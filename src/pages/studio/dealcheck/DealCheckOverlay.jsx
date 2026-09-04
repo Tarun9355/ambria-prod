@@ -25,7 +25,22 @@ const DC_BG = Object.values(
   import.meta.glob("../../../assets/ambria-dealcheck-bg.{jpg,jpeg,png,webp}", { eager: true, query: "?url", import: "default" })
 )[0] || null;
 // The zone-row action marks, taken from Build so one action does not have two pictures.
-import { IconFactory, IconCart, IconPlatform, IconCheck, IconAlert, IconChevron } from "../../../components/icons.jsx";
+import { IconFactory, IconCart, IconPlatform, IconCheck, IconAlert, IconChevron, IconBox } from "../../../components/icons.jsx";
+
+// ═══ SURFACES ═══
+// Deal Check sits on a wedding-artwork ground, so a translucent fill reads as a different colour on
+// every event type and washes the figures out — the same finding that drove Florals and the Truss
+// tab onto opaque cards. Three depths only: white card → grey tile → chip, all opaque hex.
+const IV = {
+  card: "#FFFFFF", border: "#E4E6EA", tile: "#F5F6F8", chip: "#EBEDF2",
+  shadow: "0 1px 2px rgba(26,26,46,0.06), 0 4px 12px rgba(26,26,46,0.06)",
+  // Three ink levels. Everything here had been flattened to one #1A1A2E, so a unit label carried the
+  // same weight as the rupee figure beside it. Both greys clear 4.5:1 on white.
+  ink: "#1A1A2E", ink2: "#5A6076", ink3: "#7C8296",
+  gold: "#8A6A32", green: "#059669", amber: "#B45309", red: "#DC2626",
+};
+// Money and counts are read down a column and compared, so they need fixed-width digits.
+const NUM = { fontVariantNumeric: "tabular-nums" };
 import { heavyExtraLabour, eventTimingMultFor } from "../../../lib/ims/constants";
 import { deptMpReconciled, itemImsSubcat, lookupBySubcat, itemDimsText } from "../../../lib/ims/helpers";
 import { rentalSplit, availableAtVenue, isStandingAt, fixedVenueFor, standingReductionBySubcat, standingPillarCount } from "../../../lib/ims/fixedVenues";
@@ -104,7 +119,9 @@ export default function DealCheckOverlay({ ctx }) {
     dcKitEdits, setDcKitEdits, dcManualItems, setDcManualItems, dcManualSearch, setDcManualSearch,
     dcCollapsedZones, setDcCollapsedZones, setDcBrowseAllOpen, dcBrowseAllOpen, setDcCustomModal,
     dcCustomItems, setDcCustomItems, elSelectedPhoto, dcDedupOverrides, setDcDedupOverrides,
-    photoKnowledge, saveKnowledgeEntry, dcKnowledgeKey,
+    // photoKnowledge / saveKnowledgeEntry / dcKnowledgeKey were destructured here for the
+    // "Set as correct match for this photo" control. That control is gone, and nothing else in
+    // this file read them — re-add all three if the teach action comes back.
     dcDesiredMargin, setDcDesiredMargin, dcSavingDraft, setDcSavingDraft, closeDealCheck,
     dcSaveBaselineRef, dcConflictWarnedAtRef,
     dcZoneState, dcMpOverrides, dcMpWinCount, dcMpIncludeMinusOne, dcMpIncludeDismantle,
@@ -114,6 +131,8 @@ export default function DealCheckOverlay({ ctx }) {
     activeFnIdx: activeFnIdxCommitted, fnPending, switchActiveFn, dcShowAllFns, setDcShowAllFns, dcCollapsedFnBlocks, setDcCollapsedFnBlocks,
     // pricing helpers
     collectAllFunctionData, calcFnFloralSourcingCost, calcFunctionBreakdown, calcFunctionCost,
+    // Shared availability picker — the same one Build's IconBox control opens.
+    openAvailModal,
     calcZoneTrussPreview, calcZoneFabricCost, calcZoneCarpet, buildPlatformPlan, imsField,
     libItems, rcItems, rcSubcatFactors, normalizePaintAllocation, ensureLibItemsByUrl,
     // deal check inventory-tab module helpers
@@ -1097,6 +1116,34 @@ export default function DealCheckOverlay({ ctx }) {
 .dc-tab[data-on="1"]:hover{background:#171233 !important}
 .dc-chip{transition:background .14s ease,box-shadow .16s ease,transform .12s ease}
 .dc-chip:hover{background:rgba(26,26,46,0.09) !important;box-shadow:0 3px 10px -6px rgba(26,26,46,0.5);transform:translateY(-1px)}
+/* ── INVENTORY TAB ──
+   Shadow rules carry !important: these elements set boxShadow inline, and an inline property beats a
+   stylesheet rule without it. Buttons darken by filter instead, so one rule covers every base colour.
+   Hover only on what you can act on — a static tile that lights up teaches nothing. */
+.dci-card{transition:box-shadow .18s ease,border-color .18s ease}
+.dci-card:hover{box-shadow:0 2px 6px rgba(26,26,46,.09),0 10px 26px rgba(26,26,46,.11) !important}
+.dci-row{transition:background .14s ease}
+.dci-row:hover{background:#FAFBFC !important}
+.dci-btn{transition:filter .15s ease,transform .12s ease}
+.dci-btn:hover{filter:brightness(.94)}
+.dci-btn:active{transform:translateY(1px)}
+.dci-thumb{transition:transform .14s ease,box-shadow .14s ease}
+.dci-thumb:hover{transform:translateY(-2px);box-shadow:0 6px 14px -6px rgba(26,26,46,.45)}
+/* Item cards, two to a row. GRID, not flex-wrap: with flex the last card in an odd row grows to
+   fill the width, so a zone with three items showed two normal cards and one stretched to double
+   — it read as a different, more important kind of card rather than the leftover of a pair.
+   A grid column keeps its width whether or not anything sits beside it. minmax(0,1fr) rather than
+   1fr so a long item name can't push a column past its share. */
+.dci-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;align-items:stretch}
+/* Stepping down rather than dropping straight to one: at three columns a card is ~33% of the width,
+   so the point where the split editor's dropdown, qty box and "5 avail" stop sharing a line arrives
+   sooner. Two columns from 1400px, one from 980px — the same threshold the two-column layout used. */
+@media (max-width:1400px){.dci-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:980px){.dci-grid{grid-template-columns:minmax(0,1fr)}}
+@media (prefers-reduced-motion: reduce){
+  .dci-card,.dci-row,.dci-btn,.dci-thumb{transition:none}
+  .dci-btn:active,.dci-thumb:hover{transform:none}
+}
 @media (prefers-reduced-motion: reduce){
   .dc-tab,.dc-chip{transition:none}
   .dc-chip:hover{transform:none}
@@ -1151,18 +1198,26 @@ export default function DealCheckOverlay({ ctx }) {
    Translucency is judged against what each pane SITS ON, not against the ground: the zone rows lie on
    the body, which is already glass, so two panes at the same strength would composite to opaque and
    the pair would read as one white slab. The rows are therefore much clearer than the shell. */
+/* CHROME KEEPS ITS GLASS. dc-glass is the tab bar, the function sidebar and the bottom total strip
+   — furniture that frames the page rather than content read off it. Nothing is measured against
+   these, they sit over the artwork by design, and they are single panes with nothing stacked
+   inside. Only the CONTENT surfaces below went opaque. */
 .dc-glass{background:linear-gradient(148deg,rgba(255,255,255,0.78) 0%,rgba(250,249,255,0.58) 100%);
   box-shadow:inset 0 1px 0 rgba(255,255,255,0.9)}
 /* No !important: the inline background and border were removed from the row so this rule is the only
    thing painting it. An inline value left behind for a class to override is a contradiction sitting in
    the file waiting to be believed. */
-.dc-zone{background:linear-gradient(148deg,rgba(255,255,255,0.52) 0%,rgba(250,249,255,0.30) 100%);
-  border:1px solid rgba(255,255,255,0.85);transition:background .16s ease}
-.dc-zone:hover{background:linear-gradient(148deg,rgba(255,255,255,0.66) 0%,rgba(250,249,255,0.42) 100%)}
-/* Items inside an expanded zone. A THIRD level of glass, so it is clearer again than the row it sits
-   in — the row is already clear against the body, and matching it here would have merged the two into
-   one pane with a border drawn through it. */
-.dc-item{background:linear-gradient(148deg,rgba(255,255,255,0.62) 0%,rgba(250,249,255,0.38) 100%)}
+/* ── CONTENT SURFACES ARE OPAQUE ──
+   These two were 0.52 and 0.62 white over the artwork, each set clearer than the layer it sat in so
+   they could be told apart. That works as an effect and fails as a surface: the ground behind is a
+   photograph, so the same card is a different colour on every event type, and stacking them means
+   the innermost one reads rupee figures through two washes. Same nesting, now as opaque steps —
+   the depth comes from the values differing, not from what shows through. Truss and Florals went
+   opaque for this reason; the chrome above deliberately did not. */
+.dc-zone{background:#F7F5F2;border:1px solid #E7E2DA;transition:background .16s ease}
+.dc-zone:hover{background:#FBFAF8}
+/* One step lighter than the zone shell it sits in, so the nesting still reads. */
+.dc-item{background:#FFFFFF}
 /* ── THE PANEL CURVES BELONG TO THE STEP UNDERNEATH, NOT TO THIS SCREEN ──
    Browse and Build draw the gold edge of their side panel at z-index 51 — above the header's 50, which
    is deliberate: the curve runs the whole height of the window and the bar sits over it. This overlay
@@ -1525,7 +1580,8 @@ export default function DealCheckOverlay({ ctx }) {
                   const zoneList = Object.keys(byZone);
                   const autoCollapse = totalCards > 30;  // §7.9.2 — auto-collapse when > 30 cards
                   // ═══ Patch 6 — Generate bar computation (event-wide scope · sidebar wired) ═══
-                  const activeFn = fns[fnIdx];
+                  // `activeFn` lived here to feed the function-context header; that header is gone
+                  // (see genBar below) and nothing else read it.
                   let dirtyCount = 0;
                   let totalEnabledZones = 0;
                   fns.forEach((f, fi) => {
@@ -1538,22 +1594,22 @@ export default function DealCheckOverlay({ ctx }) {
                       if (isZoneDirty(dcZoneState, dcCards, fi, zk)) dirtyCount += 1;
                     }
                   });
-                  // The Generate button is gone, and the run counter with it — a count of runs you
-                  // can no longer start says nothing. What remains is the function-context header,
-                  // which is the only part of this bar that was not about the button.
-                  const genBar = (
+                  // ── AND NOW THE HEADER IS GONE TOO ──
+                  // The Generate button went first, and the run counter with it; the function-context
+                  // header was what remained. It carried three facts and owned none of them: the
+                  // sidebar prints this function's TYPE at 17px and highlights it while it is active,
+                  // prints its DATE and shift directly underneath, and the meta line above the zones
+                  // already ends "· FUNCTION 2". The sidebar is a fixed column, so it stays on screen
+                  // while this content scrolls — meaning it was the reliable answer even before, and
+                  // this bar was the copy that scrolled away.
+                  // What is left is the one thing nothing else says: that a generate run is in flight.
+                  // So the bar renders only then, instead of standing empty the rest of the time.
+                  const genBar = !dcGenerating ? null : (
                     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 12px",borderRadius:9,background:"rgba(201,169,110,0.06)",border:`1px solid ${border}`,marginBottom:14,gap:10,flexWrap:"wrap"}}>
-                      {/* One caps line carrying three facts, and all three were the same weight of the
-                          same ink — so it read as a run of text rather than as a heading with detail.
-                          The function TYPE is the fact you are here for, so it takes the ink and the
-                          gold; "Function 1" and the date are its context and step back. Wider tracking,
-                          because a caps line this short looks cramped at 1.2 and set at 1.8. */}
-                      <div style={{fontSize:11,letterSpacing:1.8,textTransform:"uppercase",fontWeight:700,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                        <span style={{color:"#1A1A2E",opacity:0.42}}>Function {fnIdx+1}</span>
-                        {activeFn?.fnType && <span style={{color:accent}}>{activeFn.fnType}</span>}
-                        {activeFn?.fnDate && <span style={{color:"#1A1A2E",opacity:0.42}}>{activeFn.fnDate}</span>}
+                      <div style={{fontSize:12,color:IV.ink2,fontWeight:600,letterSpacing:0.2}}>
+                        Matching this function against IMS inventory…
                       </div>
-                      {dcGenerating && <div style={{fontSize:12,color:accent,fontWeight:600}}>Generating…</div>}
+                      <div style={{fontSize:12,color:accent,fontWeight:700}}>Generating…</div>
                     </div>
                   );
                   if (totalCards === 0) {
@@ -1682,8 +1738,8 @@ export default function DealCheckOverlay({ ctx }) {
                                     a sans reads as set rather than as default.
                                     "10 cards" drops to a caps micro-label: it qualifies the name, and at
                                     12px full-ink it was competing with it. */}
-                                <span style={{fontSize:15,fontWeight:700,color:"#1A1A2E",letterSpacing:-0.2,textTransform:"capitalize"}}>{zk}</span>
-                                <span className="dc-cap" style={{color:"#1A1A2E",opacity:0.45,letterSpacing:1.2}}>{totalRowCount} card{totalRowCount===1?"":"s"}</span>
+                                <span style={{fontSize:15.5,fontWeight:700,color:IV.ink,letterSpacing:-0.25,textTransform:"capitalize"}}>{zk}</span>
+                                <span className="dc-cap" style={{color:IV.ink3,letterSpacing:1.2}}>{totalRowCount} card{totalRowCount===1?"":"s"}</span>
                                 {zoneRentalTotal>0 && <span title="Total rental of all inventory in this zone" style={{fontSize:13,padding:"3px 9px",borderRadius:5,background:"rgba(201,169,110,0.15)",color:accent,fontWeight:700}}>₹{zoneRentalTotal.toLocaleString("en-IN")} rental</span>}
                               </div>
                               <div style={{display:"flex",gap:6,alignItems:"center"}}>
@@ -1700,8 +1756,8 @@ export default function DealCheckOverlay({ ctx }) {
                                   <span onClick={e=>{e.stopPropagation();setDcCustomModal({fnIdx,zoneKey:zk,type:"production"});}} title="Add Production item" style={{cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",width:26,height:26,color:"#7E22CE",borderRadius:7,background:"rgba(168,85,247,0.10)"}}><IconFactory size={14}/></span>
                                   <span onClick={e=>{e.stopPropagation();setDcCustomModal({fnIdx,zoneKey:zk,type:"buying"});}} title="Add Buying item" style={{cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",width:26,height:26,color:"#B45309",borderRadius:7,background:"rgba(245,158,11,0.12)"}}><IconCart size={14}/></span>
                                 </>}
-                                {matchedCount>0 && <span title={`${matchedCount} matched to stock`} style={{display:"inline-flex",alignItems:"center",gap:4,height:26,padding:"0 9px",borderRadius:7,background:"rgba(16,185,129,0.14)",color:"#059669",fontWeight:700,fontSize:11.5}}><IconCheck size={12}/>{matchedCount}</span>}
-                                {unmatchedCount>0 && <span title={`${unmatchedCount} not matched`} style={{display:"inline-flex",alignItems:"center",gap:4,height:26,padding:"0 9px",borderRadius:7,background:"rgba(239,68,68,0.14)",color:"#DC2626",fontWeight:700,fontSize:11.5}}><IconAlert size={12}/>{unmatchedCount}</span>}
+                                {matchedCount>0 && <span title={`${matchedCount} matched to stock`} style={{display:"inline-flex",alignItems:"center",gap:4,height:26,padding:"0 9px",borderRadius:7,background:"rgba(16,185,129,0.14)",color:"#059669",fontWeight:700,fontSize:11}}><IconCheck size={12}/>{matchedCount}</span>}
+                                {unmatchedCount>0 && <span title={`${unmatchedCount} not matched`} style={{display:"inline-flex",alignItems:"center",gap:4,height:26,padding:"0 9px",borderRadius:7,background:"rgba(239,68,68,0.14)",color:"#DC2626",fontWeight:700,fontSize:11}}><IconAlert size={12}/>{unmatchedCount}</span>}
                               </div>
                             </div>
                             {!collapsed && (
@@ -1727,14 +1783,14 @@ export default function DealCheckOverlay({ ctx }) {
                                   return (
                                     <div key={piKey} className="dc-item" style={{padding:"12px 13px",borderRadius:10,border:`1px solid ${anyShort?"rgba(245,158,11,0.45)":"rgba(255,255,255,0.85)"}`,display:"flex",flexDirection:"column",gap:8}}>
                                       <div style={{display:"flex",alignItems:"center",gap:7,flexWrap:"wrap"}}>
-                                        <span style={{fontSize:13.5,fontWeight:700,color:"#1A1A2E",letterSpacing:-0.1}}>🏗️ Platform{rowIdx>0?` #${rowIdx+1}`:""} ({heightLabel})</span>
-                                        <span className="dc-cap" style={{fontSize:9.5,padding:"2px 7px",borderRadius:999,border:"1px solid rgba(100,116,139,0.32)",color:"#64748B",letterSpacing:1.1}}>Structural</span>
-                                        <span className="dc-money" style={{fontSize:12,color:"#1A1A2E",opacity:0.62}}>{pi.L}×{pi.W} = {sqft} sqft</span>
+                                        <span style={{fontSize:13,fontWeight:700,color:IV.ink,letterSpacing:-0.1}}>🏗️ Platform{rowIdx>0?` #${rowIdx+1}`:""} ({heightLabel})</span>
+                                        <span className="dc-cap" style={{fontSize:10,padding:"2px 7px",borderRadius:999,border:"1px solid rgba(100,116,139,0.32)",color:"#64748B",letterSpacing:1.1}}>Structural</span>
+                                        <span className="dc-money" style={{fontSize:12,color:IV.ink2}}>{pi.L}×{pi.W} = {sqft} sqft</span>
                                       </div>
-                                      <div className="dc-cap" style={{color:"#1A1A2E",opacity:0.45,letterSpacing:1.3}}>Composite — expands to</div>
+                                      <div className="dc-cap" style={{color:IV.ink3,letterSpacing:1.3}}>Composite — expands to</div>
                                       <div style={{display:"flex",flexDirection:"column",gap:5,paddingLeft:8}}>
                                         <div style={{display:"flex",alignItems:"center",gap:8,fontSize:13}}>
-                                          <span style={{color:"#1A1A2E",fontWeight:600,minWidth:140}}>Platform Fatta × {pi.fattas}</span>
+                                          <span style={{color:IV.ink,fontWeight:600,minWidth:140}}>Platform Fatta × {pi.fattas}</span>
                                           {pi.fattaItem ? (
                                             fattaShort ? (
                                               <span style={{color:"#F59E0B",fontWeight:600}}>⚠ {Math.max(0,pi.freeBeforeFatta)} free{pi.priorFatta>0?` (after ${pi.priorFatta} taken by prior zones this date)`:""} · short by {Math.abs(pi.freeAfterFatta)}</span>
@@ -1747,7 +1803,7 @@ export default function DealCheckOverlay({ ctx }) {
                                         </div>
                                         {pi.stands > 0 && (
                                           <div style={{display:"flex",alignItems:"center",gap:8,fontSize:13}}>
-                                            <span style={{color:"#1A1A2E",fontWeight:600,minWidth:140}}>Platform Stand × {pi.stands}</span>
+                                            <span style={{color:IV.ink,fontWeight:600,minWidth:140}}>Platform Stand × {pi.stands}</span>
                                             {pi.standItem ? (
                                               standShort ? (
                                                 <span style={{color:"#F59E0B",fontWeight:600}}>⚠ {Math.max(0,pi.freeBeforeStand)} free{pi.priorStand>0?` (after ${pi.priorStand} taken by prior zones this date)`:""} · short by {Math.abs(pi.freeAfterStand)}</span>
@@ -1778,19 +1834,19 @@ export default function DealCheckOverlay({ ctx }) {
                                         // it is ink, and weight is what makes it the sum.
                                         return (
                                           <div style={{marginTop:9,paddingTop:8,borderTop:"1px solid rgba(26,26,46,0.10)",display:"flex",flexDirection:"column",gap:4}}>
-                                            <div style={{display:"flex",justifyContent:"space-between",gap:12,fontSize:12,color:"#1A1A2E",opacity:0.72}}>
+                                            <div style={{display:"flex",justifyContent:"space-between",gap:12,fontSize:12,color:IV.ink2}}>
                                               <span>Fatta ₹{fR.toLocaleString("en-IN")} × {pi.fattas}</span>
                                               <span className="dc-money" style={{fontWeight:600}}>₹{fCost.toLocaleString("en-IN")}</span>
                                             </div>
                                             {pi.stands > 0 && sR > 0 && (
-                                              <div style={{display:"flex",justifyContent:"space-between",gap:12,fontSize:12,color:"#1A1A2E",opacity:0.72}}>
+                                              <div style={{display:"flex",justifyContent:"space-between",gap:12,fontSize:12,color:IV.ink2}}>
                                                 <span>Stand ₹{sR.toLocaleString("en-IN")} × {pi.stands}</span>
                                                 <span className="dc-money" style={{fontWeight:600}}>₹{sCost.toLocaleString("en-IN")}</span>
                                               </div>
                                             )}
                                             <div style={{display:"flex",justifyContent:"space-between",gap:12,alignItems:"baseline",marginTop:3,paddingTop:5,borderTop:"1px solid rgba(26,26,46,0.07)"}}>
-                                              <span className="dc-cap" style={{color:"#1A1A2E",opacity:0.55,letterSpacing:1.3}}>Platform rental</span>
-                                              <span className="dc-money" style={{fontSize:14,fontWeight:800,color:"#1A1A2E"}}>₹{total.toLocaleString("en-IN")}</span>
+                                              <span className="dc-cap" style={{color:IV.ink2,letterSpacing:1.3}}>Platform rental</span>
+                                              <span className="dc-money" style={{fontSize:14,fontWeight:800,color:IV.ink}}>₹{total.toLocaleString("en-IN")}</span>
                                             </div>
                                           </div>
                                         );
@@ -1850,16 +1906,16 @@ export default function DealCheckOverlay({ ctx }) {
                                   return (
                                     <div style={{padding:"11px 12px",borderRadius:9,background:"rgba(244,63,94,0.05)",border:"1px solid rgba(244,63,94,0.25)",display:"flex",flexDirection:"column",gap:8}}>
                                       <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-                                        <span style={{fontSize:13.5,fontWeight:700,color:"#1A1A2E"}}>🟥 Carpet</span>
+                                        <span style={{fontSize:13,fontWeight:700,color:IV.ink}}>🟥 Carpet</span>
                                         <span style={{fontSize:11,padding:"2px 6px",borderRadius:4,background:"rgba(148,163,184,0.18)",color:"#64748B",fontWeight:700,letterSpacing:0.4}}>{carpetPricingFor(zc.cpT, imsCarpetMaterials).label.toLowerCase().includes("old")?"REUSED PREF":"FLOOR"}</span>
-                                        <span style={{fontSize:12,color:"#1A1A2E"}}>{neededSqft} sqft needed</span>
+                                        <span style={{fontSize:12,color:IV.ink}}>{neededSqft} sqft needed</span>
                                         {/* The charged figure, from the zone's carpet material —
                                             the same basis Build quotes on. The picker below chooses
                                             WHICH carpet ops pulls, not what it costs. */}
                                         {chargedCarpet > 0 && (
-                                          <span style={{marginLeft:"auto",fontSize:13,fontWeight:700,color:"#1A1A2E"}}>
+                                          <span style={{marginLeft:"auto",fontSize:13,fontWeight:700,color:IV.ink}}>
                                             {fmt(chargedCarpet)}
-                                            <span style={{fontWeight:400,fontSize:11,color:"#1A1A2E",marginLeft:5}}>
+                                            <span style={{fontWeight:400,fontSize:11,color:IV.ink,marginLeft:5}}>
                                               {cPrice.label || "carpet"} · ₹{cPrice.rate}/sqft
                                             </span>
                                           </span>
@@ -1867,12 +1923,12 @@ export default function DealCheckOverlay({ ctx }) {
                                       </div>
                                       {carpetItem && calc ? (
                                         <div style={{display:"flex",gap:10,alignItems:"center",padding:"6px 8px",borderRadius:7,background:"rgba(16,185,129,0.06)",border:"1px solid rgba(16,185,129,0.2)"}}>
-                                          {(()=>{const cp=imsField.photos(carpetItem)[0]; return cp ? <img loading="lazy" decoding="async" src={thumbUrl(cp, 48)} alt="" style={{width:48,height:48,borderRadius:6,objectFit:"cover",flexShrink:0}}/> : <div style={{width:48,height:48,borderRadius:6,background:"#F4F2EC",display:"flex",alignItems:"center",justifyContent:"center",fontSize:17.5,flexShrink:0}}>🟥</div>;})()}
+                                          {(()=>{const cp=imsField.photos(carpetItem)[0]; return cp ? <img loading="lazy" decoding="async" src={thumbUrl(cp, 48)} alt="" style={{width:48,height:48,borderRadius:6,objectFit:"cover",flexShrink:0}}/> : <div style={{width:48,height:48,borderRadius:6,background:"#F4F2EC",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>🟥</div>;})()}
                                           <div style={{flex:1,minWidth:0}}>
-                                            <div style={{fontSize:13,fontWeight:600,color:"#1A1A2E"}}>{carpetItem.name}</div>
-                                            <div style={{fontSize:12,color:"#1A1A2E",marginTop:2}}>
+                                            <div style={{fontSize:13,fontWeight:600,color:IV.ink}}>{carpetItem.name}</div>
+                                            <div style={{fontSize:12,color:IV.ink,marginTop:2}}>
                                               {calc.fresh>0
-                                                ? <span style={{color:"#F59E0B",fontWeight:600}}>⚠ {calc.reused} reused + {calc.fresh} fresh sqft · ₹{Math.round(calc.cost).toLocaleString("en-IN")} <span style={{opacity:0.8,fontWeight:400}}>(incl. ₹{Math.round(calc.freshCost).toLocaleString("en-IN")} fresh)</span></span>
+                                                ? <span style={{...NUM,color:IV.amber,fontWeight:600}}>⚠ {calc.reused} reused + {calc.fresh} fresh sqft · ₹{Math.round(calc.cost).toLocaleString("en-IN")} <span style={{opacity:0.8,fontWeight:400}}>(incl. ₹{Math.round(calc.freshCost).toLocaleString("en-IN")} fresh)</span></span>
                                                 : <span style={{color:"#10B981"}}>✓ {calc.needed} sqft in stock · ₹{Math.round(calc.cost).toLocaleString("en-IN")} rental</span>}
                                             </div>
                                             {calc.rentalRate<=0 && <div style={{color:"#EF4444",fontSize:11,marginTop:2,fontStyle:"italic"}}>⚠ No rental rate in IMS (₹0/sqft)</div>}
@@ -1882,9 +1938,9 @@ export default function DealCheckOverlay({ ctx }) {
                                       ) : (
                                         <div style={{fontSize:12,color:"#F59E0B",fontStyle:"italic"}}>Pick a carpet below{_anchors.length > 0 ? ` — sorted by ${_fnPal} theme` : ""} — {carpetOpts.length} options in IMS</div>
                                       )}
-                                      <input value={searchText} onChange={e=>setSearch(e.target.value)} placeholder="🔍 Search carpets (colour, type, design)…" style={{fontSize:13,padding:"5px 9px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:"#1A1A2E"}} />
+                                      <input value={searchText} onChange={e=>setSearch(e.target.value)} placeholder="🔍 Search carpets (colour, type, design)…" style={{fontSize:13,padding:"5px 9px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:IV.ink}} />
                                       <div style={{display:"flex",gap:8,overflowX:"auto",paddingBottom:4,WebkitOverflowScrolling:"touch",flexWrap:"wrap"}}>
-                                        {filtered.length === 0 && <div style={{fontSize:12,color:"#1A1A2E",fontStyle:"italic",padding:"8px 0"}}>No carpets match "{searchText}"</div>}
+                                        {filtered.length === 0 && <div style={{fontSize:12,color:IV.ink,fontStyle:"italic",padding:"8px 0"}}>No carpets match "{searchText}"</div>}
                                         {filtered.slice(0,displayLimit).map(opt=>{
                                           const optPhoto = imsField.photos(opt)[0];
                                           const isSelected = pickedId === opt.id;
@@ -1893,11 +1949,11 @@ export default function DealCheckOverlay({ ctx }) {
                                           const themeScore = scoreCarpet(opt);
                                           return (
                                             <div key={opt.id} onClick={()=>{setPick(opt.id); setSearch("");}} style={{minWidth:100,maxWidth:110,cursor:"pointer",borderRadius:8,overflow:"hidden",border:isSelected?`2px solid #10B981`:themeScore>0?`1.5px solid rgba(201,169,110,0.5)`:`1px solid ${border}`,background:isSelected?"rgba(16,185,129,0.08)":themeScore>0?"rgba(201,169,110,0.06)":"rgba(26, 26, 46,0.025)",flexShrink:0,transition:"border 0.15s",position:"relative"}}>
-                                              {themeScore>0&&<div style={{position:"absolute",top:3,right:3,fontSize:10,padding:"1px 5px",borderRadius:4,background:"rgba(201,169,110,0.85)",color:"#1A1A2E",fontWeight:700,zIndex:1}}>🎨 match</div>}
+                                              {themeScore>0&&<div style={{position:"absolute",top:3,right:3,fontSize:10,padding:"1px 5px",borderRadius:4,background:"rgba(201,169,110,0.85)",color:IV.ink,fontWeight:700,zIndex:1}}>🎨 match</div>}
                                               {optPhoto ? <img loading="lazy" decoding="async" src={thumbUrl(optPhoto, 180)} alt="" style={{width:"100%",height:72,objectFit:"cover",display:"block"}}/> : <div style={{width:"100%",height:72,background:"#F4F2EC",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22}}>🟥</div>}
                                               <div style={{padding:"5px 6px"}}>
-                                                <div style={{fontSize:11,fontWeight:600,color:"#1A1A2E",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{opt.name}</div>
-                                                <div style={{fontSize:10,color:"#1A1A2E",marginTop:1}}>{optOwned.toLocaleString("en-IN")} sqft{optRental>0?` · ₹${optRental}/sqft`:""}</div>
+                                                <div style={{fontSize:11,fontWeight:600,color:IV.ink,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{opt.name}</div>
+                                                <div style={{fontSize:10,color:IV.ink,marginTop:1}}>{optOwned.toLocaleString("en-IN")} sqft{optRental>0?` · ₹${optRental}/sqft`:""}</div>
                                               </div>
                                             </div>
                                           );
@@ -1907,6 +1963,15 @@ export default function DealCheckOverlay({ ctx }) {
                                     </div>
                                   );
                                 })()}
+                                {/* ── ITEM CARDS RUN TWO-UP ──
+                                    Flex-wrap rather than grid, so they stack on a tablet without a
+                                    media query and an odd trailing card grows to fill its row instead
+                                    of leaving a half-width hole. Matched cards and manual blocks share
+                                    the one flow: they are both "an item in this zone", and splitting
+                                    them into two grids would put a ragged gap between the groups.
+                                    minWidth 430 is the point below which the split editor's dropdown,
+                                    qty box and "5 avail" stop fitting on one line. */}
+                                <div className="dci-grid">
                                 {zoneCards.map(card => {
                                   const item = card.imsId ? dcInventoryCache.find(x => x.id === card.imsId) : null;
                                   const photo = item ? imsField.photos(item)[0] : null;
@@ -1921,13 +1986,13 @@ export default function DealCheckOverlay({ ctx }) {
                                     "list":       { icon: "📋", color: "#64748B", label: "list AI" },
                                     "floral":     { icon: "🌸", color: "#EC4899", label: "floral" },
                                     "no-match":   { icon: "⚠",  color: "#EF4444", label: "no match" },
-                                  }[card.source] || { icon: "·", color:"#1A1A2E", label: "" };
+                                  }[card.source] || { icon: "·", color:IV.ink, label: "" };
                                   return (
-                                    <div key={card._cardKey} style={{padding:"11px 12px",borderRadius:9,background:"rgba(26, 26, 46,0.025)",border:`1px solid ${border}`,display:"flex",gap:11,alignItems:"flex-start"}}>
-                                      {photo ? <img loading="lazy" decoding="async" src={thumbUrl(photo, 56)} alt="" style={{width:54,height:54,borderRadius:7,objectFit:"cover",flexShrink:0,background:"#FFFFFF"}}/> : <div style={{width:54,height:54,borderRadius:7,background:"#FFFFFF",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,color:"#1A1A2E",flexShrink:0}}>?</div>}
+                                    <div key={card._cardKey} className="dci-card" style={{padding:"12px 13px",borderRadius:10,background:IV.card,border:`1px solid ${IV.border}`,boxShadow:IV.shadow,display:"flex",gap:11,alignItems:"flex-start"}}>
+                                      {photo ? <img loading="lazy" decoding="async" src={thumbUrl(photo, 56)} alt="" style={{width:54,height:54,borderRadius:7,objectFit:"cover",flexShrink:0,background:"#FFFFFF"}}/> : <div style={{width:54,height:54,borderRadius:7,background:"#FFFFFF",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,color:IV.ink,flexShrink:0}}>?</div>}
                                       <div style={{flex:1,minWidth:0}}>
                                         <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:3}}>
-                                          <span style={{fontSize:13.5,fontWeight:700,color:"#1A1A2E"}}>{item?.name || card.rcName || "(unnamed)"}</span>
+                                          <span style={{fontSize:14,fontWeight:700,letterSpacing:-0.1,color:IV.ink}}>{item?.name || card.rcName || "(unnamed)"}</span>
                                           <span title={sourceMeta.label} style={{fontSize:11,padding:"2px 6px",borderRadius:4,background:`${sourceMeta.color}22`,color:sourceMeta.color,fontWeight:700,letterSpacing:0.4}}>{sourceMeta.icon} {sourceMeta.label}</span>
                                           {hold && <span title={`Held by ${hold.salesperson} for ${hold.eventName}`} style={{fontSize:11,padding:"2px 6px",borderRadius:4,background:"rgba(245,158,11,0.20)",color:"#F59E0B",fontWeight:700,letterSpacing:0.4}}>⏳ {hold.salesperson}</span>}
                                           {item && (()=>{ const cq=Number(card.qty)||1; const av=getStudioAvailable(item, fnBlocksForChip); return cq>av ? <span style={{fontSize:11,padding:"2px 6px",borderRadius:4,background:"rgba(239,68,68,0.18)",color:"#EF4444",fontWeight:700,letterSpacing:0.4}}>⚠ {av}</span> : null; })()}
@@ -1935,29 +2000,21 @@ export default function DealCheckOverlay({ ctx }) {
                                           <span onClick={()=>setDcCards(prev=>{const fn={...(prev[fnIdx]||{})}; delete fn[card._cardKey]; return {...prev,[fnIdx]:fn};})} title="Remove from Deal Check" style={{marginLeft:"auto",cursor:"pointer",color:"#EF4444",fontSize:15.5,fontWeight:700,padding:"0 4px",lineHeight:1,flexShrink:0,opacity:0.6,transition:"opacity 0.15s"}} onMouseEnter={e=>e.currentTarget.style.opacity=1} onMouseLeave={e=>e.currentTarget.style.opacity=0.6}>×</span>
                                         </div>
                                         {card.imsId && item ? (
-                                          <div style={{fontSize:13,color:"#1A1A2E",marginBottom:6}}>
-                                            → <span style={{color:"#1A1A2E",fontWeight:600}}>{item.name || card.imsName}</span>
-                                            <span style={{marginLeft:8,opacity:0.7}}>₹{rental.toLocaleString("en-IN")}{card.qty>1?` × ${card.qty} = ₹${(rental*card.qty).toLocaleString("en-IN")}`:""}</span>
-                                            {dims && <span style={{marginLeft:8,opacity:0.7}}>· {dims}</span>}
+                                          <div style={{fontSize:12,lineHeight:1.5,color:IV.ink2,marginBottom:7}}>
+                                            → <span style={{color:IV.ink,fontWeight:700}}>{item.name || card.imsName}</span>
+                                            <span style={{...NUM,marginLeft:8,color:IV.ink,fontWeight:700}}>₹{rental.toLocaleString("en-IN")}{card.qty>1?` × ${card.qty} = ₹${(rental*card.qty).toLocaleString("en-IN")}`:""}</span>
+                                            {dims && <span style={{marginLeft:8,color:IV.ink3}}>· {dims}</span>}
                                           </div>
                                         ) : (
-                                          <div style={{fontSize:13,color:"#EF4444",marginBottom:6,fontStyle:"italic"}}>No IMS match — pick from alternatives below or browse subcategory</div>
+                                          <div style={{fontSize:12,color:IV.red,marginBottom:7,fontStyle:"italic"}}>No IMS match — pick from alternatives below or browse subcategory</div>
                                         )}
-                                        {/* Teach button — write the CURRENT pick to the knowledge set as the correct visual match
-                                            for this photo+element. Applies to future deals (availability still checked per-deal).
-                                            Use only to fix a genuine mis-match — ordinary swaps stay deal-local and never teach. */}
-                                        {card.imsId && item && zonePhoto && (() => {
-                                          const kKey = dcKnowledgeKey?.(zonePhoto, card.rcName, card.propType);
-                                          if (!kKey) return null;
-                                          const learned = photoKnowledge?.[kKey]?.imsId === card.imsId;
-                                          return (
-                                            <div style={{marginBottom:6}}>
-                                              {learned
-                                                ? <span style={{fontSize:11.5,color:"#22C55E",fontWeight:600}}>🧠 learned for this photo</span>
-                                                : <span onClick={()=>{ const rc=rcItems.find(r=>String(r?.name||"").toLowerCase().trim()===String(card.rcName||"").toLowerCase().trim()); saveKnowledgeEntry?.(kKey,{imsId:card.imsId,subcat:rc?.sub||"",source:"taught"}); }} title="Teach the knowledge set: this IMS item is what this photo shows, so future deals using this photo auto-pick it (availability is still checked each deal). Use ONLY when the auto-match was wrong — not for availability/preference swaps, which stay on this deal only." style={{fontSize:11.5,color:"#22C55E",fontWeight:600,cursor:"pointer",textDecoration:"underline",textUnderlineOffset:2}}>🧠 Set as correct match for this photo</span>}
-                                            </div>
-                                          );
-                                        })()}
+                                        {/* The "Set as correct match for this photo" link stood here, with its "learned for
+                                            this photo" counterpart. Removed on request. Worth recording what went with it: this
+                                            was the ONLY place a person could correct the knowledge set. saveKnowledgeEntry still
+                                            runs automatically whenever the AI or a name-match resolves a card (StudioApp.jsx), so
+                                            the set keeps being written to — there is simply no longer a way to overrule it when it
+                                            is wrong, and no indicator that a photo has been learned. If that bites, the natural
+                                            home for it now is the availability picker, which is where swapping happens. */}
                                         {/* §7.9.5 — Kit composite: expand to components, per-deal editable */}
                                         {item && Array.isArray(item.subItems) && item.subItems.length > 0 && (()=>{
                                           const editKey = card._cardKey;
@@ -1974,7 +2031,7 @@ export default function DealCheckOverlay({ ctx }) {
                                             <div style={{marginTop:5,marginBottom:6,padding:"8px 10px",borderRadius:8,background:"rgba(99,102,241,0.05)",border:"1px solid rgba(99,102,241,0.25)"}}>
                                               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:5}}>
                                                 <span style={{fontSize:12,fontWeight:700,color:"#4338CA",letterSpacing:0.3}}>📦 Kit — blocks these together:{isEdited && <span style={{color:"#F59E0B",marginLeft:5}}>· edited</span>}</span>
-                                                {isEdited && <span onClick={resetKit} style={{fontSize:11,color:"#1A1A2E",cursor:"pointer",textDecoration:"underline"}}>reset to default</span>}
+                                                {isEdited && <span onClick={resetKit} style={{fontSize:11,color:IV.ink,cursor:"pointer",textDecoration:"underline"}}>reset to default</span>}
                                               </div>
                                               <div style={{display:"flex",flexDirection:"column",gap:4}}>
                                                 {comps.map((c,ci)=>{
@@ -1995,12 +2052,12 @@ export default function DealCheckOverlay({ ctx }) {
                                                       {(() => { const cp = cItem ? imsField.photos(cItem)[0] : null; return cp ? <img loading="lazy" decoding="async" src={thumbUrl(cp, 48)} alt="" style={{width:22,height:22,borderRadius:4,objectFit:"cover",flexShrink:0}} /> : <span style={{width:22,height:22,borderRadius:4,background:"rgba(26, 26, 46,0.06)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,flexShrink:0}}>🌸</span>; })()}
                                                       <span style={{color:cItem?(short?"#EF4444":"#1A1A2E"):"#EF4444",fontWeight:600,flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{cItem?cItem.name:`⚠ ${c.itemId} not in IMS`}</span>
                                                       <div style={{display:"flex",alignItems:"center",gap:2}} title="per kit">
-                                                        <span onClick={()=>setComps(comps.map((x,i)=>i===ci?{...x,qty:Math.max(1,qtyEach-1)}:x))} style={{cursor:"pointer",color:"#1A1A2E",fontSize:15.5,padding:"0 4px",userSelect:"none"}}>−</span>
-                                                        <span style={{color:"#1A1A2E",minWidth:20,textAlign:"center"}}>×{qtyEach}</span>
-                                                        <span onClick={()=>setComps(comps.map((x,i)=>i===ci?{...x,qty:qtyEach+1}:x))} style={{cursor:"pointer",color:"#1A1A2E",fontSize:15.5,padding:"0 4px",userSelect:"none"}}>+</span>
+                                                        <span onClick={()=>setComps(comps.map((x,i)=>i===ci?{...x,qty:Math.max(1,qtyEach-1)}:x))} style={{cursor:"pointer",color:IV.ink,fontSize:15.5,padding:"0 4px",userSelect:"none"}}>−</span>
+                                                        <span style={{color:IV.ink,minWidth:20,textAlign:"center"}}>×{qtyEach}</span>
+                                                        <span onClick={()=>setComps(comps.map((x,i)=>i===ci?{...x,qty:qtyEach+1}:x))} style={{cursor:"pointer",color:IV.ink,fontSize:15.5,padding:"0 4px",userSelect:"none"}}>+</span>
                                                       </div>
-                                                      {cardQty>1 && <span style={{color:"#1A1A2E",fontSize:12,whiteSpace:"nowrap"}}>× {cardQty} kits = <b style={{color:"#1A1A2E"}}>{needed}</b></span>}
-                                                      {cItem && (()=>{ const cr=imsField.rentalCost(cItem); return <span style={{color:"#1A1A2E",whiteSpace:"nowrap",opacity:0.85}}>₹{cr.toLocaleString("en-IN")} × {needed} = <b style={{color:"#4338CA"}}>₹{(cr*needed).toLocaleString("en-IN")}</b></span>; })()}
+                                                      {cardQty>1 && <span style={{color:IV.ink,fontSize:12,whiteSpace:"nowrap"}}>× {cardQty} kits = <b style={{color:IV.ink}}>{needed}</b></span>}
+                                                      {cItem && (()=>{ const cr=imsField.rentalCost(cItem); return <span style={{...NUM,color:IV.ink2,whiteSpace:"nowrap"}}>₹{cr.toLocaleString("en-IN")} × {needed} = <b style={{color:"#4338CA"}}>₹{(cr*needed).toLocaleString("en-IN")}</b></span>; })()}
                                                       {cItem && (short
                                                         ? <span style={{color:"#EF4444",fontWeight:700,whiteSpace:"nowrap"}}>⚠ need {needed}, only {owned} avail</span>
                                                         : <span style={{color:"#10B981",whiteSpace:"nowrap"}}>✓ {owned} avail</span>)}
@@ -2019,13 +2076,13 @@ export default function DealCheckOverlay({ ctx }) {
                                                 })}
                                               </div>
                                               <div style={{marginTop:5,position:"relative"}}>
-                                                <input value={dcKitAddSearch[editKey]||""} onChange={e=>setDcKitAddSearch(prev=>({...prev,[editKey]:e.target.value}))} placeholder="🔍 Search by name or sub-category to add…" style={{width:"100%",fontSize:12,padding:"4px 8px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:"#1A1A2E"}} />
+                                                <input value={dcKitAddSearch[editKey]||""} onChange={e=>setDcKitAddSearch(prev=>({...prev,[editKey]:e.target.value}))} placeholder="🔍 Search by name or sub-category to add…" style={{width:"100%",fontSize:12,padding:"4px 8px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:IV.ink}} />
                                                 {(dcKitAddSearch[editKey]||"").trim() && (()=>{
                                                   const tokens = dcKitAddSearch[editKey].trim().toLowerCase().split(/\s+/).filter(Boolean);
                                                   const matches = dcInventoryCache.filter(x=>x.id!==item.id && !comps.some(c=>c.itemId===x.id) && !isHiddenSubcat(x,rcSubcatFactors) && tokens.every(t=>(x.name+" "+(imsField.subcategory(x)||"")+" "+(x.cat||x.category||"")).toLowerCase().includes(t))).slice(0,40);
                                                   return (
                                                     <div style={{position:"absolute",zIndex:50,top:"100%",left:0,right:0,marginTop:2,background:"#F4F2EC",border:`1px solid ${border}`,borderRadius:8,maxHeight:220,overflowY:"auto",boxShadow:"0 8px 24px rgba(0,0,0,0.4)"}}>
-                                                      {matches.length===0 && <div style={{padding:"6px 8px",fontSize:12,color:"#1A1A2E"}}>No matches</div>}
+                                                      {matches.length===0 && <div style={{padding:"6px 8px",fontSize:12,color:IV.ink}}>No matches</div>}
                                                       {matches.map(x=>{
                                                         const src = imsField.photos(x)[0];
                                                         const remaining = dcRemainingForItem(x.id, fnIdx, { cardKey: editKey });
@@ -2035,12 +2092,12 @@ export default function DealCheckOverlay({ ctx }) {
                                                             style={{display:"flex",alignItems:"center",gap:6,padding:"5px 8px",cursor:isBlocked?"not-allowed":"pointer",borderBottom:`1px solid ${border}`,opacity:isBlocked?0.45:1}}>
                                                             <ItemHoverThumb src={src} size={22} rounded={4} name={x.name} sub={imsField.subcategory(x) ? imsField.subcategory(x)+" › "+(x.cat||x.category||"") : (x.cat||x.category||"")} dims={itemDimsText(x)} border={border} cardBg="#FFFFFF" textP="#1A1A2E" textS={textS} emptyBg="rgba(26, 26, 46,0.06)" />
                                                             <div style={{flex:1,minWidth:0}}>
-                                                              <div style={{fontSize:13,color:"#1A1A2E",display:"flex",alignItems:"center",gap:4,minWidth:0}}>
+                                                              <div style={{fontSize:13,color:IV.ink,display:"flex",alignItems:"center",gap:4,minWidth:0}}>
                                                                 <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{x.name}</span>
-                                                                {isBlocked && <span style={{fontSize:9,padding:"1px 4px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700,flexShrink:0}}>🚫 fully used in this event</span>}
-                                                                {!isBlocked && remaining!=null && <span style={{fontSize:9,padding:"1px 4px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700,flexShrink:0}}>{remaining} left for this event</span>}
+                                                                {isBlocked && <span style={{fontSize:10,padding:"1px 4px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700,flexShrink:0}}>🚫 fully used in this event</span>}
+                                                                {!isBlocked && remaining!=null && <span style={{fontSize:10,padding:"1px 4px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700,flexShrink:0}}>{remaining} left for this event</span>}
                                                               </div>
-                                                              <div style={{fontSize:11,color:"#1A1A2E"}}>{imsField.subcategory(x) ? imsField.subcategory(x)+" › " : ""}{x.cat||x.category||""}{itemDimsText(x) ? ` · 📐 ${itemDimsText(x)}` : ""}</div>
+                                                              <div style={{fontSize:11,color:IV.ink}}>{imsField.subcategory(x) ? imsField.subcategory(x)+" › " : ""}{x.cat||x.category||""}{itemDimsText(x) ? ` · 📐 ${itemDimsText(x)}` : ""}</div>
                                                             </div>
                                                           </div>
                                                         );
@@ -2050,7 +2107,7 @@ export default function DealCheckOverlay({ ctx }) {
                                                 })()}
                                               </div>
                                               <div style={{marginTop:5,paddingTop:5,borderTop:"1px solid rgba(99,102,241,0.2)",display:"flex",justifyContent:"space-between",fontSize:12}}>
-                                                <span style={{color:"#1A1A2E"}}>Kit rental = {kitBase>0?`console ₹${kitBase.toLocaleString("en-IN")} + `:""}add-ons ₹{partsTotal.toLocaleString("en-IN")} = ₹{kitTotal.toLocaleString("en-IN")}{cardQty>1?` × ${cardQty}`:""}</span>
+                                                <span style={{color:IV.ink}}>Kit rental = {kitBase>0?`console ₹${kitBase.toLocaleString("en-IN")} + `:""}add-ons ₹{partsTotal.toLocaleString("en-IN")} = ₹{kitTotal.toLocaleString("en-IN")}{cardQty>1?` × ${cardQty}`:""}</span>
                                                 <span style={{color:"#4338CA",fontWeight:700}}>₹{(kitTotal*cardQty).toLocaleString("en-IN")}</span>
                                               </div>
                                             </div>
@@ -2073,12 +2130,12 @@ export default function DealCheckOverlay({ ctx }) {
                                             <div style={{marginBottom:5}}>
                                               <div style={{display:"flex",alignItems:"center",gap:5,flexWrap:"wrap"}}>
                                                 <span style={{fontSize:12,padding:"2px 7px",borderRadius:5,background:"rgba(236,72,153,0.15)",color:"#EC4899",fontWeight:700}}>🖌 {allocLabel}</span>
-                                                <span style={{fontSize:11,color:"#EC4899",opacity:0.7}}>salesperson requested</span>
+                                                <span style={{fontSize:11,color:"#BE1D62",fontWeight:600}}>salesperson requested</span>
                                               </div>
                                               {isNonPaintable && (
                                                 <div style={{marginTop:4,padding:"5px 8px",borderRadius:6,background:"rgba(239,68,68,0.12)",border:"1px solid rgba(239,68,68,0.25)"}}>
                                                   <div style={{fontSize:12,color:"#EF4444",fontWeight:700}}>⚠ This item cannot be repainted</div>
-                                                  <div style={{fontSize:11,color:"#EF4444",opacity:0.8,marginTop:2}}>
+                                                  <div style={{fontSize:11,color:IV.red,lineHeight:1.5,marginTop:2}}>
                                                     {(()=>{
                                                       const sub = item ? (imsField.subcategory(item)||"") : "";
                                                       if (!sub) return "No paintable alternatives found in this subcategory.";
@@ -2113,37 +2170,53 @@ export default function DealCheckOverlay({ ctx }) {
                                           for (const itm of allSubItems) { if (!seenIds.has(itm.id)) { seenIds.add(itm.id); mergedAlts.push({imsId: itm.id, name: itm.name}); } }
                                           if (mergedAlts.length === 0) return null;
                                           const subTotal = allSubItems.length;
+                                          // ── THE SAME AVAILABILITY CONTROL BUILD HAS ──
+                                          // This was a bespoke "N alternatives" toggle opening an inline strip of 82px
+                                          // thumbnails. Build already answers this exact question — what else is in this
+                                          // sub-category, how much of each is free on this date, which are on someone's
+                                          // hold — through openAvailModal, and it answers it better: free counts,
+                                          // dimensions, holds and the split option in one list, instead of ten tiles you
+                                          // hover one at a time. Same call Build's IconBox control makes, so the two
+                                          // screens open the same picker and cannot drift apart.
+                                          // onPick is REQUIRED here: without it saveAvailPick writes the choice into
+                                          // Build's zoneElements, which is the wrong state for a Deal Check card.
+                                          // priceMode is left default so the list prices at RENTAL — Deal Check rents,
+                                          // unlike CustomItemModal which asks the same picker for production cost.
+                                          const availEl = { invId: card.imsId || null, imsId: card.imsId || null, name: item?.name || card.rcName || "" };
+                                          // Icon only. The picker's own header names the sub-category and what it is for, so a
+                                          // word here was labelling a control the user is about to see labelled again — and this
+                                          // row sits under an item name and a price line that matter more. title + aria-label
+                                          // carry the meaning for hover and for a screen reader, which a bare glyph otherwise loses.
+                                          // "Browse all N in <sub>" sat beside it and opened a second, weaker list of the same
+                                          // sub-category — no free counts, no holds. The picker answers that question properly,
+                                          // so the button is gone rather than left as a worse route to the same place.
                                           return (
-                                          <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center",marginTop:5}}>
-                                            <span style={{fontSize:11,color:"#1A1A2E",letterSpacing:0.6,textTransform:"uppercase",fontWeight:600,marginRight:2}}>Alternatives:</span>
-                                            {mergedAlts.slice(0,10).map(alt => {
-                                              const altItem = dcInventoryCache.find(x => x.id === alt.imsId);
-                                              const altPhoto = altItem ? imsField.photos(altItem)[0] : null;
-                                              const altRental = altItem ? imsField.rentalCost(altItem) : 0;
-                                              const altOwned = altItem ? imsField.qtyOwned(altItem) : 0;
-                                              const altEnough = altOwned >= (Number(card.qty) || 1);
-                                              const altDims = altItem ? imsField.sizeText(altItem) : "";
-                                              const altHold = getActiveSoftHold(softHolds, alt.imsId, authUser?.name, Date.now());
-                                              const isCurrent = alt.imsId === card.imsId;
-                                              return (
-                                                <div key={alt.imsId} onClick={()=>{
-                                                  if (isCurrent) return;
-                                                  setDcCards(prev => ({
-                                                    ...prev,
-                                                    [fnIdx]: { ...(prev[fnIdx] || {}), [card._cardKey]: { ...(prev[fnIdx]?.[card._cardKey] || {}), imsId: alt.imsId, imsName: altItem?.name || alt.name, source: "manual-swap" } }
-                                                  }));
-                                                }} title={`${alt.name || altItem?.name || alt.imsId}${altDims?" · "+altDims:""} · ₹${altRental.toLocaleString("en-IN")}${altHold?" · ⏳ "+altHold.salesperson:""}`}
-                                                style={{position:"relative",width:56,height:56,borderRadius:6,overflow:"hidden",border:isCurrent?`2px solid ${accent}`:`1px solid ${border}`,cursor:isCurrent?"default":"pointer",flexShrink:0,opacity:altHold?0.55:1}}>
-                                                  {altPhoto ? <img loading="lazy" decoding="async" src={thumbUrl(altPhoto, 96)} alt="" style={{width:"100%",height:"100%",objectFit:"cover",display:"block"}}/> : <div style={{width:"100%",height:"100%",background:"#FFFFFF",display:"flex",alignItems:"center",justifyContent:"center",fontSize:15.5,color:"#1A1A2E"}}>?</div>}
-                                                  <div style={{position:"absolute",bottom:0,left:0,right:0,padding:"2px 4px",background:"rgba(0,0,0,0.65)",fontSize:10,color:"#1A1A2E",fontWeight:700,letterSpacing:0.2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>₹{altRental >= 1000 ? Math.round(altRental/100)/10+"k" : altRental} · <span style={{color:altEnough?"#34D399":"#F87171"}}>{altOwned}</span></div>
-                                                  {altHold && <div style={{position:"absolute",top:2,right:2,fontSize:11,background:"rgba(245,158,11,0.85)",borderRadius:3,padding:"1px 3px",color:"#0F0F1A",fontWeight:700}}>⏳</div>}
-                                                  {isCurrent && <div style={{position:"absolute",top:2,left:2,fontSize:11,background:`${accent}cc`,borderRadius:3,padding:"1px 3px",color:"#0F0F1A",fontWeight:700}}>✓</div>}
-                                                </div>
-                                              );
-                                            })}
-                                            {subToUse && subTotal > 0 && (
-                                              <button onClick={()=>setDcBrowseAllOpen({fnIdx, cardKey: card._cardKey, subcategory: subToUse})} style={{padding:"6px 10px",borderRadius:6,border:`1px dashed ${border}`,background:"transparent",color:accent,fontSize:12,fontWeight:600,cursor:"pointer",letterSpacing:0.3,whiteSpace:"nowrap"}}>Browse all {subTotal} in {subToUse} ↗</button>
-                                            )}
+                                          <div style={{marginTop:7,display:"flex",gap:7,alignItems:"center",flexWrap:"wrap"}}>
+                                            <button type="button" className="dci-btn"
+                                              onClick={()=>openAvailModal?.(zk, 0, availEl, null, (pick)=>{
+                                                if (!pick) return;
+                                                setDcCards(prev => ({ ...prev, [fnIdx]: { ...(prev[fnIdx] || {}),
+                                                  [card._cardKey]: { ...(prev[fnIdx]?.[card._cardKey] || {}), imsId: pick.id, imsName: pick.name || "", source: "manual-swap" } } }));
+                                              }, {
+                                                // Pratik's Split, now offered here too. The picker cannot read this qty from
+                                                // zoneElements — a Deal Check card keeps its own — so it is declared, and the
+                                                // allocation is committed to card.split, the same field the card's own
+                                                // "✂️ Split ×N across items" editor writes and prices from.
+                                                pickHint: (Number(card.qty) || 0) >= 2
+                                                  ? "Pick one item to swap this card to — or Split to divide its qty across 2 or more."
+                                                  : "Pick an item to swap this card to.",
+                                                splitQty: Number(card.qty) || 0,
+                                                onSplit: (alloc) => setDcCards(prev => ({ ...prev, [fnIdx]: { ...(prev[fnIdx] || {}),
+                                                  [card._cardKey]: { ...(prev[fnIdx]?.[card._cardKey] || {}),
+                                                    split: alloc.map(a => ({ imsId: a.imsId, qty: a.qty })),
+                                                    source: "manual-swap" } } })),
+                                              })}
+                                              title={`Check stock availability & pick an item${subToUse ? ` — ${subTotal} in ${subToUse}` : ""}`}
+                                              aria-label="Check stock availability and pick an item"
+                                              style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:28,height:28,borderRadius:7,
+                                                border:`1px solid ${IV.border}`,background:IV.tile,color:IV.ink2,cursor:"pointer",padding:0}}>
+                                              <IconBox size={13}/>
+                                            </button>
                                           </div>
                                           );
                                         })()}
@@ -2155,17 +2228,23 @@ export default function DealCheckOverlay({ ctx }) {
                                           // Live IMS sub-category only — never Rate Card (see the sub-category note above).
                                           const subS = item ? imsField.subcategory(item) : "";
                                           const subItems = subS ? dcInventoryCache.filter(x=>String(imsField.subcategory(x)||"").toLowerCase().trim()===String(subS).toLowerCase().trim()) : [];
-                                          if (!split.length) {
-                                            if (cQty < 2) return null;
-                                            return <div style={{marginTop:5}}><span onClick={()=>setSplit([{imsId:card.imsId,qty:cQty}])} style={{fontSize:11.5,color:accent,fontWeight:600,cursor:"pointer",textDecoration:"underline",textUnderlineOffset:2}}>✂️ Split ×{cQty} across items</span></div>;
-                                          }
+                                          // ── NO SPLIT YET: NOTHING TO SHOW ──
+                                          // This used to be the "✂️ Split ×N across items" link that STARTED a split.
+                                          // The availability picker now does that (Pratik's Split, wired through
+                                          // opts.splitQty/onSplit), and it does it better: it divides across items you
+                                          // pick with their free counts and holds in front of you, rather than seeding a
+                                          // one-line editor you then fill in blind. Two entry points to one field would
+                                          // also be two places to keep in step.
+                                          // The editor BELOW stays: once a split exists it is the only thing that shows
+                                          // what the qty was divided into, and the only way to adjust or undo it.
+                                          if (!split.length) return null;
                                           const allocated = split.reduce((s,x)=>s+(Number(x.qty)||0),0);
                                           const rem = cQty - allocated;
                                           return (
                                             <div style={{marginTop:6,padding:"8px 10px",borderRadius:8,background:"rgba(16,185,129,0.05)",border:"1px solid rgba(16,185,129,0.25)"}}>
                                               <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
                                                 <span style={{fontSize:12,fontWeight:700,color:"#34D399"}}>✂️ Split ×{cQty} across items</span>
-                                                <span onClick={()=>setSplit(undefined)} style={{fontSize:11,color:"#1A1A2E",cursor:"pointer",textDecoration:"underline"}}>use single item</span>
+                                                <span onClick={()=>setSplit(undefined)} style={{fontSize:11,color:IV.ink,cursor:"pointer",textDecoration:"underline"}}>use single item</span>
                                               </div>
                                               <div style={{display:"flex",flexDirection:"column",gap:4}}>
                                                 {split.map((s,si)=>{
@@ -2176,20 +2255,20 @@ export default function DealCheckOverlay({ ctx }) {
                                                   return (
                                                     <div key={si} style={{display:"flex",alignItems:"center",gap:6,fontSize:13}}>
                                                       {(()=>{const p=it2?imsField.photos(it2)[0]:null; return p?<img loading="lazy" decoding="async" src={thumbUrl(p, 24)} alt="" style={{width:20,height:20,borderRadius:4,objectFit:"cover",flexShrink:0}}/>:<span style={{width:20,height:20,borderRadius:4,background:"rgba(26, 26, 46,0.06)",flexShrink:0,display:"inline-block"}}/>;})()}
-                                                      <select value={s.imsId} onChange={e=>upd({imsId:e.target.value})} style={{flex:1,minWidth:0,fontSize:12,padding:"3px 6px",borderRadius:5,border:`1px solid ${border}`,background:"#FFFFFF",color:"#1A1A2E"}}>
+                                                      <select value={s.imsId} onChange={e=>upd({imsId:e.target.value})} style={{flex:1,minWidth:0,fontSize:12,padding:"3px 6px",borderRadius:5,border:`1px solid ${border}`,background:"#FFFFFF",color:IV.ink}}>
                                                         {subItems.map(x=><option key={x.id} value={x.id}>{x.name} ({imsField.qtyOwned(x)})</option>)}
                                                         {!subItems.some(x=>x.id===s.imsId) && it2 && <option value={s.imsId}>{it2.name}</option>}
                                                       </select>
                                                       <input type="number" min="0" value={q} onChange={e=>upd({qty:Math.max(0,parseInt(e.target.value)||0)})} style={{width:46,fontSize:13,padding:"3px 4px",borderRadius:5,border:`1px solid ${over?"#EF4444":border}`,background:"transparent",color:over?"#EF4444":"#1A1A2E",textAlign:"center"}}/>
                                                       <span style={{color:over?"#EF4444":"#10B981",fontSize:11,whiteSpace:"nowrap"}}>{owned} avail</span>
-                                                      {split.length>1 && <span onClick={()=>setSplit(split.filter((_,i)=>i!==si))} style={{color:"#EF4444",cursor:"pointer",fontSize:14.5,padding:"0 2px"}}>×</span>}
+                                                      {split.length>1 && <span onClick={()=>setSplit(split.filter((_,i)=>i!==si))} style={{color:"#EF4444",cursor:"pointer",fontSize:14,padding:"0 2px"}}>×</span>}
                                                     </div>
                                                   );
                                                 })}
                                               </div>
                                               <div style={{marginTop:5,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                                                <span onClick={()=>setDcBrowseAllOpen({fnIdx, cardKey: card._cardKey, subcategory: subS, splitAdd: true, splitQty: Math.max(0, rem)})} style={{fontSize:11.5,color:accent,fontWeight:600,cursor:"pointer",textDecoration:"underline"}}>+ add item</span>
-                                                <span style={{fontSize:11.5,fontWeight:600,color:rem===0?"#10B981":(rem>0?"#F59E0B":"#EF4444")}}>{rem===0?`✓ allocated ${cQty}`:rem>0?`${rem} unallocated`:`over by ${-rem}`}</span>
+                                                <span onClick={()=>setDcBrowseAllOpen({fnIdx, cardKey: card._cardKey, subcategory: subS, splitAdd: true, splitQty: Math.max(0, rem)})} style={{fontSize:11,color:accent,fontWeight:600,cursor:"pointer",textDecoration:"underline"}}>+ add item</span>
+                                                <span style={{fontSize:11,fontWeight:600,color:rem===0?"#10B981":(rem>0?"#F59E0B":"#EF4444")}}>{rem===0?`✓ allocated ${cQty}`:rem>0?`${rem} unallocated`:`over by ${-rem}`}</span>
                                               </div>
                                             </div>
                                           );
@@ -2202,10 +2281,14 @@ export default function DealCheckOverlay({ ctx }) {
                                           ? splitArr.reduce((s,x)=>{ const it3=dcInventoryCache.find(y=>y.id===x.imsId); return s+(it3?imsField.rentalCost(it3):0)*(Number(x.qty)||0); },0)
                                           : (item ? rental * (Number(card.qty) || 1) : 0);
                                         if (tot <= 0) return null;
+                                        // alignSelf flex-start, not center: at half width the card grows tall
+                                        // when the alternatives strip or the split editor opens, and a centred
+                                        // figure drifted into the middle of all that while the item name it
+                                        // belongs to stayed at the top.
                                         return (
-                                          <div style={{flexShrink:0,alignSelf:"center",textAlign:"right",minWidth:74}}>
-                                            <div style={{fontSize:15.5,fontWeight:700,color:"#1A1A2E"}}>₹{tot.toLocaleString("en-IN")}</div>
-                                            <div style={{fontSize:11,color:"#1A1A2E",marginTop:1,letterSpacing:0.3}}>rental{splitArr.length?" · split":""}</div>
+                                          <div style={{flexShrink:0,alignSelf:"flex-start",textAlign:"right",minWidth:74}}>
+                                            <div style={{...NUM,fontSize:15.5,fontWeight:700,color:IV.ink}}>₹{tot.toLocaleString("en-IN")}</div>
+                                            <div style={{fontSize:11,color:IV.ink3,marginTop:1,letterSpacing:0.4,textTransform:"uppercase",fontWeight:600}}>rental{splitArr.length?" · split":""}</div>
                                           </div>
                                         );
                                       })()}
@@ -2225,24 +2308,24 @@ export default function DealCheckOverlay({ ctx }) {
                                   const _vName = (fns[fnIdx] || {}).fnVenue || "";
                                   const _avail = item ? Math.max(0, Math.min(getStudioAvailable(item, fnBlocksForChip), availableAtVenue({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, _vName, item))) : 0;
                                   return (
-                                    <div key={mi.manualId} style={{padding:"11px 12px",borderRadius:9,background:"rgba(193,154,107,0.05)",border:`1px solid rgba(193,154,107,0.30)`,display:"flex",gap:11,alignItems:"flex-start"}}>
-                                      {photo ? <img loading="lazy" decoding="async" src={thumbUrl(photo, 56)} alt="" style={{width:54,height:54,borderRadius:7,objectFit:"cover",flexShrink:0,background:"#FFFFFF"}}/> : <div style={{width:54,height:54,borderRadius:7,background:"#FFFFFF",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,color:"#1A1A2E",flexShrink:0}}>?</div>}
+                                    <div key={mi.manualId} className="dci-card" style={{padding:"12px 13px",borderRadius:10,boxShadow:IV.shadow,background:IV.card,border:`1px solid rgba(193,154,107,0.30)`,display:"flex",gap:11,alignItems:"flex-start"}}>
+                                      {photo ? <img loading="lazy" decoding="async" src={thumbUrl(photo, 56)} alt="" style={{width:54,height:54,borderRadius:7,objectFit:"cover",flexShrink:0,background:"#FFFFFF"}}/> : <div style={{width:54,height:54,borderRadius:7,background:"#FFFFFF",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,color:IV.ink,flexShrink:0}}>?</div>}
                                       <div style={{flex:1,minWidth:0}}>
                                         <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:3}}>
-                                          <span style={{fontSize:13.5,fontWeight:700,color:"#1A1A2E"}}>{item?.name || mi.imsId}</span>
+                                          <span style={{fontSize:14,fontWeight:700,letterSpacing:-0.1,color:IV.ink}}>{item?.name || mi.imsId}</span>
                                           <span style={{fontSize:11,padding:"2px 6px",borderRadius:4,background:"rgba(193,154,107,0.22)",color:"#C19A6B",fontWeight:700,letterSpacing:0.4}}>✋ MANUAL</span>
-                                          {sub && <span style={{fontSize:11,color:"#1A1A2E"}}>· {sub}</span>}
+                                          {sub && <span style={{fontSize:11,color:IV.ink}}>· {sub}</span>}
                                         </div>
-                                        <div style={{display:"flex",alignItems:"center",gap:6,fontSize:13,color:"#1A1A2E"}}>
+                                        <div style={{display:"flex",alignItems:"center",gap:6,fontSize:12,lineHeight:1.5,color:IV.ink2,flexWrap:"wrap"}}>
                                           <span>Qty:</span>
                                           <input type="number" min="1" max={_avail || undefined} value={mi.qty} onChange={e=>{
                                             const raw = Math.max(1, Number(e.target.value)||1);
                                             const v = _avail > 0 ? Math.min(raw, _avail) : raw;
                                             if (raw > v) showMsg && showMsg(`Only ${_avail} available — capped at ${_avail}`, "orange");
                                             setDcManualItems(prev => prev.map(x => x.manualId === mi.manualId ? {...x, qty: v} : x));
-                                          }} style={{width:60,padding:"3px 6px",borderRadius:4,border:`1px solid ${mi.qty>=_avail&&_avail>0?"#F59E0B":border}`,background:"rgba(26, 26, 46,0.04)",color:"#1A1A2E",fontSize:13}}/>
-                                          <span style={{opacity:0.7}}>of {_avail} avail · ₹{rental.toLocaleString("en-IN")} × {mi.qty} = ₹{(rental*mi.qty).toLocaleString("en-IN")}</span>
-                                          {dims && <span style={{opacity:0.7}}>· {dims}</span>}
+                                          }} style={{width:60,padding:"3px 6px",borderRadius:4,border:`1px solid ${mi.qty>=_avail&&_avail>0?"#F59E0B":border}`,background:"rgba(26, 26, 46,0.04)",color:IV.ink,fontSize:13}}/>
+                                          <span style={{...NUM,color:IV.ink2}}>of {_avail} avail · ₹{rental.toLocaleString("en-IN")} × {mi.qty} = ₹{(rental*mi.qty).toLocaleString("en-IN")}</span>
+                                          {dims && <span style={{color:IV.ink3}}>· {dims}</span>}
                                         </div>
                                         {/* Same-subcategory alternatives + Browse (with per-item availability) — swap a manual block to another item */}
                                         {sub && (()=>{
@@ -2252,11 +2335,11 @@ export default function DealCheckOverlay({ ctx }) {
                                           const altAvail = (a) => Math.max(0, Math.min(getStudioAvailable(a, fnBlocksForChip), availableAtVenue(_fvC, _vName, a)));
                                           return (
                                             <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center",marginTop:6}}>
-                                              <span style={{fontSize:11,color:"#1A1A2E",letterSpacing:0.6,textTransform:"uppercase",fontWeight:600}}>Alternatives:</span>
+                                              <span style={{fontSize:11,color:IV.ink,letterSpacing:0.6,textTransform:"uppercase",fontWeight:600}}>Alternatives:</span>
                                               {mAlts.slice(0,5).map(a=>{ const ao=altAvail(a); const ap=imsField.photos(a)[0]; return (
                                                 <span key={a.id} onClick={()=>setDcManualItems(prev=>prev.map(x=>x.manualId===mi.manualId?{...x,imsId:a.id}:x))} title={`${a.name} · ${ao} free`} style={{display:"inline-flex",alignItems:"center",gap:4,cursor:"pointer",padding:"2px 7px 2px 3px",borderRadius:12,border:`1px solid ${border}`,background:"rgba(26, 26, 46,0.03)",fontSize:11}}>
                                                   {ap?<img loading="lazy" decoding="async" src={thumbUrl(ap, 20)} alt="" style={{width:16,height:16,borderRadius:4,objectFit:"cover"}}/>:<span style={{width:16,height:16,borderRadius:4,background:"rgba(26, 26, 46,0.06)",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:11}}>?</span>}
-                                                  <span style={{color:"#1A1A2E",maxWidth:82,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{a.name}</span>
+                                                  <span style={{color:IV.ink,maxWidth:82,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{a.name}</span>
                                                   <span style={{color:ao>0?"#10B981":"#EF4444",fontWeight:800}}>{ao}</span>
                                                 </span>
                                               );})}
@@ -2269,6 +2352,7 @@ export default function DealCheckOverlay({ ctx }) {
                                     </div>
                                   );
                                 })}
+                                </div>
                                 {/* ═══ MANUAL SEARCH INPUT — always visible at zone bottom ═══ */}
                                 {(() => {
                                   const searchKey = `${fnIdx}|${zk}`;
@@ -2290,7 +2374,7 @@ export default function DealCheckOverlay({ ctx }) {
                                         placeholder="🔍 Search inventory to add manually (type 2+ letters)…"
                                         value={searchText}
                                         onChange={e=>setDcManualSearch(prev => ({...prev, [searchKey]: e.target.value}))}
-                                        style={{width:"100%",padding:"9px 12px",borderRadius:8,border:`1px dashed ${border}`,background:"rgba(193,154,107,0.04)",color:"#1A1A2E",fontSize:13.5,outline:"none",boxSizing:"border-box"}}
+                                        style={{width:"100%",padding:"9px 12px",borderRadius:8,border:`1px dashed ${border}`,background:"rgba(193,154,107,0.04)",color:"#1A1A2E",fontSize:13,outline:"none",boxSizing:"border-box"}}
                                       />
                                       {showResults && matches.length === 0 && (
                                         <div style={{marginTop:6,padding:"10px 12px",fontSize:13,color:"#1A1A2E",fontStyle:"italic",textAlign:"center",borderRadius:7,background:"rgba(26, 26, 46,0.02)"}}>No matches in IMS for "{searchText}"</div>
