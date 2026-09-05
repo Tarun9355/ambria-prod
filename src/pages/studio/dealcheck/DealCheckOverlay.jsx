@@ -3199,165 +3199,297 @@ export default function DealCheckOverlay({ ctx }) {
                   const gyvPct = 5;
                   const bufferPct = 3;
 
+                  // Icon split out of the label so it can sit in a tile rather than inline in the
+                  // text, and `flag` marks a line that has departed from its projection — an actual
+                  // mandi bill, or crew a dept head changed. Those are the only lines on this screen
+                  // where a person or a real invoice overrode the system, which is exactly what GOLD
+                  // means everywhere else in Deal Check.
                   const rows = [
-                    { label: "📦 Rental",    value: rental },
-                    { label: "🏗️ Truss",     value: truss },
-                    { label: actualMandi > 0 ? "🌸 Florals (ACTUAL)" : "🌸 Florals", value: actualMandi > 0 ? actualMandi : florals, note: actualMandi > 0 ? `actual mandi · projected was ${fmt(projFlorals)}` : null },
-                    { label: "🚚 Transport", value: transport },
-                    { label: mpDelta ? "👷 Manpower (ADJUSTED)" : "👷 Manpower", value: mpDelta ? effManpower : manpower, note: mpDelta ? `dept heads adjusted crew · projected ${fmt(manpower)}` : null },
-                    { label: "🛒 Buying",    value: buyTotal },
-                    { label: "🏭 Production",value: produceTotal },
-                    ...(actualExpenses > 0 ? [{ label: "🧾 On-site expenses (ACTUAL)", value: actualExpenses }] : []),
+                    { icon: "📦", label: "Rental",     value: rental },
+                    { icon: "🏗️", label: "Truss",      value: truss },
+                    { icon: "🌸", label: "Florals",    value: actualMandi > 0 ? actualMandi : florals,
+                      flag: actualMandi > 0 ? "actual" : null,
+                      note: actualMandi > 0 ? `actual mandi bill · projected ${fmt(projFlorals)}` : null },
+                    { icon: "🚚", label: "Transport",  value: transport },
+                    { icon: "👷", label: "Manpower",   value: mpDelta ? effManpower : manpower,
+                      flag: mpDelta ? "adjusted" : null,
+                      note: mpDelta ? `dept heads changed the crew · projected ${fmt(manpower)}` : null },
+                    { icon: "🛒", label: "Buying",     value: buyTotal },
+                    { icon: "🏭", label: "Production", value: produceTotal },
+                    ...(actualExpenses > 0 ? [{ icon: "🧾", label: "On-site expenses", value: actualExpenses, flag: "actual", note: "billed on site" }] : []),
                   ];
 
+                  // ── ONE QUOTE FIGURE, NOT TWO ──
+                  // The profitability panel used to recompute this locally while the quote
+                  // calculator read dcCostRollup's copy. Both apply the same negotiated-amount
+                  // override so they happened to agree, but two copies of the number the whole
+                  // screen hangs on is a disagreement waiting to happen the next time one is edited.
+                  const quote = Number(cli?.negotiatedAmount) > 0
+                    ? Number(cli.negotiatedAmount)
+                    : (() => { let s = 0; try { fns.forEach(fn => { s += calcFunctionCost(fn).grand; }); } catch {} return s; })();
+                  const netProfit = quote - grandWithOverheads;
+                  const profitPct = quote > 0 ? Math.round((netProfit / quote) * 100) : 0;
+                  // Health bands: the thresholds were already in the code, only the palette changes.
+                  const health = profitPct >= 20
+                    ? { ink: GOOD, soft: GOOD_SOFT, label: "Healthy" }
+                    : profitPct >= 10
+                      ? { ink: GOLD, soft: GOLD_SOFT, label: "Moderate" }
+                      : profitPct >= 0
+                        ? { ink: BAD, soft: BAD_SOFT, label: "Low" }
+                        : { ink: BAD, soft: BAD_SOFT, label: "Loss" };
+                  const overheads = gyvCost + bufferCost;
+
+                  // ── COLLAPSE STATE, ONE FACTORY ──
+                  // Four sections need the same open/toggle pair, and four hand-rolled copies is
+                  // four chances to key one wrong or default one differently. State lives in
+                  // dcCollapsedFnBlocks — the same store every other collapsible block in Deal
+                  // Check uses — so it persists with the deal rather than resetting on every tab
+                  // switch. All default open: each section keeps its own total in its header while
+                  // collapsed, so folding one away costs nothing, but nothing here should be hidden
+                  // until the reader chooses to hide it.
+                  const sect = (key) => {
+                    const open = dcCollapsedFnBlocks[key] !== undefined ? dcCollapsedFnBlocks[key] : true;
+                    return { open, toggle: () => setDcCollapsedFnBlocks(prev => ({ ...prev, [key]: !open })) };
+                  };
+                  const sBreak  = sect("gyv:breakdown");
+                  const sOver   = sect("gyv:overheads");
+                  const sProfit = sect("gyv:profit");
+                  const sQuote  = sect("gyv:quote");
+
+                  const SUM_TILE = { background:CARD_BG, border:`1px solid ${CARD_BORDER}`, borderRadius:11, boxShadow:CARD_SHADOW, padding:"9px 13px", minWidth:0 };
+                  const EYEBROW = { fontSize:9.5, fontWeight:700, letterSpacing:1, textTransform:"uppercase", color:INK_2, marginBottom:4, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" };
+                  const SECT_HEAD = { display:"flex", alignItems:"center", gap:12, padding:"13px 15px", borderBottom:`1px solid ${HAIRLINE}` };
+                  const SECT_TITLE = { fontSize:15.5, fontWeight:700, color:INK, letterSpacing:-0.35, lineHeight:1.2 };
+                  const SECT_SUB = { fontSize:11.5, color:INK_3, marginTop:3 };
+                  const ICON_TILE = (bg) => ({ display:"inline-flex", alignItems:"center", justifyContent:"center", width:36, height:36, borderRadius:10, flexShrink:0, fontSize:17, lineHeight:1, background:bg });
+                  // Defined AFTER SECT_HEAD, not beside the sect() factory above: headStyle reads
+                  // SECT_HEAD, and a const referenced before its declaration line has executed is a
+                  // temporal-dead-zone throw. It happened to work up there because it is only ever
+                  // called from JSX — i.e. after every const has initialised — but that is a
+                  // property of where it is called from, not of the code, and the next caller would
+                  // not know that. The chevron sits here too: it is the only affordance saying a
+                  // header is clickable, so it is built once rather than retyped per section.
+                  const chev = (open) => (
+                    <span aria-hidden="true" style={{fontSize:11,color:INK_3,flexShrink:0,display:"inline-block",transform:open?"rotate(90deg)":"none",transition:"transform 0.16s ease"}}>▸</span>
+                  );
+                  const headStyle = (open) => ({ ...SECT_HEAD, borderBottom: open ? SECT_HEAD.borderBottom : "none" });
+
                   return (
-                    <div style={{display:"flex",flexDirection:"column",gap:16,padding:"0 4px"}}>
-                      {/* Base cost summary */}
-                      <div style={{borderRadius:10,border:`1px solid ${border}`,overflow:"hidden"}}>
-                        <div style={{padding:"10px 14px",background:"rgba(26, 26, 46,0.02)",fontSize:13,fontWeight:700,color:"#1A1A2E",letterSpacing:0.4,textTransform:"uppercase"}}>💰 Project Cost Breakdown</div>
-                        <div style={{display:"flex",flexDirection:"column"}}>
-                          {rows.map((r, i) => (
-                            <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"8px 14px",borderTop:`1px solid ${border}22`,fontSize:13}}>
-                              <span style={{color:r.note?"#10B981":textS}}>{r.label}{r.note && <span style={{display:"block",fontSize:11,color:"#1A1A2E",fontWeight:400}}>{r.note}</span>}</span>
-                              <span style={{color:r.note?"#10B981":"#1A1A2E",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{fmt(r.value)}</span>
-                            </div>
-                          ))}
-                          <div style={{display:"flex",justifyContent:"space-between",padding:"10px 14px",borderTop:`1px solid ${border}`,fontSize:13.5,fontWeight:700}}>
-                            <span style={{color:"#1A1A2E"}}>Base Cost</span>
-                            <span style={{color:"#1A1A2E"}}>{fmt(baseCost)}</span>
+                    <div style={{display:"flex",flexDirection:"column",gap:12}}>
+                      <style>{DC_CSS}</style>
+
+                      {/* ── THE FOUR NUMBERS THIS SCREEN EXISTS FOR ──
+                          They were previously the last line of four separate panels, so answering
+                          "what is the margin" meant scrolling to the bottom of the page. */}
+                      <div className="dc2-sum">
+                        {[
+                          { label: "Base cost", value: fmt(baseCost), foot: "before GYV and buffer" },
+                          { label: `Overheads · ${gyvPct}% + ${bufferPct}%`, value: fmt(overheads), foot: "GYV fixed + buffer" },
+                          { label: "Project total", value: fmt(grandWithOverheads), foot: "what the deal costs us" },
+                          { label: "Net profit", value: `${netProfit < 0 ? "−" : ""}${fmt(Math.abs(netProfit))}`, foot: `${health.label} · ${profitPct}% margin`, tone: health.ink },
+                        ].map((s, si) => (
+                          <div key={si} className="dc2-card" style={SUM_TILE}>
+                            <div style={EYEBROW}>{s.label}</div>
+                            <div style={{fontSize:16.5,fontWeight:700,letterSpacing:-0.4,lineHeight:1.15,color:s.tone||INK,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",...NUM}}>{s.value}</div>
+                            <div style={{fontSize:10,color:INK_3,marginTop:2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{s.foot}</div>
                           </div>
+                        ))}
+                      </div>
+
+                      {/* ── COST BREAKDOWN ──
+                          Deliberately NOT a card grid. This is an ordered list of amounts that sum
+                          to a total, and a total only reads as a total when its parts sit in one
+                          column above it. Cards would scatter eight figures across three columns
+                          and break the one relationship that matters here. */}
+                      <div className="dc2-card" style={{background:CARD_BG,border:`1px solid ${CARD_BORDER}`,borderRadius:14,boxShadow:CARD_SHADOW,overflow:"hidden",display:"flex"}}>
+                        <div aria-hidden="true" style={{width:4,flexShrink:0,background:"#6F63A8"}} />
+                        <div style={{flex:"1 1 auto",minWidth:0}}>
+                          {/* Collapsible: the eight cost lines are the longest block on this tab,
+                              and once you have read them the figure you keep coming back for is the
+                              base cost — which stays in the header while collapsed, so folding it
+                              away costs you nothing. Keyed in dcCollapsedFnBlocks like every other
+                              collapsible block in Deal Check, so the state persists with the deal
+                              rather than resetting on every tab switch. Open by default: this is
+                              the section the tab is named after. */}
+                          <div onClick={sBreak.toggle} className="dc2-hd" style={headStyle(sBreak.open)}>
+                            <span aria-hidden="true" style={ICON_TILE("#EBE8F4")}>💰</span>
+                            <div style={{flex:"1 1 auto",minWidth:0}}>
+                              <div style={SECT_TITLE}>Project cost breakdown</div>
+                              <div style={SECT_SUB}>What the booking costs Ambria, before overheads. {rows.length} line{rows.length===1?"":"s"}.</div>
+                            </div>
+                            <div style={{textAlign:"right",flexShrink:0}}>
+                              <div style={{fontSize:17,fontWeight:750,color:INK,letterSpacing:-0.45,lineHeight:1.1,...NUM}}>{fmt(baseCost)}</div>
+                              <div style={{fontSize:11,color:INK_3,marginTop:2}}>base cost</div>
+                            </div>
+                            {chev(sBreak.open)}
+                          </div>
+                          {sBreak.open && <div style={{padding:"10px 15px 12px",display:"flex",flexDirection:"column",gap:2}}>
+                            {rows.map((r, i) => (
+                              <div key={i} className="dc2-hd" style={{display:"flex",alignItems:"center",gap:10,padding:"7px 8px",borderRadius:9,cursor:"default"}}>
+                                <span aria-hidden="true" style={{width:24,height:24,borderRadius:7,flexShrink:0,display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:12,background:TILE_BG,border:`1px solid ${TILE_BORDER}`}}>{r.icon}</span>
+                                <div style={{flex:"1 1 auto",minWidth:0}}>
+                                  <div style={{display:"flex",alignItems:"center",gap:7,flexWrap:"wrap"}}>
+                                    <span style={{fontSize:12.5,fontWeight:600,color:INK,letterSpacing:-0.1}}>{r.label}</span>
+                                    {r.flag && (
+                                      <span title={r.note || undefined} style={{fontSize:9,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase",padding:"2px 7px",borderRadius:999,background:GOLD_SOFT,color:GOLD,border:`1px solid ${GOLD}33`,whiteSpace:"nowrap",cursor:"help"}}>{r.flag}</span>
+                                    )}
+                                  </div>
+                                  {r.note && <div style={{fontSize:10.5,color:INK_3,marginTop:2,...NUM}}>{r.note}</div>}
+                                </div>
+                                <span style={{flexShrink:0,fontSize:13,fontWeight:650,color:r.value>0?INK:INK_3,letterSpacing:-0.2,...NUM}}>{fmt(r.value)}</span>
+                              </div>
+                            ))}
+                            <div style={{display:"flex",alignItems:"center",gap:10,padding:"11px 8px 3px",marginTop:4,borderTop:`1px solid ${HAIRLINE}`}}>
+                              <span style={{flex:"1 1 auto",fontSize:10.5,fontWeight:700,color:INK,letterSpacing:0.8,textTransform:"uppercase"}}>Base cost</span>
+                              <span style={{fontSize:15,fontWeight:750,color:INK,letterSpacing:-0.35,...NUM}}>{fmt(baseCost)}</span>
+                            </div>
+                          </div>}
                         </div>
                       </div>
 
-                      {/* GYV & Buffer */}
-                      <div style={{borderRadius:10,border:"1px solid rgba(99,102,241,0.25)",overflow:"hidden"}}>
-                        <div style={{padding:"10px 14px",background:"rgba(99,102,241,0.06)",fontSize:13,fontWeight:700,color:accent,letterSpacing:0.4,textTransform:"uppercase"}}>🏢 GYV Fixed & Buffer</div>
-                        <div style={{display:"flex",flexDirection:"column"}}>
-                          <div style={{display:"flex",justifyContent:"space-between",padding:"10px 14px",borderTop:`1px solid ${border}22`,fontSize:13.5}}>
-                            <span style={{color:"#1A1A2E"}}>GYV Fixed Cost <span style={{fontSize:12,opacity:0.7}}>({gyvPct}% of base)</span></span>
-                            <span style={{color:"#7C3AED",fontWeight:700,fontVariantNumeric:"tabular-nums"}}>{fmt(gyvCost)}</span>
+                      {/* ── OVERHEADS ── */}
+                      <div className="dc2-card" style={{background:CARD_BG,border:`1px solid ${CARD_BORDER}`,borderRadius:14,boxShadow:CARD_SHADOW,overflow:"hidden",display:"flex"}}>
+                        <div aria-hidden="true" style={{width:4,flexShrink:0,background:"#C6A55E"}} />
+                        <div style={{flex:"1 1 auto",minWidth:0}}>
+                          <div onClick={sOver.toggle} className="dc2-hd" style={headStyle(sOver.open)}>
+                            <span aria-hidden="true" style={ICON_TILE("#F7F1E0")}>🏢</span>
+                            <div style={{flex:"1 1 auto",minWidth:0}}>
+                              <div style={SECT_TITLE}>GYV fixed &amp; buffer</div>
+                              <div style={SECT_SUB}>Both are a percentage of base cost, added on top and carried into the project total in the bottom strip.</div>
+                            </div>
+                            <div style={{textAlign:"right",flexShrink:0}}>
+                              <div style={{fontSize:17,fontWeight:750,color:INK,letterSpacing:-0.45,lineHeight:1.1,...NUM}}>{fmt(grandWithOverheads)}</div>
+                              <div style={{fontSize:11,color:INK_3,marginTop:2}}>project total</div>
+                            </div>
+                            {chev(sOver.open)}
                           </div>
-                          <div style={{display:"flex",justifyContent:"space-between",padding:"10px 14px",borderTop:`1px solid ${border}22`,fontSize:13.5}}>
-                            <span style={{color:"#1A1A2E"}}>Buffer Cost <span style={{fontSize:12,opacity:0.7}}>({bufferPct}% of base)</span></span>
-                            <span style={{color:"#F59E0B",fontWeight:700,fontVariantNumeric:"tabular-nums"}}>{fmt(bufferCost)}</span>
-                          </div>
-                          <div style={{display:"flex",justifyContent:"space-between",padding:"12px 14px",borderTop:`1px solid ${border}`,fontSize:15.5,fontWeight:800}}>
-                            <span style={{color:"#1A1A2E"}}>Project Total (incl. GYV + Buffer)</span>
-                            <span style={{color:"#10B981"}}>{fmt(grandWithOverheads)}</span>
-                          </div>
+                          {sOver.open && <div style={{padding:"12px 15px 14px",display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:12}}>
+                            {[
+                              { k: "GYV fixed", pct: gyvPct, v: gyvCost },
+                              { k: "Buffer", pct: bufferPct, v: bufferCost },
+                            ].map(o => (
+                              <div key={o.k} className="dc2-row" style={{borderRadius:12,background:TILE_BG,border:`1px solid ${TILE_BORDER}`,padding:"10px 12px"}}>
+                                <div style={{display:"flex",alignItems:"baseline",gap:8}}>
+                                  <span style={{flex:"1 1 auto",fontSize:10.5,fontWeight:700,color:INK,letterSpacing:0.8,textTransform:"uppercase"}}>{o.k}</span>
+                                  <span style={{fontSize:10,fontWeight:700,color:INK_3,...NUM}}>{o.pct}%</span>
+                                </div>
+                                <div style={{fontSize:17,fontWeight:750,color:INK,letterSpacing:-0.45,lineHeight:1.1,marginTop:6,...NUM}}>{fmt(o.v)}</div>
+                                <div style={{fontSize:10,color:INK_3,marginTop:3,...NUM}}>{o.pct}% of {fmt(baseCost)}</div>
+                              </div>
+                            ))}
+                          </div>}
                         </div>
                       </div>
 
-                      <div style={{fontSize:12,color:"#1A1A2E",fontStyle:"italic",padding:"0 4px"}}>
-                        GYV fixed ({gyvPct}%) and buffer ({bufferPct}%) are applied on the base cost and added to the project total in the bottom strip.
-                      </div>
-
-                      {/* Net Profit / Margin */}
-                      {(()=>{
-                        // Same negotiated-amount override as dcCostRollup above (this panel recomputes
-                        // clientRevenue locally rather than reusing the outer one, so it needs the same
-                        // override applied here too).
-                        let clientRevenue = 0;
-                        if (Number(cli?.negotiatedAmount) > 0) {
-                          clientRevenue = Number(cli.negotiatedAmount);
-                        } else {
-                          try { fns.forEach(fn => { clientRevenue += calcFunctionCost(fn).grand; }); } catch {}
-                        }
-                        const netProfit = clientRevenue - grandWithOverheads;
-                        const profitPct = clientRevenue > 0 ? Math.round((netProfit / clientRevenue) * 100) : 0;
-                        const maxDiscountPct = clientRevenue > 0 ? Math.round((netProfit / clientRevenue) * 100) : 0;
-                        const profitColor = profitPct >= 20 ? "#10B981" : profitPct >= 10 ? "#F59E0B" : "#EF4444";
-                        const profitLabel = profitPct >= 20 ? "Healthy" : profitPct >= 10 ? "Moderate" : profitPct >= 0 ? "Low" : "Loss";
-                        return (
-                          <div style={{borderRadius:10,border:`1px solid ${profitColor}40`,overflow:"hidden"}}>
-                            <div style={{padding:"10px 14px",background:`${profitColor}0D`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-                              <span style={{fontSize:13,fontWeight:700,color:profitColor,letterSpacing:0.4,textTransform:"uppercase"}}>📊 Net Profitability</span>
-                              <span style={{fontSize:13.5,padding:"3px 10px",borderRadius:6,background:`${profitColor}20`,color:profitColor,fontWeight:800}}>{profitLabel} · {profitPct}%</span>
+                      {/* ── PROFITABILITY ── */}
+                      <div className="dc2-card" style={{background:CARD_BG,border:`1px solid ${CARD_BORDER}`,borderRadius:14,boxShadow:CARD_SHADOW,overflow:"hidden",display:"flex"}}>
+                        <div aria-hidden="true" style={{width:4,flexShrink:0,background:health.ink}} />
+                        <div style={{flex:"1 1 auto",minWidth:0}}>
+                          <div onClick={sProfit.toggle} className="dc2-hd" style={headStyle(sProfit.open)}>
+                            <span aria-hidden="true" style={ICON_TILE(health.soft)}>📊</span>
+                            <div style={{flex:"1 1 auto",minWidth:0}}>
+                              <div style={SECT_TITLE}>Net profitability</div>
+                              <div style={SECT_SUB}>What is left after the project total comes out of the client quote.</div>
                             </div>
-                            <div style={{display:"flex",flexDirection:"column"}}>
-                              <div style={{display:"flex",justifyContent:"space-between",padding:"10px 14px",borderTop:`1px solid ${border}22`,fontSize:13.5}}>
-                                <span style={{color:"#1A1A2E"}}>Client Quote <span style={{fontSize:12,opacity:0.7}}>{Number(cli?.negotiatedAmount) > 0 ? "(negotiated)" : "(from Build screen)"}</span></span>
-                                <span style={{color:"#1A1A2E",fontWeight:700,fontVariantNumeric:"tabular-nums"}}>{fmt(clientRevenue)}</span>
-                              </div>
-                              <div style={{display:"flex",justifyContent:"space-between",padding:"10px 14px",borderTop:`1px solid ${border}22`,fontSize:13.5}}>
-                                <span style={{color:"#1A1A2E"}}>Internal Cost <span style={{fontSize:12,opacity:0.7}}>(incl. GYV + Buffer)</span></span>
-                                <span style={{color:"#EF4444",fontWeight:700,fontVariantNumeric:"tabular-nums"}}>{fmt(grandWithOverheads)}</span>
-                              </div>
-                              <div style={{display:"flex",justifyContent:"space-between",padding:"12px 14px",borderTop:`1px solid ${border}`,fontSize:15.5,fontWeight:800}}>
-                                <span style={{color:"#1A1A2E"}}>Net Profit</span>
-                                <span style={{color:profitColor}}>{netProfit >= 0 ? "" : "−"}{fmt(Math.abs(netProfit))}</span>
-                              </div>
-                              {/* Profit bar visual */}
-                              <div style={{padding:"10px 14px",borderTop:`1px solid ${border}22`}}>
-                                <div style={{height:8,borderRadius:4,background:`${border}33`,overflow:"hidden",position:"relative"}}>
-                                  <div style={{height:"100%",borderRadius:4,background:profitColor,width:`${Math.min(100,Math.max(0,profitPct))}%`,transition:"width 0.3s"}}/>
-                                </div>
-                                <div style={{display:"flex",justifyContent:"space-between",marginTop:6,fontSize:12,color:"#1A1A2E"}}>
-                                  <span>Max discount salesperson can offer: <strong style={{color:profitColor}}>{maxDiscountPct}%</strong></span>
-                                  <span>Margin: <strong style={{color:profitColor}}>{profitPct}%</strong></span>
-                                </div>
-                              </div>
-                            </div>
+                            <span style={{flexShrink:0,fontSize:10,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase",padding:"4px 10px",borderRadius:999,background:health.soft,color:health.ink,whiteSpace:"nowrap",...NUM}}>{health.label} · {profitPct}%</span>
+                            {chev(sProfit.open)}
                           </div>
-                        );
-                      })()}
+                          {sProfit.open && <div style={{padding:"12px 15px 14px",display:"flex",flexDirection:"column",gap:12}}>
+                            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))",gap:12}}>
+                              {[
+                                { k: "Client quote", sub: Number(cli?.negotiatedAmount) > 0 ? "negotiated" : "from Build screen", v: fmt(quote), tone: INK },
+                                { k: "Internal cost", sub: "incl. GYV + buffer", v: fmt(grandWithOverheads), tone: INK },
+                                { k: "Net profit", sub: `${profitPct}% margin`, v: `${netProfit < 0 ? "−" : ""}${fmt(Math.abs(netProfit))}`, tone: health.ink },
+                              ].map(x => (
+                                <div key={x.k} className="dc2-row" style={{borderRadius:12,background:TILE_BG,border:`1px solid ${TILE_BORDER}`,padding:"10px 12px"}}>
+                                  <div style={{fontSize:10.5,fontWeight:700,color:INK,letterSpacing:0.8,textTransform:"uppercase"}}>{x.k}</div>
+                                  <div style={{fontSize:17,fontWeight:750,color:x.tone,letterSpacing:-0.45,lineHeight:1.1,marginTop:6,...NUM}}>{x.v}</div>
+                                  <div style={{fontSize:10,color:INK_3,marginTop:3}}>{x.sub}</div>
+                                </div>
+                              ))}
+                            </div>
+                            {/* The bar is the only thing on this tab that shows margin as a
+                                magnitude rather than a number — worth keeping, but it needs to say
+                                what full width MEANS, which it never did. */}
+                            <div>
+                              <div style={{height:7,borderRadius:999,background:TILE_BG,border:`1px solid ${TILE_BORDER}`,overflow:"hidden"}}>
+                                <div style={{height:"100%",background:health.ink,width:`${Math.min(100,Math.max(0,profitPct))}%`,transition:"width 0.3s ease"}}/>
+                              </div>
+                              <div style={{display:"flex",justifyContent:"space-between",gap:10,marginTop:7,fontSize:11,color:INK_3,flexWrap:"wrap",...NUM}}>
+                                <span>Most a salesperson can discount before this deal stops making money: <strong style={{color:health.ink,fontWeight:700}}>{Math.max(0, profitPct)}%</strong></span>
+                                <span>Bar is margin against a 100% scale</span>
+                              </div>
+                            </div>
+                          </div>}
+                        </div>
+                      </div>
 
                       {/* ═══ Smart Quote Calculator — salesperson adjusts margin to get revised quote ═══ */}
                       {(()=>{
                         const internalCost = grandWithOverheads;
-                        const origQuote = clientRevenue;
+                        const origQuote = quote;
                         const origProfitPct = origQuote > 0 ? Math.round(((origQuote - internalCost) / origQuote) * 100) : 0;
                         const desiredPct = dcDesiredMargin !== null ? dcDesiredMargin : origProfitPct;
                         const revisedQuote = desiredPct < 100 ? Math.round(internalCost / (1 - desiredPct / 100)) : internalCost;
                         const discount = origQuote - revisedQuote;
                         const discountPct = origQuote > 0 ? Math.round((discount / origQuote) * 100) : 0;
-                        const revisedColor = desiredPct >= 20 ? "#10B981" : desiredPct >= 10 ? "#F59E0B" : desiredPct >= 0 ? "#EF4444" : "#EF4444";
+                        const rev = desiredPct >= 20 ? GOOD : desiredPct >= 10 ? GOLD : BAD;
+                        const revSoft = desiredPct >= 20 ? GOOD_SOFT : desiredPct >= 10 ? GOLD_SOFT : BAD_SOFT;
                         const presets = [5, 10, 15, 20, 25, 30];
                         return (
-                          <div style={{borderRadius:10,border:"1px solid rgba(99,102,241,0.25)",overflow:"hidden"}}>
-                            <div style={{padding:"10px 14px",background:"rgba(99,102,241,0.06)",display:"flex",alignItems:"center",gap:8}}>
-                              <span style={{fontSize:15.5}}>🧮</span>
-                              <span style={{fontSize:13,fontWeight:700,color:accent,letterSpacing:0.4,textTransform:"uppercase"}}>Smart Quote Calculator</span>
-                            </div>
-                            <div style={{padding:"14px"}}>
-                              <div style={{fontSize:13,color:"#1A1A2E",marginBottom:10}}>Adjust your desired profit margin — see the revised quote to give the client:</div>
-                              <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:12}}>
-                                {presets.map(p => (
-                                  <button key={p} onClick={()=>setDcDesiredMargin(p)} style={{padding:"5px 12px",borderRadius:6,border:`1px solid ${desiredPct===p?accent:border}`,background:desiredPct===p?"rgba(99,102,241,0.15)":"transparent",color:desiredPct===p?"#1A1A2E":textS,fontSize:13,fontWeight:desiredPct===p?700:500,cursor:"pointer"}}>{p}%</button>
-                                ))}
-                                {dcDesiredMargin !== null && (
-                                  <button onClick={()=>setDcDesiredMargin(null)} style={{padding:"5px 12px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:"#1A1A2E",fontSize:12,cursor:"pointer"}}>Reset to actual</button>
-                                )}
-                              </div>
-                              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}>
-                                <span style={{fontSize:12,color:"#1A1A2E",whiteSpace:"nowrap"}}>Margin</span>
-                                <input type="range" min={0} max={Math.min(origProfitPct + 5, 60)} value={desiredPct} onChange={e=>setDcDesiredMargin(Number(e.target.value))} style={{flex:1,accentColor:revisedColor}} />
-                                <span style={{fontSize:15.5,fontWeight:800,color:revisedColor,minWidth:40,textAlign:"right"}}>{desiredPct}%</span>
-                              </div>
-                              <div style={{borderRadius:8,border:`1px solid ${revisedColor}33`,overflow:"hidden"}}>
-                                <div style={{display:"flex",justifyContent:"space-between",padding:"10px 12px",background:`${revisedColor}08`,fontSize:13}}>
-                                  <span style={{color:"#1A1A2E"}}>Internal Cost (fixed)</span>
-                                  <span style={{color:"#1A1A2E",fontWeight:600}}>₹{Math.round(internalCost).toLocaleString("en-IN")}</span>
+                          <div className="dc2-card" style={{background:CARD_BG,border:`1px solid ${CARD_BORDER}`,borderRadius:14,boxShadow:CARD_SHADOW,overflow:"hidden",display:"flex"}}>
+                            <div aria-hidden="true" style={{width:4,flexShrink:0,background:rev}} />
+                            <div style={{flex:"1 1 auto",minWidth:0}}>
+                              <div onClick={sQuote.toggle} className="dc2-hd" style={headStyle(sQuote.open)}>
+                                <span aria-hidden="true" style={ICON_TILE(revSoft)}>🧮</span>
+                                <div style={{flex:"1 1 auto",minWidth:0}}>
+                                  <div style={SECT_TITLE}>Smart quote calculator</div>
+                                  <div style={SECT_SUB}>Pick the margin you want to hold and see what the client would have to be quoted.</div>
                                 </div>
-                                <div style={{display:"flex",justifyContent:"space-between",padding:"10px 12px",borderTop:`1px solid ${border}22`,fontSize:13}}>
-                                  <span style={{color:"#1A1A2E"}}>Original Quote</span>
-                                  <span style={{color:"#1A1A2E",fontWeight:600}}>₹{Math.round(origQuote).toLocaleString("en-IN")}</span>
-                                </div>
-                                <div style={{display:"flex",justifyContent:"space-between",padding:"12px",borderTop:`1px solid ${border}`,fontSize:15.5,fontWeight:800}}>
-                                  <span style={{color:"#1A1A2E"}}>Revised Quote at {desiredPct}% margin</span>
-                                  <span style={{color:revisedColor}}>₹{Math.round(revisedQuote).toLocaleString("en-IN")}</span>
-                                </div>
-                                {discount !== 0 && (
-                                  <div style={{display:"flex",justifyContent:"space-between",padding:"8px 12px",borderTop:`1px solid ${border}22`,fontSize:12}}>
-                                    <span style={{color:"#1A1A2E"}}>{discount > 0 ? "Discount from original" : "Increase from original"}</span>
-                                    <span style={{color:discount>0?"#F59E0B":"#10B981",fontWeight:700}}>
-                                      {discount > 0 ? "−" : "+"}₹{Math.abs(discount).toLocaleString("en-IN")} ({Math.abs(discountPct)}%)
-                                    </span>
-                                  </div>
-                                )}
+                                {/* The live margin stays visible while collapsed — it is the one
+                                    figure this section exists to set, and hiding it would make the
+                                    fold lose information rather than merely save space. */}
+                                <span style={{flexShrink:0,fontSize:15,fontWeight:750,color:rev,letterSpacing:-0.4,...NUM}}>{desiredPct}%</span>
+                                {chev(sQuote.open)}
                               </div>
-                              {desiredPct < 5 && <div style={{marginTop:8,fontSize:12,color:"#EF4444",fontWeight:600}}>⚠ Very low margin — this deal may not cover operational risks.</div>}
-                              {desiredPct < 0 && <div style={{marginTop:4,fontSize:12,color:"#EF4444",fontWeight:600}}>🚨 Loss-making deal — quote is below internal cost.</div>}
+                              {sQuote.open && <div style={{padding:"12px 15px 14px",display:"flex",flexDirection:"column",gap:12}}>
+                                <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+                                  {presets.map(p => {
+                                    const on = desiredPct === p;
+                                    return (
+                                      <button key={p} onClick={()=>setDcDesiredMargin(p)} className="dc2-ghost"
+                                        style={{padding:"5px 12px",borderRadius:999,cursor:"pointer",border:`1px solid ${on?INK:TILE_BORDER}`,background:on?INK:"transparent",color:on?"#FFFFFF":INK_2,fontSize:11.5,fontWeight:on?700:600,...NUM}}>{p}%</button>
+                                    );
+                                  })}
+                                  {dcDesiredMargin !== null && (
+                                    <button onClick={()=>setDcDesiredMargin(null)} className="dc2-ghost"
+                                      style={{marginLeft:"auto",padding:"5px 11px",borderRadius:999,border:`1px solid ${TILE_BORDER}`,background:"transparent",color:INK_3,fontSize:11,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>↺ Back to actual</button>
+                                  )}
+                                </div>
+                                <div style={{display:"flex",alignItems:"center",gap:12}}>
+                                  <span style={{fontSize:10.5,fontWeight:700,color:INK_2,letterSpacing:0.8,textTransform:"uppercase",whiteSpace:"nowrap"}}>Margin</span>
+                                  <input type="range" min={0} max={Math.min(origProfitPct + 5, 60)} value={desiredPct} onChange={e=>setDcDesiredMargin(Number(e.target.value))} style={{flex:1,accentColor:rev}} />
+                                  <span style={{fontSize:19,fontWeight:750,color:rev,minWidth:52,textAlign:"right",letterSpacing:-0.5,...NUM}}>{desiredPct}%</span>
+                                </div>
+                                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))",gap:12}}>
+                                  {[
+                                    { k: "Internal cost", sub: "fixed", v: fmt(internalCost), tone: INK },
+                                    { k: "Original quote", sub: origProfitPct + "% margin", v: fmt(origQuote), tone: INK },
+                                    { k: `Revised at ${desiredPct}%`, sub: discount === 0 ? "same as original" : (discount > 0 ? `−${fmt(Math.abs(discount))} (${Math.abs(discountPct)}%) discount` : `+${fmt(Math.abs(discount))} (${Math.abs(discountPct)}%) increase`), v: fmt(revisedQuote), tone: rev },
+                                  ].map(x => (
+                                    <div key={x.k} className="dc2-row" style={{borderRadius:12,background:TILE_BG,border:`1px solid ${TILE_BORDER}`,padding:"10px 12px"}}>
+                                      <div style={{fontSize:10.5,fontWeight:700,color:INK,letterSpacing:0.8,textTransform:"uppercase",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{x.k}</div>
+                                      <div style={{fontSize:17,fontWeight:750,color:x.tone,letterSpacing:-0.45,lineHeight:1.1,marginTop:6,...NUM}}>{x.v}</div>
+                                      <div style={{fontSize:10,color:INK_3,marginTop:3,...NUM}}>{x.sub}</div>
+                                    </div>
+                                  ))}
+                                </div>
+                                {desiredPct < 0 ? (
+                                  <div style={{padding:"9px 12px",borderRadius:10,background:BAD_SOFT,border:`1px solid ${BAD}33`,fontSize:11.5,color:BAD,fontWeight:650}}>🚨 Loss-making — the quote is below what the deal costs us.</div>
+                                ) : desiredPct < 5 ? (
+                                  <div style={{padding:"9px 12px",borderRadius:10,background:BAD_SOFT,border:`1px solid ${BAD}33`,fontSize:11.5,color:BAD,fontWeight:650}}>⚠ Very low margin — this may not cover operational risk.</div>
+                                ) : null}
+                              </div>}
                             </div>
                           </div>
                         );
