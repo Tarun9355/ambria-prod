@@ -2837,39 +2837,88 @@ export default function DealCheckOverlay({ ctx }) {
                   const isP = dcActiveTab === "production";
                   const items = dcCustomItems.filter(c => c.fnIdx === fnIdx && c.type === dcActiveTab);
                   const total = items.reduce((s, c) => s + (c.manualPrice || c.refPrice || 0) * (Number(c.qty) || 1), 0);
-                  const ciColor = isP ? "#A855F7" : "#F59E0B";
+                  // Production and Buying are the same shape of thing — a short list of one-off
+                  // items added per zone — so they share this branch and differ only by accent.
+                  // Warm-palette equivalents of the old #A855F7 / #F59E0B.
+                  const ciInk  = isP ? "#6F63A8" : "#C6A55E";
+                  const ciTile = isP ? "#EBE8F4" : "#F7F1E0";
+                  const fnName = (collectAllFunctionData ? collectAllFunctionData() : [])[fnIdx]?.fnType || `Function ${fnIdx+1}`;
                   return (
-                    <div style={{display:"flex",flexDirection:"column",gap:14}}>
-                      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-                        <div style={{fontSize:13,color:"#1A1A2E"}}>Function {fnIdx+1} · {items.length} {dcActiveTab} item{items.length===1?"":"s"}</div>
-                        <div style={{fontSize:14.5,fontWeight:700,color:ciColor}}>₹{Math.round(total).toLocaleString("en-IN")}</div>
-                      </div>
-                      {items.length === 0 ? (
-                        <div style={{padding:"40px 20px",textAlign:"center",color:"#1A1A2E",fontSize:13,borderRadius:10,border:`1px dashed ${border}`}}>
-                          No {dcActiveTab} items yet. Add them from the 🏭/🛒 icons in zone headers on the Build screen.
-                        </div>
-                      ) : items.map(ci => {
-                        const unitCost = ci.manualPrice || ci.refPrice || 0;
-                        const refItem = ci.refItemId ? (dcInventoryCache || []).find(x => x.id === ci.refItemId) : null;
-                        const refPhoto = refItem ? imsField.photos(refItem)[0] : null;
-                        const zonePhoto = elSelectedPhoto[ci.zoneKey]?.src || null;
-                        const photo = ci.photo || zonePhoto || refPhoto || null;
-                        return (
-                          <div key={ci.id} style={{padding:"12px 14px",borderRadius:10,border:`1px solid ${ciColor}30`,background:`${ciColor}06`,display:"flex",gap:10,alignItems:"center"}}>
-                            {photo ? <img loading="lazy" decoding="async" src={thumbUrl(photo, 56)} alt="" style={{width:48,height:48,borderRadius:8,objectFit:"cover"}} /> : <div style={{width:48,height:48,borderRadius:8,background:`${ciColor}12`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20}}>{isP?"🏭":"🛒"}</div>}
-                            <div style={{flex:1}}>
-                              <div style={{fontSize:13.5,fontWeight:600,color:"#1A1A2E"}}>{ci.cat ? `${ci.cat} → ` : ""}{ci.subCat}</div>
-                              <div style={{fontSize:12,color:"#1A1A2E",marginTop:2}}>× {ci.qty}{ci.dims?.l?` · ${ci.dims.w}W × ${ci.dims.l}D × ${ci.dims.h}H ft`:""}{ci.notes?` · ${ci.notes}`:""}</div>
-                              <div style={{fontSize:11,color:"#1A1A2E",marginTop:1}}>Zone: {ci.zoneKey}{refItem?` · Ref: ${refItem.name}`:""}</div>
+                    <div style={{display:"flex",flexDirection:"column",gap:12}}>
+                      <style>{DC_CSS}</style>
+                      <div className="dc2-card" style={{background:CARD_BG,border:`1px solid ${CARD_BORDER}`,borderRadius:14,boxShadow:CARD_SHADOW,overflow:"hidden",display:"flex"}}>
+                        <div aria-hidden="true" style={{width:4,flexShrink:0,background:items.length?ciInk:"#DED7CB"}} />
+                        <div style={{flex:"1 1 auto",minWidth:0}}>
+                          <div style={{display:"flex",alignItems:"center",gap:12,padding:"13px 15px",borderBottom:`1px solid ${HAIRLINE}`}}>
+                            <span aria-hidden="true" style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:36,height:36,borderRadius:10,flexShrink:0,fontSize:17,lineHeight:1,background:ciTile}}>{isP?"🏭":"🛒"}</span>
+                            <div style={{flex:"1 1 auto",minWidth:0}}>
+                              <div style={{fontSize:15.5,fontWeight:700,color:INK,letterSpacing:-0.35,lineHeight:1.2}}>{isP ? "Production items" : "Buying items"}</div>
+                              <div style={{fontSize:11.5,color:INK_3,marginTop:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",...NUM}}>
+                                {fnName} · {items.length} item{items.length===1?"":"s"} · one-offs added from zone headers on Build
+                              </div>
                             </div>
-                            <div style={{textAlign:"right"}}>
-                              <div style={{fontSize:15.5,fontWeight:700,color:ciColor}}>₹{Math.round(unitCost * (Number(ci.qty)||1)).toLocaleString("en-IN")}</div>
-                              <div style={{fontSize:11,color:"#1A1A2E"}}>₹{Math.round(unitCost).toLocaleString("en-IN")} × {ci.qty}</div>
+                            <div style={{textAlign:"right",flexShrink:0}}>
+                              <div style={{fontSize:17,fontWeight:750,color:total>0?INK:INK_3,letterSpacing:-0.45,lineHeight:1.1,...NUM}}>₹{Math.round(total).toLocaleString("en-IN")}</div>
+                              <div style={{fontSize:11,color:INK_3,marginTop:2}}>{isP ? "to produce" : "to buy"}</div>
                             </div>
-                            <button onClick={()=>setDcCustomItems(prev=>prev.filter(x=>x.id!==ci.id))} style={{padding:"4px 8px",borderRadius:4,border:"none",background:"rgba(239,68,68,0.12)",color:"#EF4444",fontSize:13,cursor:"pointer",fontWeight:700}}>✕</button>
                           </div>
-                        );
-                      })}
+                          {items.length === 0 ? (
+                            <div style={{padding:"16px 15px",fontSize:12.5,color:INK_2}}>
+                              <div style={{fontWeight:600,marginBottom:3,color:INK}}>No {isP ? "production" : "buying"} items in {fnName}.</div>
+                              <div style={{fontSize:11.5,color:INK_3}}>Add them with the {isP ? "🏭" : "🛒"} icon in a zone header on the Build screen.</div>
+                            </div>
+                          ) : (
+                            <div className="dc2-grid4" style={{padding:"12px 15px 14px"}}>
+                              {items.map(ci => {
+                                const unitCost = ci.manualPrice || ci.refPrice || 0;
+                                const refItem = ci.refItemId ? (dcInventoryCache || []).find(x => x.id === ci.refItemId) : null;
+                                const refPhoto = refItem ? imsField.photos(refItem)[0] : null;
+                                const zonePhoto = elSelectedPhoto[ci.zoneKey]?.src || null;
+                                const photo = ci.photo || zonePhoto || refPhoto || null;
+                                const qty = Number(ci.qty) || 1;
+                                const dims = ci.dims?.l ? `${ci.dims.w}W × ${ci.dims.l}D × ${ci.dims.h}H ft` : null;
+                                return (
+                                  <div key={ci.id} className="dc2-row" style={{borderRadius:12,background:TILE_BG,border:`1px solid ${TILE_BORDER}`,overflow:"hidden",display:"flex",flexDirection:"column"}}>
+                                    <div style={{display:"flex",gap:10,padding:"11px 12px"}}>
+                                      {photo
+                                        ? <img loading="lazy" decoding="async" src={thumbUrl(photo, 96)} alt="" style={{width:46,height:46,borderRadius:9,objectFit:"cover",flexShrink:0,border:`1px solid ${CARD_BORDER}`}} />
+                                        : <div style={{width:46,height:46,borderRadius:9,background:ciTile,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>{isP?"🏭":"🛒"}</div>}
+                                      <div style={{flex:"1 1 auto",minWidth:0}}>
+                                        {/* Category is context, the sub-category is the thing — they
+                                            used to run together at one weight as "Florals → Flower
+                                            Pot Small", so the name you scan for was the tail of a
+                                            longer string. */}
+                                        {ci.cat && <div style={{fontSize:9.5,fontWeight:700,letterSpacing:0.7,textTransform:"uppercase",color:INK_3,marginBottom:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ci.cat}</div>}
+                                        <div title={ci.subCat} style={{fontSize:12.5,fontWeight:650,color:INK,letterSpacing:-0.1,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ci.subCat}</div>
+                                        <div style={{fontSize:10.5,color:INK_3,marginTop:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",...NUM}}>
+                                          {ci.zoneKey}{dims ? ` · ${dims}` : ""}
+                                        </div>
+                                      </div>
+                                    </div>
+                                    {(refItem || ci.notes) && (
+                                      <div style={{padding:"0 12px",fontSize:10.5,color:INK_3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={[refItem?`Ref: ${refItem.name}`:null, ci.notes].filter(Boolean).join(" · ")}>
+                                        {refItem ? `Ref: ${refItem.name}` : ""}{refItem && ci.notes ? " · " : ""}{ci.notes || ""}
+                                      </div>
+                                    )}
+                                    {/* marginTop:auto pins the money row to the card foot, so it
+                                        lands at the same height across a stretched grid row. */}
+                                    <div style={{marginTop:"auto",display:"flex",alignItems:"flex-end",gap:8,padding:"10px 12px 11px"}}>
+                                      <div style={{flex:"1 1 auto",minWidth:0}}>
+                                        <div style={{fontSize:17,fontWeight:750,color:INK,letterSpacing:-0.45,lineHeight:1.1,...NUM}}>₹{Math.round(unitCost * qty).toLocaleString("en-IN")}</div>
+                                        <div style={{fontSize:9.5,color:INK_3,marginTop:2,letterSpacing:0.4,textTransform:"uppercase",fontWeight:600,...NUM}}>₹{Math.round(unitCost).toLocaleString("en-IN")} × {qty}</div>
+                                      </div>
+                                      <button onClick={()=>setDcCustomItems(prev=>prev.filter(x=>x.id!==ci.id))}
+                                        title={`Remove ${ci.subCat} from ${isP ? "production" : "buying"}`}
+                                        className="dc2-ghost"
+                                        style={{flexShrink:0,width:26,height:26,borderRadius:8,border:`1px solid ${TILE_BORDER}`,background:CARD_BG,color:INK_3,fontSize:12,lineHeight:1,cursor:"pointer"}}>✕</button>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      </div>
                     </div>
                   );
                 })() : dcActiveTab === "status" ? (() => {
