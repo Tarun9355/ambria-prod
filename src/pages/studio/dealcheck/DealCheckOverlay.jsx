@@ -9,6 +9,11 @@ import { useState, useEffect, useRef } from "react";
 import DCFloralsTab from "./tabs/DCFloralsTab.jsx";
 import DCManpowerTab from "./tabs/DCManpowerTab.jsx";
 import DCTrussTab from "./tabs/DCTrussTab.jsx";
+// Shared Deal Check surfaces/inks — the same source DCManpowerTab draws from, so the
+// two tabs cannot drift the way this file’s own `IV` object and Manpower’s private
+// block already had. NUM is deliberately not imported: this file declares an
+// identical one at line 43 and importing it would be a redeclare.
+import { CARD_SHADOW, CARD_BG, CARD_BORDER, HAIRLINE, TILE_BG, TILE_BORDER, CHIP_BG, INK, INK_2, INK_3, GOLD, GOLD_SOFT, BAD, BAD_SOFT, GOOD, GOOD_SOFT, DC_CSS, deptAccent } from "../../../lib/studio/dcTokens";
 import { thumbUrl } from "../../../lib/studio/thumb";
 import { matchFlowerPattern } from "../../../lib/ims/flowerHelpers";
 import { DEPTS as OPS_DEPTS, catToDept as sharedCatToDept } from "../../../lib/ims/deptClassify";
@@ -2463,18 +2468,39 @@ export default function DealCheckOverlay({ ctx }) {
                 ) : dcActiveTab === "truss" ? (
                   <DCTrussTab ctx={ctx} />
                 ) : dcActiveTab === "transport" ? (() => {
-                  // ═══ TRANSPORT TAB BODY — per-function truck allocation (genset split out to its own
-                  // Power tab below). Each truck-capacity row now also lists the zone/element lines that
-                  // filled it (bd.transport.breakdown[].items), so this isn't just a sub-category total —
-                  // it shows what is actually being loaded, same figures the truck-count math already used.
+                  // ═══ TRANSPORT TAB BODY ═══
+                  // Four levels deep: function → department → sub-category → the actual items
+                  // that filled the truck. The old layout expressed all four with indentation and
+                  // right-aligned text alone, so three different magnitudes ("0.03 trucks",
+                  // "6 pc · 0.03 trucks", "6 pc") stacked into one ragged column jammed against
+                  // the page edge. Same data, same maths — the hierarchy is now carried by
+                  // surface (card → tile → row) and the figures sit in fixed columns.
                   const allFns = collectAllFunctionData ? collectAllFunctionData() : [];
-                  if (allFns.length === 0) return <div style={{padding:"50px 30px",textAlign:"center",color:"#1A1A2E",fontSize:13}}>No functions configured yet.</div>;
+                  if (allFns.length === 0) return <div style={{padding:"50px 30px",textAlign:"center",color:INK_3,fontSize:13}}>No functions configured yet.</div>;
                   // Scoped to the selected function unless "All functions" is on — this used to
                   // always dump every function's trucks on screen no matter which one was selected.
                   const fns = dcShowAllFns ? allFns.map((fn,fi)=>({fn,fi})) : allFns.map((fn,fi)=>({fn,fi})).filter(x=>x.fi===(activeFnIdx||0));
                   const DEPT_TRANSPORT_ICON = { Furniture: "🛋️", Floral: "🌸", Structure: "🏛️", Tenting: "⛺", Transport: "🚚", Lighting: "💡", Fabric: "🧵" };
+                  // Booking-level figures for the summary bar. Computed from the same
+                  // calcFunctionBreakdown the cards above are drawn from, so the bar cannot
+                  // disagree with the sum of what is on screen.
+                  let sumCost = 0, sumTrucks = 0, fnsWithTrucks = 0;
+                  const tierSeen = new Set();
+                  fns.forEach(({fn}) => {
+                    let b = null; try { b = calcFunctionBreakdown ? calcFunctionBreakdown(fn) : null; } catch { /* ignore */ }
+                    const t = b?.transport || null;
+                    sumCost += Number(t?.truckTotal) || 0;
+                    sumTrucks += Number(t?.trucks) || 0;
+                    if ((Number(t?.trucks) || 0) > 0) fnsWithTrucks += 1;
+                    if (t?.tierLabel) tierSeen.add(t.tierLabel);
+                  });
+                  // Fixed-width figure columns. Narrow enough to survive a third-width card,
+                  // wide enough that "1.00 trucks" and "0.03 trucks" still land on the same
+                  // right edge — which is the whole reason these are columns and not text.
+                  const NUMCOL = { minWidth: 72, textAlign: "right", flexShrink: 0, ...NUM };
                   return (
-                    <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                    <div style={{display:"flex",flexDirection:"column",gap:12}}>
+                      <style>{DC_CSS}</style>
                       {fns.map(({fn, fi}) => {
                         let bd = null; try { bd = calcFunctionBreakdown ? calcFunctionBreakdown(fn) : null; } catch { /* ignore */ }
                         const tr = bd?.transport || null;
@@ -2501,65 +2527,167 @@ export default function DealCheckOverlay({ ctx }) {
                         const isOpen = dcCollapsedFnBlocks[blockKey] !== undefined ? dcCollapsedFnBlocks[blockKey] : !dcShowAllFns;
                         const toggleOpen = () => setDcCollapsedFnBlocks(prev => ({ ...prev, [blockKey]: !isOpen }));
                         return (
-                          <div key={fi} style={{borderRadius:9,background:"rgba(56,189,248,0.04)",border:`1px solid ${border}`,overflow:"hidden"}}>
-                            <div onClick={rows.length?toggleOpen:undefined} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"11px 14px",borderBottom:(isOpen&&rows.length)?`1px solid ${border}`:"none",cursor:rows.length?"pointer":"default"}}>
-                              <div>
-                                <div style={{fontSize:13.5,fontWeight:700,color:"#1A1A2E",display:"flex",alignItems:"center",gap:6}}>
-                                  {rows.length > 0 && <span style={{fontSize:11,opacity:0.6,transform:isOpen?"rotate(90deg)":"none",transition:"transform 0.15s",display:"inline-block"}}>▸</span>}
-                                  🚚 {fn?.fnType || `Function ${fi+1}`}
+                          <div key={fi} className="dc2-card" style={{background:CARD_BG,border:`1px solid ${CARD_BORDER}`,borderRadius:14,boxShadow:CARD_SHADOW,overflow:"hidden",display:"flex"}}>
+                            {/* The same violet a ceremony day wears in the Manpower tab, so a
+                                function reads as the same object across both screens. */}
+                            <div aria-hidden="true" style={{width:4,flexShrink:0,background:trucks>0?"#6F63A8":"#D8D3E0"}} />
+                            <div style={{flex:"1 1 auto",minWidth:0}}>
+                              <div onClick={rows.length?toggleOpen:undefined} className={rows.length?"dc2-hd":undefined}
+                                style={{display:"flex",alignItems:"center",gap:12,padding:"13px 15px",borderBottom:(rows.length?isOpen:true)?`1px solid ${HAIRLINE}`:"none",cursor:rows.length?"pointer":"default"}}>
+                                <span aria-hidden="true" style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:36,height:36,borderRadius:10,flexShrink:0,fontSize:17,lineHeight:1,background:"#EBE8F4"}}>🚚</span>
+                                <div style={{flex:"1 1 auto",minWidth:0}}>
+                                  <div style={{fontSize:15.5,fontWeight:700,color:INK,letterSpacing:-0.35,lineHeight:1.2}}>{fn?.fnType || `Function ${fi+1}`}</div>
+                                  <div style={{fontSize:11.5,color:INK_3,marginTop:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",...NUM}}>
+                                    {fn?.fnDate || "—"} · {fn?.fnVenue || "—"}{fn?.fnShift ? ` · ${fn.fnShift}` : ""}
+                                  </div>
                                 </div>
-                                <div style={{fontSize:12,color:"#1A1A2E",marginTop:2}}>{fn?.fnDate || "—"} · {fn?.fnVenue || "—"} · {fn?.fnShift || "—"}{trucks?` · ${trucks} truck${trucks===1?"":"s"}${tr?.tierLabel?` · ${tr.tierLabel}`:""}`:""}</div>
+                                {/* Tier is a property of how this function was priced, not a
+                                    number — so it reads as a chip, not as more digits in the
+                                    money column it used to be appended to. */}
+                                {tr?.tierLabel && (
+                                  <span style={{flexShrink:0,fontSize:10,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase",padding:"3px 9px",borderRadius:999,background:CHIP_BG,color:INK_2,whiteSpace:"nowrap"}}>{tr.tierLabel}</span>
+                                )}
+                                <div style={{textAlign:"right",flexShrink:0}}>
+                                  <div style={{fontSize:17,fontWeight:750,color:truckTotal>0?INK:INK_3,letterSpacing:-0.45,lineHeight:1.1,...NUM}}>
+                                    {truckTotal > 0 ? `₹${Math.round(truckTotal).toLocaleString("en-IN")}` : "—"}
+                                  </div>
+                                  {trucks > 0 && <div style={{fontSize:11,color:INK_3,marginTop:2,...NUM}}>{trucks} truck{trucks===1?"":"s"}</div>}
+                                </div>
+                                {rows.length > 0 && <span aria-hidden="true" style={{fontSize:11,color:INK_3,flexShrink:0,display:"inline-block",transform:isOpen?"rotate(90deg)":"none",transition:"transform 0.16s ease"}}>▸</span>}
                               </div>
-                              <div style={{fontSize:15.5,fontWeight:800,color:"#1A1A2E",whiteSpace:"nowrap"}}>{truckTotal>0?`₹${Math.round(truckTotal).toLocaleString("en-IN")}`:"—"}</div>
-                            </div>
-                            {isOpen && deptGroups.length > 0 && (
-                              <div style={{padding:"8px 14px",display:"flex",flexDirection:"column",gap:6}}>
-                                {deptGroups.map(({dept, rows: gRows}) => {
-                                  const groupTrucks = gRows.reduce((s, r) => s + (Number(r.trucks) || 0), 0);
-                                  const groupKey = `transport:${fi}:dept:${dept}`;
-                                  // Open by default — the point of this grouping is to see at a glance
-                                  // what each department needs, not to hide it behind another click.
-                                  const groupOpen = dcCollapsedFnBlocks[groupKey] !== undefined ? dcCollapsedFnBlocks[groupKey] : true;
-                                  const toggleGroup = () => setDcCollapsedFnBlocks(prev => ({ ...prev, [groupKey]: !groupOpen }));
-                                  return (
-                                    <div key={dept} style={{borderRadius:7,background:"rgba(26,26,46,0.03)"}}>
-                                      <div onClick={toggleGroup} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 8px",cursor:"pointer"}}>
-                                        <div style={{display:"flex",alignItems:"center",gap:5,fontSize:12,fontWeight:700,color:"#1A1A2E"}}>
-                                          <span style={{fontSize:10,opacity:0.6,transform:groupOpen?"rotate(90deg)":"none",transition:"transform 0.15s",display:"inline-block"}}>▸</span>
-                                          {dept === "Buffer" ? "🧯" : (DEPT_TRANSPORT_ICON[dept] || "📦")} {dept}
+                              {/* ── NOTHING TO TRANSPORT IS NOT NOTHING TO SAY ──
+                                  This tab scopes to the function selected in the sidebar, so picking
+                                  a ceremony that carries no trucks used to leave a header with a dash
+                                  and a blank page under it — indistinguishable from the tab being
+                                  broken, which is exactly how it got reported.
+                                  Deliberately NOT gated on isOpen: under "All functions" isOpen
+                                  defaults to false, and a function with no rows renders no chevron
+                                  and no click handler — so it can never be opened. Gating the empty
+                                  state behind that collapse is how it stayed invisible in exactly
+                                  the case it exists for. There is nothing to collapse anyway. */}
+                              {deptGroups.length === 0 && (
+                                <div style={{padding:"16px 15px",fontSize:12.5,color:INK_2}}>
+                                  <div style={{fontWeight:600,marginBottom:3,color:INK}}>No transport for this function.</div>
+                                  <div style={{fontSize:11.5,color:INK_3}}>
+                                    Nothing in {fn?.fnType || "this function"} needs a truck yet.
+                                    {!dcShowAllFns && <> Use <b>🗂️ All functions</b> in the sidebar to see the whole booking’s trucks.</>}
+                                  </div>
+                                </div>
+                              )}
+                              {/* Departments sit four-to-a-row rather than stacked full width.
+                                  A dept group is a short list — often one sub-category — so at
+                                  full width each one spent a whole screen line on two figures and
+                                  left two thirds of the row empty. Three up puts a function's
+                                  whole transport plan in one or two lines. */}
+                              {isOpen && deptGroups.length > 0 && (
+                                <div className="dc2-grid" style={{padding:"12px 15px 14px"}}>
+                                  {deptGroups.map(({dept, rows: gRows}) => {
+                                    const groupTrucks = gRows.reduce((s, r) => s + (Number(r.trucks) || 0), 0);
+                                    const groupKey = `transport:${fi}:dept:${dept}`;
+                                    // Open by default — the point of this grouping is to see at a glance
+                                    // what each department needs, not to hide it behind another click.
+                                    const groupOpen = dcCollapsedFnBlocks[groupKey] !== undefined ? dcCollapsedFnBlocks[groupKey] : true;
+                                    const toggleGroup = () => setDcCollapsedFnBlocks(prev => ({ ...prev, [groupKey]: !groupOpen }));
+                                    // Six identical ivory tiles are six things you have to READ to
+                                    // tell apart. The department's hue goes on the card's left edge
+                                    // and its icon square — the same two places a phase colours a
+                                    // day card in Manpower — so the set becomes findable by colour.
+                                    const da = deptAccent(dept);
+                                    return (
+                                      <div key={dept} className="dc2-row" style={{borderRadius:12,background:TILE_BG,border:`1px solid ${TILE_BORDER}`,overflow:"hidden",display:"flex"}}>
+                                        <div aria-hidden="true" style={{width:3,flexShrink:0,background:da.stripe}} />
+                                        <div style={{flex:"1 1 auto",minWidth:0}}>
+                                        <div onClick={toggleGroup} style={{display:"flex",alignItems:"center",gap:9,padding:"9px 11px",cursor:"pointer"}}>
+                                          {/* Tinted rather than white, and a size up: at 26px on a
+                                              white square the glyph was the only differentiator and
+                                              it was too small to act as one. */}
+                                          <span aria-hidden="true" style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:29,height:29,borderRadius:9,flexShrink:0,fontSize:14,lineHeight:1,background:da.tile}}>
+                                            {dept === "Buffer" ? "🧯" : (DEPT_TRANSPORT_ICON[dept] || "📦")}
+                                          </span>
+                                          <span style={{flex:"1 1 auto",minWidth:0,fontSize:10.5,fontWeight:700,color:INK,letterSpacing:0.8,textTransform:"uppercase"}}>{dept}</span>
+                                          <span style={{...NUMCOL}}>
+                                            <span style={{fontSize:11.5,fontWeight:650,color:INK_2,...NUM}}>{groupTrucks.toFixed(2)}</span>
+                                            <span style={{fontSize:9.5,color:INK_3,marginLeft:3}}>truck{groupTrucks===1?"":"s"}</span>
+                                          </span>
+                                          <span aria-hidden="true" style={{fontSize:10,color:INK_3,flexShrink:0,display:"inline-block",transform:groupOpen?"rotate(90deg)":"none",transition:"transform 0.16s ease"}}>▸</span>
                                         </div>
-                                        <span style={{fontSize:11.5,color:"#1A1A2E",opacity:0.7}}>{groupTrucks.toFixed(2)} truck{groupTrucks===1?"":"s"}</span>
-                                      </div>
-                                      {groupOpen && (
-                                        <div style={{padding:"2px 8px 8px 26px",display:"flex",flexDirection:"column",gap:9}}>
-                                          {gRows.map((r, ri) => (
-                                            <div key={ri} style={{display:"flex",flexDirection:"column",gap:4}}>
-                                              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:12.5}}>
-                                                <span style={{fontWeight:700,color:"#1A1A2E"}}>{r.isBuffer ? `Buffer${r.tierLabel?` — ${r.tierLabel}`:""}` : r.label}</span>
-                                                <span style={{color:"#1A1A2E"}}>{r.isBuffer ? "" : `${r.qty} ${r.unit} · `}{r.trucks.toFixed(2)} truck{r.trucks===1?"":"s"}</span>
-                                              </div>
-                                              {Array.isArray(r.items) && r.items.length > 0 && (
-                                                <div style={{marginLeft:14,display:"flex",flexDirection:"column",gap:2}}>
-                                                  {r.items.map((it, ii) => (
-                                                    <div key={ii} style={{display:"flex",justifyContent:"space-between",fontSize:11.5,color:"#1A1A2E",opacity:0.75}}>
-                                                      <span>{it.zoneKey ? `${it.zoneKey} · ` : ""}{it.name}</span>
-                                                      <span>{Math.round((it.qty || 0) * 100) / 100} {r.unit}</span>
-                                                    </div>
-                                                  ))}
+                                        {groupOpen && (
+                                          <div style={{padding:"0 11px 10px",display:"flex",flexDirection:"column",gap:7}}>
+                                            {gRows.map((r, ri) => (
+                                              <div key={ri} style={{background:CARD_BG,border:`1px solid ${CARD_BORDER}`,borderRadius:9,padding:"8px 10px"}}>
+                                                {/* ── THE SUB-CATEGORY LINE ──
+                                                    Qty and trucks were one run-on string ("6 pc · 0.03
+                                                    trucks") right-aligned, so neither figure sat at a
+                                                    predictable x and no two rows could be compared.
+                                                    Two fixed columns now: what is being moved, then how
+                                                    much of a truck it fills. */}
+                                                <div style={{display:"flex",alignItems:"baseline",gap:10}}>
+                                                  <span style={{flex:"1 1 auto",minWidth:0,fontSize:12.5,fontWeight:650,color:INK,letterSpacing:-0.1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                                                    {r.isBuffer ? `Buffer${r.tierLabel?` — ${r.tierLabel}`:""}` : r.label}
+                                                  </span>
+                                                  {!r.isBuffer && <span style={{...NUMCOL}}>
+                                                    <span style={{fontSize:11.5,fontWeight:600,color:INK_2,...NUM}}>{r.qty}</span>
+                                                    <span style={{fontSize:9.5,color:INK_3,marginLeft:3}}>{r.unit}</span>
+                                                  </span>}
+                                                  <span style={{...NUMCOL}}>
+                                                    <span style={{fontSize:12.5,fontWeight:700,color:INK,letterSpacing:-0.2,...NUM}}>{r.trucks.toFixed(2)}</span>
+                                                    <span style={{fontSize:9.5,color:INK_3,marginLeft:3}}>truck{r.trucks===1?"":"s"}</span>
+                                                  </span>
                                                 </div>
-                                              )}
-                                            </div>
-                                          ))}
+                                                {Array.isArray(r.items) && r.items.length > 0 && (
+                                                  <div style={{marginTop:6,paddingTop:6,borderTop:`1px solid ${HAIRLINE}`,display:"flex",flexDirection:"column",gap:3}}>
+                                                    {r.items.map((it, ii) => (
+                                                      <div key={ii} style={{display:"flex",alignItems:"baseline",gap:10,fontSize:11.5,color:INK_3}}>
+                                                        <span style={{flex:"1 1 auto",minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                                                          {it.zoneKey ? <span style={{color:INK_3,opacity:0.8}}>{it.zoneKey} · </span> : null}{it.name}
+                                                        </span>
+                                                        {/* Item quantities land in the SAME column as
+                                                            the sub-category qty above them, so a row and
+                                                            its parts line up instead of stepping in. */}
+                                                        <span style={{...NUMCOL}}>
+                                                          <span style={{...NUM}}>{Math.round((it.qty || 0) * 100) / 100}</span>
+                                                          <span style={{fontSize:9.5,opacity:0.85,marginLeft:3}}>{r.unit}</span>
+                                                        </span>
+                                                        <span style={{...NUMCOL}} aria-hidden="true" />
+                                                      </div>
+                                                    ))}
+                                                  </div>
+                                                )}
+                                              </div>
+                                            ))}
+                                          </div>
+                                        )}
                                         </div>
-                                      )}
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
                           </div>
                         );
                       })}
+
+                      {/* ── SUMMARY BAR ──
+                          The tab had no total of its own: the only booking-wide transport figure
+                          lived in the bottom cost bar, mixed in with rental and florals. Four
+                          figures rather than one, because a total alone does not say whether it is
+                          large for the right reason — ₹8,000 over four functions and ₹8,000 over
+                          one are different conversations. */}
+                      <div className="dc2-sum">
+                        {[
+                          { label: dcShowAllFns ? "Functions counted" : "Function", value: fns.length, foot: fnsWithTrucks === fns.length ? "all carry trucks" : `${fnsWithTrucks} with trucks` },
+                          { label: "Trucks", value: sumTrucks, foot: "billed across the booking" },
+                          { label: "Tier", value: tierSeen.size === 1 ? [...tierSeen][0] : (tierSeen.size === 0 ? "—" : `${tierSeen.size} tiers`), foot: tierSeen.size > 1 ? "varies by function" : "venue rate band" },
+                          { label: "Transport total", value: `₹${Math.round(sumCost).toLocaleString("en-IN")}`, foot: sumTrucks > 0 ? `≈ ₹${Math.round(sumCost / sumTrucks).toLocaleString("en-IN")} / truck` : null, tone: GOLD },
+                        ].map((s, si) => (
+                          <div key={si} className="dc2-card" style={{background:CARD_BG,border:`1px solid ${CARD_BORDER}`,borderRadius:11,boxShadow:CARD_SHADOW,padding:"9px 13px",minWidth:0}}>
+                            <div style={{fontSize:9.5,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:INK_2,marginBottom:4,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{s.label}</div>
+                            <div style={{fontSize:16.5,fontWeight:700,letterSpacing:-0.4,lineHeight:1.15,color:s.tone||INK,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",...NUM}}>{s.value}</div>
+                            {s.foot ? <div style={{fontSize:10,color:INK_3,marginTop:2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",...NUM}}>{s.foot}</div> : null}
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   );
                 })() : dcActiveTab === "power" ? (() => {
