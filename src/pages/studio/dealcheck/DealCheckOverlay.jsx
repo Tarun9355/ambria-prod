@@ -2692,13 +2692,30 @@ export default function DealCheckOverlay({ ctx }) {
                   );
                 })() : dcActiveTab === "power" ? (() => {
                   // ═══ POWER TAB BODY — per-function genset plan, split out of Transport so genset
-                  // units/rates/cost have their own home instead of being buried inside one lump sum. ═══
+                  // units/rates/cost have their own home instead of being buried inside one lump sum.
+                  // The plan has real structure the old single line hid: two generator sizes, a rate
+                  // each, and a venue default that the deal may be overriding. All three were run
+                  // together into one sentence — "1 × 125 KVA @ ₹28,000" — which is unreadable as
+                  // soon as both sizes are in play, and silently buried the one fact worth noticing,
+                  // that someone has departed from what the venue normally needs. ═══
                   const allFns = collectAllFunctionData ? collectAllFunctionData() : [];
-                  if (allFns.length === 0) return <div style={{padding:"50px 30px",textAlign:"center",color:"#1A1A2E",fontSize:13}}>No functions configured yet.</div>;
+                  if (allFns.length === 0) return <div style={{padding:"50px 30px",textAlign:"center",color:INK_3,fontSize:13}}>No functions configured yet.</div>;
                   // Scoped to the selected function unless "All functions" is on — see Transport tab above.
                   const fns = dcShowAllFns ? allFns.map((fn,fi)=>({fn,fi})) : allFns.map((fn,fi)=>({fn,fi})).filter(x=>x.fi===(activeFnIdx||0));
+                  // Booking-level figures for the summary bar, off the same breakdown the cards use.
+                  let sumCost = 0, sumUnits = 0, sumKva = 0, fnsPowered = 0;
+                  fns.forEach(({fn}) => {
+                    let b = null; try { b = calcFunctionBreakdown ? calcFunctionBreakdown(fn) : null; } catch { /* ignore */ }
+                    const t = b?.transport || null;
+                    const a = Number(t?.gensets) || 0, c = Number(t?.genset62) || 0;
+                    sumCost += Number(t?.gensetCost) || 0;
+                    sumUnits += a + c;
+                    sumKva += a * 125 + c * 62;
+                    if (a + c > 0) fnsPowered += 1;
+                  });
                   return (
-                    <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                    <div style={{display:"flex",flexDirection:"column",gap:12}}>
+                      <style>{DC_CSS}</style>
                       {fns.map(({fn, fi}) => {
                         let bd = null; try { bd = calcFunctionBreakdown ? calcFunctionBreakdown(fn) : null; } catch { /* ignore */ }
                         const tr = bd?.transport || null;
@@ -2707,23 +2724,112 @@ export default function DealCheckOverlay({ ctx }) {
                         const g62 = Number(tr?.genset62) || 0;
                         const v125 = Number(tr?.venueGensets) || 0;
                         const v62 = Number(tr?.venueGenset62) || 0;
+                        const r125 = Number(tr?.gensetRate) || 0;
+                        const r62 = Number(tr?.gensetRate62) || 0;
+                        // One entry per generator size actually in the plan. Cost per size was never
+                        // shown — only the function's lump sum — so with both sizes running you could
+                        // not tell which one the money was going to.
+                        const units = [
+                          { kva: 125, n: g125, rate: r125, venue: v125 },
+                          { kva: 62,  n: g62,  rate: r62,  venue: v62  },
+                        ].filter(u => u.n > 0);
+                        const totalKva = g125 * 125 + g62 * 62;
                         return (
-                          <div key={fi} style={{padding:"11px 14px",borderRadius:9,background:"rgba(245,158,11,0.05)",border:`1px solid ${border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                            <div>
-                              <div style={{fontSize:13.5,fontWeight:700,color:"#1A1A2E"}}>⚡ {fn?.fnType || `Function ${fi+1}`}</div>
-                              <div style={{fontSize:12,color:"#1A1A2E",marginTop:2}}>{fn?.fnDate || "—"} · {fn?.fnVenue || "—"} · {fn?.fnShift || "—"}</div>
-                              {(g125>0 || g62>0) && (
-                                <div style={{fontSize:12,color:"#1A1A2E",marginTop:4,display:"flex",gap:10,flexWrap:"wrap"}}>
-                                  {g125>0 && <span>{g125} × 125 KVA @ ₹{Number(tr?.gensetRate||0).toLocaleString("en-IN")}{g125!==v125?` (venue default: ${v125})`:""}</span>}
-                                  {g62>0 && <span>{g62} × 62 KVA @ ₹{Number(tr?.gensetRate62||0).toLocaleString("en-IN")}{g62!==v62?` (venue default: ${v62})`:""}</span>}
+                          <div key={fi} className="dc2-card" style={{background:CARD_BG,border:`1px solid ${CARD_BORDER}`,borderRadius:14,boxShadow:CARD_SHADOW,overflow:"hidden",display:"flex"}}>
+                            {/* Gold for power — and grey when a venue needs no generator, so an
+                                unpowered function is visibly a different kind of row. */}
+                            <div aria-hidden="true" style={{width:4,flexShrink:0,background:units.length?"#C6A55E":"#DED7CB"}} />
+                            <div style={{flex:"1 1 auto",minWidth:0}}>
+                              <div style={{display:"flex",alignItems:"center",gap:12,padding:"13px 15px",borderBottom:`1px solid ${HAIRLINE}`}}>
+                                <span aria-hidden="true" style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:36,height:36,borderRadius:10,flexShrink:0,fontSize:17,lineHeight:1,background:"#F7F1E0"}}>⚡</span>
+                                <div style={{flex:"1 1 auto",minWidth:0}}>
+                                  <div style={{fontSize:15.5,fontWeight:700,color:INK,letterSpacing:-0.35,lineHeight:1.2}}>{fn?.fnType || `Function ${fi+1}`}</div>
+                                  <div style={{fontSize:11.5,color:INK_3,marginTop:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",...NUM}}>
+                                    {fn?.fnDate || "—"} · {fn?.fnVenue || "—"}{fn?.fnShift ? ` · ${fn.fnShift}` : ""}
+                                  </div>
+                                </div>
+                                {/* Total load as a chip. It is the number an electrician asks for and
+                                    it was nowhere on this screen — you had to multiply it yourself. */}
+                                {totalKva > 0 && (
+                                  <span style={{flexShrink:0,fontSize:10,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase",padding:"3px 9px",borderRadius:999,background:CHIP_BG,color:INK_2,whiteSpace:"nowrap",...NUM}}>{totalKva} KVA total</span>
+                                )}
+                                <div style={{textAlign:"right",flexShrink:0}}>
+                                  <div style={{fontSize:17,fontWeight:750,color:gensetCost>0?INK:INK_3,letterSpacing:-0.45,lineHeight:1.1,...NUM}}>
+                                    {gensetCost > 0 ? `₹${Math.round(gensetCost).toLocaleString("en-IN")}` : "—"}
+                                  </div>
+                                  {units.length > 0 && <div style={{fontSize:11,color:INK_3,marginTop:2,...NUM}}>{g125+g62} genset{(g125+g62)===1?"":"s"}</div>}
+                                </div>
+                              </div>
+                              {units.length === 0 ? (
+                                <div style={{padding:"16px 15px",fontSize:12.5,color:INK_2}}>
+                                  <div style={{fontWeight:600,marginBottom:3,color:INK}}>No genset needed at this venue.</div>
+                                  <div style={{fontSize:11.5,color:INK_3}}>{fn?.fnVenue || "This venue"} supplies its own power, so nothing is billed here.</div>
+                                </div>
+                              ) : (
+                                // auto-fit rather than a fixed column count: there are only ever one
+                                // or two sizes, and a lone 125 KVA card stranded in a third of the
+                                // row would look like something failed to load.
+                                <div style={{padding:"12px 15px 14px",display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(240px,1fr))",gap:12}}>
+                                  {units.map(u => {
+                                    const cost = u.n * u.rate;
+                                    const overridden = u.n !== u.venue;
+                                    return (
+                                      <div key={u.kva} className="dc2-row" style={{borderRadius:12,background:TILE_BG,border:`1px solid ${TILE_BORDER}`,overflow:"hidden",display:"flex"}}>
+                                        <div aria-hidden="true" style={{width:3,flexShrink:0,background:u.kva===125?"#C6A55E":"#B9A87E"}} />
+                                        <div style={{flex:"1 1 auto",minWidth:0,padding:"10px 12px"}}>
+                                          <div style={{display:"flex",alignItems:"baseline",gap:10}}>
+                                            <span style={{flex:"1 1 auto",minWidth:0,fontSize:10.5,fontWeight:700,color:INK,letterSpacing:0.8,textTransform:"uppercase"}}>{u.kva} KVA</span>
+                                            <span style={{flexShrink:0,textAlign:"right"}}>
+                                              <span style={{fontSize:13,fontWeight:700,color:INK,letterSpacing:-0.2,...NUM}}>{u.n}</span>
+                                              <span style={{fontSize:9.5,color:INK_3,marginLeft:3}}>unit{u.n===1?"":"s"}</span>
+                                            </span>
+                                          </div>
+                                          <div style={{display:"flex",alignItems:"baseline",gap:8,marginTop:7}}>
+                                            <span style={{fontSize:17,fontWeight:750,color:INK,letterSpacing:-0.45,lineHeight:1.1,...NUM}}>₹{Math.round(cost).toLocaleString("en-IN")}</span>
+                                            <span style={{fontSize:10,color:INK_3,letterSpacing:0.4,textTransform:"uppercase",fontWeight:600,...NUM}}>{u.n} × ₹{u.rate.toLocaleString("en-IN")}</span>
+                                          </div>
+                                          {/* ── THE ONE THING WORTH INTERRUPTING FOR ──
+                                              A count that departs from what the venue normally needs
+                                              was a parenthetical in grey inside a longer sentence.
+                                              It is the only fact on this card that implies someone
+                                              made a decision, so it gets the gold treatment the
+                                              "adjusted" badge uses in Manpower — same meaning, same
+                                              look. Matching the default says nothing and shows
+                                              nothing. */}
+                                          {overridden && (
+                                            <div title={`This venue normally needs ${u.venue} × ${u.kva} KVA. The deal is carrying ${u.n}.`}
+                                              style={{marginTop:8,display:"inline-flex",alignItems:"center",gap:5,fontSize:9.5,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase",padding:"3px 8px",borderRadius:999,background:GOLD_SOFT,color:GOLD,border:`1px solid ${GOLD}33`,cursor:"help",...NUM}}>
+                                              <span aria-hidden="true" style={{width:4,height:4,borderRadius:"50%",background:GOLD,display:"inline-block"}} />
+                                              venue default {u.venue}
+                                            </div>
+                                          )}
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
                                 </div>
                               )}
-                              {g125===0 && g62===0 && <div style={{fontSize:12,color:"#1A1A2E",opacity:0.6,marginTop:4}}>No genset needed at this venue</div>}
                             </div>
-                            <div style={{fontSize:15.5,fontWeight:800,color:"#1A1A2E",whiteSpace:"nowrap"}}>{gensetCost>0?`₹${Math.round(gensetCost).toLocaleString("en-IN")}`:"—"}</div>
                           </div>
                         );
                       })}
+
+                      {/* Booking-level figures. Power had no total of its own — the only genset
+                          number lived in the bottom cost bar next to rental and florals. */}
+                      <div className="dc2-sum">
+                        {[
+                          { label: dcShowAllFns ? "Functions counted" : "Function", value: fns.length, foot: fnsPowered === fns.length ? "all need power" : `${fnsPowered} need power` },
+                          { label: "Gensets", value: sumUnits, foot: "units across the booking" },
+                          { label: "Total load", value: sumKva ? `${sumKva} KVA` : "—", foot: "combined generator capacity" },
+                          { label: "Power total", value: `₹${Math.round(sumCost).toLocaleString("en-IN")}`, foot: sumUnits > 0 ? `≈ ₹${Math.round(sumCost / sumUnits).toLocaleString("en-IN")} / unit` : null, tone: GOLD },
+                        ].map((s, si) => (
+                          <div key={si} className="dc2-card" style={{background:CARD_BG,border:`1px solid ${CARD_BORDER}`,borderRadius:11,boxShadow:CARD_SHADOW,padding:"9px 13px",minWidth:0}}>
+                            <div style={{fontSize:9.5,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:INK_2,marginBottom:4,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{s.label}</div>
+                            <div style={{fontSize:16.5,fontWeight:700,letterSpacing:-0.4,lineHeight:1.15,color:s.tone||INK,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",...NUM}}>{s.value}</div>
+                            {s.foot ? <div style={{fontSize:10,color:INK_3,marginTop:2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",...NUM}}>{s.foot}</div> : null}
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   );
                 })() : (dcActiveTab === "production" || dcActiveTab === "buying") ? (() => {
