@@ -2621,7 +2621,21 @@ export default function DealCheckOverlay({ ctx }) {
                                         </div>
                                         {groupOpen && (
                                           <div style={{padding:"0 11px 10px",display:"flex",flexDirection:"column",gap:7}}>
-                                            {gRows.map((r, ri) => (
+                                            {gRows.map((r, ri) => {
+                                              // ── THE ITEM BREAKDOWN FOLDS AWAY ──
+                                              // Every sub-category listed each zone line that filled it, so a
+                                              // department with five sub-categories ran to twenty-odd rows —
+                                              // and since grid rows stretch to the tallest card, one long
+                                              // department left every short one beside it standing over a
+                                              // screen of dead space. The figures people come here for are on
+                                              // the sub-category line itself; the zone lines are the audit
+                                              // trail behind them. Closed by default, one click away, and the
+                                              // row says how many are hidden so nothing is a surprise.
+                                              const itemsKey = `transport:${fi}:${dept}:${ri}`;
+                                              const nItems = Array.isArray(r.items) ? r.items.length : 0;
+                                              const itemsOpen = dcCollapsedFnBlocks[itemsKey] === true;
+                                              const toggleItems = () => setDcCollapsedFnBlocks(prev => ({ ...prev, [itemsKey]: !itemsOpen }));
+                                              return (
                                               <div key={ri} style={{background:CARD_BG,border:`1px solid ${CARD_BORDER}`,borderRadius:9,padding:"8px 10px"}}>
                                                 {/* ── THE SUB-CATEGORY LINE ──
                                                     Qty and trucks were one run-on string ("6 pc · 0.03
@@ -2629,9 +2643,10 @@ export default function DealCheckOverlay({ ctx }) {
                                                     predictable x and no two rows could be compared.
                                                     Two fixed columns now: what is being moved, then how
                                                     much of a truck it fills. */}
-                                                <div style={{display:"flex",alignItems:"baseline",gap:10}}>
+                                                <div onClick={nItems?toggleItems:undefined} style={{display:"flex",alignItems:"baseline",gap:10,cursor:nItems?"pointer":"default"}}>
                                                   <span style={{flex:"1 1 auto",minWidth:0,fontSize:12.5,fontWeight:650,color:INK,letterSpacing:-0.1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
                                                     {r.isBuffer ? `Buffer${r.tierLabel?` — ${r.tierLabel}`:""}` : r.label}
+                                                    {nItems > 0 && <span style={{fontSize:9.5,fontWeight:600,color:INK_3,marginLeft:6,whiteSpace:"nowrap"}}>{itemsOpen ? "▾" : `▸ ${nItems}`}</span>}
                                                   </span>
                                                   {!r.isBuffer && <span style={{...NUMCOL}}>
                                                     <span style={{fontSize:11.5,fontWeight:600,color:INK_2,...NUM}}>{r.qty}</span>
@@ -2642,7 +2657,7 @@ export default function DealCheckOverlay({ ctx }) {
                                                     <span style={{fontSize:9.5,color:INK_3,marginLeft:3}}>truck{r.trucks===1?"":"s"}</span>
                                                   </span>
                                                 </div>
-                                                {Array.isArray(r.items) && r.items.length > 0 && (
+                                                {itemsOpen && nItems > 0 && (
                                                   <div style={{marginTop:6,paddingTop:6,borderTop:`1px solid ${HAIRLINE}`,display:"flex",flexDirection:"column",gap:3}}>
                                                     {r.items.map((it, ii) => (
                                                       <div key={ii} style={{display:"flex",alignItems:"baseline",gap:10,fontSize:11.5,color:INK_3}}>
@@ -2662,7 +2677,8 @@ export default function DealCheckOverlay({ ctx }) {
                                                   </div>
                                                 )}
                                               </div>
-                                            ))}
+                                              );
+                                            })}
                                           </div>
                                         )}
                                         </div>
