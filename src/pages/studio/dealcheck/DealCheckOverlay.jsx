@@ -2950,7 +2950,10 @@ export default function DealCheckOverlay({ ctx }) {
                       if (conflictSeen.has(dedup)) return;
                       conflictSeen.add(dedup);
                       const photo = imsField.photos(item)[0];
-                      conflicts.push({ imsId: card.imsId, name: item.name || card.imsName, photo, needed: cardQty, available, isShort, hold, isHeld, fnDate, fnLabel: fn.fnType || `Function ${fi+1}`, item });
+                      // fi is carried so a row can be matched against the sidebar selection —
+                      // this tab is booking-wide, and without the index there was no way to say
+                      // which conflicts belong to the function you are actually looking at.
+                      conflicts.push({ imsId: card.imsId, name: item.name || card.imsName, photo, needed: cardQty, available, isShort, hold, isHeld, fnDate, fi, fnLabel: fn.fnType || `Function ${fi+1}`, item });
                     });
                   });
 
@@ -2986,82 +2989,203 @@ export default function DealCheckOverlay({ ctx }) {
 
                   const conflictCount = conflicts.length;
                   const reuseCount = reuseItems.length;
+                  // Split, because they are not the same problem. A shortage is yours to solve —
+                  // swap the item or cut the qty. A hold belongs to another salesperson and may
+                  // simply expire. One combined "conflicts" number hid which kind you had.
+                  const shortCount = conflicts.filter(c => c.isShort).length;
+                  const heldCount = conflicts.filter(c => c.isHeld).length;
+
+                  // ── WHY SWITCHING FUNCTIONS SEEMED TO DO NOTHING ──
+                  // This tab is booking-wide and always has been: a conflict is a clash on a DATE,
+                  // and cross-function reuse is by definition a fact about several functions at
+                  // once — neither can be scoped to one ceremony. But the sidebar keeps a function
+                  // highlighted here (Inventory Status is not in the "All functions" pill list),
+                  // so the page looked like it was filtered and simply refusing to update.
+                  // Two answers, both needed: say the scope out loud, and mark the rows that DO
+                  // belong to the selected function so switching produces visible feedback instead
+                  // of apparent deadness. Sorting those rows first is what makes the change
+                  // impossible to miss — the list visibly reorders as you move down the sidebar.
+                  const activeFi = activeFnIdx || 0;
+                  const activeFnName = fns[activeFi]?.fnType || `Function ${activeFi + 1}`;
+                  const inActiveFn = (c) => c.fi === activeFi;
+                  const sortedConflicts = [...conflicts].sort((a, b) => (inActiveFn(b) ? 1 : 0) - (inActiveFn(a) ? 1 : 0));
+                  const sortedReuse = [...reuseItems].sort((a, b) => (b.fns.has(activeFi) ? 1 : 0) - (a.fns.has(activeFi) ? 1 : 0));
+                  const activeConflictCount = conflicts.filter(inActiveFn).length;
 
                   if (conflictCount === 0 && reuseCount === 0) {
-                    return <div style={{padding:"50px 30px",textAlign:"center"}}>
-                      <div style={{fontSize:28,marginBottom:10}}>✅</div>
-                      <div style={{fontSize:15.5,fontWeight:600,color:"#10B981"}}>Inventory clean</div>
-                      <div style={{fontSize:13,color:"#1A1A2E",marginTop:4}}>No calendar conflicts and no cross-function reuse opportunities.</div>
-                    </div>;
+                    return (
+                      <div style={{display:"flex",justifyContent:"center",padding:"36px 20px"}}>
+                        <div className="dc2-card" style={{background:CARD_BG,border:`1px solid ${CARD_BORDER}`,borderRadius:14,boxShadow:CARD_SHADOW,padding:"26px 30px",textAlign:"center",maxWidth:440}}>
+                          <style>{DC_CSS}</style>
+                          <div aria-hidden="true" style={{width:44,height:44,borderRadius:12,background:GOOD_SOFT,display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:20,marginBottom:12}}>✓</div>
+                          <div style={{fontSize:15.5,fontWeight:700,color:INK,letterSpacing:-0.3}}>Inventory clean</div>
+                          <div style={{fontSize:12,color:INK_3,marginTop:5,lineHeight:1.5}}>Every booked item has free stock on its date, and nothing is held by another salesperson. No item repeats across functions, so there is nothing to share.</div>
+                        </div>
+                      </div>
+                    );
                   }
 
                   return (
-                    <div style={{display:"flex",flexDirection:"column",gap:16,padding:"0 4px"}}>
-                      {/* ── ⚠ Calendar Conflicts section ── */}
-                      {conflictCount > 0 && (
-                        <div style={{borderRadius:10,border:"1px solid rgba(239,68,68,0.25)",overflow:"hidden"}}>
-                          <div style={{padding:"10px 14px",background:"rgba(239,68,68,0.06)",display:"flex",alignItems:"center",gap:8}}>
-                            <span style={{fontSize:15.5}}>⚠</span>
-                            <span style={{fontSize:13.5,fontWeight:700,color:"#EF4444"}}>Calendar Conflicts ({conflictCount} item{conflictCount===1?"":"s"})</span>
+                    <div style={{display:"flex",flexDirection:"column",gap:12}}>
+                      <style>{DC_CSS}</style>
+
+                      {/* ── SCOPE, STATED ──
+                          Without this the tab reads as broken: you pick Cocktail, every row still
+                          says Wedding, and nothing explains why. */}
+                      <div style={{display:"flex",alignItems:"center",gap:9,padding:"9px 13px",borderRadius:11,background:CHIP_BG,border:`1px solid ${CARD_BORDER}`,flexWrap:"wrap"}}>
+                        <span aria-hidden="true" style={{fontSize:13}}>🗂️</span>
+                        <span style={{fontSize:11.5,color:INK_2}}>
+                          <strong style={{color:INK,fontWeight:700}}>Whole booking</strong> — conflicts are date clashes and reuse spans ceremonies, so neither can be filtered to one function.
+                        </span>
+                        <span style={{marginLeft:"auto",fontSize:10,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase",padding:"3px 9px",borderRadius:999,background:CARD_BG,border:`1px solid ${CARD_BORDER}`,color:INK_2,whiteSpace:"nowrap"}}>
+                          {activeConflictCount > 0 ? `${activeConflictCount} in ${activeFnName}` : `none in ${activeFnName}`}
+                        </span>
+                      </div>
+
+                      {/* ── SUMMARY BAR, FIRST ──
+                          This tab is an exceptions list: everything on it is either a problem or
+                          money on the table. It opened straight into rows, so "how bad is it" took
+                          counting. Four figures answer that before any row is read — and short vs
+                          held matters more than the combined count, because a shortage is yours to
+                          solve and a hold belongs to another salesperson. */}
+                      <div className="dc2-sum">
+                        {[
+                          { label: "Conflicts", value: conflictCount, foot: conflictCount ? "need attention" : "none", tone: conflictCount ? BAD : INK },
+                          { label: "Short", value: shortCount, foot: "not enough free stock", tone: shortCount ? BAD : INK },
+                          { label: "Held elsewhere", value: heldCount, foot: "by another salesperson", tone: heldCount ? GOLD : INK },
+                          { label: "Reuse savings", value: `₹${Math.round(totalSaving).toLocaleString("en-IN")}`, foot: reuseCount ? `${reuseCount} item${reuseCount===1?"":"s"} shared` : "nothing shared yet", tone: totalSaving > 0 ? GOOD : INK },
+                        ].map((s, si) => (
+                          <div key={si} className="dc2-card" style={{background:CARD_BG,border:`1px solid ${CARD_BORDER}`,borderRadius:11,boxShadow:CARD_SHADOW,padding:"9px 13px",minWidth:0}}>
+                            <div style={{fontSize:9.5,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:INK_2,marginBottom:4,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{s.label}</div>
+                            <div style={{fontSize:16.5,fontWeight:700,letterSpacing:-0.4,lineHeight:1.15,color:s.tone,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",...NUM}}>{s.value}</div>
+                            <div style={{fontSize:10,color:INK_3,marginTop:2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{s.foot}</div>
                           </div>
-                          <div style={{display:"flex",flexDirection:"column",gap:1}}>
-                            {conflicts.map((c, ci) => (
-                              <div key={ci} style={{padding:"10px 14px",display:"flex",gap:10,alignItems:"center",background:ci%2===0?"rgba(26, 26, 46,0.015)":"transparent"}}>
-                                {c.photo ? <img loading="lazy" decoding="async" src={thumbUrl(c.photo, 40)} alt="" style={{width:40,height:40,borderRadius:6,objectFit:"cover",flexShrink:0}}/> : <div style={{width:40,height:40,borderRadius:6,background:"#F4F2EC",display:"flex",alignItems:"center",justifyContent:"center",fontSize:15.5,flexShrink:0}}>📦</div>}
-                                <div style={{flex:1,minWidth:0}}>
-                                  <div style={{fontSize:13,fontWeight:600,color:"#1A1A2E"}}>{c.name}</div>
-                                  <div style={{fontSize:12,color:"#1A1A2E",marginTop:2}}>
-                                    {c.fnLabel} · {c.fnDate}
-                                    {c.isShort && <span style={{color:"#EF4444",marginLeft:8,fontWeight:600}}>⚠ need {c.needed}, only {c.available} free</span>}
-                                  </div>
-                                  {c.isHeld && (
-                                    <div style={{fontSize:12,color:"#F59E0B",marginTop:2}}>
-                                      ⏳ Held by <strong>{c.hold.salesperson}</strong> for {c.hold.eventName}
-                                      {c.hold.expiry && <span style={{opacity:0.8}}> · expires {new Date(c.hold.expiry).toLocaleString("en-IN",{hour:"2-digit",minute:"2-digit",hour12:true})}</span>}
-                                    </div>
-                                  )}
-                                </div>
-                                <div style={{display:"flex",gap:4,flexShrink:0}}>
-                                  <span style={{fontSize:11,padding:"3px 8px",borderRadius:5,background:c.isShort?"rgba(239,68,68,0.15)":"rgba(245,158,11,0.15)",color:c.isShort?"#EF4444":"#F59E0B",fontWeight:700}}>{c.isShort?"⚠ SHORT":"⏳ HELD"}</span>
-                                </div>
+                        ))}
+                      </div>
+
+                      {/* ── CALENDAR CONFLICTS ── */}
+                      {conflictCount > 0 && (
+                        <div className="dc2-card" style={{background:CARD_BG,border:`1px solid ${CARD_BORDER}`,borderRadius:14,boxShadow:CARD_SHADOW,overflow:"hidden",display:"flex"}}>
+                          <div aria-hidden="true" style={{width:4,flexShrink:0,background:BAD}} />
+                          <div style={{flex:"1 1 auto",minWidth:0}}>
+                            <div style={{display:"flex",alignItems:"center",gap:12,padding:"13px 15px",borderBottom:`1px solid ${HAIRLINE}`}}>
+                              <span aria-hidden="true" style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:36,height:36,borderRadius:10,flexShrink:0,fontSize:17,lineHeight:1,background:BAD_SOFT}}>⚠</span>
+                              <div style={{flex:"1 1 auto",minWidth:0}}>
+                                <div style={{fontSize:15.5,fontWeight:700,color:INK,letterSpacing:-0.35,lineHeight:1.2}}>Calendar conflicts</div>
+                                <div style={{fontSize:11.5,color:INK_3,marginTop:3}}>Booked on a date where the stock is short, or already held by someone else.</div>
                               </div>
-                            ))}
+                              <span style={{flexShrink:0,fontSize:10,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase",padding:"3px 9px",borderRadius:999,background:BAD_SOFT,color:BAD,whiteSpace:"nowrap",...NUM}}>{conflictCount} item{conflictCount===1?"":"s"}</span>
+                            </div>
+                            <div className="dc2-grid" style={{padding:"12px 15px 14px"}}>
+                              {sortedConflicts.map((c, ci) => {
+                                const mine = inActiveFn(c);
+                                return (
+                                <div key={ci} className="dc2-row" title={mine?undefined:`Belongs to ${c.fnLabel}, not the function selected in the sidebar.`}
+                                  style={{borderRadius:12,background:mine?CARD_BG:TILE_BG,border:`1px solid ${mine?INK_3+"55":TILE_BORDER}`,overflow:"hidden",display:"flex"}}>
+                                  <div aria-hidden="true" style={{width:3,flexShrink:0,background:c.isShort?BAD:GOLD}} />
+                                  <div style={{flex:"1 1 auto",minWidth:0,padding:"10px 12px",display:"flex",gap:10}}>
+                                    {c.photo
+                                      ? <img loading="lazy" decoding="async" src={thumbUrl(c.photo, 88)} alt="" style={{width:44,height:44,borderRadius:9,objectFit:"cover",flexShrink:0,border:`1px solid ${CARD_BORDER}`}}/>
+                                      : <div style={{width:44,height:44,borderRadius:9,background:CARD_BG,border:`1px solid ${CARD_BORDER}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>📦</div>}
+                                    <div style={{flex:"1 1 auto",minWidth:0}}>
+                                      <div style={{display:"flex",alignItems:"flex-start",gap:8}}>
+                                        <span title={c.name} style={{flex:"1 1 auto",minWidth:0,fontSize:12.5,fontWeight:650,color:INK,letterSpacing:-0.1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.name}</span>
+                                        {/* SHORT and HELD are different problems with different
+                                            owners, so they keep different colours rather than being
+                                            flattened into one "conflict" badge. */}
+                                        <span style={{flexShrink:0,fontSize:9,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase",padding:"3px 7px",borderRadius:999,whiteSpace:"nowrap",background:c.isShort?BAD_SOFT:GOLD_SOFT,color:c.isShort?BAD:GOLD}}>{c.isShort?"short":"held"}</span>
+                                      </div>
+                                      {/* The function name is the field that tells you whether a
+                                          row is the one you selected, so on a match it takes full
+                                          ink and a dot rather than staying in the quiet grey every
+                                          other row uses. */}
+                                      <div style={{fontSize:11,color:INK_3,marginTop:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:5,...NUM}}>
+                                        {mine && <span aria-hidden="true" style={{width:5,height:5,borderRadius:"50%",background:INK,flexShrink:0}} />}
+                                        <span style={{color:mine?INK:INK_3,fontWeight:mine?650:400}}>{c.fnLabel}</span>
+                                        <span>· {c.fnDate}</span>
+                                      </div>
+                                      {c.isShort && (
+                                        <div style={{marginTop:6,fontSize:11.5,color:INK_2,...NUM}}>
+                                          need <strong style={{color:BAD,fontWeight:700}}>{c.needed}</strong>, only <strong style={{color:INK,fontWeight:700}}>{c.available}</strong> free
+                                        </div>
+                                      )}
+                                      {c.isHeld && (
+                                        <div style={{marginTop:6,fontSize:11.5,color:INK_2}}>
+                                          Held by <strong style={{color:INK,fontWeight:650}}>{c.hold.salesperson}</strong> for {c.hold.eventName}
+                                          {c.hold.expiry && <span style={{color:INK_3}}> · expires {new Date(c.hold.expiry).toLocaleString("en-IN",{hour:"2-digit",minute:"2-digit",hour12:true})}</span>}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                                );
+                              })}
+                            </div>
                           </div>
                         </div>
                       )}
 
-                      {/* ── ♻ Cross-Function Reuse section ── */}
+                      {/* ── CROSS-FUNCTION REUSE ── */}
                       {reuseCount > 0 && (
-                        <div style={{borderRadius:10,border:"1px solid rgba(16,185,129,0.25)",overflow:"hidden"}}>
-                          <div style={{padding:"10px 14px",background:"rgba(16,185,129,0.06)",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-                            <div style={{display:"flex",alignItems:"center",gap:8}}>
-                              <span style={{fontSize:15.5}}>♻️</span>
-                              <span style={{fontSize:13.5,fontWeight:700,color:"#10B981"}}>Cross-Function Reuse ({reuseCount} item{reuseCount===1?"":"s"})</span>
-                            </div>
-                            {totalSaving > 0 && <span style={{fontSize:13,fontWeight:700,color:"#10B981"}}>Saving ₹{Math.round(totalSaving).toLocaleString("en-IN")}</span>}
-                          </div>
-                          <div style={{display:"flex",flexDirection:"column",gap:1}}>
-                            {reuseItems.map((r, ri) => (
-                              <div key={ri} style={{padding:"10px 14px",display:"flex",gap:10,alignItems:"center",background:ri%2===0?"rgba(26, 26, 46,0.015)":"transparent"}}>
-                                {r.photo ? <img loading="lazy" decoding="async" src={thumbUrl(r.photo, 40)} alt="" style={{width:40,height:40,borderRadius:6,objectFit:"cover",flexShrink:0}}/> : <div style={{width:40,height:40,borderRadius:6,background:"#F4F2EC",display:"flex",alignItems:"center",justifyContent:"center",fontSize:15.5,flexShrink:0}}>📦</div>}
-                                <div style={{flex:1,minWidth:0}}>
-                                  <div style={{fontSize:13,fontWeight:600,color:"#1A1A2E"}}>{r.name} ×{r.totalQty}</div>
-                                  <div style={{fontSize:12,color:"#1A1A2E",marginTop:2}}>♻ {r.fnNames}</div>
-                                  {r.saving > 0 && !r.isSeparate && <div style={{fontSize:12,color:"#10B981",marginTop:1}}>Saved ₹{Math.round(r.saving).toLocaleString("en-IN")} by sharing across {r.fnCount} functions</div>}
-                                  {r.isSeparate && <div style={{fontSize:12,color:"#F59E0B",marginTop:1}}>Blocked separately — no sharing savings</div>}
-                                </div>
-                                <button onClick={()=>setDcDedupOverrides(prev=>({...prev,[r.imsId]: prev[r.imsId]==="separate"?undefined:"separate"}))} style={{fontSize:11,padding:"4px 8px",borderRadius:6,cursor:"pointer",border:`1px solid ${r.isSeparate?"rgba(245,158,11,0.4)":"rgba(16,185,129,0.4)"}`,background:r.isSeparate?"rgba(245,158,11,0.08)":"rgba(16,185,129,0.08)",color:r.isSeparate?"#F59E0B":"#10B981",fontWeight:600,whiteSpace:"nowrap",flexShrink:0}}>
-                                  {r.isSeparate?"♻ Share":"✂ Separate"}
-                                </button>
+                        <div className="dc2-card" style={{background:CARD_BG,border:`1px solid ${CARD_BORDER}`,borderRadius:14,boxShadow:CARD_SHADOW,overflow:"hidden",display:"flex"}}>
+                          <div aria-hidden="true" style={{width:4,flexShrink:0,background:GOOD}} />
+                          <div style={{flex:"1 1 auto",minWidth:0}}>
+                            <div style={{display:"flex",alignItems:"center",gap:12,padding:"13px 15px",borderBottom:`1px solid ${HAIRLINE}`}}>
+                              <span aria-hidden="true" style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:36,height:36,borderRadius:10,flexShrink:0,fontSize:17,lineHeight:1,background:GOOD_SOFT}}>♻️</span>
+                              <div style={{flex:"1 1 auto",minWidth:0}}>
+                                <div style={{fontSize:15.5,fontWeight:700,color:INK,letterSpacing:-0.35,lineHeight:1.2}}>Cross-function reuse</div>
+                                <div style={{fontSize:11.5,color:INK_3,marginTop:3}}>The same item is booked in more than one ceremony, so it is only charged once.</div>
                               </div>
-                            ))}
-                          </div>
-                          {totalSaving > 0 && (
-                            <div style={{padding:"10px 14px",borderTop:"1px solid rgba(16,185,129,0.15)",display:"flex",justifyContent:"space-between",fontSize:13.5,fontWeight:700}}>
-                              <span style={{color:"#1A1A2E"}}>Total reuse savings</span>
-                              <span style={{color:"#10B981"}}>₹{Math.round(totalSaving).toLocaleString("en-IN")}</span>
+                              <div style={{textAlign:"right",flexShrink:0}}>
+                                <div style={{fontSize:17,fontWeight:750,color:totalSaving>0?GOOD:INK_3,letterSpacing:-0.45,lineHeight:1.1,...NUM}}>₹{Math.round(totalSaving).toLocaleString("en-IN")}</div>
+                                <div style={{fontSize:11,color:INK_3,marginTop:2,...NUM}}>saved · {reuseCount} item{reuseCount===1?"":"s"}</div>
+                              </div>
                             </div>
-                          )}
+                            <div className="dc2-grid" style={{padding:"12px 15px 14px"}}>
+                              {sortedReuse.map((r, ri) => (
+                                <div key={ri} className="dc2-row" title={r.fns.has(activeFi)?undefined:`Not used in ${activeFnName}.`}
+                                  style={{borderRadius:12,background:r.fns.has(activeFi)?CARD_BG:TILE_BG,border:`1px solid ${r.fns.has(activeFi)?INK_3+"55":TILE_BORDER}`,overflow:"hidden",display:"flex"}}>
+                                  <div aria-hidden="true" style={{width:3,flexShrink:0,background:r.isSeparate?GOLD:GOOD}} />
+                                  <div style={{flex:"1 1 auto",minWidth:0,padding:"10px 12px",display:"flex",flexDirection:"column",gap:8}}>
+                                    <div style={{display:"flex",gap:10}}>
+                                      {r.photo
+                                        ? <img loading="lazy" decoding="async" src={thumbUrl(r.photo, 88)} alt="" style={{width:44,height:44,borderRadius:9,objectFit:"cover",flexShrink:0,border:`1px solid ${CARD_BORDER}`}}/>
+                                        : <div style={{width:44,height:44,borderRadius:9,background:CARD_BG,border:`1px solid ${CARD_BORDER}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>📦</div>}
+                                      <div style={{flex:"1 1 auto",minWidth:0}}>
+                                        <div style={{display:"flex",alignItems:"baseline",gap:6}}>
+                                          <span title={r.name} style={{flex:"1 1 auto",minWidth:0,fontSize:12.5,fontWeight:650,color:INK,letterSpacing:-0.1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.name}</span>
+                                          <span style={{flexShrink:0,fontSize:11,fontWeight:700,color:INK_2,...NUM}}>×{r.totalQty}</span>
+                                        </div>
+                                        <div title={r.fnNames} style={{fontSize:11,color:r.fns.has(activeFi)?INK_2:INK_3,fontWeight:r.fns.has(activeFi)?600:400,marginTop:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:5}}>
+                                          {r.fns.has(activeFi) && <span aria-hidden="true" style={{width:5,height:5,borderRadius:"50%",background:INK,flexShrink:0}} />}
+                                          {r.fnNames}
+                                        </div>
+                                        {/* The money is the reason this row exists, so it is the
+                                            biggest thing on it — it used to be a 12px grey sentence
+                                            below two other 12px grey sentences. */}
+                                        <div style={{marginTop:6,display:"flex",alignItems:"baseline",gap:7,flexWrap:"wrap"}}>
+                                          {r.isSeparate ? (
+                                            <span style={{fontSize:11.5,color:GOLD,fontWeight:650}}>Blocked separately — no sharing</span>
+                                          ) : (
+                                            <>
+                                              <span style={{fontSize:16,fontWeight:750,color:GOOD,letterSpacing:-0.35,lineHeight:1.1,...NUM}}>₹{Math.round(r.saving).toLocaleString("en-IN")}</span>
+                                              <span style={{fontSize:9.5,color:INK_3,letterSpacing:0.5,textTransform:"uppercase",fontWeight:600,...NUM}}>saved · {r.fnCount} fns</span>
+                                            </>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </div>
+                                    <button onClick={()=>setDcDedupOverrides(prev=>({...prev,[r.imsId]: prev[r.imsId]==="separate"?undefined:"separate"}))}
+                                      className="dc2-ghost"
+                                      title={r.isSeparate ? "Share this item across the functions again and take the saving" : "Block a separate unit per function — no saving, but each function gets its own"}
+                                      style={{alignSelf:"flex-start",marginTop:"auto",fontSize:10.5,padding:"4px 10px",borderRadius:999,cursor:"pointer",border:`1px solid ${r.isSeparate?`${GOOD}44`:TILE_BORDER}`,background:r.isSeparate?GOOD_SOFT:"transparent",color:r.isSeparate?GOOD:INK_2,fontWeight:650,letterSpacing:0.3,whiteSpace:"nowrap"}}>
+                                      {r.isSeparate?"♻ Share again":"✂ Block separately"}
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
                         </div>
                       )}
                     </div>
