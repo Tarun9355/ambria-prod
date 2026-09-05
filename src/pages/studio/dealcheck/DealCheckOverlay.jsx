@@ -10,7 +10,7 @@ import DCFloralsTab from "./tabs/DCFloralsTab.jsx";
 import DCManpowerTab from "./tabs/DCManpowerTab.jsx";
 import DCTrussTab from "./tabs/DCTrussTab.jsx";
 // Shared Deal Check surfaces/inks — the same source DCManpowerTab draws from, so the
-// two tabs cannot drift the way this file’s own `IV` object and Manpower’s private
+// two tabs cannot drift the way this file's own `IV` object and Manpower's private
 // block already had. NUM is deliberately not imported: this file declares an
 // identical one at line 43 and importing it would be a redeclare.
 import { CARD_SHADOW, CARD_BG, CARD_BORDER, HAIRLINE, TILE_BG, TILE_BORDER, CHIP_BG, INK, INK_2, INK_3, GOLD, GOLD_SOFT, BAD, BAD_SOFT, GOOD, GOOD_SOFT, DC_CSS, deptAccent } from "../../../lib/studio/dcTokens";
@@ -3507,43 +3507,107 @@ export default function DealCheckOverlay({ ctx }) {
                     if (value == null) delete nextOverrides[venue]; else nextOverrides[venue] = value;
                     saveClientLedger(clientLedger.map(c => c.id === activeClientId ? { ...c, commissionOverrides: nextOverrides } : c));
                   };
+                  // Effective rate across the whole deal. With one venue this equals its own %, but
+                  // with several it does not — each venue takes its own cut of its own share, so the
+                  // blended rate is the only figure that answers "what is this deal paying out".
+                  // It was nowhere on the screen; you had to work it out from the total yourself.
+                  const effPct = clientRevenue > 0 ? (commissionTotal / clientRevenue) * 100 : 0;
+                  const overriddenCount = commissionByVenue.filter(r => r.overrideVal != null).length;
                   return (
-                    <div style={{display:"flex",flexDirection:"column",gap:16,padding:"0 4px"}}>
-                      <div style={{borderRadius:10,border:"1px solid rgba(99,102,241,0.25)",overflow:"hidden"}}>
-                        <div style={{padding:"10px 14px",background:"rgba(99,102,241,0.06)",fontSize:13,fontWeight:700,color:accent,letterSpacing:0.4,textTransform:"uppercase"}}>🤝 Venue Commission</div>
-                        {commissionByVenue.length === 0 ? (
-                          <div style={{padding:16,textAlign:"center",color:"#1A1A2E",fontSize:13}}>No venue set on any function yet — add one in Event Info / Build.</div>
-                        ) : (
-                          <div style={{display:"flex",flexDirection:"column"}}>
-                            {commissionByVenue.map((r, i) => (
-                              <div key={r.venue} style={{padding:"10px 14px",borderTop: i ? `1px solid ${border}22` : "none"}}>
-                                <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",fontSize:13.5,marginBottom:6}}>
-                                  <span style={{color:"#1A1A2E",fontWeight:700}}>{r.venue}</span>
-                                  <span style={{fontSize:12,opacity:0.7,color:"#1A1A2E"}}>{r.pct}% of {fmt2(r.revenueShare)}{commissionByVenue.length > 1 ? " (venue's share)" : ""}</span>
-                                </div>
-                                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
-                                  <span style={{fontSize:12,color:"#1A1A2E"}}>Commission amount {r.overrideVal != null && <span style={{color:"#F59E0B",fontWeight:600}}>(overridden — system default {fmt2(r.defaultAmt)})</span>}</span>
-                                  <div style={{display:"flex",alignItems:"center",gap:6}}>
-                                    <span style={{color:"#1A1A2E",opacity:0.6,fontSize:13}}>₹</span>
-                                    <CommissionOverrideInput
-                                      defaultAmt={r.defaultAmt}
-                                      overrideVal={r.overrideVal}
-                                      border={border}
-                                      onCommit={(value) => commitOverride(r.venue, value)}
-                                    />
-                                  </div>
-                                </div>
+                    <div style={{display:"flex",flexDirection:"column",gap:12}}>
+                      <style>{DC_CSS}</style>
+
+                      <div className="dc2-sum">
+                        {[
+                          { label: commissionByVenue.length === 1 ? "Venue" : "Venues", value: commissionByVenue.length, foot: overriddenCount ? `${overriddenCount} overridden by hand` : "all at the master rate" },
+                          { label: "Deal amount", value: fmt2(clientRevenue), foot: Number(cli?.negotiatedAmount) > 0 ? "negotiated" : "from Build screen" },
+                          { label: "Effective rate", value: `${effPct.toFixed(effPct % 1 === 0 ? 0 : 1)}%`, foot: commissionByVenue.length > 1 ? "blended across venues" : "of the deal amount" },
+                          { label: "Total commission", value: fmt2(commissionTotal), foot: "set aside for venues", tone: GOLD },
+                        ].map((s, si) => (
+                          <div key={si} className="dc2-card" style={{background:CARD_BG,border:`1px solid ${CARD_BORDER}`,borderRadius:11,boxShadow:CARD_SHADOW,padding:"9px 13px",minWidth:0}}>
+                            <div style={{fontSize:9.5,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:INK_2,marginBottom:4,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{s.label}</div>
+                            <div style={{fontSize:16.5,fontWeight:700,letterSpacing:-0.4,lineHeight:1.15,color:s.tone||INK,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",...NUM}}>{s.value}</div>
+                            <div style={{fontSize:10,color:INK_3,marginTop:2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{s.foot}</div>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="dc2-card" style={{background:CARD_BG,border:`1px solid ${CARD_BORDER}`,borderRadius:14,boxShadow:CARD_SHADOW,overflow:"hidden",display:"flex"}}>
+                        <div aria-hidden="true" style={{width:4,flexShrink:0,background:GOLD}} />
+                        <div style={{flex:"1 1 auto",minWidth:0}}>
+                          <div style={{display:"flex",alignItems:"center",gap:12,padding:"13px 15px",borderBottom:`1px solid ${HAIRLINE}`}}>
+                            <span aria-hidden="true" style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:36,height:36,borderRadius:10,flexShrink:0,fontSize:17,lineHeight:1,background:GOLD_SOFT}}>🤝</span>
+                            <div style={{flex:"1 1 auto",minWidth:0}}>
+                              <div style={{fontSize:15.5,fontWeight:700,color:INK,letterSpacing:-0.35,lineHeight:1.2}}>Venue commission</div>
+                              <div style={{fontSize:11.5,color:INK_3,marginTop:3}}>
+                                The rate is master data — IMS → Admin → Settings → Master Data → Venues. The amount can be overridden per venue here; clear the box to go back to the computed figure.
                               </div>
-                            ))}
-                            <div style={{display:"flex",justifyContent:"space-between",padding:"12px 14px",borderTop:`1px solid ${border}`,fontSize:15.5,fontWeight:800}}>
-                              <span style={{color:"#1A1A2E"}}>Total Commission</span>
-                              <span style={{color:"#7C3AED"}}>{fmt2(commissionTotal)}</span>
+                            </div>
+                            <div style={{textAlign:"right",flexShrink:0}}>
+                              <div style={{fontSize:17,fontWeight:750,color:commissionTotal>0?INK:INK_3,letterSpacing:-0.45,lineHeight:1.1,...NUM}}>{fmt2(commissionTotal)}</div>
+                              <div style={{fontSize:11,color:INK_3,marginTop:2}}>total</div>
                             </div>
                           </div>
-                        )}
-                      </div>
-                      <div style={{fontSize:12,color:"#1A1A2E",fontStyle:"italic",padding:"0 4px"}}>
-                        The % comes from IMS → Admin → Settings → Master Data → Venues, applied to {commissionByVenue.length > 1 ? "each venue's own share of" : ""} the deal amount ({fmt2(clientRevenue)}{Number(cli?.negotiatedAmount) > 0 ? ", negotiated" : ""}). Clear the box to go back to the system-computed amount.
+
+                          {commissionByVenue.length === 0 ? (
+                            <div style={{padding:"16px 15px",fontSize:12.5,color:INK_2}}>
+                              <div style={{fontWeight:600,marginBottom:3,color:INK}}>No venue set yet.</div>
+                              <div style={{fontSize:11.5,color:INK_3}}>Add a venue on a function in Event Info or Build, and its commission will be worked out here.</div>
+                            </div>
+                          ) : (
+                            // auto-fit: most deals have one venue, and a lone card stranded in a
+                            // third of the row would read as something failing to load.
+                            <div style={{padding:"12px 15px 14px",display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))",gap:12}}>
+                              {commissionByVenue.map(r => {
+                                const overridden = r.overrideVal != null;
+                                const amount = overridden ? r.overrideVal : r.defaultAmt;
+                                return (
+                                  <div key={r.venue} className="dc2-row" style={{borderRadius:12,background:TILE_BG,border:`1px solid ${TILE_BORDER}`,overflow:"hidden",display:"flex"}}>
+                                    <div aria-hidden="true" style={{width:3,flexShrink:0,background:overridden?GOLD:"#B9B2C4"}} />
+                                    <div style={{flex:"1 1 auto",minWidth:0,padding:"11px 13px"}}>
+                                      <div style={{display:"flex",alignItems:"baseline",gap:8}}>
+                                        <span title={r.venue} style={{flex:"1 1 auto",minWidth:0,fontSize:12.5,fontWeight:650,color:INK,letterSpacing:-0.1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.venue}</span>
+                                        <span style={{flexShrink:0,fontSize:10,fontWeight:700,letterSpacing:0.5,padding:"2px 8px",borderRadius:999,background:CHIP_BG,color:INK_2,whiteSpace:"nowrap",...NUM}}>{r.pct}%</span>
+                                      </div>
+                                      <div style={{fontSize:10.5,color:INK_3,marginTop:3,...NUM}}>
+                                        {r.pct}% of {fmt2(r.revenueShare)}{commissionByVenue.length > 1 ? " · this venue's share" : ""}
+                                      </div>
+
+                                      <div style={{fontSize:19,fontWeight:750,color:INK,letterSpacing:-0.5,lineHeight:1.1,marginTop:9,...NUM}}>{fmt2(amount)}</div>
+
+                                      {/* The input is the only editable thing on this tab, so it
+                                          reads as a field — labelled, on the white surface, with the
+                                          rupee mark inside it — rather than as a bare box floating
+                                          at the end of a sentence. */}
+                                      <div style={{marginTop:9}}>
+                                        <div style={{fontSize:9.5,fontWeight:700,letterSpacing:0.8,textTransform:"uppercase",color:INK_2,marginBottom:4}}>Override amount</div>
+                                        <div style={{display:"flex",alignItems:"center",gap:6,background:CARD_BG,border:`1px solid ${CARD_BORDER}`,borderRadius:9,padding:"5px 9px"}}>
+                                          <span style={{fontSize:12,color:INK_3,flexShrink:0}}>₹</span>
+                                          <CommissionOverrideInput
+                                            defaultAmt={r.defaultAmt}
+                                            overrideVal={r.overrideVal}
+                                            border={CARD_BORDER}
+                                            onCommit={(value) => commitOverride(r.venue, value)}
+                                          />
+                                        </div>
+                                      </div>
+
+                                      {/* Gold, like every other "a person set this by hand" state in
+                                          Deal Check. It was an amber parenthetical mid-sentence. */}
+                                      {overridden && (
+                                        <div title={`System-computed amount is ${fmt2(r.defaultAmt)}. Clear the box to go back to it.`}
+                                          style={{marginTop:9,display:"inline-flex",alignItems:"center",gap:5,fontSize:9.5,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase",padding:"3px 8px",borderRadius:999,background:GOLD_SOFT,color:GOLD,border:`1px solid ${GOLD}33`,cursor:"help",...NUM}}>
+                                          <span aria-hidden="true" style={{width:4,height:4,borderRadius:"50%",background:GOLD,display:"inline-block"}} />
+                                          overridden · was {fmt2(r.defaultAmt)}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
                   );
