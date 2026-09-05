@@ -4,12 +4,153 @@
 // (reference App_latest.jsx ~14658–15619) plus the inline dcMpCalcOpen
 // per-day calculation breakdown panel it drives (15416–15587).
 // ═══════════════════════════════════════════════════════════════
+import { useEffect } from "react";
+import { CARD_SHADOW, CARD_BG, CARD_BORDER, HAIRLINE, TILE_BG, TILE_BORDER, CHIP_BG, INK, INK_2, INK_3, GOLD, GOLD_SOFT, NUM } from "../../../../lib/studio/dcTokens";
 import { resolveTrussConfig } from "../../../../lib/studio/pricing";
 import { heavyExtraLabour, eventTimingMultFor, EVENT_TIMINGS } from "../../../../lib/ims/constants";
 import { standingReductionBySubcat, standingPillarCount, fixedVenueFor } from "../../../../lib/ims/fixedVenues";
 import { itemImsSubcat, lookupBySubcat } from "../../../../lib/ims/helpers";
 import { matchFlowerPattern } from "../../../../lib/ims/flowerHelpers";
 import ManpowerFactorPills from "../../../../components/shared/ManpowerFactorPills.jsx";
+
+// ═════════════════════════════════════════════════
+// SURFACES
+// Same opaque stack the Truss, Florals and Inventory tabs now use: white card
+// → grey tile → chip, with three ink levels instead of one colour at three
+// opacities. The frosted-white rows this tab used to have (rgba(255,255,255,
+// 0.62) over a tinted day card) went muddy wherever two of them overlapped,
+// and money on a translucent ground is the one thing on this screen that has
+// to read first time.
+// ═════════════════════════════════════════════════
+// Surfaces, inks and the gold accent now live in one place — see dcTokens.js for
+// why (this block and DealCheckOverlay's IV object had already drifted apart).
+
+// ── ONE HUE PER PHASE ──
+// A booking runs -1 day → event → gap → dismantle, and which phase a day is in
+// changes how its crew was derived (MAX across upcoming ceremonies / from the
+// build / carried forward / a % of the event peak). That is the single most
+// useful thing to know about a day, so it gets colour: the same hue carries the
+// day's icon tile, its left stripe and its phase chip, and nothing else on the
+// card is coloured. You find the dismantle day by its colour, not by reading
+// four date headers.
+//
+// Desaturated from the stock amber/indigo/slate/rose. Those four at full
+// saturation were four loud accents stacked down the page, each shouting as
+// loudly as the money. These carry the same four distinctions — you can still
+// tell a dismantle day from an event day at a glance — at a saturation that
+// belongs next to gold rather than competing with it.
+const PHASE_ACCENT = {
+  minusOne:  { ink: "#836523", tile: "#F7F1E0", stripe: "#C6A55E" },
+  event:     { ink: "#3E3566", tile: "#EBE8F4", stripe: "#6F63A8" },
+  gap:       { ink: "#5C5766", tile: "#EFEDF1", stripe: "#A9A3B5" },
+  dismantle: { ink: "#8A4155", tile: "#F7EAEE", stripe: "#B87289" },
+};
+const accentFor = (phase) => PHASE_ACCENT[phase] || PHASE_ACCENT.gap;
+
+// Hover, focus and the summary bar's column count cannot be expressed inline,
+// which is why this tab carries a sheet at all. Prefixed .dcm- so it cannot
+// collide with the .dct-/.dci-/.dc- rules the sibling tabs ship.
+//
+// ── WHY THE !important ──
+// This codebase styles inline, and an inline declaration outranks a plain
+// stylesheet rule. Every property below that also appears in an element's
+// style={{...}} — background, border, box-shadow — therefore needs !important
+// or the hover silently does nothing. That is not a hypothetical: written
+// without it, the card lift and the row highlight both no-op'd here, because
+// every card carries an inline boxShadow and every row an inline background.
+// .dcm-btn deliberately uses filter instead, so one rule can hover both the
+// grey switch pills and the amber reset button without either needing a
+// colour of its own overridden.
+const MP_CSS = `
+.dcm-card{transition:box-shadow .16s ease,border-color .16s ease}
+.dcm-card:hover{box-shadow:0 2px 4px rgba(36,30,53,.06),0 14px 30px -10px rgba(36,30,53,.14)!important;border-color:#DED7CB!important}
+.dcm-hd{cursor:pointer;transition:background .14s ease}
+.dcm-hd:hover{background:#FCFAF7}
+.dcm-row{transition:background .14s ease,border-color .14s ease,box-shadow .16s ease}
+.dcm-row:hover{background:#FFFFFF!important;border-color:#DED7CB!important;box-shadow:0 1px 2px rgba(36,30,53,.04),0 8px 18px -10px rgba(36,30,53,.16)!important}
+.dcm-ghost{transition:background .14s ease,border-color .14s ease,color .14s ease}
+.dcm-ghost:hover{background:#F2EDE5!important;border-color:#DED7CB!important;color:#241E35!important}
+.dcm-btn{transition:filter .14s ease}
+.dcm-btn:hover{filter:brightness(.965)}
+.dcm-sum{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+@media (max-width:1040px){.dcm-sum{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:560px){.dcm-sum{grid-template-columns:1fr}}
+.dcm-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+@media (max-width:1500px){.dcm-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media (max-width:1150px){.dcm-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:780px){.dcm-grid{grid-template-columns:1fr}}
+`;
+
+// ── A LABELLED FIGURE ──
+// Four of these make the summary bar and they have to line up down the page, so
+// the label/value/foot rhythm lives in one place rather than being retyped per
+// tile with slightly different sizes each time.
+function StatTile({ label, value, foot, tone }) {
+  return (
+    <div className="dcm-card" style={{background:CARD_BG,border:`1px solid ${CARD_BORDER}`,borderRadius:11,boxShadow:CARD_SHADOW,padding:"9px 13px",minWidth:0}}>
+      <div style={{fontSize:9.5,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:INK_2,marginBottom:4,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{label}</div>
+      <div style={{fontSize:16.5,fontWeight:700,letterSpacing:-0.4,lineHeight:1.15,color:tone||INK,...NUM}}>{value}</div>
+      {foot ? <div style={{fontSize:10,color:INK_3,marginTop:2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",...NUM}}>{foot}</div> : null}
+    </div>
+  );
+}
+
+// ── THE DERIVATION, IN A DIALOG ──
+// The breakdown used to unfold inside the trade card. That was survivable while
+// the cards were full-width rows, but at four to a row a derivation table has a
+// quarter of the width and no way to be read. Making the card span the whole
+// grid row instead worked, and left a hole in the row above it every time.
+// A dialog gives the tables the width they need and leaves the grid alone.
+//
+// position:fixed escapes the day card's overflow:hidden (which is what keeps
+// the phase stripe inside the radius) — fixed elements are not clipped by an
+// ancestor's overflow. That only holds while no ancestor has transform, filter
+// or will-change set, since those create a containing block; the hover rules in
+// MP_CSS deliberately use box-shadow and brightness on the button only, so
+// nothing on the card's ancestor chain does.
+function CalcModal({ title, subtitle, onClose, children }) {
+  // Escape closes, captured at the window so it works wherever focus sits.
+  // stopPropagation because Deal Check's own overlay listens for Escape too and
+  // would otherwise close the whole tab behind this dialog in one keypress.
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      onClose();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [onClose]);
+
+  return (
+    <div
+      onClick={onClose}
+      style={{position:"fixed",inset:0,zIndex:10600,background:"rgba(16,18,28,0.45)",display:"flex",alignItems:"center",justifyContent:"center",padding:24}}
+    >
+      {/* stopPropagation so a click inside the dialog does not reach the
+          backdrop's onClose — otherwise selecting text in a table shuts it. */}
+      <div
+        role="dialog"
+        aria-modal="true"
+        onClick={(e) => e.stopPropagation()}
+        style={{background:CARD_BG,border:`1px solid ${CARD_BORDER}`,borderRadius:16,boxShadow:"0 24px 64px rgba(16,18,28,0.30)",width:"min(900px,100%)",maxHeight:"84vh",display:"flex",flexDirection:"column",overflow:"hidden"}}
+      >
+        <div style={{display:"flex",alignItems:"flex-start",gap:12,padding:"15px 18px",borderBottom:`1px solid ${HAIRLINE}`,flexShrink:0}}>
+          <div style={{flex:"1 1 auto",minWidth:0}}>
+            <div style={{fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:INK_2,marginBottom:4}}>How this was derived</div>
+            <div style={{fontSize:16,fontWeight:750,color:INK,letterSpacing:-0.3,lineHeight:1.2}}>{title}</div>
+            {subtitle ? <div style={{fontSize:11.5,color:INK_3,marginTop:3,...NUM}}>{subtitle}</div> : null}
+          </div>
+          <button onClick={onClose} title="Close (Esc)" className="dcm-btn"
+            style={{flexShrink:0,width:30,height:30,borderRadius:9,border:`1px solid ${CARD_BORDER}`,background:TILE_BG,color:INK_2,fontSize:14,lineHeight:1,cursor:"pointer"}}>✕</button>
+        </div>
+        {/* The body scrolls, not the page behind it, and the tables inside get
+            their own horizontal scroll rather than being cut off. */}
+        <div style={{padding:"14px 18px 18px",overflowY:"auto",overflowX:"auto"}}>{children}</div>
+      </div>
+    </div>
+  );
+}
 
 export default function DCManpowerTab({ ctx }) {
   const {
@@ -816,29 +957,55 @@ export default function DCManpowerTab({ ctx }) {
 
                   return (
                     <div style={{display:"flex",flexDirection:"column",gap:12}}>
-                      {/* Header — toggles + booking total */}
-                      <div style={{padding:"14px 16px",borderRadius:10,background:"rgba(251,191,36,0.06)",border:`1px solid rgba(251,191,36,0.20)`}}>
-                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12,flexWrap:"wrap",marginBottom:10}}>
-                          <div>
-                            <div style={{fontSize:13,color:"#1A1A2E",letterSpacing:0.6,textTransform:"uppercase",fontWeight:700,marginBottom:4}}>👷 Manpower Forecast — {dcShowAllFns ? "Booking" : (selectedFn?.fnType || "Function")}</div>
-                            <div style={{fontSize:12,color:"#1A1A2E"}}>{dcShowAllFns ? `${fns.length} ceremon${fns.length===1?"y":"ies"} · ${dayList.length} day${dayList.length===1?"":"s"}` : `${visibleDayList.length} day${visibleDayList.length===1?"":"s"}`} · cumulative MAX rule applied</div>
+                      <style>{MP_CSS}</style>
+
+                      {/* ── PAGE HEAD ──
+                          The amber band that stood here carried the booking total, and it carried
+                          it ABOVE every day card. On a five-day booking under "All functions"
+                          that meant the one number people read out loud had scrolled off by the
+                          time you had opened the day you came for. The total now sits in the
+                          summary bar at the foot of the tab, directly under the days it is the
+                          sum of, so the figure and its workings are on screen together.
+                          What is left here is identity and the two switches that decide which
+                          days get counted at all — which belong at the top, because they change
+                          every number below them. */}
+                      <div className="dcm-card" style={{background:CARD_BG,border:`1px solid ${CARD_BORDER}`,borderRadius:14,boxShadow:CARD_SHADOW,padding:"15px 17px",display:"flex",flexDirection:"column",gap:13}}>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:14,flexWrap:"wrap"}}>
+                          <div style={{minWidth:0}}>
+                            <div style={{fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:INK_2,marginBottom:5}}>Manpower forecast</div>
+                            <div style={{fontSize:19,fontWeight:750,color:INK,letterSpacing:-0.4,lineHeight:1.15}}>
+                              {dcShowAllFns ? "Whole booking" : (selectedFn?.fnType || "Function")}
+                            </div>
                           </div>
-                          <div style={{textAlign:"right"}}>
-                            <div style={{fontSize:13,color:"#1A1A2E"}}>Total cost</div>
-                            <div style={{fontSize:22,fontWeight:800,color:"#B45309",fontVariantNumeric:"tabular-nums"}}>₹{Math.round(visibleTotalCost).toLocaleString("en-IN")}</div>
-                            <div style={{fontSize:12,color:"#1A1A2E",fontVariantNumeric:"tabular-nums"}}>{visibleTotalDihari} dihari total</div>
+                          {/* Scope chips. Under "All functions" the ceremony count matters (it is
+                              what the MAX rule maxes over); scoped to one function it is always 1,
+                              so it is not shown. */}
+                          <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+                            {dcShowAllFns && (
+                              <span style={{fontSize:11,fontWeight:600,padding:"4px 10px",borderRadius:999,background:CHIP_BG,color:INK_2,whiteSpace:"nowrap",...NUM}}>
+                                {fns.length} ceremon{fns.length===1?"y":"ies"}
+                              </span>
+                            )}
+                            <span style={{fontSize:11,fontWeight:600,padding:"4px 10px",borderRadius:999,background:CHIP_BG,color:INK_2,whiteSpace:"nowrap",...NUM}}>
+                              {visibleDayList.length} day{visibleDayList.length===1?"":"s"} counted
+                            </span>
+                            <span title="Crew is not added up across ceremonies. Each type carries forward at the highest count any single upcoming ceremony needs, so the same people cover consecutive days." style={{fontSize:11,fontWeight:600,padding:"4px 10px",borderRadius:999,background:"#E0E7FF",color:"#3730A3",whiteSpace:"nowrap",cursor:"help"}}>
+                              cumulative MAX
+                            </span>
                           </div>
                         </div>
-                        <div style={{display:"flex",gap:14,flexWrap:"wrap"}}>
-                          <label style={{display:"flex",alignItems:"center",gap:6,fontSize:13,color:isAdmin?"#000":"#6B7280",cursor:isAdmin?"pointer":"default"}}>
-                            <input type="checkbox" checked={dcMpIncludeMinusOne} disabled={!isAdmin} onChange={e=>setDcMpIncludeMinusOne(e.target.checked)} />
-                            ⏮️ Include -1 day early setup
+                        {/* The switches read as controls now rather than as two bare checkboxes
+                            floating in a tinted band — a pressed pill shows which days are in. */}
+                        <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",borderTop:`1px solid ${HAIRLINE}`,paddingTop:12}}>
+                          <label className={isAdmin?"dcm-btn":undefined} style={{display:"inline-flex",alignItems:"center",gap:7,fontSize:12.5,fontWeight:600,padding:"6px 11px",borderRadius:9,cursor:isAdmin?"pointer":"default",border:`1px solid ${dcMpIncludeMinusOne?"#C7CDD6":CARD_BORDER}`,background:dcMpIncludeMinusOne?TILE_BG:CARD_BG,color:isAdmin?INK:INK_3,opacity:isAdmin?1:0.7}}>
+                            <input type="checkbox" checked={dcMpIncludeMinusOne} disabled={!isAdmin} onChange={e=>setDcMpIncludeMinusOne(e.target.checked)} style={{margin:0,accentColor:"#F59E0B"}} />
+                            ⏮️ −1 day early setup
                           </label>
-                          <label style={{display:"flex",alignItems:"center",gap:6,fontSize:13,color:isAdmin?"#000":"#6B7280",cursor:isAdmin?"pointer":"default"}}>
-                            <input type="checkbox" checked={dcMpIncludeDismantle} disabled={!isAdmin} onChange={e=>setDcMpIncludeDismantle(e.target.checked)} />
-                            🧹 Include dismantle days
+                          <label className={isAdmin?"dcm-btn":undefined} style={{display:"inline-flex",alignItems:"center",gap:7,fontSize:12.5,fontWeight:600,padding:"6px 11px",borderRadius:9,cursor:isAdmin?"pointer":"default",border:`1px solid ${dcMpIncludeDismantle?"#C7CDD6":CARD_BORDER}`,background:dcMpIncludeDismantle?TILE_BG:CARD_BG,color:isAdmin?INK:INK_3,opacity:isAdmin?1:0.7}}>
+                            <input type="checkbox" checked={dcMpIncludeDismantle} disabled={!isAdmin} onChange={e=>setDcMpIncludeDismantle(e.target.checked)} style={{margin:0,accentColor:"#F43F5E"}} />
+                            🧹 Dismantle days
                           </label>
-                          {!isAdmin && <span style={{fontSize:12,color:"#6B7280",fontStyle:"italic",alignSelf:"center"}}>Manpower planning now lives in IMS → Dept Ops</span>}
+                          {!isAdmin && <span style={{fontSize:11.5,color:INK_3,fontStyle:"italic",alignSelf:"center"}}>Read-only — manpower planning lives in IMS → Dept Ops</span>}
                           {/* ═══ RESET TO DERIVED ═══
                               Window picks and per-window head counts are saved per client and
                               restored on load, and a stored count WINS over the derived one
@@ -861,7 +1028,8 @@ export default function DCManpowerTab({ ctx }) {
                                 setDcMpWinCount({});
                               }}
                               title="Discard saved shift picks and head counts, and recalculate from the build"
-                              style={{alignSelf:"center",padding:"4px 10px",borderRadius:7,border:"1px solid rgba(180,83,9,0.4)",background:"rgba(245,158,11,0.10)",color:"#B45309",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>
+                              className="dcm-btn"
+                              style={{marginLeft:"auto",padding:"6px 11px",borderRadius:9,border:`1px solid ${GOLD}44`,background:GOLD_SOFT,color:GOLD,fontSize:12.5,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>
                               ↺ Reset to derived
                             </button>
                           )}
@@ -879,27 +1047,59 @@ export default function DCManpowerTab({ ctx }) {
                         const blockKey = `manpower:${d.date}`;
                         const isOpen = dcCollapsedFnBlocks[blockKey] !== undefined ? dcCollapsedFnBlocks[blockKey] : !dcShowAllFns;
                         const toggleOpen = () => setDcCollapsedFnBlocks(prev => ({ ...prev, [blockKey]: !isOpen }));
+                        const acc = accentFor(d.phase);
+                        // What the collapsed header has to answer without being opened: how many
+                        // trades, how many bodies, how many dihari, how much. All four come off
+                        // data already computed above — countByDay for heads, breakdown.slots for
+                        // dihari — so the summary cannot drift from the rows underneath it.
+                        const dayTypes = labourTypes.filter(t => (countByDay[d.date]?.[t] || 0) > 0);
+                        const dayHeads = dayTypes.reduce((n, t) => n + (countByDay[d.date][t] || 0), 0);
+                        const daySlots = Number(breakdown.slots) || 0;
                         return (
-                          <div key={di} style={{padding:"12px 14px",borderRadius:10,background:"rgba(56,189,248,0.04)",border:`1px solid ${border}`}}>
-                            {/* Day header */}
-                            <div onClick={toggleOpen} style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:12,flexWrap:"wrap",borderBottom:isOpen?`1px solid ${border}33`:"none",paddingBottom:isOpen?8:0,marginBottom:isOpen?10:0,cursor:"pointer"}}>
-                              <div>
-                                <div style={{fontSize:14.5,fontWeight:700,color:"#1A1A2E",display:"flex",alignItems:"center",gap:6}}>
-                                  <span style={{fontSize:11,opacity:0.6,transform:isOpen?"rotate(90deg)":"none",transition:"transform 0.15s",display:"inline-block"}}>▸</span>
-                                  {phaseEmoji(d.phase)} {fmtDateShort(d.date)} · <span style={{color:"#1A1A2E",fontWeight:500}}>{phaseLabel(d.phase)}</span>
-                                </div>
-                                {fnsOnDay.length > 0 && (
-                                  <div style={{fontSize:12,color:"#1A1A2E",marginTop:2}}>
-                                    {fnsOnDay.map((fn, fi) => `${fn.fnType||"?"}${fn.fnShift?` (${fn.fnShift})`:""}`).join(" · ")}
+                          <div key={di} className="dcm-card" style={{background:CARD_BG,border:`1px solid ${CARD_BORDER}`,borderRadius:14,boxShadow:CARD_SHADOW,overflow:"hidden",display:"flex"}}>
+                            {/* The phase stripe. Full-bleed down the card's left edge, so scanning
+                                a column of days you read the run of the booking — amber setup,
+                                indigo ceremonies, rose dismantle — before any text. */}
+                            <div aria-hidden="true" style={{width:4,flexShrink:0,background:acc.stripe}} />
+                            <div style={{flex:"1 1 auto",minWidth:0}}>
+                              {/* ── DAY HEADER ──
+                                  One row, four fixed slots: mark, identity, money, chevron. The
+                                  money stays hard right at every width because the identity column
+                                  is the only one allowed to grow (minWidth:0 lets it shrink rather
+                                  than shove the total off the card). */}
+                              <div onClick={toggleOpen} className="dcm-hd" style={{display:"flex",alignItems:"center",gap:12,padding:"13px 15px",borderBottom:isOpen?`1px solid ${HAIRLINE}`:"none"}}>
+                                <span aria-hidden="true" style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:36,height:36,borderRadius:10,flexShrink:0,fontSize:17,lineHeight:1,background:acc.tile}}>{phaseEmoji(d.phase)}</span>
+                                <div style={{flex:"1 1 auto",minWidth:0}}>
+                                  <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                                    <span style={{fontSize:14.5,fontWeight:700,color:INK,letterSpacing:-0.25,...NUM}}>{fmtDateShort(d.date)}</span>
+                                    <span style={{fontSize:10,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase",padding:"3px 8px",borderRadius:999,background:acc.tile,color:acc.ink,whiteSpace:"nowrap"}}>{phaseLabel(d.phase)}</span>
                                   </div>
-                                )}
+                                  <div style={{fontSize:11.5,color:INK_3,marginTop:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",...NUM}}>
+                                    {dayTypes.length > 0
+                                      ? `${dayTypes.length} trade${dayTypes.length===1?"":"s"} · ${dayHeads} on site`
+                                      : "No crew this day"}
+                                    {fnsOnDay.length > 0 && ` · ${fnsOnDay.map(fn => `${fn.fnType||"?"}${fn.fnShift?` (${fn.fnShift})`:""}`).join(" · ")}`}
+                                  </div>
+                                </div>
+                                <div style={{textAlign:"right",flexShrink:0}}>
+                                  <div style={{fontSize:16,fontWeight:750,color:breakdown.total>0?INK:INK_3,letterSpacing:-0.35,...NUM}}>
+                                    {breakdown.total > 0 ? `₹${Math.round(breakdown.total).toLocaleString("en-IN")}` : "—"}
+                                  </div>
+                                  {daySlots > 0 && <div style={{fontSize:11,color:INK_3,marginTop:2,...NUM}}>{daySlots} dihari</div>}
+                                </div>
+                                <span aria-hidden="true" style={{fontSize:11,color:INK_3,flexShrink:0,display:"inline-block",transform:isOpen?"rotate(90deg)":"none",transition:"transform 0.16s ease"}}>▸</span>
                               </div>
-                              <div style={{fontSize:15.5,fontWeight:700,color:"#1A1A2E",fontVariantNumeric:"tabular-nums",whiteSpace:"nowrap"}}>
-                                {breakdown.total > 0 ? `₹${Math.round(breakdown.total).toLocaleString("en-IN")}` : <span style={{color:"#1A1A2E",fontWeight:400,fontSize:13}}>—</span>}
-                              </div>
-                            </div>
-                            {/* Labour type rows */}
-                            {isOpen && <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                            {/* ── TRADES, FOUR TO A ROW ──
+                                Eight full-width rows made a day card a page of its own: 27 people
+                                across 8 trades read as a list you scroll rather than a crew you
+                                take in. Four to a row fits a whole day's trades in two lines.
+                                Grid, not flex-wrap — with flex, a trailing card that is alone on
+                                its line grows to fill it, so a day with 5 trades would show one
+                                double-width card. Grid columns hold their width whatever the count.
+                                overflowX:auto because the day card clips (overflow:hidden is what
+                                keeps the phase stripe inside the 14px radius), and a truncated
+                                derivation table is worse than no table — it looks complete. */}
+                            {isOpen && <div className="dcm-grid" style={{padding:"12px 15px 14px",overflowX:"auto"}}>
                               {labourTypes.map(t => {
                                 const ppl = countByDay[d.date][t] || 0;
                                 if (ppl <= 0) return null;
@@ -912,86 +1112,156 @@ export default function DCManpowerTab({ ctx }) {
                                 const slots = ticked.reduce((s, id) => s + winCountFor(d.date, t, id, ppl), 0); // Σ per-shift crew
                                 const uniform = ticked.every(id => winCountFor(d.date, t, id, ppl) === ppl);
                                 const cost = slots * effRate;
-                                // The row is a COLUMN, and the icon + detail sit in a band inside it.
-                                // Making the row itself horizontal would have made the calculation
-                                // breakdown below a third flex column beside the icon and the text,
-                                // which is not where it goes — it belongs full width under both.
+                                // ── DERIVED, OR OVERRULED BY HAND ──
+                                // A stored shift pick (dcMpOverrides["<date>|<type>"]) or a stored
+                                // per-shift head count (dcMpWinCount[type][date][winId]) WINS over
+                                // today's derivation — winCountFor returns a stored value whenever
+                                // one is present. So a count typed weeks ago silently outranks a
+                                // rebuilt element list or a changed recipe, and until now no row
+                                // said which of the eight that applied to. These are exactly the
+                                // rows "Reset to derived" in the head would clear.
+                                const shiftPinned = !!dcMpOverrides?.[`${d.date}|${t}`];
+                                const countPinned = Object.keys(dcMpWinCount?.[t]?.[d.date] || {}).length > 0;
+                                const pinned = shiftPinned || countPinned;
+                                // The derivation opens in a dialog (CalcModal) rather than inside
+                                // the card, so the card keeps its column and the grid keeps its
+                                // shape whether the breakdown is open or not.
+                                const calcOpen = !!dcMpCalcOpen[`${d.date}|${t}`];
                                 return (
-                                  <div key={t} style={{display:"flex",flexDirection:"column",gap:10,padding:"12px 14px",borderRadius:12,background:"rgba(255,255,255,0.62)",border:"1px solid rgba(255,255,255,0.85)",boxShadow:"0 1px 2px rgba(26,26,46,0.04), 0 8px 18px -14px rgba(26,26,46,0.28)"}}>
-                                    <div style={{display:"flex",alignItems:"flex-start",gap:12}}>
-                                    {/* ── THE TRADE'S OWN MARK, IN ITS OWN TILE ──
-                                        The emoji used to sit inline in front of the name, at whatever
-                                        size the label was, so eight rows of glyphs ran into eight rows
-                                        of text. In a tinted 34px tile it becomes the thing you find the
-                                        row BY — and the tile is what makes the row read as a card with
-                                        a subject rather than as a line of prose.
-                                        Fixed square with flexShrink:0, so a long trade name can never
-                                        squash it out of round. */}
-                                    <span aria-hidden="true" style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:34,height:34,borderRadius:10,flexShrink:0,fontSize:16,lineHeight:1,background:`rgba(${typeTint(t)},0.13)`,border:`1px solid rgba(${typeTint(t)},0.22)`}}>{typeEmoji(t)}</span>
-                                    {/* The middle column takes the room, so the cost on the right stays
-                                        pinned however long the name and the shift pills run. minWidth:0
-                                        is what lets it shrink instead of pushing the cost off. */}
-                                    <div style={{flex:"1 1 auto",minWidth:0,display:"flex",flexDirection:"column",gap:7}}>
-                                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:10,flexWrap:"wrap"}}>
-                                      <div style={{fontSize:13.5,color:"#1A1A2E",fontWeight:700,letterSpacing:-0.1}}>
-                                        {t}  <span style={{color:"#1A1A2E",opacity:0.62,fontWeight:400,letterSpacing:0}}>· {ppl} ppl @ ₹{effRate}/dihari</span>
-                                        {src.kind === "vendor_avg" ? (
-                                          <span title={`Avg of: ${(src.vendors||[]).join(", ")}`} style={{marginLeft:6,fontSize:11,padding:"1px 6px",borderRadius:7,background:"rgba(16,185,129,0.15)",color:"#10B981",fontWeight:600}}>📊 avg of {src.count} vendor{src.count===1?"":"s"}</span>
-                                        ) : (
-                                          <span style={{marginLeft:6,fontSize:10.5,padding:"2px 8px",borderRadius:999,background:"rgba(148,163,184,0.12)",border:"1px solid rgba(148,163,184,0.22)",color:"#1A1A2E",fontWeight:600}}>🏠 house rate</span>
-                                        )}
+                                  <div key={t} className="dcm-row" style={{display:"flex",flexDirection:"column",gap:11,padding:"14px 15px",borderRadius:13,background:TILE_BG,border:`1px solid ${TILE_BORDER}`,minWidth:0}}>
+                                    {/* ── MARK, IDENTITY, STATUS ──
+                                        The emoji used to sit inline in front of the name at label
+                                        size, so eight rows of glyphs ran into eight rows of text.
+                                        In a tinted 34px tile it becomes the thing you find the card
+                                        BY. flexShrink:0 so a long trade name can never squash it
+                                        out of round now that the column is narrow — and the name
+                                        itself ellipsises rather than wrapping the card taller than
+                                        its three neighbours. */}
+                                    <div style={{display:"flex",alignItems:"flex-start",gap:10}}>
+                                      <span aria-hidden="true" style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:34,height:34,borderRadius:10,flexShrink:0,fontSize:16,lineHeight:1,background:`rgba(${typeTint(t)},0.17)`,border:`1px solid rgba(${typeTint(t)},0.28)`}}>{typeEmoji(t)}</span>
+                                      <div style={{flex:"1 1 auto",minWidth:0}}>
+                                        <div title={t} style={{fontSize:13,color:INK,fontWeight:650,letterSpacing:-0.1,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t}</div>
+                                        {/* The rate source was a filled chip in a fourth colour.
+                                            It is a footnote about where a number came from, not a
+                                            state — so it reads as a footnote now: same quiet ink as
+                                            the rate it annotates, separated by a middot, with the
+                                            explanation on hover. The emoji went with it; at 9.5px
+                                            it was a smudge, not an icon. */}
+                                        <div title={pinned ? "Set by hand — will not follow changes to the build." : "Derived from the build, the recipe and the rate card — recalculates whenever they change."}
+                                          style={{display:"flex",alignItems:"center",gap:5,flexWrap:"wrap",marginTop:3,cursor:"help"}}>
+                                          <span style={{fontSize:11,color:INK_3,...NUM}}>{ppl} ppl @ ₹{effRate}/dihari</span>
+                                          {src.kind === "vendor_avg" ? (
+                                            <span title={`Avg of: ${(src.vendors||[]).join(", ")}`} style={{fontSize:10,color:INK_3,whiteSpace:"nowrap",cursor:"help"}}>· avg of {src.count} vendor{src.count===1?"":"s"}</span>
+                                          ) : (
+                                            <span style={{fontSize:10,color:INK_3,whiteSpace:"nowrap"}}>· house rate</span>
+                                          )}
+                                        </div>
                                       </div>
-                                      {/* The computed line: green only when there IS a cost, which is
-                                          the one thing on this row that means "this crew is booked and
-                                          priced". Zero stays grey — a green "0 dihari" reads as a
-                                          success and it is the opposite.
-                                          tabular figures so the eight rows' amounts line up down the
-                                          right edge, which is the only way to compare them at a glance. */}
-                                      <div style={{fontSize:13,color:cost>0?"#059669":textS,fontWeight:700,fontVariantNumeric:"tabular-nums",letterSpacing:-0.2,whiteSpace:"nowrap"}}>
-                                        {cost > 0 ? (uniform ? `${dihari} dihari × ${ppl} = ₹${Math.round(cost).toLocaleString("en-IN")}` : `${slots} crew-shifts = ₹${Math.round(cost).toLocaleString("en-IN")}`) : "0 dihari"}
-                                      </div>
+                                      {/* ── ONLY THE EXCEPTION GETS A BADGE ──
+                                          "DERIVED" sat on almost every card, in green, at the top
+                                          right — the most valuable corner on the card spent on the
+                                          normal case. A badge that is always there marks nothing;
+                                          it just adds a third accent competing with the money.
+                                          Now silence means derived, and the badge appears only for
+                                          a figure someone set by hand — which is the one thing on
+                                          this card worth interrupting for, since it will NOT follow
+                                          the build. Derived cards keep the tooltip on the meta line
+                                          below, so the explanation is not lost with the badge. */}
+                                      {pinned && (
+                                        <span title="Head count or shift pick was set by hand and is stored with the deal — it will NOT follow changes to the build. 'Reset to derived' clears it."
+                                          style={{flexShrink:0,display:"inline-flex",alignItems:"center",gap:5,fontSize:9,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase",padding:"3px 8px",borderRadius:999,whiteSpace:"nowrap",cursor:"help",marginTop:2,background:GOLD_SOFT,color:GOLD,border:`1px solid ${GOLD}33`}}>
+                                          <span aria-hidden="true" style={{width:4,height:4,borderRadius:"50%",background:GOLD,display:"inline-block"}} />
+                                          adjusted
+                                        </span>
+                                      )}
                                     </div>
-                                    <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
+                                    {/* ── THE MONEY ──
+                                        The amount is the big thing and the arithmetic is its
+                                        caption. It used to be a sentence ("3 dihari × 8 = ₹10,800")
+                                        set in green, which buried the figure mid-phrase at a
+                                        different x on every row. Green is gone too: it was on every
+                                        priced row, so it marked nothing — a cost is not a success. */}
+                                    <div style={{display:"flex",alignItems:"baseline",gap:8,flexWrap:"wrap"}}>
+                                      <span style={{fontSize:21,fontWeight:700,color:cost>0?INK:INK_3,letterSpacing:-0.7,lineHeight:1.05,...NUM}}>
+                                        {cost > 0 ? `₹${Math.round(cost).toLocaleString("en-IN")}` : "—"}
+                                      </span>
+                                      <span style={{fontSize:10,color:INK_3,whiteSpace:"nowrap",letterSpacing:0.5,textTransform:"uppercase",fontWeight:600,...NUM}}>
+                                        {cost > 0 ? (uniform ? `${dihari} dihari × ${ppl}` : `${slots} crew-shifts`) : "0 dihari"}
+                                      </span>
+                                    </div>
+                                    {/* marginTop:auto pins the shift controls to the foot of the
+                                        card. Grid rows stretch every card to the tallest in the
+                                        row, so without this a trade with one shift leaves its
+                                        pills stranded mid-card while its neighbour's sit low — the
+                                        controls would land at a different height in each column. */}
+                                    <div style={{display:"flex",flexWrap:"wrap",gap:5,marginTop:"auto",paddingTop:2}}>
                                       {wins.map(w => {
                                         const on = ticked.includes(w.id);
+                                        // ── OFF SHIFT ──
+                                        // A shift not being used is the quietest thing on the card.
+                                        // It was already a ghost button; it stays one, just on the
+                                        // warm hairline so it recedes into the tile instead of
+                                        // ruling a cool grey line across it.
                                         if (!on) return (
                                           <button key={w.id} onClick={isAdmin?(()=>toggleWindow(d.date, t, w.id, d.phase)):undefined}
-                                            style={{ fontSize:12,padding:"3px 8px",borderRadius:11,cursor:isAdmin?"pointer":"default",border:`1px solid ${border}`,background:"transparent",color:"#1A1A2E",fontWeight:400 }}>
+                                            title={isAdmin?"Add this shift":undefined}
+                                            className={isAdmin?"dcm-ghost":undefined}
+                                            style={{ fontSize:11.5,padding:"3px 9px",borderRadius:999,cursor:isAdmin?"pointer":"default",border:`1px solid ${TILE_BORDER}`,background:"transparent",color:INK_3,fontWeight:500 }}>
                                             {w.label}
                                           </button>
                                         );
-                                        // ON window → label toggle + per-shift crew stepper (− N +). Default = day count.
+                                        // ── ON SHIFT ──
+                                        // This was a saturated green capsule with green +/− controls,
+                                        // and there are up to four of them per card. Eight cards of
+                                        // that made green the loudest thing on the screen — louder
+                                        // than every amount — for a state that is simply the norm.
+                                        // Now the chosen shift reads as SELECTED the way a chip
+                                        // does: solid surface, full-strength ink, a hairline. The
+                                        // only colour is the gold tick, and the crew number is the
+                                        // one figure allowed weight, because that is what people
+                                        // actually change. Label toggle + per-shift stepper (− N +),
+                                        // default = the day count.
                                         const wc = winCountFor(d.date, t, w.id, ppl);
                                         return (
-                                          <span key={w.id} style={{display:"inline-flex",alignItems:"center",border:`1px solid #10B981`,borderRadius:11,overflow:"hidden",background:"rgba(16,185,129,0.15)"}}>
-                                            <button onClick={isAdmin?(()=>toggleWindow(d.date, t, w.id, d.phase)):undefined} title={isAdmin?"Remove this shift":undefined} style={{fontSize:12,padding:"3px 6px 3px 9px",cursor:isAdmin?"pointer":"default",border:"none",background:"transparent",color:"#10B981",fontWeight:600}}>✓ {w.label}</button>
-                                            {isAdmin && <button onClick={()=>setWinCount(d.date, t, w.id, Math.max(0, wc-1))} title="One fewer this shift" style={{fontSize:13,width:18,cursor:"pointer",border:"none",borderLeft:`1px solid rgba(16,185,129,0.4)`,background:"rgba(16,185,129,0.10)",color:"#10B981",fontWeight:700}}>−</button>}
-                                            <span title="Crew in this shift" style={{fontSize:12,minWidth:16,textAlign:"center",color:"#1A1A2E",fontWeight:700,fontVariantNumeric:"tabular-nums"}}>{wc}</span>
-                                            {isAdmin && <button onClick={()=>setWinCount(d.date, t, w.id, wc+1)} title="One more this shift" style={{fontSize:13,width:18,cursor:"pointer",border:"none",borderRight:`1px solid rgba(16,185,129,0.4)`,borderLeft:`1px solid rgba(16,185,129,0.4)`,background:"rgba(16,185,129,0.10)",color:"#10B981",fontWeight:700}}>+</button>}
+                                          <span key={w.id} style={{display:"inline-flex",alignItems:"center",border:`1px solid ${CARD_BORDER}`,borderRadius:999,overflow:"hidden",background:CARD_BG,boxShadow:"0 1px 1px rgba(36,30,53,0.03)"}}>
+                                            <button onClick={isAdmin?(()=>toggleWindow(d.date, t, w.id, d.phase)):undefined} title={isAdmin?"Remove this shift":undefined} style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:11.5,padding:"3px 7px 3px 9px",cursor:isAdmin?"pointer":"default",border:"none",background:"transparent",color:INK,fontWeight:600}}>
+                                              <span aria-hidden="true" style={{color:GOLD,fontSize:10}}>✓</span>{w.label}
+                                            </button>
+                                            {isAdmin && <button onClick={()=>setWinCount(d.date, t, w.id, Math.max(0, wc-1))} title="One fewer this shift" style={{fontSize:13,width:19,cursor:"pointer",border:"none",borderLeft:`1px solid ${HAIRLINE}`,background:"transparent",color:INK_3,fontWeight:600,lineHeight:1.6}}>−</button>}
+                                            <span title="Crew in this shift" style={{fontSize:11.5,minWidth:15,textAlign:"center",color:INK,fontWeight:700,...NUM}}>{wc}</span>
+                                            {isAdmin && <button onClick={()=>setWinCount(d.date, t, w.id, wc+1)} title="One more this shift" style={{fontSize:13,width:19,cursor:"pointer",border:"none",borderRight:"none",borderLeft:`1px solid ${HAIRLINE}`,background:"transparent",color:INK_3,fontWeight:600,lineHeight:1.6}}>+</button>}
                                           </span>
                                         );
                                       })}
                                       {wins.length === 0 && <span style={{fontSize:12,color:"#1A1A2E",fontStyle:"italic"}}>No windows defined for this type</span>}
-                                      {/* "how" toggle — opens calculation breakdown */}
+                                      {/* Opens the derivation dialog. No open/closed styling and no
+                                          "× hide" label any more: the dialog's backdrop covers this
+                                          button while it is up, so a pressed state nobody can see
+                                          and a close affordance nobody can reach were both dead. */}
                                       <button onClick={()=>toggleCalcOpen(d.date, t)}
+                                        title={`Show how ${ppl} ${t.toLowerCase()} was derived`}
+                                        className="dcm-ghost"
                                         style={{
-                                          marginLeft:"auto",fontSize:12,padding:"2px 8px",borderRadius:7,cursor:"pointer",
-                                          border:dcMpCalcOpen[`${d.date}|${t}`]?`1px solid #A78BFA`:`1px solid rgba(167,139,250,0.40)`,
-                                          background:dcMpCalcOpen[`${d.date}|${t}`]?"rgba(124,58,237,0.20)":"rgba(124,58,237,0.08)",
-                                          color:"#7C3AED",fontWeight:500
+                                          marginLeft:"auto",fontSize:11.5,padding:"3px 9px",borderRadius:999,cursor:"pointer",
+                                          border:`1px solid ${TILE_BORDER}`,background:"transparent",
+                                          color:INK_3,fontWeight:600,whiteSpace:"nowrap"
                                         }}>
-                                        {dcMpCalcOpen[`${d.date}|${t}`] ? "× hide" : "🧮 how"}
+                                        🧮 how
                                       </button>
                                     </div>
-                                    </div>
-                                    </div>
-                                    {/* Calculation breakdown panel — visible when toggled on. Full width
-                                        under the whole row, not inside the text column beside the icon. */}
-                                    {dcMpCalcOpen[`${d.date}|${t}`] && (() => {
+                                    {/* Calculation breakdown — opens as a dialog so the tables get
+                                        real width instead of a quarter of a card. */}
+                                    {calcOpen && (
+                                      <CalcModal
+                                        title={`${typeEmoji(t)} ${t}`}
+                                        subtitle={`${fmtDateShort(d.date)} · ${phaseLabel(d.phase)} · ${ppl} ppl @ ₹${effRate}/dihari${cost > 0 ? ` · ₹${Math.round(cost).toLocaleString("en-IN")}` : ""}`}
+                                        onClose={() => toggleCalcOpen(d.date, t)}
+                                      >
+                                    {(() => {
                                       // For event days: trace each fn on this day. For other phases: explain carry-over.
                                       if (d.phase === "event" && d.fns.length > 0) {
                                         return (
-                                          <div style={{marginTop:10,display:"flex",flexDirection:"column",gap:8}}>
+                                          <div style={{display:"flex",flexDirection:"column",gap:8}}>
                                             {d.fns.map((cfn, cfi) => {
                                               const trace = traceForType(cfn, t);
                                               return (
@@ -1022,7 +1292,7 @@ export default function DCManpowerTab({ ctx }) {
                                                             ))}
                                                             <tr style={{borderTop:`1px solid ${border}`}}>
                                                               <td colSpan={3} style={{textAlign:"right",padding:"5px 4px",color:"#1A1A2E"}}>Sum:</td>
-                                                              <td style={{textAlign:"right",padding:"5px 4px",color:"#B45309",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{trace.total}</td>
+                                                              <td style={{textAlign:"right",padding:"5px 4px",color:GOLD,fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{trace.total}</td>
                                                             </tr>
                                                           </tbody>
                                                         </table>
@@ -1067,7 +1337,7 @@ export default function DCManpowerTab({ ctx }) {
                                                           ))}
                                                           <tr style={{borderTop:`1px solid ${border}`}}>
                                                             <td colSpan={3} style={{textAlign:"right",padding:"5px 4px",color:"#1A1A2E"}}>Σ {trace.frac} → ⌈⌉ {trace.sum} · max(min {trace.minimum}):</td>
-                                                            <td style={{textAlign:"right",padding:"5px 4px",color:"#B45309",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{trace.total}</td>
+                                                            <td style={{textAlign:"right",padding:"5px 4px",color:GOLD,fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{trace.total}</td>
                                                           </tr>
                                                         </tbody>
                                                       </table>
@@ -1083,8 +1353,8 @@ export default function DCManpowerTab({ ctx }) {
                                                         </div>
                                                       ))}
                                                       <div style={{display:"flex",justifyContent:"space-between",paddingTop:6,borderTop:`1px solid ${border}`,fontWeight:600}}>
-                                                        <span style={{color:"#B45309"}}>Total</span>
-                                                        <span style={{color:"#B45309",fontVariantNumeric:"tabular-nums"}}>{trace.total}</span>
+                                                        <span style={{color:GOLD}}>Total</span>
+                                                        <span style={{color:GOLD,fontVariantNumeric:"tabular-nums"}}>{trace.total}</span>
                                                       </div>
                                                     </div>
                                                   )}
@@ -1109,8 +1379,8 @@ export default function DCManpowerTab({ ctx }) {
                                                           <span style={{color:"#1A1A2E",fontVariantNumeric:"tabular-nums"}}>→ {trace.total} ppl</span>
                                                         </div>
                                                         <div style={{display:"flex",justifyContent:"space-between",paddingTop:6,borderTop:`1px solid ${border}`,fontWeight:600}}>
-                                                          <span style={{color:"#B45309"}}>Total</span>
-                                                          <span style={{color:"#B45309",fontVariantNumeric:"tabular-nums"}}>{trace.total}</span>
+                                                          <span style={{color:GOLD}}>Total</span>
+                                                          <span style={{color:GOLD,fontVariantNumeric:"tabular-nums"}}>{trace.total}</span>
                                                         </div>
                                                       </div>
                                                     )
@@ -1125,7 +1395,7 @@ export default function DCManpowerTab({ ctx }) {
                                                           <div key={zi} style={{padding:"6px 8px",background:"rgba(26, 26, 46,0.04)",borderRadius:6,border:`1px solid ${border}`}}>
                                                             <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:4}}>
                                                               <span style={{color:"#1A1A2E",fontWeight:600}}>{zone.zoneHeader}</span>
-                                                              <span style={{color:"#B45309",fontVariantNumeric:"tabular-nums",fontWeight:600}}>→ {zone.zoneTotal} ppl</span>
+                                                              <span style={{color:GOLD,fontVariantNumeric:"tabular-nums",fontWeight:600}}>→ {zone.zoneTotal} ppl</span>
                                                             </div>
                                                             <div style={{display:"flex",flexDirection:"column",gap:2,paddingLeft:8}}>
                                                               {zone.parts.map((p, pi) => (
@@ -1138,8 +1408,8 @@ export default function DCManpowerTab({ ctx }) {
                                                           </div>
                                                         ))}
                                                         <div style={{display:"flex",justifyContent:"space-between",paddingTop:6,borderTop:`1px solid ${border}`,fontWeight:600}}>
-                                                          <span style={{color:"#B45309"}}>Grand Total</span>
-                                                          <span style={{color:"#B45309",fontVariantNumeric:"tabular-nums"}}>{trace.total} ppl</span>
+                                                          <span style={{color:GOLD}}>Grand Total</span>
+                                                          <span style={{color:GOLD,fontVariantNumeric:"tabular-nums"}}>{trace.total} ppl</span>
                                                         </div>
                                                       </div>
                                                     )
@@ -1168,38 +1438,90 @@ export default function DCManpowerTab({ ctx }) {
                                             ? `Dismantle day: ${dismPct}% of event-day crew. Event peak × ${dismPct}% = ${ppl} ${t.toLowerCase()}.`
                                             : "Dismantle day: count carried forward from final event day (no dismantling % set in Settings → Workforce).";
                                       return (
-                                        <div style={{marginTop:10,padding:"10px 12px",background:"rgba(124,58,237,0.06)",border:"1px dashed rgba(167,139,250,0.35)",borderRadius:7,fontSize:13,color:"#1A1A2E"}}>
+                                        <div style={{padding:"10px 12px",background:"rgba(124,58,237,0.06)",border:"1px dashed rgba(167,139,250,0.35)",borderRadius:7,fontSize:13,color:"#1A1A2E"}}>
                                           <div style={{fontSize:11,color:"#7C3AED",fontWeight:600,letterSpacing:0.4,textTransform:"uppercase",marginBottom:6}}>How {ppl} {t.toLowerCase()} on this day</div>
                                           <div style={{color:"#1A1A2E",fontStyle:"italic"}}>{phaseNote}</div>
                                           <div style={{marginTop:6}}>See trajectory footer for cumulative MAX progression.</div>
                                         </div>
                                       );
                                     })()}
+                                      </CalcModal>
+                                    )}
                                   </div>
                                 );
                               })}
                               {Object.keys(breakdown.byType).length === 0 && (
-                                <div style={{fontSize:13,color:"#1A1A2E",fontStyle:"italic",padding:"6px 0"}}>No manpower needed this day. (Untick all windows to model labour going home.)</div>
+                                <div style={{fontSize:12.5,color:INK_3,fontStyle:"italic",padding:"2px 0"}}>No manpower needed this day. (Untick all windows to model labour going home.)</div>
                               )}
                             </div>}
+                            </div>
                           </div>
                         );
                       })}
 
+                      {/* ── SUMMARY BAR ──
+                          Where the booking total lives now. It sits under the day cards rather
+                          than over them so the figure and the days it sums are on screen at the
+                          same time, and it is four figures rather than one because the total on
+                          its own does not tell you whether it is large for the right reason: a
+                          five-day booking at ₹40k and a one-day booking at ₹40k are different
+                          problems. Every value comes off the same dayCosts/countByDay the cards
+                          above are drawn from, so the bar cannot disagree with them. */}
+                      {(() => {
+                        const peakHeads = visibleDayList.reduce((m, d) =>
+                          Math.max(m, labourTypes.reduce((n, t) => n + (countByDay[d.date]?.[t] || 0), 0)), 0);
+                        const perDay = visibleDayList.length ? visibleTotalCost / visibleDayList.length : 0;
+                        return (
+                          <div className="dcm-sum">
+                            <StatTile
+                              label={dcShowAllFns ? "Days counted" : "Days for this fn"}
+                              value={visibleDayList.length}
+                              foot={`of ${dayList.length} in booking`}
+                            />
+                            <StatTile
+                              label="Peak on site"
+                              value={peakHeads}
+                              foot="most people on any one day"
+                            />
+                            <StatTile
+                              label="Dihari"
+                              value={visibleTotalDihari}
+                              foot="crew × shifts billed"
+                            />
+                            <StatTile
+                              label="Manpower total"
+                              value={`₹${Math.round(visibleTotalCost).toLocaleString("en-IN")}`}
+                              foot={visibleDayList.length ? `≈ ₹${Math.round(perDay).toLocaleString("en-IN")} / day` : null}
+                              tone={GOLD}
+                            />
+                          </div>
+                        );
+                      })()}
+
                       {/* Hire trajectory footer */}
-                      <div style={{padding:"12px 14px",borderRadius:10,background:"rgba(148,163,184,0.04)",border:`1px dashed ${border}`}}>
-                        <div style={{fontSize:13,fontWeight:700,color:"#1A1A2E",letterSpacing:0.6,textTransform:"uppercase",marginBottom:8}}>📈 Hire Trajectory (cumulative MAX)</div>
-                        <div style={{fontSize:12,color:"#1A1A2E",marginBottom:8,fontStyle:"italic"}}>People hired per type across booking days. Labour only scales UP — once hired, they stay.</div>
-                        <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                      <div className="dcm-card" style={{background:CARD_BG,border:`1px solid ${CARD_BORDER}`,borderRadius:14,boxShadow:CARD_SHADOW,padding:"14px 16px"}}>
+                        {/* Section eyebrow and its standfirst. Both were INK_3 — the label AND the
+                            sentence explaining it set in the palette's quietest ink, which made an
+                            entire section header disappear. The eyebrow now carries INK_2 at the
+                            shared eyebrow scale, and the sentence under it is body copy at INK_2:
+                            it is the only place the cumulative-MAX rule is actually explained, so
+                            it is not a caption. */}
+                        <div style={{fontSize:10,fontWeight:700,color:INK_2,letterSpacing:1,textTransform:"uppercase",marginBottom:5}}>📈 Hire trajectory · cumulative MAX</div>
+                        <div style={{fontSize:12,lineHeight:1.5,color:INK_2,marginBottom:12,maxWidth:"68ch"}}>People hired per trade across booking days. Labour only scales UP — once hired, they stay.</div>
+                        <div style={{display:"flex",flexDirection:"column",gap:6}}>
                           {labourTypes.map(t => {
                             const seq = dayList.map(d => countByDay[d.date][t] || 0);
                             const peak = Math.max(...seq, 0);
                             if (peak === 0) return null;
                             return (
-                              <div key={t} style={{display:"flex",alignItems:"center",gap:8,fontSize:13}}>
-                                <span style={{minWidth:140,color:"#1A1A2E",fontWeight:600}}>{typeEmoji(t)} {t}</span>
-                                <span style={{color:"#1A1A2E",fontVariantNumeric:"tabular-nums",fontFamily:"monospace"}}>{seq.join(" → ")}</span>
-                                <span style={{color:"#B45309",fontVariantNumeric:"tabular-nums",fontWeight:700}}>peak {peak}</span>
+                              <div key={t} className="dcm-row" style={{display:"flex",alignItems:"center",gap:10,padding:"7px 10px",borderRadius:9,background:TILE_BG,border:`1px solid ${CARD_BORDER}`}}>
+                                <span aria-hidden="true" style={{fontSize:13,flexShrink:0}}>{typeEmoji(t)}</span>
+                                <span style={{flex:"0 0 auto",minWidth:126,fontSize:12.5,color:INK,fontWeight:650,letterSpacing:-0.1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t}</span>
+                                {/* The progression is the point of this footer, so the numbers are
+                                    set as data — one glyph width each — and the day a trade steps
+                                    up is visible as a change in the run rather than read out. */}
+                                <span style={{flex:"1 1 auto",minWidth:0,fontSize:12,color:INK_2,fontFamily:"ui-monospace, SFMono-Regular, Menlo, monospace",overflowX:"auto",whiteSpace:"nowrap",...NUM}}>{seq.join(" → ")}</span>
+                                <span style={{flexShrink:0,fontSize:11,fontWeight:700,padding:"2px 8px",borderRadius:999,background:GOLD_SOFT,color:GOLD,border:`1px solid ${GOLD}22`,whiteSpace:"nowrap",...NUM}}>peak {peak}</span>
                               </div>
                             );
                           })}
