@@ -1352,7 +1352,15 @@ export default function DealCheckOverlay({ ctx }) {
               {/* gap 7, not 2. At 2 the pills were touching and the row read as one long bar with
                   colour changes in it rather than as ten separate things to press — which is the same
                   complaint the platform control had. The gap is what makes them countable. */}
-              <div className="dc-tabs" style={{display:"flex",gap:7,flex:"1 1 auto",minWidth:0,overflowX:"auto",scrollbarWidth:"none"}}>
+              {/* ── THE STRIP WRAPS; IT DOES NOT SCROLL ──
+                  Eleven tabs do not fit one line at most window widths. This was
+                  overflowX:auto with scrollbarWidth:none — so the row DID scroll, but with
+                  the scrollbar hidden nothing said so, and the last tab sat cut off
+                  mid-word against the close button looking like a rendering fault rather
+                  than like content continuing. Wrapping shows every tab at every width;
+                  the header grows by one row only when it has to, which is a cheaper
+                  price than a navigation item you cannot see. */}
+              <div className="dc-tabs" style={{display:"flex",flexWrap:"wrap",gap:6,rowGap:7,flex:"1 1 auto",minWidth:0,alignContent:"flex-start"}}>
                 {/* inline-flex with a gap rather than a marginRight on the emoji: the pair centres as
                     one object instead of the glyph hanging off the label's baseline. */}
                 {/* OPAQUE, both states. These were `transparent` when cold and `${accent}1F` — 12%
@@ -1364,7 +1372,7 @@ export default function DealCheckOverlay({ ctx }) {
                     card headings already wear — so "where am I" is answered from across the room
                     rather than by spotting which pill is a slightly warmer cream. */}
                 {TABS.map(t => (
-                  <button key={t.id} className="dc-tab" data-on={dcActiveTab===t.id?"1":"0"} onClick={()=>setDcActiveTab(t.id)} style={{padding:"8px 13px",borderRadius:999,border:dcActiveTab===t.id?"1px solid #221C42":"1px solid rgba(26,26,46,0.10)",cursor:"pointer",fontSize:13,fontWeight:dcActiveTab===t.id?700:500,background:dcActiveTab===t.id?"#221C42":"#FFFFFF",color:dcActiveTab===t.id?"#F5F1E7":textS,whiteSpace:"nowrap",letterSpacing:0.2,position:"relative",display:"inline-flex",alignItems:"center",gap:6,lineHeight:1,flexShrink:0}}>
+                  <button key={t.id} className="dc-tab" data-on={dcActiveTab===t.id?"1":"0"} onClick={()=>setDcActiveTab(t.id)} style={{padding:"7px 11px",borderRadius:999,border:dcActiveTab===t.id?"1px solid #221C42":"1px solid rgba(26,26,46,0.10)",cursor:"pointer",fontSize:13,fontWeight:dcActiveTab===t.id?700:500,background:dcActiveTab===t.id?"#221C42":"#FFFFFF",color:dcActiveTab===t.id?"#F5F1E7":textS,whiteSpace:"nowrap",letterSpacing:0.2,position:"relative",display:"inline-flex",alignItems:"center",gap:6,lineHeight:1,flexShrink:0}}>
                     <span style={{fontSize:14,lineHeight:1}}>{t.icon}</span>{t.label}
                     {!t.live && <span style={{marginLeft:6,fontSize:10,padding:"2px 5px",borderRadius:4,background:"rgba(245,158,11,0.18)",color:"#F59E0B",fontWeight:700,letterSpacing:0.4}}>{t.ship}</span>}
                   </button>
