@@ -6,6 +6,7 @@
 // production / buying / transport) are placeholders pending later slices.
 // ═══════════════════════════════════════════════════════════════
 import { useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import DCFloralsTab from "./tabs/DCFloralsTab.jsx";
 import DCManpowerTab from "./tabs/DCManpowerTab.jsx";
 import DCTrussTab from "./tabs/DCTrussTab.jsx";
@@ -36,6 +37,49 @@ import { IconFactory, IconCart, IconPlatform, IconCheck, IconAlert, IconChevron,
 // Deal Check sits on a wedding-artwork ground, so a translucent fill reads as a different colour on
 // every event type and washes the figures out — the same finding that drove Florals and the Truss
 // tab onto opaque cards. Three depths only: white card → grey tile → chip, all opaque hex.
+// ── HOVER TO ENLARGE A THUMBNAIL ──
+// The same control the Build screen gives every element thumbnail, brought to Deal
+// Check: the thumbnails here run 22–54px, which is enough to tell two items apart
+// only if you already know what you are looking for.
+//
+// Two things are load-bearing and easy to get wrong:
+//  · The popup is portaled to <body>. Cards lift on :hover via a CSS transform, and
+//    a transformed ancestor makes position:fixed resolve against THAT ancestor
+//    instead of the viewport — the popup would be placed by coordinates that no
+//    longer mean what they measured. Escaping the subtree is the fix.
+//  · It flips above the thumbnail when there is no room below, so a card near the
+//    bottom of the page does not open a preview off-screen.
+// pointerEvents:none so the preview can never sit between the cursor and the thing
+// being hovered, which would make it flicker.
+function HoverZoom({ src, children }) {
+  const [pos, setPos] = useState(null);
+  if (!src) return children;
+  const POP = 164;
+  return (
+    <span
+      style={{ display: "inline-flex", flexShrink: 0, cursor: "zoom-in" }}
+      onMouseEnter={(e) => {
+        const r = e.currentTarget.getBoundingClientRect();
+        const openUp = window.innerHeight - r.bottom < POP + 8 && r.top > POP + 8;
+        setPos({
+          top: openUp ? undefined : r.bottom + 4,
+          bottom: openUp ? window.innerHeight - r.top + 4 : undefined,
+          left: Math.min(r.left, window.innerWidth - 168),
+        });
+      }}
+      onMouseLeave={() => setPos(null)}
+    >
+      {children}
+      {pos && createPortal(
+        <div style={{position:"fixed",top:pos.top,bottom:pos.bottom,left:pos.left,zIndex:10000,width:160,height:160,borderRadius:10,overflow:"hidden",border:"2px solid #FFFFFF",boxShadow:"0 10px 30px rgba(36,30,53,0.34)",pointerEvents:"none",background:"#FFFFFF"}}>
+          <img src={src} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}} />
+        </div>,
+        document.body
+      )}
+    </span>
+  );
+}
+
 const IV = {
   card: "#FFFFFF", border: "#E4E6EA", tile: "#F5F6F8", chip: "#EBEDF2",
   shadow: "0 1px 2px rgba(26,26,46,0.06), 0 4px 12px rgba(26,26,46,0.06)",
@@ -1247,7 +1291,6 @@ export default function DealCheckOverlay({ ctx }) {
 /* Chrome and Safari want the pseudo-element; scrollbarWidth on the element covers Firefox. Ten pills
    in a scrolling row with a bar under them looks like a rendering fault, and there is nothing to
    discover by dragging it that the wheel does not already do. */
-.dc-tabs::-webkit-scrollbar{display:none}
 .dc-x{-webkit-tap-highlight-color:transparent;transition:background .14s ease,border-color .14s ease,color .14s ease}
 .dc-x:hover{background:rgba(225,29,72,0.10) !important;border-color:rgba(225,29,72,0.45) !important;color:#E11D48 !important}
 /* Save Draft. The gold edge brightens and the shadow deepens — the button itself stays navy, because
@@ -1667,7 +1710,27 @@ export default function DealCheckOverlay({ ctx }) {
                         const collapseKey = `${fnIdx}|${zk}`;
                         const userOverride = dcCollapsedZones[collapseKey];
                         const collapsed = userOverride === undefined ? autoCollapse : userOverride;
-                        const zoneCards = byZone[zk];
+                        // ── PLAIN CARDS FIRST, POPULATED KITS LAST ──
+                        // A kit card carries its whole component list and runs several times the
+                        // height of a plain two-line one. Grid rows stretch to their tallest cell,
+                        // so a kit placed early leaves every short card beside it standing over a
+                        // column of dead space. Kits last packs the short cards together and puts
+                        // the tall ones where their height costs nothing.
+                        // Counts the EFFECTIVE components, not item.subItems: a kit can be edited
+                        // per deal (dcKitEdits), so a card can carry a kit in IMS and show an empty
+                        // one here. Reading the same source the panel renders from is what makes
+                        // "empty" mean the same thing to the sort as it does on screen.
+                        // Array.sort is stable in V8, so order within each group is still the order
+                        // the generator produced.
+                        const zoneCardsRaw = byZone[zk];
+                        const kitSize = (c) => {
+                          const it = c.imsId ? dcInventoryCache.find(x => x.id === c.imsId) : null;
+                          if (!it) return 0;
+                          const edited = dcKitEdits[fnIdx]?.[c._cardKey];
+                          if (Array.isArray(edited)) return edited.length;
+                          return Array.isArray(it.subItems) ? it.subItems.length : 0;
+                        };
+                        const zoneCards = [...zoneCardsRaw].sort((a, b) => (kitSize(a) > 0 ? 1 : 0) - (kitSize(b) > 0 ? 1 : 0));
                         const matchedCount = zoneCards.filter(c => c.imsId).length;
                         const unmatchedCount = zoneCards.length - matchedCount;
                         // A zone can carry more than one platform row (row 0 = `${fnIdx}|${zk}`, plus
@@ -1916,43 +1979,60 @@ export default function DealCheckOverlay({ ctx }) {
                                   const showAll = dcCarpetSearch[showAllKey] === "1";
                                   const displayLimit = q ? 30 : (showAll ? filtered.length : 10);
                                   const hasMore = !q && filtered.length > 10 && !showAll;
+                                  // ── THE PICKER IS ONLY OPEN WHEN THERE IS A CHOICE TO MAKE ──
+                                  // This block showed the chosen carpet AND the full search-and-browse
+                                  // picker at once, permanently. On a settled deal that is a large
+                                  // pink panel with a search box and a grid of thumbnails sitting
+                                  // above the item cards, for a decision already made. Once a carpet
+                                  // is picked it collapses to one line; "Change" reopens it. With
+                                  // nothing picked it opens on its own, because then the picker IS
+                                  // the point. Keyed into dcCarpetSearch rather than new state — it
+                                  // is already the per-zone carpet UI store and is not persisted.
+                                  const openKey = `${fnIdx}|${zk}|open`;
+                                  const pickerOpen = !carpetItem || dcCarpetSearch[openKey] === "1";
                                   return (
-                                    <div style={{padding:"11px 12px",borderRadius:9,background:"rgba(244,63,94,0.05)",border:"1px solid rgba(244,63,94,0.25)",display:"flex",flexDirection:"column",gap:8}}>
-                                      <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-                                        <span style={{fontSize:13,fontWeight:700,color:IV.ink}}>🟥 Carpet</span>
-                                        <span style={{fontSize:11,padding:"2px 6px",borderRadius:4,background:"rgba(148,163,184,0.18)",color:"#64748B",fontWeight:700,letterSpacing:0.4}}>{carpetPricingFor(zc.cpT, imsCarpetMaterials).label.toLowerCase().includes("old")?"REUSED PREF":"FLOOR"}</span>
-                                        <span style={{fontSize:12,color:IV.ink}}>{neededSqft} sqft needed</span>
+                                    <div style={{padding:"10px 12px",borderRadius:11,background:CARD_BG,border:`1px solid ${CARD_BORDER}`,display:"flex",flexDirection:"column",gap:8}}>
+                                      <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                                        <span aria-hidden="true" style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:26,height:26,borderRadius:8,flexShrink:0,fontSize:13,background:"#F6E9E6"}}>🟥</span>
+                                        <span style={{fontSize:10.5,fontWeight:700,color:INK,letterSpacing:0.8,textTransform:"uppercase"}}>Carpet</span>
+                                        <span style={{fontSize:9.5,padding:"2px 7px",borderRadius:999,background:CHIP_BG,color:INK_2,fontWeight:700,letterSpacing:0.4}}>{carpetPricingFor(zc.cpT, imsCarpetMaterials).label.toLowerCase().includes("old")?"REUSED PREF":"FLOOR"}</span>
+                                        <span style={{fontSize:11,color:INK_3,...NUM}}>{neededSqft} sqft needed</span>
                                         {/* The charged figure, from the zone's carpet material —
-                                            the same basis Build quotes on. The picker below chooses
+                                            the same basis Build quotes on. The picker chooses
                                             WHICH carpet ops pulls, not what it costs. */}
                                         {chargedCarpet > 0 && (
-                                          <span style={{marginLeft:"auto",fontSize:13,fontWeight:700,color:IV.ink}}>
+                                          <span style={{marginLeft:"auto",fontSize:13.5,fontWeight:750,color:INK,letterSpacing:-0.3,...NUM}}>
                                             {fmt(chargedCarpet)}
-                                            <span style={{fontWeight:400,fontSize:11,color:IV.ink,marginLeft:5}}>
+                                            <span style={{fontWeight:500,fontSize:10,color:INK_3,marginLeft:6}}>
                                               {cPrice.label || "carpet"} · ₹{cPrice.rate}/sqft
                                             </span>
                                           </span>
                                         )}
                                       </div>
                                       {carpetItem && calc ? (
-                                        <div style={{display:"flex",gap:10,alignItems:"center",padding:"6px 8px",borderRadius:7,background:"rgba(16,185,129,0.06)",border:"1px solid rgba(16,185,129,0.2)"}}>
-                                          {(()=>{const cp=imsField.photos(carpetItem)[0]; return cp ? <img loading="lazy" decoding="async" src={thumbUrl(cp, 48)} alt="" style={{width:48,height:48,borderRadius:6,objectFit:"cover",flexShrink:0}}/> : <div style={{width:48,height:48,borderRadius:6,background:"#F4F2EC",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>🟥</div>;})()}
+                                        <div style={{display:"flex",gap:9,alignItems:"center",padding:"7px 9px",borderRadius:9,background:TILE_BG,border:`1px solid ${TILE_BORDER}`}}>
+                                          {(()=>{const cp=imsField.photos(carpetItem)[0]; return cp ? <HoverZoom src={thumbUrl(cp, 320)}><img loading="lazy" decoding="async" src={thumbUrl(cp, 72)} alt="" style={{width:36,height:36,borderRadius:8,objectFit:"cover",flexShrink:0,border:`1px solid ${CARD_BORDER}`}}/></HoverZoom> : <div style={{width:36,height:36,borderRadius:8,background:CARD_BG,border:`1px solid ${CARD_BORDER}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,flexShrink:0}}>🟥</div>;})()}
                                           <div style={{flex:1,minWidth:0}}>
-                                            <div style={{fontSize:13,fontWeight:600,color:IV.ink}}>{carpetItem.name}</div>
-                                            <div style={{fontSize:12,color:IV.ink,marginTop:2}}>
+                                            <div style={{fontSize:12.5,fontWeight:650,color:INK,letterSpacing:-0.1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{carpetItem.name}</div>
+                                            <div style={{fontSize:11,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",...NUM}}>
                                               {calc.fresh>0
-                                                ? <span style={{...NUM,color:IV.amber,fontWeight:600}}>⚠ {calc.reused} reused + {calc.fresh} fresh sqft · ₹{Math.round(calc.cost).toLocaleString("en-IN")} <span style={{opacity:0.8,fontWeight:400}}>(incl. ₹{Math.round(calc.freshCost).toLocaleString("en-IN")} fresh)</span></span>
-                                                : <span style={{color:"#10B981"}}>✓ {calc.needed} sqft in stock · ₹{Math.round(calc.cost).toLocaleString("en-IN")} rental</span>}
+                                                ? <span style={{color:GOLD,fontWeight:600}}>⚠ {calc.reused} reused + {calc.fresh} fresh sqft · ₹{Math.round(calc.cost).toLocaleString("en-IN")}</span>
+                                                : <span style={{color:GOOD}}>✓ {calc.needed} sqft in stock · ₹{Math.round(calc.cost).toLocaleString("en-IN")} rental</span>}
                                             </div>
-                                            {calc.rentalRate<=0 && <div style={{color:"#EF4444",fontSize:11,marginTop:2,fontStyle:"italic"}}>⚠ No rental rate in IMS (₹0/sqft)</div>}
+                                            {calc.rentalRate<=0 && <div style={{color:BAD,fontSize:10.5,marginTop:2,fontStyle:"italic"}}>⚠ No rental rate in IMS (₹0/sqft)</div>}
                                           </div>
-                                          <span onClick={()=>setPick(null)} style={{color:"#EF4444",cursor:"pointer",fontSize:15.5,fontWeight:700,flexShrink:0}} title="Clear">×</span>
+                                          <button onClick={()=>setDcCarpetSearch(prev=>({...prev,[openKey]:pickerOpen?"0":"1"}))}
+                                            className="dc2-ghost"
+                                            style={{flexShrink:0,fontSize:10.5,fontWeight:650,padding:"4px 10px",borderRadius:999,border:`1px solid ${TILE_BORDER}`,background:CARD_BG,color:INK_2,cursor:"pointer",whiteSpace:"nowrap"}}>
+                                            {pickerOpen ? "Done" : "Change"}
+                                          </button>
+                                          <span onClick={()=>setPick(null)} style={{color:BAD,cursor:"pointer",fontSize:15,fontWeight:700,flexShrink:0}} title="Clear">×</span>
                                         </div>
                                       ) : (
-                                        <div style={{fontSize:12,color:"#F59E0B",fontStyle:"italic"}}>Pick a carpet below{_anchors.length > 0 ? ` — sorted by ${_fnPal} theme` : ""} — {carpetOpts.length} options in IMS</div>
+                                        <div style={{fontSize:11.5,color:INK_2}}>Pick a carpet below{_anchors.length > 0 ? ` — sorted by ${_fnPal} theme` : ""} · {carpetOpts.length} option{carpetOpts.length===1?"":"s"} in IMS</div>
                                       )}
-                                      <input value={searchText} onChange={e=>setSearch(e.target.value)} placeholder="🔍 Search carpets (colour, type, design)…" style={{fontSize:13,padding:"5px 9px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:IV.ink}} />
-                                      <div style={{display:"flex",gap:8,overflowX:"auto",paddingBottom:4,WebkitOverflowScrolling:"touch",flexWrap:"wrap"}}>
+                                      {pickerOpen && <input value={searchText} onChange={e=>setSearch(e.target.value)} placeholder="🔍 Search carpets (colour, type, design)…" style={{fontSize:12,padding:"5px 9px",borderRadius:8,border:`1px solid ${CARD_BORDER}`,background:CARD_BG,color:INK}} />}
+                                      {pickerOpen && <div style={{display:"flex",gap:8,overflowX:"auto",paddingBottom:4,WebkitOverflowScrolling:"touch",flexWrap:"wrap"}}>
                                         {filtered.length === 0 && <div style={{fontSize:12,color:IV.ink,fontStyle:"italic",padding:"8px 0"}}>No carpets match "{searchText}"</div>}
                                         {filtered.slice(0,displayLimit).map(opt=>{
                                           const optPhoto = imsField.photos(opt)[0];
@@ -1961,9 +2041,9 @@ export default function DealCheckOverlay({ ctx }) {
                                           const optOwned = Number(opt.qty)||0;
                                           const themeScore = scoreCarpet(opt);
                                           return (
-                                            <div key={opt.id} onClick={()=>{setPick(opt.id); setSearch("");}} style={{minWidth:100,maxWidth:110,cursor:"pointer",borderRadius:8,overflow:"hidden",border:isSelected?`2px solid #10B981`:themeScore>0?`1.5px solid rgba(201,169,110,0.5)`:`1px solid ${border}`,background:isSelected?"rgba(16,185,129,0.08)":themeScore>0?"rgba(201,169,110,0.06)":"rgba(26, 26, 46,0.025)",flexShrink:0,transition:"border 0.15s",position:"relative"}}>
+                                            <div key={opt.id} onClick={()=>{setPick(opt.id); setSearch("");}} style={{minWidth:84,maxWidth:92,cursor:"pointer",borderRadius:9,overflow:"hidden",border:isSelected?`2px solid #10B981`:themeScore>0?`1.5px solid rgba(201,169,110,0.5)`:`1px solid ${border}`,background:isSelected?"rgba(16,185,129,0.08)":themeScore>0?"rgba(201,169,110,0.06)":"rgba(26, 26, 46,0.025)",flexShrink:0,transition:"border 0.15s",position:"relative"}}>
                                               {themeScore>0&&<div style={{position:"absolute",top:3,right:3,fontSize:10,padding:"1px 5px",borderRadius:4,background:"rgba(201,169,110,0.85)",color:IV.ink,fontWeight:700,zIndex:1}}>🎨 match</div>}
-                                              {optPhoto ? <img loading="lazy" decoding="async" src={thumbUrl(optPhoto, 180)} alt="" style={{width:"100%",height:72,objectFit:"cover",display:"block"}}/> : <div style={{width:"100%",height:72,background:"#F4F2EC",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22}}>🟥</div>}
+                                              {optPhoto ? <img loading="lazy" decoding="async" src={thumbUrl(optPhoto, 180)} alt="" style={{width:"100%",height:56,objectFit:"cover",display:"block"}}/> : <div style={{width:"100%",height:56,background:"#F4F2EC",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>🟥</div>}
                                               <div style={{padding:"5px 6px"}}>
                                                 <div style={{fontSize:11,fontWeight:600,color:IV.ink,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{opt.name}</div>
                                                 <div style={{fontSize:10,color:IV.ink,marginTop:1}}>{optOwned.toLocaleString("en-IN")} sqft{optRental>0?` · ₹${optRental}/sqft`:""}</div>
@@ -1971,8 +2051,8 @@ export default function DealCheckOverlay({ ctx }) {
                                             </div>
                                           );
                                         })}
-                                        {hasMore && <div onClick={()=>setDcCarpetSearch(prev=>({...prev,[showAllKey]:"1"}))} style={{minWidth:80,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",borderRadius:8,border:`1px dashed ${border}`,padding:"10px 8px",fontSize:12,color:accent,fontWeight:600,flexShrink:0}}>Show all {filtered.length}</div>}
-                                      </div>
+                                        {hasMore && <div onClick={()=>setDcCarpetSearch(prev=>({...prev,[showAllKey]:"1"}))} style={{minWidth:70,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",borderRadius:9,border:`1px dashed ${CARD_BORDER}`,padding:"10px 8px",fontSize:11,color:INK_2,fontWeight:650,flexShrink:0}}>Show all {filtered.length}</div>}
+                                      </div>}
                                     </div>
                                   );
                                 })()}
@@ -2001,8 +2081,8 @@ export default function DealCheckOverlay({ ctx }) {
                                     "no-match":   { icon: "⚠",  color: "#EF4444", label: "no match" },
                                   }[card.source] || { icon: "·", color:IV.ink, label: "" };
                                   return (
-                                    <div key={card._cardKey} className="dci-card" style={{padding:"12px 13px",borderRadius:10,background:IV.card,border:`1px solid ${IV.border}`,boxShadow:IV.shadow,display:"flex",gap:11,alignItems:"flex-start"}}>
-                                      {photo ? <img loading="lazy" decoding="async" src={thumbUrl(photo, 56)} alt="" style={{width:54,height:54,borderRadius:7,objectFit:"cover",flexShrink:0,background:"#FFFFFF"}}/> : <div style={{width:54,height:54,borderRadius:7,background:"#FFFFFF",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,color:IV.ink,flexShrink:0}}>?</div>}
+                                    <div key={card._cardKey} className="dci-card" style={{padding:"12px 13px",borderRadius:10,background:IV.card,border:`1px solid ${IV.border}`,boxShadow:IV.shadow,display:"flex",flexWrap:"wrap",gap:11,alignItems:"flex-start"}}>
+                                      {photo ? <HoverZoom src={thumbUrl(photo, 320)}><img loading="lazy" decoding="async" src={thumbUrl(photo, 56)} alt="" style={{width:54,height:54,borderRadius:7,objectFit:"cover",flexShrink:0,background:"#FFFFFF"}}/></HoverZoom> : <div style={{width:54,height:54,borderRadius:7,background:"#FFFFFF",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,color:IV.ink,flexShrink:0}}>?</div>}
                                       <div style={{flex:1,minWidth:0}}>
                                         <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:3}}>
                                           <span style={{fontSize:14,fontWeight:700,letterSpacing:-0.1,color:IV.ink}}>{item?.name || card.rcName || "(unnamed)"}</span>
@@ -2028,144 +2108,14 @@ export default function DealCheckOverlay({ ctx }) {
                                             the set keeps being written to — there is simply no longer a way to overrule it when it
                                             is wrong, and no indicator that a photo has been learned. If that bites, the natural
                                             home for it now is the availability picker, which is where swapping happens. */}
-                                        {/* §7.9.5 — Kit composite: expand to components, per-deal editable */}
-                                        {item && Array.isArray(item.subItems) && item.subItems.length > 0 && (()=>{
-                                          const editKey = card._cardKey;
-                                          const editedSub = dcKitEdits[fnIdx]?.[editKey];
-                                          const comps = Array.isArray(editedSub) ? editedSub : item.subItems.map(s=>({itemId:s.itemId, qty:Number(s.qty)||1}));
-                                          const isEdited = Array.isArray(editedSub);
-                                          const cardQty = Number(card.qty)||1;
-                                          const setComps = (next)=> setDcKitEdits(prev=>({...prev,[fnIdx]:{...(prev[fnIdx]||{}),[editKey]: next}}));
-                                          const resetKit = ()=> setDcKitEdits(prev=>{ const fnE={...(prev[fnIdx]||{})}; delete fnE[editKey]; return {...prev,[fnIdx]:fnE}; });
-                                          const kitBase = Number(item.kitBase) || 0;  // kit's own charge, added on top of parts
-                                          const partsTotal = comps.reduce((s,c)=>{ const ci=dcInventoryCache.find(x=>x.id===c.itemId); return s + (ci?imsField.rentalCost(ci):0)*(Number(c.qty)||0); },0);
-                                          const kitTotal = kitBase + partsTotal;
-                                          return (
-                                            <div style={{marginTop:5,marginBottom:6,padding:"8px 10px",borderRadius:8,background:"rgba(99,102,241,0.05)",border:"1px solid rgba(99,102,241,0.25)"}}>
-                                              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:5}}>
-                                                <span style={{fontSize:12,fontWeight:700,color:"#4338CA",letterSpacing:0.3}}>📦 Kit — blocks these together:{isEdited && <span style={{color:"#F59E0B",marginLeft:5}}>· edited</span>}</span>
-                                                {isEdited && <span onClick={resetKit} style={{fontSize:11,color:IV.ink,cursor:"pointer",textDecoration:"underline"}}>reset to default</span>}
-                                              </div>
-                                              <div style={{display:"flex",flexDirection:"column",gap:4}}>
-                                                {comps.map((c,ci)=>{
-                                                  const cItem = dcInventoryCache.find(x=>x.id===c.itemId);
-                                                  const qtyEach = Number(c.qty)||0;
-                                                  const needed = qtyEach * cardQty;
-                                                  const owned = cItem ? imsField.qtyOwned(cItem) : 0;
-                                                  const short = cItem && needed > owned;
-                                                  const unavailable = !cItem || short;
-                                                  // Same-subcategory alternatives with enough stock (for a short/missing component → one-tap swap).
-                                                  const cSub = cItem ? String(imsField.subcategory(cItem)||"") : "";
-                                                  const compAlts = unavailable && cSub ? dcInventoryCache.filter(x => x.id !== c.itemId && String(imsField.subcategory(x)||"").toLowerCase().trim() === cSub.toLowerCase().trim()).sort((a,b)=>imsField.qtyOwned(b)-imsField.qtyOwned(a)) : [];
-                                                  const compAltsFit = compAlts.filter(x => imsField.qtyOwned(x) >= needed);
-                                                  const swapComp = (id)=> setComps(comps.map((x,i)=>i===ci?{...x,itemId:id}:x));
-                                                  return (
-                                                    <div key={ci} style={unavailable?{padding:"3px 5px",borderRadius:6,background:"rgba(239,68,68,0.08)",border:"1px solid rgba(239,68,68,0.3)"}:null}>
-                                                    <div style={{display:"flex",alignItems:"center",gap:6,fontSize:13}}>
-                                                      {(() => { const cp = cItem ? imsField.photos(cItem)[0] : null; return cp ? <img loading="lazy" decoding="async" src={thumbUrl(cp, 48)} alt="" style={{width:22,height:22,borderRadius:4,objectFit:"cover",flexShrink:0}} /> : <span style={{width:22,height:22,borderRadius:4,background:"rgba(26, 26, 46,0.06)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,flexShrink:0}}>🌸</span>; })()}
-                                                      <span style={{color:cItem?(short?"#EF4444":"#1A1A2E"):"#EF4444",fontWeight:600,flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{cItem?cItem.name:`⚠ ${c.itemId} not in IMS`}</span>
-                                                      <div style={{display:"flex",alignItems:"center",gap:2}} title="per kit">
-                                                        <span onClick={()=>setComps(comps.map((x,i)=>i===ci?{...x,qty:Math.max(1,qtyEach-1)}:x))} style={{cursor:"pointer",color:IV.ink,fontSize:15.5,padding:"0 4px",userSelect:"none"}}>−</span>
-                                                        <span style={{color:IV.ink,minWidth:20,textAlign:"center"}}>×{qtyEach}</span>
-                                                        <span onClick={()=>setComps(comps.map((x,i)=>i===ci?{...x,qty:qtyEach+1}:x))} style={{cursor:"pointer",color:IV.ink,fontSize:15.5,padding:"0 4px",userSelect:"none"}}>+</span>
-                                                      </div>
-                                                      {cardQty>1 && <span style={{color:IV.ink,fontSize:12,whiteSpace:"nowrap"}}>× {cardQty} kits = <b style={{color:IV.ink}}>{needed}</b></span>}
-                                                      {cItem && (()=>{ const cr=imsField.rentalCost(cItem); return <span style={{...NUM,color:IV.ink2,whiteSpace:"nowrap"}}>₹{cr.toLocaleString("en-IN")} × {needed} = <b style={{color:"#4338CA"}}>₹{(cr*needed).toLocaleString("en-IN")}</b></span>; })()}
-                                                      {cItem && (short
-                                                        ? <span style={{color:"#EF4444",fontWeight:700,whiteSpace:"nowrap"}}>⚠ need {needed}, only {owned} avail</span>
-                                                        : <span style={{color:"#10B981",whiteSpace:"nowrap"}}>✓ {owned} avail</span>)}
-                                                      <span onClick={()=>setComps(comps.filter((_,i)=>i!==ci))} style={{color:"#EF4444",cursor:"pointer",fontSize:15.5,padding:"0 2px"}} title="Remove component">×</span>
-                                                    </div>
-                                                    {unavailable && compAlts.length>0 && (
-                                                      <div style={{display:"flex",alignItems:"center",gap:5,flexWrap:"wrap",marginTop:4,paddingLeft:28}}>
-                                                        <span style={{fontSize:11,color:"#EF4444",fontWeight:600,whiteSpace:"nowrap"}}>↔ swap to:</span>
-                                                        {(compAltsFit.length?compAltsFit:compAlts).slice(0,5).map(a=>{ const ao=imsField.qtyOwned(a); const fit=ao>=needed; return (
-                                                          <span key={a.id} onClick={()=>swapComp(a.id)} title={`${a.name} · ${ao} available · ₹${imsField.rentalCost(a).toLocaleString("en-IN")}`} style={{cursor:"pointer",fontSize:11,padding:"2px 7px",borderRadius:8,border:`1px solid ${fit?"#10B981":border}`,background:fit?"rgba(16,185,129,0.12)":"transparent",color:fit?"#10B981":textS,whiteSpace:"nowrap"}}>{a.name} ({ao})</span>
-                                                        ); })}
-                                                      </div>
-                                                    )}
-                                                    </div>
-                                                  );
-                                                })}
-                                              </div>
-                                              <div style={{marginTop:5,position:"relative"}}>
-                                                <input value={dcKitAddSearch[editKey]||""} onChange={e=>setDcKitAddSearch(prev=>({...prev,[editKey]:e.target.value}))} placeholder="🔍 Search by name or sub-category to add…" style={{width:"100%",fontSize:12,padding:"4px 8px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:IV.ink}} />
-                                                {(dcKitAddSearch[editKey]||"").trim() && (()=>{
-                                                  const tokens = dcKitAddSearch[editKey].trim().toLowerCase().split(/\s+/).filter(Boolean);
-                                                  const matches = dcInventoryCache.filter(x=>x.id!==item.id && !comps.some(c=>c.itemId===x.id) && !isHiddenSubcat(x,rcSubcatFactors) && tokens.every(t=>(x.name+" "+(imsField.subcategory(x)||"")+" "+(x.cat||x.category||"")).toLowerCase().includes(t))).slice(0,40);
-                                                  return (
-                                                    <div style={{position:"absolute",zIndex:50,top:"100%",left:0,right:0,marginTop:2,background:"#F4F2EC",border:`1px solid ${border}`,borderRadius:8,maxHeight:220,overflowY:"auto",boxShadow:"0 8px 24px rgba(0,0,0,0.4)"}}>
-                                                      {matches.length===0 && <div style={{padding:"6px 8px",fontSize:12,color:IV.ink}}>No matches</div>}
-                                                      {matches.map(x=>{
-                                                        const src = imsField.photos(x)[0];
-                                                        const remaining = dcRemainingForItem(x.id, fnIdx, { cardKey: editKey });
-                                                        const isBlocked = remaining != null && remaining <= 0;
-                                                        return (
-                                                          <div key={x.id} onClick={()=>{ if(isBlocked) return; setComps(comps.some(c=>c.itemId===x.id)?comps:[...comps,{itemId:x.id,qty:1}]); setDcKitAddSearch(prev=>({...prev,[editKey]:""})); }}
-                                                            style={{display:"flex",alignItems:"center",gap:6,padding:"5px 8px",cursor:isBlocked?"not-allowed":"pointer",borderBottom:`1px solid ${border}`,opacity:isBlocked?0.45:1}}>
-                                                            <ItemHoverThumb src={src} size={22} rounded={4} name={x.name} sub={imsField.subcategory(x) ? imsField.subcategory(x)+" › "+(x.cat||x.category||"") : (x.cat||x.category||"")} dims={itemDimsText(x)} border={border} cardBg="#FFFFFF" textP="#1A1A2E" textS={textS} emptyBg="rgba(26, 26, 46,0.06)" />
-                                                            <div style={{flex:1,minWidth:0}}>
-                                                              <div style={{fontSize:13,color:IV.ink,display:"flex",alignItems:"center",gap:4,minWidth:0}}>
-                                                                <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{x.name}</span>
-                                                                {isBlocked && <span style={{fontSize:10,padding:"1px 4px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700,flexShrink:0}}>🚫 fully used in this event</span>}
-                                                                {!isBlocked && remaining!=null && <span style={{fontSize:10,padding:"1px 4px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700,flexShrink:0}}>{remaining} left for this event</span>}
-                                                              </div>
-                                                              <div style={{fontSize:11,color:IV.ink}}>{imsField.subcategory(x) ? imsField.subcategory(x)+" › " : ""}{x.cat||x.category||""}{itemDimsText(x) ? ` · 📐 ${itemDimsText(x)}` : ""}</div>
-                                                            </div>
-                                                          </div>
-                                                        );
-                                                      })}
-                                                    </div>
-                                                  );
-                                                })()}
-                                              </div>
-                                              <div style={{marginTop:5,paddingTop:5,borderTop:"1px solid rgba(99,102,241,0.2)",display:"flex",justifyContent:"space-between",fontSize:12}}>
-                                                <span style={{color:IV.ink}}>Kit rental = {kitBase>0?`console ₹${kitBase.toLocaleString("en-IN")} + `:""}add-ons ₹{partsTotal.toLocaleString("en-IN")} = ₹{kitTotal.toLocaleString("en-IN")}{cardQty>1?` × ${cardQty}`:""}</span>
-                                                <span style={{color:"#4338CA",fontWeight:700}}>₹{(kitTotal*cardQty).toLocaleString("en-IN")}</span>
-                                              </div>
-                                            </div>
-                                          );
-                                        })()}
-                                        {/* ═══ Paint Allocation Ops handoff — show salesperson's colour request ═══ */}
-                                        {(()=>{
-                                          const cardSpec = parseCardKey(card._cardKey);
-                                          if (!cardSpec || cardSpec.kind !== "el") return null;
-                                          const fnEls = fns[fnIdx]?.zoneElements?.[cardSpec.zoneKey];
-                                          const origEl = fnEls ? fnEls.find(e => (e?.name||"").toLowerCase().trim() === (cardSpec.rcName||"").toLowerCase().trim()) || fnEls[cardSpec.idx] : null;
-                                          if (!origEl) return null;
-                                          const baseCol = item?.baseColour || "Ivory";
-                                          const allocs = normalizePaintAllocation(origEl, baseCol);
-                                          if (allocs.length === 0) return null;
-                                          const allocLabel = allocs.map(a => `${a.colour} ×${a.qty}`).join(", ");
-                                          const itemPaintCost = Number(item?.paintCost || 0);
-                                          const isNonPaintable = item && itemPaintCost <= 0;
-                                          return (
-                                            <div style={{marginBottom:5}}>
-                                              <div style={{display:"flex",alignItems:"center",gap:5,flexWrap:"wrap"}}>
-                                                <span style={{fontSize:12,padding:"2px 7px",borderRadius:5,background:"rgba(236,72,153,0.15)",color:"#EC4899",fontWeight:700}}>🖌 {allocLabel}</span>
-                                                <span style={{fontSize:11,color:"#BE1D62",fontWeight:600}}>salesperson requested</span>
-                                              </div>
-                                              {isNonPaintable && (
-                                                <div style={{marginTop:4,padding:"5px 8px",borderRadius:6,background:"rgba(239,68,68,0.12)",border:"1px solid rgba(239,68,68,0.25)"}}>
-                                                  <div style={{fontSize:12,color:"#EF4444",fontWeight:700}}>⚠ This item cannot be repainted</div>
-                                                  <div style={{fontSize:11,color:IV.red,lineHeight:1.5,marginTop:2}}>
-                                                    {(()=>{
-                                                      const sub = item ? (imsField.subcategory(item)||"") : "";
-                                                      if (!sub) return "No paintable alternatives found in this subcategory.";
-                                                      const paintableAlts = (dcInventoryCache||[]).filter(x =>
-                                                        String(imsField.subcategory(x)||"").toLowerCase().trim() === sub.toLowerCase().trim()
-                                                        && Number(x.paintCost||0) > 0
-                                                        && x.id !== item.id
-                                                      );
-                                                      if (paintableAlts.length === 0) return "No paintable alternatives found in " + sub + ".";
-                                                      return "Try: " + paintableAlts.slice(0,3).map(a => a.name).join(", ") + (paintableAlts.length > 3 ? ` (+${paintableAlts.length-3} more)` : "");
-                                                    })()}
-                                                  </div>
-                                                </div>
-                                              )}
-                                            </div>
-                                          );
-                                        })()}
+                                        {/* ── AVAILABILITY CONTROL SITS ABOVE THE KIT ──
+                                            It used to render after the kit panel, so on a kit card it
+                                            was pushed below six component rows and a search box — a
+                                            control about THIS card, parked underneath the card's
+                                            contents, in a different place on every card depending on
+                                            how many components the kit had. Above the kit it sits at a
+                                            fixed spot right under the item line on every card, kit or
+                                            not, which is where Build puts it too. */}
                                         {(()=>{
                                           // Always show the card's sub-category options — computed live from current inventory
                                           // so it works even on cached cards (no regenerate needed) and can never be blank when
@@ -2175,7 +2125,10 @@ export default function DealCheckOverlay({ ctx }) {
                                           const cardAlts = Array.isArray(card.alternatives) ? card.alternatives : [];
                                           const inferredSub = item ? imsField.subcategory(item)
                                             : (cardAlts.map(a => dcInventoryCache.find(x => x.id === a.imsId)).find(Boolean) ? imsField.subcategory(cardAlts.map(a => dcInventoryCache.find(x => x.id === a.imsId)).find(Boolean)) : "");
-                                          const subToUse = inferredSub || (zoneCards[0]?.subcategory || "");
+                                          // zoneCardsRaw, not the kit-sorted copy: this is a fallback
+                                          // sub-category hint taken from "the zone's first card", and
+                                          // reordering for layout must not change which card that is.
+                                          const subToUse = inferredSub || (zoneCardsRaw[0]?.subcategory || "");
                                           const allSubItems = subToUse ? dcInventoryCache.filter(x => String(imsField.subcategory(x)||"").toLowerCase().trim() === String(subToUse).toLowerCase().trim()) : [];
                                           const seenIds = new Set();
                                           const mergedAlts = [];
@@ -2231,6 +2184,46 @@ export default function DealCheckOverlay({ ctx }) {
                                               <IconBox size={13}/>
                                             </button>
                                           </div>
+                                          );
+                                        })()}
+                                        {/* ═══ Paint Allocation Ops handoff — show salesperson's colour request ═══ */}
+                                        {(()=>{
+                                          const cardSpec = parseCardKey(card._cardKey);
+                                          if (!cardSpec || cardSpec.kind !== "el") return null;
+                                          const fnEls = fns[fnIdx]?.zoneElements?.[cardSpec.zoneKey];
+                                          const origEl = fnEls ? fnEls.find(e => (e?.name||"").toLowerCase().trim() === (cardSpec.rcName||"").toLowerCase().trim()) || fnEls[cardSpec.idx] : null;
+                                          if (!origEl) return null;
+                                          const baseCol = item?.baseColour || "Ivory";
+                                          const allocs = normalizePaintAllocation(origEl, baseCol);
+                                          if (allocs.length === 0) return null;
+                                          const allocLabel = allocs.map(a => `${a.colour} ×${a.qty}`).join(", ");
+                                          const itemPaintCost = Number(item?.paintCost || 0);
+                                          const isNonPaintable = item && itemPaintCost <= 0;
+                                          return (
+                                            <div style={{marginBottom:5}}>
+                                              <div style={{display:"flex",alignItems:"center",gap:5,flexWrap:"wrap"}}>
+                                                <span style={{fontSize:12,padding:"2px 7px",borderRadius:5,background:"rgba(236,72,153,0.15)",color:"#EC4899",fontWeight:700}}>🖌 {allocLabel}</span>
+                                                <span style={{fontSize:11,color:"#BE1D62",fontWeight:600}}>salesperson requested</span>
+                                              </div>
+                                              {isNonPaintable && (
+                                                <div style={{marginTop:4,padding:"5px 8px",borderRadius:6,background:"rgba(239,68,68,0.12)",border:"1px solid rgba(239,68,68,0.25)"}}>
+                                                  <div style={{fontSize:12,color:"#EF4444",fontWeight:700}}>⚠ This item cannot be repainted</div>
+                                                  <div style={{fontSize:11,color:IV.red,lineHeight:1.5,marginTop:2}}>
+                                                    {(()=>{
+                                                      const sub = item ? (imsField.subcategory(item)||"") : "";
+                                                      if (!sub) return "No paintable alternatives found in this subcategory.";
+                                                      const paintableAlts = (dcInventoryCache||[]).filter(x =>
+                                                        String(imsField.subcategory(x)||"").toLowerCase().trim() === sub.toLowerCase().trim()
+                                                        && Number(x.paintCost||0) > 0
+                                                        && x.id !== item.id
+                                                      );
+                                                      if (paintableAlts.length === 0) return "No paintable alternatives found in " + sub + ".";
+                                                      return "Try: " + paintableAlts.slice(0,3).map(a => a.name).join(", ") + (paintableAlts.length > 3 ? ` (+${paintableAlts.length-3} more)` : "");
+                                                    })()}
+                                                  </div>
+                                                </div>
+                                              )}
+                                            </div>
                                           );
                                         })()}
                                         {/* ═══ SPLIT across multiple items (8 = 6+2) ═══ */}
@@ -2305,6 +2298,169 @@ export default function DealCheckOverlay({ ctx }) {
                                           </div>
                                         );
                                       })()}
+                                       {/* ── THE KIT IS A CARD-WIDTH ROW, NOT A TEXT-COLUMN ONE ──
+                                           It used to live inside the middle column, which is one of THREE
+                                           flex children (thumbnail · text · price). So it began past the
+                                           54px thumb and stopped short of the price column — the densest
+                                           thing on the card, squeezed into the narrowest part of it, and no
+                                           negative margin could fix the right-hand side because the price
+                                           column is content-sized and its width is not knowable here.
+                                           Moved out to be the card's own last child with flexWrap on the
+                                           card and width:100% here, it spans the full card, edge to edge,
+                                           with no magic numbers to drift. */}
+                                        {/* §7.9.5 — Kit composite: expand to components, per-deal editable */}
+                                        {item && Array.isArray(item.subItems) && item.subItems.length > 0 && (()=>{
+                                          const editKey = card._cardKey;
+                                          const editedSub = dcKitEdits[fnIdx]?.[editKey];
+                                          const comps = Array.isArray(editedSub) ? editedSub : item.subItems.map(s=>({itemId:s.itemId, qty:Number(s.qty)||1}));
+                                          const isEdited = Array.isArray(editedSub);
+                                          const cardQty = Number(card.qty)||1;
+                                          const setComps = (next)=> setDcKitEdits(prev=>({...prev,[fnIdx]:{...(prev[fnIdx]||{}),[editKey]: next}}));
+                                          const resetKit = ()=> setDcKitEdits(prev=>{ const fnE={...(prev[fnIdx]||{})}; delete fnE[editKey]; return {...prev,[fnIdx]:fnE}; });
+                                          const kitBase = Number(item.kitBase) || 0;  // kit's own charge, added on top of parts
+                                          const partsTotal = comps.reduce((s,c)=>{ const ci=dcInventoryCache.find(x=>x.id===c.itemId); return s + (ci?imsField.rentalCost(ci):0)*(Number(c.qty)||0); },0);
+                                          const kitTotal = kitBase + partsTotal;
+                                          return (
+                                            /* ── FULL CARD WIDTH, NOT TEXT-COLUMN WIDTH ──
+                                                The kit lives inside the card's text column, which starts
+                                                past the 54px thumbnail and the card's 11px gap — so it was
+                                                inset 65px from the left while being the widest, densest
+                                                thing on the card. Six component rows each carrying a name,
+                                                a stepper and three figures need every pixel. marginLeft:-65
+                                                pulls it back to the card's own content edge (thumb 54 + gap
+                                                11); if either of those changes, this number changes with
+                                                them. */
+                                            <div style={{width:"100%",marginTop:2,padding:"9px 11px",borderRadius:9,background:"rgba(99,102,241,0.05)",border:"1px solid rgba(99,102,241,0.25)"}}>
+                                              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:5}}>
+                                                <span style={{fontSize:12,fontWeight:700,color:"#4338CA",letterSpacing:0.3}}>📦 Kit — blocks these together:{isEdited && <span style={{color:"#F59E0B",marginLeft:5}}>· edited</span>}</span>
+                                                {isEdited && <span onClick={resetKit} style={{fontSize:11,color:IV.ink,cursor:"pointer",textDecoration:"underline"}}>reset to default</span>}
+                                              </div>
+                                              <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                                                {/* ── RESOLVED COMPONENTS FIRST, BROKEN ONES LAST ──
+                                                    A component whose itemId is no longer in IMS renders as
+                                                    "⚠ <id> not in IMS" with no photo, no price and no stock —
+                                                    a dead row in the middle of a costed list. Sorted to the
+                                                    bottom, the kit reads as its real contents first and its
+                                                    problems after.
+                                                    Note the pairing with the ORIGINAL index: every control in
+                                                    this row (the − / + steppers, the swap, the remove) mutates
+                                                    comps BY INDEX via `i===ci`. Sorting the array itself would
+                                                    leave those indices pointing at whatever now sits in that
+                                                    slot, so a stepper would silently edit a different
+                                                    component. Only the display order changes; ci is always the
+                                                    position in the real array. */}
+                                                {comps.map((c,ci)=>({c,ci}))
+                                                  .sort((a,b)=>{
+                                                    const live = (x)=> dcInventoryCache.find(y=>y.id===x.c.itemId) ? 0 : 1;
+                                                    return live(a) - live(b);
+                                                  })
+                                                  .map(({c,ci})=>{
+                                                  const cItem = dcInventoryCache.find(x=>x.id===c.itemId);
+                                                  const qtyEach = Number(c.qty)||0;
+                                                  const needed = qtyEach * cardQty;
+                                                  const owned = cItem ? imsField.qtyOwned(cItem) : 0;
+                                                  const short = cItem && needed > owned;
+                                                  const unavailable = !cItem || short;
+                                                  // Same-subcategory alternatives with enough stock (for a short/missing component → one-tap swap).
+                                                  const cSub = cItem ? String(imsField.subcategory(cItem)||"") : "";
+                                                  const compAlts = unavailable && cSub ? dcInventoryCache.filter(x => x.id !== c.itemId && String(imsField.subcategory(x)||"").toLowerCase().trim() === cSub.toLowerCase().trim()).sort((a,b)=>imsField.qtyOwned(b)-imsField.qtyOwned(a)) : [];
+                                                  const compAltsFit = compAlts.filter(x => imsField.qtyOwned(x) >= needed);
+                                                  const swapComp = (id)=> setComps(comps.map((x,i)=>i===ci?{...x,itemId:id}:x));
+                                                  return (
+                                                    <div key={ci} style={unavailable?{padding:"3px 5px",borderRadius:6,background:"rgba(239,68,68,0.08)",border:"1px solid rgba(239,68,68,0.3)"}:null}>
+                                                    <div style={{display:"flex",alignItems:"center",gap:6,fontSize:13}}>
+                                                      {(() => { const cp = cItem ? imsField.photos(cItem)[0] : null; return cp ? <HoverZoom src={thumbUrl(cp, 320)}><img loading="lazy" decoding="async" src={thumbUrl(cp, 48)} alt="" style={{width:22,height:22,borderRadius:4,objectFit:"cover",flexShrink:0}} /></HoverZoom> : <span style={{width:22,height:22,borderRadius:4,background:"rgba(26, 26, 46,0.06)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,flexShrink:0}}>🌸</span>; })()}
+                                                      <span style={{color:cItem?(short?"#EF4444":"#1A1A2E"):"#EF4444",fontWeight:600,flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{cItem?cItem.name:`⚠ ${c.itemId} not in IMS`}</span>
+                                                      <div style={{display:"flex",alignItems:"center",gap:2}} title="per kit">
+                                                        <span onClick={()=>setComps(comps.map((x,i)=>i===ci?{...x,qty:Math.max(1,qtyEach-1)}:x))} style={{cursor:"pointer",color:IV.ink,fontSize:15.5,padding:"0 4px",userSelect:"none"}}>−</span>
+                                                        <span style={{color:IV.ink,minWidth:20,textAlign:"center"}}>×{qtyEach}</span>
+                                                        <span onClick={()=>setComps(comps.map((x,i)=>i===ci?{...x,qty:qtyEach+1}:x))} style={{cursor:"pointer",color:IV.ink,fontSize:15.5,padding:"0 4px",userSelect:"none"}}>+</span>
+                                                      </div>
+                                                      <span onClick={()=>setComps(comps.filter((_,i)=>i!==ci))} style={{color:"#EF4444",cursor:"pointer",fontSize:15.5,padding:"0 2px",flexShrink:0}} title="Remove component">×</span>
+                                                    </div>
+                                                    {/* ── THE ARITHMETIC GOES ON ITS OWN LINE ──
+                                                        Thumb, name, stepper, "× 8 kits = 8", "₹200 × 8 = ₹1,600" and
+                                                        "✓ 23 avail" were six things on ONE nowrap row. That fitted while
+                                                        item cards were full width; at three-up the row is ~500px and the
+                                                        run overflowed the card. Identity and the control people actually
+                                                        press stay on line one; the sums — which are read, not clicked —
+                                                        wrap underneath, indented to the name so they read as its detail. */}
+                                                    {/* ── FIXED COLUMNS, NOT A FLOWING RUN ──
+                                                        These three figures were laid out with a plain gap, so each one
+                                                        started wherever the previous ended — and since component names
+                                                        and prices differ in width, no two rows in the kit lined up.
+                                                        Fixed minWidths make them read as columns down the block: how
+                                                        many, what they cost, whether there is stock. Right-aligning the
+                                                        availability pins it to the same edge as the ✕ above it. */}
+                                                    <div style={{display:"flex",alignItems:"center",gap:8,paddingLeft:28,paddingRight:2,fontSize:11.5,marginTop:2,flexWrap:"wrap"}}>
+                                                      <span style={{minWidth:74,color:IV.ink3,whiteSpace:"nowrap",...NUM}}>
+                                                        {cardQty>1 ? <>× {cardQty} kits = <b style={{color:IV.ink}}>{needed}</b></> : <>× {needed}</>}
+                                                      </span>
+                                                      {cItem && (()=>{ const cr=imsField.rentalCost(cItem); return <span style={{...NUM,flex:"1 1 auto",minWidth:108,color:IV.ink3,whiteSpace:"nowrap"}}>₹{cr.toLocaleString("en-IN")} × {needed} = <b style={{color:"#4338CA"}}>₹{(cr*needed).toLocaleString("en-IN")}</b></span>; })()}
+                                                      {cItem && (short
+                                                        ? <span style={{color:"#EF4444",fontWeight:700,whiteSpace:"nowrap",textAlign:"right",...NUM}}>⚠ need {needed}, only {owned}</span>
+                                                        : <span style={{color:"#10B981",whiteSpace:"nowrap",textAlign:"right",...NUM}}>✓ {owned} avail</span>)}
+                                                    </div>
+                                                    {unavailable && compAlts.length>0 && (
+                                                      <div style={{display:"flex",alignItems:"center",gap:5,flexWrap:"wrap",marginTop:4,paddingLeft:28}}>
+                                                        <span style={{fontSize:11,color:"#EF4444",fontWeight:600,whiteSpace:"nowrap"}}>↔ swap to:</span>
+                                                        {(compAltsFit.length?compAltsFit:compAlts).slice(0,5).map(a=>{ const ao=imsField.qtyOwned(a); const fit=ao>=needed; return (
+                                                          <span key={a.id} onClick={()=>swapComp(a.id)} title={`${a.name} · ${ao} available · ₹${imsField.rentalCost(a).toLocaleString("en-IN")}`} style={{cursor:"pointer",fontSize:11,padding:"2px 7px",borderRadius:8,border:`1px solid ${fit?"#10B981":border}`,background:fit?"rgba(16,185,129,0.12)":"transparent",color:fit?"#10B981":textS,whiteSpace:"nowrap"}}>{a.name} ({ao})</span>
+                                                        ); })}
+                                                      </div>
+                                                    )}
+                                                    </div>
+                                                  );
+                                                })}
+                                              </div>
+                                              <div style={{marginTop:5,position:"relative"}}>
+                                                <input value={dcKitAddSearch[editKey]||""} onChange={e=>setDcKitAddSearch(prev=>({...prev,[editKey]:e.target.value}))} placeholder="🔍 Search by name or sub-category to add…" style={{width:"100%",fontSize:12,padding:"4px 8px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:IV.ink}} />
+                                                {(dcKitAddSearch[editKey]||"").trim() && (()=>{
+                                                  const tokens = dcKitAddSearch[editKey].trim().toLowerCase().split(/\s+/).filter(Boolean);
+                                                  const matches = dcInventoryCache.filter(x=>x.id!==item.id && !comps.some(c=>c.itemId===x.id) && !isHiddenSubcat(x,rcSubcatFactors) && tokens.every(t=>(x.name+" "+(imsField.subcategory(x)||"")+" "+(x.cat||x.category||"")).toLowerCase().includes(t))).slice(0,40);
+                                                  return (
+                                                    <div style={{position:"absolute",zIndex:50,top:"100%",left:0,right:0,marginTop:2,background:"#F4F2EC",border:`1px solid ${border}`,borderRadius:8,maxHeight:220,overflowY:"auto",boxShadow:"0 8px 24px rgba(0,0,0,0.4)"}}>
+                                                      {matches.length===0 && <div style={{padding:"6px 8px",fontSize:12,color:IV.ink}}>No matches</div>}
+                                                      {matches.map(x=>{
+                                                        const src = imsField.photos(x)[0];
+                                                        const remaining = dcRemainingForItem(x.id, fnIdx, { cardKey: editKey });
+                                                        const isBlocked = remaining != null && remaining <= 0;
+                                                        return (
+                                                          <div key={x.id} onClick={()=>{ if(isBlocked) return; setComps(comps.some(c=>c.itemId===x.id)?comps:[...comps,{itemId:x.id,qty:1}]); setDcKitAddSearch(prev=>({...prev,[editKey]:""})); }}
+                                                            style={{display:"flex",alignItems:"center",gap:6,padding:"5px 8px",cursor:isBlocked?"not-allowed":"pointer",borderBottom:`1px solid ${border}`,opacity:isBlocked?0.45:1}}>
+                                                            <ItemHoverThumb src={src} size={22} rounded={4} name={x.name} sub={imsField.subcategory(x) ? imsField.subcategory(x)+" › "+(x.cat||x.category||"") : (x.cat||x.category||"")} dims={itemDimsText(x)} border={border} cardBg="#FFFFFF" textP="#1A1A2E" textS={textS} emptyBg="rgba(26, 26, 46,0.06)" />
+                                                            <div style={{flex:1,minWidth:0}}>
+                                                              <div style={{fontSize:13,color:IV.ink,display:"flex",alignItems:"center",gap:4,minWidth:0}}>
+                                                                <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{x.name}</span>
+                                                                {isBlocked && <span style={{fontSize:10,padding:"1px 4px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700,flexShrink:0}}>🚫 fully used in this event</span>}
+                                                                {!isBlocked && remaining!=null && <span style={{fontSize:10,padding:"1px 4px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700,flexShrink:0}}>{remaining} left for this event</span>}
+                                                              </div>
+                                                              <div style={{fontSize:11,color:IV.ink}}>{imsField.subcategory(x) ? imsField.subcategory(x)+" › " : ""}{x.cat||x.category||""}{itemDimsText(x) ? ` · 📐 ${itemDimsText(x)}` : ""}</div>
+                                                            </div>
+                                                          </div>
+                                                        );
+                                                      })}
+                                                    </div>
+                                                  );
+                                                })()}
+                                              </div>
+                                              {/* The working was one long sentence sharing a line with the
+                                                  total, so in a three-up card it wrapped and stranded "× 8"
+                                                  on a line of its own under the money. Total on its own line,
+                                                  working underneath it as a caption — same figures, but the
+                                                  number the card is about no longer competes with its recipe. */}
+                                              <div style={{marginTop:6,paddingTop:6,borderTop:"1px solid rgba(99,102,241,0.2)"}}>
+                                                <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",gap:8}}>
+                                                  <span style={{fontSize:10,fontWeight:700,color:IV.ink2,letterSpacing:0.7,textTransform:"uppercase",whiteSpace:"nowrap"}}>Kit rental</span>
+                                                  <span style={{fontSize:13.5,color:"#4338CA",fontWeight:750,letterSpacing:-0.3,whiteSpace:"nowrap",...NUM}}>₹{(kitTotal*cardQty).toLocaleString("en-IN")}</span>
+                                                </div>
+                                                <div style={{fontSize:10.5,color:IV.ink3,marginTop:2,...NUM}}>
+                                                  {kitBase>0?`console ₹${kitBase.toLocaleString("en-IN")} + `:""}add-ons ₹{partsTotal.toLocaleString("en-IN")} = ₹{kitTotal.toLocaleString("en-IN")}{cardQty>1?` × ${cardQty}`:""}
+                                                </div>
+                                              </div>
+                                            </div>
+                                          );
+                                        })()}
                                     </div>
                                   );
                                 })}
@@ -2322,7 +2478,7 @@ export default function DealCheckOverlay({ ctx }) {
                                   const _avail = item ? Math.max(0, Math.min(getStudioAvailable(item, fnBlocksForChip), availableAtVenue({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, _vName, item))) : 0;
                                   return (
                                     <div key={mi.manualId} className="dci-card" style={{padding:"12px 13px",borderRadius:10,boxShadow:IV.shadow,background:IV.card,border:`1px solid rgba(193,154,107,0.30)`,display:"flex",gap:11,alignItems:"flex-start"}}>
-                                      {photo ? <img loading="lazy" decoding="async" src={thumbUrl(photo, 56)} alt="" style={{width:54,height:54,borderRadius:7,objectFit:"cover",flexShrink:0,background:"#FFFFFF"}}/> : <div style={{width:54,height:54,borderRadius:7,background:"#FFFFFF",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,color:IV.ink,flexShrink:0}}>?</div>}
+                                      {photo ? <HoverZoom src={thumbUrl(photo, 320)}><img loading="lazy" decoding="async" src={thumbUrl(photo, 56)} alt="" style={{width:54,height:54,borderRadius:7,objectFit:"cover",flexShrink:0,background:"#FFFFFF"}}/></HoverZoom> : <div style={{width:54,height:54,borderRadius:7,background:"#FFFFFF",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,color:IV.ink,flexShrink:0}}>?</div>}
                                       <div style={{flex:1,minWidth:0}}>
                                         <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:3}}>
                                           <span style={{fontSize:14,fontWeight:700,letterSpacing:-0.1,color:IV.ink}}>{item?.name || mi.imsId}</span>
@@ -2905,7 +3061,7 @@ export default function DealCheckOverlay({ ctx }) {
                                   <div key={ci.id} className="dc2-row" style={{borderRadius:12,background:TILE_BG,border:`1px solid ${TILE_BORDER}`,overflow:"hidden",display:"flex",flexDirection:"column"}}>
                                     <div style={{display:"flex",gap:10,padding:"11px 12px"}}>
                                       {photo
-                                        ? <img loading="lazy" decoding="async" src={thumbUrl(photo, 96)} alt="" style={{width:46,height:46,borderRadius:9,objectFit:"cover",flexShrink:0,border:`1px solid ${CARD_BORDER}`}} />
+                                        ? <HoverZoom src={thumbUrl(photo, 320)}><img loading="lazy" decoding="async" src={thumbUrl(photo, 96)} alt="" style={{width:46,height:46,borderRadius:9,objectFit:"cover",flexShrink:0,border:`1px solid ${CARD_BORDER}`}} /></HoverZoom>
                                         : <div style={{width:46,height:46,borderRadius:9,background:ciTile,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>{isP?"🏭":"🛒"}</div>}
                                       <div style={{flex:"1 1 auto",minWidth:0}}>
                                         {/* Category is context, the sub-category is the thing — they
@@ -3109,7 +3265,7 @@ export default function DealCheckOverlay({ ctx }) {
                                   <div aria-hidden="true" style={{width:3,flexShrink:0,background:c.isShort?BAD:GOLD}} />
                                   <div style={{flex:"1 1 auto",minWidth:0,padding:"10px 12px",display:"flex",gap:10}}>
                                     {c.photo
-                                      ? <img loading="lazy" decoding="async" src={thumbUrl(c.photo, 88)} alt="" style={{width:44,height:44,borderRadius:9,objectFit:"cover",flexShrink:0,border:`1px solid ${CARD_BORDER}`}}/>
+                                      ? <HoverZoom src={thumbUrl(c.photo, 320)}><img loading="lazy" decoding="async" src={thumbUrl(c.photo, 88)} alt="" style={{width:44,height:44,borderRadius:9,objectFit:"cover",flexShrink:0,border:`1px solid ${CARD_BORDER}`}}/></HoverZoom>
                                       : <div style={{width:44,height:44,borderRadius:9,background:CARD_BG,border:`1px solid ${CARD_BORDER}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>📦</div>}
                                     <div style={{flex:"1 1 auto",minWidth:0}}>
                                       <div style={{display:"flex",alignItems:"flex-start",gap:8}}>
@@ -3173,7 +3329,7 @@ export default function DealCheckOverlay({ ctx }) {
                                   <div style={{flex:"1 1 auto",minWidth:0,padding:"10px 12px",display:"flex",flexDirection:"column",gap:8}}>
                                     <div style={{display:"flex",gap:10}}>
                                       {r.photo
-                                        ? <img loading="lazy" decoding="async" src={thumbUrl(r.photo, 88)} alt="" style={{width:44,height:44,borderRadius:9,objectFit:"cover",flexShrink:0,border:`1px solid ${CARD_BORDER}`}}/>
+                                        ? <HoverZoom src={thumbUrl(r.photo, 320)}><img loading="lazy" decoding="async" src={thumbUrl(r.photo, 88)} alt="" style={{width:44,height:44,borderRadius:9,objectFit:"cover",flexShrink:0,border:`1px solid ${CARD_BORDER}`}}/></HoverZoom>
                                         : <div style={{width:44,height:44,borderRadius:9,background:CARD_BG,border:`1px solid ${CARD_BORDER}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>📦</div>}
                                       <div style={{flex:"1 1 auto",minWidth:0}}>
                                         <div style={{display:"flex",alignItems:"baseline",gap:6}}>
