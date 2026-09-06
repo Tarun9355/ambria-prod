@@ -171,7 +171,7 @@ export default function DealCheckOverlay({ ctx }) {
     // photoKnowledge / saveKnowledgeEntry / dcKnowledgeKey were destructured here for the
     // "Set as correct match for this photo" control. That control is gone, and nothing else in
     // this file read them — re-add all three if the teach action comes back.
-    dcDesiredMargin, setDcDesiredMargin, dcSavingDraft, setDcSavingDraft, closeDealCheck,
+    dcDesiredMargin, setDcDesiredMargin, closeDealCheck,
     dcSaveBaselineRef, dcConflictWarnedAtRef,
     dcZoneState, dcMpOverrides, dcMpWinCount, dcMpIncludeMinusOne, dcMpIncludeDismantle,
     setDcResolved, setDcCards, setDcZoneState, setDcPhotoOverrides, setDcSkipped, setDcProductionAccepted,
@@ -1295,11 +1295,29 @@ export default function DealCheckOverlay({ ctx }) {
 .dc-x:hover{background:rgba(225,29,72,0.10) !important;border-color:rgba(225,29,72,0.45) !important;color:#E11D48 !important}
 /* Save Draft. The gold edge brightens and the shadow deepens — the button itself stays navy, because
    a control that changes colour on hover reads as changing what it will do. */
-.dc-save{-webkit-tap-highlight-color:transparent;transition:border-color .16s ease,box-shadow .16s ease,transform .14s ease}
-.dc-save:not([disabled]):hover{border-color:rgba(201,169,110,0.7) !important;transform:translateY(-1px);
-  box-shadow:0 14px 30px -14px rgba(26,26,46,0.8) !important}
-.dc-save:not([disabled]):active{transform:translateY(0)}
-@media (prefers-reduced-motion: reduce){.dc-save:hover,.dc-save:active{transform:none}}
+/* ── THE BOTTOM STRIP ON A TABLET ──
+   Ten cost tiles plus the project total plus Save Draft do not fit one line below
+   about 1200px, and the row was set to flex-wrap — so on an iPad it folded into
+   two rows and ate ~110px of a short screen, pushing the zone list up and reading
+   as a broken bar rather than as a bar that ran out of room.
+   Scroll the tiles instead of wrapping them: the strip keeps ONE row at every
+   width, the project total and Save Draft stay pinned where they are (they are
+   the two things you always need), and the tiles you are not looking at slide
+   out of the way. -webkit-overflow-scrolling for momentum on iPadOS; the
+   scrollbar is hidden because the tiles are visibly cut off at the edge, which is
+   its own affordance — unlike the tab strip, where a hidden scrollbar left a tab
+   looking clipped rather than continued. */
+@media (max-width:1200px){
+  .dc-bottom{padding:8px 12px !important;gap:10px !important}
+  .dc-bottomchips{flex-wrap:nowrap !important;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch;gap:8px !important;padding-bottom:2px}
+  .dc-bottomchips::-webkit-scrollbar{display:none}
+  .dc-bottomtotal .dc-money{font-size:20px !important}
+  .dc-chip{padding:5px 9px !important;min-width:66px !important}
+  .dc-chip .dc-money{font-size:13px !important}
+}
+@media (max-width:760px){
+  .dc-bottomtotal .dc-money{font-size:17px !important}
+}
 /* ═══ TYPOGRAPHY ═══
    FIGURES LINE UP. This is a costing screen — six zone rentals in a column, ten totals along the
    bottom — and proportional digits make a 1 narrower than a 7, so nothing stacks and the eye cannot
@@ -3850,33 +3868,23 @@ export default function DealCheckOverlay({ ctx }) {
               const fmt = (n) => n > 0
                 ? "₹" + Math.round(n).toLocaleString("en-IN")
                 : hasGenerated ? "₹0" : "—";
-              const onSaveDraft = async () => {
-                if (dcSavingDraft) return;
-                setDcSavingDraft(true);
-                try {
-                  // Same conflict check as the background autosave (StudioApp.jsx's Deal Check
-                  // auto-save effect) — a manual Save Draft can clobber a concurrent editor's work
-                  // exactly the same way a silent autosave tick can, so it needs the same guard rather
-                  // than assuming "the user clicked Save, so overwriting must be fine."
-                  const curClient = clientLedger.find(c => c.id === activeClientId);
-                  const baseline = dcSaveBaselineRef?.current;
-                  const remoteSavedAt = curClient?.dcDraftSavedAt || 0;
-                  const remoteSavedBy = curClient?.dcDraftSavedBy || null;
-                  const me = authUser?.name || "—";
-                  const conflict = !!(baseline && remoteSavedAt > baseline.savedAt && remoteSavedBy && remoteSavedBy !== me);
-                  if (conflict) {
-                    showMsg(`⚠ ${remoteSavedBy} saved changes to this deal while you were editing — Save Draft was NOT applied to avoid overwriting theirs. Reload Deal Check to see the latest before continuing.`, "red");
-                    return;
-                  }
-                  // Persist dcCards + dcZoneState + manpower overrides onto active client record · saved via existing client ledger flow
-                  const nowStamp = Date.now();
-                  const ledger = clientLedger.map(c => c.id !== activeClientId ? c : ({ ...c, dcCards: dcCards, dcZoneState: dcZoneState, dcKitEdits: dcKitEdits, dcCarpetPick: dcCarpetPick, dcMpOverrides: dcMpOverrides, dcMpWinCount: dcMpWinCount, dcMpIncludeMinusOne: dcMpIncludeMinusOne, dcMpIncludeDismantle: dcMpIncludeDismantle, dcDraftSavedAt: nowStamp, dcDraftSavedBy: me }));
-                  await saveClientLedger(ledger);
-                  if (dcSaveBaselineRef) dcSaveBaselineRef.current = { savedAt: nowStamp, savedBy: me };
-                  showMsg("✓ Deal Check draft saved", "green");
-                } catch (e) { showMsg("⚠ Save failed — try again", "red"); }
-                finally { setDcSavingDraft(false); }
-              };
+              // ── SAVE DRAFT REMOVED ──
+              // The button it drove did nothing the background autosave was not already doing,
+              // and it did it worse. Three reasons it went:
+              //  · It wrote a SUBSET. The autosave persists dcDraft (the full snapshot: resolved,
+              //    photoOverrides, skipped, manualItems, dedupOverrides, productionAccepted,
+              //    artFlowerAlloc, floralColorPrefs, customItems) alongside the top-level fields.
+              //    This wrote only the top-level fields and bumped dcDraftSavedAt, leaving dcDraft
+              //    stale against fresh cards until the next autosave tick repaired it.
+              //  · It skipped the guards. The autosave refuses to write an empty dcCards (see the
+              //    ROOT-CAUSE GUARD in StudioApp.jsx) and refuses to write mid-Generate. This had
+              //    neither, so pressing it before a restore finished would persist an empty card
+              //    set over a good draft — exactly the corruption that guard exists to prevent.
+              //  · Nothing was ever unsaved. The autosave fires 2.5s after edits settle and
+              //    flushes on unmount (route switch, client change, close), and the header already
+              //    reports "Deal Check last saved by <name> · <when>".
+              // If a deliberate save action is ever wanted back, it must reuse the autosave's own
+              // doSave rather than reimplement a second, weaker write path.
               const chips = [
                 { id:"rental",   label:"Rental",   icon:"📦", value: fmt(rental),    live: true  },
                 { id:"truss",    label:"Truss",    icon:"🏗️", value: fmt(truss),     live: true  },
@@ -3894,8 +3902,18 @@ export default function DealCheckOverlay({ ctx }) {
                 { id:"buffer",   label:"Buffer 3%",icon:"🛡️", value: fmt(bufferCost),live: true  },
               ];
               return (
-                <div className="dc-glass" style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 18px",borderTop:`1px solid ${border}`,gap:14}}>
-                  <div style={{display:"flex",alignItems:"center",gap:14,flexWrap:"wrap"}}>
+                <div className="dc-glass dc-bottom" style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 18px",borderTop:`1px solid ${border}`,gap:14}}>
+                  {/* ── TOTAL AND TILES ARE SIBLINGS, NOT NESTED ──
+                      The total used to sit inside the tile row and was held in place with
+                      position:sticky once that row started scrolling. Its background was
+                      `inherit`, which resolves to transparent here — so tiles slid UNDERNEATH
+                      it and both sets of digits rendered on top of each other. Sticky was the
+                      wrong tool: the total is not part of the scrollable content, so it should
+                      not be in the scroller at all. As its own flex child it simply never
+                      moves, and nothing can pass behind it. */}
+                    <div className="dc-bottomtotal" style={{flexShrink:0}}><div className="dc-cap" style={{color:"#1A1A2E",opacity:0.62}}>Project total</div><div className="dc-money" style={{fontSize:25,fontWeight:800,color:"#1A1A2E",marginTop:1,lineHeight:1.1}}>{fmt(grandWithOverheads)}</div>{stripRevenue > 0 && <div className="dc-money" style={{fontSize:11,color:stripProfitColor,fontWeight:700,marginTop:2,letterSpacing:0.1}}>Margin {stripProfitPct}% · {fmt(stripRevenue)} quote</div>}</div>
+                    <div style={{height:30,width:1,background:border}}/>
+                  <div className="dc-bottomchips" style={{display:"flex",alignItems:"center",gap:14,flex:"1 1 auto",minWidth:0,overflowX:"auto"}}>
                     {/* NOT THE SERIF. I set this in Cormorant because it is the screen's conclusion,
                         and that was the wrong reason to pick a face: Cormorant's default figures are
                         OLD-STYLE, so the total came out with its 3, 5 and 7 sitting below the line —
@@ -3905,10 +3923,8 @@ export default function DealCheckOverlay({ ctx }) {
                         The sans is what a price is set in. Size and weight carry the emphasis the
                         serif was being asked for, and dc-money keeps it tabular and lining so it
                         agrees with every other figure on the screen. */}
-                    <div><div className="dc-cap" style={{color:"#1A1A2E",opacity:0.62}}>Project total</div><div className="dc-money" style={{fontSize:25,fontWeight:800,color:"#1A1A2E",marginTop:1,lineHeight:1.1}}>{fmt(grandWithOverheads)}</div>{stripRevenue > 0 && <div className="dc-money" style={{fontSize:11,color:stripProfitColor,fontWeight:700,marginTop:2,letterSpacing:0.1}}>Margin {stripProfitPct}% · {fmt(stripRevenue)} quote</div>}</div>
-                    <div style={{height:30,width:1,background:border}}/>
                     {chips.map(c => (
-                      <div key={c.id} className="dc-chip" title={c.note ? `${c.label} — ${c.value} (${c.note})` : `${c.label} — ${c.value}`} style={{padding:"7px 11px",borderRadius:10,background:"#fff",border:`1px solid ${border}`,fontSize:12,color:"#1A1A2E",minWidth:78,opacity:c.live?1:0.5,boxShadow:"0 1px 2px rgba(26,26,46,0.04)"}}>
+                      <div key={c.id} className="dc-chip" title={c.note ? `${c.label} — ${c.value} (${c.note})` : `${c.label} — ${c.value}`} style={{padding:"7px 11px",borderRadius:10,background:"#fff",border:`1px solid ${border}`,fontSize:12,color:"#1A1A2E",flexShrink:0,minWidth:78,opacity:c.live?1:0.5,boxShadow:"0 1px 2px rgba(26,26,46,0.04)"}}>
                         {/* Flex line rather than the emoji glued straight onto the text. An emoji
                             inside an 11px uppercase caption sets its own line height, so each tile's
                             caption sat at a slightly different height depending on which glyph it
@@ -3923,11 +3939,6 @@ export default function DealCheckOverlay({ ctx }) {
                       </div>
                     ))}
                   </div>
-                  {/* Navy with gold type, not gold with navy type. Every tile along this bar is a pale
-                      card, so the one CONTROL among them should be the dark object — a gold button on
-                      a cream bar was the same value as the gold rental pills up in the rows, and read
-                      as another badge rather than the thing you press. */}
-                  <button onClick={onSaveDraft} disabled={dcSavingDraft} className="dc-save" style={{padding:"12px 22px",borderRadius:12,border:"1px solid rgba(201,169,110,0.34)",background:dcSavingDraft?"rgba(26,26,46,0.06)":"linear-gradient(135deg,#1F1A33,#2C2350)",color:dcSavingDraft?textS:accent,fontSize:13.5,fontWeight:700,cursor:dcSavingDraft?"default":"pointer",letterSpacing:0.4,whiteSpace:"nowrap",display:"inline-flex",alignItems:"center",gap:8,lineHeight:1,boxShadow:dcSavingDraft?"none":"0 10px 24px -14px rgba(26,26,46,0.7)"}}>{dcSavingDraft?"Saving…":<><span style={{fontSize:14,lineHeight:1}}>💾</span>Save Draft</>}</button>
                 </div>
               );
             })()}
