@@ -1327,11 +1327,11 @@ export default function StudioEventInfo({ ctx }) {
                   </div>
                 )}
                 <div className="ei-two" style={{marginBottom:18}}>
-                  <div><div style={label}>Guest Name <span style={{color:C.red}}>*</span></div><input value={clientName} onChange={e=>{setClientName(e.target.value);setClientSearch(e.target.value);}} placeholder="Full name" style={S.input}/></div>
+                  <div><div style={label}>Guest Name <span style={{color:C.red}}>*</span></div><input value={clientName} onChange={e=>{setClientName(e.target.value);setClientSearch(e.target.value);}} placeholder="Full name" name="ambria-guest-name" autoComplete="off" data-lpignore="true" data-1p-ignore="true" style={S.input}/></div>
                   <div>
                     <div style={label}>Phone <span style={{color:C.red}}>*</span></div>
                     <input value={clientPhone} onChange={onPhoneChange} inputMode="numeric" autoComplete="tel"
-                      maxLength={10} placeholder="10-digit mobile" style={S.input}/>
+                      maxLength={10} placeholder="10-digit mobile" name="ambria-guest-phone" autoComplete="off" data-lpignore="true" data-1p-ignore="true" style={S.input}/>
                   </div>
                 </div>
                 {/* Guards the ACTIVE deal's name/phone from a silent autosave overwrite — see
@@ -1644,7 +1644,7 @@ export default function StudioEventInfo({ ctx }) {
                   );
                   return <>{repToggle}{lmsBlock}{studioBlock}</>;
                 })()}
-                <div><div style={label}>Bride &amp; Groom Name</div><input value={clientBrideGroom} onChange={e=>setClientBrideGroom(e.target.value)} placeholder="e.g. Rahul & Priya" style={S.input}/></div>
+                <div><div style={label}>Bride &amp; Groom Name</div><input value={clientBrideGroom} onChange={e=>setClientBrideGroom(e.target.value)} placeholder="e.g. Rahul & Priya" name="ambria-bride-groom" autoComplete="off" data-lpignore="true" data-1p-ignore="true" style={S.input}/></div>
               </div>
             </div>
 
