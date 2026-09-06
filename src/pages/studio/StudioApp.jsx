@@ -1410,6 +1410,9 @@ export default function StudioApp() {
     try { fn = parseInt(sessionStorage.getItem("ambria-active-fn"), 10) || 0; } catch { /* */ }
     restoreRef.current = { id, step: st, fn };
   }
+  // Set once the restore attempt has finished, successfully or not. Until then the
+  // pointer below must not be cleared — see the effect that writes it.
+  const restoreSettledRef = useRef(false);
   // True from the very first render whenever there is a deal to bring back. The ledger loads async,
   // so without this the app rendered step 0 — Event Info — for the second or two until restore
   // fired, then jumped to Browse/Build. Gate the step body on it and that flash never happens.
@@ -1420,7 +1423,25 @@ export default function StudioApp() {
     const r = restoreRef.current;
     return !!r?.id;
   });
-  useEffect(() => { try { if (activeClientId) sessionStorage.setItem("ambria-active-client", activeClientId); else sessionStorage.removeItem("ambria-active-client"); } catch { /* storage disabled */ } }, [activeClientId]);
+  // ── WHY THE CLEAR IS GUARDED ──
+  // This mirrors activeClientId into sessionStorage so a refresh knows which deal was
+  // open. The clear half used to be unconditional, and activeClientId is null on EVERY
+  // page load until restore runs — so this effect fired on mount and deleted the very
+  // pointer restore was about to need. One refresh survived it, because restoreRef
+  // snapshots the value during the first render, before any effect. A SECOND did not:
+  // if restore failed once (ledger slow, fetch error, client not yet in the page), the
+  // pointer was already gone and every refresh after that landed on a blank Event Info
+  // with the deal apparently lost. That is what made this bug sticky rather than
+  // occasional — the first failure destroyed the evidence needed to recover.
+  // Now the pointer is only cleared once a restore attempt has actually settled, which
+  // is the point at which a null activeClientId genuinely means "no deal is open"
+  // rather than "the app has not finished starting".
+  useEffect(() => {
+    try {
+      if (activeClientId) sessionStorage.setItem("ambria-active-client", activeClientId);
+      else if (restoreSettledRef.current) sessionStorage.removeItem("ambria-active-client");
+    } catch { /* storage disabled */ }
+  }, [activeClientId]);
   useEffect(() => { try { sessionStorage.setItem("ambria-studio-step", String(step)); } catch { /* */ } }, [step]);
   // Each step/tab swaps the whole page body while the document keeps scrolling — so the browser
   // carries the previous screen's scroll offset over. Continue lives at the bottom of a long
@@ -6669,10 +6690,10 @@ export default function StudioApp() {
   const buildRestoredRef = useRef(false);
   useEffect(() => {
     if (buildRestoredRef.current) return;
-    if (activeClientId) { buildRestoredRef.current = true; setRestoring(false); return; }   // a live deal is already open
+    if (activeClientId) { buildRestoredRef.current = true; restoreSettledRef.current = true; setRestoring(false); return; }   // a live deal is already open
     if (!Array.isArray(clientLedger) || clientLedger.length === 0) return; // ledger not loaded yet
     const savedId = restoreRef.current?.id || null;   // snapshotted at first render — see restoreRef
-    if (!savedId) { buildRestoredRef.current = true; setRestoring(false); return; }
+    if (!savedId) { buildRestoredRef.current = true; restoreSettledRef.current = true; setRestoring(false); return; }
     // Used to also bail out here whenever restoreRef.current?.step === 0 (Event Info), on the theory
     // that Event Info is only ever visited to START a fresh deal. But savedId already answers that:
     // it's only set once a deal is actually active (see the sessionStorage effect that clears
@@ -6683,6 +6704,7 @@ export default function StudioApp() {
     const client = clientLedger.find(c => c.id === savedId);
     const session = client && Array.isArray(client.sessions) ? client.sessions[0] : null;
     buildRestoredRef.current = true;
+    restoreSettledRef.current = true;
     setRestoring(false);
     // Only the client has to exist. This used to bail without a session too, but a deal gets its
     // first auto-session only once something is built — so refreshing on Browse, or on Build before
