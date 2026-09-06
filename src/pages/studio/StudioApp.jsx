@@ -1651,6 +1651,32 @@ export default function StudioApp() {
 
   // ═══ DEAL CHECK REBUILD — Deploy 1 state (§7.9) ═══
   const [dcFullPageOpen, setDcFullPageOpen] = useState(false);
+  // ── ACCOUNT MENU ──
+  // Name, role and sign-out used to sit inline in the bar. They are the widest thing in
+  // the header and answer a question nobody asks twice a day, so they now live behind the
+  // avatar. Dismissal is handled here rather than with a blur handler on the button: blur
+  // fires before the menu's own click lands, so clicking Log out would close the menu and
+  // never run it. mousedown-outside is the pattern that survives that.
+  const [acctMenuOpen, setAcctMenuOpen] = useState(false);
+  const acctRef = useRef(null);
+  useEffect(() => {
+    if (!acctMenuOpen) return;
+    const onDown = (e) => { if (acctRef.current && !acctRef.current.contains(e.target)) setAcctMenuOpen(false); };
+    const onKey = (e) => { if (e.key === "Escape") setAcctMenuOpen(false); };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => { document.removeEventListener("mousedown", onDown); document.removeEventListener("keydown", onKey); };
+  }, [acctMenuOpen]);
+  // Deal Check open is published on <html> so the header can respond to it in CSS —
+  // same mechanism StudioBrowse/StudioBuild already use for data-sb-rail. The header is
+  // rendered above the overlay and has no other way to know. Removed on unmount so a
+  // route change can never leave the bar stuck in its Deal Check state.
+  useEffect(() => {
+    const el = document.documentElement;
+    if (dcFullPageOpen) el.setAttribute("data-dc-open", "1");
+    else el.removeAttribute("data-dc-open");
+    return () => el.removeAttribute("data-dc-open");
+  }, [dcFullPageOpen]);
   const [dcCards, setDcCards] = useState({});
   const [dcZoneState, setDcZoneState] = useState({});
   const [dcKitEdits, setDcKitEdits] = useState({});
@@ -9397,6 +9423,18 @@ export default function StudioApp() {
           -webkit-mask-image: linear-gradient(90deg, rgba(0,0,0,0) 0, rgba(0,0,0,1) 160px);
           mask-image: linear-gradient(90deg, rgba(0,0,0,0) 0, rgba(0,0,0,1) 160px); }
 
+        /* ── WHO YOU ARE IS NOT NEEDED WHILE DEAL CHECK IS OPEN ──
+           On a tablet the three header zones are already fighting for the row, and the
+           account cluster (avatar + name + role) is the widest thing in the bar that
+           answers a question nobody asks mid-deal. Deal Check states the client and the
+           last-saved user on its own header, so this is duplicated there anyway.
+           Hidden only while the overlay is up and only under 1440px — on a desktop there
+           is room, and on every other screen you still need to see who is signed in. */
+        @media (max-width: 1440px) {
+          :root[data-dc-open="1"] .sa-account { display: none !important; }
+        }
+        .sa-acct-item{transition:background .13s ease}
+        .sa-acct-item:hover{background:rgba(255,255,255,0.07)}
         @media (max-width: 1180px) {
           .sa-header { padding: 10px 14px !important; gap: 8px !important; }
           .sa-nav-left { gap: 10px !important; }
@@ -9619,15 +9657,23 @@ export default function StudioApp() {
                   one in the row. The only clickable thing here is the sign-out beside it.
                   This block is a single row now — the deal line that used to stack under it lives
                   below the bar, which is what gave the zone room for the avatar. */}
-              <div style={{ display: "flex", alignItems: "center", gap: 9, minWidth: 0 }}>
-                <div style={{ position: "relative", flexShrink: 0 }}>
-                  <div aria-hidden="true" style={{ width: 34, height: 34, borderRadius: "50%",
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    background: "linear-gradient(150deg,#2A1F52,#12101F)", border: `1px solid ${accent}59`,
+              {/* ── WHO YOU ARE, BEHIND THE AVATAR ──
+                  The name, the role badge and the sign-out button used to sit inline. Three
+                  elements, the widest group in the bar, restating something you knew when you
+                  signed in — and on a tablet they were the reason the header ran out of room.
+                  The avatar alone is 34px and still identifies the account; everything else is
+                  one tap away. The save-status dot stays ON the avatar, because that is the one
+                  thing here worth seeing without asking for it. */}
+              <div className="sa-account" ref={acctRef} style={{ position: "relative", flexShrink: 0 }}>
+                <button onClick={() => setAcctMenuOpen(o => !o)}
+                  title={`${authUser.name}${isAdmin ? " · Admin" : ""} — account`}
+                  aria-haspopup="menu" aria-expanded={acctMenuOpen} aria-label="Account menu"
+                  style={{ position: "relative", width: 34, height: 34, borderRadius: "50%", padding: 0,
+                    display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
+                    background: "linear-gradient(150deg,#2A1F52,#12101F)", border: `1px solid ${accent}${acctMenuOpen ? "AA" : "59"}`,
                     color: accent, fontSize: 14, fontWeight: 700, letterSpacing: 0.2,
                     boxShadow: "inset 0 1px 0 rgba(255,255,255,0.10)" }}>
-                    {(authUser.name || "?").trim().charAt(0).toUpperCase() || "?"}
-                  </div>
+                  {(authUser.name || "?").trim().charAt(0).toUpperCase() || "?"}
                   {/* A status dot that means something. The reference had a green "online" pip, but
                       a light that is always on is decoration dressed as data — everyone is online,
                       they are looking at the page. This reads saveError instead: green while writes
@@ -9636,15 +9682,30 @@ export default function StudioApp() {
                   <span title={saveError ? "Changes are not saving — see the banner above" : "Saving normally"}
                     style={{ position: "absolute", right: -1, bottom: -1, width: 10, height: 10, borderRadius: "50%",
                       background: saveError ? "#EF4444" : "#22C55E", border: "2px solid #12101F" }} />
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: NAV_FS, fontWeight: 600,
-                  color: "#fff", lineHeight: 1.15, whiteSpace: "nowrap" }}>
-                  {authUser.name}
-                  {isAdmin && <span style={{ ...NAV_META, color: accent }}>Admin</span>}
-                  {!isAdmin && authUser.role === "manager" && <span style={{ ...NAV_META, color: "#38BDF8" }}>Mgr</span>}
-                </div>
+                </button>
+                {acctMenuOpen && (
+                  <div role="menu" style={{ position: "absolute", top: "calc(100% + 9px)", right: 0, zIndex: 120,
+                    minWidth: 194, background: "#15122A", border: `1px solid ${accent}33`, borderRadius: 12,
+                    boxShadow: "0 18px 44px -14px rgba(0,0,0,0.8)", overflow: "hidden" }}>
+                    <div style={{ padding: "11px 13px", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", whiteSpace: "nowrap",
+                        overflow: "hidden", textOverflow: "ellipsis" }}>{authUser.name}</div>
+                      <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.8, textTransform: "uppercase", marginTop: 3,
+                        color: isAdmin ? accent : (authUser.role === "manager" ? "#38BDF8" : "rgba(255,255,255,0.55)") }}>
+                        {isAdmin ? "Admin" : (authUser.role === "manager" ? "Manager" : "Sales")}
+                      </div>
+                      {saveError && <div style={{ fontSize: 10.5, color: "#EF4444", fontWeight: 600, marginTop: 6 }}>Changes are not saving</div>}
+                    </div>
+                    <button role="menuitem" className="sa-acct-item"
+                      onClick={() => { setAcctMenuOpen(false); doLogout(); }}
+                      style={{ width: "100%", display: "flex", alignItems: "center", gap: 9, padding: "10px 13px",
+                        background: "transparent", border: "none", color: "#fff", fontSize: 12.5, fontWeight: 600,
+                        cursor: "pointer", textAlign: "left" }}>
+                      <IconLogout size={14} />Log out
+                    </button>
+                  </div>
+                )}
               </div>
-              <button onClick={doLogout} title="Log out" aria-label="Log out" style={NAV_ICON_BTN}><IconLogout size={NAV_ICON} /></button>
             </>}
           </div>
         </div>
