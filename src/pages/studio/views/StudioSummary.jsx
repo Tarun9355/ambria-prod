@@ -281,11 +281,14 @@ export default function StudioSummary({ ctx }) {
   const dvIsBooked = activeClient?.status === "booked";
   const dvHasNegotiated = Number(activeClient?.negotiatedAmount) > 0;
   useEffect(() => {
-    if (dvIsBooked && dvHasNegotiated && activeClient?.bookedSystemTotal == null && activeClientId) {
+    // Gated on pricingReady — the same guard totalCost()/grandTotal use before rate tables are in.
+    // Healing off a total computed over seed defaults would freeze a WRONG baseline permanently
+    // (the null guard only lets this run once), silently eating part of every real change after it.
+    if (pricingReady && dvIsBooked && dvHasNegotiated && activeClient?.bookedSystemTotal == null && activeClientId) {
       saveClientLedger(clientLedger.map(c => c.id === activeClientId ? { ...c, bookedSystemTotal: eventGrandTotal } : c));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeClientId, dvIsBooked, dvHasNegotiated, activeClient?.bookedSystemTotal]);
+  }, [activeClientId, pricingReady, dvIsBooked, dvHasNegotiated, activeClient?.bookedSystemTotal]);
   const pendingDelta = (dvIsBooked && dvHasNegotiated && activeClient?.bookedSystemTotal != null)
     ? Math.round(eventGrandTotal - activeClient.bookedSystemTotal) : 0;
   const applyPendingDealValue = () => {
@@ -293,6 +296,16 @@ export default function StudioSummary({ ctx }) {
     saveClientLedger(clientLedger.map(c => c.id === activeClientId ? { ...c, negotiatedAmount: newNegotiated, bookedSystemTotal: eventGrandTotal } : c));
     syncDealValueNow?.({ amount: Math.round(newNegotiated), pending: 0 });
     showMsg?.("Deal value updated to " + fmt(newNegotiated), "green");
+  };
+  // Escape hatch for when the pending figure itself is not trustworthy — most commonly a deal
+  // booked before this tracking existed, whose baseline got healed off whatever the build happened
+  // to total the first time Summary was opened post-rollout (not the true number at booking).
+  // Re-points the baseline at today's live total with ZERO effect on negotiatedAmount — unlike
+  // Apply, this never changes what the client owes, only where drift starts being measured from.
+  const resetDealValueTracking = () => {
+    saveClientLedger(clientLedger.map(c => c.id === activeClientId ? { ...c, bookedSystemTotal: eventGrandTotal } : c));
+    syncDealValueNow?.({ amount: Math.round(Number(activeClient?.negotiatedAmount) || 0), pending: 0 });
+    showMsg?.("Tracking reset to the current build — deal value unchanged", "green");
   };
 
   // ═══ THE DECK THIS DEAL ALREADY HAS ═══
@@ -2580,13 +2593,27 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
           {isBooked && pendingDelta !== 0 && (
             <div style={{marginTop:11,padding:"9px 14px",borderRadius:10,background:"rgba(245,158,11,0.16)",border:"1px solid rgba(245,158,11,0.4)",display:"inline-block"}}>
               <div style={{fontSize:11.5,color:"#fcd34d",fontWeight:700}}>⚠ Build changed since booking: {pendingDelta > 0 ? "+" : ""}{fmt(pendingDelta)}</div>
-              <button
-                type="button"
-                onClick={applyPendingDealValue}
-                style={{marginTop:7,fontSize:11,fontWeight:700,padding:"6px 14px",borderRadius:8,background:"#f59e0b",color:"#1a1208",border:"none",cursor:"pointer"}}
-              >
-                Apply to deal value
-              </button>
+              <div style={{marginTop:7,display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+                <button
+                  type="button"
+                  onClick={applyPendingDealValue}
+                  style={{fontSize:11,fontWeight:700,padding:"6px 14px",borderRadius:8,background:"#f59e0b",color:"#1a1208",border:"none",cursor:"pointer"}}
+                >
+                  Apply to deal value
+                </button>
+                {/* For when this figure isn't a real change to bill/discount for — e.g. an already-
+                    booked deal whose tracking only started from whatever the build happened to total
+                    the first time this shipped, not the true number at booking. Only moves where
+                    drift is measured FROM; never touches what the client is actually being charged. */}
+                <button
+                  type="button"
+                  onClick={resetDealValueTracking}
+                  title="Re-points tracking at today's build total. Does not change the deal value."
+                  style={{fontSize:10.5,fontWeight:600,padding:"6px 12px",borderRadius:8,background:"transparent",color:"#fcd34d",border:"1px solid rgba(252,211,77,0.4)",cursor:"pointer"}}
+                >
+                  Reset tracking (no value change)
+                </button>
+              </div>
             </div>
           )}
         </> : <>
