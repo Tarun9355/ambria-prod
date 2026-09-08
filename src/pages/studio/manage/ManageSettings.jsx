@@ -4,6 +4,7 @@ import { DEFAULT_FILTER_PRIORITY } from "../../../lib/studio/keys";
 import { supabase } from "../../../lib/supabase";
 import { findZoneForArea } from "../../../lib/studio/pricing";
 import { makeDeleteClient, makeDeleteClients } from "../../../lib/studio/clientDelete";
+import { clientLastTouch, clientHasBuild } from "../../../lib/studio/sessionData";
 
 // getTaxLabel — module-scope helper in the reference (App_latest.jsx:1267). Local here.
 const getTaxLabel = (k) => TAX_LABELS[k] || k.replace(/_/g, " ").replace(/([A-Z])/g, " $1").replace(/\s+/g, " ").replace(/^./, s => s.toUpperCase()).trim();
@@ -395,6 +396,16 @@ export default function ManageSettings({ ctx }) {
             },
           );
         };
+        // Same name + same number is the same guest — the key the Event Info suggestion list
+        // already dedupes on. Built from the whole ledger, not the filtered view, so a guest's
+        // records rank together even when a filter is hiding one of them.
+        const guestKey = (c) => `${String(c?.name || "").trim().toLowerCase()}|${String(c?.phone || "").replace(/\D/g, "").slice(-10)}`;
+        const guestTouchMap = new Map();
+        for (const c of clientLedger) {
+          const k = guestKey(c); const t = clientLastTouch(c);
+          if (t > (guestTouchMap.get(k) || 0)) guestTouchMap.set(k, t);
+        }
+        const guestTouch = (c) => guestTouchMap.get(guestKey(c)) || 0;
         const allSalespeople = [...new Set(clientLedger.map(c => c.createdBy || "—").filter(Boolean))];
         const canSeeAll = isAdmin || hasPerm("canManageTeam");
         const searchLc = clientSearch.toLowerCase().trim();
@@ -406,7 +417,27 @@ export default function ManageSettings({ ctx }) {
           if (ctFilterTo && c.eventDate && c.eventDate > ctFilterTo) return false;
           if (searchLc && !(c.name||"").toLowerCase().includes(searchLc) && !(c.phone||"").includes(searchLc)) return false;
           return true;
-        }).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+        // ── LAST WORKED, NOT CREATED ──
+        // Sorting by createdAt put the newest RECORD on top, which for a duplicated guest is the
+        // empty one: the copy someone made by mistake yesterday outranks the copy holding a month
+        // of work. That is what people opened first, saw no sessions in, and read as "my build is
+        // gone" — and then deleted rows by hand to get rid of. Ordering by actual work puts the
+        // record with the history on top and the empty twin below it, where it is harmless.
+        // Sorted in three keys, because a flat "most recent first" gets the duplicate case wrong.
+        // The empty Pushpanjali copy was CREATED at 11:10, twenty minutes after its twin was last
+        // SAVED at 10:49 — so on recency alone the empty one legitimately wins and lands on top,
+        // which is the whole complaint. "Holds work" cannot be the primary key either: that would
+        // sort every session-less record to the bottom and bury a lead somebody just created.
+        //   1. the guest's OWN most recent work — keeps a guest's records adjacent and puts the
+        //      guest where their latest activity says they belong
+        //   2. holds work — so within one guest's records, the one with the build is on top
+        //   3. that record's own last-touch
+        // A guest with a single record is a group of one, so this is identical to sorting by
+        // recency for the 96 clients that are not duplicated. Three keys, all comparing numbers,
+        // so it stays a valid total order — a per-pair rule would not be.
+        }).sort((a, b) => (guestTouch(b) - guestTouch(a))
+                       || ((clientHasBuild(b) ? 1 : 0) - (clientHasBuild(a) ? 1 : 0))
+                       || (clientLastTouch(b) - clientLastTouch(a)));
         return <div style={{maxWidth:1100}}>
           <div style={{fontSize:16,fontWeight:700,color:accent,marginBottom:4}}>📋 Client Tracker</div>
           <div style={{fontSize:11,color:textS,marginBottom:14}}>All clients from guest details form. {clientLedger.length} total{filtered.length!==clientLedger.length?` · ${filtered.length} shown`:""}</div>
@@ -450,13 +481,23 @@ export default function ManageSettings({ ctx }) {
                   onChange={()=>setCtSel(all?[]:visibleIds)}
                   title={all?"Clear selection":"Select all shown"} style={{cursor:"pointer"}}/></div>;
               })()}
-              <div>Client</div><div>Phone</div><div>Date</div><div>Venue</div><div>Function</div><div>Shift</div><div>Salesperson</div><div>Status</div><div>Created</div><div>Actions</div>
+              <div>Client</div><div>Phone</div><div>Date</div><div>Venue</div><div>Function</div><div>Shift</div><div>Salesperson</div><div>Status</div><div>Last worked</div><div>Actions</div>
             </div>
             {filtered.map(c=>{
               const ST = c.status==="booked" ? {bg:"rgba(16,185,129,0.15)",fg:"#10B981",t:"🟢 Booked"}
                        : c.status==="dead"   ? {bg:"rgba(239,68,68,0.14)", fg:"#EF4444",t:"🔴 Dead"}
                        :                       {bg:"rgba(245,158,11,0.15)",fg:"#F59E0B",t:"🟡 Ongoing"};
-              return <div key={c.id}>
+              // ── SAY WHICH ROW HOLDS THE WORK ──
+              // Two rows for one guest looked identical here, so the only way to find out which
+              // carried the build was to expand each in turn — or delete one and see. The count and
+              // the latest figure go on the row itself, and a record with nothing in it is greyed
+              // rather than hidden: an empty duplicate you can SEE is empty needs no cleanup.
+              // 10 is SESSION_KEEP, the read cap in rowsToSessions, so it means "10 or more".
+              const sessCount = c.sessions?.length || 0;
+              const sessTotal = c.sessions?.find(s => Number(s?.total) > 0)?.total || 0;
+              const isEmpty = sessCount === 0;
+              const touched = clientLastTouch(c);
+              return <div key={c.id} style={{opacity:isEmpty?0.62:1}}>
               <div onClick={()=>{setCtExpandedId(ctExpandedId===c.id?null:c.id);}} style={{display:"grid",gridTemplateColumns:`${isAdmin?"34px ":""}1.7fr 1fr 0.8fr 1fr 0.85fr 0.6fr 1fr 0.75fr 0.75fr 1fr`,gap:0,padding:"10px 14px",borderTop:`1px solid ${border}`,cursor:"pointer",background:ctSel.includes(c.id)?"rgba(225,29,72,0.07)":ctExpandedId===c.id?(isDark?"rgba(201,169,110,0.05)":"#FFFDF7"):"transparent",transition:"background 0.15s"}}>
                 {/* stopPropagation, or ticking a row also expands it. */}
                 {isAdmin&&<div onClick={e=>e.stopPropagation()}>
@@ -464,7 +505,15 @@ export default function ManageSettings({ ctx }) {
                     onChange={()=>setCtSel(s=>s.includes(c.id)?s.filter(x=>x!==c.id):[...s,c.id])}
                     title={`Select ${c.name}`} style={{cursor:"pointer"}}/>
                 </div>}
-                <div style={{fontSize:13,fontWeight:600,color:textP}}>{c.name}{c.brideGroom&&<div style={{fontSize:10,color:textS}}>💑 {c.brideGroom}</div>}</div>
+                <div style={{fontSize:13,fontWeight:600,color:textP}}>
+                  <span style={{display:"inline-flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                    <span>{c.name}</span>
+                    {isEmpty
+                      ? <span title="No build saved on this record — if the guest has work, it is on another row" style={{fontSize:9,fontWeight:700,padding:"1px 6px",borderRadius:8,background:"rgba(107,114,128,0.14)",color:textS,whiteSpace:"nowrap"}}>no build</span>
+                      : <span title={`${sessCount}${sessCount>=10?"+":""} saved session${sessCount===1?"":"s"}`} style={{fontSize:9,fontWeight:700,padding:"1px 6px",borderRadius:8,background:"rgba(16,185,129,0.14)",color:"#10B981",whiteSpace:"nowrap"}}>{sessCount}{sessCount>=10?"+":""} · {sessTotal?fmt(sessTotal):"₹0"}</span>}
+                  </span>
+                  {c.brideGroom&&<div style={{fontSize:10,color:textS}}>💑 {c.brideGroom}</div>}
+                </div>
                 <div style={{fontSize:12,color:textS}}>{c.phone||"—"}</div>
                 <div style={{fontSize:11,color:textP}}>{c.eventDate?new Date(c.eventDate+"T00:00:00").toLocaleDateString("en-IN",{day:"2-digit",month:"short"}):"—"}</div>
                 <div style={{fontSize:11,color:textP}}>{c.venue||"—"}</div>
@@ -472,7 +521,7 @@ export default function ManageSettings({ ctx }) {
                 <div style={{fontSize:11,color:textS}}>{c.shift||"—"}</div>
                 <div style={{fontSize:11,color:textS}}>{c.createdBy||"—"}</div>
                 <div><span style={{fontSize:10,padding:"2px 8px",borderRadius:8,fontWeight:600,background:ST.bg,color:ST.fg,whiteSpace:"nowrap"}}>{ST.t}</span></div>
-                <div style={{fontSize:10,color:textS}}>{c.createdAt?new Date(c.createdAt).toLocaleDateString("en-IN",{day:"2-digit",month:"short"}):"—"}</div>
+                <div style={{fontSize:10,color:textS}} title={touched?`Last worked ${new Date(touched).toLocaleString("en-IN")}`:undefined}>{touched?new Date(touched).toLocaleDateString("en-IN",{day:"2-digit",month:"short"}):"—"}</div>
                 <div onClick={e=>e.stopPropagation()} style={{display:"flex",gap:4,alignItems:"center"}}>
                   {c.status==="booked"
                     ? <span title="Booked deals are changed from the deal itself, not here." style={{fontSize:10,color:textS}}>—</span>

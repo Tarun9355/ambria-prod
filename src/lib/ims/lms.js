@@ -291,6 +291,15 @@ function lmsContractToLead(c, source = "venue") {
     dept: c.dept,
     entryNo: c.entryNo,
     priority: c.priority || "",
+    // What the lead is worth, so Studio can show it before anyone loads the lead. Of the money
+    // fields normalizeLmsRow reads, only totalAmt and balance survive the sync into the JSONB
+    // blob — netAmt/advanceCash/taxAmt are never written, so reading them here would silently
+    // render blank. `balance` is deliberately NOT carried: collection is LMS's business, and an
+    // outstanding figure on a quoting screen reads as part of the quote.
+    // Enquiries in lms_decor_leads DO carry this — #01414 Kanishk is a decor-lead worth
+    // ₹1,00,000 — so it is not a contracts-only field. Some rows are simply uncosted and sit at
+    // 0, which is why the caller hides the figure rather than printing ₹0.
+    totalAmt: Number(c.totalAmt) || 0,
     // Who entered this in LMS. The edge function's normalizeRow reads fisc_entryby/dhc_decor_entryby
     // for contracts and normalizeLeadRow reads dh_decor_entryby for decor leads (confirmed against a
     // live sample — it was just never wired up before), so all three sources populate this.
@@ -319,6 +328,10 @@ function lmsContractToLead(c, source = "venue") {
         shift: f.session || "",
         // Was dropped here entirely, so the guest count LMS already holds never reached the form.
         pax: f.pax || 0,
+        // Per-function decor value. The IMS Calendar already shows this as "Decor" alongside the
+        // contract "Total" (CalendarTab.jsx), so Studio reads the same field rather than a second
+        // interpretation of what a lead is worth.
+        decorLumpsum: Number(f.decorLumpsum) || 0,
       }))
       .sort((a, b) => (a.fnDate || "").localeCompare(b.fnDate || "")),
   };

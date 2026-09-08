@@ -10,6 +10,54 @@
 // what "has data" means, and so it can be tested directly.
 
 /** One function's snapshot. */
+/**
+ * When a client was last actually WORKED ON, as a timestamp.
+ *
+ * Deliberately not `createdAt`. The ledger can hold several records for one guest, and the
+ * copy created most recently is routinely the ABANDONED one: a salesperson re-enters a deal
+ * with the date typed a day out, gets a fresh empty record, and because it is newer it sorts
+ * above the record carrying the real build. That is how "Pushpanjali STD" came to list twice
+ * on 3 Sept 2026 — the empty 13 Nov copy on top, the 12 Nov one holding ten sessions and
+ * ₹5,62,529 underneath — and why the salesperson concluded their work had been lost.
+ *
+ * `sessions[0]` is the newest session: rowsToSessions sorts newest-first. The other fields are
+ * fallbacks for a client that has no sessions yet, so a brand-new record still sorts sensibly.
+ *
+ * Shared by the Event Info suggestion list and the Client Tracker so the two can never pick a
+ * different winner for the same pair of duplicates.
+ */
+export function clientLastTouch(c) {
+  return Math.max(
+    Number(c?.sessions?.[0]?.savedAt) || 0,
+    Number(c?.lastSavedAt) || 0,
+    Number(c?.lastContactAt) || 0,
+    Number(c?.createdAt) || 0,
+  );
+}
+
+/** Does this ledger record actually hold saved work? */
+export function clientHasBuild(c) {
+  return (c?.sessions?.length || 0) > 0;
+}
+
+/**
+ * Which of two records for the SAME guest is the one to use.
+ *
+ * A record holding sessions always beats one holding none. Timestamps alone cannot decide this:
+ * the empty "Pushpanjali STD" copy was CREATED on 3 Sept at roughly the same minute its twin was
+ * last SAVED (10:49), so the two tie on last-touch and whichever happened to sit earlier in the
+ * ledger array won — by luck, not by merit. "Has work" is the question being asked, so ask it
+ * first, and use recency only to separate records that are equal on it.
+ *
+ * For choosing between duplicates of one guest only. The Client Tracker deliberately does NOT
+ * order its whole list this way: it would bury a lead somebody had just created, which has no
+ * sessions yet for entirely legitimate reasons.
+ */
+export function compareClientsByWork(a, b) {
+  const work = (clientHasBuild(b) ? 1 : 0) - (clientHasBuild(a) ? 1 : 0);
+  return work !== 0 ? work : clientLastTouch(b) - clientLastTouch(a);
+}
+
 export function fnSnapHasData(snap) {
   if (!snap || typeof snap !== "object") return false;
   if (Object.keys(snap.elSelectedPhoto || {}).length > 0) return true;

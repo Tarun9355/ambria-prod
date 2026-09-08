@@ -10,7 +10,7 @@
 //
 // Persistence: the reference's Redis kvGet/reliableSave port verbatim through
 // the Supabase `settings`-table shim (src/lib/ims/kv).
-import { Fragment, useState, useEffect, useMemo, useCallback, useRef, useTransition } from "react";
+import { Fragment, useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef, useTransition } from "react";
 import { useAuth } from "../../lib/AuthContext";
 import AppSwitcher from "../../components/AppSwitcher.jsx";
 import { IconPalette, IconSliders, IconBook, IconGear, IconClipboardCheck, IconLogout, IconCheck, IconLock } from "../../components/icons.jsx";
@@ -505,7 +505,20 @@ function lookupFloralMapping(rcCode, rcName, hardPropMap) {
   if (/couple\s*couch|couch\s*flow/.test(n)) return map["F11"] || FLORAL_HARDPROP_DEFAULT["F11"];
   if (/centerp|round\s*table/.test(n)) return map["F09"] || FLORAL_HARDPROP_DEFAULT["F09"];
   if (/flower\s*pot|flower\s*planter/.test(n)) return map["F05"] || FLORAL_HARDPROP_DEFAULT["F05"];
-  if (/floral\s*reet|garland|petals?|flower\s*garden/.test(n)) return [];
+  // Returning [] means "this floral has NO hard prop, so there is nothing to reserve" — and
+  // getCardSpecsForZone drops those elements outright, which removes them from availability
+  // checks, Calendar Conflicts, Cross-Function Reuse and Deal Check's own card list all at once.
+  // That is a heavy claim to make from a NAME SUBSTRING, and "flower\s*garden" made it wrongly:
+  // "Flower Garden RFT" is a real costed item — 35 RFT in two functions in the DC-16 test, the
+  // highest-value line in it — and it vanished from Deal Check entirely, so it was never flagged
+  // short and never earned its reuse saving (BUG-12).
+  // Reet, garland and petals stay: those genuinely are loose flowers with no prop behind them.
+  // A "flower garden" is an area/structure, and whether it has something physical to reserve is a
+  // question IMS matching answers per item, not something its name settles. It now falls through
+  // to the ordinary element card below — the same treatment this function already gives an
+  // unrecognised floral, and for the same stated reason: appearing is recoverable, being dropped
+  // silently is not.
+  if (/floral\s*reet|garland|petals?/.test(n)) return [];
   return null;
 }
 
@@ -608,9 +621,10 @@ function getCardSpecsForZone(zoneElems, zoneKey, photoUrl, hardPropMap, rcItems,
     const cat = String(rc?.cat || "").toLowerCase();
     const isFloral = cat === "florals" || /^F\d+$/.test(rcCode);
     // ── null and [] ARE NOT THE SAME ANSWER ──
-    // lookupFloralMapping returns [] for a floral it KNOWS has no hard prop (reet, garland, petals,
-    // flower garden — those really are just flowers, and there is nothing to reserve). It returns
-    // null when it does not recognise the floral at all.
+    // lookupFloralMapping returns [] for a floral it KNOWS has no hard prop (reet, garland, petals
+    // — those really are just flowers, and there is nothing to reserve). It returns null when it
+    // does not recognise the floral at all. "flower garden" used to be on that [] list and should
+    // not have been — see BUG-12 in lookupFloralMapping.
     // Both used to be dropped by the same guard, so any floral outside the six mapped names vanished
     // from Deal Check entirely and silently — "Wisteria Hanging SQFT 2.5ft" among them. Unknown is
     // not the same claim as "definitely has no prop", and guessing the stricter one loses work.
@@ -1396,6 +1410,9 @@ export default function StudioApp() {
     try { fn = parseInt(sessionStorage.getItem("ambria-active-fn"), 10) || 0; } catch { /* */ }
     restoreRef.current = { id, step: st, fn };
   }
+  // Set once the restore attempt has finished, successfully or not. Until then the
+  // pointer below must not be cleared — see the effect that writes it.
+  const restoreSettledRef = useRef(false);
   // True from the very first render whenever there is a deal to bring back. The ledger loads async,
   // so without this the app rendered step 0 — Event Info — for the second or two until restore
   // fired, then jumped to Browse/Build. Gate the step body on it and that flash never happens.
@@ -1406,7 +1423,25 @@ export default function StudioApp() {
     const r = restoreRef.current;
     return !!r?.id;
   });
-  useEffect(() => { try { if (activeClientId) sessionStorage.setItem("ambria-active-client", activeClientId); else sessionStorage.removeItem("ambria-active-client"); } catch { /* storage disabled */ } }, [activeClientId]);
+  // ── WHY THE CLEAR IS GUARDED ──
+  // This mirrors activeClientId into sessionStorage so a refresh knows which deal was
+  // open. The clear half used to be unconditional, and activeClientId is null on EVERY
+  // page load until restore runs — so this effect fired on mount and deleted the very
+  // pointer restore was about to need. One refresh survived it, because restoreRef
+  // snapshots the value during the first render, before any effect. A SECOND did not:
+  // if restore failed once (ledger slow, fetch error, client not yet in the page), the
+  // pointer was already gone and every refresh after that landed on a blank Event Info
+  // with the deal apparently lost. That is what made this bug sticky rather than
+  // occasional — the first failure destroyed the evidence needed to recover.
+  // Now the pointer is only cleared once a restore attempt has actually settled, which
+  // is the point at which a null activeClientId genuinely means "no deal is open"
+  // rather than "the app has not finished starting".
+  useEffect(() => {
+    try {
+      if (activeClientId) sessionStorage.setItem("ambria-active-client", activeClientId);
+      else if (restoreSettledRef.current) sessionStorage.removeItem("ambria-active-client");
+    } catch { /* storage disabled */ }
+  }, [activeClientId]);
   useEffect(() => { try { sessionStorage.setItem("ambria-studio-step", String(step)); } catch { /* */ } }, [step]);
   // Each step/tab swaps the whole page body while the document keeps scrolling — so the browser
   // carries the previous screen's scroll offset over. Continue lives at the bottom of a long
@@ -1616,6 +1651,32 @@ export default function StudioApp() {
 
   // ═══ DEAL CHECK REBUILD — Deploy 1 state (§7.9) ═══
   const [dcFullPageOpen, setDcFullPageOpen] = useState(false);
+  // ── ACCOUNT MENU ──
+  // Name, role and sign-out used to sit inline in the bar. They are the widest thing in
+  // the header and answer a question nobody asks twice a day, so they now live behind the
+  // avatar. Dismissal is handled here rather than with a blur handler on the button: blur
+  // fires before the menu's own click lands, so clicking Log out would close the menu and
+  // never run it. mousedown-outside is the pattern that survives that.
+  const [acctMenuOpen, setAcctMenuOpen] = useState(false);
+  const acctRef = useRef(null);
+  useEffect(() => {
+    if (!acctMenuOpen) return;
+    const onDown = (e) => { if (acctRef.current && !acctRef.current.contains(e.target)) setAcctMenuOpen(false); };
+    const onKey = (e) => { if (e.key === "Escape") setAcctMenuOpen(false); };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => { document.removeEventListener("mousedown", onDown); document.removeEventListener("keydown", onKey); };
+  }, [acctMenuOpen]);
+  // Deal Check open is published on <html> so the header can respond to it in CSS —
+  // same mechanism StudioBrowse/StudioBuild already use for data-sb-rail. The header is
+  // rendered above the overlay and has no other way to know. Removed on unmount so a
+  // route change can never leave the bar stuck in its Deal Check state.
+  useEffect(() => {
+    const el = document.documentElement;
+    if (dcFullPageOpen) el.setAttribute("data-dc-open", "1");
+    else el.removeAttribute("data-dc-open");
+    return () => el.removeAttribute("data-dc-open");
+  }, [dcFullPageOpen]);
   const [dcCards, setDcCards] = useState({});
   const [dcZoneState, setDcZoneState] = useState({});
   const [dcKitEdits, setDcKitEdits] = useState({});
@@ -2012,7 +2073,10 @@ export default function StudioApp() {
   const sessionBoundaryRef = useRef(false);
   useEffect(() => { activeFnIdxRef.current = activeFnIdx; switchingRef.current = false; }, [activeFnIdx]);
   useEffect(() => { fnBuildsRef.current = fnBuilds; }, [fnBuilds]);
-  useEffect(() => { snapshotFnRef.current = snapshotBuildState; });
+  // Layout for the same reason as saveSessionRef below — switchActiveFn calls this one
+  // SYNCHRONOUSLY on the click and files the result as the function's build, so it should be
+  // reading the latest commit rather than whatever was current before the last paint.
+  useLayoutEffect(() => { snapshotFnRef.current = snapshotBuildState; });
 
   // Rebuilding a function's whole canvas is heavy enough to block for a moment. Marked as a
   // transition so React keeps the page interactive while it renders and tells us it's working
@@ -2054,7 +2118,23 @@ export default function StudioApp() {
   // above has already cleared the flag long before this fires, so this changes nothing.
   useEffect(() => {
     if (!fnBusy) return;
-    const t = setTimeout(() => { fnBusyStartRef.current = 0; setFnBusy(false); }, 3000);
+    const t = setTimeout(() => {
+      fnBusyStartRef.current = 0;
+      setFnBusy(false);
+      // ── AND RELEASE THE AUTOSAVE ── (BUG-13)
+      // This backstop was built for fnBusy alone, but switchingRef is set true by switchActiveFn on
+      // the same click and released ONLY by the effect keyed on activeFnIdx — the very commit that,
+      // in the case this backstop exists for, never arrives. So the UI recovered after three
+      // seconds while switchingRef stayed true for the rest of the session, and it gates BOTH
+      // savers: autoSaveBuild returns immediately on it, and the flush AppSwitcher awaits before
+      // navigating to IMS does nothing. Every edit after that point was silently never written —
+      // add a Production/Buying item, go to IMS, come back, and it is gone, because no save was
+      // ever attempted. Not a lost race: no save at all.
+      // Released here on exactly the reasoning the fnBusy release already uses — a switch that has
+      // not landed in three seconds is not one that is still working. In the normal case the
+      // activeFnIdx effect cleared it long before this fires, so this changes nothing.
+      switchingRef.current = false;
+    }, 3000);
     return () => clearTimeout(t);
   }, [fnBusy]);
   const isFnSwitching = fnBusy || isPendingFnRender;
@@ -4221,7 +4301,8 @@ export default function StudioApp() {
     }
     return all;
   }, [fn, clientDate, venue, clientShift, clientPax, clientPalette, zoneElements, zoneConfig, enabledEls, elSelectedPhoto, itemQty, itemGrades, activeZones, customZones, elTiers, floralRatio, customGensets, customTripRate, elNotes, floralOverrides, extraFunctions, fnBuilds, activeFnIdx]);
-  useEffect(() => { collectAllFunctionDataRef.current = collectAllFunctionData; });
+  // Layout, same reasoning as snapshotFnRef / saveSessionRef — read from synchronous paths.
+  useLayoutEffect(() => { collectAllFunctionDataRef.current = collectAllFunctionData; });
 
   const calcFunctionCost = useCallback((fnData) => {
     if (!fnData) return { decor: 0, transport: 0, grand: 0 };
@@ -4636,6 +4717,7 @@ export default function StudioApp() {
       const t = fElTiers[k] || "simple";
       const ze = fZoneElements[k];
       let ic = 0, itemCount = 0;
+      const elemLines = [];   // per-element lineCost, index-aligned with `ze` — see BUG-10 below
       if (ze && ze.length > 0) {
         (ze || []).forEach(el2 => {
           // `priceInfo.rc` is only ever set for a legacy Rate-Card name match — every IMS
@@ -4649,6 +4731,16 @@ export default function StudioApp() {
           // oversubscribed, for whichever function's zone this is, not just the active tab's.
           const priceInfo = getElPriceForFn(el2, fZoneConfig[k], fFloralRatio, true, fVenue, fBlocksForDate);
           ic += priceInfo.lineCost;
+          // ── THE LINE ITEMS MUST BE THE SAME NUMBERS THAT MADE THE TOTAL ── (BUG-10)
+          // Summary's accordion used to re-price each element itself with checkAvail=false and no
+          // blocksForDate, so an oversubscribed item showed its full undiscounted rental on the
+          // line while `ic` above had already billed the short portion at cost% — "Entry & Passage"
+          // headed ₹92,554 over eight lines summing to ₹95,554, the ₹3,000 gap being one
+          // Paper globe (S) ×40 whose IMS `cost` is unset and therefore contributed ₹0.
+          // Kept per element rather than re-derived so the two can never diverge again: there is
+          // now exactly one getElPriceForFn call per element per function, and the display reads
+          // its result instead of guessing at the arguments.
+          elemLines.push(priceInfo.lineCost);
           itemCount += (el2.qty || 0);
         });
       }
@@ -4658,7 +4750,7 @@ export default function StudioApp() {
         .reduce((s, c) => s + (c.manualPrice || c.refPrice || 0) * (Number(c.qty) || 1), 0);
       return { k, label: el.label, icon: el.icon, tier: t, ic, zl, customCost, tot: ic + zl.total + customCost, itemCount,
         note: "", selPh: fElSelectedPhoto[k] || null, zc: fZoneConfig[k] || null,
-        useElementCard: !!ze, elems: ze || [] };
+        useElementCard: !!ze, elems: ze || [], elemLines };
     });
     let transport = null;
     let transportTotal = 0;
@@ -6150,7 +6242,14 @@ export default function StudioApp() {
   // Refs hold the latest saveSession + a "has data" guard so the interval/listeners call the current
   // closure without re-subscribing (and never overwrite good data with an empty snapshot).
   const saveSessionRef = useRef(saveSession);
-  useEffect(() => { saveSessionRef.current = saveSession; });
+  // Layout, not passive. A latest-callback ref read from synchronous save paths should be current
+  // the instant a commit lands, not after the next paint; the old comment on
+  // setDcCustomItemsAndFlush was relying on MessageChannel beating setTimeout's clamp, which is
+  // scheduler behaviour rather than a guarantee. Hardening only — measured, a discrete click
+  // already had the ref current by both the microtask and setTimeout(0), so this was NOT the cause
+  // of BUG-13 (that was switchingRef never being released — see its backstop above).
+  // A bare ref assignment reads no layout, so the layout phase costs nothing here.
+  useLayoutEffect(() => { saveSessionRef.current = saveSession; });
   // Populated once runDealCheckGenerate is declared further down (ref-sync effect right after its
   // own declaration) — autoSaveBuild needs to call it, but is declared long before it exists.
   const runDealCheckGenerateRef = useRef(null);
@@ -6617,10 +6716,10 @@ export default function StudioApp() {
   const buildRestoredRef = useRef(false);
   useEffect(() => {
     if (buildRestoredRef.current) return;
-    if (activeClientId) { buildRestoredRef.current = true; setRestoring(false); return; }   // a live deal is already open
+    if (activeClientId) { buildRestoredRef.current = true; restoreSettledRef.current = true; setRestoring(false); return; }   // a live deal is already open
     if (!Array.isArray(clientLedger) || clientLedger.length === 0) return; // ledger not loaded yet
     const savedId = restoreRef.current?.id || null;   // snapshotted at first render — see restoreRef
-    if (!savedId) { buildRestoredRef.current = true; setRestoring(false); return; }
+    if (!savedId) { buildRestoredRef.current = true; restoreSettledRef.current = true; setRestoring(false); return; }
     // Used to also bail out here whenever restoreRef.current?.step === 0 (Event Info), on the theory
     // that Event Info is only ever visited to START a fresh deal. But savedId already answers that:
     // it's only set once a deal is actually active (see the sessionStorage effect that clears
@@ -6631,6 +6730,7 @@ export default function StudioApp() {
     const client = clientLedger.find(c => c.id === savedId);
     const session = client && Array.isArray(client.sessions) ? client.sessions[0] : null;
     buildRestoredRef.current = true;
+    restoreSettledRef.current = true;
     setRestoring(false);
     // Only the client has to exist. This used to bail without a session too, but a deal gets its
     // first auto-session only once something is built — so refreshing on Browse, or on Build before
@@ -7725,7 +7825,19 @@ export default function StudioApp() {
           const rc = priceInfo.rc;
           const up = priceInfo.unitPrice;
           const lt = priceInfo.lineCost;
-          if (lt > 0) items.push({ name: el2.name, size: el2.size || "", qty: el2.qty || 0, unit: el2.unit || "pc", rate: up, total: lt, isFloral: rc && (rc.cat || "").toLowerCase() === "florals" });
+          // ── THE LIVE IMS NAME, THE SAME WAY BUILD RESOLVES IT ── (BUG-17)
+          // This used to push el2.name — the name captured when the element was ADDED — while Build
+          // renders `invItem?.name || el.name`, looking el.invId up in IMS every render. Rename an
+          // item in IMS after it is already in a zone and the two part company permanently: Build
+          // said "Small .golden. jhumar", every export said "Medium golden chandelier", same 9 ×
+          // ₹3,000 = ₹27,000. Only the label was wrong, which is why the money tests never caught it
+          // — and SM-P1/P4/P5 compared exports against EACH OTHER, and all of them read this same
+          // stale field, so they agreed perfectly while all three disagreed with Build.
+          // Falls back to el2.name when there is no invId or no live match, so a Rate-Card-only or
+          // deleted-from-IMS element keeps the name it was saved with rather than going blank.
+          const liveInv = el2.invId ? (imsInventory || []).find(i => i.id === el2.invId) : null;
+          const displayName = liveInv?.name || el2.name;
+          if (lt > 0) items.push({ name: displayName, size: el2.size || "", qty: el2.qty || 0, unit: el2.unit || "pc", rate: up, total: lt, isFloral: rc && (rc.cat || "").toLowerCase() === "florals" });
           if (el2.qty > 0) {
             const imsInv = dealCheckData?.inventory || [];
             const invItem = imsInv.find(i => i.name === el2.name);
@@ -7738,7 +7850,7 @@ export default function StudioApp() {
               const subTotal = paintCost * a.qty;
               if (subTotal > 0) {
                 items.push({
-                  name: `🖌 Paint: ${el2.name} (${baseColour} → ${a.colour})`,
+                  name: `🖌 Paint: ${displayName} (${baseColour} → ${a.colour})`,   // live name too — see BUG-17 above
                   size: "",
                   qty: a.qty,
                   unit: "item",
@@ -7846,7 +7958,7 @@ export default function StudioApp() {
       const ic = items.reduce((s, i) => s + i.total, 0);
       return { k, label: el.label, icon: el.icon, tier: t, items, structItems, structTotal: zl.total, itemTotal: ic, zoneTotal: ic + zl.total, note: fElNotes[k] || "", dims, dimLabel, photo: fElSelectedPhoto[k]?.src || null, photoName: fElSelectedPhoto[k]?.eventName || "" };
     }).filter(z => z.items.length > 0 || z.structItems.length > 0);
-  }, [getElPriceForFn, zoneLabelsD, zoneMeta, zoneKeys, dealCheckData, imsDefaultPaintCost, dcCustomItems, structRates]);
+  }, [getElPriceForFn, zoneLabelsD, zoneMeta, zoneKeys, dealCheckData, imsDefaultPaintCost, dcCustomItems, structRates, imsInventory]);
 
   const buildCombinedCostSheetData = useCallback(() => {
     const all = collectAllFunctionData();
@@ -8039,17 +8151,35 @@ export default function StudioApp() {
   // ═══ AVAILABILITY PICKER ═══ Moved here from StudioBuild.jsx so it's reachable from any view
   // (the Add Production/Buying Item modal lives in StudioModals.jsx, a sibling of Build) instead of
   // being duplicated. Behaviour is unchanged — same subcat resolution, same free-sorted item list.
-  const openAvailModal = useCallback(async (zoneKey, idx, el, rc, onPick) => {
+  const openAvailModal = useCallback(async (zoneKey, idx, el, rc, onPick, opts) => {
     const invItem = el?.invId ? (imsInventory || []).find(i => i.id === el.invId) : null;
     const subcat = (invItem ? (invItem.subCat || invItem.subcategory) : "") || (rc ? itemImsSubcat(rc) : "") || rc?.sub || "";
     const date = activeFnMeta?.date || clientDate || "";
-    setAvailModal({ zoneKey, idx, elName: el?.name || "", subcat, date, loading: true, items: [], selectedId: el?.imsId || el?.invId || null, onPick: onPick || null });
+    // splitQty / onSplit let a caller that isn't the zoneElements path still offer Split.
+    // Deal Check needs both: it MUST pass onPick (or the pick lands in Build's zoneElements),
+    // and onPick was the very flag that used to mean "no split here". So the capability is now
+    // declared rather than inferred — the same correction made for priceMode above.
+    setAvailModal({ zoneKey, idx, elName: el?.name || "", subcat, date, loading: true, items: [], selectedId: el?.imsId || el?.invId || null, onPick: onPick || null, splitQty: Number(opts?.splitQty) || 0, onSplit: opts?.onSplit || null, pickHint: opts?.pickHint || "" });
     try {
       const { inventory, blocksForDate } = await loadAvailability(date);
       const target = String(subcat).toLowerCase().trim();
       const items = (inventory || [])
         .filter(it => String(it.subCat || it.subcategory || "").toLowerCase().trim() === target)
-        .map(it => ({ id: it.id, name: it.name, photo: (Array.isArray(it.photoUrls) && it.photoUrls[0]) || it.img || "", free: getStudioAvailable(it, blocksForDate), price: priceForInvItem(it, rcFactorByKey, inventory), dims: itemDimsText(it) }))
+        // ── PRICE THE WAY THE CALLER WILL USE IT ── (BUG-15)
+        // Two callers, two different right answers, and this list only ever gave one. A normal zone
+        // element opens this to swap to a different in-stock item, so RENTAL is what it will be
+        // charged. CustomItemModal opens it to pick a reference for something being made or bought
+        // outright, where the rental rate is meaningless — its own handleAvailPick already throws
+        // the shown price away and re-reads
+        // `cost`. So the browser showed "Grand panel ₹5,000" and the number jumped to ₹8,000 the
+        // moment it was picked, with nothing on screen explaining why. Real rows: Grand panel
+        // price 2,500 / cost 8,000, Louvers entry gate 2D price 3,000 / cost 15,000.
+        // The money was never wrong — only the figure shown while browsing.
+        // Declared explicitly via opts.priceMode rather than inferred from `onPick`. onPick meant
+        // "cost" only while CustomItemModal was its sole user; Deal Check's availability control
+        // also needs onPick — to write the pick back to dcCards instead of Build's zoneElements —
+        // and it is renting, so inferring would have shown it production cost.
+        .map(it => ({ id: it.id, name: it.name, photo: (Array.isArray(it.photoUrls) && it.photoUrls[0]) || it.img || "", free: getStudioAvailable(it, blocksForDate), price: opts?.priceMode === "cost" ? (Number(it.cost) || 0) : priceForInvItem(it, rcFactorByKey, inventory), dims: itemDimsText(it) }))
         .sort((a, b) => b.free - a.free);
       setAvailModal(m => (m && m.zoneKey === zoneKey && m.idx === idx) ? { ...m, loading: false, items } : m);
     } catch { setAvailModal(m => m ? { ...m, loading: false } : m); }
@@ -8078,23 +8208,45 @@ export default function StudioApp() {
   // 7/7/6, not 6/6/6 dropping 2) lands on the first few lines so the total booked qty never drifts
   // from what was there before the split. Not offered when this modal was opened via onPick (kit
   // component swap / CustomItemModal reference pick) — there's no "element with a qty" to divide there.
+  // ── HOW A QTY DIVIDES ──
+  // floor, then hand the leftover units out one each to the first lines. Extracted because there
+  // are now two commit paths (Build's zoneElements and Deal Check's card.split), and a split that
+  // allocated differently depending on which screen opened the picker would be a bug nobody would
+  // think to look for.
+  const allocateSplit = useCallback((total, ids) => {
+    const n = ids.length;
+    const base = Math.floor(total / n);
+    const remainder = total - base * n;   // 0..n-1 leftover units
+    return ids.map((id, i) => ({ id, qty: base + (i < remainder ? 1 : 0) }));
+  }, []);
+
   const saveAvailSplit = useCallback((pickedIds) => {
-    if (!availModal || availModal.onPick || !Array.isArray(pickedIds) || pickedIds.length < 2) return;
+    if (!availModal || !Array.isArray(pickedIds) || pickedIds.length < 2) return;
     const { zoneKey, idx, items } = availModal;
+    // Deal Check owns its own storage (card.split), so it commits the allocation itself rather
+    // than having Build's zoneElements rewritten underneath it.
+    if (availModal.onSplit) {
+      const total = Number(availModal.splitQty) || 0;
+      if (total < 2) return;
+      availModal.onSplit(allocateSplit(total, pickedIds).map(a => ({
+        imsId: a.id,
+        qty: a.qty,
+        name: (items || []).find(it => it.id === a.id)?.name || "",
+      })));
+      setAvailModal(null);
+      return;
+    }
+    if (availModal.onPick) return;   // a kit-component swap has nothing to split
     setZoneElements(p => {
       const elems = [...(p[zoneKey] || [])];
       const original = elems[idx];
       if (!original) return p;
       const total = Number(original.qty) || 0;
-      const n = pickedIds.length;
-      const base = Math.floor(total / n);
-      const remainder = total - base * n; // 0..n-1 leftover units, handed one each to the first `remainder` lines
       // Same scale math as Build's own applyQty — a split line stays correctly proportioned the
       // next time this zone's Scale By changes, instead of freezing at whatever qty it was split at.
       const scale = Math.max(1, Math.round(Number(zoneConfig[zoneKey]?.scale) || 1));
-      const splitEls = pickedIds.map((id, i) => {
+      const splitEls = allocateSplit(total, pickedIds).map(({ id, qty }) => {
         const pick = (items || []).find((it) => it.id === id);
-        const qty = base + (i < remainder ? 1 : 0);
         return {
           ...original,
           invId: id, imsId: id,
@@ -8106,7 +8258,7 @@ export default function StudioApp() {
       return { ...p, [zoneKey]: elems };
     });
     setAvailModal(null);
-  }, [availModal, setZoneElements, zoneConfig]);
+  }, [availModal, setZoneElements, zoneConfig, allocateSplit]);
 
   // ═══ DEAL CHECK — open handler (fetches IMS data on demand from Supabase) ═══
   const openDealCheck = useCallback(async () => {
@@ -9050,6 +9202,10 @@ export default function StudioApp() {
     clientBrideGroom, setClientBrideGroom, clientShift, setClientShift, clientPax, setClientPax, clientVenueOther, setClientVenueOther,
     clientPalette, setClientPalette, extraFunctions, setExtraFunctions, expandedFnIdx, setExpandedFnIdx,
     activeFnIdx, setActiveFnIdx, activeFnMeta, fnBuilds, setFnBuilds, isFnSwitching, ledgerReady,
+    // The optimistic index — which function was CLICKED, before the switch commits. Build's own
+    // pill nav has always read `fnPending ?? activeFnIdx`; Deal Check never received it, so it had
+    // nothing to render from but the deferred value (BUG-11).
+    fnPending,
     // True only while there WAS an in-progress deal (sessionStorage remembers one) that hasn't been
     // restored yet AND the last client_ledger fetch actually failed — not "still loading", a real
     // error. StudioEventInfo shows a "couldn't reach the server" banner instead of silently looking
@@ -9267,6 +9423,18 @@ export default function StudioApp() {
           -webkit-mask-image: linear-gradient(90deg, rgba(0,0,0,0) 0, rgba(0,0,0,1) 160px);
           mask-image: linear-gradient(90deg, rgba(0,0,0,0) 0, rgba(0,0,0,1) 160px); }
 
+        /* ── WHO YOU ARE IS NOT NEEDED WHILE DEAL CHECK IS OPEN ──
+           On a tablet the three header zones are already fighting for the row, and the
+           account cluster (avatar + name + role) is the widest thing in the bar that
+           answers a question nobody asks mid-deal. Deal Check states the client and the
+           last-saved user on its own header, so this is duplicated there anyway.
+           Hidden only while the overlay is up and only under 1440px — on a desktop there
+           is room, and on every other screen you still need to see who is signed in. */
+        @media (max-width: 1440px) {
+          :root[data-dc-open="1"] .sa-account { display: none !important; }
+        }
+        .sa-acct-item{transition:background .13s ease}
+        .sa-acct-item:hover{background:rgba(255,255,255,0.07)}
         @media (max-width: 1180px) {
           .sa-header { padding: 10px 14px !important; gap: 8px !important; }
           .sa-nav-left { gap: 10px !important; }
@@ -9489,15 +9657,23 @@ export default function StudioApp() {
                   one in the row. The only clickable thing here is the sign-out beside it.
                   This block is a single row now — the deal line that used to stack under it lives
                   below the bar, which is what gave the zone room for the avatar. */}
-              <div style={{ display: "flex", alignItems: "center", gap: 9, minWidth: 0 }}>
-                <div style={{ position: "relative", flexShrink: 0 }}>
-                  <div aria-hidden="true" style={{ width: 34, height: 34, borderRadius: "50%",
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    background: "linear-gradient(150deg,#2A1F52,#12101F)", border: `1px solid ${accent}59`,
+              {/* ── WHO YOU ARE, BEHIND THE AVATAR ──
+                  The name, the role badge and the sign-out button used to sit inline. Three
+                  elements, the widest group in the bar, restating something you knew when you
+                  signed in — and on a tablet they were the reason the header ran out of room.
+                  The avatar alone is 34px and still identifies the account; everything else is
+                  one tap away. The save-status dot stays ON the avatar, because that is the one
+                  thing here worth seeing without asking for it. */}
+              <div className="sa-account" ref={acctRef} style={{ position: "relative", flexShrink: 0 }}>
+                <button onClick={() => setAcctMenuOpen(o => !o)}
+                  title={`${authUser.name}${isAdmin ? " · Admin" : ""} — account`}
+                  aria-haspopup="menu" aria-expanded={acctMenuOpen} aria-label="Account menu"
+                  style={{ position: "relative", width: 34, height: 34, borderRadius: "50%", padding: 0,
+                    display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
+                    background: "linear-gradient(150deg,#2A1F52,#12101F)", border: `1px solid ${accent}${acctMenuOpen ? "AA" : "59"}`,
                     color: accent, fontSize: 14, fontWeight: 700, letterSpacing: 0.2,
                     boxShadow: "inset 0 1px 0 rgba(255,255,255,0.10)" }}>
-                    {(authUser.name || "?").trim().charAt(0).toUpperCase() || "?"}
-                  </div>
+                  {(authUser.name || "?").trim().charAt(0).toUpperCase() || "?"}
                   {/* A status dot that means something. The reference had a green "online" pip, but
                       a light that is always on is decoration dressed as data — everyone is online,
                       they are looking at the page. This reads saveError instead: green while writes
@@ -9506,15 +9682,30 @@ export default function StudioApp() {
                   <span title={saveError ? "Changes are not saving — see the banner above" : "Saving normally"}
                     style={{ position: "absolute", right: -1, bottom: -1, width: 10, height: 10, borderRadius: "50%",
                       background: saveError ? "#EF4444" : "#22C55E", border: "2px solid #12101F" }} />
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: NAV_FS, fontWeight: 600,
-                  color: "#fff", lineHeight: 1.15, whiteSpace: "nowrap" }}>
-                  {authUser.name}
-                  {isAdmin && <span style={{ ...NAV_META, color: accent }}>Admin</span>}
-                  {!isAdmin && authUser.role === "manager" && <span style={{ ...NAV_META, color: "#38BDF8" }}>Mgr</span>}
-                </div>
+                </button>
+                {acctMenuOpen && (
+                  <div role="menu" style={{ position: "absolute", top: "calc(100% + 9px)", right: 0, zIndex: 120,
+                    minWidth: 194, background: "#15122A", border: `1px solid ${accent}33`, borderRadius: 12,
+                    boxShadow: "0 18px 44px -14px rgba(0,0,0,0.8)", overflow: "hidden" }}>
+                    <div style={{ padding: "11px 13px", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", whiteSpace: "nowrap",
+                        overflow: "hidden", textOverflow: "ellipsis" }}>{authUser.name}</div>
+                      <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.8, textTransform: "uppercase", marginTop: 3,
+                        color: isAdmin ? accent : (authUser.role === "manager" ? "#38BDF8" : "rgba(255,255,255,0.55)") }}>
+                        {isAdmin ? "Admin" : (authUser.role === "manager" ? "Manager" : "Sales")}
+                      </div>
+                      {saveError && <div style={{ fontSize: 10.5, color: "#EF4444", fontWeight: 600, marginTop: 6 }}>Changes are not saving</div>}
+                    </div>
+                    <button role="menuitem" className="sa-acct-item"
+                      onClick={() => { setAcctMenuOpen(false); doLogout(); }}
+                      style={{ width: "100%", display: "flex", alignItems: "center", gap: 9, padding: "10px 13px",
+                        background: "transparent", border: "none", color: "#fff", fontSize: 12.5, fontWeight: 600,
+                        cursor: "pointer", textAlign: "left" }}>
+                      <IconLogout size={14} />Log out
+                    </button>
+                  </div>
+                )}
               </div>
-              <button onClick={doLogout} title="Log out" aria-label="Log out" style={NAV_ICON_BTN}><IconLogout size={NAV_ICON} /></button>
             </>}
           </div>
         </div>

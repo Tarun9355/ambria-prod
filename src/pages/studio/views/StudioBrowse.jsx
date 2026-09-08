@@ -149,11 +149,11 @@ export default function StudioBrowse({ ctx }) {
   // Browse had no way to fold its filters, unlike Build. Same behaviour here: a Hide in the
   // panel header, and a slim tab on the edge to bring it back.
   // Open on a desktop, closed on a tablet. On a narrow screen the panel is an overlay (see the
-  // ≤840 block in browseCSS), and an overlay that is up before you ask for it hides the thing you
+  // ≤1180 block in browseCSS), and an overlay that is up before you ask for it hides the thing you
   // came to look at. Read once at mount rather than on every resize: this is a starting position,
   // not a binding — once you have opened or closed it, that choice stands.
   const [filtersOpen, setFiltersOpen] = useState(() => {
-    try { return !window.matchMedia("(max-width: 840px)").matches; } catch { return true; }
+    try { return !window.matchMedia("(max-width: 1180px)").matches; } catch { return true; }
   });
   // My favourites, as a set — the tier pill on each card reads and writes this. favVideos is keyed
   // videoId → userId → true, so a favourite is per salesperson: mine and a colleague's are
@@ -1054,8 +1054,17 @@ export default function StudioBrowse({ ctx }) {
 }
 /* Desktop never sees the scrim: there, the panel has its own column and nothing is behind it. */
 .sb-scrim{display:none}
-@media (max-width:840px){
-  /* ── PORTRAIT: THE PANEL BECOMES A DRAWER ──
+@media (max-width:1180px){
+  /* ── EVERY TABLET: THE PANEL IS A DRAWER ──
+     This was portrait-only (≤840). The band above it kept the panel as a real side
+     column from 841 to 1180 on the reasoning that the width "affords" one — but it
+     does not: at 300px of reserved rail an iPad at 1024 leaves the grid ~690px, which
+     is three cramped columns, and at 1112 it is still four narrow ones. The portrait
+     argument applies unchanged at those widths — reserving space for a panel you are
+     not currently reading costs the grid more than the panel gains.
+     This block deliberately sits AFTER the ≤1180 one, so where the two set the same
+     property (--sb-pw, .sb-rail padding, .sb-grid columns, .sb-layout) these win; the
+     rules there that do not conflict (gutters, title size) still apply.
      It keeps everything that makes it the panel — fixed, curved, photographed, gold edge, its own
      scroll. What changes is that it stops RESERVING space and starts OVERLAYING it.
      Reserving was the problem. At 284px against an 834px tablet the grid was left ~470px, which is
@@ -1072,8 +1081,12 @@ export default function StudioBrowse({ ctx }) {
   /* Full width back, so the cards return to a comfortable size instead of the 190px they had to
      shrink to when the panel was taking a third of the screen. */
   .sb-grid{grid-template-columns:repeat(auto-fill,minmax(215px,1fr)) !important;gap:12px !important}
+  /* Dim, but do NOT blur. The dim is what says the page behind is parked; the blur made
+     the grid unreadable rather than quiet, and a full-viewport backdrop-filter is an
+     expensive thing to composite on a tablet. It went unnoticed while the drawer was
+     portrait-only — widening the band to every tablet is what put it in front of people. */
   .sb-scrim{display:block;position:fixed;inset:0;z-index:38;
-    background:rgba(6,6,14,0.55);backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px)}
+    background:rgba(6,6,14,0.50)}
 }
 @media (pointer: coarse){
   .sb-pill{min-height:34px}
@@ -1142,7 +1155,7 @@ export default function StudioBrowse({ ctx }) {
             filter:drop-shadow on the panel either — that re-rasterises a full-height column holding
             a photograph and a scrolling filter list on every frame. This is the same path, filled
             once and blurred, sitting between the page and the panel. */}
-        {/* Tablet only (display:none above 840). The panel overlays the grid there, so it needs a
+        {/* Tablet only (display:none above 1180). The panel overlays the grid there, so it needs a
             way out that is not the Hide button behind it, and the page behind needs to read as
             parked rather than as competing. */}
         {filtersOpen && <div className="sb-scrim" onClick={()=>setFiltersOpen(false)} aria-hidden="true"/>}

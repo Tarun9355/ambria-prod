@@ -234,7 +234,7 @@ export default function StudioSummary({ ctx }) {
     // summary accordion state
     expandedSummaryFnIdx, setExpandedSummaryFnIdx,
     // pricing helpers
-    getElPriceForFn, transportCalc,
+    transportCalc,
     // Print material rates (IMS Admin → Settings → 🖨️ Print Materials) — for the carpet label below
     // imsTrussRates joins the other two IMS rate tables here so the truss caption below can quote
     // the real configured rate instead of a hardcoded one — see BUG-9.
@@ -2707,10 +2707,20 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
                               {eb.zl.print>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"3px 0",fontSize:12}}><span style={{color:textS}}>🖨️ Print ({(eb.zc?.prints||[]).length} job{(eb.zc?.prints||[]).length>1?"s":""})</span><span style={{fontWeight:600}}>{fmt(eb.zl.print)}</span></div>}
                               <div style={{borderTop:`1px solid ${border}`,marginTop:4,paddingTop:4}}>
                                 {eb.useElementCard ? (eb.elems || []).map((el2, ei) => {
-                                  const priceInfo = getElPriceForFn(el2, eb.zc, typeof fnData.floralRatio === "number" ? fnData.floralRatio : 70, false, fnData.fnVenue);
-                                  const lt = priceInfo.lineCost;
-                                  return lt > 0 ? <div key={ei} style={{display:"flex",justifyContent:"space-between",padding:"3px 0",fontSize:12}}><span style={{color:textS}}>{el2.name} {el2.size ? `(${el2.size})` : ""} ×{el2.qty}</span><span style={{fontWeight:600}}>{fmt(lt)}</span></div> : null;
-                                }) : <div style={{display:"flex",justifyContent:"space-between",padding:"3px 0",fontSize:12}}><span style={{color:textS}}>🪑 Items ({eb.itemCount})</span><span style={{fontWeight:600}}>{fmt(eb.ic)}</span></div>}
+                                  // The figure calcFunctionBreakdown already computed for this
+                                  // element, index-aligned with eb.elems (BUG-10). Re-pricing here
+                                  // is what made the lines disagree with the header above them:
+                                  // this call passed checkAvail=false and no blocksForDate, so an
+                                  // oversubscribed item printed full rental while the header had
+                                  // billed the short part at cost%.
+                                  const lt = eb.elemLines?.[ei] ?? 0;
+                                  // Live IMS name, same resolution Build and buildZonesForFn use
+                                  // (BUG-17). This accordion is a THIRD reader of the element list
+                                  // and it had the same stale el2.name, so a renamed item disagreed
+                                  // with Build here too — not only on the Excel/PPT exports.
+                                  const liveName = (el2.invId ? (imsInventory || []).find(i => i.id === el2.invId)?.name : null) || el2.name;
+                                  return lt > 0 ? <div key={ei} style={{display:"flex",justifyContent:"space-between",padding:"3px 0",fontSize:12}}><span style={{color:textS}}>{liveName} {el2.size ? `(${el2.size})` : ""} ×{el2.qty}</span><span style={{fontWeight:600}}>{fmt(lt)}</span></div> : null;
+                                }) :<div style={{display:"flex",justifyContent:"space-between",padding:"3px 0",fontSize:12}}><span style={{color:textS}}>🪑 Items ({eb.itemCount})</span><span style={{fontWeight:600}}>{fmt(eb.ic)}</span></div>}
                                 {/* §26.13 — Production/Buying custom items in this zone */}
                                 {dcCustomItems.filter(ci => ci.fnIdx === fnData.fnIdx && ci.zoneKey === eb.k).map(ci => {
                                   const isP = ci.type === "production";
