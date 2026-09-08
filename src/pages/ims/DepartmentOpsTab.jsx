@@ -160,7 +160,15 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   // GROUPED view (kit as one line + its components) — used for the inventory/income display.
   const blockedItemsGrouped = useMemo(() => {
     if (!sel) return [];
-    if (deptInvSnap && deptInvSnap.length) return deptInvSnap.map((x, i) => ({ id: x.name + i, invId: x.imsId || null, name: x.name, photo: x.photo || "", qty: x.qty || 0, unit: x.unit || 0, total: x.total || 0, sub: x.sub || "", isKit: !!x.isKit, components: Array.isArray(x.components) ? x.components : null }));
+    if (deptInvSnap && deptInvSnap.length) {
+      const rows = deptInvSnap.map((x, i) => ({ id: x.name + i, invId: x.imsId || null, name: x.name, photo: x.photo || "", qty: x.qty || 0, unit: x.unit || 0, total: x.total || 0, sub: x.sub || "", isKit: !!x.isKit, components: Array.isArray(x.components) ? x.components : null, shortQty: x.shortQty || 0, shortCost: x.shortCost || 0, prodOrBuy: x.prodOrBuy || null }));
+      // Short items first (need chasing/ordering), then Production/Buying (not real stock — worth
+      // knowing apart from what's actually reserved), then everything else — the order requested
+      // for this list. Stable within each group: Array.prototype.sort is stable, so ties keep the
+      // snapshot's own order (whichever function/zone order dcCostRollup built them in).
+      const rank = (it) => (it.shortQty > 0 ? 0 : it.prodOrBuy ? 1 : 2);
+      return rows.sort((a, b) => rank(a) - rank(b));
+    }
     const out = [];
     Object.entries(blocks || {}).forEach(([itemId, arr]) => {
       const qty = (arr || []).filter(b => b.eventId === sel.id).reduce((s, b) => s + (Number(b.qty) || 0), 0);
@@ -993,8 +1001,16 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                       <div className="flex items-center gap-3 px-4 py-2.5">
                         {it.photo ? <img src={it.photo} alt="" onClick={() => setZoomImg(it.photo)} className="w-12 h-12 rounded-lg object-cover border cursor-zoom-in" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-12 h-12 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-lg">📦</div>}
                         <div className="flex-1 min-w-0">
-                          <div className="text-sm font-medium text-gray-900 truncate">{it.name}{it.isKit && <span className="ml-2 align-middle text-[9px] px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 font-bold">KIT</span>}</div>
-                          <div className="text-xs text-gray-500">{it.sub || "—"} · {fmt(it.unit)}/unit</div>
+                          <div className="text-sm font-medium text-gray-900 truncate">
+                            {it.name}
+                            {it.isKit && <span className="ml-2 align-middle text-[9px] px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 font-bold">KIT</span>}
+                            {it.shortQty > 0 && <span className="ml-2 align-middle text-[9px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-bold">SHORT ×{it.shortQty}</span>}
+                            {it.prodOrBuy && <span className={"ml-2 align-middle text-[9px] px-1.5 py-0.5 rounded font-bold " + (it.prodOrBuy === "buying" ? "bg-orange-100 text-orange-700" : "bg-purple-100 text-purple-700")}>{it.prodOrBuy === "buying" ? "🛒 BUYING" : "🏭 PRODUCTION"}</span>}
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            {it.sub || "—"} · {fmt(it.unit)}/unit
+                            {it.shortQty > 0 && <span className="text-amber-600"> · {it.shortQty} short of stock — priced at cost, chase or produce</span>}
+                          </div>
                         </div>
                         <div className="text-sm font-semibold text-gray-700">×{it.qty}</div>
                         <div className="text-sm font-bold text-gray-900 w-20 text-right">{fmt(it.total)}</div>

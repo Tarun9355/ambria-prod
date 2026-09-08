@@ -327,15 +327,15 @@ export default function DealCheckOverlay({ ctx }) {
               // Kits are excluded — their base+components pricing model doesn't map onto a simple
               // per-unit reused/fresh split (same reasoning calcZoneCarpet already uses for carpet).
               const isKit = Array.isArray(item.subItems) && item.subItems.length > 0;
-              let lineRental;
+              let lineRental, shortQty = 0, shortCost = 0;
               if (isKit) {
                 lineRental = repeatAdjustedRental(_rep, fn.fnVenue, item, qty, baseR);
               } else {
                 const available = getStudioAvailable(item, fnBlocks);
                 const ownedQty = Math.min(qty, available);
-                const shortQty = Math.max(0, qty - available);
+                shortQty = Math.max(0, qty - available);
                 const ownedRental = repeatAdjustedRental(_rep, fn.fnVenue, item, ownedQty, baseR);
-                const shortCost = shortQty * (Number(item.cost) || 0) * (oosCostPctFor(item, costPctFor) / 100);
+                shortCost = shortQty * (Number(item.cost) || 0) * (oosCostPctFor(item, costPctFor) / 100);
                 lineRental = ownedRental + shortCost;
               }
               rental += lineRental;
@@ -356,7 +356,10 @@ export default function DealCheckOverlay({ ctx }) {
                     return { name: ci.name, imsId: ci.id, qty: cq, unit: cr, total: Math.round(cr * cq), sub: imsField.subcategory(ci) || "", photo: imsField.photos(ci)[0] || "" };
                   }).filter(Boolean);
                 }
-                deptInv[dD].push({ name: item.name || c.name || "Item", photo: imsField.photos(item)[0] || "", qty, unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "", imsId: c.imsId, ...(components && components.length ? { isKit: true, components } : {}) });
+                // shortQty > 0 means part (or all) of this line is priced at cost% because stock ran
+                // out for this event's date — Dept Ops badges it so a head knows to flag/chase it
+                // rather than assuming the full qty is sitting reserved and ready.
+                deptInv[dD].push({ name: item.name || c.name || "Item", photo: imsField.photos(item)[0] || "", qty, unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "", imsId: c.imsId, ...(components && components.length ? { isKit: true, components } : {}), ...(shortQty > 0 ? { shortQty, shortCost: Math.round(shortCost) } : {}) });
               }
             });
             // Manually-added inventory blocks (dcManualItems) — the salesperson added these directly in
@@ -493,9 +496,14 @@ export default function DealCheckOverlay({ ctx }) {
           DEPTS.forEach(dn => {
             const seen = {}, merged = [];
             (deptInv[dn] || []).forEach(it => {
-              const key = (it.name || "") + "|" + (it.sub || "") + "|" + (it.imsId || "");
+              // prodOrBuy in the key too — a Production/Buying item can reference the SAME imsId as
+              // a genuinely rented item (CustomItemModal now requires a real inventory match), and
+              // those are different transactions (make/buy new vs. reserve the stocked one) that
+              // must never blend into one merged line.
+              const key = (it.name || "") + "|" + (it.sub || "") + "|" + (it.imsId || "") + "|" + (it.prodOrBuy || "");
               if (seen[key]) {
                 seen[key].qty += (it.qty || 0); seen[key].total += (it.total || 0);
+                if (it.shortQty) { seen[key].shortQty = (seen[key].shortQty || 0) + it.shortQty; seen[key].shortCost = (seen[key].shortCost || 0) + (it.shortCost || 0); }
                 if (Array.isArray(it.components)) { // merge kit sub-elements too (same kit across zones)
                   const base = seen[key].components || (seen[key].components = []);
                   it.components.forEach(cp => {
@@ -839,8 +847,17 @@ export default function DealCheckOverlay({ ctx }) {
           } catch {}
           const buyTotal = dcCustomItems.filter(c=>c.type==="buying").reduce((s,c)=>s+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0);
           const produceTotal = dcCustomItems.filter(c=>c.type==="production").reduce((s,c)=>s+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0);
-          // Production / Buying → department by the item's category/sub-category
-          dcCustomItems.forEach(c => { const amt = (c.manualPrice || c.refPrice || 0) * (Number(c.qty) || 1); if (amt > 0) addD(catToDept(c.cat || c.subCat), c.type === "buying" ? "buying" : "production", amt); });
+          // Production / Buying → department by the item's category/sub-category. Also listed as a
+          // line item in deptInv (previously only folded into the department's income total — Dept
+          // Ops' "Inventory blocked for X" list never showed these at all, so a head had no idea a
+          // Production/Buying item existed until the aggregate ₹ moved).
+          dcCustomItems.forEach(c => {
+            const amt = (c.manualPrice || c.refPrice || 0) * (Number(c.qty) || 1);
+            if (amt <= 0) return;
+            const d = catToDept(c.cat || c.subCat);
+            addD(d, c.type === "buying" ? "buying" : "production", amt);
+            if (deptInv[d]) deptInv[d].push({ name: c.subCat || c.cat || "Custom item", photo: c.photo || "", qty: Number(c.qty) || 1, unit: c.manualPrice || c.refPrice || 0, total: Math.round(amt), sub: c.subCat || "", imsId: c.refItemId || null, prodOrBuy: c.type === "buying" ? "buying" : "production" });
+          });
           // ── Distribute manpower per type to departments ──
           const MP_DEPT = { "Flowerists": "Floral", "Carpenters": "Structure", "Painters": "Tenting", "Truss Labour": "Tenting", "Fabric Bangali": "Fabric", "Electricians": "Lighting", "Drivers": "Transport" };
           // Direct-income share per dept (rental+florals+truss+fabric+production+buying) — drives the
