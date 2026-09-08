@@ -3355,12 +3355,12 @@ export default function StudioApp() {
     // Signature of the WHOLE projected breakdown (income + per-dept manpower + inventory + fabric) —
     // used to skip redundant writes. Covering all of it (not just income totals) means a change to the
     // manpower split or fabric plan also re-syncs, so the stored snapshot can't drift out of sync.
-    const sig = JSON.stringify({ inc: snap.income || {}, mp: snap.manpowerDetail || {}, inv: snap.inventory || {}, fab: snap.fabricPlan || {} });
+    const sig = JSON.stringify({ inc: snap.income || {}, mp: snap.manpowerDetail || {}, inv: snap.inventory || {}, fab: snap.fabricPlan || {}, dv: snap.dealValue || null });
     // Merge ONLY the Studio-owned projected fields. deptOps (the dept head's edits / actuals — IMS-owned)
     // is preserved verbatim, so re-syncing never wipes their work.
     // After a regenerate, wipe deptOps (dept head's plan + actuals) so IMS starts fresh from the new plan.
     const wipe = deptWipeRef.current; if (wipe) deptWipeRef.current = false; // one-shot per regenerate
-    const applySnap = (base) => ({ ...base, ...(wipe ? { deptOps: {} } : {}), deptIncome: snap.income || {}, deptInventory: snap.inventory || {}, floralPlan: snap.floralPlan || base.floralPlan || null, fabricPlan: snap.fabricPlan || base.fabricPlan || null, manpowerPlan: snap.manpowerPlan || [], manpowerDetail: snap.manpowerDetail || {}, mpPhases: snap.mpPhases || null, deptSeason: snap.season || null, deptIncomeSig: sig, deptSyncedAt: Date.now() });
+    const applySnap = (base) => ({ ...base, ...(wipe ? { deptOps: {} } : {}), deptIncome: snap.income || {}, deptInventory: snap.inventory || {}, floralPlan: snap.floralPlan || base.floralPlan || null, fabricPlan: snap.fabricPlan || base.fabricPlan || null, manpowerPlan: snap.manpowerPlan || [], manpowerDetail: snap.manpowerDetail || {}, mpPhases: snap.mpPhases || null, deptSeason: snap.season || null, deptIncomeSig: sig, deptSyncedAt: Date.now(), dealValue: snap.dealValue || base.dealValue || null });
     try {
       // Read the FRESHEST row so we never clobber IMS-owned fields with Studio's stale local copy.
       const { data: row } = await supabase.from("event_orders").select("data").eq("id", eo.id).maybeSingle();
@@ -3376,6 +3376,19 @@ export default function StudioApp() {
         const merged = applySnap(eo);
         await supabase.from("event_orders").upsert({ id: eo.id, client_name: eo.clientName ?? null, event_id: eo.eventId ?? null, fn_id: eo.fnId ?? null, status: eo.status ?? "pending", items: eo.items || [], manual_items: eo.manualItems || [], decisions: eo.decisions || {}, data: merged }, { onConflict: "id" });
       }
+    } catch (e) { /* best-effort */ }
+  }, [eventOrders, activeClientId, clientName]);
+  // Pushes the just-applied deal value straight onto the mirrored event_orders row, immediately —
+  // not waiting for the next Deal Check regenerate. Without this, clicking "Apply to deal value" on
+  // the Summary hero updates Studio's own number at once but IMS's Dept Ops badge would keep showing
+  // the old "pending" amount until the build changes again and persistDeptSnapshot's own debounced
+  // sync happens to fire. Same freshest-row-first pattern as persistDeptSnapshot, just for one field.
+  const syncDealValueNow = useCallback(async (dealValue) => {
+    const eo = (eventOrders || []).find(e => e.clientId === activeClientId) || (eventOrders || []).find(e => (e.clientName || "") === (clientName || "").trim());
+    if (!eo) return;
+    try {
+      const { data: row } = await supabase.from("event_orders").select("data").eq("id", eo.id).maybeSingle();
+      if (row && row.data) await supabase.from("event_orders").update({ data: { ...row.data, dealValue } }).eq("id", eo.id);
     } catch (e) { /* best-effort */ }
   }, [eventOrders, activeClientId, clientName]);
   const savePhotoImsMap = useCallback(async (nm) => { setPhotoImsMap(nm); await reliableSave(PIMAP_SK, JSON.stringify(nm), "Photo-IMS map"); }, []);
@@ -6418,7 +6431,12 @@ export default function StudioApp() {
       const result = saveSession();
       if (!result || !result.client) { showMsg("Save a client first", "red"); return; }
       const { client, ledger } = result;
-      const updated = ledger.map(c => c.id === client.id ? { ...c, status: "booked", bookedAt: Date.now(), bookedBy: authUser?.name || "—", finalSession: c.sessions?.[0] || null } : c);
+      // bookedSystemTotal is the frozen baseline the Summary hero diffs the live build against to
+      // show "pending changes since booking" (owner decision: negotiated deal value stays frozen,
+      // salesperson applies build-driven changes manually — see the hero's pendingDelta banner).
+      // Only set once — a re-confirm of an already-booked deal must not silently rebase it, or a
+      // real pending change made between two re-confirms would vanish unnoticed.
+      const updated = ledger.map(c => c.id === client.id ? { ...c, status: "booked", bookedAt: Date.now(), bookedBy: authUser?.name || "—", finalSession: c.sessions?.[0] || null, bookedSystemTotal: (c.bookedSystemTotal != null ? c.bookedSystemTotal : eventGrandTotal) } : c);
       saveClientLedger(updated);
       const allFns = collectAllFunctionData();
       const fnEOs = allFns.map(fnData => {
@@ -9316,7 +9334,7 @@ export default function StudioApp() {
     // pricing helpers
     rcIsSMB, buildZoneConfig, getFloralMode, applyFloralRatio, getElPrice, getElPriceForFn, calcElsCost, calcElsCostForFn, rcCostPctForSub,
     calcPhotoCost, calcStructCost, calcFullEventCost, getFullCost, totalCost, transportCalc, grandTotal, pricingReady,
-    collectAllFunctionData, calcFunctionCost, calcFnFloralSourcingCost, eventGrandTotal, calcFunctionBreakdown, manpowerPlanForBooking, persistDeptSnapshot, dcEoActuals, refreshDcEoActuals,
+    collectAllFunctionData, calcFunctionCost, calcFnFloralSourcingCost, eventGrandTotal, calcFunctionBreakdown, manpowerPlanForBooking, persistDeptSnapshot, syncDealValueNow, dcEoActuals, refreshDcEoActuals,
     // deal check orchestration + persistence (overlay)
     openDealCheck, runDealCheckGenerate, getStudioAvailable, loadAvailability, getActiveSoftHold, reliableSave, DC_CACHE_SK,
     writeStudioTrussSoftHolds,

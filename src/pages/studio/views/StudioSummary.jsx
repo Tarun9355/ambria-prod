@@ -230,7 +230,7 @@ export default function StudioSummary({ ctx }) {
     isAdmin, clientLedger, saveClientLedger, eventOrders, activeClientId, askConfirm,
     // events / cost sheet
     eventGrandTotal, pricingReady, collectAllFunctionData, calcFunctionBreakdown,
-    buildCombinedCostSheetData, csData, setCsData, saveSession, showMsg,
+    buildCombinedCostSheetData, csData, setCsData, saveSession, showMsg, syncDealValueNow,
     // summary accordion state
     expandedSummaryFnIdx, setExpandedSummaryFnIdx,
     // pricing helpers
@@ -269,6 +269,30 @@ export default function StudioSummary({ ctx }) {
     const num = negDraft === "" ? null : Math.max(0, Number(negDraft) || 0);
     if (num === (activeClient?.negotiatedAmount ?? null)) return; // no-op — don't write an unchanged row
     saveClientLedger(clientLedger.map(c => c.id === activeClientId ? { ...c, negotiatedAmount: num } : c));
+  };
+
+  // ── Deal value stays FROZEN once booked (owner decision — no silent auto-update on every Build
+  // edit). This tracks what the live build has drifted since booking so it can be SHOWN, and lets
+  // the salesperson fold it into the deal value with one click when they're ready.
+  // bookedSystemTotal is the live-build baseline captured at markSold (see StudioApp.jsx). A deal
+  // booked before this existed has none — heal it once, using TODAY's total as the starting line,
+  // so only changes made from here on ever show as pending (we can't know what changed before we
+  // started watching).
+  const dvIsBooked = activeClient?.status === "booked";
+  const dvHasNegotiated = Number(activeClient?.negotiatedAmount) > 0;
+  useEffect(() => {
+    if (dvIsBooked && dvHasNegotiated && activeClient?.bookedSystemTotal == null && activeClientId) {
+      saveClientLedger(clientLedger.map(c => c.id === activeClientId ? { ...c, bookedSystemTotal: eventGrandTotal } : c));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeClientId, dvIsBooked, dvHasNegotiated, activeClient?.bookedSystemTotal]);
+  const pendingDelta = (dvIsBooked && dvHasNegotiated && activeClient?.bookedSystemTotal != null)
+    ? Math.round(eventGrandTotal - activeClient.bookedSystemTotal) : 0;
+  const applyPendingDealValue = () => {
+    const newNegotiated = Math.max(0, (Number(activeClient?.negotiatedAmount) || 0) + pendingDelta);
+    saveClientLedger(clientLedger.map(c => c.id === activeClientId ? { ...c, negotiatedAmount: newNegotiated, bookedSystemTotal: eventGrandTotal } : c));
+    syncDealValueNow?.({ amount: Math.round(newNegotiated), pending: 0 });
+    showMsg?.("Deal value updated to " + fmt(newNegotiated), "green");
   };
 
   // ═══ THE DECK THIS DEAL ALREADY HAS ═══
@@ -2550,6 +2574,21 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
               margin math also uses) — the system-generated estimate stays visible here, just demoted
               to a secondary line, so nobody loses sight of what the design itself would cost at list price. */}
           {hasNegotiated && <div style={{fontSize:11.5,color:"#a5b4fc",marginTop:9}}>System estimate: <strong style={{color:"#fff",fontWeight:700}}>{fmt(eventGrandTotal)}</strong></div>}
+          {/* Build changed after booking (a Production/Buying item added, a swap, etc.) — the
+              negotiated deal value itself never moves on its own; this just makes the drift visible
+              and lets the salesperson choose to fold it in. Same number IMS's Dept Ops sees. */}
+          {isBooked && pendingDelta !== 0 && (
+            <div style={{marginTop:11,padding:"9px 14px",borderRadius:10,background:"rgba(245,158,11,0.16)",border:"1px solid rgba(245,158,11,0.4)",display:"inline-block"}}>
+              <div style={{fontSize:11.5,color:"#fcd34d",fontWeight:700}}>⚠ Build changed since booking: {pendingDelta > 0 ? "+" : ""}{fmt(pendingDelta)}</div>
+              <button
+                type="button"
+                onClick={applyPendingDealValue}
+                style={{marginTop:7,fontSize:11,fontWeight:700,padding:"6px 14px",borderRadius:8,background:"#f59e0b",color:"#1a1208",border:"none",cursor:"pointer"}}
+              >
+                Apply to deal value
+              </button>
+            </div>
+          )}
         </> : <>
           <div className="sh-te-amt" style={{fontSize:46,marginBottom:11,display:"flex",justifyContent:"center"}}>
             <span style={{display:"inline-block",width:260,height:44,borderRadius:10,background:"rgba(255,255,255,0.13)",animation:"shPulse 1.15s ease-in-out infinite"}}/>

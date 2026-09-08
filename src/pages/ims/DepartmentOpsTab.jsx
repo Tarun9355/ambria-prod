@@ -874,6 +874,21 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
               <div>
                 <div className="text-lg font-bold text-gray-900">{DEPT_ICON[dept]} {dept} — {sel.clientName || "Event"}</div>
                 <div className="text-xs text-gray-500">{selDateStr || "no date"} · {sel.functionsDetail?.[0]?.venue || sel.venue || "—"}{deptData.updatedBy ? ` · last edited by ${deptData.updatedBy}` : ""}</div>
+                {/* Deal value — read-only mirror of Studio's negotiated amount (client_ledger),
+                    written whenever Deal Check syncs. It stays frozen once booked by owner decision;
+                    "pending" is the live build's drift since booking, shown here so ops sees the same
+                    number Studio does, but only Studio can fold it into the deal value (Apply button
+                    on the Summary hero) — this view has no action for it. */}
+                {sel.dealValue && (
+                  <div className="text-xs mt-1 flex items-center gap-2 flex-wrap">
+                    <span className="font-semibold text-gray-700">💰 Deal value: ₹{Number(sel.dealValue.amount || 0).toLocaleString("en-IN")}</span>
+                    {!!sel.dealValue.pending && (
+                      <span className={"font-bold px-1.5 py-0.5 rounded text-[11px] " + (sel.dealValue.pending > 0 ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700")}>
+                        {sel.dealValue.pending > 0 ? "+" : ""}₹{Number(sel.dealValue.pending).toLocaleString("en-IN")} pending (not yet applied in Studio)
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
               {nearby.length > 0 && <div className="text-xs text-gray-500">📅 {nearby.length} nearby event{nearby.length > 1 ? "s" : ""} (±7 days)</div>}
             </div>

@@ -161,7 +161,7 @@ export default function DealCheckOverlay({ ctx }) {
     // chrome / theme
     border, textS, textP, accent, fmt,
     // client + auth
-    clientLedger, activeClientId, clientName, clientDate, authUser,
+    clientLedger, activeClientId, activeClient, clientName, clientDate, authUser, eventGrandTotal,
     // deal check state
     dcActiveTab, setDcActiveTab, dcGenerating, dcGenStatus,
     dcCards, dcInventoryCache, dcCarpetPick, setDcCarpetPick, dcCarpetSearch, setDcCarpetSearch,
@@ -1130,7 +1130,17 @@ export default function DealCheckOverlay({ ctx }) {
               fabricPlan = { liza: toRows(agg.liza), masking: toRows(agg.masking), curtain: toRows(agg.curtain) };
             }
           } catch {}
-          return { income: incomeRounded, inventory: dcCostRollup.deptInv, floralPlan, manpowerPlan, manpowerDetail, season: dcSeasonInfo, fabricPlan, mpPhases: dcCostRollup.mpPhases || null };
+          // Deal value: the negotiated amount stays frozen once booked (owner decision — no silent
+          // auto-update); this only surfaces the delta so a salesperson can see and choose to apply
+          // it. bookedSystemTotal is the live-build baseline captured at booking (or the last Apply);
+          // missing it (a deal booked before this existed) means "no known baseline yet" — treated as
+          // zero pending rather than a false-positive full-total delta.
+          const negotiatedAmount = Number(activeClient?.negotiatedAmount) || 0;
+          const hasNegotiated = negotiatedAmount > 0;
+          const dealValue = hasNegotiated
+            ? { amount: Math.round(negotiatedAmount), pending: activeClient?.bookedSystemTotal != null ? Math.round(eventGrandTotal - activeClient.bookedSystemTotal) : 0 }
+            : { amount: Math.round(eventGrandTotal || 0), pending: 0 };
+          return { income: incomeRounded, inventory: dcCostRollup.deptInv, floralPlan, manpowerPlan, manpowerDetail, season: dcSeasonInfo, fabricPlan, mpPhases: dcCostRollup.mpPhases || null, dealValue };
         };
         if (isSold && persistDeptSnapshot) {
           const _sig = JSON.stringify((dcCostRollup.DEPTS || []).map(d => Math.round(dcCostRollup.dept?.[d]?.total || 0)));

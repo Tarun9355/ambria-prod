@@ -104,7 +104,7 @@ export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, l
         events.push({
           id: "eo-" + eo.id + "-" + fi, date,
           guestName: eo.clientName || "—", functionType: fn.type || "", venue,
-          dept: "studio", totalAmt: eo.totalCost || 0, balance: 0, eoStatus: eo.status || "pending",
+          dept: "studio", totalAmt: eo.dealValue?.amount ?? eo.totalCost ?? 0, balance: 0, eoStatus: eo.status || "pending",
           eoId: eo.id,
         });
       });
