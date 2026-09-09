@@ -2467,6 +2467,54 @@ export default function StudioApp() {
       return p;
     };
     (async () => {
+      // Client ledger — row-per-client in the `client_ledger` TABLE (off the settings blob). Moved
+      // to run FIRST in this mount effect and ahead of every unrelated fetch below (taxonomy, video
+      // tags, team data, …) — ledgerReady is what Event Info's existing-client search gates on
+      // before showing anything (see the combined loading gate in StudioEventInfo.jsx), and none of
+      // those other resources have anything to do with that search, so there was never a reason for
+      // it to wait behind them.
+      // Its own two fetches (client rows + studio_sessions) now run CONCURRENTLY rather than one
+      // after another for the same reason: studio_sessions is joined against client_ledger
+      // CLIENT-SIDE afterward (by client_id), not queried by it, so one was never a prerequisite
+      // for the other — session rows is also the largest table in the system (one row per function
+      // per save, uncapped), so it was the single biggest thing this search was waiting on.
+      // Seed the dirty-check baseline with what the DB actually holds, so the first save of the
+      // session uploads only what genuinely changed instead of the entire ledger.
+      try {
+        const [rows, srows] = await Promise.all([
+          loadClientRows(),
+          loadSessionRows().catch(() => null), // table absent/unreadable — sessions stay [] below, same as before
+        ]);
+        if (Array.isArray(rows) && !cancelled) {
+          const list = rows.map(rowToClient).filter(Boolean);
+          // THE TABLE IS THE SOURCE OF TRUTH. Unconditionally — a client with no rows gets an empty
+          // history, not client_ledger.data's stale blob copy (this used to be conditional on the
+          // table actually having rows for a client, which is exactly how a deleted session came
+          // back — BUG-2 — deleting a client's last session leaves zero rows, and the stale blob
+          // copy stood in instead of the now-genuinely-empty history).
+          if (Array.isArray(srows) && srows.length) {
+            const byClient = new Map();
+            for (const r of srows) {
+              if (!r?.client_id) continue;
+              let g = byClient.get(r.client_id);
+              if (!g) { g = []; byClient.set(r.client_id, g); }
+              g.push(r);
+            }
+            for (const c of list) {
+              const mine = byClient.get(c.id);
+              c.sessions = (mine && mine.length) ? rowsToSessions(mine) : [];
+            }
+          }
+          const seed = {}; list.forEach((c) => { if (c && c.id) seed[c.id] = JSON.stringify(c); });
+          clientJsonRef.current = seed;
+          setClientLedger(list);
+          if (!cancelled) setLedgerLoadError(false);
+        }
+      } catch { if (!cancelled) setLedgerLoadError(true); }
+      // Marked ready whether the read SUCCEEDED or THREW. A failed load leaves the ledger empty,
+      // and treating that as "still loading" would hold the skeleton up for the rest of the session
+      // with nothing on the way to replace it. Ready means "we have asked", not "we found work".
+      if (!cancelled) setLedgerReady(true);
       // Events — auto-wrap to multi-function shape (functions[]).
       try {
         const v = await kvGet(STORAGE_KEY);
@@ -2608,54 +2656,6 @@ export default function StudioApp() {
       } catch {
         try { const v = await kvGet(YT_TAG_SK); if (v != null) { const tp = parse(v); if (tp && typeof tp === "object" && !cancelled) setYtVideoTags(tp); } } catch {}
       }
-      // Client ledger — now row-per-client in the `client_ledger` TABLE (off the settings blob).
-      // Seed the dirty-check baseline with what the DB actually holds, so the first save of the
-      // session uploads only what genuinely changed instead of the entire ledger.
-      try {
-        const rows = await loadClientRows();
-        if (Array.isArray(rows) && !cancelled) {
-          const list = rows.map(rowToClient).filter(Boolean);
-          // Sessions come from the `studio_sessions` TABLE (migration 026), which is the source of
-          // truth. The blob copy inside client_ledger.data stays as the fallback below — the same
-          // two-step 023 used for video tags, so this is reversible without losing a save.
-          // Only a client the table actually has rows for is replaced: a client whose sessions have
-          // not been backfilled yet keeps its blob history rather than appearing to have lost it.
-          try {
-            const srows = await loadSessionRows();
-            if (Array.isArray(srows) && srows.length && !cancelled) {
-              const byClient = new Map();
-              for (const r of srows) {
-                if (!r?.client_id) continue;
-                let g = byClient.get(r.client_id);
-                if (!g) { g = []; byClient.set(r.client_id, g); }
-                g.push(r);
-              }
-              // THE TABLE IS THE SOURCE OF TRUTH. Unconditionally — a client with no rows now gets an
-              // empty history, not the blob's copy.
-              // This used to be `if (mine && mine.length)`, which kept the blob for a client the table
-              // had nothing for. That was correct while the migration was mid-flight, but it is also
-              // exactly why a deleted session came back: deleting a client's last session leaves zero
-              // rows, the branch was skipped, and client_ledger.data.sessions — which still listed it —
-              // stood in. That is BUG-2's root cause.
-              // Safe to make unconditional because the backfill is complete: every session that existed
-              // only in a blob has been written into studio_sessions, verified as zero blob-only
-              // clients remaining before this line changed.
-              for (const c of list) {
-                const mine = byClient.get(c.id);
-                c.sessions = (mine && mine.length) ? rowsToSessions(mine) : [];
-              }
-            }
-          } catch { /* table absent or unreadable — the blob history below stands */ }
-          const seed = {}; list.forEach((c) => { if (c && c.id) seed[c.id] = JSON.stringify(c); });
-          clientJsonRef.current = seed;
-          setClientLedger(list);
-          if (!cancelled) setLedgerLoadError(false);
-        }
-      } catch { if (!cancelled) setLedgerLoadError(true); }
-      // Marked ready whether the read SUCCEEDED or THREW. A failed load leaves the ledger empty,
-      // and treating that as "still loading" would hold the skeleton up for the rest of the session
-      // with nothing on the way to replace it. Ready means "we have asked", not "we found work".
-      if (!cancelled) setLedgerReady(true);
       // Date types
       try { const v = await kvGet(DT_SK); if (v != null) { const dp = parse(v); if (dp && typeof dp === "object" && !cancelled) setDateTypes(dp); } } catch {}
       // Event orders
