@@ -1421,11 +1421,16 @@ export default function StudioEventInfo({ ctx }) {
                     if (days < 30) return `${days}d ago`;
                     return new Date(ts).toLocaleDateString("en-IN",{day:"2-digit",month:"short"});
                   };
-                  // ── LMS LOADING STATE
-                  if (lmsLoading) {
+                  // ── LOADING STATE — held as ONE combined gate, not two independent ones.
+                  // LMS leads and Studio's own client_ledger are two separate fetches that finish at
+                  // different times; showing whichever resolves first (as this used to) reads as a
+                  // complete answer while the other is still in flight — exactly how "no existing
+                  // client" gets acted on a few seconds before the real match would have shown up.
+                  // Nothing renders below until BOTH are in.
+                  if (lmsLoading || !ledgerReady) {
                     return <div style={{marginBottom:16,padding:"10px 12px",borderRadius:10,background:isDark?"rgba(59,130,246,0.06)":"rgba(59,130,246,0.04)",border:`1px solid ${isDark?"rgba(59,130,246,0.2)":"rgba(59,130,246,0.15)"}`,display:"flex",alignItems:"center",gap:8}}>
                       <span style={{display:"inline-block",width:8,height:8,borderRadius:"50%",background:"#3B82F6",animation:"pulse 1.5s infinite"}}></span>
-                      <span style={{fontSize:11,fontWeight:600,color:C.blue}}>🔍 Searching LMS leads…</span>
+                      <span style={{fontSize:11,fontWeight:600,color:C.blue}}>🔍 Searching leads & existing clients…</span>
                     </div>;
                   }
                   // ── LMS results block (shown ALONGSIDE matching Studio clients, not instead of them) ──
@@ -1567,12 +1572,9 @@ export default function StudioEventInfo({ ctx }) {
                       </div>;
                     }
                     // Nothing from LMS or Studio — show only an explanatory note if a search was attempted.
-                    // clientLedger's own fetch is a normal async round-trip on a fresh page load (a
-                    // few seconds, same as the LMS cache above) — checked FIRST so a search typed in
-                    // that window says so, instead of a confident "No matching client", which reads
-                    // as "safe to create new" and is exactly how a duplicate gets created.
-                    const note = !ledgerReady ? "⏳ Still loading your existing clients… results will appear shortly"
-                      : lmsError ? "⚠ LMS unavailable — showing Studio clients"
+                    // (ledgerReady/lmsLoading are already handled by the combined gate above, so by
+                    // this point both searches have genuinely finished with nothing to show.)
+                    const note = lmsError ? "⚠ LMS unavailable — showing Studio clients"
                       : lmsFilling ? "⏳ LMS cache loading… results will appear shortly"
                       : (clientName.trim().length >= 2 ? "No matching LMS lead or Studio client" : null);
                     if (!note) return null;
@@ -1651,19 +1653,7 @@ export default function StudioEventInfo({ ctx }) {
                       </button>
                     </div>
                   );
-                  // Studio's OWN client_ledger fetch is a separate, independent round-trip from the LMS
-                  // search above — on a fresh page load it can easily still be in flight once LMS leads
-                  // have already appeared. Without this, a salesperson sees LMS results with no hint
-                  // that Studio's own client list hasn't finished loading yet, and no matches there
-                  // silently reads as "no existing deal" rather than "still checking" — precisely how a
-                  // duplicate client gets created seconds before the real match would have shown up.
-                  const studioStillLoading = !ledgerReady && matches.length === 0 && lmsBlock && (
-                    <div style={{marginBottom:16,padding:"8px 12px",borderRadius:8,background:isDark?"rgba(59,130,246,0.06)":"rgba(59,130,246,0.04)",border:`1px solid ${isDark?"rgba(59,130,246,0.2)":"rgba(59,130,246,0.15)"}`,fontSize:11,color:C.blue,display:"flex",alignItems:"center",gap:8}}>
-                      <span style={{display:"inline-block",width:6,height:6,borderRadius:"50%",background:"#3B82F6",animation:"pulse 1.5s infinite"}}/>
-                      <span>Still checking your existing Studio clients…</span>
-                    </div>
-                  );
-                  return <>{repToggle}{lmsBlock}{studioStillLoading}{studioBlock}</>;
+                  return <>{repToggle}{lmsBlock}{studioBlock}</>;
                 })()}
                 <div><div style={label}>Bride &amp; Groom Name</div><input value={clientBrideGroom} onChange={e=>setClientBrideGroom(e.target.value)} placeholder="e.g. Rahul & Priya" name="ambria-bride-groom" autoComplete="off" data-lpignore="true" data-1p-ignore="true" style={S.input}/></div>
               </div>
