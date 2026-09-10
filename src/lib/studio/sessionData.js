@@ -58,10 +58,21 @@ export function compareClientsByWork(a, b) {
   return work !== 0 ? work : clientLastTouch(b) - clientLastTouch(a);
 }
 
+// A zone that was once built and later disabled (or a zone the app always renders a key for,
+// e.g. every admin-configured zone type) keeps its OWN key in zoneElements with an EMPTY array —
+// `Object.keys(...).length > 0` alone can't tell that apart from a zone that actually has
+// elements in it, and reported "has data" for a build where every zone was toggled off and every
+// array was empty. That gap is a confirmed real incident (see saveSession's autoSaveWouldDestroy
+// call): it let a snapshot with zero real content pass as "carries work of its own", bypassing
+// the very check this file exists to provide, and let dozens of empty auto-saves silently bury a
+// real ₹6L+ build under themselves. Checking for an actual non-empty ARRAY closes that gap.
+function hasRealZoneElements(zoneElements) {
+  return Object.values(zoneElements || {}).some((arr) => Array.isArray(arr) && arr.length > 0);
+}
 export function fnSnapHasData(snap) {
   if (!snap || typeof snap !== "object") return false;
   if (Object.keys(snap.elSelectedPhoto || {}).length > 0) return true;
-  if (Object.keys(snap.zoneElements || {}).length > 0) return true;
+  if (hasRealZoneElements(snap.zoneElements)) return true;
   if (Object.values(snap.enabledEls || {}).some((v) => v)) return true;
   if (snap.sourceVideo?.id || snap.sourceVideoId) return true;
   if (snap.sourceEvent?.id || snap.sourceEventId) return true;
@@ -85,7 +96,7 @@ export function fnSnapHasData(snap) {
 export function fnSnapHasBuild(snap) {
   if (!snap || typeof snap !== "object") return false;
   if (Object.keys(snap.elSelectedPhoto || {}).length > 0) return true;
-  if (Object.keys(snap.zoneElements || {}).length > 0) return true;
+  if (hasRealZoneElements(snap.zoneElements)) return true;
   if (Object.values(snap.enabledEls || {}).some((v) => v)) return true;
   return false;
 }
@@ -161,6 +172,17 @@ export function sessionHasData(session) {
 export function autoSaveWouldDestroy(next, prev, isAuto) {
   if (!isAuto) return false;
   if (!prev || !prev.auto) return false;          // nothing being replaced in place
+  // Checked independently of (and BEFORE) the structural check below: a real priced draft
+  // dropping to nothing is destructive on its own, whatever sessionHasData(next) concludes about
+  // shape. This is deliberately a second, independent signal rather than a replacement for the
+  // structural check — confirmed incident: `next` retained an empty-array key per zone (every
+  // zone toggled off after a bad restore) and sessionHasData(next) read that as "carries work of
+  // its own" purely from key presence, so the structural check alone let dozens of ₹0 auto-saves
+  // silently bury a real ₹6L+ draft. Money is the thing that actually matters here — check it
+  // directly too, so a similar gap in the structural shape check can't repeat this.
+  const prevTotal = Number(prev.total) || 0;
+  const nextTotal = Number(next?.total) || 0;
+  if (prevTotal > 0 && nextTotal <= 0) return true;
   if (sessionHasData(next)) return false;         // the new snapshot carries work of its own
   return sessionHasData(prev);                    // destructive only if the old one did
 }

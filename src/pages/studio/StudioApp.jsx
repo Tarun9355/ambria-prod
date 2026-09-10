@@ -2473,18 +2473,20 @@ export default function StudioApp() {
       // before showing anything (see the combined loading gate in StudioEventInfo.jsx), and none of
       // those other resources have anything to do with that search, so there was never a reason for
       // it to wait behind them.
-      // Its own two fetches (client rows + studio_sessions) now run CONCURRENTLY rather than one
-      // after another for the same reason: studio_sessions is joined against client_ledger
-      // CLIENT-SIDE afterward (by client_id), not queried by it, so one was never a prerequisite
-      // for the other — session rows is also the largest table in the system (one row per function
-      // per save, uncapped), so it was the single biggest thing this search was waiting on.
+      // Its own two fetches (client rows + studio_sessions) run sequentially, same as before this
+      // file's history started reordering it — see the comment on the try block below for why.
       // Seed the dirty-check baseline with what the DB actually holds, so the first save of the
       // session uploads only what genuinely changed instead of the entire ledger.
       try {
-        const [rows, srows] = await Promise.all([
-          loadClientRows(),
-          loadSessionRows().catch(() => null), // table absent/unreadable — sessions stay [] below, same as before
-        ]);
+        // Sequential, not Promise.all — reverted after a confirmed incident where a client's real
+        // session data got buried under a cascade of empty auto-saves shortly after this ran
+        // concurrently. Never fully proven as the cause (the actual bug was a gap in
+        // autoSaveWouldDestroy's "has data" check, now fixed in sessionData.js), but two large
+        // full-table queries firing at once is a plausible contributor and this costs little to
+        // remove as a precaution — client_ledger's own load still runs first in this effect either
+        // way, which was the real, confirmed win.
+        const rows = await loadClientRows();
+        const srows = await loadSessionRows().catch(() => null); // table absent/unreadable — sessions stay [] below, same as before
         if (Array.isArray(rows) && !cancelled) {
           const list = rows.map(rowToClient).filter(Boolean);
           // THE TABLE IS THE SOURCE OF TRUTH. Unconditionally — a client with no rows gets an empty
