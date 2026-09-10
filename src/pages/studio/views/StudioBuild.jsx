@@ -1313,6 +1313,13 @@ export default function StudioBuild({ ctx }) {
   // ManageLibrary.jsx's elHoverImg. Keyed by "zoneKey:idx" since two near-duplicate element-list
   // blocks in this file can both be on screen at once.
   const [elThumbHover, setElThumbHover] = useState(null); // { key, top, bottom, left }
+  // "+ Add element…" search results dropdown, keyed by zone key. Same escape-the-clipped-ancestor
+  // reason as elThumbHover above — .zone-row is overflow:hidden for its rounded corners, so an
+  // absolutely-positioned dropdown nested inside it that extends past the row's own bottom edge got
+  // hard-clipped with no way to scroll to the rest (reported on an Android-TV-mirrored Safari
+  // session, but the clipping is a plain CSS fact, not browser-specific — it would happen anywhere
+  // a zone card is short enough for the dropdown to overrun it, e.g. the last zone on the page).
+  const [addElPos, setAddElPos] = useState(null); // { key, top, bottom, left, openUp }
 
   // The currently-selected photo per zone can be restored from a saved session and its id may not
   // be in the lazy library cache yet (used below for the "correct & save to master" lookup) —
@@ -3196,7 +3203,20 @@ undefined
                 {/* Adding an element belongs beside the element list, not up on the photo pager.
                     Gated on the panel: adding to a collapsed list would look like nothing happened. */}
                 {isElCardOpen(k)&&<div style={{position:"relative"}}>
-                    <input value={zoneElSearch[k]||""} onChange={e=>setZoneElSearch(p=>({...p,[k]:e.target.value}))} placeholder="+ Add element..." style={{...S.input,fontSize:11.5,padding:"3px 8px",width:140,marginBottom:0}} onFocus={()=>setZoneElSearch(p=>({...p,[k]:""})) } />
+                    <input value={zoneElSearch[k]||""}
+                      onChange={e=>{
+                        setZoneElSearch(p=>({...p,[k]:e.target.value}));
+                        const r=e.currentTarget.getBoundingClientRect(); const POP=340;
+                        const openUp=window.innerHeight-r.bottom<POP+8 && r.top>POP+8;
+                        setAddElPos({key:k,openUp,top:openUp?undefined:r.bottom+2,bottom:openUp?window.innerHeight-r.top+2:undefined,left:Math.max(8,r.right-320)});
+                      }}
+                      placeholder="+ Add element..." style={{...S.input,fontSize:11.5,padding:"3px 8px",width:140,marginBottom:0}}
+                      onFocus={e=>{
+                        setZoneElSearch(p=>({...p,[k]:""}));
+                        const r=e.currentTarget.getBoundingClientRect(); const POP=340;
+                        const openUp=window.innerHeight-r.bottom<POP+8 && r.top>POP+8;
+                        setAddElPos({key:k,openUp,top:openUp?undefined:r.bottom+2,bottom:openUp?window.innerHeight-r.top+2:undefined,left:Math.max(8,r.right-320)});
+                      }} />
                     {(zoneElSearch[k]||"").length>=1&&(()=>{
                       const q=(zoneElSearch[k]||"").toLowerCase();
                       // A kit's own components are already covered by that kit — don't offer adding
@@ -3212,7 +3232,8 @@ undefined
                       const invMatches=(imsInventory||[]).filter(it=>!(zoneElements[k]||[]).find(el=>el.invId===it.id)&&!kitCoveredIds.has(it.id)&&!isHiddenSubcat(it,rcSubcatFactors)&&(it.name.toLowerCase().includes(q)||(it.cat||"").toLowerCase().includes(q)||(it.subCat||it.subcategory||"").toLowerCase().includes(q))).slice(0,8);
                       const patMatches=(recipeOnlyPatterns||[]).filter(pt=>!(zoneElements[k]||[]).find(el=>el.patternId===pt.id)&&pt.name.toLowerCase().includes(q)).slice(0,4);
                       const matches=[...invMatches.map(it=>({kind:"inv",it})),...patMatches.map(pt=>({kind:"pat",pt}))].slice(0,8);
-                      return matches.length>0?<div style={{position:"absolute",top:"100%",right:0,zIndex:50,background:cardBg,border:`1px solid ${border}`,borderRadius:8,marginTop:2,boxShadow:"0 4px 16px rgba(0,0,0,0.2)",maxHeight:340,overflowY:"auto",width:320}}>
+                      if(!addElPos||addElPos.key!==k) return null;
+                      return matches.length>0?createPortal(<div style={{position:"fixed",top:addElPos.top,bottom:addElPos.bottom,left:addElPos.left,zIndex:10000,background:cardBg,border:`1px solid ${border}`,borderRadius:8,boxShadow:"0 4px 16px rgba(0,0,0,0.2)",maxHeight:340,overflowY:"auto",width:320}}>
                         {matches.map(m=>{
                           if(m.kind==="pat"){ const pt=m.pt; return <div key={"pat:"+pt.id}
                             onClick={()=>{
@@ -3257,7 +3278,7 @@ undefined
                             </div>
                           </div>;
                         })}
-                      </div>:<div style={{position:"absolute",top:"100%",right:0,zIndex:50,background:cardBg,border:`1px solid ${border}`,borderRadius:8,marginTop:2,padding:"8px 10px",fontSize:11.5,color:textS,width:320}}>No matches</div>;
+                      </div>,document.body):createPortal(<div style={{position:"fixed",top:addElPos.top,bottom:addElPos.bottom,left:addElPos.left,zIndex:10000,background:cardBg,border:`1px solid ${border}`,borderRadius:8,padding:"8px 10px",fontSize:11.5,color:textS,width:320}}>No matches</div>,document.body);
                     })()}
                 </div>}
               </div>
