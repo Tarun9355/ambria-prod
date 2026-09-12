@@ -1020,12 +1020,16 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       swRow1.height = 22;
       const swHead = sw.addRow(["Function", "Date · Venue", "Decor", "Transport", "Grand"]);
       swHead.eachCell(c => { c.font = { bold: true, color: { argb: white } }; c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: tan } }; });
+      // Placeholder flat values for now — swapped for cross-sheet formulas once the per-function
+      // tabs (built below) exist to point at; swFnRows keeps each row so that pass can reach it.
+      const swFnRows = [];
       combined.functions.forEach(fnObj => {
         const row = sw.addRow([
           fnObj.fnType || "—", `${fmtDate(fnObj.fnDate)} · ${fnObj.fnVenue || "—"}`,
           fnObj.isEmpty ? 0 : (fnObj.decorTotal || 0), fnObj.isEmpty ? 0 : (fnObj.transportTotal || 0), fnObj.isEmpty ? 0 : (fnObj.grand || 0),
         ]);
         [3, 4, 5].forEach(ci => { row.getCell(ci).numFmt = money.numFmt; row.getCell(ci).alignment = { horizontal: "right" }; });
+        swFnRows.push(row);
       });
       const gtRow = sw.addRow(["EVENT GRAND TOTAL", "", "", "", combined.eventGrandTotal || 0]);
       sw.mergeCells(gtRow.number, 1, gtRow.number, 4);
@@ -1060,11 +1064,21 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
         negRow.getCell(5).fill = { type: "pattern", pattern: "solid", fgColor: { argb: dark } };
         negRow.getCell(5).numFmt = money.numFmt;
         negRow.getCell(5).alignment = { horizontal: "right" };
+        // Discount = grand total − negotiated amount, as a formula over those two cells — once the
+        // pass below fills in gtRow's real formula, editing any function's numbers flows all the way
+        // through to here too. FINAL NEGOTIATED AMOUNT itself stays a flat number: it's the actual
+        // manual override the salesperson entered, not something derived from other cells.
+        discRow.getCell(5).value = { formula: `E${gtRow.number}-E${negRow.number}`, result: discount };
       }
 
       // ═══ Per-function tabs — one worksheet per function, after the Event Summary tab above. ═══
+      // fnRefs mirrors combined.functions 1:1 so the Event Summary pass below can wire cross-sheet
+      // formulas into it — it needs each function's sheet name plus the row numbers of its zone
+      // subtotals, transport total, and FUNCTION TOTAL, none of which exist until this loop runs.
+      const fnRefs = [];
       combined.functions.forEach((fnObj, i) => {
-        const ws = workbook.addWorksheet(sheetNameFor(fnObj, i));
+        const sheetName = sheetNameFor(fnObj, i);
+        const ws = workbook.addWorksheet(sheetName);
         ws.columns = COLS;
         addSectionRow(ws, `AMBRIA DECORATIONS — ${(combined.clientName || "Client").toUpperCase()}`, { fill: dark, color: gold, size: 13, height: 24 });
         addSectionRow(ws, fnLine(fnObj).toUpperCase(), { fill: "FF2A2A42", color: white });
@@ -1075,6 +1089,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
           const row = ws.getRow(ws.rowCount);
           row.getCell(1).value = "Design pending — zones for this function have not been built yet.";
           row.getCell(1).font = { italic: true, color: { argb: "FF808080" } };
+          fnRefs.push({ isEmpty: true });
           return;
         }
 
@@ -1099,6 +1114,8 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
           }
           ws.addRow([]);
         });
+        const decorRows = totalRefRows.slice(); // snapshot before transport's row is appended below
+        let transportRow = null;
 
         if (fnObj.transport) {
           addSectionRow(ws, "TRANSPORT & POWER", { fill: "FF312E81", color: "FFA5B4FC" });
@@ -1119,6 +1136,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
           tRow.getCell(6).value = { formula: `SUM(F${truckRow.number}:F${gRow.number})`, result: fnObj.transport.total || 0 };
           tRow.getCell(6).numFmt = money.numFmt; tRow.getCell(6).alignment = { horizontal: "right" };
           totalRefRows.push(tRow.number);
+          transportRow = tRow.number;
           ws.addRow([]);
         }
 
@@ -1134,7 +1152,25 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
         ftRow.getCell(6).numFmt = money.numFmt;
         ftRow.getCell(6).alignment = { horizontal: "right" };
         ftRow.height = 22;
+        fnRefs.push({ isEmpty: false, sheetName, decorRows, transportRow, ftRow: ftRow.number });
       });
+
+      // ═══ Wire Event Summary's per-function rows + grand total to the sheets just built ═══
+      // Same live-recalc goal, one hop across sheets: edit a Qty/Rate on a function's own tab and
+      // Event Summary's Decor/Transport/Grand (and Discount, below) pick it up too. Skipped for any
+      // isEmpty function — there's no real content on its sheet to point a formula at.
+      const qsheet = (name) => `'${name.replace(/'/g, "''")}'`;
+      combined.functions.forEach((fnObj, i) => {
+        const ref = fnRefs[i];
+        const row = swFnRows[i];
+        if (!ref || ref.isEmpty) return;
+        const sn = qsheet(ref.sheetName);
+        if (ref.decorRows.length) row.getCell(3).value = { formula: `SUM(${ref.decorRows.map(r => `${sn}!F${r}`).join(",")})`, result: fnObj.decorTotal || 0 };
+        row.getCell(4).value = ref.transportRow ? { formula: `${sn}!F${ref.transportRow}`, result: fnObj.transportTotal || 0 } : 0;
+        row.getCell(5).value = { formula: `${sn}!F${ref.ftRow}`, result: fnObj.grand || 0 };
+      });
+      const grandRefs = fnRefs.filter(r => r && !r.isEmpty).map(r => `${qsheet(r.sheetName)}!F${r.ftRow}`);
+      if (grandRefs.length) gtRow.getCell(5).value = { formula: `SUM(${grandRefs.join(",")})`, result: combined.eventGrandTotal || 0 };
 
       // File name: guest name + the earliest function's date + venue — functions are already
       // date-sorted by buildCombinedCostSheetData, so [0] is the earliest.
