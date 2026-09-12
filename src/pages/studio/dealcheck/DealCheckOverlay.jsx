@@ -252,13 +252,21 @@ export default function DealCheckOverlay({ ctx }) {
   // the whole line at the sub-category default, same as before Fixed Venues data was read here.
   const repeatAdjustedRental = (isRepeatZone, venueName, item, qty, baseRental) => {
     const full = qty * baseRental;
-    if (!isRepeatZone || !item) return full;
+    if (!item) return full;
     // fixedVenueSubcatDiscount rides along here too — standingDiscountPct falls back to it when
     // a standing item has no per-item override of its own, so that fallback needs it on the
     // same object rentalSplit passes through, not just the two keys fixedVenueFor itself reads.
     const fvCfg = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {}, fixedVenueSubcatDiscount: dealCheckData?.fixedVenueSubcatDiscount || {} };
+    // A Fixed-Venue standing item is discounted UNCONDITIONALLY — it's physically standing at this
+    // venue whether or not the salesperson happened to flag this zone "Repeat". Gating it behind
+    // isRepeatZone used to mean the exact same standing bench billed full rate in a zone nobody
+    // marked Repeat, and only got its real discount if they also (redundantly) flagged Repeat.
     const { standingUnits, freshUnits, discountPct } = rentalSplit(fvCfg, venueName, item.id, qty, dcInventoryCache);
     if (standingUnits > 0) return standingUnits * baseRental * (1 - discountPct / 100) + freshUnits * baseRental;
+    // Not a specifically-registered standing item, so there's nothing "always there" about it — the
+    // sub-category-level Repeat discount only makes sense when THIS event's own setup is being
+    // reused across days, which is exactly what isRepeatZone means. Stays gated on it.
+    if (!isRepeatZone) return full;
     const key = String(imsField.subcategory(item) || "").toLowerCase().trim();
     const sc = key ? Number((dealCheckData?.fixedVenueSubcatDiscount || {})[key]) : NaN;
     const pct = Number.isFinite(sc) && sc > 0 ? sc : 0;
