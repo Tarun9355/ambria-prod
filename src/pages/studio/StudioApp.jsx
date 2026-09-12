@@ -2506,7 +2506,20 @@ export default function StudioApp() {
         // remove as a precaution — client_ledger's own load still runs first in this effect either
         // way, which was the real, confirmed win.
         const rows = await loadClientRows();
-        const srows = await loadSessionRows().catch(() => null); // table absent/unreadable — sessions stay [] below, same as before
+        // NOT wrapped in its own try/catch. loadSessionRows() already has an internal fallback for
+        // the one case that's actually safe to treat as "no sessions yet" (the recent_studio_sessions
+        // RPC not existing before its migration runs) — it only throws for a genuine, unexpected
+        // failure (a network blip, a timeout). A swallowed catch here used to treat THAT the same as
+        // "this client has no saved work at all": every client in `list` below comes from rowToClient,
+        // which always starts `sessions: []` (the blob mirror was retired — see clientToRow), so a
+        // transient fetch failure silently produced a session-less ledger for EVERYONE, no error
+        // shown. If the mount-restore effect then restored a client under that ledger, it populated
+        // name/date/venue but left the actual build at its empty default — and the very next autosave
+        // persisted that emptiness as a brand new, genuinely-empty session, burying real work with no
+        // warning. Letting it throw here instead routes to the same catch as loadClientRows() below:
+        // ledgerLoadError shows the existing retry banner, and clientLedger is never set from a
+        // ledger that quietly forgot everyone's history.
+        const srows = await loadSessionRows();
         if (Array.isArray(rows) && !cancelled) {
           const list = rows.map(rowToClient).filter(Boolean);
           // THE TABLE IS THE SOURCE OF TRUTH. Unconditionally — a client with no rows gets an empty
@@ -6695,25 +6708,29 @@ export default function StudioApp() {
       const rows = await loadClientRows();
       if (!Array.isArray(rows)) throw new Error("client_ledger: unexpected response");
       const list = rows.map(rowToClient).filter(Boolean);
-      try {
-        const srows = await loadSessionRows();
-        if (Array.isArray(srows) && srows.length) {
-          const byClient = new Map();
-          for (const r of srows) {
-            if (!r?.client_id) continue;
-            let g = byClient.get(r.client_id);
-            if (!g) { g = []; byClient.set(r.client_id, g); }
-            g.push(r);
-          }
-          // Same change as the mount path above — the table is authoritative, so no rows means no
-          // sessions. Left as the old conditional, this retry would have quietly resurrected a
-          // deleted session that the mount path had correctly dropped.
-          for (const c of list) {
-            const mine = byClient.get(c.id);
-            c.sessions = (mine && mine.length) ? rowsToSessions(mine) : [];
-          }
+      // NOT wrapped in its own try/catch — same reasoning as the mount effect's identical fetch
+      // above. loadSessionRows() already falls back internally for the one case that's genuinely
+      // "no sessions" (the RPC missing pre-migration); swallowing a real failure here used to let
+      // this retry commit a session-less ledger for every client (rowToClient always starts
+      // sessions: [] — there's no blob mirror left to fall back to), silently erasing what the
+      // banner was trying to recover. Letting it throw routes to the outer catch below instead.
+      const srows = await loadSessionRows();
+      if (Array.isArray(srows) && srows.length) {
+        const byClient = new Map();
+        for (const r of srows) {
+          if (!r?.client_id) continue;
+          let g = byClient.get(r.client_id);
+          if (!g) { g = []; byClient.set(r.client_id, g); }
+          g.push(r);
         }
-      } catch { /* table absent or unreadable — the blob history stands */ }
+        // Same change as the mount path above — the table is authoritative, so no rows means no
+        // sessions. Left as the old conditional, this retry would have quietly resurrected a
+        // deleted session that the mount path had correctly dropped.
+        for (const c of list) {
+          const mine = byClient.get(c.id);
+          c.sessions = (mine && mine.length) ? rowsToSessions(mine) : [];
+        }
+      }
       const seed = {}; list.forEach((c) => { if (c && c.id) seed[c.id] = JSON.stringify(c); });
       clientJsonRef.current = seed;
       setClientLedger(list);
