@@ -3188,7 +3188,14 @@ undefined
           </div>
 
           {/* ═══ ELEMENT CARD PRICING — from selected photo ═══ */}
-          {zoneSection[k]==="elements"&&(zoneElements[k] ? (
+          {/* A custom zone (added via + Add Custom Zone below) has no library photo pool to seed an
+              element list from by definition — "Other" starts with none at all, and a sourceType zone
+              may just not have picked one yet. zoneElements[k] stays undefined until a photo is
+              chosen, so gating the WHOLE editor (including "+ Add element…") on it being truthy
+              blocked a custom zone from adding anything at all until a photo existed — even though
+              nothing about the add-element search or Rate Card pricing actually needs one. A custom
+              zone always gets the real editor; every read inside already defaults with `|| []`. */}
+          {zoneSection[k]==="elements"&&((zoneElements[k] || customZones.some(cz=>cz.id===k)) ? (
             <div>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
                 {(()=>{
