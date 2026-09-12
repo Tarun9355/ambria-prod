@@ -933,6 +933,9 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       workbook.created = new Date(0); // Date.now()/new Date() with no args is unavailable in this
                                        // environment's tooling elsewhere in the session — epoch is fine,
                                        // ExcelJS just needs SOME Date object for the metadata field.
+      // Amount cells below carry live formulas — force Excel to recompute them on open rather than
+      // trusting the cached `result` we also write (needed for viewers that don't auto-recalc).
+      workbook.calcProperties = { fullCalcOnLoad: true };
       const COLS = [
         { header: "Item", key: "item", width: 34 },
         { header: "Size", key: "size", width: 12 },
@@ -971,11 +974,27 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
         });
         return row;
       };
+      // Amount used to be a flat number copied out of the DB — editing Qty or Rate in the exported
+      // sheet did nothing, since nothing on the sheet actually referenced them. Now Amount is a real
+      // formula wherever Qty×Rate is what produced it, so the exported sheet stays live in Excel.
+      // Not every structItems row qualifies though — e.g. a Box truss with a front-extension add-on
+      // shows only the BASE sqft in Qty/Rate (see the comment above trussBaseArea's call site) while
+      // its `total` also includes the extension's cost, so Qty×Rate there would under-count. Rather
+      // than special-case that by name, we just check numerically: only wire the formula when
+      // Qty×Rate actually reproduces the stored total (small rounding slack for 2-decimal areas);
+      // otherwise the flat value is the true figure and is left alone.
       const addItemRow = (ws, cells, opts = {}) => {
         const row = ws.addRow(cells);
         if (opts.italic) row.eachCell(c => { c.font = { ...(c.font || {}), italic: true }; });
         if (opts.bold) row.eachCell(c => { c.font = { ...(c.font || {}), bold: true }; });
         if (opts.fill) row.eachCell(c => { c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: opts.fill } }; });
+        const [, , qty, rate, , total] = cells;
+        if (opts.sumRange) {
+          const [start, end] = opts.sumRange;
+          row.getCell(6).value = { formula: `SUM(F${start}:F${end})`, result: Number(total) || 0 };
+        } else if (typeof qty === "number" && typeof rate === "number" && typeof total === "number" && Math.abs(qty * rate - total) < 1) {
+          row.getCell(6).value = { formula: `C${row.number}*D${row.number}`, result: total };
+        }
         row.getCell(6).numFmt = money.numFmt;
         row.getCell(3).alignment = { horizontal: "center" };
         row.getCell(4).alignment = { horizontal: "right" };
@@ -1059,12 +1078,20 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
           return;
         }
 
+        // Amount cells for each zone's own subtotal and the FUNCTION TOTAL band at the bottom are
+        // also formulas now (SUM over the rows that feed them) — the same live-recalc goal as
+        // Amount above, just one level up: change a Qty/Rate, the zone subtotal picks it up, and the
+        // function total picks that up too, all without re-exporting.
+        const totalRefRows = [];
         fnObj.zones.forEach(z => {
           addSectionRow(ws, `${z.label}${z.dimLabel ? "  (" + z.dimLabel + ")" : ""}   —   ${f(z.zoneTotal)}`, { fill: "FFEFE9DD", color: "FF1A1A2E" });
           addTableHeaderRow(ws);
+          const itemStartRow = ws.rowCount + 1;
           z.structItems.forEach(si => addItemRow(ws, [si.name, si.size || "—", si.qty ?? "—", si.rate ?? "—", si.unit || "—", si.total], { italic: true }));
           z.items.forEach(it => addItemRow(ws, [it.name, it.size || "—", it.qty, it.rate, it.unit, it.total]));
-          addItemRow(ws, [`${z.label} Subtotal`, "", "", "", "", z.zoneTotal], { bold: true, fill: subtle });
+          const itemEndRow = ws.rowCount;
+          const subtotalRow = addItemRow(ws, [`${z.label} Subtotal`, "", "", "", "", z.zoneTotal], { bold: true, fill: subtle, sumRange: itemEndRow >= itemStartRow ? [itemStartRow, itemEndRow] : null });
+          totalRefRows.push(subtotalRow.number);
           if (z.note) {
             const row = ws.addRow([`📝 ${z.note}`]);
             ws.mergeCells(row.number, 1, row.number, COLS.length);
@@ -1087,13 +1114,26 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
           truckRow.getCell(6).numFmt = money.numFmt; truckRow.getCell(6).alignment = { horizontal: "right" };
           const gRow = ws.addRow(["Genset", `${fnObj.transport.gensets || 0} units × ${f(fnObj.transport.gensetRate || 0)}`, "", "", "", fnObj.transport.gensetCost || 0]);
           gRow.getCell(6).numFmt = money.numFmt; gRow.getCell(6).alignment = { horizontal: "right" };
-          const tRow = ws.addRow(["Transport Total", "", "", "", "", fnObj.transport.total || 0]);
+          const tRow = ws.addRow(["Transport Total", "", "", "", "", ""]);
           tRow.eachCell(c => { c.font = { bold: true, color: { argb: "FF4F46E5" } }; c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFEEF2FF" } }; });
+          tRow.getCell(6).value = { formula: `SUM(F${truckRow.number}:F${gRow.number})`, result: fnObj.transport.total || 0 };
           tRow.getCell(6).numFmt = money.numFmt; tRow.getCell(6).alignment = { horizontal: "right" };
+          totalRefRows.push(tRow.number);
           ws.addRow([]);
         }
 
-        addSectionRow(ws, `FUNCTION TOTAL   —   ${f(fnObj.grand)}`, { fill: dark, color: gold, size: 12, height: 22 });
+        const ftRow = ws.addRow(["FUNCTION TOTAL", "", "", "", "", ""]);
+        ws.mergeCells(ftRow.number, 1, ftRow.number, 5);
+        ftRow.getCell(1).font = { bold: true, size: 12, color: { argb: gold } };
+        ftRow.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: dark } };
+        ftRow.getCell(6).value = totalRefRows.length
+          ? { formula: `SUM(${totalRefRows.map(r => `F${r}`).join(",")})`, result: fnObj.grand || 0 }
+          : (fnObj.grand || 0);
+        ftRow.getCell(6).font = { bold: true, size: 13, color: { argb: gold } };
+        ftRow.getCell(6).fill = { type: "pattern", pattern: "solid", fgColor: { argb: dark } };
+        ftRow.getCell(6).numFmt = money.numFmt;
+        ftRow.getCell(6).alignment = { horizontal: "right" };
+        ftRow.height = 22;
       });
 
       // File name: guest name + the earliest function's date + venue — functions are already
