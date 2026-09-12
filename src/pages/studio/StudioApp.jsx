@@ -1158,7 +1158,27 @@ function rowsToSessions(rows) {
   return out.slice(0, SESSION_KEEP);
 }
 
+// Calls the recent_studio_sessions() DB function (migration 029) instead of scanning the whole
+// table — studio_sessions never deletes rows (rowsToSessions has always capped to SESSION_KEEP
+// per client on the way OUT, client-side, after downloading everything), so at real scale this
+// was downloading a client's entire history just to keep the newest 10 sessions and throw the
+// rest away. The function does that same capping server-side; nothing here reads or deletes any
+// row this app doesn't already keep. Falls back to the old whole-table scan if the function isn't
+// there yet (a fresh environment before the migration has run) so this never hard-fails.
 async function loadSessionRows() {
+  const all = []; const SIZE = 1000;
+  for (let from = 0; ; from += SIZE) {
+    const { data, error } = await supabase.rpc("recent_studio_sessions").range(from, from + SIZE - 1);
+    if (error) {
+      if (from === 0) return loadAllSessionRowsFallback();
+      throw error;
+    }
+    all.push(...(data || []));
+    if (!data || data.length < SIZE) break;
+  }
+  return all;
+}
+async function loadAllSessionRowsFallback() {
   const all = []; const SIZE = 1000;
   for (let from = 0; ; from += SIZE) {
     const { data, error } = await supabase.from("studio_sessions")
