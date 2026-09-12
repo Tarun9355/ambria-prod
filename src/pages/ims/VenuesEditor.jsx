@@ -73,6 +73,33 @@ const cascadeSummary = (r) => {
   return bits.length ? ` — ${bits.join(" · ")} updated` : "";
 };
 
+const commKey = (kind, id) => `${kind}:${id}`;
+
+// Module-scope (not defined inside VenuesEditor) on purpose: a component declared inside another
+// component's body gets a NEW function identity every render, so React treats it as a different
+// component type at that JSX position and unmounts + remounts the DOM node — every single render.
+// That was happening here on every keystroke (setCommDraft → VenuesEditor re-renders → a fresh
+// CommissionInput function → the <input> is torn down and rebuilt), which is exactly what dropped
+// focus/highlight after each character and, combined with the fresh input never having the
+// in-progress keystrokes, could also lose the value before Enter/blur ever committed it.
+function CommissionInput({ kind, id, value, commDraft, setCommDraft, commitCommission }) {
+  const key = commKey(kind, id);
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }} title="Commission % of deal amount set aside for this venue">
+      <input
+        type="number" min={0} max={100} step={0.5}
+        value={commDraft[key] ?? (value ?? "")}
+        onChange={(e) => setCommDraft((d) => ({ ...d, [key]: e.target.value }))}
+        onBlur={() => commitCommission(kind, id)}
+        onKeyDown={(e) => e.key === "Enter" && commitCommission(kind, id)}
+        placeholder="0"
+        className="border rounded px-1.5 py-0.5 text-[11px] w-12"
+      />
+      <span className="text-[10px] text-gray-400">% comm.</span>
+    </span>
+  );
+}
+
 export default function VenuesEditor({ settings, setSettings, showMsg }) {
   const [venues, setVenues] = useState(null); // null = still loading
   const [newPropName, setNewPropName] = useState("");
@@ -83,7 +110,6 @@ export default function VenuesEditor({ settings, setSettings, showMsg }) {
   // Commission % — a draft per row (keyed "property:id" / "outdoor:name") so typing doesn't write
   // on every keystroke; committed on blur/Enter, same pattern as every rename input on this screen.
   const [commDraft, setCommDraft] = useState({});
-  const commKey = (kind, id) => `${kind}:${id}`;
 
   useEffect(() => {
     let cancelled = false;
@@ -222,20 +248,6 @@ export default function VenuesEditor({ settings, setSettings, showMsg }) {
     else save({ ...venues, outdoor: venues.outdoor.map((v) => (v.name === id ? { ...v, commissionPct: n } : v)) });
     setCommDraft((d) => { const nd = { ...d }; delete nd[commKey(kind, id)]; return nd; });
   };
-  const CommissionInput = ({ kind, id, value }) => (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }} title="Commission % of deal amount set aside for this venue">
-      <input
-        type="number" min={0} max={100} step={0.5}
-        value={commDraft[commKey(kind, id)] ?? (value ?? "")}
-        onChange={(e) => setCommDraft((d) => ({ ...d, [commKey(kind, id)]: e.target.value }))}
-        onBlur={() => commitCommission(kind, id)}
-        onKeyDown={(e) => e.key === "Enter" && commitCommission(kind, id)}
-        placeholder="0"
-        className="border rounded px-1.5 py-0.5 text-[11px] w-12"
-      />
-      <span className="text-[10px] text-gray-400">% comm.</span>
-    </span>
-  );
 
   if (!venues) return <p className="text-sm text-gray-400 italic py-6">Loading venues…</p>;
 
@@ -271,7 +283,7 @@ export default function VenuesEditor({ settings, setSettings, showMsg }) {
                     <span className="font-semibold text-gray-900">{p.name}</span>
                     <span className="text-[10px] text-gray-400">{subs.length} sub-venue{subs.length === 1 ? "" : "s"}</span>
                     <button onClick={() => setEditing({ kind: "property", id: p.id, name: p.name })} className="text-xs text-indigo-600 ml-1" title="Rename">✏️</button>
-                    <CommissionInput kind="property" id={p.id} value={p.commissionPct} />
+                    <CommissionInput kind="property" id={p.id} value={p.commissionPct} commDraft={commDraft} setCommDraft={setCommDraft} commitCommission={commitCommission} />
                     <button onClick={() => deleteProperty(p.id)} className="text-xs text-red-400 ml-auto" title="Delete">🗑️</button>
                   </>
                 )}
@@ -347,7 +359,7 @@ export default function VenuesEditor({ settings, setSettings, showMsg }) {
               <span key={v.name} className="inline-flex items-center gap-1.5 bg-white border rounded-lg px-2.5 py-1.5 text-xs text-gray-700">
                 {v.name}
                 <button onClick={() => setEditing({ kind: "outdoor", id: v.name, name: v.name, empanelled: v.empanelled })} className="text-indigo-500" title="Rename">✏️</button>
-                <CommissionInput kind="outdoor" id={v.name} value={v.commissionPct} />
+                <CommissionInput kind="outdoor" id={v.name} value={v.commissionPct} commDraft={commDraft} setCommDraft={setCommDraft} commitCommission={commitCommission} />
                 <button onClick={() => deleteOutdoorVenue(v.name)} className="text-red-400" title="Delete">✕</button>
               </span>
             );
@@ -378,7 +390,7 @@ export default function VenuesEditor({ settings, setSettings, showMsg }) {
               <div key={v.name} className="flex items-center justify-between px-3 py-2 border-b last:border-b-0">
                 <span className="text-xs text-gray-800">{v.name}</span>
                 <div className="flex items-center gap-3">
-                  <CommissionInput kind="outdoor" id={v.name} value={v.commissionPct} />
+                  <CommissionInput kind="outdoor" id={v.name} value={v.commissionPct} commDraft={commDraft} setCommDraft={setCommDraft} commitCommission={commitCommission} />
                   <button onClick={() => setEditing({ kind: "outdoor", id: v.name, name: v.name, empanelled: v.empanelled })} className="text-[11px] text-indigo-600">✏️ Edit</button>
                   <button onClick={() => deleteOutdoorVenue(v.name)} className="text-[11px] text-red-400">✕ Remove</button>
                 </div>
