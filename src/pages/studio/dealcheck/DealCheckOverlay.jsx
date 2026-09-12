@@ -338,7 +338,7 @@ export default function DealCheckOverlay({ ctx }) {
         // ═══ Shared cost rollup — single computation used by GYV tab + bottom strip (§26.19) ═══
         const dcCostRollup = (() => {
           const fns = collectAllFunctionData ? collectAllFunctionData() : [];
-          let rental = 0, florals = 0, transport = 0, manpower = 0, truss = 0, genset = 0;
+          let rental = 0, florals = 0, transport = 0, manpower = 0, truss = 0, genset = 0, printCost = 0;
           // Unavailable-shortfall pricing: a matched card's qty beyond what's actually free in
           // stock for the event date bills at item.cost × this sub-category's cost% instead of
           // the rental rate (rate_card_categories.cost_percent, IMS-owned). Default 100 (full
@@ -557,8 +557,11 @@ export default function DealCheckOverlay({ ctx }) {
           // calcStructCost's own .print (via structRates.printMaterials) — but dcCostRollup computes
           // its own cost engine from scratch rather than calling calcStructCost, so it never priced
           // print at all: clientRevenue (quote, via calcFunctionCost → calcStructCost) charged for
-          // it, while `base`/`grand` (cost, margin) silently treated it as free. Folded into the same
-          // `truss` bucket the masking/fabric cost above already shares, for the same reason.
+          // it, while `base`/`grand` (cost, margin) silently treated it as free.
+          // A print job IS a buying action (a vendor prints the flex/vinyl/sunboard, it's not pulled
+          // from truss stock), so it's costed into `printCost` → folded into `buyTotal` below, and
+          // shown as its own line in the Buying tab — not buried inside the Truss cost bucket where
+          // nothing ever surfaced it as a line item.
           try {
             const printMats = imsPrintMaterials || [];
             fns.forEach((fn) => {
@@ -573,9 +576,9 @@ export default function DealCheckOverlay({ ctx }) {
                   return sum + s * (m?.ratePerSqft || 0) * q;
                 }, 0);
                 if (pc > 0) {
-                  truss += pc;
-                  addD("Structure", "truss", pc);
-                  if (deptInv["Structure"]) deptInv["Structure"].push({ name: "🖨 Print / signage", photo: "", qty: (zc[zk].prints || []).length, unit: 0, total: Math.round(pc), sub: "print" });
+                  printCost += pc;
+                  addD("Structure", "buying", pc);
+                  if (deptInv["Structure"]) deptInv["Structure"].push({ name: "🖨 Print / signage", photo: "", qty: (zc[zk].prints || []).length, unit: 0, total: Math.round(pc), sub: "print", prodOrBuy: "buying" });
                 }
               });
             });
@@ -934,7 +937,7 @@ export default function DealCheckOverlay({ ctx }) {
               }
             }
           } catch {}
-          const buyTotal = dcCustomItems.filter(c=>c.type==="buying").reduce((s,c)=>s+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0);
+          const buyTotal = dcCustomItems.filter(c=>c.type==="buying").reduce((s,c)=>s+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0) + printCost;
           const produceTotal = dcCustomItems.filter(c=>c.type==="production").reduce((s,c)=>s+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0);
           // Production / Buying → department by the item's category/sub-category. Also listed as a
           // line item in deptInv (previously only folded into the department's income total — Dept
@@ -3061,25 +3064,51 @@ export default function DealCheckOverlay({ ctx }) {
                   const fnIdx = activeFnIdx || 0;
                   const isP = dcActiveTab === "production";
                   const items = dcCustomItems.filter(c => c.fnIdx === fnIdx && c.type === dcActiveTab);
-                  const total = items.reduce((s, c) => s + (c.manualPrice || c.refPrice || 0) * (Number(c.qty) || 1), 0);
+                  const fnForPrints = (collectAllFunctionData ? collectAllFunctionData() : [])[fnIdx];
+                  // Print jobs (zc[zk].prints — Flex/Vinyl/Sunboard etc, added via the Print tile on a
+                  // zone header in Build) are a Buying action — a vendor prints them, nothing is pulled
+                  // from truss stock — but they live on zoneConfig, not as a dcCustomItems row, so they
+                  // don't show up in the `items` filter above and need pulling in separately here.
+                  // Buying-only: Production has nothing to do with them.
+                  const printJobs = (!isP && fnForPrints) ? (() => {
+                    const zc = fnForPrints.zoneConfig || {};
+                    const en = fnForPrints.enabledEls || {};
+                    const printMats = imsPrintMaterials || [];
+                    const jobs = [];
+                    Object.keys(zc).forEach(zk => {
+                      if (!en[zk] || !zc[zk]) return;
+                      (zc[zk].prints || []).forEach((p, pi) => {
+                        const m = printMats.find(x => x.id === p.material);
+                        const area = (Number(p.areaW) || 0) * (Number(p.areaD) || 0);
+                        const qty = Math.max(1, Math.round(Number(p.qty) || 1));
+                        const rate = m?.ratePerSqft || 0;
+                        const jobTotal = area * rate * qty;
+                        if (jobTotal <= 0) return;
+                        jobs.push({ id: `print:${zk}:${pi}`, zoneKey: zk, matName: m?.name || "Print material", size: `${p.areaW || 0}×${p.areaD || 0}ft`, qty, unitCost: area * rate, total: jobTotal });
+                      });
+                    });
+                    return jobs;
+                  })() : [];
+                  const printTotal = printJobs.reduce((s, p) => s + p.total, 0);
+                  const total = items.reduce((s, c) => s + (c.manualPrice || c.refPrice || 0) * (Number(c.qty) || 1), 0) + printTotal;
                   // Production and Buying are the same shape of thing — a short list of one-off
                   // items added per zone — so they share this branch and differ only by accent.
                   // Warm-palette equivalents of the old #A855F7 / #F59E0B.
                   const ciInk  = isP ? "#6F63A8" : "#C6A55E";
                   const ciTile = isP ? "#EBE8F4" : "#F7F1E0";
-                  const fnName = (collectAllFunctionData ? collectAllFunctionData() : [])[fnIdx]?.fnType || `Function ${fnIdx+1}`;
+                  const fnName = fnForPrints?.fnType || `Function ${fnIdx+1}`;
                   return (
                     <div style={{display:"flex",flexDirection:"column",gap:12}}>
                       <style>{DC_CSS}</style>
                       <div className="dc2-card" style={{background:CARD_BG,border:`1px solid ${CARD_BORDER}`,borderRadius:14,boxShadow:CARD_SHADOW,overflow:"hidden",display:"flex"}}>
-                        <div aria-hidden="true" style={{width:4,flexShrink:0,background:items.length?ciInk:"#DED7CB"}} />
+                        <div aria-hidden="true" style={{width:4,flexShrink:0,background:(items.length + printJobs.length)?ciInk:"#DED7CB"}} />
                         <div style={{flex:"1 1 auto",minWidth:0}}>
                           <div style={{display:"flex",alignItems:"center",gap:12,padding:"13px 15px",borderBottom:`1px solid ${HAIRLINE}`}}>
                             <span aria-hidden="true" style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:36,height:36,borderRadius:10,flexShrink:0,fontSize:17,lineHeight:1,background:ciTile}}>{isP?"🏭":"🛒"}</span>
                             <div style={{flex:"1 1 auto",minWidth:0}}>
                               <div style={{fontSize:15.5,fontWeight:700,color:INK,letterSpacing:-0.35,lineHeight:1.2}}>{isP ? "Production items" : "Buying items"}</div>
                               <div style={{fontSize:11.5,color:INK_3,marginTop:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",...NUM}}>
-                                {fnName} · {items.length} item{items.length===1?"":"s"} · one-offs added from zone headers on Build
+                                {fnName} · {items.length + printJobs.length} item{(items.length + printJobs.length)===1?"":"s"} · one-offs added from zone headers on Build
                               </div>
                             </div>
                             <div style={{textAlign:"right",flexShrink:0}}>
@@ -3087,7 +3116,7 @@ export default function DealCheckOverlay({ ctx }) {
                               <div style={{fontSize:11,color:INK_3,marginTop:2}}>{isP ? "to produce" : "to buy"}</div>
                             </div>
                           </div>
-                          {items.length === 0 ? (
+                          {items.length === 0 && printJobs.length === 0 ? (
                             <div style={{padding:"16px 15px",fontSize:12.5,color:INK_2}}>
                               <div style={{fontWeight:600,marginBottom:3,color:INK}}>No {isP ? "production" : "buying"} items in {fnName}.</div>
                               <div style={{fontSize:11.5,color:INK_3}}>Add them with the {isP ? "🏭" : "🛒"} icon in a zone header on the Build screen.</div>
@@ -3140,6 +3169,30 @@ export default function DealCheckOverlay({ ctx }) {
                                   </div>
                                 );
                               })}
+                              {printJobs.map(pj => (
+                                <div key={pj.id} className="dc2-row" style={{borderRadius:12,background:TILE_BG,border:`1px solid ${TILE_BORDER}`,overflow:"hidden",display:"flex",flexDirection:"column"}}>
+                                  <div style={{display:"flex",gap:10,padding:"11px 12px"}}>
+                                    <div style={{width:46,height:46,borderRadius:9,background:ciTile,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>🖨</div>
+                                    <div style={{flex:"1 1 auto",minWidth:0}}>
+                                      <div style={{fontSize:9.5,fontWeight:700,letterSpacing:0.7,textTransform:"uppercase",color:INK_3,marginBottom:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>Print / signage</div>
+                                      <div title={pj.matName} style={{fontSize:12.5,fontWeight:650,color:INK,letterSpacing:-0.1,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{pj.matName}</div>
+                                      <div style={{fontSize:10.5,color:INK_3,marginTop:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",...NUM}}>
+                                        {pj.zoneKey} · {pj.size}
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <div style={{marginTop:"auto",display:"flex",alignItems:"flex-end",gap:8,padding:"10px 12px 11px"}}>
+                                    <div style={{flex:"1 1 auto",minWidth:0}}>
+                                      <div style={{fontSize:17,fontWeight:750,color:INK,letterSpacing:-0.45,lineHeight:1.1,...NUM}}>₹{Math.round(pj.total).toLocaleString("en-IN")}</div>
+                                      <div style={{fontSize:9.5,color:INK_3,marginTop:2,letterSpacing:0.4,textTransform:"uppercase",fontWeight:600,...NUM}}>₹{Math.round(pj.unitCost).toLocaleString("en-IN")} × {pj.qty}</div>
+                                    </div>
+                                    {/* No ✕ here — a print job lives on the zone's Print tile in Build,
+                                        not as a dcCustomItems row, so there's nothing this tab alone
+                                        can delete; the title says where to actually change it. */}
+                                    <div title="Edit or remove this print job on the Print tile in Build" style={{flexShrink:0,fontSize:9.5,color:INK_3,letterSpacing:0.3,textTransform:"uppercase",fontWeight:600,cursor:"help"}}>via Build</div>
+                                  </div>
+                                </div>
+                              ))}
                             </div>
                           )}
                         </div>
