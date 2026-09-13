@@ -1065,12 +1065,17 @@ export default function DealCheckOverlay({ ctx }) {
             try { fns.forEach(fn => { clientRevenue += calcFunctionCost(fn).grand; }); } catch {}
           }
           const effGrand = hasActuals ? grandActual : grand;
-          const profitPct = clientRevenue > 0 ? Math.round(((clientRevenue - effGrand) / clientRevenue) * 100) : 0;
           // ═══ Commission — % of the deal amount set aside per venue (IMS → Admin → Master Data →
           // Venues, one row per in-house property or outdoor venue). A booking spanning more than one
           // venue splits clientRevenue across them by each venue's own share of the system cost
           // (fns.length===1 just gets 100% of it, no proration needed). Salespeople can override the
           // computed amount per venue (cli.commissionOverrides), same pattern as negotiatedAmount.
+          // Computed BEFORE profitPct below — it is a real payout out of this deal's revenue, so the
+          // margin/profit figure has to come out net of it, not just net of production cost + GYV/
+          // buffer. It stays OUT of `grand`/`base` (production cost) itself: those feed department
+          // income splits and IMS's per-department project total, and commission isn't a department's
+          // production cost — it is a company-level venue payout, so it is subtracted only where
+          // profit is actually measured.
           const venueCommissionRates = dealCheckData?.venueCommission || {};
           const venueParentsForComm = dealCheckData?.venueParents || {};
           const resolveCommVenue = (vn) => venueParentsForComm[vn] || vn;
@@ -1097,6 +1102,7 @@ export default function DealCheckOverlay({ ctx }) {
             commissionTotal += finalAmt;
             return { venue: vKey, revenueShare, pct, defaultAmt, overrideVal: hasOverride ? overrideVal : null, finalAmt };
           });
+          const profitPct = clientRevenue > 0 ? Math.round(((clientRevenue - effGrand - commissionTotal) / clientRevenue) * 100) : 0;
           return { rental, florals, transport, genset, manpower, truss, buyTotal, produceTotal, base, gyvFixed, bufferCost, grand, clientRevenue, profitPct, fns, dept, DEPTS, deptInv, deptMp, mpRateByType,
             mpPhases: dcMpPhases, mpSchedule, mpSharedTotals, deptDirectMap, directTotal, labourUsageByDept, labourUsageTotal, manpowerDetail, manpowerPlan: dcMpPlan,
             hasActuals, actualMandi, actualExpenses, effFlorals, baseActual, grandActual, projFlorals: florals, effManpower, mpDelta,
@@ -3600,7 +3606,13 @@ export default function DealCheckOverlay({ ctx }) {
                   const quote = Number(cli?.negotiatedAmount) > 0
                     ? Number(cli.negotiatedAmount)
                     : (() => { let s = 0; try { fns.forEach(fn => { s += calcFunctionCost(fn).grand; }); } catch {} return s; })();
-                  const netProfit = quote - grandWithOverheads;
+                  // Commission is a real payout out of this deal's revenue, so what Ambria actually
+                  // keeps has to come out net of it too — not just net of production cost + GYV/
+                  // buffer. It deliberately stays OUT of grandWithOverheads/"Project total" itself
+                  // (that figure means "what building this event costs", used by IMS/dept splits and
+                  // the bottom strip) — it is only added in here, where profit is actually measured.
+                  const internalCostForProfit = grandWithOverheads + commissionTotal;
+                  const netProfit = quote - internalCostForProfit;
                   const profitPct = quote > 0 ? Math.round((netProfit / quote) * 100) : 0;
                   // Health bands: the thresholds were already in the code, only the palette changes.
                   const health = profitPct >= 20
@@ -3728,7 +3740,7 @@ export default function DealCheckOverlay({ ctx }) {
                             <span aria-hidden="true" style={ICON_TILE("#F7F1E0")}>🏢</span>
                             <div style={{flex:"1 1 auto",minWidth:0}}>
                               <div style={SECT_TITLE}>GYV fixed, buffer &amp; commission</div>
-                              <div style={SECT_SUB}>GYV and buffer are a percentage of base cost; commission is set per venue in IMS. All three are added on top and carried into the project total in the bottom strip.</div>
+                              <div style={SECT_SUB}>GYV and buffer are a percentage of base cost and are carried into the project total in the bottom strip; commission is set per venue in IMS and comes out of profit instead — see Net profitability below.</div>
                             </div>
                             <div style={{textAlign:"right",flexShrink:0}}>
                               <div style={{fontSize:17,fontWeight:750,color:INK,letterSpacing:-0.45,lineHeight:1.1,...NUM}}>{fmt(grandWithOverheads)}</div>
@@ -3763,7 +3775,7 @@ export default function DealCheckOverlay({ ctx }) {
                             <span aria-hidden="true" style={ICON_TILE(health.soft)}>📊</span>
                             <div style={{flex:"1 1 auto",minWidth:0}}>
                               <div style={SECT_TITLE}>Net profitability</div>
-                              <div style={SECT_SUB}>What is left after the project total comes out of the client quote.</div>
+                              <div style={SECT_SUB}>What is left after the project total and venue commission come out of the client quote.</div>
                             </div>
                             <span style={{flexShrink:0,fontSize:10,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase",padding:"4px 10px",borderRadius:999,background:health.soft,color:health.ink,whiteSpace:"nowrap",...NUM}}>{health.label} · {profitPct}%</span>
                             {chev(sProfit.open)}
@@ -3772,7 +3784,7 @@ export default function DealCheckOverlay({ ctx }) {
                             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))",gap:12}}>
                               {[
                                 { k: "Client quote", sub: Number(cli?.negotiatedAmount) > 0 ? "negotiated" : "from Build screen", v: fmt(quote), tone: INK },
-                                { k: "Internal cost", sub: "incl. GYV + buffer", v: fmt(grandWithOverheads), tone: INK },
+                                { k: "Internal cost", sub: "incl. GYV + buffer + commission", v: fmt(internalCostForProfit), tone: INK },
                                 { k: "Net profit", sub: `${profitPct}% margin`, v: `${netProfit < 0 ? "−" : ""}${fmt(Math.abs(netProfit))}`, tone: health.ink },
                               ].map(x => (
                                 <div key={x.k} className="dc2-row" style={{borderRadius:12,background:TILE_BG,border:`1px solid ${TILE_BORDER}`,padding:"10px 12px"}}>
@@ -3803,7 +3815,11 @@ export default function DealCheckOverlay({ ctx }) {
                           nothing left to pick a margin FOR — this stays for ongoing deals, where it's
                           still a live "what should I quote" tool. */}
                       {!isSold && (()=>{
-                        const internalCost = grandWithOverheads;
+                        // Commission-inclusive, same figure Net profitability above uses — the margin
+                        // this calculator solves for has to be measured against the same "what we
+                        // actually keep" baseline, or its revised quote would understate what a given
+                        // margin actually requires.
+                        const internalCost = internalCostForProfit;
                         const origQuote = quote;
                         const origProfitPct = origQuote > 0 ? Math.round(((origQuote - internalCost) / origQuote) * 100) : 0;
                         const desiredPct = dcDesiredMargin !== null ? dcDesiredMargin : origProfitPct;
