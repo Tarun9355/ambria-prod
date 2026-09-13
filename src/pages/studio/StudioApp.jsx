@@ -8236,7 +8236,13 @@ export default function StudioApp() {
         // "cost" only while CustomItemModal was its sole user; Deal Check's availability control
         // also needs onPick — to write the pick back to dcCards instead of Build's zoneElements —
         // and it is renting, so inferring would have shown it production cost.
-        .map(it => ({ id: it.id, name: it.name, photo: (Array.isArray(it.photoUrls) && it.photoUrls[0]) || it.img || "", free: getStudioAvailable(it, blocksForDate), price: opts?.priceMode === "cost" ? (Number(it.cost) || 0) : priceForInvItem(it, rcFactorByKey, inventory), dims: itemDimsText(it) }))
+        // A third mode, "rental": Deal Check's own picker (DealCheckOverlay.jsx) passes this — it
+        // shows OUR cost to run the deal, never a client-facing sale figure, so priceForInvItem's
+        // scaling factor (a Rate-Card markup meant for what the CLIENT is charged in Build/Summary)
+        // has no business here. Plain imsField.rentalCost matches every other rental figure Deal
+        // Check already shows (effKitRental, the zone/bottom-bar rollups) — this picker was the one
+        // place still quietly multiplying by that factor.
+        .map(it => ({ id: it.id, name: it.name, photo: (Array.isArray(it.photoUrls) && it.photoUrls[0]) || it.img || "", free: getStudioAvailable(it, blocksForDate), price: opts?.priceMode === "cost" ? (Number(it.cost) || 0) : opts?.priceMode === "rental" ? imsField.rentalCost(it) : priceForInvItem(it, rcFactorByKey, inventory), dims: itemDimsText(it) }))
         .sort((a, b) => b.free - a.free);
       setAvailModal(m => (m && m.zoneKey === zoneKey && m.idx === idx) ? { ...m, loading: false, items } : m);
     } catch { setAvailModal(m => m ? { ...m, loading: false } : m); }

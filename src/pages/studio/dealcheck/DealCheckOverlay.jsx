@@ -2202,8 +2202,11 @@ export default function DealCheckOverlay({ ctx }) {
                                           // screens open the same picker and cannot drift apart.
                                           // onPick is REQUIRED here: without it saveAvailPick writes the choice into
                                           // Build's zoneElements, which is the wrong state for a Deal Check card.
-                                          // priceMode is left default so the list prices at RENTAL — Deal Check rents,
-                                          // unlike CustomItemModal which asks the same picker for production cost.
+                                          // priceMode:"rental" — Deal Check rents, unlike CustomItemModal which asks the
+                                          // same picker for production cost, but "rental" here means OUR flat rental
+                                          // cost (imsField.rentalCost), not Build's client-facing RENTAL figure — the
+                                          // default mode runs that through priceForInvItem's Rate-Card scaling factor,
+                                          // which is a sale-price markup that has no place in Deal Check's own cost view.
                                           const availEl = { invId: card.imsId || null, imsId: card.imsId || null, name: item?.name || card.rcName || "" };
                                           // Icon only. The picker's own header names the sub-category and what it is for, so a
                                           // word here was labelling a control the user is about to see labelled again — and this
@@ -2232,6 +2235,7 @@ export default function DealCheckOverlay({ ctx }) {
                                                   [card._cardKey]: { ...(prev[fnIdx]?.[card._cardKey] || {}),
                                                     split: alloc.map(a => ({ imsId: a.imsId, qty: a.qty })),
                                                     source: "manual-swap" } } })),
+                                                priceMode: "rental",
                                               })}
                                               title={`Check stock availability & pick an item${subToUse ? ` — ${subTotal} in ${subToUse}` : ""}`}
                                               aria-label="Check stock availability and pick an item"
