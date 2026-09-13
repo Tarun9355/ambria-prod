@@ -9037,7 +9037,31 @@ export default function StudioApp() {
         newZoneState[fnIdx][zoneKey] = { ...(newZoneState[fnIdx][zoneKey] || {}), lastResolvedAt: Date.now() };
       }
     }
-    setDcCards(newCards);
+    // Functional update, re-checked against the LATEST dcCards — not a plain overwrite of the
+    // `newCards` snapshot this call started from. On Deal Check's first open after a hard refresh,
+    // this call's own `dcCards` closure can still be `{}` (state hadn't caught up to the just-
+    // restored draft yet — restore and this generate both fire from the same dcFullPageOpen flip,
+    // and dealCheckLoading-gating the generate doesn't actually wait for it: a state read inside an
+    // effect reflects the render it closed over, not a state update queued in that same pass), so
+    // every card — including an already-swapped one — got re-derived fresh from Build with nothing
+    // to protect it. Re-applying the manual-swap guard here against `prev` (guaranteed current by
+    // React's functional-update contract) closes that race regardless of what this call's own
+    // dcCards looked like when it started.
+    setDcCards(prev => {
+      const merged = { ...newCards };
+      Object.keys(prev || {}).forEach((fi) => {
+        const prevFn = prev[fi] || {};
+        let mergedFn = null;
+        Object.keys(prevFn).forEach((key) => {
+          if (prevFn[key]?.source === "manual-swap") {
+            if (!mergedFn) mergedFn = { ...(merged[fi] || {}) };
+            mergedFn[key] = prevFn[key];
+          }
+        });
+        if (mergedFn) merged[fi] = mergedFn;
+      });
+      return merged;
+    });
     setDcZoneState(newZoneState);
     // A fresh regenerate on a SOLD deal → the next dept-snapshot sync wipes the dept head's edits
     // (plan + actuals) so IMS reflects the new system plan, not the old overrides.
