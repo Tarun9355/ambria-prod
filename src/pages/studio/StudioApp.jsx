@@ -8514,6 +8514,23 @@ export default function StudioApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dcFullPageOpen]);
 
+  // Layout-effect mirror of Deal Check's own draft state, read by doSave below instead of its
+  // closure. flushDcAutosaveRef.current can be called from a setTimeout(0) fired the instant a swap
+  // sets state (see the swap handlers in DealCheckOverlay.jsx) — a PASSIVE effect refreshing that ref
+  // is not guaranteed to have re-run by then (a passive effect racing a timeout is scheduler
+  // behaviour, not a guarantee — see saveSessionRef's own layout-effect fix above for the identical
+  // class of bug), so a stale doSave closure could flush the pre-swap state and the swap would still
+  // be lost on a fast-enough refresh. A layout effect commits synchronously right after the render,
+  // always before any macrotask, so doSave reading through this ref is always current.
+  const dcStateRef = useRef({});
+  useLayoutEffect(() => {
+    dcStateRef.current = {
+      dcResolved, dcCards, dcZoneState, dcPhotoOverrides, dcSkipped, dcManualItems,
+      dcDedupOverrides, dcProductionAccepted, dcArtFlowerAlloc, dcFloralColorPrefs, dcCustomItems,
+      dcKitEdits, dcCarpetPick, dcMpOverrides, dcMpWinCount, dcMpIncludeMinusOne, dcMpIncludeDismantle,
+    };
+  });
+
   // ═══ Tier 2.2 — Deal Check cache writer (debounced, per-client) — VERBATIM ═══
   useEffect(() => {
     if (!activeClientId || !dcFullPageOpen) return;
@@ -8537,18 +8554,21 @@ export default function StudioApp() {
     // after that shows "No IMS match". A real draft always has cards, so empty = mid-load → skip.
     if (!dcCards || Object.keys(dcCards).length === 0) return;
     const doSave = (saveOpts = {}) => {
+      // Read through the layout-effect-mirrored ref, NOT this closure's own dcCards/etc — see
+      // dcStateRef above for why a stale closure here would otherwise re-flush pre-swap state.
+      const dcs = dcStateRef.current;
       const snapshot = {
-        resolved: dcResolved,
-        cards: dcCards,
-        zoneState: dcZoneState,
-        photoOverrides: dcPhotoOverrides,
-        skipped: dcSkipped,
-        manualItems: dcManualItems,
-        dedupOverrides: dcDedupOverrides,
-        productionAccepted: dcProductionAccepted,
-        artFlowerAlloc: dcArtFlowerAlloc,
-        floralColorPrefs: dcFloralColorPrefs,
-        customItems: dcCustomItems,
+        resolved: dcs.dcResolved,
+        cards: dcs.dcCards,
+        zoneState: dcs.dcZoneState,
+        photoOverrides: dcs.dcPhotoOverrides,
+        skipped: dcs.dcSkipped,
+        manualItems: dcs.dcManualItems,
+        dedupOverrides: dcs.dcDedupOverrides,
+        productionAccepted: dcs.dcProductionAccepted,
+        artFlowerAlloc: dcs.dcArtFlowerAlloc,
+        floralColorPrefs: dcs.dcFloralColorPrefs,
+        customItems: dcs.dcCustomItems,
         cachedAt: new Date().toISOString()
       };
       // In-session cache only (no network write — the old whole-blob reliableSave hammered the
@@ -8581,8 +8601,9 @@ export default function StudioApp() {
         } else {
           const nowStamp = Date.now();
           const result = saveClientLedger(cur.map(c => c.id === activeClientId ? { ...c,
-            dcCards, dcZoneState, dcKitEdits, dcCarpetPick, dcMpOverrides, dcMpWinCount,
-            dcMpIncludeMinusOne, dcMpIncludeDismantle,
+            dcCards: dcs.dcCards, dcZoneState: dcs.dcZoneState, dcKitEdits: dcs.dcKitEdits, dcCarpetPick: dcs.dcCarpetPick,
+            dcMpOverrides: dcs.dcMpOverrides, dcMpWinCount: dcs.dcMpWinCount,
+            dcMpIncludeMinusOne: dcs.dcMpIncludeMinusOne, dcMpIncludeDismantle: dcs.dcMpIncludeDismantle,
             dcDraft: snapshot, dcDraftSavedAt: nowStamp, dcDraftSavedBy: me } : c), undefined, { keepalive: !!saveOpts.keepalive });
           dcSaveBaselineRef.current = { savedAt: nowStamp, savedBy: me };
           return result;
