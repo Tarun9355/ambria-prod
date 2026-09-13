@@ -1504,12 +1504,39 @@ export default function DealCheckOverlay({ ctx }) {
                     strongest contrast available here, and it is the same ink the app's header and
                     card headings already wear — so "where am I" is answered from across the room
                     rather than by spotting which pill is a slightly warmer cream. */}
-                {TABS.map(t => (
-                  <button key={t.id} className="dc-tab" data-on={dcActiveTab===t.id?"1":"0"} onClick={()=>setDcActiveTab(t.id)} style={{padding:"7px 11px",borderRadius:999,border:dcActiveTab===t.id?"1px solid #221C42":"1px solid rgba(26,26,46,0.10)",cursor:"pointer",fontSize:13,fontWeight:dcActiveTab===t.id?700:500,background:dcActiveTab===t.id?"#221C42":"#FFFFFF",color:dcActiveTab===t.id?"#F5F1E7":textS,whiteSpace:"nowrap",letterSpacing:0.2,position:"relative",display:"inline-flex",alignItems:"center",gap:6,lineHeight:1,flexShrink:0}}>
-                    <span style={{fontSize:14,lineHeight:1}}>{t.icon}</span>{t.label}
-                    {!t.live && <span style={{marginLeft:6,fontSize:10,padding:"2px 5px",borderRadius:4,background:"rgba(245,158,11,0.18)",color:"#F59E0B",fontWeight:700,letterSpacing:0.4}}>{t.ship}</span>}
-                  </button>
-                ))}
+                {(() => {
+                  // Per-tab cost, under each tab's own label — the bottom strip used to repeat these
+                  // as a separate row of chips; the strip now only shows the overall Project Total,
+                  // and a tab's own group total lives right on the tab itself instead.
+                  const { rental, transport, genset, truss, gyvFixed, bufferCost, hasActuals, effFlorals, mpDelta, effManpower } = dcCostRollup;
+                  const florals = hasActuals ? effFlorals : dcCostRollup.florals;
+                  const manpower = mpDelta ? effManpower : dcCostRollup.manpower;
+                  const buyTotal = dcCustomItems.filter(c => c.type === "buying").reduce((s, c) => s + (c.manualPrice || c.refPrice || 0) * (Number(c.qty) || 1), 0);
+                  const produceTotal = dcCustomItems.filter(c => c.type === "production").reduce((s, c) => s + (c.manualPrice || c.refPrice || 0) * (Number(c.qty) || 1), 0);
+                  // "—" (not generated yet) vs "₹0" (generated, genuinely zero) — same distinction the
+                  // old bottom strip drew, using the same signal (any card matched, on any function).
+                  const hasGenerated = Object.values(dcCards || {}).some((fnCards) => fnCards && Object.keys(fnCards).length > 0);
+                  const fmtTab = (n) => n > 0 ? "₹" + Math.round(n).toLocaleString("en-IN") : hasGenerated ? "₹0" : "—";
+                  const TAB_AMOUNTS = {
+                    inventory: fmtTab(rental), truss: fmtTab(truss), florals: fmtTab(florals),
+                    manpower: fmtTab(manpower), production: fmtTab(produceTotal), buying: fmtTab(buyTotal),
+                    transport: fmtTab(Math.max(0, transport - genset)), power: fmtTab(genset),
+                    gyv: fmtTab(gyvFixed + bufferCost),
+                  };
+                  return TABS.map(t => {
+                    const amount = TAB_AMOUNTS[t.id];
+                    const on = dcActiveTab === t.id;
+                    return (
+                      <button key={t.id} className="dc-tab" data-on={on?"1":"0"} onClick={()=>setDcActiveTab(t.id)} style={{padding:amount?"6px 11px 5px":"7px 11px",borderRadius:999,border:on?"1px solid #221C42":"1px solid rgba(26,26,46,0.10)",cursor:"pointer",fontSize:13,fontWeight:on?700:500,background:on?"#221C42":"#FFFFFF",color:on?"#F5F1E7":textS,whiteSpace:"nowrap",letterSpacing:0.2,position:"relative",display:"inline-flex",flexDirection:"column",alignItems:"flex-start",gap:1,lineHeight:1,flexShrink:0}}>
+                        <span style={{display:"inline-flex",alignItems:"center",gap:6}}>
+                          <span style={{fontSize:14,lineHeight:1}}>{t.icon}</span>{t.label}
+                          {!t.live && <span style={{marginLeft:6,fontSize:10,padding:"2px 5px",borderRadius:4,background:"rgba(245,158,11,0.18)",color:"#F59E0B",fontWeight:700,letterSpacing:0.4}}>{t.ship}</span>}
+                        </span>
+                        {amount && <span className="dc-money" style={{fontSize:10.5,fontWeight:700,opacity:on?0.85:0.55,marginTop:1}}>{amount}</span>}
+                      </button>
+                    );
+                  });
+                })()}
               </div>
               <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:10,flexShrink:0,paddingLeft:14}}>
                 {/* The "Cached · <time>", "↻ Regenerate" and run-counter badges are gone from this
@@ -3994,12 +4021,13 @@ export default function DealCheckOverlay({ ctx }) {
                 })() : null}
               </div>
             </div>
-            {/* BOTTOM STRIP — Project total + 6 sub-cost chips + Save Draft (Patch 5: live numbers wired) */}
+            {/* BOTTOM STRIP — Project total only. The per-group chips that used to sit beside it
+                (Rental/Truss/Florals/Manpower/Buy/Produce/Genset/GYV/Buffer) now live on their own
+                tab pill instead (see the tab strip above) — owner decision, so a group's number is
+                right where you'd click to see the detail behind it, not repeated in a second row. */}
             {(() => {
               // ═══ Reads from shared dcCostRollup (§26.19) ═══
-              const { rental, transport, genset, truss, buyTotal, produceTotal, base: total, gyvFixed, bufferCost, clientRevenue: stripRevenue, profitPct: stripProfitPct, hasActuals, effFlorals, grandActual, grand: grandProj, mpDelta, effManpower } = dcCostRollup;
-              const manpower = mpDelta ? effManpower : dcCostRollup.manpower;       // reflect dept-head crew overrides
-              const florals = hasActuals ? effFlorals : dcCostRollup.florals;       // show actual mandi once logged
+              const { clientRevenue: stripRevenue, profitPct: stripProfitPct, hasActuals, grandActual, grand: grandProj } = dcCostRollup;
               const grandWithOverheads = hasActuals ? grandActual : grandProj;
               const stripProfitColor = stripProfitPct >= 20 ? "#10B981" : stripProfitPct >= 10 ? "#F59E0B" : "#EF4444";
               // Until Generate has run there are no matched cards, so every rollup figure is 0 and a
@@ -4030,60 +4058,9 @@ export default function DealCheckOverlay({ ctx }) {
               //    reports "Deal Check last saved by <name> · <when>".
               // If a deliberate save action is ever wanted back, it must reuse the autosave's own
               // doSave rather than reimplement a second, weaker write path.
-              const chips = [
-                { id:"rental",   label:"Rental",   icon:"📦", value: fmt(rental),    live: true  },
-                { id:"truss",    label:"Truss",    icon:"🏗️", value: fmt(truss),     live: true  },
-                { id:"florals",  label:"Florals",  icon:"🌸", value: fmt(florals),   live: true  },
-                { id:"transport",label:"Transport",icon:"🚚", value: fmt(Math.max(0, transport - genset)), live: true  },
-                { id:"genset",   label:"Genset",   icon:"⚡", value: fmt(genset),    live: true  },
-                // "(ADJUSTED)" once a dept head has edited crew in IMS Dept Ops — same flag + label
-                // the GYV Fixed & Buffer tab already uses (line ~2188). Without it this chip silently
-                // showed the reconciled-actuals figure with no sign it had moved off the Manpower
-                // tab's own projected total, which is what the tab itself still shows.
-                { id:"manpower", label: mpDelta ? "Manpower (ADJUSTED)" : "Manpower", icon:"👷", value: fmt(manpower), live: true, note: mpDelta ? `dept heads adjusted crew · projected ${fmt(dcCostRollup.manpower)}` : null },
-                { id:"buy",      label:"Buy",      icon:"🛒", value: fmt(dcCustomItems.filter(c=>c.type==="buying").reduce((s,c)=>s+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0)),  live: true },
-                { id:"produce",  label:"Produce",  icon:"🏭", value: fmt(dcCustomItems.filter(c=>c.type==="production").reduce((s,c)=>s+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0)), live: true },
-                { id:"gyv",      label:"GYV 5%",   icon:"🏢", value: fmt(gyvFixed),  live: true  },
-                { id:"buffer",   label:"Buffer 3%",icon:"🛡️", value: fmt(bufferCost),live: true  },
-              ];
               return (
-                <div className="dc-glass dc-bottom" style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 18px",borderTop:`1px solid ${border}`,gap:14}}>
-                  {/* ── TOTAL AND TILES ARE SIBLINGS, NOT NESTED ──
-                      The total used to sit inside the tile row and was held in place with
-                      position:sticky once that row started scrolling. Its background was
-                      `inherit`, which resolves to transparent here — so tiles slid UNDERNEATH
-                      it and both sets of digits rendered on top of each other. Sticky was the
-                      wrong tool: the total is not part of the scrollable content, so it should
-                      not be in the scroller at all. As its own flex child it simply never
-                      moves, and nothing can pass behind it. */}
-                    <div className="dc-bottomtotal" style={{flexShrink:0}}><div className="dc-cap" style={{color:"#1A1A2E",opacity:0.62}}>Project total</div><div className="dc-money" style={{fontSize:25,fontWeight:800,color:"#1A1A2E",marginTop:1,lineHeight:1.1}}>{fmt(grandWithOverheads)}</div>{stripRevenue > 0 && <div className="dc-money" style={{fontSize:11,color:stripProfitColor,fontWeight:700,marginTop:2,letterSpacing:0.1}}>Margin {stripProfitPct}% · {fmt(stripRevenue)} quote</div>}</div>
-                    <div style={{height:30,width:1,background:border}}/>
-                  <div className="dc-bottomchips" style={{display:"flex",alignItems:"center",gap:14,flex:"1 1 auto",minWidth:0,overflowX:"auto"}}>
-                    {/* NOT THE SERIF. I set this in Cormorant because it is the screen's conclusion,
-                        and that was the wrong reason to pick a face: Cormorant's default figures are
-                        OLD-STYLE, so the total came out with its 3, 5 and 7 sitting below the line —
-                        beautiful in a sentence, wobbly in a column of money. Even forced to lining
-                        figures, a text serif's numerals are drawn to sit inside prose, not to be
-                        read as an amount.
-                        The sans is what a price is set in. Size and weight carry the emphasis the
-                        serif was being asked for, and dc-money keeps it tabular and lining so it
-                        agrees with every other figure on the screen. */}
-                    {chips.map(c => (
-                      <div key={c.id} className="dc-chip" title={c.note ? `${c.label} — ${c.value} (${c.note})` : `${c.label} — ${c.value}`} style={{padding:"7px 11px",borderRadius:10,background:"#fff",border:`1px solid ${border}`,fontSize:12,color:"#1A1A2E",flexShrink:0,minWidth:78,opacity:c.live?1:0.5,boxShadow:"0 1px 2px rgba(26,26,46,0.04)"}}>
-                        {/* Flex line rather than the emoji glued straight onto the text. An emoji
-                            inside an 11px uppercase caption sets its own line height, so each tile's
-                            caption sat at a slightly different height depending on which glyph it
-                            drew; giving the glyph its own box and letting flex centre both keeps the
-                            row of tiles level. Layout kept from the drawn-icon pass. */}
-                        <div style={{fontSize:11,opacity:0.7,letterSpacing:1,textTransform:"uppercase",fontWeight:600,display:"flex",alignItems:"center",gap:5,lineHeight:1}}><span style={{fontSize:11,lineHeight:1}}>{c.icon}</span>{c.label}{!c.live&&<span style={{marginLeft:4,fontSize:9,opacity:0.7}}>D2</span>}</div>
-                        {/* dc-money: tabular, so ten tiles of rupees along the bottom bar line up
-                            digit-for-digit instead of each one being as wide as its own digits make
-                            it. On a row of figures meant to be compared at a glance that is the
-                            whole job. */}
-                        <div className="dc-money" style={{fontSize:14.5,fontWeight:700,color:"#1A1A2E",marginTop:1}}>{c.value}</div>
-                      </div>
-                    ))}
-                  </div>
+                <div className="dc-glass dc-bottom" style={{display:"flex",alignItems:"center",padding:"10px 18px",borderTop:`1px solid ${border}`,gap:14}}>
+                  <div className="dc-bottomtotal" style={{flexShrink:0}}><div className="dc-cap" style={{color:"#1A1A2E",opacity:0.62}}>Project total</div><div className="dc-money" style={{fontSize:25,fontWeight:800,color:"#1A1A2E",marginTop:1,lineHeight:1.1}}>{fmt(grandWithOverheads)}</div>{stripRevenue > 0 && <div className="dc-money" style={{fontSize:11,color:stripProfitColor,fontWeight:700,marginTop:2,letterSpacing:0.1}}>Margin {stripProfitPct}% · {fmt(stripRevenue)} quote</div>}</div>
                 </div>
               );
             })()}
