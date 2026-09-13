@@ -189,6 +189,8 @@ export default function DealCheckOverlay({ ctx }) {
     libItems, rcItems, rcSubcatFactors, normalizePaintAllocation, ensureLibItemsByUrl,
     // deal check inventory-tab module helpers
     isZoneDirty, parseCardKey, PLATFORM_FATTA_CODE, PLATFORM_STAND_CODE,
+    // Settings → Zones' own drag-ordered priority (Object.keys(zoneMeta), same list Build sorts by)
+    zoneKeys,
     // orchestration + persistence
     getStudioAvailable, getActiveSoftHold,
     // misc
@@ -1721,7 +1723,17 @@ export default function DealCheckOverlay({ ctx }) {
                       }
                     });
                   }
-                  const zoneList = Object.keys(byZone);
+                  // Follow Settings → Zones' own priority order (the same drag-ordered list Build
+                  // sorts by), not whatever order zones happened to get toggled on in — a zone
+                  // missing from that list (e.g. "(unzoned)") sorts after every known zone, in its
+                  // original relative order.
+                  const zoneList = Object.keys(byZone).sort((a, b) => {
+                    const ia = zoneKeys.indexOf(a), ib = zoneKeys.indexOf(b);
+                    if (ia === -1 && ib === -1) return 0;
+                    if (ia === -1) return 1;
+                    if (ib === -1) return -1;
+                    return ia - ib;
+                  });
                   const autoCollapse = totalCards > 30;  // §7.9.2 — auto-collapse when > 30 cards
                   // ═══ Patch 6 — Generate bar computation (event-wide scope · sidebar wired) ═══
                   // `activeFn` lived here to feed the function-context header; that header is gone

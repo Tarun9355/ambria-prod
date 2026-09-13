@@ -8893,8 +8893,18 @@ export default function StudioApp() {
         const { specs: cardSpecs, photoUrl } = entry;
         // Re-match when the zone is flagged dirty OR any current element is missing a card (build changed
         // since the last run). Otherwise the zone is up to date — skip the AI to save calls.
-        const needsMatch = cardSpecs.some(s => !newCards[fnIdx][s.cardKey]) || isZoneDirty(dcZoneState, dcCards, fnIdx, zoneKey);
-        if (!needsMatch) continue;
+        // NEVER re-derive a card the salesperson manually swapped/split inside Deal Check itself
+        // (source: "manual-swap") — that pick has no Build-side element to re-read from on a booked
+        // deal (Deal Check no longer writes back to Build once sold), so re-running it just re-pins to
+        // Build's stale invId and silently reverts the user's edit a few seconds later. It stays locked
+        // until the underlying element is actually removed/changed in Build (its cardKey gets pruned).
+        const specsToRun = cardSpecs.filter(s => {
+          const existing = newCards[fnIdx][s.cardKey];
+          if (!existing) return true;
+          if (existing.source === "manual-swap") return false;
+          return isZoneDirty(dcZoneState, dcCards, fnIdx, zoneKey);
+        });
+        if (specsToRun.length === 0) continue;
         zonesProcessed += 1;
         setDcGenStatus(`Matching zone "${zoneKey}" (fn ${fnIdx + 1})…`);
         const venueName = fn.fnVenue || "";
@@ -8993,8 +9003,8 @@ export default function StudioApp() {
         // entry, so no collisions). Cuts a zone's match time to roughly (elements/6) × per-call time.
         const CONCURRENCY = 6;
         let _si = 0;
-        await Promise.all(Array.from({ length: Math.min(CONCURRENCY, cardSpecs.length) }, async () => {
-          while (_si < cardSpecs.length && !zoneAborted) { await runSpec(cardSpecs[_si++]); }
+        await Promise.all(Array.from({ length: Math.min(CONCURRENCY, specsToRun.length) }, async () => {
+          while (_si < specsToRun.length && !zoneAborted) { await runSpec(specsToRun[_si++]); }
         }));
         if (zoneAborted) { setDcGenerating(false); setDcGenStatus("Cancelled"); setDcAbortRef(null); return { ok: false, error: "aborted" }; }
         newZoneState[fnIdx][zoneKey] = { ...(newZoneState[fnIdx][zoneKey] || {}), lastResolvedAt: Date.now() };
