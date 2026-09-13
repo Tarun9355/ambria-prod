@@ -4823,8 +4823,19 @@ export default function StudioApp() {
       // el.invId (Inventory, the normal path for anything added via "+ Add element" today) or
       // el.patternId (a pure flower-recipe element). No Rate-Card name-match fallback.
       const fFlowerPatterns = (dealCheckData || studioFloralData)?.flowerPatterns || [];
+      // ♻️ Repeat zones reuse a standing setup — nothing of theirs needs trucking. Mirrors Manpower's
+      // own freshFn treatment (DCManpowerTab.jsx / DealCheckOverlay.jsx dcCostRollup): drop repeat
+      // zones out of truck-capacity accumulation only — the per-zone accordion above still shows
+      // their full décor cost, this only affects how many trucks the trip needs. Exposed on the
+      // returned `transport` object (repeatZonesExcluded) so the Transport tab can say which zones
+      // were left out and why, rather than a truck count just quietly coming out lower.
+      const repeatZonesExcluded = Object.keys(fZoneConfig).filter(zk => fEnabledEls[zk] && fZoneConfig[zk]?.repeat)
+        .map(zk => { const cz = fCustomZones.find(c => c.id === zk); return { zk, label: zoneLabelsD[zk]?.label || cz?.name || zk }; });
+      const fEnabledElsFresh = repeatZonesExcluded.length
+        ? { ...fEnabledEls, ...Object.fromEntries(repeatZonesExcluded.map(({ zk }) => [zk, false])) }
+        : fEnabledEls;
       Object.entries(fZoneElements).forEach(([zk, elems]) => {
-        if (!fEnabledEls[zk] || !elems) return;
+        if (!fEnabledElsFresh[zk] || !elems) return;
         elems.forEach(el => {
           const invItem = el.invId ? imsInventory.find(i => i.id === el.invId) : null;
           const pattern = (!invItem && el.patternId) ? fFlowerPatterns.find(p => p.id === el.patternId) : null;
@@ -4836,7 +4847,7 @@ export default function StudioApp() {
         });
       });
       Object.entries(fZoneConfig).forEach(([zk, cfg]) => {
-        if (!cfg || !fEnabledEls[zk]) return;
+        if (!cfg || !fEnabledElsFresh[zk]) return;
         const d = cfg.dims || {}; const fd = cfg.floorDims || d;
         if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * Math.max(1, cfg.trussQty || 1); if (tSqft > 0) addSub("Truss", tSqft, zk, "Truss structure"); }
         const sqft = (fd.L || 0) * (fd.W || 0);
@@ -4854,7 +4865,7 @@ export default function StudioApp() {
       const truckTotal = allTrucks * tripRate * 2;
       transportTotal = truckTotal + plan.gensetCost;
       transport = { trucks: allTrucks, tripRate, total: transportTotal, isNew, tier: tierId, tierLabel,
-        breakdown, floralTrucks, bufferTrucks: bufTrucks, itemTrucks, totalFloralCost,
+        breakdown, floralTrucks, bufferTrucks: bufTrucks, itemTrucks, totalFloralCost, repeatZonesExcluded,
         gensets: plan.genset125, venueGensets: plan.venueGenset125, genset62: plan.genset62, venueGenset62: plan.venueGenset62,
         gensetCost: plan.gensetCost, gensetRate, gensetRate62, truckTotal };
     }

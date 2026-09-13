@@ -520,7 +520,9 @@ export default function DealCheckOverlay({ ctx }) {
                 const pObj = (imsPaletteCatalogue||[]).find(p => p.name === fnPalette);
                 const anchors = pObj?.anchorColours || [];
                 Object.keys(zc).forEach(zk => {
-                  if (!en[zk] || !zc[zk]) return;
+                  // ♻️ Repeat zones reuse a standing structure — same treatment as Manpower's own
+                  // freshFn exclusion (this zone's truss/fabric was already built for a prior day).
+                  if (!en[zk] || !zc[zk] || zc[zk].repeat) return;
                   const photoUrl = (fn.elSelectedPhoto || {})[zk];
                   let density = "moderate";
                   if (photoUrl) { const li = libItems.find(l => l.url === photoUrl); if (li?.dims?.drapeDensity) density = li.dims.drapeDensity; }
@@ -1157,7 +1159,8 @@ export default function DealCheckOverlay({ ctx }) {
                 const pObj = (imsPaletteCatalogue || []).find(p => p.name === (fn.fnPalette || "Custom"));
                 const anchors = pObj?.anchorColours || [];
                 Object.keys(zc).forEach(zk => {
-                  if (!en[zk] || !zc[zk]) return;
+                  // ♻️ Repeat zones reuse standing fabric — nothing new to stock/reorder for them.
+                  if (!en[zk] || !zc[zk] || zc[zk].repeat) return;
                   let density = "moderate";
                   const photoUrl = (fn.elSelectedPhoto || {})[zk];
                   if (photoUrl) { const li = (libItems || []).find(l => l.url === photoUrl); if (li?.dims?.drapeDensity) density = li.dims.drapeDensity; }
@@ -2873,6 +2876,16 @@ export default function DealCheckOverlay({ ctx }) {
                                 </div>
                                 {rows.length > 0 && <span aria-hidden="true" style={{fontSize:11,color:INK_3,flexShrink:0,display:"inline-block",transform:isOpen?"rotate(90deg)":"none",transition:"transform 0.16s ease"}}>▸</span>}
                               </div>
+                              {/* ♻️ Repeat zones are dropped from the truck-capacity count above (see
+                                  calcFunctionBreakdown's repeatZonesExcluded) — said here so a lower
+                                  truck count reads as "these zones didn't need a truck", not as a bug.
+                                  Not gated on isOpen, same reasoning as the empty state below it. */}
+                              {tr?.repeatZonesExcluded?.length > 0 && (
+                                <div style={{padding:"9px 15px",fontSize:11.5,color:"#059669",background:"#0596690D",borderBottom:`1px solid ${HAIRLINE}`,display:"flex",alignItems:"center",gap:6}}>
+                                  <span aria-hidden="true">♻️</span>
+                                  <span><b>{tr.repeatZonesExcluded.map(z => z.label).join(", ")}</b> {tr.repeatZonesExcluded.length===1?"is":"are"} marked Repeat — excluded from this trip's truck count.</span>
+                                </div>
+                              )}
                               {/* ── NOTHING TO TRANSPORT IS NOT NOTHING TO SAY ──
                                   This tab scopes to the function selected in the sidebar, so picking
                                   a ceremony that carries no trucks used to leave a header with a dash
