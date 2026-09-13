@@ -32,7 +32,7 @@ const DC_BG = Object.values(
   import.meta.glob("../../../assets/ambria-dealcheck-bg.{jpg,jpeg,png,webp}", { eager: true, query: "?url", import: "default" })
 )[0] || null;
 // The zone-row action marks, taken from Build so one action does not have two pictures.
-import { IconFactory, IconCart, IconPlatform, IconCheck, IconAlert, IconChevron, IconBox } from "../../../components/icons.jsx";
+import { IconFactory, IconCart, IconPlatform, IconCheck, IconAlert, IconChevron, IconBox, IconRepeat, IconSparkle } from "../../../components/icons.jsx";
 
 // ═══ SURFACES ═══
 // Deal Check sits on a wedding-artwork ground, so a translucent fill reads as a different colour on
@@ -1882,6 +1882,10 @@ export default function DealCheckOverlay({ ctx }) {
                         const totalRowCount = zoneCards.length + platformEntriesForZone.length + recipeFlorals.length + manualItemsInZone.length;
                         const zonePhoto = fns[fnIdx]?.elSelectedPhoto?.[zk]?.src || null;
                         const zonePhotoName = fns[fnIdx]?.elSelectedPhoto?.[zk]?.eventName || "";
+                        // ♻️ Repeat vs ✨ Fresh — set in Build's own zone toggle (zoneConfig[k].repeat,
+                        // fixed-venue "reuse the standing setup" vs a build from scratch). Read-only
+                        // here — mirrors Build's badge exactly, this screen just displays what was set.
+                        const zoneIsRepeatTag = !!fns[fnIdx]?.zoneConfig?.[zk]?.repeat;
                         // Total rental of every matched item in this zone — mirrors the sidebar/bottom-bar
                         // rollup math exactly (split-fulfilment lines, unavailable-shortfall cost%, the
                         // fixed-venue Repeat discount) instead of a naive qty × rate sum, which is why this
@@ -1953,6 +1957,7 @@ export default function DealCheckOverlay({ ctx }) {
                                 <span style={{fontSize:15.5,fontWeight:700,color:IV.ink,letterSpacing:-0.25,textTransform:"capitalize"}}>{zk}</span>
                                 <span className="dc-cap" style={{color:IV.ink3,letterSpacing:1.2}}>{totalRowCount} card{totalRowCount===1?"":"s"}</span>
                                 {zoneRentalTotal>0 && <span title="Total rental of all inventory in this zone" style={{fontSize:13,padding:"3px 9px",borderRadius:5,background:"rgba(201,169,110,0.15)",color:accent,fontWeight:700}}>₹{zoneRentalTotal.toLocaleString("en-IN")} rental</span>}
+                                <span title={zoneIsRepeatTag?"Reusing an existing setup — discounted rental, no build labour (set in Build)":"New build this time — full rental + labour + transport (set in Build)"} style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:10,fontWeight:700,padding:"3px 9px",borderRadius:10,border:`1px solid ${zoneIsRepeatTag?"#059669":border}`,background:zoneIsRepeatTag?"#05966918":"transparent",color:zoneIsRepeatTag?"#059669":textS}}>{zoneIsRepeatTag?<IconRepeat size={11}/>:<IconSparkle size={11}/>}{zoneIsRepeatTag?"Repeat":"Fresh"}</span>
                               </div>
                               <div style={{display:"flex",gap:6,alignItems:"center"}}>
                                 {/* ── THE SAME MARKS BUILD USES, FOR THE SAME ACTIONS ──
