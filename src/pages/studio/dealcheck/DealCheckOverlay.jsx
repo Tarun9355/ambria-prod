@@ -20,6 +20,7 @@ import { matchFlowerPattern } from "../../../lib/ims/flowerHelpers";
 import { DEPTS as OPS_DEPTS, catToDept as sharedCatToDept } from "../../../lib/ims/deptClassify";
 import ItemHoverThumb from "../../../components/shared/ItemHoverThumb.jsx";
 import { WASH_BANDS, GRAIN_URL } from "../../../lib/studio/pageWash";
+import { newSplitGroupId, reconcileDealCheckIntoBuild } from "../../../lib/studio/dealCheckSync.js";
 
 // ══ THE PAGE'S GROUND ══
 // A glob, not an import, for the same reason every other background in this app uses one: if the file
@@ -178,6 +179,8 @@ export default function DealCheckOverlay({ ctx }) {
     dealCheckData, imsPaletteCatalogue, softHolds, imsPrintMaterials, imsCarpetMaterials,
     // build / fn state
     activeFnIdx: activeFnIdxCommitted, fnPending, switchActiveFn, dcShowAllFns, setDcShowAllFns, dcCollapsedFnBlocks, setDcCollapsedFnBlocks,
+    // Deal-Check-into-Build sync (ongoing deals only — see the effect below and dealCheckSync.js)
+    zoneElements, setZoneElements, fnBuilds, setFnBuilds, isFnSwitching,
     // pricing helpers
     collectAllFunctionData, calcFnFloralSourcingCost, calcFunctionBreakdown, calcFunctionCost,
     // Shared availability picker — the same one Build's IconBox control opens.
@@ -315,6 +318,35 @@ export default function DealCheckOverlay({ ctx }) {
       .map(p => (typeof p === "string" ? p : p?.src)).filter(Boolean))];
     if (urls.length) ensureLibItemsByUrl(urls);
   }, [activeClientId, collectAllFunctionData, ensureLibItemsByUrl]);
+
+  // ═══ Sync Deal Check's own edits into Build — ONGOING deals only ═══
+  // While a deal is still being planned, Deal Check and Build are meant to describe the same
+  // build — swap an item, edit a kit's components, add a manual item, or split a card's qty
+  // across two, and Build should show it too. Once a deal is booked/sold, Build freezes as "what
+  // was sold to the guest" — reconcileSoldInventoryBlocks (StudioApp.jsx) owns everything that
+  // happens to a booked deal's inventory from here on, so this effect must never touch anything
+  // once isSold. See dealCheckSync.js for the actual reconciliation logic; this effect only
+  // decides WHETHER to run it and WHERE the result lands (the live, active function's zoneElements
+  // vs. a non-active function's snapshot in fnBuilds — the same duality collectAllFunctionData
+  // already resolves, mirrored here via the same activeFnIdx/fnPending signals).
+  const isSoldForSync = activeClient?.status === "booked";
+  useEffect(() => {
+    if (isSoldForSync) return;
+    if (isFnSwitching) return;
+    if (!activeClientId) return;
+    const fnIdx = activeFnIdx; // Deal Check's own resolved index (fnPending ?? activeFnIdxCommitted)
+    // The LIVE zoneElements state actually reflects activeFnIdxCommitted (StudioApp's own,
+    // real active function) regardless of fnPending — fnPending is only Deal Check's own faster
+    // sidebar highlight while a switch is still in flight. So fnIdx matches the live state only
+    // when there's no such mismatch, i.e. when it equals activeFnIdxCommitted.
+    const isActiveFn = fnIdx === activeFnIdxCommitted;
+    const currentZE = isActiveFn ? zoneElements : (fnBuilds[fnIdx]?.zoneElements || {});
+    const next = reconcileDealCheckIntoBuild(currentZE, dcCards[fnIdx], dcKitEdits[fnIdx], dcManualItems.filter(m => m.fnIdx === fnIdx), dcInventoryCache, parseCardKey);
+    if (next === currentZE) return;
+    if (isActiveFn) setZoneElements(next);
+    else setFnBuilds(prev => ({ ...prev, [fnIdx]: { ...(prev[fnIdx] || {}), zoneElements: next } }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dcCards, dcKitEdits, dcManualItems, isSoldForSync, isFnSwitching, activeFnIdx, activeFnIdxCommitted, activeClientId]);
 
   if (!(authUser && true)) return null;
 
@@ -2231,10 +2263,14 @@ export default function DealCheckOverlay({ ctx }) {
                                                   ? "Pick one item to swap this card to — or Split to divide its qty across 2 or more."
                                                   : "Pick an item to swap this card to.",
                                                 splitQty: Number(card.qty) || 0,
-                                                onSplit: (alloc) => setDcCards(prev => ({ ...prev, [fnIdx]: { ...(prev[fnIdx] || {}),
-                                                  [card._cardKey]: { ...(prev[fnIdx]?.[card._cardKey] || {}),
+                                                onSplit: (alloc) => setDcCards(prev => { const prevCard = prev[fnIdx]?.[card._cardKey] || {}; return { ...prev, [fnIdx]: { ...(prev[fnIdx] || {}),
+                                                  [card._cardKey]: { ...prevCard,
                                                     split: alloc.map(a => ({ imsId: a.imsId, qty: a.qty })),
-                                                    source: "manual-swap" } } })),
+                                                    // Persists once created (see dealCheckSync.js's newSplitGroupId) so the
+                                                    // ongoing-deal Build sync can find every entry a given split produced
+                                                    // even after array indices shift.
+                                                    splitGroupId: prevCard.splitGroupId || newSplitGroupId(),
+                                                    source: "manual-swap" } } }; }),
                                                 priceMode: "rental",
                                               })}
                                               title={`Check stock availability & pick an item${subToUse ? ` — ${subTotal} in ${subToUse}` : ""}`}
@@ -2290,7 +2326,7 @@ export default function DealCheckOverlay({ ctx }) {
                                         {card.imsId && (()=>{
                                           const cQty = Number(card.qty)||1;
                                           const split = Array.isArray(card.split) ? card.split.filter(s=>s&&s.imsId) : [];
-                                          const setSplit = (next)=> setDcCards(prev=>({...prev,[fnIdx]:{...(prev[fnIdx]||{}),[card._cardKey]:{...(prev[fnIdx]?.[card._cardKey]||{}),split:(Array.isArray(next)&&next.length)?next:undefined}}}));
+                                          const setSplit = (next)=> setDcCards(prev=>{ const prevCard = prev[fnIdx]?.[card._cardKey] || {}; const hasNext = Array.isArray(next) && next.length; return {...prev,[fnIdx]:{...(prev[fnIdx]||{}),[card._cardKey]:{...prevCard, split: hasNext ? next : undefined, ...(hasNext ? { splitGroupId: prevCard.splitGroupId || newSplitGroupId() } : {}) }}}; });
                                           // Live IMS sub-category only — never Rate Card (see the sub-category note above).
                                           const subS = item ? imsField.subcategory(item) : "";
                                           const subItems = subS ? dcInventoryCache.filter(x=>String(imsField.subcategory(x)||"").toLowerCase().trim()===String(subS).toLowerCase().trim()) : [];
@@ -4080,7 +4116,7 @@ export default function DealCheckOverlay({ ctx }) {
                               setDcCards(prev => {
                                 const prevCard = prev[fnIdx]?.[cardKey] || {};
                                 const prevSplit = Array.isArray(prevCard.split) ? prevCard.split.filter(s=>s&&s.imsId) : [];
-                                return { ...prev, [fnIdx]: { ...(prev[fnIdx] || {}), [cardKey]: { ...prevCard, split: [...prevSplit, { imsId: it.id, qty: Math.max(0, splitQty || 0) }] } } };
+                                return { ...prev, [fnIdx]: { ...(prev[fnIdx] || {}), [cardKey]: { ...prevCard, split: [...prevSplit, { imsId: it.id, qty: Math.max(0, splitQty || 0) }], splitGroupId: prevCard.splitGroupId || newSplitGroupId() } } };
                               });
                             } else {
                               setDcCards(prev => ({
