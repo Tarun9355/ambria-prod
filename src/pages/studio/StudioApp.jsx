@@ -6426,14 +6426,20 @@ export default function StudioApp() {
   // (via saveSession's savePromise) closes that race instead of hoping pagehide wins it.
   useEffect(() => {
     const flush = async () => {
+      // "Update now" (App.jsx's UpdateBanner) races this whole flush against a hard 4s cap and
+      // reloads regardless of which one wins — so two things matter here: don't make the Deal Check
+      // draft wait behind the (often bigger) build session save finishing first, and pass
+      // keepalive:true on BOTH so that even when the 4s cap wins the race, each fetch keeps running
+      // in the background and still lands after the reload starts, instead of being cancelled by it.
+      const tasks = [];
       if (!(switchingRef.current || fnSwitchingRef.current || !buildHasDataRef.current)) {
-        const result = saveSessionRef.current({ auto: true });
-        if (result?.savePromise) await result.savePromise;
+        const result = saveSessionRef.current({ auto: true, keepalive: true });
+        if (result?.savePromise) tasks.push(result.savePromise);
       }
       // Deal Check's own pending draft (dcCards/dcDraft) is a separate autosave loop from the build
-      // session above — flushing one doesn't flush the other. Awaited here too so a route switch or
-      // reload while Deal Check is open can't drop whichever one just happened to be mid-debounce.
-      try { await flushDcAutosaveRef.current?.(); } catch { /* best-effort */ }
+      // session above — flushing one doesn't flush the other.
+      tasks.push(Promise.resolve().then(() => flushDcAutosaveRef.current?.({ keepalive: true })));
+      await Promise.allSettled(tasks);
     };
     registerFlushBeforeReload(flush);
     return () => unregisterFlushBeforeReload(flush);
