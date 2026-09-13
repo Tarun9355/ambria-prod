@@ -173,7 +173,7 @@ export default function DealCheckOverlay({ ctx }) {
     // "Set as correct match for this photo" control. That control is gone, and nothing else in
     // this file read them — re-add all three if the teach action comes back.
     dcDesiredMargin, setDcDesiredMargin, closeDealCheck,
-    dcSaveBaselineRef, dcConflictWarnedAtRef,
+    dcSaveBaselineRef, dcConflictWarnedAtRef, flushDcAutosaveRef,
     dcZoneState, dcMpOverrides, dcMpWinCount, dcMpIncludeMinusOne, dcMpIncludeDismantle,
     setDcResolved, setDcCards, setDcZoneState, setDcPhotoOverrides, setDcSkipped, setDcProductionAccepted,
     dealCheckData, imsPaletteCatalogue, softHolds, imsPrintMaterials, imsCarpetMaterials,
@@ -2266,6 +2266,11 @@ export default function DealCheckOverlay({ ctx }) {
                                                 if (!pick) return;
                                                 setDcCards(prev => ({ ...prev, [fnIdx]: { ...(prev[fnIdx] || {}),
                                                   [card._cardKey]: { ...(prev[fnIdx]?.[card._cardKey] || {}), imsId: pick.id, imsName: pick.name || "", source: "manual-swap" } } }));
+                                                // Flush the durable draft right away rather than trusting the 2.5s debounce —
+                                                // a booked deal's swap lives ONLY in this draft (Build is deliberately never
+                                                // touched), so a refresh landing inside that window reverted straight back to
+                                                // whatever Build still shows, with no other copy anywhere to restore from.
+                                                setTimeout(() => flushDcAutosaveRef?.current?.(), 0);
                                               }, {
                                                 // Pratik's Split, now offered here too. The picker cannot read this qty from
                                                 // zoneElements — a Deal Check card keeps its own — so it is declared, and the
@@ -2275,14 +2280,14 @@ export default function DealCheckOverlay({ ctx }) {
                                                   ? "Pick one item to swap this card to — or Split to divide its qty across 2 or more."
                                                   : "Pick an item to swap this card to.",
                                                 splitQty: Number(card.qty) || 0,
-                                                onSplit: (alloc) => setDcCards(prev => { const prevCard = prev[fnIdx]?.[card._cardKey] || {}; return { ...prev, [fnIdx]: { ...(prev[fnIdx] || {}),
+                                                onSplit: (alloc) => { setDcCards(prev => { const prevCard = prev[fnIdx]?.[card._cardKey] || {}; return { ...prev, [fnIdx]: { ...(prev[fnIdx] || {}),
                                                   [card._cardKey]: { ...prevCard,
                                                     split: alloc.map(a => ({ imsId: a.imsId, qty: a.qty })),
                                                     // Persists once created (see dealCheckSync.js's newSplitGroupId) so the
                                                     // ongoing-deal Build sync can find every entry a given split produced
                                                     // even after array indices shift.
                                                     splitGroupId: prevCard.splitGroupId || newSplitGroupId(),
-                                                    source: "manual-swap" } } }; }),
+                                                    source: "manual-swap" } } }; }); setTimeout(() => flushDcAutosaveRef?.current?.(), 0); },
                                                 priceMode: "rental",
                                               })}
                                               title={`Check stock availability & pick an item${subToUse ? ` — ${subTotal} in ${subToUse}` : ""}`}
@@ -2338,7 +2343,7 @@ export default function DealCheckOverlay({ ctx }) {
                                         {card.imsId && (()=>{
                                           const cQty = Number(card.qty)||1;
                                           const split = Array.isArray(card.split) ? card.split.filter(s=>s&&s.imsId) : [];
-                                          const setSplit = (next)=> setDcCards(prev=>{ const prevCard = prev[fnIdx]?.[card._cardKey] || {}; const hasNext = Array.isArray(next) && next.length; return {...prev,[fnIdx]:{...(prev[fnIdx]||{}),[card._cardKey]:{...prevCard, split: hasNext ? next : undefined, ...(hasNext ? { splitGroupId: prevCard.splitGroupId || newSplitGroupId() } : {}) }}}; });
+                                          const setSplit = (next)=> { setDcCards(prev=>{ const prevCard = prev[fnIdx]?.[card._cardKey] || {}; const hasNext = Array.isArray(next) && next.length; return {...prev,[fnIdx]:{...(prev[fnIdx]||{}),[card._cardKey]:{...prevCard, split: hasNext ? next : undefined, ...(hasNext ? { splitGroupId: prevCard.splitGroupId || newSplitGroupId() } : {}) }}}; }); setTimeout(() => flushDcAutosaveRef?.current?.(), 0); };
                                           // Live IMS sub-category only — never Rate Card (see the sub-category note above).
                                           const subS = item ? imsField.subcategory(item) : "";
                                           const subItems = subS ? dcInventoryCache.filter(x=>String(imsField.subcategory(x)||"").toLowerCase().trim()===String(subS).toLowerCase().trim()) : [];
@@ -4136,6 +4141,9 @@ export default function DealCheckOverlay({ ctx }) {
                                 [fnIdx]: { ...(prev[fnIdx] || {}), [cardKey]: { ...(prev[fnIdx]?.[cardKey] || {}), imsId: it.id, imsName: it.name, source: "manual-swap" } }
                               }));
                             }
+                            // See the availability-picker swap above — a booked deal's manual pick has no
+                            // other copy anywhere but this draft, so it can't wait out the 2.5s debounce.
+                            setTimeout(() => flushDcAutosaveRef?.current?.(), 0);
                             setDcBrowseAllOpen(null);
                           }} style={{position:"relative",borderRadius:9,overflow:"hidden",border:isCurrent?`2px solid ${accent}`:`1px solid ${border}`,cursor:isCurrent?"default":isBlocked?"not-allowed":"pointer",background:"rgba(26, 26, 46,0.02)",opacity:hold?0.6:isBlocked?0.45:1}}>
                             {photo ? <img loading="lazy" decoding="async" src={thumbUrl(photo, 56)} alt="" style={{width:"100%",height:110,objectFit:"cover",display:"block",background:"#FAF9F6"}}/> : <div style={{width:"100%",height:110,background:"#FAF9F6",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,color:"#1A1A2E"}}>?</div>}
