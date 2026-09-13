@@ -369,8 +369,8 @@ export default function DealCheckOverlay({ ctx }) {
           { id: "transport", label: "Transport",        icon: "🚚", live: true  },
           { id: "power",     label: "Power",            icon: "⚡", live: true  },
           { id: "status",    label: "Inventory Status", icon: "📊", live: true  },
-          { id: "gyv",       label: "GYV & Buffer",     icon: "💰", live: true  },
           { id: "commission",label: "Commission",       icon: "🤝", live: true  },
+          { id: "gyv",       label: "GYV & Buffer",     icon: "💰", live: true  },
           // Dept Income removed from the tab strip. Its body below is left in place and still
           // renders if dcActiveTab is somehow "depts" — the department split is also pushed to
           // IMS Dept Ops from persistDeptSnapshot, which does not depend on this tab.
@@ -1508,7 +1508,7 @@ export default function DealCheckOverlay({ ctx }) {
                   // Per-tab cost, under each tab's own label — the bottom strip used to repeat these
                   // as a separate row of chips; the strip now only shows the overall Project Total,
                   // and a tab's own group total lives right on the tab itself instead.
-                  const { rental, transport, genset, truss, gyvFixed, bufferCost, hasActuals, effFlorals, mpDelta, effManpower } = dcCostRollup;
+                  const { rental, transport, genset, truss, gyvFixed, bufferCost, hasActuals, effFlorals, mpDelta, effManpower, commissionTotal } = dcCostRollup;
                   const florals = hasActuals ? effFlorals : dcCostRollup.florals;
                   const manpower = mpDelta ? effManpower : dcCostRollup.manpower;
                   const buyTotal = dcCustomItems.filter(c => c.type === "buying").reduce((s, c) => s + (c.manualPrice || c.refPrice || 0) * (Number(c.qty) || 1), 0);
@@ -1521,18 +1521,21 @@ export default function DealCheckOverlay({ ctx }) {
                     inventory: fmtTab(rental), truss: fmtTab(truss), florals: fmtTab(florals),
                     manpower: fmtTab(manpower), production: fmtTab(produceTotal), buying: fmtTab(buyTotal),
                     transport: fmtTab(Math.max(0, transport - genset)), power: fmtTab(genset),
-                    gyv: fmtTab(gyvFixed + bufferCost),
+                    commission: fmtTab(commissionTotal), gyv: fmtTab(gyvFixed + bufferCost),
                   };
                   return TABS.map(t => {
+                    // Every pill reserves the same second line, even a tab with no cost of its own
+                    // (Inventory Status) — a mix of one- and two-line pills in the same wrapped row
+                    // left them sitting at different heights next to each other.
                     const amount = TAB_AMOUNTS[t.id];
                     const on = dcActiveTab === t.id;
                     return (
-                      <button key={t.id} className="dc-tab" data-on={on?"1":"0"} onClick={()=>setDcActiveTab(t.id)} style={{padding:amount?"6px 11px 5px":"7px 11px",borderRadius:999,border:on?"1px solid #221C42":"1px solid rgba(26,26,46,0.10)",cursor:"pointer",fontSize:13,fontWeight:on?700:500,background:on?"#221C42":"#FFFFFF",color:on?"#F5F1E7":textS,whiteSpace:"nowrap",letterSpacing:0.2,position:"relative",display:"inline-flex",flexDirection:"column",alignItems:"flex-start",gap:1,lineHeight:1,flexShrink:0}}>
+                      <button key={t.id} className="dc-tab" data-on={on?"1":"0"} onClick={()=>setDcActiveTab(t.id)} style={{padding:"6px 11px 5px",borderRadius:999,border:on?"1px solid #221C42":"1px solid rgba(26,26,46,0.10)",cursor:"pointer",fontSize:13,fontWeight:on?700:500,background:on?"#221C42":"#FFFFFF",color:on?"#F5F1E7":textS,whiteSpace:"nowrap",letterSpacing:0.2,position:"relative",display:"inline-flex",flexDirection:"column",alignItems:"flex-start",gap:1,lineHeight:1,flexShrink:0}}>
                         <span style={{display:"inline-flex",alignItems:"center",gap:6}}>
                           <span style={{fontSize:14,lineHeight:1}}>{t.icon}</span>{t.label}
                           {!t.live && <span style={{marginLeft:6,fontSize:10,padding:"2px 5px",borderRadius:4,background:"rgba(245,158,11,0.18)",color:"#F59E0B",fontWeight:700,letterSpacing:0.4}}>{t.ship}</span>}
                         </span>
-                        {amount && <span className="dc-money" style={{fontSize:10.5,fontWeight:700,opacity:on?0.85:0.55,marginTop:1}}>{amount}</span>}
+                        <span className="dc-money" style={{fontSize:10.5,fontWeight:700,opacity:amount?(on?0.85:0.55):0,marginTop:1}}>{amount || " "}</span>
                       </button>
                     );
                   });
@@ -3562,7 +3565,7 @@ export default function DealCheckOverlay({ ctx }) {
                   );
                 })() : dcActiveTab === "gyv" ? (() => {
                   // ═══ GYV FIXED & BUFFER COST TAB — reads from shared dcCostRollup ═══
-                  const { rental, florals, transport, manpower, truss, buyTotal, produceTotal, base: baseProj, gyvFixed: gyvCost, bufferCost, grand: grandProj, clientRevenue, fns, hasActuals, actualMandi, actualExpenses, effFlorals, baseActual, grandActual, projFlorals, effManpower, mpDelta } = dcCostRollup;
+                  const { rental, florals, transport, manpower, truss, buyTotal, produceTotal, base: baseProj, gyvFixed: gyvCost, bufferCost, commissionTotal, grand: grandProj, clientRevenue, fns, hasActuals, actualMandi, actualExpenses, effFlorals, baseActual, grandActual, projFlorals, effManpower, mpDelta } = dcCostRollup;
                   const baseCost = hasActuals ? baseActual : baseProj;
                   const grandWithOverheads = hasActuals ? grandActual : grandProj;
                   const fmt = (n) => n > 0 ? "₹" + Math.round(n).toLocaleString("en-IN") : "₹0";
@@ -3724,8 +3727,8 @@ export default function DealCheckOverlay({ ctx }) {
                           <div onClick={sOver.toggle} className="dc2-hd" style={headStyle(sOver.open)}>
                             <span aria-hidden="true" style={ICON_TILE("#F7F1E0")}>🏢</span>
                             <div style={{flex:"1 1 auto",minWidth:0}}>
-                              <div style={SECT_TITLE}>GYV fixed &amp; buffer</div>
-                              <div style={SECT_SUB}>Both are a percentage of base cost, added on top and carried into the project total in the bottom strip.</div>
+                              <div style={SECT_TITLE}>GYV fixed, buffer &amp; commission</div>
+                              <div style={SECT_SUB}>GYV and buffer are a percentage of base cost; commission is set per venue in IMS. All three are added on top and carried into the project total in the bottom strip.</div>
                             </div>
                             <div style={{textAlign:"right",flexShrink:0}}>
                               <div style={{fontSize:17,fontWeight:750,color:INK,letterSpacing:-0.45,lineHeight:1.1,...NUM}}>{fmt(grandWithOverheads)}</div>
@@ -3737,14 +3740,15 @@ export default function DealCheckOverlay({ ctx }) {
                             {[
                               { k: "GYV fixed", pct: gyvPct, v: gyvCost },
                               { k: "Buffer", pct: bufferPct, v: bufferCost },
+                              { k: "Commission", pct: null, v: commissionTotal },
                             ].map(o => (
                               <div key={o.k} className="dc2-row" style={{borderRadius:12,background:TILE_BG,border:`1px solid ${TILE_BORDER}`,padding:"10px 12px"}}>
                                 <div style={{display:"flex",alignItems:"baseline",gap:8}}>
                                   <span style={{flex:"1 1 auto",fontSize:10.5,fontWeight:700,color:INK,letterSpacing:0.8,textTransform:"uppercase"}}>{o.k}</span>
-                                  <span style={{fontSize:10,fontWeight:700,color:INK_3,...NUM}}>{o.pct}%</span>
+                                  <span style={{fontSize:10,fontWeight:700,color:INK_3,...NUM}}>{o.pct != null ? `${o.pct}%` : "per venue"}</span>
                                 </div>
                                 <div style={{fontSize:17,fontWeight:750,color:INK,letterSpacing:-0.45,lineHeight:1.1,marginTop:6,...NUM}}>{fmt(o.v)}</div>
-                                <div style={{fontSize:10,color:INK_3,marginTop:3,...NUM}}>{o.pct}% of {fmt(baseCost)}</div>
+                                <div style={{fontSize:10,color:INK_3,marginTop:3,...NUM}}>{o.pct != null ? `${o.pct}% of ${fmt(baseCost)}` : "rate set per venue in IMS"}</div>
                               </div>
                             ))}
                           </div>}
@@ -3794,8 +3798,11 @@ export default function DealCheckOverlay({ ctx }) {
                         </div>
                       </div>
 
-                      {/* ═══ Smart Quote Calculator — salesperson adjusts margin to get revised quote ═══ */}
-                      {(()=>{
+                      {/* ═══ Smart Quote Calculator — salesperson adjusts margin to get revised quote ═══
+                          Booked deals only: the quote is negotiated and the sale is done, so there is
+                          nothing left to pick a margin FOR — this stays for ongoing deals, where it's
+                          still a live "what should I quote" tool. */}
+                      {!isSold && (()=>{
                         const internalCost = grandWithOverheads;
                         const origQuote = quote;
                         const origProfitPct = origQuote > 0 ? Math.round(((origQuote - internalCost) / origQuote) * 100) : 0;
