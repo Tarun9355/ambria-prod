@@ -156,12 +156,35 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   const deptIncome = (sel?.deptIncome && sel.deptIncome[dept]) || null;
   const deptInvSnap = (sel?.deptInventory && Array.isArray(sel.deptInventory[dept])) ? sel.deptInventory[dept] : null;
 
+  // ── Swap detection: a request row that both adds and removes an item in the same batch is a
+  // straight swap (a Deal Check pick replacing another, logged by reconcileSoldInventoryBlocks in
+  // one go) — tag the newly-added item SWAPPED so ops sees at a glance this isn't extra inventory,
+  // it's a substitution. Most recent qualifying row wins per item name; when a batch bundles more
+  // than one removal the "from" is shown as a count rather than guessing which item paired with which.
+  const swapInfo = useMemo(() => {
+    const map = new Map();
+    const rows = (amendRequests || [])
+      .filter(r => r.eventOrderId === sel?.id && r.department === dept && r.status === "logged")
+      .sort((a, b) => (b.requestedAt || 0) - (a.requestedAt || 0));
+    for (const r of rows) {
+      const items = r.items || [];
+      const added = items.filter(it => it.change === "added");
+      const removed = items.filter(it => it.change === "removed");
+      if (!added.length || !removed.length) continue;
+      const fromLabel = removed.length === 1 ? removed[0].name : `${removed.length} items`;
+      for (const a of added) {
+        if (!map.has(a.name)) map.set(a.name, { swappedFrom: fromLabel, at: r.requestedAt });
+      }
+    }
+    return map;
+  }, [amendRequests, sel, dept]);
+
   // ── Blocked inventory: prefer the Deal Check snapshot; fall back to IMS blocks if not synced ──
   // GROUPED view (kit as one line + its components) — used for the inventory/income display.
   const blockedItemsGrouped = useMemo(() => {
     if (!sel) return [];
     if (deptInvSnap && deptInvSnap.length) {
-      const rows = deptInvSnap.map((x, i) => ({ id: x.name + i, invId: x.imsId || null, name: x.name, photo: x.photo || "", qty: x.qty || 0, unit: x.unit || 0, total: x.total || 0, sub: x.sub || "", isKit: !!x.isKit, components: Array.isArray(x.components) ? x.components : null, shortQty: x.shortQty || 0, shortCost: x.shortCost || 0, prodOrBuy: x.prodOrBuy || null }));
+      const rows = deptInvSnap.map((x, i) => ({ id: x.name + i, invId: x.imsId || null, name: x.name, photo: x.photo || "", qty: x.qty || 0, unit: x.unit || 0, total: x.total || 0, sub: x.sub || "", isKit: !!x.isKit, components: Array.isArray(x.components) ? x.components : null, shortQty: x.shortQty || 0, shortCost: x.shortCost || 0, prodOrBuy: x.prodOrBuy || null, isSwapped: swapInfo.has(x.name), swappedFrom: swapInfo.get(x.name)?.swappedFrom || null }));
       // Short items first (need chasing/ordering), then Production/Buying (not real stock — worth
       // knowing apart from what's actually reserved), then everything else — the order requested
       // for this list. Stable within each group: Array.prototype.sort is stable, so ties keep the
@@ -181,7 +204,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
       out.push({ id: itemId, invId: itemId, name: item.name, photo: item.img || (Array.isArray(item.photoUrls) && item.photoUrls[0]) || "", qty, unit, total: unit * qty, sub: item.subCat || item.subcategory || "" });
     });
     return out.sort((a, b) => b.total - a.total);
-  }, [sel, blocks, inventory, dept]);
+  }, [sel, blocks, inventory, dept, swapInfo]);
   // FLAT view — kits expanded into the kit shell + each component as its own physical row. Used by
   // Loading & dispatch, Receiving and Dismantle (the ops manager loads/moves each real item).
   const blockedItems = useMemo(() => {
@@ -1021,10 +1044,12 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                             {it.isKit && <span className="ml-2 align-middle text-[9px] px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 font-bold">KIT</span>}
                             {it.shortQty > 0 && <span className="ml-2 align-middle text-[9px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-bold">SHORT ×{it.shortQty}</span>}
                             {it.prodOrBuy && <span className={"ml-2 align-middle text-[9px] px-1.5 py-0.5 rounded font-bold " + (it.prodOrBuy === "buying" ? "bg-orange-100 text-orange-700" : "bg-purple-100 text-purple-700")}>{it.prodOrBuy === "buying" ? "🛒 BUYING" : "🏭 PRODUCTION"}</span>}
+                            {it.isSwapped && <span className="ml-2 align-middle text-[9px] px-1.5 py-0.5 rounded bg-sky-100 text-sky-700 font-bold">🔁 SWAPPED</span>}
                           </div>
                           <div className="text-xs text-gray-500">
                             {it.sub || "—"} · {fmt(it.unit)}/unit
                             {it.shortQty > 0 && <span className="text-amber-600"> · {it.shortQty} short of stock — priced at cost, chase or produce</span>}
+                            {it.isSwapped && <span className="text-sky-600"> · swapped in for {it.swappedFrom}</span>}
                           </div>
                         </div>
                         <div className="text-sm font-semibold text-gray-700">×{it.qty}</div>
