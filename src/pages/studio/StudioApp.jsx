@@ -4818,7 +4818,12 @@ export default function StudioApp() {
       const subAgg = {}; const totalFloralCost = 0;
       // items[]: the zone/element lines that made up this sub-category's qty — lets the Transport
       // tab show WHAT is filling each truck-capacity row, not just its aggregate qty.
-      const addSub = (sub, qty, zoneKey, itemName) => { const k = String(sub || "").toLowerCase().trim(); const tc = capBySub[k]; if (!tc || !(qty > 0)) return; if (!subAgg[k]) subAgg[k] = { label: tc.item, subKey: k, perTruck: Number(tc.perTruck) || 0, unit: tc.unit || "pc", qty: 0, items: [] }; subAgg[k].qty += qty; if (itemName) subAgg[k].items.push({ zoneKey: zoneKey || "", name: itemName, qty }); };
+      // `invCat` is the CONTRIBUTING ITEM's own top-level Inventory category (item.cat/category —
+      // the same field the Inventory tab's own category chips and catToDept(i.cat, ...) everywhere
+      // else in the app read), not the sub-category's name or the truck-capacity bucket's label. Set
+      // once from whichever element first fills a bucket — a given truck-capacity bucket is one
+      // sub-category, which only ever belongs to one Inventory category in practice.
+      const addSub = (sub, qty, zoneKey, itemName, invCat) => { const k = String(sub || "").toLowerCase().trim(); const tc = capBySub[k]; if (!tc || !(qty > 0)) return; if (!subAgg[k]) subAgg[k] = { label: tc.item, subKey: k, invCat: invCat || "", perTruck: Number(tc.perTruck) || 0, unit: tc.unit || "pc", qty: 0, items: [] }; subAgg[k].qty += qty; if (itemName) subAgg[k].items.push({ zoneKey: zoneKey || "", name: itemName, qty }); };
       // An element's sub-category for truck-capacity purposes comes ONLY from live IMS identity —
       // el.invId (Inventory, the normal path for anything added via "+ Add element" today) or
       // el.patternId (a pure flower-recipe element). No Rate-Card name-match fallback.
@@ -4842,8 +4847,11 @@ export default function StudioApp() {
           const sub = invItem?.subCat || invItem?.subcategory || pattern?.sub || "";
           const tc = capBySub[String(sub || "").toLowerCase().trim()]; if (!tc) return;
           const elLabel = el.name || invItem?.name || pattern?.name || sub;
-          if (String(tc.unit || "pc").toLowerCase().includes("sqft")) { const L = Number(el.L || el.l || 0), W = Number(el.W || el.w || el.H || el.h || 0); if (L > 0 && W > 0) addSub(sub, L * W * (Number(el.qty) || 1), zk, elLabel); }
-          else addSub(sub, Number(el.qty) || 0, zk, elLabel);
+          // A flower-recipe element (pattern, no invId at all) has no inventory row to read a
+          // category off — it's a flower arrangement by definition, so it's Florals outright.
+          const invCat = invItem?.cat || invItem?.category || (pattern ? "Florals" : "");
+          if (String(tc.unit || "pc").toLowerCase().includes("sqft")) { const L = Number(el.L || el.l || 0), W = Number(el.W || el.w || el.H || el.h || 0); if (L > 0 && W > 0) addSub(sub, L * W * (Number(el.qty) || 1), zk, elLabel, invCat); }
+          else addSub(sub, Number(el.qty) || 0, zk, elLabel, invCat);
         });
       });
       Object.entries(fZoneConfig).forEach(([zk, cfg]) => {
@@ -4854,7 +4862,7 @@ export default function StudioApp() {
         if (sqft > 0) { if (cfg.plH) addSub("Platform", sqft, zk, "Platform"); if (cfg.cpT && cfg.cpT !== CARPET_OFF) addSub("Carpet", sqft, zk, "Carpet"); }
       });
       let truckFrac = 0;
-      Object.values(subAgg).forEach(s => { if (s.perTruck > 0) { truckFrac += (s.qty || 0) / s.perTruck; breakdown.push({ label: s.label, subKey: s.subKey, qty: Math.round(s.qty), perTruck: s.perTruck, unit: s.unit, trucks: (s.qty || 0) / s.perTruck, items: s.items }); } });
+      Object.values(subAgg).forEach(s => { if (s.perTruck > 0) { truckFrac += (s.qty || 0) / s.perTruck; breakdown.push({ label: s.label, subKey: s.subKey, invCat: s.invCat, qty: Math.round(s.qty), perTruck: s.perTruck, unit: s.unit, trucks: (s.qty || 0) / s.perTruck, items: s.items }); } });
       const itemTrucks = Math.ceil(truckFrac);
       const floralTrucks = 0; // florals counted via their sub-category capacity — no separate flower truck
       const bt = bufferTiers.find(b => decorTotal >= b.minBudget && decorTotal < b.maxBudget);

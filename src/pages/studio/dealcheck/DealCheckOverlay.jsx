@@ -2856,11 +2856,14 @@ export default function DealCheckOverlay({ ctx }) {
                         // pseudo-group at the end rather than being forced into one.
                         const deptGroupsMap = {};
                         rows.forEach(r => {
-                          // "Other" is the Sub-Categories tab's own unset-default — not a real
-                          // classification — so it falls through to the row's own label same as a
-                          // sub-category with no rate_card_categories row at all.
+                          // r.invCat is the CONTRIBUTING INVENTORY ITEM's own top-level category
+                          // (item.cat, set directly on the item in IMS Inventory) — the real answer
+                          // to "what department owns this," not a guess from the sub-category's own
+                          // name. Falls back to the Sub-Categories tab's admin-set grouping (when the
+                          // row has no live inventory item behind it, e.g. Truss/Platform/Carpet),
+                          // then to keyword-matching the row's own label as the last resort.
                           const subcatCat = subcatCatLabelById[r.subKey];
-                          const classifyText = (subcatCat && subcatCat !== "Other") ? subcatCat : r.label;
+                          const classifyText = r.invCat || ((subcatCat && subcatCat !== "Other") ? subcatCat : r.label);
                           const dg = r.isBuffer ? "Buffer" : sharedCatToDept(classifyText, dealCheckData?.categoryDepartments);
                           (deptGroupsMap[dg] = deptGroupsMap[dg] || []).push(r);
                         });
