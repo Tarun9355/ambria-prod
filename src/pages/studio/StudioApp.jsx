@@ -4818,7 +4818,7 @@ export default function StudioApp() {
       const subAgg = {}; const totalFloralCost = 0;
       // items[]: the zone/element lines that made up this sub-category's qty — lets the Transport
       // tab show WHAT is filling each truck-capacity row, not just its aggregate qty.
-      const addSub = (sub, qty, zoneKey, itemName) => { const k = String(sub || "").toLowerCase().trim(); const tc = capBySub[k]; if (!tc || !(qty > 0)) return; if (!subAgg[k]) subAgg[k] = { label: tc.item, perTruck: Number(tc.perTruck) || 0, unit: tc.unit || "pc", qty: 0, items: [] }; subAgg[k].qty += qty; if (itemName) subAgg[k].items.push({ zoneKey: zoneKey || "", name: itemName, qty }); };
+      const addSub = (sub, qty, zoneKey, itemName) => { const k = String(sub || "").toLowerCase().trim(); const tc = capBySub[k]; if (!tc || !(qty > 0)) return; if (!subAgg[k]) subAgg[k] = { label: tc.item, subKey: k, perTruck: Number(tc.perTruck) || 0, unit: tc.unit || "pc", qty: 0, items: [] }; subAgg[k].qty += qty; if (itemName) subAgg[k].items.push({ zoneKey: zoneKey || "", name: itemName, qty }); };
       // An element's sub-category for truck-capacity purposes comes ONLY from live IMS identity —
       // el.invId (Inventory, the normal path for anything added via "+ Add element" today) or
       // el.patternId (a pure flower-recipe element). No Rate-Card name-match fallback.
@@ -4854,7 +4854,7 @@ export default function StudioApp() {
         if (sqft > 0) { if (cfg.plH) addSub("Platform", sqft, zk, "Platform"); if (cfg.cpT && cfg.cpT !== CARPET_OFF) addSub("Carpet", sqft, zk, "Carpet"); }
       });
       let truckFrac = 0;
-      Object.values(subAgg).forEach(s => { if (s.perTruck > 0) { truckFrac += (s.qty || 0) / s.perTruck; breakdown.push({ label: s.label, qty: Math.round(s.qty), perTruck: s.perTruck, unit: s.unit, trucks: (s.qty || 0) / s.perTruck, items: s.items }); } });
+      Object.values(subAgg).forEach(s => { if (s.perTruck > 0) { truckFrac += (s.qty || 0) / s.perTruck; breakdown.push({ label: s.label, subKey: s.subKey, qty: Math.round(s.qty), perTruck: s.perTruck, unit: s.unit, trucks: (s.qty || 0) / s.perTruck, items: s.items }); } });
       const itemTrucks = Math.ceil(truckFrac);
       const floralTrucks = 0; // florals counted via their sub-category capacity — no separate flower truck
       const bt = bufferTiers.find(b => decorTotal >= b.minBudget && decorTotal < b.maxBudget);

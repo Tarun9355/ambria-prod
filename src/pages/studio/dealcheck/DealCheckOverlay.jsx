@@ -2813,6 +2813,15 @@ export default function DealCheckOverlay({ ctx }) {
                   // always dump every function's trucks on screen no matter which one was selected.
                   const fns = dcShowAllFns ? allFns.map((fn,fi)=>({fn,fi})) : allFns.map((fn,fi)=>({fn,fi})).filter(x=>x.fi===(activeFnIdx||0));
                   const DEPT_TRANSPORT_ICON = { Furniture: "🛋️", Floral: "🌸", Structure: "🏛️", Tenting: "⛺", Transport: "🚚", Lighting: "💡", Fabric: "🧵" };
+                  // IMS Settings → Sub-Categories' own top-level grouping (rate_card_categories.
+                  // category_label, admin-set — e.g. "Console Table"/"Coffee Table"/"Pedestals" are
+                  // filed under Florals there) is the source of truth for which department a
+                  // sub-category belongs to. Classifying by the sub-category's OWN name instead (e.g.
+                  // running the Furniture/Floral/Structure keyword matcher on "Console Table" itself)
+                  // matches no keyword and silently falls through to Structure's catch-all — which is
+                  // how a florals-owned prop like Console Table ended up filed under 🏛️ Structure here.
+                  const subcatCatLabelById = {};
+                  (rcSubcatFactors || []).forEach(r => { if (r?.id && r.category_label) subcatCatLabelById[r.id] = r.category_label; });
                   // Booking-level figures for the summary bar. Computed from the same
                   // calcFunctionBreakdown the cards above are drawn from, so the bar cannot
                   // disagree with the sum of what is on screen.
@@ -2847,7 +2856,12 @@ export default function DealCheckOverlay({ ctx }) {
                         // pseudo-group at the end rather than being forced into one.
                         const deptGroupsMap = {};
                         rows.forEach(r => {
-                          const dg = r.isBuffer ? "Buffer" : sharedCatToDept(r.label, dealCheckData?.categoryDepartments);
+                          // "Other" is the Sub-Categories tab's own unset-default — not a real
+                          // classification — so it falls through to the row's own label same as a
+                          // sub-category with no rate_card_categories row at all.
+                          const subcatCat = subcatCatLabelById[r.subKey];
+                          const classifyText = (subcatCat && subcatCat !== "Other") ? subcatCat : r.label;
+                          const dg = r.isBuffer ? "Buffer" : sharedCatToDept(classifyText, dealCheckData?.categoryDepartments);
                           (deptGroupsMap[dg] = deptGroupsMap[dg] || []).push(r);
                         });
                         const deptGroups = [...OPS_DEPTS, "Buffer"].filter(d => deptGroupsMap[d]?.length).map(d => ({ dept: d, rows: deptGroupsMap[d] }));
