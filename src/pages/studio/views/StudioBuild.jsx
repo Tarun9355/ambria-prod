@@ -1696,18 +1696,29 @@ export default function StudioBuild({ ctx }) {
       return null;
     };
     dragScrollRef.current.el = findScroller(document.getElementById(`zone-${dragZone}`));
-    const EDGE = 110, MAX = 26;
+    // Speed is per SECOND, not per frame. Per frame meant a 120Hz screen scrolled at double the
+    // rate of a 60Hz one, and any dropped frame showed up as a visible lurch.
+    const EDGE = 120;            // how deep the trigger band reaches from each edge
+    const MAX_PX_PER_SEC = 620;  // flat out, only in the last pixel of that band
     const onOver = (e) => {
       const h = window.innerHeight, y = e.clientY;
-      dragScrollRef.current.v =
-        y < EDGE ? -MAX * (1 - y / EDGE)
-        : y > h - EDGE ? MAX * (1 - (h - y) / EDGE)
-        : 0;
+      // How far INTO the band the pointer is, 0 at the inner boundary and 1 at the very edge.
+      const depth = y < EDGE ? -(1 - y / EDGE) : y > h - EDGE ? (1 - (h - y) / EDGE) : 0;
+      // Squared, so it eases in. Linear meant crossing the boundary snapped straight to a
+      // noticeable speed, which is what made it feel like it lurched rather than started.
+      dragScrollRef.current.v = Math.sign(depth) * depth * depth * MAX_PX_PER_SEC;
     };
-    let raf = 0;
-    const tick = () => {
+    let raf = 0, last = 0;
+    const tick = (now) => {
       const { v, el } = dragScrollRef.current;
-      if (v) { if (el) el.scrollTop += v; else window.scrollBy(0, v); }
+      // Real elapsed time, clamped: a background tab or a stalled frame can hand back a huge
+      // delta, which would teleport the page on the next frame.
+      const dt = last ? Math.min((now - last) / 1000, 0.05) : 0;
+      last = now;
+      if (v && dt) {
+        const px = v * dt;
+        if (el) el.scrollTop += px; else window.scrollBy(0, px);
+      }
       raf = requestAnimationFrame(tick);
     };
     window.addEventListener("dragover", onOver);
