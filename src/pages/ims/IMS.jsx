@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../lib/AuthContext";
-import { Tabs } from "../../components/ui";
 import { supabase, fetchAll, updateRow } from "../../lib/supabase";
 import { rowToItem, itemToRow, diffInventory } from "../../lib/inventory/adapter";
 import { computePatternSizeCost, effectiveMarkup } from "../../lib/ims/flowerHelpers";
@@ -46,6 +45,38 @@ const TABS = [
   { id: "finance", label: "📊 Finance" },
   { id: "admin", label: "⚙️ Admin" },
 ];
+
+// Vertical nav rail. Shared by the lg+ sidebar and the mobile drawer so the two can never
+// drift — the drawer only differs in closing itself after a pick.
+// Labels arrive as "🏠 Dashboard" (and "✅ Approvals (3)" when there are pending ones), so the
+// leading glyph is split off to sit in its own column: with the icons aligned, the rail can be
+// read down the labels alone, which a strip of emoji-prefixed pills could not do.
+function IMSNav({ tabs, active, onChange }) {
+  return (
+    <nav className="flex flex-col gap-0.5">
+      {tabs.map((t) => {
+        const sp = t.label.indexOf(" ");
+        const icon = sp > 0 ? t.label.slice(0, sp) : "•";
+        const text = sp > 0 ? t.label.slice(sp + 1) : t.label;
+        const on = active === t.id;
+        return (
+          /* The hover lifts and nudges right rather than only tinting: the rail is a column of
+             identical rows, and a tint alone is easy to miss on the row the cursor is actually
+             over. transition-all so the shadow and the nudge arrive together — `transition`
+             alone animates neither transform nor box-shadow to the same curve here. */
+          <button key={t.id} onClick={() => onChange(t.id)} aria-current={on ? "page" : undefined}
+            className={"w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm text-left transition-all duration-150 " +
+              (on
+                ? "bg-indigo-50 text-indigo-700 font-semibold shadow-[0_1px_2px_rgba(79,70,229,0.14),0_4px_10px_-4px_rgba(79,70,229,0.3)]"
+                : "text-gray-600 font-medium hover:bg-gray-50 hover:text-gray-900 hover:translate-x-0.5 hover:shadow-[0_1px_2px_rgba(16,24,40,0.06),0_4px_10px_-6px_rgba(16,24,40,0.2)]")}>
+            <span aria-hidden="true" className="shrink-0 w-5 text-center text-base leading-none">{icon}</span>
+            <span className="min-w-0 truncate">{text}</span>
+          </button>
+        );
+      })}
+    </nav>
+  );
+}
 
 // ── functions (events) row ⇄ object mapping. Events tab is a later phase; we load
 // functions read-mostly so the Inventory Block dropdowns can reference them, and
@@ -136,6 +167,38 @@ export default function IMS() {
     return saved && isValidTab(saved) ? saved : "dashboard";
   });
   useEffect(() => { sessionStorage.setItem("ambria-ims-tab", tab); }, [tab]);
+  // Mobile nav drawer. Deliberately not persisted — a drawer that reopens itself on reload is
+  // a drawer nobody asked for.
+  const [navOpen, setNavOpen] = useState(false);
+  // ── CALENDAR → PLANNING HAND-OFF ──
+  // Clicking a Studio booking in the Calendar tab opens it in Planning → Dept Ops. Three things
+  // have to line up: the top-level tab, Planning's own sub-tab, and the event Dept Ops selects.
+  // The sub-tab goes through the sessionStorage key PlanningTab already initialises from — it
+  // mounts fresh when the tab switches, so writing the key before setTab is what it reads. The
+  // event id travels as state because it is a one-shot the receiver clears, not a preference
+  // that should survive a reload.
+  const [focusEventId, setFocusEventId] = useState(null);
+  const [focusSearch, setFocusSearch] = useState("");
+  // eoId may be null: an LMS lead that has never been matched to a Studio deal has no
+  // event_order to select. Rather than refuse to navigate, Planning still opens and the client
+  // name goes into its search box — so a deal filed under a slightly different name surfaces
+  // immediately, and an empty list is itself the answer ("this lead isn't sold yet").
+  const [focusLeadEntry, setFocusLeadEntry] = useState(null);
+  const openEventInPlanning = (eoId, searchName = "", leadEntryNo = null) => {
+    try { sessionStorage.setItem("ambria-ims-planning-sub", "deptops"); } catch { /* private mode */ }
+    setFocusEventId(eoId || null);
+    setFocusSearch(eoId ? "" : (searchName || ""));
+    // Only meaningful when there is no deal yet — it is what lets "Build this deal in Studio"
+    // open Studio on THIS contract rather than just a name search.
+    setFocusLeadEntry(eoId ? null : (leadEntryNo || null));
+    setTab("planning");
+  };
+  // Stable identity: Dept Ops lists this in an effect's deps, so an inline arrow here would
+  // give it a new function every IMS render and re-run that effect on each one.
+  const clearFocusEvent = useCallback(() => { setFocusEventId(null); setFocusSearch(""); setFocusLeadEntry(null); }, []);
+  // The return leg. Dept Ops has no event picker of its own any more, so it needs a way back to
+  // the Calendar, which is where events are chosen. Only shown when the tab is permitted.
+  const goToCalendar = useCallback(() => setTab("calendar"), []);
 
   const [items, setItems] = useState([]);
   const [functions, setFns] = useState([]);
@@ -1273,13 +1336,20 @@ export default function IMS() {
   const isAdmin = user?.role === "Admin" || user?.id === "u_admin";
   let allowedTabs = isAdmin ? TABS : TABS.filter((t) => (roleConfig.tabs || []).includes(t.id));
   // Department heads (+ Admin) get an Approvals tab for last-minute amendment requests.
+  // Dept Ops offers a "pick an event from the Calendar" button, but only to roles that actually
+  // have the Calendar tab — otherwise it would send someone to a tab their permissions exclude.
+  const canSeeCalendar = allowedTabs.some((t) => t.id === "calendar");
   if (canApprove(user) && !allowedTabs.some((t) => t.id === "approvals")) {
     const pendN = (amendRequests || []).filter((r) => r.status === "pending").length;
     allowedTabs = [...allowedTabs, { id: "approvals", label: `✅ Approvals${pendN ? ` (${pendN})` : ""}` }];
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 font-sans">
+    /* The page ground is what makes a white card a card. At bg-gray-50 (#F9FAFB) the ground and
+       the cards sat at ~1.03:1 contrast — indistinguishable — so every card needed a drawn
+       outline to exist at all. slate-100 roughly triples that separation, which lets the cards
+       drop their rings and be told apart by fill and shadow instead of by a line. */
+    <div className="min-h-screen bg-slate-100 font-sans">
       {error && (
         <div style={{ position: "fixed", top: 8, right: 8, zIndex: 99999, background: "#dc2626", color: "#fff", padding: "12px 14px", borderRadius: 8, fontSize: 13, maxWidth: 380, boxShadow: "0 6px 20px rgba(0,0,0,0.25)", border: "1px solid #991b1b" }}>
           <div style={{ fontWeight: 700, marginBottom: 4 }}>❌ {error}</div>
@@ -1287,13 +1357,16 @@ export default function IMS() {
         </div>
       )}
       <div className="bg-white border-b sticky top-0 z-40">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6">
+        <div className="w-full px-4 sm:px-6">
           <div className="flex items-center justify-between py-3">
             <div className="flex items-center gap-3">
+              {/* Only route to the nav below lg, where the rail is not on screen. */}
+              <button onClick={() => setNavOpen(true)} aria-label="Open navigation"
+                className="lg:hidden shrink-0 w-9 h-9 -ml-1 rounded-lg flex items-center justify-center text-gray-500 hover:text-gray-900 hover:bg-gray-100 transition">☰</button>
               <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-violet-600 to-indigo-600 flex items-center justify-center text-white font-bold text-lg">A</div>
-              <div>
-                <h1 className="text-lg font-bold text-gray-900">Ambria IMS</h1>
-                <p className="text-xs text-gray-400">Inventory Management System</p>
+              <div className="min-w-0">
+                <h1 className="text-lg font-bold text-gray-900 leading-tight">Ambria IMS</h1>
+                <p className="text-xs text-gray-400 hidden sm:block">Inventory Management System</p>
               </div>
             </div>
             <div className="flex items-center gap-2">
@@ -1303,12 +1376,46 @@ export default function IMS() {
               <button onClick={handleLogout} className="text-xs text-gray-400 hover:text-red-500 ml-2 px-2 py-1 border rounded-lg">Logout</button>
             </div>
           </div>
-          <div className="pb-3 overflow-x-auto">
-            <Tabs tabs={allowedTabs} active={tab} onChange={setTab} />
-          </div>
         </div>
       </div>
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
+      {/* ── NAV RAIL + CONTENT ──
+          The tab strip became a vertical rail: at eight or nine entries a horizontal strip
+          either wrapped to two rows or scrolled sideways, and in both cases you could not see
+          the whole app at once. Same tabs, same ids, same role filtering — only the axis
+          changed. Below lg the rail is off-screen and reachable from the ☰ in the header. */}
+      <div className="flex">
+        {/* top-[61px] is the sticky header's height: py-3 (24) + the 36px logo tile + 1px
+            border. Anything taller in that row would push the rail's top out of line.
+            The rail is a floating panel rather than a column with a rule down its edge: that
+            border-r ran the full height of the page as one hard vertical line, which is the
+            heaviest mark on the screen and sat right beside the lightest content. Padding on
+            the aside and the elevation on the panel inside separate the two instead.
+            MAX-height, not height: the panel hugs its nine nav rows instead of being stretched
+            to the full viewport, which left most of it as empty white running past the fold.
+            The cap still applies, so a role with enough tabs to overflow scrolls inside the
+            panel rather than pushing it off-screen. py-4 is inside the aside's box, so the cap
+            already accounts for it. */}
+        <aside className="hidden lg:block w-56 shrink-0 sticky top-[61px] max-h-[calc(100vh-61px)] py-4 pl-4 pr-1">
+          <div className="max-h-full overflow-y-auto bg-white rounded-2xl p-3 shadow-[0_1px_2px_rgba(16,24,40,0.06),0_8px_24px_-12px_rgba(16,24,40,0.18)]">
+            <IMSNav tabs={allowedTabs} active={tab} onChange={setTab} />
+          </div>
+        </aside>
+
+        {/* Mobile drawer — same nav, same component, over a scrim. */}
+        {navOpen && (
+          <div className="lg:hidden fixed inset-0 z-50 flex">
+            <div className="absolute inset-0 bg-gray-900/40" onClick={() => setNavOpen(false)} />
+            <div className="relative w-60 max-w-[80vw] h-full bg-white rounded-r-2xl shadow-2xl py-4 px-3 overflow-y-auto">
+              <div className="flex items-center justify-between px-2 pb-3 mb-1 border-b">
+                <span className="text-xs font-bold uppercase tracking-wide text-gray-400">Menu</span>
+                <button onClick={() => setNavOpen(false)} aria-label="Close navigation" className="w-7 h-7 rounded-lg flex items-center justify-center text-red-500 hover:text-red-600 hover:bg-red-50 transition">✕</button>
+              </div>
+              <IMSNav tabs={allowedTabs} active={tab} onChange={(id) => { setTab(id); setNavOpen(false); }} />
+            </div>
+          </div>
+        )}
+
+      <div className="flex-1 min-w-0 px-4 sm:px-6 py-6">
         {loading ? (
           <div className="text-center text-gray-400 py-20"><div className="text-3xl mb-2">⏳</div>Loading Ambria IMS…</div>
         ) : tab === "dashboard" ? (
@@ -1349,6 +1456,8 @@ export default function IMS() {
             trussInv={trussInv} setTrussInv={setTrussInv}
             trussAlloc={trussAlloc} setTrussAlloc={setTrussAlloc} eventOrders={eventOrders} setEventOrders={setEventOrders} blocks={blocks}
             studio={studio} authUser={user} amendRequests={amendRequests}
+            focusEventId={focusEventId} focusSearch={focusSearch} focusLeadEntry={focusLeadEntry} onFocusHandled={clearFocusEvent}
+            onGoToCalendar={canSeeCalendar ? goToCalendar : undefined}
           />
         ) : tab === "finance" ? (
           <FinanceTab
@@ -1362,6 +1471,7 @@ export default function IMS() {
             onSyncLms={syncLms} lmsSyncing={lmsSyncing} settings={settings} setSettings={setSettings}
             eventOrders={eventOrders} setEventOrders={setEventOrders} saveEventOrders={saveEventOrders}
             blocks={blocks} setBlocks={setBlocks} saveBlocks={saveBlocks}
+            onOpenInPlanning={openEventInPlanning}
           />
         ) : tab === "flowers" ? (
           <FlowersTab
@@ -1384,6 +1494,7 @@ export default function IMS() {
             <p className="text-sm">This tab is being rebuilt in a later phase.</p>
           </div>
         )}
+      </div>
       </div>
     </div>
   );
