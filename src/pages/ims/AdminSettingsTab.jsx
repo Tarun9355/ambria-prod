@@ -40,7 +40,14 @@ function Placeholder({ name, note }) {
 }
 
 export default function AdminSettingsTab({ settings, setSettings, supervisors, setSupervisors, studio, mode, syncRecipeRatesToStudio, tier15LastSync, tier15Syncing, trussInv, setTrussInv, inventory = [], rateCardCategories = [], onUpdateSubcatFactor, onUpdateSubcatCostPercent, onAddSubcat, onRenameSubcat, onUpdateSubcatCategory, onSyncSubcatsFromInventory, onDeleteSubcat, onUpdateSubcatFloralMode, onUpdateSubcatTagHidden, rcItems = [], rcCats = [], authUser }) {
-  const studioSubcats = studio?.subcats || [];
+  // The "+ sub-category" quick-add lists below (Manpower's Tier-2 batches, Heavy Element Add-ons)
+  // used to suggest from studio.subcats — the LEGACY Rate Card items list — so a sub-category with
+  // real inventory but no matching old-style Rate Card row of the same name (Console Table,
+  // Pedestals, anything added straight to Inventory) never appeared as a quick-add option at all.
+  // rate_card_categories is the actual Sub-Categories master list every other screen already reads
+  // from (same fix already applied to Truck Capacity Rules) — nothing configured there can be
+  // missing from these suggestions now.
+  const allSubcatLabels = [...new Set((rateCardCategories || []).map((r) => r.label).filter(Boolean))].sort((a, b) => a.localeCompare(b));
   const studioLoading = !!studio?.loading;
   const [subcatSearch, setSubcatSearch] = useState("");
   const [trussMatTab, setTrussMatTab] = useState("iron"); // Truss & Batta Config: active material (pole|iron|aluminium)
@@ -403,7 +410,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                           ))}
                         </div>
                         <div className="flex flex-wrap gap-1">
-                          {studioSubcats.filter((sc) => !(cfg.subCatBatches || {})[sc]).map((sc) => (
+                          {allSubcatLabels.filter((sc) => !(cfg.subCatBatches || {})[sc]).map((sc) => (
                             <button key={sc} onClick={() => { const nb = { ...(cfg.subCatBatches || {}), [sc]: 3 }; setSettings((s) => ({ ...s, labourTiers: { ...s.labourTiers, [type]: { ...cfg, subCatBatches: nb } } })); }} className="text-xs px-2 py-0.5 rounded-full border bg-white border-gray-200 text-gray-500 hover:border-indigo-200 hover:text-indigo-600 transition-all">+ {sc}</button>
                           ))}
                         </div>
@@ -427,7 +434,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                           })}
                         </div>
                         <div className="flex flex-wrap gap-1">
-                          {studioSubcats.filter((sc) => !(settings.heavyElementRanges || []).some((h) => h.subCat === sc)).map((sc) => (
+                          {allSubcatLabels.filter((sc) => !(settings.heavyElementRanges || []).some((h) => h.subCat === sc)).map((sc) => (
                             <button key={sc} onClick={() => setSettings((s) => ({ ...s, heavyElementRanges: [...(s.heavyElementRanges || []), { subCat: sc, perCount: 10 }] }))} className="text-xs px-2 py-0.5 rounded-full border bg-white border-gray-200 text-gray-500 hover:border-indigo-200 hover:text-indigo-600 transition-all">+ {sc}</button>
                           ))}
                         </div>
