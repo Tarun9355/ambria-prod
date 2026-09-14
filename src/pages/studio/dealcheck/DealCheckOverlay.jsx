@@ -158,6 +158,7 @@ export default function DealCheckOverlay({ ctx }) {
   const [dcDept, setDcDept] = useState("Furniture"); // active Department-Income sub-tab
   const deptSyncRef = useRef(""); // dedupe auto-push of the dept snapshot to IMS
   const [dcKitAddSearch, setDcKitAddSearch] = useState({}); // per-kit-card "add component" search text, keyed by editKey
+  const [dcPrintForm, setDcPrintForm] = useState({ zoneKey: "", material: "", areaW: "", areaD: "", qty: 1 }); // Buying tab's own "+ Add print" row
   const {
     // chrome / theme
     border, textS, textP, accent, fmt,
@@ -186,6 +187,9 @@ export default function DealCheckOverlay({ ctx }) {
     // straight into that one field rather than a separate Deal-Check-only copy, so Build and
     // Deal Check can never disagree about how many gensets a function is actually carrying.
     customGensets, setCustomGensets, genset62, setGenset62,
+    // zoneConfig — prints (Buying tab's "add a print job") live on zoneConfig[zoneKey].prints,
+    // the exact same field Build's own Print tile writes.
+    zoneConfig, setZoneConfig,
     // pricing helpers
     collectAllFunctionData, calcFnFloralSourcingCost, calcFunctionBreakdown, calcFunctionCost,
     // Shared availability picker — the same one Build's IconBox control opens.
@@ -281,6 +285,64 @@ export default function DealCheckOverlay({ ctx }) {
     const sc = key ? Number((dealCheckData?.fixedVenueSubcatDiscount || {})[key]) : NaN;
     const pct = Number.isFinite(sc) && sc > 0 ? sc : 0;
     return full * (1 - pct / 100);
+  };
+
+  // One function's print jobs (Flex/Vinyl/Sunboard etc., zoneConfig[zk].prints) priced out — the
+  // exact same read Build's own zone-header Print tile total uses. Shared by the Buying tab's own
+  // list AND the tab-strip's per-tab cost, so the two can't show two different numbers for the
+  // same thing. `pi` (the print's own index within its zone's array) is what a later remove keys
+  // off — same as Build's own removePrint — not the synthetic `id` this list assigns for React keys.
+  const printJobsForFn = (fnData) => {
+    if (!fnData) return [];
+    const zc = fnData.zoneConfig || {};
+    const en = fnData.enabledEls || {};
+    const printMats = imsPrintMaterials || [];
+    const jobs = [];
+    Object.keys(zc).forEach(zk => {
+      if (!en[zk] || !zc[zk]) return;
+      (zc[zk].prints || []).forEach((p, pi) => {
+        const m = printMats.find(x => x.id === p.material);
+        const area = (Number(p.areaW) || 0) * (Number(p.areaD) || 0);
+        const qty = Math.max(1, Math.round(Number(p.qty) || 1));
+        const rate = m?.ratePerSqft || 0;
+        const jobTotal = area * rate * qty;
+        if (jobTotal <= 0) return;
+        jobs.push({ id: `print:${zk}:${pi}`, zoneKey: zk, pi, matName: m?.name || "Print material", size: `${p.areaW || 0}×${p.areaD || 0}ft`, qty, unitCost: area * rate, total: jobTotal });
+      });
+    });
+    return jobs;
+  };
+
+  // Writes a new print job straight into zoneConfig[zoneKey].prints — the SAME field Build's own
+  // Print tile writes (StudioBuild.jsx) — so a print added here shows up there identically, no
+  // separate Deal-Check-only copy to drift out of sync. Mirrors the active-vs-not duality the
+  // Deal-Check→Build sync effect and the Power tab's genset steppers already use: live state when
+  // this is the function currently open in Build, that function's fnBuilds snapshot otherwise.
+  const addPrintToZone = (fi, zoneKey, entry) => {
+    if (fi === activeFnIdxCommitted) {
+      setZoneConfig(p => ({ ...p, [zoneKey]: { ...(p[zoneKey] || {}), prints: [...((p[zoneKey] || {}).prints || []), entry] } }));
+    } else {
+      setFnBuilds(prev => {
+        const fb = prev[fi] || {};
+        const zc = fb.zoneConfig || {};
+        const zEntry = zc[zoneKey] || {};
+        return { ...prev, [fi]: { ...fb, zoneConfig: { ...zc, [zoneKey]: { ...zEntry, prints: [...(zEntry.prints || []), entry] } } } };
+      });
+    }
+  };
+  // Removes one print job by its index within that zone's prints array — same key Build's own
+  // removePrint filters on, not the synthetic id printJobsForFn assigns for React's sake.
+  const removePrintFromZone = (fi, zoneKey, pi) => {
+    if (fi === activeFnIdxCommitted) {
+      setZoneConfig(p => ({ ...p, [zoneKey]: { ...(p[zoneKey] || {}), prints: (p[zoneKey]?.prints || []).filter((_, i) => i !== pi) } }));
+    } else {
+      setFnBuilds(prev => {
+        const fb = prev[fi] || {};
+        const zc = fb.zoneConfig || {};
+        const zEntry = zc[zoneKey] || {};
+        return { ...prev, [fi]: { ...fb, zoneConfig: { ...zc, [zoneKey]: { ...zEntry, prints: (zEntry.prints || []).filter((_, i) => i !== pi) } } } };
+      });
+    }
   };
 
   // Live soft-blocking: how much of an inventory item is left for THIS deal, netting out both
@@ -1525,7 +1587,13 @@ export default function DealCheckOverlay({ ctx }) {
                   const { rental, transport, genset, truss, gyvFixed, bufferCost, hasActuals, effFlorals, mpDelta, effManpower, commissionTotal } = dcCostRollup;
                   const florals = hasActuals ? effFlorals : dcCostRollup.florals;
                   const manpower = mpDelta ? effManpower : dcCostRollup.manpower;
-                  const buyTotal = dcCustomItems.filter(c => c.type === "buying").reduce((s, c) => s + (c.manualPrice || c.refPrice || 0) * (Number(c.qty) || 1), 0);
+                  // Print jobs are a Buying cost too (see printJobsForFn) but live on zoneConfig, not
+                  // as a dcCustomItems row, so they were missing from this total entirely — the tab
+                  // pill read ₹0 while the tab body itself, which pulls printJobs in separately,
+                  // showed the real number right below it.
+                  const bookingPrintTotal = (collectAllFunctionData ? collectAllFunctionData() : [])
+                    .reduce((s, fnd) => s + printJobsForFn(fnd).reduce((s2, p) => s2 + p.total, 0), 0);
+                  const buyTotal = dcCustomItems.filter(c => c.type === "buying").reduce((s, c) => s + (c.manualPrice || c.refPrice || 0) * (Number(c.qty) || 1), 0) + bookingPrintTotal;
                   const produceTotal = dcCustomItems.filter(c => c.type === "production").reduce((s, c) => s + (c.manualPrice || c.refPrice || 0) * (Number(c.qty) || 1), 0);
                   // "—" (not generated yet) vs "₹0" (generated, genuinely zero) — same distinction the
                   // old bottom strip drew, using the same signal (any card matched, on any function).
@@ -3240,31 +3308,17 @@ export default function DealCheckOverlay({ ctx }) {
                   const isP = dcActiveTab === "production";
                   const items = dcCustomItems.filter(c => c.fnIdx === fnIdx && c.type === dcActiveTab);
                   const fnForPrints = (collectAllFunctionData ? collectAllFunctionData() : [])[fnIdx];
-                  // Print jobs (zc[zk].prints — Flex/Vinyl/Sunboard etc, added via the Print tile on a
-                  // zone header in Build) are a Buying action — a vendor prints them, nothing is pulled
-                  // from truss stock — but they live on zoneConfig, not as a dcCustomItems row, so they
-                  // don't show up in the `items` filter above and need pulling in separately here.
-                  // Buying-only: Production has nothing to do with them.
-                  const printJobs = (!isP && fnForPrints) ? (() => {
-                    const zc = fnForPrints.zoneConfig || {};
-                    const en = fnForPrints.enabledEls || {};
-                    const printMats = imsPrintMaterials || [];
-                    const jobs = [];
-                    Object.keys(zc).forEach(zk => {
-                      if (!en[zk] || !zc[zk]) return;
-                      (zc[zk].prints || []).forEach((p, pi) => {
-                        const m = printMats.find(x => x.id === p.material);
-                        const area = (Number(p.areaW) || 0) * (Number(p.areaD) || 0);
-                        const qty = Math.max(1, Math.round(Number(p.qty) || 1));
-                        const rate = m?.ratePerSqft || 0;
-                        const jobTotal = area * rate * qty;
-                        if (jobTotal <= 0) return;
-                        jobs.push({ id: `print:${zk}:${pi}`, zoneKey: zk, matName: m?.name || "Print material", size: `${p.areaW || 0}×${p.areaD || 0}ft`, qty, unitCost: area * rate, total: jobTotal });
-                      });
-                    });
-                    return jobs;
-                  })() : [];
+                  // Print jobs (zc[zk].prints — Flex/Vinyl/Sunboard etc) are a Buying action — a
+                  // vendor prints them, nothing is pulled from truss stock — but they live on
+                  // zoneConfig, not as a dcCustomItems row, so they don't show up in the `items`
+                  // filter above and need pulling in separately here. Buying-only: Production has
+                  // nothing to do with them. Shared with the tab-strip's own total (printJobsForFn),
+                  // so the two figures can't drift apart.
+                  const printJobs = (!isP && fnForPrints) ? printJobsForFn(fnForPrints) : [];
                   const printTotal = printJobs.reduce((s, p) => s + p.total, 0);
+                  // Zones this function actually has enabled — the only valid targets for a new
+                  // print, same restriction Build's own Print tile is scoped to (one zone's header).
+                  const printZoneOptions = (!isP && fnForPrints) ? Object.keys(fnForPrints.enabledEls || {}).filter(zk => fnForPrints.enabledEls[zk]) : [];
                   const total = items.reduce((s, c) => s + (c.manualPrice || c.refPrice || 0) * (Number(c.qty) || 1), 0) + printTotal;
                   // Production and Buying are the same shape of thing — a short list of one-off
                   // items added per zone — so they share this branch and differ only by accent.
@@ -3283,7 +3337,7 @@ export default function DealCheckOverlay({ ctx }) {
                             <div style={{flex:"1 1 auto",minWidth:0}}>
                               <div style={{fontSize:15.5,fontWeight:700,color:INK,letterSpacing:-0.35,lineHeight:1.2}}>{isP ? "Production items" : "Buying items"}</div>
                               <div style={{fontSize:11.5,color:INK_3,marginTop:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",...NUM}}>
-                                {fnName} · {items.length + printJobs.length} item{(items.length + printJobs.length)===1?"":"s"} · one-offs added from zone headers on Build
+                                {fnName} · {items.length + printJobs.length} item{(items.length + printJobs.length)===1?"":"s"} · {isP ? "one-offs added from zone headers on Build" : "one-offs from Build, plus prints added here"}
                               </div>
                             </div>
                             <div style={{textAlign:"right",flexShrink:0}}>
@@ -3294,7 +3348,7 @@ export default function DealCheckOverlay({ ctx }) {
                           {items.length === 0 && printJobs.length === 0 ? (
                             <div style={{padding:"16px 15px",fontSize:12.5,color:INK_2}}>
                               <div style={{fontWeight:600,marginBottom:3,color:INK}}>No {isP ? "production" : "buying"} items in {fnName}.</div>
-                              <div style={{fontSize:11.5,color:INK_3}}>Add them with the {isP ? "🏭" : "🛒"} icon in a zone header on the Build screen.</div>
+                              <div style={{fontSize:11.5,color:INK_3}}>Add them with the {isP ? "🏭" : "🛒"} icon in a zone header on the Build screen{!isP ? ", or add a print job below" : ""}.</div>
                             </div>
                           ) : (
                             <div className="dc2-grid4" style={{padding:"12px 15px 14px"}}>
@@ -3361,13 +3415,67 @@ export default function DealCheckOverlay({ ctx }) {
                                       <div style={{fontSize:17,fontWeight:750,color:INK,letterSpacing:-0.45,lineHeight:1.1,...NUM}}>₹{Math.round(pj.total).toLocaleString("en-IN")}</div>
                                       <div style={{fontSize:9.5,color:INK_3,marginTop:2,letterSpacing:0.4,textTransform:"uppercase",fontWeight:600,...NUM}}>₹{Math.round(pj.unitCost).toLocaleString("en-IN")} × {pj.qty}</div>
                                     </div>
-                                    {/* No ✕ here — a print job lives on the zone's Print tile in Build,
-                                        not as a dcCustomItems row, so there's nothing this tab alone
-                                        can delete; the title says where to actually change it. */}
-                                    <div title="Edit or remove this print job on the Print tile in Build" style={{flexShrink:0,fontSize:9.5,color:INK_3,letterSpacing:0.3,textTransform:"uppercase",fontWeight:600,cursor:"help"}}>via Build</div>
+                                    <button onClick={() => removePrintFromZone(fnIdx, pj.zoneKey, pj.pi)}
+                                      title={`Remove this ${pj.matName} print job`}
+                                      className="dc2-ghost"
+                                      style={{flexShrink:0,width:26,height:26,borderRadius:8,border:`1px solid ${TILE_BORDER}`,background:CARD_BG,color:INK_3,fontSize:12,lineHeight:1,cursor:"pointer"}}>✕</button>
                                   </div>
                                 </div>
                               ))}
+                            </div>
+                          )}
+                          {/* Buying-only: a print job is priced from material + area, not picked
+                              from stock, so it gets its own small form here rather than reusing the
+                              zone-header "+ item" flow items.map above came from (which needs a
+                              Rate-Card/inventory match — a print doesn't have one). Writes straight
+                              into zoneConfig[zoneKey].prints (addPrintToZone), the same field Build's
+                              own Print tile writes, so it shows up there identically. */}
+                          {!isP && (
+                            <div style={{padding:"12px 15px 14px",borderTop:items.length||printJobs.length?`1px solid ${HAIRLINE}`:"none"}}>
+                              <div style={{fontSize:10.5,fontWeight:700,letterSpacing:0.6,textTransform:"uppercase",color:INK_2,marginBottom:8}}>+ Add a print job</div>
+                              {printZoneOptions.length === 0 ? (
+                                <div style={{fontSize:11.5,color:INK_3}}>No zones enabled on {fnName} yet — enable one in Build first.</div>
+                              ) : (() => {
+                                const form = dcPrintForm;
+                                const mat = (imsPrintMaterials || []).find(m => m.id === form.material);
+                                const sqft = (Number(form.areaW) || 0) * (Number(form.areaD) || 0);
+                                const qty = Math.max(1, Math.round(Number(form.qty) || 1));
+                                const cost = sqft * (mat?.ratePerSqft || 0) * qty;
+                                const canAdd = !!(form.zoneKey && form.material && sqft > 0);
+                                const doAdd = () => {
+                                  if (!canAdd) return;
+                                  addPrintToZone(fnIdx, form.zoneKey, {
+                                    id: "PR" + Date.now() + Math.floor(Math.random() * 1000),
+                                    material: form.material, areaW: Number(form.areaW) || 0, areaD: Number(form.areaD) || 0,
+                                    qty, refImageUrl: "", invId: null,
+                                  });
+                                  setDcPrintForm(f => ({ ...f, areaW: "", areaD: "", qty: 1 }));
+                                };
+                                return (
+                                  <div style={{display:"flex",flexWrap:"wrap",alignItems:"center",gap:8}}>
+                                    <select value={form.zoneKey} onChange={e => setDcPrintForm(f => ({ ...f, zoneKey: e.target.value }))}
+                                      style={{padding:"5px 8px",borderRadius:8,border:`1px solid ${TILE_BORDER}`,fontSize:12,background:"#fff",color:INK,textTransform:"capitalize"}}>
+                                      <option value="">Zone…</option>
+                                      {printZoneOptions.map(zk => <option key={zk} value={zk} style={{textTransform:"capitalize"}}>{zk}</option>)}
+                                    </select>
+                                    <select value={form.material} onChange={e => setDcPrintForm(f => ({ ...f, material: e.target.value }))}
+                                      style={{padding:"5px 8px",borderRadius:8,border:`1px solid ${TILE_BORDER}`,fontSize:12,background:"#fff",color:INK,maxWidth:180}}>
+                                      <option value="">Material…</option>
+                                      {(imsPrintMaterials || []).map(m => <option key={m.id} value={m.id}>{m.name} (₹{m.ratePerSqft}/sqft)</option>)}
+                                    </select>
+                                    <input type="number" min="0" step="0.1" value={form.areaW} onChange={e => setDcPrintForm(f => ({ ...f, areaW: e.target.value }))}
+                                      placeholder="W ft" style={{width:56,padding:"5px 6px",borderRadius:8,border:`1px solid ${TILE_BORDER}`,fontSize:12,textAlign:"center"}} />
+                                    <span style={{fontSize:12,color:INK_3}}>×</span>
+                                    <input type="number" min="0" step="0.1" value={form.areaD} onChange={e => setDcPrintForm(f => ({ ...f, areaD: e.target.value }))}
+                                      placeholder="D ft" style={{width:56,padding:"5px 6px",borderRadius:8,border:`1px solid ${TILE_BORDER}`,fontSize:12,textAlign:"center"}} />
+                                    <input type="number" min="1" step="1" value={form.qty} onChange={e => setDcPrintForm(f => ({ ...f, qty: Math.max(1, Math.round(Number(e.target.value) || 1)) }))}
+                                      title="Qty" style={{width:48,padding:"5px 6px",borderRadius:8,border:`1px solid ${TILE_BORDER}`,fontSize:12,textAlign:"center"}} />
+                                    {cost > 0 && <span style={{fontSize:12.5,fontWeight:700,color:INK,...NUM}}>₹{Math.round(cost).toLocaleString("en-IN")}</span>}
+                                    <button onClick={doAdd} disabled={!canAdd}
+                                      style={{marginLeft:"auto",padding:"6px 14px",borderRadius:8,border:"none",background:canAdd?ciInk:"#DED7CB",color:"#fff",fontSize:12,fontWeight:700,cursor:canAdd?"pointer":"default"}}>+ Add</button>
+                                  </div>
+                                );
+                              })()}
                             </div>
                           )}
                         </div>
