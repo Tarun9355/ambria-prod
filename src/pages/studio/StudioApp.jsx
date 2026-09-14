@@ -8897,6 +8897,11 @@ export default function StudioApp() {
     const newCards = { ...dcCards };
     const newZoneState = { ...dcZoneState };
     const matchedItemIds = new Set();
+    // Every fnIdx actually processed this run gets its current valid cardKey set recorded here —
+    // read by the final merge below to stop it resurrecting a manual-swap card whose underlying
+    // Build element is genuinely gone/renamed/reindexed (a real prune), not just protecting it from
+    // an unrelated re-derive.
+    const validKeysByFn = {};
     let zonesProcessed = 0, cardsResolved = 0, cardsAi = 0, cardsNameMatch = 0, cardsUnmatched = 0, cardsKnown = 0;
     const ac = new AbortController();
     setDcAbortRef(ac);
@@ -8925,6 +8930,7 @@ export default function StudioApp() {
         specs.forEach(s => validKeys.add(s.cardKey));
       }
       Object.keys(newCards[fnIdx]).forEach(k => { if (!validKeys.has(k)) delete newCards[fnIdx][k]; });
+      validKeysByFn[fnIdx] = validKeys;
       for (const zoneKey of enabledZoneKeys) {
         const entry = zoneSpecs[zoneKey];
         if (!entry) continue;
@@ -9062,9 +9068,15 @@ export default function StudioApp() {
       const merged = { ...newCards };
       Object.keys(prev || {}).forEach((fi) => {
         const prevFn = prev[fi] || {};
+        // Only defined for an fnIdx this run actually touched — undefined means this fn wasn't
+        // processed at all this pass, so there is no fresh prune to respect; carry every manual-swap
+        // card forward unconditionally, same as before. When it IS defined, a key missing from it was
+        // genuinely pruned (its Build element is gone/renamed/reindexed) — resurrecting it here would
+        // put a stale "ghost" card back on screen next to whatever now correctly occupies its slot.
+        const vKeys = validKeysByFn[fi];
         let mergedFn = null;
         Object.keys(prevFn).forEach((key) => {
-          if (prevFn[key]?.source === "manual-swap") {
+          if (prevFn[key]?.source === "manual-swap" && (!vKeys || vKeys.has(key))) {
             if (!mergedFn) mergedFn = { ...(merged[fi] || {}) };
             mergedFn[key] = prevFn[key];
           }
