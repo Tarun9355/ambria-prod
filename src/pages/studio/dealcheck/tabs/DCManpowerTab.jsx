@@ -387,18 +387,25 @@ export default function DCManpowerTab({ ctx }) {
                     // Usage-based floor (matches the rollup / quote): never fewer than 1 labour per N units.
                     return labourUsageMode ? Math.max(adjusted + heavyExtra, Math.ceil(labourUsageTotal)) : (adjusted + heavyExtra);
                   };
-                  // §23 Phase 2.8 (26 May 2026) — Per-zone Fabric Bangali calculation
-                  //   • Per-zone RFT ceil (each zone rounds independently, not summed)
+                  // §23 Phase 2.9 — Fabric Bangali: top stays per-zone, side RFT pools across zones
+                  //   • Top sqft: still a per-zone range-table lookup — a canopy is a physical panel,
+                  //     one zone's doesn't average away against another's.
+                  //   • Side-wall RFT: summed across every mkOn zone FIRST, then divided by
+                  //     fabricRftPerWorker and ceiled ONCE. Ceiling each zone's own RFT independently
+                  //     (the old Phase 2.8 behaviour) threw away real leftover capacity — Entry's 104
+                  //     RFT ceils to 2 with 96 RFT of headroom, more than enough to also cover Photo
+                  //     Op's 18 RFT, yet the old per-zone split billed 2+1=3. Pooled first: ⌈122÷100⌉=2.
                   //   • U Truss: only "back" checkbox = L-span (no left/right options)
                   //   • Half Box: back (L-span) + left (backDepth) + right (backDepth), all per-toggle
                   //   • Full Box: back (dL) + left (dW) + right (dW). NEVER front (audience-facing, always open)
                   //   • Wall Masking element-card branch deleted — fabric only ever comes from zone truss dims
                   //   • mkOn applies to all configs uniformly (was: half/u always-on under Phase 2.6 — reverted)
                   //   • Defaults set in normalizeMkWallsDefaults() applied silently on session load
-                  // FINAL = Σ (zoneTop + ceil(zoneRft / fabricRftPerWorker)) over enabled zones with mkOn
+                  // FINAL = Σ(zoneTop) + ceil(Σ(zoneRft) / fabricRftPerWorker), over enabled zones with mkOn
                   // Multipliers (Heavy Saya × Premium × Day-Prior/Rush) deferred to Phase 2.7.
                   const calcPeopleFabricBangali = (fn) => {
-                    let total = 0;
+                    let topTotal = 0;
+                    let rftTotal = 0;
                     const zc = fn.zoneConfig || {};
                     const en = fn.enabledEls || {};
                     const engBackDepth = Number(dealCheckData?.trussInv?.settings?.defaultBackDepthFt) || 4;
@@ -414,7 +421,6 @@ export default function DCManpowerTab({ ctx }) {
                       const mw = z.mkWalls || {};
                       const sideDepth = Number(z.trussBackDepth) || engBackDepth;
 
-                      let zoneTop = 0;
                       let zoneRft = 0;
 
                       if (config === "full_box") {
@@ -422,7 +428,7 @@ export default function DCManpowerTab({ ctx }) {
                         const topSqft = dL * dW;
                         if (topSqft > 0 && fabricBangaliRanges.length > 0) {
                           for (const r of fabricBangaliRanges) {
-                            if (topSqft <= r.upTo) { zoneTop = r.labour || 0; break; }
+                            if (topSqft <= r.upTo) { topTotal += r.labour || 0; break; }
                           }
                         }
                         // Side walls — back spans the WIDTH (dW), left/right span the DEPTH (dL). Never front.
@@ -441,11 +447,10 @@ export default function DCManpowerTab({ ctx }) {
                         if (mw.back && spanL > 0) zoneRft += spanL;
                       }
 
-                      const zoneRftLabour = zoneRft > 0 ? Math.ceil(zoneRft / fabricRftPerWorker) : 0;
-                      total += zoneTop + zoneRftLabour;
+                      rftTotal += zoneRft;
                     });
 
-                    return total;
+                    return topTotal + (rftTotal > 0 ? Math.ceil(rftTotal / fabricRftPerWorker) : 0);
                   };
                   // Truss Labour — §23 Phase 2.5 rewire: count pillars from zone-derived Layer 1
                   // topology (matches what Deal Check Truss tab shows). The previous element-counting
@@ -500,7 +505,8 @@ export default function DCManpowerTab({ ctx }) {
                   // Aggregate identical elements (same name + size + productivity) ACROSS zones into one row —
                   // flowerists/electricians are fungible & the count is just Σ(qty÷productivity), so showing the
                   // same element once (with its combined qty) reads cleaner and doesn't change the total.
-                  // (Fabric Bangali stays per-zone — its RFT ceils per zone, so it MUST NOT be combined.)
+                  // (Fabric Bangali is per-zone for display/top, but its RFT is now POOLED across
+                  // zones before ceiling — see calcPeopleFabricBangali/traceFabricBangali above/below.)
                   const traceFlowerists = (fn) => {
                     const agg = {};
                     walkFnElements(fn, ({ rc, qty, el }) => {
@@ -628,12 +634,15 @@ export default function DCManpowerTab({ ctx }) {
                     };
                     return { kind: "subcat_table", header: ["Sub-category","Count","1 per","Need"], rows, sum: usageCeil, frac: Math.round(usageSum * 100) / 100, minimum: floorSide, total, formula: "max(venue-min floor, ⌈Σ(count ÷ 1-per-N)⌉) — summed across ALL elements (Tier 3)", situational };
                   };
-                  // §23 Phase 2.6 — trace mirrors new top+RFT logic
+                  // §23 Phase 2.9 — trace mirrors calcPeopleFabricBangali's pooled-RFT logic exactly
                   const traceFabricBangali = (fn) => {
-                    // §23 Phase 2.8 — Per-zone breakdown: each zone shows its own top + RFT + ceiling.
+                    // Per-zone breakdown: each zone shows its own top labour + raw RFT contribution.
+                    // RFT is NOT ceiled per zone any more — every zone's RFT feeds one shared pool,
+                    // ceiled once after the loop (see the pooled line pushed onto `items` below and
+                    // `rftLabour` on the returned trace) — so a zone has no standalone RFT-derived
+                    // "ppl" figure of its own, only its contribution toward the pool.
                     // Wall Masking element-card branch removed (fabric only ever from zone truss).
                     const items = [];
-                    let grandTotal = 0;
                     let grandRft = 0;
                     let grandTop = 0;
                     const zc = fn.zoneConfig || {};
@@ -681,36 +690,34 @@ export default function DCManpowerTab({ ctx }) {
                       // Skip zones with zero contribution (mkOn but no walls ticked)
                       if (zoneTop === 0 && zoneRft === 0) return;
 
-                      const zoneRftLabour = zoneRft > 0 ? Math.ceil(zoneRft / fabricRftPerWorker) : 0;
-                      const zoneTotal = zoneTop + zoneRftLabour;
                       grandTop += zoneTop;
                       grandRft += zoneRft;
-                      grandTotal += zoneTotal;
 
                       items.push({
                         zoneHeader: `${zLabel} (${cfgLabel})`,
                         parts,
                         rftSum: zoneRft,
-                        rftLabour: zoneRftLabour,
                         topLabour: zoneTop,
-                        zoneTotal,
-                        zoneSubLabel: zoneRft > 0
-                          ? `Zone RFT: ${zoneRft} ÷ ${fabricRftPerWorker} → ${zoneRftLabour} ppl${zoneTop > 0 ? `   |   Top: ${zoneTop} ppl` : ""}`
-                          : (zoneTop > 0 ? `Top: ${zoneTop} ppl` : ""),
+                        // Top-only now — RFT has no per-zone ceiling any more, so there's no
+                        // standalone "ppl" figure for a zone's own wall RFT to state here.
+                        zoneSubLabel: zoneTop > 0 ? `Top: ${zoneTop} ppl` : "",
                       });
                     });
 
-                    const rangeLabel = `Per-zone: top sqft → range table | side RFT → ceil(zoneRft ÷ ${fabricRftPerWorker})`;
+                    const rftLabour = grandRft > 0 ? Math.ceil(grandRft / fabricRftPerWorker) : 0;
+                    const total = grandTop + rftLabour;
+                    const rangeLabel = `Top: per-zone range table | Side RFT: pooled across zones, ceil(Σzone RFT ÷ ${fabricRftPerWorker})`;
                     return {
                       kind: "range_lookup_per_zone",
                       items,
                       totalAmount: grandRft,
-                      totalUnit: `RFT total across zones (each ceiled per-zone)`,
+                      totalUnit: "RFT total across zones (pooled, ceiled once)",
                       rangeLabel,
-                      total: grandTotal,
+                      total,
                       topLabour: grandTop,
                       totalRft: grandRft,
-                      formula: "Per-zone: top sqft → range table + ceil(zoneRft ÷ " + fabricRftPerWorker + "). Each zone calculated independently. (Multipliers TBD Phase 2.7)"
+                      rftLabour,
+                      formula: `Top: per-zone range table. Side RFT: pooled across every zone, ⌈${grandRft} ÷ ${fabricRftPerWorker}⌉ = ${rftLabour} ppl once — not per zone. (Multipliers TBD Phase 2.7)`,
                     };
                   };
                   const traceTrussLabour = (fn) => {
@@ -1395,7 +1402,12 @@ export default function DCManpowerTab({ ctx }) {
                                                           <div key={zi} style={{padding:"6px 8px",background:"rgba(26, 26, 46,0.04)",borderRadius:6,border:`1px solid ${border}`}}>
                                                             <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:4}}>
                                                               <span style={{color:"#1A1A2E",fontWeight:600}}>{zone.zoneHeader}</span>
-                                                              <span style={{color:GOLD,fontVariantNumeric:"tabular-nums",fontWeight:600}}>→ {zone.zoneTotal} ppl</span>
+                                                              {/* No standalone "ppl" for a zone any more — its RFT feeds the
+                                                                  pooled total below, not a per-zone ceiling — so this shows
+                                                                  what the zone actually contributes: top ppl and/or raw RFT. */}
+                                                              <span style={{color:GOLD,fontVariantNumeric:"tabular-nums",fontWeight:600}}>
+                                                                {zone.topLabour > 0 ? `${zone.topLabour} ppl` : ""}{zone.topLabour > 0 && zone.rftSum > 0 ? " + " : ""}{zone.rftSum > 0 ? `${zone.rftSum} RFT` : ""}
+                                                              </span>
                                                             </div>
                                                             <div style={{display:"flex",flexDirection:"column",gap:2,paddingLeft:8}}>
                                                               {zone.parts.map((p, pi) => (
@@ -1407,6 +1419,15 @@ export default function DCManpowerTab({ ctx }) {
                                                             )}
                                                           </div>
                                                         ))}
+                                                        {/* The pooled step — every zone's raw RFT summed, THEN divided and
+                                                            ceiled once, is the entire point of this change: a zone that
+                                                            finishes its own RFT with capacity to spare covers another
+                                                            zone's shortfall instead of each rounding up on its own. */}
+                                                        {trace.totalRft > 0 && (
+                                                          <div style={{padding:"6px 8px",background:"rgba(124,58,237,0.06)",borderRadius:6,border:"1px dashed rgba(167,139,250,0.4)",fontSize:12,color:"#1A1A2E",fontStyle:"italic"}}>
+                                                            Side RFT pooled across zones: {trace.items.filter(z => z.rftSum > 0).map(z => z.rftSum).join(" + ")} = {trace.totalRft} → ⌈{trace.totalRft} ÷ {fabricRftPerWorker}⌉ = {trace.rftLabour} ppl (once, not per zone)
+                                                          </div>
+                                                        )}
                                                         <div style={{display:"flex",justifyContent:"space-between",paddingTop:6,borderTop:`1px solid ${border}`,fontWeight:600}}>
                                                           <span style={{color:GOLD}}>Grand Total</span>
                                                           <span style={{color:GOLD,fontVariantNumeric:"tabular-nums"}}>{trace.total} ppl</span>
