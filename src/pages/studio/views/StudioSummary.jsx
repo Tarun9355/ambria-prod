@@ -230,7 +230,7 @@ export default function StudioSummary({ ctx }) {
     isAdmin, clientLedger, saveClientLedger, eventOrders, activeClientId, askConfirm,
     // events / cost sheet
     eventGrandTotal, pricingReady, collectAllFunctionData, calcFunctionBreakdown,
-    buildCombinedCostSheetData, csData, setCsData, saveSession, showMsg,
+    buildCombinedCostSheetData, csData, setCsData, saveSession, showMsg, syncDealValueNow,
     // summary accordion state
     expandedSummaryFnIdx, setExpandedSummaryFnIdx,
     // pricing helpers
@@ -269,6 +269,43 @@ export default function StudioSummary({ ctx }) {
     const num = negDraft === "" ? null : Math.max(0, Number(negDraft) || 0);
     if (num === (activeClient?.negotiatedAmount ?? null)) return; // no-op — don't write an unchanged row
     saveClientLedger(clientLedger.map(c => c.id === activeClientId ? { ...c, negotiatedAmount: num } : c));
+  };
+
+  // ── Deal value stays FROZEN once booked (owner decision — no silent auto-update on every Build
+  // edit). This tracks what the live build has drifted since booking so it can be SHOWN, and lets
+  // the salesperson fold it into the deal value with one click when they're ready.
+  // bookedSystemTotal is the live-build baseline captured at markSold (see StudioApp.jsx). A deal
+  // booked before this existed has none — heal it once, using TODAY's total as the starting line,
+  // so only changes made from here on ever show as pending (we can't know what changed before we
+  // started watching).
+  const dvIsBooked = activeClient?.status === "booked";
+  const dvHasNegotiated = Number(activeClient?.negotiatedAmount) > 0;
+  useEffect(() => {
+    // Gated on pricingReady — the same guard totalCost()/grandTotal use before rate tables are in.
+    // Healing off a total computed over seed defaults would freeze a WRONG baseline permanently
+    // (the null guard only lets this run once), silently eating part of every real change after it.
+    if (pricingReady && dvIsBooked && dvHasNegotiated && activeClient?.bookedSystemTotal == null && activeClientId) {
+      saveClientLedger(clientLedger.map(c => c.id === activeClientId ? { ...c, bookedSystemTotal: eventGrandTotal } : c));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeClientId, pricingReady, dvIsBooked, dvHasNegotiated, activeClient?.bookedSystemTotal]);
+  const pendingDelta = (dvIsBooked && dvHasNegotiated && activeClient?.bookedSystemTotal != null)
+    ? Math.round(eventGrandTotal - activeClient.bookedSystemTotal) : 0;
+  const applyPendingDealValue = () => {
+    const newNegotiated = Math.max(0, (Number(activeClient?.negotiatedAmount) || 0) + pendingDelta);
+    saveClientLedger(clientLedger.map(c => c.id === activeClientId ? { ...c, negotiatedAmount: newNegotiated, bookedSystemTotal: eventGrandTotal } : c));
+    syncDealValueNow?.({ amount: Math.round(newNegotiated), pending: 0 });
+    showMsg?.("Deal value updated to " + fmt(newNegotiated), "green");
+  };
+  // Escape hatch for when the pending figure itself is not trustworthy — most commonly a deal
+  // booked before this tracking existed, whose baseline got healed off whatever the build happened
+  // to total the first time Summary was opened post-rollout (not the true number at booking).
+  // Re-points the baseline at today's live total with ZERO effect on negotiatedAmount — unlike
+  // Apply, this never changes what the client owes, only where drift starts being measured from.
+  const resetDealValueTracking = () => {
+    saveClientLedger(clientLedger.map(c => c.id === activeClientId ? { ...c, bookedSystemTotal: eventGrandTotal } : c));
+    syncDealValueNow?.({ amount: Math.round(Number(activeClient?.negotiatedAmount) || 0), pending: 0 });
+    showMsg?.("Tracking reset to the current build — deal value unchanged", "green");
   };
 
   // ═══ THE DECK THIS DEAL ALREADY HAS ═══
@@ -896,6 +933,9 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       workbook.created = new Date(0); // Date.now()/new Date() with no args is unavailable in this
                                        // environment's tooling elsewhere in the session — epoch is fine,
                                        // ExcelJS just needs SOME Date object for the metadata field.
+      // Amount cells below carry live formulas — force Excel to recompute them on open rather than
+      // trusting the cached `result` we also write (needed for viewers that don't auto-recalc).
+      workbook.calcProperties = { fullCalcOnLoad: true };
       const COLS = [
         { header: "Item", key: "item", width: 34 },
         { header: "Size", key: "size", width: 12 },
@@ -934,11 +974,27 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
         });
         return row;
       };
+      // Amount used to be a flat number copied out of the DB — editing Qty or Rate in the exported
+      // sheet did nothing, since nothing on the sheet actually referenced them. Now Amount is a real
+      // formula wherever Qty×Rate is what produced it, so the exported sheet stays live in Excel.
+      // Not every structItems row qualifies though — e.g. a Box truss with a front-extension add-on
+      // shows only the BASE sqft in Qty/Rate (see the comment above trussBaseArea's call site) while
+      // its `total` also includes the extension's cost, so Qty×Rate there would under-count. Rather
+      // than special-case that by name, we just check numerically: only wire the formula when
+      // Qty×Rate actually reproduces the stored total (small rounding slack for 2-decimal areas);
+      // otherwise the flat value is the true figure and is left alone.
       const addItemRow = (ws, cells, opts = {}) => {
         const row = ws.addRow(cells);
         if (opts.italic) row.eachCell(c => { c.font = { ...(c.font || {}), italic: true }; });
         if (opts.bold) row.eachCell(c => { c.font = { ...(c.font || {}), bold: true }; });
         if (opts.fill) row.eachCell(c => { c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: opts.fill } }; });
+        const [, , qty, rate, , total] = cells;
+        if (opts.sumRange) {
+          const [start, end] = opts.sumRange;
+          row.getCell(6).value = { formula: `SUM(F${start}:F${end})`, result: Number(total) || 0 };
+        } else if (typeof qty === "number" && typeof rate === "number" && typeof total === "number" && Math.abs(qty * rate - total) < 1) {
+          row.getCell(6).value = { formula: `C${row.number}*D${row.number}`, result: total };
+        }
         row.getCell(6).numFmt = money.numFmt;
         row.getCell(3).alignment = { horizontal: "center" };
         row.getCell(4).alignment = { horizontal: "right" };
@@ -964,12 +1020,16 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       swRow1.height = 22;
       const swHead = sw.addRow(["Function", "Date · Venue", "Decor", "Transport", "Grand"]);
       swHead.eachCell(c => { c.font = { bold: true, color: { argb: white } }; c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: tan } }; });
+      // Placeholder flat values for now — swapped for cross-sheet formulas once the per-function
+      // tabs (built below) exist to point at; swFnRows keeps each row so that pass can reach it.
+      const swFnRows = [];
       combined.functions.forEach(fnObj => {
         const row = sw.addRow([
           fnObj.fnType || "—", `${fmtDate(fnObj.fnDate)} · ${fnObj.fnVenue || "—"}`,
           fnObj.isEmpty ? 0 : (fnObj.decorTotal || 0), fnObj.isEmpty ? 0 : (fnObj.transportTotal || 0), fnObj.isEmpty ? 0 : (fnObj.grand || 0),
         ]);
         [3, 4, 5].forEach(ci => { row.getCell(ci).numFmt = money.numFmt; row.getCell(ci).alignment = { horizontal: "right" }; });
+        swFnRows.push(row);
       });
       const gtRow = sw.addRow(["EVENT GRAND TOTAL", "", "", "", combined.eventGrandTotal || 0]);
       sw.mergeCells(gtRow.number, 1, gtRow.number, 4);
@@ -1004,11 +1064,21 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
         negRow.getCell(5).fill = { type: "pattern", pattern: "solid", fgColor: { argb: dark } };
         negRow.getCell(5).numFmt = money.numFmt;
         negRow.getCell(5).alignment = { horizontal: "right" };
+        // Discount = grand total − negotiated amount, as a formula over those two cells — once the
+        // pass below fills in gtRow's real formula, editing any function's numbers flows all the way
+        // through to here too. FINAL NEGOTIATED AMOUNT itself stays a flat number: it's the actual
+        // manual override the salesperson entered, not something derived from other cells.
+        discRow.getCell(5).value = { formula: `E${gtRow.number}-E${negRow.number}`, result: discount };
       }
 
       // ═══ Per-function tabs — one worksheet per function, after the Event Summary tab above. ═══
+      // fnRefs mirrors combined.functions 1:1 so the Event Summary pass below can wire cross-sheet
+      // formulas into it — it needs each function's sheet name plus the row numbers of its zone
+      // subtotals, transport total, and FUNCTION TOTAL, none of which exist until this loop runs.
+      const fnRefs = [];
       combined.functions.forEach((fnObj, i) => {
-        const ws = workbook.addWorksheet(sheetNameFor(fnObj, i));
+        const sheetName = sheetNameFor(fnObj, i);
+        const ws = workbook.addWorksheet(sheetName);
         ws.columns = COLS;
         addSectionRow(ws, `AMBRIA DECORATIONS — ${(combined.clientName || "Client").toUpperCase()}`, { fill: dark, color: gold, size: 13, height: 24 });
         addSectionRow(ws, fnLine(fnObj).toUpperCase(), { fill: "FF2A2A42", color: white });
@@ -1019,15 +1089,24 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
           const row = ws.getRow(ws.rowCount);
           row.getCell(1).value = "Design pending — zones for this function have not been built yet.";
           row.getCell(1).font = { italic: true, color: { argb: "FF808080" } };
+          fnRefs.push({ isEmpty: true });
           return;
         }
 
+        // Amount cells for each zone's own subtotal and the FUNCTION TOTAL band at the bottom are
+        // also formulas now (SUM over the rows that feed them) — the same live-recalc goal as
+        // Amount above, just one level up: change a Qty/Rate, the zone subtotal picks it up, and the
+        // function total picks that up too, all without re-exporting.
+        const totalRefRows = [];
         fnObj.zones.forEach(z => {
           addSectionRow(ws, `${z.label}${z.dimLabel ? "  (" + z.dimLabel + ")" : ""}   —   ${f(z.zoneTotal)}`, { fill: "FFEFE9DD", color: "FF1A1A2E" });
           addTableHeaderRow(ws);
+          const itemStartRow = ws.rowCount + 1;
           z.structItems.forEach(si => addItemRow(ws, [si.name, si.size || "—", si.qty ?? "—", si.rate ?? "—", si.unit || "—", si.total], { italic: true }));
           z.items.forEach(it => addItemRow(ws, [it.name, it.size || "—", it.qty, it.rate, it.unit, it.total]));
-          addItemRow(ws, [`${z.label} Subtotal`, "", "", "", "", z.zoneTotal], { bold: true, fill: subtle });
+          const itemEndRow = ws.rowCount;
+          const subtotalRow = addItemRow(ws, [`${z.label} Subtotal`, "", "", "", "", z.zoneTotal], { bold: true, fill: subtle, sumRange: itemEndRow >= itemStartRow ? [itemStartRow, itemEndRow] : null });
+          totalRefRows.push(subtotalRow.number);
           if (z.note) {
             const row = ws.addRow([`📝 ${z.note}`]);
             ws.mergeCells(row.number, 1, row.number, COLS.length);
@@ -1035,6 +1114,8 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
           }
           ws.addRow([]);
         });
+        const decorRows = totalRefRows.slice(); // snapshot before transport's row is appended below
+        let transportRow = null;
 
         if (fnObj.transport) {
           addSectionRow(ws, "TRANSPORT & POWER", { fill: "FF312E81", color: "FFA5B4FC" });
@@ -1050,14 +1131,46 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
           truckRow.getCell(6).numFmt = money.numFmt; truckRow.getCell(6).alignment = { horizontal: "right" };
           const gRow = ws.addRow(["Genset", `${fnObj.transport.gensets || 0} units × ${f(fnObj.transport.gensetRate || 0)}`, "", "", "", fnObj.transport.gensetCost || 0]);
           gRow.getCell(6).numFmt = money.numFmt; gRow.getCell(6).alignment = { horizontal: "right" };
-          const tRow = ws.addRow(["Transport Total", "", "", "", "", fnObj.transport.total || 0]);
+          const tRow = ws.addRow(["Transport Total", "", "", "", "", ""]);
           tRow.eachCell(c => { c.font = { bold: true, color: { argb: "FF4F46E5" } }; c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFEEF2FF" } }; });
+          tRow.getCell(6).value = { formula: `SUM(F${truckRow.number}:F${gRow.number})`, result: fnObj.transport.total || 0 };
           tRow.getCell(6).numFmt = money.numFmt; tRow.getCell(6).alignment = { horizontal: "right" };
+          totalRefRows.push(tRow.number);
+          transportRow = tRow.number;
           ws.addRow([]);
         }
 
-        addSectionRow(ws, `FUNCTION TOTAL   —   ${f(fnObj.grand)}`, { fill: dark, color: gold, size: 12, height: 22 });
+        const ftRow = ws.addRow(["FUNCTION TOTAL", "", "", "", "", ""]);
+        ws.mergeCells(ftRow.number, 1, ftRow.number, 5);
+        ftRow.getCell(1).font = { bold: true, size: 12, color: { argb: gold } };
+        ftRow.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: dark } };
+        ftRow.getCell(6).value = totalRefRows.length
+          ? { formula: `SUM(${totalRefRows.map(r => `F${r}`).join(",")})`, result: fnObj.grand || 0 }
+          : (fnObj.grand || 0);
+        ftRow.getCell(6).font = { bold: true, size: 13, color: { argb: gold } };
+        ftRow.getCell(6).fill = { type: "pattern", pattern: "solid", fgColor: { argb: dark } };
+        ftRow.getCell(6).numFmt = money.numFmt;
+        ftRow.getCell(6).alignment = { horizontal: "right" };
+        ftRow.height = 22;
+        fnRefs.push({ isEmpty: false, sheetName, decorRows, transportRow, ftRow: ftRow.number });
       });
+
+      // ═══ Wire Event Summary's per-function rows + grand total to the sheets just built ═══
+      // Same live-recalc goal, one hop across sheets: edit a Qty/Rate on a function's own tab and
+      // Event Summary's Decor/Transport/Grand (and Discount, below) pick it up too. Skipped for any
+      // isEmpty function — there's no real content on its sheet to point a formula at.
+      const qsheet = (name) => `'${name.replace(/'/g, "''")}'`;
+      combined.functions.forEach((fnObj, i) => {
+        const ref = fnRefs[i];
+        const row = swFnRows[i];
+        if (!ref || ref.isEmpty) return;
+        const sn = qsheet(ref.sheetName);
+        if (ref.decorRows.length) row.getCell(3).value = { formula: `SUM(${ref.decorRows.map(r => `${sn}!F${r}`).join(",")})`, result: fnObj.decorTotal || 0 };
+        row.getCell(4).value = ref.transportRow ? { formula: `${sn}!F${ref.transportRow}`, result: fnObj.transportTotal || 0 } : 0;
+        row.getCell(5).value = { formula: `${sn}!F${ref.ftRow}`, result: fnObj.grand || 0 };
+      });
+      const grandRefs = fnRefs.filter(r => r && !r.isEmpty).map(r => `${qsheet(r.sheetName)}!F${r.ftRow}`);
+      if (grandRefs.length) gtRow.getCell(5).value = { formula: `SUM(${grandRefs.join(",")})`, result: combined.eventGrandTotal || 0 };
 
       // File name: guest name + the earliest function's date + venue — functions are already
       // date-sorted by buildCombinedCostSheetData, so [0] is the earliest.
@@ -2550,6 +2663,35 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
               margin math also uses) — the system-generated estimate stays visible here, just demoted
               to a secondary line, so nobody loses sight of what the design itself would cost at list price. */}
           {hasNegotiated && <div style={{fontSize:11.5,color:"#a5b4fc",marginTop:9}}>System estimate: <strong style={{color:"#fff",fontWeight:700}}>{fmt(eventGrandTotal)}</strong></div>}
+          {/* Build changed after booking (a Production/Buying item added, a swap, etc.) — the
+              negotiated deal value itself never moves on its own; this just makes the drift visible
+              and lets the salesperson choose to fold it in. Same number IMS's Dept Ops sees. */}
+          {isBooked && pendingDelta !== 0 && (
+            <div style={{marginTop:11,padding:"9px 14px",borderRadius:10,background:"rgba(245,158,11,0.16)",border:"1px solid rgba(245,158,11,0.4)",display:"inline-block"}}>
+              <div style={{fontSize:11.5,color:"#fcd34d",fontWeight:700}}>⚠ Build changed since booking: {pendingDelta > 0 ? "+" : ""}{fmt(pendingDelta)}</div>
+              <div style={{marginTop:7,display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+                <button
+                  type="button"
+                  onClick={applyPendingDealValue}
+                  style={{fontSize:11,fontWeight:700,padding:"6px 14px",borderRadius:8,background:"#f59e0b",color:"#1a1208",border:"none",cursor:"pointer"}}
+                >
+                  Apply to deal value
+                </button>
+                {/* For when this figure isn't a real change to bill/discount for — e.g. an already-
+                    booked deal whose tracking only started from whatever the build happened to total
+                    the first time this shipped, not the true number at booking. Only moves where
+                    drift is measured FROM; never touches what the client is actually being charged. */}
+                <button
+                  type="button"
+                  onClick={resetDealValueTracking}
+                  title="Re-points tracking at today's build total. Does not change the deal value."
+                  style={{fontSize:10.5,fontWeight:600,padding:"6px 12px",borderRadius:8,background:"transparent",color:"#fcd34d",border:"1px solid rgba(252,211,77,0.4)",cursor:"pointer"}}
+                >
+                  Reset tracking (no value change)
+                </button>
+              </div>
+            </div>
+          )}
         </> : <>
           <div className="sh-te-amt" style={{fontSize:46,marginBottom:11,display:"flex",justifyContent:"center"}}>
             <span style={{display:"inline-block",width:260,height:44,borderRadius:10,background:"rgba(255,255,255,0.13)",animation:"shPulse 1.15s ease-in-out infinite"}}/>

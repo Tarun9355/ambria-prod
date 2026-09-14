@@ -12,6 +12,8 @@ export default function TransportEditor({ ctx }) {
     trVenues, truckCap, floralPerTruck, gensetRate, gensetRate62, bufferTiers, saveTR,
     newVenue, setNewVenue, newTC, setNewTC, TR_TIERS, TC_UNITS,
     rcItems, rcCats, allInhouseVenues, allOutdoorDB,
+    // Sub-Categories tab's own master list + the live inventory behind it — see subsByCat below.
+    rateCardCategories, inventory,
   } = ctx;
   // Venue NAMES come from Settings → Venues (central list); transport only holds rate/tier/genset per venue.
   const centralVenues = [...new Set([...(allInhouseVenues || []), ...((allOutdoorDB || []).map((v) => v.name))].filter(Boolean))].sort((a, b) => a.localeCompare(b));
@@ -50,17 +52,62 @@ export default function TransportEditor({ ctx }) {
     else next = [...(truckCap || []), { id: "TC" + Date.now().toString(36).slice(-5).toUpperCase(), item: sub, perTruck: field === "perTruck" ? Number(val) || 0 : 0, unit: field === "unit" ? val : (/truss|platform|carpet|masking|fabric|batta|ceiling/i.test(sub) ? "sqft" : "pc") }];
     saveTR(null, next);
   };
-  // Distinct sub-categories grouped by rate-card category.
+  // Distinct sub-categories grouped by top-level category — sourced from `rateCardCategories`
+  // (Admin → Settings → 📂 Sub-Categories, the actual master list the rest of the app reads: live
+  // inventory sub-categories + manually-added ones), NOT the legacy Rate Card items list. The old
+  // grouping walked `rcItems` only, so a sub-category with real inventory behind it but no
+  // matching legacy Rate-Card ITEM of the same name (Console Table, Pedestals, anything added
+  // straight to Inventory and never given a Rate Card row) never appeared on this screen at all —
+  // there was nothing missing from truckCap itself, it just had no row to show a capacity input on.
+  // groupLabelFor mirrors the Sub-Categories tab's own grouping exactly (explicit admin override →
+  // live-inventory-derived category → legacy Rate-Card-item-derived category → "Other") so a
+  // sub-category lands in the same bucket here as it does there.
+  const CAT_ALIAS_GROUPS = [
+    { test: (low) => /^(flowers?|florals?)$/.test(low), fallback: "Florals" },
+    { test: (low, raw) => /^(cloths?|fabrics?|kapda|kapra)$/.test(low) || /कपड़ा|कपडा/.test(raw), fallback: "Fabric" },
+  ];
+  const normInvCat = (value) => {
+    const raw = String(value ?? "").trim();
+    if (!raw) return "";
+    const low = raw.toLowerCase();
+    for (const g of CAT_ALIAS_GROUPS) { if (g.test(low, raw)) return g.fallback; }
+    return raw;
+  };
+  const invSubToCat = {};
+  (inventory || []).forEach((it) => {
+    const rawSub = it.subCat ?? it.subcategory;
+    if (!rawSub) return;
+    const subKey = String(rawSub).trim().toLowerCase();
+    if (!subKey || invSubToCat[subKey]) return;
+    const rawCat = it.cat ?? it.category;
+    invSubToCat[subKey] = rawCat ? normInvCat(rawCat) : "Other";
+  });
+  const subToCatLabel = {};
+  (rcItems || []).forEach((it) => {
+    const catLabel = (rcCats || []).find((c) => c.id === it.cat)?.l || it.cat;
+    if (!catLabel) return;
+    const subKey = String(it.sub || "").trim().toLowerCase();
+    const aliasKey = String(it.imsAlias || "").trim().toLowerCase();
+    if (subKey) subToCatLabel[subKey] = catLabel;
+    if (aliasKey) subToCatLabel[aliasKey] = catLabel;
+  });
+  const groupLabelFor = (r) => r.category_label || invSubToCat[r.id] || subToCatLabel[r.id] || "Other";
+  const CAT_ICON = { Florals: "🌸", Furniture: "🛋️", Structural: "🏛️", Structure: "🏛️", Lighting: "💡", Fabric: "🧵", Tenting: "⛺", Props: "🎪", Stage: "🎭", Consumable: "📦", "Arches & Props": "🚪", "Wall Masking": "🧱" };
   const subsByCat = (() => {
-    const out = [];
-    (rcCats || []).forEach((c) => {
-      const subs = [...new Set((rcItems || []).filter((i) => i.cat === c.id && i.sub).map((i) => i.sub))];
-      if (subs.length) out.push({ cat: c, subs });
+    const groups = {};
+    (rateCardCategories || []).forEach((r) => {
+      const label = groupLabelFor(r);
+      (groups[label] = groups[label] || []).push(r.label || r.id);
     });
-    // Structural pseudo-subs the calc uses from the zone config (truss/platform/carpet by sqft).
-    const have = new Set((rcItems || []).map((i) => String(i.sub || "").toLowerCase().trim()));
-    const extra = ["Truss", "Platform", "Carpet"].filter((s) => !have.has(s.toLowerCase()));
-    if (extra.length) out.push({ cat: { id: "_struct", l: "Structural (by sqft)", icon: "🏗️" }, subs: extra });
+    // Structural pseudo-subs the calc uses from the zone config (truss/platform/carpet by sqft) —
+    // not real inventory items, so they have no rate_card_categories row of their own.
+    const have = new Set(Object.values(groups).flat().map((s) => String(s).toLowerCase().trim()));
+    const structLabel = "Structural (by sqft)";
+    ["Truss", "Platform", "Carpet"].forEach((s) => { if (!have.has(s.toLowerCase())) (groups[structLabel] = groups[structLabel] || []).push(s); });
+    const labels = Object.keys(groups).filter((l) => l !== "Other" && l !== structLabel).sort();
+    const out = labels.map((l) => ({ cat: { id: l, l, icon: CAT_ICON[l] || "📦" }, subs: groups[l] }));
+    if (groups[structLabel]?.length) out.push({ cat: { id: structLabel, l: structLabel, icon: "🏗️" }, subs: groups[structLabel] });
+    if (groups.Other?.length) out.push({ cat: { id: "Other", l: "Other", icon: "📁" }, subs: groups.Other });
     return out;
   })();
 

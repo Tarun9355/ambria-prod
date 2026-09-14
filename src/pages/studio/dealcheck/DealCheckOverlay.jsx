@@ -20,6 +20,7 @@ import { matchFlowerPattern } from "../../../lib/ims/flowerHelpers";
 import { DEPTS as OPS_DEPTS, catToDept as sharedCatToDept } from "../../../lib/ims/deptClassify";
 import ItemHoverThumb from "../../../components/shared/ItemHoverThumb.jsx";
 import { WASH_BANDS, GRAIN_URL } from "../../../lib/studio/pageWash";
+import { newSplitGroupId, reconcileDealCheckIntoBuild } from "../../../lib/studio/dealCheckSync.js";
 
 // ══ THE PAGE'S GROUND ══
 // A glob, not an import, for the same reason every other background in this app uses one: if the file
@@ -31,7 +32,7 @@ const DC_BG = Object.values(
   import.meta.glob("../../../assets/ambria-dealcheck-bg.{jpg,jpeg,png,webp}", { eager: true, query: "?url", import: "default" })
 )[0] || null;
 // The zone-row action marks, taken from Build so one action does not have two pictures.
-import { IconFactory, IconCart, IconPlatform, IconCheck, IconAlert, IconChevron, IconBox } from "../../../components/icons.jsx";
+import { IconFactory, IconCart, IconPlatform, IconCheck, IconAlert, IconChevron, IconBox, IconRepeat, IconSparkle } from "../../../components/icons.jsx";
 
 // ═══ SURFACES ═══
 // Deal Check sits on a wedding-artwork ground, so a translucent fill reads as a different colour on
@@ -157,11 +158,12 @@ export default function DealCheckOverlay({ ctx }) {
   const [dcDept, setDcDept] = useState("Furniture"); // active Department-Income sub-tab
   const deptSyncRef = useRef(""); // dedupe auto-push of the dept snapshot to IMS
   const [dcKitAddSearch, setDcKitAddSearch] = useState({}); // per-kit-card "add component" search text, keyed by editKey
+  const [dcPrintForm, setDcPrintForm] = useState({ zoneKey: "", material: "", areaW: "", areaD: "", qty: 1 }); // Buying tab's own "+ Add print" row
   const {
     // chrome / theme
     border, textS, textP, accent, fmt,
     // client + auth
-    clientLedger, activeClientId, clientName, clientDate, authUser,
+    clientLedger, activeClientId, activeClient, clientName, clientDate, authUser, eventGrandTotal,
     // deal check state
     dcActiveTab, setDcActiveTab, dcGenerating, dcGenStatus,
     dcCards, dcInventoryCache, dcCarpetPick, setDcCarpetPick, dcCarpetSearch, setDcCarpetSearch,
@@ -172,12 +174,22 @@ export default function DealCheckOverlay({ ctx }) {
     // "Set as correct match for this photo" control. That control is gone, and nothing else in
     // this file read them — re-add all three if the teach action comes back.
     dcDesiredMargin, setDcDesiredMargin, closeDealCheck,
-    dcSaveBaselineRef, dcConflictWarnedAtRef,
+    dcSaveBaselineRef, dcConflictWarnedAtRef, flushDcAutosaveRef,
     dcZoneState, dcMpOverrides, dcMpWinCount, dcMpIncludeMinusOne, dcMpIncludeDismantle,
     setDcResolved, setDcCards, setDcZoneState, setDcPhotoOverrides, setDcSkipped, setDcProductionAccepted,
     dealCheckData, imsPaletteCatalogue, softHolds, imsPrintMaterials, imsCarpetMaterials,
     // build / fn state
     activeFnIdx: activeFnIdxCommitted, fnPending, switchActiveFn, dcShowAllFns, setDcShowAllFns, dcCollapsedFnBlocks, setDcCollapsedFnBlocks,
+    // Deal-Check-into-Build sync (ongoing deals only — see the effect below and dealCheckSync.js)
+    zoneElements, setZoneElements, fnBuilds, setFnBuilds, isFnSwitching,
+    // Genset counts — the SAME per-function override Build's own Transport section reads
+    // (customGensets/genset62; null = follow the venue's default). Editing them here writes
+    // straight into that one field rather than a separate Deal-Check-only copy, so Build and
+    // Deal Check can never disagree about how many gensets a function is actually carrying.
+    customGensets, setCustomGensets, genset62, setGenset62,
+    // zoneConfig — prints (Buying tab's "add a print job") live on zoneConfig[zoneKey].prints,
+    // the exact same field Build's own Print tile writes.
+    zoneConfig, setZoneConfig,
     // pricing helpers
     collectAllFunctionData, calcFnFloralSourcingCost, calcFunctionBreakdown, calcFunctionCost,
     // Shared availability picker — the same one Build's IconBox control opens.
@@ -186,6 +198,8 @@ export default function DealCheckOverlay({ ctx }) {
     libItems, rcItems, rcSubcatFactors, normalizePaintAllocation, ensureLibItemsByUrl,
     // deal check inventory-tab module helpers
     isZoneDirty, parseCardKey, PLATFORM_FATTA_CODE, PLATFORM_STAND_CODE,
+    // Settings → Zones' own drag-ordered priority (Object.keys(zoneMeta), same list Build sorts by)
+    zoneKeys,
     // orchestration + persistence
     getStudioAvailable, getActiveSoftHold,
     // misc
@@ -252,17 +266,83 @@ export default function DealCheckOverlay({ ctx }) {
   // the whole line at the sub-category default, same as before Fixed Venues data was read here.
   const repeatAdjustedRental = (isRepeatZone, venueName, item, qty, baseRental) => {
     const full = qty * baseRental;
-    if (!isRepeatZone || !item) return full;
+    if (!item) return full;
     // fixedVenueSubcatDiscount rides along here too — standingDiscountPct falls back to it when
     // a standing item has no per-item override of its own, so that fallback needs it on the
     // same object rentalSplit passes through, not just the two keys fixedVenueFor itself reads.
     const fvCfg = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {}, fixedVenueSubcatDiscount: dealCheckData?.fixedVenueSubcatDiscount || {} };
+    // A Fixed-Venue standing item is discounted UNCONDITIONALLY — it's physically standing at this
+    // venue whether or not the salesperson happened to flag this zone "Repeat". Gating it behind
+    // isRepeatZone used to mean the exact same standing bench billed full rate in a zone nobody
+    // marked Repeat, and only got its real discount if they also (redundantly) flagged Repeat.
     const { standingUnits, freshUnits, discountPct } = rentalSplit(fvCfg, venueName, item.id, qty, dcInventoryCache);
     if (standingUnits > 0) return standingUnits * baseRental * (1 - discountPct / 100) + freshUnits * baseRental;
+    // Not a specifically-registered standing item, so there's nothing "always there" about it — the
+    // sub-category-level Repeat discount only makes sense when THIS event's own setup is being
+    // reused across days, which is exactly what isRepeatZone means. Stays gated on it.
+    if (!isRepeatZone) return full;
     const key = String(imsField.subcategory(item) || "").toLowerCase().trim();
     const sc = key ? Number((dealCheckData?.fixedVenueSubcatDiscount || {})[key]) : NaN;
     const pct = Number.isFinite(sc) && sc > 0 ? sc : 0;
     return full * (1 - pct / 100);
+  };
+
+  // One function's print jobs (Flex/Vinyl/Sunboard etc., zoneConfig[zk].prints) priced out — the
+  // exact same read Build's own zone-header Print tile total uses. Shared by the Buying tab's own
+  // list AND the tab-strip's per-tab cost, so the two can't show two different numbers for the
+  // same thing. `pi` (the print's own index within its zone's array) is what a later remove keys
+  // off — same as Build's own removePrint — not the synthetic `id` this list assigns for React keys.
+  const printJobsForFn = (fnData) => {
+    if (!fnData) return [];
+    const zc = fnData.zoneConfig || {};
+    const en = fnData.enabledEls || {};
+    const printMats = imsPrintMaterials || [];
+    const jobs = [];
+    Object.keys(zc).forEach(zk => {
+      if (!en[zk] || !zc[zk]) return;
+      (zc[zk].prints || []).forEach((p, pi) => {
+        const m = printMats.find(x => x.id === p.material);
+        const area = (Number(p.areaW) || 0) * (Number(p.areaD) || 0);
+        const qty = Math.max(1, Math.round(Number(p.qty) || 1));
+        const rate = m?.ratePerSqft || 0;
+        const jobTotal = area * rate * qty;
+        if (jobTotal <= 0) return;
+        jobs.push({ id: `print:${zk}:${pi}`, zoneKey: zk, pi, matName: m?.name || "Print material", size: `${p.areaW || 0}×${p.areaD || 0}ft`, qty, unitCost: area * rate, total: jobTotal });
+      });
+    });
+    return jobs;
+  };
+
+  // Writes a new print job straight into zoneConfig[zoneKey].prints — the SAME field Build's own
+  // Print tile writes (StudioBuild.jsx) — so a print added here shows up there identically, no
+  // separate Deal-Check-only copy to drift out of sync. Mirrors the active-vs-not duality the
+  // Deal-Check→Build sync effect and the Power tab's genset steppers already use: live state when
+  // this is the function currently open in Build, that function's fnBuilds snapshot otherwise.
+  const addPrintToZone = (fi, zoneKey, entry) => {
+    if (fi === activeFnIdxCommitted) {
+      setZoneConfig(p => ({ ...p, [zoneKey]: { ...(p[zoneKey] || {}), prints: [...((p[zoneKey] || {}).prints || []), entry] } }));
+    } else {
+      setFnBuilds(prev => {
+        const fb = prev[fi] || {};
+        const zc = fb.zoneConfig || {};
+        const zEntry = zc[zoneKey] || {};
+        return { ...prev, [fi]: { ...fb, zoneConfig: { ...zc, [zoneKey]: { ...zEntry, prints: [...(zEntry.prints || []), entry] } } } };
+      });
+    }
+  };
+  // Removes one print job by its index within that zone's prints array — same key Build's own
+  // removePrint filters on, not the synthetic id printJobsForFn assigns for React's sake.
+  const removePrintFromZone = (fi, zoneKey, pi) => {
+    if (fi === activeFnIdxCommitted) {
+      setZoneConfig(p => ({ ...p, [zoneKey]: { ...(p[zoneKey] || {}), prints: (p[zoneKey]?.prints || []).filter((_, i) => i !== pi) } }));
+    } else {
+      setFnBuilds(prev => {
+        const fb = prev[fi] || {};
+        const zc = fb.zoneConfig || {};
+        const zEntry = zc[zoneKey] || {};
+        return { ...prev, [fi]: { ...fb, zoneConfig: { ...zc, [zoneKey]: { ...zEntry, prints: (zEntry.prints || []).filter((_, i) => i !== pi) } } } };
+      });
+    }
   };
 
   // Live soft-blocking: how much of an inventory item is left for THIS deal, netting out both
@@ -308,6 +388,35 @@ export default function DealCheckOverlay({ ctx }) {
     if (urls.length) ensureLibItemsByUrl(urls);
   }, [activeClientId, collectAllFunctionData, ensureLibItemsByUrl]);
 
+  // ═══ Sync Deal Check's own edits into Build — ONGOING deals only ═══
+  // While a deal is still being planned, Deal Check and Build are meant to describe the same
+  // build — swap an item, edit a kit's components, add a manual item, or split a card's qty
+  // across two, and Build should show it too. Once a deal is booked/sold, Build freezes as "what
+  // was sold to the guest" — reconcileSoldInventoryBlocks (StudioApp.jsx) owns everything that
+  // happens to a booked deal's inventory from here on, so this effect must never touch anything
+  // once isSold. See dealCheckSync.js for the actual reconciliation logic; this effect only
+  // decides WHETHER to run it and WHERE the result lands (the live, active function's zoneElements
+  // vs. a non-active function's snapshot in fnBuilds — the same duality collectAllFunctionData
+  // already resolves, mirrored here via the same activeFnIdx/fnPending signals).
+  const isSoldForSync = activeClient?.status === "booked";
+  useEffect(() => {
+    if (isSoldForSync) return;
+    if (isFnSwitching) return;
+    if (!activeClientId) return;
+    const fnIdx = activeFnIdx; // Deal Check's own resolved index (fnPending ?? activeFnIdxCommitted)
+    // The LIVE zoneElements state actually reflects activeFnIdxCommitted (StudioApp's own,
+    // real active function) regardless of fnPending — fnPending is only Deal Check's own faster
+    // sidebar highlight while a switch is still in flight. So fnIdx matches the live state only
+    // when there's no such mismatch, i.e. when it equals activeFnIdxCommitted.
+    const isActiveFn = fnIdx === activeFnIdxCommitted;
+    const currentZE = isActiveFn ? zoneElements : (fnBuilds[fnIdx]?.zoneElements || {});
+    const next = reconcileDealCheckIntoBuild(currentZE, dcCards[fnIdx], dcKitEdits[fnIdx], dcManualItems.filter(m => m.fnIdx === fnIdx), dcInventoryCache, parseCardKey);
+    if (next === currentZE) return;
+    if (isActiveFn) setZoneElements(next);
+    else setFnBuilds(prev => ({ ...prev, [fnIdx]: { ...(prev[fnIdx] || {}), zoneElements: next } }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dcCards, dcKitEdits, dcManualItems, isSoldForSync, isFnSwitching, activeFnIdx, activeFnIdxCommitted, activeClientId]);
+
   if (!(authUser && true)) return null;
 
   return (() => {
@@ -326,9 +435,9 @@ export default function DealCheckOverlay({ ctx }) {
           { id: "buying",    label: "Buying",           icon: "🛒", live: true  },
           { id: "transport", label: "Transport",        icon: "🚚", live: true  },
           { id: "power",     label: "Power",            icon: "⚡", live: true  },
-          { id: "status",    label: "Inventory Status", icon: "📊", live: true  },
-          { id: "gyv",       label: "GYV & Buffer",     icon: "💰", live: true  },
           { id: "commission",label: "Commission",       icon: "🤝", live: true  },
+          { id: "gyv",       label: "GYV & Buffer",     icon: "💰", live: true  },
+          { id: "status",    label: "Inventory Status", icon: "📊", live: true  },
           // Dept Income removed from the tab strip. Its body below is left in place and still
           // renders if dcActiveTab is somehow "depts" — the department split is also pushed to
           // IMS Dept Ops from persistDeptSnapshot, which does not depend on this tab.
@@ -338,7 +447,7 @@ export default function DealCheckOverlay({ ctx }) {
         // ═══ Shared cost rollup — single computation used by GYV tab + bottom strip (§26.19) ═══
         const dcCostRollup = (() => {
           const fns = collectAllFunctionData ? collectAllFunctionData() : [];
-          let rental = 0, florals = 0, transport = 0, manpower = 0, truss = 0, genset = 0;
+          let rental = 0, florals = 0, transport = 0, manpower = 0, truss = 0, genset = 0, printCost = 0;
           // Unavailable-shortfall pricing: a matched card's qty beyond what's actually free in
           // stock for the event date bills at item.cost × this sub-category's cost% instead of
           // the rental rate (rate_card_categories.cost_percent, IMS-owned). Default 100 (full
@@ -416,15 +525,15 @@ export default function DealCheckOverlay({ ctx }) {
               // Kits are excluded — their base+components pricing model doesn't map onto a simple
               // per-unit reused/fresh split (same reasoning calcZoneCarpet already uses for carpet).
               const isKit = Array.isArray(item.subItems) && item.subItems.length > 0;
-              let lineRental;
+              let lineRental, shortQty = 0, shortCost = 0;
               if (isKit) {
                 lineRental = repeatAdjustedRental(_rep, fn.fnVenue, item, qty, baseR);
               } else {
                 const available = getStudioAvailable(item, fnBlocks);
                 const ownedQty = Math.min(qty, available);
-                const shortQty = Math.max(0, qty - available);
+                shortQty = Math.max(0, qty - available);
                 const ownedRental = repeatAdjustedRental(_rep, fn.fnVenue, item, ownedQty, baseR);
-                const shortCost = shortQty * (Number(item.cost) || 0) * (oosCostPctFor(item, costPctFor) / 100);
+                shortCost = shortQty * (Number(item.cost) || 0) * (oosCostPctFor(item, costPctFor) / 100);
                 lineRental = ownedRental + shortCost;
               }
               rental += lineRental;
@@ -445,7 +554,10 @@ export default function DealCheckOverlay({ ctx }) {
                     return { name: ci.name, imsId: ci.id, qty: cq, unit: cr, total: Math.round(cr * cq), sub: imsField.subcategory(ci) || "", photo: imsField.photos(ci)[0] || "" };
                   }).filter(Boolean);
                 }
-                deptInv[dD].push({ name: item.name || c.name || "Item", photo: imsField.photos(item)[0] || "", qty, unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "", imsId: c.imsId, ...(components && components.length ? { isKit: true, components } : {}) });
+                // shortQty > 0 means part (or all) of this line is priced at cost% because stock ran
+                // out for this event's date — Dept Ops badges it so a head knows to flag/chase it
+                // rather than assuming the full qty is sitting reserved and ready.
+                deptInv[dD].push({ name: item.name || c.name || "Item", photo: imsField.photos(item)[0] || "", qty, unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "", imsId: c.imsId, ...(components && components.length ? { isKit: true, components } : {}), ...(shortQty > 0 ? { shortQty, shortCost: Math.round(shortCost) } : {}) });
               }
             });
             // Manually-added inventory blocks (dcManualItems) — the salesperson added these directly in
@@ -475,7 +587,9 @@ export default function DealCheckOverlay({ ctx }) {
                 const pObj = (imsPaletteCatalogue||[]).find(p => p.name === fnPalette);
                 const anchors = pObj?.anchorColours || [];
                 Object.keys(zc).forEach(zk => {
-                  if (!en[zk] || !zc[zk]) return;
+                  // ♻️ Repeat zones reuse a standing structure — same treatment as Manpower's own
+                  // freshFn exclusion (this zone's truss/fabric was already built for a prior day).
+                  if (!en[zk] || !zc[zk] || zc[zk].repeat) return;
                   const photoUrl = (fn.elSelectedPhoto || {})[zk];
                   let density = "moderate";
                   if (photoUrl) { const li = libItems.find(l => l.url === photoUrl); if (li?.dims?.drapeDensity) density = li.dims.drapeDensity; }
@@ -554,8 +668,11 @@ export default function DealCheckOverlay({ ctx }) {
           // calcStructCost's own .print (via structRates.printMaterials) — but dcCostRollup computes
           // its own cost engine from scratch rather than calling calcStructCost, so it never priced
           // print at all: clientRevenue (quote, via calcFunctionCost → calcStructCost) charged for
-          // it, while `base`/`grand` (cost, margin) silently treated it as free. Folded into the same
-          // `truss` bucket the masking/fabric cost above already shares, for the same reason.
+          // it, while `base`/`grand` (cost, margin) silently treated it as free.
+          // A print job IS a buying action (a vendor prints the flex/vinyl/sunboard, it's not pulled
+          // from truss stock), so it's costed into `printCost` → folded into `buyTotal` below, and
+          // shown as its own line in the Buying tab — not buried inside the Truss cost bucket where
+          // nothing ever surfaced it as a line item.
           try {
             const printMats = imsPrintMaterials || [];
             fns.forEach((fn) => {
@@ -570,9 +687,9 @@ export default function DealCheckOverlay({ ctx }) {
                   return sum + s * (m?.ratePerSqft || 0) * q;
                 }, 0);
                 if (pc > 0) {
-                  truss += pc;
-                  addD("Structure", "truss", pc);
-                  if (deptInv["Structure"]) deptInv["Structure"].push({ name: "🖨 Print / signage", photo: "", qty: (zc[zk].prints || []).length, unit: 0, total: Math.round(pc), sub: "print" });
+                  printCost += pc;
+                  addD("Structure", "buying", pc);
+                  if (deptInv["Structure"]) deptInv["Structure"].push({ name: "🖨 Print / signage", photo: "", qty: (zc[zk].prints || []).length, unit: 0, total: Math.round(pc), sub: "print", prodOrBuy: "buying" });
                 }
               });
             });
@@ -582,9 +699,14 @@ export default function DealCheckOverlay({ ctx }) {
           DEPTS.forEach(dn => {
             const seen = {}, merged = [];
             (deptInv[dn] || []).forEach(it => {
-              const key = (it.name || "") + "|" + (it.sub || "") + "|" + (it.imsId || "");
+              // prodOrBuy in the key too — a Production/Buying item can reference the SAME imsId as
+              // a genuinely rented item (CustomItemModal now requires a real inventory match), and
+              // those are different transactions (make/buy new vs. reserve the stocked one) that
+              // must never blend into one merged line.
+              const key = (it.name || "") + "|" + (it.sub || "") + "|" + (it.imsId || "") + "|" + (it.prodOrBuy || "");
               if (seen[key]) {
                 seen[key].qty += (it.qty || 0); seen[key].total += (it.total || 0);
+                if (it.shortQty) { seen[key].shortQty = (seen[key].shortQty || 0) + it.shortQty; seen[key].shortCost = (seen[key].shortCost || 0) + (it.shortCost || 0); }
                 if (Array.isArray(it.components)) { // merge kit sub-elements too (same kit across zones)
                   const base = seen[key].components || (seen[key].components = []);
                   it.components.forEach(cp => {
@@ -926,10 +1048,19 @@ export default function DealCheckOverlay({ ctx }) {
               }
             }
           } catch {}
-          const buyTotal = dcCustomItems.filter(c=>c.type==="buying").reduce((s,c)=>s+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0);
+          const buyTotal = dcCustomItems.filter(c=>c.type==="buying").reduce((s,c)=>s+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0) + printCost;
           const produceTotal = dcCustomItems.filter(c=>c.type==="production").reduce((s,c)=>s+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0);
-          // Production / Buying → department by the item's category/sub-category
-          dcCustomItems.forEach(c => { const amt = (c.manualPrice || c.refPrice || 0) * (Number(c.qty) || 1); if (amt > 0) addD(catToDept(c.cat || c.subCat), c.type === "buying" ? "buying" : "production", amt); });
+          // Production / Buying → department by the item's category/sub-category. Also listed as a
+          // line item in deptInv (previously only folded into the department's income total — Dept
+          // Ops' "Inventory blocked for X" list never showed these at all, so a head had no idea a
+          // Production/Buying item existed until the aggregate ₹ moved).
+          dcCustomItems.forEach(c => {
+            const amt = (c.manualPrice || c.refPrice || 0) * (Number(c.qty) || 1);
+            if (amt <= 0) return;
+            const d = catToDept(c.cat || c.subCat);
+            addD(d, c.type === "buying" ? "buying" : "production", amt);
+            if (deptInv[d]) deptInv[d].push({ name: c.subCat || c.cat || "Custom item", photo: c.photo || "", qty: Number(c.qty) || 1, unit: c.manualPrice || c.refPrice || 0, total: Math.round(amt), sub: c.subCat || "", imsId: c.refItemId || null, prodOrBuy: c.type === "buying" ? "buying" : "production" });
+          });
           // ── Distribute manpower per type to departments ──
           const MP_DEPT = { "Flowerists": "Floral", "Carpenters": "Structure", "Painters": "Tenting", "Truss Labour": "Tenting", "Fabric Bangali": "Fabric", "Electricians": "Lighting", "Drivers": "Transport" };
           // Direct-income share per dept (rental+florals+truss+fabric+production+buying) — drives the
@@ -1003,12 +1134,17 @@ export default function DealCheckOverlay({ ctx }) {
             try { fns.forEach(fn => { clientRevenue += calcFunctionCost(fn).grand; }); } catch {}
           }
           const effGrand = hasActuals ? grandActual : grand;
-          const profitPct = clientRevenue > 0 ? Math.round(((clientRevenue - effGrand) / clientRevenue) * 100) : 0;
           // ═══ Commission — % of the deal amount set aside per venue (IMS → Admin → Master Data →
           // Venues, one row per in-house property or outdoor venue). A booking spanning more than one
           // venue splits clientRevenue across them by each venue's own share of the system cost
           // (fns.length===1 just gets 100% of it, no proration needed). Salespeople can override the
           // computed amount per venue (cli.commissionOverrides), same pattern as negotiatedAmount.
+          // Computed BEFORE profitPct below — it is a real payout out of this deal's revenue, so the
+          // margin/profit figure has to come out net of it, not just net of production cost + GYV/
+          // buffer. It stays OUT of `grand`/`base` (production cost) itself: those feed department
+          // income splits and IMS's per-department project total, and commission isn't a department's
+          // production cost — it is a company-level venue payout, so it is subtracted only where
+          // profit is actually measured.
           const venueCommissionRates = dealCheckData?.venueCommission || {};
           const venueParentsForComm = dealCheckData?.venueParents || {};
           const resolveCommVenue = (vn) => venueParentsForComm[vn] || vn;
@@ -1035,6 +1171,7 @@ export default function DealCheckOverlay({ ctx }) {
             commissionTotal += finalAmt;
             return { venue: vKey, revenueShare, pct, defaultAmt, overrideVal: hasOverride ? overrideVal : null, finalAmt };
           });
+          const profitPct = clientRevenue > 0 ? Math.round(((clientRevenue - effGrand - commissionTotal) / clientRevenue) * 100) : 0;
           return { rental, florals, transport, genset, manpower, truss, buyTotal, produceTotal, base, gyvFixed, bufferCost, grand, clientRevenue, profitPct, fns, dept, DEPTS, deptInv, deptMp, mpRateByType,
             mpPhases: dcMpPhases, mpSchedule, mpSharedTotals, deptDirectMap, directTotal, labourUsageByDept, labourUsageTotal, manpowerDetail, manpowerPlan: dcMpPlan,
             hasActuals, actualMandi, actualExpenses, effFlorals, baseActual, grandActual, projFlorals: florals, effManpower, mpDelta,
@@ -1089,7 +1226,8 @@ export default function DealCheckOverlay({ ctx }) {
                 const pObj = (imsPaletteCatalogue || []).find(p => p.name === (fn.fnPalette || "Custom"));
                 const anchors = pObj?.anchorColours || [];
                 Object.keys(zc).forEach(zk => {
-                  if (!en[zk] || !zc[zk]) return;
+                  // ♻️ Repeat zones reuse standing fabric — nothing new to stock/reorder for them.
+                  if (!en[zk] || !zc[zk] || zc[zk].repeat) return;
                   let density = "moderate";
                   const photoUrl = (fn.elSelectedPhoto || {})[zk];
                   if (photoUrl) { const li = (libItems || []).find(l => l.url === photoUrl); if (li?.dims?.drapeDensity) density = li.dims.drapeDensity; }
@@ -1113,7 +1251,17 @@ export default function DealCheckOverlay({ ctx }) {
               fabricPlan = { liza: toRows(agg.liza), masking: toRows(agg.masking), curtain: toRows(agg.curtain) };
             }
           } catch {}
-          return { income: incomeRounded, inventory: dcCostRollup.deptInv, floralPlan, manpowerPlan, manpowerDetail, season: dcSeasonInfo, fabricPlan, mpPhases: dcCostRollup.mpPhases || null };
+          // Deal value: the negotiated amount stays frozen once booked (owner decision — no silent
+          // auto-update); this only surfaces the delta so a salesperson can see and choose to apply
+          // it. bookedSystemTotal is the live-build baseline captured at booking (or the last Apply);
+          // missing it (a deal booked before this existed) means "no known baseline yet" — treated as
+          // zero pending rather than a false-positive full-total delta.
+          const negotiatedAmount = Number(activeClient?.negotiatedAmount) || 0;
+          const hasNegotiated = negotiatedAmount > 0;
+          const dealValue = hasNegotiated
+            ? { amount: Math.round(negotiatedAmount), pending: activeClient?.bookedSystemTotal != null ? Math.round(eventGrandTotal - activeClient.bookedSystemTotal) : 0 }
+            : { amount: Math.round(eventGrandTotal || 0), pending: 0 };
+          return { income: incomeRounded, inventory: dcCostRollup.deptInv, floralPlan, manpowerPlan, manpowerDetail, season: dcSeasonInfo, fabricPlan, mpPhases: dcCostRollup.mpPhases || null, dealValue };
         };
         if (isSold && persistDeptSnapshot) {
           const _sig = JSON.stringify((dcCostRollup.DEPTS || []).map(d => Math.round(dcCostRollup.dept?.[d]?.total || 0)));
@@ -1432,12 +1580,48 @@ export default function DealCheckOverlay({ ctx }) {
                     strongest contrast available here, and it is the same ink the app's header and
                     card headings already wear — so "where am I" is answered from across the room
                     rather than by spotting which pill is a slightly warmer cream. */}
-                {TABS.map(t => (
-                  <button key={t.id} className="dc-tab" data-on={dcActiveTab===t.id?"1":"0"} onClick={()=>setDcActiveTab(t.id)} style={{padding:"7px 11px",borderRadius:999,border:dcActiveTab===t.id?"1px solid #221C42":"1px solid rgba(26,26,46,0.10)",cursor:"pointer",fontSize:13,fontWeight:dcActiveTab===t.id?700:500,background:dcActiveTab===t.id?"#221C42":"#FFFFFF",color:dcActiveTab===t.id?"#F5F1E7":textS,whiteSpace:"nowrap",letterSpacing:0.2,position:"relative",display:"inline-flex",alignItems:"center",gap:6,lineHeight:1,flexShrink:0}}>
-                    <span style={{fontSize:14,lineHeight:1}}>{t.icon}</span>{t.label}
-                    {!t.live && <span style={{marginLeft:6,fontSize:10,padding:"2px 5px",borderRadius:4,background:"rgba(245,158,11,0.18)",color:"#F59E0B",fontWeight:700,letterSpacing:0.4}}>{t.ship}</span>}
-                  </button>
-                ))}
+                {(() => {
+                  // Per-tab cost, under each tab's own label — the bottom strip used to repeat these
+                  // as a separate row of chips; the strip now only shows the overall Project Total,
+                  // and a tab's own group total lives right on the tab itself instead.
+                  const { rental, transport, genset, truss, gyvFixed, bufferCost, hasActuals, effFlorals, mpDelta, effManpower, commissionTotal } = dcCostRollup;
+                  const florals = hasActuals ? effFlorals : dcCostRollup.florals;
+                  const manpower = mpDelta ? effManpower : dcCostRollup.manpower;
+                  // Print jobs are a Buying cost too (see printJobsForFn) but live on zoneConfig, not
+                  // as a dcCustomItems row, so they were missing from this total entirely — the tab
+                  // pill read ₹0 while the tab body itself, which pulls printJobs in separately,
+                  // showed the real number right below it.
+                  const bookingPrintTotal = (collectAllFunctionData ? collectAllFunctionData() : [])
+                    .reduce((s, fnd) => s + printJobsForFn(fnd).reduce((s2, p) => s2 + p.total, 0), 0);
+                  const buyTotal = dcCustomItems.filter(c => c.type === "buying").reduce((s, c) => s + (c.manualPrice || c.refPrice || 0) * (Number(c.qty) || 1), 0) + bookingPrintTotal;
+                  const produceTotal = dcCustomItems.filter(c => c.type === "production").reduce((s, c) => s + (c.manualPrice || c.refPrice || 0) * (Number(c.qty) || 1), 0);
+                  // "—" (not generated yet) vs "₹0" (generated, genuinely zero) — same distinction the
+                  // old bottom strip drew, using the same signal (any card matched, on any function).
+                  const hasGenerated = Object.values(dcCards || {}).some((fnCards) => fnCards && Object.keys(fnCards).length > 0);
+                  const fmtTab = (n) => n > 0 ? "₹" + Math.round(n).toLocaleString("en-IN") : hasGenerated ? "₹0" : "—";
+                  const TAB_AMOUNTS = {
+                    inventory: fmtTab(rental), truss: fmtTab(truss), florals: fmtTab(florals),
+                    manpower: fmtTab(manpower), production: fmtTab(produceTotal), buying: fmtTab(buyTotal),
+                    transport: fmtTab(Math.max(0, transport - genset)), power: fmtTab(genset),
+                    commission: fmtTab(commissionTotal), gyv: fmtTab(gyvFixed + bufferCost),
+                  };
+                  return TABS.map(t => {
+                    // Every pill reserves the same second line, even a tab with no cost of its own
+                    // (Inventory Status) — a mix of one- and two-line pills in the same wrapped row
+                    // left them sitting at different heights next to each other.
+                    const amount = TAB_AMOUNTS[t.id];
+                    const on = dcActiveTab === t.id;
+                    return (
+                      <button key={t.id} className="dc-tab" data-on={on?"1":"0"} onClick={()=>setDcActiveTab(t.id)} style={{padding:"6px 11px 5px",borderRadius:999,border:on?"1px solid #221C42":"1px solid rgba(26,26,46,0.10)",cursor:"pointer",fontSize:13,fontWeight:on?700:500,background:on?"#221C42":"#FFFFFF",color:on?"#F5F1E7":textS,whiteSpace:"nowrap",letterSpacing:0.2,position:"relative",display:"inline-flex",flexDirection:"column",alignItems:"flex-start",gap:1,lineHeight:1,flexShrink:0}}>
+                        <span style={{display:"inline-flex",alignItems:"center",gap:6}}>
+                          <span style={{fontSize:14,lineHeight:1}}>{t.icon}</span>{t.label}
+                          {!t.live && <span style={{marginLeft:6,fontSize:10,padding:"2px 5px",borderRadius:4,background:"rgba(245,158,11,0.18)",color:"#F59E0B",fontWeight:700,letterSpacing:0.4}}>{t.ship}</span>}
+                        </span>
+                        <span className="dc-money" style={{fontSize:10.5,fontWeight:700,opacity:amount?(on?0.85:0.55):0,marginTop:1}}>{amount || " "}</span>
+                      </button>
+                    );
+                  });
+                })()}
               </div>
               <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:10,flexShrink:0,paddingLeft:14}}>
                 {/* The "Cached · <time>", "↻ Regenerate" and run-counter badges are gone from this
@@ -1651,20 +1835,31 @@ export default function DealCheckOverlay({ ctx }) {
                       }
                     });
                   }
-                  // ── SAME ZONE ORDER AS BUILD ──
-                  // byZone's own key order is whichever zone happened to contribute the first
-                  // card, which is why dragging in Build changed nothing here. The deal's
-                  // zoneOrder (per function, set by dragging) decides it instead: listed zones
-                  // first in their dragged sequence, anything else after in the order it already
-                  // had — so a zone absent from the list can never disappear from Deal Check.
+                  // ── TWO ORDERINGS, LAYERED ──
+                  // Settings → Zones is the house default: a drag-ordered priority list that every
+                  // deal follows, and the same list Build sorts by. A zone missing from it (e.g.
+                  // "(unzoned)") sorts after every known zone, keeping its original relative order.
+                  //
+                  // On top of that, ONE deal can arrange its own zones by dragging them in Build.
+                  // That per-function zoneOrder wins where it has an opinion — a salesperson who
+                  // has deliberately arranged this client's zones should not have Settings reorder
+                  // them back. Zones they never dragged keep their Settings position behind the
+                  // dragged ones, so a partial arrangement is safe and nothing can drop out.
                   const zoneList = (() => {
                     const keys = Object.keys(byZone);
+                    const bySettings = keys.slice().sort((a, b) => {
+                      const ia = zoneKeys.indexOf(a), ib = zoneKeys.indexOf(b);
+                      if (ia === -1 && ib === -1) return 0;
+                      if (ia === -1) return 1;
+                      if (ib === -1) return -1;
+                      return ia - ib;
+                    });
                     const dragged = Array.isArray(fns[fnIdx]?.zoneOrder) ? fns[fnIdx].zoneOrder : [];
-                    if (!dragged.length) return keys;
+                    if (!dragged.length) return bySettings;
                     const rank = {};
-                    keys.forEach((k, i) => { rank[k] = i; });
+                    bySettings.forEach((k, i) => { rank[k] = i; });
                     dragged.forEach((k, i) => { rank[k] = i - dragged.length; });
-                    return keys.slice().sort((a, b) => (rank[a] ?? Infinity) - (rank[b] ?? Infinity));
+                    return bySettings.slice().sort((a, b) => (rank[a] ?? Infinity) - (rank[b] ?? Infinity));
                   })();
                   const autoCollapse = totalCards > 30;  // §7.9.2 — auto-collapse when > 30 cards
                   // ═══ Patch 6 — Generate bar computation (event-wide scope · sidebar wired) ═══
@@ -1778,6 +1973,10 @@ export default function DealCheckOverlay({ ctx }) {
                         const totalRowCount = zoneCards.length + platformEntriesForZone.length + recipeFlorals.length + manualItemsInZone.length;
                         const zonePhoto = fns[fnIdx]?.elSelectedPhoto?.[zk]?.src || null;
                         const zonePhotoName = fns[fnIdx]?.elSelectedPhoto?.[zk]?.eventName || "";
+                        // ♻️ Repeat vs ✨ Fresh — set in Build's own zone toggle (zoneConfig[k].repeat,
+                        // fixed-venue "reuse the standing setup" vs a build from scratch). Read-only
+                        // here — mirrors Build's badge exactly, this screen just displays what was set.
+                        const zoneIsRepeatTag = !!fns[fnIdx]?.zoneConfig?.[zk]?.repeat;
                         // Total rental of every matched item in this zone — mirrors the sidebar/bottom-bar
                         // rollup math exactly (split-fulfilment lines, unavailable-shortfall cost%, the
                         // fixed-venue Repeat discount) instead of a naive qty × rate sum, which is why this
@@ -1849,6 +2048,7 @@ export default function DealCheckOverlay({ ctx }) {
                                 <span style={{fontSize:15.5,fontWeight:700,color:IV.ink,letterSpacing:-0.25,textTransform:"capitalize"}}>{zk}</span>
                                 <span className="dc-cap" style={{color:IV.ink3,letterSpacing:1.2}}>{totalRowCount} card{totalRowCount===1?"":"s"}</span>
                                 {zoneRentalTotal>0 && <span title="Total rental of all inventory in this zone" style={{fontSize:13,padding:"3px 9px",borderRadius:5,background:"rgba(201,169,110,0.15)",color:accent,fontWeight:700}}>₹{zoneRentalTotal.toLocaleString("en-IN")} rental</span>}
+                                <span title={zoneIsRepeatTag?"Reusing an existing setup — discounted rental, no build labour (set in Build)":"New build this time — full rental + labour + transport (set in Build)"} style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:10,fontWeight:700,padding:"3px 9px",borderRadius:10,border:`1px solid ${zoneIsRepeatTag?"#059669":border}`,background:zoneIsRepeatTag?"#05966918":"transparent",color:zoneIsRepeatTag?"#059669":textS}}>{zoneIsRepeatTag?<IconRepeat size={11}/>:<IconSparkle size={11}/>}{zoneIsRepeatTag?"Repeat":"Fresh"}</span>
                               </div>
                               <div style={{display:"flex",gap:6,alignItems:"center"}}>
                                 {/* ── THE SAME MARKS BUILD USES, FOR THE SAME ACTIONS ──
@@ -2124,13 +2324,24 @@ export default function DealCheckOverlay({ ctx }) {
                                           {card.imsId && reuseFnCount[card.imsId]?.size >= 2 && <span style={{fontSize:11,padding:"2px 6px",borderRadius:4,background:"rgba(16,185,129,0.18)",color:"#10B981",fontWeight:700,letterSpacing:0.4}}>♻ {reuseFnCount[card.imsId].size} fns</span>}
                                           <span onClick={()=>setDcCards(prev=>{const fn={...(prev[fnIdx]||{})}; delete fn[card._cardKey]; return {...prev,[fnIdx]:fn};})} title="Remove from Deal Check" style={{marginLeft:"auto",cursor:"pointer",color:"#EF4444",fontSize:15.5,fontWeight:700,padding:"0 4px",lineHeight:1,flexShrink:0,opacity:0.6,transition:"opacity 0.15s"}} onMouseEnter={e=>e.currentTarget.style.opacity=1} onMouseLeave={e=>e.currentTarget.style.opacity=0.6}>×</span>
                                         </div>
-                                        {card.imsId && item ? (
-                                          <div style={{fontSize:12,lineHeight:1.5,color:IV.ink2,marginBottom:7}}>
-                                            → <span style={{color:IV.ink,fontWeight:700}}>{item.name || card.imsName}</span>
-                                            <span style={{...NUM,marginLeft:8,color:IV.ink,fontWeight:700}}>₹{rental.toLocaleString("en-IN")}{card.qty>1?` × ${card.qty} = ₹${(rental*card.qty).toLocaleString("en-IN")}`:""}</span>
-                                            {dims && <span style={{marginLeft:8,color:IV.ink3}}>· {dims}</span>}
-                                          </div>
-                                        ) : (
+                                        {card.imsId && item ? (() => {
+                                          // The title above already shows the resolved item's name
+                                          // (item?.name, falling back to card.rcName only when
+                                          // unmatched) — repeating it here with a "→" was pure
+                                          // duplication for the common case (an exact name-match
+                                          // resolves to an item literally called the same thing).
+                                          // Only worth an arrow when it resolved to something ELSE —
+                                          // a genuine swap/AI pick the salesperson should notice.
+                                          const resolvedName = item.name || card.imsName;
+                                          const sameName = String(resolvedName || "").trim().toLowerCase() === String(card.rcName || "").trim().toLowerCase();
+                                          return (
+                                            <div style={{fontSize:12,lineHeight:1.5,color:IV.ink2,marginBottom:7}}>
+                                              {!sameName && <>→ <span style={{color:IV.ink,fontWeight:700}}>{resolvedName}</span>{" "}</>}
+                                              <span style={{...NUM,marginLeft:sameName?0:8,color:IV.ink,fontWeight:700}}>₹{rental.toLocaleString("en-IN")}{card.qty>1?` × ${card.qty} = ₹${(rental*card.qty).toLocaleString("en-IN")}`:""}</span>
+                                              {dims && <span style={{marginLeft:8,color:IV.ink3}}>· {dims}</span>}
+                                            </div>
+                                          );
+                                        })() : (
                                           <div style={{fontSize:12,color:IV.red,marginBottom:7,fontStyle:"italic"}}>No IMS match — pick from alternatives below or browse subcategory</div>
                                         )}
                                         {/* The "Set as correct match for this photo" link stood here, with its "learned for
@@ -2178,8 +2389,11 @@ export default function DealCheckOverlay({ ctx }) {
                                           // screens open the same picker and cannot drift apart.
                                           // onPick is REQUIRED here: without it saveAvailPick writes the choice into
                                           // Build's zoneElements, which is the wrong state for a Deal Check card.
-                                          // priceMode is left default so the list prices at RENTAL — Deal Check rents,
-                                          // unlike CustomItemModal which asks the same picker for production cost.
+                                          // priceMode:"rental" — Deal Check rents, unlike CustomItemModal which asks the
+                                          // same picker for production cost, but "rental" here means OUR flat rental
+                                          // cost (imsField.rentalCost), not Build's client-facing RENTAL figure — the
+                                          // default mode runs that through priceForInvItem's Rate-Card scaling factor,
+                                          // which is a sale-price markup that has no place in Deal Check's own cost view.
                                           const availEl = { invId: card.imsId || null, imsId: card.imsId || null, name: item?.name || card.rcName || "" };
                                           // Icon only. The picker's own header names the sub-category and what it is for, so a
                                           // word here was labelling a control the user is about to see labelled again — and this
@@ -2195,6 +2409,11 @@ export default function DealCheckOverlay({ ctx }) {
                                                 if (!pick) return;
                                                 setDcCards(prev => ({ ...prev, [fnIdx]: { ...(prev[fnIdx] || {}),
                                                   [card._cardKey]: { ...(prev[fnIdx]?.[card._cardKey] || {}), imsId: pick.id, imsName: pick.name || "", source: "manual-swap" } } }));
+                                                // Flush the durable draft right away rather than trusting the 2.5s debounce —
+                                                // a booked deal's swap lives ONLY in this draft (Build is deliberately never
+                                                // touched), so a refresh landing inside that window reverted straight back to
+                                                // whatever Build still shows, with no other copy anywhere to restore from.
+                                                setTimeout(() => flushDcAutosaveRef?.current?.(), 0);
                                               }, {
                                                 // Pratik's Split, now offered here too. The picker cannot read this qty from
                                                 // zoneElements — a Deal Check card keeps its own — so it is declared, and the
@@ -2204,10 +2423,15 @@ export default function DealCheckOverlay({ ctx }) {
                                                   ? "Pick one item to swap this card to — or Split to divide its qty across 2 or more."
                                                   : "Pick an item to swap this card to.",
                                                 splitQty: Number(card.qty) || 0,
-                                                onSplit: (alloc) => setDcCards(prev => ({ ...prev, [fnIdx]: { ...(prev[fnIdx] || {}),
-                                                  [card._cardKey]: { ...(prev[fnIdx]?.[card._cardKey] || {}),
+                                                onSplit: (alloc) => { setDcCards(prev => { const prevCard = prev[fnIdx]?.[card._cardKey] || {}; return { ...prev, [fnIdx]: { ...(prev[fnIdx] || {}),
+                                                  [card._cardKey]: { ...prevCard,
                                                     split: alloc.map(a => ({ imsId: a.imsId, qty: a.qty })),
-                                                    source: "manual-swap" } } })),
+                                                    // Persists once created (see dealCheckSync.js's newSplitGroupId) so the
+                                                    // ongoing-deal Build sync can find every entry a given split produced
+                                                    // even after array indices shift.
+                                                    splitGroupId: prevCard.splitGroupId || newSplitGroupId(),
+                                                    source: "manual-swap" } } }; }); setTimeout(() => flushDcAutosaveRef?.current?.(), 0); },
+                                                priceMode: "rental",
                                               })}
                                               title={`Check stock availability & pick an item${subToUse ? ` — ${subTotal} in ${subToUse}` : ""}`}
                                               aria-label="Check stock availability and pick an item"
@@ -2262,7 +2486,7 @@ export default function DealCheckOverlay({ ctx }) {
                                         {card.imsId && (()=>{
                                           const cQty = Number(card.qty)||1;
                                           const split = Array.isArray(card.split) ? card.split.filter(s=>s&&s.imsId) : [];
-                                          const setSplit = (next)=> setDcCards(prev=>({...prev,[fnIdx]:{...(prev[fnIdx]||{}),[card._cardKey]:{...(prev[fnIdx]?.[card._cardKey]||{}),split:(Array.isArray(next)&&next.length)?next:undefined}}}));
+                                          const setSplit = (next)=> { setDcCards(prev=>{ const prevCard = prev[fnIdx]?.[card._cardKey] || {}; const hasNext = Array.isArray(next) && next.length; return {...prev,[fnIdx]:{...(prev[fnIdx]||{}),[card._cardKey]:{...prevCard, split: hasNext ? next : undefined, ...(hasNext ? { splitGroupId: prevCard.splitGroupId || newSplitGroupId() } : {}) }}}; }); setTimeout(() => flushDcAutosaveRef?.current?.(), 0); };
                                           // Live IMS sub-category only — never Rate Card (see the sub-category note above).
                                           const subS = item ? imsField.subcategory(item) : "";
                                           const subItems = subS ? dcInventoryCache.filter(x=>String(imsField.subcategory(x)||"").toLowerCase().trim()===String(subS).toLowerCase().trim()) : [];
@@ -2677,6 +2901,15 @@ export default function DealCheckOverlay({ ctx }) {
                   // always dump every function's trucks on screen no matter which one was selected.
                   const fns = dcShowAllFns ? allFns.map((fn,fi)=>({fn,fi})) : allFns.map((fn,fi)=>({fn,fi})).filter(x=>x.fi===(activeFnIdx||0));
                   const DEPT_TRANSPORT_ICON = { Furniture: "🛋️", Floral: "🌸", Structure: "🏛️", Tenting: "⛺", Transport: "🚚", Lighting: "💡", Fabric: "🧵" };
+                  // IMS Settings → Sub-Categories' own top-level grouping (rate_card_categories.
+                  // category_label, admin-set — e.g. "Console Table"/"Coffee Table"/"Pedestals" are
+                  // filed under Florals there) is the source of truth for which department a
+                  // sub-category belongs to. Classifying by the sub-category's OWN name instead (e.g.
+                  // running the Furniture/Floral/Structure keyword matcher on "Console Table" itself)
+                  // matches no keyword and silently falls through to Structure's catch-all — which is
+                  // how a florals-owned prop like Console Table ended up filed under 🏛️ Structure here.
+                  const subcatCatLabelById = {};
+                  (rcSubcatFactors || []).forEach(r => { if (r?.id && r.category_label) subcatCatLabelById[r.id] = r.category_label; });
                   // Booking-level figures for the summary bar. Computed from the same
                   // calcFunctionBreakdown the cards above are drawn from, so the bar cannot
                   // disagree with the sum of what is on screen.
@@ -2711,7 +2944,15 @@ export default function DealCheckOverlay({ ctx }) {
                         // pseudo-group at the end rather than being forced into one.
                         const deptGroupsMap = {};
                         rows.forEach(r => {
-                          const dg = r.isBuffer ? "Buffer" : sharedCatToDept(r.label, dealCheckData?.categoryDepartments);
+                          // r.invCat is the CONTRIBUTING INVENTORY ITEM's own top-level category
+                          // (item.cat, set directly on the item in IMS Inventory) — the real answer
+                          // to "what department owns this," not a guess from the sub-category's own
+                          // name. Falls back to the Sub-Categories tab's admin-set grouping (when the
+                          // row has no live inventory item behind it, e.g. Truss/Platform/Carpet),
+                          // then to keyword-matching the row's own label as the last resort.
+                          const subcatCat = subcatCatLabelById[r.subKey];
+                          const classifyText = r.invCat || ((subcatCat && subcatCat !== "Other") ? subcatCat : r.label);
+                          const dg = r.isBuffer ? "Buffer" : sharedCatToDept(classifyText, dealCheckData?.categoryDepartments);
                           (deptGroupsMap[dg] = deptGroupsMap[dg] || []).push(r);
                         });
                         const deptGroups = [...OPS_DEPTS, "Buffer"].filter(d => deptGroupsMap[d]?.length).map(d => ({ dept: d, rows: deptGroupsMap[d] }));
@@ -2751,6 +2992,16 @@ export default function DealCheckOverlay({ ctx }) {
                                 </div>
                                 {rows.length > 0 && <span aria-hidden="true" style={{fontSize:11,color:INK_3,flexShrink:0,display:"inline-block",transform:isOpen?"rotate(90deg)":"none",transition:"transform 0.16s ease"}}>▸</span>}
                               </div>
+                              {/* ♻️ Repeat zones are dropped from the truck-capacity count above (see
+                                  calcFunctionBreakdown's repeatZonesExcluded) — said here so a lower
+                                  truck count reads as "these zones didn't need a truck", not as a bug.
+                                  Not gated on isOpen, same reasoning as the empty state below it. */}
+                              {tr?.repeatZonesExcluded?.length > 0 && (
+                                <div style={{padding:"9px 15px",fontSize:11.5,color:"#059669",background:"#0596690D",borderBottom:`1px solid ${HAIRLINE}`,display:"flex",alignItems:"center",gap:6}}>
+                                  <span aria-hidden="true">♻️</span>
+                                  <span><b>{tr.repeatZonesExcluded.map(z => z.label).join(", ")}</b> {tr.repeatZonesExcluded.length===1?"is":"are"} marked Repeat — excluded from this trip's truck count.</span>
+                                </div>
+                              )}
                               {/* ── NOTHING TO TRANSPORT IS NOT NOTHING TO SAY ──
                                   This tab scopes to the function selected in the sidebar, so picking
                                   a ceremony that carries no trucks used to leave a header with a dash
@@ -2914,6 +3165,16 @@ export default function DealCheckOverlay({ ctx }) {
                   if (allFns.length === 0) return <div style={{padding:"50px 30px",textAlign:"center",color:INK_3,fontSize:13}}>No functions configured yet.</div>;
                   // Scoped to the selected function unless "All functions" is on — see Transport tab above.
                   const fns = dcShowAllFns ? allFns.map((fn,fi)=>({fn,fi})) : allFns.map((fn,fi)=>({fn,fi})).filter(x=>x.fi===(activeFnIdx||0));
+                  // Writes straight into the SAME field Build's own genset plan reads (customGensets /
+                  // genset62 — null means "follow the venue default"), the live state when this is the
+                  // function currently open in Build, or that function's fnBuilds snapshot otherwise —
+                  // the identical active-vs-not duality the Deal-Check→Build sync effect already uses.
+                  // Clamped at 0: a generator count has no meaningful negative.
+                  const setGensetCount = (fi, field, nextVal) => {
+                    const val = Math.max(0, Math.round(nextVal) || 0);
+                    if (fi === activeFnIdxCommitted) { if (field === "genset125") setCustomGensets(val); else setGenset62(val); }
+                    else setFnBuilds(prev => ({ ...prev, [fi]: { ...(prev[fi] || {}), [field === "genset125" ? "customGensets" : "genset62"]: val } }));
+                  };
                   // Booking-level figures for the summary bar, off the same breakdown the cards use.
                   let sumCost = 0, sumUnits = 0, sumKva = 0, fnsPowered = 0;
                   fns.forEach(({fn}) => {
@@ -2938,13 +3199,17 @@ export default function DealCheckOverlay({ ctx }) {
                         const v62 = Number(tr?.venueGenset62) || 0;
                         const r125 = Number(tr?.gensetRate) || 0;
                         const r62 = Number(tr?.gensetRate62) || 0;
-                        // One entry per generator size actually in the plan. Cost per size was never
-                        // shown — only the function's lump sum — so with both sizes running you could
-                        // not tell which one the money was going to.
-                        const units = [
-                          { kva: 125, n: g125, rate: r125, venue: v125 },
-                          { kva: 62,  n: g62,  rate: r62,  venue: v62  },
-                        ].filter(u => u.n > 0);
+                        // Always both sizes, not just whichever is already non-zero — the steppers
+                        // below exist so a size at 0 can be raised while the other is lowered, which
+                        // needs it on screen to raise in the first place. Cost per size was never
+                        // shown at all before — only the function's lump sum — so with both sizes
+                        // running you could not tell which one the money was going to, either.
+                        // Gated on `tr` existing (a real venue + decor cost to price against) rather
+                        // than either count being non-zero.
+                        const units = tr ? [
+                          { kva: 125, n: g125, rate: r125, venue: v125, field: "genset125" },
+                          { kva: 62,  n: g62,  rate: r62,  venue: v62,  field: "genset62"  },
+                        ] : [];
                         const totalKva = g125 * 125 + g62 * 62;
                         return (
                           <div key={fi} className="dc2-card" style={{background:CARD_BG,border:`1px solid ${CARD_BORDER}`,borderRadius:14,boxShadow:CARD_SHADOW,overflow:"hidden",display:"flex"}}>
@@ -2991,9 +3256,18 @@ export default function DealCheckOverlay({ ctx }) {
                                         <div style={{flex:"1 1 auto",minWidth:0,padding:"10px 12px"}}>
                                           <div style={{display:"flex",alignItems:"baseline",gap:10}}>
                                             <span style={{flex:"1 1 auto",minWidth:0,fontSize:10.5,fontWeight:700,color:INK,letterSpacing:0.8,textTransform:"uppercase"}}>{u.kva} KVA</span>
-                                            <span style={{flexShrink:0,textAlign:"right"}}>
-                                              <span style={{fontSize:13,fontWeight:700,color:INK,letterSpacing:-0.2,...NUM}}>{u.n}</span>
-                                              <span style={{fontSize:9.5,color:INK_3,marginLeft:3}}>unit{u.n===1?"":"s"}</span>
+                                            {/* Steppers, not just a number — the whole point is being
+                                                able to move a unit from one size to the other (drop
+                                                a 125 to add a 62, say) to trim the trip's cost without
+                                                leaving this tab. */}
+                                            <span style={{flexShrink:0,display:"flex",alignItems:"center",gap:6}}>
+                                              <button onClick={() => setGensetCount(fi, u.field, u.n - 1)} disabled={u.n <= 0}
+                                                title={`Remove one ${u.kva} KVA unit`}
+                                                style={{width:20,height:20,borderRadius:5,border:`1px solid ${TILE_BORDER}`,background:"#fff",color:u.n<=0?INK_3:INK,fontSize:13,fontWeight:700,lineHeight:1,cursor:u.n<=0?"default":"pointer",display:"flex",alignItems:"center",justifyContent:"center",padding:0}}>−</button>
+                                              <span style={{minWidth:16,textAlign:"center",fontSize:13,fontWeight:700,color:INK,...NUM}}>{u.n}</span>
+                                              <button onClick={() => setGensetCount(fi, u.field, u.n + 1)}
+                                                title={`Add one ${u.kva} KVA unit`}
+                                                style={{width:20,height:20,borderRadius:5,border:`1px solid ${TILE_BORDER}`,background:"#fff",color:INK,fontSize:13,fontWeight:700,lineHeight:1,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",padding:0}}>+</button>
                                             </span>
                                           </div>
                                           <div style={{display:"flex",alignItems:"baseline",gap:8,marginTop:7}}>
@@ -3048,25 +3322,37 @@ export default function DealCheckOverlay({ ctx }) {
                   const fnIdx = activeFnIdx || 0;
                   const isP = dcActiveTab === "production";
                   const items = dcCustomItems.filter(c => c.fnIdx === fnIdx && c.type === dcActiveTab);
-                  const total = items.reduce((s, c) => s + (c.manualPrice || c.refPrice || 0) * (Number(c.qty) || 1), 0);
+                  const fnForPrints = (collectAllFunctionData ? collectAllFunctionData() : [])[fnIdx];
+                  // Print jobs (zc[zk].prints — Flex/Vinyl/Sunboard etc) are a Buying action — a
+                  // vendor prints them, nothing is pulled from truss stock — but they live on
+                  // zoneConfig, not as a dcCustomItems row, so they don't show up in the `items`
+                  // filter above and need pulling in separately here. Buying-only: Production has
+                  // nothing to do with them. Shared with the tab-strip's own total (printJobsForFn),
+                  // so the two figures can't drift apart.
+                  const printJobs = (!isP && fnForPrints) ? printJobsForFn(fnForPrints) : [];
+                  const printTotal = printJobs.reduce((s, p) => s + p.total, 0);
+                  // Zones this function actually has enabled — the only valid targets for a new
+                  // print, same restriction Build's own Print tile is scoped to (one zone's header).
+                  const printZoneOptions = (!isP && fnForPrints) ? Object.keys(fnForPrints.enabledEls || {}).filter(zk => fnForPrints.enabledEls[zk]) : [];
+                  const total = items.reduce((s, c) => s + (c.manualPrice || c.refPrice || 0) * (Number(c.qty) || 1), 0) + printTotal;
                   // Production and Buying are the same shape of thing — a short list of one-off
                   // items added per zone — so they share this branch and differ only by accent.
                   // Warm-palette equivalents of the old #A855F7 / #F59E0B.
                   const ciInk  = isP ? "#6F63A8" : "#C6A55E";
                   const ciTile = isP ? "#EBE8F4" : "#F7F1E0";
-                  const fnName = (collectAllFunctionData ? collectAllFunctionData() : [])[fnIdx]?.fnType || `Function ${fnIdx+1}`;
+                  const fnName = fnForPrints?.fnType || `Function ${fnIdx+1}`;
                   return (
                     <div style={{display:"flex",flexDirection:"column",gap:12}}>
                       <style>{DC_CSS}</style>
                       <div className="dc2-card" style={{background:CARD_BG,border:`1px solid ${CARD_BORDER}`,borderRadius:14,boxShadow:CARD_SHADOW,overflow:"hidden",display:"flex"}}>
-                        <div aria-hidden="true" style={{width:4,flexShrink:0,background:items.length?ciInk:"#DED7CB"}} />
+                        <div aria-hidden="true" style={{width:4,flexShrink:0,background:(items.length + printJobs.length)?ciInk:"#DED7CB"}} />
                         <div style={{flex:"1 1 auto",minWidth:0}}>
                           <div style={{display:"flex",alignItems:"center",gap:12,padding:"13px 15px",borderBottom:`1px solid ${HAIRLINE}`}}>
                             <span aria-hidden="true" style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:36,height:36,borderRadius:10,flexShrink:0,fontSize:17,lineHeight:1,background:ciTile}}>{isP?"🏭":"🛒"}</span>
                             <div style={{flex:"1 1 auto",minWidth:0}}>
                               <div style={{fontSize:15.5,fontWeight:700,color:INK,letterSpacing:-0.35,lineHeight:1.2}}>{isP ? "Production items" : "Buying items"}</div>
                               <div style={{fontSize:11.5,color:INK_3,marginTop:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",...NUM}}>
-                                {fnName} · {items.length} item{items.length===1?"":"s"} · one-offs added from zone headers on Build
+                                {fnName} · {items.length + printJobs.length} item{(items.length + printJobs.length)===1?"":"s"} · {isP ? "one-offs added from zone headers on Build" : "one-offs from Build, plus prints added here"}
                               </div>
                             </div>
                             <div style={{textAlign:"right",flexShrink:0}}>
@@ -3074,10 +3360,10 @@ export default function DealCheckOverlay({ ctx }) {
                               <div style={{fontSize:11,color:INK_3,marginTop:2}}>{isP ? "to produce" : "to buy"}</div>
                             </div>
                           </div>
-                          {items.length === 0 ? (
+                          {items.length === 0 && printJobs.length === 0 ? (
                             <div style={{padding:"16px 15px",fontSize:12.5,color:INK_2}}>
                               <div style={{fontWeight:600,marginBottom:3,color:INK}}>No {isP ? "production" : "buying"} items in {fnName}.</div>
-                              <div style={{fontSize:11.5,color:INK_3}}>Add them with the {isP ? "🏭" : "🛒"} icon in a zone header on the Build screen.</div>
+                              <div style={{fontSize:11.5,color:INK_3}}>Add them with the {isP ? "🏭" : "🛒"} icon in a zone header on the Build screen{!isP ? ", or add a print job below" : ""}.</div>
                             </div>
                           ) : (
                             <div className="dc2-grid4" style={{padding:"12px 15px 14px"}}>
@@ -3127,6 +3413,84 @@ export default function DealCheckOverlay({ ctx }) {
                                   </div>
                                 );
                               })}
+                              {printJobs.map(pj => (
+                                <div key={pj.id} className="dc2-row" style={{borderRadius:12,background:TILE_BG,border:`1px solid ${TILE_BORDER}`,overflow:"hidden",display:"flex",flexDirection:"column"}}>
+                                  <div style={{display:"flex",gap:10,padding:"11px 12px"}}>
+                                    <div style={{width:46,height:46,borderRadius:9,background:ciTile,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>🖨</div>
+                                    <div style={{flex:"1 1 auto",minWidth:0}}>
+                                      <div style={{fontSize:9.5,fontWeight:700,letterSpacing:0.7,textTransform:"uppercase",color:INK_3,marginBottom:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>Print / signage</div>
+                                      <div title={pj.matName} style={{fontSize:12.5,fontWeight:650,color:INK,letterSpacing:-0.1,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{pj.matName}</div>
+                                      <div style={{fontSize:10.5,color:INK_3,marginTop:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",...NUM}}>
+                                        {pj.zoneKey} · {pj.size}
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <div style={{marginTop:"auto",display:"flex",alignItems:"flex-end",gap:8,padding:"10px 12px 11px"}}>
+                                    <div style={{flex:"1 1 auto",minWidth:0}}>
+                                      <div style={{fontSize:17,fontWeight:750,color:INK,letterSpacing:-0.45,lineHeight:1.1,...NUM}}>₹{Math.round(pj.total).toLocaleString("en-IN")}</div>
+                                      <div style={{fontSize:9.5,color:INK_3,marginTop:2,letterSpacing:0.4,textTransform:"uppercase",fontWeight:600,...NUM}}>₹{Math.round(pj.unitCost).toLocaleString("en-IN")} × {pj.qty}</div>
+                                    </div>
+                                    <button onClick={() => removePrintFromZone(fnIdx, pj.zoneKey, pj.pi)}
+                                      title={`Remove this ${pj.matName} print job`}
+                                      className="dc2-ghost"
+                                      style={{flexShrink:0,width:26,height:26,borderRadius:8,border:`1px solid ${TILE_BORDER}`,background:CARD_BG,color:INK_3,fontSize:12,lineHeight:1,cursor:"pointer"}}>✕</button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          {/* Buying-only: a print job is priced from material + area, not picked
+                              from stock, so it gets its own small form here rather than reusing the
+                              zone-header "+ item" flow items.map above came from (which needs a
+                              Rate-Card/inventory match — a print doesn't have one). Writes straight
+                              into zoneConfig[zoneKey].prints (addPrintToZone), the same field Build's
+                              own Print tile writes, so it shows up there identically. */}
+                          {!isP && (
+                            <div style={{padding:"12px 15px 14px",borderTop:items.length||printJobs.length?`1px solid ${HAIRLINE}`:"none"}}>
+                              <div style={{fontSize:10.5,fontWeight:700,letterSpacing:0.6,textTransform:"uppercase",color:INK_2,marginBottom:8}}>+ Add a print job</div>
+                              {printZoneOptions.length === 0 ? (
+                                <div style={{fontSize:11.5,color:INK_3}}>No zones enabled on {fnName} yet — enable one in Build first.</div>
+                              ) : (() => {
+                                const form = dcPrintForm;
+                                const mat = (imsPrintMaterials || []).find(m => m.id === form.material);
+                                const sqft = (Number(form.areaW) || 0) * (Number(form.areaD) || 0);
+                                const qty = Math.max(1, Math.round(Number(form.qty) || 1));
+                                const cost = sqft * (mat?.ratePerSqft || 0) * qty;
+                                const canAdd = !!(form.zoneKey && form.material && sqft > 0);
+                                const doAdd = () => {
+                                  if (!canAdd) return;
+                                  addPrintToZone(fnIdx, form.zoneKey, {
+                                    id: "PR" + Date.now() + Math.floor(Math.random() * 1000),
+                                    material: form.material, areaW: Number(form.areaW) || 0, areaD: Number(form.areaD) || 0,
+                                    qty, refImageUrl: "", invId: null,
+                                  });
+                                  setDcPrintForm(f => ({ ...f, areaW: "", areaD: "", qty: 1 }));
+                                };
+                                return (
+                                  <div style={{display:"flex",flexWrap:"wrap",alignItems:"center",gap:8}}>
+                                    <select value={form.zoneKey} onChange={e => setDcPrintForm(f => ({ ...f, zoneKey: e.target.value }))}
+                                      style={{padding:"5px 8px",borderRadius:8,border:`1px solid ${TILE_BORDER}`,fontSize:12,background:"#fff",color:INK,textTransform:"capitalize"}}>
+                                      <option value="">Zone…</option>
+                                      {printZoneOptions.map(zk => <option key={zk} value={zk} style={{textTransform:"capitalize"}}>{zk}</option>)}
+                                    </select>
+                                    <select value={form.material} onChange={e => setDcPrintForm(f => ({ ...f, material: e.target.value }))}
+                                      style={{padding:"5px 8px",borderRadius:8,border:`1px solid ${TILE_BORDER}`,fontSize:12,background:"#fff",color:INK,maxWidth:180}}>
+                                      <option value="">Material…</option>
+                                      {(imsPrintMaterials || []).map(m => <option key={m.id} value={m.id}>{m.name} (₹{m.ratePerSqft}/sqft)</option>)}
+                                    </select>
+                                    <input type="number" min="0" step="0.1" value={form.areaW} onChange={e => setDcPrintForm(f => ({ ...f, areaW: e.target.value }))}
+                                      placeholder="W ft" style={{width:56,padding:"5px 6px",borderRadius:8,border:`1px solid ${TILE_BORDER}`,fontSize:12,textAlign:"center"}} />
+                                    <span style={{fontSize:12,color:INK_3}}>×</span>
+                                    <input type="number" min="0" step="0.1" value={form.areaD} onChange={e => setDcPrintForm(f => ({ ...f, areaD: e.target.value }))}
+                                      placeholder="D ft" style={{width:56,padding:"5px 6px",borderRadius:8,border:`1px solid ${TILE_BORDER}`,fontSize:12,textAlign:"center"}} />
+                                    <input type="number" min="1" step="1" value={form.qty} onChange={e => setDcPrintForm(f => ({ ...f, qty: Math.max(1, Math.round(Number(e.target.value) || 1)) }))}
+                                      title="Qty" style={{width:48,padding:"5px 6px",borderRadius:8,border:`1px solid ${TILE_BORDER}`,fontSize:12,textAlign:"center"}} />
+                                    {cost > 0 && <span style={{fontSize:12.5,fontWeight:700,color:INK,...NUM}}>₹{Math.round(cost).toLocaleString("en-IN")}</span>}
+                                    <button onClick={doAdd} disabled={!canAdd}
+                                      style={{marginLeft:"auto",padding:"6px 14px",borderRadius:8,border:"none",background:canAdd?ciInk:"#DED7CB",color:"#fff",fontSize:12,fontWeight:700,cursor:canAdd?"pointer":"default"}}>+ Add</button>
+                                  </div>
+                                );
+                              })()}
                             </div>
                           )}
                         </div>
@@ -3404,7 +3768,7 @@ export default function DealCheckOverlay({ ctx }) {
                   );
                 })() : dcActiveTab === "gyv" ? (() => {
                   // ═══ GYV FIXED & BUFFER COST TAB — reads from shared dcCostRollup ═══
-                  const { rental, florals, transport, manpower, truss, buyTotal, produceTotal, base: baseProj, gyvFixed: gyvCost, bufferCost, grand: grandProj, clientRevenue, fns, hasActuals, actualMandi, actualExpenses, effFlorals, baseActual, grandActual, projFlorals, effManpower, mpDelta } = dcCostRollup;
+                  const { rental, florals, transport, manpower, truss, buyTotal, produceTotal, base: baseProj, gyvFixed: gyvCost, bufferCost, commissionTotal, grand: grandProj, clientRevenue, fns, hasActuals, actualMandi, actualExpenses, effFlorals, baseActual, grandActual, projFlorals, effManpower, mpDelta } = dcCostRollup;
                   const baseCost = hasActuals ? baseActual : baseProj;
                   const grandWithOverheads = hasActuals ? grandActual : grandProj;
                   const fmt = (n) => n > 0 ? "₹" + Math.round(n).toLocaleString("en-IN") : "₹0";
@@ -3439,7 +3803,13 @@ export default function DealCheckOverlay({ ctx }) {
                   const quote = Number(cli?.negotiatedAmount) > 0
                     ? Number(cli.negotiatedAmount)
                     : (() => { let s = 0; try { fns.forEach(fn => { s += calcFunctionCost(fn).grand; }); } catch {} return s; })();
-                  const netProfit = quote - grandWithOverheads;
+                  // Commission is a real payout out of this deal's revenue, so what Ambria actually
+                  // keeps has to come out net of it too — not just net of production cost + GYV/
+                  // buffer. It deliberately stays OUT of grandWithOverheads/"Project total" itself
+                  // (that figure means "what building this event costs", used by IMS/dept splits and
+                  // the bottom strip) — it is only added in here, where profit is actually measured.
+                  const internalCostForProfit = grandWithOverheads + commissionTotal;
+                  const netProfit = quote - internalCostForProfit;
                   const profitPct = quote > 0 ? Math.round((netProfit / quote) * 100) : 0;
                   // Health bands: the thresholds were already in the code, only the palette changes.
                   const health = profitPct >= 20
@@ -3566,8 +3936,8 @@ export default function DealCheckOverlay({ ctx }) {
                           <div onClick={sOver.toggle} className="dc2-hd" style={headStyle(sOver.open)}>
                             <span aria-hidden="true" style={ICON_TILE("#F7F1E0")}>🏢</span>
                             <div style={{flex:"1 1 auto",minWidth:0}}>
-                              <div style={SECT_TITLE}>GYV fixed &amp; buffer</div>
-                              <div style={SECT_SUB}>Both are a percentage of base cost, added on top and carried into the project total in the bottom strip.</div>
+                              <div style={SECT_TITLE}>GYV fixed, buffer &amp; commission</div>
+                              <div style={SECT_SUB}>GYV and buffer are a percentage of base cost and are carried into the project total in the bottom strip; commission is set per venue in IMS and comes out of profit instead — see Net profitability below.</div>
                             </div>
                             <div style={{textAlign:"right",flexShrink:0}}>
                               <div style={{fontSize:17,fontWeight:750,color:INK,letterSpacing:-0.45,lineHeight:1.1,...NUM}}>{fmt(grandWithOverheads)}</div>
@@ -3579,14 +3949,15 @@ export default function DealCheckOverlay({ ctx }) {
                             {[
                               { k: "GYV fixed", pct: gyvPct, v: gyvCost },
                               { k: "Buffer", pct: bufferPct, v: bufferCost },
+                              { k: "Commission", pct: null, v: commissionTotal },
                             ].map(o => (
                               <div key={o.k} className="dc2-row" style={{borderRadius:12,background:TILE_BG,border:`1px solid ${TILE_BORDER}`,padding:"10px 12px"}}>
                                 <div style={{display:"flex",alignItems:"baseline",gap:8}}>
                                   <span style={{flex:"1 1 auto",fontSize:10.5,fontWeight:700,color:INK,letterSpacing:0.8,textTransform:"uppercase"}}>{o.k}</span>
-                                  <span style={{fontSize:10,fontWeight:700,color:INK_3,...NUM}}>{o.pct}%</span>
+                                  <span style={{fontSize:10,fontWeight:700,color:INK_3,...NUM}}>{o.pct != null ? `${o.pct}%` : "per venue"}</span>
                                 </div>
                                 <div style={{fontSize:17,fontWeight:750,color:INK,letterSpacing:-0.45,lineHeight:1.1,marginTop:6,...NUM}}>{fmt(o.v)}</div>
-                                <div style={{fontSize:10,color:INK_3,marginTop:3,...NUM}}>{o.pct}% of {fmt(baseCost)}</div>
+                                <div style={{fontSize:10,color:INK_3,marginTop:3,...NUM}}>{o.pct != null ? `${o.pct}% of ${fmt(baseCost)}` : "rate set per venue in IMS"}</div>
                               </div>
                             ))}
                           </div>}
@@ -3601,7 +3972,7 @@ export default function DealCheckOverlay({ ctx }) {
                             <span aria-hidden="true" style={ICON_TILE(health.soft)}>📊</span>
                             <div style={{flex:"1 1 auto",minWidth:0}}>
                               <div style={SECT_TITLE}>Net profitability</div>
-                              <div style={SECT_SUB}>What is left after the project total comes out of the client quote.</div>
+                              <div style={SECT_SUB}>What is left after the project total and venue commission come out of the client quote.</div>
                             </div>
                             <span style={{flexShrink:0,fontSize:10,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase",padding:"4px 10px",borderRadius:999,background:health.soft,color:health.ink,whiteSpace:"nowrap",...NUM}}>{health.label} · {profitPct}%</span>
                             {chev(sProfit.open)}
@@ -3610,7 +3981,7 @@ export default function DealCheckOverlay({ ctx }) {
                             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))",gap:12}}>
                               {[
                                 { k: "Client quote", sub: Number(cli?.negotiatedAmount) > 0 ? "negotiated" : "from Build screen", v: fmt(quote), tone: INK },
-                                { k: "Internal cost", sub: "incl. GYV + buffer", v: fmt(grandWithOverheads), tone: INK },
+                                { k: "Internal cost", sub: "incl. GYV + buffer + commission", v: fmt(internalCostForProfit), tone: INK },
                                 { k: "Net profit", sub: `${profitPct}% margin`, v: `${netProfit < 0 ? "−" : ""}${fmt(Math.abs(netProfit))}`, tone: health.ink },
                               ].map(x => (
                                 <div key={x.k} className="dc2-row" style={{borderRadius:12,background:TILE_BG,border:`1px solid ${TILE_BORDER}`,padding:"10px 12px"}}>
@@ -3636,9 +4007,16 @@ export default function DealCheckOverlay({ ctx }) {
                         </div>
                       </div>
 
-                      {/* ═══ Smart Quote Calculator — salesperson adjusts margin to get revised quote ═══ */}
-                      {(()=>{
-                        const internalCost = grandWithOverheads;
+                      {/* ═══ Smart Quote Calculator — salesperson adjusts margin to get revised quote ═══
+                          Booked deals only: the quote is negotiated and the sale is done, so there is
+                          nothing left to pick a margin FOR — this stays for ongoing deals, where it's
+                          still a live "what should I quote" tool. */}
+                      {!isSold && (()=>{
+                        // Commission-inclusive, same figure Net profitability above uses — the margin
+                        // this calculator solves for has to be measured against the same "what we
+                        // actually keep" baseline, or its revised quote would understate what a given
+                        // margin actually requires.
+                        const internalCost = internalCostForProfit;
                         const origQuote = quote;
                         const origProfitPct = origQuote > 0 ? Math.round(((origQuote - internalCost) / origQuote) * 100) : 0;
                         const desiredPct = dcDesiredMargin !== null ? dcDesiredMargin : origProfitPct;
@@ -3863,12 +4241,13 @@ export default function DealCheckOverlay({ ctx }) {
                 })() : null}
               </div>
             </div>
-            {/* BOTTOM STRIP — Project total + 6 sub-cost chips + Save Draft (Patch 5: live numbers wired) */}
+            {/* BOTTOM STRIP — Project total only. The per-group chips that used to sit beside it
+                (Rental/Truss/Florals/Manpower/Buy/Produce/Genset/GYV/Buffer) now live on their own
+                tab pill instead (see the tab strip above) — owner decision, so a group's number is
+                right where you'd click to see the detail behind it, not repeated in a second row. */}
             {(() => {
               // ═══ Reads from shared dcCostRollup (§26.19) ═══
-              const { rental, transport, genset, truss, buyTotal, produceTotal, base: total, gyvFixed, bufferCost, clientRevenue: stripRevenue, profitPct: stripProfitPct, hasActuals, effFlorals, grandActual, grand: grandProj, mpDelta, effManpower } = dcCostRollup;
-              const manpower = mpDelta ? effManpower : dcCostRollup.manpower;       // reflect dept-head crew overrides
-              const florals = hasActuals ? effFlorals : dcCostRollup.florals;       // show actual mandi once logged
+              const { clientRevenue: stripRevenue, profitPct: stripProfitPct, hasActuals, grandActual, grand: grandProj } = dcCostRollup;
               const grandWithOverheads = hasActuals ? grandActual : grandProj;
               const stripProfitColor = stripProfitPct >= 20 ? "#10B981" : stripProfitPct >= 10 ? "#F59E0B" : "#EF4444";
               // Until Generate has run there are no matched cards, so every rollup figure is 0 and a
@@ -3899,60 +4278,9 @@ export default function DealCheckOverlay({ ctx }) {
               //    reports "Deal Check last saved by <name> · <when>".
               // If a deliberate save action is ever wanted back, it must reuse the autosave's own
               // doSave rather than reimplement a second, weaker write path.
-              const chips = [
-                { id:"rental",   label:"Rental",   icon:"📦", value: fmt(rental),    live: true  },
-                { id:"truss",    label:"Truss",    icon:"🏗️", value: fmt(truss),     live: true  },
-                { id:"florals",  label:"Florals",  icon:"🌸", value: fmt(florals),   live: true  },
-                { id:"transport",label:"Transport",icon:"🚚", value: fmt(Math.max(0, transport - genset)), live: true  },
-                { id:"genset",   label:"Genset",   icon:"⚡", value: fmt(genset),    live: true  },
-                // "(ADJUSTED)" once a dept head has edited crew in IMS Dept Ops — same flag + label
-                // the GYV Fixed & Buffer tab already uses (line ~2188). Without it this chip silently
-                // showed the reconciled-actuals figure with no sign it had moved off the Manpower
-                // tab's own projected total, which is what the tab itself still shows.
-                { id:"manpower", label: mpDelta ? "Manpower (ADJUSTED)" : "Manpower", icon:"👷", value: fmt(manpower), live: true, note: mpDelta ? `dept heads adjusted crew · projected ${fmt(dcCostRollup.manpower)}` : null },
-                { id:"buy",      label:"Buy",      icon:"🛒", value: fmt(dcCustomItems.filter(c=>c.type==="buying").reduce((s,c)=>s+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0)),  live: true },
-                { id:"produce",  label:"Produce",  icon:"🏭", value: fmt(dcCustomItems.filter(c=>c.type==="production").reduce((s,c)=>s+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0)), live: true },
-                { id:"gyv",      label:"GYV 5%",   icon:"🏢", value: fmt(gyvFixed),  live: true  },
-                { id:"buffer",   label:"Buffer 3%",icon:"🛡️", value: fmt(bufferCost),live: true  },
-              ];
               return (
-                <div className="dc-glass dc-bottom" style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 18px",borderTop:`1px solid ${border}`,gap:14}}>
-                  {/* ── TOTAL AND TILES ARE SIBLINGS, NOT NESTED ──
-                      The total used to sit inside the tile row and was held in place with
-                      position:sticky once that row started scrolling. Its background was
-                      `inherit`, which resolves to transparent here — so tiles slid UNDERNEATH
-                      it and both sets of digits rendered on top of each other. Sticky was the
-                      wrong tool: the total is not part of the scrollable content, so it should
-                      not be in the scroller at all. As its own flex child it simply never
-                      moves, and nothing can pass behind it. */}
-                    <div className="dc-bottomtotal" style={{flexShrink:0}}><div className="dc-cap" style={{color:"#1A1A2E",opacity:0.62}}>Project total</div><div className="dc-money" style={{fontSize:25,fontWeight:800,color:"#1A1A2E",marginTop:1,lineHeight:1.1}}>{fmt(grandWithOverheads)}</div>{stripRevenue > 0 && <div className="dc-money" style={{fontSize:11,color:stripProfitColor,fontWeight:700,marginTop:2,letterSpacing:0.1}}>Margin {stripProfitPct}% · {fmt(stripRevenue)} quote</div>}</div>
-                    <div style={{height:30,width:1,background:border}}/>
-                  <div className="dc-bottomchips" style={{display:"flex",alignItems:"center",gap:14,flex:"1 1 auto",minWidth:0,overflowX:"auto"}}>
-                    {/* NOT THE SERIF. I set this in Cormorant because it is the screen's conclusion,
-                        and that was the wrong reason to pick a face: Cormorant's default figures are
-                        OLD-STYLE, so the total came out with its 3, 5 and 7 sitting below the line —
-                        beautiful in a sentence, wobbly in a column of money. Even forced to lining
-                        figures, a text serif's numerals are drawn to sit inside prose, not to be
-                        read as an amount.
-                        The sans is what a price is set in. Size and weight carry the emphasis the
-                        serif was being asked for, and dc-money keeps it tabular and lining so it
-                        agrees with every other figure on the screen. */}
-                    {chips.map(c => (
-                      <div key={c.id} className="dc-chip" title={c.note ? `${c.label} — ${c.value} (${c.note})` : `${c.label} — ${c.value}`} style={{padding:"7px 11px",borderRadius:10,background:"#fff",border:`1px solid ${border}`,fontSize:12,color:"#1A1A2E",flexShrink:0,minWidth:78,opacity:c.live?1:0.5,boxShadow:"0 1px 2px rgba(26,26,46,0.04)"}}>
-                        {/* Flex line rather than the emoji glued straight onto the text. An emoji
-                            inside an 11px uppercase caption sets its own line height, so each tile's
-                            caption sat at a slightly different height depending on which glyph it
-                            drew; giving the glyph its own box and letting flex centre both keeps the
-                            row of tiles level. Layout kept from the drawn-icon pass. */}
-                        <div style={{fontSize:11,opacity:0.7,letterSpacing:1,textTransform:"uppercase",fontWeight:600,display:"flex",alignItems:"center",gap:5,lineHeight:1}}><span style={{fontSize:11,lineHeight:1}}>{c.icon}</span>{c.label}{!c.live&&<span style={{marginLeft:4,fontSize:9,opacity:0.7}}>D2</span>}</div>
-                        {/* dc-money: tabular, so ten tiles of rupees along the bottom bar line up
-                            digit-for-digit instead of each one being as wide as its own digits make
-                            it. On a row of figures meant to be compared at a glance that is the
-                            whole job. */}
-                        <div className="dc-money" style={{fontSize:14.5,fontWeight:700,color:"#1A1A2E",marginTop:1}}>{c.value}</div>
-                      </div>
-                    ))}
-                  </div>
+                <div className="dc-glass dc-bottom" style={{display:"flex",alignItems:"center",padding:"10px 18px",borderTop:`1px solid ${border}`,gap:14}}>
+                  <div className="dc-bottomtotal" style={{flexShrink:0}}><div className="dc-cap" style={{color:"#1A1A2E",opacity:0.62}}>Project total</div><div className="dc-money" style={{fontSize:25,fontWeight:800,color:"#1A1A2E",marginTop:1,lineHeight:1.1}}>{fmt(grandWithOverheads)}</div>{stripRevenue > 0 && <div className="dc-money" style={{fontSize:11,color:stripProfitColor,fontWeight:700,marginTop:2,letterSpacing:0.1}}>Margin {stripProfitPct}% · {fmt(stripRevenue)} quote</div>}</div>
                 </div>
               );
             })()}
@@ -4002,7 +4330,7 @@ export default function DealCheckOverlay({ ctx }) {
                               setDcCards(prev => {
                                 const prevCard = prev[fnIdx]?.[cardKey] || {};
                                 const prevSplit = Array.isArray(prevCard.split) ? prevCard.split.filter(s=>s&&s.imsId) : [];
-                                return { ...prev, [fnIdx]: { ...(prev[fnIdx] || {}), [cardKey]: { ...prevCard, split: [...prevSplit, { imsId: it.id, qty: Math.max(0, splitQty || 0) }] } } };
+                                return { ...prev, [fnIdx]: { ...(prev[fnIdx] || {}), [cardKey]: { ...prevCard, split: [...prevSplit, { imsId: it.id, qty: Math.max(0, splitQty || 0) }], splitGroupId: prevCard.splitGroupId || newSplitGroupId() } } };
                               });
                             } else {
                               setDcCards(prev => ({
@@ -4010,6 +4338,9 @@ export default function DealCheckOverlay({ ctx }) {
                                 [fnIdx]: { ...(prev[fnIdx] || {}), [cardKey]: { ...(prev[fnIdx]?.[cardKey] || {}), imsId: it.id, imsName: it.name, source: "manual-swap" } }
                               }));
                             }
+                            // See the availability-picker swap above — a booked deal's manual pick has no
+                            // other copy anywhere but this draft, so it can't wait out the 2.5s debounce.
+                            setTimeout(() => flushDcAutosaveRef?.current?.(), 0);
                             setDcBrowseAllOpen(null);
                           }} style={{position:"relative",borderRadius:9,overflow:"hidden",border:isCurrent?`2px solid ${accent}`:`1px solid ${border}`,cursor:isCurrent?"default":isBlocked?"not-allowed":"pointer",background:"rgba(26, 26, 46,0.02)",opacity:hold?0.6:isBlocked?0.45:1}}>
                             {photo ? <img loading="lazy" decoding="async" src={thumbUrl(photo, 56)} alt="" style={{width:"100%",height:110,objectFit:"cover",display:"block",background:"#FAF9F6"}}/> : <div style={{width:"100%",height:110,background:"#FAF9F6",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,color:"#1A1A2E"}}>?</div>}

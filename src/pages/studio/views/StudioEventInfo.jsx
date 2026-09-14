@@ -183,7 +183,7 @@ export default function StudioEventInfo({ ctx }) {
     clientVenueOther, setClientVenueOther, clientPalette, setClientPalette, fnBuilds, setFnBuilds, restoreBuildState,
     extraFunctions, setExtraFunctions, expandedFnIdx, setExpandedFnIdx,
     activeFnIdx, setActiveFnIdx, switchActiveFn,
-    clientLedger, saveClientLedger, activeClientId, setActiveClientId, setClientSearch,
+    clientLedger, saveClientLedger, activeClientId, setActiveClientId, setClientSearch, ledgerReady,
     activeClient, loadClientSession, resumeSavedSession, startNewDeal, askConfirm,
     loadedClientIdentityRef, confirmClientRename, revertClientNameEdit,
     lmsLeads, lmsLoading, lmsError, lmsFilling, lmsCacheRef, setLmsRefreshCounter, loadLmsLead,
@@ -1421,11 +1421,16 @@ export default function StudioEventInfo({ ctx }) {
                     if (days < 30) return `${days}d ago`;
                     return new Date(ts).toLocaleDateString("en-IN",{day:"2-digit",month:"short"});
                   };
-                  // ── LMS LOADING STATE
-                  if (lmsLoading) {
+                  // ── LOADING STATE — held as ONE combined gate, not two independent ones.
+                  // LMS leads and Studio's own client_ledger are two separate fetches that finish at
+                  // different times; showing whichever resolves first (as this used to) reads as a
+                  // complete answer while the other is still in flight — exactly how "no existing
+                  // client" gets acted on a few seconds before the real match would have shown up.
+                  // Nothing renders below until BOTH are in.
+                  if (lmsLoading || !ledgerReady) {
                     return <div style={{marginBottom:16,padding:"10px 12px",borderRadius:10,background:isDark?"rgba(59,130,246,0.06)":"rgba(59,130,246,0.04)",border:`1px solid ${isDark?"rgba(59,130,246,0.2)":"rgba(59,130,246,0.15)"}`,display:"flex",alignItems:"center",gap:8}}>
                       <span style={{display:"inline-block",width:8,height:8,borderRadius:"50%",background:"#3B82F6",animation:"pulse 1.5s infinite"}}></span>
-                      <span style={{fontSize:11,fontWeight:600,color:C.blue}}>🔍 Searching LMS leads…</span>
+                      <span style={{fontSize:11,fontWeight:600,color:C.blue}}>🔍 Searching leads & existing clients…</span>
                     </div>;
                   }
                   // ── LMS results block (shown ALONGSIDE matching Studio clients, not instead of them) ──
@@ -1567,6 +1572,8 @@ export default function StudioEventInfo({ ctx }) {
                       </div>;
                     }
                     // Nothing from LMS or Studio — show only an explanatory note if a search was attempted.
+                    // (ledgerReady/lmsLoading are already handled by the combined gate above, so by
+                    // this point both searches have genuinely finished with nothing to show.)
                     const note = lmsError ? "⚠ LMS unavailable — showing Studio clients"
                       : lmsFilling ? "⏳ LMS cache loading… results will appear shortly"
                       : (clientName.trim().length >= 2 ? "No matching LMS lead or Studio client" : null);
@@ -1624,7 +1631,11 @@ export default function StudioEventInfo({ ctx }) {
                             }
                           </div>
                         </div>
-                        <button className="ei-btn ei-solid" onClick={() => loadClientSession(c, latest || null, 0)} style={{padding:"5px 12px",borderRadius:6,border:"none",background:accent,color:isDark?"#1a1a2e":"#fff",fontSize:10,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>Load →</button>
+                        {/* A build already saved (a session exists) skips straight to Build — no
+                            reason to make someone re-click through Event Info/Browse to see work
+                            they've already done. Nothing saved yet lands on Browse instead, where a
+                            fresh deal actually starts. */}
+                        <button className="ei-btn ei-solid" onClick={() => loadClientSession(c, latest || null, latest ? 2 : 1)} style={{padding:"5px 12px",borderRadius:6,border:"none",background:accent,color:isDark?"#1a1a2e":"#fff",fontSize:10,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>Load →</button>
                       </div>;
                     })}
                   </div>) : null;

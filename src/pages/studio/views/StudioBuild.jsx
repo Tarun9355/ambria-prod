@@ -1314,6 +1314,13 @@ export default function StudioBuild({ ctx }) {
   // ManageLibrary.jsx's elHoverImg. Keyed by "zoneKey:idx" since two near-duplicate element-list
   // blocks in this file can both be on screen at once.
   const [elThumbHover, setElThumbHover] = useState(null); // { key, top, bottom, left }
+  // "+ Add element…" search results dropdown, keyed by zone key. Same escape-the-clipped-ancestor
+  // reason as elThumbHover above — .zone-row is overflow:hidden for its rounded corners, so an
+  // absolutely-positioned dropdown nested inside it that extends past the row's own bottom edge got
+  // hard-clipped with no way to scroll to the rest (reported on an Android-TV-mirrored Safari
+  // session, but the clipping is a plain CSS fact, not browser-specific — it would happen anywhere
+  // a zone card is short enough for the dropdown to overrun it, e.g. the last zone on the page).
+  const [addElPos, setAddElPos] = useState(null); // { key, top, bottom, left, openUp }
 
   // The currently-selected photo per zone can be restored from a saved session and its id may not
   // be in the lazy library cache yet (used below for the "correct & save to master" lookup) —
@@ -3276,7 +3283,14 @@ undefined
           </div>
 
           {/* ═══ ELEMENT CARD PRICING — from selected photo ═══ */}
-          {zoneSection[k]==="elements"&&(zoneElements[k] ? (
+          {/* A custom zone (added via + Add Custom Zone below) has no library photo pool to seed an
+              element list from by definition — "Other" starts with none at all, and a sourceType zone
+              may just not have picked one yet. zoneElements[k] stays undefined until a photo is
+              chosen, so gating the WHOLE editor (including "+ Add element…") on it being truthy
+              blocked a custom zone from adding anything at all until a photo existed — even though
+              nothing about the add-element search or Rate Card pricing actually needs one. A custom
+              zone always gets the real editor; every read inside already defaults with `|| []`. */}
+          {zoneSection[k]==="elements"&&((zoneElements[k] || customZones.some(cz=>cz.id===k)) ? (
             <div>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
                 {(()=>{
@@ -3291,7 +3305,20 @@ undefined
                 {/* Adding an element belongs beside the element list, not up on the photo pager.
                     Gated on the panel: adding to a collapsed list would look like nothing happened. */}
                 {isElCardOpen(k)&&<div style={{position:"relative"}}>
-                    <input value={zoneElSearch[k]||""} onChange={e=>setZoneElSearch(p=>({...p,[k]:e.target.value}))} placeholder="+ Add element..." style={{...S.input,fontSize:11.5,padding:"3px 8px",width:140,marginBottom:0}} onFocus={()=>setZoneElSearch(p=>({...p,[k]:""})) } />
+                    <input value={zoneElSearch[k]||""}
+                      onChange={e=>{
+                        setZoneElSearch(p=>({...p,[k]:e.target.value}));
+                        const r=e.currentTarget.getBoundingClientRect(); const POP=340;
+                        const openUp=window.innerHeight-r.bottom<POP+8 && r.top>POP+8;
+                        setAddElPos({key:k,openUp,top:openUp?undefined:r.bottom+2,bottom:openUp?window.innerHeight-r.top+2:undefined,left:Math.max(8,r.right-320)});
+                      }}
+                      placeholder="+ Add element..." style={{...S.input,fontSize:11.5,padding:"3px 8px",width:140,marginBottom:0}}
+                      onFocus={e=>{
+                        setZoneElSearch(p=>({...p,[k]:""}));
+                        const r=e.currentTarget.getBoundingClientRect(); const POP=340;
+                        const openUp=window.innerHeight-r.bottom<POP+8 && r.top>POP+8;
+                        setAddElPos({key:k,openUp,top:openUp?undefined:r.bottom+2,bottom:openUp?window.innerHeight-r.top+2:undefined,left:Math.max(8,r.right-320)});
+                      }} />
                     {(zoneElSearch[k]||"").length>=1&&(()=>{
                       const q=(zoneElSearch[k]||"").toLowerCase();
                       // A kit's own components are already covered by that kit — don't offer adding
@@ -3307,7 +3334,8 @@ undefined
                       const invMatches=(imsInventory||[]).filter(it=>!(zoneElements[k]||[]).find(el=>el.invId===it.id)&&!kitCoveredIds.has(it.id)&&!isHiddenSubcat(it,rcSubcatFactors)&&(it.name.toLowerCase().includes(q)||(it.cat||"").toLowerCase().includes(q)||(it.subCat||it.subcategory||"").toLowerCase().includes(q))).slice(0,8);
                       const patMatches=(recipeOnlyPatterns||[]).filter(pt=>!(zoneElements[k]||[]).find(el=>el.patternId===pt.id)&&pt.name.toLowerCase().includes(q)).slice(0,4);
                       const matches=[...invMatches.map(it=>({kind:"inv",it})),...patMatches.map(pt=>({kind:"pat",pt}))].slice(0,8);
-                      return matches.length>0?<div style={{position:"absolute",top:"100%",right:0,zIndex:50,background:cardBg,border:`1px solid ${border}`,borderRadius:8,marginTop:2,boxShadow:"0 4px 16px rgba(0,0,0,0.2)",maxHeight:340,overflowY:"auto",width:320}}>
+                      if(!addElPos||addElPos.key!==k) return null;
+                      return matches.length>0?createPortal(<div style={{position:"fixed",top:addElPos.top,bottom:addElPos.bottom,left:addElPos.left,zIndex:10000,background:cardBg,border:`1px solid ${border}`,borderRadius:8,boxShadow:"0 4px 16px rgba(0,0,0,0.2)",maxHeight:340,overflowY:"auto",width:320}}>
                         {matches.map(m=>{
                           if(m.kind==="pat"){ const pt=m.pt; return <div key={"pat:"+pt.id}
                             onClick={()=>{
@@ -3352,7 +3380,7 @@ undefined
                             </div>
                           </div>;
                         })}
-                      </div>:<div style={{position:"absolute",top:"100%",right:0,zIndex:50,background:cardBg,border:`1px solid ${border}`,borderRadius:8,marginTop:2,padding:"8px 10px",fontSize:11.5,color:textS,width:320}}>No matches</div>;
+                      </div>,document.body):createPortal(<div style={{position:"fixed",top:addElPos.top,bottom:addElPos.bottom,left:addElPos.left,zIndex:10000,background:cardBg,border:`1px solid ${border}`,borderRadius:8,padding:"8px 10px",fontSize:11.5,color:textS,width:320}}>No matches</div>,document.body);
                     })()}
                 </div>}
               </div>
@@ -3420,7 +3448,17 @@ undefined
                         {!rc&&!el.invId&&!el.patternId&&<span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700}}>NEW</span>}
                         {el.invId&&priceInfo.warning&&<span title={priceInfo.warning} style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700}}>⚠ short</span>}
                         {(rc||el.invId)&&<span onClick={()=>openAvailModal(k, idx, el, rc)} title="Check stock availability & pick an item" style={{cursor:"pointer",fontSize:12,opacity:0.5,padding:"0 1px",lineHeight:1}}><IconBox size={12}/></span>}
-                        {el.imsId&&<span onClick={()=>openAvailModal(k, idx, el, rc)} title={`Booking: ${(imsInventory||[]).find(i=>i.id===el.imsId)?.name||el.imsName||"selected item"} — tap to change`} style={{cursor:"pointer",display:"inline-flex",alignItems:"center",gap:2,fontSize:10.5,padding:"2px 7px",borderRadius:4,background:"rgba(16,185,129,0.15)",color:"#059669",fontWeight:700,maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{(imsInventory||[]).find(i=>i.id===el.imsId)?.name||el.imsName||"pinned"}</span>}
+                        {/* Only when the manually-pinned stock item's name actually differs from
+                            what's already shown above (invItem?.name || el.name) — the box icon
+                            right before this already opens the same "tap to change" picker, so a
+                            pinned item that merely repeats the element's own name added a second
+                            clickable copy of the same word with nothing new to say. */}
+                        {(()=>{
+                          if (!el.imsId) return null;
+                          const pinnedName = (imsInventory||[]).find(i=>i.id===el.imsId)?.name||el.imsName||"pinned";
+                          if (String(pinnedName).trim().toLowerCase() === String(invItem?.name || el.name || "").trim().toLowerCase()) return null;
+                          return <span onClick={()=>openAvailModal(k, idx, el, rc)} title={`Booking: ${pinnedName} — tap to change`} style={{cursor:"pointer",display:"inline-flex",alignItems:"center",gap:2,fontSize:10.5,padding:"2px 7px",borderRadius:4,background:"rgba(16,185,129,0.15)",color:"#059669",fontWeight:700,maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{pinnedName}</span>;
+                        })()}
                         {showCosts&&rc&&(rc.cat||"").toLowerCase()==="florals"&&floralRatio>0&&<span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(0,0,0,0.05)",color:"#888",fontWeight:700}}>{"🌸"} {100-floralRatio}% real</span>}
                         {isTrussSqft&&priceInfo.area>0&&<span style={{fontSize:11,padding:"2px 7px",borderRadius:3,background:"rgba(59,130,246,0.12)",color:"#3B82F6",fontWeight:600}}>{priceInfo.area} sqft</span>}
                       </div>
@@ -3568,7 +3606,7 @@ undefined
                       flowerPatterns={(dealCheckData||studioFloralData)?.flowerPatterns||recipeOnlyPatterns}
                       qtyMultiplier={el.qty||1}
                       dealAwareness={{getRemaining:(itemId)=>remainingForItem(itemId,k,idx)}}
-                      onCheckAvailability={(cItem,onPick)=>openAvailModal(null,null,{invId:cItem.id,name:cItem.name},null,onPick,{priceMode:"cost",pickHint:"Pick the item this is based on — its production cost becomes the reference price."})}
+                      onCheckAvailability={(cItem,onPick,opts)=>openAvailModal(null,null,{invId:cItem.id,name:cItem.name},null,onPick,{priceMode:"cost",pickHint:"Pick the item this is based on — its production cost becomes the reference price.",splitQty:opts?.splitQty,onSplit:opts?.onSplit})}
                       rcSubcatFactors={rcSubcatFactors}
                       rcFactorByKey={rcFactorByKey}
                       mandiCatalogue={(dealCheckData||studioFloralData)?.mandiCatalogue||[]} studioMarkup={Number((dealCheckData||studioFloralData)?.defaultStudioMarkup)||3} elSize={el.size}

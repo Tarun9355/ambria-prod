@@ -91,16 +91,31 @@ export default function DCFloralsTab({ ctx }) {
                     }
                     return "medium";
                   };
-                  const resolveRealPct = (el, rc) => {
+                  // `rc` is a NAME-ONLY match against the Rate Card (see the big comment above
+                  // elPattern below on why that's "a coincidental name-match at best") — Build's own
+                  // pricing (getElPriceFromInventory/getElPriceFromPattern, StudioApp.jsx) never
+                  // consults it for the default real/artificial %, only the element's OWN matched
+                  // inventory item's sub-category (invId) or its recipe pattern's own sub-category
+                  // (patternId). This used to check rc.floralMode/rc.sub/rc.defaultRealPct FIRST, so
+                  // an unrelated Rate Card row that happened to share this element's display name
+                  // (e.g. a "Flower Bunch" bridal-bouquet row admin-pinned to 100% real) could force a
+                  // default Build itself never applied — the two screens priced/reported the same
+                  // element at two different real/artificial splits with no per-element override in
+                  // sight. Now mirrors Build's own precedence: invItem's sub-category first, then the
+                  // pattern's own sub-category, and only falls back to the coincidental `rc` match when
+                  // neither identity is available (a pure Rate-Card-only floral element).
+                  const resolveRealPct = (el, rc, invItem, elPattern) => {
                     if (typeof el.realPct === "number" && el.realPct >= 0 && el.realPct <= 100) return el.realPct;
-                    const mode = String(rc?.floralMode||"").toLowerCase();
-                    if (mode === "real") return 100;
-                    if (mode === "artificial") return 0;
-                    const subKey = String(rc?.sub || rc?.imsAlias || "").trim().toLowerCase();
+                    const subKey = String((invItem && (invItem.subCat || invItem.subcategory)) || elPattern?.sub || rc?.sub || rc?.imsAlias || "").trim().toLowerCase();
                     const subMode = subKey ? rcFloralModeByKey?.[subKey] : undefined;
                     if (subMode === "real") return 100;
                     if (subMode === "artificial") return 0;
-                    if (typeof rc?.defaultRealPct === "number") return rc.defaultRealPct;
+                    if (!invItem && !elPattern) {
+                      const mode = String(rc?.floralMode||"").toLowerCase();
+                      if (mode === "real") return 100;
+                      if (mode === "artificial") return 0;
+                      if (typeof rc?.defaultRealPct === "number") return rc.defaultRealPct;
+                    }
                     return Math.max(0, Math.min(100, 100 - fnFloralRatio));
                   };
                   // Walk all floral elements in this function
@@ -163,7 +178,7 @@ export default function DCFloralsTab({ ctx }) {
                         uncosted.push({ name: el.name || "(unnamed)", zoneKey: zk, qty: elQty, reason: "No rate-card entry or recipe" });
                         return;
                       }
-                      const realPct = resolveRealPct(el, rc);
+                      const realPct = resolveRealPct(el, rc, invItem, elPattern);
                       const realFrac = realPct / 100;
                       const artFrac = 1 - realFrac;
                       // Prefer the recipe the BUILD actually priced this element with, checked in

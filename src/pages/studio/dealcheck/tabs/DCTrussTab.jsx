@@ -39,11 +39,14 @@ export default function DCTrussTab({ ctx }) {
                     </div>;
                   }
 
-                  // Helper — list of zones present in a fn (uses fn.zoneConfig + fn.enabledEls)
+                  // Helper — list of zones present in a fn (uses fn.zoneConfig + fn.enabledEls).
+                  // ♻️ Repeat zones excluded — same treatment as Manpower's freshFn (this zone's
+                  // truss/fabric was already built for a prior day, so nothing bills or previews
+                  // here for it) — must match dcCostRollup's own truss/fabric total.
                   const zonesOf = (fn) => {
                     const zc = fn.zoneConfig || {};
                     const en = fn.enabledEls || {};
-                    return Object.keys(zc).filter(zk => en[zk] && zc[zk]);
+                    return Object.keys(zc).filter(zk => en[zk] && zc[zk] && !zc[zk].repeat);
                   };
 
                   // §23 Phase 3 — resolve reservation state for THIS client on the SELECTED fn date.

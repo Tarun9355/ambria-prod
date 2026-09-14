@@ -25,7 +25,7 @@ export default function ManageSettings({ ctx }) {
     // auth
     authUser, isAdmin, hasPerm, studioSettingsAllowed,
     // clients
-    clientLedger, saveClientLedger, activeClientId, setActiveClientId, startNewDeal, eventOrders,
+    clientLedger, saveClientLedger, activeClientId, setActiveClientId, startNewDeal, eventOrders, ledgerReady,
     ctFilterSp, setCtFilterSp, ctFilterStatus, setCtFilterStatus,
     ctFilterFrom, setCtFilterFrom, ctFilterTo, setCtFilterTo, ctExpandedId, setCtExpandedId,
     clientSearch, setClientSearch,
@@ -440,7 +440,18 @@ export default function ManageSettings({ ctx }) {
                        || (clientLastTouch(b) - clientLastTouch(a)));
         return <div style={{maxWidth:1100}}>
           <div style={{fontSize:16,fontWeight:700,color:accent,marginBottom:4}}>📋 Client Tracker</div>
-          <div style={{fontSize:11,color:textS,marginBottom:14}}>All clients from guest details form. {clientLedger.length} total{filtered.length!==clientLedger.length?` · ${filtered.length} shown`:""}</div>
+          {/* clientLedger's own fetch is a normal async round-trip on a fresh page load — reading
+              it here with no awareness of that showed "0 total" indistinguishable from a genuinely
+              empty ledger, for however long the fetch took. Same class of gap already fixed in
+              Event Info's own client search (ledgerReady existed and was tracked, just never
+              checked here) — a client typed into a search or opened here in that window looked
+              like it didn't exist yet, easy to mistake for real data loss. */}
+          {!ledgerReady && clientLedger.length === 0
+            ? <div style={{fontSize:11,color:textS,marginBottom:14,display:"flex",alignItems:"center",gap:8}}>
+                <span style={{display:"inline-block",width:6,height:6,borderRadius:"50%",background:accent,animation:"pulse 1.5s infinite"}}/>
+                Loading clients…
+              </div>
+            : <div style={{fontSize:11,color:textS,marginBottom:14}}>All clients from guest details form. {clientLedger.length} total{filtered.length!==clientLedger.length?` · ${filtered.length} shown`:""}</div>}
           <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:14,alignItems:"center"}}>
             <input value={clientSearch} onChange={e=>setClientSearch(e.target.value)} placeholder="🔍 Search name or phone" style={{...S.select,fontSize:11,padding:"6px 10px",width:180}}/>
             {canSeeAll&&<select value={ctFilterSp} onChange={e=>{setCtFilterSp(e.target.value);}} style={{...S.select,fontSize:11,padding:"6px 10px"}}><option value="">All salespeople</option>{allSalespeople.map(s=><option key={s} value={s}>{s}</option>)}</select>}

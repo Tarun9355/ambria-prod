@@ -25,7 +25,7 @@ const parseRow = (v, fallback) => {
   try { return JSON.parse(v); } catch { return fallback; }
 };
 
-export default function ImsTransportPanel({ rcItems = [], rcCats = [], showMsg }) {
+export default function ImsTransportPanel({ rcItems = [], rcCats = [], rateCardCategories = [], inventory = [], showMsg }) {
   const [tr, setTr] = useState(null);                  // the transport blob
   const [venues, setVenues] = useState({ inhouse: [], outdoor: [] });
   const [loading, setLoading] = useState(true);
@@ -97,7 +97,7 @@ export default function ImsTransportPanel({ rcItems = [], rcCats = [], showMsg }
     saveTR,
     newVenue, setNewVenue, newTC, setNewTC,
     TR_TIERS, TC_UNITS,
-    rcItems, rcCats,
+    rcItems, rcCats, rateCardCategories, inventory,
     allInhouseVenues, allOutdoorDB,
   };
 

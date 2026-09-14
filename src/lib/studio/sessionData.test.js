@@ -21,6 +21,16 @@ describe("fnSnapHasData", () => {
     // enabledEls present but every zone switched off is still nothing built.
     expect(fnSnapHasData({ enabledEls: { stage: false, entry: false } })).toBe(false);
   });
+
+  // Confirmed real incident: a zone that exists as a KEY (every zone type the app knows about
+  // renders a toggle row for) with an EMPTY array as its value — every zone toggled off — used to
+  // satisfy `Object.keys(zoneElements).length > 0` and read as "has data" from key presence alone,
+  // not actual content. That let a genuinely empty build bypass autoSaveWouldDestroy's guard and
+  // silently bury a real ₹6L+ session under a cascade of empty auto-saves.
+  it("does not count zone keys with empty arrays as data", () => {
+    expect(fnSnapHasData({ zoneElements: { stage: [], entry: [], vedi: [] } })).toBe(false);
+    expect(fnSnapHasData({ zoneElements: { stage: [], entry: ["truss"] } })).toBe(true);
+  });
 });
 
 describe("sessionHasData", () => {
@@ -70,6 +80,26 @@ describe("autoSaveWouldDestroy", () => {
 
   it("does not block on the very first save, with nothing to replace", () => {
     expect(autoSaveWouldDestroy({ fnSnapshots: {} }, null, true)).toBe(false);
+  });
+
+  // Second, independent signal on top of the structural check above — confirmed real incident:
+  // a snapshot can retain empty-array zone keys (see fnSnapHasData's own regression test) that
+  // pass the structural "has data" check purely on shape, even though nothing was actually built.
+  // A real priced draft dropping to zero/unknown is destructive on its own regardless of what the
+  // structural check concludes, so a similar future shape gap can't repeat this loss of a real
+  // ₹6L+ build to a null-total auto-save.
+  it("blocks a real priced draft from being replaced by a zero/null-total auto-save, even if next looks structurally non-empty", () => {
+    const prev = { auto: true, total: 622162, fnSnapshots: { 0: withVideo } };
+    const nextZero = { total: 0, fnSnapshots: { 0: { zoneElements: { stage: [], entry: [] } } } };
+    const nextNull = { total: null, fnSnapshots: { 0: { zoneElements: { stage: [], entry: [] } } } };
+    expect(autoSaveWouldDestroy(nextZero, prev, true)).toBe(true);
+    expect(autoSaveWouldDestroy(nextNull, prev, true)).toBe(true);
+  });
+
+  it("does not block when the previous draft itself had no real total to lose", () => {
+    const prev = { auto: true, total: 0, fnSnapshots: { 0: withVideo } };
+    const next = { total: null, fnSnapshots: { 0: withZones } };
+    expect(autoSaveWouldDestroy(next, prev, true)).toBe(false);
   });
 });
 

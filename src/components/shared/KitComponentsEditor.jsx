@@ -16,12 +16,16 @@ import ItemHoverThumb from "./ItemHoverThumb";
 // photos/zones) is unaffected. `onChange(nextOverrides)` persists the edit onto the element;
 // `onChange(undefined)` resets back to the kit's live default recipe.
 //
-// `onCheckAvailability(cItem, onPick)`, when given, renders a 📦 icon on each real (non-recipe)
-// component that opens the caller's own per-date stock-availability modal — same feature a
-// top-level element already has (Build's own 📦), just reused here to swap a KIT component to an
-// available alternative instead of picking the top-level element. Omit the prop (as Library does —
-// it has no client/event-date context to check availability against) and the icon simply never
-// renders; nothing else about the component changes.
+// `onCheckAvailability(cItem, onPick, opts)`, when given, renders a 📦 icon on each real
+// (non-recipe) component that opens the caller's own per-date stock-availability modal — same
+// feature a top-level element already has (Build's own 📦), just reused here to swap a KIT
+// component to an available alternative instead of picking the top-level element. `opts` carries
+// `splitQty` (this component's own per-kit qty) and `onSplit` (replaces this one component row
+// with one row per picked item, qty divided the same way a top-level element's split does) — the
+// caller forwards both straight into its own openAvailModal call so a kit component gets the exact
+// same "swap to ONE item" / "split across 2+ items" choice a top-level element already has, instead
+// of being swap-only. Omit the prop (as Library does — it has no client/event-date context to check
+// availability against) and the icon simply never renders; nothing else about the component changes.
 export default function KitComponentsEditor({ item, overrides, onChange, imsInventory, flowerPatterns, qtyMultiplier = 1, dealAwareness, onCheckAvailability, rcSubcatFactors, rcFactorByKey, mandiCatalogue = [], studioMarkup = 3, elSize, floralRatio = 0, rcFloralModeByKey = {}, floralSettings = null, textP, textS, border, cardBg, accent, isDark, fmt }) {
   // rcFactorByKey = { subcatLower: scaling_factor } — the pricing multiplier map (priceForInvItem needs
   // this, NOT the rcSubcatFactors array which is for isHiddenSubcat). Fall back to {} so pricing is 1×.
@@ -250,8 +254,15 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
                   <span style={{ whiteSpace: "normal", overflowWrap: "break-word" }}>{cItem ? cItem.name : `⚠ ${c.itemId} not in IMS`}</span>
                   {cItemIsKit && <span style={{ color: indigo, fontWeight: 700, display: "flex" }}><IconBox size={11}/></span>}
                   {cItem && onCheckAvailability && (
-                    <span onClick={() => onCheckAvailability(cItem, (picked) => { if (picked) setComps(comps.map((x, i) => i === ci ? { ...x, itemId: picked.id } : x)); })}
-                      title="Check stock availability & swap this component" style={{ cursor: "pointer", fontSize: 12, opacity: 0.5, padding: "0 1px", lineHeight: 1 }}><IconBox size={12}/></span>
+                    <span onClick={() => onCheckAvailability(cItem, (picked) => { if (picked) setComps(comps.map((x, i) => i === ci ? { ...x, itemId: picked.id } : x)); }, {
+                        splitQty: qtyEach,
+                        // Replaces THIS ONE component row with one row per picked item — the split's
+                        // own overrides (realPct/subOverrides/size) don't carry over to the new rows,
+                        // same as a fresh top-level split: each is a genuinely different item, so
+                        // there's nothing to inherit.
+                        onSplit: (alloc) => setComps([...comps.slice(0, ci), ...alloc.map(a => ({ itemId: a.imsId, qty: a.qty })), ...comps.slice(ci + 1)]),
+                      })}
+                      title="Check stock availability & swap/split this component" style={{ cursor: "pointer", fontSize: 12, opacity: 0.5, padding: "0 1px", lineHeight: 1 }}><IconBox size={12}/></span>
                   )}
                   {cFloral && sizeControls(c, ci, cFloral.pattern)}
                   {cFloral && ratioControls(c, ci, cFloral.modeDefault)}

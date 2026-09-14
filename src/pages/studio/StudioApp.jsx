@@ -1158,7 +1158,27 @@ function rowsToSessions(rows) {
   return out.slice(0, SESSION_KEEP);
 }
 
+// Calls the recent_studio_sessions() DB function (migration 029) instead of scanning the whole
+// table — studio_sessions never deletes rows (rowsToSessions has always capped to SESSION_KEEP
+// per client on the way OUT, client-side, after downloading everything), so at real scale this
+// was downloading a client's entire history just to keep the newest 10 sessions and throw the
+// rest away. The function does that same capping server-side; nothing here reads or deletes any
+// row this app doesn't already keep. Falls back to the old whole-table scan if the function isn't
+// there yet (a fresh environment before the migration has run) so this never hard-fails.
 async function loadSessionRows() {
+  const all = []; const SIZE = 1000;
+  for (let from = 0; ; from += SIZE) {
+    const { data, error } = await supabase.rpc("recent_studio_sessions").range(from, from + SIZE - 1);
+    if (error) {
+      if (from === 0) return loadAllSessionRowsFallback();
+      throw error;
+    }
+    all.push(...(data || []));
+    if (!data || data.length < SIZE) break;
+  }
+  return all;
+}
+async function loadAllSessionRowsFallback() {
   const all = []; const SIZE = 1000;
   for (let from = 0; ; from += SIZE) {
     const { data, error } = await supabase.from("studio_sessions")
@@ -2480,6 +2500,69 @@ export default function StudioApp() {
       return p;
     };
     (async () => {
+      // Client ledger — row-per-client in the `client_ledger` TABLE (off the settings blob). Moved
+      // to run FIRST in this mount effect and ahead of every unrelated fetch below (taxonomy, video
+      // tags, team data, …) — ledgerReady is what Event Info's existing-client search gates on
+      // before showing anything (see the combined loading gate in StudioEventInfo.jsx), and none of
+      // those other resources have anything to do with that search, so there was never a reason for
+      // it to wait behind them.
+      // Its own two fetches (client rows + studio_sessions) run sequentially, same as before this
+      // file's history started reordering it — see the comment on the try block below for why.
+      // Seed the dirty-check baseline with what the DB actually holds, so the first save of the
+      // session uploads only what genuinely changed instead of the entire ledger.
+      try {
+        // Sequential, not Promise.all — reverted after a confirmed incident where a client's real
+        // session data got buried under a cascade of empty auto-saves shortly after this ran
+        // concurrently. Never fully proven as the cause (the actual bug was a gap in
+        // autoSaveWouldDestroy's "has data" check, now fixed in sessionData.js), but two large
+        // full-table queries firing at once is a plausible contributor and this costs little to
+        // remove as a precaution — client_ledger's own load still runs first in this effect either
+        // way, which was the real, confirmed win.
+        const rows = await loadClientRows();
+        // NOT wrapped in its own try/catch. loadSessionRows() already has an internal fallback for
+        // the one case that's actually safe to treat as "no sessions yet" (the recent_studio_sessions
+        // RPC not existing before its migration runs) — it only throws for a genuine, unexpected
+        // failure (a network blip, a timeout). A swallowed catch here used to treat THAT the same as
+        // "this client has no saved work at all": every client in `list` below comes from rowToClient,
+        // which always starts `sessions: []` (the blob mirror was retired — see clientToRow), so a
+        // transient fetch failure silently produced a session-less ledger for EVERYONE, no error
+        // shown. If the mount-restore effect then restored a client under that ledger, it populated
+        // name/date/venue but left the actual build at its empty default — and the very next autosave
+        // persisted that emptiness as a brand new, genuinely-empty session, burying real work with no
+        // warning. Letting it throw here instead routes to the same catch as loadClientRows() below:
+        // ledgerLoadError shows the existing retry banner, and clientLedger is never set from a
+        // ledger that quietly forgot everyone's history.
+        const srows = await loadSessionRows();
+        if (Array.isArray(rows) && !cancelled) {
+          const list = rows.map(rowToClient).filter(Boolean);
+          // THE TABLE IS THE SOURCE OF TRUTH. Unconditionally — a client with no rows gets an empty
+          // history, not client_ledger.data's stale blob copy (this used to be conditional on the
+          // table actually having rows for a client, which is exactly how a deleted session came
+          // back — BUG-2 — deleting a client's last session leaves zero rows, and the stale blob
+          // copy stood in instead of the now-genuinely-empty history).
+          if (Array.isArray(srows) && srows.length) {
+            const byClient = new Map();
+            for (const r of srows) {
+              if (!r?.client_id) continue;
+              let g = byClient.get(r.client_id);
+              if (!g) { g = []; byClient.set(r.client_id, g); }
+              g.push(r);
+            }
+            for (const c of list) {
+              const mine = byClient.get(c.id);
+              c.sessions = (mine && mine.length) ? rowsToSessions(mine) : [];
+            }
+          }
+          const seed = {}; list.forEach((c) => { if (c && c.id) seed[c.id] = JSON.stringify(c); });
+          clientJsonRef.current = seed;
+          setClientLedger(list);
+          if (!cancelled) setLedgerLoadError(false);
+        }
+      } catch { if (!cancelled) setLedgerLoadError(true); }
+      // Marked ready whether the read SUCCEEDED or THREW. A failed load leaves the ledger empty,
+      // and treating that as "still loading" would hold the skeleton up for the rest of the session
+      // with nothing on the way to replace it. Ready means "we have asked", not "we found work".
+      if (!cancelled) setLedgerReady(true);
       // Events — auto-wrap to multi-function shape (functions[]).
       try {
         const v = await kvGet(STORAGE_KEY);
@@ -2621,54 +2704,6 @@ export default function StudioApp() {
       } catch {
         try { const v = await kvGet(YT_TAG_SK); if (v != null) { const tp = parse(v); if (tp && typeof tp === "object" && !cancelled) setYtVideoTags(tp); } } catch {}
       }
-      // Client ledger — now row-per-client in the `client_ledger` TABLE (off the settings blob).
-      // Seed the dirty-check baseline with what the DB actually holds, so the first save of the
-      // session uploads only what genuinely changed instead of the entire ledger.
-      try {
-        const rows = await loadClientRows();
-        if (Array.isArray(rows) && !cancelled) {
-          const list = rows.map(rowToClient).filter(Boolean);
-          // Sessions come from the `studio_sessions` TABLE (migration 026), which is the source of
-          // truth. The blob copy inside client_ledger.data stays as the fallback below — the same
-          // two-step 023 used for video tags, so this is reversible without losing a save.
-          // Only a client the table actually has rows for is replaced: a client whose sessions have
-          // not been backfilled yet keeps its blob history rather than appearing to have lost it.
-          try {
-            const srows = await loadSessionRows();
-            if (Array.isArray(srows) && srows.length && !cancelled) {
-              const byClient = new Map();
-              for (const r of srows) {
-                if (!r?.client_id) continue;
-                let g = byClient.get(r.client_id);
-                if (!g) { g = []; byClient.set(r.client_id, g); }
-                g.push(r);
-              }
-              // THE TABLE IS THE SOURCE OF TRUTH. Unconditionally — a client with no rows now gets an
-              // empty history, not the blob's copy.
-              // This used to be `if (mine && mine.length)`, which kept the blob for a client the table
-              // had nothing for. That was correct while the migration was mid-flight, but it is also
-              // exactly why a deleted session came back: deleting a client's last session leaves zero
-              // rows, the branch was skipped, and client_ledger.data.sessions — which still listed it —
-              // stood in. That is BUG-2's root cause.
-              // Safe to make unconditional because the backfill is complete: every session that existed
-              // only in a blob has been written into studio_sessions, verified as zero blob-only
-              // clients remaining before this line changed.
-              for (const c of list) {
-                const mine = byClient.get(c.id);
-                c.sessions = (mine && mine.length) ? rowsToSessions(mine) : [];
-              }
-            }
-          } catch { /* table absent or unreadable — the blob history below stands */ }
-          const seed = {}; list.forEach((c) => { if (c && c.id) seed[c.id] = JSON.stringify(c); });
-          clientJsonRef.current = seed;
-          setClientLedger(list);
-          if (!cancelled) setLedgerLoadError(false);
-        }
-      } catch { if (!cancelled) setLedgerLoadError(true); }
-      // Marked ready whether the read SUCCEEDED or THREW. A failed load leaves the ledger empty,
-      // and treating that as "still loading" would hold the skeleton up for the rest of the session
-      // with nothing on the way to replace it. Ready means "we have asked", not "we found work".
-      if (!cancelled) setLedgerReady(true);
       // Date types
       try { const v = await kvGet(DT_SK); if (v != null) { const dp = parse(v); if (dp && typeof dp === "object" && !cancelled) setDateTypes(dp); } } catch {}
       // Event orders
@@ -3368,12 +3403,12 @@ export default function StudioApp() {
     // Signature of the WHOLE projected breakdown (income + per-dept manpower + inventory + fabric) —
     // used to skip redundant writes. Covering all of it (not just income totals) means a change to the
     // manpower split or fabric plan also re-syncs, so the stored snapshot can't drift out of sync.
-    const sig = JSON.stringify({ inc: snap.income || {}, mp: snap.manpowerDetail || {}, inv: snap.inventory || {}, fab: snap.fabricPlan || {} });
+    const sig = JSON.stringify({ inc: snap.income || {}, mp: snap.manpowerDetail || {}, inv: snap.inventory || {}, fab: snap.fabricPlan || {}, dv: snap.dealValue || null });
     // Merge ONLY the Studio-owned projected fields. deptOps (the dept head's edits / actuals — IMS-owned)
     // is preserved verbatim, so re-syncing never wipes their work.
     // After a regenerate, wipe deptOps (dept head's plan + actuals) so IMS starts fresh from the new plan.
     const wipe = deptWipeRef.current; if (wipe) deptWipeRef.current = false; // one-shot per regenerate
-    const applySnap = (base) => ({ ...base, ...(wipe ? { deptOps: {} } : {}), deptIncome: snap.income || {}, deptInventory: snap.inventory || {}, floralPlan: snap.floralPlan || base.floralPlan || null, fabricPlan: snap.fabricPlan || base.fabricPlan || null, manpowerPlan: snap.manpowerPlan || [], manpowerDetail: snap.manpowerDetail || {}, mpPhases: snap.mpPhases || null, deptSeason: snap.season || null, deptIncomeSig: sig, deptSyncedAt: Date.now() });
+    const applySnap = (base) => ({ ...base, ...(wipe ? { deptOps: {} } : {}), deptIncome: snap.income || {}, deptInventory: snap.inventory || {}, floralPlan: snap.floralPlan || base.floralPlan || null, fabricPlan: snap.fabricPlan || base.fabricPlan || null, manpowerPlan: snap.manpowerPlan || [], manpowerDetail: snap.manpowerDetail || {}, mpPhases: snap.mpPhases || null, deptSeason: snap.season || null, deptIncomeSig: sig, deptSyncedAt: Date.now(), dealValue: snap.dealValue || base.dealValue || null });
     try {
       // Read the FRESHEST row so we never clobber IMS-owned fields with Studio's stale local copy.
       const { data: row } = await supabase.from("event_orders").select("data").eq("id", eo.id).maybeSingle();
@@ -3389,6 +3424,19 @@ export default function StudioApp() {
         const merged = applySnap(eo);
         await supabase.from("event_orders").upsert({ id: eo.id, client_name: eo.clientName ?? null, event_id: eo.eventId ?? null, fn_id: eo.fnId ?? null, status: eo.status ?? "pending", items: eo.items || [], manual_items: eo.manualItems || [], decisions: eo.decisions || {}, data: merged }, { onConflict: "id" });
       }
+    } catch (e) { /* best-effort */ }
+  }, [eventOrders, activeClientId, clientName]);
+  // Pushes the just-applied deal value straight onto the mirrored event_orders row, immediately —
+  // not waiting for the next Deal Check regenerate. Without this, clicking "Apply to deal value" on
+  // the Summary hero updates Studio's own number at once but IMS's Dept Ops badge would keep showing
+  // the old "pending" amount until the build changes again and persistDeptSnapshot's own debounced
+  // sync happens to fire. Same freshest-row-first pattern as persistDeptSnapshot, just for one field.
+  const syncDealValueNow = useCallback(async (dealValue) => {
+    const eo = (eventOrders || []).find(e => e.clientId === activeClientId) || (eventOrders || []).find(e => (e.clientName || "") === (clientName || "").trim());
+    if (!eo) return;
+    try {
+      const { data: row } = await supabase.from("event_orders").select("data").eq("id", eo.id).maybeSingle();
+      if (row && row.data) await supabase.from("event_orders").update({ data: { ...row.data, dealValue } }).eq("id", eo.id);
     } catch (e) { /* best-effort */ }
   }, [eventOrders, activeClientId, clientName]);
   const savePhotoImsMap = useCallback(async (nm) => { setPhotoImsMap(nm); await reliableSave(PIMAP_SK, JSON.stringify(nm), "Photo-IMS map"); }, []);
@@ -4790,32 +4838,51 @@ export default function StudioApp() {
       const subAgg = {}; const totalFloralCost = 0;
       // items[]: the zone/element lines that made up this sub-category's qty — lets the Transport
       // tab show WHAT is filling each truck-capacity row, not just its aggregate qty.
-      const addSub = (sub, qty, zoneKey, itemName) => { const k = String(sub || "").toLowerCase().trim(); const tc = capBySub[k]; if (!tc || !(qty > 0)) return; if (!subAgg[k]) subAgg[k] = { label: tc.item, perTruck: Number(tc.perTruck) || 0, unit: tc.unit || "pc", qty: 0, items: [] }; subAgg[k].qty += qty; if (itemName) subAgg[k].items.push({ zoneKey: zoneKey || "", name: itemName, qty }); };
+      // `invCat` is the CONTRIBUTING ITEM's own top-level Inventory category (item.cat/category —
+      // the same field the Inventory tab's own category chips and catToDept(i.cat, ...) everywhere
+      // else in the app read), not the sub-category's name or the truck-capacity bucket's label. Set
+      // once from whichever element first fills a bucket — a given truck-capacity bucket is one
+      // sub-category, which only ever belongs to one Inventory category in practice.
+      const addSub = (sub, qty, zoneKey, itemName, invCat) => { const k = String(sub || "").toLowerCase().trim(); const tc = capBySub[k]; if (!tc || !(qty > 0)) return; if (!subAgg[k]) subAgg[k] = { label: tc.item, subKey: k, invCat: invCat || "", perTruck: Number(tc.perTruck) || 0, unit: tc.unit || "pc", qty: 0, items: [] }; subAgg[k].qty += qty; if (itemName) subAgg[k].items.push({ zoneKey: zoneKey || "", name: itemName, qty }); };
       // An element's sub-category for truck-capacity purposes comes ONLY from live IMS identity —
       // el.invId (Inventory, the normal path for anything added via "+ Add element" today) or
       // el.patternId (a pure flower-recipe element). No Rate-Card name-match fallback.
       const fFlowerPatterns = (dealCheckData || studioFloralData)?.flowerPatterns || [];
+      // ♻️ Repeat zones reuse a standing setup — nothing of theirs needs trucking. Mirrors Manpower's
+      // own freshFn treatment (DCManpowerTab.jsx / DealCheckOverlay.jsx dcCostRollup): drop repeat
+      // zones out of truck-capacity accumulation only — the per-zone accordion above still shows
+      // their full décor cost, this only affects how many trucks the trip needs. Exposed on the
+      // returned `transport` object (repeatZonesExcluded) so the Transport tab can say which zones
+      // were left out and why, rather than a truck count just quietly coming out lower.
+      const repeatZonesExcluded = Object.keys(fZoneConfig).filter(zk => fEnabledEls[zk] && fZoneConfig[zk]?.repeat)
+        .map(zk => { const cz = fCustomZones.find(c => c.id === zk); return { zk, label: zoneLabelsD[zk]?.label || cz?.name || zk }; });
+      const fEnabledElsFresh = repeatZonesExcluded.length
+        ? { ...fEnabledEls, ...Object.fromEntries(repeatZonesExcluded.map(({ zk }) => [zk, false])) }
+        : fEnabledEls;
       Object.entries(fZoneElements).forEach(([zk, elems]) => {
-        if (!fEnabledEls[zk] || !elems) return;
+        if (!fEnabledElsFresh[zk] || !elems) return;
         elems.forEach(el => {
           const invItem = el.invId ? imsInventory.find(i => i.id === el.invId) : null;
           const pattern = (!invItem && el.patternId) ? fFlowerPatterns.find(p => p.id === el.patternId) : null;
           const sub = invItem?.subCat || invItem?.subcategory || pattern?.sub || "";
           const tc = capBySub[String(sub || "").toLowerCase().trim()]; if (!tc) return;
           const elLabel = el.name || invItem?.name || pattern?.name || sub;
-          if (String(tc.unit || "pc").toLowerCase().includes("sqft")) { const L = Number(el.L || el.l || 0), W = Number(el.W || el.w || el.H || el.h || 0); if (L > 0 && W > 0) addSub(sub, L * W * (Number(el.qty) || 1), zk, elLabel); }
-          else addSub(sub, Number(el.qty) || 0, zk, elLabel);
+          // A flower-recipe element (pattern, no invId at all) has no inventory row to read a
+          // category off — it's a flower arrangement by definition, so it's Florals outright.
+          const invCat = invItem?.cat || invItem?.category || (pattern ? "Florals" : "");
+          if (String(tc.unit || "pc").toLowerCase().includes("sqft")) { const L = Number(el.L || el.l || 0), W = Number(el.W || el.w || el.H || el.h || 0); if (L > 0 && W > 0) addSub(sub, L * W * (Number(el.qty) || 1), zk, elLabel, invCat); }
+          else addSub(sub, Number(el.qty) || 0, zk, elLabel, invCat);
         });
       });
       Object.entries(fZoneConfig).forEach(([zk, cfg]) => {
-        if (!cfg || !fEnabledEls[zk]) return;
+        if (!cfg || !fEnabledElsFresh[zk]) return;
         const d = cfg.dims || {}; const fd = cfg.floorDims || d;
         if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * Math.max(1, cfg.trussQty || 1); if (tSqft > 0) addSub("Truss", tSqft, zk, "Truss structure"); }
         const sqft = (fd.L || 0) * (fd.W || 0);
         if (sqft > 0) { if (cfg.plH) addSub("Platform", sqft, zk, "Platform"); if (cfg.cpT && cfg.cpT !== CARPET_OFF) addSub("Carpet", sqft, zk, "Carpet"); }
       });
       let truckFrac = 0;
-      Object.values(subAgg).forEach(s => { if (s.perTruck > 0) { truckFrac += (s.qty || 0) / s.perTruck; breakdown.push({ label: s.label, qty: Math.round(s.qty), perTruck: s.perTruck, unit: s.unit, trucks: (s.qty || 0) / s.perTruck, items: s.items }); } });
+      Object.values(subAgg).forEach(s => { if (s.perTruck > 0) { truckFrac += (s.qty || 0) / s.perTruck; breakdown.push({ label: s.label, subKey: s.subKey, invCat: s.invCat, qty: Math.round(s.qty), perTruck: s.perTruck, unit: s.unit, trucks: (s.qty || 0) / s.perTruck, items: s.items }); } });
       const itemTrucks = Math.ceil(truckFrac);
       const floralTrucks = 0; // florals counted via their sub-category capacity — no separate flower truck
       const bt = bufferTiers.find(b => decorTotal >= b.minBudget && decorTotal < b.maxBudget);
@@ -4826,7 +4893,7 @@ export default function StudioApp() {
       const truckTotal = allTrucks * tripRate * 2;
       transportTotal = truckTotal + plan.gensetCost;
       transport = { trucks: allTrucks, tripRate, total: transportTotal, isNew, tier: tierId, tierLabel,
-        breakdown, floralTrucks, bufferTrucks: bufTrucks, itemTrucks, totalFloralCost,
+        breakdown, floralTrucks, bufferTrucks: bufTrucks, itemTrucks, totalFloralCost, repeatZonesExcluded,
         gensets: plan.genset125, venueGensets: plan.venueGenset125, genset62: plan.genset62, venueGenset62: plan.venueGenset62,
         gensetCost: plan.gensetCost, gensetRate, gensetRate62, truckTotal };
     }
@@ -6398,14 +6465,20 @@ export default function StudioApp() {
   // (via saveSession's savePromise) closes that race instead of hoping pagehide wins it.
   useEffect(() => {
     const flush = async () => {
+      // "Update now" (App.jsx's UpdateBanner) races this whole flush against a hard 4s cap and
+      // reloads regardless of which one wins — so two things matter here: don't make the Deal Check
+      // draft wait behind the (often bigger) build session save finishing first, and pass
+      // keepalive:true on BOTH so that even when the 4s cap wins the race, each fetch keeps running
+      // in the background and still lands after the reload starts, instead of being cancelled by it.
+      const tasks = [];
       if (!(switchingRef.current || fnSwitchingRef.current || !buildHasDataRef.current)) {
-        const result = saveSessionRef.current({ auto: true });
-        if (result?.savePromise) await result.savePromise;
+        const result = saveSessionRef.current({ auto: true, keepalive: true });
+        if (result?.savePromise) tasks.push(result.savePromise);
       }
       // Deal Check's own pending draft (dcCards/dcDraft) is a separate autosave loop from the build
-      // session above — flushing one doesn't flush the other. Awaited here too so a route switch or
-      // reload while Deal Check is open can't drop whichever one just happened to be mid-debounce.
-      try { await flushDcAutosaveRef.current?.(); } catch { /* best-effort */ }
+      // session above — flushing one doesn't flush the other.
+      tasks.push(Promise.resolve().then(() => flushDcAutosaveRef.current?.({ keepalive: true })));
+      await Promise.allSettled(tasks);
     };
     registerFlushBeforeReload(flush);
     return () => unregisterFlushBeforeReload(flush);
@@ -6438,7 +6511,12 @@ export default function StudioApp() {
       const result = saveSession();
       if (!result || !result.client) { showMsg("Save a client first", "red"); return; }
       const { client, ledger } = result;
-      const updated = ledger.map(c => c.id === client.id ? { ...c, status: "booked", bookedAt: Date.now(), bookedBy: authUser?.name || "—", finalSession: c.sessions?.[0] || null } : c);
+      // bookedSystemTotal is the frozen baseline the Summary hero diffs the live build against to
+      // show "pending changes since booking" (owner decision: negotiated deal value stays frozen,
+      // salesperson applies build-driven changes manually — see the hero's pendingDelta banner).
+      // Only set once — a re-confirm of an already-booked deal must not silently rebase it, or a
+      // real pending change made between two re-confirms would vanish unnoticed.
+      const updated = ledger.map(c => c.id === client.id ? { ...c, status: "booked", bookedAt: Date.now(), bookedBy: authUser?.name || "—", finalSession: c.sessions?.[0] || null, bookedSystemTotal: (c.bookedSystemTotal != null ? c.bookedSystemTotal : eventGrandTotal) } : c);
       saveClientLedger(updated);
       const allFns = collectAllFunctionData();
       const fnEOs = allFns.map(fnData => {
@@ -6675,25 +6753,29 @@ export default function StudioApp() {
       const rows = await loadClientRows();
       if (!Array.isArray(rows)) throw new Error("client_ledger: unexpected response");
       const list = rows.map(rowToClient).filter(Boolean);
-      try {
-        const srows = await loadSessionRows();
-        if (Array.isArray(srows) && srows.length) {
-          const byClient = new Map();
-          for (const r of srows) {
-            if (!r?.client_id) continue;
-            let g = byClient.get(r.client_id);
-            if (!g) { g = []; byClient.set(r.client_id, g); }
-            g.push(r);
-          }
-          // Same change as the mount path above — the table is authoritative, so no rows means no
-          // sessions. Left as the old conditional, this retry would have quietly resurrected a
-          // deleted session that the mount path had correctly dropped.
-          for (const c of list) {
-            const mine = byClient.get(c.id);
-            c.sessions = (mine && mine.length) ? rowsToSessions(mine) : [];
-          }
+      // NOT wrapped in its own try/catch — same reasoning as the mount effect's identical fetch
+      // above. loadSessionRows() already falls back internally for the one case that's genuinely
+      // "no sessions" (the RPC missing pre-migration); swallowing a real failure here used to let
+      // this retry commit a session-less ledger for every client (rowToClient always starts
+      // sessions: [] — there's no blob mirror left to fall back to), silently erasing what the
+      // banner was trying to recover. Letting it throw routes to the outer catch below instead.
+      const srows = await loadSessionRows();
+      if (Array.isArray(srows) && srows.length) {
+        const byClient = new Map();
+        for (const r of srows) {
+          if (!r?.client_id) continue;
+          let g = byClient.get(r.client_id);
+          if (!g) { g = []; byClient.set(r.client_id, g); }
+          g.push(r);
         }
-      } catch { /* table absent or unreadable — the blob history stands */ }
+        // Same change as the mount path above — the table is authoritative, so no rows means no
+        // sessions. Left as the old conditional, this retry would have quietly resurrected a
+        // deleted session that the mount path had correctly dropped.
+        for (const c of list) {
+          const mine = byClient.get(c.id);
+          c.sessions = (mine && mine.length) ? rowsToSessions(mine) : [];
+        }
+      }
       const seed = {}; list.forEach((c) => { if (c && c.id) seed[c.id] = JSON.stringify(c); });
       clientJsonRef.current = seed;
       setClientLedger(list);
@@ -8279,7 +8361,13 @@ export default function StudioApp() {
         // "cost" only while CustomItemModal was its sole user; Deal Check's availability control
         // also needs onPick — to write the pick back to dcCards instead of Build's zoneElements —
         // and it is renting, so inferring would have shown it production cost.
-        .map(it => ({ id: it.id, name: it.name, photo: (Array.isArray(it.photoUrls) && it.photoUrls[0]) || it.img || "", free: getStudioAvailable(it, blocksForDate), price: opts?.priceMode === "cost" ? (Number(it.cost) || 0) : priceForInvItem(it, rcFactorByKey, inventory), dims: itemDimsText(it) }))
+        // A third mode, "rental": Deal Check's own picker (DealCheckOverlay.jsx) passes this — it
+        // shows OUR cost to run the deal, never a client-facing sale figure, so priceForInvItem's
+        // scaling factor (a Rate-Card markup meant for what the CLIENT is charged in Build/Summary)
+        // has no business here. Plain imsField.rentalCost matches every other rental figure Deal
+        // Check already shows (effKitRental, the zone/bottom-bar rollups) — this picker was the one
+        // place still quietly multiplying by that factor.
+        .map(it => ({ id: it.id, name: it.name, photo: (Array.isArray(it.photoUrls) && it.photoUrls[0]) || it.img || "", free: getStudioAvailable(it, blocksForDate), price: opts?.priceMode === "cost" ? (Number(it.cost) || 0) : opts?.priceMode === "rental" ? imsField.rentalCost(it) : priceForInvItem(it, rcFactorByKey, inventory), dims: itemDimsText(it) }))
         .sort((a, b) => b.free - a.free);
       setAvailModal(m => (m && m.zoneKey === zoneKey && m.idx === idx) ? { ...m, loading: false, items } : m);
     } catch { setAvailModal(m => m ? { ...m, loading: false } : m); }
@@ -8551,6 +8639,23 @@ export default function StudioApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dcFullPageOpen]);
 
+  // Layout-effect mirror of Deal Check's own draft state, read by doSave below instead of its
+  // closure. flushDcAutosaveRef.current can be called from a setTimeout(0) fired the instant a swap
+  // sets state (see the swap handlers in DealCheckOverlay.jsx) — a PASSIVE effect refreshing that ref
+  // is not guaranteed to have re-run by then (a passive effect racing a timeout is scheduler
+  // behaviour, not a guarantee — see saveSessionRef's own layout-effect fix above for the identical
+  // class of bug), so a stale doSave closure could flush the pre-swap state and the swap would still
+  // be lost on a fast-enough refresh. A layout effect commits synchronously right after the render,
+  // always before any macrotask, so doSave reading through this ref is always current.
+  const dcStateRef = useRef({});
+  useLayoutEffect(() => {
+    dcStateRef.current = {
+      dcResolved, dcCards, dcZoneState, dcPhotoOverrides, dcSkipped, dcManualItems,
+      dcDedupOverrides, dcProductionAccepted, dcArtFlowerAlloc, dcFloralColorPrefs, dcCustomItems,
+      dcKitEdits, dcCarpetPick, dcMpOverrides, dcMpWinCount, dcMpIncludeMinusOne, dcMpIncludeDismantle,
+    };
+  });
+
   // ═══ Tier 2.2 — Deal Check cache writer (debounced, per-client) — VERBATIM ═══
   useEffect(() => {
     if (!activeClientId || !dcFullPageOpen) return;
@@ -8574,18 +8679,21 @@ export default function StudioApp() {
     // after that shows "No IMS match". A real draft always has cards, so empty = mid-load → skip.
     if (!dcCards || Object.keys(dcCards).length === 0) return;
     const doSave = (saveOpts = {}) => {
+      // Read through the layout-effect-mirrored ref, NOT this closure's own dcCards/etc — see
+      // dcStateRef above for why a stale closure here would otherwise re-flush pre-swap state.
+      const dcs = dcStateRef.current;
       const snapshot = {
-        resolved: dcResolved,
-        cards: dcCards,
-        zoneState: dcZoneState,
-        photoOverrides: dcPhotoOverrides,
-        skipped: dcSkipped,
-        manualItems: dcManualItems,
-        dedupOverrides: dcDedupOverrides,
-        productionAccepted: dcProductionAccepted,
-        artFlowerAlloc: dcArtFlowerAlloc,
-        floralColorPrefs: dcFloralColorPrefs,
-        customItems: dcCustomItems,
+        resolved: dcs.dcResolved,
+        cards: dcs.dcCards,
+        zoneState: dcs.dcZoneState,
+        photoOverrides: dcs.dcPhotoOverrides,
+        skipped: dcs.dcSkipped,
+        manualItems: dcs.dcManualItems,
+        dedupOverrides: dcs.dcDedupOverrides,
+        productionAccepted: dcs.dcProductionAccepted,
+        artFlowerAlloc: dcs.dcArtFlowerAlloc,
+        floralColorPrefs: dcs.dcFloralColorPrefs,
+        customItems: dcs.dcCustomItems,
         cachedAt: new Date().toISOString()
       };
       // In-session cache only (no network write — the old whole-blob reliableSave hammered the
@@ -8618,8 +8726,9 @@ export default function StudioApp() {
         } else {
           const nowStamp = Date.now();
           const result = saveClientLedger(cur.map(c => c.id === activeClientId ? { ...c,
-            dcCards, dcZoneState, dcKitEdits, dcCarpetPick, dcMpOverrides, dcMpWinCount,
-            dcMpIncludeMinusOne, dcMpIncludeDismantle,
+            dcCards: dcs.dcCards, dcZoneState: dcs.dcZoneState, dcKitEdits: dcs.dcKitEdits, dcCarpetPick: dcs.dcCarpetPick,
+            dcMpOverrides: dcs.dcMpOverrides, dcMpWinCount: dcs.dcMpWinCount,
+            dcMpIncludeMinusOne: dcs.dcMpIncludeMinusOne, dcMpIncludeDismantle: dcs.dcMpIncludeDismantle,
             dcDraft: snapshot, dcDraftSavedAt: nowStamp, dcDraftSavedBy: me } : c), undefined, { keepalive: !!saveOpts.keepalive });
           dcSaveBaselineRef.current = { savedAt: nowStamp, savedBy: me };
           return result;
@@ -8896,6 +9005,11 @@ export default function StudioApp() {
     const newCards = { ...dcCards };
     const newZoneState = { ...dcZoneState };
     const matchedItemIds = new Set();
+    // Every fnIdx actually processed this run gets its current valid cardKey set recorded here —
+    // read by the final merge below to stop it resurrecting a manual-swap card whose underlying
+    // Build element is genuinely gone/renamed/reindexed (a real prune), not just protecting it from
+    // an unrelated re-derive.
+    const validKeysByFn = {};
     let zonesProcessed = 0, cardsResolved = 0, cardsAi = 0, cardsNameMatch = 0, cardsUnmatched = 0, cardsKnown = 0;
     const ac = new AbortController();
     setDcAbortRef(ac);
@@ -8924,14 +9038,25 @@ export default function StudioApp() {
         specs.forEach(s => validKeys.add(s.cardKey));
       }
       Object.keys(newCards[fnIdx]).forEach(k => { if (!validKeys.has(k)) delete newCards[fnIdx][k]; });
+      validKeysByFn[fnIdx] = validKeys;
       for (const zoneKey of enabledZoneKeys) {
         const entry = zoneSpecs[zoneKey];
         if (!entry) continue;
         const { specs: cardSpecs, photoUrl } = entry;
         // Re-match when the zone is flagged dirty OR any current element is missing a card (build changed
         // since the last run). Otherwise the zone is up to date — skip the AI to save calls.
-        const needsMatch = cardSpecs.some(s => !newCards[fnIdx][s.cardKey]) || isZoneDirty(dcZoneState, dcCards, fnIdx, zoneKey);
-        if (!needsMatch) continue;
+        // NEVER re-derive a card the salesperson manually swapped/split inside Deal Check itself
+        // (source: "manual-swap") — that pick has no Build-side element to re-read from on a booked
+        // deal (Deal Check no longer writes back to Build once sold), so re-running it just re-pins to
+        // Build's stale invId and silently reverts the user's edit a few seconds later. It stays locked
+        // until the underlying element is actually removed/changed in Build (its cardKey gets pruned).
+        const specsToRun = cardSpecs.filter(s => {
+          const existing = newCards[fnIdx][s.cardKey];
+          if (!existing) return true;
+          if (existing.source === "manual-swap") return false;
+          return isZoneDirty(dcZoneState, dcCards, fnIdx, zoneKey);
+        });
+        if (specsToRun.length === 0) continue;
         zonesProcessed += 1;
         setDcGenStatus(`Matching zone "${zoneKey}" (fn ${fnIdx + 1})…`);
         const venueName = fn.fnVenue || "";
@@ -9030,14 +9155,44 @@ export default function StudioApp() {
         // entry, so no collisions). Cuts a zone's match time to roughly (elements/6) × per-call time.
         const CONCURRENCY = 6;
         let _si = 0;
-        await Promise.all(Array.from({ length: Math.min(CONCURRENCY, cardSpecs.length) }, async () => {
-          while (_si < cardSpecs.length && !zoneAborted) { await runSpec(cardSpecs[_si++]); }
+        await Promise.all(Array.from({ length: Math.min(CONCURRENCY, specsToRun.length) }, async () => {
+          while (_si < specsToRun.length && !zoneAborted) { await runSpec(specsToRun[_si++]); }
         }));
         if (zoneAborted) { setDcGenerating(false); setDcGenStatus("Cancelled"); setDcAbortRef(null); return { ok: false, error: "aborted" }; }
         newZoneState[fnIdx][zoneKey] = { ...(newZoneState[fnIdx][zoneKey] || {}), lastResolvedAt: Date.now() };
       }
     }
-    setDcCards(newCards);
+    // Functional update, re-checked against the LATEST dcCards — not a plain overwrite of the
+    // `newCards` snapshot this call started from. On Deal Check's first open after a hard refresh,
+    // this call's own `dcCards` closure can still be `{}` (state hadn't caught up to the just-
+    // restored draft yet — restore and this generate both fire from the same dcFullPageOpen flip,
+    // and dealCheckLoading-gating the generate doesn't actually wait for it: a state read inside an
+    // effect reflects the render it closed over, not a state update queued in that same pass), so
+    // every card — including an already-swapped one — got re-derived fresh from Build with nothing
+    // to protect it. Re-applying the manual-swap guard here against `prev` (guaranteed current by
+    // React's functional-update contract) closes that race regardless of what this call's own
+    // dcCards looked like when it started.
+    setDcCards(prev => {
+      const merged = { ...newCards };
+      Object.keys(prev || {}).forEach((fi) => {
+        const prevFn = prev[fi] || {};
+        // Only defined for an fnIdx this run actually touched — undefined means this fn wasn't
+        // processed at all this pass, so there is no fresh prune to respect; carry every manual-swap
+        // card forward unconditionally, same as before. When it IS defined, a key missing from it was
+        // genuinely pruned (its Build element is gone/renamed/reindexed) — resurrecting it here would
+        // put a stale "ghost" card back on screen next to whatever now correctly occupies its slot.
+        const vKeys = validKeysByFn[fi];
+        let mergedFn = null;
+        Object.keys(prevFn).forEach((key) => {
+          if (prevFn[key]?.source === "manual-swap" && (!vKeys || vKeys.has(key))) {
+            if (!mergedFn) mergedFn = { ...(merged[fi] || {}) };
+            mergedFn[key] = prevFn[key];
+          }
+        });
+        if (mergedFn) merged[fi] = mergedFn;
+      });
+      return merged;
+    });
     setDcZoneState(newZoneState);
     // A fresh regenerate on a SOLD deal → the next dept-snapshot sync wipes the dept head's edits
     // (plan + actuals) so IMS reflects the new system plan, not the old overrides.
@@ -9416,9 +9571,10 @@ export default function StudioApp() {
     // pricing helpers
     rcIsSMB, buildZoneConfig, getFloralMode, applyFloralRatio, getElPrice, getElPriceForFn, calcElsCost, calcElsCostForFn, rcCostPctForSub,
     calcPhotoCost, calcStructCost, calcFullEventCost, getFullCost, totalCost, transportCalc, grandTotal, pricingReady,
-    collectAllFunctionData, calcFunctionCost, calcFnFloralSourcingCost, eventGrandTotal, calcFunctionBreakdown, manpowerPlanForBooking, persistDeptSnapshot, dcEoActuals, refreshDcEoActuals,
+    collectAllFunctionData, calcFunctionCost, calcFnFloralSourcingCost, eventGrandTotal, calcFunctionBreakdown, manpowerPlanForBooking, persistDeptSnapshot, syncDealValueNow, dcEoActuals, refreshDcEoActuals,
     // deal check orchestration + persistence (overlay)
     openDealCheck, runDealCheckGenerate, getStudioAvailable, loadAvailability, getActiveSoftHold, reliableSave, DC_CACHE_SK,
+    flushDcAutosaveRef,
     writeStudioTrussSoftHolds,
     // deal check inventory-tab module helpers
     isZoneDirty, parseCardKey, PLATFORM_FATTA_CODE, PLATFORM_STAND_CODE,

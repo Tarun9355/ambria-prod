@@ -227,11 +227,42 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   const deptIncome = (sel?.deptIncome && sel.deptIncome[dept]) || null;
   const deptInvSnap = (sel?.deptInventory && Array.isArray(sel.deptInventory[dept])) ? sel.deptInventory[dept] : null;
 
+  // ── Swap detection: a request row that both adds and removes an item in the same batch is a
+  // straight swap (a Deal Check pick replacing another, logged by reconcileSoldInventoryBlocks in
+  // one go) — tag the newly-added item SWAPPED so ops sees at a glance this isn't extra inventory,
+  // it's a substitution. Most recent qualifying row wins per item name; when a batch bundles more
+  // than one removal the "from" is shown as a count rather than guessing which item paired with which.
+  const swapInfo = useMemo(() => {
+    const map = new Map();
+    const rows = (amendRequests || [])
+      .filter(r => r.eventOrderId === sel?.id && r.department === dept && r.status === "logged")
+      .sort((a, b) => (b.requestedAt || 0) - (a.requestedAt || 0));
+    for (const r of rows) {
+      const items = r.items || [];
+      const added = items.filter(it => it.change === "added");
+      const removed = items.filter(it => it.change === "removed");
+      if (!added.length || !removed.length) continue;
+      const fromLabel = removed.length === 1 ? removed[0].name : `${removed.length} items`;
+      for (const a of added) {
+        if (!map.has(a.name)) map.set(a.name, { swappedFrom: fromLabel, at: r.requestedAt });
+      }
+    }
+    return map;
+  }, [amendRequests, sel, dept]);
+
   // ── Blocked inventory: prefer the Deal Check snapshot; fall back to IMS blocks if not synced ──
   // GROUPED view (kit as one line + its components) — used for the inventory/income display.
   const blockedItemsGrouped = useMemo(() => {
     if (!sel) return [];
-    if (deptInvSnap && deptInvSnap.length) return deptInvSnap.map((x, i) => ({ id: x.name + i, invId: x.imsId || null, name: x.name, photo: x.photo || "", qty: x.qty || 0, unit: x.unit || 0, total: x.total || 0, sub: x.sub || "", isKit: !!x.isKit, components: Array.isArray(x.components) ? x.components : null }));
+    if (deptInvSnap && deptInvSnap.length) {
+      const rows = deptInvSnap.map((x, i) => ({ id: x.name + i, invId: x.imsId || null, name: x.name, photo: x.photo || "", qty: x.qty || 0, unit: x.unit || 0, total: x.total || 0, sub: x.sub || "", isKit: !!x.isKit, components: Array.isArray(x.components) ? x.components : null, shortQty: x.shortQty || 0, shortCost: x.shortCost || 0, prodOrBuy: x.prodOrBuy || null, isSwapped: swapInfo.has(x.name), swappedFrom: swapInfo.get(x.name)?.swappedFrom || null }));
+      // Short items first (need chasing/ordering), then Production/Buying (not real stock — worth
+      // knowing apart from what's actually reserved), then everything else — the order requested
+      // for this list. Stable within each group: Array.prototype.sort is stable, so ties keep the
+      // snapshot's own order (whichever function/zone order dcCostRollup built them in).
+      const rank = (it) => (it.shortQty > 0 ? 0 : it.prodOrBuy ? 1 : 2);
+      return rows.sort((a, b) => rank(a) - rank(b));
+    }
     const out = [];
     Object.entries(blocks || {}).forEach(([itemId, arr]) => {
       const qty = (arr || []).filter(b => b.eventId === sel.id).reduce((s, b) => s + (Number(b.qty) || 0), 0);
@@ -244,7 +275,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
       out.push({ id: itemId, invId: itemId, name: item.name, photo: item.img || (Array.isArray(item.photoUrls) && item.photoUrls[0]) || "", qty, unit, total: unit * qty, sub: item.subCat || item.subcategory || "" });
     });
     return out.sort((a, b) => b.total - a.total);
-  }, [sel, blocks, inventory, dept]);
+  }, [sel, blocks, inventory, dept, swapInfo]);
   // FLAT view — kits expanded into the kit shell + each component as its own physical row. Used by
   // Loading & dispatch, Receiving and Dismantle (the ops manager loads/moves each real item).
   const blockedItems = useMemo(() => {
@@ -990,6 +1021,21 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                 <div className="min-w-0">
                   <div className="text-lg font-bold text-gray-900 truncate">{dept} — {sel.clientName || "Event"}</div>
                   <div className="text-xs text-gray-500 truncate">{selDateStr || "no date"} · {sel.functionsDetail?.[0]?.venue || sel.venue || "—"}{deptData.updatedBy ? ` · last edited by ${deptData.updatedBy}` : ""}</div>
+                  {/* Deal value — read-only mirror of Studio's negotiated amount (client_ledger),
+                      written whenever Deal Check syncs. It stays frozen once booked by owner decision;
+                      "pending" is the live build's drift since booking, shown here so ops sees the same
+                      number Studio does, but only Studio can fold it into the deal value (Apply button
+                      on the Summary hero) — this view has no action for it. */}
+                  {sel.dealValue && (
+                    <div className="text-xs mt-1 flex items-center gap-2 flex-wrap">
+                      <span className="font-semibold text-gray-700">💰 Deal value: ₹{Number(sel.dealValue.amount || 0).toLocaleString("en-IN")}</span>
+                      {!!sel.dealValue.pending && (
+                        <span className={"font-bold px-1.5 py-0.5 rounded text-[11px] " + (sel.dealValue.pending > 0 ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700")}>
+                          {sel.dealValue.pending > 0 ? "+" : ""}₹{Number(sel.dealValue.pending).toLocaleString("en-IN")} pending (not yet applied in Studio)
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
               <div className="flex items-center gap-3 flex-wrap">
@@ -1388,11 +1434,26 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                             {it.photo ? <img src={it.photo} alt="" onClick={() => setZoomImg(it.photo)} className="w-11 h-11 rounded-lg object-cover border cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-11 h-11 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-lg shrink-0">📦</div>}
                             <div className="min-w-0">
                               <div className="text-sm font-semibold text-gray-900 truncate">{it.name}</div>
-                              {it.isKit && <span className="inline-block mt-0.5 text-[10px] px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 font-bold">KIT</span>}
+                              {/* Every status badge the flat-list version carried, kept as a
+                                  wrapping row under the name instead of trailing off the end of
+                                  it — in a fixed-width ITEM column four inline badges pushed the
+                                  name out of sight, which is the opposite of what they are for. */}
+                              <div className="flex items-center gap-1 flex-wrap mt-0.5">
+                                {it.isKit && <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 font-bold">KIT</span>}
+                                {it.shortQty > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-bold">SHORT ×{it.shortQty}</span>}
+                                {it.prodOrBuy && <span className={"text-[10px] px-1.5 py-0.5 rounded font-bold " + (it.prodOrBuy === "buying" ? "bg-orange-100 text-orange-700" : "bg-purple-100 text-purple-700")}>{it.prodOrBuy === "buying" ? "🛒 BUYING" : "🏭 PRODUCTION"}</span>}
+                                {it.isSwapped && <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-100 text-sky-700 font-bold">🔁 SWAPPED</span>}
+                              </div>
                             </div>
                           </div>
                         </td>
-                        <td className="px-3 py-2.5 text-xs text-gray-500">{it.sub || "—"}</td>
+                        <td className="px-3 py-2.5 text-xs text-gray-500">
+                          <div>{it.sub || "—"}</div>
+                          {/* The explanations that rode alongside the sub-category in the flat
+                              list. They belong with DETAILS, not with the name. */}
+                          {it.shortQty > 0 && <div className="text-amber-600 mt-0.5">{it.shortQty} short of stock — priced at cost, chase or produce</div>}
+                          {it.isSwapped && <div className="text-sky-600 mt-0.5">swapped in for {it.swappedFrom}</div>}
+                        </td>
                         <td className="px-3 py-2.5 text-sm font-semibold text-gray-700 text-right tabular-nums whitespace-nowrap">×{it.qty}</td>
                         <td className="px-3 py-2.5 text-sm text-gray-600 text-right tabular-nums whitespace-nowrap">{fmt(it.unit)}</td>
                         <td className="px-4 py-2.5 text-right whitespace-nowrap">
