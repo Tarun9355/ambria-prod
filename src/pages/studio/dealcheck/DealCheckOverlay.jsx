@@ -166,7 +166,7 @@ export default function DealCheckOverlay({ ctx }) {
     clientLedger, activeClientId, activeClient, clientName, clientDate, authUser, eventGrandTotal,
     // deal check state
     dcActiveTab, setDcActiveTab, dcGenerating, dcGenStatus,
-    dcCards, dcInventoryCache, dcCarpetPick, setDcCarpetPick, dcCarpetSearch, setDcCarpetSearch,
+    dcCards, dcInventoryCache, dcCarpetPick, setDcCarpetPick,
     dcKitEdits, setDcKitEdits, dcManualItems, setDcManualItems, dcManualSearch, setDcManualSearch,
     dcCollapsedZones, setDcCollapsedZones, setDcBrowseAllOpen, dcBrowseAllOpen, setDcCustomModal,
     dcCustomItems, setDcCustomItems, elSelectedPhoto, dcDedupOverrides, setDcDedupOverrides,
@@ -2169,44 +2169,22 @@ export default function DealCheckOverlay({ ctx }) {
                                   const cPrice = carpetPricingFor(zc.cpT, imsCarpetMaterials);
                                   const chargedCarpet = neededSqft * (cPrice.rate || 0);
                                   const setPick = (id)=> setDcCarpetPick(prev=>({...prev,[fnIdx]:{...(prev[fnIdx]||{}),[zk]: id}}));
-                                  const searchKey = `${fnIdx}|${zk}`;
-                                  const searchText = dcCarpetSearch[searchKey] || "";
-                                  const setSearch = (v)=> setDcCarpetSearch(prev=>({...prev,[searchKey]:v}));
-                                  const q = searchText.toLowerCase().trim();
-                                  const _fnPal = fns[fnIdx]?.fnPalette || "Custom";
-                                  const _pObj = (imsPaletteCatalogue||[]).find(p => p.name === _fnPal);
-                                  const _anchors = (_pObj?.anchorColours || []).map(c => c.toLowerCase());
-                                  const scoreCarpet = (x) => {
-                                    const n = (x.name||"").toLowerCase();
-                                    let matches = 0;
-                                    for (const a of _anchors) { if (n.includes(a)) matches++; }
-                                    return matches;
-                                  };
-                                  let filtered;
-                                  if (q) {
-                                    filtered = carpetOpts.filter(x => (x.name||"").toLowerCase().includes(q) || String(imsField.subcategory(x)||"").toLowerCase().includes(q));
-                                  } else {
-                                    filtered = [...carpetOpts].sort((a,b) => {
-                                      const sa = scoreCarpet(a), sb = scoreCarpet(b);
-                                      if (sb !== sa) return sb - sa;
-                                      return (Number(b.qty)||0) - (Number(a.qty)||0);
-                                    });
-                                  }
-                                  const showAllKey = `${fnIdx}|${zk}|showAll`;
-                                  const showAll = dcCarpetSearch[showAllKey] === "1";
-                                  const displayLimit = q ? 30 : (showAll ? filtered.length : 10);
-                                  const hasMore = !q && filtered.length > 10 && !showAll;
-                                  // ── THE PICKER IS ONLY OPEN WHEN THERE IS A CHOICE TO MAKE ──
-                                  // This block showed the chosen carpet AND the full search-and-browse
-                                  // picker at once, permanently. On a settled deal that is a large
-                                  // pink panel with a search box and a grid of thumbnails sitting
-                                  // above the item cards, for a decision already made. Once a carpet
-                                  // is picked it collapses to one line; "Change" reopens it. With
-                                  // nothing picked it opens on its own, because then the picker IS
-                                  // the point. Keyed into dcCarpetSearch rather than new state — it
-                                  // is already the per-zone carpet UI store and is not persisted.
-                                  const openKey = `${fnIdx}|${zk}|open`;
-                                  const pickerOpen = !carpetItem || dcCarpetSearch[openKey] === "1";
+                                  // The SAME availability picker Build's IconBox control opens (and
+                                  // regular Deal Check item cards, just above) — free counts, holds
+                                  // and dimensions in one list, rather than a bespoke search-and-thumbnail
+                                  // grid duplicating that same question just for carpets. Falls back to
+                                  // whichever sub-category an already-known carpet item carries (either
+                                  // the one currently picked, or the first of the broad "contains
+                                  // carpet" set above) since openAvailModal needs a concrete sub-category
+                                  // to search within, not a substring.
+                                  const carpetSubcatFallback = carpetItem ? imsField.subcategory(carpetItem) : (carpetOpts[0] ? imsField.subcategory(carpetOpts[0]) : "Carpet");
+                                  const openCarpetPicker = () => openAvailModal?.(
+                                    zk, 0,
+                                    { invId: pickedId || null, imsId: pickedId || null, name: carpetItem?.name || "" },
+                                    { sub: carpetSubcatFallback },
+                                    (pick) => { if (pick) setPick(pick.id); },
+                                    { pickHint: "Pick which carpet to reuse — free counts and holds shown below.", priceMode: "rental" },
+                                  );
                                   return (
                                     <div style={{padding:"10px 12px",borderRadius:11,background:CARD_BG,border:`1px solid ${CARD_BORDER}`,display:"flex",flexDirection:"column",gap:8}}>
                                       <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
@@ -2238,38 +2216,22 @@ export default function DealCheckOverlay({ ctx }) {
                                             </div>
                                             {calc.rentalRate<=0 && <div style={{color:BAD,fontSize:10.5,marginTop:2,fontStyle:"italic"}}>⚠ No rental rate in IMS (₹0/sqft)</div>}
                                           </div>
-                                          <button onClick={()=>setDcCarpetSearch(prev=>({...prev,[openKey]:pickerOpen?"0":"1"}))}
+                                          <button onClick={openCarpetPicker}
                                             className="dc2-ghost"
                                             style={{flexShrink:0,fontSize:10.5,fontWeight:650,padding:"4px 10px",borderRadius:999,border:`1px solid ${TILE_BORDER}`,background:CARD_BG,color:INK_2,cursor:"pointer",whiteSpace:"nowrap"}}>
-                                            {pickerOpen ? "Done" : "Change"}
+                                            Change
                                           </button>
                                           <span onClick={()=>setPick(null)} style={{color:BAD,cursor:"pointer",fontSize:15,fontWeight:700,flexShrink:0}} title="Clear">×</span>
                                         </div>
                                       ) : (
-                                        <div style={{fontSize:11.5,color:INK_2}}>Pick a carpet below{_anchors.length > 0 ? ` — sorted by ${_fnPal} theme` : ""} · {carpetOpts.length} option{carpetOpts.length===1?"":"s"} in IMS</div>
+                                        <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                                          <span style={{fontSize:11.5,color:INK_2}}>{carpetOpts.length} option{carpetOpts.length===1?"":"s"} in IMS.</span>
+                                          <button type="button" onClick={openCarpetPicker}
+                                            style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:11.5,fontWeight:650,padding:"5px 11px",borderRadius:999,border:`1px solid ${TILE_BORDER}`,background:TILE_BG,color:INK,cursor:"pointer"}}>
+                                            <IconBox size={13}/> Check availability &amp; pick a carpet
+                                          </button>
+                                        </div>
                                       )}
-                                      {pickerOpen && <input value={searchText} onChange={e=>setSearch(e.target.value)} placeholder="🔍 Search carpets (colour, type, design)…" style={{fontSize:12,padding:"5px 9px",borderRadius:8,border:`1px solid ${CARD_BORDER}`,background:CARD_BG,color:INK}} />}
-                                      {pickerOpen && <div style={{display:"flex",gap:8,overflowX:"auto",paddingBottom:4,WebkitOverflowScrolling:"touch",flexWrap:"wrap"}}>
-                                        {filtered.length === 0 && <div style={{fontSize:12,color:IV.ink,fontStyle:"italic",padding:"8px 0"}}>No carpets match "{searchText}"</div>}
-                                        {filtered.slice(0,displayLimit).map(opt=>{
-                                          const optPhoto = imsField.photos(opt)[0];
-                                          const isSelected = pickedId === opt.id;
-                                          const optRental = imsField.rentalCost(opt);
-                                          const optOwned = Number(opt.qty)||0;
-                                          const themeScore = scoreCarpet(opt);
-                                          return (
-                                            <div key={opt.id} onClick={()=>{setPick(opt.id); setSearch("");}} style={{minWidth:84,maxWidth:92,cursor:"pointer",borderRadius:9,overflow:"hidden",border:isSelected?`2px solid #10B981`:themeScore>0?`1.5px solid rgba(201,169,110,0.5)`:`1px solid ${border}`,background:isSelected?"rgba(16,185,129,0.08)":themeScore>0?"rgba(201,169,110,0.06)":"rgba(26, 26, 46,0.025)",flexShrink:0,transition:"border 0.15s",position:"relative"}}>
-                                              {themeScore>0&&<div style={{position:"absolute",top:3,right:3,fontSize:10,padding:"1px 5px",borderRadius:4,background:"rgba(201,169,110,0.85)",color:IV.ink,fontWeight:700,zIndex:1}}>🎨 match</div>}
-                                              {optPhoto ? <img loading="lazy" decoding="async" src={thumbUrl(optPhoto, 180)} alt="" style={{width:"100%",height:56,objectFit:"cover",display:"block"}}/> : <div style={{width:"100%",height:56,background:"#F4F2EC",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>🟥</div>}
-                                              <div style={{padding:"5px 6px"}}>
-                                                <div style={{fontSize:11,fontWeight:600,color:IV.ink,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{opt.name}</div>
-                                                <div style={{fontSize:10,color:IV.ink,marginTop:1}}>{optOwned.toLocaleString("en-IN")} sqft{optRental>0?` · ₹${optRental}/sqft`:""}</div>
-                                              </div>
-                                            </div>
-                                          );
-                                        })}
-                                        {hasMore && <div onClick={()=>setDcCarpetSearch(prev=>({...prev,[showAllKey]:"1"}))} style={{minWidth:70,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",borderRadius:9,border:`1px dashed ${CARD_BORDER}`,padding:"10px 8px",fontSize:11,color:INK_2,fontWeight:650,flexShrink:0}}>Show all {filtered.length}</div>}
-                                      </div>}
                                     </div>
                                   );
                                 })()}
