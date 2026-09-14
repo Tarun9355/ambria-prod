@@ -166,7 +166,7 @@ export default function DealCheckOverlay({ ctx }) {
     clientLedger, activeClientId, activeClient, clientName, clientDate, authUser, eventGrandTotal,
     // deal check state
     dcActiveTab, setDcActiveTab, dcGenerating, dcGenStatus,
-    dcCards, dcInventoryCache, dcCarpetPick, setDcCarpetPick,
+    dcCards, dcInventoryCache, dcCarpetPick, setDcCarpetPick, dcCarpetSplit, setDcCarpetSplit,
     dcKitEdits, setDcKitEdits, dcManualItems, setDcManualItems, dcManualSearch, setDcManualSearch,
     dcCollapsedZones, setDcCollapsedZones, setDcBrowseAllOpen, dcBrowseAllOpen, setDcCustomModal,
     dcCustomItems, setDcCustomItems, elSelectedPhoto, dcDedupOverrides, setDcDedupOverrides,
@@ -2184,6 +2184,32 @@ export default function DealCheckOverlay({ ctx }) {
                                   const cPrice = carpetPricingFor(zc.cpT, imsCarpetMaterials);
                                   const chargedCarpet = neededSqft * (cPrice.rate || 0);
                                   const setPick = (id)=> setDcCarpetPick(prev=>({...prev,[fnIdx]:{...(prev[fnIdx]||{}),[zk]: id}}));
+                                  // ── SPLIT: the needed sqft divided across 2+ carpet designs, each ──
+                                  // carrying its OWN sqft — never equal, since one design covers what
+                                  // stock it actually has and the rest comes from another. Mirrors the
+                                  // regular item card's split (card.split): the availability modal's
+                                  // Split button seeds an even starting allocation across the items you
+                                  // pick, and this inline editor is the only place to rebalance or undo
+                                  // it afterward — same two-step shape, different unit (sqft, not qty).
+                                  const rawSplit = Array.isArray(dcCarpetSplit[fnIdx]?.[zk]) ? dcCarpetSplit[fnIdx][zk] : [];
+                                  const splitLines = rawSplit.filter(s => s && s.imsId);
+                                  const isSplitActive = splitLines.length >= 2;
+                                  const setSplitLines = (lines) => setDcCarpetSplit(prev => { const fn = { ...(prev[fnIdx] || {}) }; if (Array.isArray(lines) && lines.length) fn[zk] = lines; else delete fn[zk]; return { ...prev, [fnIdx]: fn }; });
+                                  const clearSplit = () => setSplitLines(null);
+                                  // Per-line reused/fresh, same formula as calcZoneCarpet — just against
+                                  // that line's own sqft allocation instead of the zone's whole neededSqft.
+                                  const splitCalc = isSplitActive ? splitLines.reduce((acc, s) => {
+                                    const it2 = dcInventoryCache.find(x => x.id === s.imsId);
+                                    const sqft = Number(s.sqft) || 0;
+                                    if (!it2 || sqft <= 0) return acc;
+                                    const owned = imsField.qtyOwned(it2);
+                                    const reused = Math.min(sqft, owned);
+                                    const fresh = Math.max(0, sqft - owned);
+                                    const purchaseRate = Number(it2.cost ?? it2.purchaseCost ?? 0) || 0;
+                                    acc.reused += reused; acc.fresh += fresh; acc.allocated += sqft;
+                                    acc.cost += reused * imsField.rentalCost(it2) + fresh * purchaseRate * (markup / 100);
+                                    return acc;
+                                  }, { reused: 0, fresh: 0, allocated: 0, cost: 0 }) : null;
                                   // The SAME availability picker Build's IconBox control opens (and
                                   // regular Deal Check item cards, just above) — free counts, holds
                                   // and dimensions in one list, rather than a bespoke search-and-thumbnail
@@ -2191,14 +2217,24 @@ export default function DealCheckOverlay({ ctx }) {
                                   // whichever sub-category an already-known carpet item carries (either
                                   // the one currently picked, or the first of the broad "contains
                                   // carpet" set above) since openAvailModal needs a concrete sub-category
-                                  // to search within, not a substring.
+                                  // to search within, not a substring. Also offers Split (opts.splitQty/
+                                  // onSplit) so the modal's own "pick 2+ items" flow seeds splitLines —
+                                  // exactly how a regular item card's split starts.
                                   const carpetSubcatFallback = carpetItem ? imsField.subcategory(carpetItem) : (carpetOpts[0] ? imsField.subcategory(carpetOpts[0]) : "Carpet");
                                   const openCarpetPicker = () => openAvailModal?.(
                                     zk, 0,
                                     { invId: pickedId || null, imsId: pickedId || null, name: carpetItem?.name || "" },
                                     { sub: carpetSubcatFallback },
-                                    (pick) => { if (pick) setPick(pick.id); },
-                                    { pickHint: "Pick which carpet to reuse — free counts and holds shown below.", priceMode: "rental" },
+                                    (pick) => { if (pick) { setPick(pick.id); clearSplit(); } },
+                                    {
+                                      pickHint: neededSqft >= 2
+                                        ? "Pick one item to swap this card to — or Split to divide the needed sqft across 2 or more designs."
+                                        : "Pick which carpet to reuse — free counts and holds shown below.",
+                                      priceMode: "rental",
+                                      neededLabel: `${neededSqft} sqft needed for this zone`,
+                                      splitQty: neededSqft,
+                                      onSplit: (alloc) => { setSplitLines(alloc.map(a => ({ imsId: a.imsId, sqft: a.qty }))); setPick(null); },
+                                    },
                                   );
                                   return (
                                     <div style={{padding:"10px 12px",borderRadius:11,background:CARD_BG,border:`1px solid ${CARD_BORDER}`,display:"flex",flexDirection:"column",gap:8}}>
@@ -2219,7 +2255,14 @@ export default function DealCheckOverlay({ ctx }) {
                                           </span>
                                         )}
                                       </div>
-                                      {carpetItem && calc ? (
+                                      {isSplitActive ? (
+                                        <div style={{display:"flex",alignItems:"center",gap:8,padding:"7px 9px",borderRadius:9,background:TILE_BG,border:`1px solid ${TILE_BORDER}`,fontSize:11}}>
+                                          <span style={{fontWeight:650,color:INK}}>✂️ Split across {splitLines.length} designs</span>
+                                          {splitCalc.fresh > 0
+                                            ? <span style={{color:GOLD,fontWeight:600,...NUM}}>⚠ {splitCalc.reused} reused + {splitCalc.fresh} fresh sqft · ₹{Math.round(splitCalc.cost).toLocaleString("en-IN")}</span>
+                                            : <span style={{color:GOOD,fontWeight:600,...NUM}}>✓ {splitCalc.reused} sqft in stock · ₹{Math.round(splitCalc.cost).toLocaleString("en-IN")} rental</span>}
+                                        </div>
+                                      ) : carpetItem && calc ? (
                                         <div style={{display:"flex",gap:9,alignItems:"center",padding:"7px 9px",borderRadius:9,background:TILE_BG,border:`1px solid ${TILE_BORDER}`}}>
                                           {(()=>{const cp=imsField.photos(carpetItem)[0]; return cp ? <HoverZoom src={thumbUrl(cp, 320)}><img loading="lazy" decoding="async" src={thumbUrl(cp, 72)} alt="" style={{width:36,height:36,borderRadius:8,objectFit:"cover",flexShrink:0,border:`1px solid ${CARD_BORDER}`}}/></HoverZoom> : <div style={{width:36,height:36,borderRadius:8,background:CARD_BG,border:`1px solid ${CARD_BORDER}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,flexShrink:0}}>🟥</div>;})()}
                                           <div style={{flex:1,minWidth:0}}>
@@ -2247,6 +2290,58 @@ export default function DealCheckOverlay({ ctx }) {
                                           </button>
                                         </div>
                                       )}
+                                      {/* ── SPLIT EDITOR ──
+                                          Once a split exists it is the only thing that shows what the
+                                          sqft was divided into, and the only way to adjust or undo it —
+                                          same reasoning as the regular item card's own split editor. Free
+                                          sqft per design is shown so a design with less stock than its own
+                                          allocation is visibly over, not just a number that doesn't add up. */}
+                                      {splitLines.length > 0 && (() => {
+                                        const remSqft = neededSqft - splitCalc.allocated;
+                                        const updLine = (si, patch) => setSplitLines(splitLines.map((x, i) => i === si ? { ...x, ...patch } : x));
+                                        const removeLine = (si) => {
+                                          const next = splitLines.filter((_, i) => i !== si);
+                                          if (next.length < 2) {
+                                            // Down to 0 or 1 line — a "split" of one thing isn't a split.
+                                            // Collapse back to the single-pick view, carrying that one
+                                            // design over as the plain pick so nothing is silently dropped.
+                                            clearSplit();
+                                            if (next.length === 1) setPick(next[0].imsId);
+                                          } else setSplitLines(next);
+                                        };
+                                        return (
+                                          <div style={{padding:"8px 10px",borderRadius:8,background:"rgba(16,185,129,0.05)",border:"1px solid rgba(16,185,129,0.25)"}}>
+                                            <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
+                                              <span style={{fontSize:12,fontWeight:700,color:"#34D399"}}>✂️ Split {neededSqft} sqft across designs</span>
+                                              <span onClick={clearSplit} style={{fontSize:11,color:INK,cursor:"pointer",textDecoration:"underline"}}>use single item</span>
+                                            </div>
+                                            <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                                              {splitLines.map((s, si) => {
+                                                const it2 = dcInventoryCache.find(x => x.id === s.imsId);
+                                                const owned = it2 ? imsField.qtyOwned(it2) : 0;
+                                                const sqft = Number(s.sqft) || 0;
+                                                const over = sqft > owned;
+                                                return (
+                                                  <div key={si} style={{display:"flex",alignItems:"center",gap:6,fontSize:13}}>
+                                                    {(()=>{const p=it2?imsField.photos(it2)[0]:null; return p?<img loading="lazy" decoding="async" src={thumbUrl(p, 24)} alt="" style={{width:20,height:20,borderRadius:4,objectFit:"cover",flexShrink:0}}/>:<span style={{width:20,height:20,borderRadius:4,background:"rgba(26, 26, 46,0.06)",flexShrink:0,display:"inline-block"}}/>;})()}
+                                                    <select value={s.imsId} onChange={e=>updLine(si,{imsId:e.target.value})} style={{flex:1,minWidth:0,fontSize:12,padding:"3px 6px",borderRadius:5,border:`1px solid ${border}`,background:"#FFFFFF",color:IV.ink}}>
+                                                      {carpetOpts.map(x=><option key={x.id} value={x.id}>{x.name} ({imsField.qtyOwned(x)} sqft)</option>)}
+                                                      {!carpetOpts.some(x=>x.id===s.imsId) && it2 && <option value={s.imsId}>{it2.name}</option>}
+                                                    </select>
+                                                    <input type="number" min="0" value={sqft} onChange={e=>updLine(si,{sqft:Math.max(0,parseInt(e.target.value)||0)})} style={{width:56,fontSize:13,padding:"3px 4px",borderRadius:5,border:`1px solid ${over?"#EF4444":border}`,background:"transparent",color:over?"#EF4444":"#1A1A2E",textAlign:"center"}}/>
+                                                    <span style={{color:over?"#EF4444":"#10B981",fontSize:11,whiteSpace:"nowrap"}}>{owned} sqft avail</span>
+                                                    <span onClick={()=>removeLine(si)} style={{color:"#EF4444",cursor:"pointer",fontSize:14,padding:"0 2px"}}>×</span>
+                                                  </div>
+                                                );
+                                              })}
+                                            </div>
+                                            <div style={{marginTop:5,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                                              <span onClick={()=>setSplitLines([...splitLines,{imsId:(carpetOpts.find(o=>!splitLines.some(s=>s.imsId===o.id))||carpetOpts[0])?.id||"",sqft:0}])} style={{fontSize:11,color:accent,fontWeight:600,cursor:"pointer",textDecoration:"underline"}}>+ add design</span>
+                                              <span style={{fontSize:11,fontWeight:600,color:remSqft===0?"#10B981":(remSqft>0?"#F59E0B":"#EF4444")}}>{remSqft===0?`✓ allocated ${neededSqft} sqft`:remSqft>0?`${remSqft} sqft unallocated`:`over by ${-remSqft} sqft`}</span>
+                                            </div>
+                                          </div>
+                                        );
+                                      })()}
                                     </div>
                                   );
                                 })()}

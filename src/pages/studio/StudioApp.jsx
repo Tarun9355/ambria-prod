@@ -1701,6 +1701,12 @@ export default function StudioApp() {
   const [dcZoneState, setDcZoneState] = useState({});
   const [dcKitEdits, setDcKitEdits] = useState({});
   const [dcCarpetPick, setDcCarpetPick] = useState({});
+  // Carpet split — {[fnIdx]: {[zoneKey]: [{imsId, sqft}, ...]}} — an alternative to the single
+  // dcCarpetPick when the needed sqft is divided across 2+ carpet designs, each carrying its OWN
+  // sqft (never an equal split: one design covers what stock it has, the rest comes from another).
+  // Mutually exclusive with dcCarpetPick for a given zone — see the carpet card in
+  // DealCheckOverlay.jsx for which one currently governs.
+  const [dcCarpetSplit, setDcCarpetSplit] = useState({});
   const [dcCarpetSearch, setDcCarpetSearch] = useState({});
   const [dcDesiredMargin, setDcDesiredMargin] = useState(null);
   const [dcRunCounter, setDcRunCounter] = useState({});
@@ -8247,6 +8253,9 @@ export default function StudioApp() {
     if (cli.dcCarpetPick && typeof cli.dcCarpetPick === "object" && !Array.isArray(cli.dcCarpetPick)) {
       setDcCarpetPick(cli.dcCarpetPick);
     }
+    if (cli.dcCarpetSplit && typeof cli.dcCarpetSplit === "object" && !Array.isArray(cli.dcCarpetSplit)) {
+      setDcCarpetSplit(cli.dcCarpetSplit);
+    }
     if (cli.dcMpOverrides && typeof cli.dcMpOverrides === "object") setDcMpOverrides(cli.dcMpOverrides);
     if (cli.dcMpWinCount && typeof cli.dcMpWinCount === "object") setDcMpWinCount(cli.dcMpWinCount);
     if (typeof cli.dcMpIncludeMinusOne === "boolean") setDcMpIncludeMinusOne(cli.dcMpIncludeMinusOne);
@@ -8341,7 +8350,7 @@ export default function StudioApp() {
     // Deal Check needs both: it MUST pass onPick (or the pick lands in Build's zoneElements),
     // and onPick was the very flag that used to mean "no split here". So the capability is now
     // declared rather than inferred — the same correction made for priceMode above.
-    setAvailModal({ zoneKey, idx, elName: el?.name || "", subcat, date, loading: true, items: [], selectedId: el?.imsId || el?.invId || null, onPick: onPick || null, splitQty: Number(opts?.splitQty) || 0, onSplit: opts?.onSplit || null, pickHint: opts?.pickHint || "" });
+    setAvailModal({ zoneKey, idx, elName: el?.name || "", subcat, date, loading: true, items: [], selectedId: el?.imsId || el?.invId || null, onPick: onPick || null, splitQty: Number(opts?.splitQty) || 0, onSplit: opts?.onSplit || null, pickHint: opts?.pickHint || "", neededLabel: opts?.neededLabel || "" });
     try {
       const { inventory, blocksForDate } = await loadAvailability(date);
       const target = String(subcat).toLowerCase().trim();
@@ -8367,7 +8376,7 @@ export default function StudioApp() {
         // has no business here. Plain imsField.rentalCost matches every other rental figure Deal
         // Check already shows (effKitRental, the zone/bottom-bar rollups) — this picker was the one
         // place still quietly multiplying by that factor.
-        .map(it => ({ id: it.id, name: it.name, photo: (Array.isArray(it.photoUrls) && it.photoUrls[0]) || it.img || "", free: getStudioAvailable(it, blocksForDate), price: opts?.priceMode === "cost" ? (Number(it.cost) || 0) : opts?.priceMode === "rental" ? imsField.rentalCost(it) : priceForInvItem(it, rcFactorByKey, inventory), dims: itemDimsText(it) }))
+        .map(it => ({ id: it.id, name: it.name, photo: (Array.isArray(it.photoUrls) && it.photoUrls[0]) || it.img || "", free: getStudioAvailable(it, blocksForDate), unit: it.unit || "", price: opts?.priceMode === "cost" ? (Number(it.cost) || 0) : opts?.priceMode === "rental" ? imsField.rentalCost(it) : priceForInvItem(it, rcFactorByKey, inventory), dims: itemDimsText(it) }))
         .sort((a, b) => b.free - a.free);
       setAvailModal(m => (m && m.zoneKey === zoneKey && m.idx === idx) ? { ...m, loading: false, items } : m);
     } catch { setAvailModal(m => m ? { ...m, loading: false } : m); }
@@ -8652,7 +8661,7 @@ export default function StudioApp() {
     dcStateRef.current = {
       dcResolved, dcCards, dcZoneState, dcPhotoOverrides, dcSkipped, dcManualItems,
       dcDedupOverrides, dcProductionAccepted, dcArtFlowerAlloc, dcFloralColorPrefs, dcCustomItems,
-      dcKitEdits, dcCarpetPick, dcMpOverrides, dcMpWinCount, dcMpIncludeMinusOne, dcMpIncludeDismantle,
+      dcKitEdits, dcCarpetPick, dcCarpetSplit, dcMpOverrides, dcMpWinCount, dcMpIncludeMinusOne, dcMpIncludeDismantle,
     };
   });
 
@@ -8726,7 +8735,7 @@ export default function StudioApp() {
         } else {
           const nowStamp = Date.now();
           const result = saveClientLedger(cur.map(c => c.id === activeClientId ? { ...c,
-            dcCards: dcs.dcCards, dcZoneState: dcs.dcZoneState, dcKitEdits: dcs.dcKitEdits, dcCarpetPick: dcs.dcCarpetPick,
+            dcCards: dcs.dcCards, dcZoneState: dcs.dcZoneState, dcKitEdits: dcs.dcKitEdits, dcCarpetPick: dcs.dcCarpetPick, dcCarpetSplit: dcs.dcCarpetSplit,
             dcMpOverrides: dcs.dcMpOverrides, dcMpWinCount: dcs.dcMpWinCount,
             dcMpIncludeMinusOne: dcs.dcMpIncludeMinusOne, dcMpIncludeDismantle: dcs.dcMpIncludeDismantle,
             dcDraft: snapshot, dcDraftSavedAt: nowStamp, dcDraftSavedBy: me } : c), undefined, { keepalive: !!saveOpts.keepalive });
@@ -8755,7 +8764,7 @@ export default function StudioApp() {
       window.removeEventListener("pagehide", onHideOrUnload);
       window.removeEventListener("beforeunload", onHideOrUnload);
     };
-  }, [activeClientId, dcFullPageOpen, dcGenerating, dcResolved, dcCards, dcZoneState, dcPhotoOverrides, dcSkipped, dcManualItems, dcDedupOverrides, dcProductionAccepted, dcArtFlowerAlloc, dcFloralColorPrefs, dcCustomItems, dcKitEdits, dcCarpetPick, dcMpOverrides, dcMpWinCount, dcMpIncludeMinusOne, dcMpIncludeDismantle, authUser, saveClientLedger]);
+  }, [activeClientId, dcFullPageOpen, dcGenerating, dcResolved, dcCards, dcZoneState, dcPhotoOverrides, dcSkipped, dcManualItems, dcDedupOverrides, dcProductionAccepted, dcArtFlowerAlloc, dcFloralColorPrefs, dcCustomItems, dcKitEdits, dcCarpetPick, dcCarpetSplit, dcMpOverrides, dcMpWinCount, dcMpIncludeMinusOne, dcMpIncludeDismantle, authUser, saveClientLedger]);
 
   // ═══ SOLD-DEAL INCREMENTAL INVENTORY RESERVATION ═══
   // Owner decision: a change to a SOLD deal's matched inventory reserves immediately — no
@@ -9555,7 +9564,7 @@ export default function StudioApp() {
     dcPhotoOverrides, setDcPhotoOverrides, dcSkipped, setDcSkipped, dcProductionAccepted, setDcProductionAccepted, dcManualItems, setDcManualItems,
     dcManualSearch, setDcManualSearch, dcDedupOverrides, setDcDedupOverrides, dcBlockedFnOpen, setDcBlockedFnOpen, dcBlockedSubOpen, setDcBlockedSubOpen,
     dcFloralExpanded, setDcFloralExpanded, dcFloralUnmatchedExpanded, setDcFloralUnmatchedExpanded, dcResolved, setDcResolved, dcResolving, setDcResolving, dcAbortRef, setDcAbortRef,
-    dcFullPageOpen, setDcFullPageOpen, closeDealCheck, dcCards, setDcCards, dcZoneState, setDcZoneState, dcKitEdits, setDcKitEdits, dcCarpetPick, setDcCarpetPick,
+    dcFullPageOpen, setDcFullPageOpen, closeDealCheck, dcCards, setDcCards, dcZoneState, setDcZoneState, dcKitEdits, setDcKitEdits, dcCarpetPick, setDcCarpetPick, dcCarpetSplit, setDcCarpetSplit,
     dcCarpetSearch, setDcCarpetSearch, dcDesiredMargin, setDcDesiredMargin, dcRunCounter, setDcRunCounter, dcCache, setDcCache, dcGenerating, setDcGenerating,
     dcSaveBaselineRef, dcConflictWarnedAtRef,
     dcGenStatus, setDcGenStatus, dcActiveTab, setDcActiveTab, dcShowAllFns, setDcShowAllFns, dcCollapsedFnBlocks, setDcCollapsedFnBlocks, dcMpOverrides, setDcMpOverrides, dcMpWinCount, setDcMpWinCount, dcMpIncludeMinusOne, setDcMpIncludeMinusOne,
