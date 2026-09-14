@@ -3353,7 +3353,17 @@ undefined
                         {!rc&&!el.invId&&!el.patternId&&<span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700}}>NEW</span>}
                         {el.invId&&priceInfo.warning&&<span title={priceInfo.warning} style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700}}>⚠ short</span>}
                         {(rc||el.invId)&&<span onClick={()=>openAvailModal(k, idx, el, rc)} title="Check stock availability & pick an item" style={{cursor:"pointer",fontSize:12,opacity:0.5,padding:"0 1px",lineHeight:1}}><IconBox size={12}/></span>}
-                        {el.imsId&&<span onClick={()=>openAvailModal(k, idx, el, rc)} title={`Booking: ${(imsInventory||[]).find(i=>i.id===el.imsId)?.name||el.imsName||"selected item"} — tap to change`} style={{cursor:"pointer",display:"inline-flex",alignItems:"center",gap:2,fontSize:10.5,padding:"2px 7px",borderRadius:4,background:"rgba(16,185,129,0.15)",color:"#059669",fontWeight:700,maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{(imsInventory||[]).find(i=>i.id===el.imsId)?.name||el.imsName||"pinned"}</span>}
+                        {/* Only when the manually-pinned stock item's name actually differs from
+                            what's already shown above (invItem?.name || el.name) — the box icon
+                            right before this already opens the same "tap to change" picker, so a
+                            pinned item that merely repeats the element's own name added a second
+                            clickable copy of the same word with nothing new to say. */}
+                        {(()=>{
+                          if (!el.imsId) return null;
+                          const pinnedName = (imsInventory||[]).find(i=>i.id===el.imsId)?.name||el.imsName||"pinned";
+                          if (String(pinnedName).trim().toLowerCase() === String(invItem?.name || el.name || "").trim().toLowerCase()) return null;
+                          return <span onClick={()=>openAvailModal(k, idx, el, rc)} title={`Booking: ${pinnedName} — tap to change`} style={{cursor:"pointer",display:"inline-flex",alignItems:"center",gap:2,fontSize:10.5,padding:"2px 7px",borderRadius:4,background:"rgba(16,185,129,0.15)",color:"#059669",fontWeight:700,maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{pinnedName}</span>;
+                        })()}
                         {showCosts&&rc&&(rc.cat||"").toLowerCase()==="florals"&&floralRatio>0&&<span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(0,0,0,0.05)",color:"#888",fontWeight:700}}>{"🌸"} {100-floralRatio}% real</span>}
                         {isTrussSqft&&priceInfo.area>0&&<span style={{fontSize:11,padding:"2px 7px",borderRadius:3,background:"rgba(59,130,246,0.12)",color:"#3B82F6",fontWeight:600}}>{priceInfo.area} sqft</span>}
                       </div>
