@@ -2476,7 +2476,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
           rcItems/rcCats this tab already receives. */}
       {/* Studio's own Transport & Power editor, mounted here via a data/theme adapter rather than
           rebuilt — one editor, so the two apps can never disagree about a rate. */}
-      {activePanel === "transport" && <ImsTransportPanel rcItems={rcItems} rcCats={rcCats} />}
+      {activePanel === "transport" && <ImsTransportPanel rcItems={rcItems} rcCats={rcCats} rateCardCategories={rateCardCategories} inventory={inventory} />}
 
       {/* Moved here from Studio → Manage → Settings, which no longer carries a Departments tab. */}
       {activePanel === "departments" && (() => {
