@@ -241,3 +241,11 @@ export function deptMpReconciled(detail, deptData) {
   ];
   return rows.reduce((s, r) => s + mpLineCost(r, mpDay, mpOverrides, mpWin, mpWinCount), 0);
 }
+
+// ── WHICH EVENT ORDERS OPS PLANS FOR ──
+// Dept Ops lists only sold/finalised deals: a pending or cancelled one has nothing to plan, and
+// a deal in review has numbers that are still moving. Shared rather than redeclared because the
+// Calendar tab has to apply the SAME test before offering to open an event in Planning — if the
+// two drifted, a calendar entry could link through to an event Dept Ops refuses to show.
+export const DEAD_EVENT_STATUS = new Set(["pending", "cancelled", "review"]);
+export const isLiveEventOrder = (eo) => !!(eo?.status && !DEAD_EVENT_STATUS.has(eo.status));
