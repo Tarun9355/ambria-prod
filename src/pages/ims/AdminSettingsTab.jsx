@@ -46,13 +46,15 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
   // Pedestals, anything added straight to Inventory) never appeared as a quick-add option at all.
   // rate_card_categories is the actual Sub-Categories master list every other screen already reads
   // from (same fix already applied to Truck Capacity Rules).
-  // Excludes source === "rate_card_only" rows — the ~29 sub-categories that survive in this table
-  // ONLY because the old Rate Card once had an item with that `sub` string, with no live inventory
-  // behind them at all (see the Sub-Categories tab's own "🏷️ rate-card only" badge). Those are
-  // exactly the stale, one-off, often-typo'd names (chowki, BTR, #TAGMDF, Sethi, ...) that kept
-  // showing up here even after the switch away from the legacy list — reading the right TABLE
-  // wasn't enough while it still surfaced rows nobody currently manages as a real sub-category.
-  const allSubcatLabels = [...new Set((rateCardCategories || []).filter((r) => r.source !== "rate_card_only").map((r) => r.label).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  // Kept to source "inventory" or "manual" only — the two values IMS.jsx ever actually writes to
+  // this column (see addSubcat/syncSubcatsFromInventory there). "rate_card_only" is NEVER a real
+  // stored value; it is only the fallback label the Sub-Categories tab's own badge shows for
+  // anything that ISN'T inventory/manual, including rows with source left null/undefined by an old
+  // migration. A prior version of this filter compared against that literal string and excluded
+  // nothing, since no row's source field is ever actually set to it — the stale, often-typo'd names
+  // (chowki, BTR, #TAGMDF, Sethi, ...) all have a non-inventory, non-manual source, so keeping the
+  // two real values is what actually excludes them.
+  const allSubcatLabels = [...new Set((rateCardCategories || []).filter((r) => r.source === "inventory" || r.source === "manual").map((r) => r.label).filter(Boolean))].sort((a, b) => a.localeCompare(b));
   const studioLoading = !!studio?.loading;
   const [subcatSearch, setSubcatSearch] = useState("");
   const [trussMatTab, setTrussMatTab] = useState("iron"); // Truss & Batta Config: active material (pole|iron|aluminium)

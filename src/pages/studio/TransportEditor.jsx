@@ -95,11 +95,12 @@ export default function TransportEditor({ ctx }) {
   const CAT_ICON = { Florals: "🌸", Furniture: "🛋️", Structural: "🏛️", Structure: "🏛️", Lighting: "💡", Fabric: "🧵", Tenting: "⛺", Props: "🎪", Stage: "🎭", Consumable: "📦", "Arches & Props": "🚪", "Wall Masking": "🧱" };
   const subsByCat = (() => {
     const groups = {};
-    // Excludes source === "rate_card_only" rows — surviving in this table only because the old
-    // Rate Card once had an item with that `sub` string, with no live inventory behind them at
-    // all. Nothing physical to load means nothing that needs a truck-capacity setting; including
-    // them was the same stale-name noise fixed in Manpower's sub-category quick-add lists.
-    (rateCardCategories || []).filter((r) => r.source !== "rate_card_only").forEach((r) => {
+    // Kept to source "inventory" or "manual" only — the two values IMS.jsx ever actually writes.
+    // "rate_card_only" is never a real stored value (only a display fallback), so excluding THAT
+    // literal string excluded nothing — these rows' source is null/undefined from an old
+    // migration, not that string. Nothing physical to load means nothing that needs a
+    // truck-capacity setting; same stale-name noise fixed in Manpower's quick-add lists.
+    (rateCardCategories || []).filter((r) => r.source === "inventory" || r.source === "manual").forEach((r) => {
       const label = groupLabelFor(r);
       (groups[label] = groups[label] || []).push(r.label || r.id);
     });
