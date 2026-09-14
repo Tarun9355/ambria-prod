@@ -95,7 +95,11 @@ export default function TransportEditor({ ctx }) {
   const CAT_ICON = { Florals: "🌸", Furniture: "🛋️", Structural: "🏛️", Structure: "🏛️", Lighting: "💡", Fabric: "🧵", Tenting: "⛺", Props: "🎪", Stage: "🎭", Consumable: "📦", "Arches & Props": "🚪", "Wall Masking": "🧱" };
   const subsByCat = (() => {
     const groups = {};
-    (rateCardCategories || []).forEach((r) => {
+    // Excludes source === "rate_card_only" rows — surviving in this table only because the old
+    // Rate Card once had an item with that `sub` string, with no live inventory behind them at
+    // all. Nothing physical to load means nothing that needs a truck-capacity setting; including
+    // them was the same stale-name noise fixed in Manpower's sub-category quick-add lists.
+    (rateCardCategories || []).filter((r) => r.source !== "rate_card_only").forEach((r) => {
       const label = groupLabelFor(r);
       (groups[label] = groups[label] || []).push(r.label || r.id);
     });

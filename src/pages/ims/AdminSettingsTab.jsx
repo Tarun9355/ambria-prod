@@ -45,9 +45,14 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
   // real inventory but no matching old-style Rate Card row of the same name (Console Table,
   // Pedestals, anything added straight to Inventory) never appeared as a quick-add option at all.
   // rate_card_categories is the actual Sub-Categories master list every other screen already reads
-  // from (same fix already applied to Truck Capacity Rules) — nothing configured there can be
-  // missing from these suggestions now.
-  const allSubcatLabels = [...new Set((rateCardCategories || []).map((r) => r.label).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  // from (same fix already applied to Truck Capacity Rules).
+  // Excludes source === "rate_card_only" rows — the ~29 sub-categories that survive in this table
+  // ONLY because the old Rate Card once had an item with that `sub` string, with no live inventory
+  // behind them at all (see the Sub-Categories tab's own "🏷️ rate-card only" badge). Those are
+  // exactly the stale, one-off, often-typo'd names (chowki, BTR, #TAGMDF, Sethi, ...) that kept
+  // showing up here even after the switch away from the legacy list — reading the right TABLE
+  // wasn't enough while it still surfaced rows nobody currently manages as a real sub-category.
+  const allSubcatLabels = [...new Set((rateCardCategories || []).filter((r) => r.source !== "rate_card_only").map((r) => r.label).filter(Boolean))].sort((a, b) => a.localeCompare(b));
   const studioLoading = !!studio?.loading;
   const [subcatSearch, setSubcatSearch] = useState("");
   const [trussMatTab, setTrussMatTab] = useState("iron"); // Truss & Batta Config: active material (pole|iron|aluminium)
