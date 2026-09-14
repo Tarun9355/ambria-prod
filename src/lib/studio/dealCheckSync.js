@@ -22,6 +22,28 @@ function cloneZone(zoneElements, zoneKey, nextArr) {
   return { ...zoneElements, [zoneKey]: nextArr };
 }
 
+// A cardKey's idx is only trustworthy while its zone's array hasn't reindexed since the card was
+// generated — removing, inserting, or splitting an element anywhere earlier in that same zone
+// shifts every later idx, and runDealCheckGenerate (which rebuilds cardKeys from Build's CURRENT
+// layout) only runs once per Deal Check open, not on every Build edit. In the gap, this reconcile
+// effect still fires on any dcCards/dcKitEdits/dcManualItems change ANYWHERE in the deal, so a
+// stale idx can land on a completely unrelated element and silently overwrite it — that is exactly
+// how a "Flower Trail" element turned into "Mosaic Pedestal" with no user action on it at all.
+//
+// Two signals establish that arr[parsed.idx] really is the element this card was generated for:
+// either it still carries the ORIGINAL name the cardKey was built from (nothing has touched it
+// since), or it already carries OUR OWN stamp from a previous sync of this exact cardKey (so a
+// second edit to the same card, after the first sync already renamed it, is recognised as a
+// continuation rather than mistaken for a stranger). Neither holding means some other element slid
+// into this slot — the caller must bail rather than touch it.
+function elAtIdxIsThisCard(arr, parsed, cardKey) {
+  const el = Array.isArray(arr) ? arr[parsed.idx] : null;
+  if (!el) return null;
+  const sameOriginalName = String(el.name || "").trim().toLowerCase() === String(parsed.rcName || "").trim().toLowerCase();
+  const ownStamp = el._dcSyncedCardKey === cardKey;
+  return (sameOriginalName || ownStamp) ? el : null;
+}
+
 /** A fresh, sufficiently-unique id for a new split — persists on the card for its whole lifetime
  * (created once, reused across every re-sync/revert of that same split; a revert followed by a
  * brand new split on the same card can safely reuse a stale id too — see syncSplitToBuild, it
@@ -32,15 +54,16 @@ export function newSplitGroupId() {
 
 // A plain 1:1 swap — the card now points at a different single item. Mirrors saveAvailPick's own
 // write (StudioApp.jsx) exactly, so a synced swap is indistinguishable from one made in Build.
-export function syncSwapToBuild(zoneElements, parsed, pick) {
+export function syncSwapToBuild(zoneElements, parsed, pick, cardKey) {
   if (!parsed || parsed.kind !== "el" || !pick?.imsId) return zoneElements;
   const arr = zoneElements[parsed.zoneKey];
-  const el = Array.isArray(arr) ? arr[parsed.idx] : null;
+  const el = elAtIdxIsThisCard(arr, parsed, cardKey);
   if (!el || el.invId === pick.imsId) return zoneElements;
   const nextArr = arr.slice();
   nextArr[parsed.idx] = {
     ...el, invId: pick.imsId, imsId: pick.imsId,
     name: pick.name || el.name, imsName: pick.name || "", imsPhoto: pick.photo || "",
+    _dcSyncedCardKey: cardKey,
   };
   return cloneZone(zoneElements, parsed.zoneKey, nextArr);
 }
@@ -48,10 +71,10 @@ export function syncSwapToBuild(zoneElements, parsed, pick) {
 // dcKitEdits[fnIdx][cardKey] and el.kitOverrides are the same shape ({itemId,qty}[] /
 // {patternId,qty}[]) — a direct copy. `comps` undefined/empty resets the element back to the
 // kit's own default recipe, matching Deal Check's own "reset to default" action.
-export function syncKitOverridesToBuild(zoneElements, parsed, comps) {
+export function syncKitOverridesToBuild(zoneElements, parsed, comps, cardKey) {
   if (!parsed || parsed.kind !== "el") return zoneElements;
   const arr = zoneElements[parsed.zoneKey];
-  const el = Array.isArray(arr) ? arr[parsed.idx] : null;
+  const el = elAtIdxIsThisCard(arr, parsed, cardKey);
   if (!el) return zoneElements;
   const has = Array.isArray(el.kitOverrides);
   const wantsReset = !Array.isArray(comps) || comps.length === 0;
@@ -60,9 +83,9 @@ export function syncKitOverridesToBuild(zoneElements, parsed, comps) {
   const nextArr = arr.slice();
   if (wantsReset) {
     const { kitOverrides, ...rest } = el; // eslint-disable-line no-unused-vars
-    nextArr[parsed.idx] = rest;
+    nextArr[parsed.idx] = { ...rest, _dcSyncedCardKey: cardKey };
   } else {
-    nextArr[parsed.idx] = { ...el, kitOverrides: comps };
+    nextArr[parsed.idx] = { ...el, kitOverrides: comps, _dcSyncedCardKey: cardKey };
   }
   return cloneZone(zoneElements, parsed.zoneKey, nextArr);
 }
@@ -106,13 +129,15 @@ function removeStaleManualEntries(zoneElements, keepManualIds) {
 // zoneElements entry a given split produces carries the SAME groupId as `_dcSplitGroup`, which is
 // how a later re-sync finds them all by scanning the zone's array instead of trusting a position
 // that an earlier split (which changes array length) may already have shifted.
-export function syncSplitToBuild(zoneElements, parsed, splitAlloc, groupId, inventoryCache) {
+export function syncSplitToBuild(zoneElements, parsed, splitAlloc, groupId, inventoryCache, cardKey) {
   if (!parsed || parsed.kind !== "el" || !groupId || !Array.isArray(splitAlloc) || splitAlloc.length < 2) return zoneElements;
   const arr = zoneElements[parsed.zoneKey];
   if (!Array.isArray(arr)) return zoneElements;
   const memberIdxs = [];
   arr.forEach((e, i) => { if (e && e._dcSplitGroup === groupId) memberIdxs.push(i); });
-  const base = memberIdxs.length ? arr[memberIdxs[0]] : arr[parsed.idx];
+  // Existing members are already found by groupId (immune to reindexing); only the FIRST split —
+  // which still has to locate its single starting element by idx — needs the staleness guard.
+  const base = memberIdxs.length ? arr[memberIdxs[0]] : elAtIdxIsThisCard(arr, parsed, cardKey);
   if (!base) return zoneElements;
   // Unchanged? Compare the existing group's members (or the single original) against the desired
   // allocation before touching anything.
@@ -193,7 +218,7 @@ export function reconcileDealCheckIntoBuild(zoneElements, cardsForFn, kitEditsFo
         if (!card) return;
         const splitArr = Array.isArray(card.split) ? card.split.filter((s) => s && s.imsId && (Number(s.qty) || 0) > 0) : [];
         if (splitArr.length >= 2 && card.splitGroupId) {
-          ze = syncSplitToBuild(ze, parsed, splitArr, card.splitGroupId, inventoryCache);
+          ze = syncSplitToBuild(ze, parsed, splitArr, card.splitGroupId, inventoryCache, cardKey);
         } else if (card.splitGroupId) {
           // Had a split at some point but no longer does — reverted via "use single item", or
           // dropped below 2 valid allocations. Collapse whatever entries still carry that group
@@ -201,8 +226,8 @@ export function reconcileDealCheckIntoBuild(zoneElements, cardsForFn, kitEditsFo
           // own comment on why identity correction happens there, not via a second, idx-based swap.
           ze = revertSplitToSingle(ze, parsed.zoneKey, card.splitGroupId, card.imsId ? { imsId: card.imsId, name: card.imsName } : null);
         } else if (card.imsId) {
-          ze = syncSwapToBuild(ze, parsed, { imsId: card.imsId, name: card.imsName });
-          ze = syncKitOverridesToBuild(ze, parsed, kitEditsForFn?.[cardKey]);
+          ze = syncSwapToBuild(ze, parsed, { imsId: card.imsId, name: card.imsName }, cardKey);
+          ze = syncKitOverridesToBuild(ze, parsed, kitEditsForFn?.[cardKey], cardKey);
         }
       });
     });
