@@ -181,6 +181,11 @@ export default function DealCheckOverlay({ ctx }) {
     activeFnIdx: activeFnIdxCommitted, fnPending, switchActiveFn, dcShowAllFns, setDcShowAllFns, dcCollapsedFnBlocks, setDcCollapsedFnBlocks,
     // Deal-Check-into-Build sync (ongoing deals only — see the effect below and dealCheckSync.js)
     zoneElements, setZoneElements, fnBuilds, setFnBuilds, isFnSwitching,
+    // Genset counts — the SAME per-function override Build's own Transport section reads
+    // (customGensets/genset62; null = follow the venue's default). Editing them here writes
+    // straight into that one field rather than a separate Deal-Check-only copy, so Build and
+    // Deal Check can never disagree about how many gensets a function is actually carrying.
+    customGensets, setCustomGensets, genset62, setGenset62,
     // pricing helpers
     collectAllFunctionData, calcFnFloralSourcingCost, calcFunctionBreakdown, calcFunctionCost,
     // Shared availability picker — the same one Build's IconBox control opens.
@@ -368,9 +373,9 @@ export default function DealCheckOverlay({ ctx }) {
           { id: "buying",    label: "Buying",           icon: "🛒", live: true  },
           { id: "transport", label: "Transport",        icon: "🚚", live: true  },
           { id: "power",     label: "Power",            icon: "⚡", live: true  },
-          { id: "status",    label: "Inventory Status", icon: "📊", live: true  },
           { id: "commission",label: "Commission",       icon: "🤝", live: true  },
           { id: "gyv",       label: "GYV & Buffer",     icon: "💰", live: true  },
+          { id: "status",    label: "Inventory Status", icon: "📊", live: true  },
           // Dept Income removed from the tab strip. Its body below is left in place and still
           // renders if dcActiveTab is somehow "depts" — the department split is also pushed to
           // IMS Dept Ops from persistDeptSnapshot, which does not depend on this tab.
@@ -3077,6 +3082,16 @@ export default function DealCheckOverlay({ ctx }) {
                   if (allFns.length === 0) return <div style={{padding:"50px 30px",textAlign:"center",color:INK_3,fontSize:13}}>No functions configured yet.</div>;
                   // Scoped to the selected function unless "All functions" is on — see Transport tab above.
                   const fns = dcShowAllFns ? allFns.map((fn,fi)=>({fn,fi})) : allFns.map((fn,fi)=>({fn,fi})).filter(x=>x.fi===(activeFnIdx||0));
+                  // Writes straight into the SAME field Build's own genset plan reads (customGensets /
+                  // genset62 — null means "follow the venue default"), the live state when this is the
+                  // function currently open in Build, or that function's fnBuilds snapshot otherwise —
+                  // the identical active-vs-not duality the Deal-Check→Build sync effect already uses.
+                  // Clamped at 0: a generator count has no meaningful negative.
+                  const setGensetCount = (fi, field, nextVal) => {
+                    const val = Math.max(0, Math.round(nextVal) || 0);
+                    if (fi === activeFnIdxCommitted) { if (field === "genset125") setCustomGensets(val); else setGenset62(val); }
+                    else setFnBuilds(prev => ({ ...prev, [fi]: { ...(prev[fi] || {}), [field === "genset125" ? "customGensets" : "genset62"]: val } }));
+                  };
                   // Booking-level figures for the summary bar, off the same breakdown the cards use.
                   let sumCost = 0, sumUnits = 0, sumKva = 0, fnsPowered = 0;
                   fns.forEach(({fn}) => {
@@ -3101,13 +3116,17 @@ export default function DealCheckOverlay({ ctx }) {
                         const v62 = Number(tr?.venueGenset62) || 0;
                         const r125 = Number(tr?.gensetRate) || 0;
                         const r62 = Number(tr?.gensetRate62) || 0;
-                        // One entry per generator size actually in the plan. Cost per size was never
-                        // shown — only the function's lump sum — so with both sizes running you could
-                        // not tell which one the money was going to.
-                        const units = [
-                          { kva: 125, n: g125, rate: r125, venue: v125 },
-                          { kva: 62,  n: g62,  rate: r62,  venue: v62  },
-                        ].filter(u => u.n > 0);
+                        // Always both sizes, not just whichever is already non-zero — the steppers
+                        // below exist so a size at 0 can be raised while the other is lowered, which
+                        // needs it on screen to raise in the first place. Cost per size was never
+                        // shown at all before — only the function's lump sum — so with both sizes
+                        // running you could not tell which one the money was going to, either.
+                        // Gated on `tr` existing (a real venue + decor cost to price against) rather
+                        // than either count being non-zero.
+                        const units = tr ? [
+                          { kva: 125, n: g125, rate: r125, venue: v125, field: "genset125" },
+                          { kva: 62,  n: g62,  rate: r62,  venue: v62,  field: "genset62"  },
+                        ] : [];
                         const totalKva = g125 * 125 + g62 * 62;
                         return (
                           <div key={fi} className="dc2-card" style={{background:CARD_BG,border:`1px solid ${CARD_BORDER}`,borderRadius:14,boxShadow:CARD_SHADOW,overflow:"hidden",display:"flex"}}>
@@ -3154,9 +3173,18 @@ export default function DealCheckOverlay({ ctx }) {
                                         <div style={{flex:"1 1 auto",minWidth:0,padding:"10px 12px"}}>
                                           <div style={{display:"flex",alignItems:"baseline",gap:10}}>
                                             <span style={{flex:"1 1 auto",minWidth:0,fontSize:10.5,fontWeight:700,color:INK,letterSpacing:0.8,textTransform:"uppercase"}}>{u.kva} KVA</span>
-                                            <span style={{flexShrink:0,textAlign:"right"}}>
-                                              <span style={{fontSize:13,fontWeight:700,color:INK,letterSpacing:-0.2,...NUM}}>{u.n}</span>
-                                              <span style={{fontSize:9.5,color:INK_3,marginLeft:3}}>unit{u.n===1?"":"s"}</span>
+                                            {/* Steppers, not just a number — the whole point is being
+                                                able to move a unit from one size to the other (drop
+                                                a 125 to add a 62, say) to trim the trip's cost without
+                                                leaving this tab. */}
+                                            <span style={{flexShrink:0,display:"flex",alignItems:"center",gap:6}}>
+                                              <button onClick={() => setGensetCount(fi, u.field, u.n - 1)} disabled={u.n <= 0}
+                                                title={`Remove one ${u.kva} KVA unit`}
+                                                style={{width:20,height:20,borderRadius:5,border:`1px solid ${TILE_BORDER}`,background:"#fff",color:u.n<=0?INK_3:INK,fontSize:13,fontWeight:700,lineHeight:1,cursor:u.n<=0?"default":"pointer",display:"flex",alignItems:"center",justifyContent:"center",padding:0}}>−</button>
+                                              <span style={{minWidth:16,textAlign:"center",fontSize:13,fontWeight:700,color:INK,...NUM}}>{u.n}</span>
+                                              <button onClick={() => setGensetCount(fi, u.field, u.n + 1)}
+                                                title={`Add one ${u.kva} KVA unit`}
+                                                style={{width:20,height:20,borderRadius:5,border:`1px solid ${TILE_BORDER}`,background:"#fff",color:INK,fontSize:13,fontWeight:700,lineHeight:1,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",padding:0}}>+</button>
                                             </span>
                                           </div>
                                           <div style={{display:"flex",alignItems:"baseline",gap:8,marginTop:7}}>
