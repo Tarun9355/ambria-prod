@@ -2232,6 +2232,13 @@ export default function DealCheckOverlay({ ctx }) {
                                         : "Pick which carpet to reuse — free counts and holds shown below.",
                                       priceMode: "rental",
                                       neededLabel: `${neededSqft} sqft needed for this zone`,
+                                      // Carpet items commonly carry a generic inventory `unit` like
+                                      // "Piece" (how they're counted on the shelf) even though every
+                                      // carpet cost calc here — calcZoneCarpet, the split editor's own
+                                      // "sqft avail" — treats their qty as total sqft already. Without
+                                      // this override the modal showed "42 Piece free" for exactly the
+                                      // same number the rest of this card calls 42 sqft.
+                                      unitLabel: "sqft",
                                       splitQty: neededSqft,
                                       onSplit: (alloc) => { setSplitLines(alloc.map(a => ({ imsId: a.imsId, sqft: a.qty }))); setPick(null); },
                                     },
