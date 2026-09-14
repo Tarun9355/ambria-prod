@@ -623,6 +623,7 @@ export default function StudioBuild({ ctx }) {
     zoneKeys, customZones, setCustomZones, zoneLabelsD, zoneMeta,
     enabledEls, setEnabledEls, customMode, toggleEl,
     zoneElements, setZoneElements, zoneConfig, setZoneConfig, setActiveZones,
+    zoneOrder, setZoneOrder,
     calcElsCost, calcStructCost, calcPhotoCost, getElPrice, applyFloralRatio,
     elSelectedPhoto, selectElPhoto, setElSelectedPhoto, elNotes, setElNotes,
     elMultiPhotos, isMultiPhotoZone, toggleMultiElPhoto,
@@ -1608,12 +1609,88 @@ export default function StudioBuild({ ctx }) {
       </FPanel>;
     })();
 
+  // ── ZONE ORDER (drag to reposition) ──
+  // Same rule the pricing side uses (calcFunctionBreakdown / buildZonesForFn in StudioApp): a key
+  // the salesperson has dragged gets a NEGATIVE index so it sorts ahead of every un-dragged one
+  // while keeping its own sequence, and anything untouched keeps its admin Zone-Types position
+  // behind them. Enabled zones still come before disabled ones — that is the primary sort and was
+  // here before; dragging only decides the order WITHIN those two groups.
+  //
+  // Declared HERE, above the Live Estimate tile, not next to the zone list it feeds. That tile is
+  // an IIFE evaluated during render, so a const declared below it would be in the temporal dead
+  // zone when the tile reads it — a ReferenceError, not a stale value.
+  const orderedZoneKeys = useMemo(() => {
+    const all = [...zoneKeys, ...customZones.map(cz => cz.id)];
+    const rank = {};
+    all.forEach((k, i) => { rank[k] = i; });
+    (zoneOrder || []).forEach((k, i) => { rank[k] = i - (zoneOrder || []).length; });
+    return all.slice().sort((a, b) =>
+      ((enabledEls[a] ? 0 : 1) - (enabledEls[b] ? 0 : 1)) || ((rank[a] ?? Infinity) - (rank[b] ?? Infinity)));
+  }, [zoneKeys, customZones, enabledEls, zoneOrder]);
+
+  const [dragZone, setDragZone] = useState(null);   // key being dragged
+  const [dragOverZone, setDragOverZone] = useState(null);
+  // Commit a move by writing the FULL visible order, not just the moved key. A partial list would
+  // be read back with the untouched keys falling behind the moved one, which silently undoes the
+  // rest of the arrangement the next time the deal is opened.
+  const moveZone = (from, to) => {
+    if (!from || !to || from === to) return;
+    const cur = orderedZoneKeys.slice();
+    const i = cur.indexOf(from), j = cur.indexOf(to);
+    if (i < 0 || j < 0) return;
+    cur.splice(j, 0, cur.splice(i, 1)[0]);
+    setZoneOrder(cur);
+  };
+  // ── AUTO-SCROLL WHILE DRAGGING ──
+  // The browser does not scroll the page during an HTML5 drag, so a zone could only ever be moved
+  // as far as the current viewport reached — there was no way to drag one to the top of a long
+  // build. Holding near the top or bottom edge now scrolls, accelerating as you get closer.
+  // Driven by rAF rather than the dragover event itself: dragover fires at an inconsistent rate
+  // (and stops entirely if the pointer holds still), which made the scroll stutter and stall.
+  const dragScrollRef = useRef({ v: 0, el: null });
+  useEffect(() => {
+    if (!dragZone) return undefined;
+    // The nearest scrollable ancestor, since Studio's scroller is not always the window.
+    const findScroller = (node) => {
+      for (let el = node; el && el !== document.body; el = el.parentElement) {
+        const s = getComputedStyle(el);
+        if (/(auto|scroll)/.test(s.overflowY) && el.scrollHeight > el.clientHeight + 4) return el;
+      }
+      return null;
+    };
+    dragScrollRef.current.el = findScroller(document.getElementById(`zone-${dragZone}`));
+    const EDGE = 110, MAX = 26;
+    const onOver = (e) => {
+      const h = window.innerHeight, y = e.clientY;
+      dragScrollRef.current.v =
+        y < EDGE ? -MAX * (1 - y / EDGE)
+        : y > h - EDGE ? MAX * (1 - (h - y) / EDGE)
+        : 0;
+    };
+    let raf = 0;
+    const tick = () => {
+      const { v, el } = dragScrollRef.current;
+      if (v) { if (el) el.scrollTop += v; else window.scrollBy(0, v); }
+      raf = requestAnimationFrame(tick);
+    };
+    window.addEventListener("dragover", onOver);
+    raf = requestAnimationFrame(tick);
+    return () => {
+      window.removeEventListener("dragover", onOver);
+      cancelAnimationFrame(raf);
+      dragScrollRef.current.v = 0;
+    };
+  }, [dragZone]);
+
   // ═══ LIVE PRICING TILE ═══ Sticky right column. Every figure is read from the same source
   // the rest of the page uses — grandTotal / totalCost() / transportCalc / cat / zoneTotal —
   // so it is a view, never a second calculation. Hidden entirely when costs are hidden.
   const PRICING_TILE = showCosts && (()=>{
     const rule = isDark ? "rgba(255,255,255,0.07)" : "rgba(26,26,46,0.07)";
-    const rows = [...zoneKeys, ...customZones.map(cz=>cz.id)]
+    // orderedZoneKeys, so a drag reorders this rail at the same moment it reorders the zones
+    // below. The comment underneath already promised these two agree; before zone dragging
+    // existed both happened to read the same admin order, so nothing had to enforce it.
+    const rows = orderedZoneKeys
       .filter(k=>enabledEls[k])
       .map(k=>{
         const cz = customZones.find(c=>c.id===k);
@@ -2514,7 +2591,7 @@ undefined
         StudioApp.jsx), there's no reason "Other" zones shouldn't get the exact same card everything
         else does — photo strip, Scale By, notes, paint allocation, all of it — instead of a second,
         drifting copy of the parts that were duplicated anyway (elements list, truss/platform). */}
-    {[...zoneKeys, ...customZones.map(cz=>cz.id)].sort((a,b)=>(enabledEls[a]?0:1)-(enabledEls[b]?0:1)).map(k=>{
+    {orderedZoneKeys.map(k=>{
       const czSrc=customZones.find(cz=>cz.id===k);
       const srcType=czSrc?.sourceType||k;
       const el=czSrc?{label:czSrc.name,icon:czSrc.icon||""}:zoneLabelsD[k];
@@ -2677,13 +2754,31 @@ undefined
       // The EXACT list for this function, not groupIdsFor's any-function fallback.
       const grpSaved = zoneGroups?.[grpArea]?.[groupFn] || [];
       const isDuplicate=!!czSrc?.sourceType;
-      return(<div key={k} id={`zone-${k}`} className="zone-row" style={{background:isOn?cardBg:isDark?"#12121F":"#FAFAFA",borderRadius:14,border:isOn?`2px solid ${isDuplicate?"#C9A96E":"#444"}`:`1px solid ${isDark?"rgba(255,255,255,0.08)":"rgba(26,26,46,0.09)"}`,marginBottom:10,overflow:"hidden"}}>
+      /* Drop target is the whole card; the drag HANDLE is the grip in the header below. Making
+         the card itself draggable would fight every text selection and every control inside it. */
+      return(<div key={k} id={`zone-${k}`} className="zone-row"
+        onDragOver={e=>{ if(dragZone && dragZone!==k){ e.preventDefault(); e.dataTransfer.dropEffect="move"; setDragOverZone(k); } }}
+        onDragLeave={()=>setDragOverZone(p=>p===k?null:p)}
+        onDrop={e=>{ e.preventDefault(); moveZone(dragZone,k); setDragZone(null); setDragOverZone(null); }}
+        style={{background:isOn?cardBg:isDark?"#12121F":"#FAFAFA",borderRadius:14,border:isOn?`2px solid ${isDuplicate?"#C9A96E":"#444"}`:`1px solid ${isDark?"rgba(255,255,255,0.08)":"rgba(26,26,46,0.09)"}`,marginBottom:10,overflow:"hidden",opacity:dragZone===k?0.45:1,outline:dragOverZone===k?"2px dashed #C9A96E":"none",outlineOffset:2,transition:"opacity .12s"}}>
         {/* Only the Details chip collapses an open zone. The whole header used to do it, so any
             stray click — on the name, the summary text, the empty space — folded the zone away
             mid-edit. An OFF zone still switches on from anywhere in the row, since there is nothing
             to lose there and it makes the row an easy target. */}
         <div className="zone-head" style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 18px",cursor:isOn?"default":"pointer"}} onClick={()=>{ if(!isOn) toggleEl(k); }}>
-          <div style={{display:"flex",alignItems:"center",gap:12,flex:1,minWidth:0}}>{/* zone emoji removed — the label carries the row */}<div style={{fontSize:15,fontWeight:600,letterSpacing:-0.2,color:isOn?textP:textS}}>{el.label}</div>{/* Read-only summary — fills the dead space between the name and the controls so a collapsed
+          <div style={{display:"flex",alignItems:"center",gap:12,flex:1,minWidth:0}}>
+            {/* The drag handle. draggable lives HERE, not on the card, so text inside the zone
+                stays selectable and no inner control gets hijacked into starting a drag.
+                stopPropagation on mousedown/click: the header toggles an OFF zone on, and
+                grabbing the grip must not also switch the zone. */}
+            <div draggable
+              onDragStart={e=>{ setDragZone(k); e.dataTransfer.effectAllowed="move"; try{ e.dataTransfer.setData("text/plain",k); }catch{ /* Safari */ } }}
+              onDragEnd={()=>{ setDragZone(null); setDragOverZone(null); }}
+              onMouseDown={e=>e.stopPropagation()}
+              onClick={e=>e.stopPropagation()}
+              title="Drag to reorder this zone — the order carries into Deal Check"
+              style={{cursor:"grab",userSelect:"none",flexShrink:0,padding:"2px 4px",marginLeft:-4,borderRadius:6,color:textS,fontSize:13,lineHeight:1,letterSpacing:1}}>⠿</div>
+            <div style={{fontSize:15,fontWeight:600,letterSpacing:-0.2,color:isOn?textP:textS}}>{el.label}</div>{/* Read-only summary — fills the dead space between the name and the controls so a collapsed
                 row still says what is in the zone. Derived from existing state only. */}
             {(()=>{
               const n=(zoneElements[k]||[]).length;

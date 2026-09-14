@@ -1651,7 +1651,21 @@ export default function DealCheckOverlay({ ctx }) {
                       }
                     });
                   }
-                  const zoneList = Object.keys(byZone);
+                  // ── SAME ZONE ORDER AS BUILD ──
+                  // byZone's own key order is whichever zone happened to contribute the first
+                  // card, which is why dragging in Build changed nothing here. The deal's
+                  // zoneOrder (per function, set by dragging) decides it instead: listed zones
+                  // first in their dragged sequence, anything else after in the order it already
+                  // had — so a zone absent from the list can never disappear from Deal Check.
+                  const zoneList = (() => {
+                    const keys = Object.keys(byZone);
+                    const dragged = Array.isArray(fns[fnIdx]?.zoneOrder) ? fns[fnIdx].zoneOrder : [];
+                    if (!dragged.length) return keys;
+                    const rank = {};
+                    keys.forEach((k, i) => { rank[k] = i; });
+                    dragged.forEach((k, i) => { rank[k] = i - dragged.length; });
+                    return keys.slice().sort((a, b) => (rank[a] ?? Infinity) - (rank[b] ?? Infinity));
+                  })();
                   const autoCollapse = totalCards > 30;  // §7.9.2 — auto-collapse when > 30 cards
                   // ═══ Patch 6 — Generate bar computation (event-wide scope · sidebar wired) ═══
                   // `activeFn` lived here to feed the function-context header; that header is gone
