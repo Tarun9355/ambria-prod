@@ -4187,7 +4187,13 @@ undefined
         background:"rgba(0,0,0,0.45)", color:"#fff", fontSize:24, lineHeight:1, cursor:"pointer",
         display:"flex", alignItems:"center", justifyContent:"center", userSelect:"none",
       });
-      return (
+      // Portaled to <body>. The lightbox is written inside the right column, but the collapsed
+      // rail strip is a SIBLING of that column and comes after it in the DOM — so the rail's
+      // vertical edge painted over the photo. z-index could not settle it: a position:fixed
+      // overlay is still confined to the nearest ancestor that makes a stacking context, and it
+      // then competes only with that ancestor, not with the rail outside it. Rendering at the
+      // body removes the ancestor from the question altogether.
+      return createPortal((
       <div onClick={()=>setLightbox(null)} style={{position:"fixed",inset:0,zIndex:10000,background:"rgba(0,0,0,0.9)",display:"flex",alignItems:"center",justifyContent:"center",padding:24,cursor:"zoom-out"}}>
         <span onClick={()=>setLightbox(null)} style={{position:"absolute",top:16,right:20,fontSize:30,lineHeight:1,color:"#fff",cursor:"pointer",fontWeight:300}}>×</span>
         {many&&<span title="Previous (←)" aria-label="Previous photo" onClick={e=>{e.stopPropagation();lightboxStep(-1);}} style={navBtn("left")}>{"‹"}</span>}
@@ -4197,7 +4203,7 @@ undefined
           {/* The caption carried the storage filename. Position is what a viewer actually wants here. */}
           {many&&<span style={{fontWeight:400,opacity:0.75}}>{lightbox.idx+1} / {items.length}</span>}
         </div>
-      </div>);
+      </div>), document.body);
     })()}
       </div>{/* /right column */}
       {PRICING_TILE&&(rightRailOpen
