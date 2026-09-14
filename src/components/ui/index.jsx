@@ -167,12 +167,23 @@ export function useConfirm() {
   return [confirm, dialog];
 }
 
+// Sub-tab strip. Only the IMS uses this (Planning, Finance, Admin, Flowers, Mandi, Settings) —
+// Studio has its own tab chrome — so it is styled to match the IMS nav rail.
 export function Tabs({ tabs, active, onChange }) {
   return (
     <div className="flex gap-1 bg-gray-100 rounded-xl p-1 flex-wrap">
       {tabs.map((t) => (
+        /* Same hover as the nav rail: the tab lifts and takes on the active pill's white
+           ground, so hovering previews what clicking does. The rail nudges right because it
+           is a column; a horizontal strip nudges UP for the same reason — the gesture has to
+           run across the axis the items are laid out on, or it reads as a wobble.
+           transition-all, not transition, or the shadow and the lift arrive on different
+           curves and the movement looks loose. */
         <button key={t.id} onClick={() => onChange(t.id)}
-          className={"px-4 py-2 rounded-lg text-sm font-medium transition-all " + (active === t.id ? "bg-white shadow text-gray-900" : "text-gray-500 hover:text-gray-700")}>
+          className={"px-4 py-2 rounded-lg text-sm transition-all duration-150 " +
+            (active === t.id
+              ? "bg-white text-gray-900 font-semibold shadow-[0_1px_2px_rgba(16,24,40,0.1),0_4px_10px_-4px_rgba(16,24,40,0.22)]"
+              : "text-gray-500 font-medium hover:text-gray-900 hover:bg-white/70 hover:-translate-y-0.5 hover:shadow-[0_1px_2px_rgba(16,24,40,0.06),0_4px_10px_-6px_rgba(16,24,40,0.2)]")}>
           {t.label}
         </button>
       ))}

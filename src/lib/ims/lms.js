@@ -231,7 +231,11 @@ export function crossReferenceContracts(contracts, eventOrders) {
       const eoName = normalize(eo.clientName);
       const eoDates = [eo.date || ""];
       if (eo.functionsDetail) {
-        for (const fn of eo.functionsDetail) { if (fn.fnDate) eoDates.push(fn.fnDate); }
+        // `date`, not `fnDate`. functionsDetail entries are written with `date` everywhere else
+        // (CalendarTab and Dept Ops both read `fn.date`), so this only ever collected the
+        // top-level eo.date — a multi-function event could never match an LMS contract on any
+        // date except its first, which is a silent miss rather than a visible failure.
+        for (const fn of eo.functionsDetail) { if (fn.date) eoDates.push(fn.date); }
       }
       const dateMatch = cDates.some((cd) => eoDates.includes(cd));
       if (!dateMatch && cDates.length > 0) continue;
@@ -349,6 +353,33 @@ function lmsContractToLead(c, source = "venue") {
 // from it (loadLmsLead has no venue-specific fields to pull). lms_contracts.dept=venue is still
 // synced and read elsewhere (e.g. the Calendar's venue-booking view) — only Studio's own search
 // stopped looking at it.
+// Fetch ONE contract by its LMS identity (dept + entry no), whatever department it belongs to.
+//
+// searchLmsLeads above is a name search and is scoped to decor on purpose. That is right for
+// someone typing a guest name into Studio, but wrong when another screen already knows exactly
+// which contract it means: the IMS calendar links here from venue contracts too, and those are
+// invisible to a decor-only search — "No matching LMS lead" for roughly half of all guests.
+// Asking for a known row by its id has no such ambiguity, so it is not restricted by dept.
+// A venue contract carries the same functions/dates/venues/pax a decor one does, so
+// lmsContractToLead converts it and loadLmsLead fills the form from it exactly the same way.
+export async function fetchLmsLeadByEntry(dept, entryNo) {
+  const d = String(dept || "").trim();
+  const e = String(entryNo || "").trim();
+  if (!d || !e) return null;
+  try {
+    const { data, error } = await supabase
+      .from("lms_contracts")
+      .select("data")
+      .eq("dept", d)
+      .eq("data->>entryNo", e)
+      .limit(1);
+    if (error || !data?.length) return null;
+    return lmsContractToLead(data[0].data, d === "venue" ? "venue" : "decor-contract");
+  } catch {
+    return null;
+  }
+}
+
 export async function searchLmsLeads(query /*, signal */) {
   const q = (query || "").trim();
   if (q.length < 2) return { ok: true, leads: [], complete: true };

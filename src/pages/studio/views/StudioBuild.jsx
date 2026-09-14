@@ -1,4 +1,4 @@
-import { Fragment, useState, useRef, useEffect, useMemo } from "react";
+import { Fragment, useState, useRef, useEffect, useLayoutEffect, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { makeFilterUI, useRailMaxHeight } from "../../../components/studio/filterUI.jsx";
 import { IconClipboard, IconPencil, IconRuler, IconBolt, IconWall, IconPlatform, IconCarpet, IconBulb, IconCheck,
@@ -623,6 +623,7 @@ export default function StudioBuild({ ctx }) {
     zoneKeys, customZones, setCustomZones, zoneLabelsD, zoneMeta,
     enabledEls, setEnabledEls, customMode, toggleEl,
     zoneElements, setZoneElements, zoneConfig, setZoneConfig, setActiveZones,
+    zoneOrder, setZoneOrder,
     calcElsCost, calcStructCost, calcPhotoCost, getElPrice, applyFloralRatio,
     elSelectedPhoto, selectElPhoto, setElSelectedPhoto, elNotes, setElNotes,
     elMultiPhotos, isMultiPhotoZone, toggleMultiElPhoto,
@@ -1615,12 +1616,129 @@ export default function StudioBuild({ ctx }) {
       </FPanel>;
     })();
 
+  // ── ZONE ORDER (drag to reposition) ──
+  // Same rule the pricing side uses (calcFunctionBreakdown / buildZonesForFn in StudioApp): a key
+  // the salesperson has dragged gets a NEGATIVE index so it sorts ahead of every un-dragged one
+  // while keeping its own sequence, and anything untouched keeps its admin Zone-Types position
+  // behind them. Enabled zones still come before disabled ones — that is the primary sort and was
+  // here before; dragging only decides the order WITHIN those two groups.
+  //
+  // Declared HERE, above the Live Estimate tile, not next to the zone list it feeds. That tile is
+  // an IIFE evaluated during render, so a const declared below it would be in the temporal dead
+  // zone when the tile reads it — a ReferenceError, not a stale value.
+  const orderedZoneKeys = useMemo(() => {
+    const all = [...zoneKeys, ...customZones.map(cz => cz.id)];
+    const rank = {};
+    all.forEach((k, i) => { rank[k] = i; });
+    (zoneOrder || []).forEach((k, i) => { rank[k] = i - (zoneOrder || []).length; });
+    return all.slice().sort((a, b) =>
+      ((enabledEls[a] ? 0 : 1) - (enabledEls[b] ? 0 : 1)) || ((rank[a] ?? Infinity) - (rank[b] ?? Infinity)));
+  }, [zoneKeys, customZones, enabledEls, zoneOrder]);
+
+  const [dragZone, setDragZone] = useState(null);   // key being dragged
+  // Commit a move by writing the FULL visible order, not just the moved key. A partial list would
+  // be read back with the untouched keys falling behind the moved one, which silently undoes the
+  // rest of the arrangement the next time the deal is opened.
+  const moveZone = (from, to) => {
+    if (!from || !to || from === to) return;
+    const cur = orderedZoneKeys.slice();
+    const i = cur.indexOf(from), j = cur.indexOf(to);
+    if (i < 0 || j < 0) return;
+    cur.splice(j, 0, cur.splice(i, 1)[0]);
+    // Bail if nothing actually moved. This runs from dragover, which fires continuously while the
+    // pointer sits over a card — without the guard every one of those events would setState with
+    // an identical array and re-render the whole build in a loop.
+    if (cur.length === orderedZoneKeys.length && cur.every((k, n) => k === orderedZoneKeys[n])) return;
+    setZoneOrder(cur);
+  };
+
+  // ── FLIP: animate zones into their new places ──
+  // Reordering is a layout change, so the cards would teleport. FLIP reads each card's position
+  // before and after, puts it straight back where it was with a transform, then releases it —
+  // the browser animates the transform, so what you see is the cards sliding up and down to make
+  // room. Layout effect, not effect: the transform has to be applied in the same frame as the
+  // reorder, or the jump is visible first.
+  const zoneRectsRef = useRef({});
+  useLayoutEffect(() => {
+    const prev = zoneRectsRef.current;
+    const next = {};
+    orderedZoneKeys.forEach((k) => {
+      const el = document.getElementById(`zone-${k}`);
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      next[k] = r.top;
+      const was = prev[k];
+      if (was == null || Math.abs(was - r.top) < 1) return;
+      el.style.transition = "none";
+      el.style.transform = `translateY(${was - r.top}px)`;
+      requestAnimationFrame(() => {
+        el.style.transition = "transform 200ms cubic-bezier(.2,.8,.2,1)";
+        el.style.transform = "";
+      });
+    });
+    zoneRectsRef.current = next;
+  }, [orderedZoneKeys]);
+  // ── AUTO-SCROLL WHILE DRAGGING ──
+  // The browser does not scroll the page during an HTML5 drag, so a zone could only ever be moved
+  // as far as the current viewport reached — there was no way to drag one to the top of a long
+  // build. Holding near the top or bottom edge now scrolls, accelerating as you get closer.
+  // Driven by rAF rather than the dragover event itself: dragover fires at an inconsistent rate
+  // (and stops entirely if the pointer holds still), which made the scroll stutter and stall.
+  const dragScrollRef = useRef({ v: 0, el: null });
+  useEffect(() => {
+    if (!dragZone) return undefined;
+    // The nearest scrollable ancestor, since Studio's scroller is not always the window.
+    const findScroller = (node) => {
+      for (let el = node; el && el !== document.body; el = el.parentElement) {
+        const s = getComputedStyle(el);
+        if (/(auto|scroll)/.test(s.overflowY) && el.scrollHeight > el.clientHeight + 4) return el;
+      }
+      return null;
+    };
+    dragScrollRef.current.el = findScroller(document.getElementById(`zone-${dragZone}`));
+    // Speed is per SECOND, not per frame. Per frame meant a 120Hz screen scrolled at double the
+    // rate of a 60Hz one, and any dropped frame showed up as a visible lurch.
+    const EDGE = 120;            // how deep the trigger band reaches from each edge
+    const MAX_PX_PER_SEC = 620;  // flat out, only in the last pixel of that band
+    const onOver = (e) => {
+      const h = window.innerHeight, y = e.clientY;
+      // How far INTO the band the pointer is, 0 at the inner boundary and 1 at the very edge.
+      const depth = y < EDGE ? -(1 - y / EDGE) : y > h - EDGE ? (1 - (h - y) / EDGE) : 0;
+      // Squared, so it eases in. Linear meant crossing the boundary snapped straight to a
+      // noticeable speed, which is what made it feel like it lurched rather than started.
+      dragScrollRef.current.v = Math.sign(depth) * depth * depth * MAX_PX_PER_SEC;
+    };
+    let raf = 0, last = 0;
+    const tick = (now) => {
+      const { v, el } = dragScrollRef.current;
+      // Real elapsed time, clamped: a background tab or a stalled frame can hand back a huge
+      // delta, which would teleport the page on the next frame.
+      const dt = last ? Math.min((now - last) / 1000, 0.05) : 0;
+      last = now;
+      if (v && dt) {
+        const px = v * dt;
+        if (el) el.scrollTop += px; else window.scrollBy(0, px);
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    window.addEventListener("dragover", onOver);
+    raf = requestAnimationFrame(tick);
+    return () => {
+      window.removeEventListener("dragover", onOver);
+      cancelAnimationFrame(raf);
+      dragScrollRef.current.v = 0;
+    };
+  }, [dragZone]);
+
   // ═══ LIVE PRICING TILE ═══ Sticky right column. Every figure is read from the same source
   // the rest of the page uses — grandTotal / totalCost() / transportCalc / cat / zoneTotal —
   // so it is a view, never a second calculation. Hidden entirely when costs are hidden.
   const PRICING_TILE = showCosts && (()=>{
     const rule = isDark ? "rgba(255,255,255,0.07)" : "rgba(26,26,46,0.07)";
-    const rows = [...zoneKeys, ...customZones.map(cz=>cz.id)]
+    // orderedZoneKeys, so a drag reorders this rail at the same moment it reorders the zones
+    // below. The comment underneath already promised these two agree; before zone dragging
+    // existed both happened to read the same admin order, so nothing had to enforce it.
+    const rows = orderedZoneKeys
       .filter(k=>enabledEls[k])
       .map(k=>{
         const cz = customZones.find(c=>c.id===k);
@@ -2521,7 +2639,7 @@ undefined
         StudioApp.jsx), there's no reason "Other" zones shouldn't get the exact same card everything
         else does — photo strip, Scale By, notes, paint allocation, all of it — instead of a second,
         drifting copy of the parts that were duplicated anyway (elements list, truss/platform). */}
-    {[...zoneKeys, ...customZones.map(cz=>cz.id)].sort((a,b)=>(enabledEls[a]?0:1)-(enabledEls[b]?0:1)).map(k=>{
+    {orderedZoneKeys.map(k=>{
       const czSrc=customZones.find(cz=>cz.id===k);
       const srcType=czSrc?.sourceType||k;
       const el=czSrc?{label:czSrc.name,icon:czSrc.icon||""}:zoneLabelsD[k];
@@ -2684,13 +2802,49 @@ undefined
       // The EXACT list for this function, not groupIdsFor's any-function fallback.
       const grpSaved = zoneGroups?.[grpArea]?.[groupFn] || [];
       const isDuplicate=!!czSrc?.sourceType;
-      return(<div key={k} id={`zone-${k}`} className="zone-row" style={{background:isOn?cardBg:isDark?"#12121F":"#FAFAFA",borderRadius:14,border:isOn?`2px solid ${isDuplicate?"#C9A96E":"#444"}`:`1px solid ${isDark?"rgba(255,255,255,0.08)":"rgba(26,26,46,0.09)"}`,marginBottom:10,overflow:"hidden"}}>
+      /* Drop target is the whole card; the drag HANDLE is the grip in the header below. Making
+         the card itself draggable would fight every text selection and every control inside it. */
+      return(<div key={k} id={`zone-${k}`} className="zone-row"
+        /* Reorder LIVE as you drag over a card, rather than only on drop. That is what makes the
+           other zones slide out of the way while you are still holding the card — the list you
+           are looking at is already the list you will get, so there is nothing to guess at. The
+           drop then only has to clear the drag state. */
+        onDragOver={e=>{ if(dragZone && dragZone!==k){ e.preventDefault(); e.dataTransfer.dropEffect="move"; moveZone(dragZone,k); } }}
+        onDrop={e=>{ e.preventDefault(); setDragZone(null); }}
+        /* No `transition` in this style object on purpose: React owns every property listed here
+           and rewrites them on each render, which would wipe the transform transition FLIP sets
+           imperatively mid-animation. The drop-target outline is gone too — the list reorders
+           live now, so the card's real position IS the preview. */
+        style={{background:isOn?cardBg:isDark?"#12121F":"#FAFAFA",borderRadius:14,border:isOn?`2px solid ${isDuplicate?"#C9A96E":"#444"}`:`1px solid ${isDark?"rgba(255,255,255,0.08)":"rgba(26,26,46,0.09)"}`,marginBottom:10,overflow:"hidden",opacity:dragZone===k?0.4:1}}>
         {/* Only the Details chip collapses an open zone. The whole header used to do it, so any
             stray click — on the name, the summary text, the empty space — folded the zone away
             mid-edit. An OFF zone still switches on from anywhere in the row, since there is nothing
             to lose there and it makes the row an easy target. */}
         <div className="zone-head" style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 18px",cursor:isOn?"default":"pointer"}} onClick={()=>{ if(!isOn) toggleEl(k); }}>
-          <div style={{display:"flex",alignItems:"center",gap:12,flex:1,minWidth:0}}>{/* zone emoji removed — the label carries the row */}<div style={{fontSize:15,fontWeight:600,letterSpacing:-0.2,color:isOn?textP:textS}}>{el.label}</div>{/* Read-only summary — fills the dead space between the name and the controls so a collapsed
+          <div style={{display:"flex",alignItems:"center",gap:12,flex:1,minWidth:0}}>
+            {/* The drag handle. draggable lives HERE, not on the card, so text inside the zone
+                stays selectable and no inner control gets hijacked into starting a drag.
+                stopPropagation on mousedown/click: the header toggles an OFF zone on, and
+                grabbing the grip must not also switch the zone. */}
+            <div draggable
+              onDragStart={e=>{
+                setDragZone(k);
+                e.dataTransfer.effectAllowed="move";
+                try{ e.dataTransfer.setData("text/plain",k); }catch{ /* Safari */ }
+                // Drag the WHOLE zone, not the grip. draggable has to live on the grip so the
+                // card's own text and controls still work, but that also makes the grip the
+                // drag image by default — a 13px glyph floating under the cursor. Pointing the
+                // drag image at the card gives the card itself, held at the spot you grabbed.
+                const card=document.getElementById(`zone-${k}`);
+                if(card){ const r=card.getBoundingClientRect();
+                  try{ e.dataTransfer.setDragImage(card, e.clientX-r.left, e.clientY-r.top); }catch{ /* not supported */ } }
+              }}
+              onDragEnd={()=>setDragZone(null)}
+              onMouseDown={e=>e.stopPropagation()}
+              onClick={e=>e.stopPropagation()}
+              title="Drag to reorder this zone — the order carries into Deal Check"
+              style={{cursor:"grab",userSelect:"none",flexShrink:0,padding:"2px 4px",marginLeft:-4,borderRadius:6,color:textS,fontSize:13,lineHeight:1,letterSpacing:1}}>⠿</div>
+            <div style={{fontSize:15,fontWeight:600,letterSpacing:-0.2,color:isOn?textP:textS}}>{el.label}</div>{/* Read-only summary — fills the dead space between the name and the controls so a collapsed
                 row still says what is in the zone. Derived from existing state only. */}
             {(()=>{
               const n=(zoneElements[k]||[]).length;
@@ -4092,7 +4246,13 @@ undefined
         background:"rgba(0,0,0,0.45)", color:"#fff", fontSize:24, lineHeight:1, cursor:"pointer",
         display:"flex", alignItems:"center", justifyContent:"center", userSelect:"none",
       });
-      return (
+      // Portaled to <body>. The lightbox is written inside the right column, but the collapsed
+      // rail strip is a SIBLING of that column and comes after it in the DOM — so the rail's
+      // vertical edge painted over the photo. z-index could not settle it: a position:fixed
+      // overlay is still confined to the nearest ancestor that makes a stacking context, and it
+      // then competes only with that ancestor, not with the rail outside it. Rendering at the
+      // body removes the ancestor from the question altogether.
+      return createPortal((
       <div onClick={()=>setLightbox(null)} style={{position:"fixed",inset:0,zIndex:10000,background:"rgba(0,0,0,0.9)",display:"flex",alignItems:"center",justifyContent:"center",padding:24,cursor:"zoom-out"}}>
         <span onClick={()=>setLightbox(null)} style={{position:"absolute",top:16,right:20,fontSize:30,lineHeight:1,color:"#fff",cursor:"pointer",fontWeight:300}}>×</span>
         {many&&<span title="Previous (←)" aria-label="Previous photo" onClick={e=>{e.stopPropagation();lightboxStep(-1);}} style={navBtn("left")}>{"‹"}</span>}
@@ -4102,7 +4262,7 @@ undefined
           {/* The caption carried the storage filename. Position is what a viewer actually wants here. */}
           {many&&<span style={{fontWeight:400,opacity:0.75}}>{lightbox.idx+1} / {items.length}</span>}
         </div>
-      </div>);
+      </div>), document.body);
     })()}
       </div>{/* /right column */}
       {PRICING_TILE&&(rightRailOpen

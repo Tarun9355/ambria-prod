@@ -1835,17 +1835,32 @@ export default function DealCheckOverlay({ ctx }) {
                       }
                     });
                   }
-                  // Follow Settings → Zones' own priority order (the same drag-ordered list Build
-                  // sorts by), not whatever order zones happened to get toggled on in — a zone
-                  // missing from that list (e.g. "(unzoned)") sorts after every known zone, in its
-                  // original relative order.
-                  const zoneList = Object.keys(byZone).sort((a, b) => {
-                    const ia = zoneKeys.indexOf(a), ib = zoneKeys.indexOf(b);
-                    if (ia === -1 && ib === -1) return 0;
-                    if (ia === -1) return 1;
-                    if (ib === -1) return -1;
-                    return ia - ib;
-                  });
+                  // ── TWO ORDERINGS, LAYERED ──
+                  // Settings → Zones is the house default: a drag-ordered priority list that every
+                  // deal follows, and the same list Build sorts by. A zone missing from it (e.g.
+                  // "(unzoned)") sorts after every known zone, keeping its original relative order.
+                  //
+                  // On top of that, ONE deal can arrange its own zones by dragging them in Build.
+                  // That per-function zoneOrder wins where it has an opinion — a salesperson who
+                  // has deliberately arranged this client's zones should not have Settings reorder
+                  // them back. Zones they never dragged keep their Settings position behind the
+                  // dragged ones, so a partial arrangement is safe and nothing can drop out.
+                  const zoneList = (() => {
+                    const keys = Object.keys(byZone);
+                    const bySettings = keys.slice().sort((a, b) => {
+                      const ia = zoneKeys.indexOf(a), ib = zoneKeys.indexOf(b);
+                      if (ia === -1 && ib === -1) return 0;
+                      if (ia === -1) return 1;
+                      if (ib === -1) return -1;
+                      return ia - ib;
+                    });
+                    const dragged = Array.isArray(fns[fnIdx]?.zoneOrder) ? fns[fnIdx].zoneOrder : [];
+                    if (!dragged.length) return bySettings;
+                    const rank = {};
+                    bySettings.forEach((k, i) => { rank[k] = i; });
+                    dragged.forEach((k, i) => { rank[k] = i - dragged.length; });
+                    return bySettings.slice().sort((a, b) => (rank[a] ?? Infinity) - (rank[b] ?? Infinity));
+                  })();
                   const autoCollapse = totalCards > 30;  // §7.9.2 — auto-collapse when > 30 cards
                   // ═══ Patch 6 — Generate bar computation (event-wide scope · sidebar wired) ═══
                   // `activeFn` lived here to feed the function-context header; that header is gone

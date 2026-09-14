@@ -26,7 +26,7 @@ import { kvGet, kvTryGet, kvSet, reliableSave } from "../../lib/ims/kv";
 import { makeAmendRequest } from "../../lib/ims/amend";
 import { catToDept } from "../../lib/ims/deptClassify";
 import { availableAtVenue, isStandingAt, rentalSplit } from "../../lib/ims/fixedVenues";
-import { searchLmsLeads, triggerLmsSync, fetchCachedContracts } from "../../lib/ims/lms";
+import { searchLmsLeads, triggerLmsSync, fetchCachedContracts, fetchLmsLeadByEntry } from "../../lib/ims/lms";
 import { uploadToStorage, compressImageForUpload, STORAGE_FOLDERS, listStorage, deleteStorageObjects, deleteStorageFolder } from "../../lib/storage";
 import { ytApi, ytDuration } from "../../lib/youtube";
 import { extractLabeledValue, bestTaxMatch } from "../../lib/studio/videoDescriptionTags";
@@ -1903,6 +1903,15 @@ export default function StudioApp() {
   const [webPreview, setWebPreview] = useState(null);
   const [zoneConfig, setZoneConfig] = useState({});
   const [activeZones, setActiveZones] = useState([]);
+  // ── PER-DEAL ZONE ORDER ──
+  // An explicit list of zone keys in the order this deal wants them. Empty = "no opinion", and
+  // everything falls back to the admin's configured Zone Types order exactly as before.
+  //
+  // Per FUNCTION, not per deal: zoneConfig, enabledEls and customZones are all per function, so a
+  // single shared order could name zones a given function does not have. It rides in the same
+  // fnBuilds snapshot as those, which is what scopes it to this client's session and no one
+  // else's — nothing here is written to the shared Zone Types settings.
+  const [zoneOrder, setZoneOrder] = useState([]);
   const [rcItems, setRcItems] = useState(RC_D);
   const [rcCats, setRcCats] = useState(RC_CATS_DEFAULT);
   const [rcSubcatFactors, setRcSubcatFactors] = useState([]); // IMS-owned; read-only here until Phase 2
@@ -2013,7 +2022,7 @@ export default function StudioApp() {
   // ═══ Snapshot / restore Build state for per-function canvases — VERBATIM ═══
   const snapshotBuildState = () => ({
     enabledEls, elTiers, zoneConfig, zoneElements, itemQty, itemGrades,
-    customMode, activeZones, customZones,
+    customMode, activeZones, zoneOrder, customZones,
     elSelectedPhoto, elInspo, elNotes, elCostOpen,
     sourceVideo, sourceEvent,
     savedInsps, selectedMoods, selectedPalettes, floralRatio,
@@ -2029,6 +2038,9 @@ export default function StudioApp() {
     if (!s) {
       setEnabledEls({}); setElTiers({}); setZoneConfig({}); setZoneElements({});
       setItemQty({}); setItemGrades({}); setCustomMode({}); setActiveZones([]);
+      // zoneOrder resets with the rest. It is per function, so switching to one that has no saved
+      // build must not inherit the previous function's arrangement.
+      setZoneOrder([]);
       setCustomZones([]); setElSelectedPhoto({}); setElInspo({}); setElNotes({});
       setElCostOpen({}); setSourceVideo(null); setSourceEvent(null);
       setSavedInsps([]); setSelectedMoods([]); setSelectedPalettes([]); setFloralRatio(70);
@@ -2044,6 +2056,7 @@ export default function StudioApp() {
     setItemGrades(s.itemGrades || {});
     setCustomMode(s.customMode || {});
     setActiveZones(s.activeZones || []);
+    setZoneOrder(s.zoneOrder || []);
     setCustomZones(s.customZones || []);
     setElSelectedPhoto(s.elSelectedPhoto || {});
     setElInspo(s.elInspo || {});
@@ -4318,7 +4331,7 @@ export default function StudioApp() {
         : (() => { const ef = extraFunctions[idx - 1] || {}; return { type: ef.type || "", date: ef.date || "", venue: ef.venue || "", shift: ef.shift || "", pax: ef.pax || "", palette: ef.palette || "Custom" }; })();
       const isActive = idx === activeFnIdx;
       const snap = isActive
-        ? { zoneElements, zoneConfig, enabledEls, elSelectedPhoto, itemQty, itemGrades, activeZones, customZones, elTiers, floralRatio, genset62, customGensets, customTripRate, elNotes, floralOverrides }
+        ? { zoneElements, zoneConfig, enabledEls, elSelectedPhoto, itemQty, itemGrades, activeZones, zoneOrder, customZones, elTiers, floralRatio, genset62, customGensets, customTripRate, elNotes, floralOverrides }
         : (fnBuilds[idx] || {});
       all.push({
         fnIdx: idx,
@@ -4335,6 +4348,7 @@ export default function StudioApp() {
         itemQty: snap.itemQty || {},
         itemGrades: snap.itemGrades || {},
         activeZones: snap.activeZones || [],
+        zoneOrder: snap.zoneOrder || [],
         customZones: snap.customZones || [],
         elTiers: snap.elTiers || {},
         floralRatio: typeof snap.floralRatio === "number" ? snap.floralRatio : floralRatio,
@@ -4348,7 +4362,7 @@ export default function StudioApp() {
       });
     }
     return all;
-  }, [fn, clientDate, venue, clientShift, clientPax, clientPalette, zoneElements, zoneConfig, enabledEls, elSelectedPhoto, itemQty, itemGrades, activeZones, customZones, elTiers, floralRatio, customGensets, customTripRate, elNotes, floralOverrides, extraFunctions, fnBuilds, activeFnIdx]);
+  }, [fn, clientDate, venue, clientShift, clientPax, clientPalette, zoneElements, zoneConfig, enabledEls, elSelectedPhoto, itemQty, itemGrades, activeZones, zoneOrder, customZones, elTiers, floralRatio, customGensets, customTripRate, elNotes, floralOverrides, extraFunctions, fnBuilds, activeFnIdx]);
   // Layout, same reasoning as snapshotFnRef / saveSessionRef — read from synchronous paths.
   useLayoutEffect(() => { collectAllFunctionDataRef.current = collectAllFunctionData; });
 
@@ -4755,6 +4769,12 @@ export default function StudioApp() {
     const zoneOrderIndex = {};
     zoneKeys.forEach((zk, i) => { zoneOrderIndex[zk] = i; });
     fCustomZones.forEach((cz, i) => { zoneOrderIndex[cz.id] = zoneKeys.length + i; });
+    // A hand-ordered deal overrides the admin order. Dragged keys get NEGATIVE indices, so they
+    // sort ahead of every un-dragged one while keeping their own sequence; anything not in the
+    // list (a zone enabled after the last drag) keeps its admin position behind them. That makes
+    // a partial list safe, so Build and Deal Check agree without having to stay in lockstep.
+    const fZoneOrder = Array.isArray(fnData.zoneOrder) ? fnData.zoneOrder : [];
+    fZoneOrder.forEach((zk, i) => { zoneOrderIndex[zk] = i - fZoneOrder.length; });
     const orderedZoneKeys = Object.entries(fEnabledEls).filter(([_, on]) => on).map(([k]) => k)
       .sort((a, b) => (zoneOrderIndex[a] ?? Infinity) - (zoneOrderIndex[b] ?? Infinity));
     const zones = orderedZoneKeys.map((k) => {
@@ -6290,7 +6310,7 @@ export default function StudioApp() {
     const savePromise = saveClientLedger(finalLedger, undefined, { keepalive: !!opts.keepalive });
     if (!opts.auto) showMsg("✓ Session saved to " + client.name, "green");
     return { client, ledger: finalLedger, savePromise };
-  }, [clientName, clientPhone, clientDate, clientShift, clientPax, clientPalette, clientBrideGroom, venue, fn, extraFunctions, grandTotal, totalCost, transportCalc, enabledEls, elTiers, zoneConfig, zoneElements, elNotes, elSelectedPhoto, sourceEvent, sourceVideo, selectedMoods, selectedPalettes, floralRatio, clientLedger, activeClientId, authUser, saveClientLedger, activeFnIdx, fnBuilds, itemQty, itemGrades, customMode, activeZones, customZones, customGensets, customTripRate, dcCustomItems,
+  }, [clientName, clientPhone, clientDate, clientShift, clientPax, clientPalette, clientBrideGroom, venue, fn, extraFunctions, grandTotal, totalCost, transportCalc, enabledEls, elTiers, zoneConfig, zoneElements, elNotes, elSelectedPhoto, sourceEvent, sourceVideo, selectedMoods, selectedPalettes, floralRatio, clientLedger, activeClientId, authUser, saveClientLedger, activeFnIdx, fnBuilds, itemQty, itemGrades, customMode, activeZones, zoneOrder, customZones, customGensets, customTripRate, dcCustomItems,
     // Explicitly listed, not left to be picked up by accident. grandTotal is in this list and does
     // usually change when the real rates land, which would rebuild this callback and pick up the new
     // pricingReady for free — but "usually" is not a guarantee: a deal whose seed-default total
@@ -6993,6 +7013,80 @@ export default function StudioApp() {
       showMsg(`Loaded LMS lead #${lead.entryNo} (${lead.dept === "venue" ? "Venue" : "Decor"})`, "green");
     }
   }, [clientLedger, saveClientLedger, authUser, allInhouseVenues, allOutdoorDB, loadClientSession, customProperties, customInhouse]);
+
+  // ── §25b DEEP LINK FROM IMS: "Build this deal in Studio" ──
+  // IMS Dept Ops links here when a calendar lead has no Studio deal behind it yet, as
+  // `#/studio?client=<guest name>&lmsEntry=<LMS entry no>`.
+  //
+  // Setting clientName is the entire trigger: the lead search effect above already watches it.
+  // When that search returns, the contract this link names is loaded through the SAME
+  // loadLmsLead the "Load →" button calls — deliberately not a second fill path, because a
+  // parallel one would drift out of step with the venue/function resolution logic in there.
+  //
+  // Placed AFTER loadLmsLead rather than beside the search effect: the dependency array is
+  // evaluated during render, so naming loadLmsLead before its own `const` would throw on the
+  // temporal dead zone rather than simply reading stale.
+  const pendingLmsEntryRef = useRef(undefined);
+  if (pendingLmsEntryRef.current === undefined) {
+    // Read once, during the first render, before anything can type into clientName.
+    pendingLmsEntryRef.current = null;
+    try {
+      const qs = window.location.hash.split("?")[1];
+      if (qs) {
+        const p = new URLSearchParams(qs);
+        const name = (p.get("client") || "").trim();
+        if (name) {
+          // lmsRef is "<dept>-<entryNo>", e.g. "venue-00741". Split on the FIRST hyphen only —
+          // the department never contains one, the entry number might.
+          const ref = (p.get("lmsRef") || "").trim();
+          const cut = ref.indexOf("-");
+          pendingLmsEntryRef.current = {
+            name, applied: false,
+            dept: cut > 0 ? ref.slice(0, cut) : null,
+            entry: cut > 0 ? ref.slice(cut + 1) : null,
+          };
+        }
+      }
+    } catch { pendingLmsEntryRef.current = null; }
+  }
+  useEffect(() => {
+    const req = pendingLmsEntryRef.current;
+    if (!req || req.applied) return;
+    req.applied = true;
+    setClientName(req.name);
+    // Strip the query so a refresh does not re-fill over work already in progress.
+    try { window.history.replaceState(null, "", window.location.pathname + window.location.search + "#/studio"); } catch { /* history blocked */ }
+    // Preferred path: ask for the exact contract the link names. This is what makes a VENUE
+    // booking fill the form — Studio's own lead search never returns those, so before this the
+    // form simply reported "No matching LMS lead" for every venue-sourced client.
+    if (!req.dept || !req.entry) return undefined;
+    let cancelled = false;
+    (async () => {
+      const lead = await fetchLmsLeadByEntry(req.dept, req.entry);
+      if (cancelled || !lead) return;   // not found → leave the ref set so the search path can try
+      pendingLmsEntryRef.current = null; // and stop it from firing a second fill on top of this one
+      loadLmsLead(lead);
+    })();
+    return () => { cancelled = true; };
+  }, []);
+  useEffect(() => {
+    const req = pendingLmsEntryRef.current;
+    if (!req || lmsLoading || !lmsLeads.length) return;
+    // Prefer the exact contract the link names. But the entry number often will NOT be here:
+    // searchLmsLeads deliberately queries decor records only (see its own comment — Studio is the
+    // décor tool and loadLmsLead has nothing to pull from a venue contract), while the IMS
+    // calendar links from venue contracts too. A venue booking and its décor job are two
+    // contracts with two entry numbers for one client, so requiring a number match meant the
+    // common case never auto-filled.
+    // So: exact number if present, otherwise the single candidate. Two or more and we stop —
+    // guessing between clients of the same name is worse than leaving the list for a human.
+    const byEntry = req.entry ? lmsLeads.find((l) => String(l.entryNo) === String(req.entry)) : null;
+    const hit = byEntry || (lmsLeads.length === 1 ? lmsLeads[0] : null);
+    if (!hit) { pendingLmsEntryRef.current = null; return; }
+    // One-shot: clear BEFORE loading, or loadLmsLead's own state changes would re-enter here.
+    pendingLmsEntryRef.current = null;
+    loadLmsLead(hit);
+  }, [lmsLeads, lmsLoading, loadLmsLead]);
 
   // ── Resume saved session (per-pill) — VERBATIM ──
   // `targetFnIdx` says WHICH pill to restore into. Without it the caller could only ever resume
@@ -7891,6 +7985,12 @@ export default function StudioApp() {
     const zoneOrderIndex = {};
     zoneKeys.forEach((zk, i) => { zoneOrderIndex[zk] = i; });
     fCustomZones.forEach((cz, i) => { zoneOrderIndex[cz.id] = zoneKeys.length + i; });
+    // A hand-ordered deal overrides the admin order. Dragged keys get NEGATIVE indices, so they
+    // sort ahead of every un-dragged one while keeping their own sequence; anything not in the
+    // list (a zone enabled after the last drag) keeps its admin position behind them. That makes
+    // a partial list safe, so Build and Deal Check agree without having to stay in lockstep.
+    const fZoneOrder = Array.isArray(fnData.zoneOrder) ? fnData.zoneOrder : [];
+    fZoneOrder.forEach((zk, i) => { zoneOrderIndex[zk] = i - fZoneOrder.length; });
     const orderedZoneKeys = Object.entries(fEnabledEls).filter(([_, on]) => on).map(([k]) => k)
       .sort((a, b) => (zoneOrderIndex[a] ?? Infinity) - (zoneOrderIndex[b] ?? Infinity));
     return orderedZoneKeys.map((k) => {
@@ -9384,7 +9484,7 @@ export default function StudioApp() {
     elInspo, setElInspo, elInspoLoading, setElInspoLoading, elSelectedPhoto, setElSelectedPhoto, elNotes, setElNotes, elCostOpen, setElCostOpen,
     elMultiPhotos, isMultiPhotoZone, toggleMultiElPhoto,
     customZones, setCustomZones, newCzSrc, setNewCzSrc, elGallery, setElGallery, galleryIdx, setGalleryIdx, webPreview, setWebPreview,
-    zoneConfig, setZoneConfig, activeZones, setActiveZones,
+    zoneConfig, setZoneConfig, activeZones, setActiveZones, zoneOrder, setZoneOrder,
     floralRatio, setFloralRatio, floralOverrides, setFloralOverrides,
     customTripRate, setCustomTripRate, venueCustom, setVenueCustom, customGensets, setCustomGensets, genset62, setGenset62, gensetRate62,
     sourceEvent, setSourceEvent, sourceVideo, setSourceVideo,
