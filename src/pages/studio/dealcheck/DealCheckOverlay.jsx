@@ -2236,13 +2236,24 @@ export default function DealCheckOverlay({ ctx }) {
                                           {card.imsId && reuseFnCount[card.imsId]?.size >= 2 && <span style={{fontSize:11,padding:"2px 6px",borderRadius:4,background:"rgba(16,185,129,0.18)",color:"#10B981",fontWeight:700,letterSpacing:0.4}}>♻ {reuseFnCount[card.imsId].size} fns</span>}
                                           <span onClick={()=>setDcCards(prev=>{const fn={...(prev[fnIdx]||{})}; delete fn[card._cardKey]; return {...prev,[fnIdx]:fn};})} title="Remove from Deal Check" style={{marginLeft:"auto",cursor:"pointer",color:"#EF4444",fontSize:15.5,fontWeight:700,padding:"0 4px",lineHeight:1,flexShrink:0,opacity:0.6,transition:"opacity 0.15s"}} onMouseEnter={e=>e.currentTarget.style.opacity=1} onMouseLeave={e=>e.currentTarget.style.opacity=0.6}>×</span>
                                         </div>
-                                        {card.imsId && item ? (
-                                          <div style={{fontSize:12,lineHeight:1.5,color:IV.ink2,marginBottom:7}}>
-                                            → <span style={{color:IV.ink,fontWeight:700}}>{item.name || card.imsName}</span>
-                                            <span style={{...NUM,marginLeft:8,color:IV.ink,fontWeight:700}}>₹{rental.toLocaleString("en-IN")}{card.qty>1?` × ${card.qty} = ₹${(rental*card.qty).toLocaleString("en-IN")}`:""}</span>
-                                            {dims && <span style={{marginLeft:8,color:IV.ink3}}>· {dims}</span>}
-                                          </div>
-                                        ) : (
+                                        {card.imsId && item ? (() => {
+                                          // The title above already shows the resolved item's name
+                                          // (item?.name, falling back to card.rcName only when
+                                          // unmatched) — repeating it here with a "→" was pure
+                                          // duplication for the common case (an exact name-match
+                                          // resolves to an item literally called the same thing).
+                                          // Only worth an arrow when it resolved to something ELSE —
+                                          // a genuine swap/AI pick the salesperson should notice.
+                                          const resolvedName = item.name || card.imsName;
+                                          const sameName = String(resolvedName || "").trim().toLowerCase() === String(card.rcName || "").trim().toLowerCase();
+                                          return (
+                                            <div style={{fontSize:12,lineHeight:1.5,color:IV.ink2,marginBottom:7}}>
+                                              {!sameName && <>→ <span style={{color:IV.ink,fontWeight:700}}>{resolvedName}</span>{" "}</>}
+                                              <span style={{...NUM,marginLeft:sameName?0:8,color:IV.ink,fontWeight:700}}>₹{rental.toLocaleString("en-IN")}{card.qty>1?` × ${card.qty} = ₹${(rental*card.qty).toLocaleString("en-IN")}`:""}</span>
+                                              {dims && <span style={{marginLeft:8,color:IV.ink3}}>· {dims}</span>}
+                                            </div>
+                                          );
+                                        })() : (
                                           <div style={{fontSize:12,color:IV.red,marginBottom:7,fontStyle:"italic"}}>No IMS match — pick from alternatives below or browse subcategory</div>
                                         )}
                                         {/* The "Set as correct match for this photo" link stood here, with its "learned for
