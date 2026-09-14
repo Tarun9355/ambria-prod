@@ -1,4 +1,4 @@
-import { Fragment, useState, useRef, useEffect, useMemo } from "react";
+import { Fragment, useState, useRef, useEffect, useLayoutEffect, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { makeFilterUI, useRailMaxHeight } from "../../../components/studio/filterUI.jsx";
 import { IconClipboard, IconPencil, IconRuler, IconBolt, IconWall, IconPlatform, IconCarpet, IconBulb, IconCheck,
@@ -1636,7 +1636,6 @@ export default function StudioBuild({ ctx }) {
   }, [zoneKeys, customZones, enabledEls, zoneOrder]);
 
   const [dragZone, setDragZone] = useState(null);   // key being dragged
-  const [dragOverZone, setDragOverZone] = useState(null);
   // Commit a move by writing the FULL visible order, not just the moved key. A partial list would
   // be read back with the untouched keys falling behind the moved one, which silently undoes the
   // rest of the arrangement the next time the deal is opened.
@@ -1646,8 +1645,39 @@ export default function StudioBuild({ ctx }) {
     const i = cur.indexOf(from), j = cur.indexOf(to);
     if (i < 0 || j < 0) return;
     cur.splice(j, 0, cur.splice(i, 1)[0]);
+    // Bail if nothing actually moved. This runs from dragover, which fires continuously while the
+    // pointer sits over a card — without the guard every one of those events would setState with
+    // an identical array and re-render the whole build in a loop.
+    if (cur.length === orderedZoneKeys.length && cur.every((k, n) => k === orderedZoneKeys[n])) return;
     setZoneOrder(cur);
   };
+
+  // ── FLIP: animate zones into their new places ──
+  // Reordering is a layout change, so the cards would teleport. FLIP reads each card's position
+  // before and after, puts it straight back where it was with a transform, then releases it —
+  // the browser animates the transform, so what you see is the cards sliding up and down to make
+  // room. Layout effect, not effect: the transform has to be applied in the same frame as the
+  // reorder, or the jump is visible first.
+  const zoneRectsRef = useRef({});
+  useLayoutEffect(() => {
+    const prev = zoneRectsRef.current;
+    const next = {};
+    orderedZoneKeys.forEach((k) => {
+      const el = document.getElementById(`zone-${k}`);
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      next[k] = r.top;
+      const was = prev[k];
+      if (was == null || Math.abs(was - r.top) < 1) return;
+      el.style.transition = "none";
+      el.style.transform = `translateY(${was - r.top}px)`;
+      requestAnimationFrame(() => {
+        el.style.transition = "transform 200ms cubic-bezier(.2,.8,.2,1)";
+        el.style.transform = "";
+      });
+    });
+    zoneRectsRef.current = next;
+  }, [orderedZoneKeys]);
   // ── AUTO-SCROLL WHILE DRAGGING ──
   // The browser does not scroll the page during an HTML5 drag, so a zone could only ever be moved
   // as far as the current viewport reached — there was no way to drag one to the top of a long
@@ -2764,10 +2794,17 @@ undefined
       /* Drop target is the whole card; the drag HANDLE is the grip in the header below. Making
          the card itself draggable would fight every text selection and every control inside it. */
       return(<div key={k} id={`zone-${k}`} className="zone-row"
-        onDragOver={e=>{ if(dragZone && dragZone!==k){ e.preventDefault(); e.dataTransfer.dropEffect="move"; setDragOverZone(k); } }}
-        onDragLeave={()=>setDragOverZone(p=>p===k?null:p)}
-        onDrop={e=>{ e.preventDefault(); moveZone(dragZone,k); setDragZone(null); setDragOverZone(null); }}
-        style={{background:isOn?cardBg:isDark?"#12121F":"#FAFAFA",borderRadius:14,border:isOn?`2px solid ${isDuplicate?"#C9A96E":"#444"}`:`1px solid ${isDark?"rgba(255,255,255,0.08)":"rgba(26,26,46,0.09)"}`,marginBottom:10,overflow:"hidden",opacity:dragZone===k?0.45:1,outline:dragOverZone===k?"2px dashed #C9A96E":"none",outlineOffset:2,transition:"opacity .12s"}}>
+        /* Reorder LIVE as you drag over a card, rather than only on drop. That is what makes the
+           other zones slide out of the way while you are still holding the card — the list you
+           are looking at is already the list you will get, so there is nothing to guess at. The
+           drop then only has to clear the drag state. */
+        onDragOver={e=>{ if(dragZone && dragZone!==k){ e.preventDefault(); e.dataTransfer.dropEffect="move"; moveZone(dragZone,k); } }}
+        onDrop={e=>{ e.preventDefault(); setDragZone(null); }}
+        /* No `transition` in this style object on purpose: React owns every property listed here
+           and rewrites them on each render, which would wipe the transform transition FLIP sets
+           imperatively mid-animation. The drop-target outline is gone too — the list reorders
+           live now, so the card's real position IS the preview. */
+        style={{background:isOn?cardBg:isDark?"#12121F":"#FAFAFA",borderRadius:14,border:isOn?`2px solid ${isDuplicate?"#C9A96E":"#444"}`:`1px solid ${isDark?"rgba(255,255,255,0.08)":"rgba(26,26,46,0.09)"}`,marginBottom:10,overflow:"hidden",opacity:dragZone===k?0.4:1}}>
         {/* Only the Details chip collapses an open zone. The whole header used to do it, so any
             stray click — on the name, the summary text, the empty space — folded the zone away
             mid-edit. An OFF zone still switches on from anywhere in the row, since there is nothing
@@ -2779,8 +2816,19 @@ undefined
                 stopPropagation on mousedown/click: the header toggles an OFF zone on, and
                 grabbing the grip must not also switch the zone. */}
             <div draggable
-              onDragStart={e=>{ setDragZone(k); e.dataTransfer.effectAllowed="move"; try{ e.dataTransfer.setData("text/plain",k); }catch{ /* Safari */ } }}
-              onDragEnd={()=>{ setDragZone(null); setDragOverZone(null); }}
+              onDragStart={e=>{
+                setDragZone(k);
+                e.dataTransfer.effectAllowed="move";
+                try{ e.dataTransfer.setData("text/plain",k); }catch{ /* Safari */ }
+                // Drag the WHOLE zone, not the grip. draggable has to live on the grip so the
+                // card's own text and controls still work, but that also makes the grip the
+                // drag image by default — a 13px glyph floating under the cursor. Pointing the
+                // drag image at the card gives the card itself, held at the spot you grabbed.
+                const card=document.getElementById(`zone-${k}`);
+                if(card){ const r=card.getBoundingClientRect();
+                  try{ e.dataTransfer.setDragImage(card, e.clientX-r.left, e.clientY-r.top); }catch{ /* not supported */ } }
+              }}
+              onDragEnd={()=>setDragZone(null)}
               onMouseDown={e=>e.stopPropagation()}
               onClick={e=>e.stopPropagation()}
               title="Drag to reorder this zone — the order carries into Deal Check"
