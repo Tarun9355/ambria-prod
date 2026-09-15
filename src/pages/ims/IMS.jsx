@@ -1473,7 +1473,6 @@ export default function IMS() {
             onSyncLms={syncLms} lmsSyncing={lmsSyncing} settings={settings} setSettings={setSettings}
             eventOrders={eventOrders} setEventOrders={setEventOrders} saveEventOrders={saveEventOrders}
             blocks={blocks} setBlocks={setBlocks} saveBlocks={saveBlocks}
-            onOpenInPlanning={openEventInPlanning}
           />
         ) : tab === "flowers" ? (
           <FlowersTab
