@@ -4,13 +4,12 @@ import { resolveDateCategory } from "../../lib/inventory/helpers";
 import { DATE_PRICING_LABELS, SETTINGS_DEFAULTS } from "../../lib/ims/constants";
 import { PRICING_CAT_STYLES } from "../../lib/inventory/constants";
 import { releaseBlocks } from "../../lib/ims/eventAutoConfirm";
-import { isLiveEventOrder } from "../../lib/ims/helpers";
 
 // Faithful copy of the reference IMS CalendarTab — renders LMS/ERP contracts on a
 // month grid, colour-codes dates by Studio category, and exposes Date Pricing config.
 // Also the one place ops can cancel a Studio-booked event (releasing its held inventory) — the
 // old dedicated IMS "Events" tab is gone; that was its only manual control worth keeping.
-export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, lmsSyncing, settings, setSettings, eventOrders, setEventOrders, saveEventOrders, blocks, setBlocks, saveBlocks, onOpenInPlanning }) {
+export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, lmsSyncing, settings, setSettings, eventOrders, setEventOrders, saveEventOrders, blocks, setBlocks, saveBlocks }) {
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth());
@@ -304,33 +303,13 @@ export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, l
           <div className="p-4 space-y-2">
           {selEvents.length === 0 ? <p className="text-sm text-gray-400 text-center py-6">No events on this date</p>
             : selEvents.map((e) => {
-              // Two gates, and the second one matters: Dept Ops lists only live deals, so an
-              // event that resolves to a pending or cancelled event_order would open a page
-              // that then refuses to show it. Testing the SAME rule here means the link is
-              // offered exactly when it will work, and the reason is stated when it won't.
-              const eo = e.eoId ? (eventOrders || []).find((o) => o.id === e.eoId) : null;
-              // `canSelect` means we know exactly which Studio deal this is and Dept Ops will
-              // show it. Every card still opens Planning either way — refusing to navigate made
-              // the majority of leads look like dead cards. Without a deal we hand over the
-              // client name and Planning opens pre-searched for it.
-              const canSelect = !!(eo && isLiveEventOrder(eo));
-              const canOpen = !!onOpenInPlanning;
-              const hint = canSelect ? "" : !e.eoId ? "no Studio deal linked — opens a search"
-                : !eo ? "linked deal no longer exists — opens a search"
-                : `deal is ${eo.status} — opens a search`;
-              // "venue-00741" / "decor-01462" — the contract's own identity, so Studio can fetch
-              // exactly this row rather than guessing from a name search that cannot see venue
-              // contracts at all.
-              const lmsRef = (e.dept && e.entryNo) ? `${e.dept}-${e.entryNo}` : null;
-              const open = () => canOpen && onOpenInPlanning(canSelect ? e.eoId : null, e.guestName || "", lmsRef);
+              // The "Open in Planning" link that used to sit on these cards is gone. Planning
+              // has its own month picker now, listing exactly the sold events it can plan, so
+              // the cross-link duplicated a shorter route. These cards are back to what the
+              // Calendar is for: reading what is booked on a date.
               return (
               <div key={e.id}
-                onClick={canOpen ? open : undefined}
-                role={canOpen ? "button" : undefined}
-                tabIndex={canOpen ? 0 : undefined}
-                onKeyDown={canOpen ? (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); open(); } } : undefined}
-                title={canSelect ? "Open this event in Planning → Dept Ops" : "Open Planning → Dept Ops, searched for this client"}
-                className={"group rounded-xl p-3 bg-gray-50/70 transition-all duration-150 " + (canOpen ? "cursor-pointer hover:bg-indigo-50/60 hover:shadow-[0_1px_2px_rgba(16,24,40,0.06),0_6px_14px_-6px_rgba(16,24,40,0.22)]" : "")}
+                className="rounded-xl p-3 bg-gray-50/70"
                 style={{ borderLeft: "4px solid " + (e.dept === "studio" ? "#a855f7" : e.dept === "venue" ? "#6366f1" : "#f59e0b") }}>
                 <div className="flex items-center justify-between mb-1">
                   <div className="flex items-center gap-2">
@@ -350,20 +329,9 @@ export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, l
                         The unopenable case states the reason for the same purpose: "my click
                         did nothing" is the reading otherwise, and every reason here is fixable
                         (run Sync LMS, or mark the deal sold). */}
-                    {canOpen && (<>
-                      {!canSelect && <span className="text-[10px] text-gray-400 whitespace-nowrap">{hint}</span>}
-                      {/* A filled pill, not a text link. On a stack of cards the plain indigo
-                          text sat at the same weight as the labels around it and read as part
-                          of the card's data rather than as its action. */}
-                      <span className="inline-flex items-center gap-1 shrink-0 rounded-lg bg-indigo-600 group-hover:bg-indigo-700 px-2.5 py-1 text-[11px] font-semibold text-white whitespace-nowrap shadow-[0_1px_2px_rgba(79,70,229,0.35)] group-hover:shadow-[0_2px_6px_rgba(79,70,229,0.45)] transition-all duration-150">
-                        Open in Planning
-                        <span aria-hidden="true">→</span>
-                      </span>
-                    </>)}
-                    {/* stopPropagation, or cancelling a booking would also navigate away to the
-                        very event you just cancelled. */}
+                    {/* The card no longer navigates, so Cancel needs no stopPropagation guard. */}
                     {e.dept === "studio" && e.eoStatus !== "cancelled" && (
-                      <button onClick={(ev) => { ev.stopPropagation(); cancelStudioEvent(e.eoId, e.guestName); }}
+                      <button onClick={() => cancelStudioEvent(e.eoId, e.guestName)}
                         className="text-xs px-2 py-1 rounded-md font-medium text-red-600 border border-red-200 hover:bg-red-50">
                         ✕ Cancel
                       </button>
