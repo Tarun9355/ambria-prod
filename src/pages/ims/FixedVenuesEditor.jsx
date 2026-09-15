@@ -502,6 +502,12 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
                       </span>
                     ); })}
                     <span className="text-[10px] text-gray-400">total {Object.values(v.truss?.pillars || {}).reduce((s, q) => s + (Number(q) || 0), 0)} pillars</span>
+                    {/* One discount for pillars as a whole — not per size, unlike the qty boxes above. */}
+                    <span className="inline-flex items-center gap-1 ml-auto">
+                      <span className="text-[10px] text-gray-500">Discount</span>
+                      <input type="number" min="0" max="100" value={v.truss?.pillarDiscountPct ?? 0} onChange={(e) => updVenue(v.id, { truss: { ...(v.truss || {}), pillarDiscountPct: parseFloat(e.target.value) || 0 } })} className="w-12 border border-teal-200 rounded px-1 py-0.5 text-xs text-center font-bold" />
+                      <span className="text-[10px] text-gray-500">%</span>
+                    </span>
                   </div>
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-xs text-gray-500 w-14">➖ Beams</span>
@@ -512,6 +518,12 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
                         <span className="text-[10px] text-gray-400">/{avail}</span>
                       </span>
                     ); })}
+                    {/* One discount for beams as a whole — not per size. */}
+                    <span className="inline-flex items-center gap-1 ml-auto">
+                      <span className="text-[10px] text-gray-500">Discount</span>
+                      <input type="number" min="0" max="100" value={v.truss?.beamDiscountPct ?? 0} onChange={(e) => updVenue(v.id, { truss: { ...(v.truss || {}), beamDiscountPct: parseFloat(e.target.value) || 0 } })} className="w-12 border border-amber-200 rounded px-1 py-0.5 text-xs text-center font-bold" />
+                      <span className="text-[10px] text-gray-500">%</span>
+                    </span>
                   </div>
                 </div>
               );
