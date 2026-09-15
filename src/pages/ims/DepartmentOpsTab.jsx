@@ -5,15 +5,16 @@ import { uploadAudioToStorage } from "../../lib/storage";
 import { DEPTS as SHARED_DEPTS, catToDept as sharedCatToDept, userDepartments } from "../../lib/ims/deptClassify";
 import ManpowerFactorPills from "../../components/shared/ManpowerFactorPills.jsx";
 
-// ── ONE COLUMN TRACK FOR EVERY CARD ROW ──
-// The income cards and the summary tiles are separate grids that sit one above the other, so
-// they have to resolve to the SAME columns or the two rows visibly disagree — which is what
-// happened: the income row used auto-FIT (four cards stretched across the full width) and the
-// tile row auto-FILL (five columns at a smaller minimum), so no card in the second row lined up
-// with anything in the first. auto-fill on both, same minimum: a row with fewer cards leaves a
-// gap at the end instead of stretching out of alignment.
+// ── THE SUMMARY TILE ROW ──
+// auto-FIT, not auto-fill. The difference only shows when there are fewer tiles than columns
+// that would fit: auto-fill keeps the empty tracks and they take up space, so five tiles in a
+// six-column row left a tile-sized hole on the right; auto-fit collapses the empty ones and the
+// real tiles stretch to fill the width.
+// This was auto-fill on purpose once, to keep the tiles column-aligned with the income CARDS
+// above them. Those cards became a single readout panel, so there is no second grid left to
+// line up with and the trade no longer buys anything.
 const GRID = "grid gap-4 items-stretch";
-const GRID_COLS = { gridTemplateColumns: "repeat(auto-fill,minmax(212px,1fr))" };
+const GRID_COLS = { gridTemplateColumns: "repeat(auto-fit,minmax(212px,1fr))" };
 
 // "2h ago" for the activity log. Relative reads faster than a date when the question is
 // "did this change since I last looked" — which is the only question this log answers. It stops
@@ -114,6 +115,10 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   const [dept, setDept] = useState(roleDept || deptOptions[0] || "Floral");
   const [search, setSearch] = useState("");
   const [leadEntry, setLeadEntry] = useState(null); // LMS entry no of the lead we arrived from
+  // Month shown by the event picker below. Starts on the current month and is nudged, once, to a
+  // month that actually has events — see the effect further down.
+  const _now = new Date();
+  const [pickMonth, setPickMonth] = useState({ y: _now.getFullYear(), m: _now.getMonth() });
   const [selId, setSelId] = useState(null);
   const [zoomImg, setZoomImg] = useState(null); // click-to-enlarge lightbox (ops needs a clear big photo)
   const [opsView, setOpsView] = useState("planning"); // "planning" | "onsite" — split on-site (receiving/dismantle) into its own view
@@ -140,6 +145,37 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   // no fragments to mis-close around bodies hundreds of lines long — and leaves their inputs
   // mounted, so a half-typed truck number survives opening and closing the dialog.
   const [modal, setModal] = useState(null);
+  // ── "ADD A SITE" MENU ──
+  // A real popover, not a <select>. The option list of a native select is drawn by the OS, so
+  // none of it can be styled — the dates and day-offsets could only ever be crammed into one
+  // line of plain text per row. position:fixed with measured coordinates because this card sets
+  // overflow-hidden, which would clip an absolutely-positioned menu. Same approach FlowerPicker
+  // in components/ui already uses for the same reason.
+  const [siteMenu, setSiteMenu] = useState(false);
+  const siteBtnRef = useRef(null);
+  const [siteMenuPos, setSiteMenuPos] = useState({ top: 0, left: 0, width: 0 });
+  useEffect(() => {
+    if (!siteMenu) return undefined;
+    const place = () => {
+      const r = siteBtnRef.current?.getBoundingClientRect();
+      if (r) setSiteMenuPos({ top: r.bottom + 6, left: r.left, width: Math.max(r.width, 280) });
+    };
+    place();
+    const onDown = (e) => { if (!siteBtnRef.current?.parentElement?.contains(e.target)) setSiteMenu(false); };
+    const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); setSiteMenu(false); } };
+    // mousedown, not click: a click listener fires after the option's own handler has already
+    // re-rendered the list, so the menu closed before the pick registered.
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    window.addEventListener("scroll", place, true);
+    window.addEventListener("resize", place);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", place, true);
+      window.removeEventListener("resize", place);
+    };
+  }, [siteMenu]);
   const modalCls = (k) => (modal === k ? "" : " hidden");
   // Escape closes, and the page behind stops scrolling while the dialog is up — without the
   // lock, a flick inside a short dialog scrolls the page underneath it instead.
@@ -147,8 +183,11 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
     if (!modal && !logOpen) return undefined;
     const onKey = (e) => { if (e.key === "Escape") { setModal(null); setLogOpen(false); } };
     window.addEventListener("keydown", onKey);
+    // The page is locked only for the activity log, which IS still a dialog. An open block is
+    // part of the page now, so freezing the scroll would trap you in it — you could not reach
+    // the tiles above or anything below.
     const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    if (logOpen) document.body.style.overflow = "hidden";
     return () => { window.removeEventListener("keydown", onKey); document.body.style.overflow = prev; };
   }, [modal, logOpen]);
   // Switching event or department while the log is open would leave the dialog showing another
@@ -186,6 +225,30 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
       .sort((a, b) => (a.date || "9999").localeCompare(b.date || "9999"));
   }, [allEvents, search]);
 
+  // Open the picker on a month that actually has events — nearest upcoming, else the most recent
+  // past one. Sold events cluster in a few months; landing on "today" usually meant an empty grid
+  // and two clicks of ‹ before anything appeared. Once only, so paging around is never undone.
+  const pickInitRef = useRef(false);
+  useEffect(() => {
+    if (pickInitRef.current || events.length === 0) return;
+    pickInitRef.current = true;
+    const dated = events.map(e => e.date).filter(Boolean).sort();
+    const target = dated.find(d => d >= today) || dated[dated.length - 1];
+    if (target) { const dt = new Date(target + "T00:00:00"); setPickMonth({ y: dt.getFullYear(), m: dt.getMonth() }); }
+  }, [events, today]);
+
+  // Events for the visible month, bucketed by date — the picker grid reads this.
+  const pickByDate = useMemo(() => {
+    const out = {};
+    events.forEach(({ eo, date }) => {
+      if (!date) return;
+      const [y, m] = date.split("-").map(Number);
+      if (y !== pickMonth.y || m !== pickMonth.m + 1) return;
+      (out[date] = out[date] || []).push(eo);
+    });
+    return out;
+  }, [events, pickMonth]);
+
   // Arriving from the Calendar tab: it hands over the event_order id that was clicked and this
   // selects it. Cleared straight after via onFocusHandled, so the hand-off is a one-shot — left
   // set, it would re-select that event every time this tab re-rendered and quietly undo the
@@ -216,12 +279,6 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
     .filter(r => r.eventOrderId === sel?.id && r.department === dept && r.status === "logged")
     .sort((a, b) => (b.requestedAt || 0) - (a.requestedAt || 0))
     .slice(0, 8), [amendRequests, sel, dept]);
-  // Nearby events — within 7 days of the selected event.
-  const nearby = useMemo(() => {
-    if (!selDateStr) return [];
-    const t = new Date(selDateStr + "T00:00:00").getTime();
-    return events.filter(({ eo, date }) => eo.id !== selId && date && Math.abs(new Date(date + "T00:00:00").getTime() - t) <= 7 * 864e5);
-  }, [events, selDateStr, selId]);
 
   // ── Department income snapshot (pushed from Deal Check → matches Studio exactly) ──
   const deptIncome = (sel?.deptIncome && sel.deptIncome[dept]) || null;
@@ -402,7 +459,6 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   const mpEdited = Object.keys(mpOverrides).length > 0 || Object.keys(mpDay).length > 0 || Object.keys(mpWin).length > 0 || Object.keys(mpWinCount).length > 0 || (Array.isArray(mpExtra) && mpExtra.length > 0);
   const expenseTotal = expenses.reduce((s, e) => s + (Number(e.amount) || 0), 0);
   const realMandiNum = Number(realMandi) || 0;
-  const projectedIncome = Math.round(deptIncome ? (Number(deptIncome.total) || 0) : (rentalIncome + mpCost)); // full dept income from Deal Check, else local
 
   const setMp = (i, key, val) => {
     const row = mpRows[i]; if (!row) return;
@@ -888,6 +944,51 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
     );
   };
 
+  // ── VIEW CONTROLS: nearby count, activity bell, Planning / On-site ──
+  // Defined once and rendered in BOTH views. The Planning view shows them on the income
+  // panel; On-site has no income panel, so it shows the same group above its own tiles. A
+  // second hand-written copy would be one edit away from the two disagreeing — and if the
+  // switch ever went missing from On-site there would be no way back to Planning.
+  const viewControls = sel ? (
+  <div className="flex items-center gap-3 flex-wrap">
+    {/* ── ACTIVITY BEHIND A BELL ──
+        The log was a permanent panel between the header and the content, so an
+        event with two edits pushed the whole page down to say so — every time, even
+        on the hundredth visit. It is a notification, not a section: it belongs on a
+        count you can ignore. The bell only renders when there IS something, so an
+        untouched event shows nothing at all rather than an empty panel. */}
+    {recentChanges.length > 0 && (
+      <button onClick={() => setLogOpen(true)}
+        className="group relative shrink-0 w-9 h-9 rounded-lg bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-base leading-none transition-colors">
+        <span aria-hidden="true">🔔</span>
+        {/* -top/-right so the badge overhangs the button instead of shrinking the
+            glyph to make room for it. */}
+        <span className="absolute -top-1 -right-1 min-w-[17px] h-[17px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold leading-[17px] text-center tabular-nums">{recentChanges.length}</span>
+        <span className="sr-only">Activity log — {recentChanges.length} recent changes</span>
+        {/* A drawn tooltip rather than the native `title`: title waits about a
+            second before appearing, which is long enough that people click the
+            unlabelled bell to find out what it is instead of waiting.
+            Drops BELOW the bell — above would put it behind the sticky page header.
+            right-0 so it grows leftward and cannot push the header wider.
+            pointer-events-none so it never intercepts the click it is describing. */}
+        <span role="tooltip" className="pointer-events-none absolute top-full right-0 mt-2 z-20 whitespace-nowrap rounded-md bg-gray-900 px-2 py-1 text-[11px] font-medium text-white opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+          Activity log
+        </span>
+      </button>
+    )}
+    {/* Back on the event header, right-hand side. It briefly lived on the department
+        row above — which does render in both views, but that row scrolls off the top
+        the moment you start reading, and the switch was gone exactly when you wanted
+        it. This header travels with the event it scopes, and like that row it sits
+        OUTSIDE the planning-only block, so On-site still has a way back. */}
+    <div className="flex gap-1 bg-gray-100 rounded-xl p-1 w-fit shrink-0">
+      {[["planning", "📋 Planning"], ["onsite", "🚚 On-site"]].map(([k, l]) => (
+        <button key={k} onClick={() => setOpsView(k)} className={"px-4 py-1.5 rounded-lg text-xs font-semibold transition " + (opsView === k ? "bg-white shadow text-gray-900" : "text-gray-500 hover:text-gray-700")}>{l}</button>
+      ))}
+    </div>
+  </div>
+  ) : null;
+
   return (
     /* ── STACKS BELOW xl ──
        Two columns only once there is room for both: the rail is a fixed 288px, so at 768px it
@@ -898,13 +999,14 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
        content box is ~768px, and splitting that would hand 288px to the picker and ~460px to
        the thing you came to read. */
     /* ── ONE MEASURE FOR THE WHOLE TAB ──
-       1484px is exactly what the two columns below add up to: the 288px rail (xl:w-72) + the
-       16px gap (gap-4) + the 1180px cap on the detail column. Without it the department bar
-       stretched to the full shell width while everything under it stopped short, so the bar
-       overhung the page by however much room the monitor had spare.
-       The cap lives here rather than on the bar so the two can never drift apart — change the
-       rail width or the reading cap and this number is the one place to update. */
-    <div className="space-y-4 xl:max-w-[1484px]">
+       The single width cap for this page, and the only one — the department bar, the cards and
+       the tiles all end on the same right edge because they all sit inside it. It used to be
+       1484px, which was the arithmetic of the old two-column layout (288px event rail + 16px
+       gap + a 1180px detail column). That rail is gone, so the sum meant nothing and the page
+       simply stopped short of the space it had.
+       Still capped rather than full-width: the IMS shell is left-aligned and unbounded, and past
+       ~1600px the wide tables turn into strips with their content pinned to both far edges. */
+    <div className="space-y-4 xl:max-w-[1600px]">
       {/* ── DEPARTMENT PICKER ──
           Was a <select> buried at the top of the left rail. A dropdown hides its options until
           you open it, so the one thing that scopes this entire page — every figure, every tile,
@@ -913,9 +1015,14 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
           It sits above the columns rather than inside the rail because it scopes BOTH of them.
           The permission rule is carried over exactly: a user with a single department still gets
           a static badge, because there is nothing for them to switch to. */}
+      {/* One row: the department picker on the left, the Planning / On-site switch on the right.
+          The switch lives HERE rather than in the income panel, because that panel only renders
+          in Planning view — putting the switch inside it would leave On-site with no way back.
+          This row renders in both. */}
+      <div className="flex items-center justify-between gap-3 flex-wrap">
       {/* w-fit so the bar ends where the last department does. As a block element it stretched
-          to the full 1484px measure, leaving most of it empty white — a panel the width of the
-          page reads as a section header rather than as the control it is.
+          the full measure, leaving most of it empty white — a panel the width of the page reads
+          as a section header rather than as the control it is.
           max-w-full keeps it inside the page on narrow screens, where the inner overflow-x
           takes over and the chips scroll instead. */}
       <div className="w-fit max-w-full bg-white rounded-xl shadow-[0_1px_2px_rgba(16,24,40,0.07),0_4px_12px_-4px_rgba(16,24,40,0.12)] px-3 py-2">
@@ -940,7 +1047,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
           })}
         </div>
       </div>
-
+      </div>
 
       {/* ── Department detail for the selected event ──
           The event-list rail that used to sit to the left of this is gone: the Calendar tab is
@@ -954,7 +1061,10 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
           DETAILS even started. max-w caps the READING width while min-w-0 keeps it
           left-aligned, so the gap does not come back — the space simply sits to the right of
           the content instead of inside it. */}
-      <div className="w-full min-w-0 xl:max-w-[1180px]">
+      {/* No cap of its own any more. 1180px was this column's share back when a 288px event rail
+          sat to its left; with the rail gone it just left a dead strip down the right-hand side.
+          The wrapper above still sets the reading measure, so the content fills that and stops. */}
+      <div className="w-full min-w-0">
         {!sel ? (
           /* ── WHY THIS LEAD HAS NO PLANNING ──
              Landing here from an LMS lead in the Calendar tab, the search finds nothing and the
@@ -985,25 +1095,81 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
               </a>
             </div>
           ) : (
-            /* With the event rail gone, the Calendar is the only place an event is chosen — so
-               the empty state has to send you there rather than say "select an event" beside a
-               page that no longer has anything to select from. */
-            <div className="max-w-md mx-auto text-center py-16 px-4">
-              <div aria-hidden="true" className="text-3xl">📅</div>
-              <div className="mt-3 text-sm font-semibold text-gray-800">No event picked yet</div>
-              <div className="mt-2 text-xs text-gray-500 leading-relaxed">
-                Open the Calendar, click a date, then click the event on it — this page will show
-                that event&apos;s {DEPT_ICON[dept]} {dept} requirements, income and P&amp;L.
-              </div>
-              {onGoToCalendar && (
-                <button onClick={onGoToCalendar}
-                  className="mt-5 inline-flex items-center gap-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 px-4 py-2.5 text-sm font-semibold text-white shadow-[0_1px_2px_rgba(79,70,229,0.3),0_6px_16px_-6px_rgba(79,70,229,0.6)] hover:-translate-y-0.5 hover:shadow-[0_2px_4px_rgba(79,70,229,0.3),0_12px_24px_-8px_rgba(79,70,229,0.65)] transition-all duration-150">
-                  <span aria-hidden="true">📅</span>
-                  Pick an event from the Calendar
-                  <span aria-hidden="true">→</span>
-                </button>
-              )}
-            </div>
+            /* ── PICK AN EVENT, RIGHT HERE ──
+               A month grid of the events this page can actually plan, so choosing one no longer
+               means a round trip to the Calendar tab. Deliberately NOT the Calendar tab's grid:
+               that one lists every LMS lead, and most of those have no Studio deal behind them —
+               they would be un-clickable rows on a page whose whole job is planning a sold deal.
+               This shows only what `events` already holds: live, sold event_orders. */
+            (() => {
+              const { y, m } = pickMonth;
+              const first = new Date(y, m, 1);
+              const startDow = first.getDay();
+              const dim = new Date(y, m + 1, 0).getDate();
+              const pad = (n) => String(n).padStart(2, "0");
+              const prev = () => setPickMonth(m === 0 ? { y: y - 1, m: 11 } : { y, m: m - 1 });
+              const next = () => setPickMonth(m === 11 ? { y: y + 1, m: 0 } : { y, m: m + 1 });
+              const cells = [];
+              for (let i = 0; i < startDow; i++) cells.push(null);
+              for (let d = 1; d <= dim; d++) cells.push(d);
+              while (cells.length % 7 !== 0) cells.push(null);   // close the last week
+              const monthTotal = Object.values(pickByDate).reduce((s, a) => s + a.length, 0);
+              return (
+                <div className="bg-white rounded-2xl shadow-[0_1px_2px_rgba(16,24,40,0.07),0_4px_12px_-4px_rgba(16,24,40,0.12)] overflow-hidden">
+                  <div className="px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
+                    <div className="min-w-0">
+                      <div className="text-[10px] font-bold uppercase tracking-[0.08em] text-gray-400">Pick an event to plan</div>
+                      <h3 className="mt-0.5 text-base font-bold text-gray-900 tracking-tight">{first.toLocaleDateString("en-IN", { month: "long", year: "numeric" })}</h3>
+                      <div className="text-[11px] text-gray-500 mt-0.5">{monthTotal} sold event{monthTotal === 1 ? "" : "s"} this month · {DEPT_ICON[dept]} {dept}</div>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button onClick={prev} title="Previous month" aria-label="Previous month"
+                        className="w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-gray-900 hover:bg-gray-100 transition">‹</button>
+                      <button onClick={() => setPickMonth({ y: _now.getFullYear(), m: _now.getMonth() })}
+                        className="px-2.5 h-8 rounded-lg text-[11px] font-semibold text-gray-500 hover:text-gray-900 hover:bg-gray-100 transition">Today</button>
+                      <button onClick={next} title="Next month" aria-label="Next month"
+                        className="w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-gray-900 hover:bg-gray-100 transition">›</button>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-7 border-b border-gray-100">
+                    {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(d => (
+                      <div key={d} className="text-center text-[10px] font-bold uppercase tracking-[0.1em] text-gray-400 py-2.5">{d}</div>
+                    ))}
+                  </div>
+                  <div className="grid grid-cols-7 gap-px bg-gray-100">
+                    {cells.map((d, i) => {
+                      if (!d) return <div key={"e" + i} className="min-h-[84px] bg-gray-50/70" />;
+                      const ds = `${y}-${pad(m + 1)}-${pad(d)}`;
+                      const evs = pickByDate[ds] || [];
+                      const isToday = ds === today;
+                      return (
+                        <div key={d} className={"min-h-[84px] p-1.5 bg-white " + (isToday ? "bg-indigo-50/60" : "")}>
+                          <div className="flex items-center justify-between mb-1.5">
+                            <span className={"tabular-nums leading-none " + (isToday ? "bg-indigo-600 text-white text-[11px] font-bold rounded-full w-[20px] h-[20px] flex items-center justify-center" : "text-[12px] font-semibold text-gray-600")}>{d}</span>
+                          </div>
+                          <div className="space-y-1">
+                            {/* Each event is its own button — clicking a DAY would be ambiguous on
+                                a date carrying two events, and this page can only show one. */}
+                            {evs.map(eo => (
+                              <button key={eo.id} onClick={() => setSelId(eo.id)} title={`Plan ${eo.clientName || "Event"}`}
+                                className="w-full text-left text-[11px] font-medium leading-tight pl-2 pr-1.5 py-1 rounded-md truncate border-l-[3px] border-indigo-500 bg-indigo-50/80 text-indigo-900 hover:bg-indigo-100 transition-colors">
+                                {eo.clientName || "Event"}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {monthTotal === 0 && (
+                    <div className="px-4 py-3 text-center text-[11px] text-gray-400 border-t border-gray-100">
+                      No sold events this month — page to another month{onGoToCalendar ? ", or open the Calendar to see every LMS lead" : ""}.
+                      {onGoToCalendar && <button onClick={onGoToCalendar} className="ml-1 font-semibold text-indigo-600 hover:text-indigo-800">Open Calendar →</button>}
+                    </div>
+                  )}
+                </div>
+              );
+            })()
           )
         ) : (
           <div className="space-y-4">
@@ -1017,6 +1183,20 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                 buttons and the same setOpsView — relocated, not added to. */}
             <div className="bg-white rounded-xl shadow-[0_1px_2px_rgba(16,24,40,0.06),0_1px_3px_rgba(16,24,40,0.05)] px-4 py-3 flex items-center justify-between flex-wrap gap-3">
               <div className="flex items-center gap-3 min-w-0">
+                {/* ── THE WAY BACK ──
+                    Picking an event on the calendar replaces it with this header, and there was
+                    no route back — the calendar only renders while nothing is selected, so the
+                    only escape was reloading the tab.
+                    It clears `search` as well as the selection: arriving from an unmatched LMS
+                    lead leaves a client name in there, and with it still set the empty-list
+                    branch would show "not a Studio deal yet" instead of the calendar. */}
+                <button onClick={() => { setSelId(null); setSearch(""); }}
+                  title="Back to the calendar" aria-label="Back to the calendar"
+                  className="group shrink-0 w-9 h-9 rounded-lg bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-500 hover:text-gray-900 transition-colors">
+                  <svg width="15" height="15" viewBox="0 0 15 15" fill="none" aria-hidden="true">
+                    <path d="M9.5 3.5 L5 7.5 L9.5 11.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </button>
                 <span aria-hidden="true" className="shrink-0 w-11 h-11 rounded-xl bg-gray-100 flex items-center justify-center text-xl leading-none">{DEPT_ICON[dept]}</span>
                 <div className="min-w-0">
                   <div className="text-lg font-bold text-gray-900 truncate">{dept} — {sel.clientName || "Event"}</div>
@@ -1036,39 +1216,6 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                       )}
                     </div>
                   )}
-                </div>
-              </div>
-              <div className="flex items-center gap-3 flex-wrap">
-                {nearby.length > 0 && <div className="text-xs text-gray-500 whitespace-nowrap">📅 {nearby.length} nearby event{nearby.length > 1 ? "s" : ""} (±7 days)</div>}
-                {/* ── ACTIVITY BEHIND A BELL ──
-                    The log was a permanent panel between the header and the content, so an
-                    event with two edits pushed the whole page down to say so — every time, even
-                    on the hundredth visit. It is a notification, not a section: it belongs on a
-                    count you can ignore. The bell only renders when there IS something, so an
-                    untouched event shows nothing at all rather than an empty panel. */}
-                {recentChanges.length > 0 && (
-                  <button onClick={() => setLogOpen(true)}
-                    className="group relative shrink-0 w-9 h-9 rounded-lg bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-base leading-none transition-colors">
-                    <span aria-hidden="true">🔔</span>
-                    {/* -top/-right so the badge overhangs the button instead of shrinking the
-                        glyph to make room for it. */}
-                    <span className="absolute -top-1 -right-1 min-w-[17px] h-[17px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold leading-[17px] text-center tabular-nums">{recentChanges.length}</span>
-                    <span className="sr-only">Activity log — {recentChanges.length} recent changes</span>
-                    {/* A drawn tooltip rather than the native `title`: title waits about a
-                        second before appearing, which is long enough that people click the
-                        unlabelled bell to find out what it is instead of waiting.
-                        Drops BELOW the bell — above would put it behind the sticky page header.
-                        right-0 so it grows leftward and cannot push the header wider.
-                        pointer-events-none so it never intercepts the click it is describing. */}
-                    <span role="tooltip" className="pointer-events-none absolute top-full right-0 mt-2 z-20 whitespace-nowrap rounded-md bg-gray-900 px-2 py-1 text-[11px] font-medium text-white opacity-0 group-hover:opacity-100 transition-opacity duration-150">
-                      Activity log
-                    </span>
-                  </button>
-                )}
-                <div className="flex gap-1 bg-gray-100 rounded-xl p-1 w-fit">
-                  {[["planning", "📋 Planning"], ["onsite", "🚚 On-site"]].map(([k, l]) => (
-                    <button key={k} onClick={() => setOpsView(k)} className={"px-4 py-1.5 rounded-lg text-xs font-semibold transition " + (opsView === k ? "bg-white shadow text-gray-900" : "text-gray-500 hover:text-gray-700")}>{l}</button>
-                  ))}
                 </div>
               </div>
             </div>
@@ -1092,7 +1239,15 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                       <div className="text-[11px] text-gray-500">Read-only · written from Studio · {dept} · {sel.clientName || "Event"}</div>
                     </div>
                     <button onClick={() => setLogOpen(false)} aria-label="Close"
-                      className="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-red-500 hover:text-red-600 hover:bg-red-50 transition">✕</button>
+                      className="group shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-red-600 hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400 transition-colors">
+                    {/* A drawn cross, not the ✕ character. The glyph is a font fallback away
+                       from rendering at the wrong weight or off-centre, and it cannot be given
+                       a real stroke width. Grey at rest, red on hover: a permanently red X reads
+                       as a warning on a panel you are only reading. */}
+                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+                      <path d="M3.5 3.5 L10.5 10.5 M10.5 3.5 L3.5 10.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+                    </svg>
+                  </button>
                   </div>
                   <div className="px-4 py-3">
                   {/* A timeline, not a paragraph list. Each entry is one edit at one time, and a
@@ -1214,15 +1369,31 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                   {/* The total is its own tier. Sharing a line with the heads made it just the
                       leftmost of four numbers; on its own row at twice their size it reads as
                       the figure the others add up to. */}
-                  <div className="px-4 py-3">
-                    <div className="text-[9px] font-bold uppercase tracking-[0.08em] text-gray-400">Total income</div>
-                    {/* 22px, not 28. It still leads the panel by a clear margin over the 14px
-                        head figures — the hierarchy is the RATIO between them, not the absolute
-                        size, so shrinking both keeps the reading order and returns the height. */}
-                    <div className="mt-1 text-[22px] leading-none font-bold text-gray-900 tabular-nums tracking-tight">{fmt(liveTotal)}</div>
-                    {/* The source sits under the figure it describes. Floated to the right of
-                        the row it read as an unrelated note in the corner. */}
-                    <div className="mt-1 text-[10px] text-gray-500">What {dept} earns on this event · synced from Deal Check</div>
+                  {/* ── EARNED vs SPENT, AS TWO CARDS ──
+                      One shape for both, so the pair reads as a comparison rather than a headline
+                      with a footnote. Same padding, same type scale, same ground — only the
+                      figures differ. Equal min-widths keep them the same size whatever the two
+                      numbers are, so neither looks more important because it has more digits.
+                      ("Projected income" was a third card here and is gone: it was
+                      deptIncome.total exactly as synced, while Total income is that same figure
+                      with the snapshot crew swapped for the live crew plan. They differed only by
+                      however much the crew had been edited since the sync — on an untouched deal,
+                      by nothing but rounding.) */}
+                  <div className="px-4 py-3 flex items-stretch gap-3 flex-wrap">
+                    <div className="rounded-xl bg-gray-50 px-4 py-3 min-w-[210px]">
+                      <div className="text-[9px] font-bold uppercase tracking-[0.08em] text-gray-400">Total income</div>
+                      <div className="mt-1.5 text-[20px] leading-none font-bold text-gray-900 tabular-nums tracking-tight">{fmt(liveTotal)}</div>
+                      <div className="mt-1.5 text-[10px] text-gray-500">What {dept} earns · synced from Deal Check</div>
+                    </div>
+                    <div className="rounded-xl bg-gray-50 px-4 py-3 min-w-[210px]">
+                      <div className="text-[9px] font-bold uppercase tracking-[0.08em] text-gray-400">Actual cost logged</div>
+                      {/* Grey dash until something is logged. A ₹0 here would read as "spent
+                          nothing", which is a different claim from "not recorded yet". */}
+                      <div className={"mt-1.5 text-[20px] leading-none font-bold tabular-nums tracking-tight " + (hasActuals ? "text-gray-900" : "text-gray-300")}>{hasActuals ? fmt(actualCost) : "—"}</div>
+                      <div className="mt-1.5 text-[10px] text-gray-500">{hasActuals ? "What you actually spent" : "Not logged yet"}</div>
+                    </div>
+                    {/* Pushed to the far right of this row, after the figures. */}
+                    <div className="ml-auto self-center">{viewControls}</div>
                   </div>
                   {/* Saying it in words. The heads below are not a second set of numbers, they
                       are the one above taken apart — and nothing on the panel said so, which is
@@ -1250,6 +1421,13 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                         <div className="mt-0.5 text-[9px] font-medium text-gray-400 tabular-nums">{pct(r.value)}% of total</div>
                       </div>
                     ))}
+                  </div>
+                  {/* Came off the P&L panel that used to close the page. It explains where the
+                      "Actual cost logged" figure above goes, so it belongs with it — and without
+                      it, nothing tells ops that what they record here is what the salesperson
+                      sees in Studio. */}
+                  <div className="px-4 py-2 bg-gray-50 border-t border-gray-100 text-[10px] text-gray-500">
+                    Actuals you save here flow to the event&apos;s P&amp;L, visible to the salesperson in Studio.
                   </div>
                 </div>
 
@@ -1294,7 +1472,11 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                        card's edge and a wide soft one that lifts it off the ground. The tinted
                        tiles (red for a shortfall, sky for receiving) separate by fill alone. */
                     <button key={t.k} onClick={() => setModal(t.k)}
-                      className={"group text-left rounded-xl p-3.5 h-full flex flex-col transition-all duration-150 shadow-[0_1px_2px_rgba(16,24,40,0.07),0_4px_12px_-4px_rgba(16,24,40,0.12)] hover:-translate-y-0.5 hover:shadow-[0_2px_6px_rgba(16,24,40,0.1),0_14px_28px_-10px_rgba(16,24,40,0.28)] " + (t.tone || "bg-white")}>
+                      /* Clicking the open tile again closes it — with the block inline, the tile
+                         is a toggle, not a launcher. The open one is ringed so you can tell at a
+                         glance which of the five the panel below belongs to. */
+                      onClickCapture={e => { if (modal === t.k) { e.stopPropagation(); setModal(null); } }}
+                      className={"group text-left rounded-xl p-3.5 h-full flex flex-col transition-all duration-150 shadow-[0_1px_2px_rgba(16,24,40,0.07),0_4px_12px_-4px_rgba(16,24,40,0.12)] hover:-translate-y-0.5 hover:shadow-[0_2px_6px_rgba(16,24,40,0.1),0_14px_28px_-10px_rgba(16,24,40,0.28)] " + (modal === t.k ? "ring-2 ring-indigo-500 " : "") + (t.tone || "bg-white")}>
                       <div className="flex items-start gap-2.5">
                         <span aria-hidden="true" className={"shrink-0 w-9 h-9 rounded-lg flex items-center justify-center text-base leading-none " + (t.alert ? "bg-white shadow-[0_1px_2px_rgba(16,24,40,0.08)]" : "bg-gray-100")}>{t.icon}</span>
                         <div className="min-w-0 flex-1">
@@ -1319,14 +1501,31 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                 Every block below stays exactly where it was written. This wrapper is `hidden`
                 until a tile is picked, at which point it becomes the dialog and the one block
                 whose key matches un-hides itself (see modalCls). */}
-            <div className={modal ? "fixed inset-0 z-50 flex items-stretch sm:items-center justify-center sm:p-6" : "hidden"}>
-              <div className="absolute inset-0 bg-gray-900/50" onClick={() => setModal(null)} />
-              <div role="dialog" aria-modal="true" className="relative w-full sm:max-w-5xl bg-gray-50 sm:rounded-2xl shadow-2xl overflow-y-auto max-h-full sm:max-h-[88vh]">
-                {/* Sticky, so the way out is reachable from the bottom of a long table. */}
-                <div className="sticky top-0 z-10 bg-white border-b px-4 py-2.5 flex items-center justify-between gap-3">
-                  <div className="min-w-0 text-xs font-semibold text-gray-500 truncate">{DEPT_ICON[dept]} {dept} · {sel.clientName || "Event"}</div>
+            {/* ── OPENS IN PLACE, UNDER THE TILES ──
+                Not a dialog any more. A block is its tile's own detail, so it belongs directly
+                beneath the row you clicked rather than over the top of the page — the tiles, the
+                income cards and the event header all stay in view while you read it.
+                Same mechanic as before: every block still lives here and hides itself unless it
+                is the open one (modalCls), so nothing had to be moved or re-parented. */}
+            <div className={modal ? "" : "hidden"}>
+              <div className="rounded-2xl bg-gray-50 ring-1 ring-gray-200 overflow-hidden">
+                {/* NOT sticky. It was, back when this panel was a dialog with its own scroll —
+                    but inline the page scrolls instead, so a sticky bar just hovers over the
+                    block underneath and covered the first block's subtitle permanently. Nothing
+                    is lost by letting it scroll away: the tile above toggles the panel shut, and
+                    Escape still closes it. */}
+                <div className="bg-white border-b px-4 py-2.5 flex items-center justify-between gap-3">
+                  <div className="min-w-0 text-[13px] font-semibold text-gray-600 truncate">{DEPT_ICON[dept]} {dept} · {sel.clientName || "Event"}</div>
                   <button onClick={() => setModal(null)} aria-label="Close"
-                    className="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-red-500 hover:text-red-600 hover:bg-red-50 transition">✕</button>
+                    className="group shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-red-600 hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400 transition-colors">
+                    {/* A drawn cross, not the ✕ character. The glyph is a font fallback away
+                       from rendering at the wrong weight or off-centre, and it cannot be given
+                       a real stroke width. Grey at rest, red on hover: a permanently red X reads
+                       as a warning on a panel you are only reading. */}
+                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+                      <path d="M3.5 3.5 L10.5 10.5 M10.5 3.5 L3.5 10.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+                    </svg>
+                  </button>
                 </div>
                 <div className="p-3 sm:p-4 space-y-3">
 
@@ -1865,49 +2064,131 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                   <div className="flex items-center gap-3 min-w-0">
                     <span aria-hidden="true" className="shrink-0 w-9 h-9 rounded-lg bg-white shadow-[0_1px_2px_rgba(16,24,40,0.08)] flex items-center justify-center text-base leading-none">🔁</span>
                     <div className="min-w-0">
-                      <div className="text-sm font-semibold text-gray-900">Dismantle plan</div>
-                      <div className="text-[11px] text-gray-500">Pick the transfer sites, then type how many of each item goes to each; the rest stay for production house.</div>
+                      <div className="text-[15px] font-semibold text-gray-900">Dismantle plan</div>
+                      <div className="text-xs text-gray-500">Pick the transfer sites, then type how many of each item goes to each; the rest stay for production house.</div>
                     </div>
                   </div>
-                  <button onClick={resetDismantle} className="text-[11px] font-semibold text-red-600 border border-red-200 bg-red-50 hover:bg-red-100 px-2.5 py-1 rounded-lg whitespace-nowrap" title="Testing: clear this plan + all on-site movements so you can re-test splits">↺ Reset (testing)</button>
+                  <button onClick={resetDismantle} className="text-xs font-semibold text-red-600 border border-red-200 bg-red-50 hover:bg-red-100 px-3 py-1.5 rounded-lg whitespace-nowrap" title="Testing: clear this plan + all on-site movements so you can re-test splits">↺ Reset (testing)</button>
                 </div>
-                {/* Site chooser — dept head names the destination sites; each becomes a column below */}
-                <div className="px-4 py-2.5 border-b bg-sky-50/40 flex items-center gap-2 flex-wrap">
-                  <span className="text-xs font-semibold text-sky-800">Transfer sites:</span>
-                  {dismantleSites.map(s => (
-                    <span key={s.id} className="inline-flex items-center gap-1 text-[11px] font-medium bg-white border border-sky-200 text-sky-700 rounded-full px-2 py-1">↪️ {s.name}{s.date ? ` · ${s.date}` : ""}<button onClick={() => removeDismantleSite(s.id)} className="text-sky-300 hover:text-red-500 ml-0.5" title="remove this site">×</button></span>
-                  ))}
-                  <select value="" onChange={e => { addDismantleSite(e.target.value); e.target.value = ""; }} className="border border-sky-300 rounded-lg px-2 py-1 text-xs">
-                    <option value="">+ Add a site…</option>
-                    {nearbyTransferEvents.filter(({ e }) => !dismantleSites.some(s => s.id === e.id)).map(({ e, d, off }) => <option key={e.id} value={e.id}>{e.clientName || "Event"} · {d || "no date"}{off === 0 ? " (same day)" : off > 0 ? ` (+${off}d)` : ` (${off}d)`}</option>)}
-                  </select>
-                  {dismantleSites.length === 0 && <span className="text-[10px] text-gray-400">No sites yet — everything goes back to production house. Add a site to route items there.</span>}
+                {/* ── SITE CHOOSER ──
+                    Each site named here becomes a column in the matrix below, which is the thing
+                    the old "Transfer sites:" sentence never said. The label is now an uppercase
+                    eyebrow like every other section marker on the page, and the count sits with
+                    it so the row states what it has done rather than just what it is.
+                    The sky wash is gone: it tinted a strip across a white card for no reason
+                    other than that the sites are sky-coloured elsewhere. */}
+                <div className="px-4 py-2.5 border-b border-gray-100 bg-gray-50">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-gray-500 shrink-0">
+                      Transfer sites
+                      {dismantleSites.length > 0 && <span className="ml-1.5 text-gray-400 tabular-nums">{dismantleSites.length}</span>}
+                    </span>
+                    {dismantleSites.map(s => (
+                      /* The × is a real target now, not a 10px glyph tucked against the text —
+                         and it only turns red on hover, so a destructive control is not shouting
+                         from a row you are only reading. */
+                      <span key={s.id} className="group inline-flex items-center gap-1.5 text-xs font-semibold bg-white ring-1 ring-sky-200 text-sky-800 rounded-lg pl-2.5 pr-1 py-1">
+                        <span aria-hidden="true">↪️</span>
+                        <span className="truncate max-w-[220px]">{s.name}</span>
+                        {s.date && <span className="font-normal text-sky-500 tabular-nums">{s.date}</span>}
+                        <button onClick={() => removeDismantleSite(s.id)} title={`Remove ${s.name}`} aria-label={`Remove ${s.name}`}
+                          className="ml-0.5 w-5 h-5 rounded-md flex items-center justify-center text-sky-300 hover:text-red-600 hover:bg-red-50 transition">×</button>
+                      </span>
+                    ))}
+                    {(() => {
+                      const opts = nearbyTransferEvents.filter(({ e }) => !dismantleSites.some(s => s.id === e.id));
+                      return (
+                        <div className="relative">
+                          <button ref={siteBtnRef} type="button" onClick={() => setSiteMenu(o => !o)}
+                            aria-haspopup="listbox" aria-expanded={siteMenu}
+                            className={"inline-flex items-center gap-1.5 rounded-lg bg-white ring-1 px-3 py-1.5 text-xs font-semibold transition " + (siteMenu ? "ring-indigo-400 text-indigo-700" : "ring-gray-200 hover:ring-gray-300 text-gray-700")}>
+                            <span aria-hidden="true" className="text-gray-400">＋</span>
+                            Add a site
+                            <span aria-hidden="true" className={"text-gray-400 text-[9px] transition-transform " + (siteMenu ? "rotate-180" : "")}>▼</span>
+                          </button>
+                          {siteMenu && (
+                            <div role="listbox" style={{ position: "fixed", top: siteMenuPos.top, left: siteMenuPos.left, width: siteMenuPos.width, zIndex: 60 }}
+                              className="rounded-xl bg-white shadow-[0_4px_12px_rgba(16,24,40,0.1),0_16px_40px_-12px_rgba(16,24,40,0.3)] ring-1 ring-gray-200 overflow-hidden">
+                              <div className="px-3 py-2 bg-gray-50 border-b border-gray-100 text-[10px] font-bold uppercase tracking-[0.08em] text-gray-500">
+                                Send items to another event
+                              </div>
+                              <div className="max-h-64 overflow-y-auto">
+                                {opts.length === 0 && (
+                                  <div className="px-3 py-4 text-center text-xs text-gray-400">No other sold events nearby.</div>
+                                )}
+                                {opts.map(({ e, d, off }) => (
+                                  <button key={e.id} type="button" role="option" aria-selected="false"
+                                    onClick={() => { addDismantleSite(e.id); setSiteMenu(false); }}
+                                    className="w-full text-left px-3 py-2 flex items-center gap-3 hover:bg-indigo-50 transition-colors">
+                                    <span className="min-w-0 flex-1">
+                                      <span className="block text-[13px] font-semibold text-gray-900 truncate">{e.clientName || "Event"}</span>
+                                      <span className="block text-[11px] text-gray-500 tabular-nums">{d || "no date"}</span>
+                                    </span>
+                                    {/* Same-day is called out because it is the tight one — the
+                                        truck has to reach the next site the same evening. The
+                                        rest just say how far off, with the sign kept. */}
+                                    <span className={"shrink-0 text-[10px] font-bold px-2 py-1 rounded-md tabular-nums whitespace-nowrap " + (off === 0 ? "bg-amber-100 text-amber-800" : "bg-gray-100 text-gray-500")}>
+                                      {off === 0 ? "same day" : off > 0 ? `+${off}d` : `${off}d`}
+                                    </span>
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                  {/* Its own line, not trailing off the end of the row — at the end it wrapped
+                      under the controls and read as a caption for the dropdown. */}
+                  {dismantleSites.length === 0 && (
+                    <div className="mt-1.5 text-[10px] text-gray-400">
+                      None yet, so everything returns to the production house. Add a site to send items straight there instead.
+                    </div>
+                  )}
                 </div>
                 {/* Matrix — one row per item, a column for production house (auto) + each site */}
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[520px] text-sm">
+                  {/* ── NO RULES BETWEEN ROWS ──
+                      Every row carried a full-width divider, so a dozen items read as a dozen
+                      stripes before it read as a list. Rows are separated by their own height and
+                      a hover tint instead — and since the eye tracks a row across to type a
+                      number into it, the hover is what actually helps here, which a static line
+                      never did. The one rule left is under the header, where it marks the change
+                      from labels to data. */}
+                  <table className="w-full min-w-[520px] text-sm border-separate border-spacing-0">
                     <thead>
-                      <tr className="bg-gray-50 text-[10px] uppercase tracking-wide text-gray-500">
-                        <th className="text-left font-semibold px-4 py-2">Item</th>
-                        <th className="text-center font-semibold px-3 py-2 whitespace-nowrap">🏭 Production House</th>
-                        {dismantleSites.map(s => <th key={s.id} className="text-center font-semibold px-3 py-2 whitespace-nowrap" title={s.date}>↪️ {s.name}</th>)}
+                      <tr>
+                        <th className="text-left text-[11px] font-bold uppercase tracking-[0.08em] text-gray-500 px-4 py-3 border-b border-gray-100">Item</th>
+                        <th className="text-center text-[11px] font-bold uppercase tracking-[0.08em] text-gray-500 px-3 py-3 whitespace-nowrap border-b border-gray-100">🏭 Production House</th>
+                        {dismantleSites.map(s => <th key={s.id} className="text-center text-[11px] font-bold uppercase tracking-[0.08em] text-gray-500 px-3 py-3 whitespace-nowrap border-b border-gray-100" title={s.date}>↪️ {s.name}</th>)}
                       </tr>
                     </thead>
-                    <tbody className="divide-y">
+                    <tbody>
                       {blockedItems.map(it => {
                         const prod = planProdQty(it);
+                        // Everything routed to a site — the row is done, so it recedes rather
+                        // than sitting at the same weight as the ones still needing a number.
+                        const done = prod === 0;
                         return (
-                          <tr key={it.id}>
-                            <td className="px-4 py-2">
-                              <div className="flex items-center gap-2">
-                                {it.photo ? <img src={it.photo} alt="" onClick={() => setZoomImg(it.photo)} className="w-8 h-8 rounded object-cover border cursor-zoom-in" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-8 h-8 rounded bg-gray-100 flex items-center justify-center text-gray-300 text-xs">📦</div>}
-                                <span className="text-sm text-gray-800">{it.name} <span className="text-[10px] text-gray-400">×{it.qty}</span></span>
+                          <tr key={it.id} className="group hover:bg-indigo-50/40 transition-colors">
+                            <td className="px-4 py-2.5">
+                              <div className="flex items-center gap-2.5 min-w-0">
+                                {it.photo ? <img src={it.photo} alt="" onClick={() => setZoomImg(it.photo)} className="w-9 h-9 rounded-lg object-cover cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-9 h-9 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-xs shrink-0">📦</div>}
+                                <span className="min-w-0 truncate text-sm font-medium text-gray-800">{it.name}</span>
+                                <span className="shrink-0 text-[11px] font-semibold text-gray-400 tabular-nums">×{it.qty}</span>
                               </div>
                             </td>
-                            <td className="px-3 py-2 text-center"><span className={"inline-block min-w-[2.5rem] px-2 py-1 rounded-lg text-sm font-semibold " + (prod > 0 ? "bg-indigo-50 text-indigo-700" : "bg-gray-100 text-gray-400")} title="auto — the remainder after the sites">{prod}</span></td>
+                            <td className="px-3 py-2.5 text-center">
+                              <span className={"inline-block min-w-[2.75rem] px-2.5 py-1.5 rounded-lg text-sm font-bold tabular-nums " + (done ? "bg-gray-50 text-gray-300" : "bg-indigo-50 text-indigo-700")}
+                                title="Auto — whatever is left after the sites below">{prod}</span>
+                            </td>
                             {dismantleSites.map(s => (
-                              <td key={s.id} className="px-3 py-2 text-center">
-                                <input type="number" min="0" max={it.qty} value={planSiteQty(it, s.id) || ""} onChange={e => setSiteQty(it, s.id, e.target.value)} placeholder="0" className="w-14 border rounded px-2 py-1 text-sm text-center" />
+                              <td key={s.id} className="px-3 py-2.5 text-center">
+                                {/* Borderless until you touch it: a grid of outlined boxes was
+                                    the heaviest thing on the table, and most of them hold 0. */}
+                                <input type="number" min="0" max={it.qty} value={planSiteQty(it, s.id) || ""} onChange={e => setSiteQty(it, s.id, e.target.value)} placeholder="0"
+                                  className="w-16 rounded-lg bg-gray-100 px-2 py-1.5 text-sm text-center tabular-nums font-semibold text-gray-800 placeholder:font-normal placeholder:text-gray-300 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:bg-white transition" />
                               </td>
                             ))}
                           </tr>
@@ -1924,6 +2205,10 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
             </>)}
 
             {opsView === "onsite" && (<>
+            {/* The same control group the income panel carries in Planning view. On-site has no
+                income panel to hang it on, so it sits on its own row above the tiles — without
+                it, On-site would have no switch back to Planning. */}
+            <div className="flex justify-end">{viewControls}</div>
             {/* The department chip row that used to sit here is gone. It switched department,
                 which is exactly what the Department picker in the left rail already does, under
                 the same permission rules — roleDept locks the rail to a badge only when the user
@@ -1948,7 +2233,11 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                        card's edge and a wide soft one that lifts it off the ground. The tinted
                        tiles (red for a shortfall, sky for receiving) separate by fill alone. */
                     <button key={t.k} onClick={() => setModal(t.k)}
-                      className={"group text-left rounded-xl p-3.5 h-full flex flex-col transition-all duration-150 shadow-[0_1px_2px_rgba(16,24,40,0.07),0_4px_12px_-4px_rgba(16,24,40,0.12)] hover:-translate-y-0.5 hover:shadow-[0_2px_6px_rgba(16,24,40,0.1),0_14px_28px_-10px_rgba(16,24,40,0.28)] " + (t.tone || "bg-white")}>
+                      /* Clicking the open tile again closes it — with the block inline, the tile
+                         is a toggle, not a launcher. The open one is ringed so you can tell at a
+                         glance which of the five the panel below belongs to. */
+                      onClickCapture={e => { if (modal === t.k) { e.stopPropagation(); setModal(null); } }}
+                      className={"group text-left rounded-xl p-3.5 h-full flex flex-col transition-all duration-150 shadow-[0_1px_2px_rgba(16,24,40,0.07),0_4px_12px_-4px_rgba(16,24,40,0.12)] hover:-translate-y-0.5 hover:shadow-[0_2px_6px_rgba(16,24,40,0.1),0_14px_28px_-10px_rgba(16,24,40,0.28)] " + (modal === t.k ? "ring-2 ring-indigo-500 " : "") + (t.tone || "bg-white")}>
                       <div className="flex items-start gap-2.5">
                         <span aria-hidden="true" className={"shrink-0 w-9 h-9 rounded-lg flex items-center justify-center text-base leading-none " + (t.alert ? "bg-white shadow-[0_1px_2px_rgba(16,24,40,0.08)]" : "bg-white shadow-[0_1px_2px_rgba(16,24,40,0.08)]")}>{t.icon}</span>
                         <div className="min-w-0 flex-1">
@@ -1967,13 +2256,28 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
               );
             })()}
 
-            <div className={modal ? "fixed inset-0 z-50 flex items-stretch sm:items-center justify-center sm:p-6" : "hidden"}>
-              <div className="absolute inset-0 bg-gray-900/50" onClick={() => setModal(null)} />
-              <div role="dialog" aria-modal="true" className="relative w-full sm:max-w-5xl bg-gray-50 sm:rounded-2xl shadow-2xl overflow-y-auto max-h-full sm:max-h-[88vh]">
-                <div className="sticky top-0 z-10 bg-white border-b px-4 py-2.5 flex items-center justify-between gap-3">
-                  <div className="min-w-0 text-xs font-semibold text-gray-500 truncate">{DEPT_ICON[dept]} {dept} · {sel.clientName || "Event"}</div>
+            {/* ── OPENS IN PLACE, UNDER THE TILES ──
+                Not a dialog any more. A block is its tile's own detail, so it belongs directly
+                beneath the row you clicked rather than over the top of the page — the tiles, the
+                income cards and the event header all stay in view while you read it.
+                Same mechanic as before: every block still lives here and hides itself unless it
+                is the open one (modalCls), so nothing had to be moved or re-parented. */}
+            <div className={modal ? "" : "hidden"}>
+              <div className="rounded-2xl bg-gray-50 ring-1 ring-gray-200 overflow-hidden">
+                {/* NOT sticky — see the Planning panel above: inline, a sticky bar just hovers
+                    over the block beneath it and hides its subtitle. */}
+                <div className="bg-white border-b px-4 py-2.5 flex items-center justify-between gap-3">
+                  <div className="min-w-0 text-[13px] font-semibold text-gray-600 truncate">{DEPT_ICON[dept]} {dept} · {sel.clientName || "Event"}</div>
                   <button onClick={() => setModal(null)} aria-label="Close"
-                    className="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-red-500 hover:text-red-600 hover:bg-red-50 transition">✕</button>
+                    className="group shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-red-600 hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400 transition-colors">
+                    {/* A drawn cross, not the ✕ character. The glyph is a font fallback away
+                       from rendering at the wrong weight or off-centre, and it cannot be given
+                       a real stroke width. Grey at rest, red on hover: a permanently red X reads
+                       as a warning on a panel you are only reading. */}
+                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+                      <path d="M3.5 3.5 L10.5 10.5 M10.5 3.5 L3.5 10.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+                    </svg>
+                  </button>
                 </div>
                 <div className="p-3 sm:p-4 space-y-3">
 
@@ -2216,52 +2520,6 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
             </div>
             </>)}
 
-            {/* ── P&L SUMMARY ──
-                Built as the mirror of the income readout at the top of the page: same white
-                panel, same two tiers, same type scale. That one opens with what the department
-                earns and breaks it into heads; this one closes with what it keeps and breaks it
-                into the two figures that produced it. The dark slab it used to be predated the
-                light ground and read as a foreign object pasted on the end of the page. */}
-            {(() => {
-              const margin = projectedIncome - actualCost;
-              const good = margin >= 0;
-              return (
-                <div className="rounded-xl bg-white shadow-[0_1px_2px_rgba(16,24,40,0.07),0_4px_12px_-4px_rgba(16,24,40,0.12)] overflow-hidden">
-                  <div className="px-4 py-3">
-                    <div className="text-[9px] font-bold uppercase tracking-[0.08em] text-gray-400">{hasActuals ? "Exact" : "Projected"} dept margin</div>
-                    {/* Colour only once actuals exist. Before that the margin is not a result,
-                        it is the income with nothing subtracted yet — painting it green would
-                        report a profit nobody has earned. */}
-                    <div className={"mt-1 text-[22px] leading-none font-bold tabular-nums tracking-tight " + (hasActuals ? (good ? "text-emerald-600" : "text-red-600") : "text-gray-300")}>
-                      {hasActuals ? fmt(margin) : "—"}
-                    </div>
-                    <div className="mt-1 text-[10px] text-gray-500">
-                      {hasActuals
-                        ? "Income minus the real spend logged on this event"
-                        : "Log the actual spend above to turn this into a real figure"}
-                    </div>
-                  </div>
-                  <div className="px-4 py-1.5 bg-gray-50 border-y border-gray-100">
-                    <span className="text-[9px] font-bold uppercase tracking-[0.08em] text-gray-500">How this is worked out</span>
-                  </div>
-                  <div className="grid gap-px bg-gray-100" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))" }}>
-                    <div className="bg-white px-4 py-2.5">
-                      <div className="text-[11px] font-semibold text-gray-700">Projected income</div>
-                      <div className="mt-1 text-[14px] leading-none font-bold text-gray-900 tabular-nums tracking-tight">{fmt(projectedIncome)}</div>
-                      <div className="mt-0.5 text-[9px] font-medium text-gray-400">rental + crew</div>
-                    </div>
-                    <div className="bg-white px-4 py-2.5">
-                      <div className="text-[11px] font-semibold text-gray-700">Actual cost logged</div>
-                      <div className={"mt-1 text-[14px] leading-none font-bold tabular-nums tracking-tight " + (hasActuals ? "text-gray-900" : "text-gray-300")}>{hasActuals ? fmt(actualCost) : "—"}</div>
-                      <div className="mt-0.5 text-[9px] font-medium text-gray-400">{hasActuals ? "what you actually spent" : "not logged yet"}</div>
-                    </div>
-                  </div>
-                  <div className="px-4 py-2 bg-gray-50 border-t border-gray-100 text-[10px] text-gray-500">
-                    Actuals you save here flow to the event&apos;s P&amp;L, visible to the salesperson in Studio.
-                  </div>
-                </div>
-              );
-            })()}
           </div>
         )}
       </div>

@@ -1368,9 +1368,12 @@ export default function IMS() {
                 <h1 className="text-lg font-bold text-gray-900 leading-tight">Ambria IMS</h1>
                 <p className="text-xs text-gray-400 hidden sm:block">Inventory Management System</p>
               </div>
+              {/* Studio ⇄ IMS sits with the app's own identity rather than in the account cluster
+                  on the right. It says WHICH app you are in, which is the same thing the logo and
+                  title next to it say — grouped with the avatar and Logout it read as a setting. */}
+              <div className="ml-2"><AppSwitcher current="ims" /></div>
             </div>
             <div className="flex items-center gap-2">
-              <AppSwitcher current="ims" />
               <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-700 text-sm font-bold">{(user?.name || "?")[0]}</div>
               <span className="text-sm text-gray-700 hidden sm:block">{user?.name} · {user?.role || "User"}</span>
               <button onClick={handleLogout} className="text-xs text-gray-400 hover:text-red-500 ml-2 px-2 py-1 border rounded-lg">Logout</button>
@@ -1390,13 +1393,12 @@ export default function IMS() {
             border-r ran the full height of the page as one hard vertical line, which is the
             heaviest mark on the screen and sat right beside the lightest content. Padding on
             the aside and the elevation on the panel inside separate the two instead.
-            MAX-height, not height: the panel hugs its nine nav rows instead of being stretched
-            to the full viewport, which left most of it as empty white running past the fold.
-            The cap still applies, so a role with enough tabs to overflow scrolls inside the
-            panel rather than pushing it off-screen. py-4 is inside the aside's box, so the cap
-            already accounts for it. */}
-        <aside className="hidden lg:block w-56 shrink-0 sticky top-[61px] max-h-[calc(100vh-61px)] py-4 pl-4 pr-1">
-          <div className="max-h-full overflow-y-auto bg-white rounded-2xl p-3 shadow-[0_1px_2px_rgba(16,24,40,0.06),0_8px_24px_-12px_rgba(16,24,40,0.18)]">
+            Full height, so the panel reaches the bottom of the viewport rather than stopping
+            under the last nav row. h resolves against the aside's CONTENT box, so py-4 is
+            already subtracted — the panel ends at the fold, it does not overflow past it, and a
+            role with enough tabs to exceed it scrolls inside the panel. */}
+        <aside className="hidden lg:block w-56 shrink-0 sticky top-[61px] h-[calc(100vh-61px)] py-4 pl-4 pr-1">
+          <div className="h-full overflow-y-auto bg-white rounded-2xl p-3 shadow-[0_1px_2px_rgba(16,24,40,0.06),0_8px_24px_-12px_rgba(16,24,40,0.18)]">
             <IMSNav tabs={allowedTabs} active={tab} onChange={setTab} />
           </div>
         </aside>
