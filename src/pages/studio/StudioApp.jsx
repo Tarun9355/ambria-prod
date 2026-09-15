@@ -25,7 +25,7 @@ import DealCheckOverlay from "./dealcheck/DealCheckOverlay.jsx";
 import { kvGet, kvTryGet, kvSet, reliableSave } from "../../lib/ims/kv";
 import { makeAmendRequest } from "../../lib/ims/amend";
 import { catToDept } from "../../lib/ims/deptClassify";
-import { availableAtVenue, isStandingAt, rentalSplit, fixedVenueDealDiscount, fixedVenueDiscountPctFor, proratedVenueDiscount } from "../../lib/ims/fixedVenues";
+import { availableAtVenue, isStandingAt, rentalSplit, fixedVenueDealDiscount, fixedVenueDiscountPctFor, proratedVenueDiscount, fixedVenueFor } from "../../lib/ims/fixedVenues";
 import { searchLmsLeads, triggerLmsSync, fetchCachedContracts, fetchLmsLeadByEntry } from "../../lib/ims/lms";
 import { uploadToStorage, compressImageForUpload, STORAGE_FOLDERS, listStorage, deleteStorageObjects, deleteStorageFolder } from "../../lib/storage";
 import { ytApi, ytDuration } from "../../lib/youtube";
@@ -73,6 +73,7 @@ import {
   defaultZoneFromArea, resolveMandiFlower, calcZoneTrussPreview,
   calcZoneFabricCost, calcZoneCarpet, buildPlatformPlan, getStudioAvailable,
   buildTopology, PLATFORM_FATTA_CODE, PLATFORM_STAND_CODE, trussRowCost,
+  zoneTrussStandingDiscount,
 } from "../../lib/studio/pricing";
 import { allocateRowAvailability } from "../../lib/studio/dealAvailability";
 import { callClaudeStreaming } from "../../lib/ai";
@@ -246,7 +247,10 @@ const FLORAL_HARDPROP_DEFAULT = {
 // platformRowCost moved to lib/studio/taxonomy.js — the zone editor needs the same function to
 // show each floor card its own cost, and two copies of a pricing formula is how a card ends up
 // disagreeing with the bill.
-function calcStructCost(zk, zc, rates) {
+// trussInv/venueTruss are OPTIONAL trailing params — callers that don't pass them (there were none
+// before this existed) just get discount 0, same as leaving a Fixed Venue's pillar/beam discount at
+// 0%. See zoneTrussStandingDiscount (lib/studio/pricing.js) for what venueTruss needs to be.
+function calcStructCost(zk, zc, rates, trussInv, venueTruss) {
   if (!zc) return { truss: 0, masking: 0, platform: 0, carpet: 0, arches: 0, pillars: 0, glass: 0, print: 0, total: 0 };
   const d = zc.dims || {}, fd = zc.floorDims || d, r = { truss: 0, masking: 0, platform: 0, carpet: 0, arches: 0, pillars: 0, glass: 0 };
   // Material, drape density, and the ceiling-via-print toggle are all per-row — separate truss
@@ -273,7 +277,17 @@ function calcStructCost(zk, zc, rates) {
     const q = Math.max(1, Math.round(Number(p.qty) || 1));
     return sum + s * (m?.ratePerSqft || 0) * q;
   }, 0);
-  r.total = r.truss + r.masking + r.platform + r.carpet + r.arches + r.pillars + r.glass + r.print; return r;
+  r.total = r.truss + r.masking + r.platform + r.carpet + r.arches + r.pillars + r.glass + r.print;
+  // Fixed-venue pillar/beam discount — a ₹ figure bridged in from the completely separate detailed
+  // RFT model (see zoneTrussStandingDiscount's own comment for why). Subtracted from truss/total
+  // here, at the source, so every one of calcStructCost's many callers (Build's zone cards, Deal
+  // Check's own zone accordion, the cost sheet) shows the same discounted number automatically
+  // instead of needing the same patch repeated at each one.
+  if (trussInv && venueTruss) {
+    const discount = zoneTrussStandingDiscount(zc, trussInv, venueTruss);
+    if (discount > 0) { r.truss = Math.max(0, r.truss - discount); r.total = Math.max(0, r.total - discount); r.trussDiscount = discount; }
+  }
+  return r;
 }
 // Resolves a deal's actual genset units + cost from the matched venue's own counts (resolveVenueGensets
 // — handles un-migrated legacy venues too) unless the deal explicitly overrides either size. null/undefined
@@ -4333,7 +4347,10 @@ export default function StudioApp() {
     // every edit) — letting it override the live config silently priced a deal from an out-of-date
     // zone list whenever a session happened to still be carrying one.
     const zones = Object.entries(zoneConfig).filter(([zk, cfg]) => enabledEls[zk] && cfg).map(([zk, cfg]) => ({ id: zk, type: zk, name: zk, config: cfg }));
-    zones.forEach(z => { c += calcStructCost(z.type, z.config, structRates).total; });
+    // Fixed-venue pillar/beam discount, if this function's venue carries one — same fvCfgForRepeat
+    // resolver the Repeat toggle already uses.
+    const _venueTrussHere = fixedVenueFor(fvCfgForRepeat, venue)?.truss;
+    zones.forEach(z => { c += calcStructCost(z.type, z.config, structRates, dealCheckData?.trussInv, _venueTrussHere).total; });
     Object.entries(zoneElements).forEach(([zk, elems]) => {
       if (!enabledEls[zk] || !elems) return;
       c += calcElsCost(elems, true, zoneConfig[zk], { checkAvailability: true }); // active fn's live canvas — see activeBlocksForDate
@@ -4348,7 +4365,7 @@ export default function StudioApp() {
       c += (ci.manualPrice || ci.refPrice || 0) * (Number(ci.qty) || 1);
     });
     return c;
-  }, [venue, enabledEls, zoneConfig, zoneElements, calcElsCost, dcCustomItems, activeFnIdx, structRates]);
+  }, [venue, enabledEls, zoneConfig, zoneElements, calcElsCost, dcCustomItems, activeFnIdx, structRates, dealCheckData, fvCfgForRepeat]);
 
   const transportCalc = useMemo(() => {
     if (!venue) return { trucks: 0, tripRate: 0, total: 0, isNew: true, tier: "new", tierLabel: "", breakdown: [], floralTrucks: 0, bufferTrucks: 0, itemTrucks: 0 };
@@ -4458,7 +4475,9 @@ export default function StudioApp() {
     // which was already emptied out elsewhere, so the loop never actually added any cost;
     // removing it just retires visibly-dead code, it doesn't change any computed total.
     const zones = Object.entries(fZoneConfig).filter(([zk, cfg]) => fEnabledEls[zk] && cfg).map(([zk, cfg]) => ({ id: zk, type: zk, name: zk, config: cfg }));
-    zones.forEach(z => { decor += calcStructCost(z.type, z.config, structRates).total; });
+    // Fixed-venue pillar/beam discount, if this function's venue carries one.
+    const _venueTrussHere = fixedVenueFor(fvCfgForRepeat, fVenue)?.truss;
+    zones.forEach(z => { decor += calcStructCost(z.type, z.config, structRates, dealCheckData?.trussInv, _venueTrussHere).total; });
     // Availability-shortfall pricing now runs for EVERY function, each against its OWN date's
     // blocks (blocksByDate — warmed for every function's date, not just the active one). It used to
     // only run for whichever function was the active Build tab (activeBlocksForDate has no other
@@ -4531,7 +4550,7 @@ export default function StudioApp() {
       transport = truckTotal + gensetCost;
     }
     return { decor, transport, grand: decor + transport };
-  }, [calcElsCostForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, dcCustomItems, structRates, blocksByDate, imsInventory, dealCheckData, studioFloralData]);
+  }, [calcElsCostForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, dcCustomItems, structRates, blocksByDate, imsInventory, dealCheckData, studioFloralData, fvCfgForRepeat]);
 
   const calcFnFloralSourcingCost = useCallback((fn) => {
     const fp = dealCheckData?.flowerPatterns || [];
@@ -4907,7 +4926,7 @@ export default function StudioApp() {
           itemCount += (el2.qty || 0);
         });
       }
-      const zl = fZoneConfig[k] ? calcStructCost(k, fZoneConfig[k], structRates) : { truss: 0, masking: 0, platform: 0, carpet: 0, total: 0 };
+      const zl = fZoneConfig[k] ? calcStructCost(k, fZoneConfig[k], structRates, dealCheckData?.trussInv, fixedVenueFor(fvCfgForRepeat, fVenue)?.truss) : { truss: 0, masking: 0, platform: 0, carpet: 0, total: 0 };
       const customCost = dcCustomItems
         .filter(c => c.fnIdx === fnData.fnIdx && c.zoneKey === k)
         .reduce((s, c) => s + (c.manualPrice || c.refPrice || 0) * (Number(c.qty) || 1), 0);
@@ -5059,7 +5078,7 @@ export default function StudioApp() {
         clientScale, truckTotalClient, totalClient: transportTotalClient, tripRateClient: tripRate * clientScale };
     }
     return { zones, transport, decorTotal, transportTotal, transportTotalClient, grand: decorTotal + transportTotal, grandClient: decorTotal + transportTotalClient };
-  }, [getElPriceForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, gensetCostRate, gensetCostRate62, zoneLabelsD, zoneKeys, dcCustomItems, structRates, blocksByDate, imsInventory, dealCheckData, studioFloralData, collectAllFunctionData]);
+  }, [getElPriceForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, gensetCostRate, gensetCostRate62, zoneLabelsD, zoneKeys, dcCustomItems, structRates, blocksByDate, imsInventory, dealCheckData, studioFloralData, collectAllFunctionData, fvCfgForRepeat]);
 
   const cat = getCat(grandTotal);
 
@@ -8207,7 +8226,7 @@ export default function StudioApp() {
           }
         });
       }
-      const zl = fZoneConfig[k] ? calcStructCost(k, fZoneConfig[k], structRates) : { truss: 0, masking: 0, platform: 0, carpet: 0, total: 0, arches: 0, pillars: 0, glass: 0 };
+      const zl = fZoneConfig[k] ? calcStructCost(k, fZoneConfig[k], structRates, dealCheckData?.trussInv, fixedVenueFor(fvCfgForRepeat, fVenue)?.truss) : { truss: 0, masking: 0, platform: 0, carpet: 0, total: 0, arches: 0, pillars: 0, glass: 0 };
       const structItems = [];
       const zc = fZoneConfig[k] || {};
       const zm = zoneMeta[k];
@@ -8302,7 +8321,7 @@ export default function StudioApp() {
       const ic = items.reduce((s, i) => s + i.total, 0);
       return { k, label: el.label, icon: el.icon, tier: t, items, structItems, structTotal: zl.total, itemTotal: ic, zoneTotal: ic + zl.total, note: fElNotes[k] || "", dims, dimLabel, photo: fElSelectedPhoto[k]?.src || null, photoName: fElSelectedPhoto[k]?.eventName || "" };
     }).filter(z => z.items.length > 0 || z.structItems.length > 0);
-  }, [getElPriceForFn, zoneLabelsD, zoneMeta, zoneKeys, dealCheckData, imsDefaultPaintCost, dcCustomItems, structRates, imsInventory]);
+  }, [getElPriceForFn, zoneLabelsD, zoneMeta, zoneKeys, dealCheckData, imsDefaultPaintCost, dcCustomItems, structRates, imsInventory, fvCfgForRepeat]);
 
   const buildCombinedCostSheetData = useCallback(() => {
     const all = collectAllFunctionData();

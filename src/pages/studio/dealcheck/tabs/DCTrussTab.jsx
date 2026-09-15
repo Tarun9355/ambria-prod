@@ -1,5 +1,6 @@
 import { Fragment } from "react";
-import { calcZoneFabric, autoFillFabricAllocation, calcFabricAllocationTotal } from "../../../../lib/studio/pricing";
+import { calcZoneFabric, autoFillFabricAllocation, calcFabricAllocationTotal, zoneTrussStandingDiscountDetail } from "../../../../lib/studio/pricing";
+import { fixedVenueFor } from "../../../../lib/ims/fixedVenues";
 import { TRUSS_ALLOC_SK } from "../../../../lib/studio/keys.js";
 import { supabase } from "../../../../lib/supabase";
 
@@ -91,6 +92,11 @@ export default function DCTrussTab({ ctx }) {
                     // A zone can carry more than one truss structure (row 0 = the zone's own scalar
                     // fields, plus any zCfg.extraTrussRows added via "+ Add Truss" in Build) — one
                     // preview card per row, not per zone.
+                    // Fixed-venue pillar/beam discount for this function's own venue (Admin →
+                    // Settings → Fixed Venues) — netted out of each row below so the Pillars/Beams
+                    // line items still sum to the row's own discounted total, matching the
+                    // aggregate this tab (and dcCostRollup's own Truss figure) both now show.
+                    const venueTrussHere = fixedVenueFor({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, fn.fnVenue || "")?.truss;
                     const previews = zones.flatMap(zk => {
                       const zCfg = (fn.zoneConfig || {})[zk];
                       const zLabel = (zoneMeta?.[zk]?.label) || ((fn.customZones || []).find(cz => cz.id === zk)?.name) || zk;
@@ -98,6 +104,13 @@ export default function DCTrussTab({ ctx }) {
                       return rows.map((row, rowIdx) => {
                         const pv = calcZoneTrussPreview(row, trussInv);
                         if (pv && pv.costs) {
+                          const disc = venueTrussHere ? zoneTrussStandingDiscountDetail(row, trussInv, venueTrussHere) : { pillar: 0, beam: 0, total: 0 };
+                          if (disc.total > 0) {
+                            pv.costs.pillarCost = Math.max(0, pv.costs.pillarCost - disc.pillar);
+                            pv.costs.beamCost = Math.max(0, pv.costs.beamCost - disc.beam);
+                            pv.costs.actual = Math.max(0, pv.costs.actual - disc.total);
+                            pv.costs.venueDiscount = disc.total;
+                          }
                           grandActual += pv.costs.actual;
                           grandU      += pv.costs.uEquivalent;
                           grandBox    += pv.costs.boxEquivalent;

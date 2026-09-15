@@ -786,7 +786,7 @@ export default function StudioBuild({ ctx }) {
   const sectionCost = (k, id) => {
     if (!showCosts) return 0;
     if (id === "elements") return calcElsCost(zoneElements[k], true, zoneConfig[k], {checkAvailability:true});
-    const sc = zoneConfig[k] ? calcStructCost(k, zoneConfig[k], structRates) : null;
+    const sc = zoneConfig[k] ? calcStructCost(k, zoneConfig[k], structRates, dealCheckData?.trussInv, fixedVenueHere?.truss) : null;
     if (id === "truss") return sc ? sc.truss + sc.masking + sc.arches + sc.pillars + sc.glass : 0;
     if (id === "platform") return sc ? sc.platform + sc.carpet : 0;
     return sc ? sc.print : 0; // calcStructCost's own print total — same figure zoneTotal() now folds in below
@@ -849,7 +849,7 @@ export default function StudioBuild({ ctx }) {
   // (shortfall-adjusted), so "By zone" + "Zones subtotal" quietly failed to add up to the number
   // above them. Same reasoning as calcFunctionCost's — this is what makes Build's own totals agree
   // with themselves, and with Summary/Deal Check's.
-  const zoneTotal = (k) => calcElsCost(zoneElements[k],true,zoneConfig[k],{checkAvailability:true})+(zoneConfig[k]?calcStructCost(k,zoneConfig[k],structRates).total:0)+dcCustomItems.filter(c=>c.fnIdx===(activeFnIdx||0)&&c.zoneKey===k).reduce((acc,c)=>acc+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0);
+  const zoneTotal = (k) => calcElsCost(zoneElements[k],true,zoneConfig[k],{checkAvailability:true})+(zoneConfig[k]?calcStructCost(k,zoneConfig[k],structRates,dealCheckData?.trussInv,fixedVenueHere?.truss).total:0)+dcCustomItems.filter(c=>c.fnIdx===(activeFnIdx||0)&&c.zoneKey===k).reduce((acc,c)=>acc+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0);
   void textSRaw;
 
   // Photo-filter pill. Was 9px in a 2px-tall chip with `textS` (~3.1:1) when inactive — too small
@@ -3453,9 +3453,20 @@ undefined
                   const isTrussSqft = rc && rc.unit === "truss_sqft";
                   const rawUp = priceInfo.unitPrice;
                   const adjUp = applyFloralRatio(rawUp, rc);
+                  // priceInfo.lineCost (not qty×adjUp) — the Repeat/standing-venue discount
+                  // (repeatAdjustedLineCost) only lives inside lineCost; qty×adjUp is always the
+                  // undiscounted list total, which used to make this card disagree with the zone
+                  // total right above it (calcElsCost already sums lineCost, not qty×rate).
                   const lineTotal = isTrussSqft
                     ? applyFloralRatio(priceInfo.lineCost, rc)
-                    : (el.qty||0) * adjUp;
+                    : priceInfo.lineCost;
+                  // TEMP — owner ask, pending team discussion, may be removed: show the discounted
+                  // effective rate (and colour it) instead of leaving the benefit invisible inside
+                  // lineTotal's own math. Only for non-truss items — truss_sqft's own unit isn't a
+                  // simple per-piece rate to begin with.
+                  const _qtyForRate = el.qty || 0;
+                  const _effUp = (!isTrussSqft && _qtyForRate > 0) ? lineTotal / _qtyForRate : adjUp;
+                  const _rateDiscounted = !isTrussSqft && _effUp < adjUp - 0.5;
                   const invItem = el.invId ? (imsInventory||[]).find(i=>i.id===el.invId) : null;
                   const thumbItem = invItem || (imsInventory||[]).find(i=>i.name===el.name);
                   // A pure flower-recipe element (patternId, no invId) has no IMS inventory row at
@@ -3502,7 +3513,7 @@ undefined
                           )}
                         </div>
                         <span title={isUnavail?"Not available for this date — tap the stock icon to pick a different item":undefined} style={{fontSize:12,fontWeight:500,color:isUnavail?"#EF4444":(rc||el.invId||el.patternId)?textP:"#F59E0B",textDecoration:isUnavail?"line-through":"none",minWidth:0,whiteSpace:"normal",overflowWrap:"anywhere"}}>{invItem?.name || el.name}</span>
-                        {showCosts&&<span title="Rate per unit" style={{flexShrink:0,fontSize:11,fontWeight:600,color:textS,whiteSpace:"nowrap"}}>{adjUp>0?`₹${adjUp.toLocaleString("en-IN")}/${isTrussSqft?"truss sqft":(invItem?.unit||rc?.unit||el.unit)}`:"₹0"}</span>}
+                        {showCosts&&<span title={_rateDiscounted?"Rate per unit — Repeat/standing-venue discount applied":"Rate per unit"} style={{flexShrink:0,fontSize:11,fontWeight:600,color:_rateDiscounted?"#10B981":textS,whiteSpace:"nowrap"}}>{_effUp>0?`₹${Math.round(_effUp).toLocaleString("en-IN")}/${isTrussSqft?"truss sqft":(invItem?.unit||rc?.unit||el.unit)}`:"₹0"}</span>}
                         {isKit&&<span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(99,102,241,0.15)",color:"#6366F1",fontWeight:700}}>KIT</span>}
                         {!rc&&!el.invId&&!el.patternId&&<span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700}}>NEW</span>}
                         {el.invId&&priceInfo.warning&&<span title={priceInfo.warning} style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700}}>⚠ short</span>}
@@ -3800,7 +3811,7 @@ undefined
               create the entry on the first keystroke — calcStructCost already returns all-zero for
               an untouched config, and every field reads through `|| {}`. */}
           {(zoneSection[k]==="truss"||zoneSection[k]==="platform")&&(()=>{
-            const zm=zoneMeta[k],zc=zoneConfig[k]||{},st=calcStructCost(k,zc,structRates);
+            const zm=zoneMeta[k],zc=zoneConfig[k]||{},st=calcStructCost(k,zc,structRates,dealCheckData?.trussInv,fixedVenueHere?.truss);
             const dl={L:"Depth",W:"Width",H:"Height",S:"Size"};
             const sZ=u=>{setActiveZones([]);setZoneConfig(p=>({...p,[k]:{...p[k],...u}}));};
             const sD=(d,v)=>{setActiveZones([]);setZoneConfig(p=>{const cur=p[k]||{};const dims={...(cur.dims||{}),[d]:parseFloat(v)||0};

@@ -94,7 +94,7 @@ const NUM = { fontVariantNumeric: "tabular-nums" };
 import { heavyExtraLabour, eventTimingMultFor } from "../../../lib/ims/constants";
 import { deptMpReconciled, itemImsSubcat, lookupBySubcat, itemDimsText } from "../../../lib/ims/helpers";
 import { rentalSplit, availableAtVenue, isStandingAt, fixedVenueFor, standingReductionBySubcat, fixedVenueDealDiscount } from "../../../lib/ims/fixedVenues";
-import { calcZoneFabric, autoFillFabricAllocation, resolveTrussConfig } from "../../../lib/studio/pricing";
+import { calcZoneFabric, autoFillFabricAllocation, resolveTrussConfig, zoneTrussStandingDiscount } from "../../../lib/studio/pricing";
 import { carpetPricingFor, CARPET_OFF } from "../../../lib/studio/taxonomy";
 import { qtyUsedElsewhereInDealCheck } from "../../../lib/studio/dealAvailability";
 import { isHiddenSubcat, oosCostPctFor } from "../../../lib/rateCard";
@@ -600,9 +600,18 @@ export default function DealCheckOverlay({ ctx }) {
                   if (photoUrl) { const li = libItems.find(l => l.url === photoUrl); if (li?.dims?.drapeDensity) density = li.dims.drapeDensity; }
                   // A zone can carry more than one truss structure (row 0 = the zone's own scalar
                   // fields, plus any zc[zk].extraTrussRows added via "+ Add Truss") — sum cost per row.
+                  // Fixed-venue pillar/beam discount — this IS the detailed model
+                  // zoneTrussStandingDiscount was built against, so no bridging needed here (unlike
+                  // calcStructCost's area-based total, where the same helper's output has to be
+                  // subtracted from a completely different formula).
+                  const _venueTrussHere = fixedVenueFor({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, fn.fnVenue || "")?.truss;
                   [zc[zk], ...(zc[zk].extraTrussRows || [])].forEach(row => {
                     const pv = calcZoneTrussPreview(row, tInv);
-                    if (pv?.costs?.actual) { truss += pv.costs.actual; addD("Tenting", "truss", pv.costs.actual); } // truss steel → Tenting
+                    if (pv?.costs?.actual) {
+                      const discount = _venueTrussHere ? zoneTrussStandingDiscount(row, tInv, _venueTrussHere) : 0;
+                      const netActual = Math.max(0, pv.costs.actual - discount);
+                      truss += netActual; addD("Tenting", "truss", netActual); // truss steel → Tenting
+                    }
                     // Truss requirement → loadable line items grouped BY SIZE (e.g. "Truss pillar 15ft").
                     // Pushed per-zone here; the size-keyed names merge across all zones below.
                     if (pv?.topology && deptInv["Tenting"]) {
