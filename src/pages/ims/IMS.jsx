@@ -1331,6 +1331,31 @@ export default function IMS() {
     navigate("/login", { replace: true });
   };
 
+  // ── ACCOUNT BLOCK ──
+  // Defined once, rendered at the foot of both the desktop rail and the mobile drawer. Written
+  // as one value rather than copied into each, so the two can never drift — the same reason the
+  // nav itself is a component instead of two lists.
+  const accountBlock = (
+    <div className="mt-3 pt-3">
+      <div className="flex items-center gap-2.5 px-1 pb-2.5">
+        <div className="shrink-0 w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-700 text-sm font-bold">{(user?.name || "?")[0]}</div>
+        <div className="min-w-0">
+          <div className="text-[13px] font-semibold text-gray-900 truncate">{user?.name || "—"}</div>
+          <div className="text-[11px] text-gray-400 truncate">{user?.role || "User"}</div>
+        </div>
+      </div>
+      {/* Full width, and red only on hover: signing out is destructive enough to want a moment's
+          thought, but it is not a warning sitting in the rail all day. */}
+      <button onClick={handleLogout}
+        className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium text-gray-600 hover:text-red-600 hover:bg-red-50 transition-colors">
+        <span aria-hidden="true" className="shrink-0 w-5 flex items-center justify-center">
+          <svg width="15" height="15" viewBox="0 0 15 15" fill="none"><path d="M6 13H3.5A1.5 1.5 0 0 1 2 11.5v-8A1.5 1.5 0 0 1 3.5 2H6M10 10.5 13 7.5 10 4.5M13 7.5H6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+        </span>
+        Log out
+      </button>
+    </div>
+  );
+
   // Role-based tab filtering (faithful to reference).
   const roleConfig = (settings?.roleTabs || {})[user?.role] || { tabs: TABS.map((t) => t.id) };
   const isAdmin = user?.role === "Admin" || user?.id === "u_admin";
@@ -1356,28 +1381,40 @@ export default function IMS() {
           <button onClick={() => setError("")} style={{ background: "#fff", color: "#dc2626", border: "none", padding: "5px 12px", borderRadius: 4, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Dismiss</button>
         </div>
       )}
-      <div className="bg-white border-b sticky top-0 z-40">
+      {/* No rule under the header. It is sticky, so content scrolls beneath it and something has
+          to mark the edge — a soft shadow does that only when there is something behind it to
+          cast onto, where a drawn line sat there permanently even with the page at the top. */}
+      <div className="bg-white sticky top-0 z-40 shadow-[0_1px_2px_rgba(16,24,40,0.04),0_4px_12px_-6px_rgba(16,24,40,0.12)]">
         <div className="w-full px-4 sm:px-6">
-          <div className="flex items-center justify-between py-3">
-            <div className="flex items-center gap-3">
-              {/* Only route to the nav below lg, where the rail is not on screen. */}
-              <button onClick={() => setNavOpen(true)} aria-label="Open navigation"
-                className="lg:hidden shrink-0 w-9 h-9 -ml-1 rounded-lg flex items-center justify-center text-gray-500 hover:text-gray-900 hover:bg-gray-100 transition">☰</button>
-              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-violet-600 to-indigo-600 flex items-center justify-center text-white font-bold text-lg">A</div>
+          <div className="flex items-center gap-2 sm:gap-3 py-2.5 sm:py-3">
+            {/* Only route to the nav below lg, where the rail is not on screen. A drawn icon
+                rather than the ☰ character, which renders at a different weight and baseline in
+                every font — the same reason the close and chevron glyphs were replaced. */}
+            <button onClick={() => setNavOpen(true)} aria-label="Open navigation"
+              className="lg:hidden shrink-0 w-8 h-8 -ml-1.5 rounded-lg flex items-center justify-center text-gray-500 hover:text-gray-900 hover:bg-gray-100 transition">
+              <svg width="15" height="15" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+                <path d="M3 5h12M3 9h12M3 13h12" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+              </svg>
+            </button>
+            {/* Logo and wordmark are one unit — gap-2.5, not the row's gap, so the switcher
+                cannot look like it belongs to the name. */}
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="shrink-0 w-9 h-9 rounded-xl bg-gradient-to-br from-violet-600 to-indigo-600 flex items-center justify-center text-white font-bold text-lg shadow-[0_1px_2px_rgba(79,70,229,0.3),0_6px_16px_-8px_rgba(79,70,229,0.6)]">A</div>
               <div className="min-w-0">
-                <h1 className="text-lg font-bold text-gray-900 leading-tight">Ambria IMS</h1>
+                {/* Smaller on a phone. At 18px it crowded the switcher off the row; the wordmark
+                    does not need to be the largest thing on a 390px screen to be found. */}
+                <h1 className="text-[15px] sm:text-lg font-bold text-gray-900 leading-tight tracking-tight truncate">Ambria IMS</h1>
                 <p className="text-xs text-gray-400 hidden sm:block">Inventory Management System</p>
               </div>
-              {/* Studio ⇄ IMS sits with the app's own identity rather than in the account cluster
-                  on the right. It says WHICH app you are in, which is the same thing the logo and
-                  title next to it say — grouped with the avatar and Logout it read as a setting. */}
-              <div className="ml-2"><AppSwitcher current="ims" /></div>
             </div>
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-700 text-sm font-bold">{(user?.name || "?")[0]}</div>
-              <span className="text-sm text-gray-700 hidden sm:block">{user?.name} · {user?.role || "User"}</span>
-              <button onClick={handleLogout} className="text-xs text-gray-400 hover:text-red-500 ml-2 px-2 py-1 border rounded-lg">Logout</button>
-            </div>
+            {/* ml-auto, so Studio ⇄ IMS goes to the far right instead of trailing the wordmark.
+                It still belongs to the app's identity rather than the account cluster — it says
+                WHICH app you are in — but pinned right it reads as a switch rather than a suffix,
+                and the row no longer has to fit everything into its left half. */}
+            <div className="ml-auto shrink-0"><AppSwitcher current="ims" iconSize={12} /></div>
+            {/* The account cluster moved to the foot of the nav rail — see `accountBlock`. Who
+                you are and how to sign out belong with navigation, not beside the page title,
+                and on a phone they were competing with it for the same row. */}
           </div>
         </div>
       </div>
@@ -1398,8 +1435,13 @@ export default function IMS() {
             already subtracted — the panel ends at the fold, it does not overflow past it, and a
             role with enough tabs to exceed it scrolls inside the panel. */}
         <aside className="hidden lg:block w-56 shrink-0 sticky top-[61px] h-[calc(100vh-61px)] py-4 pl-4 pr-1">
-          <div className="h-full overflow-y-auto bg-white rounded-2xl p-3 shadow-[0_1px_2px_rgba(16,24,40,0.06),0_8px_24px_-12px_rgba(16,24,40,0.18)]">
-            <IMSNav tabs={allowedTabs} active={tab} onChange={setTab} />
+          {/* Column, so the nav scrolls and the account block stays pinned to the foot rather
+              than floating wherever the tab list happens to end. */}
+          <div className="h-full flex flex-col bg-white rounded-2xl p-3 shadow-[0_1px_2px_rgba(16,24,40,0.06),0_8px_24px_-12px_rgba(16,24,40,0.18)]">
+            <div className="flex-1 min-h-0 overflow-y-auto">
+              <IMSNav tabs={allowedTabs} active={tab} onChange={setTab} />
+            </div>
+            {accountBlock}
           </div>
         </aside>
 
@@ -1407,12 +1449,22 @@ export default function IMS() {
         {navOpen && (
           <div className="lg:hidden fixed inset-0 z-50 flex">
             <div className="absolute inset-0 bg-gray-900/40" onClick={() => setNavOpen(false)} />
-            <div className="relative w-60 max-w-[80vw] h-full bg-white rounded-r-2xl shadow-2xl py-4 px-3 overflow-y-auto">
-              <div className="flex items-center justify-between px-2 pb-3 mb-1 border-b">
+            {/* flex column, and the scroll moved onto the nav list inside — with overflow on the
+                panel itself the account block scrolled away with the tabs instead of sitting at
+                the foot of the drawer. */}
+            {/* 208px, down from 240. The longest label here is "Approvals" — the drawer was sized
+                for the desktop rail's content, not its own, and at 80vw it covered most of the
+                page it is navigating. Narrower also leaves more of that page visible behind the
+                scrim, which is what tells you the drawer is temporary. */}
+            <div className="relative w-52 max-w-[72vw] h-full bg-white rounded-r-2xl shadow-2xl py-4 px-2.5 flex flex-col">
+              <div className="flex items-center justify-between px-2 pb-2 mb-1">
                 <span className="text-xs font-bold uppercase tracking-wide text-gray-400">Menu</span>
                 <button onClick={() => setNavOpen(false)} aria-label="Close navigation" className="w-7 h-7 rounded-lg flex items-center justify-center text-red-500 hover:text-red-600 hover:bg-red-50 transition">✕</button>
               </div>
-              <IMSNav tabs={allowedTabs} active={tab} onChange={(id) => { setTab(id); setNavOpen(false); }} />
+              <div className="flex-1 min-h-0 overflow-y-auto">
+                <IMSNav tabs={allowedTabs} active={tab} onChange={(id) => { setTab(id); setNavOpen(false); }} />
+              </div>
+              {accountBlock}
             </div>
           </div>
         )}

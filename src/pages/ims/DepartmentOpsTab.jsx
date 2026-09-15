@@ -1,9 +1,10 @@
-import { useState, useMemo, useEffect, useRef, Fragment } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { fmt } from "../../lib/format";
 import { mpDayWise, mpBaseDay, mpEffDay, mpEffWindows, mpLineCost, mpDayCost, isLiveEventOrder } from "../../lib/ims/helpers";
 import { uploadAudioToStorage } from "../../lib/storage";
 import { DEPTS as SHARED_DEPTS, catToDept as sharedCatToDept, userDepartments } from "../../lib/ims/deptClassify";
 import ManpowerFactorPills from "../../components/shared/ManpowerFactorPills.jsx";
+import { TabsMenu } from "../../components/ui";
 
 // ── THE SUMMARY TILE ROW ──
 // auto-FIT, not auto-fill. The difference only shows when there are fewer tiles than columns
@@ -13,8 +14,84 @@ import ManpowerFactorPills from "../../components/shared/ManpowerFactorPills.jsx
 // This was auto-fill on purpose once, to keep the tiles column-aligned with the income CARDS
 // above them. Those cards became a single readout panel, so there is no second grid left to
 // line up with and the trade no longer buys anything.
-const GRID = "grid gap-4 items-stretch";
-const GRID_COLS = { gridTemplateColumns: "repeat(auto-fit,minmax(212px,1fr))" };
+// Two fixed columns on a phone, auto-fit from sm up.
+//
+// It cannot be one rule: auto-fit picks the column count from a MINIMUM width, and the minimum
+// that yields two columns at 390px (~150px) yields six on a 1200px desktop — far too many for
+// tiles this size. So the phone count is stated outright and auto-fit takes over only where it
+// gives a sensible answer. Written as classes rather than the inline style this replaces because
+// an inline style has no breakpoints.
+const GRID = "grid gap-3 sm:gap-4 items-stretch grid-cols-2 sm:[grid-template-columns:repeat(auto-fit,minmax(212px,1fr))]";
+
+/* ── THE CARD'S ICONS ──
+   Drawn, not emoji, and only for the event header card the design system specifies. Emoji were
+   fine as block markers — each block needs to be told apart at a glance and an emoji does that
+   in one character — but they cannot take a colour or a stroke weight, and this card's icons
+   have to go blue when their tag is active and grey when it is not. Each inherits currentColor
+   and sits on a 16px box, so the caller sets both by setting text colour and nothing else.
+   Kept at module scope: they close over nothing, so redefining them on every render of a
+   2700-line component would allocate three functions per keystroke for no reason. */
+/* A glyph for a crew line, matched on the type NAME rather than an id, because crew types are
+   free text a salesperson types in Studio — "Labours", "Labour", "Helpers" all arrive. Matching
+   on a substring means a new wording still lands on the right picture, and anything unrecognised
+   falls back to a generic person rather than to a wrong one. */
+function crewIcon(type) {
+  const t = String(type || "").toLowerCase();
+  if (t.includes("superv") || t.includes("manager") || t.includes("incharge")) return "🧑‍💼";
+  if (t.includes("driver")) return "🚚";
+  if (t.includes("carpenter") || t.includes("tech") || t.includes("electric")) return "🔧";
+  if (t.includes("labour") || t.includes("labor") || t.includes("helper") || t.includes("crew")) return "👷";
+  return "👤";
+}
+
+/* One figure under its own column label, for the inventory rows. Fixed widths from sm up, so a
+   kit's components line up under the kit's own qty / rate / total — the components sum to the kit
+   line, and that comparison is most of the reason the contents can be opened at all. Below sm the
+   three share the row equally instead, because fixed columns plus a name do not fit 390px. */
+const StatCell = ({ label, w, children }) => (
+  <div className={"flex-1 sm:flex-none text-right " + w}>
+    <div className="text-[9px] font-bold uppercase tracking-[0.08em] text-gray-400 leading-none">{label}</div>
+    <div className="mt-1">{children}</div>
+  </div>
+);
+const STAT_W = { qty: "sm:w-16", rate: "sm:w-20", total: "sm:w-24" };
+
+const IconBell = ({ s = 14 }) => (
+  <svg width={s} height={s} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+    <path d="M8 2a3.6 3.6 0 0 0-3.6 3.6c0 2.7-1 3.6-1 3.6h9.2s-1-.9-1-3.6A3.6 3.6 0 0 0 8 2Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+    <path d="M6.7 11.6a1.4 1.4 0 0 0 2.6 0" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+  </svg>
+);
+const IconClipboard = ({ s = 14 }) => (
+  <svg width={s} height={s} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+    <rect x="2.75" y="3.25" width="10.5" height="10" rx="2" stroke="currentColor" strokeWidth="1.4" />
+    <path d="M2.75 6.25h10.5M5.75 2v2.5M10.25 2v2.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+  </svg>
+);
+const IconTruck = ({ s = 14 }) => (
+  <svg width={s} height={s} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+    <path d="M1.75 4.5h7v6.25h-7z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+    <path d="M8.75 7h2.6l2.9 2.2v1.55h-5.5z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+    <circle cx="4.75" cy="11.75" r="1.25" stroke="currentColor" strokeWidth="1.4" />
+    <circle cx="11.25" cy="11.75" r="1.25" stroke="currentColor" strokeWidth="1.4" />
+  </svg>
+);
+
+// One glyph per income head, keyed on the label the rows are built with (see `rows` in the
+// readout). Keyed on the label rather than an index so reordering the heads — or a department
+// that only has some of them — cannot silently shift every icon by one. Anything unmapped falls
+// back to a dot, which is a neutral placeholder rather than a wrong picture.
+const HEAD_ICON = {
+  "Inventory rental": "📦",
+  "Truss": "🏗️",
+  "Fabric / draping": "🧵",
+  "Real flowers (mandi)": "🌷",
+  "Artificial flowers": "🌸",
+  "Manpower": "👥",
+  "Production": "🏭",
+  "Buying": "🛒",
+  "Transport": "🚚",
+};
 
 // "2h ago" for the activity log. Relative reads faster than a date when the question is
 // "did this change since I last looked" — which is the only question this log answers. It stops
@@ -65,7 +142,7 @@ function VoiceRecorder({ value, onSave, compact = false, label = "voice note" })
       {value && !rec && !compact && <audio src={value} controls className="h-6 max-w-[130px]" />}
       {rec
         ? <button onClick={stop} className="text-[10px] font-semibold text-white bg-red-600 rounded-full px-2 py-1 animate-pulse whitespace-nowrap">⏹ stop</button>
-        : <button onClick={start} className={"text-[10px] font-semibold rounded-full px-2 py-1 border whitespace-nowrap " + (value ? "text-emerald-700 border-emerald-200 bg-emerald-50 hover:bg-emerald-100" : "text-indigo-600 border-indigo-200 hover:bg-indigo-50")} title={value ? "re-record " + label : "record " + label}>🎤 {value ? "✓" : (compact ? "" : label)}</button>}
+        : <button onClick={start} className={"text-[10px] font-semibold rounded-full px-2 py-1 border whitespace-nowrap " + (value ? "text-emerald-700 border-emerald-200 bg-emerald-50 hover:bg-emerald-100" : "text-blue-600 border-blue-200 hover:bg-blue-50")} title={value ? "re-record " + label : "record " + label}>🎤 {value ? "✓" : (compact ? "" : label)}</button>}
       {err && <span className="text-[10px] text-red-500">{err}</span>}
     </span>
   );
@@ -119,6 +196,9 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   // month that actually has events — see the effect further down.
   const _now = new Date();
   const [pickMonth, setPickMonth] = useState({ y: _now.getFullYear(), m: _now.getMonth() });
+  // Which date the phone layout has open. Desktop shows every day's events in the grid at once
+  // and never needs this; on a phone the grid is dates only, so one has to be chosen to list.
+  const [pickDay, setPickDay] = useState(null);
   const [selId, setSelId] = useState(null);
   const [zoomImg, setZoomImg] = useState(null); // click-to-enlarge lightbox (ops needs a clear big photo)
   const [opsView, setOpsView] = useState("planning"); // "planning" | "onsite" — split on-site (receiving/dismantle) into its own view
@@ -176,24 +256,53 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
       window.removeEventListener("resize", place);
     };
   }, [siteMenu]);
+  // Tracked in JS, not just CSS, because two behaviours can't be expressed in a class: locking
+  // the page behind the sheet, and swallowing a backdrop tap. 639px is the pixel below Tailwind's
+  // `sm`, so this flips on exactly the same line the classes below do.
+  const [isPhone, setIsPhone] = useState(() => typeof window !== "undefined" && window.matchMedia("(max-width: 639px)").matches);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 639px)");
+    const sync = () => setIsPhone(mq.matches);
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
   const modalCls = (k) => (modal === k ? "" : " hidden");
+  // ── THE PANEL: inline from sm up, a bottom sheet on a phone ──
+  // Opening in place works on the desktop grid because the tiles sit four to a row and stay in
+  // view beside the panel. On a 390px column the tiles are stacked one per row, so "inline under
+  // the tiles" puts the panel a screen and a half below the tap — it reads as nothing having
+  // happened. Same DOM either way; only these three class strings differ, so a block never has to
+  // be moved or re-parented to change which form it takes.
+  const PANEL_WRAP = "fixed inset-0 z-50 flex items-end bg-gray-900/40 sm:static sm:z-auto sm:block sm:bg-transparent";
+  const PANEL_CARD = "w-full max-h-[88vh] flex flex-col rounded-t-2xl bg-gray-50 ring-1 ring-gray-200 overflow-hidden sm:max-h-none sm:block sm:rounded-2xl";
+  const PANEL_BODY = "flex-1 min-h-0 overflow-y-auto overscroll-contain p-3 space-y-3 sm:flex-none sm:overflow-visible sm:p-4";
+  // Tapping the dimmed area closes, the way every sheet on the platform does. Guarded on the
+  // phone breakpoint: from sm up this same element is the plain inline wrapper, and a click that
+  // lands on it rather than on a child would otherwise shut the panel for no visible reason.
+  const onPanelBackdrop = (e) => { if (isPhone && e.target === e.currentTarget) setModal(null); };
   // Escape closes, and the page behind stops scrolling while the dialog is up — without the
   // lock, a flick inside a short dialog scrolls the page underneath it instead.
   useEffect(() => {
     if (!modal && !logOpen) return undefined;
     const onKey = (e) => { if (e.key === "Escape") { setModal(null); setLogOpen(false); } };
     window.addEventListener("keydown", onKey);
-    // The page is locked only for the activity log, which IS still a dialog. An open block is
-    // part of the page now, so freezing the scroll would trap you in it — you could not reach
-    // the tiles above or anything below.
+    // From sm up an open block is part of the page, so freezing the scroll would trap you in it —
+    // you could not reach the tiles above or anything below. On a phone the same block is a sheet
+    // over the page, and without the lock a flick inside a short one scrolls the page underneath
+    // instead of the sheet. The activity log is a dialog at every width, so it always locks.
     const prev = document.body.style.overflow;
-    if (logOpen) document.body.style.overflow = "hidden";
+    if (logOpen || (modal && isPhone)) document.body.style.overflow = "hidden";
     return () => { window.removeEventListener("keydown", onKey); document.body.style.overflow = prev; };
-  }, [modal, logOpen]);
+  }, [modal, logOpen, isPhone]);
   // Switching event or department while the log is open would leave the dialog showing another
   // context's entries — close it, since its contents are scoped to both.
   useEffect(() => { setLogOpen(false); }, [selId, dept]);
   const [mpOpen, setMpOpen] = useState({}); // which manpower rows have their derivation expanded
+  // Which kits have their components showing. Collapsed by default: a kit's own line already
+  // carries the qty, the rate and the total that matter, and six components under each of four
+  // kits buried the ordinary items between them.
+  const [kitOpen, setKitOpen] = useState({});
   const [mpDayHow, setMpDayHow] = useState({}); // which per-day rows have their "how" derivation expanded
   const [routeDraft, setRouteDraft] = useState({}); // dismantle routing draft per item: {qty, type, toEventId}
   const [manTruck, setManTruck] = useState({}); // confirm-time truck details per destination group: {[groupKey]:{vehicle,driver,phone}}
@@ -846,7 +955,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
       <div className="mb-1.5 bg-white border rounded-lg overflow-hidden">
         <div className="grid grid-cols-[1fr_auto_auto_auto] gap-2 px-2 py-1 bg-gray-100 text-[10px] uppercase tracking-wide text-gray-500 font-semibold"><span>{t.perRow ? "Recipe / item" : "Sub-category"}</span><span className="text-right w-12">{t.countLabel || "Count"}</span><span className="text-right w-12">Batch</span><span className="text-right w-12">Need</span></div>
         {t.rows.map((tr, ti) => (<div key={ti} className="grid grid-cols-[1fr_auto_auto_auto] gap-2 px-2 py-0.5 text-[10px] text-gray-700"><span className="truncate" title={tr.sub}>{tr.sub}</span><span className="text-right w-12">{tr.count}</span><span className="text-right w-12 text-gray-400">÷{tr.batch}</span><span className="text-right w-12 font-semibold">{tr.need.toFixed(2)}</span></div>))}
-        <div className="px-2 py-1 bg-gray-50 text-[10px] text-right text-gray-600 border-t">{t.perRow ? <>Σ each ⌈need⌉ = <b className="text-gray-900">{t.result}</b></> : <>Σ {t.need.toFixed(2)} → ⌈ {Math.ceil(t.need)} ⌉ · max(min {t.min}) = <b className="text-gray-900">{t.result}</b></>}</div>
+        <div className="px-2 py-1 bg-gray-50 text-[10px] text-right text-gray-600">{t.perRow ? <>Σ each ⌈need⌉ = <b className="text-gray-900">{t.result}</b></> : <>Σ {t.need.toFixed(2)} → ⌈ {Math.ceil(t.need)} ⌉ · max(min {t.min}) = <b className="text-gray-900">{t.result}</b></>}</div>
       </div>
     );
     if (t.kind === "pillars") return <div className="mb-1.5 text-[10px] text-gray-600">🏗️ {t.total} pillar(s){t.zoneP ? ` — ${t.zoneP} from truss tool${t.recipeP ? `, ${t.recipeP} from build` : ""}` : ""} → range → <b>{t.result}</b></div>;
@@ -889,10 +998,10 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
           const howOpen = !!mpDayHow[dayKey];
           const hasShare = r.shared && d.share != null;
           return (
-            <div key={i} className="py-1 border-b last:border-b-0">
+            <div key={i} className="py-1">
               <div className="flex justify-between items-center">
                 <span className="flex items-center gap-1.5">
-                  <button onClick={() => setMpDayHow(o => ({ ...o, [dayKey]: !o[dayKey] }))} className="text-[10px] font-semibold text-indigo-500 hover:text-indigo-700 border border-indigo-200 rounded px-1 leading-tight" title="How this day's crew was calculated">{howOpen ? "▾" : "▸"} how</button>
+                  <button onClick={() => setMpDayHow(o => ({ ...o, [dayKey]: !o[dayKey] }))} className="text-[10px] font-semibold text-blue-500 hover:text-blue-700 border border-blue-200 rounded px-1 leading-tight" title="How this day's crew was calculated">{howOpen ? "▾" : "▸"} how</button>
                   <span className="font-medium text-gray-700">{phaseLbl(d)}</span>
                 </span>
                 <span className="flex items-center gap-1">
@@ -914,7 +1023,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                       {ids.length > 1 && <button onClick={() => removeDihari(r.type, d.date, id, ids)} className="text-red-300 hover:text-red-500 text-[10px]" title="remove this dihari">×</button>}
                     </span>
                   ); })}
-                  <button onClick={() => addDihari(r, d.date, ids)} className="text-[10px] font-semibold text-indigo-600 border border-indigo-200 rounded-full px-1.5 py-0.5" title="Add another dihari (shift) this day">+ dihari</button>
+                  <button onClick={() => addDihari(r, d.date, ids)} className="text-[10px] font-semibold text-blue-600 border border-blue-200 rounded-full px-1.5 py-0.5" title="Add another dihari (shift) this day">+ dihari</button>
                 </div>
               )}
               {winDefs.length > 0 && !editable && (Array.isArray(d.windowIds) || (mpWin[r.type] && mpWin[r.type][d.date] != null)) && (
@@ -945,12 +1054,14 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   };
 
   // ── VIEW CONTROLS: nearby count, activity bell, Planning / On-site ──
-  // Defined once and rendered in BOTH views. The Planning view shows them on the income
-  // panel; On-site has no income panel, so it shows the same group above its own tiles. A
-  // second hand-written copy would be one edit away from the two disagreeing — and if the
-  // switch ever went missing from On-site there would be no way back to Planning.
+  // ONE home: the right-hand end of the event header. They had been split across two — the
+  // income panel's figure row in Planning, a row of their own above the tiles in On-site — so
+  // the same two controls moved every time you flipped the view, and in On-site they sat on a
+  // strip that existed only to hold them. The header renders in both views, sits outside the
+  // planning-only block (so On-site keeps its way back to Planning), travels with the event
+  // these controls scope, and had an empty right half since the toggle last moved out of it.
   const viewControls = sel ? (
-  <div className="flex items-center gap-3 flex-wrap">
+  <div className="flex items-center gap-2 shrink-0">
     {/* ── ACTIVITY BEHIND A BELL ──
         The log was a permanent panel between the header and the content, so an
         event with two edits pushed the whole page down to say so — every time, even
@@ -959,11 +1070,11 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
         untouched event shows nothing at all rather than an empty panel. */}
     {recentChanges.length > 0 && (
       <button onClick={() => setLogOpen(true)}
-        className="group relative shrink-0 w-9 h-9 rounded-lg bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-base leading-none transition-colors">
-        <span aria-hidden="true">🔔</span>
+        className="group relative shrink-0 w-7 h-7 rounded-lg bg-blue-100 hover:bg-blue-200 text-blue-600 flex items-center justify-center transition-colors">
+        <IconBell s={13} />
         {/* -top/-right so the badge overhangs the button instead of shrinking the
             glyph to make room for it. */}
-        <span className="absolute -top-1 -right-1 min-w-[17px] h-[17px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold leading-[17px] text-center tabular-nums">{recentChanges.length}</span>
+        <span className="absolute -top-1 -right-1 min-w-[14px] h-[14px] px-[3px] rounded-full bg-red-500 text-white text-[9px] font-bold leading-[14px] text-center tabular-nums ring-2 ring-white">{recentChanges.length}</span>
         <span className="sr-only">Activity log — {recentChanges.length} recent changes</span>
         {/* A drawn tooltip rather than the native `title`: title waits about a
             second before appearing, which is long enough that people click the
@@ -976,16 +1087,32 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
         </span>
       </button>
     )}
-    {/* Back on the event header, right-hand side. It briefly lived on the department
-        row above — which does render in both views, but that row scrolls off the top
-        the moment you start reading, and the switch was gone exactly when you wanted
-        it. This header travels with the event it scopes, and like that row it sits
-        OUTSIDE the planning-only block, so On-site still has a way back. */}
-    <div className="flex gap-1 bg-gray-100 rounded-xl p-1 w-fit shrink-0">
-      {[["planning", "📋 Planning"], ["onsite", "🚚 On-site"]].map(([k, l]) => (
-        <button key={k} onClick={() => setOpsView(k)} className={"px-4 py-1.5 rounded-lg text-xs font-semibold transition " + (opsView === k ? "bg-white shadow text-gray-900" : "text-gray-500 hover:text-gray-700")}>{l}</button>
-      ))}
-    </div>
+    {/* It briefly lived on the department row above — which does render in both views,
+        but that row scrolls off the top the moment you start reading, and the switch
+        was gone exactly when you wanted it. */}
+    {/* ── STATUS TAGS, NOT A SEGMENTED TRACK ──
+        Two standalone tags per the design system: the one you are on is filled soft blue with
+        blue-700 text, the other is plain. The grey track they used to share made this read as a
+        setting with an on and an off position; as two tags it reads as two places, which is
+        what it is.
+        Only the ACTIVE tag is outlined. Giving both a ring drew four boxes into one small
+        corner — the bell's, two rings and the card's own edge — which is what made this corner
+        read as clutter rather than as three controls. Unringed, the inactive tag is just a
+        label until you want it, and the one that is outlined is the one that means something.
+        28px tall, matching the bell. */}
+    {[["planning", "Planning", IconClipboard], ["onsite", "On-site", IconTruck]].map(([k, label, Icon]) => {
+      const on = opsView === k;
+      return (
+        <button key={k} onClick={() => setOpsView(k)} aria-pressed={on}
+          className={"shrink-0 h-7 inline-flex items-center gap-1.5 px-2.5 rounded-lg text-[12px] font-semibold transition-colors "
+            + (on
+              ? "bg-blue-100 text-blue-700 ring-1 ring-blue-200"
+              : "text-gray-500 hover:text-gray-900 hover:bg-gray-100")}>
+          <span className={on ? "text-blue-600" : "text-gray-400"}><Icon s={13} /></span>
+          {label}
+        </button>
+      );
+    })}
   </div>
   ) : null;
 
@@ -1025,21 +1152,47 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
           as a section header rather than as the control it is.
           max-w-full keeps it inside the page on narrow screens, where the inner overflow-x
           takes over and the chips scroll instead. */}
-      <div className="w-fit max-w-full bg-white rounded-xl shadow-[0_1px_2px_rgba(16,24,40,0.07),0_4px_12px_-4px_rgba(16,24,40,0.12)] px-3 py-2">
+      {/* The white card is sm-and-up only. On a phone this is one small dropdown, and the section
+          dropdown directly above it has no card — a bare control next to a carded one reads as
+          two unrelated things. Stripped here, the two stack as a matching pair. */}
+      {/* ── PHONE: SHARE THE SECTION PICKER'S LINE ──
+          The section dropdown is rendered by PlanningTab and this one by DepartmentOpsTab, so
+          they are block siblings in a space-y-4 stack and cannot be put in one flex row without
+          lifting `dept` state out of this component. Instead this row is pulled up onto that
+          line: -48px = the control's own 32px height (py-2 ×2 + a 16px line) plus the 16px
+          space-y-4 gap. The offset is safe because BOTH controls are now the same TabsMenu, so
+          their heights cannot diverge — and ml-auto keeps this one on the right, clear of it.
+          56 rather than the bare 48: this sits inside a `flex items-center` row that adds a few
+          pixels of its own above the control, which the raw height calculation does not see. */}
+      <div className="w-fit max-w-full ml-auto -mt-14 sm:mt-0 sm:ml-0 sm:bg-white sm:rounded-xl sm:shadow-[0_1px_2px_rgba(16,24,40,0.07),0_4px_12px_-4px_rgba(16,24,40,0.12)] sm:px-3 sm:py-2">
         {/* Scrolls sideways rather than wrapping to a second row: eight departments at a phone
             width would otherwise turn a one-line control into a four-line block. Bar hidden, as
             everywhere else on this page. */}
         <div className="flex items-center gap-1.5 overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
-          <span className="shrink-0 text-[9px] font-bold uppercase tracking-[0.08em] text-gray-400 pr-1.5">Department</span>
+          {/* The eyebrow earns its place beside a row of chips, where the row needs naming. Beside
+              a dropdown that already reads "🛋 Furniture" it is just a second label for the same
+              thing, so it drops out on phone. */}
+          <span className="hidden sm:inline shrink-0 text-[9px] font-bold uppercase tracking-[0.08em] text-gray-400 pr-1.5">Department</span>
+          {/* ── PHONE: THE SAME MENU THE SUB-TABS USE ──
+              Eight chips on one scrolling line showed three, and the other five gave no sign
+              they existed — a horizontal scroller with no visible edge reads as the whole list.
+              The menu shows all eight at once and reuses TabsMenu, so the department picker and
+              the section picker behave identically instead of being two different controls that
+              happen to look alike. */}
+          {!(roleDept && !isAdmin) && (
+            <div className="sm:hidden">
+              <TabsMenu tabs={deptOptions.map(d => ({ id: d, label: `${DEPT_ICON[d]} ${d}` }))} active={dept} onChange={setDept} tone="accent" />
+            </div>
+          )}
           {roleDept && !isAdmin ? (
-            <span className="shrink-0 px-3 py-1.5 rounded-lg bg-indigo-50 text-indigo-700 text-sm font-semibold whitespace-nowrap">{DEPT_ICON[roleDept]} {roleDept}</span>
+            <span className="shrink-0 px-3 py-1.5 rounded-lg bg-blue-50 text-blue-700 text-sm font-semibold whitespace-nowrap">{DEPT_ICON[roleDept]} {roleDept}</span>
           ) : deptOptions.map(d => {
             const on = dept === d;
             return (
               <button key={d} onClick={() => setDept(d)} aria-current={on ? "true" : undefined}
-                className={"shrink-0 px-3 py-1.5 rounded-lg text-sm whitespace-nowrap transition-all duration-150 " +
+                className={"hidden sm:inline-flex shrink-0 px-3 py-1.5 rounded-lg text-sm whitespace-nowrap transition-all duration-150 " +
                   (on
-                    ? "bg-indigo-50 text-indigo-700 font-semibold shadow-[0_1px_2px_rgba(79,70,229,0.14),0_4px_10px_-4px_rgba(79,70,229,0.3)]"
+                    ? "bg-blue-50 text-blue-700 font-semibold shadow-[0_1px_2px_rgba(37,99,235,0.14),0_4px_10px_-4px_rgba(37,99,235,0.3)]"
                     : "text-gray-600 font-medium hover:text-gray-900 hover:bg-gray-50 hover:-translate-y-0.5 hover:shadow-[0_1px_2px_rgba(16,24,40,0.06),0_4px_10px_-6px_rgba(16,24,40,0.2)]")}>
                 {DEPT_ICON[d]} {d}
               </button>
@@ -1081,14 +1234,14 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                 to be created here.
               </div>
               {/* A filled button, not a text link. It is the only action on an otherwise dead
-                  end, so it has to read as the way out — indigo text on white was competing
+                  end, so it has to read as the way out — blue text on white was competing
                   with the body copy above it and losing.
                   The link carries the client name and, when we know it, the LMS entry number.
                   Studio sets those into its client-name field, which is what already drives its
                   LMS lead search, then loads the named contract through its own "Load →" path —
                   so the Event Info form opens filled in, not blank. */}
               <a href={`${import.meta.env.BASE_URL}#/studio?client=${encodeURIComponent(search.trim())}${leadEntry ? `&lmsRef=${encodeURIComponent(leadEntry)}` : ""}`}
-                className="mt-5 inline-flex items-center gap-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 px-4 py-2.5 text-sm font-semibold text-white shadow-[0_1px_2px_rgba(79,70,229,0.3),0_6px_16px_-6px_rgba(79,70,229,0.6)] hover:-translate-y-0.5 hover:shadow-[0_2px_4px_rgba(79,70,229,0.3),0_12px_24px_-8px_rgba(79,70,229,0.65)] transition-all duration-150">
+                className="mt-5 inline-flex items-center gap-2 rounded-lg bg-blue-600 hover:bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white shadow-[0_1px_2px_rgba(37,99,235,0.3),0_6px_16px_-6px_rgba(37,99,235,0.6)] hover:-translate-y-0.5 hover:shadow-[0_2px_4px_rgba(37,99,235,0.3),0_12px_24px_-8px_rgba(37,99,235,0.65)] transition-all duration-150">
                 <span aria-hidden="true">🎨</span>
                 Build this deal in Studio
                 <span aria-hidden="true">→</span>
@@ -1107,13 +1260,24 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
               const startDow = first.getDay();
               const dim = new Date(y, m + 1, 0).getDate();
               const pad = (n) => String(n).padStart(2, "0");
-              const prev = () => setPickMonth(m === 0 ? { y: y - 1, m: 11 } : { y, m: m - 1 });
-              const next = () => setPickMonth(m === 11 ? { y: y + 1, m: 0 } : { y, m: m + 1 });
+              // Changing month clears the open day — its date belongs to the month you just left,
+              // so the list underneath would keep showing events that are no longer on the grid.
+              const prev = () => { setPickDay(null); setPickMonth(m === 0 ? { y: y - 1, m: 11 } : { y, m: m - 1 }); };
+              const next = () => { setPickDay(null); setPickMonth(m === 11 ? { y: y + 1, m: 0 } : { y, m: m + 1 }); };
               const cells = [];
               for (let i = 0; i < startDow; i++) cells.push(null);
               for (let d = 1; d <= dim; d++) cells.push(d);
               while (cells.length % 7 !== 0) cells.push(null);   // close the last week
               const monthTotal = Object.values(pickByDate).reduce((s, a) => s + a.length, 0);
+              // The phone grid shows the real dates either side of the month instead of blanks,
+              // greyed out. A blank corner reads as a rendering fault; "27 28 29 30" reads as
+              // the week continuing, which is what a calendar is supposed to show.
+              const iso = (dt) => `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`;
+              const mCells = [];
+              for (let i = startDow; i > 0; i--) { const dt = new Date(y, m, 1 - i); mCells.push({ d: dt.getDate(), ds: iso(dt), out: true }); }
+              for (let d = 1; d <= dim; d++) mCells.push({ d, ds: `${y}-${pad(m + 1)}-${pad(d)}`, out: false });
+              for (let i = 1; mCells.length % 7 !== 0; i++) { const dt = new Date(y, m + 1, i); mCells.push({ d: dt.getDate(), ds: iso(dt), out: true }); }
+              const dayLabel = pickDay ? new Date(pickDay + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" }) : "";
               return (
                 <div className="bg-white rounded-2xl shadow-[0_1px_2px_rgba(16,24,40,0.07),0_4px_12px_-4px_rgba(16,24,40,0.12)] overflow-hidden">
                   <div className="px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
@@ -1122,37 +1286,120 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                       <h3 className="mt-0.5 text-base font-bold text-gray-900 tracking-tight">{first.toLocaleDateString("en-IN", { month: "long", year: "numeric" })}</h3>
                       <div className="text-[11px] text-gray-500 mt-0.5">{monthTotal} sold event{monthTotal === 1 ? "" : "s"} this month · {DEPT_ICON[dept]} {dept}</div>
                     </div>
-                    <div className="flex items-center gap-1 shrink-0">
+                    {/* Today as a pill, the arrows as circles — the arrows are a pair doing one
+                        job and the pill is a separate one, so they should not look alike. Drawn
+                        chevrons rather than ‹ › glyphs, which sit off-centre in most faces. */}
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button onClick={() => { setPickDay(null); setPickMonth({ y: _now.getFullYear(), m: _now.getMonth() }); }}
+                        className="px-3 h-9 rounded-full text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 transition">Today</button>
                       <button onClick={prev} title="Previous month" aria-label="Previous month"
-                        className="w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-gray-900 hover:bg-gray-100 transition">‹</button>
-                      <button onClick={() => setPickMonth({ y: _now.getFullYear(), m: _now.getMonth() })}
-                        className="px-2.5 h-8 rounded-lg text-[11px] font-semibold text-gray-500 hover:text-gray-900 hover:bg-gray-100 transition">Today</button>
+                        className="w-9 h-9 rounded-full bg-gray-50 hover:bg-gray-100 flex items-center justify-center text-gray-500 hover:text-gray-900 transition">
+                        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M9 3.5 L5 7 L9 10.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                      </button>
                       <button onClick={next} title="Next month" aria-label="Next month"
-                        className="w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-gray-900 hover:bg-gray-100 transition">›</button>
+                        className="w-9 h-9 rounded-full bg-gray-50 hover:bg-gray-100 flex items-center justify-center text-gray-500 hover:text-gray-900 transition">
+                        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M5 3.5 L9 7 L5 10.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                      </button>
                     </div>
                   </div>
-                  <div className="grid grid-cols-7 border-b border-gray-100">
+                  {/* ── PHONE LAYOUT ──
+                      Seven columns of 84px cells with a name chip inside each is a desktop shape;
+                      at phone width a column is ~45px, so the chips truncate to two characters
+                      and the month becomes unreadable. Below sm the grid collapses to dates only
+                      — a dot marks a day that has events — and tapping a date lists that day's
+                      events underneath at full width, where the names actually fit. */}
+                  <div className="sm:hidden">
+                    <div className="grid grid-cols-7 px-2">
+                      {["S", "M", "T", "W", "T", "F", "S"].map((d, i) => (
+                        <div key={i} className="text-center text-[10px] font-bold uppercase tracking-[0.1em] text-gray-400 py-2">{d}</div>
+                      ))}
+                    </div>
+                    {/* Every date is a filled tile, not a bare number on white. It gives each day
+                        a real edge to aim at on a touch screen, and it is what separates the
+                        month from the days either side of it without needing a rule. */}
+                    <div className="grid grid-cols-7 px-2 pb-3 gap-1">
+                      {mCells.map(({ d, ds, out }) => {
+                        const evs = out ? [] : (pickByDate[ds] || []);
+                        const isToday = ds === today;
+                        const on = pickDay === ds;
+                        return (
+                          <button key={ds} onClick={() => !out && evs.length && setPickDay(on ? null : ds)}
+                            disabled={out || !evs.length}
+                            aria-label={`${ds}${evs.length ? ` — ${evs.length} event(s)` : ""}`}
+                            className={"h-12 rounded-xl flex flex-col items-center justify-center gap-1 transition-colors "
+                              + (on ? "bg-blue-600"
+                                : out ? "bg-transparent"
+                                : evs.length ? "bg-blue-50 active:bg-blue-100"
+                                : "bg-gray-50")}>
+                            <span className={"text-[13px] tabular-nums leading-none "
+                              + (on ? "text-white font-bold"
+                                : out ? "text-gray-300 font-normal"
+                                : evs.length ? "text-blue-800 font-bold"
+                                : isToday ? "text-blue-600 font-bold" : "text-gray-600 font-medium")}>{d}</span>
+                            {/* A dot only where there is something — the tile tint already says
+                                it too, but the dot survives at a glance when the row is scanned
+                                rather than read. */}
+                            <span className={"w-1.5 h-1.5 rounded-full " + (on ? "bg-white" : evs.length ? "bg-blue-500" : "bg-transparent")} />
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {(() => {
+                      const dayEvs = pickDay ? (pickByDate[pickDay] || []) : [];
+                      if (!pickDay) return <div className="px-4 pb-4 text-center text-[11px] text-gray-400">Tap a highlighted date to see its events.</div>;
+                      return (
+                        <div className="px-3 pb-3">
+                          <div className="flex items-baseline justify-between gap-2 px-1 pb-2">
+                            <span className="text-[13px] font-bold text-gray-900">Events on {dayLabel}</span>
+                            <span className="shrink-0 text-[11px] text-gray-400">{dayEvs.length} event{dayEvs.length === 1 ? "" : "s"}</span>
+                          </div>
+                          <div className="space-y-2">
+                            {dayEvs.map(eo => (
+                              <button key={eo.id} onClick={() => setSelId(eo.id)}
+                                className="w-full text-left rounded-xl bg-gray-50 hover:bg-blue-50 active:bg-blue-100 px-3 py-3 flex items-center gap-3 transition-colors">
+                                <span aria-hidden="true" className="shrink-0 w-2.5 h-2.5 rounded-full bg-blue-500" />
+                                <span className="min-w-0 flex-1">
+                                  <span className="block text-sm font-semibold text-gray-900 truncate">{eo.clientName || "Event"}</span>
+                                  {/* Venue and shift, because that is what an event_order actually
+                                      carries — there are no start/end times on one to show. */}
+                                  <span className="block text-[11px] text-gray-500 truncate">
+                                    {eo.functionsDetail?.[0]?.venue || eo.venue || "—"}
+                                    {eo.functionsDetail?.[0]?.shift ? ` · ${eo.functionsDetail[0].shift}` : ""}
+                                  </span>
+                                </span>
+                                <span aria-hidden="true" className="shrink-0 text-gray-400">
+                                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M5 3.5 L9 7 L5 10.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                                </span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+
+                  <div className="hidden sm:grid grid-cols-7">
                     {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(d => (
                       <div key={d} className="text-center text-[10px] font-bold uppercase tracking-[0.1em] text-gray-400 py-2.5">{d}</div>
                     ))}
                   </div>
-                  <div className="grid grid-cols-7 gap-px bg-gray-100">
+                  <div className="hidden sm:grid grid-cols-7 gap-px bg-gray-100">
                     {cells.map((d, i) => {
                       if (!d) return <div key={"e" + i} className="min-h-[84px] bg-gray-50/70" />;
                       const ds = `${y}-${pad(m + 1)}-${pad(d)}`;
                       const evs = pickByDate[ds] || [];
                       const isToday = ds === today;
                       return (
-                        <div key={d} className={"min-h-[84px] p-1.5 bg-white " + (isToday ? "bg-indigo-50/60" : "")}>
+                        <div key={d} className={"min-h-[84px] p-1.5 bg-white " + (isToday ? "bg-blue-50/60" : "")}>
                           <div className="flex items-center justify-between mb-1.5">
-                            <span className={"tabular-nums leading-none " + (isToday ? "bg-indigo-600 text-white text-[11px] font-bold rounded-full w-[20px] h-[20px] flex items-center justify-center" : "text-[12px] font-semibold text-gray-600")}>{d}</span>
+                            <span className={"tabular-nums leading-none " + (isToday ? "bg-blue-600 text-white text-[11px] font-bold rounded-full w-[20px] h-[20px] flex items-center justify-center" : "text-[12px] font-semibold text-gray-600")}>{d}</span>
                           </div>
                           <div className="space-y-1">
                             {/* Each event is its own button — clicking a DAY would be ambiguous on
                                 a date carrying two events, and this page can only show one. */}
                             {evs.map(eo => (
                               <button key={eo.id} onClick={() => setSelId(eo.id)} title={`Plan ${eo.clientName || "Event"}`}
-                                className="w-full text-left text-[11px] font-medium leading-tight pl-2 pr-1.5 py-1 rounded-md truncate border-l-[3px] border-indigo-500 bg-indigo-50/80 text-indigo-900 hover:bg-indigo-100 transition-colors">
+                                className="w-full text-left text-[11px] font-medium leading-tight pl-2 pr-1.5 py-1 rounded-md truncate border-l-[3px] border-blue-500 bg-blue-50/80 text-blue-900 hover:bg-blue-100 transition-colors">
                                 {eo.clientName || "Event"}
                               </button>
                             ))}
@@ -1162,9 +1409,9 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                     })}
                   </div>
                   {monthTotal === 0 && (
-                    <div className="px-4 py-3 text-center text-[11px] text-gray-400 border-t border-gray-100">
+                    <div className="px-4 py-3 text-center text-[11px] text-gray-400">
                       No sold events this month — page to another month{onGoToCalendar ? ", or open the Calendar to see every LMS lead" : ""}.
-                      {onGoToCalendar && <button onClick={onGoToCalendar} className="ml-1 font-semibold text-indigo-600 hover:text-indigo-800">Open Calendar →</button>}
+                      {onGoToCalendar && <button onClick={onGoToCalendar} className="ml-1 font-semibold text-blue-600 hover:text-blue-800">Open Calendar →</button>}
                     </div>
                   )}
                 </div>
@@ -1181,8 +1428,21 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                 panel. It decides what the whole right-hand column shows, so it belongs beside
                 the thing it scopes rather than buried between two content cards. Same two
                 buttons and the same setOpsView — relocated, not added to. */}
-            <div className="bg-white rounded-xl shadow-[0_1px_2px_rgba(16,24,40,0.06),0_1px_3px_rgba(16,24,40,0.05)] px-4 py-3 flex items-center justify-between flex-wrap gap-3">
-              <div className="flex items-center gap-3 min-w-0">
+            {/* Full width, like every other card in this column — it is the event's header, so it
+                spans what it heads. Only the height came down: the icon tile, the chevron and the
+                type each dropped a step (see below), which is what made the bar thinner without
+                changing what it holds.
+                justify-between gives the bell and the Planning / On-site switch the far right of
+                this row — see `viewControls` for why they belong here and nowhere else. */}
+            {/* ── CARD CONTAINER (design system §7) ──
+                rounded-2xl on a soft, wide shadow rather than the tight hairline the other cards
+                use. This is the one card on the page that names what everything below it is
+                about, so it is allowed to sit a little further off the ground than they do.
+                font-body puts Inter on the card's running text; the title takes Playfair from
+                font-display below. Scoped to this card and not to `body`, because Studio has its
+                own typography and is not part of this system. */}
+            <div className="font-body bg-white rounded-2xl shadow-[0_1px_2px_rgba(16,24,40,0.04),0_8px_24px_-12px_rgba(16,24,40,0.2)] px-3 py-2.5 flex items-center justify-between flex-wrap gap-x-2 gap-y-1.5">
+              <div className="flex items-center gap-2 min-w-0">
                 {/* ── THE WAY BACK ──
                     Picking an event on the calendar replaces it with this header, and there was
                     no route back — the calendar only renders while nothing is selected, so the
@@ -1192,15 +1452,38 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                     branch would show "not a Studio deal yet" instead of the calendar. */}
                 <button onClick={() => { setSelId(null); setSearch(""); }}
                   title="Back to the calendar" aria-label="Back to the calendar"
-                  className="group shrink-0 w-9 h-9 rounded-lg bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-500 hover:text-gray-900 transition-colors">
-                  <svg width="15" height="15" viewBox="0 0 15 15" fill="none" aria-hidden="true">
+                  className="group shrink-0 w-8 h-8 rounded-lg bg-white ring-1 ring-gray-200 hover:ring-gray-300 hover:bg-gray-50 flex items-center justify-center text-gray-500 hover:text-gray-900 transition-colors">
+                  <svg width="13" height="13" viewBox="0 0 15 15" fill="none" aria-hidden="true">
                     <path d="M9.5 3.5 L5 7.5 L9.5 11.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
                 </button>
-                <span aria-hidden="true" className="shrink-0 w-11 h-11 rounded-xl bg-gray-100 flex items-center justify-center text-xl leading-none">{DEPT_ICON[dept]}</span>
+                {/* The system draws this as a photo of the item. There is no image on a
+                    department — it is a category, not a product — so the tile keeps the
+                    department's emoji and takes the system's shape and soft-blue ground
+                    instead. Blue rather than grey also separates it from the back button
+                    beside it, which is now white: two grey squares side by side read as a
+                    pair of buttons, and only one of them is one. */}
+                <span aria-hidden="true" className="shrink-0 w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center text-[15px] leading-none">{DEPT_ICON[dept]}</span>
                 <div className="min-w-0">
-                  <div className="text-lg font-bold text-gray-900 truncate">{dept} — {sel.clientName || "Event"}</div>
-                  <div className="text-xs text-gray-500 truncate">{selDateStr || "no date"} · {sel.functionsDetail?.[0]?.venue || sel.venue || "—"}{deptData.updatedBy ? ` · last edited by ${deptData.updatedBy}` : ""}</div>
+                  {/* ── TEXT ELEMENTS (design system §8) ──
+                      Playfair SemiBold for the title, Inter Regular for the line under it — the
+                      system's one typographic rule, serif for what names the thing and sans for
+                      what describes it.
+                      The spec sets H2 at 22 and body at 16, drawn at desktop width. Both are held
+                      a step down on a phone — 16 and 12. At the spec's sizes this card was the
+                      tallest thing above the fold on a 390px screen and its two rows ran into
+                      each other, which is the whole reason it read as big and clustered. Playfair
+                      also carries more weight per pixel than the sans it replaced, so 16px here
+                      is not smaller than the 15px plain title it started as. Full spec sizes
+                      from sm up, where there is room for them. */}
+                  <div className="font-display text-[16px] sm:text-[22px] font-semibold text-gray-900 leading-tight sm:leading-snug truncate">{dept} — {sel.clientName || "Event"}</div>
+                  {/* Wraps to a second line on a phone rather than truncating. Three facts are
+                      joined here — date, venue, who touched it last — and a single line at 390px
+                      always cut the third one mid-name, which is the one piece you would be
+                      reading it for. Capped at two lines so a long venue cannot push the card
+                      taller than the tiles it sits above; from sm there is room for one line and
+                      it truncates as before. */}
+                  <div className="text-[12px] sm:text-sm text-gray-500 leading-snug line-clamp-2 sm:truncate">{selDateStr || "no date"} · {sel.functionsDetail?.[0]?.venue || sel.venue || "—"}{deptData.updatedBy ? ` · last edited by ${deptData.updatedBy}` : ""}</div>
                   {/* Deal value — read-only mirror of Studio's negotiated amount (client_ledger),
                       written whenever Deal Check syncs. It stays frozen once booked by owner decision;
                       "pending" is the live build's drift since booking, shown here so ops sees the same
@@ -1218,6 +1501,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                   )}
                 </div>
               </div>
+              {viewControls}
             </div>
 
             {/* Recent changes — a salesperson can now add/remove/change items on a sold deal at any
@@ -1232,7 +1516,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                 <div className="fixed inset-0 z-50 flex items-stretch sm:items-center justify-center sm:p-6">
                   <div className="absolute inset-0 bg-gray-900/50" onClick={() => setLogOpen(false)} />
                   <div role="dialog" aria-modal="true" className="relative w-full sm:max-w-2xl bg-white sm:rounded-2xl shadow-2xl overflow-y-auto max-h-full sm:max-h-[80vh]">
-                  <div className="sticky top-0 z-10 bg-white border-b px-4 py-3 flex items-center gap-2">
+                  <div className="sticky top-0 z-10 bg-white px-4 py-3 flex items-center gap-2">
                     <span aria-hidden="true" className="shrink-0 w-9 h-9 rounded-lg bg-amber-100 flex items-center justify-center text-base leading-none">🕑</span>
                     <div className="min-w-0 flex-1">
                       <div className="text-sm font-semibold text-gray-900">Activity log</div>
@@ -1254,7 +1538,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                       dot with a connecting rule says that at a glance — the previous version ran
                       the author, the change and the timestamp together as prose, so telling two
                       entries apart meant reading both in full. */}
-                  <div className="divide-y divide-gray-100">
+                  <div className="">
                     {shown.map(r => {
                       /* ── THE VERB IS SAID ONCE, NOT PER ITEM ──
                          This was one run-on sentence that repeated the verb for every item:
@@ -1362,7 +1646,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                     page showed two identical rows and only one of them answered a click. A card
                     is a promise of interactivity; spending it on read-only numbers makes the
                     real targets harder to find.
-                    So: one surface. The total sits on the left behind an indigo rule, the heads
+                    So: one surface. The total sits on the left behind a blue rule, the heads
                     that make it up are stat columns beside it. Nothing here can be mistaken for
                     something to press. */}
                 <div className="rounded-xl bg-white shadow-[0_1px_2px_rgba(16,24,40,0.07),0_4px_12px_-4px_rgba(16,24,40,0.12)] overflow-hidden">
@@ -1379,26 +1663,33 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                       with the snapshot crew swapped for the live crew plan. They differed only by
                       however much the crew had been edited since the sync — on an untouched deal,
                       by nothing but rounding.) */}
+                  {/* flex-1 min-w-0 below sm, so the pair sits two-up on a phone instead of
+                      stacking: at 210px minimum they could not share a 390px screen and the
+                      comparison — earned against spent — turned into two unrelated figures a
+                      scroll apart. From sm the old minimum is back, which is what keeps them
+                      equally sized whatever the two numbers are. */}
                   <div className="px-4 py-3 flex items-stretch gap-3 flex-wrap">
-                    <div className="rounded-xl bg-gray-50 px-4 py-3 min-w-[210px]">
-                      <div className="text-[9px] font-bold uppercase tracking-[0.08em] text-gray-400">Total income</div>
-                      <div className="mt-1.5 text-[20px] leading-none font-bold text-gray-900 tabular-nums tracking-tight">{fmt(liveTotal)}</div>
-                      <div className="mt-1.5 text-[10px] text-gray-500">What {dept} earns · synced from Deal Check</div>
+                    {/* The earned figure is filled, not another grey box. It is the number the
+                        whole panel is about and everything below is it taken apart, so it carries
+                        the page's one block of colour. Its partner stays grey: two filled cards
+                        would be a pair of headlines with nothing to compare them against. */}
+                    <div className="rounded-xl bg-blue-600 px-4 py-3 flex-1 min-w-0 sm:min-w-[210px] shadow-[0_1px_2px_rgba(37,99,235,0.25),0_8px_20px_-10px_rgba(37,99,235,0.75)]">
+                      <div className="text-[9px] font-bold uppercase tracking-[0.08em] text-blue-200">Total income</div>
+                      <div className="mt-1.5 text-[20px] leading-none font-bold text-white tabular-nums tracking-tight">{fmt(liveTotal)}</div>
+                      <div className="mt-1.5 text-[10px] text-blue-100">What {dept} earns · synced from Deal Check</div>
                     </div>
-                    <div className="rounded-xl bg-gray-50 px-4 py-3 min-w-[210px]">
+                    <div className="rounded-xl bg-gray-50 px-4 py-3 flex-1 min-w-0 sm:min-w-[210px]">
                       <div className="text-[9px] font-bold uppercase tracking-[0.08em] text-gray-400">Actual cost logged</div>
                       {/* Grey dash until something is logged. A ₹0 here would read as "spent
                           nothing", which is a different claim from "not recorded yet". */}
                       <div className={"mt-1.5 text-[20px] leading-none font-bold tabular-nums tracking-tight " + (hasActuals ? "text-gray-900" : "text-gray-300")}>{hasActuals ? fmt(actualCost) : "—"}</div>
                       <div className="mt-1.5 text-[10px] text-gray-500">{hasActuals ? "What you actually spent" : "Not logged yet"}</div>
                     </div>
-                    {/* Pushed to the far right of this row, after the figures. */}
-                    <div className="ml-auto self-center">{viewControls}</div>
                   </div>
                   {/* Saying it in words. The heads below are not a second set of numbers, they
                       are the one above taken apart — and nothing on the panel said so, which is
                       the whole reason it needed reading twice. */}
-                  <div className="px-4 py-1.5 bg-gray-50 border-y border-gray-100 flex items-center justify-between gap-3 flex-wrap">
+                  <div className="px-4 py-1.5 bg-gray-50 flex items-center justify-between gap-3 flex-wrap">
                     <span className="text-[9px] font-bold uppercase tracking-[0.08em] text-gray-500">What makes up this total</span>
                     <span className="text-[9px] font-semibold text-gray-400 tabular-nums">{shown.length} head{shown.length === 1 ? "" : "s"} · {fmt(shownSum)}</span>
                   </div>
@@ -1409,16 +1700,27 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                   <div className="grid gap-px bg-gray-100" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))" }}>
                     {shown.map((r, i) => (
                       <div key={i} className="bg-white px-4 py-2.5">
-                        {/* No emoji here. On the tiles below they are how you pick a block out
-                            at a glance; in a column of figures they are noise — each renders at
-                            a different weight and colour, so a row of them reads as clutter
-                            rather than as a set. The labels do the work instead.
+                        {/* The emoji sits in a neutral tile rather than loose beside the label.
+                            Loose, a column of them read as clutter — each glyph renders at its
+                            own weight and colour, so they never looked like a set. Boxed at one
+                            size on one grey, the tile is the repeated shape and the glyph inside
+                            it is just what distinguishes this row, the same way it works on the
+                            blocks below.
                             Sentence case, not uppercase: these are names to read, and "Real
                             flowers (mandi)" set in tracked capitals is slower than it looks. */}
-                        <div className="text-[11px] font-semibold text-gray-700 truncate" title={r.label}>{r.label}</div>
-                        <div className="mt-1 text-[14px] leading-none font-bold text-gray-900 tabular-nums tracking-tight">{fmt(r.value)}</div>
-                        {/* "42%" alone begs the question "of what". Two more words answer it. */}
-                        <div className="mt-0.5 text-[9px] font-medium text-gray-400 tabular-nums">{pct(r.value)}% of total</div>
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span aria-hidden="true" className="shrink-0 w-7 h-7 rounded-lg bg-gray-100 flex items-center justify-center text-[13px] leading-none">{HEAD_ICON[r.label] || "•"}</span>
+                          <div className="min-w-0 flex-1">
+                            <div className="text-[11px] font-semibold text-gray-700 truncate" title={r.label}>{r.label}</div>
+                            <div className="mt-0.5 text-[14px] leading-none font-bold text-gray-900 tabular-nums tracking-tight">{fmt(r.value)}</div>
+                          </div>
+                        </div>
+                        {/* No drawn bar. The share is stated, not plotted: at these widths the
+                            bar was a full-width blue rule under every head, which read as a
+                            divider before it read as a measure — and the number beside it was
+                            the part anyone actually used.
+                            "42%" alone begs the question "of what", so the two words stay. */}
+                        <div className="mt-1 pl-9 text-[9px] font-medium text-gray-400 tabular-nums">{pct(r.value)}% of total</div>
                       </div>
                     ))}
                   </div>
@@ -1426,7 +1728,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                       "Actual cost logged" figure above goes, so it belongs with it — and without
                       it, nothing tells ops that what they record here is what the salesperson
                       sees in Studio. */}
-                  <div className="px-4 py-2 bg-gray-50 border-t border-gray-100 text-[10px] text-gray-500">
+                  <div className="px-4 py-2 bg-gray-50 text-[10px] text-gray-500">
                     Actuals you save here flow to the event&apos;s P&amp;L, visible to the salesperson in Studio.
                   </div>
                 </div>
@@ -1465,7 +1767,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                 blockedItems.length > 0 && { k: "dism", icon: "🔁", title: "Dismantle plan", sub: "where each item goes after" },
               ].filter(Boolean);
               return (
-                <div className={GRID} style={GRID_COLS}>
+                <div className={GRID}>
                   {tiles.map(t => (
                     /* No drawn outline. Separation comes from the slate-100 page ground under a
                        white fill, plus a two-layer shadow — a tight 1px one that reads as the
@@ -1476,7 +1778,13 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                          is a toggle, not a launcher. The open one is ringed so you can tell at a
                          glance which of the five the panel below belongs to. */
                       onClickCapture={e => { if (modal === t.k) { e.stopPropagation(); setModal(null); } }}
-                      className={"group text-left rounded-xl p-3.5 h-full flex flex-col transition-all duration-150 shadow-[0_1px_2px_rgba(16,24,40,0.07),0_4px_12px_-4px_rgba(16,24,40,0.12)] hover:-translate-y-0.5 hover:shadow-[0_2px_6px_rgba(16,24,40,0.1),0_14px_28px_-10px_rgba(16,24,40,0.28)] " + (modal === t.k ? "ring-2 ring-indigo-500 " : "") + (t.tone || "bg-white")}>
+                      className={"group text-left rounded-xl p-3 sm:p-3.5 h-full flex flex-col transition-all duration-150 shadow-[0_1px_2px_rgba(16,24,40,0.07),0_4px_12px_-4px_rgba(16,24,40,0.12)] hover:-translate-y-0.5 hover:shadow-[0_2px_6px_rgba(16,24,40,0.1),0_14px_28px_-10px_rgba(16,24,40,0.28)] " + (modal === t.k ? "ring-2 ring-blue-500 " : "") + (t.tone || "bg-white")}>
+                      {/* One size at every width now. The phone tile used to be the full column
+                          wide — one per row — so its type was bumped a step to fill it. Two to a
+                          row it is about 170px, narrower than the desktop tile, and the bumped
+                          sizes wrapped every title onto three lines. items-start rather than
+                          centred for the same reason: once a title can wrap, the icon has to
+                          stay level with its first line. */}
                       <div className="flex items-start gap-2.5">
                         <span aria-hidden="true" className={"shrink-0 w-9 h-9 rounded-lg flex items-center justify-center text-base leading-none " + (t.alert ? "bg-white shadow-[0_1px_2px_rgba(16,24,40,0.08)]" : "bg-gray-100")}>{t.icon}</span>
                         <div className="min-w-0 flex-1">
@@ -1485,8 +1793,10 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                         </div>
                         {/* gray-300 put this at ~1.5:1 on white — present in the markup, absent
                             on screen. gray-500 is 4.8:1, and it darkens on hover so the chevron
-                            confirms the whole tile is the target, not just the corner it sits in. */}
-                        <span aria-hidden="true" className="shrink-0 text-gray-500 group-hover:text-gray-900 text-base font-semibold leading-none transition-colors">›</span>
+                            confirms the whole tile is the target, not just the corner it sits in.
+                            Hidden below sm: at a 170px column it cost real width the title needed,
+                            and on a touch screen there is no hover state for it to explain. */}
+                        <span aria-hidden="true" className="hidden sm:block shrink-0 text-gray-500 group-hover:text-gray-900 text-base font-semibold leading-none transition-colors">›</span>
                       </div>
                       {/* Only tiles that HAVE a headline figure reserve room for one — an empty
                           line on the others would read as a number that failed to load. */}
@@ -1507,14 +1817,16 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                 income cards and the event header all stay in view while you read it.
                 Same mechanic as before: every block still lives here and hides itself unless it
                 is the open one (modalCls), so nothing had to be moved or re-parented. */}
-            <div className={modal ? "" : "hidden"}>
-              <div className="rounded-2xl bg-gray-50 ring-1 ring-gray-200 overflow-hidden">
-                {/* NOT sticky. It was, back when this panel was a dialog with its own scroll —
-                    but inline the page scrolls instead, so a sticky bar just hovers over the
-                    block underneath and covered the first block's subtitle permanently. Nothing
-                    is lost by letting it scroll away: the tile above toggles the panel shut, and
-                    Escape still closes it. */}
-                <div className="bg-white border-b px-4 py-2.5 flex items-center justify-between gap-3">
+            <div onClick={onPanelBackdrop} className={modal ? PANEL_WRAP : "hidden"}>
+              <div className={PANEL_CARD}>
+                {/* NOT sticky from sm up. It was, back when this panel was a dialog with its own
+                    scroll — but inline the page scrolls instead, so a sticky bar just hovers over
+                    the block underneath and covered the first block's subtitle permanently.
+                    Nothing is lost by letting it scroll away: the tile above toggles the panel
+                    shut, and Escape still closes it. On a phone it is pinned by the flex column
+                    instead — the body scrolls under it — so the close button is always reachable
+                    without scrolling a sheet back to the top. */}
+                <div className="shrink-0 bg-white px-4 py-2.5 flex items-center justify-between gap-3">
                   <div className="min-w-0 text-[13px] font-semibold text-gray-600 truncate">{DEPT_ICON[dept]} {dept} · {sel.clientName || "Event"}</div>
                   <button onClick={() => setModal(null)} aria-label="Close"
                     className="group shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-red-600 hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400 transition-colors">
@@ -1527,7 +1839,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                     </svg>
                   </button>
                 </div>
-                <div className="p-3 sm:p-4 space-y-3">
+                <div className={PANEL_BODY}>
 
             {/* Fabric: stock vs requirement + shortfall (Fabric dept only) */}
             {dept === "Fabric" && (
@@ -1536,7 +1848,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                 {upcomingFabricShort.length > 0 && (
                   <div className={"bg-red-50 rounded-xl overflow-hidden" + modalCls("fabshort")}>
                     <div className="px-4 py-2.5 bg-red-100/70 text-sm font-bold text-red-800">⚠️ {upcomingFabricShort.length} upcoming fabric shortfall{upcomingFabricShort.length > 1 ? "s" : ""} — order ahead</div>
-                    <div className="divide-y divide-red-100">
+                    <div className="">
                       {upcomingFabricShort.map((s, i) => (
                         <div key={i} className="flex items-center justify-between px-4 py-1.5 text-xs">
                           <span className="text-red-800"><b>{s.fabric}</b> · {s.colour}</span>
@@ -1556,9 +1868,9 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                   {fabricReqRows.length === 0 ? (
                     <div className="px-4 py-5 text-center text-xs text-gray-400">{sel?.fabricPlan ? "No fabric required for this event." : "No fabric plan synced yet — open Deal Check for this event in Studio."}</div>
                   ) : fabricReqRows.map(ft => (
-                    <div key={ft.key} className="border-t first:border-t-0">
+                    <div key={ft.key}>
                       <div className="px-4 py-1.5 bg-gray-50/60 text-xs font-semibold text-gray-700">{ft.emoji} {ft.label}</div>
-                      <div className="divide-y">
+                      <div className="">
                         {ft.rows.map((r, i) => (
                           /* Four fixed columns need ~430px. Below sm the colour takes its own
                              line and need / have / short wrap under it left-aligned — the
@@ -1579,41 +1891,37 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
 
             {/* Blocked inventory */}
             <div className={"bg-white rounded-xl shadow-[0_1px_2px_rgba(16,24,40,0.06),0_1px_3px_rgba(16,24,40,0.05)] overflow-hidden" + modalCls("inv")}>
-              <div className="px-4 py-3 bg-gray-50 border-b flex items-center justify-between gap-3 flex-wrap">
-                <div className="flex items-center gap-3 min-w-0">
-                  <span aria-hidden="true" className="shrink-0 w-9 h-9 rounded-lg bg-white shadow-[0_1px_2px_rgba(16,24,40,0.08)] flex items-center justify-center text-base leading-none">📦</span>
+              {/* Summary strip. Tinted blue rather than grey and the figure set in a white pill:
+                  with the rows below now white cards on a light ground, a grey header read as
+                  one more row instead of as the thing they add up to. */}
+              {/* No flex-wrap. It was wrapping on a phone — title on one line, the figure dropped
+                  onto a second — which doubled the strip's height for a caption and a number that
+                  both fit once the title is allowed to truncate. min-w-0 on the text block is what
+                  lets it truncate rather than push the figure off the row. */}
+              <div className="m-2.5 mb-0 px-2.5 py-2 rounded-xl bg-blue-50 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span aria-hidden="true" className="shrink-0 w-8 h-8 rounded-lg bg-white shadow-[0_1px_2px_rgba(16,24,40,0.08)] flex items-center justify-center text-sm leading-none">📦</span>
                   <div className="min-w-0">
-                    <div className="text-sm font-semibold text-gray-900 truncate">Inventory blocked for {dept}</div>
-                    <div className="text-[11px] text-gray-500">{blockedItemsGrouped.length} item{blockedItemsGrouped.length === 1 ? "" : "s"} held for this event</div>
+                    <div className="text-[13px] font-semibold text-gray-900 truncate">Inventory blocked for {dept}</div>
+                    <div className="text-[10px] text-gray-500 truncate">{blockedItemsGrouped.length} item{blockedItemsGrouped.length === 1 ? "" : "s"} held for this event</div>
                   </div>
                 </div>
-                <div className="text-xl font-bold text-gray-900 tabular-nums whitespace-nowrap">{fmt(rentalIncome)}</div>
+                <div className="shrink-0 rounded-lg bg-white px-2.5 py-1 text-[15px] font-bold text-gray-900 tabular-nums whitespace-nowrap shadow-[0_1px_2px_rgba(16,24,40,0.06)]">{fmt(rentalIncome)}</div>
               </div>
               {blockedItemsGrouped.length === 0 ? (
                 <div className="px-4 py-6 text-center text-xs text-gray-400">No inventory blocked for this department on this event.</div>
               ) : (
-                /* ── A REAL TABLE, WITH A HEADER ROW ──
-                   Qty, unit rate and line total used to sit as three unlabelled figures at the
-                   end of a flex row, so which was which had to be inferred from magnitude.
-                   Named columns at fixed alignment mean they line up down the card and can be
-                   compared. overflow-x on the wrapper because item names run long and a table
-                   of money is the one thing that must never be silently clipped. */
-                <div className="overflow-x-auto">
-                {/* min-w or the wrapper's overflow-x never fires: percentage columns just
-                    squeeze, and on a phone ITEM / DETAILS collapse to two characters a line
-                    while the money columns wrap mid-number. Below ~640px this scrolls
-                    sideways instead, which keeps the figures readable and aligned. */}
-                <table className="w-full min-w-[640px] text-left border-collapse">
-                  <thead>
-                    <tr className="border-b bg-white">
-                      <th className="px-4 py-2 text-[10px] font-bold uppercase tracking-wide text-gray-400 w-[34%]">Item</th>
-                      <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-gray-400 w-[22%]">Details</th>
-                      <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-gray-400 text-right whitespace-nowrap w-[10%]">Qty</th>
-                      <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-gray-400 text-right whitespace-nowrap w-[16%]">Rate / unit</th>
-                      <th className="px-4 py-2 text-[10px] font-bold uppercase tracking-wide text-gray-400 text-right whitespace-nowrap w-[18%]">Total</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y">
+                /* ── ONE CARD PER ITEM, NOT A TABLE ──
+                   This was a five-column table with a header row, which meant two different
+                   layouts to maintain: a real table from sm up and a grid that faked one below,
+                   with the whole display chain (table → tbody → tr → td) switching at the
+                   breakpoint. One card per row is a single layout that works at every width, and
+                   it drops the 640px minimum that used to put a money table in a horizontal
+                   scroller on a phone.
+                   The header row goes with it: with one row per card there is nothing for a
+                   shared header to sit above, so each figure carries its own label — which is
+                   also the only form that survived the phone layout anyway. */
+                <div className="p-2.5 space-y-2">
                   {blockedItemsGrouped.map(it => {
                     // ── WHY THE TOTAL IS NOT ALWAYS RATE × QTY ──
                     // On rows pushed from Deal Check, `unit` and `total` are independent fields:
@@ -1626,11 +1934,13 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                     const derived = Math.round((Number(it.unit) || 0) * (Number(it.qty) || 0));
                     const mismatch = derived !== Math.round(Number(it.total) || 0);
                     return (
-                    <Fragment key={it.id}>
-                      <tr className="align-middle hover:bg-gray-50 transition-colors">
-                        <td className="px-4 py-2.5">
-                          <div className="flex items-center gap-3 min-w-0">
-                            {it.photo ? <img src={it.photo} alt="" onClick={() => setZoomImg(it.photo)} className="w-11 h-11 rounded-lg object-cover border cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-11 h-11 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-lg shrink-0">📦</div>}
+                    <div key={it.id} className="rounded-xl bg-white ring-1 ring-gray-100 shadow-[0_1px_2px_rgba(16,24,40,0.05)] overflow-hidden">
+                      {/* flex-wrap, so the figures drop to their own full-width line on a phone
+                          and sit inline beside the name from sm up — one rule instead of two
+                          layouts. */}
+                      <div className="p-2.5 flex flex-wrap items-center gap-x-3 gap-y-2">
+                          <div className="flex items-center gap-3 min-w-0 flex-1">
+                            {it.photo ? <img src={it.photo} alt="" onClick={() => setZoomImg(it.photo)} className="w-12 h-12 rounded-lg object-cover border cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-12 h-12 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-lg shrink-0">📦</div>}
                             <div className="min-w-0">
                               <div className="text-sm font-semibold text-gray-900 truncate">{it.name}</div>
                               {/* Every status badge the flat-list version carried, kept as a
@@ -1638,108 +1948,166 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                                   it — in a fixed-width ITEM column four inline badges pushed the
                                   name out of sight, which is the opposite of what they are for. */}
                               <div className="flex items-center gap-1 flex-wrap mt-0.5">
-                                {it.isKit && <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 font-bold">KIT</span>}
+                                {/* ── THE KIT BADGE IS THE TOGGLE ──
+                                    The components are the one thing on this row that can be
+                                    opened, and the badge is already the thing that says there
+                                    are any — so it opens them rather than a separate control
+                                    competing with it. It carries the count, so you can tell
+                                    what you are unfolding before you unfold it.
+                                    A kit with no components stays a plain label: a control that
+                                    reveals nothing is worse than no control. */}
+                                {it.isKit && ((it.components || []).length > 0 ? (
+                                  <button onClick={() => setKitOpen(o => ({ ...o, [it.id]: !o[it.id] }))}
+                                    aria-expanded={!!kitOpen[it.id]}
+                                    title={kitOpen[it.id] ? "Hide the kit's contents" : "Show what is inside this kit"}
+                                    className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 font-bold hover:bg-blue-200 transition-colors">
+                                    KIT · {it.components.length}
+                                    <span aria-hidden="true" className={"transition-transform duration-150 " + (kitOpen[it.id] ? "rotate-180" : "")}>
+                                      <svg width="9" height="9" viewBox="0 0 14 14" fill="none"><path d="M3.5 5 L7 8.5 L10.5 5" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                                    </span>
+                                  </button>
+                                ) : (
+                                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 font-bold">KIT</span>
+                                ))}
                                 {it.shortQty > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-bold">SHORT ×{it.shortQty}</span>}
                                 {it.prodOrBuy && <span className={"text-[10px] px-1.5 py-0.5 rounded font-bold " + (it.prodOrBuy === "buying" ? "bg-orange-100 text-orange-700" : "bg-purple-100 text-purple-700")}>{it.prodOrBuy === "buying" ? "🛒 BUYING" : "🏭 PRODUCTION"}</span>}
                                 {it.isSwapped && <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-100 text-sky-700 font-bold">🔁 SWAPPED</span>}
                               </div>
+                              {/* Sub-category and the explanations that go with it. They used to
+                                  be their own DETAILS column; on a card they belong under the
+                                  name they describe. */}
+                              <div className="text-xs text-gray-500 mt-0.5">
+                                <div className="truncate" title={it.sub || ""}>{it.sub || "—"}</div>
+                                {it.shortQty > 0 && <div className="text-amber-600 mt-0.5">{it.shortQty} short of stock — priced at cost, chase or produce</div>}
+                                {it.isSwapped && <div className="text-sky-600 mt-0.5">swapped in for {it.swappedFrom}</div>}
+                              </div>
                             </div>
                           </div>
-                        </td>
-                        <td className="px-3 py-2.5 text-xs text-gray-500">
-                          <div>{it.sub || "—"}</div>
-                          {/* The explanations that rode alongside the sub-category in the flat
-                              list. They belong with DETAILS, not with the name. */}
-                          {it.shortQty > 0 && <div className="text-amber-600 mt-0.5">{it.shortQty} short of stock — priced at cost, chase or produce</div>}
-                          {it.isSwapped && <div className="text-sky-600 mt-0.5">swapped in for {it.swappedFrom}</div>}
-                        </td>
-                        <td className="px-3 py-2.5 text-sm font-semibold text-gray-700 text-right tabular-nums whitespace-nowrap">×{it.qty}</td>
-                        <td className="px-3 py-2.5 text-sm text-gray-600 text-right tabular-nums whitespace-nowrap">{fmt(it.unit)}</td>
-                        <td className="px-4 py-2.5 text-right whitespace-nowrap">
-                          <div className="text-sm font-bold text-gray-900 tabular-nums">{fmt(it.total)}</div>
-                          {mismatch && <div className="text-[10px] text-gray-400 tabular-nums" title={`Rate × qty is ${fmt(derived)}. This line is ${fmt(it.total)}${it.isKit ? " because a kit's total includes the components listed below." : "."}`}>{it.isKit ? "incl. kit contents" : `rate × qty = ${fmt(derived)}`}</div>}
-                        </td>
-                      </tr>
-                      {/* Kit contents — each sub-element loaded separately, with its own rental (customised
-                          per-deal by the salesperson). Their totals sum to the kit total above. */}
-                      {/* Kit contents keep their own sub-rows, but now inside the table so each
-                          component's qty, rate and total sit in the SAME columns as the kit line
-                          above them. Previously they were a separate flex list with their own
-                          widths, so a component's total and its parent's total did not align —
-                          which is the one comparison this block exists to support, since the
-                          components sum to the kit line. */}
-                      {it.isKit && it.components && it.components.length > 0 && it.components.map((cp, ci) => (
-                        <tr key={"c" + ci} className="bg-indigo-50/30 hover:bg-indigo-50/70 transition-colors">
-                          <td className="pl-8 pr-4 py-1.5">
-                            <div className="flex items-center gap-2 min-w-0">
-                              <span aria-hidden="true" className="text-indigo-300 shrink-0">└</span>
+                          {/* Divided from the name and from each other, so three right-aligned
+                              figures read as three columns rather than one run of digits. */}
+                          <div className="w-full sm:w-auto flex items-start gap-0 divide-x divide-gray-100 sm:border-l sm:border-gray-100 sm:pl-1">
+                            <StatCell label="Qty" w={STAT_W.qty}>
+                              <span className="text-sm font-semibold text-gray-700 tabular-nums">×{it.qty}</span>
+                            </StatCell>
+                            <StatCell label="Rate" w={STAT_W.rate}>
+                              <span className="text-sm text-gray-600 tabular-nums">{fmt(it.unit)}</span>
+                            </StatCell>
+                            <StatCell label="Total" w={STAT_W.total}>
+                              <div className="text-sm font-bold text-gray-900 tabular-nums">{fmt(it.total)}</div>
+                              {mismatch && <div className="text-[10px] text-gray-400 tabular-nums mt-0.5" title={`Rate × qty is ${fmt(derived)}. This line is ${fmt(it.total)}${it.isKit ? " because a kit's total includes the components listed below." : "."}`}>{it.isKit ? "incl. kit" : `≠ ${fmt(derived)}`}</div>}
+                            </StatCell>
+                          </div>
+                      </div>
+                      {/* Kit contents — each sub-element loaded separately, with its own rental
+                          (customised per-deal by the salesperson). Their totals sum to the kit
+                          total above, which is why the three figures reuse the kit row's own
+                          column widths: the sum only reads as a sum if it lines up under it.
+                          Tinted and inset, so an opened kit is visibly part of its card rather
+                          than a run of new items after it. */}
+                      {it.isKit && kitOpen[it.id] && it.components && it.components.length > 0 && (
+                        <div className="bg-blue-50/50 px-2.5 py-1.5 space-y-1">
+                          {it.components.map((cp, ci) => (
+                            <div key={"c" + ci} className="flex items-center gap-2">
+                              <span aria-hidden="true" className="text-blue-300 shrink-0 text-xs">└</span>
                               {cp.photo ? <img src={cp.photo} alt="" onClick={() => setZoomImg(cp.photo)} className="w-6 h-6 rounded object-cover border cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-6 h-6 rounded bg-gray-100 flex items-center justify-center text-gray-300 text-[10px] shrink-0">🌸</div>}
-                              <span className="text-xs text-gray-700 truncate">{cp.name}</span>
+                              <span className="text-xs text-gray-700 truncate flex-1 min-w-0" title={cp.sub || ""}>{cp.name}</span>
+                              <span className={"shrink-0 text-xs font-medium text-gray-500 text-right tabular-nums " + STAT_W.qty}>×{cp.qty}</span>
+                              <span className={"shrink-0 text-xs text-gray-500 text-right tabular-nums " + STAT_W.rate}>{fmt(cp.unit)}</span>
+                              <span className={"shrink-0 text-xs font-semibold text-gray-700 text-right tabular-nums " + STAT_W.total}>{fmt(cp.total)}</span>
                             </div>
-                          </td>
-                          <td className="px-3 py-1.5 text-[11px] text-gray-400">{cp.sub || "—"}</td>
-                          <td className="px-3 py-1.5 text-xs font-medium text-gray-500 text-right tabular-nums whitespace-nowrap">×{cp.qty}</td>
-                          <td className="px-3 py-1.5 text-xs text-gray-500 text-right tabular-nums whitespace-nowrap">{fmt(cp.unit)}</td>
-                          <td className="px-4 py-1.5 text-xs font-semibold text-gray-700 text-right tabular-nums whitespace-nowrap">{fmt(cp.total)}</td>
-                        </tr>
-                      ))}
-                    </Fragment>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                     );
                   })}
-                  </tbody>
-                </table>
                 </div>
               )}
             </div>
 
             {/* Manpower plan (editable / override) */}
             <div className={"bg-white rounded-xl shadow-[0_1px_2px_rgba(16,24,40,0.06),0_1px_3px_rgba(16,24,40,0.05)] overflow-hidden" + modalCls("mp")}>
-              <div className="px-4 py-3 bg-gray-50 border-b flex items-center justify-between gap-3 flex-wrap">
-                <div className="flex items-center gap-3 min-w-0">
-                  <span aria-hidden="true" className="shrink-0 w-9 h-9 rounded-lg bg-white shadow-[0_1px_2px_rgba(16,24,40,0.08)] flex items-center justify-center text-base leading-none">👷</span>
+              {/* Same compact tinted strip the Inventory panel uses, deliberately. The reference
+                  for this panel draws a taller header with the figure on its own line below the
+                  caption — but that is the shape that was just trimmed off Inventory for being
+                  too tall, and two panels opened from the same row of tiles should not disagree
+                  about what their own header looks like. */}
+              <div className="m-2.5 mb-0 px-2.5 py-2 rounded-xl bg-blue-50 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span aria-hidden="true" className="shrink-0 w-8 h-8 rounded-lg bg-white shadow-[0_1px_2px_rgba(16,24,40,0.08)] flex items-center justify-center text-sm leading-none">👷</span>
                   <div className="min-w-0">
-                    <div className="text-sm font-semibold text-gray-900">Manpower plan</div>
-                    <div className="text-[11px] text-gray-500">From Studio; edit any field, it saves. Sum matches the income card.</div>
+                    <div className="text-[13px] font-semibold text-gray-900 truncate">Manpower plan</div>
+                    <div className="text-[10px] text-gray-500 truncate">From Studio; edit any field, it saves. Sum matches the income card.</div>
                   </div>
                 </div>
-                <div className="text-xl font-bold text-gray-900 tabular-nums whitespace-nowrap">{fmt(mpCost)}</div>
+                <div className="shrink-0 rounded-lg bg-white px-2.5 py-1 text-[15px] font-bold text-gray-900 tabular-nums whitespace-nowrap shadow-[0_1px_2px_rgba(16,24,40,0.06)]">{fmt(mpCost)}</div>
               </div>
+              {/* The booking note as its own tinted card with a marker, not a grey 10px line
+                  wedged under the header. It explains how every figure below is arrived at, so
+                  it is the thing to read before the rows — at 10px grey on grey it read as a
+                  caption on the header and was skipped. */}
               {sel.mpPhases && (
-                <div className="px-4 py-1.5 text-[10px] text-gray-500 bg-gray-50/60 border-b">
-                  📅 Crew booked across: {sel.mpPhases.minusOne ? "−1 setup day · " : ""}{sel.mpPhases.eventDays || 0} event day{(sel.mpPhases.eventDays || 0) > 1 ? "s" : ""}{sel.mpPhases.gapDays ? ` · ${sel.mpPhases.gapDays} gap day(s)` : ""}{sel.mpPhases.dismantle ? " · +1 dismantle day" : ""}. Each crew line = peak count × ₹/day × its working days (open a row to see the math).
+                <div className="m-2.5 mb-0 px-2.5 py-2 rounded-xl bg-gray-50 flex items-start gap-2 text-[11px] text-gray-600 leading-relaxed">
+                  <span aria-hidden="true" className="shrink-0 text-sm leading-none mt-px">📅</span>
+                  <span>Crew booked across: {sel.mpPhases.minusOne ? "−1 setup day · " : ""}{sel.mpPhases.eventDays || 0} event day{(sel.mpPhases.eventDays || 0) > 1 ? "s" : ""}{sel.mpPhases.gapDays ? ` · ${sel.mpPhases.gapDays} gap day(s)` : ""}{sel.mpPhases.dismantle ? " · +1 dismantle day" : ""}. Each crew line = peak count × ₹/day × its working days (open a row to see the math).</span>
                 </div>
               )}
               {mpRows.length === 0 && (
                 <div className="px-4 py-5 text-center text-xs text-gray-400">No crew assigned to {dept} for this event — matches the ₹0 income card. Add a crew type below if you need one.</div>
               )}
-              <div className="divide-y">
+              <div className="p-2.5 space-y-2">
                 {mpRows.map((r, i) => {
                   const overridden = r.sysCount != null && Number(r.count) !== Number(r.sysCount);
-                  const days = Number(r.days) || 1;
                   const open = !!mpOpen[i];
                   return (
-                    <div key={i} className="px-4 py-2.5 hover:bg-gray-50/70 transition-colors">
-                      {/* how-button + name + qty + ₹/day + line total is ~460px of fixed
-                          content. Wrapping lets the two inputs drop to a second line on a
-                          phone instead of shrinking below a tappable size. */}
-                      <div className="flex items-center flex-wrap gap-x-3 gap-y-2">
-                        <button onClick={() => setMpOpen(o => ({ ...o, [i]: !o[i] }))} className="shrink-0 text-[10px] font-semibold text-indigo-600 hover:text-indigo-800 border border-indigo-200 rounded px-1.5 py-0.5" title="How this crew number was calculated">{open ? "▾ hide" : "▸ how"}</button>
-                        <span className="flex-1 min-w-[110px] text-sm font-medium text-gray-800">{r.type}{r.shared && <span className="ml-2 text-[10px] bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded font-semibold">SHARED</span>}</span>
+                    /* ── ONE CARD PER CREW TYPE ──
+                       These rows were a single wrapping flex line with the derivation toggle as
+                       a small "▸ how" pill at its head. With two inputs, a label, a badge and a
+                       total on one line, a phone wrapped it into an unpredictable shape — and the
+                       toggle, which is the most useful control here, looked like the least
+                       important thing on the row.
+                       As a card it is two deliberate lines: who, and how many, on top; what they
+                       cost, below. The toggle becomes the chevron tile that opens the card. */
+                    <div key={i} className="rounded-xl bg-white ring-1 ring-gray-100 shadow-[0_1px_2px_rgba(16,24,40,0.05)] p-2.5 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <button onClick={() => setMpOpen(o => ({ ...o, [i]: !o[i] }))}
+                          aria-expanded={open}
+                          className="shrink-0 w-8 h-8 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-500 flex items-center justify-center transition-colors"
+                          title={open ? "Hide how this crew number was calculated" : "How this crew number was calculated"}>
+                          <span aria-hidden="true" className={"transition-transform duration-150 " + (open ? "rotate-180" : "")}>
+                            <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M3.5 5 L7 8.5 L10.5 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                          </span>
+                        </button>
+                        <span aria-hidden="true" className="shrink-0 w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center text-sm leading-none">{crewIcon(r.type)}</span>
+                        <span className="flex-1 min-w-0 text-sm font-semibold text-gray-900 truncate">{r.type}{r.shared && <span className="ml-1.5 text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded font-bold align-middle">SHARED</span>}</span>
                         {r.shared && !dayWise(r) ? (
-                          <span className="text-[10px] text-gray-400 mr-2">split allocation</span>
-                        ) : (<>
-                          {dayWise(r)
-                            ? <div className="flex items-center gap-1"><span className="text-xs text-gray-400" title="Total dihari (crew × shifts, summed across all days). Auto-calculated — edit the crew on any day in the plan below and this updates.">dihari</span><span className="w-16 border border-transparent rounded-lg px-2 py-1.5 text-sm text-center font-semibold bg-gray-100 text-gray-700" title="Auto-calculated from the day-wise plan below">{Number(r.rate) > 0 ? Math.round(Number(lineCost(r)) / Number(r.rate)) : 0}</span></div>
-                            : <div className="flex items-center gap-1"><span className="text-xs text-gray-400">qty</span><input type="number" min="0" value={r.count} onChange={e => setMp(i, "count", e.target.value)} className={"w-16 border rounded-lg px-2 py-1.5 text-sm text-center " + (overridden ? "border-amber-400 bg-amber-50 font-bold" : "")} /></div>}
-                          <div className="flex items-center gap-1"><span className="text-xs text-gray-400">₹/day</span><input type="number" min="0" value={r.rate} onChange={e => setMp(i, "rate", e.target.value)} className="w-20 border rounded-lg px-2 py-1.5 text-sm text-center" /></div>
-                        </>)}
-                        <div className="text-sm font-semibold text-gray-700 w-24 text-right ml-auto">{fmt(lineCost(r))}</div>
+                          <span className="shrink-0 text-[10px] text-gray-400">split allocation</span>
+                        ) : dayWise(r) ? (
+                          <div className="shrink-0 flex items-center gap-1.5"><span className="text-[11px] text-gray-400" title="Total dihari (crew × shifts, summed across all days). Auto-calculated — edit the crew on any day in the plan below and this updates.">dihari</span><span className="w-16 rounded-lg px-2 py-1.5 text-sm text-center font-bold bg-gray-100 text-gray-700" title="Auto-calculated from the day-wise plan below">{Number(r.rate) > 0 ? Math.round(Number(lineCost(r)) / Number(r.rate)) : 0}</span></div>
+                        ) : (
+                          <div className="shrink-0 flex items-center gap-1.5"><span className="text-[11px] text-gray-400">qty</span><input type="number" min="0" value={r.count} onChange={e => setMp(i, "count", e.target.value)} className={"w-16 rounded-lg px-2 py-1.5 text-sm text-center font-semibold ring-1 " + (overridden ? "ring-amber-400 bg-amber-50 font-bold" : "ring-gray-200 bg-white")} /></div>
+                        )}
                       </div>
+                      {/* Second line: the rate that is editable, and the line total it produces.
+                          The total sits in a filled pill rather than as loose text so the one
+                          figure you cannot type into does not look like another input. */}
+                      {!(r.shared && !dayWise(r)) && (
+                        <div className="flex items-center gap-2">
+                          <span className="shrink-0 text-[11px] text-gray-400">₹/day</span>
+                          <input type="number" min="0" value={r.rate} onChange={e => setMp(i, "rate", e.target.value)} className="w-24 rounded-lg ring-1 ring-gray-200 bg-white px-2 py-1.5 text-sm text-center font-semibold" />
+                          <div className="ml-auto shrink-0 rounded-lg bg-gray-100 px-3 py-1.5 text-sm font-bold text-gray-900 tabular-nums">{fmt(lineCost(r))}</div>
+                        </div>
+                      )}
+                      {r.shared && !dayWise(r) && (
+                        <div className="flex items-center">
+                          <div className="ml-auto shrink-0 rounded-lg bg-gray-100 px-3 py-1.5 text-sm font-bold text-gray-900 tabular-nums">{fmt(lineCost(r))}</div>
+                        </div>
+                      )}
                       {open && (
-                        <div className="text-[10px] text-gray-500 mt-1.5 pl-7 leading-relaxed bg-gray-50 rounded-lg p-2">
+                        <div className="text-[10px] text-gray-500 leading-relaxed bg-gray-50 rounded-lg p-2">
                           {r.shared ? (
                             <>
-                              <div className="text-[10px] uppercase tracking-wide text-indigo-500 font-semibold mb-1">How {r.type} derived → then split</div>
+                              <div className="text-[10px] uppercase tracking-wide text-blue-500 font-semibold mb-1">How {r.type} derived → then split</div>
                               {renderMpTrace(r.trace)}
                               {renderMpSchedule(r)}
                               {r.splitInfo && r.splitInfo.byUsage && r.splitInfo.usageTotal > 0 ? (
@@ -1762,7 +2130,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                               )}
                             </>
                           ) : (<>
-                            <div className="text-[10px] uppercase tracking-wide text-indigo-500 font-semibold mb-1">How {r.sysCount != null && r.sysCount !== "" ? r.sysCount : (r.count || "")} {r.type} derived</div>
+                            <div className="text-[10px] uppercase tracking-wide text-blue-500 font-semibold mb-1">How {r.sysCount != null && r.sysCount !== "" ? r.sysCount : (r.count || "")} {r.type} derived</div>
                             {renderMpTrace(r.trace)}
                             {renderMpSchedule(r)}
                             {r.basis && !r.trace && <span className="text-gray-600">📐 {r.basis}<br /></span>}
@@ -1786,7 +2154,15 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                   );
                 })}
               </div>
-              <div className="px-4 py-2"><button onClick={addMp} className="text-xs text-indigo-600 hover:text-indigo-800 font-medium">+ Add crew type</button></div>
+              {/* A dashed full-width slot rather than a small text link. It sits at the end of a
+                  column of filled cards, so drawing it as the outline of the card it would add
+                  says what it does without a word of explanation — and gives it a target the
+                  width of the rows it joins instead of the width of three words. */}
+              <div className="px-2.5 pb-2.5">
+                <button onClick={addMp} className="w-full rounded-xl border-2 border-dashed border-blue-200 hover:border-blue-300 hover:bg-blue-50/50 text-blue-600 text-[13px] font-semibold py-2.5 flex items-center justify-center gap-1.5 transition-colors">
+                  <span aria-hidden="true" className="text-base leading-none">+</span> Add crew type
+                </button>
+              </div>
             </div>
 
             {/* Actuals → exact cost */}
@@ -1806,11 +2182,11 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                           and how each is derived. */}
                       <div className="bg-white border border-emerald-100 rounded-lg overflow-hidden text-xs">
                         <div className="px-3 py-2 bg-emerald-50 font-semibold text-emerald-900 flex justify-between"><span>🌸 Floral cost to source</span><span>{fmt(mandiActualTotal)}</span></div>
-                        <div className="divide-y">
+                        <div className="">
                           <div className="flex justify-between px-3 py-1.5"><span className="text-gray-600">🌿 Real flowers (mandi) <span className="text-[10px] text-gray-400">— see shopping list below</span></span><span className="font-medium text-gray-800">{fmt(mandiActualReal)}</span></div>
                           <div>
                             <div className="flex justify-between px-3 py-1.5 items-center">
-                              <span className="text-gray-600 flex items-center gap-1.5">🌸 Artificial flowers {fp.artificial && <button onClick={() => setArtHowOpen(o => !o)} className="text-[10px] font-semibold text-indigo-500 hover:text-indigo-700 border border-indigo-200 rounded px-1 leading-tight" title="How the artificial cost is derived">{artHowOpen ? "▾" : "▸"} how</button>}</span>
+                              <span className="text-gray-600 flex items-center gap-1.5">🌸 Artificial flowers {fp.artificial && <button onClick={() => setArtHowOpen(o => !o)} className="text-[10px] font-semibold text-blue-500 hover:text-blue-700 border border-blue-200 rounded px-1 leading-tight" title="How the artificial cost is derived">{artHowOpen ? "▾" : "▸"} how</button>}</span>
                               <span className="font-medium text-gray-800">{fmt(fp.artificial ? fp.artificial.total : artificialProj)}</span>
                             </div>
                             {fp.artificial && artHowOpen && (
@@ -1819,7 +2195,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                                   {fp.artificial.flowerBunches > 0 && <div>🌸 Flowers: <b>{fp.artificial.flowerBunches}</b> bunches ÷ {fp.artificial.flowerBPK}/kg = <b>{fp.artificial.flowerKg} kg</b> × {fmt(fp.artificial.flowerRate)}/kg = <b className="text-gray-900">{fmt(fp.artificial.flowerCost)}</b></div>}
                                   {fp.artificial.greenBunches > 0 && <div>🌿 Greens: <b>{fp.artificial.greenBunches}</b> bunches ÷ {fp.artificial.greenBPK}/kg = <b>{fp.artificial.greenKg} kg</b> × {fmt(fp.artificial.greenRate)}/kg = <b className="text-gray-900">{fmt(fp.artificial.greenCost)}</b></div>}
                                   {fp.artificial.flowerBunches <= 0 && fp.artificial.greenBunches <= 0 && <div className="text-gray-400 italic">No artificial bunches captured — set "Art Bunches/Unit" on flowers in the Mandi tab.</div>}
-                                  <div className="pt-1 border-t text-right">Total artificial = <b className="text-gray-900">{fmt(fp.artificial.total)}</b></div>
+                                  <div className="pt-1 text-right">Total artificial = <b className="text-gray-900">{fmt(fp.artificial.total)}</b></div>
                                 </div>
                               </div>
                             )}
@@ -1846,11 +2222,11 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                           <span></span><span className="w-28"></span>
                           <span className="flex items-center justify-end gap-1 w-44"><span className="w-12 text-center">qty</span><span className="text-transparent">×</span><span className="w-16 text-center">₹/unit</span><span className="w-14 text-right">total</span><span className="w-3"></span></span>
                         </div>
-                        <div className="px-3 py-1 bg-emerald-50/40 text-[10px] text-emerald-700/80 border-b border-emerald-50">Real shopping = <b>qty × ₹/unit</b>. Projected = planned units from the recipe × mandi price{fp.season && fp.season.mult && fp.season.mult !== 1 ? ` × ${fp.season.mult} season` : ""}.</div>
+                        <div className="px-3 py-1 bg-emerald-50/40 text-[10px] text-emerald-700/80">Real shopping = <b>qty × ₹/unit</b>. Projected = planned units from the recipe × mandi price{fp.season && fp.season.mult && fp.season.mult !== 1 ? ` × ${fp.season.mult} season` : ""}.</div>
                         {mandiRows.length === 0 && fpFlowers.length === 0 ? (
                           <div className="px-3 py-3 text-xs text-gray-400 text-center">No mandi plan captured. Add flowers below, or run Deal Check before marking Sold to auto-capture it.</div>
                         ) : (
-                          <div className="divide-y">
+                          <div className="">
                             {mandiRows.map((r, i) => {
                               const lineActual = (Number(r.qty) || 0) * (Number(r.price) || 0);
                               const lineVar = lineActual - (Number(r.projCost) || 0);
@@ -1875,7 +2251,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                                 <div className="bg-gray-50/60">
                                   <div className="grid grid-cols-[1fr_auto_auto] gap-2 px-3 py-1.5 items-center">
                                     <div className="text-xs text-gray-500 flex items-center gap-1.5 min-w-0">
-                                      {art && <button onClick={() => setArtHowOpen(o => !o)} className="shrink-0 text-[10px] font-semibold text-indigo-500 hover:text-indigo-700 border border-indigo-200 rounded px-1 leading-tight" title="How the artificial cost was calculated">{artHowOpen ? "▾" : "▸"} how</button>}
+                                      {art && <button onClick={() => setArtHowOpen(o => !o)} className="shrink-0 text-[10px] font-semibold text-blue-500 hover:text-blue-700 border border-blue-200 rounded px-1 leading-tight" title="How the artificial cost was calculated">{artHowOpen ? "▾" : "▸"} how</button>}
                                       <span className="truncate">Artificial flowers / greens <span className="text-[10px] text-gray-400">(not mandi-shopped)</span></span>
                                     </div>
                                     <div className="text-right w-28 text-xs text-gray-400">{fmt(artTot)}</div>
@@ -1887,7 +2263,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                                         {art.flowerBunches > 0 && <div>🌸 Flowers: <b>{art.flowerBunches}</b> bunches ÷ {art.flowerBPK}/kg = <b>{art.flowerKg} kg</b> × {fmt(art.flowerRate)}/kg = <b className="text-gray-900">{fmt(art.flowerCost)}</b></div>}
                                         {art.greenBunches > 0 && <div>🌿 Greens: <b>{art.greenBunches}</b> bunches ÷ {art.greenBPK}/kg = <b>{art.greenKg} kg</b> × {fmt(art.greenRate)}/kg = <b className="text-gray-900">{fmt(art.greenCost)}</b></div>}
                                         {art.flowerBunches <= 0 && art.greenBunches <= 0 && <div className="text-gray-400 italic">No artificial bunches captured — set "Art Bunches/Unit" on flowers in the Mandi tab.</div>}
-                                        <div className="pt-1 border-t text-right">Total artificial = <b className="text-gray-900">{fmt(art.total)}</b></div>
+                                        <div className="pt-1 text-right">Total artificial = <b className="text-gray-900">{fmt(art.total)}</b></div>
                                       </div>
                                     </div>
                                   )}
@@ -1897,7 +2273,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                           </div>
                         )}
                         {/* Totals row */}
-                        <div className="grid grid-cols-[1fr_auto_auto] gap-2 px-3 py-2 bg-emerald-50 border-t border-emerald-100 items-center">
+                        <div className="grid grid-cols-[1fr_auto_auto] gap-2 px-3 py-2 bg-emerald-50 items-center">
                           <span className="text-xs font-bold text-emerald-900">Total</span>
                           <span className="text-right w-28 text-xs font-semibold text-gray-500">{fmt(projectedTotal)}</span>
                           <span className="text-right w-44 text-sm font-bold text-emerald-800 pr-6">{fmt(mandiActualTotal)}</span>
@@ -1943,12 +2319,12 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
               <div className="px-4 py-2.5 bg-gray-50 flex items-center justify-between flex-wrap gap-2">
                 <span className="text-sm font-semibold text-gray-800">🚚 Loading & dispatch <span className="text-xs font-normal text-gray-400">— split inventory across trucks; each prints its own challan</span></span>
                 <div className="flex items-center gap-2">
-                  <button onClick={() => setShowFleet(v => !v)} className="text-[11px] text-indigo-600 hover:text-indigo-800 font-medium">{showFleet ? "Done" : "⚙️ Manage fleet"}</button>
-                  <button onClick={addTruck} className="text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg font-medium">+ Add truck</button>
+                  <button onClick={() => setShowFleet(v => !v)} className="text-[11px] text-blue-600 hover:text-blue-800 font-medium">{showFleet ? "Done" : "⚙️ Manage fleet"}</button>
+                  <button onClick={addTruck} className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg font-medium">+ Add truck</button>
                 </div>
               </div>
               {showFleet && (
-                <div className="px-4 py-3 border-b bg-gray-50 space-y-2">
+                <div className="px-4 py-3 bg-gray-50 space-y-2">
                   <div className="text-[10px] text-gray-400 uppercase tracking-wide font-semibold">Own fleet (shared across departments)</div>
                   {fleet.map(f => (
                     <div key={f.id} className="flex items-center gap-2 text-xs">
@@ -1962,13 +2338,13 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                     <input value={newVeh.vehicle} onChange={e => setNewVeh(v => ({ ...v, vehicle: e.target.value }))} placeholder="Vehicle no." className="border rounded px-2 py-1.5 text-xs" />
                     <input value={newVeh.driver} onChange={e => setNewVeh(v => ({ ...v, driver: e.target.value }))} placeholder="Driver name" className="border rounded px-2 py-1.5 text-xs" />
                     <input value={newVeh.phone} onChange={e => setNewVeh(v => ({ ...v, phone: e.target.value }))} placeholder="Phone" className="border rounded px-2 py-1.5 text-xs" />
-                    <button onClick={addFleet} className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded text-xs font-medium">Add</button>
+                    <button onClick={addFleet} className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded text-xs font-medium">Add</button>
                   </div>
                 </div>
               )}
               {/* Per-item loaded summary across all trucks */}
               {blockedItems.length > 0 && trucks.length > 0 && (
-                <div className="px-4 py-2 border-b bg-gray-50/40">
+                <div className="px-4 py-2 bg-gray-50/40">
                   <div className="text-[10px] uppercase text-gray-400 font-semibold mb-1">Loaded across trucks</div>
                   <div className="flex flex-wrap gap-x-4 gap-y-1">
                     {blockedItems.map(it => { const k = "inv:" + it.id; const ld = truckLoadedQty(k); const full = ld >= it.qty; return (
@@ -1981,7 +2357,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
               {trucks.length === 0 ? (
                 <div className="px-4 py-6 text-center text-xs text-gray-400">No trucks yet. Add a truck to load inventory for dispatch across one or more vehicles.</div>
               ) : (
-                <div className="divide-y">
+                <div className="">
                   {trucks.map((t, ti) => (
                     <div key={t.id} className="p-4 space-y-2">
                       <div className="flex items-center justify-between flex-wrap gap-2">
@@ -1989,14 +2365,14 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                         <div className="flex items-center gap-2">
                           {t.phone && <a href={"tel:" + t.phone} className="inline-flex items-center gap-0.5 text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-2 py-1 hover:bg-emerald-100" title={"Call " + (t.driver || "driver") + " · " + t.phone}>📞 Call</a>}
                           <select value={t.status || "loading"} onChange={e => setTruck(t.id, { status: e.target.value })} className="border rounded-lg px-2 py-1 text-xs capitalize">{TRUCK_STATUS.map(s => <option key={s} value={s}>{s}</option>)}</select>
-                          <button onClick={() => printTruckChallan(t, ti + 1)} className="text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-2.5 py-1 rounded-lg font-medium">🖨️ Challan</button>
+                          <button onClick={() => printTruckChallan(t, ti + 1)} className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1 rounded-lg font-medium">🖨️ Challan</button>
                           <button onClick={() => delTruck(t.id)} className="text-red-400 hover:text-red-600 text-sm">×</button>
                         </div>
                       </div>
                       {eventTrucks.length > 0 && (
                         <div className="flex flex-wrap gap-1.5">
                           {eventTrucks.map(f => { const on = t.vehicle === f.vehicle && t.driver === f.driver; return (
-                            <button key={f.id} onClick={() => setTruck(t.id, { vehicle: f.vehicle || "", driver: f.driver || "", phone: f.phone || "" })} className={"text-[11px] px-2 py-1 rounded-lg border " + (on ? "bg-indigo-600 border-indigo-600 text-white" : "bg-white border-gray-200 text-gray-700 hover:bg-indigo-50")}>🚛 {f.vehicle || f.driver}{f.vehicle && f.driver ? ` · ${f.driver}` : ""}</button>
+                            <button key={f.id} onClick={() => setTruck(t.id, { vehicle: f.vehicle || "", driver: f.driver || "", phone: f.phone || "" })} className={"text-[11px] px-2 py-1 rounded-lg border " + (on ? "bg-blue-600 border-blue-600 text-white" : "bg-white border-gray-200 text-gray-700 hover:bg-blue-50")}>🚛 {f.vehicle || f.driver}{f.vehicle && f.driver ? ` · ${f.driver}` : ""}</button>
                           ); })}
                         </div>
                       )}
@@ -2006,7 +2382,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                         ))}
                       </div>
                       {blockedItems.length > 0 ? (
-                        <div className="border rounded-lg divide-y">
+                        <div className="rounded-lg bg-gray-50/60 p-1">
                           {blockedItems.map(it => { const k = "inv:" + it.id; const onThis = Number(t.items?.[k]) || 0; const totalLoaded = truckLoadedQty(k); const matchCls = totalLoaded === it.qty ? "text-emerald-600" : totalLoaded > it.qty ? "text-red-600" : totalLoaded > 0 ? "text-amber-600" : "text-gray-400"; return (
                             <div key={k} className="flex items-center flex-wrap gap-x-3 gap-y-1.5 px-3 py-1.5">
                               {it.photo ? <img src={it.photo} alt="" onClick={() => setZoomImg(it.photo)} className="w-8 h-8 rounded object-cover border cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-8 h-8 rounded bg-gray-100 flex items-center justify-center text-gray-300 text-xs shrink-0">📦</div>}
@@ -2022,12 +2398,12 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                 </div>
               )}
               {/* Essentials / tools */}
-              <div className="bg-amber-50/40 border-t">
+              <div className="bg-amber-50/40">
                 <div className="px-4 py-2 text-xs font-semibold text-amber-800 flex items-center justify-between">
                   <span>🛠️ Essentials / tools <span className="font-normal text-amber-600">— things you carry but don't block (saved for every {dept} event)</span></span>
                 </div>
                 {deptTools.length > 0 && (
-                  <div className="divide-y divide-amber-100">
+                  <div className="">
                     {deptTools.map((t, i) => {
                       const k = "tool:" + t.name; const on = !!loaded[k];
                       return (
@@ -2060,7 +2436,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
             {/* Dismantle plan — dept head pre-sets where each item goes; ops just confirms on-site */}
             {blockedItems.length > 0 && (
               <div className={"bg-white rounded-xl shadow-[0_1px_2px_rgba(16,24,40,0.06),0_1px_3px_rgba(16,24,40,0.05)] overflow-hidden" + modalCls("dism")}>
-                <div className="px-4 py-3 bg-gray-50 border-b flex items-center justify-between gap-2 flex-wrap">
+                <div className="px-4 py-3 bg-gray-50 flex items-center justify-between gap-2 flex-wrap">
                   <div className="flex items-center gap-3 min-w-0">
                     <span aria-hidden="true" className="shrink-0 w-9 h-9 rounded-lg bg-white shadow-[0_1px_2px_rgba(16,24,40,0.08)] flex items-center justify-center text-base leading-none">🔁</span>
                     <div className="min-w-0">
@@ -2077,7 +2453,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                     it so the row states what it has done rather than just what it is.
                     The sky wash is gone: it tinted a strip across a white card for no reason
                     other than that the sites are sky-coloured elsewhere. */}
-                <div className="px-4 py-2.5 border-b border-gray-100 bg-gray-50">
+                <div className="px-4 py-2.5 bg-gray-50">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-gray-500 shrink-0">
                       Transfer sites
@@ -2101,7 +2477,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                         <div className="relative">
                           <button ref={siteBtnRef} type="button" onClick={() => setSiteMenu(o => !o)}
                             aria-haspopup="listbox" aria-expanded={siteMenu}
-                            className={"inline-flex items-center gap-1.5 rounded-lg bg-white ring-1 px-3 py-1.5 text-xs font-semibold transition " + (siteMenu ? "ring-indigo-400 text-indigo-700" : "ring-gray-200 hover:ring-gray-300 text-gray-700")}>
+                            className={"inline-flex items-center gap-1.5 rounded-lg bg-white ring-1 px-3 py-1.5 text-xs font-semibold transition " + (siteMenu ? "ring-blue-400 text-blue-700" : "ring-gray-200 hover:ring-gray-300 text-gray-700")}>
                             <span aria-hidden="true" className="text-gray-400">＋</span>
                             Add a site
                             <span aria-hidden="true" className={"text-gray-400 text-[9px] transition-transform " + (siteMenu ? "rotate-180" : "")}>▼</span>
@@ -2109,7 +2485,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                           {siteMenu && (
                             <div role="listbox" style={{ position: "fixed", top: siteMenuPos.top, left: siteMenuPos.left, width: siteMenuPos.width, zIndex: 60 }}
                               className="rounded-xl bg-white shadow-[0_4px_12px_rgba(16,24,40,0.1),0_16px_40px_-12px_rgba(16,24,40,0.3)] ring-1 ring-gray-200 overflow-hidden">
-                              <div className="px-3 py-2 bg-gray-50 border-b border-gray-100 text-[10px] font-bold uppercase tracking-[0.08em] text-gray-500">
+                              <div className="px-3 py-2 bg-gray-50 text-[10px] font-bold uppercase tracking-[0.08em] text-gray-500">
                                 Send items to another event
                               </div>
                               <div className="max-h-64 overflow-y-auto">
@@ -2119,7 +2495,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                                 {opts.map(({ e, d, off }) => (
                                   <button key={e.id} type="button" role="option" aria-selected="false"
                                     onClick={() => { addDismantleSite(e.id); setSiteMenu(false); }}
-                                    className="w-full text-left px-3 py-2 flex items-center gap-3 hover:bg-indigo-50 transition-colors">
+                                    className="w-full text-left px-3 py-2 flex items-center gap-3 hover:bg-blue-50 transition-colors">
                                     <span className="min-w-0 flex-1">
                                       <span className="block text-[13px] font-semibold text-gray-900 truncate">{e.clientName || "Event"}</span>
                                       <span className="block text-[11px] text-gray-500 tabular-nums">{d || "no date"}</span>
@@ -2159,9 +2535,9 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                   <table className="w-full min-w-[520px] text-sm border-separate border-spacing-0">
                     <thead>
                       <tr>
-                        <th className="text-left text-[11px] font-bold uppercase tracking-[0.08em] text-gray-500 px-4 py-3 border-b border-gray-100">Item</th>
-                        <th className="text-center text-[11px] font-bold uppercase tracking-[0.08em] text-gray-500 px-3 py-3 whitespace-nowrap border-b border-gray-100">🏭 Production House</th>
-                        {dismantleSites.map(s => <th key={s.id} className="text-center text-[11px] font-bold uppercase tracking-[0.08em] text-gray-500 px-3 py-3 whitespace-nowrap border-b border-gray-100" title={s.date}>↪️ {s.name}</th>)}
+                        <th className="text-left text-[11px] font-bold uppercase tracking-[0.08em] text-gray-500 px-4 py-3">Item</th>
+                        <th className="text-center text-[11px] font-bold uppercase tracking-[0.08em] text-gray-500 px-3 py-3 whitespace-nowrap">🏭 Production House</th>
+                        {dismantleSites.map(s => <th key={s.id} className="text-center text-[11px] font-bold uppercase tracking-[0.08em] text-gray-500 px-3 py-3 whitespace-nowrap" title={s.date}>↪️ {s.name}</th>)}
                       </tr>
                     </thead>
                     <tbody>
@@ -2171,7 +2547,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                         // than sitting at the same weight as the ones still needing a number.
                         const done = prod === 0;
                         return (
-                          <tr key={it.id} className="group hover:bg-indigo-50/40 transition-colors">
+                          <tr key={it.id} className="group hover:bg-blue-50/40 transition-colors">
                             <td className="px-4 py-2.5">
                               <div className="flex items-center gap-2.5 min-w-0">
                                 {it.photo ? <img src={it.photo} alt="" onClick={() => setZoomImg(it.photo)} className="w-9 h-9 rounded-lg object-cover cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-9 h-9 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-xs shrink-0">📦</div>}
@@ -2180,7 +2556,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                               </div>
                             </td>
                             <td className="px-3 py-2.5 text-center">
-                              <span className={"inline-block min-w-[2.75rem] px-2.5 py-1.5 rounded-lg text-sm font-bold tabular-nums " + (done ? "bg-gray-50 text-gray-300" : "bg-indigo-50 text-indigo-700")}
+                              <span className={"inline-block min-w-[2.75rem] px-2.5 py-1.5 rounded-lg text-sm font-bold tabular-nums " + (done ? "bg-gray-50 text-gray-300" : "bg-blue-50 text-blue-700")}
                                 title="Auto — whatever is left after the sites below">{prod}</span>
                             </td>
                             {dismantleSites.map(s => (
@@ -2188,7 +2564,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                                 {/* Borderless until you touch it: a grid of outlined boxes was
                                     the heaviest thing on the table, and most of them hold 0. */}
                                 <input type="number" min="0" max={it.qty} value={planSiteQty(it, s.id) || ""} onChange={e => setSiteQty(it, s.id, e.target.value)} placeholder="0"
-                                  className="w-16 rounded-lg bg-gray-100 px-2 py-1.5 text-sm text-center tabular-nums font-semibold text-gray-800 placeholder:font-normal placeholder:text-gray-300 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:bg-white transition" />
+                                  className="w-16 rounded-lg bg-gray-100 px-2 py-1.5 text-sm text-center tabular-nums font-semibold text-gray-800 placeholder:font-normal placeholder:text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:bg-white transition" />
                               </td>
                             ))}
                           </tr>
@@ -2205,10 +2581,6 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
             </>)}
 
             {opsView === "onsite" && (<>
-            {/* The same control group the income panel carries in Planning view. On-site has no
-                income panel to hang it on, so it sits on its own row above the tiles — without
-                it, On-site would have no switch back to Planning. */}
-            <div className="flex justify-end">{viewControls}</div>
             {/* The department chip row that used to sit here is gone. It switched department,
                 which is exactly what the Department picker in the left rail already does, under
                 the same permission rules — roleDept locks the rail to a badge only when the user
@@ -2226,7 +2598,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                 mpRows.length > 0 && { k: "oscrew", icon: "👷", title: "On-site crew", sub: mpEdited ? "actual logged" : "as planned", value: fmt(mpCost) },
               ].filter(Boolean);
               return (
-                <div className={GRID} style={GRID_COLS}>
+                <div className={GRID}>
                   {tiles.map(t => (
                     /* No drawn outline. Separation comes from the slate-100 page ground under a
                        white fill, plus a two-layer shadow — a tight 1px one that reads as the
@@ -2237,7 +2609,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                          is a toggle, not a launcher. The open one is ringed so you can tell at a
                          glance which of the five the panel below belongs to. */
                       onClickCapture={e => { if (modal === t.k) { e.stopPropagation(); setModal(null); } }}
-                      className={"group text-left rounded-xl p-3.5 h-full flex flex-col transition-all duration-150 shadow-[0_1px_2px_rgba(16,24,40,0.07),0_4px_12px_-4px_rgba(16,24,40,0.12)] hover:-translate-y-0.5 hover:shadow-[0_2px_6px_rgba(16,24,40,0.1),0_14px_28px_-10px_rgba(16,24,40,0.28)] " + (modal === t.k ? "ring-2 ring-indigo-500 " : "") + (t.tone || "bg-white")}>
+                      className={"group text-left rounded-xl p-3.5 h-full flex flex-col transition-all duration-150 shadow-[0_1px_2px_rgba(16,24,40,0.07),0_4px_12px_-4px_rgba(16,24,40,0.12)] hover:-translate-y-0.5 hover:shadow-[0_2px_6px_rgba(16,24,40,0.1),0_14px_28px_-10px_rgba(16,24,40,0.28)] " + (modal === t.k ? "ring-2 ring-blue-500 " : "") + (t.tone || "bg-white")}>
                       <div className="flex items-start gap-2.5">
                         <span aria-hidden="true" className={"shrink-0 w-9 h-9 rounded-lg flex items-center justify-center text-base leading-none " + (t.alert ? "bg-white shadow-[0_1px_2px_rgba(16,24,40,0.08)]" : "bg-white shadow-[0_1px_2px_rgba(16,24,40,0.08)]")}>{t.icon}</span>
                         <div className="min-w-0 flex-1">
@@ -2262,11 +2634,11 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                 income cards and the event header all stay in view while you read it.
                 Same mechanic as before: every block still lives here and hides itself unless it
                 is the open one (modalCls), so nothing had to be moved or re-parented. */}
-            <div className={modal ? "" : "hidden"}>
-              <div className="rounded-2xl bg-gray-50 ring-1 ring-gray-200 overflow-hidden">
+            <div onClick={onPanelBackdrop} className={modal ? PANEL_WRAP : "hidden"}>
+              <div className={PANEL_CARD}>
                 {/* NOT sticky — see the Planning panel above: inline, a sticky bar just hovers
                     over the block beneath it and hides its subtitle. */}
-                <div className="bg-white border-b px-4 py-2.5 flex items-center justify-between gap-3">
+                <div className="shrink-0 bg-white px-4 py-2.5 flex items-center justify-between gap-3">
                   <div className="min-w-0 text-[13px] font-semibold text-gray-600 truncate">{DEPT_ICON[dept]} {dept} · {sel.clientName || "Event"}</div>
                   <button onClick={() => setModal(null)} aria-label="Close"
                     className="group shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-red-600 hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400 transition-colors">
@@ -2279,7 +2651,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                     </svg>
                   </button>
                 </div>
-                <div className="p-3 sm:p-4 space-y-3">
+                <div className={PANEL_BODY}>
 
             {/* Receiving — ops manager sees every item's sources (which truck + driver, from where) + shortfall */}
             {sourceRows.length > 0 && (
@@ -2289,9 +2661,9 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                   {(() => { const sc = sourceRows.filter(r => r.shortfall > 0).length; return <span className={"text-xs font-semibold px-2 py-0.5 rounded-full " + (sc > 0 ? "bg-red-100 text-red-700" : "bg-emerald-100 text-emerald-700")}>{sc > 0 ? `⚠️ ${sc} short` : "✓ all sourced"}</span>; })()}
                 </div>
                 {sourceRows.some(r => r.shortfall > 0) && (
-                  <div className="px-4 py-2 bg-red-50 border-b border-red-200 text-xs text-red-700 font-semibold">⚠️ Shortfall on {sourceRows.filter(r => r.shortfall > 0).length} item(s) — not enough assigned from any source. Check with the dept head / production house.</div>
+                  <div className="px-4 py-2 bg-red-50 text-xs text-red-700 font-semibold">⚠️ Shortfall on {sourceRows.filter(r => r.shortfall > 0).length} item(s) — not enough assigned from any source. Check with the dept head / production house.</div>
                 )}
-                <div className="divide-y divide-sky-100">
+                <div>
                   {sourceRows.map((r, i) => (
                     <div key={i} className="px-4 py-2">
                       <div className="flex items-center justify-between flex-wrap gap-x-2 gap-y-1 text-xs">
@@ -2326,7 +2698,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                 <span className="text-sm font-semibold text-gray-800">🔁 Dismantle & return routing <span className="text-xs font-normal text-gray-400">— confirm the dept head's plan, or tap a chip to route the full remaining qty</span></span>
                 <div className="flex items-center gap-1.5">
                   {blockedItems.some(it => unroutedQty(it) > 0) && (<>
-                    <button onClick={confirmAllPlanned} className="text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg whitespace-nowrap">✓ Confirm all as planned</button>
+                    <button onClick={confirmAllPlanned} className="text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg whitespace-nowrap">✓ Confirm all as planned</button>
                     <button onClick={routeAllToWarehouse} className="text-xs font-bold bg-gray-800 hover:bg-gray-900 text-white px-3 py-1.5 rounded-lg whitespace-nowrap">🏬 All → warehouse</button>
                   </>)}
                   <button onClick={resetDismantle} className="text-xs font-semibold text-red-600 border border-red-200 bg-red-50 hover:bg-red-100 px-2.5 py-1.5 rounded-lg whitespace-nowrap" title="Testing: clear the plan + all movements so you can re-test">↺ Reset (testing)</button>
@@ -2334,7 +2706,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
               </div>
               {/* Loading manifest — grouped by destination (the dept head's plan). Each list = one place. */}
               {destGroups.length > 0 && (
-                <div className="px-4 py-3 space-y-2 bg-sky-50/40 border-b">
+                <div className="px-4 py-3 space-y-2 bg-sky-50/40">
                   <div className="text-xs font-semibold text-gray-600">📦 Loading manifest — by destination · put the truck details, mark anything broken/repair, then confirm</div>
                   {destGroups.map(g => {
                     const isTransfer = g.type === "transfer";
@@ -2349,17 +2721,17 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                         <button onClick={() => setManOpen(o => ({ ...o, [g.key]: !o[g.key] }))} className="text-sm font-semibold text-gray-800 flex items-center gap-1.5 text-left">
                           <span className="text-gray-400">{open ? "▾" : "▸"}</span>{g.label} <span className="text-[10px] text-gray-400">· {g.items.reduce((s, x) => s + x.qty, 0)} pc · {g.items.length} item{g.items.length > 1 ? "s" : ""}</span>{isTransfer && hasTruck ? <span className="text-[10px] text-emerald-600">· 🚛 {truck.vehicle || truck.driver || "truck set"}</span> : null}
                         </button>
-                        <button onClick={() => confirmGroup(g)} disabled={!canConfirm} className="text-[11px] font-bold bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed text-white px-3 py-1 rounded-lg whitespace-nowrap">{isTransfer ? `✓ Loaded on this truck${selRows.length < g.items.length ? ` (${selRows.length})` : ""}` : "✓ Confirm — back to production house"}</button>
+                        <button onClick={() => confirmGroup(g)} disabled={!canConfirm} className="text-[11px] font-bold bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white px-3 py-1 rounded-lg whitespace-nowrap">{isTransfer ? `✓ Loaded on this truck${selRows.length < g.items.length ? ` (${selRows.length})` : ""}` : "✓ Confirm — back to production house"}</button>
                       </div>
                       {open && (<>
                       {/* Truck details — only for transfers to another site (production house needs none) */}
                       {isTransfer && (
-                        <div className="px-3 py-2 bg-sky-50/60 border-b space-y-1.5">
+                        <div className="px-3 py-2 bg-sky-50/60 space-y-1.5">
                           <div className="text-[10px] text-sky-700 font-semibold">🚛 Which truck is carrying this to {g.label.replace("↪️ ", "")}? — shown to the receiving site</div>
                           {eventTrucks.length > 0 && (
                             <div className="flex flex-wrap gap-1.5">
                               {eventTrucks.map(f => { const on = truck.vehicle === f.vehicle && truck.driver === f.driver; return (
-                                <button key={f.id} onClick={() => pickTruckFleet(g.key, f)} className={"text-[11px] px-2 py-1 rounded-lg border " + (on ? "bg-indigo-600 border-indigo-600 text-white" : "bg-white border-gray-200 text-gray-700 hover:bg-indigo-50")}>🚛 {f.vehicle || f.driver}{f.vehicle && f.driver ? ` · ${f.driver}` : ""}</button>
+                                <button key={f.id} onClick={() => pickTruckFleet(g.key, f)} className={"text-[11px] px-2 py-1 rounded-lg border " + (on ? "bg-blue-600 border-blue-600 text-white" : "bg-white border-gray-200 text-gray-700 hover:bg-blue-50")}>🚛 {f.vehicle || f.driver}{f.vehicle && f.driver ? ` · ${f.driver}` : ""}</button>
                               ); })}
                             </div>
                           )}
@@ -2371,7 +2743,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                           {g.items.length > 1 && <div className="text-[10px] text-gray-400">Tick only what fits on this truck — untick the rest and confirm them on a second truck.</div>}
                         </div>
                       )}
-                      <div className="divide-y">
+                      <div className="">
                         {g.items.map(({ it, qty }, i) => {
                           const ck = gKey(g.key, it); const c = condOf(ck);
                           const rep = Number(c.repair) || 0, brk = Number(c.broken) || 0;
@@ -2396,7 +2768,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                 </div>
               )}
               {movements.some(m => m.type === "repair") && (
-                <div className="px-4 py-2 bg-amber-50 border-b border-amber-200 text-xs text-amber-800">
+                <div className="px-4 py-2 bg-amber-50 text-xs text-amber-800">
                   🔧 <b>Repairs needed</b> (kept in stock — fix before next use): {movements.filter(m => m.type === "repair").map((m, i) => <span key={m.id}>{i > 0 ? ", " : ""}{m.qty}× {m.name}</span>)}
                 </div>
               )}
@@ -2408,9 +2780,9 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
               )}
               {/* Movement log for this event */}
               {movements.length > 0 && (
-                <div className="border-t bg-gray-50/40">
+                <div className="bg-gray-50/40">
                   <div className="px-4 py-1.5 text-[10px] uppercase text-gray-400 font-semibold">Movement log</div>
-                  <div className="divide-y">
+                  <div className="">
                     {movements.slice().reverse().map(m => (
                       <div key={m.id} className="flex items-center justify-between gap-2 px-4 py-1.5 text-xs flex-wrap">
                         <span className={m.type === "damage" ? "text-red-600 font-semibold" : m.type === "repair" ? "text-amber-600 font-semibold" : m.type === "transfer" ? "text-sky-700" : "text-gray-600"}>
@@ -2433,7 +2805,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                   <span className="text-sm font-semibold text-gray-800">👷 On-site crew — actual held <span className="text-xs font-normal text-gray-400">— log the crew you actually kept; sets the real manpower cost</span></span>
                   <span className="text-sm font-bold text-gray-900">{fmt(mpCost)}{mpEdited && <span className="ml-1 text-[10px] font-semibold text-amber-600">actual</span>}</span>
                 </div>
-                <div className="divide-y">
+                <div className="">
                   {mpRows.map((r, i) => {
                     if (r.type === "Supervisors") return null; // ops IS the supervisor — no separate line for him
                     const daywise = mpDayWise(r);
@@ -2456,23 +2828,23 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                           <span className="flex-1 text-sm font-medium text-gray-800 min-w-[90px]">{r.type}{r.shared && <span className="ml-2 text-[10px] bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded font-semibold">SHARED</span>}</span>
                           {readOnly ? <span className="text-[10px] text-gray-400">split allocation · {fmt(actCost)}</span> : daywise ? (<>
                             <div className="flex items-center gap-1"><span className="text-[10px] text-gray-400">dihari</span><span className={"w-14 rounded-lg px-2 py-1 text-sm text-center font-semibold " + (edited ? "bg-amber-50 text-amber-700 border border-amber-300" : "bg-gray-100 text-gray-700")} title="Total dihari held (crew × shifts across all days) — matches the plan until you edit below">{actDihari}</span></div>
-                            {sched.length > 0 && <button onClick={() => setOsMp(o => ({ ...o, [i]: !o[i] }))} className="text-[10px] font-semibold text-indigo-600 hover:text-indigo-800 border border-indigo-200 rounded px-1.5 py-1" title="Adjust crew per day and per shift (e.g. drop the evening, or keep 1 in evening)">{expanded ? "▾ by day/shift" : "▸ by day/shift"}</button>}
+                            {sched.length > 0 && <button onClick={() => setOsMp(o => ({ ...o, [i]: !o[i] }))} className="text-[10px] font-semibold text-blue-600 hover:text-blue-800 border border-blue-200 rounded px-1.5 py-1" title="Adjust crew per day and per shift (e.g. drop the evening, or keep 1 in evening)">{expanded ? "▾ by day/shift" : "▸ by day/shift"}</button>}
                             <span className="text-sm font-semibold text-gray-700 w-24 text-right">{fmt(actCost)}</span>
-                            {edited && <button onClick={() => resetMpLine(r)} className="text-[10px] text-indigo-500 hover:underline whitespace-nowrap" title="revert to the dept head's planned crew">↺ plan</button>}
+                            {edited && <button onClick={() => resetMpLine(r)} className="text-[10px] text-blue-500 hover:underline whitespace-nowrap" title="revert to the dept head's planned crew">↺ plan</button>}
                           </>) : (<>
                             <div className="flex items-center gap-1"><span className="text-[10px] text-gray-400">people</span><input type="number" min="0" value={Number(r.count) || 0} onChange={e => setActualCrew(r, i, e.target.value)} className={"w-14 border rounded-lg px-2 py-1 text-sm text-center " + ((Number(r.count) || 0) !== planPeak ? "border-amber-400 bg-amber-50 font-bold" : "")} /></div>
                             <span className="text-sm font-semibold text-gray-700 w-24 text-right">{fmt(actCost)}</span>
-                            {edited && <button onClick={() => resetMpLine(r)} className="text-[10px] text-indigo-500 hover:underline whitespace-nowrap" title="revert to the dept head's planned crew">↺ plan</button>}
+                            {edited && <button onClick={() => resetMpLine(r)} className="text-[10px] text-blue-500 hover:underline whitespace-nowrap" title="revert to the dept head's planned crew">↺ plan</button>}
                           </>)}
                         </div>
                         {!readOnly && <div className="text-[10px] text-gray-400 mt-0.5 pl-0.5">{daywise
                           ? <>Planned {planDihari} dihari · {fmt(planCost)}{edited ? <span className="text-amber-600 font-semibold"> → actual {actDihari} dihari = {fmt(actCost)}</span> : ""}</>
                           : <>Planned {planPeak} × {fmt(planCost)}{edited ? <span className="text-amber-600 font-semibold"> → actual {Number(r.count) || 0} = {fmt(actCost)}</span> : ""}</>}</div>}
                         {r.type === "Labours" && anyLabours && (
-                          <div className="mt-1.5 bg-indigo-50 border border-indigo-100 rounded-lg px-2 py-1.5 flex items-center gap-2 flex-wrap text-[11px]">
-                            <span className="font-semibold text-indigo-700">👥 All-dept labour total</span>
-                            <input type="number" min="0" value={eventLabourDihari} onChange={e => setEventLabourTotal(e.target.value)} className="w-16 border border-indigo-300 rounded px-2 py-0.5 text-center font-semibold" />
-                            <span className="text-indigo-600">dihari — set the whole event's labour; auto-splits across every department by usage</span>
+                          <div className="mt-1.5 bg-blue-50 border border-blue-100 rounded-lg px-2 py-1.5 flex items-center gap-2 flex-wrap text-[11px]">
+                            <span className="font-semibold text-blue-700">👥 All-dept labour total</span>
+                            <input type="number" min="0" value={eventLabourDihari} onChange={e => setEventLabourTotal(e.target.value)} className="w-16 border border-blue-300 rounded px-2 py-0.5 text-center font-semibold" />
+                            <span className="text-blue-600">dihari — set the whole event's labour; auto-splits across every department by usage</span>
                           </div>
                         )}
                         {expanded && daywise && sched.length > 0 && (
@@ -2483,7 +2855,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                               const dayCost = mpDayCost(r, d, mpDay, mpWin, mpWinCount, rate);
                               const hasSlots = winDefs.length > 0 || ids.length > 0;
                               return (
-                                <div key={di} className="flex items-start gap-2 flex-wrap text-[11px] border-b last:border-b-0 py-1.5">
+                                <div key={di} className="flex items-start gap-2 flex-wrap text-[11px] py-1.5">
                                   <span className="w-24 text-gray-600 font-medium pt-1">{phaseLbl(d)}</span>
                                   {hasSlots ? (
                                     <div className="flex items-center gap-1.5 flex-wrap flex-1">
@@ -2494,7 +2866,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                                           {ids.length > 1 && <button onClick={() => removeDihari(r.type, d.date, id, ids)} className="text-red-300 hover:text-red-500" title="remove this dihari">×</button>}
                                         </span>
                                       ); })}
-                                      <button onClick={() => addDihari(r, d.date, ids)} className="text-[10px] font-semibold text-indigo-600 hover:text-indigo-800 border border-indigo-200 rounded-full px-2 py-0.5" title="Add another dihari (shift) for this day">+ dihari</button>
+                                      <button onClick={() => addDihari(r, d.date, ids)} className="text-[10px] font-semibold text-blue-600 hover:text-blue-800 border border-blue-200 rounded-full px-2 py-0.5" title="Add another dihari (shift) for this day">+ dihari</button>
                                     </div>
                                   ) : (
                                     <label className="flex items-center gap-1 flex-1"><span className="text-gray-400">crew</span><input type="number" min="0" value={Math.round(effDay(r, d))} onChange={e => setMpDay(r.type, d.date, e.target.value)} className="w-12 border rounded px-1 py-0.5 text-center" /></label>
@@ -2509,7 +2881,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                     );
                   })}
                 </div>
-                <div className="px-4 py-2 bg-gray-50 border-t flex items-center justify-between text-xs gap-2 flex-wrap">
+                <div className="px-4 py-2 bg-gray-50 flex items-center justify-between text-xs gap-2 flex-wrap">
                   <span className="text-gray-500">Planned manpower <b className="text-gray-700">{fmt(mpPlannedCost)}</b></span>
                   <span className="text-gray-800 font-semibold">Actual held {fmt(mpCost)} {mpCost !== mpPlannedCost && <span className={mpCost < mpPlannedCost ? "text-emerald-600" : "text-red-600"}>({mpCost < mpPlannedCost ? "▼ saved " : "▲ over "}{fmt(Math.abs(mpCost - mpPlannedCost))})</span>}</span>
                 </div>

@@ -169,9 +169,144 @@ export function useConfirm() {
 
 // Sub-tab strip. Only the IMS uses this (Planning, Finance, Admin, Flowers, Mandi, Settings) —
 // Studio has its own tab chrome — so it is styled to match the IMS nav rail.
+// The narrow-screen form of Tabs. A drawn popover rather than a <select>, because a select's
+// option list is rendered by the OS — on desktop Chrome that is the flat blue-highlighted list,
+// which no amount of styling on the closed control can fix. This one matches the rest of the IMS:
+// white card, soft ring, indigo for the current section.
+// `tone="accent"` fills the trigger indigo instead of white. It exists for the phone row where
+// two of these sit side by side — the section picker and the department picker. Identical white
+// pills gave no clue which of the two scoped the page you were reading; filling the department
+// one says it is the narrower, page-defining choice without adding a word of label.
+export function TabsMenu({ tabs, active, onChange, tone = "plain" }) {
+  const accent = tone === "accent";
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef(null);
+  const [pos, setPos] = useState({ top: 0, left: 0, width: 0, maxH: 0, flip: false });
+  const current = tabs.find((t) => t.id === active) || tabs[0];
+  useEffect(() => {
+    if (!open) return undefined;
+    // ── KEEPING A FIXED POPOVER INSIDE THE WINDOW ──
+    // This used to be one line: top = trigger.bottom + 6. Three things went wrong with that on a
+    // phone, all visible at once on the department picker, which has eight entries:
+    //   1. It re-ran on scroll, so the menu followed its trigger up underneath the sticky page
+    //      header — and being fixed at z-60 it painted OVER that header instead of behind it.
+    //   2. Eight rows are taller than the space under the trigger, so the list simply ran off
+    //      the bottom of the screen with no indication there was more.
+    //   3. Nothing clamped `left`, so a trigger near the right edge put the menu half off-screen.
+    const GAP = 6;     // breathing room between trigger and menu
+    const EDGE = 8;    // smallest gap we will leave against any window edge
+    const MIN_H = 132; // below this the menu is too short to be worth flipping for
+    const place = () => {
+      const r = wrapRef.current?.getBoundingClientRect();
+      if (!r) return;
+      // The trigger has scrolled out of view — most often beneath the sticky header. A menu
+      // anchored to something you can no longer see is not a menu, it is a floating panel over
+      // unrelated chrome, so close it rather than reposition it. This is the overlap fix.
+      if (r.bottom <= 0 || r.top >= window.innerHeight) { setOpen(false); return; }
+      const width = Math.max(r.width, 220);
+      // Clamp horizontally: prefer left-aligned with the trigger, but never past either edge.
+      const left = Math.max(EDGE, Math.min(r.left, window.innerWidth - width - EDGE));
+      const below = window.innerHeight - r.bottom - GAP - EDGE;
+      const above = r.top - GAP - EDGE;
+      // Open upward only when below is genuinely cramped AND above is roomier — flipping for a
+      // few pixels' gain just makes the menu appear somewhere unexpected.
+      const flip = below < MIN_H && above > below;
+      setPos({
+        top: flip ? Math.max(EDGE, r.top - GAP) : r.bottom + GAP,
+        left,
+        width,
+        maxH: Math.max(MIN_H, flip ? above : below), // taller than this and it scrolls internally
+        flip,
+      });
+    };
+    place();
+    // mousedown, not click: a click listener fires after the option's own handler has already
+    // re-rendered, so the menu closed before the pick registered.
+    const onDown = (e) => { if (!wrapRef.current?.contains(e.target)) setOpen(false); };
+    const onKey = (e) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    window.addEventListener("scroll", place, true);
+    window.addEventListener("resize", place);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", place, true);
+      window.removeEventListener("resize", place);
+    };
+  }, [open]);
+  return (
+    // w-fit: it holds one short section name, and stretched across the screen it read as a page
+    // header rather than as the control it is.
+    <div ref={wrapRef} className="relative w-fit max-w-full">
+      {/* White on a light page rather than a flat grey pill: grey-on-grey gave it no edge, so it
+          read as a label someone had tinted rather than a control. A hairline ring plus a small
+          shadow is what the cards and inputs on these pages use, so it now belongs to the same
+          set — and the chevron sits in its own divided cell, the way a real picker does, instead
+          of floating a few pixels after the text. */}
+      <button type="button" onClick={() => setOpen((o) => !o)} aria-haspopup="listbox" aria-expanded={open}
+        className={"group inline-flex items-center rounded-xl text-[13px] font-semibold transition-all "
+          + (accent
+            /* Blue, not the plain branch's indigo: `tone="accent"` is used only by Dept Ops,
+               which is on the design system's blue. The plain branch stays indigo because nine
+               other IMS tabs render it and they are not on the system yet. */
+            ? "bg-blue-600 text-white shadow-[0_1px_2px_rgba(37,99,235,0.3),0_6px_16px_-8px_rgba(37,99,235,0.7)] " + (open ? "ring-2 ring-blue-300" : "hover:bg-blue-700")
+            : "bg-white text-gray-900 shadow-[0_1px_2px_rgba(16,24,40,0.06)] " + (open ? "ring-2 ring-indigo-400" : "ring-1 ring-gray-200 hover:ring-gray-300 hover:shadow-[0_1px_2px_rgba(16,24,40,0.08),0_4px_10px_-6px_rgba(16,24,40,0.25)]"))}>
+        <span className="truncate pl-3 pr-2 py-2">{current?.label}</span>
+        <span aria-hidden="true" className={"shrink-0 self-stretch flex items-center px-2 rounded-r-xl transition-colors "
+          + (accent
+            ? "text-white/70 bg-white/10"
+            : open ? "text-indigo-600 bg-indigo-50/70" : "text-gray-400 bg-gray-50 group-hover:bg-gray-100")}>
+          <span className={"transition-transform duration-150 " + (open ? "rotate-180" : "")}>
+            <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M3.5 5 L7 8.5 L10.5 5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" /></svg>
+          </span>
+        </span>
+      </button>
+      {open && (
+        /* When flipped, the menu is anchored by its BOTTOM to the top of the trigger — the only
+           way to grow upward without measuring the rendered list first. maxHeight plus overflow
+           is what stops a long list running off either edge; it scrolls inside itself instead. */
+        <div role="listbox" style={{
+          position: "fixed",
+          ...(pos.flip ? { bottom: Math.max(0, window.innerHeight - pos.top) } : { top: pos.top }),
+          left: pos.left,
+          width: pos.width,
+          maxHeight: pos.maxH || undefined,
+          zIndex: 60,
+        }}
+          className="rounded-xl bg-white ring-1 ring-gray-200 shadow-[0_4px_12px_rgba(16,24,40,0.1),0_16px_40px_-12px_rgba(16,24,40,0.3)] overflow-y-auto overscroll-contain py-1">
+          {tabs.map((t) => {
+            const on = t.id === active;
+            return (
+              <button key={t.id} type="button" role="option" aria-selected={on}
+                onClick={() => { onChange(t.id); setOpen(false); }}
+                className={"w-full text-left px-3 py-2 flex items-center gap-2 text-[13px] transition-colors " + (on ? "bg-indigo-50 text-indigo-700 font-semibold" : "text-gray-700 font-medium hover:bg-gray-50")}>
+                <span className="min-w-0 truncate flex-1">{t.label}</span>
+                {/* A tick on the current one, so the list says where you are as well as where
+                    you can go — the highlight alone reads as hover on a touch screen. */}
+                {on && (
+                  <span aria-hidden="true" className="shrink-0 text-indigo-600">
+                    <svg width="13" height="13" viewBox="0 0 14 14" fill="none"><path d="M3 7.5 L5.75 10 L11 4" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function Tabs({ tabs, active, onChange }) {
   return (
-    <div className="flex gap-1 bg-gray-100 rounded-xl p-1 flex-wrap">
+    <>
+    {/* ── PHONE: ONE DROPDOWN ──
+        Five pills wrap to two or three rows at phone width, which costs a third of the first
+        screen before any content starts — and a wrapped strip stops reading as one control.
+        Both forms render from the same `tabs` and `active`, so they cannot drift. */}
+    <div className="sm:hidden"><TabsMenu tabs={tabs} active={active} onChange={onChange} /></div>
+    <div className="hidden sm:flex gap-1 bg-gray-100 rounded-xl p-1 flex-wrap">
       {tabs.map((t) => (
         /* Same hover as the nav rail: the tab lifts and takes on the active pill's white
            ground, so hovering previews what clicking does. The rail nudges right because it
@@ -188,6 +323,7 @@ export function Tabs({ tabs, active, onChange }) {
         </button>
       ))}
     </div>
+    </>
   );
 }
 

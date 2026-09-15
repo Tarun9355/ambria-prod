@@ -9,7 +9,9 @@ import { IconPalette, IconBox } from "./icons";
 //
 // `tone` picks the palette: "light" for the white IMS header (the default, unchanged),
 // "dark" for Studio's gradient header — where the old light-grey chip looked pasted on.
-export default function AppSwitcher({ current, tone = "light" }) {
+// `iconSize` lets a caller shrink the leading glyphs without touching the other app's header —
+// IMS asks for 12 so the switcher sits quieter beside the logo; Studio keeps the 14 it had.
+export default function AppSwitcher({ current, tone = "light", iconSize = 14 }) {
   const { user, roleTabs } = useAuth();
   const navigate = useNavigate();
   const apps = userApps(user, roleTabs);
@@ -58,7 +60,7 @@ export default function AppSwitcher({ current, tone = "light" }) {
             className={chip(active)}
             title={active ? `You're in ${label}` : `Switch to ${label}`}
           >
-            <Icon size={14} />
+            <Icon size={iconSize} />
             {label}
           </button>
         );

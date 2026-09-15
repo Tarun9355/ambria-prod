@@ -8,6 +8,23 @@
 @source inline("{bg,border,text}-{rose,orange,purple}-{50,100,200,300,600,700,800,900}");
 @source inline("hover:bg-{rose,orange,purple}-700");
 
+/* ── IMS DESIGN SYSTEM: TYPE ──
+   Tailwind v4 is CSS-first — there is no tailwind.config.js to extend — so declaring these here
+   is what makes the `font-display` and `font-body` utilities exist.
+
+   Only the two FACES are tokens. The palette is not, because the design system's blues are
+   Tailwind's own blue scale exactly — #2563EB is blue-600, #3B82F6 blue-500, #60A5FA blue-400,
+   #DBEAFE blue-100 — so re-declaring them under new names would add a layer of indirection that
+   buys nothing and hides the fact that `blue-600` already IS the primary.
+
+   Named for their JOB rather than their family: `display` is titles and figures, `body` is
+   running text, labels and buttons. Applied per-page, never on `body` — Studio has its own
+   typography and is not part of this system. */
+@theme {
+  --font-display: "Playfair Display", Georgia, "Times New Roman", serif;
+  --font-body: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
 :root {
   /* Ambria is a light-themed UI (white cards / gray-50 bg). Pin the scheme to light so
      OS dark mode never flips text/native form controls to white-on-white. */
