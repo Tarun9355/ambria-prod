@@ -3872,7 +3872,11 @@ export default function DealCheckOverlay({ ctx }) {
                   // ═══ GYV FIXED & BUFFER COST TAB — reads from shared dcCostRollup ═══
                   const { rental, florals, transport, manpower, truss, buyTotal, produceTotal, base: baseProj, gyvFixed: gyvCost, bufferCost, commissionTotal, grand: grandProj, agencyFee, agencyFeePct, dealAmount, fns, hasActuals, actualMandi, actualExpenses, effFlorals, baseActual, grandActual, projFlorals, effManpower, mpDelta } = dcCostRollup;
                   const baseCost = hasActuals ? baseActual : baseProj;
-                  const grandWithOverheads = hasActuals ? grandActual : grandProj;
+                  // Project total = production cost + GYV/buffer + venue commission. Commission used
+                  // to be excluded here (a "company-level payout" kept out of "what building this event
+                  // costs") and only folded in for profit — but it IS a real cost of doing the deal, so
+                  // it now belongs in the headline total the owner watches, not just in profit's math.
+                  const grandWithOverheads = (hasActuals ? grandActual : grandProj) + commissionTotal;
                   const fmt = (n) => n > 0 ? "₹" + Math.round(n).toLocaleString("en-IN") : "₹0";
                   const gyvPct = 5;
                   const bufferPct = 3;
@@ -3902,12 +3906,11 @@ export default function DealCheckOverlay({ ctx }) {
                   // amount override) — read that directly rather than re-deriving it a second time here,
                   // so this and the quote calculator below can never drift against each other.
                   const quote = dealAmount;
-                  // Commission is a real payout out of this deal's revenue, so what Ambria actually
-                  // keeps has to come out net of it too — not just net of production cost + GYV/
-                  // buffer. It deliberately stays OUT of grandWithOverheads/"Project total" itself
-                  // (that figure means "what building this event costs", used by IMS/dept splits and
-                  // the bottom strip) — it is only added in here, where profit is actually measured.
-                  const internalCostForProfit = grandWithOverheads + commissionTotal;
+                  // grandWithOverheads (Project total) already includes commission above, so this is
+                  // simply that figure — kept as its own name because "what profit is measured
+                  // against" and "what building this event costs" are conceptually different things
+                  // that happen to be numerically equal now that commission counts as both.
+                  const internalCostForProfit = grandWithOverheads;
                   const netProfit = quote - internalCostForProfit;
                   const profitPct = quote > 0 ? Math.round((netProfit / quote) * 100) : 0;
                   // Health bands: the thresholds were already in the code, only the palette changes.
@@ -4036,7 +4039,7 @@ export default function DealCheckOverlay({ ctx }) {
                             <span aria-hidden="true" style={ICON_TILE("#F7F1E0")}>🏢</span>
                             <div style={{flex:"1 1 auto",minWidth:0}}>
                               <div style={SECT_TITLE}>GYV fixed, buffer &amp; commission</div>
-                              <div style={SECT_SUB}>GYV and buffer are a percentage of base cost and are carried into the project total in the bottom strip; commission is set per venue in IMS and comes out of profit instead — see Net profitability below.</div>
+                              <div style={SECT_SUB}>GYV and buffer are a percentage of base cost; commission is set per venue in IMS. All three are carried into the project total in the bottom strip and count against profit — see Net profitability below.</div>
                             </div>
                             <div style={{textAlign:"right",flexShrink:0}}>
                               <div style={{fontSize:17,fontWeight:750,color:INK,letterSpacing:-0.45,lineHeight:1.1,...NUM}}>{fmt(grandWithOverheads)}</div>
@@ -4351,8 +4354,10 @@ export default function DealCheckOverlay({ ctx }) {
                 right where you'd click to see the detail behind it, not repeated in a second row. */}
             {(() => {
               // ═══ Reads from shared dcCostRollup (§26.19) ═══
-              const { dealAmount: stripRevenue, profitPct: stripProfitPct, hasActuals, grandActual, grand: grandProj } = dcCostRollup;
-              const grandWithOverheads = hasActuals ? grandActual : grandProj;
+              const { dealAmount: stripRevenue, profitPct: stripProfitPct, hasActuals, grandActual, grand: grandProj, commissionTotal } = dcCostRollup;
+              // Project total = production cost + GYV/buffer + venue commission — same definition as
+              // the GYV & Buffer tab's own "Project total" tile, so this strip can never disagree with it.
+              const grandWithOverheads = (hasActuals ? grandActual : grandProj) + commissionTotal;
               const stripProfitColor = stripProfitPct >= 20 ? "#10B981" : stripProfitPct >= 10 ? "#F59E0B" : "#EF4444";
               // Until Generate has run there are no matched cards, so every rollup figure is 0 and a
               // department that genuinely costs nothing looked identical to one that was never
