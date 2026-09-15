@@ -2443,7 +2443,10 @@ export default function DealCheckOverlay({ ctx }) {
                                           return (
                                             <div style={{fontSize:12,lineHeight:1.5,color:IV.ink2,marginBottom:7}}>
                                               {!sameName && <>→ <span style={{color:IV.ink,fontWeight:700}}>{resolvedName}</span>{" "}</>}
-                                              <span style={{...NUM,marginLeft:sameName?0:8,color:IV.ink,fontWeight:700}}>₹{_effRate.toLocaleString("en-IN")}{card.qty>1?` × ${card.qty} = ₹${_lineTotal.toLocaleString("en-IN")}`:""}</span>
+                                              {/* Green whenever the discounted rate actually differs from list — a quiet
+                                                  "this line got a discount" signal, not just a caption that happens to
+                                                  add up. */}
+                                              <span style={{...NUM,marginLeft:sameName?0:8,color:_effRate<rental?"#10B981":IV.ink,fontWeight:700}}>₹{_effRate.toLocaleString("en-IN")}{card.qty>1?` × ${card.qty} = ₹${_lineTotal.toLocaleString("en-IN")}`:""}</span>
                                               {dims && <span style={{marginLeft:8,color:IV.ink3}}>· {dims}</span>}
                                             </div>
                                           );
@@ -2869,7 +2872,7 @@ export default function DealCheckOverlay({ ctx }) {
                                             if (raw > v) showMsg && showMsg(`Only ${_avail} available — capped at ${_avail}`, "orange");
                                             setDcManualItems(prev => prev.map(x => x.manualId === mi.manualId ? {...x, qty: v} : x));
                                           }} style={{width:60,padding:"3px 6px",borderRadius:4,border:`1px solid ${mi.qty>=_avail&&_avail>0?"#F59E0B":border}`,background:"rgba(26, 26, 46,0.04)",color:IV.ink,fontSize:13}}/>
-                                          <span style={{...NUM,color:IV.ink2}}>of {_avail} avail · ₹{_effRate.toLocaleString("en-IN")} × {mi.qty} = ₹{lineTotal.toLocaleString("en-IN")}</span>
+                                          <span style={{...NUM,color:IV.ink2}}>of {_avail} avail · <span style={{color:_effRate<rental?"#10B981":IV.ink2,fontWeight:_effRate<rental?700:400}}>₹{_effRate.toLocaleString("en-IN")} × {mi.qty} = ₹{lineTotal.toLocaleString("en-IN")}</span></span>
                                           {dims && <span style={{color:IV.ink3}}>· {dims}</span>}
                                         </div>
                                         {/* Same-subcategory alternatives + Browse (with per-item availability) — swap a manual block to another item */}
