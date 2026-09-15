@@ -4321,9 +4321,17 @@ export default function StudioApp() {
     if (bufTrucks > 0) breakdown.push({ label: "Buffer", qty: 0, perTruck: 0, unit: "", trucks: bufTrucks, isBuffer: true, tierLabel: bt?.label || "" });
     const allTrucks = itemTrucks + floralTrucks + bufTrucks;
     const plan = resolveGensetPlan(match, customGensets, genset62, gensetRate, gensetRate62);
-    const truckTotal = allTrucks * tripRate * 2;
+    // Guest-facing markup on the venue's own trip cost (trVenues[].clientScale, Admin → Settings →
+    // Transport & Power) — this calc is Build's own client-facing figure (feeds grandTotal, the
+    // Live Estimate rail and the Build page total panel — nothing internal reads transportCalc),
+    // so unlike calcFunctionBreakdown there's no separate raw field to keep: truckTotal/total ARE
+    // the client price here. Scoped to the truck/trip line only, not genset. Defaults to 1 (no
+    // change) for a venue nobody has set it on.
+    const rawTruckTotal = allTrucks * tripRate * 2;
+    const clientScale = Number(match?.clientScale) > 0 ? Number(match.clientScale) : 1;
+    const truckTotal = rawTruckTotal * clientScale;
     const total = truckTotal + plan.gensetCost;
-    return { trucks: allTrucks, tripRate, total, isNew, tier: tierId, tierLabel, breakdown, floralTrucks, bufferTrucks: bufTrucks, itemTrucks, totalFloralCost, gensets: plan.genset125, venueGensets: plan.venueGenset125, venueGenset62: plan.venueGenset62, gensetCost: plan.gensetCost, gensetRate, gensetRate62, genset62: plan.genset62, truckTotal };
+    return { trucks: allTrucks, tripRate, total, isNew, tier: tierId, tierLabel, breakdown, floralTrucks, bufferTrucks: bufTrucks, itemTrucks, totalFloralCost, gensets: plan.genset125, venueGensets: plan.venueGenset125, venueGenset62: plan.venueGenset62, gensetCost: plan.gensetCost, gensetRate, gensetRate62, genset62: plan.genset62, truckTotal, clientScale };
   }, [venue, customTripRate, customGensets, gensetRate, gensetRate62, genset62, trVenues, zoneElements, enabledEls, rcItems, truckCap, floralPerTruck, bufferTiers, totalCost, zoneConfig, imsInventory, dealCheckData, studioFloralData]);
 
   const grandTotal = useMemo(() => totalCost() + transportCalc.total, [totalCost, transportCalc]);
@@ -4446,7 +4454,14 @@ export default function StudioApp() {
       const bt = bufferTiers.find(b => decor >= b.minBudget && decor < b.maxBudget);
       const bufTrucks = bt ? bt.bufferTrucks : 0;
       const allTrucks = itemTrucks + floralTrucks + bufTrucks;
-      const truckTotal = allTrucks * tripRate * 2;
+      const rawTruckTotal = allTrucks * tripRate * 2;
+      // eventGrandTotal (this function's own caller) IS the client-facing revenue figure — the
+      // booking-confirm amount, Deal Check's header total, and its own clientRevenue/profit-margin
+      // calc all sum calcFunctionCost().grand, never calcFunctionBreakdown's cost fields — so the
+      // guest-facing venue-truck markup (trVenues[].clientScale) belongs here, same as
+      // calcFunctionBreakdown's *Client fields and transportCalc above. Defaults to 1 (no change).
+      const clientScale = Number(match?.clientScale) > 0 ? Number(match.clientScale) : 1;
+      const truckTotal = rawTruckTotal * clientScale;
       const gensetCost = resolveGensetPlan(match, fCustomGensets, fCustomGenset62, gensetRate, gensetRate62).gensetCost;
       transport = truckTotal + gensetCost;
     }
@@ -4756,7 +4771,7 @@ export default function StudioApp() {
   }, [collectAllFunctionData, calcFunctionCost]);
 
   const calcFunctionBreakdown = useCallback((fnData) => {
-    if (!fnData) return { zones: [], transport: null, decorTotal: 0, transportTotal: 0, grand: 0 };
+    if (!fnData) return { zones: [], transport: null, decorTotal: 0, transportTotal: 0, transportTotalClient: 0, grand: 0, grandClient: 0 };
     const fZoneElements = fnData.zoneElements || {};
     const fZoneConfig = fnData.zoneConfig || {};
     const fEnabledEls = fnData.enabledEls || {};
@@ -4828,6 +4843,7 @@ export default function StudioApp() {
     });
     let transport = null;
     let transportTotal = 0;
+    let transportTotalClient = 0;
     let decorTotal = 0;
     zones.forEach(z => { decorTotal += z.tot; });
     if (fVenue && decorTotal > 0) {
@@ -4897,13 +4913,29 @@ export default function StudioApp() {
       const allTrucks = itemTrucks + floralTrucks + bufTrucks;
       const plan = resolveGensetPlan(match, fCustomGensets, fCustomGenset62, gensetRate, gensetRate62);
       const truckTotal = allTrucks * tripRate * 2;
+      // Guest-facing markup on the venue's own trip cost — Admin → Settings → Transport & Power's
+      // per-venue "client scale" field (trVenues[].clientScale). Defaults to 1 (client sees the
+      // same figure as cost) so a venue nobody has set it on behaves exactly as before this
+      // existed. Deliberately scoped to the truck/trip line only, not genset — every INTERNAL
+      // consumer of this function (Deal Check's own Transport tab, the Dept-Income snapshot, the
+      // event_orders ops bridge) keeps reading truckTotal/transportTotal/grand completely
+      // unchanged; only the NEW *Client fields carry the markup, for Build's Live Estimate panel
+      // and Summary's client-facing accordion/export to read instead.
+      const clientScale = Number(match?.clientScale) > 0 ? Number(match.clientScale) : 1;
+      const truckTotalClient = truckTotal * clientScale;
       transportTotal = truckTotal + plan.gensetCost;
+      transportTotalClient = truckTotalClient + plan.gensetCost;
       transport = { trucks: allTrucks, tripRate, total: transportTotal, isNew, tier: tierId, tierLabel,
         breakdown, floralTrucks, bufferTrucks: bufTrucks, itemTrucks, totalFloralCost, repeatZonesExcluded,
         gensets: plan.genset125, venueGensets: plan.venueGenset125, genset62: plan.genset62, venueGenset62: plan.venueGenset62,
-        gensetCost: plan.gensetCost, gensetRate, gensetRate62, truckTotal };
+        gensetCost: plan.gensetCost, gensetRate, gensetRate62, truckTotal,
+        // tripRateClient is the effective per-trip rate the client-facing truckTotalClient is
+        // actually built from (tripRate × clientScale) — client-facing displays (Summary's own
+        // "Trucks × N × 2 trips @ ₹X" line) show THIS, not the raw tripRate, so the line's own
+        // arithmetic matches the total sitting next to it instead of looking like it doesn't add up.
+        clientScale, truckTotalClient, totalClient: transportTotalClient, tripRateClient: tripRate * clientScale };
     }
-    return { zones, transport, decorTotal, transportTotal, grand: decorTotal + transportTotal };
+    return { zones, transport, decorTotal, transportTotal, transportTotalClient, grand: decorTotal + transportTotal, grandClient: decorTotal + transportTotalClient };
   }, [getElPriceForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, zoneLabelsD, zoneKeys, dcCustomItems, structRates, blocksByDate, imsInventory, dealCheckData, studioFloralData]);
 
   const cat = getCat(grandTotal);
@@ -8195,8 +8227,13 @@ export default function StudioApp() {
         zones,
         transport: bd.transport,
         decorTotal: bd.decorTotal,
-        transportTotal: bd.transportTotal,
-        grand: bd.grand,
+        // Client-facing cost sheet (Excel/PPT/PDF/on-screen exports below) — transportTotal/grand
+        // here carry the guest-facing venue-truck markup (bd.transportTotalClient/grandClient),
+        // same split as calcFunctionBreakdown's own *Client fields. Nothing in this function reads
+        // the internal-cost fields; that's calcFunctionBreakdown's raw transportTotal/grand, read
+        // directly by Deal Check's own Transport tab and the Dept-Income/event_orders bridges.
+        transportTotal: bd.transportTotalClient,
+        grand: bd.grandClient,
         isEmpty: zones.length === 0
       };
     });
