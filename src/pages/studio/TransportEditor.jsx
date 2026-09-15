@@ -38,13 +38,14 @@ export default function TransportEditor({ ctx }) {
     }
     // clientScale: the guest-facing markup on this venue's own trip cost (Build's Live Estimate,
     // Summary's accordion/export) — never 0 (that would zero the client's transport charge
-    // outright), so an emptied/invalid input falls back to 1 (same as cost) rather than storing a
-    // silent free ride. calcFunctionBreakdown/calcFunctionCost apply this same >0-or-1 fallback
+    // outright), so an emptied/invalid input falls back to 1.25 (the owner's requested default —
+    // 25% markup — rather than 1/no-markup) instead of storing a silent free ride.
+    // calcFunctionBreakdown/calcFunctionCost/transportCalc apply this same >0-or-1.25 fallback
     // when READING it, so a venue that has never had this field touched behaves identically.
-    const conv = (f, v) => (f === "rate" ? (Number(v) || 0) : f === "clientScale" ? (Number(v) > 0 ? Number(v) : 1) : v);
+    const conv = (f, v) => (f === "rate" ? (Number(v) || 0) : f === "clientScale" ? (Number(v) > 0 ? Number(v) : 1.25) : v);
     let next;
     if (existing) next = (trVenues || []).map((v) => (v === existing ? { ...v, [field]: conv(field, val) } : v));
-    else next = [...(trVenues || []), { id: "V" + Date.now().toString(36).slice(-5).toUpperCase(), name, tier: field === "tier" ? val : "", rate: field === "rate" ? Number(val) || 0 : 0, genset125: 1, genset62: 0, clientScale: field === "clientScale" ? conv("clientScale", val) : 1 }];
+    else next = [...(trVenues || []), { id: "V" + Date.now().toString(36).slice(-5).toUpperCase(), name, tier: field === "tier" ? val : "", rate: field === "rate" ? Number(val) || 0 : 0, genset125: 1, genset62: 0, clientScale: field === "clientScale" ? conv("clientScale", val) : 1.25 }];
     saveTR(next);
   };
   // Per-sub-category truck capacity, keyed by sub-category name (truckCap[].item === sub).
@@ -174,13 +175,14 @@ export default function TransportEditor({ ctx }) {
             <div style={{ width: 1, height: 20, background: border, margin: "0 4px" }} />
             {/* Guest-facing markup on the venue's own trip cost above — the price the client sees
                 in Build's Live Estimate and Summary is trip rate × this scale, while Deal Check's
-                own Transport tab keeps reading the raw rate as our actual cost. 1 = no markup
-                (client sees our cost), the default for every venue until set here. */}
-            <span style={{ fontSize: 11, color: "#10B981" }} title="Guest-facing markup on the trip cost — 1 = client sees our own cost">🧾</span>
-            <input type="number" step="0.05" min="0" value={v.clientScale ?? 1} onChange={(e) => upsertVenue(name, "clientScale", e.target.value)} style={{ ...numInput, width: 52, color: "#10B981" }} />
+                own Transport tab keeps reading the raw rate as our actual cost. Defaults to 1.25
+                (25% markup) — the owner's requested starting point — for every venue until tuned
+                here; 1 = client sees our own cost exactly. */}
+            <span style={{ fontSize: 11, color: "#10B981" }} title="Guest-facing markup on the trip cost — defaults to 1.25 (25%); 1 = client sees our own cost">🧾</span>
+            <input type="number" step="0.05" min="0" value={v.clientScale ?? 1.25} onChange={(e) => upsertVenue(name, "clientScale", e.target.value)} style={{ ...numInput, width: 52, color: "#10B981" }} />
             <span style={{ fontSize: 9, color: textS }}>× to guest</span>
-            {(Number(v.clientScale) || 1) !== 1 && (v.rate || 0) > 0 && (
-              <span style={{ fontSize: 9.5, color: textS }}>(₹{Math.round((v.rate || 0) * (Number(v.clientScale) || 1)).toLocaleString("en-IN")}/trip to guest)</span>
+            {(Number(v.clientScale) || 1.25) !== 1 && (v.rate || 0) > 0 && (
+              <span style={{ fontSize: 9.5, color: textS }}>(₹{Math.round((v.rate || 0) * (Number(v.clientScale) || 1.25)).toLocaleString("en-IN")}/trip to guest)</span>
             )}
           </div>
         </div>

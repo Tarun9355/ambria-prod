@@ -4325,10 +4325,10 @@ export default function StudioApp() {
     // Transport & Power) — this calc is Build's own client-facing figure (feeds grandTotal, the
     // Live Estimate rail and the Build page total panel — nothing internal reads transportCalc),
     // so unlike calcFunctionBreakdown there's no separate raw field to keep: truckTotal/total ARE
-    // the client price here. Scoped to the truck/trip line only, not genset. Defaults to 1 (no
-    // change) for a venue nobody has set it on.
+    // the client price here. Scoped to the truck/trip line only, not genset. Defaults to 1.25
+    // (25% markup, the owner's requested starting point) for a venue nobody has set it on.
     const rawTruckTotal = allTrucks * tripRate * 2;
-    const clientScale = Number(match?.clientScale) > 0 ? Number(match.clientScale) : 1;
+    const clientScale = Number(match?.clientScale) > 0 ? Number(match.clientScale) : 1.25;
     const truckTotal = rawTruckTotal * clientScale;
     const total = truckTotal + plan.gensetCost;
     return { trucks: allTrucks, tripRate, total, isNew, tier: tierId, tierLabel, breakdown, floralTrucks, bufferTrucks: bufTrucks, itemTrucks, totalFloralCost, gensets: plan.genset125, venueGensets: plan.venueGenset125, venueGenset62: plan.venueGenset62, gensetCost: plan.gensetCost, gensetRate, gensetRate62, genset62: plan.genset62, truckTotal, clientScale };
@@ -4459,8 +4459,9 @@ export default function StudioApp() {
       // booking-confirm amount, Deal Check's header total, and its own clientRevenue/profit-margin
       // calc all sum calcFunctionCost().grand, never calcFunctionBreakdown's cost fields — so the
       // guest-facing venue-truck markup (trVenues[].clientScale) belongs here, same as
-      // calcFunctionBreakdown's *Client fields and transportCalc above. Defaults to 1 (no change).
-      const clientScale = Number(match?.clientScale) > 0 ? Number(match.clientScale) : 1;
+      // calcFunctionBreakdown's *Client fields and transportCalc above. Defaults to 1.25 (25%
+      // markup, the owner's requested starting point) until a venue's own value is set.
+      const clientScale = Number(match?.clientScale) > 0 ? Number(match.clientScale) : 1.25;
       const truckTotal = rawTruckTotal * clientScale;
       const gensetCost = resolveGensetPlan(match, fCustomGensets, fCustomGenset62, gensetRate, gensetRate62).gensetCost;
       transport = truckTotal + gensetCost;
@@ -4914,14 +4915,14 @@ export default function StudioApp() {
       const plan = resolveGensetPlan(match, fCustomGensets, fCustomGenset62, gensetRate, gensetRate62);
       const truckTotal = allTrucks * tripRate * 2;
       // Guest-facing markup on the venue's own trip cost — Admin → Settings → Transport & Power's
-      // per-venue "client scale" field (trVenues[].clientScale). Defaults to 1 (client sees the
-      // same figure as cost) so a venue nobody has set it on behaves exactly as before this
-      // existed. Deliberately scoped to the truck/trip line only, not genset — every INTERNAL
-      // consumer of this function (Deal Check's own Transport tab, the Dept-Income snapshot, the
-      // event_orders ops bridge) keeps reading truckTotal/transportTotal/grand completely
-      // unchanged; only the NEW *Client fields carry the markup, for Build's Live Estimate panel
-      // and Summary's client-facing accordion/export to read instead.
-      const clientScale = Number(match?.clientScale) > 0 ? Number(match.clientScale) : 1;
+      // per-venue "client scale" field (trVenues[].clientScale). Defaults to 1.25 (25% markup, the
+      // owner's requested starting point) until a venue's own value is set. Deliberately scoped to
+      // the truck/trip line only, not genset — every INTERNAL consumer of this function (Deal
+      // Check's own Transport tab, the Dept-Income snapshot, the event_orders ops bridge) keeps
+      // reading truckTotal/transportTotal/grand completely unchanged; only the NEW *Client fields
+      // carry the markup, for Build's Live Estimate panel and Summary's client-facing
+      // accordion/export to read instead.
+      const clientScale = Number(match?.clientScale) > 0 ? Number(match.clientScale) : 1.25;
       const truckTotalClient = truckTotal * clientScale;
       transportTotal = truckTotal + plan.gensetCost;
       transportTotalClient = truckTotalClient + plan.gensetCost;
