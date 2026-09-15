@@ -1138,25 +1138,22 @@ export default function DealCheckOverlay({ ctx }) {
           // against the system's list-price estimate once a deal has been discounted or upsold in
           // negotiation — every margin figure in Deal Check should reflect the real deal.
           let clientRevenue = 0;
-          // Agency fee — flat % of the system-computed deal amount, billed to the guest on top of
-          // everything else (Admin → Settings, default 20%). Pure Ambria income: NOT added when the
-          // deal has a negotiated amount, since that figure is already the final all-in number the
-          // salesperson agreed with the client — stacking another 20% on top of an already-negotiated
-          // total would misrepresent what the guest actually agreed to pay. Deliberately kept OUT of
-          // clientRevenue itself (below) so commission's revenueShare stays exactly what it was before
-          // this existed — commission is a venue payout on production/décor revenue, not a cut of
-          // Ambria's own agency fee.
-          let agencyFee = 0;
-          const agencyFeePct = Number(dealCheckData?.agencyFeePct) || 20;
           if (Number(cli?.negotiatedAmount) > 0) {
             clientRevenue = Number(cli.negotiatedAmount);
           } else {
             try { fns.forEach(fn => { clientRevenue += calcFunctionCost(fn).grand; }); } catch {}
-            agencyFee = Math.round(clientRevenue * agencyFeePct / 100);
           }
+          // Agency fee — flat % of the deal amount, billed to the guest on top of everything else
+          // (Admin → Settings, default 20%). Pure Ambria income, so it always applies — negotiated or
+          // not — rather than being read as an expense; the owner's own framing is "this is income,
+          // not a cost". Deliberately kept OUT of clientRevenue itself so commission's revenueShare
+          // stays exactly what it was before this existed — commission is a venue payout on
+          // production/décor revenue, not a cut of Ambria's own agency fee.
+          const agencyFeePct = Number(dealCheckData?.agencyFeePct) || 20;
+          const agencyFee = Math.round(clientRevenue * agencyFeePct / 100);
           // dealAmount — what the guest is ACTUALLY billed (clientRevenue + the fee). This is the
-          // number shown as "Deal amount" and the one profit is measured against; clientRevenue
-          // itself stays the commission base, untouched by the fee.
+          // number the profitability panel measures profit against; clientRevenue itself stays the
+          // commission base, untouched by the fee.
           const dealAmount = clientRevenue + agencyFee;
           const effGrand = hasActuals ? grandActual : grand;
           // ═══ Commission — % of the deal amount set aside per venue (IMS → Admin → Master Data →
@@ -3873,7 +3870,7 @@ export default function DealCheckOverlay({ ctx }) {
                   );
                 })() : dcActiveTab === "gyv" ? (() => {
                   // ═══ GYV FIXED & BUFFER COST TAB — reads from shared dcCostRollup ═══
-                  const { rental, florals, transport, manpower, truss, buyTotal, produceTotal, base: baseProj, gyvFixed: gyvCost, bufferCost, commissionTotal, grand: grandProj, clientRevenue, fns, hasActuals, actualMandi, actualExpenses, effFlorals, baseActual, grandActual, projFlorals, effManpower, mpDelta } = dcCostRollup;
+                  const { rental, florals, transport, manpower, truss, buyTotal, produceTotal, base: baseProj, gyvFixed: gyvCost, bufferCost, commissionTotal, grand: grandProj, agencyFee, agencyFeePct, dealAmount, fns, hasActuals, actualMandi, actualExpenses, effFlorals, baseActual, grandActual, projFlorals, effManpower, mpDelta } = dcCostRollup;
                   const baseCost = hasActuals ? baseActual : baseProj;
                   const grandWithOverheads = hasActuals ? grandActual : grandProj;
                   const fmt = (n) => n > 0 ? "₹" + Math.round(n).toLocaleString("en-IN") : "₹0";
@@ -3901,13 +3898,10 @@ export default function DealCheckOverlay({ ctx }) {
                   ];
 
                   // ── ONE QUOTE FIGURE, NOT TWO ──
-                  // The profitability panel used to recompute this locally while the quote
-                  // calculator read dcCostRollup's copy. Both apply the same negotiated-amount
-                  // override so they happened to agree, but two copies of the number the whole
-                  // screen hangs on is a disagreement waiting to happen the next time one is edited.
-                  const quote = Number(cli?.negotiatedAmount) > 0
-                    ? Number(cli.negotiatedAmount)
-                    : (() => { let s = 0; try { fns.forEach(fn => { s += calcFunctionCost(fn).grand; }); } catch {} return s; })();
+                  // dealAmount is dcCostRollup's own copy (clientRevenue + agencyFee, same negotiated-
+                  // amount override) — read that directly rather than re-deriving it a second time here,
+                  // so this and the quote calculator below can never drift against each other.
+                  const quote = dealAmount;
                   // Commission is a real payout out of this deal's revenue, so what Ambria actually
                   // keeps has to come out net of it too — not just net of production cost + GYV/
                   // buffer. It deliberately stays OUT of grandWithOverheads/"Project total" itself
@@ -4086,6 +4080,11 @@ export default function DealCheckOverlay({ ctx }) {
                             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))",gap:12}}>
                               {[
                                 { k: "Client quote", sub: Number(cli?.negotiatedAmount) > 0 ? "negotiated" : "from Build screen", v: fmt(quote), tone: INK },
+                                // Agency fee — flat % of the deal (Admin → Settings), billed to the guest
+                                // on top of everything else. Pure Ambria income, no offsetting cost — it's
+                                // already inside "Client quote" above, called out here so it reads as the
+                                // profit driver it is rather than a hidden markup.
+                                { k: "Agency fee", sub: `${agencyFeePct}% — income, incl. above`, v: fmt(agencyFee), tone: GOOD },
                                 { k: "Internal cost", sub: "incl. GYV + buffer + commission", v: fmt(internalCostForProfit), tone: INK },
                                 { k: "Net profit", sub: `${profitPct}% margin`, v: `${netProfit < 0 ? "−" : ""}${fmt(Math.abs(netProfit))}`, tone: health.ink },
                               ].map(x => (
@@ -4195,7 +4194,7 @@ export default function DealCheckOverlay({ ctx }) {
                   // ═══ COMMISSION TAB — % of the deal amount set aside per venue, reads from shared
                   // dcCostRollup. The % itself is IMS master data (Admin → Master Data → Venues);
                   // the amount can be overridden per venue right here. ═══
-                  const { commissionByVenue, commissionTotal, clientRevenue, agencyFee, agencyFeePct, dealAmount } = dcCostRollup;
+                  const { commissionByVenue, commissionTotal, clientRevenue } = dcCostRollup;
                   const fmt2 = (n) => (n >= 0 ? "₹" + Math.round(n).toLocaleString("en-IN") : "−₹" + Math.round(Math.abs(n)).toLocaleString("en-IN"));
                   const commitOverride = (venue, value) => {
                     const nextOverrides = { ...(cli?.commissionOverrides || {}) };
@@ -4215,10 +4214,9 @@ export default function DealCheckOverlay({ ctx }) {
                       <div className="dc2-sum">
                         {[
                           { label: commissionByVenue.length === 1 ? "Venue" : "Venues", value: commissionByVenue.length, foot: overriddenCount ? `${overriddenCount} overridden by hand` : "all at the master rate" },
-                          { label: "Deal amount", value: fmt2(dealAmount), foot: Number(cli?.negotiatedAmount) > 0 ? "negotiated" : `from Build screen, incl. ${agencyFeePct}% agency fee` },
-                          { label: "Effective rate", value: `${effPct.toFixed(effPct % 1 === 0 ? 0 : 1)}%`, foot: commissionByVenue.length > 1 ? "blended across venues" : "of production revenue (pre-fee)" },
+                          { label: "Deal amount", value: fmt2(clientRevenue), foot: Number(cli?.negotiatedAmount) > 0 ? "negotiated" : "from Build screen" },
+                          { label: "Effective rate", value: `${effPct.toFixed(effPct % 1 === 0 ? 0 : 1)}%`, foot: commissionByVenue.length > 1 ? "blended across venues" : "of the deal amount" },
                           { label: "Total commission", value: fmt2(commissionTotal), foot: "set aside for venues", tone: GOLD },
-                          { label: "Agency fee", value: fmt2(agencyFee), foot: agencyFee > 0 ? `${agencyFeePct}% — Ambria income` : "not applied — negotiated deal", tone: GOLD },
                         ].map((s, si) => (
                           <div key={si} className="dc2-card" style={{background:CARD_BG,border:`1px solid ${CARD_BORDER}`,borderRadius:11,boxShadow:CARD_SHADOW,padding:"9px 13px",minWidth:0}}>
                             <div style={{fontSize:9.5,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:INK_2,marginBottom:4,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{s.label}</div>
