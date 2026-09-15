@@ -110,6 +110,8 @@ export default function DCTrussTab({ ctx }) {
                             pv.costs.beamCost = Math.max(0, pv.costs.beamCost - disc.beam);
                             pv.costs.actual = Math.max(0, pv.costs.actual - disc.total);
                             pv.costs.venueDiscount = disc.total;
+                            pv.costs.pillarDiscounted = disc.pillar > 0;
+                            pv.costs.beamDiscounted = disc.beam > 0;
                           }
                           grandActual += pv.costs.actual;
                           grandU      += pv.costs.uEquivalent;
@@ -483,7 +485,7 @@ export default function DCTrussTab({ ctx }) {
                                       <div className="dct-tile" style={{flex:"1 1 200px",padding:"10px 12px",background:TILE_BG,borderRadius:7,fontSize:12}}>
                                         <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",gap:8,marginBottom:4}}>
                                           <span style={{fontSize:10.5,fontWeight:700,letterSpacing:0.6,textTransform:"uppercase",color:INK_2}}>🏛️ Pillars ({topo.pillars.length})</span>
-                                          {(costs?.pillarCost || 0) > 0 && <span style={{...NUM,fontSize:12.5,fontWeight:700,color:INK}}>₹{Math.round((costs?.pillarCost || 0)).toLocaleString("en-IN")}</span>}
+                                          {(costs?.pillarCost || 0) > 0 && <span title={costs?.pillarDiscounted?"Fixed-venue standing-pillar discount applied":undefined} style={{...NUM,fontSize:12.5,fontWeight:700,color:costs?.pillarDiscounted?"#10B981":INK}}>₹{Math.round((costs?.pillarCost || 0)).toLocaleString("en-IN")}</span>}
                                         </div>
                                         <div style={{...NUM,color:INK,fontWeight:600,lineHeight:1.5}}>
                                           {groupByLen(topo.pillars, p => p.H)} = {costs?.pillarRft || 0} RFT
@@ -492,7 +494,7 @@ export default function DCTrussTab({ ctx }) {
                                       <div className="dct-tile" style={{flex:"1 1 200px",padding:"10px 12px",background:TILE_BG,borderRadius:7,fontSize:12}}>
                                         <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",gap:8,marginBottom:4}}>
                                           <span style={{fontSize:10.5,fontWeight:700,letterSpacing:0.6,textTransform:"uppercase",color:INK_2}}>🔗 Beams ({topo.beams.length})</span>
-                                          {(costs?.beamCost || 0) > 0 && <span style={{...NUM,fontSize:12.5,fontWeight:700,color:INK}}>₹{Math.round((costs?.beamCost || 0)).toLocaleString("en-IN")}</span>}
+                                          {(costs?.beamCost || 0) > 0 && <span title={costs?.beamDiscounted?"Fixed-venue standing-beam discount applied":undefined} style={{...NUM,fontSize:12.5,fontWeight:700,color:costs?.beamDiscounted?"#10B981":INK}}>₹{Math.round((costs?.beamCost || 0)).toLocaleString("en-IN")}</span>}
                                         </div>
                                         <div style={{...NUM,color:INK,fontWeight:600,lineHeight:1.5}}>
                                           {groupByLen(topo.beams, b => b.lengthFt)} = {costs?.beamRft || 0} RFT
