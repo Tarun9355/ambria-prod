@@ -546,6 +546,7 @@ ${(fnObj.transport.breakdown || []).map(bd => `<div class="tr-row"><div class="t
 `).join("")}
 <div class="summary-table"><table><tr><th>Function</th><th style="text-align:left">Date · Venue</th><th style="text-align:right">Decor</th><th style="text-align:right">Transport</th><th style="text-align:right">Grand</th></tr>
 ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnType || "—"}</td><td style="text-align:left;color:#6B7280">${fmtDate(fnObj.fnDate)} · ${fnObj.fnVenue || "—"}</td><td style="text-align:right">${fnObj.isEmpty ? "—" : f(fnObj.decorTotal)}</td><td style="text-align:right;color:#4F46E5">${fnObj.isEmpty ? "—" : f(fnObj.transportTotal)}</td><td style="text-align:right;font-weight:700">${fnObj.isEmpty ? "—" : f(fnObj.grand)}</td></tr>`).join("")}
+<tr><td style="font-weight:600">Agency Fee</td><td style="text-align:left;color:#6B7280">${combined.agencyFeePct ?? 20}% of decor + transport + power</td><td style="text-align:right">—</td><td style="text-align:right">—</td><td style="text-align:right;font-weight:700">${f(combined.agencyFee || 0)}</td></tr>
 </table></div>
 <div class="grand"><div class="g-label">Event Grand Total</div><div class="g-amt">${f(combined.eventGrandTotal)}</div></div>
 <div class="footer"><strong>Ambria Decorations</strong> · Pushpanjali, Bijwasan, New Delhi · thefusiondecor.com<br>This is an estimate. Final pricing may vary based on customization and availability.</div>
@@ -864,6 +865,12 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
           { text: fnObj.isEmpty ? "—" : f(fnObj.grand), options: { fontSize: 10, align: "right", color: dark, bold: true } }
         ]);
       });
+      sumRows.push([
+        { text: "Agency Fee", options: { fontSize: 10, color: dark, bold: true } },
+        { text: `${combined.agencyFeePct ?? 20}% of decor + transport + power`, options: { fontSize: 9, color: gray, italic: true } },
+        { text: "", options: {} }, { text: "", options: {} },
+        { text: f(combined.agencyFee || 0), options: { fontSize: 10, align: "right", color: dark, bold: true } }
+      ]);
       slide.addTable(sumRows, { x: 0.6, y: 1.1, w: 8.8, fontSize: 10, border: { type: "solid", pt: 0.5, color: "E8E0D4" }, rowH: 0.36, colW: [1.6, 3.2, 1.4, 1.3, 1.3] });
 
       // Event grand total band
@@ -1031,6 +1038,15 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
         [3, 4, 5].forEach(ci => { row.getCell(ci).numFmt = money.numFmt; row.getCell(ci).alignment = { horizontal: "right" }; });
         swFnRows.push(row);
       });
+      // Agency fee — flat % of the deal (Admin → Settings, default 20%), billed to the guest on top
+      // of every function's own decor+transport+power total. Its own line, not folded silently into
+      // any function's total, so the guest can see exactly what it is.
+      const agencyFeeRow = sw.addRow(["AGENCY FEE", `${combined.agencyFeePct ?? 20}% of decor + transport + power`, "", "", combined.agencyFee || 0]);
+      sw.mergeCells(agencyFeeRow.number, 1, agencyFeeRow.number, 4);
+      agencyFeeRow.getCell(1).font = { bold: true, color: { argb: "FF4F46E5" } };
+      agencyFeeRow.getCell(2).font = { color: { argb: "FF6B7280" }, italic: true };
+      agencyFeeRow.getCell(5).numFmt = money.numFmt;
+      agencyFeeRow.getCell(5).alignment = { horizontal: "right" };
       const gtRow = sw.addRow(["EVENT GRAND TOTAL", "", "", "", combined.eventGrandTotal || 0]);
       sw.mergeCells(gtRow.number, 1, gtRow.number, 4);
       gtRow.getCell(1).font = { bold: true, size: 12, color: { argb: white } };
@@ -1175,7 +1191,14 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
         row.getCell(5).value = { formula: `${sn}!F${ref.ftRow}`, result: fnObj.grand || 0 };
       });
       const grandRefs = fnRefs.filter(r => r && !r.isEmpty).map(r => `${qsheet(r.sheetName)}!F${r.ftRow}`);
-      if (grandRefs.length) gtRow.getCell(5).value = { formula: `SUM(${grandRefs.join(",")})`, result: combined.eventGrandTotal || 0 };
+      // The fee row itself becomes a live formula too (not just the grand total below it) — editing
+      // a Qty on a per-function tab should recalculate the fee's base, not leave it stuck at whatever
+      // it was when the sheet was built. Matches csUpdateQty's own on-screen re-derivation above.
+      if (grandRefs.length) {
+        const feePct = Number(combined.agencyFeePct) || 20;
+        agencyFeeRow.getCell(5).value = { formula: `ROUND(SUM(${grandRefs.join(",")})*${feePct}/100,0)`, result: combined.agencyFee || 0 };
+        gtRow.getCell(5).value = { formula: `SUM(${grandRefs.join(",")})+F${agencyFeeRow.number}`, result: combined.eventGrandTotal || 0 };
+      }
 
       // File name: guest name + the earliest function's date + venue — functions are already
       // date-sorted by buildCombinedCostSheetData, so [0] is the earliest.
@@ -2999,7 +3022,13 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
         fnObj.zones[zi].zoneTotal=fnObj.zones[zi].structTotal+fnObj.zones[zi].itemTotal;
         fnObj.decorTotal=fnObj.zones.reduce((s,z)=>s+z.zoneTotal,0);
         fnObj.grand=fnObj.decorTotal+(fnObj.transportTotal||0);
-        d.eventGrandTotal=d.functions.reduce((s,f)=>s+(f.grand||0),0);
+        const preFeeTotal=d.functions.reduce((s,f)=>s+(f.grand||0),0);
+        // Re-derive the agency fee off the edited total — d.agencyFeePct was stamped in by
+        // buildCombinedCostSheetData when this sheet was first opened; carry it forward rather than
+        // silently dropping the fee the moment someone tweaks a quantity.
+        const feePct=Number(d.agencyFeePct)||20;
+        d.agencyFee=Math.round(preFeeTotal*feePct/100);
+        d.eventGrandTotal=preFeeTotal+d.agencyFee;
         setCsData(d);
       };
       // The cost-sheet PDF button is gone from the toolbar. exportPDF() below still builds the sheet
@@ -3281,6 +3310,13 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
               )}
             </div>
           ))}
+          {/* Agency fee — flat % of the deal (Admin → Settings, default 20%), on top of every
+              function's own total above. Its own line so it never reads as an unexplained jump
+              between the sum of the function totals and the grand total below. */}
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 24px",marginBottom:8}}>
+            <div style={{fontSize:13,fontWeight:600,color:textS}}>Agency Fee <span style={{fontWeight:400}}>({csData.agencyFeePct ?? 20}% of decor + transport + power)</span></div>
+            <div style={{fontSize:15,fontWeight:700}}>{fmt(csData.agencyFee || 0)}</div>
+          </div>
           {/* Event grand total */}
           <div style={{background:"linear-gradient(135deg,#1a1a2e,#2d1b69)",borderRadius:14,padding:"20px 24px",display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
             <div style={{fontSize:18,fontWeight:700,color:"#fff"}}>Event Grand Total</div>

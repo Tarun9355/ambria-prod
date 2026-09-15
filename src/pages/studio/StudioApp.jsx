@@ -4388,7 +4388,14 @@ export default function StudioApp() {
     return { trucks: allTrucks, tripRate, total, isNew, tier: tierId, tierLabel, breakdown, floralTrucks, bufferTrucks: bufTrucks, itemTrucks, totalFloralCost, gensets: plan.genset125, venueGensets: plan.venueGenset125, venueGenset62: plan.venueGenset62, gensetCost: plan.gensetCost, gensetRate, gensetRate62, genset62: plan.genset62, truckTotal, clientScale };
   }, [venue, customTripRate, customGensets, gensetRate, gensetRate62, genset62, trVenues, zoneElements, enabledEls, rcItems, truckCap, floralPerTruck, bufferTiers, totalCost, zoneConfig, imsInventory, dealCheckData, studioFloralData]);
 
-  const grandTotal = useMemo(() => totalCost() + transportCalc.total, [totalCost, transportCalc]);
+  const grandTotal = useMemo(() => {
+    const base = totalCost() + transportCalc.total;
+    // Agency fee (Admin → Settings, default 20%) — this is Build's own live "page total" for the
+    // active function, the number a salesperson watches while building. It has to carry the fee too,
+    // or it would visibly disagree with eventGrandTotal/Deal Check/the cost sheet, which all do.
+    const feePct = Number(dealCheckData?.agencyFeePct) || 20;
+    return base + Math.round(base * feePct / 100);
+  }, [totalCost, transportCalc, dealCheckData]);
 
   const collectAllFunctionData = useCallback(() => {
     const all = [];
@@ -4822,8 +4829,13 @@ export default function StudioApp() {
 
   const eventGrandTotal = useMemo(() => {
     const all = collectAllFunctionData();
-    return all.reduce((sum, fnData) => sum + calcFunctionCost(fnData).grand, 0);
-  }, [collectAllFunctionData, calcFunctionCost]);
+    const base = all.reduce((sum, fnData) => sum + calcFunctionCost(fnData).grand, 0);
+    // Agency fee — flat % of the whole deal, billed to the guest on top of everything else
+    // (Admin → Settings, default 20%). This is the number booking confirmation, Summary's hero,
+    // and the negotiated-amount placeholder all read, so the fee has to sit inside it, not beside it.
+    const feePct = Number(dealCheckData?.agencyFeePct) || 20;
+    return base + Math.round(base * feePct / 100);
+  }, [collectAllFunctionData, calcFunctionCost, dealCheckData]);
 
   const calcFunctionBreakdown = useCallback((fnData) => {
     if (!fnData) return { zones: [], transport: null, decorTotal: 0, transportTotal: 0, transportTotalClient: 0, grand: 0, grandClient: 0 };
@@ -8342,13 +8354,19 @@ export default function StudioApp() {
         isEmpty: zones.length === 0
       };
     });
-    const eventGT = functions.reduce((s, f) => s + (f.grand || 0), 0);
+    const preFeeTotal = functions.reduce((s, f) => s + (f.grand || 0), 0);
+    // Agency fee — same flat % of the deal as eventGrandTotal (StudioApp's own memo), applied here
+    // too so the cost sheet's own grand total agrees with it, plus exposed as its own amount so the
+    // sheet can print it as an explicit line rather than folding it silently into the total.
+    const agencyFeePct = Number(dealCheckData?.agencyFeePct) || 20;
+    const agencyFee = Math.round(preFeeTotal * agencyFeePct / 100);
     return {
       functions,
-      eventGrandTotal: eventGT,
+      eventGrandTotal: preFeeTotal + agencyFee,
+      agencyFee, agencyFeePct,
       clientName, clientPhone, clientBrideGroom
     };
-  }, [collectAllFunctionData, buildZonesForFn, calcFunctionBreakdown, clientName, clientPhone, clientBrideGroom, clientLedger, activeClientId, activeFnIdx]);
+  }, [collectAllFunctionData, buildZonesForFn, calcFunctionBreakdown, clientName, clientPhone, clientBrideGroom, clientLedger, activeClientId, activeFnIdx, dealCheckData]);
 
   // ═══════════════════════════════════════════════════════════════
   // DEAL CHECK orchestration — IMS fetch (Supabase) + AI photo-match loop +
@@ -8703,6 +8721,12 @@ export default function StudioApp() {
       const paintableCategories = Array.isArray(s.paintableCategories) ? s.paintableCategories : [];
       const defaultPaintCostPerItem = typeof s.defaultPaintCostPerItem === "number" ? s.defaultPaintCostPerItem : 400;
       const carpetFreshMarkup = typeof s.carpetFreshMarkup === "number" ? s.carpetFreshMarkup : 40;
+      // Agency fee — a flat % of the whole deal's client-facing total, billed to the guest on top
+      // of decor/transport/power (Admin → Settings). Pure Ambria income: applied only where the
+      // GUEST-facing total is computed (eventGrandTotal, the cost sheet, Deal Check's own "Deal
+      // amount"/profit figure) — never inside internal cost, department income, or commission's own
+      // revenue-share base, so it doesn't inflate what venues/salespeople are paid on.
+      const agencyFeePct = typeof s.agencyFeePct === "number" ? s.agencyFeePct : 20;
       // Vendors (manpower avg-rate forecast) — match IMS rowToVendor shape (type/name from columns).
       const vendors = Array.isArray(vendorRows)
         ? vendorRows.map(v => ({ ...(v?.data || {}), id: v?.id, name: v?.name ?? v?.data?.name, type: v?.type ?? v?.data?.type }))
@@ -8724,7 +8748,7 @@ export default function StudioApp() {
       (Array.isArray(venuesRaw?.properties) ? venuesRaw.properties : []).forEach(p => { if (p?.name && typeof p.commissionPct === "number") venueCommission[p.name] = p.commissionPct; });
       (Array.isArray(venuesRaw?.outdoor) ? venuesRaw.outdoor : []).forEach(v => { if (v?.name && typeof v.commissionPct === "number") venueCommission[v.name] = v.commissionPct; });
 
-      setDealCheckData({ inventory, blocksByDate, fetchedDates: uniqueDates, flowerPatterns, mandiCatalogue, mandiPriceMultipliers, seasonMap, electricianProductivity, artificialMixRatePerKg, artificialFlowerRatePerKg, artificialFlowerBunchesPerKg, artificialGreenRatePerKg, artificialGreenBunchesPerKg, flowerRecipeSubcats, dihariSchemes, defaultWindowsByPhase, labourTiers, venueMinLabour, defaultMinLabour, eventTypeMultipliers, eventTimingMultipliers, sayaMultiplier, heavyElementRanges, fabricBangaliRanges, trussLabourRanges, fabricRftPerWorker, vendors, trussInv, colourCatalogue, paletteCatalogue, paintableCategories, defaultPaintCostPerItem, carpetFreshMarkup, defaultStudioMarkup: Number(s.defaultStudioMarkup ?? 3) || 3, fixedVenues: Array.isArray(s.fixedVenues) ? s.fixedVenues : [], fixedVenueSubcatDiscount: (s.fixedVenueSubcatDiscount && typeof s.fixedVenueSubcatDiscount === "object") ? s.fixedVenueSubcatDiscount : {}, venueParents, venueCommission, venueDumping: (s.venueDumping && typeof s.venueDumping === "object") ? s.venueDumping : {}, categoryDepartments: (catDeptMap && Object.keys(catDeptMap).length) ? catDeptMap : ((s.categoryDepartments && typeof s.categoryDepartments === "object") ? s.categoryDepartments : {}) });
+      setDealCheckData({ inventory, blocksByDate, fetchedDates: uniqueDates, flowerPatterns, mandiCatalogue, mandiPriceMultipliers, seasonMap, electricianProductivity, artificialMixRatePerKg, artificialFlowerRatePerKg, artificialFlowerBunchesPerKg, artificialGreenRatePerKg, artificialGreenBunchesPerKg, flowerRecipeSubcats, dihariSchemes, defaultWindowsByPhase, labourTiers, venueMinLabour, defaultMinLabour, eventTypeMultipliers, eventTimingMultipliers, sayaMultiplier, heavyElementRanges, fabricBangaliRanges, trussLabourRanges, fabricRftPerWorker, vendors, trussInv, colourCatalogue, paletteCatalogue, paintableCategories, defaultPaintCostPerItem, carpetFreshMarkup, agencyFeePct, defaultStudioMarkup: Number(s.defaultStudioMarkup ?? 3) || 3, fixedVenues: Array.isArray(s.fixedVenues) ? s.fixedVenues : [], fixedVenueSubcatDiscount: (s.fixedVenueSubcatDiscount && typeof s.fixedVenueSubcatDiscount === "object") ? s.fixedVenueSubcatDiscount : {}, venueParents, venueCommission, venueDumping: (s.venueDumping && typeof s.venueDumping === "object") ? s.venueDumping : {}, categoryDepartments: (catDeptMap && Object.keys(catDeptMap).length) ? catDeptMap : ((s.categoryDepartments && typeof s.categoryDepartments === "object") ? s.categoryDepartments : {}) });
       setDealCheckLoading(false);
       if (inventory.length === 0) {
         setDcAbortRef(null);

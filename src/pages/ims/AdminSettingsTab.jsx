@@ -618,6 +618,18 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
       )}
       {activePanel === "venues" && (
         <div className="space-y-4">
+          {/* Agency fee — a single global %, not per-venue, so it sits above the venue list rather
+              than inside VenuesEditor itself. Billed to the guest on top of every deal's decor +
+              transport + power total (Studio's eventGrandTotal / Deal Check's "Deal amount" / the
+              cost sheet exports) — pure Ambria income, doesn't touch venue commission or internal cost. */}
+          <div className="bg-white border rounded-2xl p-5">
+            <p className="font-bold text-gray-900 mb-1">💵 Agency Fee</p>
+            <p className="text-xs text-gray-500 mb-3">Flat % of every deal's client-facing total, billed to the guest on top of decor + transport + power. Applied everywhere the guest sees a total — Build, Summary, the cost sheet exports, and Deal Check's own Commission tab.</p>
+            <div className="flex items-center gap-2">
+              <input type="number" min="0" max="100" value={settings.agencyFeePct ?? 20} onChange={(e) => setSettings((s) => ({ ...s, agencyFeePct: parseFloat(e.target.value) || 0 }))} className="w-24 border border-teal-200 rounded-lg px-3 py-2 text-sm font-bold text-teal-700 text-center" />
+              <span className="text-sm text-gray-600">%</span>
+            </div>
+          </div>
           <VenuesEditor settings={settings} setSettings={setSettings} />
         </div>
       )}
