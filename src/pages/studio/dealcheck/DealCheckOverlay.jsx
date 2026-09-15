@@ -2631,12 +2631,18 @@ export default function DealCheckOverlay({ ctx }) {
                                           );
                                         })()}
                                       </div>
-                                      {/* Right-aligned line total (split-aware: sum of split lines, else single item × qty). */}
+                                      {/* Right-aligned line total (split-aware: sum of split lines, else single item × qty).
+                                          Repeat/standing-adjusted (repeatAdjustedRental) — this used to be a flat
+                                          rate × qty, so a Repeat zone's own card showed full price while the zone
+                                          header/rollup right above it had already applied the discount to the same
+                                          line, disagreeing with its own total. */}
                                       {card.imsId && (()=>{
                                         const splitArr = Array.isArray(card.split) ? card.split.filter(s=>s&&s.imsId&&(Number(s.qty)||0)>0) : [];
+                                        const _rep = !!(fns[fnIdx]?.zoneConfig?.[card.zoneKey]?.repeat);
+                                        const _venue = fns[fnIdx]?.fnVenue;
                                         const tot = splitArr.length
-                                          ? splitArr.reduce((s,x)=>{ const it3=dcInventoryCache.find(y=>y.id===x.imsId); return s+(it3?imsField.rentalCost(it3):0)*(Number(x.qty)||0); },0)
-                                          : (item ? rental * (Number(card.qty) || 1) : 0);
+                                          ? splitArr.reduce((s,x)=>{ const it3=dcInventoryCache.find(y=>y.id===x.imsId); const q=Number(x.qty)||0; return s+(it3?repeatAdjustedRental(_rep,_venue,it3,q,imsField.rentalCost(it3)):0); },0)
+                                          : (item ? repeatAdjustedRental(_rep, _venue, item, Number(card.qty) || 1, rental) : 0);
                                         if (tot <= 0) return null;
                                         // alignSelf flex-start, not center: at half width the card grows tall
                                         // when the alternatives strip or the split editor opens, and a centred
@@ -2820,12 +2826,16 @@ export default function DealCheckOverlay({ ctx }) {
                                   const item = dealCheckInventory.find(i => i.id === mi.imsId);
                                   const photo = item ? imsField.photos(item)[0] : null;
                                   // Same figure the rollup charges, so the row cannot show one price
-                                  // while the total is built from another.
+                                  // while the total is built from another — rental is the base rate
+                                  // (shown as the "× rate" reference below); lineTotal below is what
+                                  // actually gets billed, Repeat/standing-adjusted like the rollup.
                                   const rental = item ? effKitRental(item, activeFnIdx, null) : 0;
                                   const dims = item ? imsField.sizeText(item) : "";
                                   const sub = item ? imsField.subcategory(item) : "";
                                   // Hard cap: you can't block more than is available at this venue.
                                   const _vName = (fns[fnIdx] || {}).fnVenue || "";
+                                  const _rep = mi.zoneKey ? !!(fns[fnIdx]?.zoneConfig?.[mi.zoneKey]?.repeat) : false;
+                                  const lineTotal = item ? repeatAdjustedRental(_rep, _vName, item, mi.qty, rental) : 0;
                                   const _avail = item ? Math.max(0, Math.min(getStudioAvailable(item, fnBlocksForChip), availableAtVenue({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, _vName, item))) : 0;
                                   return (
                                     <div key={mi.manualId} className="dci-card" style={{padding:"12px 13px",borderRadius:10,boxShadow:IV.shadow,background:IV.card,border:`1px solid rgba(193,154,107,0.30)`,display:"flex",gap:11,alignItems:"flex-start"}}>
@@ -2844,7 +2854,7 @@ export default function DealCheckOverlay({ ctx }) {
                                             if (raw > v) showMsg && showMsg(`Only ${_avail} available — capped at ${_avail}`, "orange");
                                             setDcManualItems(prev => prev.map(x => x.manualId === mi.manualId ? {...x, qty: v} : x));
                                           }} style={{width:60,padding:"3px 6px",borderRadius:4,border:`1px solid ${mi.qty>=_avail&&_avail>0?"#F59E0B":border}`,background:"rgba(26, 26, 46,0.04)",color:IV.ink,fontSize:13}}/>
-                                          <span style={{...NUM,color:IV.ink2}}>of {_avail} avail · ₹{rental.toLocaleString("en-IN")} × {mi.qty} = ₹{(rental*mi.qty).toLocaleString("en-IN")}</span>
+                                          <span style={{...NUM,color:IV.ink2}}>of {_avail} avail · ₹{rental.toLocaleString("en-IN")} × {mi.qty} = ₹{lineTotal.toLocaleString("en-IN")}</span>
                                           {dims && <span style={{color:IV.ink3}}>· {dims}</span>}
                                         </div>
                                         {/* Same-subcategory alternatives + Browse (with per-item availability) — swap a manual block to another item */}
