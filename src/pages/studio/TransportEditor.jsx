@@ -36,10 +36,15 @@ export default function TransportEditor({ ctx }) {
       saveTR(next);
       return;
     }
-    const conv = (f, v) => (f === "rate" ? (Number(v) || 0) : v);
+    // clientScale: the guest-facing markup on this venue's own trip cost (Build's Live Estimate,
+    // Summary's accordion/export) — never 0 (that would zero the client's transport charge
+    // outright), so an emptied/invalid input falls back to 1 (same as cost) rather than storing a
+    // silent free ride. calcFunctionBreakdown/calcFunctionCost apply this same >0-or-1 fallback
+    // when READING it, so a venue that has never had this field touched behaves identically.
+    const conv = (f, v) => (f === "rate" ? (Number(v) || 0) : f === "clientScale" ? (Number(v) > 0 ? Number(v) : 1) : v);
     let next;
     if (existing) next = (trVenues || []).map((v) => (v === existing ? { ...v, [field]: conv(field, val) } : v));
-    else next = [...(trVenues || []), { id: "V" + Date.now().toString(36).slice(-5).toUpperCase(), name, tier: field === "tier" ? val : "", rate: field === "rate" ? Number(val) || 0 : 0, genset125: 1, genset62: 0 }];
+    else next = [...(trVenues || []), { id: "V" + Date.now().toString(36).slice(-5).toUpperCase(), name, tier: field === "tier" ? val : "", rate: field === "rate" ? Number(val) || 0 : 0, genset125: 1, genset62: 0, clientScale: field === "clientScale" ? conv("clientScale", val) : 1 }];
     saveTR(next);
   };
   // Per-sub-category truck capacity, keyed by sub-category name (truckCap[].item === sub).
@@ -145,7 +150,7 @@ export default function TransportEditor({ ctx }) {
         <div style={{ fontSize: 16, fontWeight: 700, color: accent }}>🏛️ Venue Transport Pricing</div>
         <span style={{ fontSize: 11, color: textS }}>{centralVenues.length} venues</span>
       </div>
-      <div style={{ fontSize: 11, color: textS, marginBottom: 16 }}>Venues come from <b>Settings → Venues</b>. Set the tier, trip rate &amp; genset count per venue here. New venues appear automatically.</div>
+      <div style={{ fontSize: 11, color: textS, marginBottom: 16 }}>Venues come from <b>Settings → Venues</b>. Set the tier, trip rate, genset count &amp; the guest-facing truck markup per venue here. New venues appear automatically.</div>
       {centralVenues.length === 0 && <div style={{ fontSize: 12, color: textS, fontStyle: "italic", padding: "8px 0" }}>No venues yet — add them in Settings → Venues.</div>}
       {centralVenues.map((name) => { const v = venueByName(name) || {}; const g = resolveVenueGensets(v); return (
         <div key={name} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: `1px solid ${border}`, flexWrap: "wrap", gap: 8 }}>
@@ -166,6 +171,17 @@ export default function TransportEditor({ ctx }) {
             <span style={{ fontSize: 9, color: textS }}>×125</span>
             <input type="number" step="1" min="0" title="62 KVA gensets" value={g.genset62} onChange={(e) => upsertVenue(name, "genset62", e.target.value)} style={{ ...numInput, width: 36, color: "#F59E0B", textAlign: "center" }} />
             <span style={{ fontSize: 9, color: textS }}>×62</span>
+            <div style={{ width: 1, height: 20, background: border, margin: "0 4px" }} />
+            {/* Guest-facing markup on the venue's own trip cost above — the price the client sees
+                in Build's Live Estimate and Summary is trip rate × this scale, while Deal Check's
+                own Transport tab keeps reading the raw rate as our actual cost. 1 = no markup
+                (client sees our cost), the default for every venue until set here. */}
+            <span style={{ fontSize: 11, color: "#10B981" }} title="Guest-facing markup on the trip cost — 1 = client sees our own cost">🧾</span>
+            <input type="number" step="0.05" min="0" value={v.clientScale ?? 1} onChange={(e) => upsertVenue(name, "clientScale", e.target.value)} style={{ ...numInput, width: 52, color: "#10B981" }} />
+            <span style={{ fontSize: 9, color: textS }}>× to guest</span>
+            {(Number(v.clientScale) || 1) !== 1 && (v.rate || 0) > 0 && (
+              <span style={{ fontSize: 9.5, color: textS }}>(₹{Math.round((v.rate || 0) * (Number(v.clientScale) || 1)).toLocaleString("en-IN")}/trip to guest)</span>
+            )}
           </div>
         </div>
       ); })}

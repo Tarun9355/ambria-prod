@@ -1127,13 +1127,16 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
           // total (trucks) × trip rate is actually charged (see transportCalc/truckTotal).
           // Listing every sub-category here read as line-item billing for numbers nobody pays.
           const trucks = fnObj.transport.trucks || 0;
-          const truckRow = ws.addRow(["Trucks", `${trucks} truck${trucks !== 1 ? "s" : ""} × ${f(fnObj.transport.tripRate)} × 2`, "", "", "", fnObj.transport.truckTotal || 0]);
+          // Client-facing export: truckTotalClient/tripRateClient (Admin → Settings → Transport &
+          // Power's per-venue "client scale") rather than the raw cost fields — Deal Check's own
+          // Transport tab is the one place that still reads truckTotal/tripRate unscaled.
+          const truckRow = ws.addRow(["Trucks", `${trucks} truck${trucks !== 1 ? "s" : ""} × ${f(fnObj.transport.tripRateClient ?? fnObj.transport.tripRate)} × 2`, "", "", "", fnObj.transport.truckTotalClient ?? fnObj.transport.truckTotal ?? 0]);
           truckRow.getCell(6).numFmt = money.numFmt; truckRow.getCell(6).alignment = { horizontal: "right" };
           const gRow = ws.addRow(["Genset", `${fnObj.transport.gensets || 0} units × ${f(fnObj.transport.gensetRate || 0)}`, "", "", "", fnObj.transport.gensetCost || 0]);
           gRow.getCell(6).numFmt = money.numFmt; gRow.getCell(6).alignment = { horizontal: "right" };
           const tRow = ws.addRow(["Transport Total", "", "", "", "", ""]);
           tRow.eachCell(c => { c.font = { bold: true, color: { argb: "FF4F46E5" } }; c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFEEF2FF" } }; });
-          tRow.getCell(6).value = { formula: `SUM(F${truckRow.number}:F${gRow.number})`, result: fnObj.transport.total || 0 };
+          tRow.getCell(6).value = { formula: `SUM(F${truckRow.number}:F${gRow.number})`, result: fnObj.transport.totalClient ?? fnObj.transport.total ?? 0 };
           tRow.getCell(6).numFmt = money.numFmt; tRow.getCell(6).alignment = { horizontal: "right" };
           totalRefRows.push(tRow.number);
           transportRow = tRow.number;
@@ -2904,7 +2907,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
                             </div>
                           </div>
                         </div>
-                        <div style={{fontSize:15,fontWeight:700,color:accentText}}>{fmt(breakdown.transport.total)}</div>
+                        <div style={{fontSize:15,fontWeight:700,color:accentText}}>{fmt(breakdown.transport.totalClient ?? breakdown.transport.total)}</div>
                       </div>
                       {txOpen[fnData.fnIdx] && (
                       <div style={{padding:"6px 20px 12px 48px"}}>
@@ -2916,7 +2919,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
                         ))}
                         <div style={{borderTop:`0.5px solid ${border}`,marginTop:6,paddingTop:8,fontSize:12}}>
                           <div style={{display:"flex",justifyContent:"space-between"}}><span style={{color:textS}}>⚡ Genset × {breakdown.transport.gensets}</span><span>{fmt(breakdown.transport.gensetCost)}</span></div>
-                          <div style={{display:"flex",justifyContent:"space-between",marginTop:2}}><span style={{color:textS}}>🚛 Trucks × {breakdown.transport.trucks} × 2 trips @ {fmt(breakdown.transport.tripRate)}</span><span>{fmt(breakdown.transport.truckTotal)}</span></div>
+                          <div style={{display:"flex",justifyContent:"space-between",marginTop:2}}><span style={{color:textS}}>🚛 Trucks × {breakdown.transport.trucks} × 2 trips @ {fmt(breakdown.transport.tripRateClient ?? breakdown.transport.tripRate)}</span><span>{fmt(breakdown.transport.truckTotalClient ?? breakdown.transport.truckTotal)}</span></div>
                         </div>
                       </div>
                       )}
