@@ -192,6 +192,13 @@ export default function StudioModals({ ctx }) {
                     ? `Splitting ${origQty} × ${availModal.elName} — pick 2 or more items below`
                     : <>{availModal.subcat||"—"} · free on {availModal.date||"event date"} · tap to pick</>}
                 </div>
+                {/* Caller-supplied context (e.g. Deal Check's carpet card: "1200 sqft needed") — the
+                    modal covers whatever showed this figure behind it, so it's restated here rather
+                    than making the caller remember it. Opt-in (opts.neededLabel); most callers (a
+                    plain qty swap) have nothing extra to say beyond the subtitle above. */}
+                {availModal.neededLabel && (
+                  <div style={{fontSize:11,color:accent,marginTop:3,fontWeight:600}}>{availModal.neededLabel}</div>
+                )}
               </div>
               <div style={{display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
                 {splitCapable && (
@@ -227,6 +234,16 @@ export default function StudioModals({ ctx }) {
                         {it.photo ? <img src={it.photo} alt="" style={{width:"100%",height:120,objectFit:"cover",display:"block",opacity:out?0.5:1}}/> : <div style={{width:"100%",height:120,display:"flex",alignItems:"center",justifyContent:"center",fontSize:30,background:isDark?"#1a1a2e":"#eee"}}><IconBox size={22}/></div>}
                         <div style={{padding:"8px 10px"}}>
                           <div style={{fontSize:11,fontWeight:600,color:textP,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.name}</div>
+                          {/* The corner badge is deliberately a bare number (no room for a unit in a
+                              22px-wide tag) — this line spells it out. availModal.unitLabel is a
+                              caller override (Deal Check's carpet picker passes "sqft") for when the
+                              raw inventory unit field doesn't say what this qty actually means here —
+                              a carpet's own `unit` is often a generic "Piece" (how it's counted on
+                              the shelf) even though every carpet cost calc in this app (calcZoneCarpet,
+                              the split editor's own "sqft avail") treats its qty as total sqft
+                              already, so "Piece" was mislabeling the exact same 42 as a count of rugs
+                              instead of the sqft that number has always meant. */}
+                          <div style={{fontSize:9.5,marginTop:2,color:out?"#EF4444":"#059669",fontWeight:600}}>{it.free} {availModal.unitLabel || it.unit || "pc"} free</div>
                           {it.dims && <div style={{fontSize:9,color:textS,marginTop:2}}><IconRuler size={9}/> {it.dims}</div>}
                           <div style={{fontSize:11,fontWeight:700,color:accent,marginTop:2}}>{fmt(Math.round(it.price))}</div>
                         </div>
