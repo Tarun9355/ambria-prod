@@ -285,6 +285,10 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
                 {!venueOptions.includes(v.name) && <option value={v.name}>{v.name} (not in venue list)</option>}
               </select>
               <div className="flex items-center gap-1"><span className="text-xs text-gray-500">Min labour</span><input type="number" min="0" value={v.minLabour ?? 4} onChange={(e) => updVenue(v.id, { minLabour: parseInt(e.target.value) || 0 })} className="w-14 border rounded px-2 py-1 text-sm text-center" /></div>
+              {/* Fixed-venue discount — a % off this venue's own share of the booked deal amount
+                  (Deal Check's dealAmount, before the agency fee), same proration commission already
+                  uses for a multi-venue booking. 0 = no discount, the default for every venue today. */}
+              <div className="flex items-center gap-1"><span className="text-xs text-gray-500">Discount</span><input type="number" min="0" max="100" value={v.discountPct ?? 0} onChange={(e) => updVenue(v.id, { discountPct: parseFloat(e.target.value) || 0 })} className="w-14 border rounded px-2 py-1 text-sm text-center" /><span className="text-xs text-gray-500">%</span></div>
               <button onClick={() => delVenue(v.id)} className="text-red-400 hover:text-red-600 text-sm ml-auto">🗑️</button>
             </div>
 

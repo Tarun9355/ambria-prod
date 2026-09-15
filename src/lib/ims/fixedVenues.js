@@ -133,6 +133,49 @@ export function standingReductionBySubcat(settings, venueName, cards, inventory)
   return out;
 }
 
+// This venue's own configured discount % (0 if it isn't a Fixed Venue, or has none set). Exported
+// so a caller can stamp it onto its own per-function data once (see buildCombinedCostSheetData),
+// letting a later re-derivation (e.g. an on-screen cost-sheet quantity edit) use proratedVenueDiscount
+// below without needing the fixedVenues settings blob at all.
+export function fixedVenueDiscountPctFor(settings, venueName) {
+  const fv = fixedVenueFor(settings, venueName);
+  return Number(fv?.discountPct) || 0;
+}
+
+// Pure proration, no settings lookup: given a list of { grand, discountPct } (already resolved),
+// discount THAT item's own share of revenueTotal by its own discountPct and sum. This is the actual
+// math both fixedVenueDealDiscount below and a from-scratch caller (holding only pre-resolved data)
+// can share.
+export function proratedVenueDiscount(items, revenueTotal) {
+  let total = 0;
+  (items || []).forEach((it) => { total += Number(it?.grand) || 0; });
+  let discount = 0;
+  (items || []).forEach((it) => {
+    const pct = Number(it?.discountPct) || 0;
+    if (pct > 0 && total > 0) {
+      const share = (Number(it?.grand) || 0) / total;
+      discount += Math.round((Number(revenueTotal) || 0) * share * pct / 100);
+    }
+  });
+  return discount;
+}
+
+// Fixed-venue discount on the deal amount — a % off THIS venue's own share of the deal, when a
+// function's venue is one of the Fixed Venues configured with a discountPct (Admin → Settings →
+// Fixed Venues). For a booking spanning several venues, only the discounted venue's own share of
+// the revenue is discounted, prorated the same way venue commission already is (fnGrandByVenue ÷
+// total) — so a negotiated lump-sum revenue still discounts correctly even though it isn't itself
+// split per venue. fns: per-function data (each carrying its own fnVenue); calcFnGrand(fn) → that
+// function's own pre-fee client-facing total; revenueTotal: the deal amount (system total or
+// negotiated override) this discount is a % of.
+export function fixedVenueDealDiscount(settings, fns, calcFnGrand, revenueTotal) {
+  const items = (fns || []).map((fn) => {
+    let g = 0; try { g = calcFnGrand(fn) || 0; } catch { g = 0; }
+    return { grand: g, discountPct: fixedVenueDiscountPctFor(settings, fn?.fnVenue || "") };
+  });
+  return proratedVenueDiscount(items, revenueTotal);
+}
+
 // Heavy-element extra labour for a function, netting out standing inventory at fixed venues.
 // Returns { total, breakdown: string[] }.
 export function heavyElementExtraForFn(fn, settings, inventory) {

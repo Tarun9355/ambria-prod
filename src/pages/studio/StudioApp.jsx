@@ -25,7 +25,7 @@ import DealCheckOverlay from "./dealcheck/DealCheckOverlay.jsx";
 import { kvGet, kvTryGet, kvSet, reliableSave } from "../../lib/ims/kv";
 import { makeAmendRequest } from "../../lib/ims/amend";
 import { catToDept } from "../../lib/ims/deptClassify";
-import { availableAtVenue, isStandingAt, rentalSplit } from "../../lib/ims/fixedVenues";
+import { availableAtVenue, isStandingAt, rentalSplit, fixedVenueDealDiscount, fixedVenueDiscountPctFor, proratedVenueDiscount } from "../../lib/ims/fixedVenues";
 import { searchLmsLeads, triggerLmsSync, fetchCachedContracts, fetchLmsLeadByEntry } from "../../lib/ims/lms";
 import { uploadToStorage, compressImageForUpload, STORAGE_FOLDERS, listStorage, deleteStorageObjects, deleteStorageFolder } from "../../lib/storage";
 import { ytApi, ytDuration } from "../../lib/youtube";
@@ -4390,12 +4390,15 @@ export default function StudioApp() {
 
   const grandTotal = useMemo(() => {
     const base = totalCost() + transportCalc.total;
+    // Fixed-venue discount — same as eventGrandTotal's, just for this one active function/venue.
+    const fvCfg = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
+    const discounted = Math.max(0, base - fixedVenueDealDiscount(fvCfg, [{ fnVenue: venue }], () => base, base));
     // Agency fee (Admin → Settings, default 20%) — this is Build's own live "page total" for the
     // active function, the number a salesperson watches while building. It has to carry the fee too,
     // or it would visibly disagree with eventGrandTotal/Deal Check/the cost sheet, which all do.
     const feePct = Number(dealCheckData?.agencyFeePct) || 20;
-    return base + Math.round(base * feePct / 100);
-  }, [totalCost, transportCalc, dealCheckData]);
+    return discounted + Math.round(discounted * feePct / 100);
+  }, [totalCost, transportCalc, dealCheckData, venue]);
 
   const collectAllFunctionData = useCallback(() => {
     const all = [];
@@ -4830,11 +4833,15 @@ export default function StudioApp() {
   const eventGrandTotal = useMemo(() => {
     const all = collectAllFunctionData();
     const base = all.reduce((sum, fnData) => sum + calcFunctionCost(fnData).grand, 0);
-    // Agency fee — flat % of the whole deal, billed to the guest on top of everything else
+    // Fixed-venue discount — % off a function's own share of the deal when its venue is a Fixed
+    // Venue configured with one (Admin → Settings → Fixed Venues), applied before the agency fee.
+    const fvCfg = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
+    const discounted = Math.max(0, base - fixedVenueDealDiscount(fvCfg, all, (fn) => calcFunctionCost(fn).grand, base));
+    // Agency fee — flat % of the (post-discount) deal, billed to the guest on top of everything else
     // (Admin → Settings, default 20%). This is the number booking confirmation, Summary's hero,
     // and the negotiated-amount placeholder all read, so the fee has to sit inside it, not beside it.
     const feePct = Number(dealCheckData?.agencyFeePct) || 20;
-    return base + Math.round(base * feePct / 100);
+    return discounted + Math.round(discounted * feePct / 100);
   }, [collectAllFunctionData, calcFunctionCost, dealCheckData]);
 
   const calcFunctionBreakdown = useCallback((fnData) => {
@@ -8329,6 +8336,7 @@ export default function StudioApp() {
       const db = b.fnDate || "9999-12-31";
       return da.localeCompare(db);
     });
+    const fvCfg = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
     const functions = sorted.map(fnDataRaw => {
       const fnData = enrichFromSession(fnDataRaw);
       const zones = buildZonesForFn(fnData);
@@ -8351,19 +8359,27 @@ export default function StudioApp() {
         // directly by Deal Check's own Transport tab and the Dept-Income/event_orders bridges.
         transportTotal: bd.transportTotalClient,
         grand: bd.grandClient,
+        // Stamped once here (rather than re-resolved from settings later) so the on-screen cost
+        // sheet's own quantity-edit recompute (StudioSummary's csUpdateQty) can re-derive the
+        // discount from proratedVenueDiscount without needing the fixedVenues settings blob at all.
+        discountPct: fixedVenueDiscountPctFor(fvCfg, fnData.fnVenue),
         isEmpty: zones.length === 0
       };
     });
     const preFeeTotal = functions.reduce((s, f) => s + (f.grand || 0), 0);
+    // Fixed-venue discount — same mechanism as eventGrandTotal's, applied before the agency fee;
+    // exposed as its own amount so the sheet can print it as an explicit line.
+    const venueDiscount = proratedVenueDiscount(functions, preFeeTotal);
+    const discountedTotal = Math.max(0, preFeeTotal - venueDiscount);
     // Agency fee — same flat % of the deal as eventGrandTotal (StudioApp's own memo), applied here
     // too so the cost sheet's own grand total agrees with it, plus exposed as its own amount so the
     // sheet can print it as an explicit line rather than folding it silently into the total.
     const agencyFeePct = Number(dealCheckData?.agencyFeePct) || 20;
-    const agencyFee = Math.round(preFeeTotal * agencyFeePct / 100);
+    const agencyFee = Math.round(discountedTotal * agencyFeePct / 100);
     return {
       functions,
-      eventGrandTotal: preFeeTotal + agencyFee,
-      agencyFee, agencyFeePct,
+      eventGrandTotal: discountedTotal + agencyFee,
+      venueDiscount, agencyFee, agencyFeePct,
       clientName, clientPhone, clientBrideGroom
     };
   }, [collectAllFunctionData, buildZonesForFn, calcFunctionBreakdown, clientName, clientPhone, clientBrideGroom, clientLedger, activeClientId, activeFnIdx, dealCheckData]);

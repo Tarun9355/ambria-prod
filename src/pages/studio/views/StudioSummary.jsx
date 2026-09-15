@@ -14,6 +14,7 @@ import { useState, useEffect, useRef, Fragment } from "react";
 import { IconSparkle, IconExcelMark, IconCanvaMark, IconEye, IconRepeat } from "../../../components/icons.jsx";
 import { LOGO_ASSET, logoCrop } from "../../../lib/studio/brand.js";
 import { getCat, carpetPricingFor, trussRateFor, trussBaseArea } from "../../../lib/studio/taxonomy";
+import { proratedVenueDiscount } from "../../../lib/ims/fixedVenues";
 import { makeDeleteClient } from "../../../lib/studio/clientDelete";
 import { swatchHexFor, nearestColourName } from "../../../lib/studio/colours";
 import { paletteFromPhotos } from "../../../lib/studio/photoPalette";
@@ -546,6 +547,7 @@ ${(fnObj.transport.breakdown || []).map(bd => `<div class="tr-row"><div class="t
 `).join("")}
 <div class="summary-table"><table><tr><th>Function</th><th style="text-align:left">Date · Venue</th><th style="text-align:right">Decor</th><th style="text-align:right">Transport</th><th style="text-align:right">Grand</th></tr>
 ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnType || "—"}</td><td style="text-align:left;color:#6B7280">${fmtDate(fnObj.fnDate)} · ${fnObj.fnVenue || "—"}</td><td style="text-align:right">${fnObj.isEmpty ? "—" : f(fnObj.decorTotal)}</td><td style="text-align:right;color:#4F46E5">${fnObj.isEmpty ? "—" : f(fnObj.transportTotal)}</td><td style="text-align:right;font-weight:700">${fnObj.isEmpty ? "—" : f(fnObj.grand)}</td></tr>`).join("")}
+${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91C1C">Fixed-Venue Discount</td><td style="text-align:left;color:#6B7280">applied to booked venue's share</td><td style="text-align:right">—</td><td style="text-align:right">—</td><td style="text-align:right;font-weight:700;color:#B91C1C">−${f(combined.venueDiscount)}</td></tr>` : ""}
 <tr><td style="font-weight:600">Agency Fee</td><td style="text-align:left;color:#6B7280">${combined.agencyFeePct ?? 20}% of decor + transport + power</td><td style="text-align:right">—</td><td style="text-align:right">—</td><td style="text-align:right;font-weight:700">${f(combined.agencyFee || 0)}</td></tr>
 </table></div>
 <div class="grand"><div class="g-label">Event Grand Total</div><div class="g-amt">${f(combined.eventGrandTotal)}</div></div>
@@ -865,6 +867,14 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
           { text: fnObj.isEmpty ? "—" : f(fnObj.grand), options: { fontSize: 10, align: "right", color: dark, bold: true } }
         ]);
       });
+      if ((combined.venueDiscount || 0) > 0) {
+        sumRows.push([
+          { text: "Fixed-Venue Discount", options: { fontSize: 10, color: "B91C1C", bold: true } },
+          { text: "applied to booked venue's share", options: { fontSize: 9, color: gray, italic: true } },
+          { text: "", options: {} }, { text: "", options: {} },
+          { text: `−${f(combined.venueDiscount)}`, options: { fontSize: 10, align: "right", color: "B91C1C", bold: true } }
+        ]);
+      }
       sumRows.push([
         { text: "Agency Fee", options: { fontSize: 10, color: dark, bold: true } },
         { text: `${combined.agencyFeePct ?? 20}% of decor + transport + power`, options: { fontSize: 9, color: gray, italic: true } },
@@ -1038,6 +1048,18 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
         [3, 4, 5].forEach(ci => { row.getCell(ci).numFmt = money.numFmt; row.getCell(ci).alignment = { horizontal: "right" }; });
         swFnRows.push(row);
       });
+      // Fixed-venue discount — % off the booked venue's own share of the total, when it's one of
+      // the Fixed Venues configured with a discount (Admin → Settings → Fixed Venues). Only added
+      // when there actually is one, so a booking with no fixed-venue discount doesn't grow a ₹0 row.
+      let discountRow = null;
+      if ((combined.venueDiscount || 0) > 0) {
+        discountRow = sw.addRow(["FIXED-VENUE DISCOUNT", "", "", "", -combined.venueDiscount]);
+        sw.mergeCells(discountRow.number, 1, discountRow.number, 4);
+        discountRow.getCell(1).font = { bold: true, color: { argb: "FFB91C1C" } };
+        discountRow.getCell(5).numFmt = money.numFmt;
+        discountRow.getCell(5).alignment = { horizontal: "right" };
+        discountRow.getCell(5).font = { color: { argb: "FFB91C1C" } };
+      }
       // Agency fee — flat % of the deal (Admin → Settings, default 20%), billed to the guest on top
       // of every function's own decor+transport+power total. Its own line, not folded silently into
       // any function's total, so the guest can see exactly what it is.
@@ -1194,10 +1216,15 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       // The fee row itself becomes a live formula too (not just the grand total below it) — editing
       // a Qty on a per-function tab should recalculate the fee's base, not leave it stuck at whatever
       // it was when the sheet was built. Matches csUpdateQty's own on-screen re-derivation above.
+      // The discount row stays a static number — it's a per-venue proration (see
+      // proratedVenueDiscount), not a flat %, so it isn't worth reproducing as an Excel formula —
+      // but the fee/grand total below still reference its cell, so at least THEY stay internally
+      // consistent with whatever the discount row says.
       if (grandRefs.length) {
+        const preFeeFormula = `SUM(${grandRefs.join(",")})${discountRow ? `+F${discountRow.number}` : ""}`;
         const feePct = Number(combined.agencyFeePct) || 20;
-        agencyFeeRow.getCell(5).value = { formula: `ROUND(SUM(${grandRefs.join(",")})*${feePct}/100,0)`, result: combined.agencyFee || 0 };
-        gtRow.getCell(5).value = { formula: `SUM(${grandRefs.join(",")})+F${agencyFeeRow.number}`, result: combined.eventGrandTotal || 0 };
+        agencyFeeRow.getCell(5).value = { formula: `ROUND((${preFeeFormula})*${feePct}/100,0)`, result: combined.agencyFee || 0 };
+        gtRow.getCell(5).value = { formula: `${preFeeFormula}+F${agencyFeeRow.number}`, result: combined.eventGrandTotal || 0 };
       }
 
       // File name: guest name + the earliest function's date + venue — functions are already
@@ -3023,12 +3050,17 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
         fnObj.decorTotal=fnObj.zones.reduce((s,z)=>s+z.zoneTotal,0);
         fnObj.grand=fnObj.decorTotal+(fnObj.transportTotal||0);
         const preFeeTotal=d.functions.reduce((s,f)=>s+(f.grand||0),0);
-        // Re-derive the agency fee off the edited total — d.agencyFeePct was stamped in by
-        // buildCombinedCostSheetData when this sheet was first opened; carry it forward rather than
-        // silently dropping the fee the moment someone tweaks a quantity.
+        // Re-derive the fixed-venue discount off the edited total — each function's own discountPct
+        // was stamped in by buildCombinedCostSheetData when this sheet was first opened, so this
+        // needs no settings lookup, just the same proration math.
+        d.venueDiscount=proratedVenueDiscount(d.functions,preFeeTotal);
+        const discountedTotal=Math.max(0,preFeeTotal-d.venueDiscount);
+        // Re-derive the agency fee off the (post-discount) edited total — d.agencyFeePct was
+        // stamped in by buildCombinedCostSheetData when this sheet was first opened; carry it
+        // forward rather than silently dropping the fee the moment someone tweaks a quantity.
         const feePct=Number(d.agencyFeePct)||20;
-        d.agencyFee=Math.round(preFeeTotal*feePct/100);
-        d.eventGrandTotal=preFeeTotal+d.agencyFee;
+        d.agencyFee=Math.round(discountedTotal*feePct/100);
+        d.eventGrandTotal=discountedTotal+d.agencyFee;
         setCsData(d);
       };
       // The cost-sheet PDF button is gone from the toolbar. exportPDF() below still builds the sheet
@@ -3310,6 +3342,14 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
               )}
             </div>
           ))}
+          {/* Fixed-venue discount — only shown when the booked venue actually carries one
+              (Admin → Settings → Fixed Venues). Applied before the agency fee below. */}
+          {(csData.venueDiscount || 0) > 0 && (
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 24px",marginBottom:8}}>
+              <div style={{fontSize:13,fontWeight:600,color:"#B91C1C"}}>Fixed-Venue Discount</div>
+              <div style={{fontSize:15,fontWeight:700,color:"#B91C1C"}}>−{fmt(csData.venueDiscount)}</div>
+            </div>
+          )}
           {/* Agency fee — flat % of the deal (Admin → Settings, default 20%), on top of every
               function's own total above. Its own line so it never reads as an unexplained jump
               between the sum of the function totals and the grand total below. */}

@@ -93,7 +93,7 @@ const IV = {
 const NUM = { fontVariantNumeric: "tabular-nums" };
 import { heavyExtraLabour, eventTimingMultFor } from "../../../lib/ims/constants";
 import { deptMpReconciled, itemImsSubcat, lookupBySubcat, itemDimsText } from "../../../lib/ims/helpers";
-import { rentalSplit, availableAtVenue, isStandingAt, fixedVenueFor, standingReductionBySubcat } from "../../../lib/ims/fixedVenues";
+import { rentalSplit, availableAtVenue, isStandingAt, fixedVenueFor, standingReductionBySubcat, fixedVenueDealDiscount } from "../../../lib/ims/fixedVenues";
 import { calcZoneFabric, autoFillFabricAllocation, resolveTrussConfig } from "../../../lib/studio/pricing";
 import { carpetPricingFor, CARPET_OFF } from "../../../lib/studio/taxonomy";
 import { qtyUsedElsewhereInDealCheck } from "../../../lib/studio/dealAvailability";
@@ -1143,18 +1143,25 @@ export default function DealCheckOverlay({ ctx }) {
           } else {
             try { fns.forEach(fn => { clientRevenue += calcFunctionCost(fn).grand; }); } catch {}
           }
-          // Agency fee — flat % of the deal amount, billed to the guest on top of everything else
-          // (Admin → Settings, default 20%). Pure Ambria income, so it always applies — negotiated or
-          // not — rather than being read as an expense; the owner's own framing is "this is income,
-          // not a cost". Deliberately kept OUT of clientRevenue itself so commission's revenueShare
-          // stays exactly what it was before this existed — commission is a venue payout on
-          // production/décor revenue, not a cut of Ambria's own agency fee.
+          // Fixed-venue discount — % off THIS venue's own share of the deal amount, when a function's
+          // venue is one of the Fixed Venues configured with a discount (Admin → Settings → Fixed
+          // Venues). Applied to the pre-fee amount, before the agency fee is added on top — see
+          // fixedVenueDealDiscount for the per-venue proration (same mechanism commission uses).
+          // Deliberately kept OUT of clientRevenue/commission's own base, same reasoning as the agency
+          // fee below: commission stays exactly what it was before either of these existed.
+          const fvCfgForDiscount = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
+          const venueDiscount = fixedVenueDealDiscount(fvCfgForDiscount, fns, (fn) => calcFunctionCost(fn).grand, clientRevenue);
+          const discountedRevenue = Math.max(0, clientRevenue - venueDiscount);
+          // Agency fee — flat % of the (post-discount) deal amount, billed to the guest on top of
+          // everything else (Admin → Settings, default 20%). Pure Ambria income, so it always applies
+          // — negotiated or not — rather than being read as an expense; the owner's own framing is
+          // "this is income, not a cost".
           const agencyFeePct = Number(dealCheckData?.agencyFeePct) || 20;
-          const agencyFee = Math.round(clientRevenue * agencyFeePct / 100);
-          // dealAmount — what the guest is ACTUALLY billed (clientRevenue + the fee). This is the
-          // number the profitability panel measures profit against; clientRevenue itself stays the
-          // commission base, untouched by the fee.
-          const dealAmount = clientRevenue + agencyFee;
+          const agencyFee = Math.round(discountedRevenue * agencyFeePct / 100);
+          // dealAmount — what the guest is ACTUALLY billed (clientRevenue − the fixed-venue discount
+          // + the agency fee). This is the number the profitability panel measures profit against;
+          // clientRevenue itself stays the commission base, untouched by either.
+          const dealAmount = discountedRevenue + agencyFee;
           const effGrand = hasActuals ? grandActual : grand;
           // ═══ Commission — % of the deal amount set aside per venue (IMS → Admin → Master Data →
           // Venues, one row per in-house property or outdoor venue). A booking spanning more than one
@@ -1196,7 +1203,7 @@ export default function DealCheckOverlay({ ctx }) {
           // Profit measured against dealAmount (fee included) — the fee is pure additional revenue
           // with no offsetting cost, so it flows straight through to profit, same as the owner asked.
           const profitPct = dealAmount > 0 ? Math.round(((dealAmount - effGrand - commissionTotal) / dealAmount) * 100) : 0;
-          return { rental, florals, transport, genset, manpower, truss, buyTotal, produceTotal, base, gyvFixed, bufferCost, grand, clientRevenue, agencyFee, agencyFeePct, dealAmount, profitPct, fns, dept, DEPTS, deptInv, deptMp, mpRateByType,
+          return { rental, florals, transport, genset, manpower, truss, buyTotal, produceTotal, base, gyvFixed, bufferCost, grand, clientRevenue, venueDiscount, agencyFee, agencyFeePct, dealAmount, profitPct, fns, dept, DEPTS, deptInv, deptMp, mpRateByType,
             mpPhases: dcMpPhases, mpSchedule, mpSharedTotals, deptDirectMap, directTotal, labourUsageByDept, labourUsageTotal, manpowerDetail, manpowerPlan: dcMpPlan,
             hasActuals, actualMandi, actualExpenses, effFlorals, baseActual, grandActual, projFlorals: florals, effManpower, mpDelta,
             commissionByVenue, commissionTotal };
@@ -3870,7 +3877,7 @@ export default function DealCheckOverlay({ ctx }) {
                   );
                 })() : dcActiveTab === "gyv" ? (() => {
                   // ═══ GYV FIXED & BUFFER COST TAB — reads from shared dcCostRollup ═══
-                  const { rental, florals, transport, manpower, truss, buyTotal, produceTotal, base: baseProj, gyvFixed: gyvCost, bufferCost, commissionTotal, grand: grandProj, agencyFee, agencyFeePct, dealAmount, fns, hasActuals, actualMandi, actualExpenses, effFlorals, baseActual, grandActual, projFlorals, effManpower, mpDelta } = dcCostRollup;
+                  const { rental, florals, transport, manpower, truss, buyTotal, produceTotal, base: baseProj, gyvFixed: gyvCost, bufferCost, commissionTotal, grand: grandProj, venueDiscount, agencyFee, agencyFeePct, dealAmount, fns, hasActuals, actualMandi, actualExpenses, effFlorals, baseActual, grandActual, projFlorals, effManpower, mpDelta } = dcCostRollup;
                   const baseCost = hasActuals ? baseActual : baseProj;
                   // Project total = production cost + GYV/buffer + venue commission. Commission used
                   // to be excluded here (a "company-level payout" kept out of "what building this event
@@ -4083,6 +4090,10 @@ export default function DealCheckOverlay({ ctx }) {
                             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))",gap:12}}>
                               {[
                                 { k: "Client quote", sub: Number(cli?.negotiatedAmount) > 0 ? "negotiated" : "from Build screen", v: fmt(quote), tone: INK },
+                                // Fixed-venue discount — % off this venue's own share of the deal (Admin
+                                // → Settings → Fixed Venues), applied before the agency fee below. Only
+                                // shown when a booked venue actually carries one.
+                                ...(venueDiscount > 0 ? [{ k: "Fixed-venue discount", sub: "already netted out of quote above", v: `−${fmt(venueDiscount)}`, tone: BAD }] : []),
                                 // Agency fee — flat % of the deal (Admin → Settings), billed to the guest
                                 // on top of everything else. Pure Ambria income, no offsetting cost — it's
                                 // already inside "Client quote" above, called out here so it reads as the
