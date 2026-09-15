@@ -293,6 +293,47 @@ function resolveGensetPlan(match, customGenset125, customGenset62, gensetRate, g
   const gensetCostOurs = (Number(genset125) || 0) * (Number(gensetCostRate) || 0) + (Number(genset62) || 0) * (Number(gensetCostRate62) || 0);
   return { venueGenset125: venue.genset125, venueGenset62: venue.genset62, genset125, genset62, gensetCost, gensetCostOurs };
 }
+// Per-truck-capacity-sub-category quantity for one function's own zones — same aggregation
+// calcFunctionBreakdown does to build its subAgg, factored out so it can also be run against the
+// PREVIOUS function's raw data to find carryover (below), without recursing into a full
+// calcFunctionBreakdown call (which would repeat pricing/genset work we don't need here and would
+// double-net a chain of same-venue functions against each other).
+function computeFnSubQty(fnData, capBySub, imsInventory, flowerPatterns) {
+  const fZoneElements = fnData?.zoneElements || {};
+  const fZoneConfig = fnData?.zoneConfig || {};
+  const fEnabledEls = fnData?.enabledEls || {};
+  const repeatZones = Object.keys(fZoneConfig).filter(zk => fEnabledEls[zk] && fZoneConfig[zk]?.repeat);
+  const fEnabledElsFresh = repeatZones.length
+    ? { ...fEnabledEls, ...Object.fromEntries(repeatZones.map((zk) => [zk, false])) }
+    : fEnabledEls;
+  const qty = {};
+  const add = (sub, q) => {
+    const k = String(sub || "").toLowerCase().trim();
+    if (!capBySub[k] || !(q > 0)) return;
+    qty[k] = (qty[k] || 0) + q;
+  };
+  Object.entries(fZoneElements).forEach(([zk, elems]) => {
+    if (!fEnabledElsFresh[zk] || !elems) return;
+    elems.forEach((el) => {
+      const invItem = el.invId ? imsInventory.find((i) => i.id === el.invId) : null;
+      const pattern = (!invItem && el.patternId) ? flowerPatterns.find((p) => p.id === el.patternId) : null;
+      const sub = invItem?.subCat || invItem?.subcategory || pattern?.sub || "";
+      const tc = capBySub[String(sub || "").toLowerCase().trim()]; if (!tc) return;
+      if (String(tc.unit || "pc").toLowerCase().includes("sqft")) {
+        const L = Number(el.L || el.l || 0), W = Number(el.W || el.w || el.H || el.h || 0);
+        if (L > 0 && W > 0) add(sub, L * W * (Number(el.qty) || 1));
+      } else add(sub, Number(el.qty) || 0);
+    });
+  });
+  Object.entries(fZoneConfig).forEach(([zk, cfg]) => {
+    if (!cfg || !fEnabledElsFresh[zk]) return;
+    const d = cfg.dims || {}; const fd = cfg.floorDims || d;
+    if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * Math.max(1, cfg.trussQty || 1); if (tSqft > 0) add("Truss", tSqft); }
+    const sqft = (fd.L || 0) * (fd.W || 0);
+    if (sqft > 0) { if (cfg.plH) add("Platform", sqft); if (cfg.cpT && cfg.cpT !== CARPET_OFF) add("Carpet", sqft); }
+  });
+  return qty;
+}
 function initZP(zk, size) {
   const p = ZONE_PRESETS[zk]?.[size]; const zm = ZONE_META[zk]; if (!p || !zm) return null;
   const dims = {}; zm.dimFields.forEach(f => { dims[f] = p[f] || 0; });
@@ -4884,6 +4925,25 @@ export default function StudioApp() {
       // el.invId (Inventory, the normal path for anything added via "+ Add element" today) or
       // el.patternId (a pure flower-recipe element). No Rate-Card name-match fallback.
       const fFlowerPatterns = (dealCheckData || studioFloralData)?.flowerPatterns || [];
+      // ── Same-venue truck carryover (internal cost only) ──
+      // Owner's rule: if the immediately preceding function (by date) is at this SAME venue, whatever
+      // it already trucked in for a given truck-capacity sub-category (e.g. "Sofa") is still sitting
+      // there — this function only needs to truck the INCREASE over that, not its own qty from
+      // scratch. A gap function at a different venue breaks the chain (checked against the function
+      // right before this one only, not any earlier one at this venue). Deliberately scoped to
+      // Ambria's own cost (truckTotal/transportTotal/trucks below) — Build/Summary keep pricing each
+      // function's trucks independently for the guest (truckTotalClient), unaffected.
+      let prevSubQty = {};
+      let carriedOverFromFn = "";
+      try {
+        const sortedFns = [...collectAllFunctionData()].sort((a, b) => (a.fnDate || "9999-12-31").localeCompare(b.fnDate || "9999-12-31"));
+        const myPos = sortedFns.findIndex(f => f.fnIdx === fnData.fnIdx);
+        const prevFnData = myPos > 0 ? sortedFns[myPos - 1] : null;
+        if (prevFnData && prevFnData.fnVenue && prevFnData.fnVenue.toLowerCase().trim() === fVenue.toLowerCase().trim()) {
+          prevSubQty = computeFnSubQty(prevFnData, capBySub, imsInventory, fFlowerPatterns);
+          carriedOverFromFn = prevFnData.fnType || "";
+        }
+      } catch { /* never let a carryover lookup failure break the transport calc */ }
       // ♻️ Repeat zones reuse a standing setup — nothing of theirs needs trucking. Mirrors Manpower's
       // own freshFn treatment (DCManpowerTab.jsx / DealCheckOverlay.jsx dcCostRollup): drop repeat
       // zones out of truck-capacity accumulation only — the per-zone accordion above still shows
@@ -4917,14 +4977,31 @@ export default function StudioApp() {
         const sqft = (fd.L || 0) * (fd.W || 0);
         if (sqft > 0) { if (cfg.plH) addSub("Platform", sqft, zk, "Platform"); if (cfg.cpT && cfg.cpT !== CARPET_OFF) addSub("Carpet", sqft, zk, "Carpet"); }
       });
+      // truckFracClient: this function's own full requirement, exactly as before carryover existed —
+      // still what Build/Summary bill the guest for (truckTotalClient below stays keyed off this).
+      // truckFrac: netted against prevSubQty — Ambria's own truck-capacity/cost basis.
       let truckFrac = 0;
-      Object.values(subAgg).forEach(s => { if (s.perTruck > 0) { truckFrac += (s.qty || 0) / s.perTruck; breakdown.push({ label: s.label, subKey: s.subKey, invCat: s.invCat, qty: Math.round(s.qty), perTruck: s.perTruck, unit: s.unit, trucks: (s.qty || 0) / s.perTruck, items: s.items }); } });
+      let truckFracClient = 0;
+      const carriedOver = [];
+      Object.values(subAgg).forEach(s => {
+        if (!(s.perTruck > 0)) return;
+        truckFracClient += (s.qty || 0) / s.perTruck;
+        const carried = Math.min(s.qty || 0, prevSubQty[s.subKey] || 0);
+        const netQty = Math.max(0, (s.qty || 0) - carried);
+        truckFrac += netQty / s.perTruck;
+        if (carried > 0) carriedOver.push({ label: s.label, subKey: s.subKey, qty: Math.round(carried) });
+        // trucksClient — this row's unnetted truck fraction (Summary's client-facing accordion
+        // reads this); trucks is netted for carryover (Deal Check's own Transport tab reads that).
+        breakdown.push({ label: s.label, subKey: s.subKey, invCat: s.invCat, qty: Math.round(s.qty), perTruck: s.perTruck, unit: s.unit, trucks: netQty / s.perTruck, trucksClient: (s.qty || 0) / s.perTruck, carriedQty: Math.round(carried), items: s.items });
+      });
       const itemTrucks = Math.ceil(truckFrac);
+      const itemTrucksClient = Math.ceil(truckFracClient);
       const floralTrucks = 0; // florals counted via their sub-category capacity — no separate flower truck
       const bt = bufferTiers.find(b => decorTotal >= b.minBudget && decorTotal < b.maxBudget);
       const bufTrucks = bt ? bt.bufferTrucks : 0;
-      if (bufTrucks > 0) breakdown.push({ label: "Buffer", qty: 0, perTruck: 0, unit: "", trucks: bufTrucks, isBuffer: true, tierLabel: bt?.label || "" });
+      if (bufTrucks > 0) breakdown.push({ label: "Buffer", qty: 0, perTruck: 0, unit: "", trucks: bufTrucks, trucksClient: bufTrucks, isBuffer: true, tierLabel: bt?.label || "" });
       const allTrucks = itemTrucks + floralTrucks + bufTrucks;
+      const allTrucksClient = itemTrucksClient + floralTrucks + bufTrucks;
       const plan = resolveGensetPlan(match, fCustomGensets, fCustomGenset62, gensetRate, gensetRate62, gensetCostRate, gensetCostRate62);
       const truckTotal = allTrucks * tripRate * 2;
       // Guest-facing markup on the venue's own trip cost — Admin → Settings → Transport & Power's
@@ -4935,12 +5012,20 @@ export default function StudioApp() {
       // reading truckTotal/transportTotal/grand completely unchanged; only the NEW *Client fields
       // carry the markup, for Build's Live Estimate panel and Summary's client-facing
       // accordion/export to read instead.
+      // truckTotalClient is built from allTrucksClient (UNNETTED) rather than truckTotal/allTrucks —
+      // same-venue carryover above is an internal-cost optimisation only; the guest is still billed
+      // as if every function trucked its own full requirement, exactly as before this existed.
       const clientScale = Number(match?.clientScale) > 0 ? Number(match.clientScale) : 1.25;
-      const truckTotalClient = truckTotal * clientScale;
+      const truckTotalClient = allTrucksClient * tripRate * 2 * clientScale;
       transportTotal = truckTotal + plan.gensetCost;
       transportTotalClient = truckTotalClient + plan.gensetCost;
       transport = { trucks: allTrucks, tripRate, total: transportTotal, isNew, tier: tierId, tierLabel,
         breakdown, floralTrucks, bufferTrucks: bufTrucks, itemTrucks, totalFloralCost, repeatZonesExcluded,
+        // trucksClient — the UNNETTED truck count (this function priced on its own, no carryover),
+        // pairs with truckTotalClient/tripRateClient below. `trucks` above is netted for cost and no
+        // longer safe to read next to a *Client total — Summary/exports must read this one instead.
+        trucksClient: allTrucksClient,
+        carriedOver, carriedOverFromFn,
         gensets: plan.genset125, venueGensets: plan.venueGenset125, genset62: plan.genset62, venueGenset62: plan.venueGenset62,
         gensetCost: plan.gensetCost, gensetRate, gensetRate62, truckTotal,
         // gensetCostOurs — OUR real cost for these gensets (gensetCostRate/62, Admin → Settings →
@@ -4955,7 +5040,7 @@ export default function StudioApp() {
         clientScale, truckTotalClient, totalClient: transportTotalClient, tripRateClient: tripRate * clientScale };
     }
     return { zones, transport, decorTotal, transportTotal, transportTotalClient, grand: decorTotal + transportTotal, grandClient: decorTotal + transportTotalClient };
-  }, [getElPriceForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, gensetCostRate, gensetCostRate62, zoneLabelsD, zoneKeys, dcCustomItems, structRates, blocksByDate, imsInventory, dealCheckData, studioFloralData]);
+  }, [getElPriceForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, gensetCostRate, gensetCostRate62, zoneLabelsD, zoneKeys, dcCustomItems, structRates, blocksByDate, imsInventory, dealCheckData, studioFloralData, collectAllFunctionData]);
 
   const cat = getCat(grandTotal);
 

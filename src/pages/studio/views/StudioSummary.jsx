@@ -1126,7 +1126,9 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
           // sub-category using 0.00005 of a truck), never individually billed; only the CEILED
           // total (trucks) × trip rate is actually charged (see transportCalc/truckTotal).
           // Listing every sub-category here read as line-item billing for numbers nobody pays.
-          const trucks = fnObj.transport.trucks || 0;
+          // trucksClient — the unnetted truck count this pairs with (trucks itself is now netted
+          // for same-venue carryover, an internal-cost-only figure — see calcFunctionBreakdown).
+          const trucks = fnObj.transport.trucksClient ?? fnObj.transport.trucks ?? 0;
           // Client-facing export: truckTotalClient/tripRateClient (Admin → Settings → Transport &
           // Power's per-venue "client scale") rather than the raw cost fields — Deal Check's own
           // Transport tab is the one place that still reads truckTotal/tripRate unscaled.
@@ -2914,12 +2916,12 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
                         {breakdown.transport.breakdown.map((bd, bi) => (
                           <div key={bi} style={{display:"flex",justifyContent:"space-between",padding:"3px 0",fontSize:12}}>
                             <span style={{color:textS}}>{bd.isFloral?"🌸":bd.isBuffer?"🛡️":"🚚"} {bd.label} {bd.isFloral?`(${fmt(bd.qty)} ÷ ${fmt(bd.perTruck)})`:bd.isBuffer?`(${bd.tierLabel})`:bd.qty>0?`(${bd.qty} ÷ ${bd.perTruck}/${bd.unit})`:""}</span>
-                            <span style={{fontWeight:600}}>{bd.trucks} truck{bd.trucks!==1?"s":""}</span>
+                            <span style={{fontWeight:600}}>{(bd.trucksClient ?? bd.trucks)} truck{(bd.trucksClient ?? bd.trucks)!==1?"s":""}</span>
                           </div>
                         ))}
                         <div style={{borderTop:`0.5px solid ${border}`,marginTop:6,paddingTop:8,fontSize:12}}>
                           <div style={{display:"flex",justifyContent:"space-between"}}><span style={{color:textS}}>⚡ Genset × {breakdown.transport.gensets}</span><span>{fmt(breakdown.transport.gensetCost)}</span></div>
-                          <div style={{display:"flex",justifyContent:"space-between",marginTop:2}}><span style={{color:textS}}>🚛 Trucks × {breakdown.transport.trucks} × 2 trips @ {fmt(breakdown.transport.tripRateClient ?? breakdown.transport.tripRate)}</span><span>{fmt(breakdown.transport.truckTotalClient ?? breakdown.transport.truckTotal)}</span></div>
+                          <div style={{display:"flex",justifyContent:"space-between",marginTop:2}}><span style={{color:textS}}>🚛 Trucks × {breakdown.transport.trucksClient ?? breakdown.transport.trucks} × 2 trips @ {fmt(breakdown.transport.tripRateClient ?? breakdown.transport.tripRate)}</span><span>{fmt(breakdown.transport.truckTotalClient ?? breakdown.transport.truckTotal)}</span></div>
                         </div>
                       </div>
                       )}

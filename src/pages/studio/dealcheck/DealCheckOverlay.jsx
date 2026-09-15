@@ -3071,6 +3071,15 @@ export default function DealCheckOverlay({ ctx }) {
                                   <span><b>{tr.repeatZonesExcluded.map(z => z.label).join(", ")}</b> {tr.repeatZonesExcluded.length===1?"is":"are"} marked Repeat — excluded from this trip's truck count.</span>
                                 </div>
                               )}
+                              {/* Same-venue carryover — an item this function needs that's already sitting at the
+                                  venue from the immediately preceding function isn't re-trucked (internal cost only;
+                                  see calcFunctionBreakdown's carriedOver/carriedOverFromFn). */}
+                              {tr?.carriedOver?.length > 0 && (
+                                <div style={{padding:"9px 15px",fontSize:11.5,color:"#4F46E5",background:"#4F46E50D",borderBottom:`1px solid ${HAIRLINE}`,display:"flex",alignItems:"center",gap:6}}>
+                                  <span aria-hidden="true">🔁</span>
+                                  <span><b>{tr.carriedOver.map(c => `${c.qty} ${c.label}`).join(", ")}</b> already at this venue from {tr.carriedOverFromFn || "the previous function"} — not re-trucked.</span>
+                                </div>
+                              )}
                               {/* ── NOTHING TO TRANSPORT IS NOT NOTHING TO SAY ──
                                   This tab scopes to the function selected in the sidebar, so picking
                                   a ceremony that carries no trucks used to leave a header with a dash
