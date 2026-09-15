@@ -8,7 +8,7 @@ import { useEffect } from "react";
 import { CARD_SHADOW, CARD_BG, CARD_BORDER, HAIRLINE, TILE_BG, TILE_BORDER, CHIP_BG, INK, INK_2, INK_3, GOLD, GOLD_SOFT, NUM } from "../../../../lib/studio/dcTokens";
 import { resolveTrussConfig } from "../../../../lib/studio/pricing";
 import { heavyExtraLabour, eventTimingMultFor, EVENT_TIMINGS } from "../../../../lib/ims/constants";
-import { standingReductionBySubcat, standingPillarCount, fixedVenueFor } from "../../../../lib/ims/fixedVenues";
+import { standingReductionBySubcat, fixedVenueFor } from "../../../../lib/ims/fixedVenues";
 import { itemImsSubcat, lookupBySubcat } from "../../../../lib/ims/helpers";
 import { matchFlowerPattern } from "../../../../lib/ims/flowerHelpers";
 import ManpowerFactorPills from "../../../../components/shared/ManpowerFactorPills.jsx";
@@ -471,8 +471,11 @@ export default function DCManpowerTab({ ctx }) {
                         } catch {}
                       });
                     }
-                    // Net the venue's standing (installed) pillars — reused truss adds no labour.
-                    pillars = Math.max(0, pillars - standingPillarCount({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, fn.fnVenue || ""));
+                    // A Fixed Venue's standing pillar count used to be netted out here on the theory
+                    // that already-standing pillars need no erection labour — wrong: standing just
+                    // means those pillars/beams sit in the venue's own godown, not that they're
+                    // already up in position. Labour still has to move and erect every pillar this
+                    // event needs, fresh-trucked or drawn from venue storage alike. No reduction.
                     if (pillars <= 0 || trussLabourRanges.length === 0) return 0;
                     for (const r of trussLabourRanges) {
                       if (pillars <= r.upTo) return r.labour || 0;

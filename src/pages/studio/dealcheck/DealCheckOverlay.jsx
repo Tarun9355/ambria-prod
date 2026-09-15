@@ -93,7 +93,7 @@ const IV = {
 const NUM = { fontVariantNumeric: "tabular-nums" };
 import { heavyExtraLabour, eventTimingMultFor } from "../../../lib/ims/constants";
 import { deptMpReconciled, itemImsSubcat, lookupBySubcat, itemDimsText } from "../../../lib/ims/helpers";
-import { rentalSplit, availableAtVenue, isStandingAt, fixedVenueFor, standingReductionBySubcat, standingPillarCount } from "../../../lib/ims/fixedVenues";
+import { rentalSplit, availableAtVenue, isStandingAt, fixedVenueFor, standingReductionBySubcat } from "../../../lib/ims/fixedVenues";
 import { calcZoneFabric, autoFillFabricAllocation, resolveTrussConfig } from "../../../lib/studio/pricing";
 import { carpetPricingFor, CARPET_OFF } from "../../../lib/studio/taxonomy";
 import { qtyUsedElsewhereInDealCheck } from "../../../lib/studio/dealAvailability";
@@ -897,10 +897,15 @@ export default function DealCheckOverlay({ ctx }) {
                   return total;
                 }
                 if (type === "Truss Labour") {
-                  // MUST match DCManpowerTab.calcPeopleTrussLabour — zone-topology pillarCount minus the venue's standing pillars.
+                  // MUST match DCManpowerTab.calcPeopleTrussLabour — zone-topology pillarCount.
+                  // A Fixed Venue's standing pillar count (Admin → Settings → Fixed Venues) used to be
+                  // netted out here on the theory that "already-standing pillars need no erection
+                  // labour" — wrong: standing just means those pillars/beams live in the venue's own
+                  // godown, not that they're already up in position. Labour still has to move and erect
+                  // every pillar this event needs, whether it's trucked in fresh or drawn from what the
+                  // venue has in storage. Full zone-derived pillar count, no reduction.
                   let pillars = 0; const tInv = dealCheckData?.trussInv;
                   if (tInv) { const zc = fn.zoneConfig||{}, en = fn.enabledEls||{}; Object.keys(zc).forEach(zk => { if (!en[zk]||!zc[zk]) return; try { const pv = calcZoneTrussPreview(zc[zk], tInv); if (pv?.topology?.pillarCount) pillars += pv.topology.pillarCount; } catch {} }); }
-                  pillars = Math.max(0, pillars - standingPillarCount({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, fn.fnVenue || ""));
                   if (pillars <= 0 || trussLabourRanges.length === 0) return 0;
                   for (const r of trussLabourRanges) { if (pillars <= r.upTo) return r.labour || 0; }
                   return trussLabourRanges[trussLabourRanges.length-1]?.labour || 0;
