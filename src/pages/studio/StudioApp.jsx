@@ -280,12 +280,18 @@ function calcStructCost(zk, zc, rates) {
 // on an override means "follow the venue"; an explicit number, including 0, pins that size regardless of
 // what the venue says. One shared function so the same resolution can't drift across its several call
 // sites (totalCost, transportCalc, per-function breakdown, custom-venue auto-persist).
-function resolveGensetPlan(match, customGenset125, customGenset62, gensetRate, gensetRate62) {
+// gensetCostRate/gensetCostRate62 are OPTIONAL — callers that don't pass them (there were none
+// before this existed) just get gensetCostOurs: 0, same as leaving the settings fields at 0.
+function resolveGensetPlan(match, customGenset125, customGenset62, gensetRate, gensetRate62, gensetCostRate, gensetCostRate62) {
   const venue = resolveVenueGensets(match);
   const genset125 = (customGenset125 !== null && customGenset125 !== undefined) ? customGenset125 : venue.genset125;
   const genset62 = (customGenset62 !== null && customGenset62 !== undefined) ? customGenset62 : venue.genset62;
   const gensetCost = (Number(genset125) || 0) * (Number(gensetRate) || 0) + (Number(genset62) || 0) * (Number(gensetRate62) || 0);
-  return { venueGenset125: venue.genset125, venueGenset62: venue.genset62, genset125, genset62, gensetCost };
+  // gensetCostOurs — what the genset actually costs US (the vendor's charge), independent of
+  // gensetCost above (what we bill the client for it). Deal Check's own Power tab and IMS read
+  // this one; Build/Summary keep showing gensetCost/gensetRate to the guest, unchanged.
+  const gensetCostOurs = (Number(genset125) || 0) * (Number(gensetCostRate) || 0) + (Number(genset62) || 0) * (Number(gensetCostRate62) || 0);
+  return { venueGenset125: venue.genset125, venueGenset62: venue.genset62, genset125, genset62, gensetCost, gensetCostOurs };
 }
 function initZP(zk, size) {
   const p = ZONE_PRESETS[zk]?.[size]; const zm = ZONE_META[zk]; if (!p || !zm) return null;
@@ -1974,8 +1980,15 @@ export default function StudioApp() {
   // each size carries its own count. 125 KVA keeps the original `gensetRate` key and the existing
   // customGensets override; 62 KVA mirrors it with its own override — null means "follow the
   // venue's own 62 KVA count" (resolveVenueGensets), an explicit number (0 included) pins it.
-  const [gensetRate, setGensetRate] = useState(28000);      // 125 KVA
-  const [gensetRate62, setGensetRate62] = useState(18000);  // 62 KVA
+  const [gensetRate, setGensetRate] = useState(28000);      // 125 KVA — billed to the client
+  const [gensetRate62, setGensetRate62] = useState(18000);  // 62 KVA — billed to the client
+  // Our own cost per genset (what the vendor actually charges us), separate from the client-billed
+  // rate above — Deal Check's own Power tab and IMS need OUR figure to track real margin; Build/
+  // Summary keep showing gensetRate/gensetRate62 to the guest, completely unchanged. Defaults to 0
+  // (not yet set) rather than mirroring the client rate, so an untouched value reads honestly as
+  // "cost not entered yet" instead of silently claiming 0% margin on every genset.
+  const [gensetCostRate, setGensetCostRate] = useState(0);      // 125 KVA — our cost
+  const [gensetCostRate62, setGensetCostRate62] = useState(0);  // 62 KVA — our cost
   const [genset62, setGenset62] = useState(null);           // override for the smaller unit, per deal — null = follow venue
   const [bufferTiers, setBufferTiers] = useState(TR_DBT);
   const [newVenue, setNewVenue] = useState({ tier: "inhouse", name: "", rate: 0, gensets: 1 });
@@ -2644,7 +2657,7 @@ export default function StudioApp() {
       // Transport
       try {
         const v = await kvGet(RC_SK_TR);
-        if (v != null) { const td = parse(v); if (td && typeof td === "object" && !cancelled) { if (td.venues) setTrVenues(td.venues); if (td.truckCap) setTruckCap(td.truckCap); if (td.floralPerTruck) setFloralPerTruck(td.floralPerTruck); if (td.bufferTiers) setBufferTiers(td.bufferTiers); if (td.gensetRate !== undefined) setGensetRate(td.gensetRate); if (td.gensetRate62 !== undefined) setGensetRate62(td.gensetRate62); } }
+        if (v != null) { const td = parse(v); if (td && typeof td === "object" && !cancelled) { if (td.venues) setTrVenues(td.venues); if (td.truckCap) setTruckCap(td.truckCap); if (td.floralPerTruck) setFloralPerTruck(td.floralPerTruck); if (td.bufferTiers) setBufferTiers(td.bufferTiers); if (td.gensetRate !== undefined) setGensetRate(td.gensetRate); if (td.gensetRate62 !== undefined) setGensetRate62(td.gensetRate62); if (td.gensetCostRate !== undefined) setGensetCostRate(td.gensetCostRate); if (td.gensetCostRate62 !== undefined) setGensetCostRate62(td.gensetCostRate62); } }
       } catch {}
       if (!cancelled) trSettingsLoadedRef.current = true;
       // Templates
@@ -2831,7 +2844,7 @@ export default function StudioApp() {
         if (!key) return;
         try {
           if (key === RC_SK_CATS) { const a = pj(await kvGet(RC_SK_CATS)); if (Array.isArray(a)) setRcCats(a); }
-          else if (key === RC_SK_TR) { const td = pj(await kvGet(RC_SK_TR)); if (td && typeof td === "object") { if (td.venues) setTrVenues(td.venues); if (td.truckCap) setTruckCap(td.truckCap); if (td.floralPerTruck) setFloralPerTruck(td.floralPerTruck); if (td.bufferTiers) setBufferTiers(td.bufferTiers); if (td.gensetRate !== undefined) setGensetRate(td.gensetRate); if (td.gensetRate62 !== undefined) setGensetRate62(td.gensetRate62); } trSettingsLoadedRef.current = true; }
+          else if (key === RC_SK_TR) { const td = pj(await kvGet(RC_SK_TR)); if (td && typeof td === "object") { if (td.venues) setTrVenues(td.venues); if (td.truckCap) setTruckCap(td.truckCap); if (td.floralPerTruck) setFloralPerTruck(td.floralPerTruck); if (td.bufferTiers) setBufferTiers(td.bufferTiers); if (td.gensetRate !== undefined) setGensetRate(td.gensetRate); if (td.gensetRate62 !== undefined) setGensetRate62(td.gensetRate62); if (td.gensetCostRate !== undefined) setGensetCostRate(td.gensetCostRate); if (td.gensetCostRate62 !== undefined) setGensetCostRate62(td.gensetCostRate62); } trSettingsLoadedRef.current = true; }
           else if (key === PALETTE_SK) { const p = pj(await kvGet(PALETTE_SK)); if (p && typeof p === "object") { if (Array.isArray(p.colourCatalogue)) setImsColourCatalogue(p.colourCatalogue); if (Array.isArray(p.paletteCatalogue)) setImsPaletteCatalogue(p.paletteCatalogue); } }
           else if (key === "printMaterials") { const pm = pj(await kvGet("printMaterials")); if (Array.isArray(pm)) setImsPrintMaterials(pm); }
           else if (key === "carpetMaterials") { const cm = pj(await kvGet("carpetMaterials")); if (Array.isArray(cm)) setImsCarpetMaterials(cm); }
@@ -4912,7 +4925,7 @@ export default function StudioApp() {
       const bufTrucks = bt ? bt.bufferTrucks : 0;
       if (bufTrucks > 0) breakdown.push({ label: "Buffer", qty: 0, perTruck: 0, unit: "", trucks: bufTrucks, isBuffer: true, tierLabel: bt?.label || "" });
       const allTrucks = itemTrucks + floralTrucks + bufTrucks;
-      const plan = resolveGensetPlan(match, fCustomGensets, fCustomGenset62, gensetRate, gensetRate62);
+      const plan = resolveGensetPlan(match, fCustomGensets, fCustomGenset62, gensetRate, gensetRate62, gensetCostRate, gensetCostRate62);
       const truckTotal = allTrucks * tripRate * 2;
       // Guest-facing markup on the venue's own trip cost — Admin → Settings → Transport & Power's
       // per-venue "client scale" field (trVenues[].clientScale). Defaults to 1.25 (25% markup, the
@@ -4930,6 +4943,11 @@ export default function StudioApp() {
         breakdown, floralTrucks, bufferTrucks: bufTrucks, itemTrucks, totalFloralCost, repeatZonesExcluded,
         gensets: plan.genset125, venueGensets: plan.venueGenset125, genset62: plan.genset62, venueGenset62: plan.venueGenset62,
         gensetCost: plan.gensetCost, gensetRate, gensetRate62, truckTotal,
+        // gensetCostOurs — OUR real cost for these gensets (gensetCostRate/62, Admin → Settings →
+        // Transport & Power), independent of gensetCost above (what's billed to the client).
+        // Deal Check's own Power tab reads this one; Build/Summary keep showing gensetCost/
+        // gensetRate to the guest, unchanged.
+        gensetCostOurs: plan.gensetCostOurs, gensetCostRate, gensetCostRate62,
         // tripRateClient is the effective per-trip rate the client-facing truckTotalClient is
         // actually built from (tripRate × clientScale) — client-facing displays (Summary's own
         // "Trucks × N × 2 trips @ ₹X" line) show THIS, not the raw tripRate, so the line's own
@@ -4937,7 +4955,7 @@ export default function StudioApp() {
         clientScale, truckTotalClient, totalClient: transportTotalClient, tripRateClient: tripRate * clientScale };
     }
     return { zones, transport, decorTotal, transportTotal, transportTotalClient, grand: decorTotal + transportTotal, grandClient: decorTotal + transportTotalClient };
-  }, [getElPriceForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, zoneLabelsD, zoneKeys, dcCustomItems, structRates, blocksByDate, imsInventory, dealCheckData, studioFloralData]);
+  }, [getElPriceForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, gensetCostRate, gensetCostRate62, zoneLabelsD, zoneKeys, dcCustomItems, structRates, blocksByDate, imsInventory, dealCheckData, studioFloralData]);
 
   const cat = getCat(grandTotal);
 
@@ -4957,13 +4975,14 @@ export default function StudioApp() {
   }, [authUser, notifications]);
 
   // ── Transport save (used by autoPersistCustomVenue) — VERBATIM (kv shim) ──
-  const saveTR = useCallback(async (nv, ntc, nfpt, nbt, ngr, ngr62) => {
+  const saveTR = useCallback(async (nv, ntc, nfpt, nbt, ngr, ngr62, ngcr, ngcr62) => {
     // Writes the legacy blob, so it persists the LOCAL list — never IMS's, which lives in its own key.
     const sv = nv || trVenues; const st = ntc || truckCap; const sf = nfpt !== undefined ? nfpt : floralPerTruck; const sb = nbt || bufferTiers; const sgr = ngr !== undefined ? ngr : gensetRate; const sgr62 = ngr62 !== undefined ? ngr62 : gensetRate62;
-    if (nv) setTrVenues(nv); if (ntc) setTruckCap(ntc); if (nfpt !== undefined) setFloralPerTruck(nfpt); if (nbt) setBufferTiers(nbt); if (ngr !== undefined) setGensetRate(ngr); if (ngr62 !== undefined) setGensetRate62(ngr62);
-    const local = { venues: sv, truckCap: st, floralPerTruck: sf, bufferTiers: sb, gensetRate: sgr, gensetRate62: sgr62 };
+    const sgcr = ngcr !== undefined ? ngcr : gensetCostRate; const sgcr62 = ngcr62 !== undefined ? ngcr62 : gensetCostRate62;
+    if (nv) setTrVenues(nv); if (ntc) setTruckCap(ntc); if (nfpt !== undefined) setFloralPerTruck(nfpt); if (nbt) setBufferTiers(nbt); if (ngr !== undefined) setGensetRate(ngr); if (ngr62 !== undefined) setGensetRate62(ngr62); if (ngcr !== undefined) setGensetCostRate(ngcr); if (ngcr62 !== undefined) setGensetCostRate62(ngcr62);
+    const local = { venues: sv, truckCap: st, floralPerTruck: sf, bufferTiers: sb, gensetRate: sgr, gensetRate62: sgr62, gensetCostRate: sgcr, gensetCostRate62: sgcr62 };
     await reliableSave(RC_SK_TR, JSON.stringify(local), "Transport");
-  }, [trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62]);
+  }, [trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, gensetCostRate, gensetCostRate62]);
 
   // ── One-time backfill: fractional "gensets" → explicit genset125/genset62 ──
   // Pre-migration venues only ever had one fractional number (0.5 meaning "half a 125 KVA

@@ -40,7 +40,7 @@ export default function ImsTransportPanel({ rcItems = [], rcCats = [], rateCardC
       if (cancelled) return;
       if (error) { setErr(error.message); setLoading(false); return; }
       const byKey = Object.fromEntries((data || []).map((r) => [r.key, r.value]));
-      setTr(parseRow(byKey[RC_SK_TR], { venues: [], truckCap: [], floralPerTruck: 50000, bufferTiers: [], gensetRate: 28000, gensetRate62: 18000 }));
+      setTr(parseRow(byKey[RC_SK_TR], { venues: [], truckCap: [], floralPerTruck: 50000, bufferTiers: [], gensetRate: 28000, gensetRate62: 18000, gensetCostRate: 0, gensetCostRate62: 0 }));
       setVenues(parseRow(byKey[VENUES_SK], { inhouse: [], outdoor: [] }));
       setLoading(false);
     })();
@@ -48,8 +48,8 @@ export default function ImsTransportPanel({ rcItems = [], rcCats = [], rateCardC
   }, []);
 
   // Same positional signature as Studio's saveTR, because TransportEditor calls it that way:
-  // (venues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62).
-  const saveTR = useCallback(async (nv, ntc, nfpt, nbt, ngr, ngr62) => {
+  // (venues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, gensetCostRate, gensetCostRate62).
+  const saveTR = useCallback(async (nv, ntc, nfpt, nbt, ngr, ngr62, ngcr, ngcr62) => {
     setTr((prev) => {
       const next = {
         venues: nv || prev.venues,
@@ -58,6 +58,8 @@ export default function ImsTransportPanel({ rcItems = [], rcCats = [], rateCardC
         bufferTiers: nbt || prev.bufferTiers,
         gensetRate: ngr !== undefined ? ngr : prev.gensetRate,
         gensetRate62: ngr62 !== undefined ? ngr62 : prev.gensetRate62,
+        gensetCostRate: ngcr !== undefined ? ngcr : prev.gensetCostRate,
+        gensetCostRate62: ngcr62 !== undefined ? ngcr62 : prev.gensetCostRate62,
       };
       // Stringify — Studio JSON.parses this row. Writing an object would break its loader.
       supabase.from("settings").upsert({ key: RC_SK_TR, value: JSON.stringify(next) }, { onConflict: "key" })
@@ -93,6 +95,8 @@ export default function ImsTransportPanel({ rcItems = [], rcCats = [], rateCardC
     truckCap: tr.truckCap || [],
     gensetRate: tr.gensetRate,
     gensetRate62: tr.gensetRate62,
+    gensetCostRate: tr.gensetCostRate,
+    gensetCostRate62: tr.gensetCostRate62,
     bufferTiers: tr.bufferTiers || [],
     saveTR,
     newVenue, setNewVenue, newTC, setNewTC,

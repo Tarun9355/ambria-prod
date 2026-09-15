@@ -577,7 +577,12 @@ export default function DealCheckOverlay({ ctx }) {
               if (deptInv[dD]) deptInv[dD].push({ name: item.name || "Item", photo: imsField.photos(item)[0] || "", qty: q, unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "", imsId: mi.imsId });
             });
             try { const fl = calcFnFloralSourcingCost(fn).grandTotal; florals += fl; addD("Floral", "florals", fl); } catch {}
-            try { const bd = calcFunctionBreakdown ? calcFunctionBreakdown(fn) : null; if (bd && bd.transportTotal) { transport += bd.transportTotal; addD("Transport", "transport", bd.transportTotal); genset += Number(bd.transport?.gensetCost) || 0; } if (bd && bd.gensetTotal) { addD("Lighting", "rental", bd.gensetTotal); if (deptInv["Lighting"]) deptInv["Lighting"].push({ name: "Genset / power", photo: "", qty: 1, unit: 0, total: Math.round(bd.gensetTotal), sub: "genset" }); } } catch {}
+            // `genset` (used only for the Power tab's own nav-pill amount) reads gensetCostOurs —
+            // OUR real cost — not gensetCost (client-billed), so the pill agrees with the Power
+            // tab body it summarizes. `transport`/the "Transport" IMS dept line are untouched
+            // (still transportTotal, truck cost + client-billed genset bundled as before) — this
+            // is scoped to the Power calc only, not a redistribution of department cost.
+            try { const bd = calcFunctionBreakdown ? calcFunctionBreakdown(fn) : null; if (bd && bd.transportTotal) { transport += bd.transportTotal; addD("Transport", "transport", bd.transportTotal); genset += Number(bd.transport?.gensetCostOurs) || 0; } if (bd && bd.gensetTotal) { addD("Lighting", "rental", bd.gensetTotal); if (deptInv["Lighting"]) deptInv["Lighting"].push({ name: "Genset / power", photo: "", qty: 1, unit: 0, total: Math.round(bd.gensetTotal), sub: "genset" }); } } catch {}
             try {
               const tInv = dealCheckData?.trussInv;
               if (tInv) {
@@ -3240,12 +3245,15 @@ export default function DealCheckOverlay({ ctx }) {
                     else setFnBuilds(prev => ({ ...prev, [fi]: { ...(prev[fi] || {}), [field === "genset125" ? "customGensets" : "genset62"]: val } }));
                   };
                   // Booking-level figures for the summary bar, off the same breakdown the cards use.
+                  // gensetCostOurs — OUR real cost per genset (Admin → Settings → Transport &
+                  // Power's genset "our cost" fields), not gensetCost (what's billed to the
+                  // client) — this tab is Deal Check's own internal cost tool, same as Transport's.
                   let sumCost = 0, sumUnits = 0, sumKva = 0, fnsPowered = 0;
                   fns.forEach(({fn}) => {
                     let b = null; try { b = calcFunctionBreakdown ? calcFunctionBreakdown(fn) : null; } catch { /* ignore */ }
                     const t = b?.transport || null;
                     const a = Number(t?.gensets) || 0, c = Number(t?.genset62) || 0;
-                    sumCost += Number(t?.gensetCost) || 0;
+                    sumCost += Number(t?.gensetCostOurs) || 0;
                     sumUnits += a + c;
                     sumKva += a * 125 + c * 62;
                     if (a + c > 0) fnsPowered += 1;
@@ -3256,13 +3264,15 @@ export default function DealCheckOverlay({ ctx }) {
                       {fns.map(({fn, fi}) => {
                         let bd = null; try { bd = calcFunctionBreakdown ? calcFunctionBreakdown(fn) : null; } catch { /* ignore */ }
                         const tr = bd?.transport || null;
-                        const gensetCost = Number(tr?.gensetCost) || 0;
+                        // OUR cost (gensetCostOurs/gensetCostRate) — never the client-billed
+                        // gensetCost/gensetRate, which is what Build/Summary show the guest.
+                        const gensetCost = Number(tr?.gensetCostOurs) || 0;
                         const g125 = Number(tr?.gensets) || 0;
                         const g62 = Number(tr?.genset62) || 0;
                         const v125 = Number(tr?.venueGensets) || 0;
                         const v62 = Number(tr?.venueGenset62) || 0;
-                        const r125 = Number(tr?.gensetRate) || 0;
-                        const r62 = Number(tr?.gensetRate62) || 0;
+                        const r125 = Number(tr?.gensetCostRate) || 0;
+                        const r62 = Number(tr?.gensetCostRate62) || 0;
                         // Always both sizes, not just whichever is already non-zero — the steppers
                         // below exist so a size at 0 can be raised while the other is lowered, which
                         // needs it on screen to raise in the first place. Cost per size was never
@@ -3371,7 +3381,7 @@ export default function DealCheckOverlay({ ctx }) {
                           { label: dcShowAllFns ? "Functions counted" : "Function", value: fns.length, foot: fnsPowered === fns.length ? "all need power" : `${fnsPowered} need power` },
                           { label: "Gensets", value: sumUnits, foot: "units across the booking" },
                           { label: "Total load", value: sumKva ? `${sumKva} KVA` : "—", foot: "combined generator capacity" },
-                          { label: "Power total", value: `₹${Math.round(sumCost).toLocaleString("en-IN")}`, foot: sumUnits > 0 ? `≈ ₹${Math.round(sumCost / sumUnits).toLocaleString("en-IN")} / unit` : null, tone: GOLD },
+                          { label: "Power cost", value: `₹${Math.round(sumCost).toLocaleString("en-IN")}`, foot: sumUnits > 0 ? `our cost · ≈ ₹${Math.round(sumCost / sumUnits).toLocaleString("en-IN")} / unit` : "our cost", tone: GOLD },
                         ].map((s, si) => (
                           <div key={si} className="dc2-card" style={{background:CARD_BG,border:`1px solid ${CARD_BORDER}`,borderRadius:11,boxShadow:CARD_SHADOW,padding:"9px 13px",minWidth:0}}>
                             <div style={{fontSize:9.5,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:INK_2,marginBottom:4,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{s.label}</div>

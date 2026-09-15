@@ -9,7 +9,7 @@ export default function TransportEditor({ ctx }) {
   const [openCats, setOpenCats] = useState({}); // collapsible truck-capacity category groups
   const {
     S, isDark, accent, border, textP, textS, showMsg,
-    trVenues, truckCap, floralPerTruck, gensetRate, gensetRate62, bufferTiers, saveTR,
+    trVenues, truckCap, floralPerTruck, gensetRate, gensetRate62, gensetCostRate, gensetCostRate62, bufferTiers, saveTR,
     newVenue, setNewVenue, newTC, setNewTC, TR_TIERS, TC_UNITS,
     rcItems, rcCats, allInhouseVenues, allOutdoorDB,
     // Sub-Categories tab's own master list + the live inventory behind it — see subsByCat below.
@@ -181,9 +181,6 @@ export default function TransportEditor({ ctx }) {
             <span style={{ fontSize: 11, color: "#10B981" }} title="Guest-facing markup on the trip cost — defaults to 1.25 (25%); 1 = client sees our own cost">🧾</span>
             <input type="number" step="0.05" min="0" value={v.clientScale ?? 1.25} onChange={(e) => upsertVenue(name, "clientScale", e.target.value)} style={{ ...numInput, width: 52, color: "#10B981" }} />
             <span style={{ fontSize: 9, color: textS }}>× to guest</span>
-            {(Number(v.clientScale) || 1.25) !== 1 && (v.rate || 0) > 0 && (
-              <span style={{ fontSize: 9.5, color: textS }}>(₹{Math.round((v.rate || 0) * (Number(v.clientScale) || 1.25)).toLocaleString("en-IN")}/trip to guest)</span>
-            )}
           </div>
         </div>
       ); })}
@@ -198,18 +195,32 @@ export default function TransportEditor({ ctx }) {
           back unchanged; 62 KVA is stored alongside it and only applies to deals that pick it. */}
       <div style={{ marginTop: 12 }}>
         {[
-          { label: "125 KVA", hint: "Default — used unless a deal picks otherwise", value: gensetRate, save: (v) => saveTR(null, null, undefined, null, v) },
-          { label: "62 KVA", hint: "Smaller unit", value: gensetRate62, save: (v) => saveTR(null, null, undefined, null, undefined, v) },
+          { label: "125 KVA", hint: "Default — used unless a deal picks otherwise", value: gensetRate, save: (v) => saveTR(null, null, undefined, null, v), costValue: gensetCostRate, costSave: (v) => saveTR(null, null, undefined, null, undefined, undefined, v) },
+          { label: "62 KVA", hint: "Smaller unit", value: gensetRate62, save: (v) => saveTR(null, null, undefined, null, undefined, v), costValue: gensetCostRate62, costSave: (v) => saveTR(null, null, undefined, null, undefined, undefined, undefined, v) },
         ].map((g) => (
           <div key={g.label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: "10px 0", borderTop: `1px solid ${border}`, flexWrap: "wrap" }}>
             <div>
               <div style={{ fontSize: 14, fontWeight: 600, color: textP }}>{g.label}</div>
               <div style={{ fontSize: 10.5, color: textS }}>{g.hint}</div>
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <span style={{ fontSize: 13, color: textS }}>₹</span>
-              <input type="number" min="0" value={g.value} onChange={(e) => g.save(Number(e.target.value) || 0)} style={{ ...numInput, width: 100, fontSize: 18 }} />
-              <span style={{ fontSize: 11, color: textS }}>/event</span>
+            <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontSize: 13, color: textS }}>₹</span>
+                <input type="number" min="0" value={g.value} onChange={(e) => g.save(Number(e.target.value) || 0)} style={{ ...numInput, width: 100, fontSize: 18 }} />
+                <span style={{ fontSize: 11, color: textS }}>/event</span>
+                <span style={{ fontSize: 9.5, color: textS, marginLeft: 2 }}>billed to guest</span>
+              </div>
+              <div style={{ width: 1, height: 20, background: border }} />
+              {/* Our own cost for this genset size — separate from the rate above (what we bill the
+                  client). Deal Check's own Power tab and IMS read THIS figure to track real margin;
+                  Build/Summary keep showing the rate above to the guest, unchanged. */}
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontSize: 11, color: "#10B981" }}>🔧</span>
+                <span style={{ fontSize: 13, color: textS }}>₹</span>
+                <input type="number" min="0" value={g.costValue || ""} placeholder="0" onChange={(e) => g.costSave(Number(e.target.value) || 0)} style={{ ...numInput, width: 90, fontSize: 16, color: "#10B981" }} />
+                <span style={{ fontSize: 11, color: textS }}>/event</span>
+                <span style={{ fontSize: 9.5, color: textS, marginLeft: 2 }}>our cost</span>
+              </div>
             </div>
           </div>
         ))}
