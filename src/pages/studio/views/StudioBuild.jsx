@@ -882,11 +882,13 @@ export default function StudioBuild({ ctx }) {
   const pBorder = "rgba(255,255,255,0.17)";
   const pCard   = "rgba(255,255,255,0.06)";
   const zpPill = (active) => ({ display: "inline-flex", alignItems: "center", padding: "4px 11px", borderRadius: 999, fontSize: 10.5, lineHeight: 1.4, cursor: "pointer", whiteSpace: "nowrap", transition: "all 0.15s", background: active ? accent : "transparent", color: active ? (isDark ? "#1a1a2e" : "#fff") : zpTextM, border: `1px solid ${active ? accent : border}`, fontWeight: active ? 600 : 500 });
-  const zpIndoorVenues = allInhouseVenues.filter(v => (allVenueData[v]?.type || "Outdoor") === "Indoor");
-  const zpOutdoorVenues = [
-    ...allInhouseVenues.filter(v => (allVenueData[v]?.type || "Outdoor") !== "Indoor"),
-    ...(allOutdoorDB || []).map(v => v.name).filter(Boolean),
-  ];
+  // Outdoor venues now carry a real `type` too (allVenueData merges both — see its own comment in
+  // StudioApp.jsx), so they're run through the SAME type check as in-house venues instead of being
+  // dumped into the Outdoor bucket unconditionally. An outside venue nobody has tagged still behaves
+  // exactly as before (allVenueData falls back to "Outdoor" for anything untyped).
+  const zpAllVenueNames = [...allInhouseVenues, ...(allOutdoorDB || []).map(v => v.name).filter(Boolean)];
+  const zpIndoorVenues = zpAllVenueNames.filter(v => (allVenueData[v]?.type || "Outdoor") === "Indoor");
+  const zpOutdoorVenues = zpAllVenueNames.filter(v => (allVenueData[v]?.type || "Outdoor") !== "Indoor");
   const zpWantIndoor = (zpFilters.venueType || []).includes("Indoor");
   const zpWantOutdoor = (zpFilters.venueType || []).some(v => v === "Outdoor" || v === "Semi-Outdoor");
   const zpVenueChoices = zpWantIndoor && !zpWantOutdoor ? zpIndoorVenues

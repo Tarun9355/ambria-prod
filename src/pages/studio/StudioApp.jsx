@@ -5326,8 +5326,15 @@ export default function StudioApp() {
   const allVenueData = useMemo(() => {
     const merged = {};
     customInhouse.forEach(v => { merged[v.name] = { base: v.base || 0, label: v.label || "", type: v.type || "Outdoor" }; });
+    // Outdoor venues never carried a type at all (VenuesEditor's Outdoor Venues section had no field
+    // for it) — every one of them fell into the Indoor/Outdoor picker's Outdoor bucket unconditionally,
+    // so picking "Outside + Indoor" there could never return anything even for an outside venue with
+    // a real indoor banquet hall. Merged into the SAME map (not a separate lookup) so every caller
+    // that reads allVenueData[name].type — the Build zone-photo-picker's filter included — needs no
+    // second data source to check.
+    customOutdoor.forEach(v => { if (!merged[v.name]) merged[v.name] = { base: 0, label: "", type: v.type || "Outdoor" }; });
     return merged;
-  }, [customInhouse]);
+  }, [customInhouse, customOutdoor]);
   const allInhouseGroups = useMemo(() => {
     const groups = [];
     customInhouse.forEach(v => {

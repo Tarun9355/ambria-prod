@@ -19,6 +19,7 @@ import { useState, useEffect, useMemo } from "react";
 import { supabase } from "../../lib/supabase";
 import { VENUES_SK, RC_SK_TR } from "../../lib/studio/keys";
 import { migrateVenues, genVenueId } from "../../lib/ims/venueProperties";
+import { SPACES as VENUE_TYPES, venueTypeLabel } from "../../lib/studio/taxonomy";
 
 // Cascades a venue rename into the three places Studio's own renameVenueEverywhere used to update.
 // Past events are deliberately excluded — client_ledger/event_orders record where a job actually
@@ -74,6 +75,20 @@ const cascadeSummary = (r) => {
 };
 
 const commKey = (kind, id) => `${kind}:${id}`;
+
+// Indoor/Outdoor/Semi-Outdoor/Both — what StudioBuild.jsx's zone-photo-picker filters venues by
+// (allVenueData[name].type). Unset (value "") renders as an amber "Not set" pill so it's obvious at
+// a glance which venues still need one, without blocking anything — every reader downstream already
+// treats a falsy type as "Outdoor".
+function TypeSelect({ value, onChange, title }) {
+  return (
+    <select value={value || ""} onChange={(e) => onChange(e.target.value)} title={title || "Venue type — used by Build/Browse's Indoor/Outdoor filter"}
+      className={"text-[10px] rounded px-1 py-0.5 border " + (value ? "text-gray-600 bg-white" : "text-amber-700 bg-amber-50 border-amber-200")}>
+      <option value="">Not set</option>
+      {VENUE_TYPES.map((t) => <option key={t} value={t}>{venueTypeLabel(t)}</option>)}
+    </select>
+  );
+}
 
 // Module-scope (not defined inside VenuesEditor) on purpose: a component declared inside another
 // component's body gets a NEW function identity every render, so React treats it as a different
@@ -191,8 +206,16 @@ export default function VenuesEditor({ settings, setSettings, showMsg }) {
     if (!name) return;
     if (venues.inhouse.some((sv) => sv.name.toLowerCase() === name.toLowerCase())) { showMsg?.("Venue already exists", "red"); return; }
     const property = venues.properties.find((p) => p.id === propertyId);
-    save({ ...venues, inhouse: [...venues.inhouse, { id: genVenueId("iv"), name, parent: property?.name || "", propertyId, label: "", type: "Outdoor", base: 0 }] });
+    // type starts unset (not hardcoded "Outdoor") — every reader downstream (allVenueData in
+    // StudioApp.jsx, the Build zone-photo-picker's Indoor/Outdoor filter) already treats a falsy
+    // type as "Outdoor", so nothing changes for an untagged sub-venue until someone sets a real
+    // value below. Leaving it unset is what surfaces the "Not set" pill instead of silently locking
+    // every new sub-venue to Outdoor with no way to ever change it — the bug this fixes.
+    save({ ...venues, inhouse: [...venues.inhouse, { id: genVenueId("iv"), name, parent: property?.name || "", propertyId, label: "", type: "", base: 0 }] });
     setNewSubVenue((p) => ({ ...p, [propertyId]: "" }));
+  };
+  const setSubVenueType = (id, type) => {
+    save({ ...venues, inhouse: venues.inhouse.map((sv) => (sv.id === id ? { ...sv, type } : sv)) });
   };
 
   const renameSubVenue = (id, newName) => {
@@ -235,6 +258,13 @@ export default function VenuesEditor({ settings, setSettings, showMsg }) {
   const deleteOutdoorVenue = (name) => {
     if (!window.confirm(`Delete venue "${name}"? This cannot be undone.`)) return;
     save({ ...venues, outdoor: venues.outdoor.filter((v) => v.name !== name) });
+  };
+  // Outdoor venues never carried a type at all — every one of them was unconditionally treated as
+  // "Outdoor" (StudioBuild.jsx's zone-photo-picker dumps every outdoor venue straight into its
+  // Outdoor bucket). Real outside venues that also have an indoor banquet hall need to be able to
+  // say so, or picking "Outside + Indoor" in that filter can never return anything.
+  const setOutdoorVenueType = (name, type) => {
+    save({ ...venues, outdoor: venues.outdoor.map((v) => (v.name === name ? { ...v, type } : v)) });
   };
 
   // Commission % — one value per in-house PROPERTY (covers all its sub-venues) or per outdoor
@@ -305,6 +335,7 @@ export default function VenuesEditor({ settings, setSettings, showMsg }) {
                   return (
                     <span key={sv.id} className="inline-flex items-center gap-1.5 bg-white border rounded-lg px-2.5 py-1 text-xs text-gray-700">
                       {sv.name}
+                      <TypeSelect value={sv.type} onChange={(t) => setSubVenueType(sv.id, t)} />
                       <button onClick={() => setEditing({ kind: "subvenue", id: sv.id, name: sv.name })} className="text-indigo-500" title="Rename">✏️</button>
                       <button onClick={() => deleteSubVenue(sv.id, sv.name)} className="text-red-400" title="Delete">✕</button>
                     </span>
@@ -358,6 +389,7 @@ export default function VenuesEditor({ settings, setSettings, showMsg }) {
             return (
               <span key={v.name} className="inline-flex items-center gap-1.5 bg-white border rounded-lg px-2.5 py-1.5 text-xs text-gray-700">
                 {v.name}
+                <TypeSelect value={v.type} onChange={(t) => setOutdoorVenueType(v.name, t)} />
                 <button onClick={() => setEditing({ kind: "outdoor", id: v.name, name: v.name, empanelled: v.empanelled })} className="text-indigo-500" title="Rename">✏️</button>
                 <CommissionInput kind="outdoor" id={v.name} value={v.commissionPct} commDraft={commDraft} setCommDraft={setCommDraft} commitCommission={commitCommission} />
                 <button onClick={() => deleteOutdoorVenue(v.name)} className="text-red-400" title="Delete">✕</button>
@@ -390,6 +422,7 @@ export default function VenuesEditor({ settings, setSettings, showMsg }) {
               <div key={v.name} className="flex items-center justify-between px-3 py-2 border-b last:border-b-0">
                 <span className="text-xs text-gray-800">{v.name}</span>
                 <div className="flex items-center gap-3">
+                  <TypeSelect value={v.type} onChange={(t) => setOutdoorVenueType(v.name, t)} />
                   <CommissionInput kind="outdoor" id={v.name} value={v.commissionPct} commDraft={commDraft} setCommDraft={setCommDraft} commitCommission={commitCommission} />
                   <button onClick={() => setEditing({ kind: "outdoor", id: v.name, name: v.name, empanelled: v.empanelled })} className="text-[11px] text-indigo-600">✏️ Edit</button>
                   <button onClick={() => deleteOutdoorVenue(v.name)} className="text-[11px] text-red-400">✕ Remove</button>
