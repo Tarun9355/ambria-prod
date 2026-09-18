@@ -71,7 +71,7 @@ import { RC_D, RC_CATS_DEFAULT } from "../../lib/studio/constants";
 import {
   resolveTrussConfig, findZoneForArea, findAreaForZone, makeZoneId,
   defaultZoneFromArea, resolveMandiFlower, calcZoneTrussPreview,
-  calcZoneFabricCost, calcZoneCarpet, buildPlatformPlan, getStudioAvailable,
+  calcZoneFabric, calcZoneFabricCost, calcZoneCarpet, buildPlatformPlan, getStudioAvailable,
   buildTopology, PLATFORM_FATTA_CODE, PLATFORM_STAND_CODE, trussRowCost,
   zoneTrussStandingDiscount,
 } from "../../lib/studio/pricing";
@@ -181,6 +181,18 @@ const TR_DTC = [
   { id: "TC07", item: "Platform batch", perTruck: 0, unit: "sqft" },
   { id: "TC08", item: "Carpet batch", perTruck: 0, unit: "sqft" },
   { id: "TC09", item: "Arches", perTruck: 0, unit: "pc" },
+  // Fabric Allocation (masking/liza/curtains — §23 Phase 2.9f) and floral material (real mandi +
+  // artificial) never had a truck-capacity line at all: neither is a zoneElement, so both were
+  // silently invisible to every truck count in the app. Named exactly "Masking"/"Liza"/"Curtains"/
+  // "Real Flowers"/"Artificial Flowers" — computeTruckItems/calcFunctionCost/calcFunctionBreakdown
+  // all key truck capacity by exact (lowercased) item name, same as "Truss"/"Platform"/"Carpet".
+  // perTruck starts at 0 (same convention as Round Tables/Props/Arches above) — set a real capacity
+  // in Admin → Settings → Transport & Power once you know it.
+  { id: "TC10", item: "Masking", perTruck: 0, unit: "pc" },
+  { id: "TC11", item: "Liza", perTruck: 0, unit: "kg" },
+  { id: "TC12", item: "Curtains", perTruck: 0, unit: "pc" },
+  { id: "TC13", item: "Real Flowers", perTruck: 0, unit: "kg" },
+  { id: "TC14", item: "Artificial Flowers", perTruck: 0, unit: "bunch" },
 ];
 const TR_DBT = [
   { id: "BT01", label: "Below ₹1L", minBudget: 0, maxBudget: 100000, bufferTrucks: 0 },
@@ -312,7 +324,7 @@ function resolveGensetPlan(match, customGenset125, customGenset62, gensetRate, g
 // PREVIOUS function's raw data to find carryover (below), without recursing into a full
 // calcFunctionBreakdown call (which would repeat pricing/genset work we don't need here and would
 // double-net a chain of same-venue functions against each other).
-function computeFnSubQty(fnData, capBySub, imsInventory, flowerPatterns) {
+function computeFnSubQty(fnData, capBySub, imsInventory, flowerPatterns, trussInv) {
   const fZoneElements = fnData?.zoneElements || {};
   const fZoneConfig = fnData?.zoneConfig || {};
   const fEnabledEls = fnData?.enabledEls || {};
@@ -345,6 +357,18 @@ function computeFnSubQty(fnData, capBySub, imsInventory, flowerPatterns) {
     if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * Math.max(1, cfg.trussQty || 1); if (tSqft > 0) add("Truss", tSqft); }
     const sqft = (fd.L || 0) * (fd.W || 0);
     if (sqft > 0) { if (cfg.plH) add("Platform", sqft); if (cfg.cpT && cfg.cpT !== CARPET_OFF) add("Carpet", sqft); }
+    // Fabric Allocation (masking/liza/curtains) is a physical rental setup that can plausibly still
+    // be standing at the venue for the next same-day function, same reasoning as Truss/Platform/
+    // Carpet above — so it participates in carryover netting too. Base truss row only (matches
+    // Truss/Platform/Carpet's own scope here — extraTrussRows aren't counted for trucking).
+    // Density defaults to "moderate": precise photo-derived density only matters for rental PRICING
+    // (calcZoneFabricCost), not truck capacity, which is already an approximation.
+    if (trussInv) {
+      const fab = calcZoneFabric(cfg, trussInv, "moderate");
+      if (fab.maskingPieces > 0) add("Masking", fab.maskingPieces);
+      if (fab.lizaKg > 0) add("Liza", fab.lizaKg);
+      if (fab.curtainPieces > 0) add("Curtains", fab.curtainPieces);
+    }
   });
   return qty;
 }
@@ -969,7 +993,7 @@ function maxRepaintCostInSubcat(rcSub, imsInventory, fallback) {
 // Each truckCap entry is keyed by sub-category name (`item`), with `perTruck` (capacity) + `unit`
 // (pcs / sqft per truck). Capacity 0 → that sub-category is skipped. Deal items are aggregated by
 // their rate-card sub-category; truss / platform / carpet contribute sqft via the zone config.
-function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckCap, imsInventory, flowerPatterns) {
+function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckCap, imsInventory, flowerPatterns, trussInv, flowerMaterialQty) {
   const capBySub = {};
   (truckCap || []).forEach(tc => { if ((Number(tc.perTruck) || 0) > 0) capBySub[String(tc.item || "").toLowerCase().trim()] = tc; });
   const subAgg = {}; // subLower → { label, qty, perTruck, unit }
@@ -1006,7 +1030,24 @@ function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckC
     // cpT truthy AND not the explicit OFF sentinel — an untouched floor (cpT unset) gets no carpet
     // truck-load either, same as it gets no carpet cost (see CARPET_OFF in taxonomy.js).
     if (sqft > 0) { if (cfg.plH) addSub("Platform", sqft); if (cfg.cpT && cfg.cpT !== CARPET_OFF) addSub("Carpet", sqft); }
+    // Fabric Allocation (masking/liza/curtains) — never trucked before: it's computed from the truss
+    // config, not a zoneElement, so it fell through the element loop above entirely. Same base-row-
+    // only scope as Truss/Platform/Carpet; density defaults to "moderate" (see computeFnSubQty).
+    if (trussInv) {
+      const fab = calcZoneFabric(cfg, trussInv, "moderate");
+      if (fab.maskingPieces > 0) addSub("Masking", fab.maskingPieces);
+      if (fab.lizaKg > 0) addSub("Liza", fab.lizaKg);
+      if (fab.curtainPieces > 0) addSub("Curtains", fab.curtainPieces);
+    }
   });
+  // Floral material (real mandi flowers + artificial bunches) — also never trucked: it's derived
+  // from flower recipes, not a zoneElement either. One figure per function (not per zone), passed in
+  // by the caller (computing it needs calcFnFloralSourcingCost, a much heavier calc this pure helper
+  // has no business re-running). Real flowers' unit varies per mandi item (kg/bunch/dozen) and is
+  // summed here as one "kg" bucket regardless — an approximation, same spirit as every perTruck
+  // capacity already being a rough estimate, not a promise this is exact.
+  if (flowerMaterialQty?.realKg > 0) addSub("Real Flowers", flowerMaterialQty.realKg);
+  if (flowerMaterialQty?.artBunches > 0) addSub("Artificial Flowers", flowerMaterialQty.artBunches);
   let frac = 0; const breakdown = [];
   Object.values(subAgg).forEach(s => { const f = s.perTruck > 0 ? s.qty / s.perTruck : 0; frac += f; breakdown.push({ label: s.label, qty: Math.round(s.qty), perTruck: s.perTruck, unit: s.unit, trucks: f }); });
   return { itemTrucks: Math.ceil(frac), truckFraction: frac, breakdown };
@@ -3315,6 +3356,10 @@ export default function StudioApp() {
   // declared long before collectAllFunctionData exists, so a direct reference would be a TDZ
   // ReferenceError on first render.
   const collectAllFunctionDataRef = useRef(null);
+  // Same TDZ reasoning as collectAllFunctionDataRef just above — transportCalc/calcFunctionCost are
+  // both declared, and both need to call calcFnFloralSourcingCost for the flower-material truck
+  // count, before calcFnFloralSourcingCost itself is declared further down the file.
+  const calcFnFloralSourcingCostRef = useRef(null);
   const activeClientIdRef = useRef(null);
   useEffect(() => { activeClientIdRef.current = activeClientId; }, [activeClientId]);
   // Serialised snapshot of every client as last written, keyed by id. The dirty check USED to hold
@@ -4407,7 +4452,17 @@ export default function StudioApp() {
       return { trucks: 0, tripRate, total: 0, isNew, tier: tierId, tierLabel, breakdown: [], floralTrucks: 0, bufferTrucks: 0, itemTrucks: 0, totalFloralCost: 0, gensets: 0, venueGensets: venueOnly.genset125, venueGenset62: venueOnly.genset62, gensetCost: 0, gensetRate, gensetRate62, genset62: 0, truckTotal: 0 };
     }
     const breakdown = [];
-    const { itemTrucks, breakdown: itemBd } = computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckCap, imsInventory, (dealCheckData || studioFloralData)?.flowerPatterns);
+    const trussInvHere = dealCheckData?.trussInv || studioFloralData?.trussInv;
+    // Real-flower kg (summed across every mandi item regardless of its own unit — an approximation,
+    // see computeTruckItems' comment) + artificial bunches, for the Real Flowers / Artificial Flowers
+    // truck-capacity rows. Goes through the ref, not a direct call — see calcFnFloralSourcingCostRef's
+    // declaration for why (this memo is declared before calcFnFloralSourcingCost in the file).
+    const floralSourcingHere = calcFnFloralSourcingCostRef.current?.({ zoneElements, enabledEls, floralOverrides, fnIdx: activeFnIdx, fnDate: clientDate, floralRatio });
+    const flowerMaterialQty = {
+      realKg: (floralSourcingHere?.breakdown || []).reduce((s, f) => s + (f.qty || 0), 0),
+      artBunches: (floralSourcingHere?.artFlowerBunches || 0) + (floralSourcingHere?.artGreenBunches || 0),
+    };
+    const { itemTrucks, breakdown: itemBd } = computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckCap, imsInventory, (dealCheckData || studioFloralData)?.flowerPatterns, trussInvHere, flowerMaterialQty);
     itemBd.forEach(b => breakdown.push(b));
     const floralTrucks = 0, totalFloralCost = 0; // florals now counted via their sub-category capacity — no separate flower truck
     const bt = bufferTiers.find(b => decor >= b.minBudget && decor < b.maxBudget);
@@ -4426,7 +4481,7 @@ export default function StudioApp() {
     const truckTotal = rawTruckTotal * clientScale;
     const total = truckTotal + plan.gensetCost;
     return { trucks: allTrucks, tripRate, total, isNew, tier: tierId, tierLabel, breakdown, floralTrucks, bufferTrucks: bufTrucks, itemTrucks, totalFloralCost, gensets: plan.genset125, venueGensets: plan.venueGenset125, venueGenset62: plan.venueGenset62, gensetCost: plan.gensetCost, gensetRate, gensetRate62, genset62: plan.genset62, truckTotal, clientScale };
-  }, [venue, customTripRate, customGensets, gensetRate, gensetRate62, genset62, trVenues, zoneElements, enabledEls, rcItems, truckCap, floralPerTruck, bufferTiers, totalCost, zoneConfig, imsInventory, dealCheckData, studioFloralData]);
+  }, [venue, customTripRate, customGensets, gensetRate, gensetRate62, genset62, trVenues, zoneElements, enabledEls, rcItems, truckCap, floralPerTruck, bufferTiers, totalCost, zoneConfig, imsInventory, dealCheckData, studioFloralData, floralOverrides, floralRatio, activeFnIdx, clientDate]);
 
   const grandTotal = useMemo(() => {
     const base = totalCost() + transportCalc.total;
@@ -4554,7 +4609,22 @@ export default function StudioApp() {
         if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * Math.max(1, cfg.trussQty || 1); if (tSqft > 0) addSub("Truss", tSqft); }
         const sqft = (fd.L || 0) * (fd.W || 0);
         if (sqft > 0) { if (cfg.plH) addSub("Platform", sqft); if (cfg.cpT && cfg.cpT !== CARPET_OFF) addSub("Carpet", sqft); }
+        // Fabric Allocation (masking/liza/curtains) — see computeTruckItems' matching comment.
+        const fcTrussInv = dealCheckData?.trussInv || studioFloralData?.trussInv;
+        if (fcTrussInv) {
+          const fab = calcZoneFabric(cfg, fcTrussInv, "moderate");
+          if (fab.maskingPieces > 0) addSub("Masking", fab.maskingPieces);
+          if (fab.lizaKg > 0) addSub("Liza", fab.lizaKg);
+          if (fab.curtainPieces > 0) addSub("Curtains", fab.curtainPieces);
+        }
       });
+      // Floral material (real mandi + artificial) — see computeTruckItems' matching comment. Through
+      // the ref: calcFnFloralSourcingCost is declared later in the file (TDZ).
+      const fcFloralSourcing = calcFnFloralSourcingCostRef.current?.(fnData);
+      const fcRealKg = (fcFloralSourcing?.breakdown || []).reduce((s, f) => s + (f.qty || 0), 0);
+      const fcArtBunches = (fcFloralSourcing?.artFlowerBunches || 0) + (fcFloralSourcing?.artGreenBunches || 0);
+      if (fcRealKg > 0) addSub("Real Flowers", fcRealKg);
+      if (fcArtBunches > 0) addSub("Artificial Flowers", fcArtBunches);
       let truckFrac = 0; Object.values(subAgg).forEach(s => { if (s.perTruck > 0) truckFrac += (s.qty || 0) / s.perTruck; });
       const itemTrucks = Math.ceil(truckFrac);
       const floralTrucks = 0; // florals counted via their sub-category capacity — no separate flower truck
@@ -4577,14 +4647,20 @@ export default function StudioApp() {
   }, [calcElsCostForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, dcCustomItems, structRates, blocksByDate, imsInventory, dealCheckData, studioFloralData, fvCfgForRepeat]);
 
   const calcFnFloralSourcingCost = useCallback((fn) => {
-    const fp = dealCheckData?.flowerPatterns || [];
-    const mc = dealCheckData?.mandiCatalogue || [];
+    // fp/mc/the two BPK figures now also drive the truck-count wiring below (real-flower kg and
+    // artificial bunch counts feed computeTruckItems) — falling back to studioFloralData for those
+    // four is the same "no Deal-Check-gated pricing" fix applied to trussInv/agencyFeePct/fixedVenues
+    // elsewhere, now needed here too since this function's OUTPUT quantities are no longer purely
+    // internal-cost. mults/sMap/the two RATE figures still only affect the internal ₹ cost (not the
+    // quantities), so they're left Deal-Check-only for now.
+    const fp = dealCheckData?.flowerPatterns || studioFloralData?.flowerPatterns || [];
+    const mc = dealCheckData?.mandiCatalogue || studioFloralData?.mandiCatalogue || [];
     const mults = dealCheckData?.mandiPriceMultipliers || {};
     const sMap = dealCheckData?.seasonMap || {};
     const artFlowerRate = Number(dealCheckData?.artificialFlowerRatePerKg ?? 50);
-    const artFlowerBPK = Number(dealCheckData?.artificialFlowerBunchesPerKg ?? 16) || 16;
+    const artFlowerBPK = Number(dealCheckData?.artificialFlowerBunchesPerKg ?? studioFloralData?.artificialFlowerBunchesPerKg ?? 16) || 16;
     const artGreenRate = Number(dealCheckData?.artificialGreenRatePerKg ?? 40);
-    const artGreenBPK = Number(dealCheckData?.artificialGreenBunchesPerKg ?? 23) || 23;
+    const artGreenBPK = Number(dealCheckData?.artificialGreenBunchesPerKg ?? studioFloralData?.artificialGreenBunchesPerKg ?? 23) || 23;
     const fnRatio = typeof fn?.floralRatio === "number" ? fn.floralRatio : (typeof floralRatio === "number" ? floralRatio : 70);
     const szMap = (m, s) => { if (m === "smb") { const u = (s || "M").toUpperCase(); return u === "S" ? "small" : u === "B" ? "big" : "medium"; } return "medium"; };
     const resRP = (el, rc) => {
@@ -4762,7 +4838,12 @@ export default function StudioApp() {
       fbreak[v.name].qty += v.totalQty; fbreak[v.name].cost += cost;
     });
     return { totalReal: tReal, totalArtificial: tArt, grandTotal: tReal + tArt, breakdown: Object.values(fbreak).map(f => ({ ...f, qty: Math.ceil(f.qty), cost: Math.round(f.cost) })).sort((a, b) => b.cost - a.cost), artFlowerBunches, artGreenBunches, income: { real: realIncome, art: artIncome } };
-  }, [dealCheckData, rcItems, floralRatio, resolveRcRate, rcFloralModeByKey, dcFloralColorPrefs, imsInventory]);
+  }, [dealCheckData, studioFloralData, rcItems, floralRatio, resolveRcRate, rcFloralModeByKey, dcFloralColorPrefs, imsInventory]);
+  // Sync for calcFnFloralSourcingCostRef — see its declaration (near collectAllFunctionDataRef) for
+  // why transportCalc/calcFunctionCost need to reach this function through a ref instead of calling
+  // it directly: both are declared earlier in the file, so a direct reference would be a TDZ
+  // ReferenceError on first render.
+  useLayoutEffect(() => { calcFnFloralSourcingCostRef.current = calcFnFloralSourcingCost; });
 
   // Crew counts per manpower type for the whole booking, WITH a plain-English "basis" so the dept
   // head sees how the system derived each number (e.g. "6 = 12 arrangements ÷ 2 per flowerist").
@@ -5005,7 +5086,7 @@ export default function StudioApp() {
         const myPos = sortedFns.findIndex(f => f.fnIdx === fnData.fnIdx);
         const prevFnData = myPos > 0 ? sortedFns[myPos - 1] : null;
         if (prevFnData && prevFnData.fnVenue && prevFnData.fnVenue.toLowerCase().trim() === fVenue.toLowerCase().trim()) {
-          prevSubQty = computeFnSubQty(prevFnData, capBySub, imsInventory, fFlowerPatterns);
+          prevSubQty = computeFnSubQty(prevFnData, capBySub, imsInventory, fFlowerPatterns, dealCheckData?.trussInv || studioFloralData?.trussInv);
           carriedOverFromFn = prevFnData.fnType || "";
         }
       } catch { /* never let a carryover lookup failure break the transport calc */ }
@@ -5035,13 +5116,29 @@ export default function StudioApp() {
           else addSub(sub, Number(el.qty) || 0, zk, elLabel, invCat);
         });
       });
+      const bdTrussInv = dealCheckData?.trussInv || studioFloralData?.trussInv;
       Object.entries(fZoneConfig).forEach(([zk, cfg]) => {
         if (!cfg || !fEnabledElsFresh[zk]) return;
         const d = cfg.dims || {}; const fd = cfg.floorDims || d;
         if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * Math.max(1, cfg.trussQty || 1); if (tSqft > 0) addSub("Truss", tSqft, zk, "Truss structure"); }
         const sqft = (fd.L || 0) * (fd.W || 0);
         if (sqft > 0) { if (cfg.plH) addSub("Platform", sqft, zk, "Platform"); if (cfg.cpT && cfg.cpT !== CARPET_OFF) addSub("Carpet", sqft, zk, "Carpet"); }
+        // Fabric Allocation (masking/liza/curtains) — see computeTruckItems' matching comment.
+        if (bdTrussInv) {
+          const fab = calcZoneFabric(cfg, bdTrussInv, "moderate");
+          if (fab.maskingPieces > 0) addSub("Masking", fab.maskingPieces, zk, "Wall masking");
+          if (fab.lizaKg > 0) addSub("Liza", fab.lizaKg, zk, "Liza drape");
+          if (fab.curtainPieces > 0) addSub("Curtains", fab.curtainPieces, zk, "Velvet curtains");
+        }
       });
+      // Floral material (real mandi + artificial) — see computeTruckItems' matching comment.
+      // calcFnFloralSourcingCost is declared earlier in the file than this function, so — unlike
+      // transportCalc/calcFunctionCost — it's safe to call directly here, no ref needed.
+      const bdFloralSourcing = calcFnFloralSourcingCost(fnData);
+      const bdRealKg = (bdFloralSourcing?.breakdown || []).reduce((s, f) => s + (f.qty || 0), 0);
+      const bdArtBunches = (bdFloralSourcing?.artFlowerBunches || 0) + (bdFloralSourcing?.artGreenBunches || 0);
+      if (bdRealKg > 0) addSub("Real Flowers", bdRealKg, null, "Real flowers");
+      if (bdArtBunches > 0) addSub("Artificial Flowers", bdArtBunches, null, "Artificial flowers");
       // truckFracClient: this function's own full requirement, exactly as before carryover existed —
       // still what Build/Summary bill the guest for (truckTotalClient below stays keyed off this).
       // truckFrac: netted against prevSubQty — Ambria's own truck-capacity/cost basis.
@@ -5105,7 +5202,7 @@ export default function StudioApp() {
         clientScale, truckTotalClient, totalClient: transportTotalClient, tripRateClient: tripRate * clientScale };
     }
     return { zones, transport, decorTotal, transportTotal, transportTotalClient, grand: decorTotal + transportTotal, grandClient: decorTotal + transportTotalClient };
-  }, [getElPriceForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, gensetCostRate, gensetCostRate62, zoneLabelsD, zoneKeys, dcCustomItems, structRates, blocksByDate, imsInventory, dealCheckData, studioFloralData, collectAllFunctionData, fvCfgForRepeat]);
+  }, [getElPriceForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, gensetCostRate, gensetCostRate62, zoneLabelsD, zoneKeys, dcCustomItems, structRates, blocksByDate, imsInventory, dealCheckData, studioFloralData, collectAllFunctionData, fvCfgForRepeat, calcFnFloralSourcingCost]);
 
   const cat = getCat(grandTotal);
 
