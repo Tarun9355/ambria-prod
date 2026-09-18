@@ -4023,7 +4023,7 @@ export default function StudioApp() {
   const FLORAL_DATA_KEYS = [
     "flowerPatterns", "mandiCatalogue", "artificialFlowerRatePerKg", "artificialFlowerBunchesPerKg",
     "artificialGreenRatePerKg", "artificialGreenBunchesPerKg", "defaultStudioMarkup",
-    "fixedVenues", "fixedVenueSubcatDiscount",
+    "fixedVenues", "fixedVenueSubcatDiscount", "agencyFeePct",
   ];
   const refreshStudioFloralData = useCallback(async () => {
     try {
@@ -4040,6 +4040,13 @@ export default function StudioApp() {
         defaultStudioMarkup: Number(s.defaultStudioMarkup ?? 3) || 3,
         fixedVenues: Array.isArray(s.fixedVenues) ? s.fixedVenues : [],
         fixedVenueSubcatDiscount: (s.fixedVenueSubcatDiscount && typeof s.fixedVenueSubcatDiscount === "object") ? s.fixedVenueSubcatDiscount : {},
+        // Same reason fixedVenues lives here and not only in dealCheckData: eventGrandTotal/grandTotal/
+        // buildCombinedCostSheetData (Build's own live total, Summary's hero, the cost sheet) all need
+        // the REAL configured fee before Deal Check has ever been opened — dealCheckData stays null
+        // until then, and these totals used to silently fall back to a hardcoded 20% in the meantime,
+        // then visibly jump once Deal Check's fetch landed and stayed jumped (dealCheckData persists
+        // after Deal Check closes). This lightweight settings-only fetch closes that gap.
+        agencyFeePct: typeof s.agencyFeePct === "number" ? s.agencyFeePct : 20,
       });
     } catch { /* ignore — floral auto-derive falls back to flat rate */ }
   }, []);
@@ -4408,14 +4415,15 @@ export default function StudioApp() {
   const grandTotal = useMemo(() => {
     const base = totalCost() + transportCalc.total;
     // Fixed-venue discount — same as eventGrandTotal's, just for this one active function/venue.
-    const fvCfg = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
+    // Same studioFloralData/venueParents fallback as eventGrandTotal, for the same reason.
+    const fvCfg = { fixedVenues: (dealCheckData?.fixedVenues?.length ? dealCheckData.fixedVenues : studioFloralData?.fixedVenues) || [], venueParents: dealCheckData?.venueParents || venueParents || {} };
     const discounted = Math.max(0, base - fixedVenueDealDiscount(fvCfg, [{ fnVenue: venue }], () => base, base));
     // Agency fee (Admin → Settings, default 20%) — this is Build's own live "page total" for the
     // active function, the number a salesperson watches while building. It has to carry the fee too,
     // or it would visibly disagree with eventGrandTotal/Deal Check/the cost sheet, which all do.
-    const feePct = Number(dealCheckData?.agencyFeePct) || 20;
+    const feePct = Number(dealCheckData?.agencyFeePct ?? studioFloralData?.agencyFeePct) || 20;
     return discounted + Math.round(discounted * feePct / 100);
-  }, [totalCost, transportCalc, dealCheckData, venue]);
+  }, [totalCost, transportCalc, dealCheckData, venue, studioFloralData, venueParents]);
 
   const collectAllFunctionData = useCallback(() => {
     const all = [];
@@ -4854,14 +4862,17 @@ export default function StudioApp() {
     const base = all.reduce((sum, fnData) => sum + calcFunctionCost(fnData).grand, 0);
     // Fixed-venue discount — % off a function's own share of the deal when its venue is a Fixed
     // Venue configured with one (Admin → Settings → Fixed Venues), applied before the agency fee.
-    const fvCfg = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
+    // Falls back to studioFloralData/local venueParents (both load on mount, no Deal Check needed)
+    // before dealCheckData exists — see refreshStudioFloralData's agencyFeePct comment for why this
+    // matters: without the fallback, this total was visibly wrong until Deal Check was first opened.
+    const fvCfg = { fixedVenues: (dealCheckData?.fixedVenues?.length ? dealCheckData.fixedVenues : studioFloralData?.fixedVenues) || [], venueParents: dealCheckData?.venueParents || venueParents || {} };
     const discounted = Math.max(0, base - fixedVenueDealDiscount(fvCfg, all, (fn) => calcFunctionCost(fn).grand, base));
     // Agency fee — flat % of the (post-discount) deal, billed to the guest on top of everything else
     // (Admin → Settings, default 20%). This is the number booking confirmation, Summary's hero,
     // and the negotiated-amount placeholder all read, so the fee has to sit inside it, not beside it.
-    const feePct = Number(dealCheckData?.agencyFeePct) || 20;
+    const feePct = Number(dealCheckData?.agencyFeePct ?? studioFloralData?.agencyFeePct) || 20;
     return discounted + Math.round(discounted * feePct / 100);
-  }, [collectAllFunctionData, calcFunctionCost, dealCheckData]);
+  }, [collectAllFunctionData, calcFunctionCost, dealCheckData, studioFloralData, venueParents]);
 
   const calcFunctionBreakdown = useCallback((fnData) => {
     if (!fnData) return { zones: [], transport: null, decorTotal: 0, transportTotal: 0, transportTotalClient: 0, grand: 0, grandClient: 0 };
@@ -8371,7 +8382,8 @@ export default function StudioApp() {
       const db = b.fnDate || "9999-12-31";
       return da.localeCompare(db);
     });
-    const fvCfg = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
+    // Same studioFloralData/venueParents fallback as eventGrandTotal/grandTotal, for the same reason.
+    const fvCfg = { fixedVenues: (dealCheckData?.fixedVenues?.length ? dealCheckData.fixedVenues : studioFloralData?.fixedVenues) || [], venueParents: dealCheckData?.venueParents || venueParents || {} };
     const functions = sorted.map(fnDataRaw => {
       const fnData = enrichFromSession(fnDataRaw);
       const zones = buildZonesForFn(fnData);
@@ -8409,7 +8421,7 @@ export default function StudioApp() {
     // Agency fee — same flat % of the deal as eventGrandTotal (StudioApp's own memo), applied here
     // too so the cost sheet's own grand total agrees with it, plus exposed as its own amount so the
     // sheet can print it as an explicit line rather than folding it silently into the total.
-    const agencyFeePct = Number(dealCheckData?.agencyFeePct) || 20;
+    const agencyFeePct = Number(dealCheckData?.agencyFeePct ?? studioFloralData?.agencyFeePct) || 20;
     const agencyFee = Math.round(discountedTotal * agencyFeePct / 100);
     return {
       functions,
@@ -8417,7 +8429,7 @@ export default function StudioApp() {
       venueDiscount, agencyFee, agencyFeePct,
       clientName, clientPhone, clientBrideGroom
     };
-  }, [collectAllFunctionData, buildZonesForFn, calcFunctionBreakdown, clientName, clientPhone, clientBrideGroom, clientLedger, activeClientId, activeFnIdx, dealCheckData]);
+  }, [collectAllFunctionData, buildZonesForFn, calcFunctionBreakdown, clientName, clientPhone, clientBrideGroom, clientLedger, activeClientId, activeFnIdx, dealCheckData, studioFloralData, venueParents]);
 
   // ═══════════════════════════════════════════════════════════════
   // DEAL CHECK orchestration — IMS fetch (Supabase) + AI photo-match loop +

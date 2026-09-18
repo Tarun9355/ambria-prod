@@ -3914,7 +3914,7 @@ export default function DealCheckOverlay({ ctx }) {
                   );
                 })() : dcActiveTab === "gyv" ? (() => {
                   // ═══ GYV FIXED & BUFFER COST TAB — reads from shared dcCostRollup ═══
-                  const { rental, florals, transport, manpower, truss, buyTotal, produceTotal, base: baseProj, gyvFixed: gyvCost, bufferCost, commissionTotal, grand: grandProj, venueDiscount, agencyFee, agencyFeePct, dealAmount, fns, hasActuals, actualMandi, actualExpenses, effFlorals, baseActual, grandActual, projFlorals, effManpower, mpDelta } = dcCostRollup;
+                  const { rental, florals, transport, manpower, truss, buyTotal, produceTotal, base: baseProj, gyvFixed: gyvCost, bufferCost, commissionTotal, grand: grandProj, venueDiscount, dealAmount, fns, hasActuals, actualMandi, actualExpenses, effFlorals, baseActual, grandActual, projFlorals, effManpower, mpDelta } = dcCostRollup;
                   const baseCost = hasActuals ? baseActual : baseProj;
                   // Project total = production cost + GYV/buffer + venue commission. Commission used
                   // to be excluded here (a "company-level payout" kept out of "what building this event
@@ -4131,11 +4131,6 @@ export default function DealCheckOverlay({ ctx }) {
                                 // → Settings → Fixed Venues), applied before the agency fee below. Only
                                 // shown when a booked venue actually carries one.
                                 ...(venueDiscount > 0 ? [{ k: "Fixed-venue discount", sub: "already netted out of quote above", v: `−${fmt(venueDiscount)}`, tone: BAD }] : []),
-                                // Agency fee — flat % of the deal (Admin → Settings), billed to the guest
-                                // on top of everything else. Pure Ambria income, no offsetting cost — it's
-                                // already inside "Client quote" above, called out here so it reads as the
-                                // profit driver it is rather than a hidden markup.
-                                { k: "Agency fee", sub: `${agencyFeePct}% — income, incl. above`, v: fmt(agencyFee), tone: GOOD },
                                 { k: "Internal cost", sub: "incl. GYV + buffer + commission", v: fmt(internalCostForProfit), tone: INK },
                                 { k: "Net profit", sub: `${profitPct}% margin`, v: `${netProfit < 0 ? "−" : ""}${fmt(Math.abs(netProfit))}`, tone: health.ink },
                               ].map(x => (
