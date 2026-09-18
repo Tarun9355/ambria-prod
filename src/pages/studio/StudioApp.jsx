@@ -6443,33 +6443,44 @@ export default function StudioApp() {
       // The draft this save replaced, plus anything the ten-session cut dropped.
       const dropIds = [...new Set([replacedId, ...prunedIds].filter((x) => x && x !== snapshot.id))];
       if (rowsForSnapshot.length) {
-        (async () => {
-          try {
-            // ── DELETION DISABLED. DO NOT RE-ENABLE UNTIL THE COLLAPSE IS FIXED. ──
-            // A confirmed case of real work being destroyed: a client had a ₹4,50,865 build saved at
-            // 15:16; by 15:22 that session had been deleted and replaced by a ₹2,61,861 one — an
-            // autosave collapsed OVER newer work with an older build and then deleted the newer
-            // session's rows via `replacedId` below.
-            // The same path also enforces the ten-session cap (`prunedIds`), which only makes sense
-            // if those ten are ten distinct saves. They are not: consecutive auto-drafts are failing
-            // to collapse into one slot, so the ten fill with duplicates of one build and every save
-            // pushes a genuinely older save off the end and deletes it.
-            // Until that is understood, this writes and never deletes. Rows accumulate — untidy, and
-            // rowsToSessions caps the history at ten on read so the UI is unaffected — but no save
-            // can destroy another. Losing a salesperson's build is not a tidiness trade.
-            // dropIds is still computed above so the intended behaviour stays visible in the code.
-            void dropIds;
-            const { error } = await supabase.from("studio_sessions")
-              .upsert(rowsForSnapshot, { onConflict: "id" });
-            if (error) throw error;
-          } catch (e) {
-            // SAID OUT LOUD, not swallowed. A silent data-layer failure is how 249 tag verifications
-            // were lost in July (see the note on migration 023) — if these rows are not landing, the
-            // screen has to say so rather than look like it saved. The client_ledger mirror still
-            // holds the save either way, so this reports a sync problem, not lost work.
-            showMsg?.("Session rows not saved: " + (e?.message || e), "red");
-          }
-        })();
+        // ── DELETION DISABLED. DO NOT RE-ENABLE UNTIL THE COLLAPSE IS FIXED. ──
+        // A confirmed case of real work being destroyed: a client had a ₹4,50,865 build saved at
+        // 15:16; by 15:22 that session had been deleted and replaced by a ₹2,61,861 one — an
+        // autosave collapsed OVER newer work with an older build and then deleted the newer
+        // session's rows via `replacedId` below.
+        // The same path also enforces the ten-session cap (`prunedIds`), which only makes sense
+        // if those ten are ten distinct saves. They are not: consecutive auto-drafts are failing
+        // to collapse into one slot, so the ten fill with duplicates of one build and every save
+        // pushes a genuinely older save off the end and deletes it.
+        // Until that is understood, this writes and never deletes. Rows accumulate — untidy, and
+        // rowsToSessions caps the history at ten on read so the UI is unaffected — but no save
+        // can destroy another. Losing a salesperson's build is not a tidiness trade.
+        // dropIds is still computed above so the intended behaviour stays visible in the code.
+        void dropIds;
+        if (opts.keepalive) {
+          // CONFIRMED GAP, closed: this row IS the build — client_ledger.data has no `sessions` key
+          // at all any more (see clientToRow — the blob mirror was retired once this table's backfill
+          // completed), so a keepalive write of client_ledger protects a client's NAME/PHONE from
+          // being lost on refresh, not their zoneElements/zoneConfig. This is the write that actually
+          // needed the same protection and never had it — a plain (non-keepalive) fetch here is
+          // exactly the one a real browser refresh/close is free to cancel mid-flight, which is how a
+          // deal's amount was seen to drop after a hard refresh and only recover once a later,
+          // uninterrupted save re-landed the fuller build.
+          keepaliveUpsert("studio_sessions", rowsForSnapshot);
+        } else {
+          (async () => {
+            try {
+              const { error } = await supabase.from("studio_sessions")
+                .upsert(rowsForSnapshot, { onConflict: "id" });
+              if (error) throw error;
+            } catch (e) {
+              // SAID OUT LOUD, not swallowed. A silent data-layer failure is how 249 tag verifications
+              // were lost in July (see the note on migration 023) — if these rows are not landing, the
+              // screen has to say so rather than look like it saved.
+              showMsg?.("Session rows not saved: " + (e?.message || e), "red");
+            }
+          })();
+        }
       }
     }
     setActiveClientId(client.id);
@@ -6543,9 +6554,14 @@ export default function StudioApp() {
   // writes a session that is half one function and half another. The switch's own settled state
   // schedules a save straight after, so nothing is skipped — only mistimed.
   // True from the moment an edit schedules the 1.5s debounce until autoSaveBuild actually runs it —
-  // i.e. exactly the window a real browser refresh/tab-close can race against pagehide's
-  // fire-and-forget save and win (confirmed gap: pagehide fires the save, but nothing guarantees its
-  // network write lands before the browser tears the page down). Backs the beforeunload prompt below.
+  // i.e. exactly the window a real browser refresh/tab-close can race against pagehide's fire-and-
+  // forget save. pagehide/beforeunload DO fire a fresh save (not just rely on the debounce having
+  // already run), and as of the studio_sessions keepalive fix above that save's actual content-
+  // bearing write now uses `fetch(..., {keepalive:true})`, which the browser promises to keep
+  // delivering after teardown — closing the specific "confirmed gap" this comment used to describe
+  // (that write used to be a plain, cancellable fetch). Still not an absolute guarantee — keepalive
+  // requests share a small (~64KB) browser-wide payload budget — so the beforeunload prompt below
+  // stays as the belt-and-suspenders backstop for a build too large for that budget.
   const unsavedEditRef = useRef(false);
   const autoSaveBuild = useCallback((opts = {}) => {
     // Both flags: switchingRef covers the click-to-commit half, fnSwitchingRef the render-and-settle
