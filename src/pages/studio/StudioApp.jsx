@@ -4027,9 +4027,24 @@ export default function StudioApp() {
   ];
   const refreshStudioFloralData = useCallback(async () => {
     try {
-      const { data } = await supabase.from("settings").select("key,value").in("key", FLORAL_DATA_KEYS);
+      // truss_inventory alongside settings, same parallel fetch shape — it's one row (key "main"),
+      // not the 600+-row `inventory` table, so it costs nothing extra to load on mount. Needed so the
+      // fixed-venue pillar/beam discount (calcStructCost's trussInv param) can compute before Deal
+      // Check has ever been opened — dealCheckData?.trussInv used to be the only source, so Build's/
+      // Summary's own total silently omitted this discount (showing a HIGHER total) until Deal Check
+      // loaded it, then stayed lower afterward — the other half of the "total changes after opening
+      // Deal Check" bug, alongside the agencyFeePct/fixedVenues gap fixed above.
+      const [{ data }, trussInvRows] = await Promise.all([
+        supabase.from("settings").select("key,value").in("key", FLORAL_DATA_KEYS),
+        fetchAll("truss_inventory").catch(() => []),
+      ]);
       const s = {};
       (data || []).forEach(r => { let v = r?.value; for (let i = 0; i < 2; i++) { if (typeof v === "string") { try { v = JSON.parse(v); } catch { break; } } } s[r.key] = v; });
+      let trussInv = null;
+      const trussMain = Array.isArray(trussInvRows) ? trussInvRows.find(r => r.key === "main") : null;
+      let tv = trussMain?.data;
+      for (let i = 0; i < 2; i++) { if (typeof tv === "string") { try { tv = JSON.parse(tv); } catch { break; } } }
+      if (tv && typeof tv === "object" && tv.pillars) trussInv = tv;
       setStudioFloralData({
         flowerPatterns: Array.isArray(s.flowerPatterns) ? s.flowerPatterns : [],
         mandiCatalogue: Array.isArray(s.mandiCatalogue) ? s.mandiCatalogue : [],
@@ -4047,6 +4062,7 @@ export default function StudioApp() {
         // then visibly jump once Deal Check's fetch landed and stayed jumped (dealCheckData persists
         // after Deal Check closes). This lightweight settings-only fetch closes that gap.
         agencyFeePct: typeof s.agencyFeePct === "number" ? s.agencyFeePct : 20,
+        trussInv,
       });
     } catch { /* ignore — floral auto-derive falls back to flat rate */ }
   }, []);
@@ -4357,7 +4373,7 @@ export default function StudioApp() {
     // Fixed-venue pillar/beam discount, if this function's venue carries one — same fvCfgForRepeat
     // resolver the Repeat toggle already uses.
     const _venueTrussHere = fixedVenueFor(fvCfgForRepeat, venue)?.truss;
-    zones.forEach(z => { c += calcStructCost(z.type, z.config, structRates, dealCheckData?.trussInv, _venueTrussHere).total; });
+    zones.forEach(z => { c += calcStructCost(z.type, z.config, structRates, dealCheckData?.trussInv || studioFloralData?.trussInv, _venueTrussHere).total; });
     Object.entries(zoneElements).forEach(([zk, elems]) => {
       if (!enabledEls[zk] || !elems) return;
       c += calcElsCost(elems, true, zoneConfig[zk], { checkAvailability: true }); // active fn's live canvas — see activeBlocksForDate
@@ -4372,7 +4388,7 @@ export default function StudioApp() {
       c += (ci.manualPrice || ci.refPrice || 0) * (Number(ci.qty) || 1);
     });
     return c;
-  }, [venue, enabledEls, zoneConfig, zoneElements, calcElsCost, dcCustomItems, activeFnIdx, structRates, dealCheckData, fvCfgForRepeat]);
+  }, [venue, enabledEls, zoneConfig, zoneElements, calcElsCost, dcCustomItems, activeFnIdx, structRates, dealCheckData, studioFloralData, fvCfgForRepeat]);
 
   const transportCalc = useMemo(() => {
     if (!venue) return { trucks: 0, tripRate: 0, total: 0, isNew: true, tier: "new", tierLabel: "", breakdown: [], floralTrucks: 0, bufferTrucks: 0, itemTrucks: 0 };
@@ -4485,7 +4501,7 @@ export default function StudioApp() {
     const zones = Object.entries(fZoneConfig).filter(([zk, cfg]) => fEnabledEls[zk] && cfg).map(([zk, cfg]) => ({ id: zk, type: zk, name: zk, config: cfg }));
     // Fixed-venue pillar/beam discount, if this function's venue carries one.
     const _venueTrussHere = fixedVenueFor(fvCfgForRepeat, fVenue)?.truss;
-    zones.forEach(z => { decor += calcStructCost(z.type, z.config, structRates, dealCheckData?.trussInv, _venueTrussHere).total; });
+    zones.forEach(z => { decor += calcStructCost(z.type, z.config, structRates, dealCheckData?.trussInv || studioFloralData?.trussInv, _venueTrussHere).total; });
     // Availability-shortfall pricing now runs for EVERY function, each against its OWN date's
     // blocks (blocksByDate — warmed for every function's date, not just the active one). It used to
     // only run for whichever function was the active Build tab (activeBlocksForDate has no other
@@ -4937,7 +4953,7 @@ export default function StudioApp() {
           itemCount += (el2.qty || 0);
         });
       }
-      const zl = fZoneConfig[k] ? calcStructCost(k, fZoneConfig[k], structRates, dealCheckData?.trussInv, fixedVenueFor(fvCfgForRepeat, fVenue)?.truss) : { truss: 0, masking: 0, platform: 0, carpet: 0, total: 0 };
+      const zl = fZoneConfig[k] ? calcStructCost(k, fZoneConfig[k], structRates, dealCheckData?.trussInv || studioFloralData?.trussInv, fixedVenueFor(fvCfgForRepeat, fVenue)?.truss) : { truss: 0, masking: 0, platform: 0, carpet: 0, total: 0 };
       const customCost = dcCustomItems
         .filter(c => c.fnIdx === fnData.fnIdx && c.zoneKey === k)
         .reduce((s, c) => s + (c.manualPrice || c.refPrice || 0) * (Number(c.qty) || 1), 0);
@@ -8253,7 +8269,7 @@ export default function StudioApp() {
           }
         });
       }
-      const zl = fZoneConfig[k] ? calcStructCost(k, fZoneConfig[k], structRates, dealCheckData?.trussInv, fixedVenueFor(fvCfgForRepeat, fVenue)?.truss) : { truss: 0, masking: 0, platform: 0, carpet: 0, total: 0, arches: 0, pillars: 0, glass: 0 };
+      const zl = fZoneConfig[k] ? calcStructCost(k, fZoneConfig[k], structRates, dealCheckData?.trussInv || studioFloralData?.trussInv, fixedVenueFor(fvCfgForRepeat, fVenue)?.truss) : { truss: 0, masking: 0, platform: 0, carpet: 0, total: 0, arches: 0, pillars: 0, glass: 0 };
       const structItems = [];
       const zc = fZoneConfig[k] || {};
       const zm = zoneMeta[k];
@@ -8348,7 +8364,7 @@ export default function StudioApp() {
       const ic = items.reduce((s, i) => s + i.total, 0);
       return { k, label: el.label, icon: el.icon, tier: t, items, structItems, structTotal: zl.total, itemTotal: ic, zoneTotal: ic + zl.total, note: fElNotes[k] || "", dims, dimLabel, photo: fElSelectedPhoto[k]?.src || null, photoName: fElSelectedPhoto[k]?.eventName || "" };
     }).filter(z => z.items.length > 0 || z.structItems.length > 0);
-  }, [getElPriceForFn, zoneLabelsD, zoneMeta, zoneKeys, dealCheckData, imsDefaultPaintCost, dcCustomItems, structRates, imsInventory, fvCfgForRepeat]);
+  }, [getElPriceForFn, zoneLabelsD, zoneMeta, zoneKeys, dealCheckData, studioFloralData, imsDefaultPaintCost, dcCustomItems, structRates, imsInventory, fvCfgForRepeat]);
 
   const buildCombinedCostSheetData = useCallback(() => {
     const all = collectAllFunctionData();
