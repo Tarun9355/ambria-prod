@@ -4170,7 +4170,16 @@ export default function DealCheckOverlay({ ctx }) {
                         const origQuote = quote;
                         const origProfitPct = origQuote > 0 ? Math.round(((origQuote - internalCost) / origQuote) * 100) : 0;
                         const desiredPct = dcDesiredMargin !== null ? dcDesiredMargin : origProfitPct;
-                        const revisedQuote = desiredPct < 100 ? Math.round(internalCost / (1 - desiredPct / 100)) : internalCost;
+                        // At "actual" (calculator untouched), show the real quote — not a value
+                        // rebuilt from origProfitPct. origProfitPct is origQuote's margin ROUNDED to
+                        // a whole percent (e.g. 30.75% → 31%), and inverting that rounded percent back
+                        // into a quote does not round-trip to origQuote: internalCost / (1-0.31) is a
+                        // few thousand rupees higher than the ₹816,755 that actually produces a 30.75%
+                        // margin. Only once the user picks an ACTUAL desired margin should this invert
+                        // the formula — that's the deliberate "what quote hits this round number"
+                        // question the calculator exists to answer, not a math error.
+                        const revisedQuote = dcDesiredMargin === null ? origQuote
+                          : (desiredPct < 100 ? Math.round(internalCost / (1 - desiredPct / 100)) : internalCost);
                         const discount = origQuote - revisedQuote;
                         const discountPct = origQuote > 0 ? Math.round((discount / origQuote) * 100) : 0;
                         const rev = desiredPct >= 20 ? GOOD : desiredPct >= 10 ? GOLD : BAD;
