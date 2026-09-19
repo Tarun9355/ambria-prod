@@ -2756,140 +2756,170 @@ export default function StudioApp() {
         if (v != null) { const td = parse(v); if (td && typeof td === "object" && !cancelled) { if (td.venues) setTrVenues(td.venues); if (td.truckCap) setTruckCap(td.truckCap); if (td.floralPerTruck) setFloralPerTruck(td.floralPerTruck); if (td.bufferTiers) setBufferTiers(td.bufferTiers); if (td.gensetRate !== undefined) setGensetRate(td.gensetRate); if (td.gensetRate62 !== undefined) setGensetRate62(td.gensetRate62); if (td.gensetCostRate !== undefined) setGensetCostRate(td.gensetCostRate); if (td.gensetCostRate62 !== undefined) setGensetCostRate62(td.gensetCostRate62); } }
       } catch {}
       if (!cancelled) trSettingsLoadedRef.current = true;
-      // Templates
-      try { const v = await kvGet(TPL_SK); if (v != null) { const tp = parse(v); if (Array.isArray(tp) && tp.length && !cancelled) setTemplates(tp); } } catch {}
-      // Zone definitions
-      let loadedZones = null;
-      try { const v = await kvGet(ZONE_DEF_SK); if (v != null) { const zp = parse(v); if (zp && zp.elements) { loadedZones = zp; if (!cancelled) setZoneDefs(zp); } } } catch {}
-      // Zone photo groups — normalised on read, so a blob written before groups were per-function
-      // (a bare id array per zone) loads as an any-function group instead of being ignored.
-      try { const v = await kvGet(ZONE_GROUPS_SK); if (v != null && !cancelled) { const zg = normaliseZoneGroups(parse(v)); zoneGroupsRef.current = zg; setZoneGroups(zg); } } catch {}
-      // Taxonomy — backfill missing keys from DEFAULT_TAX
-      let loadedTax = null;
-      try {
-        const v = await kvGet(TAX_SK);
-        if (v != null) {
-          const tp = parse(v);
-          if (tp && tp.eventType) {
-            const out = { ...tp };
-            let merged = false;
-            for (const k of Object.keys(DEFAULT_TAX)) { if (!Array.isArray(out[k])) { out[k] = DEFAULT_TAX[k]; merged = true; } }
-            // One-time: introduce the "Both" venue type (Indoor + Outdoor) into the already-saved
-            // shared taxonomy. Gated on a stored flag so that if someone later deletes "Both" in
-            // Manage Settings it stays gone — we don't auto-restore it (the taxonomy is user-managed).
-            try {
-              const bothDone = await kvGet(TAX_BOTH_MIG_SK);
-              if (bothDone == null) {
-                if (Array.isArray(out.venueType) && !out.venueType.includes("Both")) { out.venueType = [...out.venueType, "Both"]; merged = true; }
-                reliableSave(TAX_BOTH_MIG_SK, "1", "Taxonomy migration").catch(() => {});
+      // Everything below this point (through the "Deal Check boot loaders" at the end) used to be
+      // ~30 individually-awaited kvGet/fetchAll calls, one after another, IN SERIES — none of them
+      // read another's result (verified: loadedZones/loadedTax below are only ever used inside their
+      // OWN try-block), so there was never a reason for #2 to wait on #1's round trip finishing
+      // before even starting. At ~50-150ms per request (each doubled by its own CORS preflight),
+      // that's several seconds of serial network latency on every single Studio mount, during which
+      // this component keeps re-rendering on every one of the ~30 setState calls landing one at a
+      // time — a real, measurable contributor to "the app feels laggy right after opening it",
+      // traced from a user-supplied Network-tab capture showing this exact sequence of requests
+      // spread across a 30+ second window. Running them concurrently costs the same as the SLOWEST
+      // one instead of the SUM of all of them, and collapses ~30 separate re-render ticks into one.
+      // Split into two batches, not one, to preserve the pre-existing pricingReady ordering exactly:
+      // the comment on setPricingReady below promises it only flips once rate card/inventory/
+      // transport/the five structure-rate tables have landed — true before this change and still
+      // true after, since this first batch still fully resolves before that line runs.
+      await Promise.all([
+        // Templates
+        (async () => { try { const v = await kvGet(TPL_SK); if (v != null) { const tp = parse(v); if (Array.isArray(tp) && tp.length && !cancelled) setTemplates(tp); } } catch {} })(),
+        // Zone definitions
+        (async () => { try { const v = await kvGet(ZONE_DEF_SK); if (v != null) { const zp = parse(v); if (zp && zp.elements && !cancelled) setZoneDefs(zp); } } catch {} })(),
+        // Zone photo groups — normalised on read, so a blob written before groups were per-function
+        // (a bare id array per zone) loads as an any-function group instead of being ignored.
+        (async () => { try { const v = await kvGet(ZONE_GROUPS_SK); if (v != null && !cancelled) { const zg = normaliseZoneGroups(parse(v)); zoneGroupsRef.current = zg; setZoneGroups(zg); } } catch {} })(),
+        // Taxonomy — backfill missing keys from DEFAULT_TAX
+        (async () => {
+          try {
+            const v = await kvGet(TAX_SK);
+            if (v != null) {
+              const tp = parse(v);
+              if (tp && tp.eventType) {
+                const out = { ...tp };
+                let merged = false;
+                for (const k of Object.keys(DEFAULT_TAX)) { if (!Array.isArray(out[k])) { out[k] = DEFAULT_TAX[k]; merged = true; } }
+                // One-time: introduce the "Both" venue type (Indoor + Outdoor) into the already-saved
+                // shared taxonomy. Gated on a stored flag so that if someone later deletes "Both" in
+                // Manage Settings it stays gone — we don't auto-restore it (the taxonomy is user-managed).
+                try {
+                  const bothDone = await kvGet(TAX_BOTH_MIG_SK);
+                  if (bothDone == null) {
+                    if (Array.isArray(out.venueType) && !out.venueType.includes("Both")) { out.venueType = [...out.venueType, "Both"]; merged = true; }
+                    reliableSave(TAX_BOTH_MIG_SK, "1", "Taxonomy migration").catch(() => {});
+                  }
+                } catch {}
+                if (merged) reliableSave(TAX_SK, JSON.stringify(out), "Taxonomy").catch(() => {});
+                if (!cancelled) setTaxonomy(out);
               }
-            } catch {}
-            if (merged) reliableSave(TAX_SK, JSON.stringify(out), "Taxonomy").catch(() => {});
-            loadedTax = out; if (!cancelled) setTaxonomy(out);
+            } else { reliableSave(TAX_SK, JSON.stringify(DEFAULT_TAX), "Taxonomy").catch(() => {}); }
+          } catch {}
+        })(),
+        // Areas↔Zones auto-sync removed: the bidirectional sync (ZONE_META seeds, area→zone,
+        // zone→area) ran unconditionally on every load and silently restored deleted zones/areas
+        // from hardcoded defaults — same class of bug as the category orphan-recovery. Zones and
+        // taxonomy are now fully user-managed; create/delete via the Zone editor.
+        // Library — row-per-photo in the `library` TABLE, server-side paginated (no whole-table
+        // fetch on mount — see `libraryQueries.js` + `mergeLibItems`). Nothing to eagerly load here.
+        // Correction log (contribution tracking) — table-backed now, see photoCorrections.js
+        (async () => { try { const rows = await fetchPhotoCorrections(); if (!cancelled) { setCorrLog(rows); corrLogRef.current = rows; } } catch {} })(),
+        (async () => { try { const v = await kvGet(TAG_KB_SK); if (v != null) { const kb = parse(v); if (kb && typeof kb === "object" && !cancelled) setTagKB(kb); } } catch {} })(),
+        // Team
+        (async () => {
+          try {
+            const v = await kvGet(TEAM_SK);
+            if (v != null) { const tp = parse(v); if (tp && typeof tp === "object" && !Array.isArray(tp) && !cancelled) setTeamData(tp); }
+            else { reliableSave(TEAM_SK, JSON.stringify(DEFAULT_TEAM), "Team").catch(() => {}); }
+          } catch {}
+        })(),
+        // Premia config
+        (async () => { try { const v = await kvGet(PREMIA_CFG_SK); if (v != null) { const pc = parse(v); if (pc && typeof pc === "object" && !Array.isArray(pc) && !cancelled) setPremiaConfig({ ...PREMIA_DEFAULTS, ...pc }); } } catch {} })(),
+        // Notifications
+        (async () => { try { const v = await kvGet(NOTIF_SK); if (v != null) { const np = parse(v); if (Array.isArray(np) && !cancelled) setNotifications(np); } } catch {} })(),
+        // Video tags — the `video_tags` TABLE is the source of truth (migration 023). The legacy
+        // YT_TAG_SK blob is still written as a mirror for one release, and is read here only as a
+        // fallback, so this deploy is safe whether or not the migration has been applied yet.
+        // Empty table also falls through to the blob: a fresh environment has rows only after backfill.
+        (async () => {
+          try {
+            const rows = await fetchAll("video_tags");
+            if (Array.isArray(rows) && rows.length && !cancelled) setYtVideoTags(rowsToVideoTagMap(rows));
+            else if (!cancelled) throw new Error("video_tags empty");
+          } catch {
+            try { const v = await kvGet(YT_TAG_SK); if (v != null) { const tp = parse(v); if (tp && typeof tp === "object" && !cancelled) setYtVideoTags(tp); } } catch {}
           }
-        } else { reliableSave(TAX_SK, JSON.stringify(DEFAULT_TAX), "Taxonomy").catch(() => {}); loadedTax = DEFAULT_TAX; }
-      } catch {}
-      // Areas↔Zones auto-sync removed: the bidirectional sync (ZONE_META seeds, area→zone,
-      // zone→area) ran unconditionally on every load and silently restored deleted zones/areas
-      // from hardcoded defaults — same class of bug as the category orphan-recovery. Zones and
-      // taxonomy are now fully user-managed; create/delete via the Zone editor.
-      // Library — row-per-photo in the `library` TABLE, server-side paginated (no whole-table
-      // fetch on mount — see `libraryQueries.js` + `mergeLibItems`). Nothing to eagerly load here.
-      // Correction log (contribution tracking) — table-backed now, see photoCorrections.js
-      try { const rows = await fetchPhotoCorrections(); if (!cancelled) { setCorrLog(rows); corrLogRef.current = rows; } } catch {}
-      try { const v = await kvGet(TAG_KB_SK); if (v != null) { const kb = parse(v); if (kb && typeof kb === "object" && !cancelled) setTagKB(kb); } } catch {}
-      // Team
-      try {
-        const v = await kvGet(TEAM_SK);
-        if (v != null) { const tp = parse(v); if (tp && typeof tp === "object" && !Array.isArray(tp) && !cancelled) setTeamData(tp); }
-        else { reliableSave(TEAM_SK, JSON.stringify(DEFAULT_TEAM), "Team").catch(() => {}); }
-      } catch {}
-      // Premia config
-      try { const v = await kvGet(PREMIA_CFG_SK); if (v != null) { const pc = parse(v); if (pc && typeof pc === "object" && !Array.isArray(pc) && !cancelled) setPremiaConfig({ ...PREMIA_DEFAULTS, ...pc }); } } catch {}
-      // Notifications
-      try { const v = await kvGet(NOTIF_SK); if (v != null) { const np = parse(v); if (Array.isArray(np) && !cancelled) setNotifications(np); } } catch {}
-      // Video tags — the `video_tags` TABLE is the source of truth (migration 023). The legacy
-      // YT_TAG_SK blob is still written as a mirror for one release, and is read here only as a
-      // fallback, so this deploy is safe whether or not the migration has been applied yet.
-      // Empty table also falls through to the blob: a fresh environment has rows only after backfill.
-      try {
-        const rows = await fetchAll("video_tags");
-        if (Array.isArray(rows) && rows.length && !cancelled) setYtVideoTags(rowsToVideoTagMap(rows));
-        else if (!cancelled) throw new Error("video_tags empty");
-      } catch {
-        try { const v = await kvGet(YT_TAG_SK); if (v != null) { const tp = parse(v); if (tp && typeof tp === "object" && !cancelled) setYtVideoTags(tp); } } catch {}
-      }
-      // Date types
-      try { const v = await kvGet(DT_SK); if (v != null) { const dp = parse(v); if (dp && typeof dp === "object" && !cancelled) setDateTypes(dp); } } catch {}
-      // Event orders
-      try { const rows = await loadEoRows(); if (Array.isArray(rows) && !cancelled) setEventOrders(rows.map(rowToEO)); } catch { /* ignore */ }
-      // Photo→IMS cache
-      try { const v = await kvGet(PIMAP_SK); if (v != null) { const pm = parse(v); if (pm && typeof pm === "object" && !Array.isArray(pm) && !cancelled) setPhotoImsMap(pm); } } catch {}
-      // Scan history
-      try { const v = await kvGet(SCAN_HIST_SK); if (v != null) { const sh = parse(v); if (sh && typeof sh === "object" && !Array.isArray(sh) && !cancelled) setScanHistory(sh); } } catch {}
-      // Manual videos
-      try { const v = await kvGet(MANUAL_VID_SK); if (v != null) { const mp = parse(v); if (Array.isArray(mp) && !cancelled) setManualVideos(mp); } } catch {}
-      // Hidden videos
-      try { const v = await kvGet(HIDDEN_VID_SK); if (v != null) { const hp = parse(v); if (hp && typeof hp === "object" && !cancelled) setHiddenVideos(hp); } } catch {}
-      // Favourite videos
-      try { const v = await kvGet(FAV_VID_SK); if (v != null) { const fp = parse(v); if (fp && typeof fp === "object" && !cancelled) setFavVideos(fp); } } catch {}
-      // Favourite zone photos
-      try { const v = await kvGet(FAV_PHOTO_SK); if (v != null) { const fp = parse(v); if (fp && typeof fp === "object" && !cancelled) setFavPhotos(fp); } } catch {}
-      // Filter priority
-      try { const v = await kvGet(FILTER_PRIORITY_SK); if (v != null) { const fpp = parse(v); if (Array.isArray(fpp) && fpp.length === 5 && !cancelled) setFilterPriority(fpp); } } catch {}
-      // Tagging-hidden sub-categories (Pricing flags)
-      try { const v = await kvGet(TAG_HIDDEN_SUBS_SK); if (v != null) { const hs = parse(v); if (Array.isArray(hs) && !cancelled) setTagHiddenSubs(hs.filter((x) => typeof x === "string")); } } catch {}
-      // Palette catalogue (Studio-owned) + IMS settings (paint cats)
-      try {
-        const palv = await kvGet(PALETTE_SK);
-        if (palv != null) { const p = parse(palv); if (p && typeof p === "object" && !cancelled) { if (Array.isArray(p.colourCatalogue) && p.colourCatalogue.length) setImsColourCatalogue(p.colourCatalogue); if (Array.isArray(p.paletteCatalogue) && p.paletteCatalogue.length) setImsPaletteCatalogue(p.paletteCatalogue); } }
-        if (!cancelled) { paletteLoadedRef.current = true; setPaletteCatalogueLoaded(true); }
-        const sv = await kvGet(IMS_SETTINGS_SK);
-        if (sv != null) { const s = parse(sv); if (s && typeof s === "object" && !cancelled) { if (Array.isArray(s.paintableCategories) && s.paintableCategories.length) setImsPaintableCategories(s.paintableCategories); if (typeof s.defaultPaintCostPerItem === "number") setImsDefaultPaintCost(s.defaultPaintCostPerItem); } }
-      } catch {}
-      // AI Synonym Dictionary — IMS persists each settings field as its OWN row keyed by field name
-      // (IMS.jsx's setSettings), not nested under IMS_SETTINGS_SK, so it's fetched by its own key.
-      try { const synv = await kvGet("synonymDictionary"); if (synv != null) { const sd = parse(synv); if (Array.isArray(sd) && !cancelled) setImsSynonymDictionary(sd); } } catch {}
-      // Print Materials — same per-field kv row pattern as synonymDictionary above.
-      try { const pmv = await kvGet("printMaterials"); if (pmv != null) { const pm = parse(pmv); if (Array.isArray(pm) && !cancelled) setImsPrintMaterials(pm); } } catch {}
-      try { const cmv = await kvGet("carpetMaterials"); if (cmv != null) { const cm = parse(cmv); if (Array.isArray(cm) && !cancelled) setImsCarpetMaterials(cm); } } catch {}
-      // Truss & Masking Rates (IMS Admin → Settings → 🏗️) — same per-field kv row pattern.
-      try { const trv = await kvGet("trussRates"); if (trv != null) { const tr = parse(trv); if (Array.isArray(tr) && !cancelled) setImsTrussRates(tr); } } catch {}
-      try { const mrv = await kvGet("maskingRates"); if (mrv != null) { const mr = parse(mrv); if (Array.isArray(mr) && !cancelled) setImsMaskingRates(mr); } } catch {}
-      try { const prv = await kvGet("platformRates"); if (prv != null) { const pr = parse(prv); if (Array.isArray(pr) && !cancelled) setImsPlatformRates(pr); } } catch {}
+        })(),
+        // Date types
+        (async () => { try { const v = await kvGet(DT_SK); if (v != null) { const dp = parse(v); if (dp && typeof dp === "object" && !cancelled) setDateTypes(dp); } } catch {} })(),
+        // Event orders
+        (async () => { try { const rows = await loadEoRows(); if (Array.isArray(rows) && !cancelled) setEventOrders(rows.map(rowToEO)); } catch { /* ignore */ } })(),
+        // Photo→IMS cache
+        (async () => { try { const v = await kvGet(PIMAP_SK); if (v != null) { const pm = parse(v); if (pm && typeof pm === "object" && !Array.isArray(pm) && !cancelled) setPhotoImsMap(pm); } } catch {} })(),
+        // Scan history
+        (async () => { try { const v = await kvGet(SCAN_HIST_SK); if (v != null) { const sh = parse(v); if (sh && typeof sh === "object" && !Array.isArray(sh) && !cancelled) setScanHistory(sh); } } catch {} })(),
+        // Manual videos
+        (async () => { try { const v = await kvGet(MANUAL_VID_SK); if (v != null) { const mp = parse(v); if (Array.isArray(mp) && !cancelled) setManualVideos(mp); } } catch {} })(),
+        // Hidden videos
+        (async () => { try { const v = await kvGet(HIDDEN_VID_SK); if (v != null) { const hp = parse(v); if (hp && typeof hp === "object" && !cancelled) setHiddenVideos(hp); } } catch {} })(),
+        // Favourite videos
+        (async () => { try { const v = await kvGet(FAV_VID_SK); if (v != null) { const fp = parse(v); if (fp && typeof fp === "object" && !cancelled) setFavVideos(fp); } } catch {} })(),
+        // Favourite zone photos
+        (async () => { try { const v = await kvGet(FAV_PHOTO_SK); if (v != null) { const fp = parse(v); if (fp && typeof fp === "object" && !cancelled) setFavPhotos(fp); } } catch {} })(),
+        // Filter priority
+        (async () => { try { const v = await kvGet(FILTER_PRIORITY_SK); if (v != null) { const fpp = parse(v); if (Array.isArray(fpp) && fpp.length === 5 && !cancelled) setFilterPriority(fpp); } } catch {} })(),
+        // Tagging-hidden sub-categories (Pricing flags)
+        (async () => { try { const v = await kvGet(TAG_HIDDEN_SUBS_SK); if (v != null) { const hs = parse(v); if (Array.isArray(hs) && !cancelled) setTagHiddenSubs(hs.filter((x) => typeof x === "string")); } } catch {} })(),
+        // Palette catalogue (Studio-owned) + IMS settings (paint cats)
+        (async () => {
+          try {
+            const palv = await kvGet(PALETTE_SK);
+            if (palv != null) { const p = parse(palv); if (p && typeof p === "object" && !cancelled) { if (Array.isArray(p.colourCatalogue) && p.colourCatalogue.length) setImsColourCatalogue(p.colourCatalogue); if (Array.isArray(p.paletteCatalogue) && p.paletteCatalogue.length) setImsPaletteCatalogue(p.paletteCatalogue); } }
+            if (!cancelled) { paletteLoadedRef.current = true; setPaletteCatalogueLoaded(true); }
+            const sv = await kvGet(IMS_SETTINGS_SK);
+            if (sv != null) { const s = parse(sv); if (s && typeof s === "object" && !cancelled) { if (Array.isArray(s.paintableCategories) && s.paintableCategories.length) setImsPaintableCategories(s.paintableCategories); if (typeof s.defaultPaintCostPerItem === "number") setImsDefaultPaintCost(s.defaultPaintCostPerItem); } }
+          } catch {}
+        })(),
+        // AI Synonym Dictionary — IMS persists each settings field as its OWN row keyed by field name
+        // (IMS.jsx's setSettings), not nested under IMS_SETTINGS_SK, so it's fetched by its own key.
+        (async () => { try { const synv = await kvGet("synonymDictionary"); if (synv != null) { const sd = parse(synv); if (Array.isArray(sd) && !cancelled) setImsSynonymDictionary(sd); } } catch {} })(),
+        // Print Materials — same per-field kv row pattern as synonymDictionary above.
+        (async () => { try { const pmv = await kvGet("printMaterials"); if (pmv != null) { const pm = parse(pmv); if (Array.isArray(pm) && !cancelled) setImsPrintMaterials(pm); } } catch {} })(),
+        (async () => { try { const cmv = await kvGet("carpetMaterials"); if (cmv != null) { const cm = parse(cmv); if (Array.isArray(cm) && !cancelled) setImsCarpetMaterials(cm); } } catch {} })(),
+        // Truss & Masking Rates (IMS Admin → Settings → 🏗️) — same per-field kv row pattern.
+        (async () => { try { const trv = await kvGet("trussRates"); if (trv != null) { const tr = parse(trv); if (Array.isArray(tr) && !cancelled) setImsTrussRates(tr); } } catch {} })(),
+        (async () => { try { const mrv = await kvGet("maskingRates"); if (mrv != null) { const mr = parse(mrv); if (Array.isArray(mr) && !cancelled) setImsMaskingRates(mr); } } catch {} })(),
+        (async () => { try { const prv = await kvGet("platformRates"); if (prv != null) { const pr = parse(prv); if (Array.isArray(pr) && !cancelled) setImsPlatformRates(pr); } } catch {} })(),
+      ]);
       // Every input the estimate reads has now landed: the rate card and its scaling factors,
       // inventory, the transport settings, and all five structure-rate tables above. Anything loaded
       // after this line does not feed grandTotal. See pricingReady where it is declared.
       if (!cancelled) setPricingReady(true);
-      // Deal Check boot loaders
-      try { const rows = await fetchAll("amend_requests"); if (Array.isArray(rows) && !cancelled) setAmendRequests(rows.map((r) => ({ ...(r.data || {}), id: r.id, status: r.status ?? r.data?.status }))); } catch { /* ignore */ }
-      // Knowledge set — learned photo→IMS visual identity (fail-safe: table may not exist yet).
-      try { const rows = await fetchAll("dc_photo_knowledge"); if (Array.isArray(rows) && !cancelled) { const m = {}; for (const r of rows) { if (r?.id && r.data?.imsId) m[r.id] = r.data; } setPhotoKnowledge(m); } } catch { /* table missing → knowledge disabled, AI still works */ }
-      try { const v = await kvGet(FLORAL_HARDPROP_MAP_SK); if (v != null) { const m = parse(v); if (m && typeof m === "object" && !Array.isArray(m) && !cancelled) setFloralHardPropMap(m); } } catch {}
-      try { const v = await kvGet(DC_RUN_COUNTER_SK); if (v != null) { const rc = parse(v); if (rc && typeof rc === "object" && !Array.isArray(rc) && !cancelled) setDcRunCounter(rc); } } catch {}
-      try {
-        const rows = await fetchAll("soft_holds");
-        if (Array.isArray(rows) && !cancelled) {
-          const now = Date.now(); const live = {}; const expiredIds = [];
-          for (const r of rows) { const h = r.data || {}; const exp = typeof h.expiry === "number" ? h.expiry : Date.parse(h.expiry || ""); if (exp && exp > now) live[r.id] = h; else expiredIds.push(r.id); }
-          setSoftHolds(live);
-          for (const id of expiredIds) supabase.from("soft_holds").delete().eq("id", id).then(() => {});
-        }
-      } catch {}
-      try { const v = await kvGet(DC_CACHE_SK); if (v != null) { const dc = parse(v); if (dc && typeof dc === "object" && !Array.isArray(dc) && !cancelled) setDcCache(dc); } } catch {}
-      try {
-        const rows = await fetchAll("truss_allocations"); // now the shared table (IMS + Studio), off the blob
-        if (Array.isArray(rows) && !cancelled) {
-          const now = Date.now(); const cleaned = {};
-          for (const r of rows) {
-            const entry = rowToAlloc(r);
-            if (!Array.isArray(entry.events)) { cleaned[entry.date] = entry; continue; }
-            const liveEvents = entry.events.filter(ev => { if (ev.state !== "soft") return true; const exp = typeof ev.expiry === "number" ? ev.expiry : Date.parse(ev.expiry || ""); return exp && exp > now; });
-            cleaned[entry.date] = { ...entry, events: liveEvents };
-          }
-          setTrussAlloc(cleaned);
-        }
-      } catch {}
+      // Deal Check boot loaders — same "nothing here reads another's result" reasoning as the batch
+      // above, kept as its own separate Promise.all only so pricingReady's ordering above is untouched.
+      await Promise.all([
+        (async () => { try { const rows = await fetchAll("amend_requests"); if (Array.isArray(rows) && !cancelled) setAmendRequests(rows.map((r) => ({ ...(r.data || {}), id: r.id, status: r.status ?? r.data?.status }))); } catch { /* ignore */ } })(),
+        // Knowledge set — learned photo→IMS visual identity (fail-safe: table may not exist yet).
+        (async () => { try { const rows = await fetchAll("dc_photo_knowledge"); if (Array.isArray(rows) && !cancelled) { const m = {}; for (const r of rows) { if (r?.id && r.data?.imsId) m[r.id] = r.data; } setPhotoKnowledge(m); } } catch { /* table missing → knowledge disabled, AI still works */ } })(),
+        (async () => { try { const v = await kvGet(FLORAL_HARDPROP_MAP_SK); if (v != null) { const m = parse(v); if (m && typeof m === "object" && !Array.isArray(m) && !cancelled) setFloralHardPropMap(m); } } catch {} })(),
+        (async () => { try { const v = await kvGet(DC_RUN_COUNTER_SK); if (v != null) { const rc = parse(v); if (rc && typeof rc === "object" && !Array.isArray(rc) && !cancelled) setDcRunCounter(rc); } } catch {} })(),
+        (async () => {
+          try {
+            const rows = await fetchAll("soft_holds");
+            if (Array.isArray(rows) && !cancelled) {
+              const now = Date.now(); const live = {}; const expiredIds = [];
+              for (const r of rows) { const h = r.data || {}; const exp = typeof h.expiry === "number" ? h.expiry : Date.parse(h.expiry || ""); if (exp && exp > now) live[r.id] = h; else expiredIds.push(r.id); }
+              setSoftHolds(live);
+              for (const id of expiredIds) supabase.from("soft_holds").delete().eq("id", id).then(() => {});
+            }
+          } catch {}
+        })(),
+        (async () => { try { const v = await kvGet(DC_CACHE_SK); if (v != null) { const dc = parse(v); if (dc && typeof dc === "object" && !Array.isArray(dc) && !cancelled) setDcCache(dc); } } catch {} })(),
+        (async () => {
+          try {
+            const rows = await fetchAll("truss_allocations"); // now the shared table (IMS + Studio), off the blob
+            if (Array.isArray(rows) && !cancelled) {
+              const now = Date.now(); const cleaned = {};
+              for (const r of rows) {
+                const entry = rowToAlloc(r);
+                if (!Array.isArray(entry.events)) { cleaned[entry.date] = entry; continue; }
+                const liveEvents = entry.events.filter(ev => { if (ev.state !== "soft") return true; const exp = typeof ev.expiry === "number" ? ev.expiry : Date.parse(ev.expiry || ""); return exp && exp > now; });
+                cleaned[entry.date] = { ...entry, events: liveEvents };
+              }
+              setTrussAlloc(cleaned);
+            }
+          } catch {}
+        })(),
+      ]);
     })();
     return () => { cancelled = true; };
   }, []);
