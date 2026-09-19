@@ -4,8 +4,18 @@
 // built beyond the standing qty, a swapped design, or any other venue → full.
 import { heavyExtraLabour } from "./constants";
 
-// Normalize a venue name for matching: lowercase, drop a leading "Ambria ", trim.
-function normVenue(s) { return String(s || "").toLowerCase().replace(/^ambria\s+/, "").trim(); }
+// Normalize a venue name for matching: lowercase, drop a leading "Ambria ", trim, and drop
+// trailing punctuation. The trailing-punctuation strip closes a real, confusing bug: a deal's own
+// venue field read "Pushpanjali." (a stray trailing period, however it got typed) while the Fixed
+// Venue was configured as "Pushpanjali" — lowercase + trim alone still leave "pushpanjali." !==
+// "pushpanjali", so fixedVenueFor never matched, and every standing-item discount for that venue
+// silently priced at full rate no matter how many times the element was removed and re-added. There
+// was no error or warning anywhere — a byte-for-byte (mod case) name match was the only thing
+// standing between "configured correctly" and "silently does nothing," which is far too fragile for
+// something an admin free-types into a venue-name field. Stripping trailing .,;: closes the specific
+// case found; it does not make the match fuzzy in general (a genuinely different venue name still
+// won't match), just tolerant of stray end-of-string punctuation.
+function normVenue(s) { return String(s || "").toLowerCase().replace(/^ambria\s+/, "").trim().replace(/[.,;:]+$/, "").trim(); }
 
 // Sub-venue → parent map (e.g. Aura → Exotica). Stored by Studio; may be a JSON string.
 function parentMap(settings) {
