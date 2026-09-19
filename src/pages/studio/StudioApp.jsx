@@ -6745,7 +6745,21 @@ export default function StudioApp() {
     // edit is never wrong to persist; only the four PRICE-DERIVED fields (tier/total/decorTotal/
     // transportTotal) can be — those still carry forward the previous save's values while pricing
     // isn't ready (see the snapshot construction in saveSession) instead of holding up everything.
-    if (buildHasDataRef.current) {
+    // opts.periodic (only the bare 15s interval passes this) skips the save entirely when
+    // unsavedEditRef is already false — i.e. the last debounced save (or a previous periodic tick)
+    // already landed and there is nothing new to persist. The periodic tick's own job, per its
+    // "fallback" name, is only to catch a save the 1.5s debounce MISSED (a backgrounded tab
+    // throttling its timer); if nothing has been edited since the last save, there is nothing to
+    // catch. Without this, saveSession — a deep clone of zoneConfig/zoneElements plus a full
+    // totalCost() recompute, then the state-update render cascade that follows (transportCalc,
+    // eventGrandTotal, calcFunctionCost/calcFunctionBreakdown all reading pricing-reactive state) —
+    // was re-running on this exact 15s clock indefinitely, edit or no edit, for as long as any deal
+    // with build data sat open. CPU long-task profiling (PerformanceObserver, not guesswork) measured
+    // ~700ms-1s of blocked main thread per occurrence, right in that window — a real, separate cause
+    // of the reported choppiness from the network fetches already fixed above, on the same 15s clock.
+    // pagehide/beforeunload/unmount are NOT gated — page teardown is rare enough that always saving
+    // there costs nothing ongoing, and it's the one place worth erring toward the safe side.
+    if (buildHasDataRef.current && (!opts.periodic || unsavedEditRef.current)) {
       // opts.keepalive: only ever passed true from the pagehide/visibility-hidden/beforeunload
       // handlers below — the page is actually going away, so this save has to survive teardown
       // (fetch keepalive) rather than trust a normal request to finish in time.
@@ -6814,7 +6828,7 @@ export default function StudioApp() {
   // teardown. The 15s periodic/unmount saves stay plain — the page isn't disappearing for either.
   useEffect(() => {
     const onHideOrUnload = () => autoSaveBuild({ keepalive: true });
-    const id = setInterval(() => autoSaveBuild(), 15000);
+    const id = setInterval(() => autoSaveBuild({ periodic: true }), 15000);
     const onVis = () => { if (document.visibilityState === "hidden") onHideOrUnload(); };
     document.addEventListener("visibilitychange", onVis);
     window.addEventListener("pagehide", onHideOrUnload);
