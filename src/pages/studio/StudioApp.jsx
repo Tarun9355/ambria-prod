@@ -8587,7 +8587,20 @@ export default function StudioApp() {
           // deleted-from-IMS element keeps the name it was saved with rather than going blank.
           const liveInv = el2.invId ? (imsInventory || []).find(i => i.id === el2.invId) : null;
           const displayName = liveInv?.name || el2.name;
-          if (lt > 0) items.push({ name: displayName, size: el2.size || "", qty: el2.qty || 0, unit: el2.unit || "pc", rate: up, total: lt, isFloral: rc && (rc.cat || "").toLowerCase() === "florals" });
+          if (lt > 0) {
+            // `up` is the full, pre-discount unit rate (rental × sub-category factor) — `lt` already
+            // has any Fixed-Venue standing-item discount baked in (repeatAdjustedLineCost, inside
+            // getElPriceForFn). Surfacing both, plus the delta, lets the cost sheet show the guest the
+            // benefit explicitly instead of just a lower total they have no way to attribute.
+            const qtyN = el2.qty || 0;
+            const noDiscTotal = Math.round(up * qtyN);
+            const hasDiscount = qtyN > 0 && (noDiscTotal - lt) > 0.5;
+            items.push({
+              name: displayName, size: el2.size || "", qty: qtyN, unit: el2.unit || "pc", rate: up, total: lt,
+              isFloral: rc && (rc.cat || "").toLowerCase() === "florals",
+              hasDiscount, discRate: hasDiscount ? Math.round(lt / qtyN) : undefined, noDiscTotal: hasDiscount ? noDiscTotal : undefined,
+            });
+          }
           if (el2.qty > 0) {
             const imsInv = dealCheckData?.inventory || [];
             const invItem = imsInv.find(i => i.name === el2.name);

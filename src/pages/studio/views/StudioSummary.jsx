@@ -495,7 +495,8 @@ body{font-family:'Outfit','Plus Jakarta Sans',system-ui,-apple-system,sans-serif
 table{width:100%;border-collapse:collapse}
 th{text-align:left;padding:6px 12px;font-size:9px;text-transform:uppercase;letter-spacing:0.5px;color:#8B7355;background:#FDFCFA;border-bottom:1px solid #E8E0D4}
 th:last-child,td:last-child{text-align:right}
-th:nth-child(3),td:nth-child(3),th:nth-child(4),td:nth-child(4){text-align:center}
+th:nth-child(3),td:nth-child(3){text-align:center}
+th:nth-child(4),td:nth-child(4),th:nth-child(5),td:nth-child(5),th:nth-child(6),td:nth-child(6){text-align:right}
 td{padding:5px 12px;font-size:11px;border-bottom:1px solid #F3EDE4}
 tr:last-child td{border-bottom:none}
 .struct-row td{color:#6B7280;font-style:italic;background:#FDFCFA}
@@ -531,11 +532,11 @@ ${combined.functions.map((fnObj, fi) => `
 ${fnObj.isEmpty ? `<div class="fn-empty">Design pending — zones for this function have not been built yet.</div>` : `
 ${fnObj.zones.map(z => `<div class="zone"><div class="zone-head"><h3>${z.label}</h3><div class="zone-total">${f(z.zoneTotal)}</div></div>
 ${z.photo ? `<div style="padding:8px 12px;background:#FAFAF7;border-bottom:1px solid #E8E0D4"><img src="${z.photo}" style="width:100%;max-height:160px;object-fit:cover;border-radius:8px;display:block" onerror="this.style.display='none'"/>${z.photoName ? `<div style="font-size:9px;color:#8B7355;margin-top:4px;text-align:center">Reference: ${z.photoName}</div>` : ""}</div>` : ""}
-<table><tr><th>Item</th><th>Size</th><th>Qty</th><th>Rate</th><th>Amount</th></tr>
-${z.structItems.map(si => `<tr class="struct-row"><td>${si.name}</td><td>—</td><td>—</td><td>—</td><td>${f(si.total)}</td></tr>`).join("")}
-${z.items.map(it => `<tr><td>${it.name}</td><td>${it.size || "—"}</td><td>${it.qty}</td><td>${f(it.rate)}/${it.unit}</td><td>${f(it.total)}</td></tr>`).join("")}
-<tr class="subtotal-row"><td colspan="4">${z.label} Subtotal</td><td>${f(z.zoneTotal)}</td></tr>
-${z.note ? `<tr class="note-row"><td colspan="5">📝 ${z.note}</td></tr>` : ""}
+<table><tr><th>Item</th><th>Size</th><th>Qty</th><th>Rate</th><th>Disc. Rate</th><th>List Amt</th><th>Amount</th></tr>
+${z.structItems.map(si => `<tr class="struct-row"><td>${si.name}</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>${f(si.total)}</td></tr>`).join("")}
+${z.items.map(it => `<tr><td>${it.name}</td><td>${it.size || "—"}</td><td>${it.qty}</td><td>${f(it.rate)}/${it.unit}</td><td${it.hasDiscount ? ' style="color:#15803D;font-weight:700"' : ""}>${it.hasDiscount ? `${f(it.discRate)}/${it.unit}` : "—"}</td><td${it.hasDiscount ? ' style="text-decoration:line-through"' : ""}>${it.hasDiscount ? f(it.noDiscTotal) : "—"}</td><td${it.hasDiscount ? ' style="color:#15803D;font-weight:700"' : ""}>${f(it.total)}</td></tr>`).join("")}
+<tr class="subtotal-row"><td colspan="6">${z.label} Subtotal</td><td>${f(z.zoneTotal)}</td></tr>
+${z.note ? `<tr class="note-row"><td colspan="7">📝 ${z.note}</td></tr>` : ""}
 </table></div>`).join("")}
 ${fnObj.transport ? `<div class="transport"><div class="transport-head"><h3>🚛 Transport &amp; Power</h3><div class="tr-total">${f(fnObj.transport.total)}</div></div><div style="padding:8px 0">
 ${(fnObj.transport.breakdown || []).map(bd => `<div class="tr-row"><div class="tr-label">${bd.label} — ${bd.trucks} truck${bd.trucks !== 1 ? "s" : ""}</div><div class="tr-val">${f((bd.trucks || 0) * (fnObj.transport.tripRate || 0) * 2)}</div></div>`).join("")}
@@ -780,6 +781,8 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
              { text: "Size", options: { bold: true, color: "FFFFFF", fill: { color: "8B7355" }, fontSize: 9, align: "center" } },
              { text: "Qty", options: { bold: true, color: "FFFFFF", fill: { color: "8B7355" }, fontSize: 9, align: "center" } },
              { text: "Rate", options: { bold: true, color: "FFFFFF", fill: { color: "8B7355" }, fontSize: 9, align: "right" } },
+             { text: "Disc. Rate", options: { bold: true, color: "FFFFFF", fill: { color: "8B7355" }, fontSize: 9, align: "right" } },
+             { text: "List Amt", options: { bold: true, color: "FFFFFF", fill: { color: "8B7355" }, fontSize: 9, align: "right" } },
              { text: "Amount", options: { bold: true, color: "FFFFFF", fill: { color: "8B7355" }, fontSize: 9, align: "right" } }]
           ];
           z.structItems.forEach(si => {
@@ -787,6 +790,8 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
               { text: si.name, options: { fontSize: 9, color: gray, italic: true } },
               { text: "—", options: { fontSize: 9, align: "center", color: "B0B0B0" } },
               { text: "—", options: { fontSize: 9, align: "center", color: "B0B0B0" } },
+              { text: "—", options: { fontSize: 9, align: "right", color: "B0B0B0" } },
+              { text: "—", options: { fontSize: 9, align: "right", color: "B0B0B0" } },
               { text: "—", options: { fontSize: 9, align: "right", color: "B0B0B0" } },
               { text: f(si.total), options: { fontSize: 9, align: "right", color: gray } }
             ]);
@@ -797,7 +802,9 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
               { text: it.size || "—", options: { fontSize: 9, align: "center", color: gray } },
               { text: String(it.qty), options: { fontSize: 9, align: "center", color: dark } },
               { text: f(it.rate) + "/" + it.unit, options: { fontSize: 9, align: "right", color: gray } },
-              { text: f(it.total), options: { fontSize: 9, align: "right", color: dark, bold: true } }
+              { text: it.hasDiscount ? `${f(it.discRate)}/${it.unit}` : "—", options: { fontSize: 9, align: "right", color: it.hasDiscount ? "15803D" : "B0B0B0", bold: !!it.hasDiscount } },
+              { text: it.hasDiscount ? f(it.noDiscTotal) : "—", options: { fontSize: 9, align: "right", color: it.hasDiscount ? "B0B0B0" : "B0B0B0", strike: !!it.hasDiscount } },
+              { text: f(it.total), options: { fontSize: 9, align: "right", color: it.hasDiscount ? "15803D" : dark, bold: true } }
             ]);
           });
           rows.push([
@@ -805,9 +812,11 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
             { text: "", options: { fill: { color: "F9F7F3" } } },
             { text: "", options: { fill: { color: "F9F7F3" } } },
             { text: "", options: { fill: { color: "F9F7F3" } } },
+            { text: "", options: { fill: { color: "F9F7F3" } } },
+            { text: "", options: { fill: { color: "F9F7F3" } } },
             { text: f(z.zoneTotal), options: { fontSize: 10, align: "right", color: "8B7355", bold: true, fill: { color: "F9F7F3" } } }
           ]);
-          slide.addTable(rows, { x: 0.6, y: tblY, w: 8.8, fontSize: 9, border: { type: "solid", pt: 0.5, color: "E8E0D4" }, rowH: 0.3, colW: [3.2, 1.0, 0.8, 1.6, 2.2], autoPage: true });
+          slide.addTable(rows, { x: 0.6, y: tblY, w: 8.8, fontSize: 9, border: { type: "solid", pt: 0.5, color: "E8E0D4" }, rowH: 0.3, colW: [2.6, 0.7, 0.6, 1.1, 1.1, 1.1, 1.6], autoPage: true });
           if (z.note) {
             const noteY = Math.min(tblY + (rows.length * 0.3) + 0.2, 6.5);
             slide.addText("📝 " + z.note, { x: 0.6, y: noteY, w: 8.8, fontSize: 9, fontFace: "Arial", color: "8B7355", italic: true });
@@ -953,13 +962,18 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
       // Amount cells below carry live formulas — force Excel to recompute them on open rather than
       // trusting the cached `result` we also write (needed for viewers that don't auto-recalc).
       workbook.calcProperties = { fullCalcOnLoad: true };
+      // Disc. Rate / List Amount are the fixed-venue-discount "before" columns — Rate/Amount already
+      // ARE the discounted figures (repeatAdjustedLineCost bakes the discount straight into lineCost),
+      // so showing only those hid the benefit entirely. Left as "—" for any line with no discount.
       const COLS = [
-        { header: "Item", key: "item", width: 34 },
-        { header: "Size", key: "size", width: 12 },
-        { header: "Qty", key: "qty", width: 8 },
-        { header: "Rate", key: "rate", width: 14 },
-        { header: "Unit", key: "unit", width: 10 },
-        { header: "Amount", key: "amount", width: 14 },
+        { header: "Item", key: "item", width: 32 },
+        { header: "Size", key: "size", width: 10 },
+        { header: "Qty", key: "qty", width: 7 },
+        { header: "Rate", key: "rate", width: 11 },
+        { header: "Disc. Rate", key: "discRate", width: 11 },
+        { header: "Unit", key: "unit", width: 8 },
+        { header: "List Amount", key: "listAmount", width: 13 },
+        { header: "Amount", key: "amount", width: 13 },
       ];
       const money = { numFmt: '"₹"#,##0' };
       const usedSheetNames = new Set();
@@ -1005,17 +1019,29 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
         if (opts.italic) row.eachCell(c => { c.font = { ...(c.font || {}), italic: true }; });
         if (opts.bold) row.eachCell(c => { c.font = { ...(c.font || {}), bold: true }; });
         if (opts.fill) row.eachCell(c => { c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: opts.fill } }; });
-        const [, , qty, rate, , total] = cells;
+        const [, , qty, rate, discRate, , listAmount, total] = cells;
         if (opts.sumRange) {
           const [start, end] = opts.sumRange;
-          row.getCell(6).value = { formula: `SUM(F${start}:F${end})`, result: Number(total) || 0 };
-        } else if (typeof qty === "number" && typeof rate === "number" && typeof total === "number" && Math.abs(qty * rate - total) < 1) {
-          row.getCell(6).value = { formula: `C${row.number}*D${row.number}`, result: total };
+          row.getCell(8).value = { formula: `SUM(H${start}:H${end})`, result: Number(total) || 0 };
+        } else {
+          if (typeof qty === "number" && typeof rate === "number" && typeof listAmount === "number" && Math.abs(qty * rate - listAmount) < 1) {
+            row.getCell(7).value = { formula: `C${row.number}*D${row.number}`, result: listAmount };
+          }
+          if (typeof qty === "number" && typeof discRate === "number" && typeof total === "number" && Math.abs(qty * discRate - total) < 1) {
+            row.getCell(8).value = { formula: `C${row.number}*E${row.number}`, result: total };
+          }
         }
-        row.getCell(6).numFmt = money.numFmt;
+        row.getCell(7).numFmt = money.numFmt;
+        row.getCell(8).numFmt = money.numFmt;
         row.getCell(3).alignment = { horizontal: "center" };
         row.getCell(4).alignment = { horizontal: "right" };
-        row.getCell(6).alignment = { horizontal: "right" };
+        row.getCell(5).alignment = { horizontal: "right" };
+        row.getCell(7).alignment = { horizontal: "right" };
+        row.getCell(8).alignment = { horizontal: "right" };
+        if (opts.discountGreen) {
+          row.getCell(5).font = { ...(row.getCell(5).font || {}), color: { argb: "FF15803D" }, bold: true };
+          row.getCell(8).font = { ...(row.getCell(8).font || {}), color: { argb: "FF15803D" }, bold: true };
+        }
         return row;
       };
 
@@ -1140,10 +1166,10 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
           addSectionRow(ws, `${z.label}${z.dimLabel ? "  (" + z.dimLabel + ")" : ""}   —   ${f(z.zoneTotal)}`, { fill: "FFEFE9DD", color: "FF1A1A2E" });
           addTableHeaderRow(ws);
           const itemStartRow = ws.rowCount + 1;
-          z.structItems.forEach(si => addItemRow(ws, [si.name, si.size || "—", si.qty ?? "—", si.rate ?? "—", si.unit || "—", si.total], { italic: true }));
-          z.items.forEach(it => addItemRow(ws, [it.name, it.size || "—", it.qty, it.rate, it.unit, it.total]));
+          z.structItems.forEach(si => addItemRow(ws, [si.name, si.size || "—", si.qty ?? "—", si.rate ?? "—", "—", si.unit || "—", "—", si.total], { italic: true }));
+          z.items.forEach(it => addItemRow(ws, [it.name, it.size || "—", it.qty, it.rate, it.hasDiscount ? it.discRate : "—", it.unit, it.hasDiscount ? it.noDiscTotal : "—", it.total], { discountGreen: it.hasDiscount }));
           const itemEndRow = ws.rowCount;
-          const subtotalRow = addItemRow(ws, [`${z.label} Subtotal`, "", "", "", "", z.zoneTotal], { bold: true, fill: subtle, sumRange: itemEndRow >= itemStartRow ? [itemStartRow, itemEndRow] : null });
+          const subtotalRow = addItemRow(ws, [`${z.label} Subtotal`, "", "", "", "", "", "", z.zoneTotal], { bold: true, fill: subtle, sumRange: itemEndRow >= itemStartRow ? [itemStartRow, itemEndRow] : null });
           totalRefRows.push(subtotalRow.number);
           if (z.note) {
             const row = ws.addRow([`📝 ${z.note}`]);
@@ -1157,8 +1183,8 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
 
         if (fnObj.transport) {
           addSectionRow(ws, "TRANSPORT & POWER", { fill: "FF312E81", color: "FFA5B4FC" });
-          const row = ws.addRow(["Item", "Details", "", "", "", "Amount"]);
-          row.eachCell((c, idx) => { if ([1, 2, 6].includes(idx)) { c.font = { bold: true, color: { argb: white } }; c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF4F46E5" } }; c.alignment = { horizontal: idx === 6 ? "right" : "left" }; } });
+          const row = ws.addRow(["Item", "Details", "", "", "", "", "", "Amount"]);
+          row.eachCell((c, idx) => { if ([1, 2, 8].includes(idx)) { c.font = { bold: true, color: { argb: white } }; c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF4F46E5" } }; c.alignment = { horizontal: idx === 8 ? "right" : "left" }; } });
           // One row for the whole truck count, not one per sub-category — the per-sub-category
           // breakdown (fnObj.transport.breakdown) is a fractional-truck WORKING figure (e.g. a
           // sub-category using 0.00005 of a truck), never individually billed; only the CEILED
@@ -1170,30 +1196,30 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
           // Client-facing export: truckTotalClient/tripRateClient (Admin → Settings → Transport &
           // Power's per-venue "client scale") rather than the raw cost fields — Deal Check's own
           // Transport tab is the one place that still reads truckTotal/tripRate unscaled.
-          const truckRow = ws.addRow(["Trucks", `${trucks} truck${trucks !== 1 ? "s" : ""} × ${f(fnObj.transport.tripRateClient ?? fnObj.transport.tripRate)} × 2`, "", "", "", fnObj.transport.truckTotalClient ?? fnObj.transport.truckTotal ?? 0]);
-          truckRow.getCell(6).numFmt = money.numFmt; truckRow.getCell(6).alignment = { horizontal: "right" };
-          const gRow = ws.addRow(["Genset", `${fnObj.transport.gensets || 0} units × ${f(fnObj.transport.gensetRate || 0)}`, "", "", "", fnObj.transport.gensetCost || 0]);
-          gRow.getCell(6).numFmt = money.numFmt; gRow.getCell(6).alignment = { horizontal: "right" };
-          const tRow = ws.addRow(["Transport Total", "", "", "", "", ""]);
+          const truckRow = ws.addRow(["Trucks", `${trucks} truck${trucks !== 1 ? "s" : ""} × ${f(fnObj.transport.tripRateClient ?? fnObj.transport.tripRate)} × 2`, "", "", "", "", "", fnObj.transport.truckTotalClient ?? fnObj.transport.truckTotal ?? 0]);
+          truckRow.getCell(8).numFmt = money.numFmt; truckRow.getCell(8).alignment = { horizontal: "right" };
+          const gRow = ws.addRow(["Genset", `${fnObj.transport.gensets || 0} units × ${f(fnObj.transport.gensetRate || 0)}`, "", "", "", "", "", fnObj.transport.gensetCost || 0]);
+          gRow.getCell(8).numFmt = money.numFmt; gRow.getCell(8).alignment = { horizontal: "right" };
+          const tRow = ws.addRow(["Transport Total", "", "", "", "", "", "", ""]);
           tRow.eachCell(c => { c.font = { bold: true, color: { argb: "FF4F46E5" } }; c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFEEF2FF" } }; });
-          tRow.getCell(6).value = { formula: `SUM(F${truckRow.number}:F${gRow.number})`, result: fnObj.transport.totalClient ?? fnObj.transport.total ?? 0 };
-          tRow.getCell(6).numFmt = money.numFmt; tRow.getCell(6).alignment = { horizontal: "right" };
+          tRow.getCell(8).value = { formula: `SUM(H${truckRow.number}:H${gRow.number})`, result: fnObj.transport.totalClient ?? fnObj.transport.total ?? 0 };
+          tRow.getCell(8).numFmt = money.numFmt; tRow.getCell(8).alignment = { horizontal: "right" };
           totalRefRows.push(tRow.number);
           transportRow = tRow.number;
           ws.addRow([]);
         }
 
-        const ftRow = ws.addRow(["FUNCTION TOTAL", "", "", "", "", ""]);
-        ws.mergeCells(ftRow.number, 1, ftRow.number, 5);
+        const ftRow = ws.addRow(["FUNCTION TOTAL", "", "", "", "", "", "", ""]);
+        ws.mergeCells(ftRow.number, 1, ftRow.number, 7);
         ftRow.getCell(1).font = { bold: true, size: 12, color: { argb: gold } };
         ftRow.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: dark } };
-        ftRow.getCell(6).value = totalRefRows.length
-          ? { formula: `SUM(${totalRefRows.map(r => `F${r}`).join(",")})`, result: fnObj.grand || 0 }
+        ftRow.getCell(8).value = totalRefRows.length
+          ? { formula: `SUM(${totalRefRows.map(r => `H${r}`).join(",")})`, result: fnObj.grand || 0 }
           : (fnObj.grand || 0);
-        ftRow.getCell(6).font = { bold: true, size: 13, color: { argb: gold } };
-        ftRow.getCell(6).fill = { type: "pattern", pattern: "solid", fgColor: { argb: dark } };
-        ftRow.getCell(6).numFmt = money.numFmt;
-        ftRow.getCell(6).alignment = { horizontal: "right" };
+        ftRow.getCell(8).font = { bold: true, size: 13, color: { argb: gold } };
+        ftRow.getCell(8).fill = { type: "pattern", pattern: "solid", fgColor: { argb: dark } };
+        ftRow.getCell(8).numFmt = money.numFmt;
+        ftRow.getCell(8).alignment = { horizontal: "right" };
         ftRow.height = 22;
         fnRefs.push({ isEmpty: false, sheetName, decorRows, transportRow, ftRow: ftRow.number });
       });
@@ -1208,11 +1234,11 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
         const row = swFnRows[i];
         if (!ref || ref.isEmpty) return;
         const sn = qsheet(ref.sheetName);
-        if (ref.decorRows.length) row.getCell(3).value = { formula: `SUM(${ref.decorRows.map(r => `${sn}!F${r}`).join(",")})`, result: fnObj.decorTotal || 0 };
-        row.getCell(4).value = ref.transportRow ? { formula: `${sn}!F${ref.transportRow}`, result: fnObj.transportTotal || 0 } : 0;
-        row.getCell(5).value = { formula: `${sn}!F${ref.ftRow}`, result: fnObj.grand || 0 };
+        if (ref.decorRows.length) row.getCell(3).value = { formula: `SUM(${ref.decorRows.map(r => `${sn}!H${r}`).join(",")})`, result: fnObj.decorTotal || 0 };
+        row.getCell(4).value = ref.transportRow ? { formula: `${sn}!H${ref.transportRow}`, result: fnObj.transportTotal || 0 } : 0;
+        row.getCell(5).value = { formula: `${sn}!H${ref.ftRow}`, result: fnObj.grand || 0 };
       });
-      const grandRefs = fnRefs.filter(r => r && !r.isEmpty).map(r => `${qsheet(r.sheetName)}!F${r.ftRow}`);
+      const grandRefs = fnRefs.filter(r => r && !r.isEmpty).map(r => `${qsheet(r.sheetName)}!H${r.ftRow}`);
       // The fee row itself becomes a live formula too (not just the grand total below it) — editing
       // a Qty on a per-function tab should recalculate the fee's base, not leave it stuck at whatever
       // it was when the sheet was built. Matches csUpdateQty's own on-screen re-derivation above.
@@ -3311,16 +3337,18 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
                       </div>}
                       {/* Editable items table */}
                       {z.items.length>0&&<div style={{padding:"0 18px 12px",borderTop:`1px solid ${border}`}}>
-                        <div className="sm-costgrid" style={{display:"grid",gridTemplateColumns:"2.5fr 0.8fr 1fr 1.2fr 1.5fr",gap:0,padding:"8px 0 4px",borderBottom:`1px solid ${border}`,fontSize:9,textTransform:"uppercase",letterSpacing:0.5,color:textS,fontWeight:600}}>
-                          <div>Item</div><div style={{textAlign:"center"}}>Size</div><div style={{textAlign:"center"}}>Qty</div><div style={{textAlign:"right"}}>Rate</div><div style={{textAlign:"right"}}>Amount</div>
+                        <div className="sm-costgrid" style={{display:"grid",gridTemplateColumns:"2fr 0.6fr 0.6fr 0.9fr 0.9fr 1fr 1.1fr",gap:0,padding:"8px 0 4px",borderBottom:`1px solid ${border}`,fontSize:9,textTransform:"uppercase",letterSpacing:0.5,color:textS,fontWeight:600}}>
+                          <div>Item</div><div style={{textAlign:"center"}}>Size</div><div style={{textAlign:"center"}}>Qty</div><div style={{textAlign:"right"}}>Rate</div><div style={{textAlign:"right"}}>Disc. Rate</div><div style={{textAlign:"right"}}>List Amt</div><div style={{textAlign:"right"}}>Amount</div>
                         </div>
                         {z.items.map((it,ii)=>(
-                          <div key={ii} className="sm-costgrid" style={{display:"grid",gridTemplateColumns:"2.5fr 0.8fr 1fr 1.2fr 1.5fr",gap:0,padding:"6px 0",borderBottom:`1px solid ${isDark?"rgba(255,255,255,0.04)":"#F3EDE4"}`,alignItems:"center",fontSize:12}}>
+                          <div key={ii} className="sm-costgrid" style={{display:"grid",gridTemplateColumns:"2fr 0.6fr 0.6fr 0.9fr 0.9fr 1fr 1.1fr",gap:0,padding:"6px 0",borderBottom:`1px solid ${isDark?"rgba(255,255,255,0.04)":"#F3EDE4"}`,alignItems:"center",fontSize:12}}>
                             <div style={{fontWeight:500}}>{it.name}</div>
                             <div style={{textAlign:"center",color:textS}}>{it.size||"—"}</div>
                             <div style={{textAlign:"center"}}><input type="number" min="0" value={it.qty} onChange={e=>csUpdateQty(fi,zi,ii,parseInt(e.target.value)||0)} style={{width:48,padding:"4px 6px",borderRadius:6,border:`1px solid ${accentText}40`,background:isDark?"#0A0A14":"#FFFDF7",color:isDark?"#fff":"#1a1a2e",fontSize:13,fontWeight:700,textAlign:"center",outline:"none",fontFamily:"inherit"}}/></div>
                             <div style={{textAlign:"right",color:textS,fontSize:11}}>{fmt(it.rate)}/{it.unit}</div>
-                            <div style={{textAlign:"right",fontWeight:600,color:it.qty>0?accentText:textS}}>{fmt(it.total)}</div>
+                            <div style={{textAlign:"right",fontSize:11,fontWeight:it.hasDiscount?700:400,color:it.hasDiscount?"#15803D":textS}}>{it.hasDiscount?`${fmt(it.discRate)}/${it.unit}`:"—"}</div>
+                            <div style={{textAlign:"right",fontSize:11,color:textS,textDecoration:it.hasDiscount?"line-through":"none"}}>{it.hasDiscount?fmt(it.noDiscTotal):"—"}</div>
+                            <div style={{textAlign:"right",fontWeight:600,color:it.hasDiscount?"#15803D":(it.qty>0?accentText:textS)}}>{fmt(it.total)}</div>
                           </div>
                         ))}
                         <div style={{display:"flex",justifyContent:"space-between",padding:"10px 0 4px",borderTop:`2px solid ${border}`,marginTop:4}}>
