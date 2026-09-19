@@ -78,7 +78,7 @@ import {
 import { allocateRowAvailability } from "../../lib/studio/dealAvailability";
 import { callClaudeStreaming } from "../../lib/ai";
 import { heavyExtraLabour, eventTimingMultFor } from "../../lib/ims/constants";
-import { itemImsSubcat, lookupBySubcat, priceForInvItem, itemDimsText } from "../../lib/ims/helpers";
+import { itemImsSubcat, lookupBySubcat, priceForInvItem, itemDimsText, walkKitUnits } from "../../lib/ims/helpers";
 import { matchFlowerPattern, floralPatternUnitRates, sizeClassToPatternKey, normalizeSizeClass, kitFloralCompDelta } from "../../lib/ims/flowerHelpers";
 import { rowToRcItem, rcItemToRow, rcIsSMB, getFloralMode, oosCostPctFor } from "../../lib/rateCard";
 import { supabase, fetchAll, upsertRow, deleteRow, subscribeTable, keepaliveUpsert } from "../../lib/supabase";
@@ -342,19 +342,32 @@ function computeFnSubQty(fnData, capBySub, imsInventory, flowerPatterns, trussIn
     if (!fEnabledElsFresh[zk] || !elems) return;
     elems.forEach((el) => {
       const invItem = el.invId ? imsInventory.find((i) => i.id === el.invId) : null;
-      const pattern = (!invItem && el.patternId) ? flowerPatterns.find((p) => p.id === el.patternId) : null;
-      const sub = invItem?.subCat || invItem?.subcategory || pattern?.sub || "";
+      if (invItem) {
+        const kitSub = invItem.subCat || invItem.subcategory || "";
+        const kitTc = capBySub[String(kitSub || "").toLowerCase().trim()];
+        // sqft-unit items measure the OUTER element's own footprint — stays on the kit's own
+        // sub-category, not decomposed (see computeTruckItems' matching comment).
+        if (kitTc && String(kitTc.unit || "pc").toLowerCase().includes("sqft")) {
+          const L = Number(el.L || el.l || 0), W = Number(el.W || el.w || el.H || el.h || 0);
+          if (L > 0 && W > 0) add(kitSub, L * W * (Number(el.qty) || 1));
+        } else {
+          // Decompose a kit into its own base AND every component (recursively) — each counts
+          // under ITS OWN sub-category. See computeTruckItems' matching comment.
+          walkKitUnits(invItem, Number(el.qty) || 0, imsInventory, el.kitOverrides, (node, nodeQty) => {
+            const nodeSub = node.subCat || node.subcategory || "";
+            const freshQty = fvCfg && venueName ? builtQty(fvCfg, venueName, node.id, nodeQty) : nodeQty;
+            add(nodeSub, freshQty);
+          });
+        }
+        return;
+      }
+      const pattern = el.patternId ? flowerPatterns.find((p) => p.id === el.patternId) : null;
+      const sub = pattern?.sub || "";
       const tc = capBySub[String(sub || "").toLowerCase().trim()]; if (!tc) return;
       if (String(tc.unit || "pc").toLowerCase().includes("sqft")) {
         const L = Number(el.L || el.l || 0), W = Number(el.W || el.w || el.H || el.h || 0);
         if (L > 0 && W > 0) add(sub, L * W * (Number(el.qty) || 1));
-      } else {
-        // A fixed-venue standing item (up to its registered standing qty) is already physically at
-        // this venue — no truck needed for that portion, same "already there" reasoning as its
-        // pricing discount. Only the qty BUILT FRESH beyond what's standing counts toward capacity.
-        const freshQty = fvCfg && venueName && el.invId ? builtQty(fvCfg, venueName, el.invId, Number(el.qty) || 0) : (Number(el.qty) || 0);
-        add(sub, freshQty);
-      }
+      } else add(sub, Number(el.qty) || 0);
     });
   });
   Object.entries(fZoneConfig).forEach(([zk, cfg]) => {
@@ -1018,17 +1031,37 @@ function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckC
       // master, and letting a name coincidentally match a Rate Card row override the element's real
       // Inventory sub-category was how this silently misclassified trucking for some elements.
       const invItem = el.invId ? (imsInventory || []).find(i => i.id === el.invId) : null;
-      const pattern = (!invItem && el.patternId) ? (flowerPatterns || []).find(p => p.id === el.patternId) : null;
-      const sub = invItem?.subCat || invItem?.subcategory || pattern?.sub || "";
+      if (invItem) {
+        const kitSub = invItem.subCat || invItem.subcategory || "";
+        const kitTc = capBySub[String(kitSub || "").toLowerCase().trim()];
+        // sqft-unit items are measured by the OUTER element's own footprint (a fabric panel priced
+        // by area) — a kit priced by area has no meaningful per-component footprint, so this stays
+        // on the kit's own sub-category exactly as before, not decomposed.
+        if (kitTc && String(kitTc.unit || "pc").toLowerCase().includes("sqft")) {
+          const L = Number(el.L || el.l || 0), W = Number(el.W || el.w || el.H || el.h || 0);
+          if (L > 0 && W > 0) addSub(kitSub, L * W * (Number(el.qty) || 1));
+        } else {
+          // Piece/qty-based: decompose a kit into its own base AND every component (recursively) —
+          // each counts toward transport under ITS OWN sub-category, not just the kit's, same
+          // reasoning as the kit's own per-piece pricing/standing-discount treatment. A plain
+          // (non-kit) item just visits itself once via walkKitUnits, so this covers both uniformly.
+          walkKitUnits(invItem, Number(el.qty) || 0, imsInventory, el.kitOverrides, (node, nodeQty) => {
+            const nodeSub = node.subCat || node.subcategory || "";
+            // A fixed-venue standing item (up to its registered standing qty) is already physically
+            // at this venue — no truck needed for that portion, same "already there" reasoning as
+            // its pricing discount. Checked per-node: a kit can have some pieces standing and others
+            // not, same as its discount.
+            const freshQty = fvCfg && venueName ? builtQty(fvCfg, venueName, node.id, nodeQty) : nodeQty;
+            addSub(nodeSub, freshQty);
+          });
+        }
+        return;
+      }
+      const pattern = el.patternId ? (flowerPatterns || []).find(p => p.id === el.patternId) : null;
+      const sub = pattern?.sub || "";
       const tc = capBySub[String(sub || "").toLowerCase().trim()]; if (!tc) return;
       if (String(tc.unit || "pc").toLowerCase().includes("sqft")) { const L = Number(el.L || el.l || 0), W = Number(el.W || el.w || el.H || el.h || 0); if (L > 0 && W > 0) addSub(sub, L * W * (Number(el.qty) || 1)); }
-      else {
-        // A fixed-venue standing item (up to its registered standing qty) is already physically at
-        // this venue — no truck needed for that portion, same "already there" reasoning as its
-        // pricing discount. Only the qty BUILT FRESH beyond what's standing counts toward capacity.
-        const freshQty = fvCfg && venueName && el.invId ? builtQty(fvCfg, venueName, el.invId, Number(el.qty) || 0) : (Number(el.qty) || 0);
-        addSub(sub, freshQty);
-      }
+      else addSub(sub, Number(el.qty) || 0);
     });
   });
   Object.entries(zoneConfig || {}).forEach(([zk, cfg]) => {
@@ -4693,16 +4726,28 @@ export default function StudioApp() {
         if (!fEnabledEls[zk] || !elems) return;
         elems.forEach(el => {
           const invItem = el.invId ? imsInventory.find(i => i.id === el.invId) : null;
-          const pattern = (!invItem && el.patternId) ? fcFlowerPatterns.find(p => p.id === el.patternId) : null;
-          const sub = invItem?.subCat || invItem?.subcategory || pattern?.sub || "";
+          if (invItem) {
+            const kitSub = invItem.subCat || invItem.subcategory || "";
+            const kitTc = capBySub[String(kitSub || "").toLowerCase().trim()];
+            if (kitTc && String(kitTc.unit || "pc").toLowerCase().includes("sqft")) {
+              const L = Number(el.L || el.l || 0), W = Number(el.W || el.w || el.H || el.h || 0);
+              if (L > 0 && W > 0) addSub(kitSub, L * W * (Number(el.qty) || 1));
+            } else {
+              // Decompose a kit into its own base AND every component (recursively) — each counts
+              // under ITS OWN sub-category. See computeTruckItems' matching comment.
+              walkKitUnits(invItem, Number(el.qty) || 0, imsInventory, el.kitOverrides, (node, nodeQty) => {
+                const nodeSub = node.subCat || node.subcategory || "";
+                const freshQty = builtQty(fvCfgForRepeat, fVenue, node.id, nodeQty);
+                addSub(nodeSub, freshQty);
+              });
+            }
+            return;
+          }
+          const pattern = el.patternId ? fcFlowerPatterns.find(p => p.id === el.patternId) : null;
+          const sub = pattern?.sub || "";
           const tc = capBySub[String(sub || "").toLowerCase().trim()]; if (!tc) return;
           if (String(tc.unit || "pc").toLowerCase().includes("sqft")) { const L = Number(el.L || el.l || 0), W = Number(el.W || el.w || el.H || el.h || 0); if (L > 0 && W > 0) addSub(sub, L * W * (Number(el.qty) || 1)); }
-          else {
-            // A fixed-venue standing item (up to its registered standing qty) is already at this
-            // venue — no truck needed for that portion. See computeTruckItems' matching comment.
-            const freshQty = el.invId ? builtQty(fvCfgForRepeat, fVenue, el.invId, Number(el.qty) || 0) : (Number(el.qty) || 0);
-            addSub(sub, freshQty);
-          }
+          else addSub(sub, Number(el.qty) || 0);
         });
       });
       Object.entries(fZoneConfig).forEach(([zk, cfg]) => {
@@ -5208,20 +5253,35 @@ export default function StudioApp() {
         if (!fEnabledElsFresh[zk] || !elems) return;
         elems.forEach(el => {
           const invItem = el.invId ? imsInventory.find(i => i.id === el.invId) : null;
-          const pattern = (!invItem && el.patternId) ? fFlowerPatterns.find(p => p.id === el.patternId) : null;
-          const sub = invItem?.subCat || invItem?.subcategory || pattern?.sub || "";
+          if (invItem) {
+            const kitSub = invItem.subCat || invItem.subcategory || "";
+            const kitTc = capBySub[String(kitSub || "").toLowerCase().trim()];
+            if (kitTc && String(kitTc.unit || "pc").toLowerCase().includes("sqft")) {
+              const L = Number(el.L || el.l || 0), W = Number(el.W || el.w || el.H || el.h || 0);
+              if (L > 0 && W > 0) addSub(kitSub, L * W * (Number(el.qty) || 1), zk, el.name || invItem.name || kitSub, invItem.cat || invItem.category || "");
+            } else {
+              // Decompose a kit into its own base AND every component (recursively) — each counts
+              // under ITS OWN sub-category, with its OWN name/category in the breakdown's items[]
+              // (not the outer element's — a console kit's Fabric component shows as the fabric's
+              // own name, not "Console Table"). See computeTruckItems' matching comment.
+              walkKitUnits(invItem, Number(el.qty) || 0, imsInventory, el.kitOverrides, (node, nodeQty) => {
+                const nodeSub = node.subCat || node.subcategory || "";
+                const freshQty = builtQty(fvCfgForRepeat, fVenue, node.id, nodeQty);
+                const label = node.id === invItem.id ? (el.name || node.name || nodeSub) : (node.name || nodeSub);
+                addSub(nodeSub, freshQty, zk, label, node.cat || node.category || "");
+              });
+            }
+            return;
+          }
+          const pattern = el.patternId ? fFlowerPatterns.find(p => p.id === el.patternId) : null;
+          const sub = pattern?.sub || "";
           const tc = capBySub[String(sub || "").toLowerCase().trim()]; if (!tc) return;
-          const elLabel = el.name || invItem?.name || pattern?.name || sub;
+          const elLabel = el.name || pattern?.name || sub;
           // A flower-recipe element (pattern, no invId at all) has no inventory row to read a
           // category off — it's a flower arrangement by definition, so it's Florals outright.
-          const invCat = invItem?.cat || invItem?.category || (pattern ? "Florals" : "");
+          const invCat = pattern ? "Florals" : "";
           if (String(tc.unit || "pc").toLowerCase().includes("sqft")) { const L = Number(el.L || el.l || 0), W = Number(el.W || el.w || el.H || el.h || 0); if (L > 0 && W > 0) addSub(sub, L * W * (Number(el.qty) || 1), zk, elLabel, invCat); }
-          else {
-            // A fixed-venue standing item (up to its registered standing qty) is already at this
-            // venue — no truck needed for that portion. See computeTruckItems' matching comment.
-            const freshQty = el.invId ? builtQty(fvCfgForRepeat, fVenue, el.invId, Number(el.qty) || 0) : (Number(el.qty) || 0);
-            addSub(sub, freshQty, zk, elLabel, invCat);
-          }
+          else addSub(sub, Number(el.qty) || 0, zk, elLabel, invCat);
         });
       });
       const bdTrussInv = dealCheckData?.trussInv || studioFloralData?.trussInv;
