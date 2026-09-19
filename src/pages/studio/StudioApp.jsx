@@ -6718,10 +6718,23 @@ export default function StudioApp() {
     // itself regenerated. On a SOLD deal, piggyback a silent, free (skipAi — no vision calls, no
     // run-limit cost) regenerate on the same debounce so the real IMS reservation follows Build's
     // qty edits within the same ~1.5s window instead of staying stale until Deal Check reopens.
-    try {
-      const cli = (clientLedgerRef.current || []).find((c) => c.id === activeClientIdRef.current);
-      if (cli?.status === "booked") runDealCheckGenerateRef.current?.(null, { skipAi: true, silent: true }).catch(() => {});
-    } catch { /* ignore */ }
+    //
+    // opts.edited only, NOT the bare 15s periodic tick / pagehide / unmount calls below: this
+    // regenerate does a full, uncached inventory+blocks refetch (fetchIMSData → fetchAll("inventory")
+    // is the whole table, ~150KB) plus re-matches every element against it — cheap once per real
+    // edit, but the periodic timer fires unconditionally every 15s whether or not anything changed,
+    // and was re-running this full cycle on that same fixed clock for the entire time any booked
+    // deal was open — including while just watching a video elsewhere in Studio, competing for the
+    // same main thread/network the whole time. Traced from a user-supplied Network-tab capture
+    // showing inventory?select=* (143KB) + blocks?select=* repeating on a ~15s cadence during
+    // reported playback stutter — nothing to do with rendering, which is why memoizing the video
+    // modal/Browse grid (reverted, see git history) never touched it.
+    if (opts.edited) {
+      try {
+        const cli = (clientLedgerRef.current || []).find((c) => c.id === activeClientIdRef.current);
+        if (cli?.status === "booked") runDealCheckGenerateRef.current?.(null, { skipAi: true, silent: true }).catch(() => {});
+      } catch { /* ignore */ }
+    }
   }, []);
   // Production/Buying items (dcCustomItems) get an instant save on top of the normal 1.5s debounce —
   // owner decision, after "add one, refresh shortly after, it's gone" kept resurfacing even with the
@@ -6735,13 +6748,13 @@ export default function StudioApp() {
   // ref-sync effect that keeps it current runs on every render, so one tick is enough.
   const setDcCustomItemsAndFlush = useCallback((updater) => {
     setDcCustomItems(updater);
-    setTimeout(() => autoSaveBuild(), 0);
+    setTimeout(() => autoSaveBuild({ edited: true }), 0);
   }, [autoSaveBuild]);
   // 1) Debounced on edits.
   useEffect(() => {
     if (!buildHasDataRef.current) return;
     unsavedEditRef.current = true;
-    const t = setTimeout(autoSaveBuild, 1500);
+    const t = setTimeout(() => autoSaveBuild({ edited: true }), 1500);
     return () => clearTimeout(t);
     // Event Info fields are in here too — date, venue, function, shift, pax, the extra functions.
     // They were absent, so editing the deal's details never scheduled a save; only touching the
