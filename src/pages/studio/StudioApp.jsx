@@ -8783,10 +8783,26 @@ export default function StudioApp() {
     // sheet can print it as an explicit line rather than folding it silently into the total.
     const agencyFeePct = Number(dealCheckData?.agencyFeePct ?? studioFloralData?.agencyFeePct) || 20;
     const agencyFee = Math.round(discountedTotal * agencyFeePct / 100);
+    const systemGrandTotal = discountedTotal + agencyFee;
+    // A negotiated amount (Summary's own "Total Estimate" hero shows THIS instead of the system
+    // estimate the moment one is set — see commitNegotiatedAmount/StudioSummary.jsx) is the deal's
+    // real, agreed price. The cost sheet used to always show the pre-negotiation system total
+    // instead, on every function line and the grand total — a real deal with a negotiated price
+    // could show a completely different "Function Total" here than what the client actually agreed
+    // to and what Summary/the booking itself record. Each function's own line is rescaled
+    // proportionally by its share of the system total — same proration proratedVenueDiscount already
+    // uses above for a deal-wide figure that isn't itself split per function — so the sheet's
+    // per-function breakdown still sums to the real negotiated amount instead of the un-negotiated
+    // system estimate.
+    const negotiatedAmount = Number(ac?.negotiatedAmount) > 0 ? Number(ac.negotiatedAmount) : 0;
+    if (negotiatedAmount > 0 && preFeeTotal > 0) {
+      const scale = negotiatedAmount / preFeeTotal;
+      functions.forEach(f => { f.grand = Math.round((f.grand || 0) * scale); });
+    }
     return {
       functions,
-      eventGrandTotal: discountedTotal + agencyFee,
-      venueDiscount, agencyFee, agencyFeePct,
+      eventGrandTotal: negotiatedAmount > 0 ? negotiatedAmount : systemGrandTotal,
+      venueDiscount, agencyFee, agencyFeePct, negotiatedAmount,
       clientName, clientPhone, clientBrideGroom
     };
   }, [collectAllFunctionData, buildZonesForFn, calcFunctionBreakdown, clientName, clientPhone, clientBrideGroom, clientLedger, activeClientId, activeFnIdx, dealCheckData, studioFloralData, venueParents]);

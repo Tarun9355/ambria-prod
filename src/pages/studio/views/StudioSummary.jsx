@@ -3350,18 +3350,6 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
               <div style={{fontSize:15,fontWeight:700,color:"#B91C1C"}}>−{fmt(csData.venueDiscount)}</div>
             </div>
           )}
-          {/* Agency fee — flat % of the deal (Admin → Settings, default 20%), on top of every
-              function's own total above. Its own line so it never reads as an unexplained jump
-              between the sum of the function totals and the grand total below. */}
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 24px",marginBottom:8}}>
-            <div style={{fontSize:13,fontWeight:600,color:textS}}>Agency Fee <span style={{fontWeight:400}}>({csData.agencyFeePct ?? 20}% of decor + transport + power)</span></div>
-            <div style={{fontSize:15,fontWeight:700}}>{fmt(csData.agencyFee || 0)}</div>
-          </div>
-          {/* Event grand total */}
-          <div style={{background:"linear-gradient(135deg,#1a1a2e,#2d1b69)",borderRadius:14,padding:"20px 24px",display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
-            <div style={{fontSize:18,fontWeight:700,color:"#fff"}}>Event Grand Total</div>
-            <div style={{fontSize:28,fontWeight:700,color:"#C9A96E"}}>{fmt(csData.eventGrandTotal)}</div>
-          </div>
           <div style={{textAlign:"center",fontSize:10,color:textS,padding:"8px 0 20px"}}>Edit quantities above — totals update live across all functions. Then export as PDF or PPT.</div>
         </div>
       </div>);
