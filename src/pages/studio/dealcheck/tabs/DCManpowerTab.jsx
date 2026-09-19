@@ -1273,7 +1273,16 @@ export default function DCManpowerTab({ ctx }) {
                                         return (
                                           <div style={{display:"flex",flexDirection:"column",gap:8}}>
                                             {d.fns.map((cfn, cfi) => {
-                                              const trace = traceForType(cfn, t);
+                                              // freshFnMP — same Repeat-zone exclusion the real headcount uses
+                                              // (peopleByFn above calls calcPeopleForType(freshFnMP(fn), type)).
+                                              // This trace used to run on the raw cfn instead, so it explained a
+                                              // DIFFERENT number than the one actually shown at the top of this
+                                              // modal — a Repeat zone's own contribution (no fresh build labour
+                                              // needed, reused standing setup) still showed up in "how this was
+                                              // derived" even though it correctly never counted toward the real
+                                              // total, e.g. Fabric Bangali reading "8 ppl derived" here while the
+                                              // header above showed the correct 4.
+                                              const trace = traceForType(freshFnMP(cfn), t);
                                               return (
                                                 <div key={cfi} style={{padding:"10px 12px",background:"rgba(124,58,237,0.06)",border:"1px dashed rgba(167,139,250,0.35)",borderRadius:7}}>
                                                   <div style={{fontSize:11,color:"#7C3AED",fontWeight:600,letterSpacing:0.4,textTransform:"uppercase",marginBottom:8}}>
