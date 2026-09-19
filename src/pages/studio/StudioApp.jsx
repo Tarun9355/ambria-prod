@@ -2989,6 +2989,16 @@ export default function StudioApp() {
           else if (key === FAV_PHOTO_SK) { const fp = pj(await kvGet(FAV_PHOTO_SK)); if (fp && typeof fp === "object") setFavPhotos(fp); }
           else if (key === ZONE_GROUPS_SK) { const zg = normaliseZoneGroups(pj(await kvGet(ZONE_GROUPS_SK))); zoneGroupsRef.current = zg; setZoneGroups(zg); }
           else if (FLORAL_DATA_KEYS.includes(key)) { refreshStudioFloralData(); }
+          // roleTabs (IMS → Admin → Users → 🔐 Manage Access) was missing here — it's only ever
+          // loaded once, at mount (see the `useEffect(() => { kvGet("roleTabs")... }, [])` above
+          // isAdmin). A role's Studio tab/sub-tab grants (studioSub, hasStudioTab — what shows the
+          // Deal Check button, among everything else gated the same way) were computed from that
+          // one-time snapshot for the rest of the session, so a permission an admin had just granted
+          // never reached a user whose Studio tab was already open when it happened — same class of
+          // bug as every other "loaded once, never kept live" gap this file has already been fixed
+          // for. They saw it appear only after their next full reload, which reads as "my role has
+          // the permission and the button still isn't there."
+          else if (key === "roleTabs") { const rt = pj(await kvGet("roleTabs")); if (rt && typeof rt === "object") setStudioRoleTabs(rt); }
         } catch { /* ignore */ }
       })
       .subscribe();
