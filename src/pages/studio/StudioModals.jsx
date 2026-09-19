@@ -5,11 +5,10 @@
 // them. These blocks live at the END of AmbriStudioInner's return in the
 // reference (App_latest.jsx). Transcribed VERBATIM here and driven off `ctx`.
 // ═══════════════════════════════════════════════════════════════
-import { Fragment, useState, useCallback, useRef, useLayoutEffect } from "react";
+import { Fragment, useState } from "react";
 import { IconBox, IconRuler, IconCrown, IconPalette, IconFlower, IconFactory } from "../../components/icons.jsx";
 import AllocationPicker from "../../components/studio/AllocationPicker.jsx";
 import CustomItemModal from "../../components/studio/CustomItemModal.jsx";
-import VideoPlayerModal from "../../components/studio/VideoPlayerModal.jsx";
 import KitComponentsEditor from "../../components/shared/KitComponentsEditor.jsx";
 import ItemHoverThumb from "../../components/shared/ItemHoverThumb.jsx";
 import InventoryItemPickerModal from "../../components/shared/InventoryItemPickerModal.jsx";
@@ -91,20 +90,7 @@ export default function StudioModals({ ctx }) {
   // in StudioBrowse.jsx for the full reasoning: loadEvent replaces enabledEls wholesale rather than
   // merging, so customizing off a new reference while the active function already has a build going
   // silently switches its zones off with no confirmation.
-  //
-  // Reads its inputs through a ref (synced every render below), not a closure over the live values
-  // directly, and is itself wrapped in useCallback with an EMPTY dep array — so its own reference
-  // never changes. That's what lets VideoPlayerModal.jsx (this function's only caller) be wrapped in
-  // React.memo effectively: a memoized component's props must have stable identity across the
-  // renders it should SKIP, and a plain arrow function recreated every render would defeat that
-  // regardless of how the rest of memoization is set up. See VideoPlayerModal.jsx's own comment for
-  // why this mattered (reported YouTube playback lag).
-  const guardedPickAndLoadDepsRef = useRef({});
-  useLayoutEffect(() => {
-    guardedPickAndLoadDepsRef.current = { isFnSwitching: ctx.isFnSwitching, elSelectedPhoto, zoneElements, enabledEls, sourceVideo, sourceEvent, fnSnapHasData, pickAndLoad, askConfirm, showMsg };
-  });
-  const guardedPickAndLoad = useCallback((ev, targetStep, videoUrl, onLoaded) => {
-    const d = guardedPickAndLoadDepsRef.current;
+  const guardedPickAndLoad = (ev, targetStep, videoUrl, onLoaded) => {
     // ── NOTHING WHILE A FUNCTION IS STILL LOADING ── (BUG-21)
     // The comment above claimed parity with Browse's card buttons, and the body delivered only half
     // of it: the overwrite confirm was here, this check was not. So the popup — the OTHER way into
@@ -115,14 +101,14 @@ export default function StudioModals({ ctx }) {
     // confirm never appears, the load goes through, and the rolling autosave then writes the
     // near-empty build over the session it came from. Refusing is the only safe answer, because
     // mid-switch there is genuinely nothing to judge.
-    if (d.isFnSwitching) {
-      d.showMsg("Still loading this function — try again in a moment", "red");
+    if (ctx.isFnSwitching) {
+      showMsg("Still loading this function — try again in a moment", "red");
       return;
     }
-    const liveSnap = { elSelectedPhoto: d.elSelectedPhoto, zoneElements: d.zoneElements, enabledEls: d.enabledEls, sourceVideo: d.sourceVideo, sourceEvent: d.sourceEvent };
-    const proceed = () => { d.pickAndLoad(ev, targetStep, videoUrl); if (onLoaded) onLoaded(); };
-    if (d.fnSnapHasData(liveSnap)) {
-      d.askConfirm(
+    const liveSnap = { elSelectedPhoto, zoneElements, enabledEls, sourceVideo, sourceEvent };
+    const proceed = () => { pickAndLoad(ev, targetStep, videoUrl); if (onLoaded) onLoaded(); };
+    if (fnSnapHasData(liveSnap)) {
+      askConfirm(
         "Switch reference and start customizing this instead?",
         proceed,
         { note: "The zones you already turned on for this function will be switched off — their picks aren't deleted from the library, but this build stops using them.", yesLabel: "Switch anyway" }
@@ -130,7 +116,7 @@ export default function StudioModals({ ctx }) {
       return;
     }
     proceed();
-  }, []);
+  };
 
   return (<>
       {/* ═══ §26.13 — 🏭/🛒 Production/Buying Custom Item Modal (31 May 2026) ═══ */}
@@ -285,11 +271,58 @@ export default function StudioModals({ ctx }) {
         );
       })()}
 
-      {/* Extracted to its own memoized component — see VideoPlayerModal.jsx's header comment for
-          why (reported YouTube playback lag: this file re-renders on every realtime/autosave tick,
-          and this block used to redo all of its work — regex matches, URL rebuilding, full subtree
-          reconciliation — on every single one of them while a video was actually playing). */}
-      <VideoPlayerModal videoModal={videoModal} setVideoModal={setVideoModal} videoPlaying={videoPlaying} setVideoPlaying={setVideoPlaying} videoOverlay={videoOverlay} setVideoOverlay={setVideoOverlay} showMsg={showMsg} guardedPickAndLoad={guardedPickAndLoad} />
+      {videoModal&&(
+        <div style={{position:"fixed",inset:0,background:"#000",zIndex:100,display:"flex",flexDirection:"column"}} onClick={()=>{setVideoModal(null);setVideoPlaying(false);setVideoOverlay(false);}}>
+          <div style={{flex:1,position:"relative",overflow:"hidden"}} onClick={e=>e.stopPropagation()}>
+              {videoModal.video?(()=>{const vm=videoModal.video.match(/embed\/([a-zA-Z0-9_-]{11})/);const vl=videoModal.video.match(/list=([a-zA-Z0-9_-]+)/);const tid=vm?vm[1]:null;const wurl=tid&&tid!=="videoseries"?`https://www.youtube.com/watch?v=${tid}${vl?"&list="+vl[1]:""}`:vl?`https://www.youtube.com/playlist?list=${vl[1]}`:videoModal.video;const embedSrc=videoModal.video+(videoModal.video.includes("?")?"&":"?")+"autoplay=1&rel=0&modestbranding=1";const doCopy=(e)=>{e.stopPropagation();try{navigator.clipboard.writeText(wurl);showMsg("✓ YouTube link copied!","green");}catch{}};return <div style={{width:"100%",height:"100%"}}>{videoPlaying&&!videoOverlay?<iframe src={embedSrc} style={{width:"100%",height:"100%",border:"none"}} allow="autoplay; encrypted-media; fullscreen" allowFullScreen title="YouTube video"/>:<div onClick={(e)=>{e.stopPropagation();if(videoOverlay){setVideoOverlay(false);}setVideoPlaying(true);}} style={{width:"100%",height:"100%",cursor:"pointer",position:"relative",background:videoModal.gradient}}>
+                {(videoModal.img||videoModal.photos?.[0])&&<img src={videoModal.img||videoModal.photos?.[0]} alt="" style={{width:"100%",height:"100%",objectFit:"cover",opacity:videoOverlay?0.2:0.6}} onError={e=>{e.target.style.display="none"}}/>}
+                {videoOverlay?<div style={{position:"absolute",inset:0,background:"rgba(10,10,20,0.92)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:12}}>
+                  <div style={{fontSize:28,fontWeight:500,color:"#C9A96E",letterSpacing:3}}>AMBRIA</div>
+                  <div style={{fontSize:14,color:"rgba(255,255,255,0.6)"}}>Loved this look? Let's build your dream decor.</div>
+                  <div style={{display:"flex",gap:10,marginTop:12}}>
+                    <button onClick={(e)=>{e.stopPropagation();setVideoOverlay(false);setVideoPlaying(true);}} style={{padding:"12px 28px",borderRadius:10,border:"1.5px solid rgba(255,255,255,0.3)",background:"transparent",color:"#fff",fontSize:14,fontWeight:500,cursor:"pointer"}}>{"↺"} Replay</button>
+                    <button onClick={(e)=>{e.stopPropagation();guardedPickAndLoad(videoModal,1,videoModal.video);}} style={{padding:"12px 28px",borderRadius:10,border:"none",background:"#C9A96E",color:"#0a0a14",fontSize:14,fontWeight:600,cursor:"pointer"}}>{"🎨"} Customize</button>
+                    {/* EXACT LOOK — HIDDEN FOR NOW (end-of-video overlay). See the note on the other
+                        copy in the bar below; both are hidden together so the popup never offers the
+                        action in one place and not the other.
+                        <button onClick={(e)=>{e.stopPropagation();guardedPickAndLoad(videoModal,2,videoModal.video,()=>showMsg("Exact look loaded","green"));}} style={{padding:"12px 28px",borderRadius:10,border:"1.5px solid rgba(255,255,255,0.3)",background:"transparent",color:"#fff",fontSize:14,fontWeight:500,cursor:"pointer"}}>{"📋"} Exact Look</button>
+                    */}
+                  </div>
+                  <button onClick={(e)=>{e.stopPropagation();setVideoModal(null);setVideoPlaying(false);setVideoOverlay(false);}} style={{padding:"8px 20px",borderRadius:8,border:"1px solid rgba(255,255,255,0.15)",background:"transparent",color:"rgba(255,255,255,0.5)",fontSize:12,cursor:"pointer",marginTop:6}}>Close</button>
+                </div>
+                :<div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:8}}><div style={{width:80,height:56,borderRadius:16,background:"rgba(255,0,0,0.9)",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 4px 20px rgba(255,0,0,0.4)"}}><div style={{width:0,height:0,borderLeft:"20px solid #fff",borderTop:"12px solid transparent",borderBottom:"12px solid transparent",marginLeft:5}}/></div><div style={{fontSize:14,color:"#fff",fontWeight:600,textShadow:"0 1px 6px rgba(0,0,0,0.8)"}}>▶ Play Video</div></div>}
+                </div>}
+                </div>})()
+              :<div style={{width:"100%",height:"100%",background:videoModal.gradient,display:"flex",alignItems:"center",justifyContent:"center"}}>{videoModal.photos?.[0]&&<img src={videoModal.photos[0]} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}} onError={e=>{e.target.style.display="none"}}/>}</div>}
+            <button onClick={()=>{setVideoModal(null);setVideoPlaying(false);setVideoOverlay(false);}} style={{position:"absolute",top:16,right:16,background:"rgba(0,0,0,0.6)",border:"none",color:"#fff",width:40,height:40,borderRadius:"50%",cursor:"pointer",fontSize:20,zIndex:20,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700}}>✕</button>
+          </div>
+          {!videoOverlay&&<div style={{background:"rgba(10,10,20,0.95)",padding:"12px 24px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,flexShrink:0}} onClick={e=>e.stopPropagation()}>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:16,fontWeight:700,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{videoModal.name}</div>
+              <div style={{fontSize:11,color:"#9CA3AF"}}>{videoModal.venue} · {videoModal.fn}</div>
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
+              {/* PRICE + TIER — HIDDEN FOR NOW, on the owner's instruction.
+                  The tier chip goes with the price rather than staying behind, because it is the
+                  same number in another form: getCat() buckets the very same getFullCost(), and
+                  getCat(0) returns "Silver" — so a video costing ₹0 was being labelled Silver.
+                  Leaving the chip would have kept publishing that figure with the number that
+                  explains it removed.
+                  <div style={{textAlign:"right"}}><div style={{fontSize:18,fontWeight:700,color:"#C9A96E"}}>{fmt(getFullCost(videoModal))}</div><span style={{fontSize:10,padding:"2px 8px",borderRadius:8,background:getCat(getFullCost(videoModal)).bg,color:getCat(getFullCost(videoModal)).color,fontWeight:600}}>{getCat(getFullCost(videoModal)).label}</span></div>
+              */}
+              <button onClick={()=>{guardedPickAndLoad(videoModal,1,videoModal.video);}} style={{padding:"8px 18px",borderRadius:8,border:"none",background:"#C9A96E",color:"#0a0a14",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>{"🎨"} Customize</button>
+              {/* EXACT LOOK — HIDDEN FOR NOW, on the owner's instruction. Customize is the only way
+                  into a build from this popup while this stands.
+                  Commented rather than deleted: the handler and its guards are unchanged, so
+                  bringing it back is uncommenting this. targetStep 2 is what makes Exact Look
+                  different from Customize — it lands on Summary rather than Build — and that is the
+                  detail most easily lost if the button were rewritten from memory later.
+                  <button onClick={()=>{guardedPickAndLoad(videoModal,2,videoModal.video,()=>showMsg("Exact look loaded","green"));}} style={{padding:"8px 18px",borderRadius:8,border:`1.5px solid #C9A96E`,background:"transparent",color:"#C9A96E",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>{"📋"} Exact Look</button>
+              */}
+            </div>
+          </div>}
+        </div>
+      )}
 
       {zurCustomPicker && (
         <InventoryItemPickerModal

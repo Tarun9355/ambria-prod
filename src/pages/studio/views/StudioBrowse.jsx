@@ -1,4 +1,4 @@
-import { Fragment, memo, useState, useRef, useEffect } from "react";
+import { Fragment, useState, useRef, useEffect } from "react";
 import { makeFilterUI, useRailMaxHeight } from "../../../components/studio/filterUI.jsx";
 import { IconCheck, IconChevron, IconCrown, IconSave, IconPlay,
   IconPalette, IconClipboard, IconSearch, IconCalendar } from "../../../components/icons.jsx";
@@ -34,7 +34,7 @@ const PANEL_BG =
   Object.values(import.meta.glob("../../../assets/ambria-panel.{jpg,jpeg,png,webp}", { eager: true, query: "?url", import: "default" }))[0] ||
   null;
 
-function StudioBrowse({ ctx }) {
+export default function StudioBrowse({ ctx }) {
   // Which filter sections are expanded. All closed by default: six open sections made the panel
   // taller than the viewport, which is what buried Palette. Closed headers still show what's
   // selected, so nothing is hidden — you just don't scroll past options you aren't changing.
@@ -1841,29 +1841,3 @@ function StudioBrowse({ ctx }) {
       </div>
     );
 }
-
-// This screen is huge (video/photo grid, ~6 filter sections, palette/venue pickers) and reads its
-// entire state through one `ctx` object that StudioApp rebuilds fresh on every render — so on its
-// own, wrapping this in React.memo would do nothing (a new `ctx` reference every time still reads as
-// "changed" props under the default shallow comparison) and enumerating every ctx field this
-// component actually depends on, to write a real comparator, would be the same too-risky exercise
-// StudioModals.jsx's memoization already decided against for a component this size.
-//
-// The video modal (VideoPlayerModal.jsx) is a `position:fixed inset:0 zIndex:100` layer with an
-// opaque `background:#000` — while it's open and playing, this whole component sits mounted but
-// fully hidden underneath it (Browse doesn't unmount when a video opens; the modal just paints over
-// it). Reported bug: playback stutter persisted even after memoizing the video modal itself, because
-// this component was still fully re-rendering — filtering/sorting the whole video+photo library,
-// rebuilding SVG panel paths, walking the palette/venue lists — on every Supabase realtime tick and
-// autosave tick, none of which the user could even see, all while competing with the YouTube iframe
-// for the same main-thread frame budget.
-//
-// So instead of a real prop comparator, this one only special-cases the one condition that matters:
-// treat props as unchanged (skip the render entirely) whenever a video is open AND actively playing.
-// That state is verifiably invisible (the overlay is fully opaque), so freezing it costs nothing the
-// user can see, and the moment the video is paused or closed this returns false again and everything
-// re-renders exactly as it did before this change — no other behavior is altered.
-export default memo(StudioBrowse, (prev, next) => {
-  if (next.ctx.videoModal && next.ctx.videoPlaying) return true;
-  return false;
-});
