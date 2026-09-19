@@ -68,6 +68,35 @@ export function rentalSplit(settings, venueName, invId, qty, inventory) {
   return { standingUnits, freshUnits: total - standingUnits, discountPct: standingDiscountPct(settings, venueName, invId, inventory) };
 }
 
+// Raw-cost discount amount for a kit element's `qty` units, checking the kit's OWN base AND every
+// component (recursively) against the venue's standing inventory — mirrors priceForInvItem's own
+// recursion (lib/ims/helpers.js) node-for-node, but accumulates a discount instead of a price. A
+// kit can have some pieces registered standing at a venue and others not (e.g. the console table
+// itself plus 2 of its 3 decor components, but not the 3rd) — each registered piece contributes its
+// OWN raw rate × its OWN discountPct × however many of THAT piece are actually standing here, not
+// one blanket rate applied to the kit's total. Works entirely in raw-cost terms (kitBase/price, no
+// scaling factor) so the caller can subtract this straight off the already-scaled unitRate×qty
+// total without touching the markup, same reasoning as the plain-item fix beside this.
+export function kitStandingDiscountAmount(item, qty, inventory, overrideSubItems, settings, venueName, _seen) {
+  if (!item || !(Number(qty) > 0)) return 0;
+  const isKit = Array.isArray(item.subItems) && item.subItems.length > 0;
+  const rawRate = isKit ? (Number(item.kitBase) || 0) : (Number(item.price) || 0);
+  const { standingUnits, discountPct } = rentalSplit(settings, venueName, item.id, qty, inventory);
+  let discount = standingUnits * rawRate * discountPct / 100;
+  if (!isKit) return discount;
+  const seen = _seen ? new Set(_seen) : new Set();
+  if (item.id) { if (seen.has(item.id)) return discount; seen.add(item.id); } // cycle guard, same as priceForInvItem
+  const subItems = Array.isArray(overrideSubItems) ? overrideSubItems : (Array.isArray(item.subItems) ? item.subItems : []);
+  subItems.forEach((si) => {
+    if (si.patternId) return; // flower-recipe add-on — never a standing physical item
+    const ci = (inventory || []).find((i) => i.id === si.itemId);
+    if (!ci) return;
+    const subOv = Array.isArray(si.subOverrides) ? si.subOverrides : undefined;
+    discount += kitStandingDiscountAmount(ci, qty * (Number(si.qty) || 0), inventory, subOv, settings, venueName, seen);
+  });
+  return discount;
+}
+
 // Units of an item AVAILABLE to an event at `venueName` = total minus units that are
 // standing (installed) at OTHER fixed venues. So another venue can't book a venue's
 // fixed stock; only genuinely free units (e.g. at Production House) are offered.

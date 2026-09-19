@@ -25,7 +25,7 @@ import DealCheckOverlay from "./dealcheck/DealCheckOverlay.jsx";
 import { kvGet, kvTryGet, kvSet, reliableSave } from "../../lib/ims/kv";
 import { makeAmendRequest } from "../../lib/ims/amend";
 import { catToDept } from "../../lib/ims/deptClassify";
-import { availableAtVenue, isStandingAt, rentalSplit, fixedVenueDealDiscount, fixedVenueDiscountPctFor, proratedVenueDiscount, fixedVenueFor } from "../../lib/ims/fixedVenues";
+import { availableAtVenue, isStandingAt, rentalSplit, fixedVenueDealDiscount, fixedVenueDiscountPctFor, proratedVenueDiscount, fixedVenueFor, kitStandingDiscountAmount, builtQty } from "../../lib/ims/fixedVenues";
 import { searchLmsLeads, triggerLmsSync, fetchCachedContracts, fetchLmsLeadByEntry } from "../../lib/ims/lms";
 import { uploadToStorage, compressImageForUpload, STORAGE_FOLDERS, listStorage, deleteStorageObjects, deleteStorageFolder } from "../../lib/storage";
 import { ytApi, ytDuration } from "../../lib/youtube";
@@ -324,7 +324,7 @@ function resolveGensetPlan(match, customGenset125, customGenset62, gensetRate, g
 // PREVIOUS function's raw data to find carryover (below), without recursing into a full
 // calcFunctionBreakdown call (which would repeat pricing/genset work we don't need here and would
 // double-net a chain of same-venue functions against each other).
-function computeFnSubQty(fnData, capBySub, imsInventory, flowerPatterns, trussInv) {
+function computeFnSubQty(fnData, capBySub, imsInventory, flowerPatterns, trussInv, fvCfg, venueName) {
   const fZoneElements = fnData?.zoneElements || {};
   const fZoneConfig = fnData?.zoneConfig || {};
   const fEnabledEls = fnData?.enabledEls || {};
@@ -348,7 +348,13 @@ function computeFnSubQty(fnData, capBySub, imsInventory, flowerPatterns, trussIn
       if (String(tc.unit || "pc").toLowerCase().includes("sqft")) {
         const L = Number(el.L || el.l || 0), W = Number(el.W || el.w || el.H || el.h || 0);
         if (L > 0 && W > 0) add(sub, L * W * (Number(el.qty) || 1));
-      } else add(sub, Number(el.qty) || 0);
+      } else {
+        // A fixed-venue standing item (up to its registered standing qty) is already physically at
+        // this venue — no truck needed for that portion, same "already there" reasoning as its
+        // pricing discount. Only the qty BUILT FRESH beyond what's standing counts toward capacity.
+        const freshQty = fvCfg && venueName && el.invId ? builtQty(fvCfg, venueName, el.invId, Number(el.qty) || 0) : (Number(el.qty) || 0);
+        add(sub, freshQty);
+      }
     });
   });
   Object.entries(fZoneConfig).forEach(([zk, cfg]) => {
@@ -993,7 +999,7 @@ function maxRepaintCostInSubcat(rcSub, imsInventory, fallback) {
 // Each truckCap entry is keyed by sub-category name (`item`), with `perTruck` (capacity) + `unit`
 // (pcs / sqft per truck). Capacity 0 → that sub-category is skipped. Deal items are aggregated by
 // their rate-card sub-category; truss / platform / carpet contribute sqft via the zone config.
-function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckCap, imsInventory, flowerPatterns, trussInv, flowerMaterialQty) {
+function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckCap, imsInventory, flowerPatterns, trussInv, flowerMaterialQty, fvCfg, venueName) {
   const capBySub = {};
   (truckCap || []).forEach(tc => { if ((Number(tc.perTruck) || 0) > 0) capBySub[String(tc.item || "").toLowerCase().trim()] = tc; });
   const subAgg = {}; // subLower → { label, qty, perTruck, unit }
@@ -1016,7 +1022,13 @@ function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckC
       const sub = invItem?.subCat || invItem?.subcategory || pattern?.sub || "";
       const tc = capBySub[String(sub || "").toLowerCase().trim()]; if (!tc) return;
       if (String(tc.unit || "pc").toLowerCase().includes("sqft")) { const L = Number(el.L || el.l || 0), W = Number(el.W || el.w || el.H || el.h || 0); if (L > 0 && W > 0) addSub(sub, L * W * (Number(el.qty) || 1)); }
-      else addSub(sub, Number(el.qty) || 0);
+      else {
+        // A fixed-venue standing item (up to its registered standing qty) is already physically at
+        // this venue — no truck needed for that portion, same "already there" reasoning as its
+        // pricing discount. Only the qty BUILT FRESH beyond what's standing counts toward capacity.
+        const freshQty = fvCfg && venueName && el.invId ? builtQty(fvCfg, venueName, el.invId, Number(el.qty) || 0) : (Number(el.qty) || 0);
+        addSub(sub, freshQty);
+      }
     });
   });
   Object.entries(zoneConfig || {}).forEach(([zk, cfg]) => {
@@ -3865,30 +3877,47 @@ export default function StudioApp() {
   //    be billed after markup. A 50% fixed-venue discount must read as ₹250 − (50% of ₹100) =
   //    ₹200, not ₹250 × 0.5 = ₹125 — the old `unitRate * (1 - discountPct/100)` scaled away the
   //    markup along with the discount instead of only removing the raw-cost discount from it.
-  const repeatAdjustedLineCost = (item, qty, unitRate, zc, venueName) => {
+  const repeatAdjustedLineCost = (item, qty, unitRate, zc, venueName, kitOverrides) => {
     const full = qty * unitRate;
     if (!item) return full;
-    // item.price is the exact pre-factor rate for a plain item — priceForInvItem's own formula is
-    // just item.price × factor, so this always matches. A kit has no single such figure: its
-    // unitRate here can be a composite (kitBase × factor + a sum of each component's OWN priced
-    // rate, plus a floral-recipe blend on top for some branches above) with nothing "raw" to
-    // isolate cleanly. Falling back to unitRate itself for a kit keeps this function's PRE-EXISTING
-    // (imprecise, scales the markup away too) behavior rather than guessing at a new formula for a
-    // case nobody has reported as wrong — the fix below is verified against the plain-item case.
     const isKit = Array.isArray(item.subItems) && item.subItems.length > 0;
-    const rawRate = isKit ? unitRate : (Number(item.price) || 0);
-    const { standingUnits, freshUnits, discountPct } = rentalSplit(fvCfgForRepeat, venueName, item.id, qty, imsInventory);
-    if (standingUnits > 0) {
-      const discountedUnitRate = Math.max(0, unitRate - rawRate * discountPct / 100);
-      return standingUnits * discountedUnitRate + freshUnits * unitRate;
+    if (isKit) {
+      // A kit can have some of its OWN pieces registered standing at a venue and others not — e.g.
+      // the console table itself plus 2 of its 3 decor components, but not the 3rd. Check the kit's
+      // own base AND every component recursively (kitStandingDiscountAmount, lib/ims/fixedVenues.js
+      // — mirrors priceForInvItem's own recursion node for node), so each registered piece gets its
+      // OWN (rental × factor) − (rental × its own discountPct) rather than one blanket rate for the
+      // whole kit. Raw-cost terms throughout, so subtracting it straight off unitRate×qty leaves
+      // every piece's markup untouched — same reasoning as the plain-item fix below.
+      const discount = kitStandingDiscountAmount(item, qty, imsInventory, kitOverrides, fvCfgForRepeat, venueName);
+      if (discount > 0) return Math.max(0, full - discount);
+      // No piece of this kit is registered standing anywhere — falls through to the sub-category
+      // Repeat default below, same treatment a plain item with no standing registration gets.
+    } else {
+      const rawRate = Number(item.price) || 0;
+      const { standingUnits, freshUnits, discountPct } = rentalSplit(fvCfgForRepeat, venueName, item.id, qty, imsInventory);
+      // A Fixed-Venue standing item is discounted UNCONDITIONALLY — it's physically standing at
+      // this venue whether or not this zone happens to be flagged Repeat. Only the sub-category
+      // default below (no specific item registered as standing) still needs Repeat.
+      if (standingUnits > 0) {
+        // discountPct is a % off the ITEM's own raw rental (Ambria's cost side), not a % off
+        // whatever the guest is billed after the sub-category's scaling factor — unitRate here is
+        // already that scaled, guest-facing rate. A ₹100 rental at a 2.5× factor bills ₹250; a 50%
+        // fixed-venue discount reads as ₹250 − (50% of ₹100) = ₹200, not ₹250 × 0.5 = ₹125.
+        const discountedUnitRate = Math.max(0, unitRate - rawRate * discountPct / 100);
+        return standingUnits * discountedUnitRate + freshUnits * unitRate;
+      }
     }
     // Not registered standing at this specific venue, so there's nothing "always there" about it —
     // the sub-category-level discount only makes sense when THIS event's own setup is being reused
-    // across days, which is exactly what the Repeat toggle means. Stays gated on it.
+    // across days, which is exactly what the Repeat toggle means. Stays gated on it. A kit has no
+    // single raw, pre-factor figure at this fallback either (a composite of several already-scaled
+    // pieces) — scales unitRate directly, same pre-existing shape this one remaining case always had.
     if (!zc?.repeat) return full;
     const key = String(item.subCat || item.subcategory || "").toLowerCase().trim();
     const sc = key ? Number((fvCfgForRepeat.fixedVenueSubcatDiscount || {})[key]) : NaN;
     const pct = Number.isFinite(sc) && sc > 0 ? sc : 0;
+    const rawRate = isKit ? unitRate : (Number(item.price) || 0);
     return qty * Math.max(0, unitRate - rawRate * pct / 100);
   };
   // opts.checkAvailability (Build view's live canvas ONLY — explicit opt-in, never a default) turns
@@ -3969,7 +3998,7 @@ export default function StudioApp() {
         const flowerCost = recipeCost(subCatPattern, item.subCat || item.subcategory) + attachedPatterns.reduce((sum, x) => sum + recipeCost(x.pattern, x.pattern.sub, x.qty, x.si), 0) + compDelta;
         const unitPrice = priceForInvItem(item, rcFactorByKey, imsInventory, el.kitOverrides) + flowerCost;
         const anySMB = subCatPattern?.mode === "smb" || attachedPatterns.some((x) => x.pattern.mode === "smb");
-        return { rc: null, unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName), area: 0, warning: null, isFloralBlend: false, realPct: null, patternSMB: anySMB };
+        return { rc: null, unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName, el.kitOverrides), area: 0, warning: null, isFloralBlend: false, realPct: null, patternSMB: anySMB };
       }
     }
 
@@ -3993,7 +4022,7 @@ export default function StudioApp() {
         // item's own rental (× its sub-category's scaling factor) is always added on top, alongside
         // the recipe's own generic "extra (pot/base)" figure.
         const unitPrice = Math.round(realPct / 100 * rates.realRate + (100 - realPct) / 100 * rates.artRate) + rates.extra + priceForInvItem(item, rcFactorByKey, imsInventory);
-        return { rc: null, unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName), area: 0, warning: null, isFloralBlend: true, realPct, patternSMB: pattern.mode === "smb" };
+        return { rc: null, unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName, el.kitOverrides), area: 0, warning: null, isFloralBlend: true, realPct, patternSMB: pattern.mode === "smb" };
       }
     }
 
@@ -4043,7 +4072,7 @@ export default function StudioApp() {
       // Repeat discount applies to the owned/available portion only — same ordering Deal Check's
       // own rollup already uses (DealCheckOverlay.jsx): the shortfall (not actually free in stock)
       // bills at cost% regardless, never discounted further on top of that.
-      const lineCost = repeatAdjustedLineCost(item, ownedQty, ownedRate, opts?.zc, opts?.venueName) + shortQty * shortRate;
+      const lineCost = repeatAdjustedLineCost(item, ownedQty, ownedRate, opts?.zc, opts?.venueName, el.kitOverrides) + shortQty * shortRate;
       const unitPrice = qty > 0 ? lineCost / qty : ownedRate;
       const warning = shortQty > 0 ? `⚠ ${shortQty} of ${qty} not free in stock for this date — priced at cost%` : null;
       // `available` here is "how much of THIS row's own qty is real stock" (= ownedQty) — the sole
@@ -4052,7 +4081,7 @@ export default function StudioApp() {
       return { rc: null, unitPrice, lineCost, area: 0, warning, isFloralBlend: false, realPct: null, available: ownedQty };
     }
     const unitPrice = priceForInvItem(item, rcFactorByKey, imsInventory, el.kitOverrides);
-    return { rc: null, unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName), area: 0, warning: null, isFloralBlend: false, realPct: null };
+    return { rc: null, unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName, el.kitOverrides), area: 0, warning: null, isFloralBlend: false, realPct: null };
   }, [imsInventory, rcFactorByKey, rcCostPctForSub, activeBlocksForDate, dealCheckData, studioFloralData, rcFloralModeByKey, floralRatio, fvCfgForRepeat, clientLedger, activeClientId, activeFnIdx, activeFnMeta, clientDate]);
   // Shared SMB/flat rate resolution — the one place `getElPrice`, `getElPriceForFn`, and
   // `calcFullEventCost` all resolve a rate-card item's base rate for an element's size, now with
@@ -4531,7 +4560,7 @@ export default function StudioApp() {
       realKg: (floralSourcingHere?.breakdown || []).reduce((s, f) => s + (f.qty || 0), 0),
       artBunches: (floralSourcingHere?.artFlowerBunches || 0) + (floralSourcingHere?.artGreenBunches || 0),
     };
-    const { itemTrucks, breakdown: itemBd } = computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckCap, imsInventory, (dealCheckData || studioFloralData)?.flowerPatterns, trussInvHere, flowerMaterialQty);
+    const { itemTrucks, breakdown: itemBd } = computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckCap, imsInventory, (dealCheckData || studioFloralData)?.flowerPatterns, trussInvHere, flowerMaterialQty, fvCfgForRepeat, venue);
     itemBd.forEach(b => breakdown.push(b));
     const floralTrucks = 0, totalFloralCost = 0; // florals now counted via their sub-category capacity — no separate flower truck
     const bt = bufferTiers.find(b => decor >= b.minBudget && decor < b.maxBudget);
@@ -4550,7 +4579,7 @@ export default function StudioApp() {
     const truckTotal = rawTruckTotal * clientScale;
     const total = truckTotal + plan.gensetCost;
     return { trucks: allTrucks, tripRate, total, isNew, tier: tierId, tierLabel, breakdown, floralTrucks, bufferTrucks: bufTrucks, itemTrucks, totalFloralCost, gensets: plan.genset125, venueGensets: plan.venueGenset125, venueGenset62: plan.venueGenset62, gensetCost: plan.gensetCost, gensetRate, gensetRate62, genset62: plan.genset62, truckTotal, clientScale };
-  }, [venue, customTripRate, customGensets, gensetRate, gensetRate62, genset62, trVenues, zoneElements, enabledEls, rcItems, truckCap, floralPerTruck, bufferTiers, totalCost, zoneConfig, imsInventory, dealCheckData, studioFloralData, floralOverrides, floralRatio, activeFnIdx, clientDate]);
+  }, [venue, customTripRate, customGensets, gensetRate, gensetRate62, genset62, trVenues, zoneElements, enabledEls, rcItems, truckCap, floralPerTruck, bufferTiers, totalCost, zoneConfig, imsInventory, dealCheckData, studioFloralData, floralOverrides, floralRatio, activeFnIdx, clientDate, fvCfgForRepeat]);
 
   const grandTotal = useMemo(() => {
     const base = totalCost() + transportCalc.total;
@@ -4668,7 +4697,12 @@ export default function StudioApp() {
           const sub = invItem?.subCat || invItem?.subcategory || pattern?.sub || "";
           const tc = capBySub[String(sub || "").toLowerCase().trim()]; if (!tc) return;
           if (String(tc.unit || "pc").toLowerCase().includes("sqft")) { const L = Number(el.L || el.l || 0), W = Number(el.W || el.w || el.H || el.h || 0); if (L > 0 && W > 0) addSub(sub, L * W * (Number(el.qty) || 1)); }
-          else addSub(sub, Number(el.qty) || 0);
+          else {
+            // A fixed-venue standing item (up to its registered standing qty) is already at this
+            // venue — no truck needed for that portion. See computeTruckItems' matching comment.
+            const freshQty = el.invId ? builtQty(fvCfgForRepeat, fVenue, el.invId, Number(el.qty) || 0) : (Number(el.qty) || 0);
+            addSub(sub, freshQty);
+          }
         });
       });
       Object.entries(fZoneConfig).forEach(([zk, cfg]) => {
@@ -5155,7 +5189,7 @@ export default function StudioApp() {
         const myPos = sortedFns.findIndex(f => f.fnIdx === fnData.fnIdx);
         const prevFnData = myPos > 0 ? sortedFns[myPos - 1] : null;
         if (prevFnData && prevFnData.fnVenue && prevFnData.fnVenue.toLowerCase().trim() === fVenue.toLowerCase().trim()) {
-          prevSubQty = computeFnSubQty(prevFnData, capBySub, imsInventory, fFlowerPatterns, dealCheckData?.trussInv || studioFloralData?.trussInv);
+          prevSubQty = computeFnSubQty(prevFnData, capBySub, imsInventory, fFlowerPatterns, dealCheckData?.trussInv || studioFloralData?.trussInv, fvCfgForRepeat, fVenue);
           carriedOverFromFn = prevFnData.fnType || "";
         }
       } catch { /* never let a carryover lookup failure break the transport calc */ }
@@ -5182,7 +5216,12 @@ export default function StudioApp() {
           // category off — it's a flower arrangement by definition, so it's Florals outright.
           const invCat = invItem?.cat || invItem?.category || (pattern ? "Florals" : "");
           if (String(tc.unit || "pc").toLowerCase().includes("sqft")) { const L = Number(el.L || el.l || 0), W = Number(el.W || el.w || el.H || el.h || 0); if (L > 0 && W > 0) addSub(sub, L * W * (Number(el.qty) || 1), zk, elLabel, invCat); }
-          else addSub(sub, Number(el.qty) || 0, zk, elLabel, invCat);
+          else {
+            // A fixed-venue standing item (up to its registered standing qty) is already at this
+            // venue — no truck needed for that portion. See computeTruckItems' matching comment.
+            const freshQty = el.invId ? builtQty(fvCfgForRepeat, fVenue, el.invId, Number(el.qty) || 0) : (Number(el.qty) || 0);
+            addSub(sub, freshQty, zk, elLabel, invCat);
+          }
         });
       });
       const bdTrussInv = dealCheckData?.trussInv || studioFloralData?.trussInv;
