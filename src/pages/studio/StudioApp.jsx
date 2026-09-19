@@ -3846,21 +3846,50 @@ export default function StudioApp() {
   // Repeat-billed line cost for `qty` units of `item` at `unitRate` — ports Deal Check's own
   // repeatAdjustedRental formula (DealCheckOverlay.jsx) into Build's pricing, so a zone marked
   // ♻️ Repeat actually prices lower here too, matching what the Repeat toggle's own tooltip
-  // already promises ("discounted rental") instead of being a silent no-op. Needs BOTH a repeat
-  // zone (zc?.repeat) and a resolved venue name — omit either and this returns the full price
-  // unchanged, so any call site that doesn't pass them keeps pricing exactly as before.
+  // already promises ("discounted rental") instead of being a silent no-op.
+  //
+  // Two bugs fixed here, both already corrected in Deal Check's copy and never ported over:
+  //
+  // 1. UNCONDITIONAL for a registered standing item. A Fixed-Venue standing item is discounted
+  //    whether or not this zone happens to be flagged Repeat — it's physically standing at the
+  //    venue regardless. Gating the whole function behind zc?.repeat (the old `if (!zc?.repeat ||
+  //    !venueName || !item) return full` guard) meant the exact same standing item billed full
+  //    rate in any zone nobody happened to also tick Repeat on. Only the sub-category-level
+  //    default (no specific standing item registered) still needs Repeat — see below.
+  //
+  // 2. Discount off the RAW rate, not the guest-facing one. `unitRate` here is already the
+  //    scaled, guest-facing rate (item.price × the sub-category's rate_card_categories scaling
+  //    factor — see priceForInvItem) — e.g. a ₹100 rental at a 2.5× factor bills the guest ₹250.
+  //    `discountPct` is configured as a % off the ITEM's own rental (Ambria's cost side, same as
+  //    Deal Check's baseRental, which IS the raw rate), not a % off whatever the guest happens to
+  //    be billed after markup. A 50% fixed-venue discount must read as ₹250 − (50% of ₹100) =
+  //    ₹200, not ₹250 × 0.5 = ₹125 — the old `unitRate * (1 - discountPct/100)` scaled away the
+  //    markup along with the discount instead of only removing the raw-cost discount from it.
   const repeatAdjustedLineCost = (item, qty, unitRate, zc, venueName) => {
     const full = qty * unitRate;
-    if (!zc?.repeat || !venueName || !item) return full;
+    if (!item) return full;
+    // item.price is the exact pre-factor rate for a plain item — priceForInvItem's own formula is
+    // just item.price × factor, so this always matches. A kit has no single such figure: its
+    // unitRate here can be a composite (kitBase × factor + a sum of each component's OWN priced
+    // rate, plus a floral-recipe blend on top for some branches above) with nothing "raw" to
+    // isolate cleanly. Falling back to unitRate itself for a kit keeps this function's PRE-EXISTING
+    // (imprecise, scales the markup away too) behavior rather than guessing at a new formula for a
+    // case nobody has reported as wrong — the fix below is verified against the plain-item case.
+    const isKit = Array.isArray(item.subItems) && item.subItems.length > 0;
+    const rawRate = isKit ? unitRate : (Number(item.price) || 0);
     const { standingUnits, freshUnits, discountPct } = rentalSplit(fvCfgForRepeat, venueName, item.id, qty, imsInventory);
-    if (standingUnits > 0) return standingUnits * unitRate * (1 - discountPct / 100) + freshUnits * unitRate;
-    // Not registered standing at this specific venue — Repeat still applies (a reused setup can
-    // happen anywhere), just without a venue-specific cap: the sub-category default, same
-    // fallback Deal Check's own repeatAdjustedRental uses.
+    if (standingUnits > 0) {
+      const discountedUnitRate = Math.max(0, unitRate - rawRate * discountPct / 100);
+      return standingUnits * discountedUnitRate + freshUnits * unitRate;
+    }
+    // Not registered standing at this specific venue, so there's nothing "always there" about it —
+    // the sub-category-level discount only makes sense when THIS event's own setup is being reused
+    // across days, which is exactly what the Repeat toggle means. Stays gated on it.
+    if (!zc?.repeat) return full;
     const key = String(item.subCat || item.subcategory || "").toLowerCase().trim();
     const sc = key ? Number((fvCfgForRepeat.fixedVenueSubcatDiscount || {})[key]) : NaN;
     const pct = Number.isFinite(sc) && sc > 0 ? sc : 0;
-    return full * (1 - pct / 100);
+    return qty * Math.max(0, unitRate - rawRate * pct / 100);
   };
   // opts.checkAvailability (Build view's live canvas ONLY — explicit opt-in, never a default) turns
   // on the same unavailable-shortfall pricing already built for Deal Check: qty within what's free
