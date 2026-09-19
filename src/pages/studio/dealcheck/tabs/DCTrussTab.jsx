@@ -41,13 +41,13 @@ export default function DCTrussTab({ ctx }) {
                   }
 
                   // Helper — list of zones present in a fn (uses fn.zoneConfig + fn.enabledEls).
-                  // ♻️ Repeat zones excluded — same treatment as Manpower's freshFn (this zone's
-                  // truss/fabric was already built for a prior day, so nothing bills or previews
-                  // here for it) — must match dcCostRollup's own truss/fabric total.
+                  // ♻️ Repeat zones now STAY in this list — a repeat zone's truss still costs half
+                  // (see the per-row discount below) rather than nothing, so it needs its own preview
+                  // card instead of being invisible. Must match dcCostRollup's own truss total.
                   const zonesOf = (fn) => {
                     const zc = fn.zoneConfig || {};
                     const en = fn.enabledEls || {};
-                    return Object.keys(zc).filter(zk => en[zk] && zc[zk] && !zc[zk].repeat);
+                    return Object.keys(zc).filter(zk => en[zk] && zc[zk]);
                   };
 
                   // §23 Phase 3 — resolve reservation state for THIS client on the SELECTED fn date.
@@ -101,6 +101,7 @@ export default function DCTrussTab({ ctx }) {
                       const zCfg = (fn.zoneConfig || {})[zk];
                       const zLabel = (zoneMeta?.[zk]?.label) || ((fn.customZones || []).find(cz => cz.id === zk)?.name) || zk;
                       const rows = [zCfg, ...(zCfg.extraTrussRows || [])];
+                      const isRepeat = !!zCfg.repeat;
                       return rows.map((row, rowIdx) => {
                         const pv = calcZoneTrussPreview(row, trussInv);
                         if (pv && pv.costs) {
@@ -113,16 +114,30 @@ export default function DCTrussTab({ ctx }) {
                             pv.costs.pillarDiscounted = disc.pillar > 0;
                             pv.costs.beamDiscounted = disc.beam > 0;
                           }
+                          // ♻️ Repeat zone: the structure is already standing, but reusing it isn't
+                          // free — someone still has to check/re-tension/touch it up — so it bills at
+                          // HALF rather than the ₹0 this used to drop to entirely (see dcCostRollup's
+                          // matching change). The pillar/beam RFT and batta figures stay OUT of the
+                          // grand totals below regardless — those drive truss-inventory sourcing, and
+                          // a repeat zone needs nothing new sourced for a rig that isn't moving.
+                          if (isRepeat) {
+                            pv.costs.pillarCost = Math.round(pv.costs.pillarCost * 0.5);
+                            pv.costs.beamCost = Math.round(pv.costs.beamCost * 0.5);
+                            pv.costs.actual = Math.round(pv.costs.actual * 0.5);
+                            pv.costs.isRepeat = true;
+                          }
                           grandActual += pv.costs.actual;
-                          grandU      += pv.costs.uEquivalent;
-                          grandBox    += pv.costs.boxEquivalent;
-                          grandPillarRft += pv.costs.pillarRft;
-                          grandBeamRft   += pv.costs.beamRft;
-                          if (pv.batta?.rftWithBuffer) grandBattaRft += pv.batta.rftWithBuffer;
+                          if (!isRepeat) {
+                            grandU      += pv.costs.uEquivalent;
+                            grandBox    += pv.costs.boxEquivalent;
+                            grandPillarRft += pv.costs.pillarRft;
+                            grandBeamRft   += pv.costs.beamRft;
+                            if (pv.batta?.rftWithBuffer) grandBattaRft += pv.batta.rftWithBuffer;
+                          }
                         }
                         if (pv?.source === "default-on-forget") anyDefault = true;
                         if (pv?.smartFlag === "red") anyShortage = true;
-                        return { zk, zLabel: rowIdx > 0 ? `${zLabel} (truss #${rowIdx + 1})` : zLabel, pv, row, rowIdx };
+                        return { zk, zLabel: rowIdx > 0 ? `${zLabel} (truss #${rowIdx + 1})${isRepeat ? " · ♻️ Repeat (50%)" : ""}` : `${zLabel}${isRepeat ? " · ♻️ Repeat (50%)" : ""}`, pv, row, rowIdx };
                       });
                     }).filter(x => x.pv && x.pv.source !== "none");
                     return { fn, previews };

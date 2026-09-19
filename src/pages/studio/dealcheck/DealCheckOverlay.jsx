@@ -592,9 +592,18 @@ export default function DealCheckOverlay({ ctx }) {
                 const pObj = (imsPaletteCatalogue||[]).find(p => p.name === fnPalette);
                 const anchors = pObj?.anchorColours || [];
                 Object.keys(zc).forEach(zk => {
-                  // ♻️ Repeat zones reuse a standing structure — same treatment as Manpower's own
-                  // freshFn exclusion (this zone's truss/fabric was already built for a prior day).
-                  if (!en[zk] || !zc[zk] || zc[zk].repeat) return;
+                  if (!en[zk] || !zc[zk]) return;
+                  // ♻️ Repeat zone: the structure is already standing from a prior day, but it isn't
+                  // truly free to reuse — someone still has to check, re-tension and touch up the
+                  // rig, so the truss/steel line bills at HALF rather than the ₹0 this used to drop
+                  // to (owner decision — a Repeat zone's truss cost was being completely dropped,
+                  // which overstated the saving). Fabric (masking/liza/curtains) and the pillar/beam
+                  // loadable-line listing below stay fully excluded for a repeat zone — the physical
+                  // drape is genuinely already up and unchanged, and there's nothing NEW to
+                  // fabricate/haul in for a rig that isn't moving, unlike the structure itself which
+                  // still needs some on-site labour to safely carry over.
+                  const isRepeat = !!zc[zk].repeat;
+                  const repeatTrussMult = isRepeat ? 0.5 : 1;
                   const photoUrl = (fn.elSelectedPhoto || {})[zk];
                   let density = "moderate";
                   if (photoUrl) { const li = libItems.find(l => l.url === photoUrl); if (li?.dims?.drapeDensity) density = li.dims.drapeDensity; }
@@ -609,9 +618,10 @@ export default function DealCheckOverlay({ ctx }) {
                     const pv = calcZoneTrussPreview(row, tInv);
                     if (pv?.costs?.actual) {
                       const discount = _venueTrussHere ? zoneTrussStandingDiscount(row, tInv, _venueTrussHere) : 0;
-                      const netActual = Math.max(0, pv.costs.actual - discount);
+                      const netActual = Math.max(0, pv.costs.actual - discount) * repeatTrussMult;
                       truss += netActual; addD("Tenting", "truss", netActual); // truss steel → Tenting
                     }
+                    if (isRepeat) return; // nothing new to load or fabricate for a rig that isn't moving
                     // Truss requirement → loadable line items grouped BY SIZE (e.g. "Truss pillar 15ft").
                     // Pushed per-zone here; the size-keyed names merge across all zones below.
                     if (pv?.topology && deptInv["Tenting"]) {
