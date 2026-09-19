@@ -391,12 +391,14 @@ export default function DCTrussTab({ ctx }) {
                         const anchors = pObj?.anchorColours || [];
                         let fnGrand = 0;
                         previews.forEach(({ zk, pv }) => {
-                          fnGrand += pv?.costs?.actual || 0;
+                          fnGrand += pv?.costs?.actual || 0; // already halved above for a repeat zone
                           const zCfg = (fn.zoneConfig || {})[zk];
                           const photoUrl = (fn.elSelectedPhoto || {})[zk];
                           let density = "moderate";
                           if (photoUrl) { const li = libItems.find(l => l.url === photoUrl); if (li?.dims?.drapeDensity) density = li.dims.drapeDensity; }
-                          fnGrand += calcZoneFabricCost(zCfg, trussInv, anchors, density);
+                          // Same 50% treatment as the truss steel above for a repeat zone — see
+                          // dcCostRollup's matching change.
+                          fnGrand += calcZoneFabricCost(zCfg, trussInv, anchors, density) * (zCfg?.repeat ? 0.5 : 1);
                         });
                         return (
                         <div key={fi} style={{display:"flex",flexDirection:"column",gap:10}}>
