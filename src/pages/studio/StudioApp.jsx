@@ -391,6 +391,28 @@ function computeFnSubQty(fnData, capBySub, imsInventory, flowerPatterns, trussIn
   });
   return qty;
 }
+// Resolve a venue's own configured Transport & Power rate (trVenues, Admin -> Settings ->
+// Transport & Power) by name — trying a direct match first, then the venue's PARENT (via
+// venueParents, e.g. a sub-venue like "Aura" -> its property "Exotica") if the venue itself has no
+// row of its own. Every one of the (previously five, independent) `trVenues.find(v => v.name...
+// === venueName...)` call sites only ever tried the direct match: a sub-venue with no trip-rate row
+// of its own — the normal case, since a rate is configured once per PROPERTY, not once per hall
+// inside it — fell all the way through to "New venue" (a manual trip-rate placeholder) instead of
+// the property's own configured rate, silently mispricing trucking/genset for every booking at that
+// sub-venue. Centralized here instead of duplicating the fallback at every call site, the same
+// reasoning as computeTruckItems/computeFnSubQty existing as shared functions rather than N inline
+// copies.
+function resolveTrVenue(trVenues, venueName, venueParents) {
+  const norm = (s) => String(s || "").toLowerCase().trim();
+  const vn = norm(venueName);
+  if (!vn) return null;
+  const direct = (trVenues || []).find((v) => norm(v.name) === vn);
+  if (direct) return direct;
+  const parent = venueParents?.[venueName];
+  const pn = norm(parent);
+  if (pn && pn !== vn) return (trVenues || []).find((v) => norm(v.name) === pn) || null;
+  return null;
+}
 function initZP(zk, size) {
   const p = ZONE_PRESETS[zk]?.[size]; const zm = ZONE_META[zk]; if (!p || !zm) return null;
   const dims = {}; zm.dimFields.forEach(f => { dims[f] = p[f] || 0; });
@@ -2981,10 +3003,24 @@ export default function StudioApp() {
   const saveVenues = useCallback(async (ih, od) => { setCustomInhouse(ih); setCustomOutdoor(od); await reliableSave(STORAGE_KEY + "-venues", JSON.stringify({ inhouse: ih, outdoor: od, properties: customPropertiesRef.current || [] }), "Venues"); }, []);
   // Sub-venue → parent map (Aura → Exotica) so fixed-venue rules match across sub-venues.
   // Persisted to settings so IMS reads it too.
-  const venueParents = useMemo(() => ({
-    ...Object.fromEntries((customInhouse || []).filter(v => v.name).map(v => [v.name, v.parent || v.name])),
-    ...Object.fromEntries((customOutdoor || []).filter(v => v.name).map(v => [v.name, v.name])),
-  }), [customInhouse, customOutdoor]);
+  //
+  // Resolves through propertyId FIRST — the real, stable relationship a sub-venue is created with
+  // (VenuesEditor.jsx's addSubVenue: { ...propertyId, parent: property?.name || "" }) — not the
+  // `.parent` name string alone. `.parent` is only a SNAPSHOT taken once at add-time: if the parent
+  // property is later renamed, every sub-venue's own `.parent` field stays stale forever (nothing
+  // re-derives it), while propertyId still points at the right property row and always resolves to
+  // its CURRENT name. Falling back to the stale `.parent` (then to the sub-venue's own name) only
+  // covers a sub-venue whose property has since been deleted, or one from before propertyId existed.
+  const venueParents = useMemo(() => {
+    const propNameById = new Map((customProperties || []).map((p) => [p.id, p.name]));
+    const out = {};
+    (customInhouse || []).forEach((v) => {
+      if (!v.name) return;
+      out[v.name] = (v.propertyId && propNameById.get(v.propertyId)) || v.parent || v.name;
+    });
+    (customOutdoor || []).forEach((v) => { if (v.name) out[v.name] = v.name; });
+    return out;
+  }, [customInhouse, customOutdoor, customProperties]);
   useEffect(() => { if (!customInhouse.length) return; reliableSave("venueParents", JSON.stringify(venueParents), "Venue parents").catch(() => {}); }, [venueParents]);
   // The Rate Card admin editor (Studio's RateCard.jsx, IMS's RateCardPanel.jsx) is gone — nobody
   // edits `rate_card` by hand anymore, recipes are IMS-native (flowerPatterns), and every element
@@ -3883,9 +3919,18 @@ export default function StudioApp() {
   // has been opened once for this client; studioFloralData is fetched unconditionally on mount
   // and carries the same fixedVenues/fixedVenueSubcatDiscount, so a zone marked ♻️ Repeat prices
   // correctly here even before Deal Check has ever run.
+  //
+  // venueParents specifically: the LOCAL memo (always live, recomputed from customInhouse/
+  // customOutdoor/customProperties, which load at boot independent of Deal Check) now comes FIRST,
+  // ahead of dealCheckData's own copy — the reverse of every other field here. dealCheckData.
+  // venueParents is a snapshot taken whenever Deal Check last ran; a sub-venue added, or a property
+  // renamed, since then would silently keep resolving to the stale mapping for the rest of the
+  // session otherwise, the same "Deal-Check-gated" trap already fixed for agencyFeePct/trussInv —
+  // this one just runs the other direction (local-over-stale, not local-as-fallback) because the
+  // local computation is provably never staler than dealCheckData's own copy of the same data.
   const fvCfgForRepeat = useMemo(() => ({
     fixedVenues: (dealCheckData?.fixedVenues?.length ? dealCheckData.fixedVenues : studioFloralData?.fixedVenues) || [],
-    venueParents: dealCheckData?.venueParents || venueParents || {},
+    venueParents: venueParents || dealCheckData?.venueParents || {},
     fixedVenueSubcatDiscount: (dealCheckData?.fixedVenueSubcatDiscount && Object.keys(dealCheckData.fixedVenueSubcatDiscount).length ? dealCheckData.fixedVenueSubcatDiscount : studioFloralData?.fixedVenueSubcatDiscount) || {},
   }), [dealCheckData, studioFloralData, venueParents]);
   // Repeat-billed line cost for `qty` units of `item` at `unitRate` — ports Deal Check's own
@@ -4493,7 +4538,7 @@ export default function StudioApp() {
       });
     });
     const venueName = ev.venue || "";
-    const match = trVenues.find(v => v.name.toLowerCase() === venueName.toLowerCase());
+    const match = resolveTrVenue(trVenues, venueName, venueParents);
     const tripRate = match ? match.rate : 0;
     let truckFrac = 0;
     Object.entries(itemAgg).forEach(([tcId, qty]) => { const tc = truckCap.find(t => t.id === tcId); if (!tc || !tc.perTruck) return; truckFrac += qty / tc.perTruck; });
@@ -4510,7 +4555,7 @@ export default function StudioApp() {
     // behaviour — this is a Browse-card estimate, not the live deal's own priced total).
     const gensetCost = resolveGensetPlan(match, null, genset62, gensetRate, gensetRate62).gensetCost;
     return decorCost + truckTotal + gensetCost;
-  }, [ytVideoTags, libItems, rcItems, getElPrice, resolveRcRate, getElPriceFromInventory, getElPriceFromPattern, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, genset62, structRates]);
+  }, [ytVideoTags, libItems, rcItems, getElPrice, resolveRcRate, getElPriceFromInventory, getElPriceFromPattern, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, genset62, structRates, venueParents]);
 
   const fullCostMap = useMemo(() => {
     const m = {};
@@ -4568,7 +4613,7 @@ export default function StudioApp() {
 
   const transportCalc = useMemo(() => {
     if (!venue) return { trucks: 0, tripRate: 0, total: 0, isNew: true, tier: "new", tierLabel: "", breakdown: [], floralTrucks: 0, bufferTrucks: 0, itemTrucks: 0 };
-    const match = trVenues.find(v => v.name.toLowerCase() === venue.toLowerCase());
+    const match = resolveTrVenue(trVenues, venue, venueParents);
     const isNew = !match;
     const tripRate = match ? match.rate : customTripRate;
     const tierId = match ? match.tier : "new";
@@ -4612,13 +4657,13 @@ export default function StudioApp() {
     const truckTotal = rawTruckTotal * clientScale;
     const total = truckTotal + plan.gensetCost;
     return { trucks: allTrucks, tripRate, total, isNew, tier: tierId, tierLabel, breakdown, floralTrucks, bufferTrucks: bufTrucks, itemTrucks, totalFloralCost, gensets: plan.genset125, venueGensets: plan.venueGenset125, venueGenset62: plan.venueGenset62, gensetCost: plan.gensetCost, gensetRate, gensetRate62, genset62: plan.genset62, truckTotal, clientScale };
-  }, [venue, customTripRate, customGensets, gensetRate, gensetRate62, genset62, trVenues, zoneElements, enabledEls, rcItems, truckCap, floralPerTruck, bufferTiers, totalCost, zoneConfig, imsInventory, dealCheckData, studioFloralData, floralOverrides, floralRatio, activeFnIdx, clientDate, fvCfgForRepeat]);
+  }, [venue, customTripRate, customGensets, gensetRate, gensetRate62, genset62, trVenues, zoneElements, enabledEls, rcItems, truckCap, floralPerTruck, bufferTiers, totalCost, zoneConfig, imsInventory, dealCheckData, studioFloralData, floralOverrides, floralRatio, activeFnIdx, clientDate, fvCfgForRepeat, venueParents]);
 
   const grandTotal = useMemo(() => {
     const base = totalCost() + transportCalc.total;
     // Fixed-venue discount — same as eventGrandTotal's, just for this one active function/venue.
     // Same studioFloralData/venueParents fallback as eventGrandTotal, for the same reason.
-    const fvCfg = { fixedVenues: (dealCheckData?.fixedVenues?.length ? dealCheckData.fixedVenues : studioFloralData?.fixedVenues) || [], venueParents: dealCheckData?.venueParents || venueParents || {} };
+    const fvCfg = { fixedVenues: (dealCheckData?.fixedVenues?.length ? dealCheckData.fixedVenues : studioFloralData?.fixedVenues) || [], venueParents: venueParents || dealCheckData?.venueParents || {} };
     const discounted = Math.max(0, base - fixedVenueDealDiscount(fvCfg, [{ fnVenue: venue }], () => base, base));
     // Agency fee (Admin → Settings, default 20%) — this is Build's own live "page total" for the
     // active function, the number a salesperson watches while building. It has to carry the fee too,
@@ -4709,7 +4754,7 @@ export default function StudioApp() {
     });
     let transport = 0;
     if (fVenue && decor > 0) {
-      const match = trVenues.find(v => v.name.toLowerCase() === fVenue.toLowerCase());
+      const match = resolveTrVenue(trVenues, fVenue, venueParents);
       const fCustomTripRate = typeof fnData.customTripRate === "number" ? fnData.customTripRate : 0;
       const fCustomGensets = typeof fnData.customGensets === "number" ? fnData.customGensets : null;
       const fCustomGenset62 = typeof fnData.genset62 === "number" ? fnData.genset62 : null;
@@ -4792,7 +4837,7 @@ export default function StudioApp() {
       transport = truckTotal + gensetCost;
     }
     return { decor, transport, grand: decor + transport };
-  }, [calcElsCostForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, dcCustomItems, structRates, blocksByDate, imsInventory, dealCheckData, studioFloralData, fvCfgForRepeat]);
+  }, [calcElsCostForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, dcCustomItems, structRates, blocksByDate, imsInventory, dealCheckData, studioFloralData, fvCfgForRepeat, venueParents]);
 
   const calcFnFloralSourcingCost = useCallback((fn) => {
     // fp/mc/the two BPK figures now also drive the truck-count wiring below (real-flower kg and
@@ -5110,7 +5155,7 @@ export default function StudioApp() {
     // Falls back to studioFloralData/local venueParents (both load on mount, no Deal Check needed)
     // before dealCheckData exists — see refreshStudioFloralData's agencyFeePct comment for why this
     // matters: without the fallback, this total was visibly wrong until Deal Check was first opened.
-    const fvCfg = { fixedVenues: (dealCheckData?.fixedVenues?.length ? dealCheckData.fixedVenues : studioFloralData?.fixedVenues) || [], venueParents: dealCheckData?.venueParents || venueParents || {} };
+    const fvCfg = { fixedVenues: (dealCheckData?.fixedVenues?.length ? dealCheckData.fixedVenues : studioFloralData?.fixedVenues) || [], venueParents: venueParents || dealCheckData?.venueParents || {} };
     const discounted = Math.max(0, base - fixedVenueDealDiscount(fvCfg, all, (fn) => calcFunctionCost(fn).grand, base));
     // Agency fee — flat % of the (post-discount) deal, billed to the guest on top of everything else
     // (Admin → Settings, default 20%). This is the number booking confirmation, Summary's hero,
@@ -5196,7 +5241,7 @@ export default function StudioApp() {
     let decorTotal = 0;
     zones.forEach(z => { decorTotal += z.tot; });
     if (fVenue && decorTotal > 0) {
-      const match = trVenues.find(v => v.name.toLowerCase() === fVenue.toLowerCase());
+      const match = resolveTrVenue(trVenues, fVenue, venueParents);
       const isNew = !match;
       const fCustomTripRate = typeof fnData.customTripRate === "number" ? fnData.customTripRate : 0;
       const fCustomGensets = typeof fnData.customGensets === "number" ? fnData.customGensets : null;
@@ -5370,7 +5415,7 @@ export default function StudioApp() {
         clientScale, truckTotalClient, totalClient: transportTotalClient, tripRateClient: tripRate * clientScale };
     }
     return { zones, transport, decorTotal, transportTotal, transportTotalClient, grand: decorTotal + transportTotal, grandClient: decorTotal + transportTotalClient };
-  }, [getElPriceForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, gensetCostRate, gensetCostRate62, zoneLabelsD, zoneKeys, dcCustomItems, structRates, blocksByDate, imsInventory, dealCheckData, studioFloralData, collectAllFunctionData, fvCfgForRepeat, calcFnFloralSourcingCost]);
+  }, [getElPriceForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, gensetCostRate, gensetCostRate62, zoneLabelsD, zoneKeys, dcCustomItems, structRates, blocksByDate, imsInventory, dealCheckData, studioFloralData, collectAllFunctionData, fvCfgForRepeat, calcFnFloralSourcingCost, venueParents]);
 
   const cat = getCat(grandTotal);
 
@@ -8698,7 +8743,7 @@ export default function StudioApp() {
       return da.localeCompare(db);
     });
     // Same studioFloralData/venueParents fallback as eventGrandTotal/grandTotal, for the same reason.
-    const fvCfg = { fixedVenues: (dealCheckData?.fixedVenues?.length ? dealCheckData.fixedVenues : studioFloralData?.fixedVenues) || [], venueParents: dealCheckData?.venueParents || venueParents || {} };
+    const fvCfg = { fixedVenues: (dealCheckData?.fixedVenues?.length ? dealCheckData.fixedVenues : studioFloralData?.fixedVenues) || [], venueParents: venueParents || dealCheckData?.venueParents || {} };
     const functions = sorted.map(fnDataRaw => {
       const fnData = enrichFromSession(fnDataRaw);
       const zones = buildZonesForFn(fnData);
@@ -9613,7 +9658,7 @@ export default function StudioApp() {
         zonesProcessed += 1;
         setDcGenStatus(`Matching zone "${zoneKey}" (fn ${fnIdx + 1})…`);
         const venueName = fn.fnVenue || "";
-        const fvCfg = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || venueParents };
+        const fvCfg = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: venueParents || dealCheckData?.venueParents || {} };
         // Match one element spec → its card. The AI vision call dominates wall-clock, so these run in
         // parallel below (bounded) instead of one-at-a-time — the main "Generate is slow" fix.
         let zoneAborted = false;
