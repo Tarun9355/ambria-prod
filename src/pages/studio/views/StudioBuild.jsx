@@ -3176,13 +3176,20 @@ undefined
                   cursor:"pointer",position:"relative",background:isSelected?(isDark?"#0D2818":"#ECFDF5"):cardBg,
                   boxShadow:isSelected?"0 2px 12px rgba(5,150,105,0.2)":"none",
                   transition:"all 0.15s"}}>
-                  {/* Opens on this photo and hands the lightbox its own set — the group if this is
-                      a grouped photo, the rest of the zone otherwise — so the arrows stay inside
-                      what you were looking at and the counter reads against it. */}
+                  {/* Opens on this photo and hands the lightbox its own set — the live tick
+                      selection if this photo is one of the currently-ticked group (even before
+                      it's been pinned), else the saved pinned group if it's already grouped, else
+                      the rest of the zone — so the arrows stay inside what you were looking at and
+                      the counter reads against it. Ticks (grpPicked) used to only scope the
+                      lightbox once "Pin" had been clicked (ph.grouped) — before that, opening any
+                      of the ticked photos fell through to lbRest, which is the WHOLE unpinned zone,
+                      so arrowing through "the 4 I selected" walked every photo instead. */}
                   <div style={{position:"relative",cursor:"zoom-in"}} onClick={(e)=>{
                     e.stopPropagation();
                     if(phSwipedJustNow())return;
-                    const set = ph.grouped ? lbGrouped : lbRest;
+                    const isTicked = grpOn && ph.isLibrary && ph.eventId && grpPicked.has(ph.eventId);
+                    const tickedSet = isTicked ? matchedPhotos.filter(p => p.isLibrary && p.eventId && grpPicked.has(p.eventId)) : null;
+                    const set = (tickedSet && tickedSet.length) ? tickedSet : (ph.grouped ? lbGrouped : lbRest);
                     const at = set.indexOf(ph);
                     setLightbox({idx: at < 0 ? 0 : at, items: set.map(p=>({src:p.src,name:p.eventName}))});
                   }}>
