@@ -3960,14 +3960,15 @@ export default function StudioApp() {
     venueParents: venueParents || dealCheckData?.venueParents || {},
     fixedVenueSubcatDiscount: (dealCheckData?.fixedVenueSubcatDiscount && Object.keys(dealCheckData.fixedVenueSubcatDiscount).length ? dealCheckData.fixedVenueSubcatDiscount : studioFloralData?.fixedVenueSubcatDiscount) || {},
   }), [dealCheckData, studioFloralData, venueParents]);
-  // Owner ask: a discrete per-deal toggle (Build's reference banner, beside Upload) that keeps every
-  // Fixed-Venue/Repeat discount fully applied in Deal Check (Ambria's own internal cost/ops side —
-  // it never reads any of the functions below, it has its own separate repeatAdjustedRental/
-  // dcCostRollup) while suppressing it from the GUEST-facing numbers only — Build's live canvas,
-  // Summary, and every export. zc.repeat itself is untouched by this (the ✨Fresh/♻️Repeat toggle
-  // stays available and still flows to Deal Check exactly as before) — only what that flag's
-  // discount actually PRICES for the client is hidden.
-  const hideDiscountFromClient = !!clientLedger.find(c => c.id === activeClientId)?.hideDiscountFromClient;
+  // Owner ask: a discrete per-deal toggle (Build's reference banner, beside Upload) — OFF (hidden)
+  // BY DEFAULT: every Fixed-Venue/Repeat discount prices at full rate for the GUEST-facing numbers
+  // — Build's live canvas, Summary, and every export — until the checkbox is explicitly ticked to
+  // client_ledger.applyDiscountToClient. Deal Check (Ambria's own internal cost/ops side — it never
+  // reads any of the functions below, it has its own separate repeatAdjustedRental/dcCostRollup)
+  // always applies the real discount regardless of this checkbox. zc.repeat itself is untouched
+  // either way (the ✨Fresh/♻️Repeat toggle stays available and still flows to Deal Check as before)
+  // — only what that flag PRICES for the client depends on this.
+  const hideDiscountFromClient = !clientLedger.find(c => c.id === activeClientId)?.applyDiscountToClient;
   const venueTrussFor = (venueName) => hideDiscountFromClient ? undefined : fixedVenueFor(fvCfgForRepeat, venueName)?.truss;
   // Owner ask: a second discrete per-deal lever, alongside hideDiscountFromClient — the small dot on
   // each Photo Filters section (Build's left rail) doubles as a markup tier picker when clicked

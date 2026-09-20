@@ -2592,16 +2592,17 @@ undefined
         the reference, so it does not belong inside a card that describes the reference — and a
         control that stays put is one people can find without looking. */}
     <div style={{flexShrink:0, display:"flex", alignItems:"center", justifyContent:"flex-end", gap:8}}>
-      {/* Discrete, deliberately unlabeled — see hideDiscountFromClient (StudioApp.jsx). Ticked, every
-          Fixed-Venue/Repeat discount stays fully applied in Deal Check (unaffected — it has its own
-          separate cost engine) while every guest-facing number here in Build, Summary, and every
-          export prices at full rate instead. */}
-      <label title="Hide fixed-venue / repeat discount from this customer's build (Deal Check still applies it)"
-        style={{display:"inline-flex",alignItems:"center",opacity:hideDiscountFromClient?0.85:0.25,cursor:activeClientId?"pointer":"not-allowed"}}>
-        <input type="checkbox" checked={hideDiscountFromClient} disabled={!activeClientId}
+      {/* Discrete, deliberately unlabeled — see hideDiscountFromClient (StudioApp.jsx). OFF by
+          default (unticked = hidden): every guest-facing number here in Build, Summary, and every
+          export prices at full rate. Ticking it applies the Fixed-Venue/Repeat discount to the
+          guest build too. Deal Check is unaffected either way — it has its own separate cost engine
+          and always applies the real discount regardless of this checkbox. */}
+      <label title="Apply fixed-venue / repeat discount to this customer's build too (off by default — Deal Check always applies it)"
+        style={{display:"inline-flex",alignItems:"center",opacity:!hideDiscountFromClient?0.85:0.25,cursor:activeClientId?"pointer":"not-allowed"}}>
+        <input type="checkbox" checked={!hideDiscountFromClient} disabled={!activeClientId}
           onChange={e=>{
             const v=e.target.checked;
-            saveClientLedger(clientLedger.map(c=>c.id===activeClientId?{...c,hideDiscountFromClient:v}:c));
+            saveClientLedger(clientLedger.map(c=>c.id===activeClientId?{...c,applyDiscountToClient:v}:c));
           }}
           style={{width:11,height:11,cursor:activeClientId?"pointer":"not-allowed",accentColor:accent}}/>
       </label>
