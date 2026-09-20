@@ -1585,10 +1585,16 @@ export default function StudioBuild({ ctx }) {
           No `action` either — Hide moved OUT of this header to the top of the rail, where Browse
           keeps it. It closes the whole panel, not the card it was sitting in, and a control belongs
           on the thing it acts on. */}
+      // Discreet per-deal markup lever, piggybacking on each section's own lead dot (see the Section
+      // component's onDotClick) — Venue=1x, Event type=1.1x, Venue type=1.2x, and so on down the
+      // list by 0.1x per section. Guest-facing element pricing only (getElPrice/getElPriceForFn in
+      // StudioApp.jsx) — unrelated to what these dots normally do (a filter's active-selection tint).
+      const curMultiplier = Number(clientLedger.find(c=>c.id===activeClientId)?.guestPriceMultiplier)||1;
       return <FPanel title="Filters" total={total} onClear={clearAll}
         scroll={railMaxH}>
         {groups.map((g,gi)=>{
           const sel=zpFilters[g.key]||[];
+          const gMult=Math.round((1+0.1*gi)*10)/10;
           // Groups with long values (palette, venue names) get fewer columns and left-aligned rows.
           const align = g.cols === 1 ? "start" : undefined;
           // Palette and Venue are the two long, hunt-through lists, so both get a search box. The
@@ -1616,7 +1622,10 @@ export default function StudioBuild({ ctx }) {
           const selectedHidden = sel.filter(v => all.includes(v) && !shown.includes(v));
           const optPill = (v) => <FPill key={v} on={sel.includes(v)} align={align} onClick={()=>zpToggleFilter(g.key,v)}>{optLabel(v)}</FPill>;
           return <FSection key={g.key} id={g.key} label={g.label} count={sel.length} last={gi===groups.length-1}
-            cols={g.cols || 3} open={!!zpOpen[g.key]} onToggle={()=>zpToggleOpen(g.key)}>
+            cols={g.cols || 3} open={!!zpOpen[g.key]} onToggle={()=>zpToggleOpen(g.key)}
+            dotActive={Math.abs(curMultiplier-gMult)<0.01}
+            dotTitle={`Guest price ${gMult}x`}
+            onDotClick={activeClientId?()=>saveClientLedger(clientLedger.map(c=>c.id===activeClientId?{...c,guestPriceMultiplier:gMult}:c)):undefined}>
             {/* Inhouse/Outside — narrows which venue names are offered below, same chips + same
                 reset-on-switch behaviour as Browse's Venue filter (clears the name pick, the search
                 and "see all" so nothing from the old group lingers hidden). */}

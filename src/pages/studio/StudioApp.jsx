@@ -3969,6 +3969,17 @@ export default function StudioApp() {
   // discount actually PRICES for the client is hidden.
   const hideDiscountFromClient = !!clientLedger.find(c => c.id === activeClientId)?.hideDiscountFromClient;
   const venueTrussFor = (venueName) => hideDiscountFromClient ? undefined : fixedVenueFor(fvCfgForRepeat, venueName)?.truss;
+  // Owner ask: a second discrete per-deal lever, alongside hideDiscountFromClient — the small dot on
+  // each Photo Filters section (Build's left rail) doubles as a markup tier picker when clicked
+  // directly: Venue=1x, Event type=1.1x, Venue type=1.2x, Design style=1.3x, Color palette=1.4x,
+  // Day/Night=1.5x, Tier=1.6x (client_ledger.guestPriceMultiplier — a plain float, defaults to 1).
+  // Scoped to guest-facing ELEMENT pricing only (getElPrice/getElPriceForFn below, the "menu" list of
+  // props/items) — NOT structural costs (truss/masking/platform/carpet/print), and NOT Deal Check,
+  // which never calls either of those two functions.
+  const guestPriceMultiplier = (() => {
+    const m = Number(clientLedger.find(c => c.id === activeClientId)?.guestPriceMultiplier);
+    return (m >= 1 && m <= 2) ? m : 1;
+  })();
   // Repeat-billed line cost for `qty` units of `item` at `unitRate` — ports Deal Check's own
   // repeatAdjustedRental formula (DealCheckOverlay.jsx) into Build's pricing, so a zone marked
   // ♻️ Repeat actually prices lower here too, matching what the Repeat toggle's own tooltip
@@ -4415,7 +4426,7 @@ export default function StudioApp() {
   // already resolves that — function 0 or whichever extraFunctions entry is active) — every
   // existing caller of getElPrice/calcElsCost prices the active function's live canvas, so this
   // default is always correct for them without having to pass it explicitly at each call site.
-  const getElPrice = useCallback((el, zc, opts, venueName) => {
+  const getElPriceRaw = useCallback((el, zc, opts, venueName) => {
     if (el.invId) return getElPriceFromInventory(el, { ...opts, zc, venueName: venueName ?? activeFnMeta.venue }); // IMS inventory-sourced element — Rate Card never consulted
     if (el.mandiId) return getElPriceFromMandi(el); // raw mandi commodity (e.g. Loose Petals), no recipe/inventory
     if (el.patternId) return getElPriceFromPattern(el); // pure flower-recipe element, no inventory item
@@ -4455,6 +4466,13 @@ export default function StudioApp() {
     }
     return { rc, unitPrice: up, lineCost: (el.qty || 0) * up, area: 0, warning: null, isFloralBlend: isFloral, realPct };
   }, [rcItems, getFloralMode, rcFloralModeByKey, floralRatio, floralArtUnitRate, patternExtra, resolveRcRate, getElPriceFromInventory, getElPriceFromPattern, getElPriceFromMandi, activeFnMeta]);
+  // guestPriceMultiplier applied once, here, on top of whichever branch above priced the element —
+  // scales unitPrice/lineCost only, leaving area/warning/availability/realPct untouched.
+  const getElPrice = useCallback((el, zc, opts, venueName) => {
+    const r = getElPriceRaw(el, zc, opts, venueName);
+    if (guestPriceMultiplier === 1) return r;
+    return { ...r, unitPrice: r.unitPrice * guestPriceMultiplier, lineCost: r.lineCost * guestPriceMultiplier };
+  }, [getElPriceRaw, guestPriceMultiplier]);
 
   const calcElsCost = useCallback((elements, withFloral, zc, opts, venueName) => {
     return (elements || []).reduce((s, el) => {
@@ -4475,7 +4493,7 @@ export default function StudioApp() {
   // function snapshot" — callers iterate their OWN fns/fnData with its own fnVenue, so there is no
   // single correct default the way activeFnMeta.venue is for the always-active-function getElPrice.
   // Omit it and a Repeat zone here simply prices at full rate, same as before this existed.
-  const getElPriceForFn = useCallback((el, zc, fnRatio, checkAvail, venueName, blocksForDate) => {
+  const getElPriceForFnRaw = useCallback((el, zc, fnRatio, checkAvail, venueName, blocksForDate) => {
     if (el.invId) return getElPriceFromInventory(el, { checkAvailability: !!checkAvail, zc, venueName, blocksForDate }); // IMS inventory-sourced element — Rate Card never consulted
     if (el.mandiId) return getElPriceFromMandi(el); // raw mandi commodity (e.g. Loose Petals), no recipe/inventory
     if (el.patternId) return getElPriceFromPattern(el); // pure flower-recipe element, no inventory item
@@ -4509,6 +4527,12 @@ export default function StudioApp() {
     }
     return { rc, unitPrice: up, lineCost: (el.qty || 0) * up };
   }, [rcItems, getFloralMode, rcFloralModeByKey, floralArtUnitRate, patternExtra, resolveRcRate, getElPriceFromInventory, getElPriceFromPattern, getElPriceFromMandi]);
+  // Same guestPriceMultiplier fold as getElPrice, for the export/collectAllFunctionData path.
+  const getElPriceForFn = useCallback((el, zc, fnRatio, checkAvail, venueName, blocksForDate) => {
+    const r = getElPriceForFnRaw(el, zc, fnRatio, checkAvail, venueName, blocksForDate);
+    if (guestPriceMultiplier === 1) return r;
+    return { ...r, unitPrice: r.unitPrice * guestPriceMultiplier, lineCost: r.lineCost * guestPriceMultiplier };
+  }, [getElPriceForFnRaw, guestPriceMultiplier]);
 
   const calcElsCostForFn = useCallback((elements, zc, fnRatio, checkAvail, venueName, blocksForDate) => {
     return (elements || []).reduce((s, el) => s + getElPriceForFn(el, zc, fnRatio, checkAvail, venueName, blocksForDate).lineCost, 0);
