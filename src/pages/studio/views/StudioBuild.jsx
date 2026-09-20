@@ -623,7 +623,7 @@ export default function StudioBuild({ ctx }) {
     // zone photo groups (hand-picked leading photos, keyed by zone + function)
     zoneGroups = {}, writeZoneGroup,
     // date demand
-    dateTypes, clientLedger, activeClientId,
+    dateTypes, clientLedger, activeClientId, saveClientLedger, hideDiscountFromClient,
     // build canvas
     setShowCosts, grandTotal, totalCost, transportCalc, pricingReady,
     savedInsps, setStep, setPreviewImg,
@@ -794,7 +794,7 @@ export default function StudioBuild({ ctx }) {
   const sectionCost = (k, id) => {
     if (!showCosts) return 0;
     if (id === "elements") return calcElsCost(zoneElements[k], true, zoneConfig[k], {checkAvailability:true});
-    const sc = zoneConfig[k] ? calcStructCost(k, zoneConfig[k], structRates, dealCheckData?.trussInv, fixedVenueHere?.truss) : null;
+    const sc = zoneConfig[k] ? calcStructCost(k, zoneConfig[k], structRates, dealCheckData?.trussInv, fixedVenueTrussForCalc) : null;
     if (id === "truss") return sc ? sc.truss + sc.masking + sc.arches + sc.pillars + sc.glass : 0;
     if (id === "platform") return sc ? sc.platform + sc.carpet : 0;
     return sc ? sc.print : 0; // calcStructCost's own print total — same figure zoneTotal() now folds in below
@@ -857,7 +857,7 @@ export default function StudioBuild({ ctx }) {
   // (shortfall-adjusted), so "By zone" + "Zones subtotal" quietly failed to add up to the number
   // above them. Same reasoning as calcFunctionCost's — this is what makes Build's own totals agree
   // with themselves, and with Summary/Deal Check's.
-  const zoneTotal = (k) => calcElsCost(zoneElements[k],true,zoneConfig[k],{checkAvailability:true})+(zoneConfig[k]?calcStructCost(k,zoneConfig[k],structRates,dealCheckData?.trussInv,fixedVenueHere?.truss).total:0)+dcCustomItems.filter(c=>c.fnIdx===(activeFnIdx||0)&&c.zoneKey===k).reduce((acc,c)=>acc+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0);
+  const zoneTotal = (k) => calcElsCost(zoneElements[k],true,zoneConfig[k],{checkAvailability:true})+(zoneConfig[k]?calcStructCost(k,zoneConfig[k],structRates,dealCheckData?.trussInv,fixedVenueTrussForCalc).total:0)+dcCustomItems.filter(c=>c.fnIdx===(activeFnIdx||0)&&c.zoneKey===k).reduce((acc,c)=>acc+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0);
   void textSRaw;
 
   // Photo-filter pill. Was 9px in a 2px-tall chip with `textS` (~3.1:1) when inactive — too small
@@ -1225,6 +1225,11 @@ export default function StudioBuild({ ctx }) {
     venueParents: dealCheckData?.venueParents || venueParents || {},
   };
   const fixedVenueHere = fixedVenueFor(_fvCfg, activeFnMeta?.venue || venue);
+  // The ✨Fresh/♻️Repeat toggle above stays driven by fixedVenueHere as-is — zc.repeat still needs to
+  // flow to Deal Check exactly as before regardless of the hide-discount checkbox. Only what that
+  // flag's truss discount actually PRICES for the client (every calcStructCost call below) is
+  // suppressed — mirrors StudioApp.jsx's venueTrussFor for the same reason (see hideDiscountFromClient there).
+  const fixedVenueTrussForCalc = hideDiscountFromClient ? undefined : fixedVenueHere?.truss;
 
   // Live soft-blocking: how much of an inventory item is left for THIS event, after
   // netting out both other events' commitments (getStudioAvailable) and whatever
@@ -2565,7 +2570,20 @@ undefined
         One position, always. Uploading a client photo is an action on the BUILD, not a property of
         the reference, so it does not belong inside a card that describes the reference — and a
         control that stays put is one people can find without looking. */}
-    <div style={{flexShrink:0, display:"flex", justifyContent:"flex-end"}}>
+    <div style={{flexShrink:0, display:"flex", alignItems:"center", justifyContent:"flex-end", gap:8}}>
+      {/* Discrete, deliberately unlabeled — see hideDiscountFromClient (StudioApp.jsx). Ticked, every
+          Fixed-Venue/Repeat discount stays fully applied in Deal Check (unaffected — it has its own
+          separate cost engine) while every guest-facing number here in Build, Summary, and every
+          export prices at full rate instead. */}
+      <label title="Hide fixed-venue / repeat discount from this customer's build (Deal Check still applies it)"
+        style={{display:"inline-flex",alignItems:"center",opacity:hideDiscountFromClient?0.85:0.25,cursor:activeClientId?"pointer":"not-allowed"}}>
+        <input type="checkbox" checked={hideDiscountFromClient} disabled={!activeClientId}
+          onChange={e=>{
+            const v=e.target.checked;
+            saveClientLedger(clientLedger.map(c=>c.id===activeClientId?{...c,hideDiscountFromClient:v}:c));
+          }}
+          style={{width:11,height:11,cursor:activeClientId?"pointer":"not-allowed",accentColor:accent}}/>
+      </label>
       {BANNER_UPLOAD}
     </div>
             </div>{/* .bd-rail-scroll */}
@@ -3893,7 +3911,7 @@ undefined
               create the entry on the first keystroke — calcStructCost already returns all-zero for
               an untouched config, and every field reads through `|| {}`. */}
           {(zoneSection[k]==="truss"||zoneSection[k]==="platform")&&(()=>{
-            const zm=zoneMeta[k],zc=zoneConfig[k]||{},st=calcStructCost(k,zc,structRates,dealCheckData?.trussInv,fixedVenueHere?.truss);
+            const zm=zoneMeta[k],zc=zoneConfig[k]||{},st=calcStructCost(k,zc,structRates,dealCheckData?.trussInv,fixedVenueTrussForCalc);
             const dl={L:"Depth",W:"Width",H:"Height",S:"Size"};
             const sZ=u=>{setActiveZones([]);setZoneConfig(p=>({...p,[k]:{...p[k],...u}}));};
             const sD=(d,v)=>{setActiveZones([]);setZoneConfig(p=>{const cur=p[k]||{};const dims={...(cur.dims||{}),[d]:parseFloat(v)||0};
@@ -3922,7 +3940,7 @@ undefined
               {zoneSection[k]==="truss"&&<TrussStack S={S} customCeilingField={customCeilingField} k={k} zc={zc} zm={zm} st={st} sZ={sZ} sD={sD} fmt={fmt} showCosts={showCosts}
                 isDark={isDark} border={border} textP={textP} textS={textS} accent={accent}
                 customMaskingField={customMaskingField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates}
-                trussInv={dealCheckData?.trussInv} venueTruss={fixedVenueHere?.truss} />}
+                trussInv={dealCheckData?.trussInv} venueTruss={fixedVenueTrussForCalc} />}
               {/* ── PLATFORM + CARPET → then floor dims ── */}
               {zoneSection[k]==="platform"&&<FloorStack S={S} zc={zc} zm={zm} st={st} sZ={sZ} sFD={sFD} fd={fd} fmt={fmt} showCosts={showCosts}
                 isDark={isDark} border={border} accent={accent} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} />}

@@ -3960,6 +3960,15 @@ export default function StudioApp() {
     venueParents: venueParents || dealCheckData?.venueParents || {},
     fixedVenueSubcatDiscount: (dealCheckData?.fixedVenueSubcatDiscount && Object.keys(dealCheckData.fixedVenueSubcatDiscount).length ? dealCheckData.fixedVenueSubcatDiscount : studioFloralData?.fixedVenueSubcatDiscount) || {},
   }), [dealCheckData, studioFloralData, venueParents]);
+  // Owner ask: a discrete per-deal toggle (Build's reference banner, beside Upload) that keeps every
+  // Fixed-Venue/Repeat discount fully applied in Deal Check (Ambria's own internal cost/ops side —
+  // it never reads any of the functions below, it has its own separate repeatAdjustedRental/
+  // dcCostRollup) while suppressing it from the GUEST-facing numbers only — Build's live canvas,
+  // Summary, and every export. zc.repeat itself is untouched by this (the ✨Fresh/♻️Repeat toggle
+  // stays available and still flows to Deal Check exactly as before) — only what that flag's
+  // discount actually PRICES for the client is hidden.
+  const hideDiscountFromClient = !!clientLedger.find(c => c.id === activeClientId)?.hideDiscountFromClient;
+  const venueTrussFor = (venueName) => hideDiscountFromClient ? undefined : fixedVenueFor(fvCfgForRepeat, venueName)?.truss;
   // Repeat-billed line cost for `qty` units of `item` at `unitRate` — ports Deal Check's own
   // repeatAdjustedRental formula (DealCheckOverlay.jsx) into Build's pricing, so a zone marked
   // ♻️ Repeat actually prices lower here too, matching what the Repeat toggle's own tooltip
@@ -3985,6 +3994,7 @@ export default function StudioApp() {
   const repeatAdjustedLineCost = (item, qty, unitRate, zc, venueName, kitOverrides) => {
     const full = qty * unitRate;
     if (!item) return full;
+    if (hideDiscountFromClient) return full; // see hideDiscountFromClient above — guest-facing only
     const isKit = Array.isArray(item.subItems) && item.subItems.length > 0;
     if (isKit) {
       // A kit can have some of its OWN pieces registered standing at a venue and others not — e.g.
@@ -4622,7 +4632,7 @@ export default function StudioApp() {
     const zones = Object.entries(zoneConfig).filter(([zk, cfg]) => enabledEls[zk] && cfg).map(([zk, cfg]) => ({ id: zk, type: zk, name: zk, config: cfg }));
     // Fixed-venue pillar/beam discount, if this function's venue carries one — same fvCfgForRepeat
     // resolver the Repeat toggle already uses.
-    const _venueTrussHere = fixedVenueFor(fvCfgForRepeat, venue)?.truss;
+    const _venueTrussHere = venueTrussFor(venue);
     zones.forEach(z => { c += calcStructCost(z.type, z.config, structRates, dealCheckData?.trussInv || studioFloralData?.trussInv, _venueTrussHere).total; });
     Object.entries(zoneElements).forEach(([zk, elems]) => {
       if (!enabledEls[zk] || !elems) return;
@@ -4638,7 +4648,7 @@ export default function StudioApp() {
       c += (ci.manualPrice || ci.refPrice || 0) * (Number(ci.qty) || 1);
     });
     return c;
-  }, [venue, enabledEls, zoneConfig, zoneElements, calcElsCost, dcCustomItems, activeFnIdx, structRates, dealCheckData, studioFloralData, fvCfgForRepeat]);
+  }, [venue, enabledEls, zoneConfig, zoneElements, calcElsCost, dcCustomItems, activeFnIdx, structRates, dealCheckData, studioFloralData, fvCfgForRepeat, clientLedger, activeClientId]);
 
   const transportCalc = useMemo(() => {
     if (!venue) return { trucks: 0, tripRate: 0, total: 0, isNew: true, tier: "new", tierLabel: "", breakdown: [], floralTrucks: 0, bufferTrucks: 0, itemTrucks: 0 };
@@ -4686,7 +4696,7 @@ export default function StudioApp() {
     const truckTotal = rawTruckTotal * clientScale;
     const total = truckTotal + plan.gensetCost;
     return { trucks: allTrucks, tripRate, total, isNew, tier: tierId, tierLabel, breakdown, floralTrucks, bufferTrucks: bufTrucks, itemTrucks, totalFloralCost, gensets: plan.genset125, venueGensets: plan.venueGenset125, venueGenset62: plan.venueGenset62, gensetCost: plan.gensetCost, gensetRate, gensetRate62, genset62: plan.genset62, truckTotal, clientScale };
-  }, [venue, customTripRate, customGensets, gensetRate, gensetRate62, genset62, trVenues, zoneElements, enabledEls, rcItems, truckCap, floralPerTruck, bufferTiers, totalCost, zoneConfig, imsInventory, dealCheckData, studioFloralData, floralOverrides, floralRatio, activeFnIdx, clientDate, fvCfgForRepeat, venueParents]);
+  }, [venue, customTripRate, customGensets, gensetRate, gensetRate62, genset62, trVenues, zoneElements, enabledEls, rcItems, truckCap, floralPerTruck, bufferTiers, totalCost, zoneConfig, imsInventory, dealCheckData, studioFloralData, floralOverrides, floralRatio, activeFnIdx, clientDate, fvCfgForRepeat, venueParents, clientLedger, activeClientId]);
 
   const grandTotal = useMemo(() => {
     const base = totalCost() + transportCalc.total;
@@ -4760,7 +4770,7 @@ export default function StudioApp() {
     // removing it just retires visibly-dead code, it doesn't change any computed total.
     const zones = Object.entries(fZoneConfig).filter(([zk, cfg]) => fEnabledEls[zk] && cfg).map(([zk, cfg]) => ({ id: zk, type: zk, name: zk, config: cfg }));
     // Fixed-venue pillar/beam discount, if this function's venue carries one.
-    const _venueTrussHere = fixedVenueFor(fvCfgForRepeat, fVenue)?.truss;
+    const _venueTrussHere = venueTrussFor(fVenue);
     zones.forEach(z => { decor += calcStructCost(z.type, z.config, structRates, dealCheckData?.trussInv || studioFloralData?.trussInv, _venueTrussHere).total; });
     // Availability-shortfall pricing now runs for EVERY function, each against its OWN date's
     // blocks (blocksByDate — warmed for every function's date, not just the active one). It used to
@@ -4866,7 +4876,7 @@ export default function StudioApp() {
       transport = truckTotal + gensetCost;
     }
     return { decor, transport, grand: decor + transport };
-  }, [calcElsCostForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, dcCustomItems, structRates, blocksByDate, imsInventory, dealCheckData, studioFloralData, fvCfgForRepeat, venueParents]);
+  }, [calcElsCostForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, dcCustomItems, structRates, blocksByDate, imsInventory, dealCheckData, studioFloralData, fvCfgForRepeat, venueParents, clientLedger, activeClientId]);
 
   const calcFnFloralSourcingCost = useCallback((fn) => {
     // fp/mc/the two BPK figures now also drive the truck-count wiring below (real-flower kg and
@@ -5256,7 +5266,7 @@ export default function StudioApp() {
           itemCount += (el2.qty || 0);
         });
       }
-      const zl = fZoneConfig[k] ? calcStructCost(k, fZoneConfig[k], structRates, dealCheckData?.trussInv || studioFloralData?.trussInv, fixedVenueFor(fvCfgForRepeat, fVenue)?.truss) : { truss: 0, masking: 0, platform: 0, carpet: 0, total: 0 };
+      const zl = fZoneConfig[k] ? calcStructCost(k, fZoneConfig[k], structRates, dealCheckData?.trussInv || studioFloralData?.trussInv, venueTrussFor(fVenue)) : { truss: 0, masking: 0, platform: 0, carpet: 0, total: 0 };
       const customCost = dcCustomItems
         .filter(c => c.fnIdx === fnData.fnIdx && c.zoneKey === k)
         .reduce((s, c) => s + (c.manualPrice || c.refPrice || 0) * (Number(c.qty) || 1), 0);
@@ -5444,7 +5454,7 @@ export default function StudioApp() {
         clientScale, truckTotalClient, totalClient: transportTotalClient, tripRateClient: tripRate * clientScale };
     }
     return { zones, transport, decorTotal, transportTotal, transportTotalClient, grand: decorTotal + transportTotal, grandClient: decorTotal + transportTotalClient };
-  }, [getElPriceForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, gensetCostRate, gensetCostRate62, zoneLabelsD, zoneKeys, dcCustomItems, structRates, blocksByDate, imsInventory, dealCheckData, studioFloralData, collectAllFunctionData, fvCfgForRepeat, calcFnFloralSourcingCost, venueParents]);
+  }, [getElPriceForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, gensetCostRate, gensetCostRate62, zoneLabelsD, zoneKeys, dcCustomItems, structRates, blocksByDate, imsInventory, dealCheckData, studioFloralData, collectAllFunctionData, fvCfgForRepeat, calcFnFloralSourcingCost, venueParents, clientLedger, activeClientId]);
 
   const cat = getCat(grandTotal);
 
@@ -8657,7 +8667,7 @@ export default function StudioApp() {
           }
         });
       }
-      const zl = fZoneConfig[k] ? calcStructCost(k, fZoneConfig[k], structRates, dealCheckData?.trussInv || studioFloralData?.trussInv, fixedVenueFor(fvCfgForRepeat, fVenue)?.truss) : { truss: 0, masking: 0, platform: 0, carpet: 0, total: 0, arches: 0, pillars: 0, glass: 0 };
+      const zl = fZoneConfig[k] ? calcStructCost(k, fZoneConfig[k], structRates, dealCheckData?.trussInv || studioFloralData?.trussInv, venueTrussFor(fVenue)) : { truss: 0, masking: 0, platform: 0, carpet: 0, total: 0, arches: 0, pillars: 0, glass: 0 };
       const structItems = [];
       const zc = fZoneConfig[k] || {};
       const zm = zoneMeta[k];
@@ -8752,7 +8762,7 @@ export default function StudioApp() {
       const ic = items.reduce((s, i) => s + i.total, 0);
       return { k, label: el.label, icon: el.icon, tier: t, items, structItems, structTotal: zl.total, itemTotal: ic, zoneTotal: ic + zl.total, note: fElNotes[k] || "", dims, dimLabel, photo: fElSelectedPhoto[k]?.src || null, photoName: fElSelectedPhoto[k]?.eventName || "" };
     }).filter(z => z.items.length > 0 || z.structItems.length > 0);
-  }, [getElPriceForFn, zoneLabelsD, zoneMeta, zoneKeys, dealCheckData, studioFloralData, imsDefaultPaintCost, dcCustomItems, structRates, imsInventory, fvCfgForRepeat]);
+  }, [getElPriceForFn, zoneLabelsD, zoneMeta, zoneKeys, dealCheckData, studioFloralData, imsDefaultPaintCost, dcCustomItems, structRates, imsInventory, fvCfgForRepeat, clientLedger, activeClientId]);
 
   const buildCombinedCostSheetData = useCallback(() => {
     const all = collectAllFunctionData();
@@ -10136,7 +10146,7 @@ export default function StudioApp() {
     showLedgerRestoreWarning: ledgerLoadError && !activeClientId && !!restoreRef.current?.id,
     retryLedgerLoad,
     deleteSessionRows,
-    showClientForm, setShowClientForm, clientLedger, setClientLedger, saveClientLedger, activeClientId, setActiveClientId, clientSearch, setClientSearch,
+    showClientForm, setShowClientForm, clientLedger, setClientLedger, saveClientLedger, activeClientId, setActiveClientId, clientSearch, setClientSearch, hideDiscountFromClient,
     snapshotBuildState, restoreBuildState, switchActiveFn, fnSnapHasData, fnSnapHasBuild,
     sessionHistoryExpanded, setSessionHistoryExpanded,
     // LMS
