@@ -3973,13 +3973,27 @@ export default function StudioApp() {
   // each Photo Filters section (Build's left rail) doubles as a markup tier picker when clicked
   // directly: Venue=1x, Event type=1.1x, Venue type=1.2x, Design style=1.3x, Color palette=1.4x,
   // Day/Night=1.5x, Tier=1.6x (client_ledger.guestPriceMultiplier — a plain float, defaults to 1).
-  // Scoped to guest-facing ELEMENT pricing only (getElPrice/getElPriceForFn below, the "menu" list of
-  // props/items) — NOT structural costs (truss/masking/platform/carpet/print), and NOT Deal Check,
-  // which never calls either of those two functions.
+  // Scales EVERYTHING the guest pays — element/"menu" pricing (getElPrice/getElPriceForFn), structural
+  // costs (calcStructCost's truss/masking/platform/carpet/print, via scaleStruct below), and
+  // Transport & Power (transportCalc/calcFunctionCost/calcFunctionBreakdown's truckTotal/gensetCost).
+  // NOT Deal Check — dcCostRollup/repeatAdjustedRental are Ambria's own cost-side numbers and never
+  // call any of the functions this multiplies, so they stay exactly as-is regardless of this lever.
   const guestPriceMultiplier = (() => {
     const m = Number(clientLedger.find(c => c.id === activeClientId)?.guestPriceMultiplier);
     return (m >= 1 && m <= 2) ? m : 1;
   })();
+  // calcStructCost is a plain module-level function (no closure over component state), so its
+  // truss/masking/platform/carpet/arches/pillars/glass/print/total/trussDiscount fields are all
+  // scaled here, once, at every guest-facing call site instead of threading the multiplier through
+  // calcStructCost's own signature (which Deal Check-adjacent code never calls anyway).
+  const scaleStruct = (r) => {
+    if (guestPriceMultiplier === 1 || !r) return r;
+    const s = { ...r };
+    ["truss", "masking", "platform", "carpet", "arches", "pillars", "glass", "print", "total", "trussDiscount"].forEach((k) => {
+      if (typeof s[k] === "number") s[k] = s[k] * guestPriceMultiplier;
+    });
+    return s;
+  };
   // Repeat-billed line cost for `qty` units of `item` at `unitRate` — ports Deal Check's own
   // repeatAdjustedRental formula (DealCheckOverlay.jsx) into Build's pricing, so a zone marked
   // ♻️ Repeat actually prices lower here too, matching what the Repeat toggle's own tooltip
@@ -4549,9 +4563,9 @@ export default function StudioApp() {
   const calcPhotoCost = useCallback((zoneKey, photo) => {
     const zc = (photo?.dims && Object.values(photo.dims).some(v => v > 0)) ? buildZoneConfig(zoneKey, photo.dims) : null;
     const elCost = calcElsCost(photo?.elements, true, zc, { checkAvailability: true });
-    const structCost = zc ? calcStructCost(zoneKey, zc, structRates).total : 0;
+    const structCost = zc ? scaleStruct(calcStructCost(zoneKey, zc, structRates)).total : 0;
     return elCost + structCost;
-  }, [calcElsCost, structRates]);
+  }, [calcElsCost, structRates, guestPriceMultiplier]);
 
   const calcFullEventCost = useCallback((ev) => {
     if (!ev) return 0;
@@ -4657,7 +4671,7 @@ export default function StudioApp() {
     // Fixed-venue pillar/beam discount, if this function's venue carries one — same fvCfgForRepeat
     // resolver the Repeat toggle already uses.
     const _venueTrussHere = venueTrussFor(venue);
-    zones.forEach(z => { c += calcStructCost(z.type, z.config, structRates, dealCheckData?.trussInv || studioFloralData?.trussInv, _venueTrussHere).total; });
+    zones.forEach(z => { c += scaleStruct(calcStructCost(z.type, z.config, structRates, dealCheckData?.trussInv || studioFloralData?.trussInv, _venueTrussHere)).total; });
     Object.entries(zoneElements).forEach(([zk, elems]) => {
       if (!enabledEls[zk] || !elems) return;
       c += calcElsCost(elems, true, zoneConfig[zk], { checkAvailability: true }); // active fn's live canvas — see activeBlocksForDate
@@ -4717,9 +4731,12 @@ export default function StudioApp() {
     // (25% markup, the owner's requested starting point) for a venue nobody has set it on.
     const rawTruckTotal = allTrucks * tripRate * 2;
     const clientScale = Number(match?.clientScale) > 0 ? Number(match.clientScale) : 1.25;
-    const truckTotal = rawTruckTotal * clientScale;
-    const total = truckTotal + plan.gensetCost;
-    return { trucks: allTrucks, tripRate, total, isNew, tier: tierId, tierLabel, breakdown, floralTrucks, bufferTrucks: bufTrucks, itemTrucks, totalFloralCost, gensets: plan.genset125, venueGensets: plan.venueGenset125, venueGenset62: plan.venueGenset62, gensetCost: plan.gensetCost, gensetRate, gensetRate62, genset62: plan.genset62, truckTotal, clientScale };
+    const truckTotal = rawTruckTotal * clientScale * guestPriceMultiplier;
+    // gensetCost is already the GUEST-billed figure (resolveGensetPlan's own gensetCostOurs is the
+    // separate, unscaled figure Deal Check's Power tab reads for what we actually pay the vendor).
+    const gensetCostForGuest = plan.gensetCost * guestPriceMultiplier;
+    const total = truckTotal + gensetCostForGuest;
+    return { trucks: allTrucks, tripRate, total, isNew, tier: tierId, tierLabel, breakdown, floralTrucks, bufferTrucks: bufTrucks, itemTrucks, totalFloralCost, gensets: plan.genset125, venueGensets: plan.venueGenset125, venueGenset62: plan.venueGenset62, gensetCost: gensetCostForGuest, gensetRate, gensetRate62, genset62: plan.genset62, truckTotal, clientScale };
   }, [venue, customTripRate, customGensets, gensetRate, gensetRate62, genset62, trVenues, zoneElements, enabledEls, rcItems, truckCap, floralPerTruck, bufferTiers, totalCost, zoneConfig, imsInventory, dealCheckData, studioFloralData, floralOverrides, floralRatio, activeFnIdx, clientDate, fvCfgForRepeat, venueParents, clientLedger, activeClientId]);
 
   const grandTotal = useMemo(() => {
@@ -4795,7 +4812,7 @@ export default function StudioApp() {
     const zones = Object.entries(fZoneConfig).filter(([zk, cfg]) => fEnabledEls[zk] && cfg).map(([zk, cfg]) => ({ id: zk, type: zk, name: zk, config: cfg }));
     // Fixed-venue pillar/beam discount, if this function's venue carries one.
     const _venueTrussHere = venueTrussFor(fVenue);
-    zones.forEach(z => { decor += calcStructCost(z.type, z.config, structRates, dealCheckData?.trussInv || studioFloralData?.trussInv, _venueTrussHere).total; });
+    zones.forEach(z => { decor += scaleStruct(calcStructCost(z.type, z.config, structRates, dealCheckData?.trussInv || studioFloralData?.trussInv, _venueTrussHere)).total; });
     // Availability-shortfall pricing now runs for EVERY function, each against its OWN date's
     // blocks (blocksByDate — warmed for every function's date, not just the active one). It used to
     // only run for whichever function was the active Build tab (activeBlocksForDate has no other
@@ -4895,8 +4912,8 @@ export default function StudioApp() {
       // calcFunctionBreakdown's *Client fields and transportCalc above. Defaults to 1.25 (25%
       // markup, the owner's requested starting point) until a venue's own value is set.
       const clientScale = Number(match?.clientScale) > 0 ? Number(match.clientScale) : 1.25;
-      const truckTotal = rawTruckTotal * clientScale;
-      const gensetCost = resolveGensetPlan(match, fCustomGensets, fCustomGenset62, gensetRate, gensetRate62).gensetCost;
+      const truckTotal = rawTruckTotal * clientScale * guestPriceMultiplier;
+      const gensetCost = resolveGensetPlan(match, fCustomGensets, fCustomGenset62, gensetRate, gensetRate62).gensetCost * guestPriceMultiplier;
       transport = truckTotal + gensetCost;
     }
     return { decor, transport, grand: decor + transport };
@@ -5290,7 +5307,7 @@ export default function StudioApp() {
           itemCount += (el2.qty || 0);
         });
       }
-      const zl = fZoneConfig[k] ? calcStructCost(k, fZoneConfig[k], structRates, dealCheckData?.trussInv || studioFloralData?.trussInv, venueTrussFor(fVenue)) : { truss: 0, masking: 0, platform: 0, carpet: 0, total: 0 };
+      const zl = fZoneConfig[k] ? scaleStruct(calcStructCost(k, fZoneConfig[k], structRates, dealCheckData?.trussInv || studioFloralData?.trussInv, venueTrussFor(fVenue))) : { truss: 0, masking: 0, platform: 0, carpet: 0, total: 0 };
       const customCost = dcCustomItems
         .filter(c => c.fnIdx === fnData.fnIdx && c.zoneKey === k)
         .reduce((s, c) => s + (c.manualPrice || c.refPrice || 0) * (Number(c.qty) || 1), 0);
@@ -5454,9 +5471,15 @@ export default function StudioApp() {
       // same-venue carryover above is an internal-cost optimisation only; the guest is still billed
       // as if every function trucked its own full requirement, exactly as before this existed.
       const clientScale = Number(match?.clientScale) > 0 ? Number(match.clientScale) : 1.25;
-      const truckTotalClient = allTrucksClient * tripRate * 2 * clientScale;
+      const truckTotalClient = allTrucksClient * tripRate * 2 * clientScale * guestPriceMultiplier;
+      // gensetCost (below, in the returned object) is already documented as the GUEST-facing genset
+      // figure — "Build/Summary keep showing gensetCost/gensetRate to the guest" — so it's the one
+      // guestPriceMultiplier scales; transportTotal here stays built from the raw plan.gensetCost so
+      // Deal Check's own Transport tab (which reads truckTotal/transportTotal, never gensetCost on
+      // its own) is completely unaffected.
+      const gensetCostForGuest = plan.gensetCost * guestPriceMultiplier;
       transportTotal = truckTotal + plan.gensetCost;
-      transportTotalClient = truckTotalClient + plan.gensetCost;
+      transportTotalClient = truckTotalClient + gensetCostForGuest;
       transport = { trucks: allTrucks, tripRate, total: transportTotal, isNew, tier: tierId, tierLabel,
         breakdown, floralTrucks, bufferTrucks: bufTrucks, itemTrucks, totalFloralCost, repeatZonesExcluded,
         // trucksClient — the UNNETTED truck count (this function priced on its own, no carryover),
@@ -5465,7 +5488,7 @@ export default function StudioApp() {
         trucksClient: allTrucksClient,
         carriedOver, carriedOverFromFn,
         gensets: plan.genset125, venueGensets: plan.venueGenset125, genset62: plan.genset62, venueGenset62: plan.venueGenset62,
-        gensetCost: plan.gensetCost, gensetRate, gensetRate62, truckTotal,
+        gensetCost: gensetCostForGuest, gensetRate, gensetRate62, truckTotal,
         // gensetCostOurs — OUR real cost for these gensets (gensetCostRate/62, Admin → Settings →
         // Transport & Power), independent of gensetCost above (what's billed to the client).
         // Deal Check's own Power tab reads this one; Build/Summary keep showing gensetCost/
@@ -8691,7 +8714,7 @@ export default function StudioApp() {
           }
         });
       }
-      const zl = fZoneConfig[k] ? calcStructCost(k, fZoneConfig[k], structRates, dealCheckData?.trussInv || studioFloralData?.trussInv, venueTrussFor(fVenue)) : { truss: 0, masking: 0, platform: 0, carpet: 0, total: 0, arches: 0, pillars: 0, glass: 0 };
+      const zl = fZoneConfig[k] ? scaleStruct(calcStructCost(k, fZoneConfig[k], structRates, dealCheckData?.trussInv || studioFloralData?.trussInv, venueTrussFor(fVenue))) : { truss: 0, masking: 0, platform: 0, carpet: 0, total: 0, arches: 0, pillars: 0, glass: 0 };
       const structItems = [];
       const zc = fZoneConfig[k] || {};
       const zm = zoneMeta[k];
@@ -10170,7 +10193,7 @@ export default function StudioApp() {
     showLedgerRestoreWarning: ledgerLoadError && !activeClientId && !!restoreRef.current?.id,
     retryLedgerLoad,
     deleteSessionRows,
-    showClientForm, setShowClientForm, clientLedger, setClientLedger, saveClientLedger, activeClientId, setActiveClientId, clientSearch, setClientSearch, hideDiscountFromClient,
+    showClientForm, setShowClientForm, clientLedger, setClientLedger, saveClientLedger, activeClientId, setActiveClientId, clientSearch, setClientSearch, hideDiscountFromClient, guestPriceMultiplier,
     snapshotBuildState, restoreBuildState, switchActiveFn, fnSnapHasData, fnSnapHasBuild,
     sessionHistoryExpanded, setSessionHistoryExpanded,
     // LMS

@@ -623,7 +623,7 @@ export default function StudioBuild({ ctx }) {
     // zone photo groups (hand-picked leading photos, keyed by zone + function)
     zoneGroups = {}, writeZoneGroup,
     // date demand
-    dateTypes, clientLedger, activeClientId, saveClientLedger, hideDiscountFromClient,
+    dateTypes, clientLedger, activeClientId, saveClientLedger, hideDiscountFromClient, guestPriceMultiplier,
     // build canvas
     setShowCosts, grandTotal, totalCost, transportCalc, pricingReady,
     savedInsps, setStep, setPreviewImg,
@@ -794,7 +794,7 @@ export default function StudioBuild({ ctx }) {
   const sectionCost = (k, id) => {
     if (!showCosts) return 0;
     if (id === "elements") return calcElsCost(zoneElements[k], true, zoneConfig[k], {checkAvailability:true});
-    const sc = zoneConfig[k] ? calcStructCost(k, zoneConfig[k], structRates, dealCheckData?.trussInv, fixedVenueTrussForCalc) : null;
+    const sc = zoneConfig[k] ? scaleStruct(calcStructCost(k, zoneConfig[k], structRates, dealCheckData?.trussInv, fixedVenueTrussForCalc)) : null;
     if (id === "truss") return sc ? sc.truss + sc.masking + sc.arches + sc.pillars + sc.glass : 0;
     if (id === "platform") return sc ? sc.platform + sc.carpet : 0;
     return sc ? sc.print : 0; // calcStructCost's own print total — same figure zoneTotal() now folds in below
@@ -857,7 +857,7 @@ export default function StudioBuild({ ctx }) {
   // (shortfall-adjusted), so "By zone" + "Zones subtotal" quietly failed to add up to the number
   // above them. Same reasoning as calcFunctionCost's — this is what makes Build's own totals agree
   // with themselves, and with Summary/Deal Check's.
-  const zoneTotal = (k) => calcElsCost(zoneElements[k],true,zoneConfig[k],{checkAvailability:true})+(zoneConfig[k]?calcStructCost(k,zoneConfig[k],structRates,dealCheckData?.trussInv,fixedVenueTrussForCalc).total:0)+dcCustomItems.filter(c=>c.fnIdx===(activeFnIdx||0)&&c.zoneKey===k).reduce((acc,c)=>acc+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0);
+  const zoneTotal = (k) => calcElsCost(zoneElements[k],true,zoneConfig[k],{checkAvailability:true})+(zoneConfig[k]?scaleStruct(calcStructCost(k,zoneConfig[k],structRates,dealCheckData?.trussInv,fixedVenueTrussForCalc)).total:0)+dcCustomItems.filter(c=>c.fnIdx===(activeFnIdx||0)&&c.zoneKey===k).reduce((acc,c)=>acc+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0);
   void textSRaw;
 
   // Photo-filter pill. Was 9px in a 2px-tall chip with `textS` (~3.1:1) when inactive — too small
@@ -1230,6 +1230,18 @@ export default function StudioBuild({ ctx }) {
   // flag's truss discount actually PRICES for the client (every calcStructCost call below) is
   // suppressed — mirrors StudioApp.jsx's venueTrussFor for the same reason (see hideDiscountFromClient there).
   const fixedVenueTrussForCalc = hideDiscountFromClient ? undefined : fixedVenueHere?.truss;
+  // Same scaleStruct StudioApp.jsx uses for its own guest-facing calcStructCost calls (getElPrice/
+  // getElPriceForFn already fold guestPriceMultiplier in there) — Build's own local truss/masking/
+  // platform/carpet/print previews (sc/zoneTotal/st below, and TrussStack's own displayed figures)
+  // need the same fold so what a salesperson sees while editing matches what Summary/exports charge.
+  const scaleStruct = (r) => {
+    if (guestPriceMultiplier === 1 || !r) return r;
+    const s = { ...r };
+    ["truss", "masking", "platform", "carpet", "arches", "pillars", "glass", "print", "total", "trussDiscount"].forEach((k) => {
+      if (typeof s[k] === "number") s[k] = s[k] * guestPriceMultiplier;
+    });
+    return s;
+  };
 
   // Live soft-blocking: how much of an inventory item is left for THIS event, after
   // netting out both other events' commitments (getStudioAvailable) and whatever
@@ -3920,7 +3932,7 @@ undefined
               create the entry on the first keystroke — calcStructCost already returns all-zero for
               an untouched config, and every field reads through `|| {}`. */}
           {(zoneSection[k]==="truss"||zoneSection[k]==="platform")&&(()=>{
-            const zm=zoneMeta[k],zc=zoneConfig[k]||{},st=calcStructCost(k,zc,structRates,dealCheckData?.trussInv,fixedVenueTrussForCalc);
+            const zm=zoneMeta[k],zc=zoneConfig[k]||{},st=scaleStruct(calcStructCost(k,zc,structRates,dealCheckData?.trussInv,fixedVenueTrussForCalc));
             const dl={L:"Depth",W:"Width",H:"Height",S:"Size"};
             const sZ=u=>{setActiveZones([]);setZoneConfig(p=>({...p,[k]:{...p[k],...u}}));};
             const sD=(d,v)=>{setActiveZones([]);setZoneConfig(p=>{const cur=p[k]||{};const dims={...(cur.dims||{}),[d]:parseFloat(v)||0};
