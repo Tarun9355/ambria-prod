@@ -304,8 +304,10 @@ function calcStructCost(zk, zc, rates, applyDiscount) {
   if (applyDiscount) {
     const pct = GUEST_STRUCT_DISCOUNT_PCT;
     const before = r.total;
-    ["truss", "masking", "platform", "carpet", "arches", "pillars", "glass", "print"].forEach((k) => { r[k] = r[k] * (1 - pct / 100); });
-    r.total = r.total * (1 - pct / 100);
+    // Each field rounded to the rupee (a 25% cut rarely lands whole otherwise), then total is
+    // re-summed from the rounded fields so it never disagrees with what the tiles above add up to.
+    ["truss", "masking", "platform", "carpet", "arches", "pillars", "glass", "print"].forEach((k) => { r[k] = Math.round(r[k] * (1 - pct / 100)); });
+    r.total = r.truss + r.masking + r.platform + r.carpet + r.arches + r.pillars + r.glass + r.print;
     r.trussDiscount = before - r.total;
   }
   return r;
@@ -4036,10 +4038,12 @@ export default function StudioApp() {
     const full = qty * unitRate;
     if (!item) return full;
     if (hideDiscountFromClient) return full; // see hideDiscountFromClient above — guest-facing only
-    if (zc?.repeat) return full * (1 - GUEST_DISCOUNT_PCT / 100);
+    // Rounded to the rupee — a 25% cut rarely lands on a whole number otherwise (₹1,289 × 0.75 =
+    // ₹966.75), and every other price in the build is a whole rupee.
+    if (zc?.repeat) return Math.round(full * (1 - GUEST_DISCOUNT_PCT / 100));
     const { standingUnits, freshUnits } = rentalSplit(fvCfgForRepeat, venueName, item.id, qty, imsInventory);
     if (standingUnits <= 0) return full;
-    return standingUnits * unitRate * (1 - GUEST_DISCOUNT_PCT / 100) + freshUnits * unitRate;
+    return Math.round(standingUnits * unitRate * (1 - GUEST_DISCOUNT_PCT / 100) + freshUnits * unitRate);
   };
   // opts.checkAvailability (Build view's live canvas ONLY — explicit opt-in, never a default) turns
   // on the same unavailable-shortfall pricing already built for Deal Check: qty within what's free
