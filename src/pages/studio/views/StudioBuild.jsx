@@ -633,7 +633,7 @@ export default function StudioBuild({ ctx }) {
     zoneElements, setZoneElements, zoneConfig, setZoneConfig, setActiveZones,
     zoneOrder, setZoneOrder,
     calcElsCost, calcStructCost, calcPhotoCost, getElPrice, applyFloralRatio,
-    elSelectedPhoto, selectElPhoto, setElSelectedPhoto, elNotes, setElNotes,
+    elSelectedPhoto, selectElPhoto, setElSelectedPhoto, grpSel, setGrpSel, elNotes, setElNotes,
     elMultiPhotos, isMultiPhotoZone, toggleMultiElPhoto,
     setElGallery, setGalleryIdx,
     newCzSrc, setNewCzSrc,
@@ -921,9 +921,11 @@ export default function StudioBuild({ ctx }) {
   // zone for the current function. Kept apart from elSelectedPhoto: that is the ONE photo whose
   // elements price the zone, and overloading the same click to also mean "put this in the group"
   // would make every grouping tick re-price the build.
-  const [grpSel, setGrpSel] = useState({});   // { [zoneKey]: Set<libraryPhotoId> } — the TRUE current
-  // membership once grid mode is on for a zone (pre-loaded from the saved group, see the grid-view
-  // toggle below), not just a pending pick. Ticking/unticking IS the group now — no separate confirm.
+  // grpSel — { [zoneKey]: Set<libraryPhotoId> }, the TRUE current membership once grid mode is on for
+  // a zone (pre-loaded from the saved group, see the grid-view toggle below), not just a pending
+  // pick. Ticking/unticking IS the group now — no separate confirm. Lifted to StudioApp.jsx (ctx)
+  // so it rides the per-function session snapshot/restore path and survives a reload — was local
+  // `useState({})` here, which reset on every remount.
   const grpSelFor = (k) => grpSel[k] || EMPTY_SET;
   // ── WHICH TICKS THE USER ACTUALLY ASKED FOR ──
   // Opening the grid, and picking a photo to build with, both pre-tick that photo — a convenience, so
@@ -993,9 +995,13 @@ export default function StudioBuild({ ctx }) {
     setGrpAuto(p => { const a = new Set(p[k] || []); a.add(id); return { ...p, [k]: a }; });
     return { ...prev, [k]: cur };
   });
-  // Hide the ticks locally WITHOUT touching the saved group — used when leaving grid view, where
-  // the ticks just stop being visible/actionable, same as the group being untouched always meant.
-  const hideGrpPick = (k) => { setGrpSel(prev => ({ ...prev, [k]: new Set() })); setGrpAuto(p => ({ ...p, [k]: new Set() })); };
+  // Leaving grid view used to wipe the tick set outright ("hide" = clear) — fine while grpSel was
+  // ephemeral local state anyway, but now that it's lifted into the session snapshot specifically so
+  // a salesperson's ticks survive a reload, clearing them the moment the grid closes defeated that
+  // the very first time anyone toggled back to strip view. Now it only resets grpAuto (the
+  // auto-vs-explicit bookkeeping, meaningless once you've stopped looking at this grid session) and
+  // leaves the actual tick membership alone — reopening the grid picks up right where you left it.
+  const hideGrpPick = (k) => { setGrpAuto(p => ({ ...p, [k]: new Set() })); };
   // Untick everything in this zone AND persist that — with the auto-save above, this empties the
   // saved group, same as unticking each photo individually would, just in one click.
   const clearGrpPick = (k, srcType, label) => setGrpSel(prev => {
@@ -2908,13 +2914,22 @@ undefined
                 // showing up, because group membership does not follow tags.
                 // The auto-ticked ids go into grpAuto and are excluded from every save until the user
                 // toggles one by hand.
-                const initial=new Set(grpSaved);
+                // A zone that already has ticks — from earlier this session, or restored from a saved
+                // deal session on reload — keeps exactly those on reopen instead of being reseeded
+                // from the saved/pinned group. Reseeding unconditionally here used to throw away a
+                // session-restored tick set the moment the grid was reopened, which made persisting
+                // it pointless.
+                const already=grpSel[k];
+                const hasExisting=already&&already.size>0;
+                const initial=hasExisting?new Set(already):new Set(grpSaved);
                 const auto=new Set();
-                if(isMultiPhotoZone(el.label)){
-                  (elMultiPhotos[k]||[]).forEach(p=>{ if(p?.eventId && !initial.has(p.eventId)){ initial.add(p.eventId); auto.add(p.eventId); } });
-                } else {
-                  const selP=elSelectedPhoto[k];
-                  if(selP?.eventId && !initial.has(selP.eventId)){ initial.add(selP.eventId); auto.add(selP.eventId); }
+                if(!hasExisting){
+                  if(isMultiPhotoZone(el.label)){
+                    (elMultiPhotos[k]||[]).forEach(p=>{ if(p?.eventId && !initial.has(p.eventId)){ initial.add(p.eventId); auto.add(p.eventId); } });
+                  } else {
+                    const selP=elSelectedPhoto[k];
+                    if(selP?.eventId && !initial.has(selP.eventId)){ initial.add(selP.eventId); auto.add(selP.eventId); }
+                  }
                 }
                 setGrpSel(p=>({...p,[k]:initial}));
                 setGrpAuto(p=>({...p,[k]:auto}));

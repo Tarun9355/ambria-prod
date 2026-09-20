@@ -2066,6 +2066,12 @@ export default function StudioApp() {
   const [elInspo, setElInspo] = useState({});
   const [elInspoLoading, setElInspoLoading] = useState({});
   const [elSelectedPhoto, setElSelectedPhoto] = useState({});
+  // Zone-grid tick selection ({ [zoneKey]: Set<libraryPhotoId> }) — the candidate photos ticked in
+  // ▦ grid view before (or without ever) hitting "Pin". Lifted here (was local to StudioBuild.jsx)
+  // so it rides the same per-function snapshot/restore path as elSelectedPhoto/zoneOrder/customZones
+  // below — a salesperson's in-progress tick set now survives a session reload/function switch
+  // instead of resetting every remount.
+  const [grpSel, setGrpSel] = useState({});
   const [elNotes, setElNotes] = useState({});
   const [elCostOpen, setElCostOpen] = useState({});
   const [customZones, setCustomZones] = useState([]);
@@ -2206,6 +2212,9 @@ export default function StudioApp() {
     enabledEls, elTiers, zoneConfig, zoneElements, itemQty, itemGrades,
     customMode, activeZones, zoneOrder, customZones,
     elSelectedPhoto, elInspo, elNotes, elCostOpen,
+    // Sets aren't JSON-safe — flatten to plain arrays here, the same serialization-boundary approach
+    // elSelectedPhoto's own sibling fields use, and rebuild the Sets in restoreBuildState below.
+    grpSel: Object.fromEntries(Object.entries(grpSel).map(([k, set]) => [k, [...set]])),
     sourceVideo, sourceEvent,
     savedInsps, selectedMoods, selectedPalettes, floralRatio,
     customGensets, genset62, customTripRate,
@@ -2223,7 +2232,7 @@ export default function StudioApp() {
       // zoneOrder resets with the rest. It is per function, so switching to one that has no saved
       // build must not inherit the previous function's arrangement.
       setZoneOrder([]);
-      setCustomZones([]); setElSelectedPhoto({}); setElInspo({}); setElNotes({});
+      setCustomZones([]); setElSelectedPhoto({}); setGrpSel({}); setElInspo({}); setElNotes({});
       setElCostOpen({}); setSourceVideo(null); setSourceEvent(null);
       setSavedInsps([]); setSelectedMoods([]); setSelectedPalettes([]); setFloralRatio(70);
       setCustomGensets(null); setGenset62(null); setCustomTripRate(0);
@@ -2241,6 +2250,7 @@ export default function StudioApp() {
     setZoneOrder(s.zoneOrder || []);
     setCustomZones(s.customZones || []);
     setElSelectedPhoto(s.elSelectedPhoto || {});
+    setGrpSel(Object.fromEntries(Object.entries(s.grpSel || {}).map(([k, arr]) => [k, new Set(arr)])));
     setElInspo(s.elInspo || {});
     setElNotes(s.elNotes || {});
     setElCostOpen(s.elCostOpen || {});
@@ -7313,6 +7323,7 @@ export default function StudioApp() {
       setSourceVideo({ id: session.sourceVideoId, title: session.sourceVideoTitle || vid?.title || "Video", tags: vTag });
     }
     if (session.elSelectedPhoto) setElSelectedPhoto(session.elSelectedPhoto);
+    setGrpSel(Object.fromEntries(Object.entries(session.grpSel || {}).map(([k, arr]) => [k, new Set(arr)])));
     setStep(landingStep);
     // The single-function path's toast, gone for the reason given on the multi-function one above.
   }, [events, allVideos, ytVideoTags]);
@@ -7705,6 +7716,7 @@ export default function StudioApp() {
     setZoneElements(session.zoneElements || {});
     setElNotes(session.elNotes || {});
     setElSelectedPhoto(session.elSelectedPhoto || {});
+    setGrpSel(Object.fromEntries(Object.entries(session.grpSel || {}).map(([k, arr]) => [k, new Set(arr)])));
     setSelectedMoods(session.selectedMoods || []);
     setSelectedPalettes(session.selectedPalettes || []);
     setFloralOverrides({ note: "", rows: [] });
@@ -10127,7 +10139,7 @@ export default function StudioApp() {
     // build canvas
     enabledEls, setEnabledEls, elTiers, setElTiers, customMode, setCustomMode, itemQty, setItemQty, itemGrades, setItemGrades,
     showInsp, setShowInsp, showAi, setShowAi, showPpt, setShowPpt, showCosts, setShowCosts,
-    elInspo, setElInspo, elInspoLoading, setElInspoLoading, elSelectedPhoto, setElSelectedPhoto, elNotes, setElNotes, elCostOpen, setElCostOpen,
+    elInspo, setElInspo, elInspoLoading, setElInspoLoading, elSelectedPhoto, setElSelectedPhoto, grpSel, setGrpSel, elNotes, setElNotes, elCostOpen, setElCostOpen,
     elMultiPhotos, isMultiPhotoZone, toggleMultiElPhoto,
     customZones, setCustomZones, newCzSrc, setNewCzSrc, elGallery, setElGallery, galleryIdx, setGalleryIdx, webPreview, setWebPreview,
     zoneConfig, setZoneConfig, activeZones, setActiveZones, zoneOrder, setZoneOrder,
