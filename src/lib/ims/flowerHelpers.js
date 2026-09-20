@@ -188,28 +188,40 @@ export const floralPatternUnitRates = (pattern, sizeKey, mandiCatalogue, setting
 // The flat rental cancels out algebraically and is NOT looked up here: the editor's per-unit figure
 // is `blend + extra + flatRental` and the delta is that minus `flatRental`, leaving just the recipe
 // part. Don't "fix" this by adding a rental lookup — that double-counts.
-export const kitFloralCompDelta = ({ comps, inventory, flowerPatterns, mandiCatalogue, floralSettings, rcFloralModeByKey, floralRatio, elSize, rcFactorByKey }) => {
-  if (!Array.isArray(comps) || comps.length === 0) return 0;
+// Shared core: same comps loop as the old kitFloralCompDelta, but returns both the marked-up recipe
+// money AND the realPct-weighted raw ingredient cost for each component, in one pass — so a
+// Fixed-Venue/Repeat discount on a kit's floral components can be computed off `raw` the same way
+// the non-kit floral path discounts its own recipe's raw cost, without a second traversal of comps.
+export const kitFloralCompCosts = ({ comps, inventory, flowerPatterns, mandiCatalogue, floralSettings, rcFloralModeByKey, floralRatio, elSize, rcFactorByKey }) => {
+  if (!Array.isArray(comps) || comps.length === 0) return { money: 0, raw: 0 };
   const modes = rcFloralModeByKey || {};
   const globalReal = Math.max(0, Math.min(100, 100 - (Number(floralRatio) || 0)));
-  return comps.reduce((sum, c) => {
-    if (!c || c.patternId) return sum;   // recipe add-ons are priced separately, on top
+  return comps.reduce((acc, c) => {
+    if (!c || c.patternId) return acc;   // recipe add-ons are priced separately, on top
     const cItem = (inventory || []).find((i) => i.id === c.itemId);
-    if (!cItem) return sum;
+    if (!cItem) return acc;
     const pat = matchFlowerPattern(cItem, flowerPatterns || []);
-    if (!pat) return sum;                // not a floral component — the overwhelming majority
+    if (!pat) return acc;                // not a floral component — the overwhelming majority
     // A component may pin its own size; with none it inherits the element's, and a missing size
     // means "big" — the same fallback every other kit-pricing call site uses.
     const rates = floralPatternUnitRates(pat, sizeClassToPatternKey(c.size || elSize || "B"), mandiCatalogue || [], floralSettings || {}, inventory, rcFactorByKey);
-    if (!rates) return sum;
+    if (!rates) return acc;
     const sk = String(cItem.subCat || cItem.subcategory || pat.sub || "").trim().toLowerCase();
     const subMode = sk ? modes[sk] : undefined;
     const modeDefault = subMode === "real" ? 100 : subMode === "artificial" ? 0 : globalReal;
     const realPct = (typeof c.realPct === "number" && c.realPct >= 0 && c.realPct <= 100) ? c.realPct : modeDefault;
     const recipeMoney = Math.round(realPct / 100 * rates.realRate + (100 - realPct) / 100 * rates.artRate) + rates.extra;
-    return sum + recipeMoney * (Number(c.qty) || 0);
-  }, 0);
+    const qty = Number(c.qty) || 0;
+    acc.money += recipeMoney * qty;
+    // Same realPct weighting as the non-kit path: only the real share of the recipe has a
+    // comparable raw/markup figure to discount at all.
+    acc.raw += rates.rawCost * (realPct / 100) * qty;
+    return acc;
+  }, { money: 0, raw: 0 });
 };
+
+// Back-compat wrapper — KitComponentsEditor's footer only ever needed the money figure.
+export const kitFloralCompDelta = (args) => kitFloralCompCosts(args).money;
 
 const RC_UNIT_LABELS = {
   sqft: "/sqft", truss_sqft: "/truss sqft", rft: "/RFT", pc: "/pc", setup: "/setup",

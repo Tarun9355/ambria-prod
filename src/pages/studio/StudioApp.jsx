@@ -79,7 +79,7 @@ import { allocateRowAvailability } from "../../lib/studio/dealAvailability";
 import { callClaudeStreaming } from "../../lib/ai";
 import { heavyExtraLabour, eventTimingMultFor } from "../../lib/ims/constants";
 import { itemImsSubcat, lookupBySubcat, priceForInvItem, itemDimsText, walkKitUnits } from "../../lib/ims/helpers";
-import { matchFlowerPattern, floralPatternUnitRates, sizeClassToPatternKey, normalizeSizeClass, kitFloralCompDelta } from "../../lib/ims/flowerHelpers";
+import { matchFlowerPattern, floralPatternUnitRates, sizeClassToPatternKey, normalizeSizeClass, kitFloralCompCosts } from "../../lib/ims/flowerHelpers";
 import { rowToRcItem, rcItemToRow, rcIsSMB, getFloralMode, oosCostPctFor } from "../../lib/rateCard";
 import { supabase, fetchAll, upsertRow, deleteRow, subscribeTable, keepaliveUpsert } from "../../lib/supabase";
 import {
@@ -4017,12 +4017,15 @@ export default function StudioApp() {
   //    be billed after markup. A 50% fixed-venue discount must read as ₹250 − (50% of ₹100) =
   //    ₹200, not ₹250 × 0.5 = ₹125 — the old `unitRate * (1 - discountPct/100)` scaled away the
   //    markup along with the discount instead of only removing the raw-cost discount from it.
-  // floralRawCost (non-kit floral items only — see the isFloral branch below): the attached flower
-  // recipe's own pre-markup ingredient cost (floralPatternUnitRates' `rawCost`), discounted at the
-  // exact same pct as the pot/container's own rental — same "% off the raw/wholesale figure, not off
-  // what the guest is billed after markup" rule item.price already gets. Recipe markup and the pot's
-  // rate_card_categories factor both stay untouched; only the two raw bases shrink.
-  const repeatAdjustedLineCost = (item, qty, unitRate, zc, venueName, kitOverrides, floralRawCost = 0) => {
+  // floralRawCost: the attached flower recipe's own pre-markup, realPct-weighted ingredient cost
+  // (floralPatternUnitRates' `rawCost`) — for a plain floral item (isFloral branch below) or pooled
+  // across everything attached to a kit (the isKit branch's flowerRawCost). Discounted at the exact
+  // same pct as the item/kit's own rental, same "% off the raw/wholesale figure, not off what the
+  // guest is billed after markup" rule item.price already gets.
+  // kitFlowerCost (kits only): the SAME recipe's already-marked-up money (flowerCost) — needed only
+  // to peel the recipe back OUT of the kit-fallback's "treat the whole unitRate as raw" approximation
+  // below, so it isn't discounted twice (once as part of that blob, once via floralRawCost itself).
+  const repeatAdjustedLineCost = (item, qty, unitRate, zc, venueName, kitOverrides, floralRawCost = 0, kitFlowerCost = 0) => {
     const full = qty * unitRate;
     if (!item) return full;
     if (hideDiscountFromClient) return full; // see hideDiscountFromClient above — guest-facing only
@@ -4036,7 +4039,12 @@ export default function StudioApp() {
       // whole kit. Raw-cost terms throughout, so subtracting it straight off unitRate×qty leaves
       // every piece's markup untouched — same reasoning as the plain-item fix below.
       const discount = kitStandingDiscountAmount(item, qty, imsInventory, kitOverrides, fvCfgForRepeat, venueName);
-      if (discount > 0) return Math.max(0, full - discount);
+      // The attached flower recipe belongs to the kit AS A WHOLE, not to any one registered
+      // component, so it rides the kit's OWN top-level standing qty/pct — the same rentalSplit call
+      // kitStandingDiscountAmount already makes for its own recursion root.
+      const { standingUnits: kitStandingUnits, discountPct: kitDiscountPct } = rentalSplit(fvCfgForRepeat, venueName, item.id, qty, imsInventory);
+      const kitFloralStandingDiscount = kitStandingUnits > 0 ? kitStandingUnits * floralRawCost * kitDiscountPct / 100 : 0;
+      if (discount > 0 || kitFloralStandingDiscount > 0) return Math.max(0, full - discount - kitFloralStandingDiscount);
       // No piece of this kit is registered standing anywhere — falls through to the sub-category
       // Repeat default below, same treatment a plain item with no standing registration gets.
     } else {
@@ -4065,7 +4073,10 @@ export default function StudioApp() {
     const key = String(item.subCat || item.subcategory || "").toLowerCase().trim();
     const sc = key ? Number((fvCfgForRepeat.fixedVenueSubcatDiscount || {})[key]) : NaN;
     const pct = Number.isFinite(sc) && sc > 0 ? sc : 0;
-    const rawRate = isKit ? unitRate : (Number(item.price) || 0);
+    // kitFlowerCost is peeled OUT of the kit's own "whole unitRate as raw" approximation here —
+    // otherwise the recipe money embedded in unitRate would get discounted once as part of that
+    // blob AND again via floralRawCost just below, double-counting the flower discount for a kit.
+    const rawRate = isKit ? Math.max(0, unitRate - kitFlowerCost) : (Number(item.price) || 0);
     return qty * Math.max(0, unitRate - rawRate * pct / 100 - floralRawCost * pct / 100);
   };
   // opts.checkAvailability (Build view's live canvas ONLY — explicit opt-in, never a default) turns
@@ -4110,17 +4121,23 @@ export default function StudioApp() {
       // element's own size toggle and the deal's global ratio — set via the 🌐/🎯/Size controls in
       // KitComponentsEditor.jsx and InventoryTab.jsx's kit builder. Undefined fields fall back to
       // the previous shared behavior (element size / sub-category mode / global floralRatio).
+      // Returns { blended, raw } — blended is the existing marked-up recipe money, raw is that same
+      // recipe's realPct-weighted pre-markup ingredient cost (floralPatternUnitRates' rawCost),
+      // exposed so a Fixed-Venue/Repeat discount can take a % off the raw figure the same way it
+      // already does for a plain (non-kit) floral element, instead of leaving a kit's own attached
+      // recipe untouched by that discount entirely.
       const recipeCost = (pattern, subKey, recipeQty = 1, override) => {
-        if (!pattern) return 0;
+        if (!pattern) return { blended: 0, raw: 0 };
         const szKey = override?.size || sizeKey;
         const rates = floralPatternUnitRates(pattern, szKey, floralSrc.mandiCatalogue || [], floralSrc, imsInventory, rcFactorByKey);
-        if (!rates) return 0;
+        if (!rates) return { blended: 0, raw: 0 };
         const sk = String(subKey || pattern.sub || "").trim().toLowerCase();
         const subMode = sk ? rcFloralModeByKey[sk] : undefined;
         const modeDefault = subMode === "real" ? 100 : subMode === "artificial" ? 0 : Math.max(0, Math.min(100, 100 - floralRatio));
         const realPct = (typeof override?.realPct === "number" && override.realPct >= 0 && override.realPct <= 100) ? override.realPct : modeDefault;
         const blended = Math.round(realPct / 100 * rates.realRate + (100 - realPct) / 100 * rates.artRate) + rates.extra;
-        return blended * (Number(recipeQty) || 0);
+        const q = Number(recipeQty) || 0;
+        return { blended: blended * q, raw: rates.rawCost * (realPct / 100) * q };
       };
       const subCatPattern = matchFlowerPattern(item, floralSrc.flowerPatterns || []);
       // Per-instance overrides (el.kitOverrides) replace the kit's own global subItems recipe for
@@ -4135,18 +4152,25 @@ export default function StudioApp() {
       //     missing: the kit's own breakdown (KitComponentsEditor's footer) counted it while the
       //     charged price did not, so a console kit billed ₹3,746 against a ₹7,715 breakdown. Same
       //     shared helper both sides now call, so they cannot disagree again.
-      const compDelta = kitFloralCompDelta({
+      const compCosts = kitFloralCompCosts({
         comps: effectiveSubItems, inventory: imsInventory, flowerPatterns: floralSrc.flowerPatterns || [],
         mandiCatalogue: floralSrc.mandiCatalogue || [], floralSettings: floralSrc,
         rcFloralModeByKey, floralRatio, elSize: el.size, rcFactorByKey,
       });
+      const compDelta = compCosts.money;
       // compDelta alone is enough to take this branch — a kit can have floral components without
       // carrying a sub-category recipe or any add-on of its own.
       if (subCatPattern || attachedPatterns.length || compDelta > 0) {
-        const flowerCost = recipeCost(subCatPattern, item.subCat || item.subcategory) + attachedPatterns.reduce((sum, x) => sum + recipeCost(x.pattern, x.pattern.sub, x.qty, x.si), 0) + compDelta;
+        const subCatCost = recipeCost(subCatPattern, item.subCat || item.subcategory);
+        const attachedCosts = attachedPatterns.map((x) => recipeCost(x.pattern, x.pattern.sub, x.qty, x.si));
+        const flowerCost = subCatCost.blended + attachedCosts.reduce((sum, r) => sum + r.blended, 0) + compDelta;
+        // Every floral source attached to this kit — its own sub-category recipe, any add-on
+        // pattern, and any plain floral component — pools into one raw-cost figure. The kit is
+        // billed and discounted as ONE line, so its discount can't be split by source anyway.
+        const flowerRawCost = subCatCost.raw + attachedCosts.reduce((sum, r) => sum + r.raw, 0) + compCosts.raw;
         const unitPrice = priceForInvItem(item, rcFactorByKey, imsInventory, el.kitOverrides) + flowerCost;
         const anySMB = subCatPattern?.mode === "smb" || attachedPatterns.some((x) => x.pattern.mode === "smb");
-        return { rc: null, unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName, el.kitOverrides), area: 0, warning: null, isFloralBlend: false, realPct: null, patternSMB: anySMB };
+        return { rc: null, unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName, el.kitOverrides, flowerRawCost, flowerCost), area: 0, warning: null, isFloralBlend: false, realPct: null, patternSMB: anySMB };
       }
     }
 
@@ -4170,7 +4194,13 @@ export default function StudioApp() {
         // item's own rental (× its sub-category's scaling factor) is always added on top, alongside
         // the recipe's own generic "extra (pot/base)" figure.
         const unitPrice = Math.round(realPct / 100 * rates.realRate + (100 - realPct) / 100 * rates.artRate) + rates.extra + priceForInvItem(item, rcFactorByKey, imsInventory);
-        return { rc: null, unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName, el.kitOverrides, rates.rawCost), area: 0, warning: null, isFloralBlend: true, realPct, patternSMB: pattern.mode === "smb" };
+        // Discount base is the raw cost weighted by realPct — realRate (rawCost × markup) only
+        // contributes realPct% of the final blended price, so a repeat/standing discount can only
+        // touch that same realPct share of rawCost. At 100% real this is the full rawCost (the
+        // ₹600 example); at 0% real (fully artificial) it's ₹0 — artRate's synthetic-bunch/rented-
+        // item composite has no comparable "already standing" wholesale figure to discount.
+        const floralRawCost = rates.rawCost * (realPct / 100);
+        return { rc: null, unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName, el.kitOverrides, floralRawCost), area: 0, warning: null, isFloralBlend: true, realPct, patternSMB: pattern.mode === "smb" };
       }
     }
 
