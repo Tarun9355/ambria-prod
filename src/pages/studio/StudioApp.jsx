@@ -3907,6 +3907,23 @@ export default function StudioApp() {
     return { rc: null, unitPrice, lineCost: qty * unitPrice, area: 0, warning: null, isFloralBlend: true, realPct, patternSMB: pattern.mode === "smb" };
   }, [dealCheckData, studioFloralData, rcFloralModeByKey, floralRatio, imsInventory, rcFactorByKey]);
 
+  // Price an element sourced directly from a raw mandi commodity (el.mandiId, sibling to
+  // el.patternId's getElPriceFromPattern) — e.g. "Loose Petals" added straight to a zone by the kg,
+  // with no recipe/blend and no rentable IMS stock behind it. Just qty × the chosen colour variant's
+  // own currentPrice, falling back to the parent flower's currentPrice when no variant is picked yet
+  // (see resolveMandiFlower in lib/ims/flowerHelpers.js for the same parent/variant lookup used
+  // elsewhere — this reads the variant's OWN price instead of that helper's always-parent-price
+  // behavior, since here the variant IS the specific thing being bought, not just a recipe label).
+  const getElPriceFromMandi = useCallback((el) => {
+    const floralSrc = dealCheckData || studioFloralData || {};
+    const parent = (floralSrc.mandiCatalogue || []).find((m) => m.id === el.mandiId);
+    if (!parent) return { rc: null, unitPrice: 0, lineCost: 0, area: 0, warning: null, isFloralBlend: false, realPct: null };
+    const variant = el.mandiVariantId ? (parent.colorVariants || []).find((v) => v.variantId === el.mandiVariantId) : null;
+    const unitPrice = Number((variant || parent).currentPrice) || 0;
+    const qty = el.qty || 0;
+    return { rc: null, unitPrice, lineCost: qty * unitPrice, area: 0, warning: null, isFloralBlend: false, realPct: null };
+  }, [dealCheckData, studioFloralData]);
+
   // Rate Card → IMS migration: price an element sourced directly from IMS inventory (Library
   // "+Add element" — no Rate Card lookup involved for these, by design, not as a fallback).
   // Returns the same shape getElPrice/getElPriceForFn do, so it drops into every existing caller
@@ -4380,6 +4397,7 @@ export default function StudioApp() {
   // default is always correct for them without having to pass it explicitly at each call site.
   const getElPrice = useCallback((el, zc, opts, venueName) => {
     if (el.invId) return getElPriceFromInventory(el, { ...opts, zc, venueName: venueName ?? activeFnMeta.venue }); // IMS inventory-sourced element — Rate Card never consulted
+    if (el.mandiId) return getElPriceFromMandi(el); // raw mandi commodity (e.g. Loose Petals), no recipe/inventory
     if (el.patternId) return getElPriceFromPattern(el); // pure flower-recipe element, no inventory item
     const rc = rcItems.find(i => i.name.toLowerCase() === (el.name || "").toLowerCase());
     if (!rc) return { rc: null, unitPrice: 0, lineCost: 0, area: 0, warning: null, isFloralBlend: false, realPct: null };
@@ -4416,7 +4434,7 @@ export default function StudioApp() {
       return { rc, unitPrice: up, lineCost: area * up, area, warning, isFloralBlend: isFloral, realPct };
     }
     return { rc, unitPrice: up, lineCost: (el.qty || 0) * up, area: 0, warning: null, isFloralBlend: isFloral, realPct };
-  }, [rcItems, getFloralMode, rcFloralModeByKey, floralRatio, floralArtUnitRate, patternExtra, resolveRcRate, getElPriceFromInventory, getElPriceFromPattern, activeFnMeta]);
+  }, [rcItems, getFloralMode, rcFloralModeByKey, floralRatio, floralArtUnitRate, patternExtra, resolveRcRate, getElPriceFromInventory, getElPriceFromPattern, getElPriceFromMandi, activeFnMeta]);
 
   const calcElsCost = useCallback((elements, withFloral, zc, opts, venueName) => {
     return (elements || []).reduce((s, el) => {
@@ -4439,6 +4457,7 @@ export default function StudioApp() {
   // Omit it and a Repeat zone here simply prices at full rate, same as before this existed.
   const getElPriceForFn = useCallback((el, zc, fnRatio, checkAvail, venueName, blocksForDate) => {
     if (el.invId) return getElPriceFromInventory(el, { checkAvailability: !!checkAvail, zc, venueName, blocksForDate }); // IMS inventory-sourced element — Rate Card never consulted
+    if (el.mandiId) return getElPriceFromMandi(el); // raw mandi commodity (e.g. Loose Petals), no recipe/inventory
     if (el.patternId) return getElPriceFromPattern(el); // pure flower-recipe element, no inventory item
     const rc = rcItems.find(i => i.name.toLowerCase() === (el.name || "").toLowerCase());
     if (!rc) return { rc: null, unitPrice: 0, lineCost: 0 };
@@ -4469,7 +4488,7 @@ export default function StudioApp() {
       return { rc, unitPrice: up, lineCost: area * up };
     }
     return { rc, unitPrice: up, lineCost: (el.qty || 0) * up };
-  }, [rcItems, getFloralMode, rcFloralModeByKey, floralArtUnitRate, patternExtra, resolveRcRate, getElPriceFromInventory, getElPriceFromPattern]);
+  }, [rcItems, getFloralMode, rcFloralModeByKey, floralArtUnitRate, patternExtra, resolveRcRate, getElPriceFromInventory, getElPriceFromPattern, getElPriceFromMandi]);
 
   const calcElsCostForFn = useCallback((elements, zc, fnRatio, checkAvail, venueName, blocksForDate) => {
     return (elements || []).reduce((s, el) => s + getElPriceForFn(el, zc, fnRatio, checkAvail, venueName, blocksForDate).lineCost, 0);

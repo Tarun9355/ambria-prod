@@ -3402,7 +3402,15 @@ undefined
                       // getElPriceFromPattern in StudioApp.jsx).
                       const invMatches=(imsInventory||[]).filter(it=>!(zoneElements[k]||[]).find(el=>el.invId===it.id)&&!kitCoveredIds.has(it.id)&&!isHiddenSubcat(it,rcSubcatFactors)&&(it.name.toLowerCase().includes(q)||(it.cat||"").toLowerCase().includes(q)||(it.subCat||it.subcategory||"").toLowerCase().includes(q))).slice(0,8);
                       const patMatches=(recipeOnlyPatterns||[]).filter(pt=>!(zoneElements[k]||[]).find(el=>el.patternId===pt.id)&&pt.name.toLowerCase().includes(q)).slice(0,4);
-                      const matches=[...invMatches.map(it=>({kind:"inv",it})),...patMatches.map(pt=>({kind:"pat",pt}))].slice(0,8);
+                      // Owner ask: exactly ONE raw mandi commodity — Loose Petals — is directly
+                      // addable as its own element (by the kg, variant picked afterward in the element
+                      // card), unlike every other mandi flower which only ever prices through a recipe.
+                      // Hardcoded by name rather than a new admin toggle, since it's a single named
+                      // exception, not a general feature.
+                      const ALLOWED_MANDI_ELEMENT_NAMES=["loose petals"];
+                      const mandiCatalogue=(dealCheckData||studioFloralData)?.mandiCatalogue||[];
+                      const mandiMatches=mandiCatalogue.filter(m=>ALLOWED_MANDI_ELEMENT_NAMES.includes(String(m.name||"").trim().toLowerCase())&&!(zoneElements[k]||[]).find(el=>el.mandiId===m.id)&&(m.name||"").toLowerCase().includes(q)).slice(0,4);
+                      const matches=[...invMatches.map(it=>({kind:"inv",it})),...patMatches.map(pt=>({kind:"pat",pt})),...mandiMatches.map(m=>({kind:"mandi",m}))].slice(0,8);
                       if(!addElPos||addElPos.key!==k) return null;
                       return matches.length>0?createPortal(<div style={{position:"fixed",top:addElPos.top,bottom:addElPos.bottom,left:addElPos.left,zIndex:10000,background:cardBg,border:`1px solid ${border}`,borderRadius:8,boxShadow:"0 4px 16px rgba(0,0,0,0.2)",maxHeight:340,overflowY:"auto",width:320}}>
                         {matches.map(m=>{
@@ -3421,6 +3429,23 @@ undefined
                                 <span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(236,72,153,0.15)",color:"#EC4899",fontWeight:700,flexShrink:0}}>🌺 RECIPE</span>
                               </div>
                               <div style={{fontSize:11,color:textS,marginTop:2}}>{pt.sub?pt.sub+" › ":""}Flower recipe — no inventory item</div>
+                            </div>
+                          </div>; }
+                          if(m.kind==="mandi"){ const mi=m.m; const variants=Array.isArray(mi.colorVariants)?mi.colorVariants:[]; return <div key={"mandi:"+mi.id}
+                            onClick={()=>{
+                              if(!(zoneElements[k]||[]).find(el=>el.mandiId===mi.id)){setZoneElements(prev=>({...prev,[k]:[...(prev[k]||[]),{name:mi.name,qty:1,unit:mi.unit||"kg",size:"",mandiId:mi.id,mandiVariantId:variants.length===1?variants[0].variantId:""}]}));}
+                              setZoneElSearch(prev=>({...prev,[k]:""}));
+                            }}
+                            style={{padding:"8px 10px",fontSize:12,cursor:"pointer",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",gap:10}}>
+                            <div style={{width:56,height:56,borderRadius:8,overflow:"hidden",flexShrink:0,background:isDark?"#1a1a2e":"#eee",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                              {mi.photoUrl ? <img src={mi.photoUrl} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/> : <span style={{fontSize:22,opacity:0.5}}>🌸</span>}
+                            </div>
+                            <div style={{flex:1,minWidth:0}}>
+                              <div style={{fontWeight:500,color:textP,display:"flex",alignItems:"center",gap:4,minWidth:0}}>
+                                <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{mi.name}</span>
+                                <span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700,flexShrink:0}}>🌸 MANDI · {mi.unit||"kg"}</span>
+                              </div>
+                              <div style={{fontSize:11,color:textS,marginTop:2}}>{variants.length?`Choose a variant after adding (${variants.length} available)`:"Raw flower — no recipe/inventory item"}</div>
                             </div>
                           </div>; }
                           const it=m.it; const isKit=Array.isArray(it.subItems)&&it.subItems.length>0; const src=it.img||it.photoUrls?.[0];
@@ -3522,10 +3547,10 @@ undefined
                             document.body
                           )}
                         </div>
-                        <span title={isUnavail?"Not available for this date — tap the stock icon to pick a different item":undefined} style={{fontSize:12,fontWeight:500,color:isUnavail?"#EF4444":(rc||el.invId||el.patternId)?textP:"#F59E0B",textDecoration:isUnavail?"line-through":"none",minWidth:0,whiteSpace:"normal",overflowWrap:"anywhere"}}>{invItem?.name || el.name}</span>
+                        <span title={isUnavail?"Not available for this date — tap the stock icon to pick a different item":undefined} style={{fontSize:12,fontWeight:500,color:isUnavail?"#EF4444":(rc||el.invId||el.patternId||el.mandiId)?textP:"#F59E0B",textDecoration:isUnavail?"line-through":"none",minWidth:0,whiteSpace:"normal",overflowWrap:"anywhere"}}>{invItem?.name || el.name}</span>
                         {showCosts&&<span title={_rateDiscounted?"Rate per unit — Repeat/standing-venue discount applied":"Rate per unit"} style={{flexShrink:0,fontSize:11,fontWeight:600,color:_rateDiscounted?"#10B981":textS,whiteSpace:"nowrap"}}>{_effUp>0?`₹${Math.round(_effUp).toLocaleString("en-IN")}/${isTrussSqft?"truss sqft":(invItem?.unit||rc?.unit||el.unit)}`:"₹0"}</span>}
                         {isKit&&<span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(99,102,241,0.15)",color:"#6366F1",fontWeight:700}}>KIT</span>}
-                        {!rc&&!el.invId&&!el.patternId&&<span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700}}>NEW</span>}
+                        {!rc&&!el.invId&&!el.patternId&&!el.mandiId&&<span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700}}>NEW</span>}
                         {el.invId&&priceInfo.warning&&<span title={priceInfo.warning} style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700}}>⚠ short</span>}
                         {(rc||el.invId)&&<span onClick={()=>openAvailModal(k, idx, el, rc)} title="Check stock availability & pick an item" style={{cursor:"pointer",fontSize:12,opacity:0.5,padding:"0 1px",lineHeight:1}}><IconBox size={12}/></span>}
                         {/* Only when the manually-pinned stock item's name actually differs from
@@ -3543,6 +3568,16 @@ undefined
                         {isTrussSqft&&priceInfo.area>0&&<span style={{fontSize:11,padding:"2px 7px",borderRadius:3,background:"rgba(59,130,246,0.12)",color:"#3B82F6",fontWeight:600}}>{priceInfo.area} sqft</span>}
                       </div>
                       <div style={{display:"flex",alignItems:"center",gap:4,marginTop:2,flexWrap:"wrap"}}>
+                        {!!el.mandiId&&(()=>{
+                          const mandiCat=(dealCheckData||studioFloralData)?.mandiCatalogue||[];
+                          const parent=mandiCat.find(m=>m.id===el.mandiId);
+                          const variants=Array.isArray(parent?.colorVariants)?parent.colorVariants:[];
+                          if(!variants.length) return null;
+                          return <select value={el.mandiVariantId||""} onChange={e=>{const v=e.target.value;const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],mandiVariantId:v};setZoneElements(p=>({...p,[k]:elems}));}} title="Which variant of this flower is being used" style={{fontSize:11,padding:"2px 6px",borderRadius:6,border:`1px solid ${el.mandiVariantId?border:"#F59E0B"}`,background:cardBg,color:textP}}>
+                            <option value="">Choose variant…</option>
+                            {variants.map(v=><option key={v.variantId} value={v.variantId}>{v.name}</option>)}
+                          </select>;
+                        })()}
                         {hasSizes&&!priceInfo.isFloralBlend&&["S","M","B"].map(s=><button key={s} onClick={()=>{const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],size:s};setZoneElements(p=>({...p,[k]:elems}));}} style={{padding:"1px 6px",borderRadius:4,border:"none",fontSize:11,fontWeight:(el.size||"M")===s?700:400,cursor:"pointer",background:(el.size||"M")===s?"rgba(0,0,0,0.06)":"transparent",color:(el.size||"M")===s?"#666":textS}}>{s}</button>)}
                         {priceInfo.isFloralBlend&&priceInfo.patternSMB&&["S","M","B"].map(s=><button key={s} onClick={()=>{const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],size:s};setZoneElements(p=>({...p,[k]:elems}));}} style={{padding:"1px 6px",borderRadius:4,border:"none",fontSize:11,fontWeight:(el.size||"B")===s?700:400,cursor:"pointer",background:(el.size||"B")===s?"rgba(0,0,0,0.06)":"transparent",color:(el.size||"B")===s?"#666":textS}}>{s}</button>)}
                         {hasSizes&&!priceInfo.isFloralBlend&&<button onClick={()=>{const elems=[...(zoneElements[k]||[])];const used=new Set(elems.filter(e=>e.name===el.name).map(e=>e.size||"M"));const ns=["B","M","S"].find(s=>!used.has(s))||"B";elems.splice(idx+1,0,applyQty(k,{...el,size:ns},1));setZoneElements(p=>({...p,[k]:elems}));}} title="Split into another size (e.g. 3 Big + 2 Small)" style={{padding:"1px 6px",borderRadius:4,border:`1px dashed ${border}`,fontSize:11,fontWeight:600,cursor:"pointer",background:"transparent",color:accent}}>＋ size</button>}
