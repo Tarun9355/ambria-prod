@@ -116,14 +116,14 @@ export default function DCTrussTab({ ctx }) {
                           }
                           // ♻️ Repeat zone: the structure is already standing, but reusing it isn't
                           // free — someone still has to check/re-tension/touch it up — so it bills at
-                          // HALF rather than the ₹0 this used to drop to entirely (see dcCostRollup's
+                          // 30% rather than the ₹0 this used to drop to entirely (see dcCostRollup's
                           // matching change). The pillar/beam RFT and batta figures stay OUT of the
                           // grand totals below regardless — those drive truss-inventory sourcing, and
                           // a repeat zone needs nothing new sourced for a rig that isn't moving.
                           if (isRepeat) {
-                            pv.costs.pillarCost = Math.round(pv.costs.pillarCost * 0.5);
-                            pv.costs.beamCost = Math.round(pv.costs.beamCost * 0.5);
-                            pv.costs.actual = Math.round(pv.costs.actual * 0.5);
+                            pv.costs.pillarCost = Math.round(pv.costs.pillarCost * 0.3);
+                            pv.costs.beamCost = Math.round(pv.costs.beamCost * 0.3);
+                            pv.costs.actual = Math.round(pv.costs.actual * 0.3);
                             pv.costs.isRepeat = true;
                           }
                           grandActual += pv.costs.actual;
@@ -137,7 +137,7 @@ export default function DCTrussTab({ ctx }) {
                         }
                         if (pv?.source === "default-on-forget") anyDefault = true;
                         if (pv?.smartFlag === "red") anyShortage = true;
-                        return { zk, zLabel: rowIdx > 0 ? `${zLabel} (truss #${rowIdx + 1})${isRepeat ? " · ♻️ Repeat (50%)" : ""}` : `${zLabel}${isRepeat ? " · ♻️ Repeat (50%)" : ""}`, pv, row, rowIdx };
+                        return { zk, zLabel: rowIdx > 0 ? `${zLabel} (truss #${rowIdx + 1})${isRepeat ? " · ♻️ Repeat (30%)" : ""}` : `${zLabel}${isRepeat ? " · ♻️ Repeat (30%)" : ""}`, pv, row, rowIdx };
                       });
                     }).filter(x => x.pv && x.pv.source !== "none");
                     return { fn, previews };

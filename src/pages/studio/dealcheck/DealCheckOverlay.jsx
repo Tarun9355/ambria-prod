@@ -595,13 +595,14 @@ export default function DealCheckOverlay({ ctx }) {
                   if (!en[zk] || !zc[zk]) return;
                   // ♻️ Repeat zone: the structure and its fabric are already standing from a prior
                   // day, but reusing them isn't truly free — someone still has to check/re-tension
-                  // the rig and steam/re-hang or spot-repair the drape — so both the truss/steel line
-                  // AND the fabric line bill at HALF rather than the ₹0 they used to drop to entirely
-                  // (owner decision). The pillar/beam loadable-line listing below stays fully
-                  // excluded for a repeat zone — there's nothing NEW to source/haul in for a rig
-                  // that isn't moving, which is a separate question from what it costs to reuse it.
+                  // the rig (billed at 30%) and steam/re-hang or spot-repair the drape (billed at
+                  // 50%) — rather than the ₹0 they used to drop to entirely (owner decision). The
+                  // pillar/beam loadable-line listing below stays fully excluded for a repeat zone —
+                  // there's nothing NEW to source/haul in for a rig that isn't moving, which is a
+                  // separate question from what it costs to reuse it.
                   const isRepeat = !!zc[zk].repeat;
-                  const repeatMult = isRepeat ? 0.5 : 1;
+                  const repeatMult = isRepeat ? 0.3 : 1;
+                  const repeatFabMult = isRepeat ? 0.5 : 1;
                   const photoUrl = (fn.elSelectedPhoto || {})[zk];
                   let density = "moderate";
                   if (photoUrl) { const li = libItems.find(l => l.url === photoUrl); if (li?.dims?.drapeDensity) density = li.dims.drapeDensity; }
@@ -630,7 +631,7 @@ export default function DealCheckOverlay({ ctx }) {
                       Object.entries(pmap).forEach(([ft, n]) => deptInv["Tenting"].push({ name: `Truss pillar ${ft}ft`, photo: "", qty: n, unit: 0, total: 0, sub: "truss structure" }));
                       Object.entries(bmap).forEach(([ft, n]) => deptInv["Tenting"].push({ name: `Truss beam ${ft}ft`, photo: "", qty: n, unit: 0, total: 0, sub: "truss structure" }));
                     }
-                    const fabCost = calcZoneFabricCost(row, tInv, anchors, density) * repeatMult;
+                    const fabCost = calcZoneFabricCost(row, tInv, anchors, density) * repeatFabMult;
                     truss += fabCost; addD("Fabric", "fabric", fabCost); // truss/masking fabric → Fabric
                   });
                 });
