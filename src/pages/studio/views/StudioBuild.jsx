@@ -3477,8 +3477,8 @@ undefined
                       // Searches IMS inventory + pure flower-recipe patterns with no inventory backing
                       // (Rate Card is not consulted here — see getElPriceFromInventory /
                       // getElPriceFromPattern in StudioApp.jsx).
-                      const invMatches=(imsInventory||[]).filter(it=>!(zoneElements[k]||[]).find(el=>el.invId===it.id)&&!kitCoveredIds.has(it.id)&&!isHiddenSubcat(it,rcSubcatFactors)&&(it.name.toLowerCase().includes(q)||(it.cat||"").toLowerCase().includes(q)||(it.subCat||it.subcategory||"").toLowerCase().includes(q))).slice(0,8);
-                      const patMatches=(recipeOnlyPatterns||[]).filter(pt=>!(zoneElements[k]||[]).find(el=>el.patternId===pt.id)&&pt.name.toLowerCase().includes(q)).slice(0,4);
+                      const invMatches=(imsInventory||[]).filter(it=>!(zoneElements[k]||[]).find(el=>el.invId===it.id)&&!kitCoveredIds.has(it.id)&&!isHiddenSubcat(it,rcSubcatFactors)&&(it.name.toLowerCase().includes(q)||(it.cat||"").toLowerCase().includes(q)||(it.subCat||it.subcategory||"").toLowerCase().includes(q)));
+                      const patMatches=(recipeOnlyPatterns||[]).filter(pt=>!(zoneElements[k]||[]).find(el=>el.patternId===pt.id)&&pt.name.toLowerCase().includes(q));
                       // Owner ask: exactly ONE raw mandi commodity — Loose Petals — is directly
                       // addable as its own element (by the kg, variant picked afterward in the element
                       // card), unlike every other mandi flower which only ever prices through a recipe.
@@ -3486,8 +3486,8 @@ undefined
                       // exception, not a general feature.
                       const ALLOWED_MANDI_ELEMENT_NAMES=["loose petals"];
                       const mandiCatalogue=(dealCheckData||studioFloralData)?.mandiCatalogue||[];
-                      const mandiMatches=mandiCatalogue.filter(m=>ALLOWED_MANDI_ELEMENT_NAMES.includes(String(m.name||"").trim().toLowerCase())&&!(zoneElements[k]||[]).find(el=>el.mandiId===m.id)&&(m.name||"").toLowerCase().includes(q)).slice(0,4);
-                      const matches=[...invMatches.map(it=>({kind:"inv",it})),...patMatches.map(pt=>({kind:"pat",pt})),...mandiMatches.map(m=>({kind:"mandi",m}))].slice(0,8);
+                      const mandiMatches=mandiCatalogue.filter(m=>ALLOWED_MANDI_ELEMENT_NAMES.includes(String(m.name||"").trim().toLowerCase())&&!(zoneElements[k]||[]).find(el=>el.mandiId===m.id)&&(m.name||"").toLowerCase().includes(q));
+                      const matches=[...invMatches.map(it=>({kind:"inv",it})),...patMatches.map(pt=>({kind:"pat",pt})),...mandiMatches.map(m=>({kind:"mandi",m}))];
                       if(!addElPos||addElPos.key!==k) return null;
                       return matches.length>0?createPortal(<div style={{position:"fixed",top:addElPos.top,bottom:addElPos.bottom,left:addElPos.left,zIndex:10000,background:cardBg,border:`1px solid ${border}`,borderRadius:8,boxShadow:"0 4px 16px rgba(0,0,0,0.2)",maxHeight:340,overflowY:"auto",width:320}}>
                         {matches.map(m=>{

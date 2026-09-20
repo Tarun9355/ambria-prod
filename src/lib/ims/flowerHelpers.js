@@ -116,7 +116,8 @@ export const floralPatternUnitRates = (pattern, sizeKey, mandiCatalogue, setting
   const sizeData = sizes[resolveSizeKey(sizes, sizeKey)];
   if (!sizeData) return null;
   const markup = effectiveMarkup(pattern, settings);
-  const realRate = Math.round((computePatternSizeCost(sizeData, mandiCatalogue, inventory) || 0) * markup);
+  const rawCost = computePatternSizeCost(sizeData, mandiCatalogue, inventory) || 0;
+  const realRate = Math.round(rawCost * markup);
   const afRate = Number(settings?.artificialFlowerRatePerKg ?? 50);
   const afBPK = Number(settings?.artificialFlowerBunchesPerKg ?? 16) || 16;
   const agRate = Number(settings?.artificialGreenRatePerKg ?? 40);
@@ -169,7 +170,11 @@ export const floralPatternUnitRates = (pattern, sizeKey, mandiCatalogue, setting
     artCost += (Number(fl?.qty) || 0) * bpu * (ft === "green" ? agRate / agBPK : afRate / afBPK);
   });
   const artRate = Math.round(artCost * artMarkup) + Math.round(mappedFinal) + Math.round(invItemCost * markup);
-  return { realRate, artRate, extra: Number(sizeData.extraCost) || 0 };
+  // rawCost: the recipe's own pre-markup ingredient cost (real side only — computePatternSizeCost).
+  // Exposed so a Fixed-Venue/Repeat discount can be taken off the recipe's raw material cost the
+  // same way it's taken off an inventory item's raw rental (item.price) — a % of the wholesale
+  // figure, not of whatever the guest is billed after the recipe's own markup.
+  return { realRate, artRate, extra: Number(sizeData.extraCost) || 0, rawCost };
 };
 
 // A kit's PLAIN components ({itemId,qty} — not patternId add-ons) can themselves be floral items

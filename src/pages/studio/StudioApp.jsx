@@ -4017,7 +4017,12 @@ export default function StudioApp() {
   //    be billed after markup. A 50% fixed-venue discount must read as ₹250 − (50% of ₹100) =
   //    ₹200, not ₹250 × 0.5 = ₹125 — the old `unitRate * (1 - discountPct/100)` scaled away the
   //    markup along with the discount instead of only removing the raw-cost discount from it.
-  const repeatAdjustedLineCost = (item, qty, unitRate, zc, venueName, kitOverrides) => {
+  // floralRawCost (non-kit floral items only — see the isFloral branch below): the attached flower
+  // recipe's own pre-markup ingredient cost (floralPatternUnitRates' `rawCost`), discounted at the
+  // exact same pct as the pot/container's own rental — same "% off the raw/wholesale figure, not off
+  // what the guest is billed after markup" rule item.price already gets. Recipe markup and the pot's
+  // rate_card_categories factor both stay untouched; only the two raw bases shrink.
+  const repeatAdjustedLineCost = (item, qty, unitRate, zc, venueName, kitOverrides, floralRawCost = 0) => {
     const full = qty * unitRate;
     if (!item) return full;
     if (hideDiscountFromClient) return full; // see hideDiscountFromClient above — guest-facing only
@@ -4045,7 +4050,9 @@ export default function StudioApp() {
         // whatever the guest is billed after the sub-category's scaling factor — unitRate here is
         // already that scaled, guest-facing rate. A ₹100 rental at a 2.5× factor bills ₹250; a 50%
         // fixed-venue discount reads as ₹250 − (50% of ₹100) = ₹200, not ₹250 × 0.5 = ₹125.
-        const discountedUnitRate = Math.max(0, unitRate - rawRate * discountPct / 100);
+        // floralRawCost rides the same pct — a ₹600 recipe at 3× markup bills ₹1,800; the same 50%
+        // knocks ₹300 off that (50% of the ₹600 raw cost), not 50% of the marked-up ₹1,800.
+        const discountedUnitRate = Math.max(0, unitRate - rawRate * discountPct / 100 - floralRawCost * discountPct / 100);
         return standingUnits * discountedUnitRate + freshUnits * unitRate;
       }
     }
@@ -4059,7 +4066,7 @@ export default function StudioApp() {
     const sc = key ? Number((fvCfgForRepeat.fixedVenueSubcatDiscount || {})[key]) : NaN;
     const pct = Number.isFinite(sc) && sc > 0 ? sc : 0;
     const rawRate = isKit ? unitRate : (Number(item.price) || 0);
-    return qty * Math.max(0, unitRate - rawRate * pct / 100);
+    return qty * Math.max(0, unitRate - rawRate * pct / 100 - floralRawCost * pct / 100);
   };
   // opts.checkAvailability (Build view's live canvas ONLY — explicit opt-in, never a default) turns
   // on the same unavailable-shortfall pricing already built for Deal Check: qty within what's free
@@ -4163,7 +4170,7 @@ export default function StudioApp() {
         // item's own rental (× its sub-category's scaling factor) is always added on top, alongside
         // the recipe's own generic "extra (pot/base)" figure.
         const unitPrice = Math.round(realPct / 100 * rates.realRate + (100 - realPct) / 100 * rates.artRate) + rates.extra + priceForInvItem(item, rcFactorByKey, imsInventory);
-        return { rc: null, unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName, el.kitOverrides), area: 0, warning: null, isFloralBlend: true, realPct, patternSMB: pattern.mode === "smb" };
+        return { rc: null, unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName, el.kitOverrides, rates.rawCost), area: 0, warning: null, isFloralBlend: true, realPct, patternSMB: pattern.mode === "smb" };
       }
     }
 
