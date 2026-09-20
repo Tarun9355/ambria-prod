@@ -494,6 +494,10 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
       : deptTypes.map(t => ({ type: t, count: "", rate: Number(dihari[t]?.rate) || 0, basis: "", sysCount: null, sysRate: 0, sysCost: 0, days: 1, _extra: true })));
   const expenses = Array.isArray(deptData.expenses) ? deptData.expenses : [];
   const realMandi = deptData.realMandi || "";
+  // Manual discount the department head grants the salesperson on this deal — a goodwill/incentive
+  // figure the head types in directly, unrelated to Deal Check's own venue/repeat pricing discounts
+  // and not derived from anything else on this page.
+  const discount = deptData.discount ?? "";
 
   const saveDept = (patch) => {
     if (!sel) return;
@@ -1684,6 +1688,19 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                           nothing", which is a different claim from "not recorded yet". */}
                       <div className={"mt-1.5 text-[20px] leading-none font-bold tabular-nums tracking-tight " + (hasActuals ? "text-gray-900" : "text-gray-300")}>{hasActuals ? fmt(actualCost) : "—"}</div>
                       <div className="mt-1.5 text-[10px] text-gray-500">{hasActuals ? "What you actually spent" : "Not logged yet"}</div>
+                    </div>
+                    {/* Not synced from anywhere, unlike its two neighbours — a plain manual figure
+                        the department head types in themselves. Amber, not grey/blue, so it never
+                        looks like another system-derived readout. */}
+                    <div className="rounded-xl bg-amber-50 px-4 py-3 flex-1 min-w-0 sm:min-w-[210px] ring-1 ring-amber-200">
+                      <div className="text-[9px] font-bold uppercase tracking-[0.08em] text-amber-600">Discount to salesperson</div>
+                      <div className="mt-1.5 flex items-center gap-1">
+                        <span className="text-[16px] font-bold text-amber-900">₹</span>
+                        <input type="number" min="0" value={discount}
+                          onChange={e => saveDept({ discount: e.target.value === "" ? "" : Math.max(0, Number(e.target.value) || 0) })}
+                          placeholder="0" className="w-full bg-transparent text-[20px] leading-none font-bold text-amber-900 tabular-nums tracking-tight outline-none" />
+                      </div>
+                      <div className="mt-1.5 text-[10px] text-amber-700">Manual — set by {dept} head for the salesperson on this deal</div>
                     </div>
                   </div>
                   {/* Saying it in words. The heads below are not a second set of numbers, they
