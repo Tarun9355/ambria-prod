@@ -73,7 +73,6 @@ import {
   defaultZoneFromArea, resolveMandiFlower, calcZoneTrussPreview,
   calcZoneFabric, calcZoneFabricCost, calcZoneCarpet, buildPlatformPlan, getStudioAvailable,
   buildTopology, PLATFORM_FATTA_CODE, PLATFORM_STAND_CODE, trussRowCost,
-  zoneTrussStandingDiscount,
 } from "../../lib/studio/pricing";
 import { allocateRowAvailability } from "../../lib/studio/dealAvailability";
 import { callClaudeStreaming } from "../../lib/ai";
@@ -259,10 +258,16 @@ const FLORAL_HARDPROP_DEFAULT = {
 // platformRowCost moved to lib/studio/taxonomy.js — the zone editor needs the same function to
 // show each floor card its own cost, and two copies of a pricing formula is how a card ends up
 // disagreeing with the bill.
-// trussInv/venueTruss are OPTIONAL trailing params — callers that don't pass them (there were none
-// before this existed) just get discount 0, same as leaving a Fixed Venue's pillar/beam discount at
-// 0%. See zoneTrussStandingDiscount (lib/studio/pricing.js) for what venueTruss needs to be.
-function calcStructCost(zk, zc, rates, trussInv, venueTruss) {
+// applyDiscount is an OPTIONAL trailing param, resolved by the caller (StudioApp.jsx's
+// structDiscountFor / StudioBuild.jsx's own local equivalent) as: the discreet guest-discount
+// toggle is on AND (this zone is flagged ♻️ Repeat OR the venue is one of Deal Check's registered
+// Fixed Venues). Callers that don't pass it (there were none before this existed) just get no
+// discount, same as leaving it off.
+// Same flat pct as the component-scope GUEST_DISCOUNT_PCT (repeatAdjustedLineCost) — duplicated as
+// a module-level constant only because this function sits outside the component and can't close
+// over that one; kept in lockstep by being the one other place this number is allowed to live.
+const GUEST_STRUCT_DISCOUNT_PCT = 25;
+function calcStructCost(zk, zc, rates, applyDiscount) {
   if (!zc) return { truss: 0, masking: 0, platform: 0, carpet: 0, arches: 0, pillars: 0, glass: 0, print: 0, total: 0 };
   const d = zc.dims || {}, fd = zc.floorDims || d, r = { truss: 0, masking: 0, platform: 0, carpet: 0, arches: 0, pillars: 0, glass: 0 };
   // Material, drape density, and the ceiling-via-print toggle are all per-row — separate truss
@@ -290,14 +295,18 @@ function calcStructCost(zk, zc, rates, trussInv, venueTruss) {
     return sum + s * (m?.ratePerSqft || 0) * q;
   }, 0);
   r.total = r.truss + r.masking + r.platform + r.carpet + r.arches + r.pillars + r.glass + r.print;
-  // Fixed-venue pillar/beam discount — a ₹ figure bridged in from the completely separate detailed
-  // RFT model (see zoneTrussStandingDiscount's own comment for why). Subtracted from truss/total
-  // here, at the source, so every one of calcStructCost's many callers (Build's zone cards, Deal
-  // Check's own zone accordion, the cost sheet) shows the same discounted number automatically
-  // instead of needing the same patch repeated at each one.
-  if (trussInv && venueTruss) {
-    const discount = zoneTrussStandingDiscount(zc, trussInv, venueTruss);
-    if (discount > 0) { r.truss = Math.max(0, r.truss - discount); r.total = Math.max(0, r.total - discount); r.trussDiscount = discount; }
+  // Flat 25% off every structural line — same guest-discount rule repeatAdjustedLineCost uses for
+  // elements (see its own comment): Deal Check keeps its own separate, config-driven pillar/beam
+  // discount (zoneTrussStandingDiscount, still called directly from DealCheckOverlay.jsx/
+  // DCTrussTab.jsx, untouched by this), while the guest build gets one flat pct off the full
+  // guest-facing total here — applied at the source, so every caller (Build's zone cards, Summary,
+  // the cost sheet) shows the same discounted number automatically.
+  if (applyDiscount) {
+    const pct = GUEST_STRUCT_DISCOUNT_PCT;
+    const before = r.total;
+    ["truss", "masking", "platform", "carpet", "arches", "pillars", "glass", "print"].forEach((k) => { r[k] = r[k] * (1 - pct / 100); });
+    r.total = r.total * (1 - pct / 100);
+    r.trussDiscount = before - r.total;
   }
   return r;
 }
@@ -3978,7 +3987,11 @@ export default function StudioApp() {
   // either way (the ✨Fresh/♻️Repeat toggle stays available and still flows to Deal Check as before)
   // — only what that flag PRICES for the client depends on this.
   const hideDiscountFromClient = !clientLedger.find(c => c.id === activeClientId)?.applyDiscountToClient;
-  const venueTrussFor = (venueName) => hideDiscountFromClient ? undefined : fixedVenueFor(fvCfgForRepeat, venueName)?.truss;
+  // Feeds calcStructCost's flat 25% (see its own comment) — same eligibility rule
+  // repeatAdjustedLineCost uses for elements: the toggle is on AND (this zone is Repeat OR the
+  // venue itself is one of Deal Check's registered Fixed Venues — checked at the venue level here
+  // since structural cost has no per-item id the way an inventory element does).
+  const structDiscountFor = (zc, venueName) => !hideDiscountFromClient && (!!zc?.repeat || !!fixedVenueFor(fvCfgForRepeat, venueName));
   // Owner ask: a second discrete per-deal lever, alongside hideDiscountFromClient — the small dot on
   // each Photo Filters section (Build's left rail) doubles as a markup tier picker when clicked
   // directly: Venue=1x, Event type=1.1x, Venue type=1.2x, Design style=1.3x, Color palette=1.4x,
@@ -4531,9 +4544,9 @@ export default function StudioApp() {
   const calcPhotoCost = useCallback((zoneKey, photo) => {
     const zc = (photo?.dims && Object.values(photo.dims).some(v => v > 0)) ? buildZoneConfig(zoneKey, photo.dims) : null;
     const elCost = calcElsCost(photo?.elements, true, zc, { checkAvailability: true });
-    const structCost = zc ? scaleStruct(calcStructCost(zoneKey, zc, structRates)).total : 0;
+    const structCost = zc ? scaleStruct(calcStructCost(zoneKey, zc, structRates, structDiscountFor(zc, venue))).total : 0;
     return elCost + structCost;
-  }, [calcElsCost, structRates, guestPriceMultiplier]);
+  }, [calcElsCost, structRates, guestPriceMultiplier, venue, hideDiscountFromClient, fvCfgForRepeat]);
 
   const calcFullEventCost = useCallback((ev) => {
     if (!ev) return 0;
@@ -4636,10 +4649,9 @@ export default function StudioApp() {
     // every edit) — letting it override the live config silently priced a deal from an out-of-date
     // zone list whenever a session happened to still be carrying one.
     const zones = Object.entries(zoneConfig).filter(([zk, cfg]) => enabledEls[zk] && cfg).map(([zk, cfg]) => ({ id: zk, type: zk, name: zk, config: cfg }));
-    // Fixed-venue pillar/beam discount, if this function's venue carries one — same fvCfgForRepeat
-    // resolver the Repeat toggle already uses.
-    const _venueTrussHere = venueTrussFor(venue);
-    zones.forEach(z => { c += scaleStruct(calcStructCost(z.type, z.config, structRates, dealCheckData?.trussInv || studioFloralData?.trussInv, _venueTrussHere)).total; });
+    // structDiscountFor is per-zone (zc.repeat varies per zone), unlike the old venue-only truss
+    // discount this replaced.
+    zones.forEach(z => { c += scaleStruct(calcStructCost(z.type, z.config, structRates, structDiscountFor(z.config, venue))).total; });
     Object.entries(zoneElements).forEach(([zk, elems]) => {
       if (!enabledEls[zk] || !elems) return;
       c += calcElsCost(elems, true, zoneConfig[zk], { checkAvailability: true }); // active fn's live canvas — see activeBlocksForDate
@@ -4778,9 +4790,7 @@ export default function StudioApp() {
     // which was already emptied out elsewhere, so the loop never actually added any cost;
     // removing it just retires visibly-dead code, it doesn't change any computed total.
     const zones = Object.entries(fZoneConfig).filter(([zk, cfg]) => fEnabledEls[zk] && cfg).map(([zk, cfg]) => ({ id: zk, type: zk, name: zk, config: cfg }));
-    // Fixed-venue pillar/beam discount, if this function's venue carries one.
-    const _venueTrussHere = venueTrussFor(fVenue);
-    zones.forEach(z => { decor += scaleStruct(calcStructCost(z.type, z.config, structRates, dealCheckData?.trussInv || studioFloralData?.trussInv, _venueTrussHere)).total; });
+    zones.forEach(z => { decor += scaleStruct(calcStructCost(z.type, z.config, structRates, structDiscountFor(z.config, fVenue))).total; });
     // Availability-shortfall pricing now runs for EVERY function, each against its OWN date's
     // blocks (blocksByDate — warmed for every function's date, not just the active one). It used to
     // only run for whichever function was the active Build tab (activeBlocksForDate has no other
@@ -5278,7 +5288,7 @@ export default function StudioApp() {
           itemCount += (el2.qty || 0);
         });
       }
-      const zl = fZoneConfig[k] ? scaleStruct(calcStructCost(k, fZoneConfig[k], structRates, dealCheckData?.trussInv || studioFloralData?.trussInv, venueTrussFor(fVenue))) : { truss: 0, masking: 0, platform: 0, carpet: 0, total: 0 };
+      const zl = fZoneConfig[k] ? scaleStruct(calcStructCost(k, fZoneConfig[k], structRates, structDiscountFor(fZoneConfig[k], fVenue))) : { truss: 0, masking: 0, platform: 0, carpet: 0, total: 0 };
       const customCost = dcCustomItems
         .filter(c => c.fnIdx === fnData.fnIdx && c.zoneKey === k)
         .reduce((s, c) => s + (c.manualPrice || c.refPrice || 0) * (Number(c.qty) || 1), 0);
@@ -8743,7 +8753,7 @@ export default function StudioApp() {
           }
         });
       }
-      const zl = fZoneConfig[k] ? scaleStruct(calcStructCost(k, fZoneConfig[k], structRates, dealCheckData?.trussInv || studioFloralData?.trussInv, venueTrussFor(fVenue))) : { truss: 0, masking: 0, platform: 0, carpet: 0, total: 0, arches: 0, pillars: 0, glass: 0 };
+      const zl = fZoneConfig[k] ? scaleStruct(calcStructCost(k, fZoneConfig[k], structRates, structDiscountFor(fZoneConfig[k], fVenue))) : { truss: 0, masking: 0, platform: 0, carpet: 0, total: 0, arches: 0, pillars: 0, glass: 0 };
       const structItems = [];
       const zc = fZoneConfig[k] || {};
       const zm = zoneMeta[k];

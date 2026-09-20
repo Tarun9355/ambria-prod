@@ -794,7 +794,7 @@ export default function StudioBuild({ ctx }) {
   const sectionCost = (k, id) => {
     if (!showCosts) return 0;
     if (id === "elements") return calcElsCost(zoneElements[k], true, zoneConfig[k], {checkAvailability:true});
-    const sc = zoneConfig[k] ? scaleStruct(calcStructCost(k, zoneConfig[k], structRates, dealCheckData?.trussInv, fixedVenueTrussForCalc)) : null;
+    const sc = zoneConfig[k] ? scaleStruct(calcStructCost(k, zoneConfig[k], structRates, structDiscountFor(zoneConfig[k]))) : null;
     if (id === "truss") return sc ? sc.truss + sc.masking + sc.arches + sc.pillars + sc.glass : 0;
     if (id === "platform") return sc ? sc.platform + sc.carpet : 0;
     return sc ? sc.print : 0; // calcStructCost's own print total — same figure zoneTotal() now folds in below
@@ -857,7 +857,7 @@ export default function StudioBuild({ ctx }) {
   // (shortfall-adjusted), so "By zone" + "Zones subtotal" quietly failed to add up to the number
   // above them. Same reasoning as calcFunctionCost's — this is what makes Build's own totals agree
   // with themselves, and with Summary/Deal Check's.
-  const zoneTotal = (k) => calcElsCost(zoneElements[k],true,zoneConfig[k],{checkAvailability:true})+(zoneConfig[k]?scaleStruct(calcStructCost(k,zoneConfig[k],structRates,dealCheckData?.trussInv,fixedVenueTrussForCalc)).total:0)+dcCustomItems.filter(c=>c.fnIdx===(activeFnIdx||0)&&c.zoneKey===k).reduce((acc,c)=>acc+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0);
+  const zoneTotal = (k) => calcElsCost(zoneElements[k],true,zoneConfig[k],{checkAvailability:true})+(zoneConfig[k]?scaleStruct(calcStructCost(k,zoneConfig[k],structRates,structDiscountFor(zoneConfig[k]))).total:0)+dcCustomItems.filter(c=>c.fnIdx===(activeFnIdx||0)&&c.zoneKey===k).reduce((acc,c)=>acc+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0);
   void textSRaw;
 
   // Photo-filter pill. Was 9px in a 2px-tall chip with `textS` (~3.1:1) when inactive — too small
@@ -1226,10 +1226,10 @@ export default function StudioBuild({ ctx }) {
   };
   const fixedVenueHere = fixedVenueFor(_fvCfg, activeFnMeta?.venue || venue);
   // The ✨Fresh/♻️Repeat toggle above stays driven by fixedVenueHere as-is — zc.repeat still needs to
-  // flow to Deal Check exactly as before regardless of the hide-discount checkbox. Only what that
-  // flag's truss discount actually PRICES for the client (every calcStructCost call below) is
-  // suppressed — mirrors StudioApp.jsx's venueTrussFor for the same reason (see hideDiscountFromClient there).
-  const fixedVenueTrussForCalc = hideDiscountFromClient ? undefined : fixedVenueHere?.truss;
+  // flow to Deal Check exactly as before regardless of the hide-discount checkbox. Mirrors
+  // StudioApp.jsx's structDiscountFor: flat 25% off calcStructCost's total (see its own comment) when
+  // the toggle is on AND (this zone is Repeat OR the venue itself is a registered Fixed Venue).
+  const structDiscountFor = (zc) => !hideDiscountFromClient && (!!zc?.repeat || !!fixedVenueHere);
   // Same scaleStruct StudioApp.jsx uses for its own guest-facing calcStructCost calls (getElPrice/
   // getElPriceForFn already fold guestPriceMultiplier in there) — Build's own local truss/masking/
   // platform/carpet/print previews (sc/zoneTotal/st below, and TrussStack's own displayed figures)
@@ -3933,7 +3933,7 @@ undefined
               create the entry on the first keystroke — calcStructCost already returns all-zero for
               an untouched config, and every field reads through `|| {}`. */}
           {(zoneSection[k]==="truss"||zoneSection[k]==="platform")&&(()=>{
-            const zm=zoneMeta[k],zc=zoneConfig[k]||{},st=scaleStruct(calcStructCost(k,zc,structRates,dealCheckData?.trussInv,fixedVenueTrussForCalc));
+            const zm=zoneMeta[k],zc=zoneConfig[k]||{},st=scaleStruct(calcStructCost(k,zc,structRates,structDiscountFor(zc)));
             const dl={L:"Depth",W:"Width",H:"Height",S:"Size"};
             const sZ=u=>{setActiveZones([]);setZoneConfig(p=>({...p,[k]:{...p[k],...u}}));};
             const sD=(d,v)=>{setActiveZones([]);setZoneConfig(p=>{const cur=p[k]||{};const dims={...(cur.dims||{}),[d]:parseFloat(v)||0};
@@ -3959,10 +3959,13 @@ undefined
                   chip row went earlier. */}
               {/* ── TRUSS (with masking nested inside it) → then the floor card ── */}
               
+              {/* trussInv/venueTruss dropped — that was the old Fixed-Venue pillar/beam config discount
+                  preview (zoneTrussStandingDiscountDetail), now replaced for the guest by the flat 25%
+                  st (scaleStruct(calcStructCost(...))) above already reflects; Deal Check's own
+                  DCTrussTab still shows that detailed breakdown for its own purposes, unaffected. */}
               {zoneSection[k]==="truss"&&<TrussStack S={S} customCeilingField={customCeilingField} k={k} zc={zc} zm={zm} st={st} sZ={sZ} sD={sD} fmt={fmt} showCosts={showCosts}
                 isDark={isDark} border={border} textP={textP} textS={textS} accent={accent}
-                customMaskingField={customMaskingField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates}
-                trussInv={dealCheckData?.trussInv} venueTruss={fixedVenueTrussForCalc} />}
+                customMaskingField={customMaskingField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} />}
               {/* ── PLATFORM + CARPET → then floor dims ── */}
               {zoneSection[k]==="platform"&&<FloorStack S={S} zc={zc} zm={zm} st={st} sZ={sZ} sFD={sFD} fd={fd} fmt={fmt} showCosts={showCosts}
                 isDark={isDark} border={border} accent={accent} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} />}
