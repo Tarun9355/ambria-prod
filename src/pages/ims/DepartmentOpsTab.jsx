@@ -1682,16 +1682,9 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                       <div className="mt-1.5 text-[20px] leading-none font-bold text-white tabular-nums tracking-tight">{fmt(liveTotal)}</div>
                       <div className="mt-1.5 text-[10px] text-blue-100">What {dept} earns · synced from Deal Check</div>
                     </div>
-                    <div className="rounded-xl bg-gray-50 px-4 py-3 flex-1 min-w-0 sm:min-w-[210px]">
-                      <div className="text-[9px] font-bold uppercase tracking-[0.08em] text-gray-400">Actual cost logged</div>
-                      {/* Grey dash until something is logged. A ₹0 here would read as "spent
-                          nothing", which is a different claim from "not recorded yet". */}
-                      <div className={"mt-1.5 text-[20px] leading-none font-bold tabular-nums tracking-tight " + (hasActuals ? "text-gray-900" : "text-gray-300")}>{hasActuals ? fmt(actualCost) : "—"}</div>
-                      <div className="mt-1.5 text-[10px] text-gray-500">{hasActuals ? "What you actually spent" : "Not logged yet"}</div>
-                    </div>
-                    {/* Not synced from anywhere, unlike its two neighbours — a plain manual figure
-                        the department head types in themselves. Amber, not grey/blue, so it never
-                        looks like another system-derived readout. */}
+                    {/* Not synced from anywhere, unlike its neighbours — a plain manual figure the
+                        department head types in themselves. Amber, not grey/blue, so it never looks
+                        like another system-derived readout. */}
                     <div className="rounded-xl bg-amber-50 px-4 py-3 flex-1 min-w-0 sm:min-w-[210px] ring-1 ring-amber-200">
                       <div className="text-[9px] font-bold uppercase tracking-[0.08em] text-amber-600">Discount to salesperson</div>
                       <div className="mt-1.5 flex items-center gap-1">
@@ -1702,6 +1695,28 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                       </div>
                       <div className="mt-1.5 text-[10px] text-amber-700">Manual — set by {dept} head for the salesperson on this deal</div>
                     </div>
+                    <div className="rounded-xl bg-gray-50 px-4 py-3 flex-1 min-w-0 sm:min-w-[210px]">
+                      <div className="text-[9px] font-bold uppercase tracking-[0.08em] text-gray-400">Actual cost logged</div>
+                      {/* Grey dash until something is logged. A ₹0 here would read as "spent
+                          nothing", which is a different claim from "not recorded yet". */}
+                      <div className={"mt-1.5 text-[20px] leading-none font-bold tabular-nums tracking-tight " + (hasActuals ? "text-gray-900" : "text-gray-300")}>{hasActuals ? fmt(actualCost) : "—"}</div>
+                      <div className="mt-1.5 text-[10px] text-gray-500">{hasActuals ? "What you actually spent" : "Not logged yet"}</div>
+                    </div>
+                    {/* Net = income − discount − actual cost. The bottom line the first three cards
+                        add up to, so it gets its own colour rather than sharing grey/amber with a
+                        component it's actually the result of. Actual cost counts as 0 here until
+                        logged (Not logged yet ≠ spent nothing, but a net figure has to start somewhere). */}
+                    {(() => {
+                      const netAmount = liveTotal - (Number(discount) || 0) - (hasActuals ? actualCost : 0);
+                      const neg = netAmount < 0;
+                      return (
+                        <div className={"rounded-xl px-4 py-3 flex-1 min-w-0 sm:min-w-[210px] ring-1 " + (neg ? "bg-red-50 ring-red-200" : "bg-emerald-50 ring-emerald-200")}>
+                          <div className={"text-[9px] font-bold uppercase tracking-[0.08em] " + (neg ? "text-red-600" : "text-emerald-600")}>Net</div>
+                          <div className={"mt-1.5 text-[20px] leading-none font-bold tabular-nums tracking-tight " + (neg ? "text-red-900" : "text-emerald-900")}>{fmt(netAmount)}</div>
+                          <div className={"mt-1.5 text-[10px] " + (neg ? "text-red-700" : "text-emerald-700")}>Income − discount − actual cost{!hasActuals ? " (cost not logged yet)" : ""}</div>
+                        </div>
+                      );
+                    })()}
                   </div>
                   {/* Saying it in words. The heads below are not a second set of numbers, they
                       are the one above taken apart — and nothing on the panel said so, which is
