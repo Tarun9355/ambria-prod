@@ -6994,6 +6994,12 @@ export default function StudioApp() {
   // requests share a small (~64KB) browser-wide payload budget — so the beforeunload prompt below
   // stays as the belt-and-suspenders backstop for a build too large for that budget.
   const unsavedEditRef = useRef(false);
+  // Reactive mirror of unsavedEditRef, purely for the manual "Save now" pill in the header — the ref
+  // itself can't drive a render. Flipped true in lockstep with the ref (the debounced-edit effect
+  // below) and false wherever the ref is cleared (a real save landing, or the manual save button).
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [manualSaving, setManualSaving] = useState(false);
+  const [justSaved, setJustSaved] = useState(false);
   const autoSaveBuild = useCallback((opts = {}) => {
     // Both flags: switchingRef covers the click-to-commit half, fnSwitchingRef the render-and-settle
     // half. Either one alone leaves a window where a save can capture a half-loaded function.
@@ -7025,6 +7031,7 @@ export default function StudioApp() {
       // (fetch keepalive) rather than trust a normal request to finish in time.
       try { saveSessionRef.current({ auto: true, keepalive: !!opts.keepalive }); } catch { /* ignore */ }
       unsavedEditRef.current = false;
+      setHasUnsavedChanges(false);
     }
     // Editing an inventory element's qty directly in Build (not through Deal Check) never touched
     // the real reservation before — the "short" badge here is a live LOCAL price/availability
@@ -7068,6 +7075,7 @@ export default function StudioApp() {
   useEffect(() => {
     if (!buildHasDataRef.current) return;
     unsavedEditRef.current = true;
+    setHasUnsavedChanges(true);
     const t = setTimeout(() => autoSaveBuild({ edited: true }), 1500);
     return () => clearTimeout(t);
     // Event Info fields are in here too — date, venue, function, shift, pax, the extra functions.
@@ -7113,6 +7121,33 @@ export default function StudioApp() {
     window.addEventListener("beforeunload", onBeforeUnload);
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, []);
+  // Manual "Save now" — the header pill (below) only renders while hasUnsavedChanges is true, so this
+  // is always a real, user-initiated flush of a genuine pending edit, not a debounce race. Bypasses
+  // the 1.5s debounce and the periodic-tick "nothing changed" skip entirely by calling saveSession
+  // itself (auto:false — the manual "Save Draft" path, see its own comment) and AWAITING the actual
+  // network write before clearing the dirty flag, instead of firing-and-forgetting like the
+  // pagehide/beforeunload saves do. That's the point of this button: unlike those, its whole job is
+  // to let a refresh proceed KNOWING the save has actually landed, not just that it was kicked off.
+  const saveNow = useCallback(async () => {
+    if (manualSaving) return;
+    setManualSaving(true);
+    try {
+      const result = saveSessionRef.current({ auto: false });
+      // saveClientLedger never throws — it catches its own errors, shows a red toast itself, and
+      // resolves `false`. Only clear the dirty flag when it actually resolved true (or there was
+      // nothing to await, e.g. no session change at all), so a failed save leaves the pill up and
+      // the beforeunload warning armed rather than silently reporting success.
+      const ok = result?.savePromise ? await result.savePromise : !!result;
+      if (ok !== false) {
+        unsavedEditRef.current = false;
+        setHasUnsavedChanges(false);
+        setJustSaved(true);
+        setTimeout(() => setJustSaved(false), 2000);
+      }
+    } finally {
+      setManualSaving(false);
+    }
+  }, [manualSaving]);
   // 4) On-demand flush for the "new version available" banner (App.jsx), which lives above the
   // router and reloads the page on click. pagehide fires on reload too, but a reload can cancel an
   // in-flight fetch before it lands — the same network write that pagehide kicks off has no guarantee
@@ -10622,6 +10657,26 @@ export default function StudioApp() {
                vs this-mode) apart — side by side they read as one broken control. */}
         <div className="sa-nav-right" style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 12, flex: "1 1 0", minWidth: 0 }}>
           {/* The estimate chip lived here; Build's right-hand Live Estimate tile owns it now. */}
+          {/* Manual "Save now" pill — only rendered while there's something to save (or mid-save, or
+              just after one), so it never sits idle as decoration. Autosave already covers this
+              within ~1.5s of the last edit, but a refresh in that window (or right after, before the
+              keepalive write confirms) is exactly the gap this closes: click it, wait for the network
+              write to actually land, then refresh with nothing left to lose — the beforeunload
+              warning below only fires while hasUnsavedChanges is still true. */}
+          {mode === "studio" && authUser && (hasUnsavedChanges || manualSaving || justSaved) && (
+            <button onClick={saveNow} disabled={manualSaving}
+              title={manualSaving ? "Saving…" : hasUnsavedChanges ? "You have unsaved changes — click to save now" : "All changes saved"}
+              style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 13px", borderRadius: 999,
+                border: `1px solid ${hasUnsavedChanges ? "#F59E0B88" : "#22C55E88"}`,
+                background: hasUnsavedChanges ? "rgba(245,158,11,0.14)" : "rgba(34,197,94,0.14)",
+                color: hasUnsavedChanges ? "#F59E0B" : "#22C55E", fontSize: 11.5, fontWeight: 700,
+                fontFamily: "inherit", cursor: manualSaving ? "progress" : "pointer", flexShrink: 0,
+                whiteSpace: "nowrap", transition: "background .15s ease, color .15s ease" }}>
+              <span aria-hidden="true" style={{ width: 6, height: 6, borderRadius: "50%", flexShrink: 0,
+                background: "currentColor" }} />
+              {manualSaving ? "Saving…" : hasUnsavedChanges ? "Unsaved changes — Save now" : "Saved"}
+            </button>
+          )}
           {/* Mode switch — which part of Studio. Titled to distinguish it from the app switcher. */}
           <div style={NAV_GROUP}>
             {[["studio", "Studio", IconPalette, "Design Studio — build deals"], ...(canManageAny ? [["manage", "Manage", IconSliders, "Manage — library & settings"]] : [])].map(([id, label, Icon, tip]) => (
