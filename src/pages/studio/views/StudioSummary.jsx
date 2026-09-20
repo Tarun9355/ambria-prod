@@ -3086,7 +3086,17 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
         // forward rather than silently dropping the fee the moment someone tweaks a quantity.
         const feePct=Number(d.agencyFeePct)||20;
         d.agencyFee=Math.round(discountedTotal*feePct/100);
-        d.eventGrandTotal=discountedTotal+d.agencyFee;
+        const negotiatedAmount=Number(d.negotiatedAmount)||0;
+        d.eventGrandTotal=negotiatedAmount>0?negotiatedAmount:(discountedTotal+d.agencyFee);
+        // Fold that discount/fee (or negotiated rescale) proportionally back into every function's
+        // own previewGrand — same as buildCombinedCostSheetData's initial pass — so the on-screen
+        // cards keep summing to eventGrandTotal after a live quantity edit, not just on first open.
+        if(preFeeTotal>0){
+          const scale=d.eventGrandTotal/preFeeTotal;
+          d.functions.forEach(f=>{f.previewGrand=Math.round((f.grand||0)*scale);});
+        } else {
+          d.functions.forEach(f=>{f.previewGrand=f.grand||0;});
+        }
         setCsData(d);
       };
       // The cost-sheet PDF button is gone from the toolbar. exportPDF() below still builds the sheet
@@ -3277,7 +3287,10 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
                 </div>
                 <div style={{textAlign:"right"}}>
                   <div style={{fontSize:10,color:"#a5b4fc",textTransform:"uppercase"}}>Function Total</div>
-                  <div style={{fontSize:20,fontWeight:700,color:"#C9A96E"}}>{fnObj.isEmpty?"—":fmt(fnObj.grand)}</div>
+                  {/* previewGrand — this function's own share of the venue discount + agency fee (or
+                      negotiated rescale) already folded in, so every card's total summed together
+                      equals the deal amount on Summary — see buildCombinedCostSheetData. */}
+                  <div style={{fontSize:20,fontWeight:700,color:"#C9A96E"}}>{fnObj.isEmpty?"—":fmt(fnObj.previewGrand??fnObj.grand)}</div>
                 </div>
               </div>
               {/* Empty function placeholder */}
@@ -3370,14 +3383,11 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
               )}
             </div>
           ))}
-          {/* Fixed-venue discount — only shown when the booked venue actually carries one
-              (Admin → Settings → Fixed Venues). Applied before the agency fee below. */}
-          {(csData.venueDiscount || 0) > 0 && (
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 24px",marginBottom:8}}>
-              <div style={{fontSize:13,fontWeight:600,color:"#B91C1C"}}>Fixed-Venue Discount</div>
-              <div style={{fontSize:15,fontWeight:700,color:"#B91C1C"}}>−{fmt(csData.venueDiscount)}</div>
-            </div>
-          )}
+          {/* No separate Fixed-Venue Discount/Agency Fee row here any more — each function's own
+              "Function Total" above already carries its proportional share of both (previewGrand),
+              so the cards sum to the deal amount by themselves; a further subtraction here would
+              double-count it. Excel/PPT/HTML still show the discount and fee as their own explicit
+              lines, since those keep every function's raw (un-folded) total for that breakdown. */}
           <div style={{textAlign:"center",fontSize:10,color:textS,padding:"8px 0 20px"}}>Edit quantities above — totals update live across all functions. Then export as PDF or PPT.</div>
         </div>
       </div>);

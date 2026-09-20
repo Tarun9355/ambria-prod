@@ -8839,13 +8839,23 @@ export default function StudioApp() {
     // per-function breakdown still sums to the real negotiated amount instead of the un-negotiated
     // system estimate.
     const negotiatedAmount = Number(ac?.negotiatedAmount) > 0 ? Number(ac.negotiatedAmount) : 0;
-    if (negotiatedAmount > 0 && preFeeTotal > 0) {
-      const scale = negotiatedAmount / preFeeTotal;
-      functions.forEach(f => { f.grand = Math.round((f.grand || 0) * scale); });
+    const eventGrandTotal = negotiatedAmount > 0 ? negotiatedAmount : systemGrandTotal;
+    // previewGrand — each function's own total with its proportional share of the venue discount +
+    // agency fee (or the negotiated rescale) already folded in, so the on-screen preview's function
+    // cards sum to eventGrandTotal on their own, with no separate discount/fee row needed under
+    // them. Kept SEPARATE from `grand` (left exactly as calcFunctionBreakdown produced it) because
+    // Excel/PPT/HTML's own "Event Summary" section already shows that same discount/fee/negotiated
+    // adjustment as its own explicit row against the raw per-function figures — folding it into
+    // `grand` too would double it there.
+    if (preFeeTotal > 0) {
+      const scale = eventGrandTotal / preFeeTotal;
+      functions.forEach(f => { f.previewGrand = Math.round((f.grand || 0) * scale); });
+    } else {
+      functions.forEach(f => { f.previewGrand = f.grand || 0; });
     }
     return {
       functions,
-      eventGrandTotal: negotiatedAmount > 0 ? negotiatedAmount : systemGrandTotal,
+      eventGrandTotal,
       venueDiscount, agencyFee, agencyFeePct, negotiatedAmount,
       clientName, clientPhone, clientBrideGroom
     };
