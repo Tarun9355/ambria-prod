@@ -1020,6 +1020,21 @@ export default function StudioBuild({ ctx }) {
   const [leftRailOpen, setLeftRailOpen] = useState(() => {
     try { return !window.matchMedia("(max-width: 900px)").matches; } catch { return true; }
   });
+  // Auto-fold the YOUR EVENT rail, once, the moment a client with an EXISTING build loads — a
+  // returning session already carries real work to review, and the intake sidebar (client name,
+  // demand badge, filters) is for STARTING a build, not something worth stealing width from a
+  // review of one that's already there. A brand-new/blank client is left exactly as the viewport-
+  // based default above decides. Guarded by a ref keyed to activeClientId so this fires exactly
+  // once per client switch and never re-fights a salesperson who reopens the rail afterward —
+  // loadClientSession/resumeSavedSession set activeClientId and restore zoneElements in the same
+  // synchronous call, so by the time this effect runs both are already consistent for the new client.
+  const railAutoDecidedFor = useRef(null);
+  useEffect(() => {
+    if (!activeClientId || railAutoDecidedFor.current === activeClientId) return;
+    railAutoDecidedFor.current = activeClientId;
+    const hasExistingBuild = grandTotal > 0 || Object.values(zoneElements || {}).some(arr => Array.isArray(arr) && arr.length > 0);
+    if (hasExistingBuild) setLeftRailOpen(false);
+  }, [activeClientId, grandTotal, zoneElements]);
   // Live Estimate starts folded — the build opens with every zone off and the total at ₹0, so on
   // arrival the rail is a column of zeroes taking width from the zones. Its tab on the right edge
   // brings it back the moment there is a number worth watching.
