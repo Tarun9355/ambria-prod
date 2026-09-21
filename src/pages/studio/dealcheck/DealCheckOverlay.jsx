@@ -96,7 +96,7 @@ import { deptMpReconciled, itemImsSubcat, lookupBySubcat, itemDimsText } from ".
 import { rentalSplit, availableAtVenue, isStandingAt, fixedVenueFor, standingReductionBySubcat, fixedVenueDealDiscount } from "../../../lib/ims/fixedVenues";
 import { calcZoneFabric, autoFillFabricAllocation, resolveTrussConfig, zoneTrussStandingDiscount } from "../../../lib/studio/pricing";
 import { carpetPricingFor, CARPET_OFF } from "../../../lib/studio/taxonomy";
-import { qtyUsedElsewhereInDealCheck } from "../../../lib/studio/dealAvailability";
+import { qtyUsedElsewhereInDealCheck, netOwnReservedBlocks } from "../../../lib/studio/dealAvailability";
 import { isHiddenSubcat, oosCostPctFor } from "../../../lib/rateCard";
 
 // Commission override box (one per venue, Commission tab below) — its OWN local draft state, not
@@ -358,7 +358,9 @@ export default function DealCheckOverlay({ ctx }) {
     const usedElsewhere = qtyUsedElsewhereInDealCheck(imsId, fns, dcCards, dcManualItems, dcKitEdits, dcInventoryCache, { fnIdx, ...exclude }, targetDate);
     if (usedElsewhere <= 0) return null;
     const fnBlocks = (dealCheckData?.blocksByDate || {})[targetDate] || {};
-    const otherEventsAvail = getStudioAvailable(it, fnBlocks);
+    // Net this SAME deal's own already-recorded reservation out first — see netOwnReservedBlocks.
+    const cliForAvail = clientLedger.find(c => c.id === activeClientId);
+    const otherEventsAvail = getStudioAvailable(it, netOwnReservedBlocks(fnBlocks, it.id, cliForAvail?.dcReservedInventory, fnIdx));
     return Math.max(0, otherEventsAvail - usedElsewhere);
   };
 
@@ -422,6 +424,13 @@ export default function DealCheckOverlay({ ctx }) {
   return (() => {
         const cli = clientLedger.find(c => c.id === activeClientId);
         const isSold = cli?.status === "booked";
+        // Every availability check below must net out THIS deal's own already-recorded reservation
+        // first (netOwnReservedBlocks) — otherwise a SOLD deal's own held stock counts as someone
+        // else's demand against itself the moment reconcileSoldInventoryBlocks writes its real
+        // `blocks` table rows, and previously-free stock reads "short" (billed at cost%, not the
+        // rental rate) purely because the deal got booked. Single choke point for every
+        // getStudioAvailable() call in this component from here down.
+        const dcAvailable = (item, fnBlocks, fnIdx) => item ? getStudioAvailable(item, netOwnReservedBlocks(fnBlocks, item.id, cli?.dcReservedInventory, fnIdx)) : 0;
         // The 2-run counter came out with the Generate button — nothing starts a run from this
         // screen any more, so there is no allowance left to display. dcRunCounter is still written
         // by runDealCheckGenerate in StudioApp; only this read of it is gone.
@@ -529,7 +538,7 @@ export default function DealCheckOverlay({ ctx }) {
               if (isKit) {
                 lineRental = repeatAdjustedRental(_rep, fn.fnVenue, item, qty, baseR);
               } else {
-                const available = getStudioAvailable(item, fnBlocks);
+                const available = dcAvailable(item, fnBlocks, fi);
                 const ownedQty = Math.min(qty, available);
                 shortQty = Math.max(0, qty - available);
                 const ownedRental = repeatAdjustedRental(_rep, fn.fnVenue, item, ownedQty, baseR);
@@ -1195,7 +1204,7 @@ export default function DealCheckOverlay({ ctx }) {
           const effGrand = hasActuals ? grandActual : grand;
           // ═══ Commission — % of the deal amount set aside per venue (IMS → Admin → Master Data →
           // Venues, one row per in-house property or outdoor venue). A booking spanning more than one
-          // venue splits clientRevenue across them by each venue's own share of the system cost
+          // venue splits dealAmount across them by each venue's own share of the system cost
           // (fns.length===1 just gets 100% of it, no proration needed). Salespeople can override the
           // computed amount per venue (cli.commissionOverrides), same pattern as negotiatedAmount.
           // Computed BEFORE profitPct below — it is a real payout out of this deal's revenue, so the
@@ -1204,6 +1213,12 @@ export default function DealCheckOverlay({ ctx }) {
           // income splits and IMS's per-department project total, and commission isn't a department's
           // production cost — it is a company-level venue payout, so it is subtracted only where
           // profit is actually measured.
+          //
+          // Based on dealAmount (fee-INCLUSIVE — what the guest is actually billed), not the pre-fee
+          // clientRevenue: a venue's commission agreement is a cut of the total money changing hands
+          // through the deal, and this is exactly what every other "Deal amount"/"Client Quote" figure
+          // in Deal Check (the bottom strip, the GYV tab) already means by that name — clientRevenue
+          // here would have been the one place quietly showing something smaller under the same label.
           const venueCommissionRates = dealCheckData?.venueCommission || {};
           const venueParentsForComm = dealCheckData?.venueParents || {};
           const resolveCommVenue = (vn) => venueParentsForComm[vn] || vn;
@@ -1221,7 +1236,7 @@ export default function DealCheckOverlay({ ctx }) {
           const venueKeys = Object.keys(fnGrandByVenue);
           const commissionByVenue = venueKeys.map(vKey => {
             const share = totalFnGrandForComm > 0 ? fnGrandByVenue[vKey] / totalFnGrandForComm : (venueKeys.length === 1 ? 1 : 0);
-            const revenueShare = clientRevenue * share;
+            const revenueShare = dealAmount * share;
             const pct = Number(venueCommissionRates[vKey]) || 0;
             const defaultAmt = Math.round(revenueShare * pct / 100);
             const overrideVal = commissionOverrides[vKey];
@@ -1754,7 +1769,7 @@ export default function DealCheckOverlay({ ctx }) {
                         const _rep = zoneIsRepeatFn(ck);
                         const isKit = Array.isArray(item.subItems) && item.subItems.length > 0;
                         if (isKit) { fnDecor += repeatAdjustedRental(_rep, fn.fnVenue, item, qty, baseR); return; }
-                        const available = getStudioAvailable(item, fnBlocks);
+                        const available = dcAvailable(item, fnBlocks, fi);
                         const ownedQty = Math.min(qty, available);
                         const shortQty = Math.max(0, qty - available);
                         const ownedRental = repeatAdjustedRental(_rep, fn.fnVenue, item, ownedQty, baseR);
@@ -2063,7 +2078,7 @@ export default function DealCheckOverlay({ ctx }) {
                           const _rep = _zoneIsRepeat(c._cardKey);
                           const isKit = Array.isArray(it.subItems) && it.subItems.length > 0;
                           if (isKit) { zoneRentalTotal += repeatAdjustedRental(_rep, _fnVenueForRepeat, it, qty, baseR); return; }
-                          const available = getStudioAvailable(it, fnBlocksForChip);
+                          const available = dcAvailable(it, fnBlocksForChip, fnIdx);
                           const ownedQty = Math.min(qty, available);
                           const shortQty = Math.max(0, qty - available);
                           const ownedRental = repeatAdjustedRental(_rep, _fnVenueForRepeat, it, ownedQty, baseR);
@@ -2456,7 +2471,7 @@ export default function DealCheckOverlay({ ctx }) {
                                           <span style={{fontSize:14,fontWeight:700,letterSpacing:-0.1,color:IV.ink}}>{item?.name || card.rcName || "(unnamed)"}</span>
                                           <span title={sourceMeta.label} style={{fontSize:11,padding:"2px 6px",borderRadius:4,background:`${sourceMeta.color}22`,color:sourceMeta.color,fontWeight:700,letterSpacing:0.4}}>{sourceMeta.icon} {sourceMeta.label}</span>
                                           {hold && <span title={`Held by ${hold.salesperson} for ${hold.eventName}`} style={{fontSize:11,padding:"2px 6px",borderRadius:4,background:"rgba(245,158,11,0.20)",color:"#F59E0B",fontWeight:700,letterSpacing:0.4}}>⏳ {hold.salesperson}</span>}
-                                          {item && (()=>{ const cq=Number(card.qty)||1; const av=getStudioAvailable(item, fnBlocksForChip); return cq>av ? <span style={{fontSize:11,padding:"2px 6px",borderRadius:4,background:"rgba(239,68,68,0.18)",color:"#EF4444",fontWeight:700,letterSpacing:0.4}}>⚠ {av}</span> : null; })()}
+                                          {item && (()=>{ const cq=Number(card.qty)||1; const av=dcAvailable(item, fnBlocksForChip, fnIdx); return cq>av ?<span style={{fontSize:11,padding:"2px 6px",borderRadius:4,background:"rgba(239,68,68,0.18)",color:"#EF4444",fontWeight:700,letterSpacing:0.4}}>⚠ {av}</span> : null; })()}
                                           {card.imsId && reuseFnCount[card.imsId]?.size >= 2 && <span style={{fontSize:11,padding:"2px 6px",borderRadius:4,background:"rgba(16,185,129,0.18)",color:"#10B981",fontWeight:700,letterSpacing:0.4}}>♻ {reuseFnCount[card.imsId].size} fns</span>}
                                           <span onClick={()=>setDcCards(prev=>{const fn={...(prev[fnIdx]||{})}; delete fn[card._cardKey]; return {...prev,[fnIdx]:fn};})} title="Remove from Deal Check" style={{marginLeft:"auto",cursor:"pointer",color:"#EF4444",fontSize:15.5,fontWeight:700,padding:"0 4px",lineHeight:1,flexShrink:0,opacity:0.6,transition:"opacity 0.15s"}} onMouseEnter={e=>e.currentTarget.style.opacity=1} onMouseLeave={e=>e.currentTarget.style.opacity=0.6}>×</span>
                                         </div>
@@ -2884,7 +2899,7 @@ export default function DealCheckOverlay({ ctx }) {
                                   // that line's own arithmetic reproduces lineTotal instead of looking
                                   // like it doesn't add up (list rate × qty ≠ the discounted lineTotal).
                                   const _effRate = mi.qty > 0 ? Math.round(lineTotal / mi.qty) : rental;
-                                  const _avail = item ? Math.max(0, Math.min(getStudioAvailable(item, fnBlocksForChip), availableAtVenue({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, _vName, item))) : 0;
+                                  const _avail = item ? Math.max(0, Math.min(dcAvailable(item, fnBlocksForChip, fnIdx), availableAtVenue({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, _vName, item))) : 0;
                                   return (
                                     <div key={mi.manualId} className="dci-card" style={{padding:"12px 13px",borderRadius:10,boxShadow:IV.shadow,background:IV.card,border:`1px solid rgba(193,154,107,0.30)`,display:"flex",gap:11,alignItems:"flex-start"}}>
                                       {photo ? <HoverZoom src={thumbUrl(photo, 320)}><img loading="lazy" decoding="async" src={thumbUrl(photo, 56)} alt="" style={{width:54,height:54,borderRadius:7,objectFit:"cover",flexShrink:0,background:"#FFFFFF"}}/></HoverZoom> : <div style={{width:54,height:54,borderRadius:7,background:"#FFFFFF",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,color:IV.ink,flexShrink:0}}>?</div>}
@@ -2910,7 +2925,7 @@ export default function DealCheckOverlay({ ctx }) {
                                           const mAlts = dcInventoryCache.filter(x => x.id !== mi.imsId && String(imsField.subcategory(x)||"").toLowerCase().trim() === sub.toLowerCase().trim());
                                           if (!mAlts.length) return null;
                                           const _fvC = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
-                                          const altAvail = (a) => Math.max(0, Math.min(getStudioAvailable(a, fnBlocksForChip), availableAtVenue(_fvC, _vName, a)));
+                                          const altAvail = (a) => Math.max(0, Math.min(dcAvailable(a, fnBlocksForChip, fnIdx), availableAtVenue(_fvC, _vName, a)));
                                           return (
                                             <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center",marginTop:6}}>
                                               <span style={{fontSize:11,color:IV.ink,letterSpacing:0.6,textTransform:"uppercase",fontWeight:600}}>Alternatives:</span>
@@ -3684,7 +3699,7 @@ export default function DealCheckOverlay({ ctx }) {
                       const item = dcInventoryCache.find(x => x.id === card.imsId);
                       if (!item) return;
                       const cardQty = Number(card.qty) || 1;
-                      const available = getStudioAvailable(item, fnBlocks);
+                      const available = dcAvailable(item, fnBlocks, fi);
                       const hold = getActiveSoftHold(softHolds, card.imsId, authUser?.name, nowMs);
                       const isShort = cardQty > available;
                       const isHeld = !!hold;
@@ -4270,7 +4285,7 @@ export default function DealCheckOverlay({ ctx }) {
                   // ═══ COMMISSION TAB — % of the deal amount set aside per venue, reads from shared
                   // dcCostRollup. The % itself is IMS master data (Admin → Master Data → Venues);
                   // the amount can be overridden per venue right here. ═══
-                  const { commissionByVenue, commissionTotal, clientRevenue } = dcCostRollup;
+                  const { commissionByVenue, commissionTotal, dealAmount } = dcCostRollup;
                   const fmt2 = (n) => (n >= 0 ? "₹" + Math.round(n).toLocaleString("en-IN") : "−₹" + Math.round(Math.abs(n)).toLocaleString("en-IN"));
                   const commitOverride = (venue, value) => {
                     const nextOverrides = { ...(cli?.commissionOverrides || {}) };
@@ -4281,7 +4296,9 @@ export default function DealCheckOverlay({ ctx }) {
                   // with several it does not — each venue takes its own cut of its own share, so the
                   // blended rate is the only figure that answers "what is this deal paying out".
                   // It was nowhere on the screen; you had to work it out from the total yourself.
-                  const effPct = clientRevenue > 0 ? (commissionTotal / clientRevenue) * 100 : 0;
+                  // Against dealAmount (fee-inclusive), matching what commissionByVenue's own
+                  // revenueShare is now computed against, above in dcCostRollup.
+                  const effPct = dealAmount > 0 ? (commissionTotal / dealAmount) * 100 : 0;
                   const overriddenCount = commissionByVenue.filter(r => r.overrideVal != null).length;
                   return (
                     <div style={{display:"flex",flexDirection:"column",gap:12}}>
@@ -4290,7 +4307,7 @@ export default function DealCheckOverlay({ ctx }) {
                       <div className="dc2-sum">
                         {[
                           { label: commissionByVenue.length === 1 ? "Venue" : "Venues", value: commissionByVenue.length, foot: overriddenCount ? `${overriddenCount} overridden by hand` : "all at the master rate" },
-                          { label: "Deal amount", value: fmt2(clientRevenue), foot: Number(cli?.negotiatedAmount) > 0 ? "negotiated" : "from Build screen" },
+                          { label: "Deal amount", value: fmt2(dealAmount), foot: Number(cli?.negotiatedAmount) > 0 ? "negotiated" : "from Build screen" },
                           { label: "Effective rate", value: `${effPct.toFixed(effPct % 1 === 0 ? 0 : 1)}%`, foot: commissionByVenue.length > 1 ? "blended across venues" : "of the deal amount" },
                           { label: "Total commission", value: fmt2(commissionTotal), foot: "set aside for venues", tone: GOLD },
                         ].map((s, si) => (
@@ -4500,7 +4517,7 @@ export default function DealCheckOverlay({ ctx }) {
                         const isCurrent = splitAdd ? _mSplitIds.includes(it.id) : it.id === _mCurId;
                         const _mExclude = manualId ? { manualId } : { cardKey };
                         const _mUsedElsewhere = qtyUsedElsewhereInDealCheck(it.id, _mFns, dcCards, dcManualItems, dcKitEdits, dcInventoryCache, { fnIdx, ..._mExclude }, (_mFns[fnIdx]||{}).fnDate || clientDate);
-                        const avail = Math.max(0, Math.min(getStudioAvailable(it, _mBlocks), availableAtVenue(_mFvC, _mVenue, it)) - _mUsedElsewhere);
+                        const avail = Math.max(0, Math.min(dcAvailable(it, _mBlocks, fnIdx), availableAtVenue(_mFvC, _mVenue, it)) - _mUsedElsewhere);
                         const isBlocked = !isCurrent && avail <= 0;
                         return (
                           <div key={it.id} onClick={()=>{

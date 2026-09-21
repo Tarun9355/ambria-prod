@@ -83,6 +83,22 @@ export function allocateRowAvailability(invId, fns, imsInventory, target, target
   return result;
 }
 
+// Deal Check + Build share one root cause here: once a SOLD deal's own reservation is written into
+// the real `blocks` table (reconcileSoldInventoryBlocks, StudioApp.jsx), that same per-date block
+// total feeds every OTHER availability check for this item/date too — so a booked deal's own held
+// stock reads as competing demand from someone else, and previously-free stock starts showing
+// "short" (and billing its shortfall at cost%, not the rental rate) the moment the deal itself gets
+// booked. Nets this deal's own last-synced reservation (dcReservedInventory, kept in sync by
+// reconcileSoldInventoryBlocks after every real write) out of the raw per-date block map before any
+// getStudioAvailable() call. Mirrors StudioApp.jsx's getElPriceFromInventory, which already applies
+// this fix for Build's own live availability check — DealCheckOverlay never had its own copy, so
+// every getStudioAvailable() call there double-counted a sold deal's own stock against itself.
+export function netOwnReservedBlocks(fnBlocks, itemId, dcReservedInventory, fnIdx) {
+  const ownReserved = dcReservedInventory?.[fnIdx]?.[itemId] || 0;
+  if (ownReserved <= 0) return fnBlocks || {};
+  return { ...(fnBlocks || {}), [itemId]: Math.max(0, ((fnBlocks || {})[itemId] || 0) - ownReserved) };
+}
+
 // Deal Check: same idea over dcCards[fnIdx][cardKey] (+ card.split[] variants) and dcManualItems,
 // plus kit expansion via dcKitEdits overrides.
 // exclude = { fnIdx, zoneKey?, cardKey?, manualId? } — zoneKey alone excludes the whole zone
