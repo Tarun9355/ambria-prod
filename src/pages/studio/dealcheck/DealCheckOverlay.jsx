@@ -2786,10 +2786,6 @@ export default function DealCheckOverlay({ ctx }) {
                                                   const owned = cItem ? imsField.qtyOwned(cItem) : 0;
                                                   const short = cItem && needed > owned;
                                                   const unavailable = !cItem || short;
-                                                  // Same-subcategory alternatives with enough stock (for a short/missing component → one-tap swap).
-                                                  const cSub = cItem ? String(imsField.subcategory(cItem)||"") : "";
-                                                  const compAlts = unavailable && cSub ? dcInventoryCache.filter(x => x.id !== c.itemId && String(imsField.subcategory(x)||"").toLowerCase().trim() === cSub.toLowerCase().trim()).sort((a,b)=>imsField.qtyOwned(b)-imsField.qtyOwned(a)) : [];
-                                                  const compAltsFit = compAlts.filter(x => imsField.qtyOwned(x) >= needed);
                                                   const swapComp = (id)=> setComps(comps.map((x,i)=>i===ci?{...x,itemId:id}:x));
                                                   return (
                                                     <div key={ci} style={unavailable?{padding:"3px 5px",borderRadius:6,background:"rgba(239,68,68,0.08)",border:"1px solid rgba(239,68,68,0.3)"}:null}>
@@ -2826,12 +2822,21 @@ export default function DealCheckOverlay({ ctx }) {
                                                         ? <span style={{color:"#EF4444",fontWeight:700,whiteSpace:"nowrap",textAlign:"right",...NUM}}>⚠ need {needed}, only {owned}</span>
                                                         : <span style={{color:"#10B981",whiteSpace:"nowrap",textAlign:"right",...NUM}}>✓ {owned} avail</span>)}
                                                     </div>
-                                                    {unavailable && compAlts.length>0 && (
-                                                      <div style={{display:"flex",alignItems:"center",gap:5,flexWrap:"wrap",marginTop:4,paddingLeft:28}}>
-                                                        <span style={{fontSize:11,color:"#EF4444",fontWeight:600,whiteSpace:"nowrap"}}>↔ swap to:</span>
-                                                        {(compAltsFit.length?compAltsFit:compAlts).slice(0,5).map(a=>{ const ao=imsField.qtyOwned(a); const fit=ao>=needed; return (
-                                                          <span key={a.id} onClick={()=>swapComp(a.id)} title={`${a.name} · ${ao} available · ₹${imsField.rentalCost(a).toLocaleString("en-IN")}`} style={{cursor:"pointer",fontSize:11,padding:"2px 7px",borderRadius:8,border:`1px solid ${fit?"#10B981":border}`,background:fit?"rgba(16,185,129,0.12)":"transparent",color:fit?"#10B981":textS,whiteSpace:"nowrap"}}>{a.name} ({ao})</span>
-                                                        ); })}
+                                                    {unavailable && (
+                                                      <div style={{marginTop:4,paddingLeft:28}}>
+                                                        {/* Same availability picker Build's IconBox control opens (and the
+                                                            main card's own swap button above uses) — photo, dims, real free
+                                                            counts, search — instead of this row's own bespoke "N alternatives"
+                                                            pill list, which only ever showed a bare name and raw stock qty
+                                                            (not netted against what else this deal is already using). */}
+                                                        <button type="button" className="dci-btn"
+                                                          onClick={()=>openAvailModal?.(card.zoneKey || editKey, ci, { invId: c.itemId, imsId: c.itemId, name: cItem?.name || c.itemId }, null, (pick)=>{
+                                                            if (!pick) return;
+                                                            swapComp(pick.id);
+                                                          }, { pickHint: `Pick a replacement for this kit component — need ${needed}.` })}
+                                                          style={{display:"inline-flex",alignItems:"center",gap:5,padding:"3px 9px",borderRadius:6,border:"1px solid rgba(239,68,68,0.35)",background:"rgba(239,68,68,0.08)",color:"#EF4444",fontSize:11,fontWeight:600,cursor:"pointer"}}>
+                                                          <IconBox size={12}/> {cItem ? `⚠ need ${needed}, only ${owned} — swap` : "⚠ not in IMS — pick one"}
+                                                        </button>
                                                       </div>
                                                     )}
                                                     </div>
