@@ -1473,11 +1473,16 @@ export default function StudioEventInfo({ ctx }) {
                                     </span>
                                   );
                                 }
-                                // Single function (or legacy back-compat)
+                                // Single function (or legacy back-compat). fnLabel/fnDate/venueLabel
+                                // live on lead.functions[0], never on the lead itself (lmsContractToLead,
+                                // lib/ims/lms.js) — reading them off `lead` directly always came back
+                                // undefined, which is why every single-function card showed only the
+                                // status word and the amount, with no date or type at all.
+                                const f0 = fns ? fns[0] : null;
                                 return <>
-                                  {lead.fnLabel && <>{lead.fnLabel}</>}
-                                  {lead.fnDate && <> · {lead.fnDate}</>}
-                                  {lead.venueLabel && <> · {lead.venueLabel}</>}
+                                  {f0?.fnLabel && <>{f0.fnLabel}</>}
+                                  {f0?.fnDate && <> · {f0.fnDate}</>}
+                                  {(f0?.venueLabel || f0?.locationLabel) && <> · {f0.venueLabel || f0.locationLabel}</>}
                                   {lead.status && <> · {lead.status}</>}
                                 </>;
                               })()}
