@@ -1,15 +1,21 @@
 import { useState, useMemo } from "react";
 import DatePricingPanel from "./DatePricingPanel.jsx";
 import { resolveDateCategory } from "../../lib/inventory/helpers";
-import { DATE_PRICING_LABELS, SETTINGS_DEFAULTS } from "../../lib/ims/constants";
+import { DATE_PRICING_LABELS, SETTINGS_DEFAULTS, hasIMSPerm } from "../../lib/ims/constants";
 import { PRICING_CAT_STYLES } from "../../lib/inventory/constants";
 import { releaseBlocks } from "../../lib/ims/eventAutoConfirm";
+import { useAuth } from "../../lib/AuthContext";
 
 // Faithful copy of the reference IMS CalendarTab — renders LMS/ERP contracts on a
 // month grid, colour-codes dates by Studio category, and exposes Date Pricing config.
 // Also the one place ops can cancel a Studio-booked event (releasing its held inventory) — the
 // old dedicated IMS "Events" tab is gone; that was its only manual control worth keeping.
 export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, lmsSyncing, settings, setSettings, eventOrders, setEventOrders, saveEventOrders, blocks, setBlocks, saveBlocks }) {
+  const { user: authUser } = useAuth();
+  // "Cancel booking" is IMS's only surviving whole-event release control (see cancelStudioEvent's
+  // own comment below) — the nearest real target for block_release, which has no dedicated
+  // per-item "release" UI anywhere in the app.
+  const canRelease = hasIMSPerm(authUser, "block_release");
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth());
@@ -57,6 +63,7 @@ export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, l
   // Cancel a Studio-booked event: releases every inventory item it's holding and marks the
   // event_orders row cancelled. This is the only surviving manual control from the old Events tab.
   function cancelStudioEvent(eoId, guestName) {
+    if (!canRelease) return;
     if (!eoId || !setEventOrders || !setBlocks) return;
     if (!confirm(`Cancel booking for "${guestName}" and release all its held inventory?`)) return;
     const newBlocks = releaseBlocks(blocks, eoId);
@@ -330,7 +337,7 @@ export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, l
                         did nothing" is the reading otherwise, and every reason here is fixable
                         (run Sync LMS, or mark the deal sold). */}
                     {/* The card no longer navigates, so Cancel needs no stopPropagation guard. */}
-                    {e.dept === "studio" && e.eoStatus !== "cancelled" && (
+                    {e.dept === "studio" && e.eoStatus !== "cancelled" && canRelease && (
                       <button onClick={() => cancelStudioEvent(e.eoId, e.guestName)}
                         className="text-xs px-2 py-1 rounded-md font-medium text-red-600 border border-red-200 hover:bg-red-50">
                         ✕ Cancel

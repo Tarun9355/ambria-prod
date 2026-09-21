@@ -3,7 +3,7 @@ import { Badge, TypeBadge, Modal } from "../../components/ui";
 import { fmt } from "../../lib/format";
 import { INV_CATS, INV_LOCATIONS, DEPTS, INV_TYPES, PRICING_CAT_STYLES, SUBCAT_OTHER, PAINT_TOKENS } from "../../lib/inventory/constants";
 import { findAlternatives, getEffectivePricing } from "../../lib/inventory/helpers";
-import { DATE_PRICING_LABELS } from "../../lib/ims/constants";
+import { DATE_PRICING_LABELS, hasIMSPerm } from "../../lib/ims/constants";
 import { uploadToStorage, compressImageForUpload, STORAGE_FOLDERS } from "../../lib/storage";
 import { callClaudeStreaming } from "../../lib/ai";
 import { locationBreakdown } from "../../lib/ims/fixedVenues";
@@ -13,6 +13,10 @@ import { catToDept, canSeeDept } from "../../lib/ims/deptClassify";
 import ItemHoverThumb from "../../components/shared/ItemHoverThumb";
 
 export default function InventoryTab({ inventory, setInventory, functions, setFunctions, categories, setCategories, settings, studio, rateCardCategories = [], authUser }) {
+  const canAdd = hasIMSPerm(authUser, "inv_add");
+  const canDelete = hasIMSPerm(authUser, "inv_delete");
+  const canImages = hasIMSPerm(authUser, "inv_images");
+  const canBlock = hasIMSPerm(authUser, "block_single");
   const studioLoading = !!studio?.loading;
   // Tier 1.2 — Studio cat labels. Top-level categories (Florals/Fabric/Structure/...) are a
   // small, stable set still sourced from Studio's live Rate-Card categories — only the
@@ -338,6 +342,7 @@ Rules:
   }
 
   async function addItem() {
+    if (!canAdd) return;
     let img = form.img || "";
     // Upload base64 to Storage instead of storing raw (prevents 413 payload-too-large)
     if (img && img.startsWith("data:")) {
@@ -410,9 +415,11 @@ Rules:
   }
 
   function deleteItem(id) {
+    if (!canDelete) return;
     setDeleteConfirmId(id);
   }
   function confirmDeleteItem() {
+    if (!canDelete) return;
     const id = deleteConfirmId;
     setDeleteConfirmId(null);
     if (!id) return;
@@ -460,6 +467,7 @@ Rules:
   }
 
   async function handleEditPhoto(e) {
+    if (!canImages) return;
     const file = e.target.files?.[0]; if (!file) return;
     setEditPhotoUploading(true);
     try {
@@ -498,6 +506,7 @@ Rules:
   }
 
   function saveEdit() {
+    if (!canAdd) return;
     const f = editForm;
     if (!f.id) return;
     const lNum = parseFloat(f.dimL), wNum = parseFloat(f.dimW), hNum = parseFloat(f.dimH);
@@ -571,6 +580,7 @@ Rules:
   }
 
   function blockItem() {
+    if (!canBlock) return;
     const inv = inventory.find((i) => i.id === blockModal);
     if (!inv || !blockForm.fnId) return;
     const qty = parseInt(blockForm.qty) || 1;
@@ -751,7 +761,7 @@ Rules:
           <div className="ml-auto flex gap-2">
             <button onClick={() => { setMoveFromSub(""); setMoveToSub(""); setMoveSubcatModal(true); }}
               className="bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 px-4 py-2 rounded-lg text-sm whitespace-nowrap">🔀 Move Sub-Category</button>
-            <button onClick={() => { setPhotoModal(false); setBulkModal(false); setImportModal(false); setForm({ name: "", cat: "Florals", subCat: "", type: "Budgeted", itemClass: "discrete", qty: "", unit: "Piece", loc: "Production House", price: "", cost: "", breakagePct: 0, dimL: "", dimW: "", dimH: "", dimUnit: "Feet", printL: "", printW: "", printUnit: "Feet", baseColour: "", paintCost: "", notes: "", img: "" }); setPhotoImg(null); setPhotoReady(false); setPhotoError(""); setAddModal(true); }} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm whitespace-nowrap">+ Add Item</button>
+            {canAdd && <button onClick={() => { setPhotoModal(false); setBulkModal(false); setImportModal(false); setForm({ name: "", cat: "Florals", subCat: "", type: "Budgeted", itemClass: "discrete", qty: "", unit: "Piece", loc: "Production House", price: "", cost: "", breakagePct: 0, dimL: "", dimW: "", dimH: "", dimUnit: "Feet", printL: "", printW: "", printUnit: "Feet", baseColour: "", paintCost: "", notes: "", img: "" }); setPhotoImg(null); setPhotoReady(false); setPhotoError(""); setAddModal(true); }} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm whitespace-nowrap">+ Add Item</button>}
           </div>
         </div>
 
@@ -915,10 +925,10 @@ Rules:
                     </td>
                     <td className="px-2.5 py-2">
                       <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
-                        <button onClick={() => { setBlockModal(i.id); setBlockForm({ fnId: "", qty: 1, dept: "Flower", remark: "", sizeClass: "M" }); }}
-                          className={"text-xs hover:underline whitespace-nowrap " + (zero ? "text-gray-400" : "text-indigo-600")}>🔒 Block</button>
-                        <button onClick={() => openEdit(i.id)} className="text-xs text-violet-600 hover:underline whitespace-nowrap">✏️ Edit</button>
-                        <button onClick={() => deleteItem(i.id)} className="text-xs text-red-500 hover:underline">Delete</button>
+                        {canBlock && <button onClick={() => { setBlockModal(i.id); setBlockForm({ fnId: "", qty: 1, dept: "Flower", remark: "", sizeClass: "M" }); }}
+                          className={"text-xs hover:underline whitespace-nowrap " + (zero ? "text-gray-400" : "text-indigo-600")}>🔒 Block</button>}
+                        {canAdd && <button onClick={() => openEdit(i.id)} className="text-xs text-violet-600 hover:underline whitespace-nowrap">✏️ Edit</button>}
+                        {canDelete && <button onClick={() => deleteItem(i.id)} className="text-xs text-red-500 hover:underline">Delete</button>}
                       </div>
                     </td>
                   </tr>
@@ -1422,11 +1432,11 @@ Rules:
                   )}
                 </div>
                 <div className="flex flex-col gap-2 flex-1">
-                  <input ref={editPhotoInputRef} type="file" accept="image/*" onChange={handleEditPhoto} className="hidden" />
-                  <button onClick={() => editPhotoInputRef.current?.click()} disabled={editPhotoUploading}
+                  {canImages && <input ref={editPhotoInputRef} type="file" accept="image/*" onChange={handleEditPhoto} className="hidden" />}
+                  {canImages && <button onClick={() => editPhotoInputRef.current?.click()} disabled={editPhotoUploading}
                     className={"text-xs px-3 py-2 rounded-lg font-medium " + (editPhotoUploading ? "bg-gray-200 text-gray-400" : "bg-indigo-100 text-indigo-700 hover:bg-indigo-200")}>
                     {editPhotoUploading ? "Uploading…" : "📤 Upload new photo"}
-                  </button>
+                  </button>}
                   {editForm.img && (
                     <button onClick={() => setEditForm((f) => ({ ...f, img: "" }))}
                       className="text-xs px-3 py-1.5 rounded-lg text-red-600 hover:bg-red-50 text-left">

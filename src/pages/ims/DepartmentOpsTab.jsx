@@ -5,6 +5,7 @@ import { uploadAudioToStorage } from "../../lib/storage";
 import { DEPTS as SHARED_DEPTS, catToDept as sharedCatToDept, userDepartments } from "../../lib/ims/deptClassify";
 import ManpowerFactorPills from "../../components/shared/ManpowerFactorPills.jsx";
 import { TabsMenu } from "../../components/ui";
+import { hasIMSPerm } from "../../lib/ims/constants";
 
 // ── THE SUMMARY TILE ROW ──
 // auto-FIT, not auto-fill. The difference only shows when there are fewer tiles than columns
@@ -181,6 +182,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   const catToDept = (cat) => sharedCatToDept(cat, catDeptCfg);
   const dihari = settings?.dihariSchemes || {};
   const isAdmin = authUser?.role === "Admin" || authUser?.id === "u_admin";
+  const canManpower = hasIMSPerm(authUser, "events_manpower");
   // This user's allowed departments — an explicit grant (user.departments, set in Admin -> Users &
   // Roles) if present, else the same role-name inference this screen always used (e.g. "Dept Head
   // - Tenting" -> Tenting). null = unrestricted (sees every department), same as before this
@@ -528,7 +530,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   const dayOv = (r, d) => { const ov = mpDay[r.type]; return !!(ov && ov[d.date] != null && Number(ov[d.date]) !== Math.round(mpBaseDay(r, d))); };
   const effWinIds = (r, d) => { const ov = mpWin[r.type]; return ov && ov[d.date] != null ? ov[d.date] : (Array.isArray(d.windowIds) ? d.windowIds : []); };
   const effWin = (r, d) => mpEffWindows(r, d, mpWin);
-  const setMpDay = (type, date, val) => saveDept({ mpDay: { ...mpDay, [type]: { ...(mpDay[type] || {}), [date]: val } } });
+  const setMpDay = (type, date, val) => { if (!canManpower) return; saveDept({ mpDay: { ...mpDay, [type]: { ...(mpDay[type] || {}), [date]: val } } }); };
   const setMpAllDays = (type, schedule, val) => { const m = { ...(mpDay[type] || {}) }; (schedule || []).forEach(d => { m[d.date] = val; }); saveDept({ mpDay: { ...mpDay, [type]: m } }); };
   const toggleWin = (type, date, winId, curIds) => { const next = curIds.includes(winId) ? curIds.filter(x => x !== winId) : [...curIds, winId]; saveDept({ mpWin: { ...mpWin, [type]: { ...(mpWin[type] || {}), [date]: next } } }); };
   const setWinAllDays = (type, schedule, ids) => { const m = { ...(mpWin[type] || {}) }; (schedule || []).forEach(d => { m[d.date] = ids; }); saveDept({ mpWin: { ...mpWin, [type]: m } }); };
@@ -1010,7 +1012,9 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                 </span>
                 <span className="flex items-center gap-1">
                   {editable
-                    ? <input type="number" min="0" value={showDay(r, d)} onChange={e => setMpDay(r.type, d.date, e.target.value)} className={"w-10 border rounded px-1 py-0.5 text-[10px] text-center " + (ov ? "border-amber-400 bg-amber-50 font-bold" : "")} />
+                    ? <input type="number" min="0" value={showDay(r, d)} onChange={e => setMpDay(r.type, d.date, e.target.value)} disabled={!canManpower}
+                        title={canManpower ? undefined : "Requires \"Manage Manpower\""}
+                        className={"w-10 border rounded px-1 py-0.5 text-[10px] text-center " + (ov ? "border-amber-400 bg-amber-50 font-bold" : "") + (canManpower ? "" : " opacity-50 cursor-not-allowed")} />
                     : <b>{d.count}</b>}
                   crew × {shifts} shift{shifts === 1 ? "" : "s"}
                 </span>

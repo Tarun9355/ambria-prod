@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { Badge, Modal } from "../../components/ui";
-import { ROLES, ROLE_DEFAULTS, PERM_LABELS, PERM_GROUPS } from "../../lib/ims/constants";
+import { ROLES, ROLE_DEFAULTS, PERM_LABELS, PERM_GROUPS, PERM_UNWIRED, effectiveRolePerms, hasIMSPerm } from "../../lib/ims/constants";
 import { callUserAdmin } from "../../lib/userAdmin";
 import { DEPTS, userDepartments } from "../../lib/ims/deptClassify";
+import { useAuth } from "../../lib/AuthContext";
 import RoleAccessModal from "./RoleAccessModal.jsx";
 
 // App-access default derived from role (the one addition to the reference).
@@ -14,9 +15,19 @@ const defaultApps = (role) => role === "Admin" ? ["studio","ims"] : role === "Sa
 const defaultDepartments = (role) => userDepartments({ role }) || [];
 
 export default function UsersTab({ users, setUsers, addUser, settings, setSettings }){
+  const { user: me } = useAuth();
+  // admin_users gates every mutation on this screen (create/edit/delete/reset/activate a user,
+  // manage a role's access, create/rename/delete a role) — NOT mere visibility of the tab, which
+  // settings.roleTabs already controls separately (AdminTab.jsx). Someone who can see this screen
+  // but lacks admin_users sees it read-only.
+  const canManageUsers = hasIMSPerm(me, "admin_users");
   const [modal, setModal]=useState(false);
   const [editUser, setEditUser]=useState(null);
-  const [form, setForm]=useState({ name:"", email:"", phone:"", role:"Sales", permissions:ROLE_DEFAULTS.Sales, active:true, password:"", departments:defaultDepartments("Sales") });
+  const [form, setForm]=useState({ name:"", email:"", phone:"", role:"Sales", permissions:effectiveRolePerms("Sales", settings), active:true, password:"", departments:defaultDepartments("Sales") });
+  // Whether the per-user permission override checklist is expanded. Collapsed by default — a
+  // fresh/edited user just inherits the role's Edit Access config (setRole below) with no manual
+  // ticking required; this only opens when someone deliberately wants an exception for one person.
+  const [permsOverrideOpen, setPermsOverrideOpen]=useState(false);
   const [credsShown, setCredsShown]=useState(null);
   const [resetFor, setResetFor]=useState(null);
   const [resetPw, setResetPw]=useState("");
@@ -28,6 +39,10 @@ export default function UsersTab({ users, setUsers, addUser, settings, setSettin
   // Dynamic roles from settings (fallback to hardcoded ROLES)
   const dynamicRoles = Array.isArray(settings?.rolesList) ? settings.rolesList : ROLES;
   const roleCounts=dynamicRoles.reduce((acc,r)=>({ ...acc, [r]:users.filter(u=>u.role===r).length }),{});
+  // Whether the form's current permissions have been hand-edited away from what its role currently
+  // resolves to in Edit Access — drives the "customized" callout in the modal's Permissions panel.
+  const roleDefaultPerms = effectiveRolePerms(form.role, settings);
+  const permsOverridden = JSON.stringify([...(form.permissions||[])].sort()) !== JSON.stringify([...roleDefaultPerms].sort());
 
   // Derive username from display name: lowercase, spaces → _, strip non-alphanumerics
   const deriveUsername = (name) => (name||"").trim().toLowerCase().replace(/\s+/g,"_").replace(/[^a-z0-9_]/g,"");
@@ -42,15 +57,20 @@ export default function UsersTab({ users, setUsers, addUser, settings, setSettin
     return `${prefix.charAt(0).toUpperCase() + prefix.slice(1).toLowerCase()}-${suffix}`;
   };
 
-  function openAdd(){ setEditUser(null); setForm({ name:"", email:"", phone:"", role:"Sales", permissions:[...(ROLE_DEFAULTS.Sales||[])], active:true, password:"", apps:defaultApps("Sales"), departments:defaultDepartments("Sales") }); setShowPw(false); setModal(true); }
-  function openEdit(u){ setEditUser(u); setForm({ ...u, permissions:[...(u.permissions||[])], password:"", apps:u.apps || defaultApps(u.role), departments:[...(u.departments || defaultDepartments(u.role))] }); setShowPw(false); setModal(true); }
-  function setRole(role){ setForm(f=>({...f, role, permissions:[...(ROLE_DEFAULTS[role]||[])], apps:defaultApps(role), departments:defaultDepartments(role)})); }
+  function openAdd(){ setEditUser(null); setForm({ name:"", email:"", phone:"", role:"Sales", permissions:[...effectiveRolePerms("Sales", settings)], active:true, password:"", apps:defaultApps("Sales"), departments:defaultDepartments("Sales") }); setPermsOverrideOpen(false); setShowPw(false); setModal(true); }
+  function openEdit(u){ setEditUser(u); setForm({ ...u, permissions:[...(u.permissions||[])], password:"", apps:u.apps || defaultApps(u.role), departments:[...(u.departments || defaultDepartments(u.role))] }); setPermsOverrideOpen(false); setShowPw(false); setModal(true); }
+  // Picking a role re-inherits ITS current Edit Access config (settings.rolePerms), not a frozen
+  // constant — an admin who tightens a role in Edit Access sees that reflected the next time anyone
+  // picks that role here, without having to also revisit every existing user of it.
+  function setRole(role){ setForm(f=>({...f, role, permissions:[...effectiveRolePerms(role, settings)], apps:defaultApps(role), departments:defaultDepartments(role)})); }
+  function resetPermsToRoleDefault(){ setForm(f=>({...f, permissions:[...effectiveRolePerms(f.role, settings)]})); }
   function togglePerm(p){ setForm(f=>({ ...f, permissions:(f.permissions||[]).includes(p)?(f.permissions||[]).filter(x=>x!==p):[...(f.permissions||[]),p] })); }
   function toggleApp(a){ setForm(f=>{ const cur=f.apps || defaultApps(f.role); return { ...f, apps:cur.includes(a)?cur.filter(x=>x!==a):[...cur,a] }; }); }
   function toggleDept(d){ setForm(f=>{ const cur=f.departments || []; return { ...f, departments:cur.includes(d)?cur.filter(x=>x!==d):[...cur,d] }; }); }
 
   const [busy, setBusy] = useState(false);
   async function save(){
+    if(!canManageUsers){ alert('Requires "Manage Users & Permissions"'); return; }
     if(!form.name || !form.name.trim()){ alert("Name is required"); return; }
     const username = deriveUsername(form.name);
     if(!username){ alert("Name must contain at least one letter or digit"); return; }
@@ -81,8 +101,9 @@ export default function UsersTab({ users, setUsers, addUser, settings, setSettin
     setModal(false);
     setCredsShown({ name: form.name.trim(), username, password: form.password.trim(), isReset: false });
   }
-  function toggleActive(id){ setUsers(prev=>prev.map(u=>u.id===id?{...u,active:!u.active}:u)); }
+  function toggleActive(id){ if(!canManageUsers) return; setUsers(prev=>prev.map(u=>u.id===id?{...u,active:!u.active}:u)); }
   async function deleteUser(id){
+    if(!canManageUsers) return;
     const u = users.find(x=>x.id===id);
     if(!window.confirm(`Delete user "${u?.name || u?.username || "this user"}"?\n\nThis cannot be undone.`)) return;
     try { await callUserAdmin("deleteUser", { userId: id }); }
@@ -91,8 +112,9 @@ export default function UsersTab({ users, setUsers, addUser, settings, setSettin
 
   // Reset Password flow — sets the password in Supabase Auth (creates the account if the user hasn't
   // been migrated yet), via the admin-gated edge function.
-  function openReset(u){ setResetFor(u); setResetPw(""); }
+  function openReset(u){ if(!canManageUsers) return; setResetFor(u); setResetPw(""); }
   async function confirmReset(){
+    if(!canManageUsers){ alert('Requires "Manage Users & Permissions"'); return; }
     if(!resetPw || !resetPw.trim()){ alert("Enter a new password"); return; }
     const newPw = resetPw.trim();
     const u = resetFor;
@@ -116,33 +138,36 @@ export default function UsersTab({ users, setUsers, addUser, settings, setSettin
       <div className="grid grid-cols-4 gap-3">
         {dynamicRoles.map(r=>(
           <div key={r} className="bg-white border rounded-xl p-4 text-center relative group hover:border-indigo-300 transition-all">
-            {r !== "Admin" && <button onClick={(e)=>{e.stopPropagation(); if(!window.confirm(`Delete role "${r}"? ${roleCounts[r]||0} users will need reassignment.`)) return; setSettings(s=>({...s, rolesList:(s.rolesList||ROLES).filter(x=>x!==r)})); if(roleEditor===r) setRoleEditor(null);}} className="absolute top-1 right-2 text-gray-300 hover:text-red-500 text-xs opacity-0 group-hover:opacity-100">✕</button>}
+            {r !== "Admin" && canManageUsers && <button onClick={(e)=>{e.stopPropagation(); if(!window.confirm(`Delete role "${r}"? ${roleCounts[r]||0} users will need reassignment.`)) return; setSettings(s=>({...s, rolesList:(s.rolesList||ROLES).filter(x=>x!==r)})); if(roleEditor===r) setRoleEditor(null);}} className="absolute top-1 right-2 text-gray-300 hover:text-red-500 text-xs opacity-0 group-hover:opacity-100">✕</button>}
             <p className="text-2xl font-bold text-indigo-700">{roleCounts[r]||0}</p>
             {renameRole?.old === r ? (
               <div className="flex items-center gap-1 mt-1">
-                <input value={renameRole.draft} onChange={e=>setRenameRole({...renameRole, draft:e.target.value})} className="border rounded px-2 py-0.5 text-xs w-full" autoFocus onKeyDown={e=>{if(e.key==="Enter"&&renameRole.draft.trim()){const old=renameRole.old,nw=renameRole.draft.trim(); setSettings(s=>{const rt={...(s.roleTabs||{})}; rt[nw]=rt[old]; delete rt[old]; return {...s,rolesList:(s.rolesList||ROLES).map(x=>x===old?nw:x),roleTabs:rt};}); setUsers(prev=>prev.map(u=>u.role===old?{...u,role:nw}:u)); setRenameRole(null); if(roleEditor===old) setRoleEditor(nw);}}} />
+                <input value={renameRole.draft} onChange={e=>setRenameRole({...renameRole, draft:e.target.value})} className="border rounded px-2 py-0.5 text-xs w-full" autoFocus onKeyDown={e=>{if(e.key==="Enter"&&renameRole.draft.trim()){const old=renameRole.old,nw=renameRole.draft.trim(); setSettings(s=>{const rt={...(s.roleTabs||{})}; rt[nw]=rt[old]; delete rt[old]; const rp={...(s.rolePerms||{})}; if(rp[old]){rp[nw]=rp[old]; delete rp[old];} return {...s,rolesList:(s.rolesList||ROLES).map(x=>x===old?nw:x),roleTabs:rt,rolePerms:rp};}); setUsers(prev=>prev.map(u=>u.role===old?{...u,role:nw}:u)); setRenameRole(null); if(roleEditor===old) setRoleEditor(nw);}}} />
                 <button onClick={()=>setRenameRole(null)} className="text-xs text-gray-400">✕</button>
               </div>
             ) : (
-              <p className="text-xs text-gray-500 mt-1 cursor-pointer" onDoubleClick={()=>{if(r!=="Admin")setRenameRole({old:r,draft:r});}}>{r}</p>
+              <p className="text-xs text-gray-500 mt-1" style={canManageUsers && r!=="Admin" ? {cursor:"pointer"} : undefined} onDoubleClick={()=>{if(r!=="Admin" && canManageUsers)setRenameRole({old:r,draft:r});}}>{r}</p>
             )}
             <div className="flex items-center gap-1.5 mt-2.5 pt-2 border-t">
-              <button onClick={()=>setRoleEditor(r)} className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 text-xs font-semibold hover:bg-indigo-100">
+              <button onClick={()=>setRoleEditor(r)} disabled={!canManageUsers} title={canManageUsers ? undefined : "Requires \"Manage Users & Permissions\""} className={"flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg border text-xs font-semibold "+(canManageUsers?"border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100":"border-gray-200 bg-gray-50 text-gray-400 cursor-not-allowed")}>
                 🔐 Manage Access
               </button>
             </div>
           </div>
         ))}
-        <div className="border-2 border-dashed border-indigo-200 rounded-xl p-4 flex flex-col items-center justify-center cursor-pointer hover:border-indigo-400" onClick={()=>{const name=window.prompt("New role name:");if(name&&name.trim()&&!dynamicRoles.includes(name.trim())){setSettings(s=>({...s,rolesList:[...(s.rolesList||ROLES),name.trim()],roleTabs:{...(s.roleTabs||{}), [name.trim()]:{tabs:["dashboard"],subTabs:{}}}}));}}}>
-          <p className="text-2xl text-indigo-300">+</p>
-          <p className="text-xs text-indigo-400 mt-1">Create role</p>
+        <div className={"border-2 border-dashed rounded-xl p-4 flex flex-col items-center justify-center "+(canManageUsers?"border-indigo-200 cursor-pointer hover:border-indigo-400":"border-gray-200 cursor-not-allowed opacity-60")}
+          title={canManageUsers ? undefined : "Requires \"Manage Users & Permissions\""}
+          onClick={()=>{if(!canManageUsers)return; const name=window.prompt("New role name:");if(name&&name.trim()&&!dynamicRoles.includes(name.trim())){setSettings(s=>({...s,rolesList:[...(s.rolesList||ROLES),name.trim()],roleTabs:{...(s.roleTabs||{}), [name.trim()]:{tabs:["dashboard"],subTabs:{}}}}));}}}>
+          <p className={"text-2xl "+(canManageUsers?"text-indigo-300":"text-gray-300")}>+</p>
+          <p className={"text-xs mt-1 "+(canManageUsers?"text-indigo-400":"text-gray-400")}>Create role</p>
         </div>
       </div>
 
       {roleEditor && <RoleAccessModal key={roleEditor} role={roleEditor} settings={settings} setSettings={setSettings} onClose={()=>setRoleEditor(null)} />}
 
       <div className="flex justify-end">
-        <button onClick={openAdd} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm">+ Add User</button>
+        <button onClick={openAdd} disabled={!canManageUsers} title={canManageUsers ? undefined : "Requires \"Manage Users & Permissions\""}
+          className={"px-4 py-2 rounded-lg text-sm "+(canManageUsers?"bg-indigo-600 hover:bg-indigo-700 text-white":"bg-gray-200 text-gray-400 cursor-not-allowed")}>+ Add User</button>
       </div>
 
       <div className="bg-white border rounded-xl overflow-hidden">
@@ -176,12 +201,14 @@ export default function UsersTab({ users, setUsers, addUser, settings, setSettin
                 <td className="px-4 py-3"><span className="text-xs text-gray-500">{u.permissions.length} permissions</span></td>
                 <td className="px-4 py-3"><Badge color={u.active?"green":"gray"}>{u.active?"Active":"Inactive"}</Badge></td>
                 <td className="px-4 py-3">
-                  <div className="flex gap-2 flex-wrap">
-                    <button onClick={()=>openEdit(u)} className="text-xs text-indigo-600 hover:underline">Edit</button>
-                    <button onClick={()=>openReset(u)} className="text-xs text-amber-700 hover:underline px-1.5 py-0.5 bg-amber-50 rounded">🔑 Reset PW</button>
-                    <button onClick={()=>toggleActive(u.id)} className="text-xs text-amber-600 hover:underline">{u.active?"Deactivate":"Activate"}</button>
-                    <button onClick={()=>deleteUser(u.id)} className="text-xs text-red-500 hover:underline">Delete</button>
-                  </div>
+                  {canManageUsers ? (
+                    <div className="flex gap-2 flex-wrap">
+                      <button onClick={()=>openEdit(u)} className="text-xs text-indigo-600 hover:underline">Edit</button>
+                      <button onClick={()=>openReset(u)} className="text-xs text-amber-700 hover:underline px-1.5 py-0.5 bg-amber-50 rounded">🔑 Reset PW</button>
+                      <button onClick={()=>toggleActive(u.id)} className="text-xs text-amber-600 hover:underline">{u.active?"Deactivate":"Activate"}</button>
+                      <button onClick={()=>deleteUser(u.id)} className="text-xs text-red-500 hover:underline">Delete</button>
+                    </div>
+                  ) : <span className="text-xs text-gray-300" title="Requires &quot;Manage Users &amp; Permissions&quot;">—</span>}
                 </td>
               </tr>
             ))}
@@ -267,22 +294,44 @@ export default function UsersTab({ users, setUsers, addUser, settings, setSettin
             </div>
           </div>
           <div>
-            <p className="text-xs font-medium text-gray-700 mb-2">Permissions ({(form.permissions||[]).length} enabled)</p>
-            <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
-              {Object.entries(PERM_GROUPS).map(([group, perms])=>(
-                <div key={group} className="border rounded-lg p-3">
-                  <p className="text-xs font-semibold text-gray-600 mb-2 uppercase tracking-wide">{group}</p>
-                  <div className="space-y-1">
-                    {perms.map(p=>(
-                      <label key={p} className="flex items-center gap-2 cursor-pointer">
-                        <input type="checkbox" checked={(form.permissions||[]).includes(p)} onChange={()=>togglePerm(p)} className="rounded" />
-                        <span className="text-xs text-gray-600">{PERM_LABELS[p]}</span>
-                      </label>
-                    ))}
-                  </div>
-                </div>
-              ))}
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs font-medium text-gray-700">Permissions</p>
+              <button type="button" onClick={()=>setRoleEditor(form.role)} className="text-[11px] text-indigo-600 hover:underline">🔐 Edit {form.role}'s defaults</button>
             </div>
+            {/* Role is the source of truth now (Edit Access, RoleAccessModal) — this just inherits
+                it. No manual ticking needed for the common case; the checklist below is only for
+                the rare "this one person needs an exception" case, and stays collapsed otherwise. */}
+            <div className="bg-indigo-50 border border-indigo-100 rounded-lg p-3 text-xs text-indigo-800 mb-2">
+              Inherits <strong>{roleDefaultPerms.length}</strong> permission{roleDefaultPerms.length===1?"":"s"} from <strong>{form.role}</strong>'s Edit Access config.
+              {permsOverridden && <div className="mt-1 text-amber-700">⚠ Customized for this user ({(form.permissions||[]).length} enabled) — differs from the role default.</div>}
+            </div>
+            <button type="button" onClick={()=>setPermsOverrideOpen(v=>!v)} className="text-xs text-gray-500 hover:text-gray-700 underline mb-2">
+              {permsOverrideOpen ? "▾ Hide override checklist" : "▸ Override for this user"}
+            </button>
+            {permsOverrideOpen && (
+              <>
+                {permsOverridden && (
+                  <div className="flex justify-end mb-2">
+                    <button type="button" onClick={resetPermsToRoleDefault} className="text-[11px] text-indigo-600 hover:underline">↺ Reset to role defaults</button>
+                  </div>
+                )}
+                <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
+                  {Object.entries(PERM_GROUPS).map(([group, perms])=>(
+                    <div key={group} className="border rounded-lg p-3">
+                      <p className="text-xs font-semibold text-gray-600 mb-2 uppercase tracking-wide">{group}</p>
+                      <div className="space-y-1">
+                        {perms.map(p=>(
+                          <label key={p} className="flex items-center gap-2 cursor-pointer" title={PERM_UNWIRED.has(p) ? "Not yet wired to any control in the app" : undefined}>
+                            <input type="checkbox" checked={(form.permissions||[]).includes(p)} onChange={()=>togglePerm(p)} className="rounded" />
+                            <span className="text-xs text-gray-600">{PERM_LABELS[p]}{PERM_UNWIRED.has(p) ? " ⚪" : ""}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         </div>
         <div className="flex justify-end gap-3 mt-4 pt-4 border-t">

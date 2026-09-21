@@ -35,6 +35,34 @@ export const ROLE_DEFAULTS = {
   "Site Supervisor": ["inv_view", "events_view", "events_manpower", "purchase_request", "reports_generate"],
 };
 
+// Permission ids with no real control anywhere in the app to gate — either the feature itself is
+// unreachable dead code (Import Excel, Bulk Block: the modals exist but nothing ever opens them),
+// or there is genuinely no IMS UI for the concept at all (Events was a removed tab; creating/editing
+// an event happens in Studio or via the external LMS sync, never inside IMS; Reports has no
+// export/print action anywhere in Finance). Listed here so the Edit Access screen can say so
+// honestly instead of implying a toggle does something it doesn't — same disclosure this codebase
+// already applies to Premium Segment / Day-Prior Setup in Date Pricing Config.
+export const PERM_UNWIRED = new Set(["inv_import", "block_bulk", "events_create", "events_edit", "events_view", "reports_generate"]);
+
+// Admin always has every permission; every other role always has AT LEAST its configured Edit
+// Access default (settings.rolePerms[role]), falling back to the hardcoded ROLE_DEFAULTS above only
+// until an admin has actually opened Edit Access for that role once. A per-user `permissions` array
+// starts as a copy of this (see UsersTab.setRole) and can be edited further for just that one user.
+export const effectiveRolePerms = (role, settings) => {
+  if (role === "Admin") return ROLE_DEFAULTS.Admin;
+  const configured = settings?.rolePerms?.[role];
+  return Array.isArray(configured) ? configured : (ROLE_DEFAULTS[role] || []);
+};
+
+// The one enforcement check every gated button in IMS calls. Admin always passes (both by role name
+// and by the legacy u_admin id some seed data still uses); everyone else needs the permission id in
+// their own resolved `permissions` array.
+export const hasIMSPerm = (user, id) => {
+  if (!user) return false;
+  if (user.role === "Admin" || user.id === "u_admin") return true;
+  return Array.isArray(user.permissions) && user.permissions.includes(id);
+};
+
 export const PROD_STATUSES = ["Requested", "Acknowledged", "In Progress", "Ready for Review", "Confirmed", "Added to Inventory"];
 export const PROD_DEPTS = ["Floral", "Fabric", "Structural", "Lighting", "Painter & Production", "Props", "Furniture", "Other"];
 export const DIM_UNITS = ["ft", "cm", "inches", "metres"];
