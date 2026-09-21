@@ -637,7 +637,7 @@ export default function DCTrussTab({ ctx }) {
                                         </span>
                                       );
 
-                                      const FabricRow = ({ emoji, label, qty, unitLabel, allocs, totals, fabricType, allocField, breakdown }) => {
+                                      const FabricRow = ({ emoji, label, qty, unitLabel, allocs, totals, fabricType, allocField, breakdown, discounted }) => {
                                         const shortQty = totals.totalShort || 0;
                                         const hasShort = shortQty > 0;
                                         const marginLoss = totals.freshCost || 0;
@@ -665,10 +665,10 @@ export default function DCTrussTab({ ctx }) {
                                               <AllocChips allocs={allocs} unitLabel={unitLabel} />
                                               {hasShort ? (
                                                 <span style={{...NUM,fontSize:12,color:"#B45309",whiteSpace:"nowrap",fontWeight:700}}>
-                                                  ⚠️ {shortQty}{unitLabel} fresh · {fmtRs(totals.total)} <span style={{color:INK_2,fontWeight:400}}>(incl. {fmtRs(marginLoss)} fresh)</span>
+                                                  ⚠️ {shortQty}{unitLabel} fresh · <span title={discounted?"Repeat-zone discount applied":undefined} style={{color:discounted?"#10B981":undefined}}>{fmtRs(totals.total)}</span> <span style={{color:INK_2,fontWeight:400}}>(incl. {fmtRs(marginLoss)} fresh)</span>
                                                 </span>
                                               ) : allocs.length > 0 ? (
-                                                <span style={{...NUM,fontSize:12,color:"#059669",whiteSpace:"nowrap",fontWeight:600}}>✓ in stock · <span style={{color:INK,fontWeight:700}}>{fmtRs(totals.total)}</span> <span style={{color:INK_2,fontWeight:400}}>rental</span></span>
+                                                <span style={{...NUM,fontSize:12,color:"#059669",whiteSpace:"nowrap",fontWeight:600}}>✓ in stock · <span title={discounted?"Repeat-zone discount applied":undefined} style={{color:discounted?"#10B981":INK,fontWeight:700}}>{fmtRs(totals.total)}</span> <span style={{color:INK_2,fontWeight:400}}>rental</span></span>
                                               ) : (
                                                 <span style={{fontSize:12,color:INK_3,whiteSpace:"nowrap"}}>— not allocated</span>
                                               )}
@@ -694,16 +694,19 @@ export default function DCTrussTab({ ctx }) {
                                             emoji="🧱" label="Wall Masking" qty={fab.maskingPieces} unitLabel="pc"
                                             allocs={maskingAlloc} totals={maskingTotals} fabricType="masking" allocField="maskingAllocation"
                                             breakdown={`RFT ${Math.round((fab.maskL || 0) + 2*(fab.maskW || 0))} ÷ 13`}
+                                            discounted={costs?.isRepeat}
                                           />}
                                           {showLiza && <FabricRow
                                             emoji="🪡" label="Liza" qty={fab.lizaKg} unitLabel="kg"
                                             allocs={lizaAlloc} totals={lizaTotals} fabricType="liza" allocField="lizaAllocation"
                                             breakdown={fab.lizaModel === "wrap+ceiling" ? `wrap ${fab.lizaWrapKg}kg + ceiling ${fab.lizaCeilingKg}kg (${density})` : `wrap only`}
+                                            discounted={costs?.isRepeat}
                                           />}
                                           {showCurtain && <FabricRow
                                             emoji="🎀" label="Velvet Curtains" qty={fab.curtainPieces} unitLabel="pc"
                                             allocs={curtainAlloc} totals={curtainTotals} fabricType="curtain" allocField="curtainAllocation"
                                             breakdown={`${fab.curtainPillarCount || fab.pillarCount} ${fab.curtainPillarCount && fab.curtainPillarCount < fab.pillarCount ? "front " : ""}pillars × ${(row.curtainsPerPillar || 4)} curtains/pillar`}
+                                            discounted={costs?.isRepeat}
                                           />}
                                           </div>
                                         </div>
