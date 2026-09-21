@@ -298,15 +298,21 @@ export default function DCFloralsTab({ ctx }) {
                             // less fresh stock on a repeat zone, so every downstream figure (lineCost,
                             // realLines, flowerAgg, and thus realCost/totalReal below) is already
                             // working off the reduced quantity.
-                            const totalFlowerQty = (fl.qty || 0) * elQty * effectiveRealFrac * realQtyFrac;
+                            // totalFlowerQtyFull is the SAME line pre-repeat-cut (realQtyFrac omitted) —
+                            // carried on the aggregate purely so the mandi list can show a shoppers'
+                            // guide of "was X, now Y" next to the discounted figure. It plays no part
+                            // in any cost math (that's totalFlowerQty, used everywhere above).
+                            const totalFlowerQtyFull = (fl.qty || 0) * elQty * effectiveRealFrac;
+                            const totalFlowerQty = totalFlowerQtyFull * realQtyFrac;
                             const lineCost = totalFlowerQty * unitPrice;
                             realCostPerUnit += (fl.qty || 0) * unitPrice;
                             const displayName = parent?.name || fl.flowerId;
                             realLines.push({ flowerId: parentId, name: displayName, perPattern: fl.qty || 0, qty: totalFlowerQty, unit: parent?.unit || "kg", unitPrice, lineCost, realOnly: flowerType === "real_only", variantPicked: override?.colorVariant?.label || null });
                             // Aggregate — KEYED BY PARENT ID (collapses old per-colour rows into one parent row)
                             if (totalFlowerQty > 0) {
-                              const prev = flowerAgg.get(parentId) || { flowerId: parentId, name: displayName, totalQty: 0, unit: parent?.unit || "kg", unitPrice, contributors: [], realOnly: flowerType === "real_only", flowerType, variantPicked: override?.colorVariant || null };
+                              const prev = flowerAgg.get(parentId) || { flowerId: parentId, name: displayName, totalQty: 0, totalQtyFull: 0, unit: parent?.unit || "kg", unitPrice, contributors: [], realOnly: flowerType === "real_only", flowerType, variantPicked: override?.colorVariant || null };
                               prev.totalQty += totalFlowerQty;
+                              prev.totalQtyFull += totalFlowerQtyFull;
                               prev.unitPrice = unitPrice; // refresh in case variant override applies
                               prev.variantPicked = override?.colorVariant || prev.variantPicked;
                               prev.contributors.push({
@@ -436,6 +442,9 @@ export default function DCFloralsTab({ ctx }) {
                     const effectiveFromRate = Number(fromAgg.unitPrice) || 0;
                     // Reduce original (split) or zero it out (full)
                     if (isSplit) {
+                      // totalQtyFull moves by the same delta as totalQty — a swap doesn't apply its
+                      // own repeat-discount, it just relocates already-discounted qty to another row.
+                      fromAgg.totalQtyFull = Math.max(0, (fromAgg.totalQtyFull ?? fromAgg.totalQty) - swapQty);
                       fromAgg.totalQty = Math.max(0, fromAgg.totalQty - swapQty);
                       // Drop the row entirely if qty fell to 0
                       if (fromAgg.totalQty <= 0.0001) flowerAgg.delete(override.swapTo.fromParentId);
@@ -452,6 +461,7 @@ export default function DCFloralsTab({ ctx }) {
                     const existing = flowerAgg.get(targetId);
                     if (existing) {
                       existing.totalQty += newQty;
+                      existing.totalQtyFull = (existing.totalQtyFull ?? existing.totalQty - newQty) + newQty;
                       existing.contributors.push({
                         elName: "↪ swapped from " + (override.swapTo.fromName || ""), zoneKey: "—",
                         elQty: 1, perPattern: newQty, realFrac: 1, contribution: newQty,
@@ -462,6 +472,7 @@ export default function DCFloralsTab({ ctx }) {
                         flowerId: targetId,
                         name: targetParent.name,
                         totalQty: newQty,
+                        totalQtyFull: newQty,
                         unit: targetParent.unit || "kg",
                         unitPrice: targetRate,
                         contributors: [{
@@ -739,9 +750,27 @@ export default function DCFloralsTab({ ctx }) {
                                       </div>
                                     )}
                                   </td>
-                                  <td style={{padding:"6px 4px",color:"#1A1A2E",textAlign:"right",fontVariantNumeric:"tabular-nums"}}>{f.totalQty.toFixed(2)} {f.unit}</td>
-                                  <td style={{padding:"6px 4px",color:"#1A1A2E",textAlign:"right",fontVariantNumeric:"tabular-nums"}}>₹{Math.round(f.unitPrice).toLocaleString("en-IN")}/{f.unit}</td>
-                                  <td style={{padding:"6px 4px",color:"#1A1A2E",textAlign:"right",fontVariantNumeric:"tabular-nums",fontWeight:600}}>₹{Math.round(f.totalQty * f.unitPrice).toLocaleString("en-IN")}</td>
+                                  {/* Repeat-zone discount is a QUANTITY cut (§ see REPEAT_REAL_QTY_MULT
+                                      above), not a rate cut — the rate never changes, so the strike-
+                                      through goes on Qty/Total, the two figures the cut actually moves.
+                                      Without it the row just shows one number and a salesperson can't
+                                      tell whether a discount landed or the flower simply needed less. */}
+                                  {(() => {
+                                    const discounted = f.totalQtyFull != null && f.totalQtyFull > f.totalQty + 0.005;
+                                    return (
+                                      <>
+                                        <td style={{padding:"6px 4px",color:"#1A1A2E",textAlign:"right",fontVariantNumeric:"tabular-nums"}}>
+                                          {discounted && <span title="Qty before the repeat-zone discount" style={{textDecoration:"line-through",opacity:0.4,marginRight:6}}>{f.totalQtyFull.toFixed(2)}</span>}
+                                          <span title={discounted ? "♻ Repeat zone — 80% less fresh stock needed" : undefined} style={{color:discounted?"#10B981":undefined,fontWeight:discounted?700:400}}>{f.totalQty.toFixed(2)} {f.unit}</span>
+                                        </td>
+                                        <td style={{padding:"6px 4px",color:"#1A1A2E",textAlign:"right",fontVariantNumeric:"tabular-nums"}}>₹{Math.round(f.unitPrice).toLocaleString("en-IN")}/{f.unit}</td>
+                                        <td style={{padding:"6px 4px",color:"#1A1A2E",textAlign:"right",fontVariantNumeric:"tabular-nums",fontWeight:600}}>
+                                          {discounted && <span title="Cost before the repeat-zone discount" style={{textDecoration:"line-through",opacity:0.4,marginRight:6,fontWeight:400}}>₹{Math.round(f.totalQtyFull * f.unitPrice).toLocaleString("en-IN")}</span>}
+                                          <span style={{color:discounted?"#10B981":undefined}}>₹{Math.round(f.totalQty * f.unitPrice).toLocaleString("en-IN")}</span>
+                                        </td>
+                                      </>
+                                    );
+                                  })()}
                                   <td style={{padding:"6px 4px",textAlign:"right"}}>
                                     <div style={{display:"flex",gap:4,justifyContent:"flex-end",flexWrap:"wrap"}}>
                                       {fnIdx === activeFnIdx && (
