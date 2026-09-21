@@ -588,10 +588,17 @@ export default function DealCheckOverlay({ ctx }) {
             try { const fl = calcFnFloralSourcingCost(fn).grandTotal; florals += fl; addD("Floral", "florals", fl); } catch {}
             // `genset` (used only for the Power tab's own nav-pill amount) reads gensetCostOurs —
             // OUR real cost — not gensetCost (client-billed), so the pill agrees with the Power
-            // tab body it summarizes. `transport`/the "Transport" IMS dept line are untouched
-            // (still transportTotal, truck cost + client-billed genset bundled as before) — this
-            // is scoped to the Power calc only, not a redistribution of department cost.
-            try { const bd = calcFunctionBreakdown ? calcFunctionBreakdown(fn) : null; if (bd && bd.transportTotal) { transport += bd.transportTotal; addD("Transport", "transport", bd.transportTotal); genset += Number(bd.transport?.gensetCostOurs) || 0; } if (bd && bd.gensetTotal) { addD("Lighting", "rental", bd.gensetTotal); if (deptInv["Lighting"]) deptInv["Lighting"].push({ name: "Genset / power", photo: "", qty: 1, unit: 0, total: Math.round(bd.gensetTotal), sub: "genset" }); } } catch {}
+            // tab body it summarizes.
+            // `transport`/the "Transport" nav pill now reads bd.transport.truckTotal — pure truck
+            // cost — instead of bd.transportTotal, which bundles in gensetCost (what the CLIENT is
+            // billed for genset, revenue with margin baked in, not a cost). That bundling made the
+            // "Transport" pill disagree with the Transport tab's own summary bar (which has always
+            // totalled truckTotal only — it has no genset line at all) by exactly the genset revenue
+            // amount, and inflated `grand`/profit's cost side with a revenue figure. bd.gensetTotal
+            // (the old "add genset to Lighting dept income" branch below this) never existed on
+            // calcFunctionBreakdown's return at all — confirmed no writer anywhere in the codebase —
+            // so it never once ran; removed rather than left as dead code that looks intentional.
+            try { const bd = calcFunctionBreakdown ? calcFunctionBreakdown(fn) : null; const truckTotal = Number(bd?.transport?.truckTotal) || 0; if (truckTotal > 0) { transport += truckTotal; addD("Transport", "transport", truckTotal); } genset += Number(bd?.transport?.gensetCostOurs) || 0; } catch {}
             try {
               const tInv = dealCheckData?.trussInv;
               if (tInv) {
