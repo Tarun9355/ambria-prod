@@ -1687,7 +1687,7 @@ export default function DealCheckOverlay({ ctx }) {
                   const TAB_AMOUNTS = {
                     inventory: fmtTab(rental), truss: fmtTab(truss), florals: fmtTab(florals),
                     manpower: fmtTab(manpower), production: fmtTab(produceTotal), buying: fmtTab(buyTotal),
-                    transport: fmtTab(Math.max(0, transport - genset)), power: fmtTab(genset),
+                    transport: fmtTab(transport), power: fmtTab(genset),
                     commission: fmtTab(commissionTotal), gyv: fmtTab(gyvFixed + bufferCost),
                   };
                   return TABS.map(t => {
