@@ -340,6 +340,10 @@ export default function DCFloralsTab({ ctx }) {
                       let artFlowerCost = 0;
                       const artLines = []; // breakdown for "how" panel
                       let artBunchesFlower = 0, artBunchesGreen = 0;
+                      // *Full = pre repeat-zone-cut (artQtyFrac omitted) — display-only, same purpose
+                      // as totalQtyFull on the real side: lets the Artificial Bunches card show what
+                      // the bunch count would have been without the discount, struck through.
+                      let artBunchesFlowerFull = 0, artBunchesGreenFull = 0;
                       if (artFrac > 0 && pattern) {
                         const sizes = pattern.sizes || {};
                         let comp = sizes[sizeKey] || sizes.medium;
@@ -390,12 +394,14 @@ export default function DCFloralsTab({ ctx }) {
                               return;
                             }
                             const bunchesPerUnit = Number(parent?.artificialBunchesPerUnit) || 0;
-                            const realUnitsReplaced = (fl.qty || 0) * elQty * artFrac * artQtyFrac;
+                            const realUnitsReplacedFull = (fl.qty || 0) * elQty * artFrac;
+                            const realUnitsReplaced = realUnitsReplacedFull * artQtyFrac;
                             const bunches = realUnitsReplaced * bunchesPerUnit;
+                            const bunchesFull = realUnitsReplacedFull * bunchesPerUnit;
                             const isGreen = flowerType === "green";
                             const perBunch = isGreen ? greenPerBunchRate : flowerPerBunchRate;
                             const lineCost = bunches * perBunch;
-                            if (isGreen) artBunchesGreen += bunches; else artBunchesFlower += bunches;
+                            if (isGreen) { artBunchesGreen += bunches; artBunchesGreenFull += bunchesFull; } else { artBunchesFlower += bunches; artBunchesFlowerFull += bunchesFull; }
                             artFlowerCost += lineCost;
                             artLines.push({
                               flowerId: parentId, name: parent?.name || fl.flowerId,
@@ -419,7 +425,7 @@ export default function DCFloralsTab({ ctx }) {
                       // breakdown below can skip showing it a second time here (with a "no pattern"
                       // warning that's really just "this was never supposed to have one").
                       const isInvOnlyNoPattern = !!invItem && !pattern;
-                      elementBreakdown.push({ name: el.name, zoneKey: zk, qty: elQty, realPct, realCost, artCost, total: realCost + artCost, hasPattern: !!pattern, realLines, size: sizeKey, artLines, artBunchesFlower, artBunchesGreen, flowerPerBunchRate, greenPerBunchRate, isInvOnlyNoPattern });
+                      elementBreakdown.push({ name: el.name, zoneKey: zk, qty: elQty, realPct, realCost, artCost, total: realCost + artCost, hasPattern: !!pattern, realLines, size: sizeKey, artLines, artBunchesFlower, artBunchesGreen, artBunchesFlowerFull, artBunchesGreenFull, flowerPerBunchRate, greenPerBunchRate, isInvOnlyNoPattern });
                     });
                   });
                   if (elementBreakdown.length === 0) {
@@ -867,12 +873,24 @@ export default function DCFloralsTab({ ctx }) {
                       {(() => {
                         const totalArtBunchesFlower = elementBreakdown.reduce((s,e)=>s+(e.artBunchesFlower||0),0);
                         const totalArtBunchesGreen = elementBreakdown.reduce((s,e)=>s+(e.artBunchesGreen||0),0);
-                        const flowerKg = totalArtBunchesFlower / (Number(dealCheckData?.artificialFlowerBunchesPerKg ?? 16) || 16);
-                        const greenKg = totalArtBunchesGreen / (Number(dealCheckData?.artificialGreenBunchesPerKg ?? 23) || 23);
+                        // *Full — same bunches pre repeat-zone-cut, display-only (see artBunchesFlowerFull
+                        // above). Used to strike through the pre-discount figure next to the real one.
+                        const totalArtBunchesFlowerFull = elementBreakdown.reduce((s,e)=>s+(e.artBunchesFlowerFull||0),0);
+                        const totalArtBunchesGreenFull = elementBreakdown.reduce((s,e)=>s+(e.artBunchesGreenFull||0),0);
+                        const bunchesPerKgFlower = Number(dealCheckData?.artificialFlowerBunchesPerKg ?? 16) || 16;
+                        const bunchesPerKgGreen = Number(dealCheckData?.artificialGreenBunchesPerKg ?? 23) || 23;
+                        const flowerKg = totalArtBunchesFlower / bunchesPerKgFlower;
+                        const greenKg = totalArtBunchesGreen / bunchesPerKgGreen;
+                        const flowerKgFull = totalArtBunchesFlowerFull / bunchesPerKgFlower;
+                        const greenKgFull = totalArtBunchesGreenFull / bunchesPerKgGreen;
                         const flowerRate = Number(dealCheckData?.artificialFlowerRatePerKg ?? 50);
                         const greenRate = Number(dealCheckData?.artificialGreenRatePerKg ?? 40);
                         const flowerCost = flowerKg * flowerRate;
                         const greenCost = greenKg * greenRate;
+                        const flowerCostFull = flowerKgFull * flowerRate;
+                        const greenCostFull = greenKgFull * greenRate;
+                        const flowerDiscounted = totalArtBunchesFlowerFull > totalArtBunchesFlower + 0.05;
+                        const greenDiscounted = totalArtBunchesGreenFull > totalArtBunchesGreen + 0.05;
                         const missingRatios = elementBreakdown.reduce((acc,e)=>{
                           (e.artLines||[]).forEach(al=>{ if(!al.realOnly && al.missingRatio && al.realUnitsReplaced > 0) acc.add(al.name); });
                           return acc;
@@ -895,13 +913,23 @@ export default function DCFloralsTab({ ctx }) {
                             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,fontSize:13}}>
                               <div style={{padding:"8px 10px",borderRadius:7,background:"rgba(236,72,153,0.06)"}}>
                                 <div style={{fontSize:12,color:"#EC4899",fontWeight:600,marginBottom:4}}>🌹 Flower bunches</div>
-                                <div style={{color:"#1A1A2E",fontVariantNumeric:"tabular-nums"}}>{totalArtBunchesFlower.toFixed(1)} bunches = <b>{flowerKg.toFixed(2)} kg</b></div>
-                                <div style={{fontSize:11,color:"#1A1A2E",marginTop:2}}>× ₹{flowerRate}/kg = <span style={{color:"#EC4899",fontWeight:600}}>₹{Math.round(flowerCost).toLocaleString("en-IN")}</span></div>
+                                <div style={{color:"#1A1A2E",fontVariantNumeric:"tabular-nums"}}>
+                                  {flowerDiscounted && <span title="Bunches before the repeat-zone discount" style={{textDecoration:"line-through",opacity:0.4,marginRight:5}}>{totalArtBunchesFlowerFull.toFixed(1)} bunches</span>}
+                                  <span title={flowerDiscounted ? "♻ Repeat zone — 30% less artificial stock needed" : undefined} style={{color:flowerDiscounted?"#10B981":undefined,fontWeight:flowerDiscounted?700:undefined}}>{totalArtBunchesFlower.toFixed(1)} bunches</span> = <b>{flowerKg.toFixed(2)} kg</b>
+                                </div>
+                                <div style={{fontSize:11,color:"#1A1A2E",marginTop:2}}>
+                                  × ₹{flowerRate}/kg = {flowerDiscounted && <span style={{textDecoration:"line-through",opacity:0.4,marginRight:4}}>₹{Math.round(flowerCostFull).toLocaleString("en-IN")}</span>}<span style={{color:"#EC4899",fontWeight:600}}>₹{Math.round(flowerCost).toLocaleString("en-IN")}</span>
+                                </div>
                               </div>
                               <div style={{padding:"8px 10px",borderRadius:7,background:"rgba(16,185,129,0.06)"}}>
                                 <div style={{fontSize:12,color:"#10B981",fontWeight:600,marginBottom:4}}>🌿 Green bunches</div>
-                                <div style={{color:"#1A1A2E",fontVariantNumeric:"tabular-nums"}}>{totalArtBunchesGreen.toFixed(1)} bunches = <b>{greenKg.toFixed(2)} kg</b></div>
-                                <div style={{fontSize:11,color:"#1A1A2E",marginTop:2}}>× ₹{greenRate}/kg = <span style={{color:"#10B981",fontWeight:600}}>₹{Math.round(greenCost).toLocaleString("en-IN")}</span></div>
+                                <div style={{color:"#1A1A2E",fontVariantNumeric:"tabular-nums"}}>
+                                  {greenDiscounted && <span title="Bunches before the repeat-zone discount" style={{textDecoration:"line-through",opacity:0.4,marginRight:5}}>{totalArtBunchesGreenFull.toFixed(1)} bunches</span>}
+                                  <span title={greenDiscounted ? "♻ Repeat zone — 30% less artificial stock needed" : undefined} style={{color:greenDiscounted?"#10B981":undefined,fontWeight:greenDiscounted?700:undefined}}>{totalArtBunchesGreen.toFixed(1)} bunches</span> = <b>{greenKg.toFixed(2)} kg</b>
+                                </div>
+                                <div style={{fontSize:11,color:"#1A1A2E",marginTop:2}}>
+                                  × ₹{greenRate}/kg = {greenDiscounted && <span style={{textDecoration:"line-through",opacity:0.4,marginRight:4}}>₹{Math.round(greenCostFull).toLocaleString("en-IN")}</span>}<span style={{color:"#10B981",fontWeight:600}}>₹{Math.round(greenCost).toLocaleString("en-IN")}</span>
+                                </div>
                               </div>
                             </div>
                             {mappedList.length > 0 && (
