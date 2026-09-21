@@ -7,7 +7,7 @@
 import { useEffect } from "react";
 import { CARD_SHADOW, CARD_BG, CARD_BORDER, HAIRLINE, TILE_BG, TILE_BORDER, CHIP_BG, INK, INK_2, INK_3, GOLD, GOLD_SOFT, NUM } from "../../../../lib/studio/dcTokens";
 import { resolveTrussConfig } from "../../../../lib/studio/pricing";
-import { heavyExtraLabour, eventTimingMultFor, EVENT_TIMINGS } from "../../../../lib/ims/constants";
+import { heavyExtraLabour, eventTimingMultFor, EVENT_TIMINGS, SIT_MULT_DEFAULTS } from "../../../../lib/ims/constants";
 import { standingReductionBySubcat, fixedVenueFor } from "../../../../lib/ims/fixedVenues";
 import { itemImsSubcat, lookupBySubcat } from "../../../../lib/ims/helpers";
 import { matchFlowerPattern } from "../../../../lib/ims/flowerHelpers";
@@ -191,7 +191,6 @@ export default function DCManpowerTab({ ctx }) {
                   const defaultMinLabour = dealCheckData?.defaultMinLabour || 4;
                   const eventTypeMultipliers = dealCheckData?.eventTypeMultipliers || { outdoor_budgeted:1.0 };
                   const eventTimingMultipliers = dealCheckData?.eventTimingMultipliers || {};
-                  const sayaMultiplier = dealCheckData?.sayaMultiplier || 1.3;
                   const heavyElementRanges = dealCheckData?.heavyElementRanges || [];
                   const fabricBangaliRanges = dealCheckData?.fabricBangaliRanges || [];
                   const trussLabourRanges = dealCheckData?.trussLabourRanges || [];
@@ -200,6 +199,22 @@ export default function DCManpowerTab({ ctx }) {
                   const flowerPatternsMP = dealCheckData?.flowerPatterns || [];
                   const electricianProdMP = dealCheckData?.electricianProductivity || {};
                   const seasonMapMP = dealCheckData?.seasonMap || {};
+                  // Situational Multipliers (IMS → Admin → Calendar → Date Pricing Config): Heavy
+                  // Saya — a King's-season date needs more crew per role, at that role's OWN
+                  // configured pressure factor, not the old flat sayaMultiplier applied only to
+                  // Labours. Combined via the same "biggest single pressure factor wins" max() the
+                  // existing dumping/timing candidates already use (not multiplied together), then
+                  // capped. Premium Segment/Day-Prior aren't wired yet — Premium has no per-function
+                  // segment field to gate on (this tab hard-codes "outdoor_budgeted" everywhere a
+                  // segment is read, see calcPeopleTier3Labours), and Day-Prior needs its own
+                  // reduction applied to the separate -1-day phase, not this per-type multiplier.
+                  const situMultCap = dealCheckData?.situationalMultiplierCap || 1.8;
+                  const sitMultsMP = dealCheckData?.situationalMultipliers || SIT_MULT_DEFAULTS;
+                  const heavySayaMultFor = (fn, type) => {
+                    if (seasonMapMP[fn.fnDate || ""] !== "kings") return 1.0;
+                    const m = Number((sitMultsMP.heavySaya || {})[type]);
+                    return m > 0 ? m : 1.0;
+                  };
                   // ── Vendor avg-rate lookup (22 May 2026) ─────────────
                   // For each labour type: avg of (vendor.storedRate.amount) where
                   // vendor.type==="Manpower Contractor", vendor.active, vendor.isFixed, vendor.labourType===type.
@@ -363,12 +378,10 @@ export default function DCManpowerTab({ ctx }) {
                     const dayPrior = dcMpIncludeMinusOne; // -1 day enabled = day-prior confirmed
                     let situationalMult = 1.0;
                     if (!dayPrior) {
-                      const candidates = [dumpingMult];
-                      const season = seasonMapMP[fn.fnDate||""];
-                      if (season === "kings") candidates.push(sayaMultiplier);
+                      const candidates = [dumpingMult, heavySayaMultFor(fn, "Labours")];
                       const timingId = shiftToTiming(fn.fnShift);
                       candidates.push(eventTimingMultFor(eventTimingMultipliers, timingId, "Labours", 1.0));
-                      situationalMult = Math.max(...candidates, 1.0);
+                      situationalMult = Math.min(situMultCap, Math.max(...candidates, 1.0));
                     }
                     const adjusted = Math.ceil(base * situationalMult);
                     // Heavy element add-ons
@@ -489,17 +502,25 @@ export default function DCManpowerTab({ ctx }) {
                     if (type === "Drivers") return 0;
                     return 0;
                   };
-                  // Dispatcher
+                  // Dispatcher. Labours (and anything configured as a generic tier-3 type, which
+                  // reuses calcPeopleTier3Labours wholesale) already folds heavySaya in internally —
+                  // skip the generic wrap below for those so it isn't applied twice. Every other type
+                  // gets the same King's-date per-role pressure factor applied here, uniformly,
+                  // instead of leaving every non-Labours role unaffected by a King's date the way
+                  // this tab always has.
                   const calcPeopleForType = (fn, type) => {
-                    if (type === "Flowerists") return calcPeopleFlowerists(fn);
-                    if (type === "Electricians") return calcPeopleElectricians(fn);
-                    if (type === "Labours") return calcPeopleTier3Labours(fn);
-                    if (type === "Fabric Bangali") return calcPeopleFabricBangali(fn);
-                    if (type === "Truss Labour") return calcPeopleTrussLabour(fn);
                     const cfg = labourTiers[type];
-                    if (cfg && cfg.tier === 2) return calcPeopleTier2(fn, type);
-                    if (cfg && cfg.tier === 3) return calcPeopleTier3Labours(fn);
-                    return calcPeopleDefault(fn, type);
+                    const isTier3Labours = type === "Labours" || (cfg && cfg.tier === 3);
+                    const raw = type === "Flowerists" ? calcPeopleFlowerists(fn)
+                      : type === "Electricians" ? calcPeopleElectricians(fn)
+                      : isTier3Labours ? calcPeopleTier3Labours(fn)
+                      : type === "Fabric Bangali" ? calcPeopleFabricBangali(fn)
+                      : type === "Truss Labour" ? calcPeopleTrussLabour(fn)
+                      : (cfg && cfg.tier === 2) ? calcPeopleTier2(fn, type)
+                      : calcPeopleDefault(fn, type);
+                    if (isTier3Labours || type === "Supervisors" || type === "Drivers" || !(raw > 0)) return raw;
+                    const m = Math.min(situMultCap, heavySayaMultFor(fn, type));
+                    return m > 1 ? Math.ceil(raw * m) : raw;
                   };
 
                   // ── Trace helpers (22 May 2026 · breakdown UI) ─────────────
@@ -599,14 +620,13 @@ export default function DCManpowerTab({ ctx }) {
                     const dumpingMult = ({ nearby:1.0, medium:1.1, far:1.2 })[dumpingLevel] || 1.0;
                     const eventMult = eventTypeMultipliers["outdoor_budgeted"] || 1;
                     const base = Math.ceil(venueMin * eventMult);
-                    const season = seasonMapMP[fn.fnDate||""];
-                    const sayaMult = season === "kings" ? sayaMultiplier : 1.0;
+                    const sayaMult = heavySayaMultFor(fn, "Labours");
                     const timingId = shiftToTiming(fn.fnShift);
                     const timingMult = eventTimingMultFor(eventTimingMultipliers, timingId, "Labours", 1.0);
                     const timingLabel = "⏰ " + (EVENT_TIMINGS.find(t => t.id === timingId)?.label || timingId);
                     let situationalMult = 1.0;
                     if (!dcMpIncludeMinusOne) {
-                      situationalMult = Math.max(dumpingMult, sayaMult, timingMult, 1.0);
+                      situationalMult = Math.min(situMultCap, Math.max(dumpingMult, sayaMult, timingMult, 1.0));
                     }
                     const adjusted = Math.ceil(base * situationalMult); // venue-min floor (with situational)
                     const subCounts = {};

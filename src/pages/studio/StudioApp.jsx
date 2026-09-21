@@ -76,7 +76,8 @@ import {
 } from "../../lib/studio/pricing";
 import { allocateRowAvailability } from "../../lib/studio/dealAvailability";
 import { callClaudeStreaming } from "../../lib/ai";
-import { heavyExtraLabour, eventTimingMultFor } from "../../lib/ims/constants";
+import { heavyExtraLabour, eventTimingMultFor, SETTINGS_DEFAULTS, SIT_MULT_DEFAULTS } from "../../lib/ims/constants";
+import { resolveDateCategory, getEffectivePricing } from "../../lib/inventory/helpers";
 import { itemImsSubcat, lookupBySubcat, priceForInvItem, itemDimsText, walkKitUnits } from "../../lib/ims/helpers";
 import { matchFlowerPattern, floralPatternUnitRates, sizeClassToPatternKey, normalizeSizeClass, kitFloralCompDelta } from "../../lib/ims/flowerHelpers";
 import { rowToRcItem, rcItemToRow, rcIsSMB, getFloralMode, oosCostPctFor } from "../../lib/rateCard";
@@ -4007,6 +4008,21 @@ export default function StudioApp() {
     const m = Number(clientLedger.find(c => c.id === activeClientId)?.guestPriceMultiplier);
     return (m >= 1 && m <= 2) ? m : 1;
   })();
+  // Category Multipliers (IMS → Admin → Calendar → Date Pricing Config — King's/Perfect/Filler):
+  // "Base price × multiplier = effective rental price charged to client", scoped to element/rental
+  // pricing (getElPrice/getElPriceForFn) to match that text — not structural/transport, unlike
+  // guestPriceMultiplier above. Always on (not gated by hideDiscountFromClient — this is market
+  // pricing by date desirability, not a discount the client opts into). Reuses getEffectivePricing
+  // (lib/inventory/helpers.js) — the SAME function IMS's own Inventory tab/P&L report already read —
+  // so a date's category and its last-minute-booking override resolve identically everywhere.
+  // dealCheckData falls back to studioFloralData so this works before Deal Check has ever been
+  // opened, same reasoning as fixedVenues/agencyFeePct above.
+  const dateCategoryMultiplierFor = (dateStr) => {
+    const dp = dealCheckData?.datePricing || studioFloralData?.datePricing;
+    if (!dp || !dateStr) return 1;
+    const m = getEffectivePricing(1, dateStr, { datePricing: dp }).multiplier;
+    return (m > 0) ? m : 1;
+  };
   // calcStructCost is a plain module-level function (no closure over component state), so its
   // truss/masking/platform/carpet/arches/pillars/glass/print/total/trussDiscount fields are all
   // scaled here, once, at every guest-facing call site instead of threading the multiplier through
@@ -4291,7 +4307,7 @@ export default function StudioApp() {
   const FLORAL_DATA_KEYS = [
     "flowerPatterns", "mandiCatalogue", "artificialFlowerRatePerKg", "artificialFlowerBunchesPerKg",
     "artificialGreenRatePerKg", "artificialGreenBunchesPerKg", "defaultStudioMarkup",
-    "fixedVenues", "fixedVenueSubcatDiscount", "agencyFeePct",
+    "fixedVenues", "fixedVenueSubcatDiscount", "agencyFeePct", "datePricing",
   ];
   const refreshStudioFloralData = useCallback(async () => {
     try {
@@ -4330,6 +4346,10 @@ export default function StudioApp() {
         // then visibly jump once Deal Check's fetch landed and stayed jumped (dealCheckData persists
         // after Deal Check closes). This lightweight settings-only fetch closes that gap.
         agencyFeePct: typeof s.agencyFeePct === "number" ? s.agencyFeePct : 20,
+        // Same reasoning as agencyFeePct/fixedVenues above — Category Multipliers (IMS → Calendar →
+        // Date Pricing Config) must scale the guest-facing rental price before Deal Check has ever
+        // been opened too, not just once dealCheckData's own copy has loaded.
+        datePricing: (s.datePricing && typeof s.datePricing === "object") ? s.datePricing : SETTINGS_DEFAULTS.datePricing,
         trussInv,
       });
     } catch { /* ignore — floral auto-derive falls back to flat rate */ }
@@ -4465,13 +4485,15 @@ export default function StudioApp() {
     }
     return { rc, unitPrice: up, lineCost: (el.qty || 0) * up, area: 0, warning: null, isFloralBlend: isFloral, realPct };
   }, [rcItems, getFloralMode, rcFloralModeByKey, floralRatio, floralArtUnitRate, patternExtra, resolveRcRate, getElPriceFromInventory, getElPriceFromPattern, getElPriceFromMandi, activeFnMeta]);
-  // guestPriceMultiplier applied once, here, on top of whichever branch above priced the element —
-  // scales unitPrice/lineCost only, leaving area/warning/availability/realPct untouched.
+  // guestPriceMultiplier + dateCategoryMultiplierFor(clientDate) applied once, here, on top of
+  // whichever branch above priced the element — scales unitPrice/lineCost only, leaving area/
+  // warning/availability/realPct untouched. clientDate is this deal's active function's own date.
   const getElPrice = useCallback((el, zc, opts, venueName) => {
     const r = getElPriceRaw(el, zc, opts, venueName);
-    if (guestPriceMultiplier === 1) return r;
-    return { ...r, unitPrice: r.unitPrice * guestPriceMultiplier, lineCost: r.lineCost * guestPriceMultiplier };
-  }, [getElPriceRaw, guestPriceMultiplier]);
+    const mult = guestPriceMultiplier * dateCategoryMultiplierFor(clientDate);
+    if (mult === 1) return r;
+    return { ...r, unitPrice: r.unitPrice * mult, lineCost: r.lineCost * mult };
+  }, [getElPriceRaw, guestPriceMultiplier, clientDate, dealCheckData, studioFloralData]);
 
   const calcElsCost = useCallback((elements, withFloral, zc, opts, venueName) => {
     return (elements || []).reduce((s, el) => {
@@ -4526,15 +4548,19 @@ export default function StudioApp() {
     }
     return { rc, unitPrice: up, lineCost: (el.qty || 0) * up };
   }, [rcItems, getFloralMode, rcFloralModeByKey, floralArtUnitRate, patternExtra, resolveRcRate, getElPriceFromInventory, getElPriceFromPattern, getElPriceFromMandi]);
-  // Same guestPriceMultiplier fold as getElPrice, for the export/collectAllFunctionData path.
-  const getElPriceForFn = useCallback((el, zc, fnRatio, checkAvail, venueName, blocksForDate) => {
+  // Same guestPriceMultiplier + dateCategoryMultiplierFor fold as getElPrice, for the export/
+  // collectAllFunctionData path — fnDate (optional, new) is THIS function's own date (multi-function
+  // bookings can span several dates/categories), not necessarily the active function's clientDate.
+  // Omitted, it prices at 1x category multiplier same as before this existed.
+  const getElPriceForFn = useCallback((el, zc, fnRatio, checkAvail, venueName, blocksForDate, fnDate) => {
     const r = getElPriceForFnRaw(el, zc, fnRatio, checkAvail, venueName, blocksForDate);
-    if (guestPriceMultiplier === 1) return r;
-    return { ...r, unitPrice: r.unitPrice * guestPriceMultiplier, lineCost: r.lineCost * guestPriceMultiplier };
-  }, [getElPriceForFnRaw, guestPriceMultiplier]);
+    const mult = guestPriceMultiplier * dateCategoryMultiplierFor(fnDate);
+    if (mult === 1) return r;
+    return { ...r, unitPrice: r.unitPrice * mult, lineCost: r.lineCost * mult };
+  }, [getElPriceForFnRaw, guestPriceMultiplier, dealCheckData, studioFloralData]);
 
-  const calcElsCostForFn = useCallback((elements, zc, fnRatio, checkAvail, venueName, blocksForDate) => {
-    return (elements || []).reduce((s, el) => s + getElPriceForFn(el, zc, fnRatio, checkAvail, venueName, blocksForDate).lineCost, 0);
+  const calcElsCostForFn = useCallback((elements, zc, fnRatio, checkAvail, venueName, blocksForDate, fnDate) => {
+    return (elements || []).reduce((s, el) => s + getElPriceForFn(el, zc, fnRatio, checkAvail, venueName, blocksForDate, fnDate).lineCost, 0);
   }, [getElPriceForFn]);
 
   // The price badge on every UNSELECTED photo tile: what this zone would cost if you picked this
@@ -4806,7 +4832,7 @@ export default function StudioApp() {
     const fBlocksForDate = blocksByDate[fnData.fnDate];
     Object.entries(fZoneElements).forEach(([zk, elems]) => {
       if (!fEnabledEls[zk] || !elems) return;
-      decor += calcElsCostForFn(elems, fZoneConfig[zk], fFloralRatio, true, fVenue, fBlocksForDate);
+      decor += calcElsCostForFn(elems, fZoneConfig[zk], fFloralRatio, true, fVenue, fBlocksForDate, fnData.fnDate);
     });
     // Only count a custom item while its own zone is still enabled — matches calcFunctionBreakdown
     // (Summary's accordion), which already scoped this way; this one used to count every custom
@@ -5114,7 +5140,6 @@ export default function StudioApp() {
     const defaultMinLabour = d.defaultMinLabour || 4;
     const eventTypeMultipliers = d.eventTypeMultipliers || { outdoor_budgeted: 1 };
     const eventTimingMultipliers = d.eventTimingMultipliers || {};
-    const sayaMultiplier = d.sayaMultiplier || 1.3;
     const heavyElementRanges = d.heavyElementRanges || [];
     const fabricBangaliRanges = d.fabricBangaliRanges || [];
     const trussLabourRanges = d.trussLabourRanges || [];
@@ -5125,6 +5150,21 @@ export default function StudioApp() {
     if (!types.length || !(allFns || []).length) return [];
     const sizeFromMode = (mode, sz) => (mode === "flat" || !sz) ? "medium" : (String(sz).toLowerCase() || "medium");
     const shiftToTiming = (s) => { const sl = String(s || "").toLowerCase(); if (sl.includes("morning")) return "morning"; if (sl.includes("evening") || sl.includes("night")) return "evening"; return "day"; };
+    // Situational Multipliers (IMS → Admin → Calendar → Date Pricing Config): Heavy Saya — a
+    // King's-season date needs more crew per role, at that role's OWN configured pressure factor
+    // (heavySayaMultFor), not the old flat sayaMultiplier applied only to Labours. Combined via the
+    // same "biggest single pressure factor wins" max() the existing dumping/timing candidates
+    // already use below (not multiplied together), then capped — Premium Segment/Day-Prior aren't
+    // wired here yet: Premium has no per-function segment field to gate on (Studio hard-codes
+    // "outdoor_budgeted" everywhere a segment is read), and Day-Prior needs the separate -1-day
+    // phase/schedule engine (DCManpowerTab's dayList), not this whole-booking snapshot.
+    const situMultCap = d.situationalMultiplierCap || 1.8;
+    const sitMults = d.situationalMultipliers || SIT_MULT_DEFAULTS;
+    const heavySayaMultFor = (fn, type) => {
+      if (seasonMap[fn.fnDate || ""] !== "kings") return 1.0;
+      const m = Number((sitMults.heavySaya || {})[type]);
+      return m > 0 ? m : 1.0;
+    };
     // An element's cat/sub/inhouseMode for manpower purposes comes ONLY from live IMS identity now
     // — el.invId (Inventory, the normal path for anything added via "+ Add element" today) or
     // el.patternId (a pure flower-recipe element). The legacy Rate-Card name-match fallback is
@@ -5172,7 +5212,7 @@ export default function StudioApp() {
       if (type === "Labours") {
         const vc = venueMinLabour[fn.fnVenue || ""]; const vm = (vc && typeof vc === "object" ? vc.min : (typeof vc === "number" ? vc : null)) || defaultMinLabour;
         const em = eventTypeMultipliers["outdoor_budgeted"] || 1; const base = Math.ceil(vm * em);
-        const ss = seasonMap[fn.fnDate || ""]; const cand = [1.0]; if (ss === "kings") cand.push(sayaMultiplier); cand.push(eventTimingMultFor(eventTimingMultipliers, shiftToTiming(fn.fnShift), "Labours", 1.0)); const sm = Math.max(...cand, 1.0);
+        const cand = [1.0, heavySayaMultFor(fn, "Labours"), eventTimingMultFor(eventTimingMultipliers, shiftToTiming(fn.fnShift), "Labours", 1.0)]; const sm = Math.min(situMultCap, Math.max(...cand));
         const adj = Math.ceil(base * sm); const sc = {}; walk(fn, ({ rc, qty }) => { sc[rc.sub || ""] = (sc[rc.sub || ""] || 0) + qty; });
         let he = 0; heavyElementRanges.forEach(her => { he += heavyExtraLabour(her, lookupBySubcat(sc, her.subCat) || 0); });
         return { count: adj + he, basis: `venue min ${vm}${sm > 1 ? ` ×${sm.toFixed(2)} season/timing` : ""}${he ? ` + ${he} heavy-element` : ""}`, trace: { kind: "labours", venueMin: vm, mult: sm, heavy: he, result: adj + he } };
@@ -5207,7 +5247,16 @@ export default function StudioApp() {
     };
     return types.map(type => {
       let best = { count: 0, basis: "", trace: null };
-      (allFns || []).forEach(fn => { const r = calc(fn, type); if (r.count > best.count) best = r; });
+      (allFns || []).forEach(fn => {
+        let r = calc(fn, type);
+        // Labours already folds heavySaya into `sm` above; Supervisors is a fixed 1-per-booking role.
+        // Every other type gets the same King's-date pressure factor applied here, at its own rate.
+        if (type !== "Labours" && type !== "Supervisors" && r.count > 0) {
+          const m = Math.min(situMultCap, heavySayaMultFor(fn, type));
+          if (m > 1) r = { ...r, count: Math.ceil(r.count * m), basis: `${r.basis} ×${m.toFixed(2)} King's` };
+        }
+        if (r.count > best.count) best = r;
+      });
       return { type, count: best.count, basis: best.basis, rate: Number(dihari[type]?.rate) || 0, trace: best.trace || null };
     }).filter(r => r.count > 0);
   }, [dealCheckData, rcItems, imsInventory]);
@@ -5277,7 +5326,7 @@ export default function StudioApp() {
           // checkAvail for every function now (see calcFunctionCost's comment) — keeps this
           // accordion's per-zone total matching Build's own live totalCost() when an item is
           // oversubscribed, for whichever function's zone this is, not just the active tab's.
-          const priceInfo = getElPriceForFn(el2, fZoneConfig[k], fFloralRatio, true, fVenue, fBlocksForDate);
+          const priceInfo = getElPriceForFn(el2, fZoneConfig[k], fFloralRatio, true, fVenue, fBlocksForDate, fnData.fnDate);
           ic += priceInfo.lineCost;
           // ── THE LINE ITEMS MUST BE THE SAME NUMBERS THAT MADE THE TOTAL ── (BUG-10)
           // Summary's accordion used to re-price each element itself with checkAvail=false and no
@@ -8702,7 +8751,7 @@ export default function StudioApp() {
       let items = [];
       if (ze && ze.length > 0) {
         ze.forEach(el2 => {
-          const priceInfo = getElPriceForFn(el2, fZoneConfig[k], fFloralRatio, false, fVenue);
+          const priceInfo = getElPriceForFn(el2, fZoneConfig[k], fFloralRatio, false, fVenue, undefined, fnData.fnDate);
           const rc = priceInfo.rc;
           const up = priceInfo.unitPrice;
           const lt = priceInfo.lineCost;
@@ -9305,6 +9354,13 @@ export default function StudioApp() {
       if (s.eventTypeMultipliers && typeof s.eventTypeMultipliers === "object") eventTypeMultipliers = s.eventTypeMultipliers;
       if (s.eventTimingMultipliers && typeof s.eventTimingMultipliers === "object") eventTimingMultipliers = s.eventTimingMultipliers;
       const sayaMultiplier = typeof s.sayaMultiplier === "number" ? s.sayaMultiplier : 1.3;
+      // Category Multipliers (guest rental pricing) + Situational Multipliers (crew planning) —
+      // IMS → Admin → Calendar → Date Pricing Config. Both were persisted settings with nothing
+      // reading them; now wired into repeatAdjustedLineCost-adjacent pricing and manpowerPlanForBooking/
+      // DCManpowerTab's crew counts respectively — see dateCategoryMultiplierFor/heavySayaMultFor.
+      const datePricing = (s.datePricing && typeof s.datePricing === "object") ? s.datePricing : SETTINGS_DEFAULTS.datePricing;
+      const situationalMultipliers = (s.situationalMultipliers && typeof s.situationalMultipliers === "object") ? s.situationalMultipliers : SIT_MULT_DEFAULTS;
+      const situationalMultiplierCap = typeof s.situationalMultiplierCap === "number" ? s.situationalMultiplierCap : 1.8;
       const heavyElementRanges = Array.isArray(s.heavyElementRanges) ? s.heavyElementRanges : [];
       const fabricBangaliRanges = Array.isArray(s.fabricBangaliRanges) ? s.fabricBangaliRanges : [];
       const trussLabourRanges = Array.isArray(s.trussLabourRanges) ? s.trussLabourRanges : [];
@@ -9341,7 +9397,7 @@ export default function StudioApp() {
       (Array.isArray(venuesRaw?.properties) ? venuesRaw.properties : []).forEach(p => { if (p?.name && typeof p.commissionPct === "number") venueCommission[p.name] = p.commissionPct; });
       (Array.isArray(venuesRaw?.outdoor) ? venuesRaw.outdoor : []).forEach(v => { if (v?.name && typeof v.commissionPct === "number") venueCommission[v.name] = v.commissionPct; });
 
-      setDealCheckData({ inventory, blocksByDate, fetchedDates: uniqueDates, flowerPatterns, mandiCatalogue, mandiPriceMultipliers, seasonMap, electricianProductivity, artificialMixRatePerKg, artificialFlowerRatePerKg, artificialFlowerBunchesPerKg, artificialGreenRatePerKg, artificialGreenBunchesPerKg, flowerRecipeSubcats, dihariSchemes, defaultWindowsByPhase, labourTiers, venueMinLabour, defaultMinLabour, eventTypeMultipliers, eventTimingMultipliers, sayaMultiplier, heavyElementRanges, fabricBangaliRanges, trussLabourRanges, fabricRftPerWorker, vendors, trussInv, colourCatalogue, paletteCatalogue, paintableCategories, defaultPaintCostPerItem, carpetFreshMarkup, agencyFeePct, defaultStudioMarkup: Number(s.defaultStudioMarkup ?? 3) || 3, fixedVenues: Array.isArray(s.fixedVenues) ? s.fixedVenues : [], fixedVenueSubcatDiscount: (s.fixedVenueSubcatDiscount && typeof s.fixedVenueSubcatDiscount === "object") ? s.fixedVenueSubcatDiscount : {}, venueParents, venueCommission, venueDumping: (s.venueDumping && typeof s.venueDumping === "object") ? s.venueDumping : {}, categoryDepartments: (catDeptMap && Object.keys(catDeptMap).length) ? catDeptMap : ((s.categoryDepartments && typeof s.categoryDepartments === "object") ? s.categoryDepartments : {}) });
+      setDealCheckData({ inventory, blocksByDate, fetchedDates: uniqueDates, flowerPatterns, mandiCatalogue, mandiPriceMultipliers, seasonMap, electricianProductivity, artificialMixRatePerKg, artificialFlowerRatePerKg, artificialFlowerBunchesPerKg, artificialGreenRatePerKg, artificialGreenBunchesPerKg, flowerRecipeSubcats, dihariSchemes, defaultWindowsByPhase, labourTiers, venueMinLabour, defaultMinLabour, eventTypeMultipliers, eventTimingMultipliers, sayaMultiplier, datePricing, situationalMultipliers, situationalMultiplierCap, heavyElementRanges, fabricBangaliRanges, trussLabourRanges, fabricRftPerWorker, vendors, trussInv, colourCatalogue, paletteCatalogue, paintableCategories, defaultPaintCostPerItem, carpetFreshMarkup, agencyFeePct, defaultStudioMarkup: Number(s.defaultStudioMarkup ?? 3) || 3, fixedVenues: Array.isArray(s.fixedVenues) ? s.fixedVenues : [], fixedVenueSubcatDiscount: (s.fixedVenueSubcatDiscount && typeof s.fixedVenueSubcatDiscount === "object") ? s.fixedVenueSubcatDiscount : {}, venueParents, venueCommission, venueDumping: (s.venueDumping && typeof s.venueDumping === "object") ? s.venueDumping : {}, categoryDepartments: (catDeptMap && Object.keys(catDeptMap).length) ? catDeptMap : ((s.categoryDepartments && typeof s.categoryDepartments === "object") ? s.categoryDepartments : {}) });
       setDealCheckLoading(false);
       if (inventory.length === 0) {
         setDcAbortRef(null);
