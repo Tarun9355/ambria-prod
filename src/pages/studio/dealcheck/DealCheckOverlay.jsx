@@ -457,6 +457,12 @@ export default function DealCheckOverlay({ ctx }) {
         const dcCostRollup = (() => {
           const fns = collectAllFunctionData ? collectAllFunctionData() : [];
           let rental = 0, florals = 0, transport = 0, manpower = 0, truss = 0, genset = 0, printCost = 0;
+          // Per-function breakdown, one bucket per fn for every category that genuinely splits by
+          // function — the FUNCTIONS sidebar reads this to show whichever amount matches the active
+          // tab (truss cost while on Truss, transport while on Transport, etc.) instead of always
+          // showing rental. Manpower/commission/GYV-buffer have no clean per-function split (shared
+          // crew across overlapping days, deal-wide fee/margin) so they're left out here on purpose.
+          const byFn = fns.map(() => ({ rental: 0, truss: 0, florals: 0, transport: 0, genset: 0, production: 0, buying: 0 }));
           // Unavailable-shortfall pricing: a matched card's qty beyond what's actually free in
           // stock for the event date bills at item.cost × this sub-category's cost% instead of
           // the rental rate (rate_card_categories.cost_percent, IMS-owned). Default 100 (full
@@ -512,7 +518,7 @@ export default function DealCheckOverlay({ ctx }) {
                   const it = dcInventoryCache.find(x => x.id === s.imsId); if (!it) return;
                   const q = Number(s.qty) || 0; const br = imsField.rentalCost(it);
                   const line = repeatAdjustedRental(_rep, fn.fnVenue, it, q, br);
-                  rental += line;
+                  rental += line; byFn[fi].rental += line;
                   const dd = catToDept(imsField.category(it));
                   addD(dd, "rental", line);
                   if (line > 0 && deptInv[dd]) deptInv[dd].push({ name: it.name, photo: imsField.photos(it)[0] || "", qty: q, unit: br, total: Math.round(line), sub: imsField.subcategory(it) || "", imsId: it.id });
@@ -545,7 +551,7 @@ export default function DealCheckOverlay({ ctx }) {
                 shortCost = shortQty * (Number(item.cost) || 0) * (oosCostPctFor(item, costPctFor) / 100);
                 lineRental = ownedRental + shortCost;
               }
-              rental += lineRental;
+              rental += lineRental; byFn[fi].rental += lineRental;
               const dD = catToDept(imsField.category(item) || c.cat);
               addD(dD, "rental", lineRental);
               if (lineRental > 0 && deptInv[dD]) {
@@ -580,12 +586,12 @@ export default function DealCheckOverlay({ ctx }) {
               const baseR = effKitRental(item, fi, null);
               const _rep = mi.zoneKey ? !!(fn.zoneConfig?.[mi.zoneKey]?.repeat) : false;
               const lineRental = repeatAdjustedRental(_rep, fn.fnVenue, item, q, baseR);
-              rental += lineRental;
+              rental += lineRental; byFn[fi].rental += lineRental;
               const dD = catToDept(imsField.category(item));
               addD(dD, "rental", lineRental);
               if (deptInv[dD]) deptInv[dD].push({ name: item.name || "Item", photo: imsField.photos(item)[0] || "", qty: q, unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "", imsId: mi.imsId });
             });
-            try { const fl = calcFnFloralSourcingCost(fn).grandTotal; florals += fl; addD("Floral", "florals", fl); } catch {}
+            try { const fl = calcFnFloralSourcingCost(fn).grandTotal; florals += fl; byFn[fi].florals += fl; addD("Floral", "florals", fl); } catch {}
             // `genset` (used only for the Power tab's own nav-pill amount) reads gensetCostOurs —
             // OUR real cost — not gensetCost (client-billed), so the pill agrees with the Power
             // tab body it summarizes.
@@ -598,7 +604,7 @@ export default function DealCheckOverlay({ ctx }) {
             // (the old "add genset to Lighting dept income" branch below this) never existed on
             // calcFunctionBreakdown's return at all — confirmed no writer anywhere in the codebase —
             // so it never once ran; removed rather than left as dead code that looks intentional.
-            try { const bd = calcFunctionBreakdown ? calcFunctionBreakdown(fn) : null; const truckTotal = Number(bd?.transport?.truckTotal) || 0; if (truckTotal > 0) { transport += truckTotal; addD("Transport", "transport", truckTotal); } genset += Number(bd?.transport?.gensetCostOurs) || 0; } catch {}
+            try { const bd = calcFunctionBreakdown ? calcFunctionBreakdown(fn) : null; const truckTotal = Number(bd?.transport?.truckTotal) || 0; if (truckTotal > 0) { transport += truckTotal; byFn[fi].transport += truckTotal; addD("Transport", "transport", truckTotal); } const gO = Number(bd?.transport?.gensetCostOurs) || 0; genset += gO; byFn[fi].genset += gO; } catch {}
             try {
               const tInv = dealCheckData?.trussInv;
               if (tInv) {
@@ -636,7 +642,7 @@ export default function DealCheckOverlay({ ctx }) {
                     if (pv?.costs?.actual) {
                       const discount = _venueTrussHere ? zoneTrussStandingDiscount(row, tInv, _venueTrussHere) : 0;
                       const netActual = Math.max(0, pv.costs.actual - discount) * repeatMult;
-                      truss += netActual; addD("Tenting", "truss", netActual); // truss steel → Tenting
+                      truss += netActual; byFn[fi].truss += netActual; addD("Tenting", "truss", netActual); // truss steel → Tenting
                     }
                     // Truss requirement → loadable line items grouped BY SIZE (e.g. "Truss pillar 15ft").
                     // Pushed per-zone here; the size-keyed names merge across all zones below. Still
@@ -650,7 +656,7 @@ export default function DealCheckOverlay({ ctx }) {
                       Object.entries(bmap).forEach(([ft, n]) => deptInv["Tenting"].push({ name: `Truss beam ${ft}ft`, photo: "", qty: n, unit: 0, total: 0, sub: "truss structure" }));
                     }
                     const fabCost = calcZoneFabricCost(row, tInv, anchors, density) * repeatFabMult;
-                    truss += fabCost; addD("Fabric", "fabric", fabCost); // truss/masking fabric → Fabric
+                    truss += fabCost; byFn[fi].truss += fabCost; addD("Fabric", "fabric", fabCost); // truss/masking fabric → Fabric
                   });
                 });
               }
@@ -662,7 +668,7 @@ export default function DealCheckOverlay({ ctx }) {
             if (pp) {
               const fattaR = pp.fattaItem ? imsField.rentalCost(pp.fattaItem) : 0;
               const standR = pp.standItem ? imsField.rentalCost(pp.standItem) : 0;
-              Object.values(pp.perZone || {}).forEach(z => { const pc = (z.fattas || 0) * fattaR + (z.stands || 0) * standR; rental += pc; addD("Tenting", "rental", pc); if (pc > 0 && deptInv["Tenting"]) deptInv["Tenting"].push({ name: "Platform (fatta + stand)", photo: "", qty: (z.fattas || 0) + (z.stands || 0), unit: 0, total: Math.round(pc), sub: `${z.fattas || 0} fatta · ${z.stands || 0} stand` }); }); // platform → Tenting
+              Object.entries(pp.perZone || {}).forEach(([k, z]) => { const pc = (z.fattas || 0) * fattaR + (z.stands || 0) * standR; rental += pc; const pfi = Number(k.split("|")[0]); if (byFn[pfi]) byFn[pfi].rental += pc; addD("Tenting", "rental", pc); if (pc > 0 && deptInv["Tenting"]) deptInv["Tenting"].push({ name: "Platform (fatta + stand)", photo: "", qty: (z.fattas || 0) + (z.stands || 0), unit: 0, total: Math.round(pc), sub: `${z.fattas || 0} fatta · ${z.stands || 0} stand` }); }); // platform → Tenting
             }
           } catch {}
           try {
@@ -691,7 +697,7 @@ export default function DealCheckOverlay({ ctx }) {
                 const pickedId = picks[zk];
                 const carpetItem = pickedId ? dcInventoryCache.find(x => x.id === pickedId) : null;
                 if (cc > 0) {
-                  rental += cc;
+                  rental += cc; byFn[fi].rental += cc;
                   addD("Tenting", "rental", cc);
                   if (deptInv["Tenting"]) deptInv["Tenting"].push({
                     name: carpetItem?.name || carpetPricingFor(zcz.cpT, imsCarpetMaterials).label || "Carpet",
@@ -717,7 +723,7 @@ export default function DealCheckOverlay({ ctx }) {
           // nothing ever surfaced it as a line item.
           try {
             const printMats = imsPrintMaterials || [];
-            fns.forEach((fn) => {
+            fns.forEach((fn, fi) => {
               const zc = fn.zoneConfig || {};
               const en = fn.enabledEls || {};
               Object.keys(zc).forEach(zk => {
@@ -729,7 +735,7 @@ export default function DealCheckOverlay({ ctx }) {
                   return sum + s * (m?.ratePerSqft || 0) * q;
                 }, 0);
                 if (pc > 0) {
-                  printCost += pc;
+                  printCost += pc; byFn[fi].buying += pc;
                   addD("Structure", "buying", pc);
                   if (deptInv["Structure"]) deptInv["Structure"].push({ name: "🖨 Print / signage", photo: "", qty: (zc[zk].prints || []).length, unit: 0, total: Math.round(pc), sub: "print", prodOrBuy: "buying" });
                 }
@@ -1104,6 +1110,7 @@ export default function DealCheckOverlay({ ctx }) {
           dcCustomItems.forEach(c => {
             const amt = (c.manualPrice || c.refPrice || 0) * (Number(c.qty) || 1);
             if (amt <= 0) return;
+            if (byFn[c.fnIdx]) byFn[c.fnIdx][c.type === "buying" ? "buying" : "production"] += amt;
             const d = catToDept(c.cat || c.subCat);
             addD(d, c.type === "buying" ? "buying" : "production", amt);
             if (deptInv[d]) deptInv[d].push({ name: c.subCat || c.cat || "Custom item", photo: c.photo || "", qty: Number(c.qty) || 1, unit: c.manualPrice || c.refPrice || 0, total: Math.round(amt), sub: c.subCat || "", imsId: c.refItemId || null, prodOrBuy: c.type === "buying" ? "buying" : "production" });
@@ -1257,7 +1264,7 @@ export default function DealCheckOverlay({ ctx }) {
           // Profit measured against dealAmount (fee included) — the fee is pure additional revenue
           // with no offsetting cost, so it flows straight through to profit, same as the owner asked.
           const profitPct = dealAmount > 0 ? Math.round(((dealAmount - effGrand - commissionTotal) / dealAmount) * 100) : 0;
-          return { rental, florals, transport, genset, manpower, truss, buyTotal, produceTotal, base, gyvFixed, bufferCost, grand, clientRevenue, venueDiscount, agencyFee, agencyFeePct, dealAmount, profitPct, fns, dept, DEPTS, deptInv, deptMp, mpRateByType,
+          return { rental, florals, transport, genset, manpower, truss, buyTotal, produceTotal, base, gyvFixed, bufferCost, grand, clientRevenue, venueDiscount, agencyFee, agencyFeePct, dealAmount, profitPct, fns, dept, DEPTS, deptInv, deptMp, mpRateByType, byFn,
             mpPhases: dcMpPhases, mpSchedule, mpSharedTotals, deptDirectMap, directTotal, labourUsageByDept, labourUsageTotal, manpowerDetail, manpowerPlan: dcMpPlan,
             hasActuals, actualMandi, actualExpenses, effFlorals, baseActual, grandActual, projFlorals: florals, effManpower, mpDelta,
             commissionByVenue, commissionTotal };
@@ -1746,71 +1753,19 @@ export default function DealCheckOverlay({ ctx }) {
                   {(() => {
                     const fns = collectAllFunctionData ? collectAllFunctionData() : [];
                     if (fns.length === 0) return <div style={{padding:"10px 12px",borderRadius:8,background:"rgba(26, 26, 46,0.03)",border:`1px solid ${border}`,fontSize:13,color:"#1A1A2E",fontStyle:"italic"}}>No functions yet</div>;
-                    // Platform (fatta+stand) — computed once for every function's zones, same source
-                    // the bottom-bar rollup uses, so this per-fn chip can add its own share below.
-                    const platformPlanForSidebar = buildPlatformPlan(fns, dealCheckData);
-                    const pfFattaR = platformPlanForSidebar?.fattaItem ? imsField.rentalCost(platformPlanForSidebar.fattaItem) : 0;
-                    const pfStandR = platformPlanForSidebar?.standItem ? imsField.rentalCost(platformPlanForSidebar.standItem) : 0;
+                    // Per-fn amount follows the active tab — Truss shows that fn's truss cost,
+                    // Transport shows its truck cost, Power its genset cost, etc — sourced from
+                    // dcCostRollup.byFn, which accumulates every category per-fn as it already loops
+                    // fn-by-fn for the booking-wide totals (one calc, not a second copy that can drift
+                    // — this sidebar used to run its own rental-only recompute here, which is why
+                    // switching tabs never changed what it showed). Manpower/Commission/GYV/Inventory
+                    // Status have no clean per-function split (shared crew across overlapping days,
+                    // deal-wide fee/margin) so those fall back to rental, same as every tab showed
+                    // before this existed.
+                    const BYFN_KEY = { inventory: "rental", truss: "truss", florals: "florals", transport: "transport", power: "genset", production: "production", buying: "buying" };
+                    const byFnKey = BYFN_KEY[dcActiveTab] || "rental";
                     return fns.map((fn, fi) => {
-                      // Per-fn decor cost (rental + floral) — spec §7.9.3. Mirrors the logic the
-                      // shared cost rollup (dcCostRollup below) applies per zone/card, so this chip
-                      // matches the "X rental" totals shown per zone in the Inventory tab — it used
-                      // to just sum effKitRental(card.qty), silently dropping manually-added items
-                      // (dcManualItems), the fixed-venue Repeat discount, split-fulfilment cards, and
-                      // unavailable-shortfall (cost%) pricing that the zone chips already account for.
-                      const cards = dcCards[fi] || {};
-                      const fnBlocks = (dealCheckData?.blocksByDate || {})[fn.fnDate || clientDate] || {};
-                      const zoneIsRepeatFn = (ck) => { const zk = String(ck || "").split("::")[1]; return !!(zk && fn.zoneConfig?.[zk]?.repeat); };
-                      const costPctForFn = (subcat) => { const key = String(subcat || "").trim().toLowerCase(); const row = (rcSubcatFactors || []).find(r => r?.id === key); const v = row ? Number(row.cost_percent) : undefined; return (typeof v === "number" && isFinite(v) && v >= 0) ? v : 100; };
-                      let fnDecor = 0;
-                      Object.entries(cards).forEach(([ck, c]) => {
-                        const splitArr = Array.isArray(c.split) ? c.split.filter(s => s && s.imsId && (Number(s.qty) || 0) > 0) : [];
-                        if (splitArr.length) {
-                          const _rep = zoneIsRepeatFn(ck);
-                          splitArr.forEach(s => { const it = dcInventoryCache.find(x => x.id === s.imsId); if (!it) return; const q = Number(s.qty) || 0; const br = imsField.rentalCost(it); fnDecor += repeatAdjustedRental(_rep, fn.fnVenue, it, q, br); });
-                          return;
-                        }
-                        if (!c?.imsId) return;
-                        const item = dcInventoryCache.find(x => x.id === c.imsId);
-                        if (!item) return;
-                        const baseR = effKitRental(item, fi, ck);
-                        const qty = c.qty || 1;
-                        const _rep = zoneIsRepeatFn(ck);
-                        const isKit = Array.isArray(item.subItems) && item.subItems.length > 0;
-                        if (isKit) { fnDecor += repeatAdjustedRental(_rep, fn.fnVenue, item, qty, baseR); return; }
-                        const available = dcAvailable(item, fnBlocks, fi);
-                        const ownedQty = Math.min(qty, available);
-                        const shortQty = Math.max(0, qty - available);
-                        const ownedRental = repeatAdjustedRental(_rep, fn.fnVenue, item, ownedQty, baseR);
-                        const shortCost = shortQty * (Number(item.cost) || 0) * (oosCostPctFor(item, costPctForFn) / 100);
-                        fnDecor += ownedRental + shortCost;
-                      });
-                      (dcManualItems || []).filter(mi => mi.fnIdx === fi).forEach(mi => {
-                        const item = dcInventoryCache.find(x => x.id === mi.imsId);
-                        if (!item) return;
-                        const q = Number(mi.qty) || 1;
-                        // Same as the rollup above — a manual item may be a kit.
-                        const baseR = effKitRental(item, fi, null);
-                        const _rep = mi.zoneKey ? !!(fn.zoneConfig?.[mi.zoneKey]?.repeat) : false;
-                        fnDecor += repeatAdjustedRental(_rep, fn.fnVenue, item, q, baseR);
-                      });
-                      // Platform (fatta+stand) + carpet — same math as the bottom-bar rollup (they have
-                      // no zone "card" to hang off of, so the sum above never saw them). This used to
-                      // leave the sidebar chip running short of the bottom strip by exactly these two
-                      // structural costs on any deal with a platform or carpet.
-                      Object.entries(platformPlanForSidebar?.perZone || {}).forEach(([k, z]) => { if (Number(k.split("|")[0]) === fi) fnDecor += (z.fattas || 0) * pfFattaR + (z.stands || 0) * pfStandR; });
-                      {
-                        const zc = fn.zoneConfig || {};
-                        const en = fn.enabledEls || {};
-                        Object.keys(zc).forEach(zk => {
-                          if (!en[zk] || !zc[zk] || zc[zk].cpT === CARPET_OFF) return;
-                          const zcz = zc[zk];
-                          const fd = zcz.floorDims || zcz.dims || {};
-                          const area = (Number(fd.L) || Number(fd.S) || 0) * (Number(fd.W) || Number(fd.S) || 0);
-                          const cRate = carpetPricingFor(zcz.cpT, imsCarpetMaterials).rate || 0;
-                          if (area > 0 && cRate > 0) fnDecor += area * cRate;
-                        });
-                      }
+                      const fnDecor = dcCostRollup.byFn?.[fi]?.[byFnKey] || 0;
                       const isActive = fi === activeFnIdx && !dcShowAllFns;
                       return (
                         // THE SELECTED FUNCTION IS INKED, NOT TINTED. A gold-tinted card next to plain
