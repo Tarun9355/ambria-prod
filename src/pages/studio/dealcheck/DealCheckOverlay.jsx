@@ -1175,12 +1175,23 @@ export default function DealCheckOverlay({ ctx }) {
           // everything else (Admin → Settings, default 20%). Pure Ambria income, so it always applies
           // — negotiated or not — rather than being read as an expense; the owner's own framing is
           // "this is income, not a cost".
+          //
+          // BUT: when negotiated, clientRevenue is already negotiatedAmount — the FINAL, all-inclusive
+          // figure the salesperson typed on Summary (it directly replaces eventGrandTotal there, which
+          // is itself system-total-plus-fee). Adding agencyFee on top of that a second time inflated a
+          // ₹1,50,000 negotiated deal into a ₹1,87,500 "Client Quote"/"Deal amount" — a real bug, not
+          // extra revenue. When negotiated, the fee is instead backed OUT of the already-final total
+          // (still shown as its own figure below, just not added again), so dealAmount stays exactly
+          // what was negotiated.
+          const isNegotiated = Number(cli?.negotiatedAmount) > 0;
           const agencyFeePct = Number(dealCheckData?.agencyFeePct) || 20;
-          const agencyFee = Math.round(discountedRevenue * agencyFeePct / 100);
-          // dealAmount — what the guest is ACTUALLY billed (clientRevenue − the fixed-venue discount
-          // + the agency fee). This is the number the profitability panel measures profit against;
-          // clientRevenue itself stays the commission base, untouched by either.
-          const dealAmount = discountedRevenue + agencyFee;
+          const agencyFee = isNegotiated
+            ? Math.round(discountedRevenue - discountedRevenue / (1 + agencyFeePct / 100))
+            : Math.round(discountedRevenue * agencyFeePct / 100);
+          // dealAmount — what the guest is ACTUALLY billed. Un-negotiated: clientRevenue (pre-fee) +
+          // agencyFee, same as eventGrandTotal's own formula. Negotiated: discountedRevenue itself —
+          // it's already the final billed figure, agencyFee above is just its fee share for display.
+          const dealAmount = isNegotiated ? discountedRevenue : discountedRevenue + agencyFee;
           const effGrand = hasActuals ? grandActual : grand;
           // ═══ Commission — % of the deal amount set aside per venue (IMS → Admin → Master Data →
           // Venues, one row per in-house property or outdoor venue). A booking spanning more than one
