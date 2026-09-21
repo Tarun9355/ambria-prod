@@ -604,14 +604,16 @@ export default function DealCheckOverlay({ ctx }) {
                   if (!en[zk] || !zc[zk]) return;
                   // ♻️ Repeat zone: the structure and its fabric are already standing from a prior
                   // day, but reusing them isn't truly free — someone still has to check/re-tension
-                  // the rig (billed at 30%) and steam/re-hang or spot-repair the drape (billed at
-                  // 50%) — rather than the ₹0 they used to drop to entirely (owner decision). The
-                  // pillar/beam loadable-line listing below stays fully excluded for a repeat zone —
-                  // there's nothing NEW to source/haul in for a rig that isn't moving, which is a
-                  // separate question from what it costs to reuse it.
+                  // the rig and steam/re-hang or spot-repair the drape, rather than the ₹0 they used
+                  // to drop to entirely. One flat 30% discount (billed at 70%) across truss/pillar/
+                  // beam/batta (structure) AND masking/liza/curtain (fabric) — replaces the earlier
+                  // owner-decision split (structure billed at 30%, fabric at 50%) with a single rate
+                  // for both. The pillar/beam loadable-line listing below stays fully excluded for a
+                  // repeat zone — there's nothing NEW to source/haul in for a rig that isn't moving,
+                  // which is a separate question from what it costs to reuse it.
                   const isRepeat = !!zc[zk].repeat;
-                  const repeatMult = isRepeat ? 0.3 : 1;
-                  const repeatFabMult = isRepeat ? 0.5 : 1;
+                  const repeatMult = isRepeat ? 0.7 : 1;
+                  const repeatFabMult = isRepeat ? 0.7 : 1;
                   const photoUrl = (fn.elSelectedPhoto || {})[zk];
                   let density = "moderate";
                   if (photoUrl) { const li = libItems.find(l => l.url === photoUrl); if (li?.dims?.drapeDensity) density = li.dims.drapeDensity; }

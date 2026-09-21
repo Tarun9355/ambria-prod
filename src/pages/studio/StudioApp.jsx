@@ -4957,6 +4957,14 @@ export default function StudioApp() {
       if (typeof rc?.defaultRealPct === "number") return rc.defaultRealPct;
       return Math.max(0, Math.min(100, 100 - fnRatio));
     };
+    // Repeat-zone floral discount, Deal Check's own internal cost lever (owner decision) — a pure
+    // QUANTITY cut, never a direct ₹ discount: real flowers need 80% less fresh stock on a repeat
+    // zone (qty × 0.2), artificial needs 30% less (qty × 0.7). Cost, the mandi shopping list
+    // (breakdown, below), and the artificial bunch counts (artFlowerBunches/artGreenBunches, which
+    // feed truck loading) all follow automatically from the reduced quantity — no separate cost
+    // multiplier anywhere.
+    const REPEAT_REAL_QTY_MULT = 0.2;
+    const REPEAT_ART_QTY_MULT = 0.7;
     let tArt = 0, realIncome = 0, artIncome = 0, artFlowerBunches = 0, artGreenBunches = 0, fixedExtras = 0;
     // Real-flower quantities/rates, aggregated by mandi parent id across every element in this
     // function — mirrors DCFloralsTab.jsx's own `flowerAgg`. Needed (not just a running total)
@@ -4972,6 +4980,7 @@ export default function StudioApp() {
     (fnOverrides.rows || []).forEach(r => { if (r?.flowerId) overrideByParentId.set(r.flowerId, r); });
     Object.entries(fn?.zoneElements || {}).forEach(([zk, elems]) => {
       if (!fn.enabledEls?.[zk]) return;
+      const zoneRepeat = !!fn.zoneConfig?.[zk]?.repeat;
       (elems || []).forEach(el => {
         // Mirrors DCFloralsTab's resolution — the two must agree, or the tab lists elements the
         // bottom-bar total does not count. An exact-only rate-card match dropped "Blue Pottery Pot
@@ -5066,20 +5075,21 @@ export default function StudioApp() {
           const variantRate = Number(override?.colorVariant?.rate) || 0;
           const basePrice = prefRate > 0 ? prefRate : variantRate > 0 ? variantRate : (Number(parent?.currentPrice) || 0);
           const bp = (prefRate > 0 || variantRate > 0) ? basePrice : basePrice * sMult;
-          const realUnits = (fl.qty || 0) * q * effR;
+          const realUnits = (fl.qty || 0) * q * effR * (zoneRepeat ? REPEAT_REAL_QTY_MULT : 1);
           if (realUnits > 0 && parent) {
             const agg = flowerAgg.get(parentId) || { totalQty: 0, unitPrice: bp, name: parent.name || "Flower", unit: parent.unit || "" };
             agg.totalQty += realUnits;
             agg.unitPrice = bp; // refresh — mirrors the Florals tab's own aggregation
             flowerAgg.set(parentId, agg);
           }
-          if (effA > 0) {
+          const effAQty = effA * (zoneRepeat ? REPEAT_ART_QTY_MULT : 1);
+          if (effAQty > 0) {
             if (ft === "mapping") {
               // Mapped to a specific artificial inventory item — sourcing cost = its purchase cost per unit.
-              tArt += (fl.qty || 0) * q * effA * (Number(parent?.artificialMapCost) || 0);
+              tArt += (fl.qty || 0) * q * effAQty * (Number(parent?.artificialMapCost) || 0);
             } else {
               const bpu = Number(parent?.artificialBunchesPerUnit) || 0;
-              const bunches = (fl.qty || 0) * q * effA * bpu;
+              const bunches = (fl.qty || 0) * q * effAQty * bpu;
               const isG = ft === "green";
               if (isG) artGreenBunches += bunches; else artFlowerBunches += bunches;
               tArt += bunches * (isG ? artGreenRate / artGreenBPK : artFlowerRate / artFlowerBPK);
@@ -5113,7 +5123,10 @@ export default function StudioApp() {
       else flowerAgg.set(targetId, { totalQty: swapQty, unitPrice: targetRate, name: targetParent.name || "Flower", unit: targetParent.unit || "" });
     });
     let tReal = fixedExtras;
-    const fbreak = {}; // flowerName → { name, qty, cost } (mandi shopping breakdown, real flowers)
+    // flowerName → { name, qty, cost } — the mandi shopping breakdown. v.totalQty already carries
+    // the repeat-zone 80% cut where it applies (real flowers only), so this list and the cost below
+    // both reflect the reduced quantity actually needed — no separate discount step here.
+    const fbreak = {};
     flowerAgg.forEach(v => {
       if (!(v.totalQty > 0)) return;
       const cost = v.totalQty * v.unitPrice;

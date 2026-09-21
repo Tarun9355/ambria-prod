@@ -132,8 +132,17 @@ export default function DCFloralsTab({ ctx }) {
                   const fnOverrides = activeFn.floralOverrides || { note: "", rows: [] };
                   const overrideByParentId = new Map();
                   (fnOverrides.rows || []).forEach(r => { if (r?.flowerId) overrideByParentId.set(r.flowerId, r); });
+                  // Repeat-zone floral discount — mirrors calcFnFloralSourcingCost (StudioApp.jsx), the
+                  // bottom-bar/GYV rollup this tab's totals must agree with. A pure QUANTITY cut, never
+                  // a direct ₹ discount: real flowers need 80% less fresh stock on a repeat zone
+                  // (qty × 0.2), artificial needs 30% less (qty × 0.7) — cost follows automatically.
+                  const REPEAT_REAL_QTY_MULT = 0.2;
+                  const REPEAT_ART_QTY_MULT = 0.7;
                   Object.entries(activeFn.zoneElements || {}).forEach(([zk, elems]) => {
                     if (!activeFn.enabledEls?.[zk]) return;
+                    const zoneRepeat = !!activeFn.zoneConfig?.[zk]?.repeat;
+                    const realQtyFrac = zoneRepeat ? REPEAT_REAL_QTY_MULT : 1;
+                    const artQtyFrac = zoneRepeat ? REPEAT_ART_QTY_MULT : 1;
                     (elems || []).forEach(el => {
                       const elName = (el.name || "").toLowerCase().trim();
                       const elQty = el.qty || 0;
@@ -285,7 +294,11 @@ export default function DCFloralsTab({ ctx }) {
                             // Tier 1.9b — real_only flowers always 100% real, ignore element's blend
                             const flowerType = parent?.flowerType || (parent?.isGreen ? "green" : "flower");
                             const effectiveRealFrac = flowerType === "real_only" ? 1 : realFrac;
-                            const totalFlowerQty = (fl.qty || 0) * elQty * effectiveRealFrac;
+                            // Repeat-zone quantity cut applied at the source — real flowers need 80%
+                            // less fresh stock on a repeat zone, so every downstream figure (lineCost,
+                            // realLines, flowerAgg, and thus realCost/totalReal below) is already
+                            // working off the reduced quantity.
+                            const totalFlowerQty = (fl.qty || 0) * elQty * effectiveRealFrac * realQtyFrac;
                             const lineCost = totalFlowerQty * unitPrice;
                             realCostPerUnit += (fl.qty || 0) * unitPrice;
                             const displayName = parent?.name || fl.flowerId;
@@ -309,6 +322,8 @@ export default function DCFloralsTab({ ctx }) {
                       // Tier 1.9 (22 May 2026) — Artificial cost via real-to-bunch conversion.
                       // Iterate the recipe again to compute artificial bunches per real-flower line.
                       // Old formula (rental × artFrac) replaced entirely. No fallback for items without recipe.
+                      // realLines.qty already carries the repeat-zone quantity cut (applied above at
+                      // totalFlowerQty), so this sums straight through with no separate multiplier.
                       const realCost = realLines.reduce((s, l) => s + l.qty * l.unitPrice, 0) + patternExtraCost;
                       const artFlowerRatePerKg = Number(dealCheckData?.artificialFlowerRatePerKg ?? 50);
                       const artFlowerBunchesPerKg = Number(dealCheckData?.artificialFlowerBunchesPerKg ?? 16) || 16;
@@ -316,7 +331,7 @@ export default function DCFloralsTab({ ctx }) {
                       const artGreenBunchesPerKg = Number(dealCheckData?.artificialGreenBunchesPerKg ?? 23) || 23;
                       const flowerPerBunchRate = artFlowerRatePerKg / artFlowerBunchesPerKg;
                       const greenPerBunchRate = artGreenRatePerKg / artGreenBunchesPerKg;
-                      let artCost = 0;
+                      let artFlowerCost = 0;
                       const artLines = []; // breakdown for "how" panel
                       let artBunchesFlower = 0, artBunchesGreen = 0;
                       if (artFrac > 0 && pattern) {
@@ -353,10 +368,12 @@ export default function DCFloralsTab({ ctx }) {
                             // artificial cost silently computed as ₹0 (bunchesPerUnit falls back to 0
                             // since mapping flowers never have one set in IMS).
                             if (flowerType === "mapping") {
-                              const realUnitsReplaced = (fl.qty || 0) * elQty * artFrac;
+                              // artQtyFrac (repeat-zone quantity cut) applied at the source, same as
+                              // the real side — bunches/cost below both follow automatically.
+                              const realUnitsReplaced = (fl.qty || 0) * elQty * artFrac * artQtyFrac;
                               const mapCost = Number(parent?.artificialMapCost) || 0;
                               const lineCost = realUnitsReplaced * mapCost;
-                              artCost += lineCost;
+                              artFlowerCost += lineCost;
                               artLines.push({
                                 flowerId: parentId, name: parent?.name || fl.flowerId,
                                 realUnitsReplaced, unit: parent?.unit || "?",
@@ -367,13 +384,13 @@ export default function DCFloralsTab({ ctx }) {
                               return;
                             }
                             const bunchesPerUnit = Number(parent?.artificialBunchesPerUnit) || 0;
-                            const realUnitsReplaced = (fl.qty || 0) * elQty * artFrac;
+                            const realUnitsReplaced = (fl.qty || 0) * elQty * artFrac * artQtyFrac;
                             const bunches = realUnitsReplaced * bunchesPerUnit;
                             const isGreen = flowerType === "green";
                             const perBunch = isGreen ? greenPerBunchRate : flowerPerBunchRate;
                             const lineCost = bunches * perBunch;
                             if (isGreen) artBunchesGreen += bunches; else artBunchesFlower += bunches;
-                            artCost += lineCost;
+                            artFlowerCost += lineCost;
                             artLines.push({
                               flowerId: parentId, name: parent?.name || fl.flowerId,
                               realUnitsReplaced, unit: parent?.unit || "?",
@@ -386,7 +403,7 @@ export default function DCFloralsTab({ ctx }) {
                       // Inventory ingredients join the ARTIFICIAL total here, outside the artFrac gate
                       // above — a manufactured piece is never fresh, and it goes out whatever the
                       // blend says. Charged in full: the blend governs flowers, not rented pieces.
-                      artCost += invItemCost;
+                      const artCost = artFlowerCost + invItemCost;
                       artLines.push(...invItemLines);
                       totalReal += realCost;
                       totalArtificial += artCost;
