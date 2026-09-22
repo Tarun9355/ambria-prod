@@ -7601,10 +7601,19 @@ export default function StudioApp() {
     }
     if (session.fnSnapshots && typeof session.fnSnapshots === "object" && Object.keys(session.fnSnapshots).length > 0) {
       const fn0Snap = session.fnSnapshots[0] || session.fnSnapshots["0"] || null;
+      // MUST include idx 0 here (unlike the older version of this block) — it used to be excluded on
+      // the assumption that Fn0's data always lives in the live top-level state instead. True only
+      // when landingFnIdx is 0. Landing on any OTHER function (a refresh while Fn4 was active, say)
+      // left fnBuilds with no entry at all for Fn0 — not merely stale, ABSENT — so the very next
+      // autosave's collectAllFunctionData/saveSession loop (which reads fnBuilds[i] for every i that
+      // isn't the live index) found nothing for Fn0 and wrote a session with NO fnSnapshots[0] at all,
+      // permanently erasing Fn1's entire real build. resumeSavedSession (the explicit per-pill Resume
+      // button) already gets this right — it excludes whichever index IS being restored into, not a
+      // hardcoded 0 — this mount-restore path is fixed to match that same, correct pattern.
       const restoredBuilds = {};
       Object.entries(session.fnSnapshots).forEach(([k, v]) => {
         const idx = parseInt(k);
-        if (!isNaN(idx) && idx !== 0 && v) restoredBuilds[idx] = v;
+        if (!isNaN(idx) && v) restoredBuilds[idx] = v;
       });
       // The mount-restore effect (refresh/reopen) passes the function that was actually active
       // before — landing everyone back on Fn0's live state while labelling it "Function N" (a bare
