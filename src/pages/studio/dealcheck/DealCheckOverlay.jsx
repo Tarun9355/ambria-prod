@@ -462,7 +462,11 @@ export default function DealCheckOverlay({ ctx }) {
           // tab (truss cost while on Truss, transport while on Transport, etc.) instead of always
           // showing rental. Manpower/commission/GYV-buffer have no clean per-function split (shared
           // crew across overlapping days, deal-wide fee/margin) so they're left out here on purpose.
-          const byFn = fns.map(() => ({ rental: 0, truss: 0, florals: 0, transport: 0, genset: 0, production: 0, buying: 0 }));
+          const byFn = fns.map(() => ({ rental: 0, truss: 0, florals: 0, transport: 0, genset: 0, production: 0, buying: 0,
+            // TEMP DIAGNOSTIC — remove once the Inventory-tab-vs-sidebar rental mismatch is found.
+            // Breaks byFn[i].rental down by which of the 4 contributing loops added it, so console
+            // can show exactly which source accounts for a gap the zone-by-zone sum doesn't have.
+            _rentalDbg: { cards: 0, manual: 0, platform: 0, carpet: 0 } }));
           // Unavailable-shortfall pricing: a matched card's qty beyond what's actually free in
           // stock for the event date bills at item.cost × this sub-category's cost% instead of
           // the rental rate (rate_card_categories.cost_percent, IMS-owned). Default 100 (full
@@ -518,7 +522,7 @@ export default function DealCheckOverlay({ ctx }) {
                   const it = dcInventoryCache.find(x => x.id === s.imsId); if (!it) return;
                   const q = Number(s.qty) || 0; const br = imsField.rentalCost(it);
                   const line = repeatAdjustedRental(_rep, fn.fnVenue, it, q, br);
-                  rental += line; byFn[fi].rental += line;
+                  rental += line; byFn[fi].rental += line; byFn[fi]._rentalDbg.cards += line;
                   const dd = catToDept(imsField.category(it));
                   addD(dd, "rental", line);
                   if (line > 0 && deptInv[dd]) deptInv[dd].push({ name: it.name, photo: imsField.photos(it)[0] || "", qty: q, unit: br, total: Math.round(line), sub: imsField.subcategory(it) || "", imsId: it.id });
@@ -551,7 +555,7 @@ export default function DealCheckOverlay({ ctx }) {
                 shortCost = shortQty * (Number(item.cost) || 0) * (oosCostPctFor(item, costPctFor) / 100);
                 lineRental = ownedRental + shortCost;
               }
-              rental += lineRental; byFn[fi].rental += lineRental;
+              rental += lineRental; byFn[fi].rental += lineRental; byFn[fi]._rentalDbg.cards += lineRental;
               const dD = catToDept(imsField.category(item) || c.cat);
               addD(dD, "rental", lineRental);
               if (lineRental > 0 && deptInv[dD]) {
@@ -586,7 +590,8 @@ export default function DealCheckOverlay({ ctx }) {
               const baseR = effKitRental(item, fi, null);
               const _rep = mi.zoneKey ? !!(fn.zoneConfig?.[mi.zoneKey]?.repeat) : false;
               const lineRental = repeatAdjustedRental(_rep, fn.fnVenue, item, q, baseR);
-              rental += lineRental; byFn[fi].rental += lineRental;
+              rental += lineRental; byFn[fi].rental += lineRental; byFn[fi]._rentalDbg.manual += lineRental;
+              if (lineRental > 0) console.log(`[rentalDbg] manual item fn${fi} zone="${mi.zoneKey}" ${item.name} qty=${q} = ₹${Math.round(lineRental)}`);
               const dD = catToDept(imsField.category(item));
               addD(dD, "rental", lineRental);
               if (deptInv[dD]) deptInv[dD].push({ name: item.name || "Item", photo: imsField.photos(item)[0] || "", qty: q, unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "", imsId: mi.imsId });
@@ -668,7 +673,7 @@ export default function DealCheckOverlay({ ctx }) {
             if (pp) {
               const fattaR = pp.fattaItem ? imsField.rentalCost(pp.fattaItem) : 0;
               const standR = pp.standItem ? imsField.rentalCost(pp.standItem) : 0;
-              Object.entries(pp.perZone || {}).forEach(([k, z]) => { const pc = (z.fattas || 0) * fattaR + (z.stands || 0) * standR; rental += pc; const pfi = Number(k.split("|")[0]); if (byFn[pfi]) byFn[pfi].rental += pc; addD("Tenting", "rental", pc); if (pc > 0 && deptInv["Tenting"]) deptInv["Tenting"].push({ name: "Platform (fatta + stand)", photo: "", qty: (z.fattas || 0) + (z.stands || 0), unit: 0, total: Math.round(pc), sub: `${z.fattas || 0} fatta · ${z.stands || 0} stand` }); }); // platform → Tenting
+              Object.entries(pp.perZone || {}).forEach(([k, z]) => { const pc = (z.fattas || 0) * fattaR + (z.stands || 0) * standR; rental += pc; const pfi = Number(k.split("|")[0]); if (byFn[pfi]) { byFn[pfi].rental += pc; byFn[pfi]._rentalDbg.platform += pc; if (pc > 0) console.log(`[rentalDbg] platform fn${pfi} zone="${k.split("|")[1]}" ${z.fattas||0} fatta + ${z.stands||0} stand = ₹${Math.round(pc)}`); } addD("Tenting", "rental", pc); if (pc > 0 && deptInv["Tenting"]) deptInv["Tenting"].push({ name: "Platform (fatta + stand)", photo: "", qty: (z.fattas || 0) + (z.stands || 0), unit: 0, total: Math.round(pc), sub: `${z.fattas || 0} fatta · ${z.stands || 0} stand` }); }); // platform → Tenting
             }
           } catch {}
           try {
@@ -697,7 +702,8 @@ export default function DealCheckOverlay({ ctx }) {
                 const pickedId = picks[zk];
                 const carpetItem = pickedId ? dcInventoryCache.find(x => x.id === pickedId) : null;
                 if (cc > 0) {
-                  rental += cc; byFn[fi].rental += cc;
+                  rental += cc; byFn[fi].rental += cc; byFn[fi]._rentalDbg.carpet += cc;
+                  console.log(`[rentalDbg] carpet fn${fi} zone="${zk}" = ₹${Math.round(cc)}`);
                   addD("Tenting", "rental", cc);
                   if (deptInv["Tenting"]) deptInv["Tenting"].push({
                     name: carpetItem?.name || carpetPricingFor(zcz.cpT, imsCarpetMaterials).label || "Carpet",
@@ -1264,6 +1270,8 @@ export default function DealCheckOverlay({ ctx }) {
           // Profit measured against dealAmount (fee included) — the fee is pure additional revenue
           // with no offsetting cost, so it flows straight through to profit, same as the owner asked.
           const profitPct = dealAmount > 0 ? Math.round(((dealAmount - effGrand - commissionTotal) / dealAmount) * 100) : 0;
+          // TEMP DIAGNOSTIC — remove once the Inventory-tab-vs-sidebar rental mismatch is found.
+          console.table(byFn.map((b, i) => ({ fn: fns[i]?.fnType || i, cards: Math.round(b._rentalDbg.cards), manual: Math.round(b._rentalDbg.manual), platform: Math.round(b._rentalDbg.platform), carpet: Math.round(b._rentalDbg.carpet), total: Math.round(b.rental) })));
           // ── SMART-QUOTE-DRIVEN LIVE FIGURES (shared) ──
           // Computed once here, off the SAME effGrand/commissionTotal/dealAmount every other field
           // above already uses, so every tab that reads it (GYV & Buffer's profitability chips,
