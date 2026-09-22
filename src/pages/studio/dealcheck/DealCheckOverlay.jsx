@@ -4326,8 +4326,8 @@ export default function DealCheckOverlay({ ctx }) {
                               </div>
                             </div>
                             <div style={{textAlign:"right",flexShrink:0}}>
-                              <div style={{fontSize:17,fontWeight:750,color:commissionTotal>0?INK:INK_3,letterSpacing:-0.45,lineHeight:1.1,...NUM}}>{fmt2(commissionTotal)}</div>
-                              <div style={{fontSize:11,color:INK_3,marginTop:2}}>total</div>
+                              <div style={{fontSize:17,fontWeight:750,color:(smartQuoteActive?liveCommissionTotal:commissionTotal)>0?INK:INK_3,letterSpacing:-0.45,lineHeight:1.1,...NUM}}>{fmt2(smartQuoteActive ? liveCommissionTotal : commissionTotal)}</div>
+                              <div style={{fontSize:11,color:INK_3,marginTop:2}}>{smartQuoteActive ? "total · live preview" : "total"}</div>
                             </div>
                           </div>
 
@@ -4342,7 +4342,13 @@ export default function DealCheckOverlay({ ctx }) {
                             <div style={{padding:"12px 15px 14px",display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))",gap:12}}>
                               {commissionByVenue.map(r => {
                                 const overridden = r.overrideVal != null;
-                                const amount = overridden ? r.overrideVal : r.defaultAmt;
+                                // Scale the AUTO-computed share/amount with the live quote when the
+                                // calculator is engaged — a manual override is a fixed payout someone
+                                // set on purpose, so it never moves with a hypothetical preview.
+                                const commScale = (smartQuoteActive && dealAmount > 0) ? liveQuote / dealAmount : 1;
+                                const liveRevenueShare = r.revenueShare * commScale;
+                                const liveDefaultAmt = Math.round(r.defaultAmt * commScale);
+                                const amount = overridden ? r.overrideVal : liveDefaultAmt;
                                 return (
                                   <div key={r.venue} className="dc2-row" style={{borderRadius:12,background:TILE_BG,border:`1px solid ${TILE_BORDER}`,overflow:"hidden",display:"flex"}}>
                                     <div aria-hidden="true" style={{width:3,flexShrink:0,background:overridden?GOLD:"#B9B2C4"}} />
@@ -4352,7 +4358,7 @@ export default function DealCheckOverlay({ ctx }) {
                                         <span style={{flexShrink:0,fontSize:10,fontWeight:700,letterSpacing:0.5,padding:"2px 8px",borderRadius:999,background:CHIP_BG,color:INK_2,whiteSpace:"nowrap",...NUM}}>{r.pct}%</span>
                                       </div>
                                       <div style={{fontSize:10.5,color:INK_3,marginTop:3,...NUM}}>
-                                        {r.pct}% of {fmt2(r.revenueShare)}{commissionByVenue.length > 1 ? " · this venue's share" : ""}
+                                        {overridden ? `${r.pct}% of ${fmt2(r.revenueShare)}` : `${r.pct}% of ${fmt2(liveRevenueShare)}`}{commissionByVenue.length > 1 ? " · this venue's share" : ""}{smartQuoteActive && !overridden ? " · live" : ""}
                                       </div>
 
                                       <div style={{fontSize:19,fontWeight:750,color:INK,letterSpacing:-0.5,lineHeight:1.1,marginTop:9,...NUM}}>{fmt2(amount)}</div>
