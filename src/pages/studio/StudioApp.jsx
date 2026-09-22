@@ -2359,6 +2359,15 @@ export default function StudioApp() {
   // saveSession clears this on the first save after a load, so collapsing resumes as normal within
   // the new meeting.
   const sessionBoundaryRef = useRef(false);
+  // What the top saved session (sessions[0]) was when THIS tab last loaded or saved this client —
+  // the build-path sibling of Deal Check's dcSaveBaselineRef (~line 9153, same fix, same reasoning).
+  // saveSession compares this against the live sessions[0] read fresh at save time
+  // (prevSnapForTotals) to tell "someone else saved a newer build while I was editing" apart from
+  // "my own last write echoing back", instead of blindly overwriting whichever tab's autosave lands
+  // last — the exact bug already once caught and only half-fixed in this file (see the "DELETION
+  // DISABLED" note near saveSession's own studio_sessions write).
+  const buildSaveBaselineRef = useRef(null);
+  const buildConflictWarnedAtRef = useRef(0);
   useEffect(() => { activeFnIdxRef.current = activeFnIdx; switchingRef.current = false; }, [activeFnIdx]);
   useEffect(() => { fnBuildsRef.current = fnBuilds; }, [fnBuilds]);
   // Layout for the same reason as saveSessionRef below — switchActiveFn calls this one
@@ -6807,6 +6816,29 @@ export default function StudioApp() {
     // each function's own price can be carried forward — see fnTotals in the snapshot.
     const prevSnapForTotals = (((clientLedgerRef.current || clientLedger)
       .find(c => c.id === activeClientId)?.sessions) || [])[0] || null;
+    // ── STOP A STALE TAB FROM SILENTLY OVERWRITING A NEWER SAVE ──
+    // Same fix as Deal Check's dcDraft autosave (dcSaveBaselineRef, ~line 9153) — this file already
+    // has one confirmed incident of exactly this (see the "DELETION DISABLED" note further down):
+    // a ₹4,50,865 build was saved, then a DIFFERENT tab's autosave — still working from an older
+    // load — landed a ₹2,61,861 build on top of it a few minutes later. Disabling row deletion only
+    // stopped the older save from destroying the newer one's studio_sessions rows; it never stopped
+    // the older save from becoming sessions[0] (the build every screen treats as "current") in the
+    // first place. buildSaveBaselineRef is what sessions[0] was when THIS tab last loaded or saved —
+    // if the live sessions[0] (prevSnapForTotals, read fresh above) has moved past that AND it was
+    // someone else's save, this tab's own copy is stale: skip the write entirely rather than let it
+    // silently regress the deal, and say so.
+    const buildBaseline = buildSaveBaselineRef.current;
+    const buildRemoteSavedAt = prevSnapForTotals?.savedAt || 0;
+    const buildRemoteSavedBy = prevSnapForTotals?.savedBy || null;
+    const buildMe = authUser?.name || "—";
+    const buildConflict = !!(buildBaseline && buildRemoteSavedAt > buildBaseline.savedAt && buildRemoteSavedBy && buildRemoteSavedBy !== buildMe);
+    if (buildConflict) {
+      if (buildConflictWarnedAtRef.current !== buildRemoteSavedAt) {
+        buildConflictWarnedAtRef.current = buildRemoteSavedAt;
+        showMsg?.(`⚠ ${buildRemoteSavedBy} saved changes to this deal while you were editing — your changes were NOT auto-saved to avoid overwriting theirs. Reload to see the latest before continuing.`, "red");
+      }
+      return; // nothing local is discarded — it just isn't persisted until this tab reloads
+    }
     const takeSnapshot = snapshotFnRef.current || snapshotBuildState;
     for (let i = 0; i < totalFns; i++) {
       let snap;
@@ -7039,6 +7071,10 @@ export default function StudioApp() {
         ? [snapshot, ...prevSessions.slice(1)]
         : [snapshot, ...prevSessions];
       client.sessions = nextSessionList.slice(0, SESSION_KEEP);
+      // This save is now sessions[0] — advance the baseline to it so THIS tab's next save compares
+      // against its own latest write, not the load-time one (mirrors dcSaveBaselineRef's own advance
+      // after a successful dcDraft save).
+      buildSaveBaselineRef.current = { savedAt: snapshot.savedAt, savedBy: snapshot.savedBy };
       const prunedIds = nextSessionList.slice(SESSION_KEEP).map((x) => x?.id).filter(Boolean);
       sessionBoundaryRef.current = false;
       // ── THE SAME SAVE, ROW-LEVEL, TO `studio_sessions` (migration 026) ──
@@ -7505,6 +7541,11 @@ export default function StudioApp() {
     // This IS the client's real identity as of this load — future edits away from it need an
     // explicit confirm (see loadedClientIdentityRef) before they're allowed to autosave.
     loadedClientIdentityRef.current = { name: client.name || "", phone: client.phone || "" };
+    // What sessions[0] IS on the server right now, as of this load — not necessarily `session`
+    // itself (a deliberate Resume can load an OLDER session while sessions[0] stays whatever it
+    // already was). saveSession compares its own next write against this to tell a stale tab from
+    // one that's actually caught up — see buildSaveBaselineRef's own comment.
+    buildSaveBaselineRef.current = { savedAt: Number(client.sessions?.[0]?.savedAt) || 0, savedBy: client.sessions?.[0]?.savedBy || null };
     setClientDate(client.eventDate || "");
     setVenue(client.venue || "");
     setFn(client.fn || "");
