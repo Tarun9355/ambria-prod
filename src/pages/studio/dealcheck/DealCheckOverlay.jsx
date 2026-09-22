@@ -1858,6 +1858,18 @@ export default function DealCheckOverlay({ ctx }) {
                       if (Number(pfi) === fnIdx && !byZone[pzk]) byZone[pzk] = [];
                     });
                   }
+                  // A manually-added item (dcManualItems) is only ever rendered NESTED inside its own
+                  // zone's card (manualItemsInZone below, filtered by zoneKey === zk) — unlike cards
+                  // and platform above, nothing force-adds an entry for its zoneKey if that zone was
+                  // since renamed or removed. Without this, such an item is fully counted into
+                  // dcCostRollup's rental/byFn totals (that loop only filters by fnIdx, never checks
+                  // the zone still exists) while being completely invisible here — the sidebar and
+                  // this tab's own visible zones silently disagree by exactly that item's cost.
+                  (dcManualItems || []).forEach(mi => {
+                    if (mi.fnIdx !== fnIdx) return;
+                    const zk = mi.zoneKey || "(unzoned)";
+                    if (!byZone[zk]) byZone[zk] = [];
+                  });
                   const activeFnForFlorals = fns[fnIdx];
                   const recipeSubcatsLC = (dealCheckData?.flowerRecipeSubcats || ["Flower Pattern"]).map(s => String(s||"").toLowerCase());
                   const flowerPatternsForCheck = dealCheckData?.flowerPatterns || [];
