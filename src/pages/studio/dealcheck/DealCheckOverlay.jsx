@@ -1264,10 +1264,29 @@ export default function DealCheckOverlay({ ctx }) {
           // Profit measured against dealAmount (fee included) — the fee is pure additional revenue
           // with no offsetting cost, so it flows straight through to profit, same as the owner asked.
           const profitPct = dealAmount > 0 ? Math.round(((dealAmount - effGrand - commissionTotal) / dealAmount) * 100) : 0;
+          // ── SMART-QUOTE-DRIVEN LIVE FIGURES (shared) ──
+          // Computed once here, off the SAME effGrand/commissionTotal/dealAmount every other field
+          // above already uses, so every tab that reads it (GYV & Buffer's profitability chips,
+          // Commission's own summary) sees one number instead of each re-deriving its own copy that
+          // can drift. Mirrors GYV & Buffer's own quote-calculator formula exactly. isSold gates it
+          // the same way that calculator does — a booked deal's quote is negotiated and done.
+          const smartQuoteActive = !isSold && dcDesiredMargin !== null;
+          const smartInternalCost = effGrand + commissionTotal;
+          const smartOrigProfitPct = dealAmount > 0 ? Math.round(((dealAmount - smartInternalCost) / dealAmount) * 100) : 0;
+          const smartDesiredPct = dcDesiredMargin !== null ? dcDesiredMargin : smartOrigProfitPct;
+          const smartRevisedQuote = !smartQuoteActive ? dealAmount
+            : (smartDesiredPct < 100 ? Math.round(smartInternalCost / (1 - smartDesiredPct / 100)) : smartInternalCost);
+          // liveQuote/liveCommissionTotal: what any "what does this deal look like right now" display
+          // should read instead of dealAmount/commissionTotal when the calculator is engaged. Commission
+          // scales proportionally with the live quote at the SAME blended rate (commissionTotal/dealAmount)
+          // — a one-way "quote moved, so commission follows" step, not fed back into the solve above.
+          const liveQuote = smartQuoteActive ? smartRevisedQuote : dealAmount;
+          const liveCommissionTotal = (smartQuoteActive && dealAmount > 0) ? Math.round(commissionTotal * (liveQuote / dealAmount)) : commissionTotal;
           return { rental, florals, transport, genset, manpower, truss, buyTotal, produceTotal, base, gyvFixed, bufferCost, grand, clientRevenue, venueDiscount, agencyFee, agencyFeePct, dealAmount, profitPct, fns, dept, DEPTS, deptInv, deptMp, mpRateByType, byFn,
             mpPhases: dcMpPhases, mpSchedule, mpSharedTotals, deptDirectMap, directTotal, labourUsageByDept, labourUsageTotal, manpowerDetail, manpowerPlan: dcMpPlan,
             hasActuals, actualMandi, actualExpenses, effFlorals, baseActual, grandActual, projFlorals: florals, effManpower, mpDelta,
-            commissionByVenue, commissionTotal };
+            commissionByVenue, commissionTotal,
+            smartQuoteActive, smartOrigProfitPct, smartDesiredPct, liveQuote, liveCommissionTotal };
         })();
 
         // ── Build + auto-push the department snapshot to IMS whenever Deal Check is open (any tab),
@@ -3920,7 +3939,7 @@ export default function DealCheckOverlay({ ctx }) {
                   );
                 })() : dcActiveTab === "gyv" ? (() => {
                   // ═══ GYV FIXED & BUFFER COST TAB — reads from shared dcCostRollup ═══
-                  const { rental, florals, transport, manpower, truss, buyTotal, produceTotal, base: baseProj, gyvFixed: gyvCost, bufferCost, commissionTotal, grand: grandProj, venueDiscount, dealAmount, fns, hasActuals, actualMandi, actualExpenses, effFlorals, baseActual, grandActual, projFlorals, effManpower, mpDelta } = dcCostRollup;
+                  const { rental, florals, transport, manpower, truss, buyTotal, produceTotal, base: baseProj, gyvFixed: gyvCost, bufferCost, commissionTotal, grand: grandProj, venueDiscount, dealAmount, fns, hasActuals, actualMandi, actualExpenses, effFlorals, baseActual, grandActual, projFlorals, effManpower, mpDelta, smartQuoteActive, smartOrigProfitPct, smartDesiredPct, liveQuote, liveCommissionTotal } = dcCostRollup;
                   const baseCost = hasActuals ? baseActual : baseProj;
                   // Project total = production cost + GYV/buffer + venue commission. Commission used
                   // to be excluded here (a "company-level payout" kept out of "what building this event
@@ -3985,24 +4004,13 @@ export default function DealCheckOverlay({ ctx }) {
                         : { ink: BAD, soft: BAD_SOFT, label: "Loss" };
                   const overheads = gyvCost + bufferCost;
                   // ── SMART-QUOTE-DRIVEN LIVE FIGURES ──
-                  // Hoisted from the Smart Quote Calculator further down (same formula, computed once)
-                  // so the profitability chips above it can also show "what this looks like if the
-                  // margin slider is engaged" instead of only the actual booked numbers. isSold mirrors
-                  // that calculator's own gating — a booked deal's quote is negotiated and done, so
-                  // there is nothing left to preview.
-                  const smartQuoteActive = !isSold && dcDesiredMargin !== null;
-                  const smartOrigProfitPct = quote > 0 ? Math.round(((quote - internalCostForProfit) / quote) * 100) : 0;
-                  const smartDesiredPct = dcDesiredMargin !== null ? dcDesiredMargin : smartOrigProfitPct;
-                  const smartRevisedQuote = !smartQuoteActive ? quote
-                    : (smartDesiredPct < 100 ? Math.round(internalCostForProfit / (1 - smartDesiredPct / 100)) : internalCostForProfit);
+                  // smartQuoteActive/smartDesiredPct/liveQuote/liveCommissionTotal come straight off
+                  // dcCostRollup (computed once, shared with the Commission tab — see its own comment
+                  // there) instead of being re-derived here, so the two tabs can't show two different
+                  // "live" numbers for the same slider position. Only what's specific to THIS tab's own
+                  // display — the tone color and the resulting net profit/margin — is computed locally.
                   const smartTone = smartDesiredPct >= 20 ? GOOD : smartDesiredPct >= 10 ? GOLD : BAD;
-                  // liveQuote/liveCommission/liveNetProfit: what the 4-chip profitability bar shows.
-                  // liveQuote follows the calculator when it's engaged, else the actual quote. Commission
-                  // scales with it proportionally, at the SAME blended rate the Commission tab itself
-                  // shows (commissionTotal / quote) — a one-way "quote moved, so commission follows"
-                  // step, not fed back into the calculator's own solve above.
-                  const liveQuote = smartQuoteActive ? smartRevisedQuote : quote;
-                  const liveCommission = (smartQuoteActive && quote > 0) ? Math.round(commissionTotal * (liveQuote / quote)) : commissionTotal;
+                  const liveCommission = liveCommissionTotal;
                   const liveNetProfit = liveQuote - projectCost - liveCommission;
                   const liveProfitPct = liveQuote > 0 ? Math.round((liveNetProfit / liveQuote) * 100) : 0;
 
@@ -4171,11 +4179,10 @@ export default function DealCheckOverlay({ ctx }) {
                           nothing left to pick a margin FOR — this stays for ongoing deals, where it's
                           still a live "what should I quote" tool. */}
                       {!isSold && (()=>{
-                        // origQuote/origProfitPct/desiredPct/revisedQuote/rev are hoisted above (as
-                        // quote/smartOrigProfitPct/smartDesiredPct/smartRevisedQuote/smartTone) so the
-                        // Net profitability chips further up can also reflect this calculator's live
-                        // proposed quote — same values, read here under their old local names so the
-                        // rest of this card needs no further changes.
+                        // origProfitPct/desiredPct/rev come straight off dcCostRollup (as
+                        // smartOrigProfitPct/smartDesiredPct/smartTone) — the same shared fields the
+                        // Net profitability chips further up and the Commission tab both read, so this
+                        // calculator can't show a different "live" number than either of them.
                         const internalCost = internalCostForProfit;
                         const origQuote = quote;
                         const origProfitPct = smartOrigProfitPct;
@@ -4188,7 +4195,11 @@ export default function DealCheckOverlay({ ctx }) {
                         // margin. Only once the user picks an ACTUAL desired margin should this invert
                         // the formula — that's the deliberate "what quote hits this round number"
                         // question the calculator exists to answer, not a math error.
-                        const revisedQuote = smartRevisedQuote;
+                        // liveQuote, not a separately-hoisted "smartRevisedQuote": this card only ever
+                        // renders while !isSold (see the guard above), so smartQuoteActive reduces to
+                        // exactly "dcDesiredMargin !== null" here — the same condition this used to
+                        // gate on directly — making liveQuote identical to what this card needs.
+                        const revisedQuote = liveQuote;
                         const discount = origQuote - revisedQuote;
                         const discountPct = origQuote > 0 ? Math.round((discount / origQuote) * 100) : 0;
                         const rev = smartTone;
@@ -4258,7 +4269,7 @@ export default function DealCheckOverlay({ ctx }) {
                   // ═══ COMMISSION TAB — % of the deal amount set aside per venue, reads from shared
                   // dcCostRollup. The % itself is IMS master data (Admin → Master Data → Venues);
                   // the amount can be overridden per venue right here. ═══
-                  const { commissionByVenue, commissionTotal, dealAmount } = dcCostRollup;
+                  const { commissionByVenue, commissionTotal, dealAmount, smartQuoteActive, smartDesiredPct, liveQuote, liveCommissionTotal } = dcCostRollup;
                   const fmt2 = (n) => (n >= 0 ? "₹" + Math.round(n).toLocaleString("en-IN") : "−₹" + Math.round(Math.abs(n)).toLocaleString("en-IN"));
                   const commitOverride = (venue, value) => {
                     const nextOverrides = { ...(cli?.commissionOverrides || {}) };
@@ -4277,12 +4288,23 @@ export default function DealCheckOverlay({ ctx }) {
                     <div style={{display:"flex",flexDirection:"column",gap:12}}>
                       <style>{DC_CSS}</style>
 
+                      {/* smartQuoteActive: the GYV & Buffer tab's smart quote calculator is engaged
+                          (dcDesiredMargin set) — Deal amount/Total commission below track its live
+                          proposed quote instead of the actual booked figures, same shared fields the
+                          GYV & Buffer tab itself reads, so the two can't disagree on what "live" means.
+                          The per-venue breakdown further down still shows the real, committed amounts —
+                          those are what actually gets paid out, not a hypothetical preview. */}
+                      {smartQuoteActive && (
+                        <div style={{padding:"9px 13px",borderRadius:10,background:GOLD_SOFT,border:`1px solid ${GOLD}33`,fontSize:11.5,color:GOLD,fontWeight:650}}>
+                          🧮 Live at the smart quote calculator's {smartDesiredPct}% margin — deal amount and commission below are a preview, not the committed figures.
+                        </div>
+                      )}
                       <div className="dc2-sum">
                         {[
                           { label: commissionByVenue.length === 1 ? "Venue" : "Venues", value: commissionByVenue.length, foot: overriddenCount ? `${overriddenCount} overridden by hand` : "all at the master rate" },
-                          { label: "Deal amount", value: fmt2(dealAmount), foot: Number(cli?.negotiatedAmount) > 0 ? "negotiated" : "from Build screen" },
+                          { label: "Deal amount", value: fmt2(smartQuoteActive ? liveQuote : dealAmount), foot: smartQuoteActive ? `at ${smartDesiredPct}% margin` : (Number(cli?.negotiatedAmount) > 0 ? "negotiated" : "from Build screen"), tone: smartQuoteActive ? GOLD : undefined },
                           { label: "Effective rate", value: `${effPct.toFixed(effPct % 1 === 0 ? 0 : 1)}%`, foot: commissionByVenue.length > 1 ? "blended across venues" : "of the deal amount" },
-                          { label: "Total commission", value: fmt2(commissionTotal), foot: "set aside for venues", tone: GOLD },
+                          { label: "Total commission", value: fmt2(smartQuoteActive ? liveCommissionTotal : commissionTotal), foot: smartQuoteActive ? "scaled with the quote above" : "set aside for venues", tone: GOLD },
                         ].map((s, si) => (
                           <div key={si} className="dc2-card" style={{background:CARD_BG,border:`1px solid ${CARD_BORDER}`,borderRadius:11,boxShadow:CARD_SHADOW,padding:"9px 13px",minWidth:0}}>
                             <div style={{fontSize:9.5,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:INK_2,marginBottom:4,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{s.label}</div>
