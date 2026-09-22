@@ -1871,25 +1871,20 @@ export default function DealCheckOverlay({ ctx }) {
                     if (!byZone[zk]) byZone[zk] = [];
                   });
                   // Same gap, found live: a zone with carpet configured but NO cards/platform/manual
-                  // items of its own (dcCostRollup's carpet loop walks zoneConfig directly and adds
-                  // cost for ANY enabled zone with cpT set, regardless of whether anything else is in
-                  // it) was fully counted into the sidebar total while never getting a byZone entry —
-                  // confirmed via the [rentalDbg] diagnostic: Haldi's ₹4,732 gap was entirely a
-                  // "centrelounge" zone's carpet cost, a zone with zero cards that never appeared
-                  // anywhere in this list.
+                  // items of its own (dcCostRollup's carpet loop walks zoneConfig directly and charges
+                  // for ANY enabled zone whose cpT isn't explicitly CARPET_OFF — an unset/undefined
+                  // cpT still prices at carpetPricingFor's default rate, it is NOT free) was fully
+                  // counted into the sidebar total while never getting a byZone entry. First attempt
+                  // at this fix required `cpT` to be truthy, which is stricter than the cost loop's
+                  // own gate (`cpT === CARPET_OFF` to skip) — an undefined cpT zone with real carpet
+                  // cost (e.g. "centrelounge") passed the cost loop but failed this truthy check and
+                  // never got force-added. Matching the exact same condition here fixes that.
                   const activeFnForFlorals = fns[fnIdx];
-                  // TEMP DIAGNOSTIC — the force-add below isn't surfacing "centrelounge" for Haldi
-                  // even after a confirmed clean deploy (incognito, matching Last-Modified). Log
-                  // every candidate this loop actually sees so we can tell whether it's not finding
-                  // the zone at all, finding it but failing a condition, or something else entirely.
-                  console.log("[carpetZoneDbg] fnIdx", fnIdx, "zoneConfig keys", activeFnForFlorals?.zoneConfig ? Object.keys(activeFnForFlorals.zoneConfig) : null, "enabledEls", activeFnForFlorals?.enabledEls);
                   if (activeFnForFlorals?.zoneConfig) {
                     Object.keys(activeFnForFlorals.zoneConfig).forEach(zk => {
-                      const cpT = activeFnForFlorals.zoneConfig[zk]?.cpT;
-                      const enabled = !!activeFnForFlorals.enabledEls?.[zk];
-                      if (cpT && cpT !== CARPET_OFF) console.log("[carpetZoneDbg] zone", zk, "cpT", cpT, "enabled", enabled, "alreadyInByZone", !!byZone[zk]);
-                      if (!enabled) return;
-                      if (cpT && cpT !== CARPET_OFF && !byZone[zk]) byZone[zk] = [];
+                      if (!activeFnForFlorals.enabledEls?.[zk]) return;
+                      const zc = activeFnForFlorals.zoneConfig[zk];
+                      if (zc && zc.cpT !== CARPET_OFF && !byZone[zk]) byZone[zk] = [];
                     });
                   }
                   const recipeSubcatsLC = (dealCheckData?.flowerRecipeSubcats || ["Flower Pattern"]).map(s => String(s||"").toLowerCase());
