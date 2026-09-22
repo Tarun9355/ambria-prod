@@ -1878,10 +1878,17 @@ export default function DealCheckOverlay({ ctx }) {
                   // "centrelounge" zone's carpet cost, a zone with zero cards that never appeared
                   // anywhere in this list.
                   const activeFnForFlorals = fns[fnIdx];
+                  // TEMP DIAGNOSTIC — the force-add below isn't surfacing "centrelounge" for Haldi
+                  // even after a confirmed clean deploy (incognito, matching Last-Modified). Log
+                  // every candidate this loop actually sees so we can tell whether it's not finding
+                  // the zone at all, finding it but failing a condition, or something else entirely.
+                  console.log("[carpetZoneDbg] fnIdx", fnIdx, "zoneConfig keys", activeFnForFlorals?.zoneConfig ? Object.keys(activeFnForFlorals.zoneConfig) : null, "enabledEls", activeFnForFlorals?.enabledEls);
                   if (activeFnForFlorals?.zoneConfig) {
                     Object.keys(activeFnForFlorals.zoneConfig).forEach(zk => {
-                      if (!activeFnForFlorals.enabledEls?.[zk]) return;
                       const cpT = activeFnForFlorals.zoneConfig[zk]?.cpT;
+                      const enabled = !!activeFnForFlorals.enabledEls?.[zk];
+                      if (cpT && cpT !== CARPET_OFF) console.log("[carpetZoneDbg] zone", zk, "cpT", cpT, "enabled", enabled, "alreadyInByZone", !!byZone[zk]);
+                      if (!enabled) return;
                       if (cpT && cpT !== CARPET_OFF && !byZone[zk]) byZone[zk] = [];
                     });
                   }
