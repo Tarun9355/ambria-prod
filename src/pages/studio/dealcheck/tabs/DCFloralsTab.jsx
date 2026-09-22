@@ -143,7 +143,36 @@ export default function DCFloralsTab({ ctx }) {
                     const zoneRepeat = !!activeFn.zoneConfig?.[zk]?.repeat;
                     const realQtyFrac = zoneRepeat ? REPEAT_REAL_QTY_MULT : 1;
                     const artQtyFrac = zoneRepeat ? REPEAT_ART_QTY_MULT : 1;
+                    // A kit's own subItems can carry floral content of their own — a flower-recipe
+                    // add-on (si.patternId, e.g. a floral topper baked into a stage kit) or a
+                    // component item that is itself categorized as florals. Neither ever reached this
+                    // tab before: the loop below only ever looked at the outer element's own
+                    // invId/patternId/name, so a kit's floral pieces were priced correctly (Build's
+                    // getElPrice already folds kitFloralCompDelta/attachedPatterns into the rental
+                    // line) but never itemized here. Expanding each such subItem into its own
+                    // synthetic element — same shape the loop below already knows how to price —
+                    // surfaces it without duplicating any of that pricing logic.
+                    const expandedElems = [];
                     (elems || []).forEach(el => {
+                      expandedElems.push(el);
+                      const kitInvItem = el.invId ? (dcInventoryCache || []).find(i => i.id === el.invId) : null;
+                      if (kitInvItem && Array.isArray(kitInvItem.subItems) && kitInvItem.subItems.length > 0) {
+                        const outerQty = el.qty || 0;
+                        (kitInvItem.subItems || []).forEach(si => {
+                          const siQty = (Number(si.qty) || 0) * outerQty;
+                          if (siQty <= 0) return;
+                          if (si.patternId) {
+                            expandedElems.push({ name: `${el.name || kitInvItem.name} · recipe`, patternId: si.patternId, qty: siQty, size: el.size, _kitParent: el.name || kitInvItem.name });
+                            return;
+                          }
+                          const ci = si.itemId ? (dcInventoryCache || []).find(i => i.id === si.itemId) : null;
+                          if (ci && String(ci.cat || ci.category || "").toLowerCase() === "florals") {
+                            expandedElems.push({ name: ci.name, invId: ci.id, qty: siQty, size: el.size, _kitParent: el.name || kitInvItem.name });
+                          }
+                        });
+                      }
+                    });
+                    expandedElems.forEach(el => {
                       const elName = (el.name || "").toLowerCase().trim();
                       const elQty = el.qty || 0;
                       let rc = rcItems.find(i => (i.name || "").toLowerCase().trim() === elName);

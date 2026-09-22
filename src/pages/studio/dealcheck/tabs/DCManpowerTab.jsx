@@ -9,7 +9,7 @@ import { CARD_SHADOW, CARD_BG, CARD_BORDER, HAIRLINE, TILE_BG, TILE_BORDER, CHIP
 import { resolveTrussConfig } from "../../../../lib/studio/pricing";
 import { heavyExtraLabour, eventTimingMultFor, EVENT_TIMINGS, SIT_MULT_DEFAULTS } from "../../../../lib/ims/constants";
 import { standingReductionBySubcat, fixedVenueFor } from "../../../../lib/ims/fixedVenues";
-import { itemImsSubcat, lookupBySubcat } from "../../../../lib/ims/helpers";
+import { itemImsSubcat, lookupBySubcat, walkKitUnits } from "../../../../lib/ims/helpers";
 import { matchFlowerPattern } from "../../../../lib/ims/flowerHelpers";
 import ManpowerFactorPills from "../../../../components/shared/ManpowerFactorPills.jsx";
 
@@ -264,16 +264,27 @@ export default function DCManpowerTab({ ctx }) {
                         // `.sub` is a separate, older vocabulary that doesn't track IMS's live
                         // Sub-Categories master, and a name coincidentally matching a Rate Card row
                         // used to silently override the element's real Inventory sub-category.
-                        let rc = null;
-                        if (el.invId) {
-                          const invItem = (dcInventoryCache || []).find(i => i.id === el.invId);
-                          if (invItem) rc = { name: invItem.name, cat: invItem.cat || invItem.category || "", sub: invItem.subCat || invItem.subcategory || "" };
-                        }
-                        if (!rc && el.patternId) rc = { name: el.name || "", cat: "florals", sub: "" };
-                        if (!rc) return;
                         const qty = el.qty || 0;
                         if (qty <= 0) return;
-                        cb({ el, rc, qty, zoneKey: zk });
+                        if (el.invId) {
+                          const invItem = (dcInventoryCache || []).find(i => i.id === el.invId);
+                          if (invItem) {
+                            // A kit's components each carry their OWN cat/sub — a stage kit built from
+                            // truss + fabric + lighting sub-parts used to count entirely under whatever
+                            // the kit itself is filed as. walkKitUnits (the same node-walker Transport
+                            // already uses) visits the kit's own node plus every component, so each
+                            // feeds crew-hours into its own bucket instead of one.
+                            if (Array.isArray(invItem.subItems) && invItem.subItems.length > 0) {
+                              walkKitUnits(invItem, qty, dcInventoryCache, el.kitOverrides, (node, nodeQty) => {
+                                cb({ el, rc: { name: node.name, cat: node.cat || node.category || "", sub: node.subCat || node.subcategory || "" }, qty: nodeQty, zoneKey: zk });
+                              });
+                            } else {
+                              cb({ el, rc: { name: invItem.name, cat: invItem.cat || invItem.category || "", sub: invItem.subCat || invItem.subcategory || "" }, qty, zoneKey: zk });
+                            }
+                            return;
+                          }
+                        }
+                        if (el.patternId) cb({ el, rc: { name: el.name || "", cat: "florals", sub: "" }, qty, zoneKey: zk });
                       });
                     });
                   };

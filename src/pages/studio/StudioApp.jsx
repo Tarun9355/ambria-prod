@@ -5302,17 +5302,30 @@ export default function StudioApp() {
     // override the element's real Inventory sub-category for labour-batching purposes. An element
     // with neither identity (should not exist in a build made through today's UI) simply doesn't
     // count here, same as before this comment — it never did without SOME resolvable identity.
+    // A kit (invItem.subItems non-empty) used to contribute ONE bucket — its own top-level cat/sub —
+    // no matter what its components actually are. walkKitUnits (already the shared node-walker for
+    // transport/pricing) visits the kit's own node plus every component recursively, so a stage kit
+    // built from truss + fabric + lighting sub-parts now feeds crew-hours into each of THEIR
+    // categories too, instead of all of it landing under whatever the kit itself is filed as.
     const walk = (fn, cb) => { const en = fn.enabledEls || {}; const ze = fn.zoneElements || {}; Object.keys(en).forEach(zk => { if (!en[zk]) return; (ze[zk] || []).forEach(el => {
-      let rc = null;
+      const qty0 = Number(el.qty || el.count || 1);
       if (el.invId) {
         const invItem = imsInventory.find(i => i.id === el.invId);
-        if (invItem) rc = { name: invItem.name, cat: invItem.cat || invItem.category, sub: invItem.subCat || invItem.subcategory, inhouseMode: "flat" };
+        if (invItem) {
+          if (Array.isArray(invItem.subItems) && invItem.subItems.length > 0) {
+            walkKitUnits(invItem, qty0, imsInventory, el.kitOverrides, (node, nodeQty) => {
+              cb({ rc: { name: node.name, cat: node.cat || node.category, sub: node.subCat || node.subcategory, inhouseMode: "flat" }, el, qty: nodeQty });
+            });
+          } else {
+            cb({ rc: { name: invItem.name, cat: invItem.cat || invItem.category, sub: invItem.subCat || invItem.subcategory, inhouseMode: "flat" }, el, qty: qty0 });
+          }
+          return;
+        }
       }
-      if (!rc && el.patternId) {
+      if (el.patternId) {
         const pat = fps.find(p => p.id === el.patternId);
-        if (pat) rc = { name: pat.name, cat: "florals", sub: pat.sub, inhouseMode: pat.mode === "smb" ? "smb" : "flat" };
+        if (pat) cb({ rc: { name: pat.name, cat: "florals", sub: pat.sub, inhouseMode: pat.mode === "smb" ? "smb" : "flat" }, el, qty: qty0 });
       }
-      if (rc) cb({ rc, el, qty: Number(el.qty || el.count || 1) });
     }); }); };
     const calc = (fn, type) => {
       if (type === "Flowerists") {
