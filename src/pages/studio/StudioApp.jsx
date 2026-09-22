@@ -6253,7 +6253,7 @@ export default function StudioApp() {
   // pinned per-video — Build shows every zone-tagged library photo live instead (see
   // getLibPhotosForZone / StudioBuild.jsx's getMatchedPhotos).
   const buildVideoTagFromAI = useCallback(async (videoId) => {
-      const ytData = await ytApi("videos", { part: "snippet", id: videoId }).catch(() => ({}));
+      const ytData = await ytApi("videos", { part: "snippet", id: videoId }).catch((e) => { console.error("[youtube]", e); return {}; });
       const snippet = ytData.items?.[0]?.snippet;
       if (!snippet) return null;
       const desc = snippet.description || "";
@@ -6402,12 +6402,12 @@ export default function StudioApp() {
   // ── YouTube Data API loaders — rewired through the Supabase `youtube` Edge Function
   // (ytApi) + kv cache (YT_SK settings blob) instead of /api/youtube + window.storage. ──
   const fetchYTPlaylist = useCallback(async (playlistId, pageToken) => {
-    const d = await ytApi("playlistItems", { part: "snippet,contentDetails", maxResults: 50, playlistId, ...(pageToken ? { pageToken } : {}) }).catch(() => ({}));
+    const d = await ytApi("playlistItems", { part: "snippet,contentDetails", maxResults: 50, playlistId, ...(pageToken ? { pageToken } : {}) }).catch((e) => { console.error("[youtube]", e); return {}; });
     if (!d.items) return { items: [], nextPageToken: null };
     const videoIds = d.items.map((i) => i.contentDetails?.videoId).filter(Boolean).join(",");
     const durations = {};
     if (videoIds) {
-      const vd = await ytApi("videos", { part: "contentDetails", id: videoIds }).catch(() => ({}));
+      const vd = await ytApi("videos", { part: "contentDetails", id: videoIds }).catch((e) => { console.error("[youtube]", e); return {}; });
       (vd.items || []).forEach((v) => { durations[v.id] = ytDuration(v.contentDetails?.duration); });
     }
     const items = d.items.map((i) => ({
@@ -6428,7 +6428,7 @@ export default function StudioApp() {
     const out = [];
     const list = [...new Set((ids || []).filter(Boolean))];
     for (let i = 0; i < list.length; i += 50) {          // the videos endpoint caps at 50 ids
-      const d = await ytApi("videos", { part: "snippet,contentDetails", id: list.slice(i, i + 50).join(",") }).catch(() => ({}));
+      const d = await ytApi("videos", { part: "snippet,contentDetails", id: list.slice(i, i + 50).join(",") }).catch((e) => { console.error("[youtube]", e); return {}; });
       (d.items || []).forEach((v) => {
         out.push({
           id: v.id,
@@ -6486,7 +6486,7 @@ export default function StudioApp() {
     if (!query.trim()) return;
     setYtLoading(true);
     try {
-      const d = await ytApi("search", { part: "snippet", type: "video", maxResults: 20, q: query }).catch(() => ({}));
+      const d = await ytApi("search", { part: "snippet", type: "video", maxResults: 20, q: query }).catch((e) => { console.error("[youtube]", e); return {}; });
       const items = (d.items || []).map((i) => ({
         id: i.id?.videoId, title: i.snippet?.title || "", thumb: i.snippet?.thumbnails?.medium?.url || "",
         date: i.snippet?.publishedAt?.slice(0, 10) || "", duration: "", playlistId: "search",
