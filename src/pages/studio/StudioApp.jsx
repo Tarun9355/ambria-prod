@@ -4546,15 +4546,20 @@ export default function StudioApp() {
     }
     return { rc, unitPrice: up, lineCost: (el.qty || 0) * up, area: 0, warning: null, isFloralBlend: isFloral, realPct };
   }, [rcItems, getFloralMode, rcFloralModeByKey, floralRatio, floralArtUnitRate, patternExtra, resolveRcRate, getElPriceFromInventory, getElPriceFromPattern, getElPriceFromMandi, activeFnMeta]);
-  // guestPriceMultiplier + dateCategoryMultiplierFor(clientDate) applied once, here, on top of
-  // whichever branch above priced the element — scales unitPrice/lineCost only, leaving area/
-  // warning/availability/realPct untouched. clientDate is this deal's active function's own date.
+  // guestPriceMultiplier + dateCategoryMultiplierFor(activeFnMeta.date) applied once, here, on top
+  // of whichever branch above priced the element — scales unitPrice/lineCost only, leaving area/
+  // warning/availability/realPct untouched. activeFnMeta.date is whichever function's tab is
+  // currently open in Build — clientDate is NOT that: it is always function 0's own date
+  // specifically (restoreBuildState, run on every function-tab switch, never touches it), so a
+  // deal's 2nd+ function priced here at clientDate's date-category instead of its own — e.g. a
+  // Filler-dated function 1 and a Kings-dated function 2 both silently priced at Filler while
+  // function 2 was the one open in Build.
   const getElPrice = useCallback((el, zc, opts, venueName) => {
     const r = getElPriceRaw(el, zc, opts, venueName);
-    const mult = guestPriceMultiplier * dateCategoryMultiplierFor(clientDate);
+    const mult = guestPriceMultiplier * dateCategoryMultiplierFor(activeFnMeta.date);
     if (mult === 1) return r;
     return { ...r, unitPrice: r.unitPrice * mult, lineCost: r.lineCost * mult };
-  }, [getElPriceRaw, guestPriceMultiplier, clientDate, dealCheckData, studioFloralData]);
+  }, [getElPriceRaw, guestPriceMultiplier, activeFnMeta, dealCheckData, studioFloralData]);
 
   const calcElsCost = useCallback((elements, withFloral, zc, opts, venueName) => {
     return (elements || []).reduce((s, el) => {
