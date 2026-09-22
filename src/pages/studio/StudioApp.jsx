@@ -4065,6 +4065,15 @@ export default function StudioApp() {
     const m = getEffectivePricing(1, dateStr, { datePricing: dp }).multiplier;
     return (m > 0) ? m : 1;
   };
+  // Owner ask: the guest-facing cross-function reuse discount/transport-waiver (findCrossFnReuseSource,
+  // below) must never fire for a function priced on a Filler ("non_saya") date — Filler dates are
+  // already the cheapest category, and the owner doesn't want an extra discount stacked on top of one.
+  // Only gates that ONE mechanism; every other date-category behavior above is unaffected.
+  const isFillerDateFor = (dateStr) => {
+    const dp = dealCheckData?.datePricing || studioFloralData?.datePricing;
+    if (!dp || !dateStr) return false;
+    return resolveDateCategory(dateStr, { datePricing: dp }) === "non_saya";
+  };
   // calcStructCost is a plain module-level function (no closure over component state), so its
   // truss/masking/platform/carpet/arches/pillars/glass/print/total/trussDiscount fields are all
   // scaled here, once, at every guest-facing call site instead of threading the multiplier through
@@ -4886,8 +4895,9 @@ export default function StudioApp() {
     // Cross-function reuse (guest-facing) — see findCrossFnReuseSource/computeFnInvQty above. Two
     // SEPARATELY-seeded pools (decor pricing vs transport truck-qty below): both walk fZoneElements
     // in the same order, so they land on identical per-element allocations without needing to
-    // share mutable state across the two unrelated loops.
-    const crossFnPrevFn = !hideDiscountFromClient ? findCrossFnReuseSource(fnData, collectAllFunctionData()) : null;
+    // share mutable state across the two unrelated loops. Never fires when THIS function (the one
+    // being priced/billed) is on a Filler date — see isFillerDateFor above.
+    const crossFnPrevFn = (!hideDiscountFromClient && !isFillerDateFor(fnData.fnDate)) ? findCrossFnReuseSource(fnData, collectAllFunctionData()) : null;
     const pricingPool = crossFnPrevFn ? new Map(Object.entries(computeFnInvQty(crossFnPrevFn))) : null;
     let decor = 0;
     // Always derive zones fresh from the live zoneConfig/enabledEls — see totalCost's matching
@@ -5389,7 +5399,8 @@ export default function StudioApp() {
     const fBlocksForDate = blocksByDate[fnData.fnDate];
     // Cross-function reuse (guest-facing) — same source calcFunctionCost uses, so Summary's
     // accordion/Build's Live Estimate agree with the revenue total on which units are discounted.
-    const crossFnPrevFn = !hideDiscountFromClient ? findCrossFnReuseSource(fnData, collectAllFunctionData()) : null;
+    // Never fires when THIS function is on a Filler date — see isFillerDateFor above.
+    const crossFnPrevFn = (!hideDiscountFromClient && !isFillerDateFor(fnData.fnDate)) ? findCrossFnReuseSource(fnData, collectAllFunctionData()) : null;
     const pricingPool = crossFnPrevFn ? new Map(Object.entries(computeFnInvQty(crossFnPrevFn))) : null;
     // Sorted by IMS/Studio Admin → Settings → Zone Types' configured order (zoneKeys), same as
     // buildZonesForFn below — enabledEls' own key order is whenever each zone was first toggled on
