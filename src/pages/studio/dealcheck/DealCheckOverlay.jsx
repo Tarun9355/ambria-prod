@@ -1760,12 +1760,13 @@ export default function DealCheckOverlay({ ctx }) {
                     // — this sidebar used to run its own rental-only recompute here, which is why
                     // switching tabs never changed what it showed). Manpower/Commission/GYV/Inventory
                     // Status have no clean per-function split (shared crew across overlapping days,
-                    // deal-wide fee/margin) so those fall back to rental, same as every tab showed
-                    // before this existed.
+                    // deal-wide fee/margin) — those show "—" (byFnKey null) rather than silently
+                    // falling back to rental, which read as "Manpower's own per-fn cost" when it was
+                    // really just Inventory's rental figure reappearing under a different tab.
                     const BYFN_KEY = { inventory: "rental", truss: "truss", florals: "florals", transport: "transport", power: "genset", production: "production", buying: "buying" };
-                    const byFnKey = BYFN_KEY[dcActiveTab] || "rental";
+                    const byFnKey = BYFN_KEY[dcActiveTab] || null;
                     return fns.map((fn, fi) => {
-                      const fnDecor = dcCostRollup.byFn?.[fi]?.[byFnKey] || 0;
+                      const fnDecor = byFnKey ? (dcCostRollup.byFn?.[fi]?.[byFnKey] || 0) : null;
                       const isActive = fi === activeFnIdx && !dcShowAllFns;
                       return (
                         // THE SELECTED FUNCTION IS INKED, NOT TINTED. A gold-tinted card next to plain
@@ -3948,7 +3949,19 @@ export default function DealCheckOverlay({ ctx }) {
                     { icon: "🛒", label: "Buying",     value: buyTotal },
                     { icon: "🏭", label: "Production", value: produceTotal },
                     ...(actualExpenses > 0 ? [{ icon: "🧾", label: "On-site expenses", value: actualExpenses, flag: "actual", note: "billed on site" }] : []),
+                    // GYV fixed + buffer used to sit in their own "Overheads" card further down —
+                    // moved in as ordinary lines here so the whole cost side (production cost AND
+                    // overheads) reads as one list summing to one total, same reasoning the rows
+                    // above it already follow. Commission is NOT here — it's a payout, not a
+                    // production cost, and now lives only in the profitability chips below.
+                    { icon: "🏢", label: "GYV fixed", value: gyvCost, note: `${gyvPct}% of base cost` },
+                    { icon: "🧯", label: "Buffer",    value: bufferCost, note: `${bufferPct}% of base cost` },
                   ];
+                  // projectCost — base cost + GYV + buffer, commission deliberately excluded (see rows
+                  // above). This IS dcCostRollup's own grand/grandActual: that field was already
+                  // computed as exactly this sum before grandWithOverheads bolted commission on top of
+                  // it, so reading it directly here can never drift from the rows' own total.
+                  const projectCost = hasActuals ? grandActual : grandProj;
 
                   // ── ONE QUOTE FIGURE, NOT TWO ──
                   // dealAmount is dcCostRollup's own copy (clientRevenue + agencyFee, same negotiated-
@@ -3971,6 +3984,27 @@ export default function DealCheckOverlay({ ctx }) {
                         ? { ink: BAD, soft: BAD_SOFT, label: "Low" }
                         : { ink: BAD, soft: BAD_SOFT, label: "Loss" };
                   const overheads = gyvCost + bufferCost;
+                  // ── SMART-QUOTE-DRIVEN LIVE FIGURES ──
+                  // Hoisted from the Smart Quote Calculator further down (same formula, computed once)
+                  // so the profitability chips above it can also show "what this looks like if the
+                  // margin slider is engaged" instead of only the actual booked numbers. isSold mirrors
+                  // that calculator's own gating — a booked deal's quote is negotiated and done, so
+                  // there is nothing left to preview.
+                  const smartQuoteActive = !isSold && dcDesiredMargin !== null;
+                  const smartOrigProfitPct = quote > 0 ? Math.round(((quote - internalCostForProfit) / quote) * 100) : 0;
+                  const smartDesiredPct = dcDesiredMargin !== null ? dcDesiredMargin : smartOrigProfitPct;
+                  const smartRevisedQuote = !smartQuoteActive ? quote
+                    : (smartDesiredPct < 100 ? Math.round(internalCostForProfit / (1 - smartDesiredPct / 100)) : internalCostForProfit);
+                  const smartTone = smartDesiredPct >= 20 ? GOOD : smartDesiredPct >= 10 ? GOLD : BAD;
+                  // liveQuote/liveCommission/liveNetProfit: what the 4-chip profitability bar shows.
+                  // liveQuote follows the calculator when it's engaged, else the actual quote. Commission
+                  // scales with it proportionally, at the SAME blended rate the Commission tab itself
+                  // shows (commissionTotal / quote) — a one-way "quote moved, so commission follows"
+                  // step, not fed back into the calculator's own solve above.
+                  const liveQuote = smartQuoteActive ? smartRevisedQuote : quote;
+                  const liveCommission = (smartQuoteActive && quote > 0) ? Math.round(commissionTotal * (liveQuote / quote)) : commissionTotal;
+                  const liveNetProfit = liveQuote - projectCost - liveCommission;
+                  const liveProfitPct = liveQuote > 0 ? Math.round((liveNetProfit / liveQuote) * 100) : 0;
 
                   // ── COLLAPSE STATE, ONE FACTORY ──
                   // Four sections need the same open/toggle pair, and four hand-rolled copies is
@@ -3985,7 +4019,6 @@ export default function DealCheckOverlay({ ctx }) {
                     return { open, toggle: () => setDcCollapsedFnBlocks(prev => ({ ...prev, [key]: !open })) };
                   };
                   const sBreak  = sect("gyv:breakdown");
-                  const sOver   = sect("gyv:overheads");
                   const sProfit = sect("gyv:profit");
                   const sQuote  = sect("gyv:quote");
 
@@ -4048,11 +4081,11 @@ export default function DealCheckOverlay({ ctx }) {
                             <span aria-hidden="true" style={ICON_TILE("#EBE8F4")}>💰</span>
                             <div style={{flex:"1 1 auto",minWidth:0}}>
                               <div style={SECT_TITLE}>Project cost breakdown</div>
-                              <div style={SECT_SUB}>What the booking costs Ambria, before overheads. {rows.length} line{rows.length===1?"":"s"}.</div>
+                              <div style={SECT_SUB}>What the booking costs Ambria, GYV and buffer included — commission excluded (see profitability below). {rows.length} line{rows.length===1?"":"s"}.</div>
                             </div>
                             <div style={{textAlign:"right",flexShrink:0}}>
-                              <div style={{fontSize:17,fontWeight:750,color:INK,letterSpacing:-0.45,lineHeight:1.1,...NUM}}>{fmt(baseCost)}</div>
-                              <div style={{fontSize:11,color:INK_3,marginTop:2}}>base cost</div>
+                              <div style={{fontSize:17,fontWeight:750,color:INK,letterSpacing:-0.45,lineHeight:1.1,...NUM}}>{fmt(projectCost)}</div>
+                              <div style={{fontSize:11,color:INK_3,marginTop:2}}>project cost</div>
                             </div>
                             {chev(sBreak.open)}
                           </div>
@@ -4073,44 +4106,9 @@ export default function DealCheckOverlay({ ctx }) {
                               </div>
                             ))}
                             <div style={{display:"flex",alignItems:"center",gap:10,padding:"11px 8px 3px",marginTop:4,borderTop:`1px solid ${HAIRLINE}`}}>
-                              <span style={{flex:"1 1 auto",fontSize:10.5,fontWeight:700,color:INK,letterSpacing:0.8,textTransform:"uppercase"}}>Base cost</span>
-                              <span style={{fontSize:15,fontWeight:750,color:INK,letterSpacing:-0.35,...NUM}}>{fmt(baseCost)}</span>
+                              <span style={{flex:"1 1 auto",fontSize:10.5,fontWeight:700,color:INK,letterSpacing:0.8,textTransform:"uppercase"}}>Project cost</span>
+                              <span style={{fontSize:15,fontWeight:750,color:INK,letterSpacing:-0.35,...NUM}}>{fmt(projectCost)}</span>
                             </div>
-                          </div>}
-                        </div>
-                      </div>
-
-                      {/* ── OVERHEADS ── */}
-                      <div className="dc2-card" style={{background:CARD_BG,border:`1px solid ${CARD_BORDER}`,borderRadius:14,boxShadow:CARD_SHADOW,overflow:"hidden",display:"flex"}}>
-                        <div aria-hidden="true" style={{width:4,flexShrink:0,background:"#C6A55E"}} />
-                        <div style={{flex:"1 1 auto",minWidth:0}}>
-                          <div onClick={sOver.toggle} className="dc2-hd" style={headStyle(sOver.open)}>
-                            <span aria-hidden="true" style={ICON_TILE("#F7F1E0")}>🏢</span>
-                            <div style={{flex:"1 1 auto",minWidth:0}}>
-                              <div style={SECT_TITLE}>GYV fixed, buffer &amp; commission</div>
-                              <div style={SECT_SUB}>GYV and buffer are a percentage of base cost; commission is set per venue in IMS. All three are carried into the project total in the bottom strip and count against profit — see Net profitability below.</div>
-                            </div>
-                            <div style={{textAlign:"right",flexShrink:0}}>
-                              <div style={{fontSize:17,fontWeight:750,color:INK,letterSpacing:-0.45,lineHeight:1.1,...NUM}}>{fmt(grandWithOverheads)}</div>
-                              <div style={{fontSize:11,color:INK_3,marginTop:2}}>project total</div>
-                            </div>
-                            {chev(sOver.open)}
-                          </div>
-                          {sOver.open && <div style={{padding:"12px 15px 14px",display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:12}}>
-                            {[
-                              { k: "GYV fixed", pct: gyvPct, v: gyvCost },
-                              { k: "Buffer", pct: bufferPct, v: bufferCost },
-                              { k: "Commission", pct: null, v: commissionTotal },
-                            ].map(o => (
-                              <div key={o.k} className="dc2-row" style={{borderRadius:12,background:TILE_BG,border:`1px solid ${TILE_BORDER}`,padding:"10px 12px"}}>
-                                <div style={{display:"flex",alignItems:"baseline",gap:8}}>
-                                  <span style={{flex:"1 1 auto",fontSize:10.5,fontWeight:700,color:INK,letterSpacing:0.8,textTransform:"uppercase"}}>{o.k}</span>
-                                  <span style={{fontSize:10,fontWeight:700,color:INK_3,...NUM}}>{o.pct != null ? `${o.pct}%` : "per venue"}</span>
-                                </div>
-                                <div style={{fontSize:17,fontWeight:750,color:INK,letterSpacing:-0.45,lineHeight:1.1,marginTop:6,...NUM}}>{fmt(o.v)}</div>
-                                <div style={{fontSize:10,color:INK_3,marginTop:3,...NUM}}>{o.pct != null ? `${o.pct}% of ${fmt(baseCost)}` : "rate set per venue in IMS"}</div>
-                              </div>
-                            ))}
                           </div>}
                         </div>
                       </div>
@@ -4123,21 +4121,27 @@ export default function DealCheckOverlay({ ctx }) {
                             <span aria-hidden="true" style={ICON_TILE(health.soft)}>📊</span>
                             <div style={{flex:"1 1 auto",minWidth:0}}>
                               <div style={SECT_TITLE}>Net profitability</div>
-                              <div style={SECT_SUB}>What is left after the project total and venue commission come out of the client quote.</div>
+                              <div style={SECT_SUB}>{smartQuoteActive ? "Live against the smart quote calculator's proposed quote below." : "What is left after the project cost and commission come out of the client quote."}</div>
                             </div>
                             <span style={{flexShrink:0,fontSize:10,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase",padding:"4px 10px",borderRadius:999,background:health.soft,color:health.ink,whiteSpace:"nowrap",...NUM}}>{health.label} · {profitPct}%</span>
                             {chev(sProfit.open)}
                           </div>
                           {sProfit.open && <div style={{padding:"12px 15px 14px",display:"flex",flexDirection:"column",gap:12}}>
+                            {/* Exactly 4 chips, always — Commission used to live in its own
+                                "Overheads" card; it's a payout against the quote, not a production
+                                cost, so it belongs here instead. Client Quote and Commission track
+                                the smart quote calculator below when it's engaged (same one-way
+                                "quote moved, so commission follows" step, not fed back into its own
+                                solve); Internal Cost is what building the event actually costs
+                                Ambria and never moves with it. Fixed-venue discount (when any) is
+                                folded into the Client Quote chip's own footnote instead of a 5th
+                                chip — it's already netted into that figure either way. */}
                             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))",gap:12}}>
                               {[
-                                { k: "Client quote", sub: Number(cli?.negotiatedAmount) > 0 ? "negotiated" : "from Build screen", v: fmt(quote), tone: INK },
-                                // Fixed-venue discount — % off this venue's own share of the deal (Admin
-                                // → Settings → Fixed Venues), applied before the agency fee below. Only
-                                // shown when a booked venue actually carries one.
-                                ...(venueDiscount > 0 ? [{ k: "Fixed-venue discount", sub: "already netted out of quote above", v: `−${fmt(venueDiscount)}`, tone: BAD }] : []),
-                                { k: "Internal cost", sub: "incl. GYV + buffer + commission", v: fmt(internalCostForProfit), tone: INK },
-                                { k: "Net profit", sub: `${profitPct}% margin`, v: `${netProfit < 0 ? "−" : ""}${fmt(Math.abs(netProfit))}`, tone: health.ink },
+                                { k: "Client quote", sub: smartQuoteActive ? `at ${smartDesiredPct}% margin` : (venueDiscount > 0 ? `after −${fmt(venueDiscount)} venue discount` : (Number(cli?.negotiatedAmount) > 0 ? "negotiated" : "from Build screen")), v: fmt(liveQuote), tone: smartQuoteActive ? smartTone : INK },
+                                { k: "Internal cost", sub: "base + GYV + buffer, no commission", v: fmt(projectCost), tone: INK },
+                                { k: "Commission", sub: smartQuoteActive ? "scaled with the quote above" : "set per venue in IMS", v: fmt(liveCommission), tone: INK },
+                                { k: "Net profit", sub: `${liveProfitPct}% margin`, v: `${liveNetProfit < 0 ? "−" : ""}${fmt(Math.abs(liveNetProfit))}`, tone: smartQuoteActive ? smartTone : health.ink },
                               ].map(x => (
                                 <div key={x.k} className="dc2-row" style={{borderRadius:12,background:TILE_BG,border:`1px solid ${TILE_BORDER}`,padding:"10px 12px"}}>
                                   <div style={{fontSize:10.5,fontWeight:700,color:INK,letterSpacing:0.8,textTransform:"uppercase"}}>{x.k}</div>
@@ -4151,7 +4155,7 @@ export default function DealCheckOverlay({ ctx }) {
                                 what full width MEANS, which it never did. */}
                             <div>
                               <div style={{height:7,borderRadius:999,background:TILE_BG,border:`1px solid ${TILE_BORDER}`,overflow:"hidden"}}>
-                                <div style={{height:"100%",background:health.ink,width:`${Math.min(100,Math.max(0,profitPct))}%`,transition:"width 0.3s ease"}}/>
+                                <div style={{height:"100%",background:(smartQuoteActive?smartTone:health.ink),width:`${Math.min(100,Math.max(0,liveProfitPct))}%`,transition:"width 0.3s ease"}}/>
                               </div>
                               <div style={{display:"flex",justifyContent:"space-between",gap:10,marginTop:7,fontSize:11,color:INK_3,flexWrap:"wrap",...NUM}}>
                                 <span>Most a salesperson can discount before this deal stops making money: <strong style={{color:health.ink,fontWeight:700}}>{Math.max(0, profitPct)}%</strong></span>
@@ -4167,14 +4171,15 @@ export default function DealCheckOverlay({ ctx }) {
                           nothing left to pick a margin FOR — this stays for ongoing deals, where it's
                           still a live "what should I quote" tool. */}
                       {!isSold && (()=>{
-                        // Commission-inclusive, same figure Net profitability above uses — the margin
-                        // this calculator solves for has to be measured against the same "what we
-                        // actually keep" baseline, or its revised quote would understate what a given
-                        // margin actually requires.
+                        // origQuote/origProfitPct/desiredPct/revisedQuote/rev are hoisted above (as
+                        // quote/smartOrigProfitPct/smartDesiredPct/smartRevisedQuote/smartTone) so the
+                        // Net profitability chips further up can also reflect this calculator's live
+                        // proposed quote — same values, read here under their old local names so the
+                        // rest of this card needs no further changes.
                         const internalCost = internalCostForProfit;
                         const origQuote = quote;
-                        const origProfitPct = origQuote > 0 ? Math.round(((origQuote - internalCost) / origQuote) * 100) : 0;
-                        const desiredPct = dcDesiredMargin !== null ? dcDesiredMargin : origProfitPct;
+                        const origProfitPct = smartOrigProfitPct;
+                        const desiredPct = smartDesiredPct;
                         // At "actual" (calculator untouched), show the real quote — not a value
                         // rebuilt from origProfitPct. origProfitPct is origQuote's margin ROUNDED to
                         // a whole percent (e.g. 30.75% → 31%), and inverting that rounded percent back
@@ -4183,11 +4188,10 @@ export default function DealCheckOverlay({ ctx }) {
                         // margin. Only once the user picks an ACTUAL desired margin should this invert
                         // the formula — that's the deliberate "what quote hits this round number"
                         // question the calculator exists to answer, not a math error.
-                        const revisedQuote = dcDesiredMargin === null ? origQuote
-                          : (desiredPct < 100 ? Math.round(internalCost / (1 - desiredPct / 100)) : internalCost);
+                        const revisedQuote = smartRevisedQuote;
                         const discount = origQuote - revisedQuote;
                         const discountPct = origQuote > 0 ? Math.round((discount / origQuote) * 100) : 0;
-                        const rev = desiredPct >= 20 ? GOOD : desiredPct >= 10 ? GOLD : BAD;
+                        const rev = smartTone;
                         const revSoft = desiredPct >= 20 ? GOOD_SOFT : desiredPct >= 10 ? GOLD_SOFT : BAD_SOFT;
                         const presets = [5, 10, 15, 20, 25, 30];
                         return (
