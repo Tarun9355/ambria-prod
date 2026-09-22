@@ -2581,7 +2581,20 @@ export default function StudioApp() {
   const studioSub = useCallback((parent, sub) => {
     if (isAdmin) return true;
     if (!(studioCfg?.tabs || []).includes(parent)) return false;
-    return (studioCfg?.subTabs?.[parent] || []).includes(sub); // explicit grant
+    // "Restriction is opt-in" (RoleAccessModal.jsx's own documented rule for this exact data shape):
+    // an absent/empty subTabs[parent] means every child is visible — no admin action ever
+    // restricted anything under this tab, so nothing under it should be hidden. This used to
+    // require an explicit grant unconditionally, silently hiding Deal Check (and viewpricing/
+    // export, and every Settings sub-view routed through here) for every Sales role that was
+    // never individually hand-customized, since the seeded default is {tabs:["design"],subTabs:{}}
+    // — an admin who never touched a single toggle for a role saw "nothing restricted" and
+    // reasonably assumed everything was visible, while this returned false for all of it.
+    // studioLibraryAllowed already implements this same rule correctly; this brings dealcheck/
+    // viewpricing/export/settings-sub-views (everything else routed through studioSub) in line
+    // with it instead of being the one path still requiring an explicit grant.
+    const subs = studioCfg?.subTabs?.[parent];
+    if (!subs || subs.length === 0) return true;
+    return subs.includes(sub);
   }, [isAdmin, studioCfg]);
   // Which Studio Settings sub-views (venues/tags/clients/calendar/users/zones/palettes/
   // priority) this role can see — consumed by ManageSettings.
