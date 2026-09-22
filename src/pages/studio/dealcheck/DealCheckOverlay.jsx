@@ -922,22 +922,29 @@ export default function DealCheckOverlay({ ctx }) {
                 };
                 if (type === "Labours") return calcTier3(fn);
                 if (type === "Fabric Bangali") {
-                  // MUST match DCManpowerTab.calcPeopleFabricBangali — per-zone RFT from truss dims (not element L×W).
-                  let total = 0; const zc = fn.zoneConfig || {}, en = fn.enabledEls || {};
+                  // MUST match DCManpowerTab.calcPeopleFabricBangali — per-zone top (range table) +
+                  // optional masking-wall RFT (mkOn-gated) + batta RFT (wraps every pillar+beam,
+                  // ALWAYS — not gated on mkOn, since a truss gets wrapped in fabric whether or not its
+                  // separate, optional side-wall masking is switched on). Side RFT (walls + batta) is
+                  // pooled across every zone and ceiled ONCE, not per zone (per-zone ceiling throws away
+                  // real leftover capacity — see DCManpowerTab §23 Phase 2.9).
+                  let topTotal = 0, rftTotal = 0; const zc = fn.zoneConfig || {}, en = fn.enabledEls || {};
                   const engBackDepth = Number(dealCheckData?.trussInv?.settings?.defaultBackDepthFt) || 4;
                   const fabricRftPerWorker = Number(dealCheckData?.fabricRftPerWorker) || 100;
+                  const tInv = dealCheckData?.trussInv;
                   Object.keys(zc).forEach(zk => {
-                    if (!en[zk] || !zc[zk]) return; const z = zc[zk]; if (!z.mkOn) return;
+                    if (!en[zk] || !zc[zk]) return; const z = zc[zk];
                     const cfg = resolveTrussConfig(z); if (!cfg || !cfg.config) return; const config = cfg.config;
                     const dL = Number(z.dims?.L) || Number(z.dims?.S) || 0; const dW = Number(z.dims?.W) || Number(z.dims?.S) || 0;
                     const mw = z.mkWalls || {}; const sideDepth = Number(z.trussBackDepth) || engBackDepth;
                     let zoneTop = 0, zoneRft = 0;
-                    if (config === "full_box") { const topSqft = dL * dW; if (topSqft > 0 && fabricBangaliRanges.length > 0) { for (const r of fabricBangaliRanges) { if (topSqft <= r.upTo) { zoneTop = r.labour || 0; break; } } } if (mw.back && dW > 0) zoneRft += dW; if (mw.left && dL > 0) zoneRft += dL; if (mw.right && dL > 0) zoneRft += dL; }
-                    else if (config === "half_box") { const spanL = cfg.spanFt || dL || dW; if (mw.back && spanL > 0) zoneRft += spanL; if (mw.left && sideDepth > 0) zoneRft += sideDepth; if (mw.right && sideDepth > 0) zoneRft += sideDepth; }
-                    else if (config === "u_only") { const spanL = cfg.spanFt || dL || dW; if (mw.back && spanL > 0) zoneRft += spanL; }
-                    total += zoneTop + (zoneRft > 0 ? Math.ceil(zoneRft / fabricRftPerWorker) : 0);
+                    if (config === "full_box") { const topSqft = dL * dW; if (topSqft > 0 && fabricBangaliRanges.length > 0) { for (const r of fabricBangaliRanges) { if (topSqft <= r.upTo) { zoneTop = r.labour || 0; break; } } } if (z.mkOn) { if (mw.back && dW > 0) zoneRft += dW; if (mw.left && dL > 0) zoneRft += dL; if (mw.right && dL > 0) zoneRft += dL; } }
+                    else if (config === "half_box") { const spanL = cfg.spanFt || dL || dW; if (z.mkOn) { if (mw.back && spanL > 0) zoneRft += spanL; if (mw.left && sideDepth > 0) zoneRft += sideDepth; if (mw.right && sideDepth > 0) zoneRft += sideDepth; } }
+                    else if (config === "u_only") { const spanL = cfg.spanFt || dL || dW; if (z.mkOn && mw.back && spanL > 0) zoneRft += spanL; }
+                    if (tInv) { try { const pv = calcZoneTrussPreview(z, tInv); if (pv?.batta?.rftWithBuffer) zoneRft += pv.batta.rftWithBuffer; } catch {} }
+                    topTotal += zoneTop; rftTotal += zoneRft;
                   });
-                  return total;
+                  return topTotal + (rftTotal > 0 ? Math.ceil(rftTotal / fabricRftPerWorker) : 0);
                 }
                 if (type === "Truss Labour") {
                   // MUST match DCManpowerTab.calcPeopleTrussLabour — zone-topology pillarCount.

@@ -433,10 +433,10 @@ export default function DCManpowerTab({ ctx }) {
                     const zc = fn.zoneConfig || {};
                     const en = fn.enabledEls || {};
                     const engBackDepth = Number(dealCheckData?.trussInv?.settings?.defaultBackDepthFt) || 4;
+                    const tInv = dealCheckData?.trussInv;
                     Object.keys(zc).forEach(zk => {
                       if (!en[zk] || !zc[zk]) return;
                       const z = zc[zk];
-                      if (!z.mkOn) return;
                       const cfg = resolveTrussConfig(z);
                       if (!cfg || !cfg.config) return;
                       const config = cfg.config;
@@ -455,21 +455,34 @@ export default function DCManpowerTab({ ctx }) {
                             if (topSqft <= r.upTo) { topTotal += r.labour || 0; break; }
                           }
                         }
-                        // Side walls — back spans the WIDTH (dW), left/right span the DEPTH (dL). Never front.
-                        if (mw.back  && dW > 0) zoneRft += dW;
-                        if (mw.left  && dL > 0) zoneRft += dL;
-                        if (mw.right && dL > 0) zoneRft += dL;
+                        // Side walls — back spans the WIDTH (dW), left/right span the DEPTH (dL). Never
+                        // front. Optional, opt-in — only counts when Masking is switched on for this zone.
+                        if (z.mkOn) {
+                          if (mw.back  && dW > 0) zoneRft += dW;
+                          if (mw.left  && dL > 0) zoneRft += dL;
+                          if (mw.right && dL > 0) zoneRft += dL;
+                        }
                       } else if (config === "half_box") {
                         // Half Box — back (L-span) + left/right (backDepth) per-toggle
                         const spanL = cfg.spanFt || dL || dW;
-                        if (mw.back  && spanL > 0)      zoneRft += spanL;
-                        if (mw.left  && sideDepth > 0)  zoneRft += sideDepth;
-                        if (mw.right && sideDepth > 0)  zoneRft += sideDepth;
+                        if (z.mkOn) {
+                          if (mw.back  && spanL > 0)      zoneRft += spanL;
+                          if (mw.left  && sideDepth > 0)  zoneRft += sideDepth;
+                          if (mw.right && sideDepth > 0)  zoneRft += sideDepth;
+                        }
                       } else if (config === "u_only") {
                         // U Truss — only "back" checkbox (L-span). No left/right.
                         const spanL = cfg.spanFt || dL || dW;
-                        if (mw.back && spanL > 0) zoneRft += spanL;
+                        if (z.mkOn && mw.back && spanL > 0) zoneRft += spanL;
                       }
+
+                      // Batta wraps every pillar + every beam this zone's truss actually has — a fixed
+                      // part of building ANY truss, done by Fabric Bangali regardless of whether the
+                      // OPTIONAL side-wall Masking is switched on. Used to only be counted when mkOn was
+                      // true (the whole zone was skipped otherwise, via the removed `if (!z.mkOn) return`
+                      // above), so a zone with real draping labour but Masking off silently contributed
+                      // nothing here even though it has its own truss/pillar/beam cost in the Truss tab.
+                      if (tInv) { try { const pv = calcZoneTrussPreview(z, tInv); if (pv?.batta?.rftWithBuffer) zoneRft += pv.batta.rftWithBuffer; } catch {} }
 
                       rftTotal += zoneRft;
                     });
@@ -682,10 +695,10 @@ export default function DCManpowerTab({ ctx }) {
                     const zc = fn.zoneConfig || {};
                     const en = fn.enabledEls || {};
                     const engBackDepth = Number(dealCheckData?.trussInv?.settings?.defaultBackDepthFt) || 4;
+                    const tInv = dealCheckData?.trussInv;
                     Object.keys(zc).forEach(zk => {
                       if (!en[zk] || !zc[zk]) return;
                       const z = zc[zk];
-                      if (!z.mkOn) return;
                       const cfg = resolveTrussConfig(z);
                       if (!cfg || !cfg.config) return;
                       const config = cfg.config;
@@ -708,20 +721,35 @@ export default function DCManpowerTab({ ctx }) {
                           }
                         }
                         parts.push({ kind: "top", label: `Top ${dL}×${dW} = ${topSqft} sqft → ${zoneTop} ppl`, workers: zoneTop });
-                        if (mw.back  && dW > 0) { parts.push({ kind: "rft", label: `Back RFT: ${dW}`,  rft: dW }); zoneRft += dW; }
-                        if (mw.left  && dL > 0) { parts.push({ kind: "rft", label: `Left RFT: ${dL}`,  rft: dL }); zoneRft += dL; }
-                        if (mw.right && dL > 0) { parts.push({ kind: "rft", label: `Right RFT: ${dL}`, rft: dL }); zoneRft += dL; }
+                        if (z.mkOn) {
+                          if (mw.back  && dW > 0) { parts.push({ kind: "rft", label: `Back RFT: ${dW}`,  rft: dW }); zoneRft += dW; }
+                          if (mw.left  && dL > 0) { parts.push({ kind: "rft", label: `Left RFT: ${dL}`,  rft: dL }); zoneRft += dL; }
+                          if (mw.right && dL > 0) { parts.push({ kind: "rft", label: `Right RFT: ${dL}`, rft: dL }); zoneRft += dL; }
+                        }
                       } else if (config === "half_box") {
                         const spanL = cfg.spanFt || dL || dW;
-                        if (mw.back  && spanL > 0)     { parts.push({ kind: "rft", label: `Back RFT: ${spanL} (L-span)`,  rft: spanL }); zoneRft += spanL; }
-                        if (mw.left  && sideDepth > 0) { parts.push({ kind: "rft", label: `Left RFT: ${sideDepth} (backDepth)`,  rft: sideDepth }); zoneRft += sideDepth; }
-                        if (mw.right && sideDepth > 0) { parts.push({ kind: "rft", label: `Right RFT: ${sideDepth} (backDepth)`, rft: sideDepth }); zoneRft += sideDepth; }
+                        if (z.mkOn) {
+                          if (mw.back  && spanL > 0)     { parts.push({ kind: "rft", label: `Back RFT: ${spanL} (L-span)`,  rft: spanL }); zoneRft += spanL; }
+                          if (mw.left  && sideDepth > 0) { parts.push({ kind: "rft", label: `Left RFT: ${sideDepth} (backDepth)`,  rft: sideDepth }); zoneRft += sideDepth; }
+                          if (mw.right && sideDepth > 0) { parts.push({ kind: "rft", label: `Right RFT: ${sideDepth} (backDepth)`, rft: sideDepth }); zoneRft += sideDepth; }
+                        }
                       } else if (config === "u_only") {
                         const spanL = cfg.spanFt || dL || dW;
-                        if (mw.back && spanL > 0) { parts.push({ kind: "rft", label: `Back RFT: ${spanL} (L-span)`, rft: spanL }); zoneRft += spanL; }
+                        if (z.mkOn && mw.back && spanL > 0) { parts.push({ kind: "rft", label: `Back RFT: ${spanL} (L-span)`, rft: spanL }); zoneRft += spanL; }
                       }
 
-                      // Skip zones with zero contribution (mkOn but no walls ticked)
+                      // Batta wraps every pillar + every beam this zone's truss actually has — always,
+                      // whether or not the OPTIONAL side-wall Masking above is switched on. Used to be
+                      // entirely invisible here: the whole zone was skipped unless mkOn was true.
+                      if (tInv) {
+                        try {
+                          const pv = calcZoneTrussPreview(z, tInv);
+                          const battaRft = pv?.batta?.rftWithBuffer || 0;
+                          if (battaRft > 0) { parts.push({ kind: "rft", label: `Batta RFT (wraps truss, buffered): ${battaRft}`, rft: battaRft }); zoneRft += battaRft; }
+                        } catch {}
+                      }
+
+                      // Skip zones with zero contribution (no top, no walls, no truss to batta-wrap)
                       if (zoneTop === 0 && zoneRft === 0) return;
 
                       grandTop += zoneTop;
