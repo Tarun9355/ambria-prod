@@ -2253,11 +2253,14 @@ export default function DealCheckOverlay({ ctx }) {
                                 {/* §26.18 + §26.19 — Carpet block with visual tile picker */}
                                 {(()=>{
                                   const zc = fns[fnIdx]?.zoneConfig?.[zk];
-                                  // Unset cpT (nobody has picked a carpet material yet) skips this card
-                                  // too, same as the explicit OFF sentinel — otherwise it renders an
-                                  // "pick a carpet" prompt for a floor that isn't being charged carpet
-                                  // at all (see carpetPricingFor in taxonomy.js).
-                                  if (!zc || !zc.cpT || zc.cpT === CARPET_OFF) return null;
+                                  // An unset cpT is NOT the same as the explicit OFF sentinel —
+                                  // carpetPricingFor (taxonomy.js) defaults an unset cpT to "Carpet
+                                  // Old" and charges for it, same as dcCostRollup's carpet loop. This
+                                  // card used to require cpT to be truthy to render at all, which hid
+                                  // it for exactly the floors that are silently being charged the
+                                  // default rate — the zone showed a rental total with no card behind
+                                  // it. Only the explicit "— None —" pick (CARPET_OFF) should hide this.
+                                  if (!zc || zc.cpT === CARPET_OFF) return null;
                                   const fd = zc.floorDims || zc.dims || {};
                                   const neededSqft = Math.round((Number(fd.L)||0)*(Number(fd.W)||0));
                                   if (neededSqft <= 0) return null;
