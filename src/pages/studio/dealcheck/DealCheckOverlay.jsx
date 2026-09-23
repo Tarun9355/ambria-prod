@@ -2047,9 +2047,16 @@ export default function DealCheckOverlay({ ctx }) {
                             that means SOMETHING NEEDS DOING, and it was the quietest thing there.
                             Red with a warning glyph when there is something, green when there is not.
                             Only the presentation moved; dirtyCount is untouched. */}
-                        {dirtyCount>0
-                          ? <div style={{fontSize:11,fontWeight:700,letterSpacing:0.6,color:"#E11D48",display:"inline-flex",alignItems:"center",gap:5,padding:"4px 9px",borderRadius:999,background:"rgba(225,29,72,0.10)",border:"1px solid rgba(225,29,72,0.22)"}}><span style={{fontSize:11,lineHeight:1}}>⚠</span>{dirtyCount} {dirtyCount===1?"issue":"issues"}</div>
-                          : <div style={{fontSize:11,fontWeight:700,letterSpacing:0.6,color:"#059669",display:"inline-flex",alignItems:"center",gap:5,padding:"4px 9px",borderRadius:999,background:"rgba(16,185,129,0.10)",border:"1px solid rgba(16,185,129,0.22)"}}><span style={{fontSize:11,lineHeight:1}}>✓</span>All clean</div>}
+                        <div style={{display:"flex",alignItems:"center",gap:8}}>
+                          {/* Same figure the nav-pill/sidebar already show for this function — reading
+                              dcCostRollup.byFn directly rather than re-summing the zone cards below
+                              means this can't drift from either of those the way a second, independent
+                              total would (see this whole file's history of exactly that bug). */}
+                          <div title="This function's total rental" style={{fontSize:11,fontWeight:700,letterSpacing:0.6,color:accent,display:"inline-flex",alignItems:"center",gap:5,padding:"4px 9px",borderRadius:999,background:"rgba(201,169,110,0.14)",border:"1px solid rgba(201,169,110,0.3)"}}>₹{Math.round(dcCostRollup.byFn?.[fnIdx]?.rental || 0).toLocaleString("en-IN")} rental</div>
+                          {dirtyCount>0
+                            ? <div style={{fontSize:11,fontWeight:700,letterSpacing:0.6,color:"#E11D48",display:"inline-flex",alignItems:"center",gap:5,padding:"4px 9px",borderRadius:999,background:"rgba(225,29,72,0.10)",border:"1px solid rgba(225,29,72,0.22)"}}><span style={{fontSize:11,lineHeight:1}}>⚠</span>{dirtyCount} {dirtyCount===1?"issue":"issues"}</div>
+                            : <div style={{fontSize:11,fontWeight:700,letterSpacing:0.6,color:"#059669",display:"inline-flex",alignItems:"center",gap:5,padding:"4px 9px",borderRadius:999,background:"rgba(16,185,129,0.10)",border:"1px solid rgba(16,185,129,0.22)"}}><span style={{fontSize:11,lineHeight:1}}>✓</span>All clean</div>}
+                        </div>
                       </div>
                       {zoneList.map(zk => {
                         const collapseKey = `${fnIdx}|${zk}`;
