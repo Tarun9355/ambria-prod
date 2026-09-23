@@ -5094,7 +5094,6 @@ export default function StudioApp() {
     const REPEAT_REAL_QTY_MULT = 0.2;
     const REPEAT_ART_QTY_MULT = 0.7;
     let tArt = 0, realIncome = 0, artIncome = 0, artFlowerBunches = 0, artGreenBunches = 0, fixedExtras = 0;
-    const _dbgContrib = {};
     // Real-flower quantities/rates, aggregated by mandi parent id across every element in this
     // function — mirrors DCFloralsTab.jsx's own `flowerAgg`. Needed (not just a running total)
     // because the swap-override pass below has to divert quantity FROM one flower's aggregate
@@ -5138,10 +5137,18 @@ export default function StudioApp() {
         // happened to match a Rate Card row, so most of a real build's florals silently contributed
         // NOTHING to this total, while DCFloralsTab.jsx (which resolves invId directly) kept showing
         // the correct, much larger figure. Same fix as that tab, ported here so the two agree.
-        const invItem = el.invId ? imsInventory.find(i => i.id === el.invId) : null;
+        // imsInventory is the boot-time snapshot (fetchAll("inventory") once at app load, patched
+        // only by realtime deltas afterward) — dcInventoryCache is Deal Check's own copy, freshly
+        // re-fetched every time Deal Check opens/regenerates. An item added or changed since boot
+        // (confirmed: "Round Fibre Pot"/"Iron bucket" resolved fine in DCFloralsTab.jsx via
+        // dcInventoryCache but came back undefined here) silently dropped out of this rollup's
+        // floral total while the tab kept counting it correctly. dcInventoryCache as a fallback,
+        // not primary, since this function must still work before Deal Check has ever been opened
+        // (dcInventoryCache is empty until then) — same "no Deal-Check-gated pricing" reasoning as
+        // the dealCheckData→studioFloralData fallbacks already in this function.
+        const invItem = el.invId ? (imsInventory.find(i => i.id === el.invId) || (dcInventoryCache || []).find(i => i.id === el.invId)) : null;
         const invIsFloral = !!invItem && String(invItem.cat || invItem.category || "").toLowerCase() === "florals";
         const elPat = el.patternId ? fp.find(p => p.id === el.patternId) : null;
-        if (["Flower bedding", "Iron bucket", "Round Fibre Pot"].includes((el.name || "").trim())) console.log("[floralDbg ROLLUP resolve]", el.name, "zk", zk, "invId", el.invId, "patternId", el.patternId, "invItem", invItem?.name, invItem?.cat || invItem?.category, "elPat", elPat?.name, "rc", rc?.name, rc?.cat, "isFloral", (!!el.patternId || invIsFloral || String(rc?.cat || "").toLowerCase() === "florals"), "elQty", el.qty);
         if (!el.patternId && !invIsFloral && String(rc?.cat || "").toLowerCase() !== "florals") return;
         const q = el.qty || 0; if (q <= 0) return;
         const rp = resRP(el, rc, invItem, elPat) / 100, ap = 1 - rp;
@@ -5206,7 +5213,6 @@ export default function StudioApp() {
           const basePrice = prefRate > 0 ? prefRate : variantRate > 0 ? variantRate : (Number(parent?.currentPrice) || 0);
           const bp = (prefRate > 0 || variantRate > 0) ? basePrice : basePrice * sMult;
           const realUnits = (fl.qty || 0) * q * effR * (zoneRepeat ? REPEAT_REAL_QTY_MULT : 1);
-          if ((parentId === "F1781867011660" || parentId === "F1781867006469") && (fn?.fnType === "Wedding" || fn?.fnDate === "2026-09-30")) { const k = parentId + " | " + zk + "::" + el.name; _dbgContrib[k] = (_dbgContrib[k] || 0) + realUnits; }
           if (realUnits > 0 && parent) {
             const agg = flowerAgg.get(parentId) || { totalQty: 0, unitPrice: bp, name: parent.name || "Flower", unit: parent.unit || "" };
             agg.totalQty += realUnits;
@@ -5265,9 +5271,8 @@ export default function StudioApp() {
       if (!fbreak[v.name]) fbreak[v.name] = { name: v.name, qty: 0, cost: 0, unit: v.unit };
       fbreak[v.name].qty += v.totalQty; fbreak[v.name].cost += cost;
     });
-    if (fn?.fnType === "Wedding" || fn?.fnDate === "2026-09-30") { console.log("[floralDbg ROLLUP]", fn?.fnType, "tReal", Math.round(tReal), "tArt", Math.round(tArt), "fixedExtras", Math.round(fixedExtras), "artFlowerBunches", Math.round(artFlowerBunches), "artGreenBunches", Math.round(artGreenBunches), "flowerAgg", Array.from(flowerAgg.entries()).map(([k, v]) => ({ id: k, name: v.name, qty: Math.round(v.totalQty * 100) / 100, rate: v.unitPrice, cost: Math.round(v.totalQty * v.unitPrice) }))); console.log("[floralDbg ROLLUP contrib]", _dbgContrib); }
     return { totalReal: tReal, totalArtificial: tArt, grandTotal: tReal + tArt, breakdown: Object.values(fbreak).map(f => ({ ...f, qty: Math.ceil(f.qty), cost: Math.round(f.cost) })).sort((a, b) => b.cost - a.cost), artFlowerBunches, artGreenBunches, income: { real: realIncome, art: artIncome } };
-  }, [dealCheckData, studioFloralData, rcItems, floralRatio, resolveRcRate, rcFloralModeByKey, dcFloralColorPrefs, imsInventory]);
+  }, [dealCheckData, studioFloralData, rcItems, floralRatio, resolveRcRate, rcFloralModeByKey, dcFloralColorPrefs, imsInventory, dcInventoryCache]);
   // Sync for calcFnFloralSourcingCostRef — see its declaration (near collectAllFunctionDataRef) for
   // why transportCalc/calcFunctionCost need to reach this function through a ref instead of calling
   // it directly: both are declared earlier in the file, so a direct reference would be a TDZ

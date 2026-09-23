@@ -126,7 +126,6 @@ export default function DCFloralsTab({ ctx }) {
                   // wrong bucket. Listing them makes that visible instead of silent.
                   const uncosted = [];
                   let totalReal = 0, totalArtificial = 0;
-                  const _dbgContrib = {};
                   // Tier 2.1 (25 May 2026) — per-row overrides from floralOverrides.rows.
                   // Map: parentId → { colorVariant?, splitFromOriginal? } for quick lookup during aggregation.
                   // Lets the iteration apply variant prices and split rows without rewriting the loop.
@@ -209,18 +208,8 @@ export default function DCFloralsTab({ ctx }) {
                       const invItem = el.invId ? (dcInventoryCache || []).find(i => i.id === el.invId) : null;
                       const invIsFloral = !!invItem && String(invItem.cat || invItem.category || "").toLowerCase() === "florals";
                       const isFloral = !!el.patternId || invIsFloral || String(rc?.cat || "").toLowerCase() === "florals";
-                      if (["Flower bedding", "Iron bucket", "Round Fibre Pot"].includes((el.name || "").trim())) console.log("[floralDbg TAB resolve]", el.name, "zk", zk, "invId", el.invId, "patternId", el.patternId, "invItem", invItem?.name, invItem?.cat, "elPattern", elPattern?.name, "rc", rc?.name, rc?.cat, "isFloral", isFloral, "elQty", elQty);
                       if (!isFloral) return;                 // lighting, structure, furniture — not this tab's business
                       if (elQty <= 0) return;
-                      // Floral, but nothing to price it by. Record rather than drop: the header used
-                      // to read "1 ELEMENT" while others were silently on the floor.
-                      if (!rc && !elPattern && !invItem) {
-                        uncosted.push({ name: el.name || "(unnamed)", zoneKey: zk, qty: elQty, reason: "No rate-card entry or recipe" });
-                        return;
-                      }
-                      const realPct = resolveRealPct(el, rc, invItem, elPattern);
-                      const realFrac = realPct / 100;
-                      const artFrac = 1 - realFrac;
                       // Prefer the recipe the BUILD actually priced this element with, checked in
                       // Build's own priority order (invId, then patternId, then Rate Card by name).
                       // Re-deriving it a different way could land on a different recipe than the
@@ -234,9 +223,28 @@ export default function DCFloralsTab({ ctx }) {
                       // backwards from how recipes are organised: a recipe is created PER SUB-CATEGORY
                       // and applies to every differently-named product in it — a pure name comparison
                       // would never find it, and risks false positives on short/generic names besides.
+                      // Computed BEFORE the "nothing to price it by" check below — this used to bail
+                      // to `uncosted` the moment rc/elPattern/invItem were all null, without ever
+                      // trying this same fallback the ROLLUP (calcFnFloralSourcingCost, StudioApp.jsx)
+                      // already attempts. A patternId that no longer resolves by id (its recipe was
+                      // recreated/renamed in IMS Mandi) but whose element name matches a live pattern's
+                      // own name EXACTLY (matchFlowerPattern's own last-resort branch) is a legitimate
+                      // recovery, not a coincidental guess — confirmed live: "Flower bedding" resolved
+                      // to a real pattern in the rollup this way and contributed real, correct money,
+                      // while this tab dropped it into uncosted and silently showed ₹0 for it.
                       let pattern = elPattern
                         || (invItem ? matchFlowerPattern(invItem, flowerPatterns) : null)
                         || matchFlowerPattern({ subcategory: rc?.sub, name: rc?.name || el.name }, flowerPatterns);
+                      // Floral, but nothing to price it by — genuinely, even after the name-fallback
+                      // above. Record rather than drop: the header used to read "1 ELEMENT" while
+                      // others were silently on the floor.
+                      if (!rc && !elPattern && !invItem && !pattern) {
+                        uncosted.push({ name: el.name || "(unnamed)", zoneKey: zk, qty: elQty, reason: "No rate-card entry or recipe" });
+                        return;
+                      }
+                      const realPct = resolveRealPct(el, rc, invItem, elPattern);
+                      const realFrac = realPct / 100;
+                      const artFrac = 1 - realFrac;
                       // Build sizes an invId floral element the same way regardless of any Rate Card
                       // "smb" mode (sizeClassToPatternKey/normalizeSizeClass, getElPriceFromInventory)
                       // — sizeFromMode below requires rc.inhouseMode==="smb" to honour el.size at all,
@@ -336,7 +344,6 @@ export default function DCFloralsTab({ ctx }) {
                             const totalFlowerQtyFull = (fl.qty || 0) * elQty * effectiveRealFrac;
                             const totalFlowerQty = totalFlowerQtyFull * realQtyFrac;
                             const lineCost = totalFlowerQty * unitPrice;
-                            if ((parentId === "F1781867011660" || parentId === "F1781867006469") && (activeFn?.fnType === "Wedding" || activeFn?.fnDate === "2026-09-30")) { const k = parentId + " | " + zk + "::" + el.name; _dbgContrib[k] = (_dbgContrib[k] || 0) + totalFlowerQty; }
                             realCostPerUnit += (fl.qty || 0) * unitPrice;
                             const displayName = parent?.name || fl.flowerId;
                             realLines.push({ flowerId: parentId, name: displayName, perPattern: fl.qty || 0, qty: totalFlowerQty, unit: parent?.unit || "kg", unitPrice, lineCost, realOnly: flowerType === "real_only", variantPicked: override?.colorVariant?.label || null });
@@ -530,7 +537,6 @@ export default function DCFloralsTab({ ctx }) {
                   });
                   const sortedAgg = Array.from(flowerAgg.values()).sort((a,b) => b.totalQty - a.totalQty);
                   const grandTotal = totalReal + totalArtificial;
-                  if (activeFn?.fnType === "Wedding" || activeFn?.fnDate === "2026-09-30") { console.log("[floralDbg TAB]", activeFn?.fnType, "totalReal", Math.round(totalReal), "totalArtificial", Math.round(totalArtificial), "flowerAgg", Array.from(flowerAgg.entries()).map(([k, v]) => ({ id: k, name: v.name, qty: Math.round(v.totalQty * 100) / 100, rate: v.unitPrice, cost: Math.round(v.totalQty * v.unitPrice) }))); console.log("[floralDbg TAB contrib]", _dbgContrib); }
                   const overallRealPct = grandTotal > 0 ? Math.round((totalReal / grandTotal) * 100) : 0;
                   // §26 — Total artificial bunches for this function (sum of realUnitsReplaced across all art lines)
                   const totalArtBunches = elementBreakdown.reduce((sum, eb) =>
