@@ -968,11 +968,6 @@ export default function DCManpowerTab({ ctx }) {
                     bookingTotalCost += dayBreakdown.total;
                     bookingTotalDihari += dayBreakdown.slots;
                   });
-                  if (fns.length === 2) {
-                    const _byType = {};
-                    Object.values(dayCosts).forEach(db => Object.entries(db.byType).forEach(([t, v]) => { _byType[t] = (_byType[t] || 0) + v.cost; }));
-                    console.log("[mpDbg TAB]", "total", Math.round(bookingTotalCost), "byType", Object.fromEntries(Object.entries(_byType).map(([k,v])=>[k,Math.round(v)])), "days", Object.entries(dayCosts).map(([date, db]) => ({ date, phase: dayList.find(d=>d.date===date)?.phase, byType: Object.fromEntries(Object.entries(db.byType).map(([t,v])=>[t,{ppl:v.ppl, dihari:v.dihari, cost:Math.round(v.cost)}])) })));
-                  }
 
                   // ── Scope to the selected function unless "All functions" is on ──
                   // The cumulative MAX rule above still has to run over every day of the WHOLE

@@ -92,7 +92,7 @@ const IV = {
 // Money and counts are read down a column and compared, so they need fixed-width digits.
 const NUM = { fontVariantNumeric: "tabular-nums" };
 import { heavyExtraLabour, eventTimingMultFor, SIT_MULT_DEFAULTS } from "../../../lib/ims/constants";
-import { deptMpReconciled, itemImsSubcat, lookupBySubcat, itemDimsText } from "../../../lib/ims/helpers";
+import { deptMpReconciled, itemImsSubcat, lookupBySubcat, itemDimsText, walkKitUnits } from "../../../lib/ims/helpers";
 import { rentalSplit, availableAtVenue, isStandingAt, fixedVenueFor, standingReductionBySubcat, fixedVenueDealDiscount } from "../../../lib/ims/fixedVenues";
 import { calcZoneFabric, autoFillFabricAllocation, resolveTrussConfig, zoneTrussStandingDiscount } from "../../../lib/studio/pricing";
 import { carpetPricingFor, CARPET_OFF } from "../../../lib/studio/taxonomy";
@@ -855,16 +855,30 @@ export default function DealCheckOverlay({ ctx }) {
                   // (Inventory) or el.patternId (a pure flower-recipe element). No Rate-Card name-
                   // match fallback: Rate Card's own `.sub` is a separate, older vocabulary that
                   // doesn't track IMS's live Sub-Categories master.
-                  let rc = null;
-                  if (el.invId) {
-                    const invItem = (dcInventoryCache || []).find(i => i.id === el.invId);
-                    if (invItem) rc = { name: invItem.name, cat: invItem.cat || invItem.category || "", sub: invItem.subCat || invItem.subcategory || "" };
-                  }
-                  if (!rc && el.patternId) rc = { name: el.name || "", cat: "florals", sub: "" };
-                  if (!rc) return;
                   const qty = el.qty || 0;
                   if (qty <= 0) return;
-                  cb({ rc, el, qty, zk });
+                  if (el.invId) {
+                    const invItem = (dcInventoryCache || []).find(i => i.id === el.invId);
+                    if (invItem) {
+                      // A kit's components each carry their OWN cat/sub — a stage kit built from
+                      // carpentry/paint/fabric sub-parts used to count entirely under whatever the
+                      // kit itself is filed as. walkKitUnits (same node-walker Transport/Florals
+                      // already use) visits the kit's own node plus every component, so each feeds
+                      // crew-hours into its own bucket instead of one — MUST match DCManpowerTab's
+                      // own walkFnElements, which already had this; this copy never did, so Carpenters/
+                      // Painters (tier-2 sub-category types, the common home for kit components) came
+                      // in lower here than the tab whenever a kit had carpentry/paint sub-parts.
+                      if (Array.isArray(invItem.subItems) && invItem.subItems.length > 0) {
+                        walkKitUnits(invItem, qty, dcInventoryCache, el.kitOverrides, (node, nodeQty) => {
+                          cb({ rc: { name: node.name, cat: node.cat || node.category || "", sub: node.subCat || node.subcategory || "" }, el, qty: nodeQty, zk });
+                        });
+                      } else {
+                        cb({ rc: { name: invItem.name, cat: invItem.cat || invItem.category || "", sub: invItem.subCat || invItem.subcategory || "" }, el, qty, zk });
+                      }
+                      return;
+                    }
+                  }
+                  if (el.patternId) cb({ rc: { name: el.name || "", cat: "florals", sub: "" }, el, qty, zk });
                 }); });
               };
               // "Repeat" model (ANY venue): a repeat zone reuses an existing setup → no build labour, so we
@@ -1117,7 +1131,6 @@ export default function DealCheckOverlay({ ctx }) {
                 const _aggFrac = {}; if (labourUsageMode && labourUsageTotal > 0) DEPTS.forEach(dp => { _aggFrac[dp] = (labourUsageByDept[dp] || 0) / labourUsageTotal; });
                 let _lastFrac = Object.keys(_aggFrac).length ? _aggFrac : null;
                 let running = {}; labourTypes.forEach(t => { running[t] = 0; });
-                const _dbgMp = [];
                 dayList.forEach(d => {
                   if (d.phase === "minusOne") { labourTypes.forEach(t => { let mx = 0; fns.forEach((fn, fi) => { if ((peopleByFn[t][fi]||0) > mx) mx = peopleByFn[t][fi]; }); running[t] = Math.max(running[t], mx); }); }
                   else if (d.phase === "event") { labourTypes.forEach(t => { let need = 0; d.fns.forEach(fn => { const fi = fns.indexOf(fn); if ((peopleByFn[t][fi]||0) > need) need = peopleByFn[t][fi]; }); running[t] = Math.max(running[t], need); }); }
@@ -1150,7 +1163,6 @@ export default function DealCheckOverlay({ ctx }) {
                     const mpCost = daySlots * (rateByType[t] || 0);
                     manpower += mpCost;
                     mpByType[t] = (mpByType[t] || 0) + mpCost;
-                    _dbgMp.push({ date: d.date, phase: d.phase, type: t, ppl, wins: wins.length, daySlots, rate: rateByType[t] || 0, mpCost: Math.round(mpCost) });
                     // Per-day labour cost → departments by THIS day's usage fractions.
                     if (t === "Labours" && labourUsageMode && labourUsageTotal > 0 && dayFrac && mpCost > 0) { DEPTS.forEach(dp => { labourDeptCost[dp] += mpCost * (dayFrac[dp] || 0); }); }
                     if (wins.length > 0) {
@@ -1165,7 +1177,6 @@ export default function DealCheckOverlay({ ctx }) {
                     }
                   });
                 });
-                if (fns.length === 2) console.log("[mpDbg ROLLUP]", "total", Math.round(manpower), "byType", Object.fromEntries(Object.entries(mpByType).map(([k,v])=>[k,Math.round(v)])), "days", _dbgMp);
               }
             }
           } catch {}
