@@ -5168,6 +5168,7 @@ export default function StudioApp() {
         // invId element it's fed the real IMS inventory item (matching getElPriceFromInventory
         // exactly) instead of a coincidental Rate Card name-match.
         let pat = elPat || (invItem ? matchFlowerPattern(invItem, fp) : null) || matchFlowerPattern({ subcategory: rc?.sub, name: rc?.name || el.name }, fp);
+        if (["Round Fibre Pot", "Iron bucket"].includes((el.name || "").trim())) console.log("[floralDbg2 ROLLUP]", el.name, "zk", zk, "invId", el.invId, "invItemFound", !!invItem, "invItemSub", invItem?.subCat || invItem?.subcategory, "invItemSrc", invItem ? (imsInventory.find(i=>i.id===el.invId) ? "imsInventory" : "dcInventoryCache") : "none", "patFound", !!pat, "patSub", pat?.sub, "patName", pat?.name);
         if (!pat) return;
         // Build sizes an invId floral element the same way regardless of any Rate Card "smb" mode —
         // sizeFromMode/szMap below requires rc.inhouseMode==="smb" to honour el.size at all, which an
