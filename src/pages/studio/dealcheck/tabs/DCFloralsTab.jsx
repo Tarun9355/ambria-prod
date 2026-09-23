@@ -334,6 +334,7 @@ export default function DCFloralsTab({ ctx }) {
                             const totalFlowerQtyFull = (fl.qty || 0) * elQty * effectiveRealFrac;
                             const totalFlowerQty = totalFlowerQtyFull * realQtyFrac;
                             const lineCost = totalFlowerQty * unitPrice;
+                            if ((parentId === "F1781867011660" || parentId === "F1781867006469") && (activeFn?.fnType === "Wedding" || activeFn?.fnDate === "2026-09-30")) console.log("[floralDbg TAB el]", parentId, "el", el.name, "zk", zk, "elQty", elQty, "flQty", fl.qty, "realFrac", realFrac, "effectiveRealFrac", effectiveRealFrac, "zoneRepeat", zoneRepeat, "totalFlowerQty", totalFlowerQty);
                             realCostPerUnit += (fl.qty || 0) * unitPrice;
                             const displayName = parent?.name || fl.flowerId;
                             realLines.push({ flowerId: parentId, name: displayName, perPattern: fl.qty || 0, qty: totalFlowerQty, unit: parent?.unit || "kg", unitPrice, lineCost, realOnly: flowerType === "real_only", variantPicked: override?.colorVariant?.label || null });

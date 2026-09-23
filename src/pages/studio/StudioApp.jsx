@@ -5204,6 +5204,7 @@ export default function StudioApp() {
           const basePrice = prefRate > 0 ? prefRate : variantRate > 0 ? variantRate : (Number(parent?.currentPrice) || 0);
           const bp = (prefRate > 0 || variantRate > 0) ? basePrice : basePrice * sMult;
           const realUnits = (fl.qty || 0) * q * effR * (zoneRepeat ? REPEAT_REAL_QTY_MULT : 1);
+          if ((parentId === "F1781867011660" || parentId === "F1781867006469") && (fn?.fnType === "Wedding" || fn?.fnDate === "2026-09-30")) console.log("[floralDbg ROLLUP el]", parentId, "el", el.name, "zk", zk, "elQty", q, "flQty", fl.qty, "rp", rp, "effR", effR, "zoneRepeat", zoneRepeat, "realUnits", realUnits);
           if (realUnits > 0 && parent) {
             const agg = flowerAgg.get(parentId) || { totalQty: 0, unitPrice: bp, name: parent.name || "Flower", unit: parent.unit || "" };
             agg.totalQty += realUnits;
