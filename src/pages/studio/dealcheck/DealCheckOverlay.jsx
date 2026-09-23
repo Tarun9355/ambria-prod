@@ -1292,8 +1292,20 @@ export default function DealCheckOverlay({ ctx }) {
           const smartInternalCost = effGrand + commissionTotal;
           const smartOrigProfitPct = dealAmount > 0 ? Math.round(((dealAmount - smartInternalCost) / dealAmount) * 100) : 0;
           const smartDesiredPct = dcDesiredMargin !== null ? dcDesiredMargin : smartOrigProfitPct;
+          // Commission is a % of the deal amount, so it SCALES with the revised quote (see
+          // liveCommissionTotal below) rather than staying fixed at commissionTotal's original
+          // rupee value. Solving smartInternalCost/(1-desiredPct/100) treated commission as fixed
+          // while liveCommissionTotal still scales it against whatever quote that solve produces —
+          // so the Net Profit chip (liveQuote - effGrand - liveCommissionTotal) always undershot the
+          // desiredPct the salesperson picked, by exactly the extra commission the higher quote
+          // pulls in (confirmed: 15% chosen showed as 14% actual). Solving
+          // quote − effGrand − commRate·quote = (desiredPct/100)·quote for quote instead gives
+          // effGrand / (1 − commRate − desiredPct/100), which folds the scaling into the solve
+          // itself so the realized margin matches what was picked.
+          const commRate = dealAmount > 0 ? commissionTotal / dealAmount : 0;
+          const smartRevisedQuoteDenom = 1 - commRate - smartDesiredPct / 100;
           const smartRevisedQuote = !smartQuoteActive ? dealAmount
-            : (smartDesiredPct < 100 ? Math.round(smartInternalCost / (1 - smartDesiredPct / 100)) : smartInternalCost);
+            : (smartRevisedQuoteDenom > 0 ? Math.round(effGrand / smartRevisedQuoteDenom) : smartInternalCost);
           // liveQuote/liveCommissionTotal: what any "what does this deal look like right now" display
           // should read instead of dealAmount/commissionTotal when the calculator is engaged. Commission
           // scales proportionally with the live quote at the SAME blended rate (commissionTotal/dealAmount)
@@ -4287,8 +4299,16 @@ export default function DealCheckOverlay({ ctx }) {
                                 </div>
                                 <div style={{display:"flex",alignItems:"center",gap:12}}>
                                   <span style={{fontSize:10.5,fontWeight:700,color:INK_2,letterSpacing:0.8,textTransform:"uppercase",whiteSpace:"nowrap"}}>Margin</span>
-                                  <input type="range" min={0} max={Math.min(origProfitPct + 5, 60)} value={desiredPct} onChange={e=>setDcDesiredMargin(Number(e.target.value))} style={{flex:1,accentColor:rev}} />
-                                  <span style={{fontSize:19,fontWeight:750,color:rev,minWidth:52,textAlign:"right",letterSpacing:-0.5,...NUM}}>{desiredPct}%</span>
+                                  {/* Used to cap at origProfitPct + 5 — with a 10% original margin
+                                      that maxed out at 15%, silently below every preset pill past
+                                      "15%" even though clicking one worked fine. The slider's own
+                                      ceiling now matches the presets/manual field (60%, the same
+                                      hard cap this already enforced further down). */}
+                                  <input type="range" min={0} max={60} value={desiredPct} onChange={e=>setDcDesiredMargin(Number(e.target.value))} style={{flex:1,accentColor:rev}} />
+                                  <input type="number" min={-100} max={200} step={1} value={desiredPct}
+                                    onChange={e=>{ const v = Number(e.target.value); if (Number.isFinite(v)) setDcDesiredMargin(Math.max(-100, Math.min(200, Math.round(v)))); }}
+                                    style={{width:60,fontSize:15,fontWeight:750,color:rev,textAlign:"right",padding:"4px 6px",borderRadius:8,border:`1px solid ${TILE_BORDER}`,background:TILE_BG,...NUM}}/>
+                                  <span style={{fontSize:19,fontWeight:750,color:rev,letterSpacing:-0.5,...NUM}}>%</span>
                                 </div>
                                 <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))",gap:12}}>
                                   {[
