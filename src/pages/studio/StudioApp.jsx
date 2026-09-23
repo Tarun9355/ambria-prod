@@ -5109,7 +5109,36 @@ export default function StudioApp() {
     Object.entries(fn?.zoneElements || {}).forEach(([zk, elems]) => {
       if (!fn.enabledEls?.[zk]) return;
       const zoneRepeat = !!fn.zoneConfig?.[zk]?.repeat;
+      // A kit's own subItems can carry floral content of their own (a flower-recipe add-on via
+      // si.patternId, or a component item itself categorized as florals, e.g. "Round Fibre Pot"
+      // nested inside a stage kit) — mirrors DCFloralsTab.jsx's own expandedElems fix exactly.
+      // That fix only ever landed in the tab; this rollup kept walking `elems` raw, so a kit's
+      // floral sub-components never existed here under their own name at all — not a resolution
+      // failure, the element simply never appeared in this loop to resolve in the first place.
+      // Confirmed live: "Round Fibre Pot"/"Iron bucket" (real florals-category sub-items of a kit)
+      // counted correctly in the tab via this exact expansion and never appeared in this rollup's
+      // diagnostic logging at all, at any gate — because there was nothing here named that to gate.
+      const expandedElems = [];
       (elems || []).forEach(el => {
+        expandedElems.push(el);
+        const kitInvItem = el.invId ? (imsInventory.find(i => i.id === el.invId) || (dcInventoryCache || []).find(i => i.id === el.invId)) : null;
+        if (kitInvItem && Array.isArray(kitInvItem.subItems) && kitInvItem.subItems.length > 0) {
+          const outerQty = el.qty || 0;
+          (kitInvItem.subItems || []).forEach(si => {
+            const siQty = (Number(si.qty) || 0) * outerQty;
+            if (siQty <= 0) return;
+            if (si.patternId) {
+              expandedElems.push({ name: `${el.name || kitInvItem.name} · recipe`, patternId: si.patternId, qty: siQty, size: el.size });
+              return;
+            }
+            const ci = si.itemId ? (imsInventory.find(i => i.id === si.itemId) || (dcInventoryCache || []).find(i => i.id === si.itemId)) : null;
+            if (ci && String(ci.cat || ci.category || "").toLowerCase() === "florals") {
+              expandedElems.push({ name: ci.name, invId: ci.id, qty: siQty, size: el.size });
+            }
+          });
+        }
+      });
+      expandedElems.forEach(el => {
         // Mirrors DCFloralsTab's resolution — the two must agree, or the tab lists elements the
         // bottom-bar total does not count. An exact-only rate-card match dropped "Blue Pottery Pot
         // Big" (the row is "Blue Pottery Pot"), and keying "is this floral" off the rate-card
@@ -5149,7 +5178,6 @@ export default function StudioApp() {
         const invItem = el.invId ? (imsInventory.find(i => i.id === el.invId) || (dcInventoryCache || []).find(i => i.id === el.invId)) : null;
         const invIsFloral = !!invItem && String(invItem.cat || invItem.category || "").toLowerCase() === "florals";
         const elPat = el.patternId ? fp.find(p => p.id === el.patternId) : null;
-        if (["Round Fibre Pot", "Iron bucket"].includes((el.name || "").trim())) console.log("[floralDbg3 ROLLUP early]", el.name, "zk", zk, "elInvId", el.invId, "invItemFound", !!invItem, "invItemCat", invItem?.cat, invItem?.category, "invIsFloral", invIsFloral, "elQty", el.qty, "willReturnEarly", (!el.patternId && !invIsFloral && String(rc?.cat || "").toLowerCase() !== "florals"));
         if (!el.patternId && !invIsFloral && String(rc?.cat || "").toLowerCase() !== "florals") return;
         const q = el.qty || 0; if (q <= 0) return;
         const rp = resRP(el, rc, invItem, elPat) / 100, ap = 1 - rp;
@@ -5169,7 +5197,6 @@ export default function StudioApp() {
         // invId element it's fed the real IMS inventory item (matching getElPriceFromInventory
         // exactly) instead of a coincidental Rate Card name-match.
         let pat = elPat || (invItem ? matchFlowerPattern(invItem, fp) : null) || matchFlowerPattern({ subcategory: rc?.sub, name: rc?.name || el.name }, fp);
-        if (["Round Fibre Pot", "Iron bucket"].includes((el.name || "").trim())) console.log("[floralDbg2 ROLLUP]", el.name, "zk", zk, "invId", el.invId, "invItemFound", !!invItem, "invItemSub", invItem?.subCat || invItem?.subcategory, "invItemSrc", invItem ? (imsInventory.find(i=>i.id===el.invId) ? "imsInventory" : "dcInventoryCache") : "none", "patFound", !!pat, "patSub", pat?.sub, "patName", pat?.name);
         if (!pat) return;
         // Build sizes an invId floral element the same way regardless of any Rate Card "smb" mode —
         // sizeFromMode/szMap below requires rc.inhouseMode==="smb" to honour el.size at all, which an

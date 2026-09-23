@@ -235,7 +235,6 @@ export default function DCFloralsTab({ ctx }) {
                       let pattern = elPattern
                         || (invItem ? matchFlowerPattern(invItem, flowerPatterns) : null)
                         || matchFlowerPattern({ subcategory: rc?.sub, name: rc?.name || el.name }, flowerPatterns);
-                      if (["Round Fibre Pot", "Iron bucket"].includes((el.name || "").trim())) console.log("[floralDbg2 TAB]", el.name, "zk", zk, "invItemSub", invItem?.subCat || invItem?.subcategory, "patFound", !!pattern, "patSub", pattern?.sub, "patName", pattern?.name);
                       // Floral, but nothing to price it by — genuinely, even after the name-fallback
                       // above. Record rather than drop: the header used to read "1 ELEMENT" while
                       // others were silently on the floor.
