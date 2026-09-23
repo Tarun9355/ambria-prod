@@ -5094,6 +5094,7 @@ export default function StudioApp() {
     const REPEAT_REAL_QTY_MULT = 0.2;
     const REPEAT_ART_QTY_MULT = 0.7;
     let tArt = 0, realIncome = 0, artIncome = 0, artFlowerBunches = 0, artGreenBunches = 0, fixedExtras = 0;
+    const _dbgContrib = {};
     // Real-flower quantities/rates, aggregated by mandi parent id across every element in this
     // function — mirrors DCFloralsTab.jsx's own `flowerAgg`. Needed (not just a running total)
     // because the swap-override pass below has to divert quantity FROM one flower's aggregate
@@ -5204,7 +5205,7 @@ export default function StudioApp() {
           const basePrice = prefRate > 0 ? prefRate : variantRate > 0 ? variantRate : (Number(parent?.currentPrice) || 0);
           const bp = (prefRate > 0 || variantRate > 0) ? basePrice : basePrice * sMult;
           const realUnits = (fl.qty || 0) * q * effR * (zoneRepeat ? REPEAT_REAL_QTY_MULT : 1);
-          if ((parentId === "F1781867011660" || parentId === "F1781867006469") && (fn?.fnType === "Wedding" || fn?.fnDate === "2026-09-30")) console.log("[floralDbg ROLLUP el]", parentId, "el", el.name, "zk", zk, "elQty", q, "flQty", fl.qty, "rp", rp, "effR", effR, "zoneRepeat", zoneRepeat, "realUnits", realUnits);
+          if ((parentId === "F1781867011660" || parentId === "F1781867006469") && (fn?.fnType === "Wedding" || fn?.fnDate === "2026-09-30")) { const k = parentId + " | " + zk + "::" + el.name; _dbgContrib[k] = (_dbgContrib[k] || 0) + realUnits; }
           if (realUnits > 0 && parent) {
             const agg = flowerAgg.get(parentId) || { totalQty: 0, unitPrice: bp, name: parent.name || "Flower", unit: parent.unit || "" };
             agg.totalQty += realUnits;
@@ -5263,7 +5264,7 @@ export default function StudioApp() {
       if (!fbreak[v.name]) fbreak[v.name] = { name: v.name, qty: 0, cost: 0, unit: v.unit };
       fbreak[v.name].qty += v.totalQty; fbreak[v.name].cost += cost;
     });
-    if (fn?.fnType === "Wedding" || fn?.fnDate === "2026-09-30") console.log("[floralDbg ROLLUP]", fn?.fnType, "tReal", Math.round(tReal), "tArt", Math.round(tArt), "fixedExtras", Math.round(fixedExtras), "artFlowerBunches", Math.round(artFlowerBunches), "artGreenBunches", Math.round(artGreenBunches), "flowerAgg", Array.from(flowerAgg.entries()).map(([k, v]) => ({ id: k, name: v.name, qty: Math.round(v.totalQty * 100) / 100, rate: v.unitPrice, cost: Math.round(v.totalQty * v.unitPrice) })));
+    if (fn?.fnType === "Wedding" || fn?.fnDate === "2026-09-30") { console.log("[floralDbg ROLLUP]", fn?.fnType, "tReal", Math.round(tReal), "tArt", Math.round(tArt), "fixedExtras", Math.round(fixedExtras), "artFlowerBunches", Math.round(artFlowerBunches), "artGreenBunches", Math.round(artGreenBunches), "flowerAgg", Array.from(flowerAgg.entries()).map(([k, v]) => ({ id: k, name: v.name, qty: Math.round(v.totalQty * 100) / 100, rate: v.unitPrice, cost: Math.round(v.totalQty * v.unitPrice) }))); console.log("[floralDbg ROLLUP contrib]", _dbgContrib); }
     return { totalReal: tReal, totalArtificial: tArt, grandTotal: tReal + tArt, breakdown: Object.values(fbreak).map(f => ({ ...f, qty: Math.ceil(f.qty), cost: Math.round(f.cost) })).sort((a, b) => b.cost - a.cost), artFlowerBunches, artGreenBunches, income: { real: realIncome, art: artIncome } };
   }, [dealCheckData, studioFloralData, rcItems, floralRatio, resolveRcRate, rcFloralModeByKey, dcFloralColorPrefs, imsInventory]);
   // Sync for calcFnFloralSourcingCostRef — see its declaration (near collectAllFunctionDataRef) for

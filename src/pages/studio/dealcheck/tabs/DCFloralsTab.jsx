@@ -126,6 +126,7 @@ export default function DCFloralsTab({ ctx }) {
                   // wrong bucket. Listing them makes that visible instead of silent.
                   const uncosted = [];
                   let totalReal = 0, totalArtificial = 0;
+                  const _dbgContrib = {};
                   // Tier 2.1 (25 May 2026) — per-row overrides from floralOverrides.rows.
                   // Map: parentId → { colorVariant?, splitFromOriginal? } for quick lookup during aggregation.
                   // Lets the iteration apply variant prices and split rows without rewriting the loop.
@@ -334,7 +335,7 @@ export default function DCFloralsTab({ ctx }) {
                             const totalFlowerQtyFull = (fl.qty || 0) * elQty * effectiveRealFrac;
                             const totalFlowerQty = totalFlowerQtyFull * realQtyFrac;
                             const lineCost = totalFlowerQty * unitPrice;
-                            if ((parentId === "F1781867011660" || parentId === "F1781867006469") && (activeFn?.fnType === "Wedding" || activeFn?.fnDate === "2026-09-30")) console.log("[floralDbg TAB el]", parentId, "el", el.name, "zk", zk, "elQty", elQty, "flQty", fl.qty, "realFrac", realFrac, "effectiveRealFrac", effectiveRealFrac, "zoneRepeat", zoneRepeat, "totalFlowerQty", totalFlowerQty);
+                            if ((parentId === "F1781867011660" || parentId === "F1781867006469") && (activeFn?.fnType === "Wedding" || activeFn?.fnDate === "2026-09-30")) { const k = parentId + " | " + zk + "::" + el.name; _dbgContrib[k] = (_dbgContrib[k] || 0) + totalFlowerQty; }
                             realCostPerUnit += (fl.qty || 0) * unitPrice;
                             const displayName = parent?.name || fl.flowerId;
                             realLines.push({ flowerId: parentId, name: displayName, perPattern: fl.qty || 0, qty: totalFlowerQty, unit: parent?.unit || "kg", unitPrice, lineCost, realOnly: flowerType === "real_only", variantPicked: override?.colorVariant?.label || null });
@@ -528,7 +529,7 @@ export default function DCFloralsTab({ ctx }) {
                   });
                   const sortedAgg = Array.from(flowerAgg.values()).sort((a,b) => b.totalQty - a.totalQty);
                   const grandTotal = totalReal + totalArtificial;
-                  if (activeFn?.fnType === "Wedding" || activeFn?.fnDate === "2026-09-30") console.log("[floralDbg TAB]", activeFn?.fnType, "totalReal", Math.round(totalReal), "totalArtificial", Math.round(totalArtificial), "flowerAgg", Array.from(flowerAgg.entries()).map(([k, v]) => ({ id: k, name: v.name, qty: Math.round(v.totalQty * 100) / 100, rate: v.unitPrice, cost: Math.round(v.totalQty * v.unitPrice) })));
+                  if (activeFn?.fnType === "Wedding" || activeFn?.fnDate === "2026-09-30") { console.log("[floralDbg TAB]", activeFn?.fnType, "totalReal", Math.round(totalReal), "totalArtificial", Math.round(totalArtificial), "flowerAgg", Array.from(flowerAgg.entries()).map(([k, v]) => ({ id: k, name: v.name, qty: Math.round(v.totalQty * 100) / 100, rate: v.unitPrice, cost: Math.round(v.totalQty * v.unitPrice) }))); console.log("[floralDbg TAB contrib]", _dbgContrib); }
                   const overallRealPct = grandTotal > 0 ? Math.round((totalReal / grandTotal) * 100) : 0;
                   // §26 — Total artificial bunches for this function (sum of realUnitsReplaced across all art lines)
                   const totalArtBunches = elementBreakdown.reduce((sum, eb) =>
