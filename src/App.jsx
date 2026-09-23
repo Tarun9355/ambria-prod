@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, Suspense, lazy } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import { useAuth } from "./lib/AuthContext";
 import { landingPath, userApps } from "./lib/auth";
@@ -6,8 +6,22 @@ import { useVersionCheck } from "./lib/useVersionCheck";
 import { flushBeforeReload } from "./lib/pendingSaveRegistry";
 import { canvaHandleOAuthRedirect } from "./lib/canva";
 import Login from "./pages/Login.jsx";
-import Studio from "./pages/Studio.jsx";
-import IMS from "./pages/ims/IMS.jsx";
+// Studio and IMS are each a large, largely independent bundle (Studio alone pulls in
+// DealCheckOverlay and every Deal Check tab) — a salesperson opening /studio was downloading
+// every byte of IMS's admin/inventory code too, and vice versa for ops staff on /ims, even though
+// neither role ever navigates to the other app's route in the same session. Lazy-loading each
+// behind its own route splits them into separate chunks fetched only when that route is actually
+// visited — pure code-splitting, no change to either app's own logic or behavior.
+const Studio = lazy(() => import("./pages/Studio.jsx"));
+const IMS = lazy(() => import("./pages/ims/IMS.jsx"));
+
+function RouteFallback() {
+  return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", fontSize: 14, color: "#6B7280" }}>
+      Loading…
+    </div>
+  );
+}
 
 // Canva's OAuth redirect lands back on the site's bare base URL with ?code=&state= — BEFORE the
 // HashRouter's own #/... fragment, so it's readable/strippable here regardless of which route (or
@@ -107,13 +121,15 @@ export default function App() {
   }, []);
   return (
     <>
-      <Routes>
-        <Route path="/login" element={user ? <Navigate to={landingPath(user, roleTabs)} replace /> : <Login />} />
-        <Route path="/" element={<Navigate to={landingPath(user, roleTabs)} replace />} />
-        <Route path="/studio" element={<Protected app="studio"><Studio /></Protected>} />
-        <Route path="/ims" element={<Protected app="ims"><IMS /></Protected>} />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
+      <Suspense fallback={<RouteFallback />}>
+        <Routes>
+          <Route path="/login" element={user ? <Navigate to={landingPath(user, roleTabs)} replace /> : <Login />} />
+          <Route path="/" element={<Navigate to={landingPath(user, roleTabs)} replace />} />
+          <Route path="/studio" element={<Protected app="studio"><Studio /></Protected>} />
+          <Route path="/ims" element={<Protected app="ims"><IMS /></Protected>} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </Suspense>
       <UpdateBanner />
       <CanvaOAuthBanner />
     </>
