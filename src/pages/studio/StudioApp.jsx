@@ -5063,14 +5063,26 @@ export default function StudioApp() {
     const artGreenBPK = Number(dealCheckData?.artificialGreenBunchesPerKg ?? studioFloralData?.artificialGreenBunchesPerKg ?? 23) || 23;
     const fnRatio = typeof fn?.floralRatio === "number" ? fn.floralRatio : (typeof floralRatio === "number" ? floralRatio : 70);
     const szMap = (m, s) => { if (m === "smb") { const u = (s || "M").toUpperCase(); return u === "S" ? "small" : u === "B" ? "big" : "medium"; } return "medium"; };
-    const resRP = (el, rc) => {
+    // MUST mirror DCFloralsTab.jsx's own resolveRealPct exactly, precedence and all — this used to
+    // check rc.floralMode/rc.sub/rc.defaultRealPct FIRST, unconditionally, so a Rate Card row that
+    // merely happened to share an element's display name (e.g. a "Flower Bunch" bridal-bouquet row
+    // pinned to 100% real) overrode the element's own inventory/pattern sub-category — a real
+    // element's actual identity losing to a coincidental name match. The tab was already fixed to
+    // check invItem's/the pattern's OWN sub-category first and only fall back to rc when NEITHER
+    // identity exists; this rollup (which feeds the nav-pill/byFn florals total) never got the same
+    // fix, so the two silently priced the same element at two different real/artificial splits.
+    const resRP = (el, rc, invItem, elPattern) => {
       if (typeof el.realPct === "number" && el.realPct >= 0 && el.realPct <= 100) return el.realPct;
-      const m = String(rc?.floralMode || "").toLowerCase();
-      if (m === "real") return 100; if (m === "artificial") return 0;
-      const subKey = String(rc?.sub || rc?.imsAlias || "").trim().toLowerCase();
+      const subKey = String((invItem && (invItem.subCat || invItem.subcategory)) || elPattern?.sub || rc?.sub || rc?.imsAlias || "").trim().toLowerCase();
       const subMode = subKey ? rcFloralModeByKey[subKey] : undefined;
-      if (subMode === "real") return 100; if (subMode === "artificial") return 0;
-      if (typeof rc?.defaultRealPct === "number") return rc.defaultRealPct;
+      if (subMode === "real") return 100;
+      if (subMode === "artificial") return 0;
+      if (!invItem && !elPattern) {
+        const mode = String(rc?.floralMode || "").toLowerCase();
+        if (mode === "real") return 100;
+        if (mode === "artificial") return 0;
+        if (typeof rc?.defaultRealPct === "number") return rc.defaultRealPct;
+      }
       return Math.max(0, Math.min(100, 100 - fnRatio));
     };
     // Repeat-zone floral discount, Deal Check's own internal cost lever (owner decision) — a pure
@@ -5130,7 +5142,7 @@ export default function StudioApp() {
         const elPat = el.patternId ? fp.find(p => p.id === el.patternId) : null;
         if (!el.patternId && !invIsFloral && String(rc?.cat || "").toLowerCase() !== "florals") return;
         const q = el.qty || 0; if (q <= 0) return;
-        const rp = resRP(el, rc) / 100, ap = 1 - rp;
+        const rp = resRP(el, rc, invItem, elPat) / 100, ap = 1 - rp;
         // Billed income split — EVERY floral arrangement bills (recipe-driven or not): the real
         // portion at the inhouse rate, the artificial portion at the artificial rate (mirrors
         // getElPrice's blend). Computed at element level, before the recipe gate below.
