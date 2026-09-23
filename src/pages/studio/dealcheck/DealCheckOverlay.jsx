@@ -1092,7 +1092,25 @@ export default function DealCheckOverlay({ ctx }) {
                 if (dcMpIncludeMinusOne) dayList.push({date:addDays(earliest,-1),phase:"minusOne",fns:[]});
                 let cur = earliest;
                 while (cur <= latest) { const fd = fns.filter(f => f.fnDate === cur); dayList.push({date:cur,phase:fd.length?"event":"gap",fns:fd}); cur = addDays(cur,1); }
-                if (dcMpIncludeDismantle) dayList.push({date:addDays(latest,1),phase:"dismantle",fns:[]});
+                // MUST match DCManpowerTab's own dismantle-day construction exactly — a dismantle day
+                // after EVERY function, not just once at the very end of the booking. This rollup used
+                // to only ever push ONE dismantle day at `latest+1`, so a booking with a gap between
+                // functions (e.g. dates 24/26/28) silently missed the dismantle days after 24 and 26 —
+                // undercounting the bottom-bar Manpower total against the tab's own "whole booking"
+                // figure on any booking that isn't every function on consecutive calendar days. Two
+                // back-to-back functions (next day IS itself another event) get no dismantle day
+                // between them — the crew flows straight into the next setup.
+                if (dcMpIncludeDismantle) {
+                  const eventDatesSet = new Set(dayList.filter(d => d.phase === "event").map(d => d.date));
+                  dayList.filter(d => d.phase === "event").forEach(d => {
+                    const nextDate = addDays(d.date, 1);
+                    if (eventDatesSet.has(nextDate)) return;
+                    const existing = dayList.find(x => x.date === nextDate);
+                    if (existing) existing.phase = "dismantle";
+                    else dayList.push({ date: nextDate, phase: "dismantle", fns: [] });
+                  });
+                  dayList.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+                }
                 dcMpPhases = { minusOne: dayList.some(d=>d.phase==="minusOne"), eventDays: dayList.filter(d=>d.phase==="event").length, gapDays: dayList.filter(d=>d.phase==="gap").length, dismantle: dayList.some(d=>d.phase==="dismantle") };
                 const peopleByFn = {}; labourTypes.forEach(t => { peopleByFn[t] = {}; fns.forEach((fn, fi) => { const fv = fixedVenueFor(fvCfgMP, fn.fnVenue || ""); const computed = calcPpl(freshFnMP(fn), t) || 0; peopleByFn[t][fi] = fv ? Math.max(fixedCrewFloor(fv, t), computed) : computed; }); });
                 // Default labour split fraction (used for leading / no-element days) = aggregate usage share.
