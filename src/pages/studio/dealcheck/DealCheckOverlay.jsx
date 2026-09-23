@@ -91,7 +91,7 @@ const IV = {
 };
 // Money and counts are read down a column and compared, so they need fixed-width digits.
 const NUM = { fontVariantNumeric: "tabular-nums" };
-import { heavyExtraLabour, eventTimingMultFor } from "../../../lib/ims/constants";
+import { heavyExtraLabour, eventTimingMultFor, SIT_MULT_DEFAULTS } from "../../../lib/ims/constants";
 import { deptMpReconciled, itemImsSubcat, lookupBySubcat, itemDimsText } from "../../../lib/ims/helpers";
 import { rentalSplit, availableAtVenue, isStandingAt, fixedVenueFor, standingReductionBySubcat, fixedVenueDealDiscount } from "../../../lib/ims/fixedVenues";
 import { calcZoneFabric, autoFillFabricAllocation, resolveTrussConfig, zoneTrussStandingDiscount } from "../../../lib/studio/pricing";
@@ -788,13 +788,26 @@ export default function DealCheckOverlay({ ctx }) {
             const defaultMinLabour = dealCheckData?.defaultMinLabour || 4;
             const eventTypeMultipliers = dealCheckData?.eventTypeMultipliers || { outdoor_budgeted:1.0 };
             const eventTimingMultipliers = dealCheckData?.eventTimingMultipliers || {};
-            const sayaMultiplier = dealCheckData?.sayaMultiplier || 1.3;
             const heavyElementRanges = dealCheckData?.heavyElementRanges || [];
             const fabricBangaliRanges = dealCheckData?.fabricBangaliRanges || [];
             const trussLabourRanges = dealCheckData?.trussLabourRanges || [];
             const flowerPatternsMP = dealCheckData?.flowerPatterns || [];
             const electricianProdMP = dealCheckData?.electricianProductivity || {};
             const seasonMapMP = dealCheckData?.seasonMap || {};
+            // Heavy Saya (King's-season, per-role pressure factor) — MUST match DCManpowerTab's
+            // heavySayaMultFor exactly, else a King's date bumps crew in the tab but not here. This
+            // rollup previously had NO such wrap at all for Flowerists/Electricians/Fabric Bangali/
+            // Truss Labour/tier-2 types (only Labours read a King's flag, and via the OLD flat
+            // sayaMultiplier below rather than this per-type config) — every other role's headcount
+            // silently ignored a King's date entirely, undercounting the bottom-bar Manpower total
+            // relative to the tab whenever one of those roles' pressure factor exceeded 1.
+            const situMultCap = dealCheckData?.situationalMultiplierCap || 1.8;
+            const sitMultsMP = dealCheckData?.situationalMultipliers || SIT_MULT_DEFAULTS;
+            const heavySayaMultFor = (fn, type) => {
+              if (seasonMapMP[fn.fnDate || ""] !== "kings") return 1.0;
+              const m = Number((sitMultsMP.heavySaya || {})[type]);
+              return m > 0 ? m : 1.0;
+            };
             const labourTypes = Object.keys(dihariSchemes);
             if (labourTypes.length && fns.length) {
               // Rate per type MUST match the Manpower tab exactly (else the bottom bar diverges from the tab):
@@ -867,7 +880,7 @@ export default function DealCheckOverlay({ ctx }) {
                 return { ...fn, enabledEls: nen };
               };
               const fixedCrewFloor = (fv, type) => { const c = fv.fixedCrew || {}; if (c[type] != null && c[type] !== "") return Number(c[type]) || 0; if (type === "Labours") return Number(fv.minLabour) || 0; return 0; };
-              const calcPpl = (fn, type) => {
+              const calcPplRaw = (fn, type) => {
                 if (type === "Flowerists") {
                   // Flowerists are fungible across ALL arrangements → sum every element's fractional need
                   // (qty ÷ units-per-flowerist) and ceil ONCE. MUST match DCManpowerTab.calcPeopleFlowerists
@@ -922,7 +935,10 @@ export default function DealCheckOverlay({ ctx }) {
                   const em = eventTypeMultipliers["outdoor_budgeted"] || 1;
                   const base = Math.ceil(vm * em);
                   let sm = 1.0;
-                  if (!dcMpIncludeMinusOne) { const c = [dm]; const ss = seasonMapMP[fn.fnDate||""]; if (ss === "kings") c.push(sayaMultiplier); c.push(eventTimingMultFor(eventTimingMultipliers, shiftToTiming(fn.fnShift), "Labours", 1.0)); sm = Math.max(...c, 1.0); }
+                  // heavySayaMultFor(fn,"Labours") replaces the old flat sayaMultiplier — MUST match
+                  // DCManpowerTab.calcPeopleTier3Labours's own candidate list and cap exactly (the old
+                  // flat multiplier was also never capped by situMultCap here, unlike the tab).
+                  if (!dcMpIncludeMinusOne) { const c = [dm, heavySayaMultFor(fn, "Labours")]; c.push(eventTimingMultFor(eventTimingMultipliers, shiftToTiming(fn.fnShift), "Labours", 1.0)); sm = Math.min(situMultCap, Math.max(...c, 1.0)); }
                   const adj = Math.ceil(base * sm);
                   const sc = {}; walkFn(fn, ({rc, qty}) => { const _s = itemImsSubcat(rc); sc[_s] = (sc[_s]||0) + qty; });
                   // Net fixed-venue standing stock before heavy-element labour (fixed venues have installed pieces).
@@ -982,6 +998,19 @@ export default function DealCheckOverlay({ ctx }) {
                 if (type === "Supervisors") return 1;
                 return 0;
               };
+              // Heavy Saya wrap — MUST match DCManpowerTab.calcPeopleForType's dispatcher exactly.
+              // Labours/tier-3 already folds heavySaya in internally (calcTier3, above) — skip the
+              // wrap for those so it isn't applied twice. Supervisors/Drivers have no pressure-factor
+              // config entry (SIT_MULT_DEFAULTS.heavySaya has no such key either), so heavySayaMultFor
+              // would just return 1.0 for them anyway, but skipping matches the tab's own explicit guard.
+              const calcPpl = (fn, type) => {
+                const raw = calcPplRaw(fn, type);
+                const cfg = labourTiers[type];
+                const isTier3Labours = type === "Labours" || (cfg && cfg.tier === 3);
+                if (isTier3Labours || type === "Supervisors" || type === "Drivers" || !(raw > 0)) return raw;
+                const m = Math.min(situMultCap, heavySayaMultFor(fn, type));
+                return m > 1 ? Math.ceil(raw * m) : raw;
+              };
               // Per-function calculation trace (the "how" for each day) — mirrors manpowerPlanForBooking's
               // trace shapes so Dept Ops' renderMpTrace can show each day's own bifurcation table.
               const traceOf = (fn, type) => {
@@ -1010,7 +1039,7 @@ export default function DealCheckOverlay({ ctx }) {
                   const vm = fv ? (fv.minLabour ?? defaultMinLabour) : 0; // min only for fixed venues
                   const em = eventTypeMultipliers["outdoor_budgeted"] || 1; const base = Math.ceil(vm * em);
                   let sm = 1.0;
-                  if (!dcMpIncludeMinusOne) { const c = [({ nearby: 1.0, medium: 1.1, far: 1.2 })[(dealCheckData?.venueDumping || {})[venueName] || "nearby"] || 1.0]; const ss = seasonMapMP[fn.fnDate || ""]; if (ss === "kings") c.push(sayaMultiplier); c.push(eventTimingMultFor(eventTimingMultipliers, shiftToTiming(fn.fnShift), "Labours", 1.0)); sm = Math.max(...c, 1.0); }
+                  if (!dcMpIncludeMinusOne) { const c = [({ nearby: 1.0, medium: 1.1, far: 1.2 })[(dealCheckData?.venueDumping || {})[venueName] || "nearby"] || 1.0, heavySayaMultFor(fn, "Labours")]; c.push(eventTimingMultFor(eventTimingMultipliers, shiftToTiming(fn.fnShift), "Labours", 1.0)); sm = Math.min(situMultCap, Math.max(...c, 1.0)); }
                   const adj = Math.ceil(base * sm); const sc = {}; walkFn(fn, ({ rc, qty }) => { const _s = itemImsSubcat(rc); sc[_s] = (sc[_s] || 0) + qty; });
                   const reduction = standingReductionBySubcat(fvCfg, venueName, (dcCards || {})[fns.indexOf(fn)], dealCheckData?.inventory || []);
                   let he = 0; heavyElementRanges.forEach(her => { const count = Math.max(0, (lookupBySubcat(sc, her.subCat) || 0) - (lookupBySubcat(reduction, her.subCat) || 0)); he += heavyExtraLabour(her, count); });
