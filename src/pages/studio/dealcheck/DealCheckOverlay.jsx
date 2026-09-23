@@ -191,7 +191,7 @@ export default function DealCheckOverlay({ ctx }) {
     // the exact same field Build's own Print tile writes.
     zoneConfig, setZoneConfig,
     // pricing helpers
-    collectAllFunctionData, calcFnFloralSourcingCost, calcFunctionBreakdown, calcFunctionCost,
+    collectAllFunctionData, calcFnFloralSourcingCost, calcFunctionBreakdown, calcFunctionCost, dateCategoryMultiplierFor,
     // Shared availability picker — the same one Build's IconBox control opens.
     openAvailModal,
     calcZoneTrussPreview, calcZoneFabricCost, calcZoneCarpet, buildPlatformPlan, imsField,
@@ -264,7 +264,18 @@ export default function DealCheckOverlay({ ctx }) {
   // venue at all — including a Repeat zone at a venue that isn't a configured Fixed Venue —
   // Repeat still applies (a reused setup can happen anywhere), just without a venue-specific cap:
   // the whole line at the sub-category default, same as before Fixed Venues data was read here.
-  const repeatAdjustedRental = (isRepeatZone, venueName, item, qty, baseRental) => {
+  // fnDate (optional) — folds in dateCategoryMultiplierFor (StudioApp.jsx), the SAME King's/
+  // Perfect/Filler market-pricing multiplier the guest build always applies to element rental
+  // (getElPrice/getElPriceForFn), which Deal Check never read at all: "Base price × multiplier =
+  // effective rental price charged to client" is a real fact about what will actually be billed,
+  // not a discount Ambria eats, so Deal Check's own margin figures were wrong by exactly this
+  // amount on any date marked King's/Perfect/Filler. Applied to baseRental BEFORE the existing
+  // Fixed-Venue/Repeat discount math below, which is untouched — this only changes the starting
+  // rate that math runs on, never its own logic. Omitting fnDate multiplies by 1 (no behavior
+  // change), so every call site not yet passing a date is still exactly as before.
+  const repeatAdjustedRental = (isRepeatZone, venueName, item, qty, baseRentalIn, fnDate) => {
+    const dateMult = fnDate ? dateCategoryMultiplierFor(fnDate) : 1;
+    const baseRental = baseRentalIn * dateMult;
     const full = qty * baseRental;
     if (!item) return full;
     // fixedVenueSubcatDiscount rides along here too — standingDiscountPct falls back to it when
@@ -517,7 +528,7 @@ export default function DealCheckOverlay({ ctx }) {
                 splitArr.forEach(s => {
                   const it = dcInventoryCache.find(x => x.id === s.imsId); if (!it) return;
                   const q = Number(s.qty) || 0; const br = imsField.rentalCost(it);
-                  const line = repeatAdjustedRental(_rep, fn.fnVenue, it, q, br);
+                  const line = repeatAdjustedRental(_rep, fn.fnVenue, it, q, br, fn.fnDate);
                   rental += line; byFn[fi].rental += line;
                   const dd = catToDept(imsField.category(it));
                   addD(dd, "rental", line);
@@ -542,12 +553,12 @@ export default function DealCheckOverlay({ ctx }) {
               const isKit = Array.isArray(item.subItems) && item.subItems.length > 0;
               let lineRental, shortQty = 0, shortCost = 0;
               if (isKit) {
-                lineRental = repeatAdjustedRental(_rep, fn.fnVenue, item, qty, baseR);
+                lineRental = repeatAdjustedRental(_rep, fn.fnVenue, item, qty, baseR, fn.fnDate);
               } else {
                 const available = dcAvailable(item, fnBlocks, fi);
                 const ownedQty = Math.min(qty, available);
                 shortQty = Math.max(0, qty - available);
-                const ownedRental = repeatAdjustedRental(_rep, fn.fnVenue, item, ownedQty, baseR);
+                const ownedRental = repeatAdjustedRental(_rep, fn.fnVenue, item, ownedQty, baseR, fn.fnDate);
                 shortCost = shortQty * (Number(item.cost) || 0) * (oosCostPctFor(item, costPctFor) / 100);
                 lineRental = ownedRental + shortCost;
               }
@@ -585,7 +596,7 @@ export default function DealCheckOverlay({ ctx }) {
               // A manually added item can be a kit too — price it the same way as a matched card.
               const baseR = effKitRental(item, fi, null);
               const _rep = mi.zoneKey ? !!(fn.zoneConfig?.[mi.zoneKey]?.repeat) : false;
-              const lineRental = repeatAdjustedRental(_rep, fn.fnVenue, item, q, baseR);
+              const lineRental = repeatAdjustedRental(_rep, fn.fnVenue, item, q, baseR, fn.fnDate);
               rental += lineRental; byFn[fi].rental += lineRental;
               const dD = catToDept(imsField.category(item));
               addD(dD, "rental", lineRental);
@@ -2081,12 +2092,13 @@ export default function DealCheckOverlay({ ctx }) {
                         const _zoneIsRepeat = (ck) => { const zzk = String(ck || "").split("::")[1]; return !!(zzk && fns[fnIdx]?.zoneConfig?.[zzk]?.repeat); };
                         const _costPctFor = (subcat) => { const key = String(subcat || "").trim().toLowerCase(); const row = (rcSubcatFactors || []).find(r => r?.id === key); const v = row ? Number(row.cost_percent) : undefined; return (typeof v === "number" && isFinite(v) && v >= 0) ? v : 100; };
                         const _fnVenueForRepeat = fns[fnIdx]?.fnVenue;
+                        const _fnDateForRepeat = fns[fnIdx]?.fnDate;
                         let zoneRentalTotal = 0;
                         zoneCards.forEach(c => {
                           const splitArr = Array.isArray(c.split) ? c.split.filter(s => s && s.imsId && (Number(s.qty) || 0) > 0) : [];
                           if (splitArr.length) {
                             const _rep = _zoneIsRepeat(c._cardKey);
-                            splitArr.forEach(s => { const it = dcInventoryCache.find(x => x.id === s.imsId); if (!it) return; const q = Number(s.qty) || 0; const br = imsField.rentalCost(it); zoneRentalTotal += repeatAdjustedRental(_rep, _fnVenueForRepeat, it, q, br); });
+                            splitArr.forEach(s => { const it = dcInventoryCache.find(x => x.id === s.imsId); if (!it) return; const q = Number(s.qty) || 0; const br = imsField.rentalCost(it); zoneRentalTotal += repeatAdjustedRental(_rep, _fnVenueForRepeat, it, q, br, _fnDateForRepeat); });
                             return;
                           }
                           if (!c.imsId) return;
@@ -2096,15 +2108,15 @@ export default function DealCheckOverlay({ ctx }) {
                           const qty = Number(c.qty) || 1;
                           const _rep = _zoneIsRepeat(c._cardKey);
                           const isKit = Array.isArray(it.subItems) && it.subItems.length > 0;
-                          if (isKit) { zoneRentalTotal += repeatAdjustedRental(_rep, _fnVenueForRepeat, it, qty, baseR); return; }
+                          if (isKit) { zoneRentalTotal += repeatAdjustedRental(_rep, _fnVenueForRepeat, it, qty, baseR, _fnDateForRepeat); return; }
                           const available = dcAvailable(it, fnBlocksForChip, fnIdx);
                           const ownedQty = Math.min(qty, available);
                           const shortQty = Math.max(0, qty - available);
-                          const ownedRental = repeatAdjustedRental(_rep, _fnVenueForRepeat, it, ownedQty, baseR);
+                          const ownedRental = repeatAdjustedRental(_rep, _fnVenueForRepeat, it, ownedQty, baseR, _fnDateForRepeat);
                           const shortCost = shortQty * (Number(it.cost) || 0) * (oosCostPctFor(it, _costPctFor) / 100);
                           zoneRentalTotal += ownedRental + shortCost;
                         });
-                        manualItemsInZone.forEach(mi => { const it = dcInventoryCache.find(x => x.id === mi.imsId); if (!it) return; const q = Number(mi.qty) || 1; const baseR = effKitRental(it, fnIdx, null); const _rep = mi.zoneKey ? !!(fns[fnIdx]?.zoneConfig?.[mi.zoneKey]?.repeat) : false; zoneRentalTotal += repeatAdjustedRental(_rep, _fnVenueForRepeat, it, q, baseR); });
+                        manualItemsInZone.forEach(mi => { const it = dcInventoryCache.find(x => x.id === mi.imsId); if (!it) return; const q = Number(mi.qty) || 1; const baseR = effKitRental(it, fnIdx, null); const _rep = mi.zoneKey ? !!(fns[fnIdx]?.zoneConfig?.[mi.zoneKey]?.repeat) : false; zoneRentalTotal += repeatAdjustedRental(_rep, _fnVenueForRepeat, it, q, baseR, _fnDateForRepeat); });
                         platformEntriesForZone.forEach(({ pi }) => { zoneRentalTotal += (pi.fattas || 0) * platformFattaR + (pi.stands || 0) * platformStandR; });
                         {
                           const zcz = fns[fnIdx]?.zoneConfig?.[zk];
@@ -2469,7 +2481,7 @@ export default function DealCheckOverlay({ ctx }) {
                                   const _rep = !!(fns[fnIdx]?.zoneConfig?.[card.zoneKey]?.repeat);
                                   const _venue = fns[fnIdx]?.fnVenue;
                                   const _cardQty = Number(card.qty) || 1;
-                                  const _lineTotal = item ? repeatAdjustedRental(_rep, _venue, item, _cardQty, rental) : 0;
+                                  const _lineTotal = item ? repeatAdjustedRental(_rep, _venue, item, _cardQty, rental, _fnDateForRepeat) : 0;
                                   // The per-unit rate shown next to "×" — the discounted equivalent, not
                                   // the list rate, so the line's own arithmetic (rate × qty) reproduces
                                   // the total sitting right next to it instead of looking wrong.
@@ -2722,7 +2734,7 @@ export default function DealCheckOverlay({ ctx }) {
                                         // Non-split reuses _lineTotal (computed once above, alongside the
                                         // "rate × qty" caption) rather than re-deriving it here.
                                         const tot = splitArr.length
-                                          ? splitArr.reduce((s,x)=>{ const it3=dcInventoryCache.find(y=>y.id===x.imsId); const q=Number(x.qty)||0; return s+(it3?repeatAdjustedRental(_rep,_venue,it3,q,imsField.rentalCost(it3)):0); },0)
+                                          ? splitArr.reduce((s,x)=>{ const it3=dcInventoryCache.find(y=>y.id===x.imsId); const q=Number(x.qty)||0; return s+(it3?repeatAdjustedRental(_rep,_venue,it3,q,imsField.rentalCost(it3),_fnDateForRepeat):0); },0)
                                           : _lineTotal;
                                         if (tot <= 0) return null;
                                         // alignSelf flex-start, not center: at half width the card grows tall
@@ -2921,7 +2933,7 @@ export default function DealCheckOverlay({ ctx }) {
                                   // Hard cap: you can't block more than is available at this venue.
                                   const _vName = (fns[fnIdx] || {}).fnVenue || "";
                                   const _rep = mi.zoneKey ? !!(fns[fnIdx]?.zoneConfig?.[mi.zoneKey]?.repeat) : false;
-                                  const lineTotal = item ? repeatAdjustedRental(_rep, _vName, item, mi.qty, rental) : 0;
+                                  const lineTotal = item ? repeatAdjustedRental(_rep, _vName, item, mi.qty, rental, _fnDateForRepeat) : 0;
                                   // Discounted equivalent of "rental" for the "× qty" caption below — so
                                   // that line's own arithmetic reproduces lineTotal instead of looking
                                   // like it doesn't add up (list rate × qty ≠ the discounted lineTotal).
