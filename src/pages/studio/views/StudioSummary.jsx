@@ -1247,10 +1247,10 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
       // but the fee/grand total below still reference its cell, so at least THEY stay internally
       // consistent with whatever the discount row says.
       if (grandRefs.length) {
-        const preFeeFormula = `SUM(${grandRefs.join(",")})${discountRow ? `+F${discountRow.number}` : ""}`;
+        const preFeeFormula = `SUM(${grandRefs.join(",")})${discountRow ? `+E${discountRow.number}` : ""}`;
         const feePct = Number(combined.agencyFeePct) || 20;
         agencyFeeRow.getCell(5).value = { formula: `ROUND((${preFeeFormula})*${feePct}/100,0)`, result: combined.agencyFee || 0 };
-        gtRow.getCell(5).value = { formula: `${preFeeFormula}+F${agencyFeeRow.number}`, result: combined.eventGrandTotal || 0 };
+        gtRow.getCell(5).value = { formula: `${preFeeFormula}+E${agencyFeeRow.number}`, result: combined.eventGrandTotal || 0 };
       }
 
       // File name: guest name + the earliest function's date + venue — functions are already
