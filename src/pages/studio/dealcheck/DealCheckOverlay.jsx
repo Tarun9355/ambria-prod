@@ -1117,6 +1117,7 @@ export default function DealCheckOverlay({ ctx }) {
                 const _aggFrac = {}; if (labourUsageMode && labourUsageTotal > 0) DEPTS.forEach(dp => { _aggFrac[dp] = (labourUsageByDept[dp] || 0) / labourUsageTotal; });
                 let _lastFrac = Object.keys(_aggFrac).length ? _aggFrac : null;
                 let running = {}; labourTypes.forEach(t => { running[t] = 0; });
+                const _dbgMp = [];
                 dayList.forEach(d => {
                   if (d.phase === "minusOne") { labourTypes.forEach(t => { let mx = 0; fns.forEach((fn, fi) => { if ((peopleByFn[t][fi]||0) > mx) mx = peopleByFn[t][fi]; }); running[t] = Math.max(running[t], mx); }); }
                   else if (d.phase === "event") { labourTypes.forEach(t => { let need = 0; d.fns.forEach(fn => { const fi = fns.indexOf(fn); if ((peopleByFn[t][fi]||0) > need) need = peopleByFn[t][fi]; }); running[t] = Math.max(running[t], need); }); }
@@ -1149,6 +1150,7 @@ export default function DealCheckOverlay({ ctx }) {
                     const mpCost = daySlots * (rateByType[t] || 0);
                     manpower += mpCost;
                     mpByType[t] = (mpByType[t] || 0) + mpCost;
+                    _dbgMp.push({ date: d.date, phase: d.phase, type: t, ppl, wins: wins.length, daySlots, rate: rateByType[t] || 0, mpCost: Math.round(mpCost) });
                     // Per-day labour cost → departments by THIS day's usage fractions.
                     if (t === "Labours" && labourUsageMode && labourUsageTotal > 0 && dayFrac && mpCost > 0) { DEPTS.forEach(dp => { labourDeptCost[dp] += mpCost * (dayFrac[dp] || 0); }); }
                     if (wins.length > 0) {
@@ -1163,6 +1165,7 @@ export default function DealCheckOverlay({ ctx }) {
                     }
                   });
                 });
+                if (fns.length === 2) console.log("[mpDbg ROLLUP]", "total", Math.round(manpower), "byType", Object.fromEntries(Object.entries(mpByType).map(([k,v])=>[k,Math.round(v)])), "days", _dbgMp);
               }
             }
           } catch {}
