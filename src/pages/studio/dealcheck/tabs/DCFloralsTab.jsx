@@ -209,6 +209,7 @@ export default function DCFloralsTab({ ctx }) {
                       const invItem = el.invId ? (dcInventoryCache || []).find(i => i.id === el.invId) : null;
                       const invIsFloral = !!invItem && String(invItem.cat || invItem.category || "").toLowerCase() === "florals";
                       const isFloral = !!el.patternId || invIsFloral || String(rc?.cat || "").toLowerCase() === "florals";
+                      if (["Flower bedding", "Iron bucket", "Round Fibre Pot"].includes((el.name || "").trim())) console.log("[floralDbg TAB resolve]", el.name, "zk", zk, "invId", el.invId, "patternId", el.patternId, "invItem", invItem?.name, invItem?.cat, "elPattern", elPattern?.name, "rc", rc?.name, rc?.cat, "isFloral", isFloral, "elQty", elQty);
                       if (!isFloral) return;                 // lighting, structure, furniture — not this tab's business
                       if (elQty <= 0) return;
                       // Floral, but nothing to price it by. Record rather than drop: the header used

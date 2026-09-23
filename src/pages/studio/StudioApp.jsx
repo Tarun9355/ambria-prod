@@ -5141,6 +5141,7 @@ export default function StudioApp() {
         const invItem = el.invId ? imsInventory.find(i => i.id === el.invId) : null;
         const invIsFloral = !!invItem && String(invItem.cat || invItem.category || "").toLowerCase() === "florals";
         const elPat = el.patternId ? fp.find(p => p.id === el.patternId) : null;
+        if (["Flower bedding", "Iron bucket", "Round Fibre Pot"].includes((el.name || "").trim())) console.log("[floralDbg ROLLUP resolve]", el.name, "zk", zk, "invId", el.invId, "patternId", el.patternId, "invItem", invItem?.name, invItem?.cat || invItem?.category, "elPat", elPat?.name, "rc", rc?.name, rc?.cat, "isFloral", (!!el.patternId || invIsFloral || String(rc?.cat || "").toLowerCase() === "florals"), "elQty", el.qty);
         if (!el.patternId && !invIsFloral && String(rc?.cat || "").toLowerCase() !== "florals") return;
         const q = el.qty || 0; if (q <= 0) return;
         const rp = resRP(el, rc, invItem, elPat) / 100, ap = 1 - rp;
