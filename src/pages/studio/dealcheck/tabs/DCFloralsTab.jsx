@@ -527,6 +527,7 @@ export default function DCFloralsTab({ ctx }) {
                   });
                   const sortedAgg = Array.from(flowerAgg.values()).sort((a,b) => b.totalQty - a.totalQty);
                   const grandTotal = totalReal + totalArtificial;
+                  if (activeFn?.fnType === "Wedding" || activeFn?.fnDate === "2026-09-30") console.log("[floralDbg TAB]", activeFn?.fnType, "totalReal", Math.round(totalReal), "totalArtificial", Math.round(totalArtificial), "flowerAgg", Array.from(flowerAgg.entries()).map(([k, v]) => ({ id: k, name: v.name, qty: Math.round(v.totalQty * 100) / 100, rate: v.unitPrice, cost: Math.round(v.totalQty * v.unitPrice) })));
                   const overallRealPct = grandTotal > 0 ? Math.round((totalReal / grandTotal) * 100) : 0;
                   // §26 — Total artificial bunches for this function (sum of realUnitsReplaced across all art lines)
                   const totalArtBunches = elementBreakdown.reduce((sum, eb) =>
