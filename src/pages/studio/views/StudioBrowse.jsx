@@ -40,19 +40,18 @@ const PANEL_BG =
 // throttle its realtime/autosave timers instead of them fighting the video decode for main-thread
 // time — that's the actual fix. But sending the guest to the full youtube.com website loses the
 // same full-bleed black "watching a look" presentation the old in-page modal had (and shows
-// unrelated recommended videos/comments/branding, not great over a salesperson's shoulder). This
-// builds that same edge-to-edge presentation as its own tiny page — still just the YouTube iframe
-// underneath (so its native fullscreen button still works) — and opens THAT in the new tab instead
-// of youtube.com's own page.
+// unrelated recommended videos/comments/branding, not great over a salesperson's shoulder).
+// public/video.html recreates that same edge-to-edge black presentation — still just the YouTube
+// iframe underneath, so its native fullscreen button still works. It MUST be a real static page on
+// our own origin, not a blob:/data: URL: YouTube's embed rejects playback with "Error 153: Video
+// player configuration error" when the embedding document has no valid http(s) origin to check
+// (which is exactly what a blob: page has — an opaque origin) — a first attempt at this hit that
+// error in production. import.meta.env.BASE_URL is the deployed "/ambria-prod/" base path, so this
+// resolves correctly on GitHub Pages and in local dev alike.
 function openVideoTab(videoId) {
   const id = String(videoId || "").match(/^[a-zA-Z0-9_-]{6,20}$/) ? videoId : null;
   if (!id) return;
-  const embedSrc = `https://www.youtube.com/embed/${id}?autoplay=1&rel=0&modestbranding=1`;
-  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Ambria — Video</title>
-<style>html,body{margin:0;padding:0;width:100%;height:100%;background:#000;overflow:hidden}iframe{position:fixed;inset:0;width:100%;height:100%;border:0}</style>
-</head><body><iframe src="${embedSrc}" allow="autoplay; encrypted-media; fullscreen" allowfullscreen title="Video"></iframe></body></html>`;
-  const url = URL.createObjectURL(new Blob([html], { type: "text/html" }));
-  window.open(url, "_blank");
+  window.open(`${import.meta.env.BASE_URL}video.html?v=${id}`, "_blank");
 }
 
 function StudioBrowse({ ctx }) {
