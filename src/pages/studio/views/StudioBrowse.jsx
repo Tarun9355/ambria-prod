@@ -80,7 +80,7 @@ function StudioBrowse({ ctx }) {
     // taxonomy / palette
     taxonomy, imsPaletteCatalogue,
     // video modal / premia
-    setVideoModal, setVideoPlaying, setPremiaGate,
+    setPremiaGate,
     // multi-function
     extraFunctions, activeFnMeta, activeFnIdx, fnSnapHasData, fnSnapHasBuild,
     // build / session
@@ -241,10 +241,14 @@ function StudioBrowse({ ctx }) {
       const isPlatinum = v.tierCat === "Platinum";
       const priceTBD = v.price === null || v.price === undefined;
       const tierColor = tierColors(v.tierCat);
-      const videoUrl = `https://www.youtube.com/embed/${v.id}`;
       return (
         <div className="sb-card" style={{...S.card,cursor:"default",display:"flex",flexDirection:"column",boxShadow:tileShadow}}>
-          <div style={{background:"#1a1a2e",height:150,display:"flex",alignItems:"center",justifyContent:"center",position:"relative",overflow:"hidden",cursor:"pointer"}} onClick={()=>{setVideoModal({name:v.title, video:videoUrl, venue:v.venue, fn:v.fn});setVideoPlaying(true);}}>
+          {/* Play opens the real YouTube watch page in a new tab instead of an in-page embed —
+              reported choppy/laggy playback on older laptops, confirmed to play smoothly when the
+              same video is opened directly on youtube.com. The embedded iframe (autoplay + our own
+              page's own realtime/autosave churn fighting it for main-thread time) was the common
+              factor; a new tab gives the video its own process with none of that contention. */}
+          <div style={{background:"#1a1a2e",height:150,display:"flex",alignItems:"center",justifyContent:"center",position:"relative",overflow:"hidden",cursor:"pointer"}} onClick={()=>{window.open(`https://www.youtube.com/watch?v=${v.id}`,"_blank","noopener,noreferrer");}}>
             <img className="sb-thumb" src={v.thumbnail} alt={v.title} loading="lazy" style={{width:"100%",height:"100%",objectFit:"cover",position:"absolute",inset:0}} onError={e=>{e.target.style.display="none"}}/>
             <div className="sb-play" style={{width:48,height:48,borderRadius:"50%",background:"rgba(255,255,255,0.25)",backdropFilter:"blur(4px)",WebkitBackdropFilter:"blur(4px)",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",position:"relative",zIndex:2}}><IconPlay size={20}/></div>
             {/* Click the tier pill to favourite this video for its own venue (see browseVideos'
@@ -1378,7 +1382,7 @@ function StudioBrowse({ ctx }) {
                     </div>
                     </div>
                     <div style={{display:"flex",gap:7}}>
-                    {!unavailable && <button onClick={(e)=>{e.stopPropagation();setVideoModal({name:videoTitle,video:`https://www.youtube.com/embed/${s.sourceVideoId}`,venue:s.venue||"",fn:s.fn||"",desc:"",gradient:"linear-gradient(135deg,#1a1a2e,#C9A96E)",photos:[],tags:[]});setVideoPlaying(true);}} className="sb-bnr-btn sb-bnr-out" style={{padding:"6px 11px",borderRadius:7,border:`1px solid ${isDark?"rgba(234,179,8,0.5)":"#D97706"}`,background:"transparent",color:isDark?"#FBBF24":"#B45309",fontSize:10,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",flex:"0 0 auto",display:"inline-flex",alignItems:"center",justifyContent:"center",gap:5}}><IconPlay size={11}/>Play</button>}
+                    {!unavailable && <button onClick={(e)=>{e.stopPropagation();window.open(`https://www.youtube.com/watch?v=${s.sourceVideoId}`,"_blank","noopener,noreferrer");}} className="sb-bnr-btn sb-bnr-out" style={{padding:"6px 11px",borderRadius:7,border:`1px solid ${isDark?"rgba(234,179,8,0.5)":"#D97706"}`,background:"transparent",color:isDark?"#FBBF24":"#B45309",fontSize:10,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",flex:"0 0 auto",display:"inline-flex",alignItems:"center",justifyContent:"center",gap:5}}><IconPlay size={11}/>Play</button>}
                     {/* Pass _fnIdx so the restore lands on the function that HAS the build.
                         Blocked ONLY while a switch is in flight, because there the build state is
                         half-replaced and loading into it loses work — a wait that ends on its own.
@@ -1422,7 +1426,7 @@ function StudioBrowse({ ctx }) {
                     </div>
                     </div>
                     <div style={{display:"flex",gap:7}}>
-                    <button onClick={(e)=>{e.stopPropagation();setVideoModal({name:videoTitle,video:`https://www.youtube.com/embed/${bannerCurrentId}`,venue:venue||"",fn:activeFnMeta.type||"",desc:"",gradient:"linear-gradient(135deg,#1a1a2e,#6366F1)",photos:[],tags:[]});setVideoPlaying(true);}} className="sb-bnr-btn sb-bnr-out" style={{padding:"6px 11px",borderRadius:7,border:`1px solid ${isDark?"rgba(99,102,241,0.5)":"#6366F1"}`,background:"transparent",color:isDark?"#A5B4FC":"#4338CA",fontSize:10,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",flex:"0 0 auto",display:"inline-flex",alignItems:"center",justifyContent:"center",gap:5}}><IconPlay size={11}/>Play</button>
+                    <button onClick={(e)=>{e.stopPropagation();window.open(`https://www.youtube.com/watch?v=${bannerCurrentId}`,"_blank","noopener,noreferrer");}} className="sb-bnr-btn sb-bnr-out" style={{padding:"6px 11px",borderRadius:7,border:`1px solid ${isDark?"rgba(99,102,241,0.5)":"#6366F1"}`,background:"transparent",color:isDark?"#A5B4FC":"#4338CA",fontSize:10,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",flex:"0 0 auto",display:"inline-flex",alignItems:"center",justifyContent:"center",gap:5}}><IconPlay size={11}/>Play</button>
                     <button onClick={(e)=>{e.stopPropagation();setStep(2);}} className="sb-bnr-btn sb-bnr-solid" style={{padding:"6px 12px",borderRadius:7,border:"none",background:isDark?"#4F46E5":"#4338CA",color:"#fff",fontSize:10,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap",flex:1}}>
                       Continue build {"→"}
                     </button>
