@@ -156,6 +156,12 @@ export default function DealCheckOverlay({ ctx }) {
     return () => ro.disconnect();
   }, []);
   const [dcDept, setDcDept] = useState("Furniture"); // active Department-Income sub-tab
+  // Salesperson-facing "what is each department earning off this deal" modal — opened from a
+  // button near the FUNCTIONS sidebar, so it's reachable from whichever tab is open rather than
+  // requiring a trip to the (removed-from-the-strip) Dept Income tab. Owner ask: a salesperson
+  // negotiating with a department head over a discount needs to see that department's OWN share
+  // of the deal, not the whole project total, to know what room that head actually has to give.
+  const [dcDeptModalOpen, setDcDeptModalOpen] = useState(false);
   const deptSyncRef = useRef(""); // dedupe auto-push of the dept snapshot to IMS
   const [dcKitAddSearch, setDcKitAddSearch] = useState({}); // per-kit-card "add component" search text, keyed by editKey
   const [dcPrintForm, setDcPrintForm] = useState({ zoneKey: "", material: "", areaW: "", areaD: "", qty: 1 }); // Buying tab's own "+ Add print" row
@@ -1898,6 +1904,15 @@ export default function DealCheckOverlay({ ctx }) {
               {/* LEFT SIDEBAR — function tabs + per-fn cost (skeletal in Patch 3, populated in Patch 5) */}
               <div className="dc-glass" style={{width:220,borderRight:`1px solid ${border}`,padding:"14px 12px",overflowY:"auto"}}>
                 <div style={{fontSize:11,color:"#1A1A2E",letterSpacing:1.4,textTransform:"uppercase",marginBottom:10,fontWeight:700}}>Functions</div>
+                {/* Reachable from any tab, not just the (removed-from-the-strip) Dept Income one —
+                    a salesperson mid-negotiation with a department head shouldn't have to first
+                    figure out which tab used to hold this. */}
+                <button onClick={()=>setDcDeptModalOpen(true)}
+                  style={{width:"100%",textAlign:"left",padding:"9px 12px",borderRadius:10,marginBottom:10,cursor:"pointer",
+                    border:`1px solid ${border}`,background:"#fff",fontSize:12.5,fontWeight:700,color:"#1A1A2E",
+                    display:"flex",alignItems:"center",gap:7}}>
+                  🏦 Dept income
+                </button>
                 {/* Manpower/Transport/Power are booking-wide rollups — everywhere else (Inventory,
                     Production, Buying) already scopes to whichever function is selected below, so
                     this pill only needs to exist on the three tabs that used to ignore the
@@ -4676,6 +4691,60 @@ export default function DealCheckOverlay({ ctx }) {
               return (
                 <div className="dc-glass dc-bottom" style={{display:"flex",alignItems:"center",width:220,boxSizing:"border-box",padding:"10px 18px",borderTop:`1px solid ${border}`,borderRight:`1px solid ${border}`,gap:14}}>
                   <div className="dc-bottomtotal" style={{flexShrink:0}}><div className="dc-cap" style={{color:"#1A1A2E",opacity:0.62}}>Project total</div><div className="dc-money" style={{fontSize:25,fontWeight:800,color:"#1A1A2E",marginTop:1,lineHeight:1.1}}>{fmt(grandWithOverheads)}</div>{stripRevenue > 0 && <div className="dc-money" style={{fontSize:11,color:stripProfitColor,fontWeight:700,marginTop:2,letterSpacing:0.1}}>Margin {stripProfitPct}% · {fmt(stripRevenue)} quote</div>}</div>
+                </div>
+              );
+            })()}
+            {/* ═══ Dept Income modal — salesperson-facing, reachable from any tab ═══
+                Same body/data the (removed-from-the-strip) Dept Income tab already renders —
+                dcCostRollup.dept, one source of truth — just in a modal instead of behind a tab
+                click, so a salesperson mid-call with a department head can pull it up from
+                wherever they are in Deal Check. */}
+            {dcDeptModalOpen && (() => {
+              const dd = dcCostRollup.dept || {};
+              const depts = dcCostRollup.DEPTS || [];
+              const deptIcon = { Furniture: "🛋️", Floral: "🌸", Structure: "🏛️", Tenting: "⛺", Transport: "🚚", Lighting: "💡", Fabric: "🧵" };
+              const cur = dd[dcDept] || { rental: 0, florals: 0, truss: 0, fabric: 0, transport: 0, manpower: 0, production: 0, buying: 0, total: 0 };
+              const grandAll = depts.reduce((s, d) => s + (dd[d]?.total || 0), 0);
+              const f2 = (n) => n > 0 ? "₹" + Math.round(n).toLocaleString("en-IN") : "₹0";
+              const lines = [
+                ["📦 Inventory rental", cur.rental], ["🌸 Floral (mandi)", cur.florals], ["🏗️ Truss", cur.truss],
+                ["🧵 Fabric / draping", cur.fabric], ["👷 Manpower", cur.manpower], ["🏭 Production", cur.production],
+                ["🛒 Buying", cur.buying], ["🚚 Transport", cur.transport],
+              ].filter(([, v]) => v > 0);
+              const syncToOps = async () => { await (persistDeptSnapshot && persistDeptSnapshot(buildDeptSnapshot())); showMsg && showMsg("📤 Department breakdown pushed to IMS Dept Ops", "green"); };
+              return (
+                <div onClick={()=>setDcDeptModalOpen(false)} style={{position:"fixed",inset:0,zIndex:9100,background:"rgba(10,10,20,0.85)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+                  <div onClick={e=>e.stopPropagation()} style={{width:"min(560px, 100%)",maxHeight:"82vh",background:"#FFFFFF",borderRadius:14,border:`1px solid ${border}`,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+                    <div style={{padding:"14px 18px",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                      <div>
+                        <div style={{fontSize:14.5,fontWeight:700,color:"#1A1A2E",letterSpacing:0.2}}>🏦 Department Income</div>
+                        <div style={{fontSize:12,color:"#1A1A2E",letterSpacing:1,textTransform:"uppercase",marginTop:2}}>What each department is earning off this deal</div>
+                      </div>
+                      <button onClick={()=>setDcDeptModalOpen(false)} style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:"#1A1A2E",fontSize:14.5,cursor:"pointer",lineHeight:1}}>✕</button>
+                    </div>
+                    <div style={{padding:"14px 18px",overflowY:"auto"}}>
+                      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+                        <span style={{ fontSize:12, color:"#1A1A2E", alignSelf: "center", marginRight: 8 }}>Auto-syncs to IMS Dept Ops</span><button onClick={syncToOps} style={{ padding: "6px 14px", borderRadius: 8, border: `1px solid ${accent}`, background: `${accent}18`, color: accent, fontSize:13, fontWeight: 700, cursor: "pointer" }}>📤 Sync now</button>
+                      </div>
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
+                        {depts.map(d => { const on = dcDept === d; const t = dd[d]?.total || 0; return (
+                          <button key={d} onClick={() => setDcDept(d)} style={{ padding: "8px 12px", borderRadius: 10, border: `1.5px solid ${on ? accent : border}`, background: on ? `${accent}18` : "transparent", color: on ? "#1A1A2E" : textS, cursor: "pointer", display: "flex", flexDirection: "column", gap: 2, minWidth: 96, alignItems: "flex-start" }}>
+                            <span style={{ fontSize:13, fontWeight: on ? 700 : 500 }}>{deptIcon[d] || "🏦"} {d}</span>
+                            <span style={{ fontSize:14.5, fontWeight: 800, color: on ? "#1A1A2E" : textP }}>{f2(t)}</span>
+                          </button>); })}
+                      </div>
+                      <div style={{ borderRadius: 10, border: `1px solid ${border}`, overflow: "hidden" }}>
+                        <div style={{ padding: "10px 14px", background: "rgba(26, 26, 46,0.02)", fontSize:13.5, fontWeight: 700, color: "#1A1A2E", display: "flex", justifyContent: "space-between" }}>
+                          <span>{deptIcon[dcDept]} {dcDept} — Department Income</span><span>{f2(cur.total)}</span>
+                        </div>
+                        {lines.length === 0
+                          ? <div style={{ padding: 16, textAlign: "center", color:"#1A1A2E", fontSize:13 }}>No income for this department in the current deal.</div>
+                          : lines.map(([l, v], i) => <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "9px 14px", borderTop: `1px solid ${border}22`, fontSize:13.5 }}><span style={{ color:"#1A1A2E" }}>{l}</span><span style={{ color: "#1A1A2E", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{f2(v)}</span></div>)}
+                        <div style={{ display: "flex", justifyContent: "space-between", padding: "10px 14px", borderTop: `1px solid ${border}`, fontSize:13, color:"#1A1A2E" }}><span>Share of project</span><span style={{ fontWeight: 700, color: accent }}>{grandAll > 0 ? Math.round((cur.total / grandAll) * 100) : 0}%</span></div>
+                      </div>
+                      <div style={{ fontSize:12, color:"#1A1A2E", marginTop: 10, lineHeight: 1.5 }}>General labour & supervisors are split across departments by each one's direct-income share. Truss steel → Tenting · masking/drape fabric → Fabric · platform & carpet → Tenting · genset → Lighting · everything else → by its category.</div>
+                    </div>
+                  </div>
                 </div>
               );
             })()}
