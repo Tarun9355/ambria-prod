@@ -9974,6 +9974,22 @@ export default function StudioApp() {
         const change = now === 0 ? "removed" : was === 0 ? "added" : "qty_changed";
         if (!changesByDept[dept]) changesByDept[dept] = [];
         changesByDept[dept].push({ name: item?.name || id, qty: now || was, change });
+        // A kit's own components can belong to a completely different department than the kit
+        // itself (carpentry/fabric/floral sub-parts inside a Structure-filed stage kit) — those
+        // departments never learned an affected deal's kit changed at all, only the kit's own
+        // department did. Purely additive: this does NOT touch requiredByFn/blocks reservation
+        // above (still keyed on the kit's own id, matching how availability is checked everywhere
+        // else in the app) — only which department heads get told about the change.
+        if (Array.isArray(item?.subItems) && item.subItems.length > 0) {
+          item.subItems.forEach((si) => {
+            const ci = (inventoryList || []).find((x) => x.id === si.itemId);
+            if (!ci) return;
+            const compDept = catToDept(ci.cat || ci.category, dealCheckData?.categoryDepartments);
+            if (compDept === dept) return; // already notified via the kit's own department above
+            if (!changesByDept[compDept]) changesByDept[compDept] = [];
+            changesByDept[compDept].push({ name: `${ci.name} (in ${item?.name || id})`, qty: (now || was) * (Number(si.qty) || 1), change });
+          });
+        }
       });
     });
     if (!changed) return;

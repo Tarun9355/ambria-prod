@@ -564,26 +564,49 @@ export default function DealCheckOverlay({ ctx }) {
               }
               rental += lineRental; byFn[fi].rental += lineRental;
               const dD = catToDept(imsField.category(item) || c.cat);
-              addD(dD, "rental", lineRental);
+              // A kit's own components each carry their OWN category — a stage kit filed under
+              // Structure but built from carpentry/fabric/floral sub-parts used to put 100% of its
+              // cost, and the ONLY Dept Ops visibility of those parts, under Structure alone.
+              // Carpentry/Fabric/Floral never saw their share of the money OR the physical item in
+              // their own blocked-inventory list. Each component now charges its OWN department,
+              // scaled by whatever discount applied to the kit as a whole (proportional to its share
+              // of the kit's undiscounted base cost) — the kit's own dD only keeps its own base share.
+              let components;
+              if (isKit) {
+                const edited = dcKitEdits[fi]?.[ck];
+                const comps = Array.isArray(edited) ? edited : item.subItems.map(s => ({ itemId: s.itemId, qty: Number(s.qty) || 1 }));
+                components = comps.map(cp => {
+                  const ci = dcInventoryCache.find(x => x.id === cp.itemId);
+                  if (!ci) return null;
+                  const cq = (Number(cp.qty) || 1) * qty;   // component qty × number of kits
+                  const cr = imsField.rentalCost(ci);
+                  return { ci, name: ci.name, imsId: ci.id, qty: cq, unit: cr, total: cr * cq, sub: imsField.subcategory(ci) || "", photo: imsField.photos(ci)[0] || "" };
+                }).filter(Boolean);
+              }
+              if (isKit && components && components.length) {
+                const fullBase = baseR * qty;
+                const compBaseTotal = components.reduce((s, cp) => s + cp.total, 0);
+                const scale = fullBase > 0 ? lineRental / fullBase : 0;
+                const kitOwnShare = (fullBase - compBaseTotal) * scale;
+                addD(dD, "rental", kitOwnShare);
+                components.forEach(cp => {
+                  const compDept = catToDept(imsField.category(cp.ci) || cp.sub);
+                  const compShare = cp.total * scale;
+                  addD(compDept, "rental", compShare);
+                  // A component filed under the SAME department as the kit itself already shows up
+                  // via the kit's own nested `components` list below — no separate card needed.
+                  if (compShare > 0 && compDept !== dD && deptInv[compDept]) {
+                    deptInv[compDept].push({ name: cp.name, photo: cp.photo, qty: cp.qty, unit: cp.unit, total: Math.round(compShare), sub: cp.sub, imsId: cp.imsId, fromKit: item.name || c.name || "Item" });
+                  }
+                });
+              } else {
+                addD(dD, "rental", lineRental);
+              }
               if (lineRental > 0 && deptInv[dD]) {
-                // Kit composite → also carry its component items (customised per-deal via dcKitEdits,
-                // else the master subItems) so Dept Ops can list each sub-element with its own rental.
-                let components;
-                if (Array.isArray(item.subItems) && item.subItems.length > 0) {
-                  const edited = dcKitEdits[fi]?.[ck];
-                  const comps = Array.isArray(edited) ? edited : item.subItems.map(s => ({ itemId: s.itemId, qty: Number(s.qty) || 1 }));
-                  components = comps.map(cp => {
-                    const ci = dcInventoryCache.find(x => x.id === cp.itemId);
-                    if (!ci) return null;
-                    const cq = (Number(cp.qty) || 1) * qty;   // component qty × number of kits
-                    const cr = imsField.rentalCost(ci);
-                    return { name: ci.name, imsId: ci.id, qty: cq, unit: cr, total: Math.round(cr * cq), sub: imsField.subcategory(ci) || "", photo: imsField.photos(ci)[0] || "" };
-                  }).filter(Boolean);
-                }
                 // shortQty > 0 means part (or all) of this line is priced at cost% because stock ran
                 // out for this event's date — Dept Ops badges it so a head knows to flag/chase it
                 // rather than assuming the full qty is sitting reserved and ready.
-                deptInv[dD].push({ name: item.name || c.name || "Item", photo: imsField.photos(item)[0] || "", qty, unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "", imsId: c.imsId, ...(components && components.length ? { isKit: true, components } : {}), ...(shortQty > 0 ? { shortQty, shortCost: Math.round(shortCost) } : {}) });
+                deptInv[dD].push({ name: item.name || c.name || "Item", photo: imsField.photos(item)[0] || "", qty, unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "", imsId: c.imsId, ...(components && components.length ? { isKit: true, components: components.map(({ci, ...rest}) => ({ ...rest, total: Math.round(rest.total) })) } : {}), ...(shortQty > 0 ? { shortQty, shortCost: Math.round(shortCost) } : {}) });
               }
             });
             // Manually-added inventory blocks (dcManualItems) — the salesperson added these directly in
@@ -599,8 +622,37 @@ export default function DealCheckOverlay({ ctx }) {
               const lineRental = repeatAdjustedRental(_rep, fn.fnVenue, item, q, baseR, fn.fnDate);
               rental += lineRental; byFn[fi].rental += lineRental;
               const dD = catToDept(imsField.category(item));
-              addD(dD, "rental", lineRental);
-              if (deptInv[dD]) deptInv[dD].push({ name: item.name || "Item", photo: imsField.photos(item)[0] || "", qty: q, unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "", imsId: mi.imsId });
+              // Same per-component department split as matched cards above — a manually-added kit
+              // used to have no components list AT ALL (not even for display), so its parts' cost and
+              // Dept Ops visibility went entirely to the kit's own department.
+              const miIsKit = Array.isArray(item.subItems) && item.subItems.length > 0;
+              let miComponents;
+              if (miIsKit) {
+                miComponents = item.subItems.map(s => {
+                  const ci = dcInventoryCache.find(x => x.id === s.itemId);
+                  if (!ci) return null;
+                  const cq = (Number(s.qty) || 1) * q;
+                  const cr = imsField.rentalCost(ci);
+                  return { ci, name: ci.name, imsId: ci.id, qty: cq, unit: cr, total: cr * cq, sub: imsField.subcategory(ci) || "", photo: imsField.photos(ci)[0] || "" };
+                }).filter(Boolean);
+              }
+              if (miIsKit && miComponents && miComponents.length) {
+                const fullBase = baseR * q;
+                const compBaseTotal = miComponents.reduce((s, cp) => s + cp.total, 0);
+                const scale = fullBase > 0 ? lineRental / fullBase : 0;
+                addD(dD, "rental", (fullBase - compBaseTotal) * scale);
+                miComponents.forEach(cp => {
+                  const compDept = catToDept(imsField.category(cp.ci) || cp.sub);
+                  const compShare = cp.total * scale;
+                  addD(compDept, "rental", compShare);
+                  if (compShare > 0 && compDept !== dD && deptInv[compDept]) {
+                    deptInv[compDept].push({ name: cp.name, photo: cp.photo, qty: cp.qty, unit: cp.unit, total: Math.round(compShare), sub: cp.sub, imsId: cp.imsId, fromKit: item.name || "Item" });
+                  }
+                });
+              } else {
+                addD(dD, "rental", lineRental);
+              }
+              if (deptInv[dD]) deptInv[dD].push({ name: item.name || "Item", photo: imsField.photos(item)[0] || "", qty: q, unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "", imsId: mi.imsId, ...(miComponents && miComponents.length ? { isKit: true, components: miComponents.map(({ci, ...rest}) => ({ ...rest, total: Math.round(rest.total) })) } : {}) });
             });
             try { const fl = calcFnFloralSourcingCost(fn).grandTotal; florals += fl; byFn[fi].florals += fl; addD("Floral", "florals", fl); } catch {}
             // `genset` (used only for the Power tab's own nav-pill amount) reads gensetCostOurs —
@@ -4616,8 +4668,13 @@ export default function DealCheckOverlay({ ctx }) {
               //    reports "Deal Check last saved by <name> · <when>".
               // If a deliberate save action is ever wanted back, it must reuse the autosave's own
               // doSave rather than reimplement a second, weaker write path.
+              // Width matches the left sidebar's own 220px column (the FUNCTIONS list above it) —
+              // this strip is Project Total, not a page footer, and stretching it the full width of
+              // the overlay left a wide band of empty glass beside a card only a few hundred pixels
+              // wide. Sitting directly under the sidebar it lines up with is also a clearer read:
+              // "this number belongs to that column".
               return (
-                <div className="dc-glass dc-bottom" style={{display:"flex",alignItems:"center",padding:"10px 18px",borderTop:`1px solid ${border}`,gap:14}}>
+                <div className="dc-glass dc-bottom" style={{display:"flex",alignItems:"center",width:220,boxSizing:"border-box",padding:"10px 18px",borderTop:`1px solid ${border}`,borderRight:`1px solid ${border}`,gap:14}}>
                   <div className="dc-bottomtotal" style={{flexShrink:0}}><div className="dc-cap" style={{color:"#1A1A2E",opacity:0.62}}>Project total</div><div className="dc-money" style={{fontSize:25,fontWeight:800,color:"#1A1A2E",marginTop:1,lineHeight:1.1}}>{fmt(grandWithOverheads)}</div>{stripRevenue > 0 && <div className="dc-money" style={{fontSize:11,color:stripProfitColor,fontWeight:700,marginTop:2,letterSpacing:0.1}}>Margin {stripProfitPct}% · {fmt(stripRevenue)} quote</div>}</div>
                 </div>
               );
