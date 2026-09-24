@@ -196,6 +196,7 @@ export default function ManageLibrary({ ctx }) {
     accentBg, accentText, textP, cardBg,
     // taxonomy
     taxonomy, setTaxonomy, saveTax, TAX_LABELS, imsPaletteCatalogue, setImsPaletteCatalogue, imsColourCatalogue, setImsColourCatalogue, savePaletteData, paletteCatalogueLoaded,
+    zoneKeys, zoneLabelsD,
     taxOr, FUNCTIONS, CATEGORIES,
     // derived venue memos
     allInhouseVenues, allOutdoorDB, customOutdoor, inhouseParentNames, allInhouseVenueOrParentNames, subVenuesOfParent, leafInhouseVenues,
@@ -796,9 +797,16 @@ export default function ManageLibrary({ ctx }) {
         {Object.keys(taxonomy).filter(k => Array.isArray(taxonomy[k])).map(k => {
           // colorPalette: use paletteCatalogue names instead of legacy taxonomy values
           // (filter to array-valued keys so non-array fields like taggingStandards never .map-crash)
+          // areasElements: taxonomy's own copy is a separately-persisted list only best-effort
+          // synced with Manage -> Zone Types on a rename (same staleness StudioBuild.jsx's photo
+          // tag-correction modal had — see its own comment) — a zone added, renamed, or removed any
+          // other way silently fell out of sync. Sourced live from zoneKeys instead, the same admin-
+          // configured list Build's own zone pickers read.
           const vals = k === "colorPalette" && imsPaletteCatalogue.length > 0
             ? imsPaletteCatalogue.map(p => p.name)
-            : taxonomy[k];
+            : k === "areasElements"
+              ? zoneKeys.map(zk => zoneLabelsD[zk]?.label || zk)
+              : taxonomy[k];
           const secCount = (libFilters[k] || []).length;
           return (
           <FSection key={k} id={k} label={k === "colorPalette" ? "Palette" : getTaxLabel(k)} count={secCount}
@@ -1185,9 +1193,13 @@ export default function ManageLibrary({ ctx }) {
                     </>;
                   })())}
                 {Object.keys(taxonomy).filter(k => Array.isArray(taxonomy[k])).map((k, ki) => {
+                  // See the filter rail's matching comment above — areasElements now sources from
+                  // zoneKeys (live) instead of taxonomy.areasElements (a stale, separately-persisted copy).
                   const vals = k === "colorPalette" && imsPaletteCatalogue.length > 0
                     ? imsPaletteCatalogue.map(p => p.name)
-                    : taxonomy[k];
+                    : k === "areasElements"
+                      ? zoneKeys.map(zk => zoneLabelsD[zk]?.label || zk)
+                      : taxonomy[k];
                   const picked = (libEditImg.tags?.[k] || []).length;
                   return mlTagCard(ki + 2, ML_TAX_ICON[k] || <IconPalette size={14} />, k === "colorPalette" ? "Palette" : getTaxLabel(k),
                     <div style={mlTagRow}>
