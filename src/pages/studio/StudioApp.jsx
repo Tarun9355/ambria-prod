@@ -4231,7 +4231,7 @@ export default function StudioApp() {
         const flowerCost = recipeCost(subCatPattern, item.subCat || item.subcategory) + attachedPatterns.reduce((sum, x) => sum + recipeCost(x.pattern, x.pattern.sub, x.qty, x.si), 0) + compDelta;
         const unitPrice = priceForInvItem(item, rcFactorByKey, imsInventory, el.kitOverrides) + flowerCost;
         const anySMB = subCatPattern?.mode === "smb" || attachedPatterns.some((x) => x.pattern.mode === "smb");
-        return { rc: null, unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName, crossFnTake), area: 0, warning: null, isFloralBlend: false, realPct: null, patternSMB: anySMB };
+        return { rc: null, unitPrice, fullUnitPrice: unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName, crossFnTake), area: 0, warning: null, isFloralBlend: false, realPct: null, patternSMB: anySMB };
       }
     }
 
@@ -4255,7 +4255,7 @@ export default function StudioApp() {
         // item's own rental (× its sub-category's scaling factor) is always added on top, alongside
         // the recipe's own generic "extra (pot/base)" figure.
         const unitPrice = Math.round(realPct / 100 * rates.realRate + (100 - realPct) / 100 * rates.artRate) + rates.extra + priceForInvItem(item, rcFactorByKey, imsInventory);
-        return { rc: null, unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName, crossFnTake), area: 0, warning: null, isFloralBlend: true, realPct, patternSMB: pattern.mode === "smb" };
+        return { rc: null, unitPrice, fullUnitPrice: unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName, crossFnTake), area: 0, warning: null, isFloralBlend: true, realPct, patternSMB: pattern.mode === "smb" };
       }
     }
 
@@ -4311,10 +4311,16 @@ export default function StudioApp() {
       // `available` here is "how much of THIS row's own qty is real stock" (= ownedQty) — the sole
       // consumer (StudioBuild.jsx's isUnavail badge) only ever checks <= 0, which ownedQty matches
       // exactly: 0 iff nothing was left for this row's turn in the allocation above.
-      return { rc: null, unitPrice, lineCost, area: 0, warning, isFloralBlend: false, realPct: null, available: ownedQty };
+      // fullUnitPrice (undiscounted, pre-shortfall-blend rate) — StudioBuild.jsx's per-card rate
+      // badge compares its OWN effective rate against this to decide whether to colour it green.
+      // `unitPrice` above can't serve that role in this branch: it's already lineCost/qty, i.e. the
+      // SAME blended (repeat-discount + shortfall-cost%) figure as the effective rate, so comparing
+      // it against itself never found a difference and the badge silently never went green for any
+      // item that ever took this availability-checked path — which is every element card in Build.
+      return { rc: null, unitPrice, fullUnitPrice: ownedRate, lineCost, area: 0, warning, isFloralBlend: false, realPct: null, available: ownedQty };
     }
     const unitPrice = priceForInvItem(item, rcFactorByKey, imsInventory, el.kitOverrides);
-    return { rc: null, unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName, crossFnTake), area: 0, warning: null, isFloralBlend: false, realPct: null };
+    return { rc: null, unitPrice, fullUnitPrice: unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName, crossFnTake), area: 0, warning: null, isFloralBlend: false, realPct: null };
   }, [imsInventory, rcFactorByKey, rcCostPctForSub, activeBlocksForDate, dealCheckData, studioFloralData, rcFloralModeByKey, floralRatio, fvCfgForRepeat, clientLedger, activeClientId, activeFnIdx, activeFnMeta, clientDate]);
   // Shared SMB/flat rate resolution — the one place `getElPrice`, `getElPriceForFn`, and
   // `calcFullEventCost` all resolve a rate-card item's base rate for an element's size, now with
@@ -4589,7 +4595,7 @@ export default function StudioApp() {
     const r = getElPriceRaw(el, zc, opts, venueName);
     const mult = guestPriceMultiplier * dateCategoryMultiplierFor(activeFnMeta.date);
     if (mult === 1) return r;
-    return { ...r, unitPrice: r.unitPrice * mult, lineCost: r.lineCost * mult };
+    return { ...r, unitPrice: r.unitPrice * mult, fullUnitPrice: r.fullUnitPrice != null ? r.fullUnitPrice * mult : undefined, lineCost: r.lineCost * mult };
   }, [getElPriceRaw, guestPriceMultiplier, activeFnMeta, dealCheckData, studioFloralData]);
 
   const calcElsCost = useCallback((elements, withFloral, zc, opts, venueName) => {

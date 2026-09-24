@@ -3576,7 +3576,13 @@ undefined
                   const rc = priceInfo.rc;
                   const hasSizes = rcIsSMB(rc);
                   const isTrussSqft = rc && rc.unit === "truss_sqft";
-                  const rawUp = priceInfo.unitPrice;
+                  // fullUnitPrice (undiscounted rate) rather than unitPrice — for any item priced
+                  // through the availability-checked path (every element card here), unitPrice IS
+                  // already lineCost/qty, the SAME blended figure _effUp below computes, so comparing
+                  // it against itself could never detect a discount and the rate badge never went
+                  // green. Falls back to unitPrice for element types that don't carry fullUnitPrice
+                  // (mandi/pattern/rate-card elements), unchanged from before.
+                  const rawUp = priceInfo.fullUnitPrice ?? priceInfo.unitPrice;
                   const adjUp = applyFloralRatio(rawUp, rc);
                   // priceInfo.lineCost (not qty×adjUp) — the Repeat/standing-venue discount
                   // (repeatAdjustedLineCost) only lives inside lineCost; qty×adjUp is always the
