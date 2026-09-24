@@ -56,6 +56,16 @@ const StatCell = ({ label, w, children }) => (
 );
 const STAT_W = { qty: "sm:w-16", rate: "sm:w-20", total: "sm:w-24" };
 
+/* Page with a down-arrow: a document you take away, which is what the export produces. Not a
+   printer glyph — the print dialog is how it is saved, not what it is for. */
+const IconDownload = ({ s = 14 }) => (
+  <svg width={s} height={s} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+    <path d="M9.2 1.8H4.4a1.4 1.4 0 0 0-1.4 1.4v9.6a1.4 1.4 0 0 0 1.4 1.4h7.2a1.4 1.4 0 0 0 1.4-1.4V5.6L9.2 1.8Z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+    <path d="M9 2v3.4h3.6" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+    <path d="M8 7.6v4m0 0L6.4 10M8 11.6 9.6 10" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
 const IconBell = ({ s = 14 }) => (
   <svg width={s} height={s} viewBox="0 0 16 16" fill="none" aria-hidden="true">
     <path d="M8 2a3.6 3.6 0 0 0-3.6 3.6c0 2.7-1 3.6-1 3.6h9.2s-1-.9-1-3.6A3.6 3.6 0 0 0 8 2Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
@@ -303,6 +313,9 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   // carries the qty, the rate and the total that matter, and six components under each of four
   // kits buried the ordinary items between them.
   const [kitOpen, setKitOpen] = useState({});
+  // Set while the PDF is being built. The first export also downloads the jsPDF chunk, so there
+  // is a real pause — without a busy state the button looks broken and gets pressed again.
+  const [exporting, setExporting] = useState(false);
   const [mpDayHow, setMpDayHow] = useState({}); // which per-day rows have their "how" derivation expanded
   const [routeDraft, setRouteDraft] = useState({}); // dismantle routing draft per item: {qty, type, toEventId}
   const [manTruck, setManTruck] = useState({}); // confirm-time truck details per destination group: {[groupKey]:{vehicle,driver,phone}}
@@ -680,6 +693,48 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   const actualCost = mandiSpend + expenseTotal + mpCost;
   const hasActuals = mandiSpend > 0 || expenseTotal > 0 || mpEdited;
 
+  // ── THE DEPARTMENT'S INCOME, BROKEN INTO HEADS ──
+  // Read by the on-screen readout AND by the PDF export. It lives here rather than inside the
+  // panel's render because two copies of this arithmetic would eventually disagree, and the one
+  // thing worse than a missing breakdown is two breakdowns of the same department that differ.
+  const income = useMemo(() => {
+    if (!deptIncome) return { shown: [], shownSum: 0, gap: 0, liveTotal: 0, pct: () => 0 };
+    // fp (floralPlan) is a whole-EVENT floral sourcing plan, not scoped per department — only
+    // show its real/artificial split under the Floral dept itself.
+    const artTotal = (dept === "Floral" && fp.artificial) ? Math.round(fp.artificial.total) : 0;
+    const realFloral = dept === "Floral" ? Math.max(0, Math.round((deptIncome.florals || 0) - artTotal)) : 0;
+    const liveManpower = Math.round(mpCost);   // edited crew plan (not the stale snapshot)
+    const liveTotal = Math.round((deptIncome.total || 0) - (deptIncome.manpower || 0) + liveManpower);
+    // Fixed order, so a head does not move the moment another one appears or drops to zero —
+    // the position of a figure is how you find it again on the next event.
+    const rows = [
+      { label: "Inventory rental", value: deptIncome.rental },
+      { label: "Truss", value: deptIncome.truss },
+      { label: "Fabric / draping", value: deptIncome.fabric },
+      { label: "Real flowers (mandi)", value: realFloral },
+      { label: "Artificial flowers", value: artTotal },
+      { label: "Manpower", value: liveManpower },
+      { label: "Production", value: deptIncome.production },
+      { label: "Buying", value: deptIncome.buying },
+      { label: "Transport", value: deptIncome.transport },
+    ];
+    // ── SHARE OF THE DEPARTMENT'S OWN INCOME ──
+    // The percentages are taken against the SUM OF THE HEADS SHOWN, not against liveTotal.
+    // liveTotal is deptIncome.total with the stale manpower swapped for the live edited crew, so
+    // it can carry heads this list does not — and a column of percentages that silently fails to
+    // reach 100 is worse than no percentages. Computed this way they always total 100, and `gap`
+    // states it outright if the two figures disagree rather than leaving the reader to notice.
+    const shown = rows.filter(r => r.value > 0).map(r => ({ ...r, value: Math.round(r.value) }));
+    const shownSum = shown.reduce((s, r) => s + r.value, 0);
+    return {
+      shown,
+      shownSum,
+      gap: liveTotal - shownSum,
+      liveTotal,
+      pct: (v) => (shownSum > 0 ? Math.round((v / shownSum) * 100) : 0),
+    };
+  }, [deptIncome, dept, fp, mpCost]);
+
   const printChallan = () => {
     const w = window.open("", "_blank");
     if (!w) return;
@@ -1053,6 +1108,305 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
     );
   };
 
+  // ── DEPARTMENT REPORT → PDF ──
+  // Everything this tab knows about ONE department on ONE event, in one printable page: the
+  // money, the blocked inventory, the crew, what was actually spent, the trucks, the dismantle
+  // routing, and (for Fabric) the requirement against stock. Scoped exactly like the page it is
+  // exported from — `dept` and `sel` are what the whole tab is filtered by — so the button needs
+  // no arguments and there is no way to export a department you are not looking at.
+  //
+  // Printed via the browser rather than a PDF library: this is a client-only SPA on GitHub Pages
+  // with no server to render on, and a bundled generator would add hundreds of kilobytes to
+  // every page load for a button used occasionally. "Save as PDF" is in the print dialog of every
+  // browser the team uses, and the same approach already prints the loading challans above.
+  const buildReportHtml = () => {
+    // Anything that reaches the page goes through this first. The values are client names,
+    // venues, crew types and item names typed by staff in Studio — an apostrophe or a stray
+    // "<" in one of them would otherwise break the markup or inject into it.
+    const esc = (v) => String(v ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    const money = (v) => esc(fmt(Math.round(Number(v) || 0)));
+    // data-block marks a unit the paginator will try to keep on one page. Sections are the
+    // natural unit: a heading stranded at the foot of a page with its table overleaf is the
+    // single thing that makes a generated report look generated.
+    let sectionNo = 0;
+    const sect = (title, body) => {
+      if (!body) return "";
+      sectionNo += 1;
+      return `<section data-block><div class="sh"><span class="sn">${String(sectionNo).padStart(2, "0")}</span><h3>${esc(title)}</h3><i></i></div>${body}</section>`;
+    };
+    const table = (heads, rows, widths) => rows.length
+      ? `<table><colgroup>${widths.map(w => `<col style="width:${w}">`).join("")}</colgroup><thead><tr>${heads.map((h, i) => `<th${i ? ' class="n"' : ""}>${esc(h)}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table>`
+      : "";
+
+    const venue = sel?.functionsDetail?.[0]?.venue || sel?.venue || "—";
+
+    /* Money. `income` is the same memo the readout on screen uses, so the report and the page
+       cannot disagree about what the department earns. */
+    const headRows = income.shown.map(r =>
+      `<tr><td>${esc(r.label)}</td><td class="n">${money(r.value)}</td><td class="n">${income.pct(r.value)}%</td></tr>`);
+    // Each head also gets a drawn share bar. On screen these were dropped as noise, but a page
+    // that cannot be scrolled or hovered has nothing else to make a column of percentages
+    // comparable at a glance, and here the bars sit in their own narrow column rather than
+    // running the width of the sheet.
+    const headRowsBar = income.shown.map(r =>
+      `<tr><td>${esc(r.label)}</td><td class="n">${money(r.value)}</td><td class="bar"><i style="width:${Math.max(income.pct(r.value), 2)}%"></i></td><td class="n pct">${income.pct(r.value)}%</td></tr>`);
+    const moneyBlock = `
+      <div class="cards">
+        <div class="card hi"><div class="k">Total income</div><div class="v">${money(income.liveTotal)}</div><div class="s">What ${esc(dept)} earns · synced from Deal Check</div></div>
+        <div class="card"><div class="k">Actual cost logged</div><div class="v ${hasActuals ? "" : "muted"}">${hasActuals ? money(actualCost) : "—"}</div><div class="s">${hasActuals ? "What you actually spent" : "Not logged yet"}</div></div>
+      </div>
+      ${table(["Head", "Amount", "", "Share"], headRowsBar, ["46%", "22%", "22%", "10%"])}
+      ${income.gap !== 0 && income.shown.length ? `<p class="note">Heads above sum to ${money(income.shownSum)} — ${money(Math.abs(income.gap))} ${income.gap > 0 ? "less than" : "more than"} the department total. The total carries the live crew plan; a head may not be broken out here.</p>` : ""}`;
+
+    /* Inventory, with each kit's components indented beneath it — the components sum to the kit
+       line, which is the one comparison this section exists to support. */
+    const invRows = [];
+    blockedItemsGrouped.forEach(it => {
+      const flags = [it.isKit ? "KIT" : "", it.shortQty > 0 ? `SHORT x${it.shortQty}` : "", it.prodOrBuy ? it.prodOrBuy.toUpperCase() : "", it.isSwapped ? "SWAPPED" : ""].filter(Boolean).join(" · ");
+      invRows.push(`<tr><td>${esc(it.name)}${flags ? ` <span class="tag">${esc(flags)}</span>` : ""}<div class="sub">${esc(it.sub || "—")}</div></td><td class="n">${esc(it.qty)}</td><td class="n">${money(it.unit)}</td><td class="n b">${money(it.total)}</td></tr>`);
+      (it.isKit && Array.isArray(it.components) ? it.components : []).forEach(cp => {
+        invRows.push(`<tr class="kit"><td>&#8627; ${esc(cp.name)}</td><td class="n">${esc(cp.qty)}</td><td class="n">${money(cp.unit)}</td><td class="n">${money(cp.total)}</td></tr>`);
+      });
+    });
+
+    const crewRows = mpRows.map(r => {
+      const count = dayWise(r)
+        ? (Number(r.rate) > 0 ? Math.round(Number(lineCost(r)) / Number(r.rate)) : 0) + " dihari"
+        : esc(r.count);
+      return `<tr><td>${esc(r.type)}${r.shared ? ' <span class="tag">SHARED</span>' : ""}</td><td class="n">${count}</td><td class="n">${money(r.rate)}</td><td class="n b">${money(lineCost(r))}</td></tr>`;
+    });
+    if (crewRows.length) crewRows.push(`<tr class="tot"><td>Total</td><td class="n"></td><td class="n"></td><td class="n b">${money(mpCost)}</td></tr>`);
+
+    const spendRows = [
+      ...(dept === "Floral" && mandiSpend > 0 ? [`<tr><td>Mandi shopping (real flowers)</td><td class="n b">${money(mandiSpend)}</td></tr>`] : []),
+      ...expenses.map(e => `<tr><td>${esc(e.label || e.note || "Expense")}</td><td class="n b">${money(e.amount)}</td></tr>`),
+      ...(mpCost > 0 ? [`<tr><td>Crew (per the plan above)</td><td class="n b">${money(mpCost)}</td></tr>`] : []),
+    ];
+    if (spendRows.length) spendRows.push(`<tr class="tot"><td>Total logged</td><td class="n b">${money(actualCost)}</td></tr>`);
+
+    const truckRows = trucks.map((t, i) => {
+      const n = blockedItems.filter(it => (Number(t.items?.["inv:" + it.id]) || 0) > 0).length;
+      return `<tr><td>Truck ${i + 1}</td><td>${esc(t.vehicle || "—")}</td><td>${esc(t.driver || "—")}</td><td>${esc(t.phone || "—")}</td><td class="n">${n} item${n === 1 ? "" : "s"}</td><td>${esc(t.status || "—")}</td></tr>`;
+    });
+
+    const moveRows = movements.map(m =>
+      `<tr><td>${esc(m.name)}</td><td>${esc(m.type === "transfer" ? `Transfer → ${m.toEventName || "site"}` : m.type === "damage" ? "Damaged" : "Back to production house")}</td><td class="n">${esc(m.qty)}</td><td>${esc(m.by || "—")}</td></tr>`);
+
+    const fabRows = dept === "Fabric" ? fabricReqRows.flatMap(ft => ft.rows.map(r =>
+      `<tr><td>${esc(ft.label)} · ${esc(r.colour)}</td><td class="n">${esc(r.required)} ${esc(ft.unit)}</td><td class="n">${esc(r.avail)} ${esc(ft.unit)}</td><td class="n ${r.short > 0 ? "bad" : "ok"}">${r.short > 0 ? `short ${esc(r.short)} ${esc(ft.unit)}` : "ok"}</td></tr>`)) : [];
+
+    const html = `<!doctype html><html><head><meta charset="utf-8">
+<title>${esc(dept)} — ${esc(sel?.clientName || "Event")} — Ambria</title>
+<style>
+  /* ── A PAGE, NOT A WEB PAGE ──
+     The first version had no width at all, so the browser laid it out across the whole window:
+     on a 1920px screen the Item column and the Qty column ended up a foot apart and the sheet
+     read as a spreadsheet dump. Everything here is sized to ONE A4 sheet — 794px is A4's
+     210mm at 96dpi — and centred, so what you see is what the PDF is. */
+  *{box-sizing:border-box}
+  html,body{margin:0;background:#EEF1F6}
+  body{font-family:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;color:#111827;font-size:11px;line-height:1.5;-webkit-font-smoothing:antialiased}
+  .sheet{width:794px;margin:0 auto;background:#fff;padding:38px 44px 30px}
+
+  /* Header: a rule of colour, the department as the headline, the event beneath it, and the
+     facts that identify this sheet as labelled pairs — a report is found again by its
+     identifiers, so they are the one thing that must never be a run-on sentence. */
+  .hdr{border-top:3px solid #2563EB;padding-top:14px;margin-bottom:20px}
+  .brand{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px}
+  .brand .co{font-size:10px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:#2563EB}
+  .brand .kind{font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:#9CA3AF}
+  h1{font-size:25px;line-height:1.15;margin:0;color:#0F172A;letter-spacing:-.02em;font-weight:700}
+  h1 span{color:#94A3B8;font-weight:400}
+  .facts{display:flex;gap:26px;margin-top:14px;padding-top:12px;border-top:1px solid #E8ECF2}
+  .facts div{min-width:0}
+  .facts .k{font-size:8px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#9CA3AF;margin-bottom:2px}
+  .facts .v{font-size:11.5px;font-weight:600;color:#1F2937}
+
+  /* Section head: a number, the name, and a rule that runs out to the margin. The number is
+     what lets someone on a phone call say "look at section 3" instead of "scroll down a bit". */
+  section{margin-bottom:20px}
+  .sh{display:flex;align-items:center;gap:9px;margin-bottom:9px}
+  .sh .sn{font-size:8.5px;font-weight:700;color:#2563EB;background:#EFF6FF;border-radius:3px;padding:2px 5px;letter-spacing:.04em}
+  .sh h3{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#334155;margin:0;white-space:nowrap}
+  .sh i{flex:1;height:1px;background:#E8ECF2}
+
+  table{width:100%;border-collapse:collapse;table-layout:fixed}
+  th,td{padding:6px 9px;text-align:left;vertical-align:middle;word-wrap:break-word}
+  th{font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.09em;color:#94A3B8;border-bottom:1px solid #CBD5E1;padding-bottom:5px}
+  td{border-bottom:1px solid #F1F5F9;font-size:11px}
+  tbody tr:last-child td{border-bottom:0}
+  .n{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+  .b{font-weight:700;color:#0F172A}
+  .sub{color:#94A3B8;font-size:9.5px;margin-top:1px}
+  .kit td{color:#475569;font-size:10px;background:#F8FAFF;border-bottom:1px solid #EEF2FF}
+  .kit td:first-child{padding-left:26px;color:#64748B}
+  .tot td{background:#F8FAFC;font-weight:700;border-top:1.5px solid #CBD5E1;border-bottom:0;color:#0F172A}
+  .tag{display:inline-block;background:#DBEAFE;color:#1D4ED8;font-size:7.5px;font-weight:700;padding:1.5px 4px;border-radius:2.5px;vertical-align:middle;letter-spacing:.04em;margin-left:3px}
+  /* The share bar gets its own narrow column so it stays a measure instead of becoming a rule
+     across the sheet, which is what made it read as a divider on screen. */
+  .bar{padding-right:4px}
+  .bar i{display:block;height:4px;border-radius:2px;background:#2563EB;min-width:2px}
+  td.bar{position:relative;background:linear-gradient(#EEF2F7,#EEF2F7) 9px center/calc(100% - 18px) 4px no-repeat}
+  .pct{font-size:10px;color:#64748B;font-weight:600}
+
+  .cards{display:flex;gap:11px;margin-bottom:13px}
+  .card{flex:1;border:1px solid #E8ECF2;border-radius:9px;padding:12px 14px}
+  .card.hi{background:#2563EB;border-color:#2563EB;color:#fff}
+  .card .k{font-size:8px;text-transform:uppercase;letter-spacing:.1em;font-weight:700;opacity:.72}
+  .card .v{font-size:23px;font-weight:700;margin:5px 0 3px;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+  .card .v.muted{color:#CBD5E1}
+  .card .s{font-size:9px;opacity:.72;line-height:1.35}
+  .meta{color:#94A3B8;font-size:9.5px;margin:7px 0 0}
+  .note{background:#FFFBEB;border-left:3px solid #F59E0B;color:#92400E;padding:7px 10px;border-radius:0 5px 5px 0;font-size:10px;margin:9px 0 0}
+  .empty{color:#94A3B8;font-style:italic;font-size:10.5px;margin:2px 0 0}
+  .ok{color:#059669;font-weight:600}
+  .bad{color:#DC2626;font-weight:700}
+  footer{margin-top:26px;padding-top:11px;border-top:1px solid #E8ECF2;color:#94A3B8;font-size:8.5px;display:flex;justify-content:space-between;gap:16px}
+
+  /* The button is screen furniture. It is hidden from print, and the exporter removes it from
+     the DOM outright before rendering, so it can never appear in the file either way. */
+  .noprint{position:fixed;top:16px;right:16px;background:#2563EB;color:#fff;border:0;border-radius:9px;padding:10px 18px;font:600 13px/1 inherit;cursor:pointer;box-shadow:0 4px 14px rgba(37,99,235,.35)}
+  @media print{
+    @page{size:A4;margin:0}
+    html,body{background:#fff}
+    .noprint{display:none!important}
+    .sheet{width:auto;padding:14mm 14mm 10mm}
+    section{break-inside:avoid}
+    tr{break-inside:avoid}
+  }
+</style></head><body>
+<button class="noprint" onclick="window.print()">Save as PDF</button>
+<div class="sheet" id="sheet">
+<header class="hdr" data-block>
+  <div class="brand"><span class="co">Ambria</span><span class="kind">Department report</span></div>
+  <h1>${esc(dept)} <span>— ${esc(sel?.clientName || "Event")}</span></h1>
+  <div class="facts">
+    <div><div class="k">Event date</div><div class="v">${esc(selDateStr || "—")}</div></div>
+    <div><div class="k">Venue</div><div class="v">${esc(venue)}</div></div>
+    <div><div class="k">Department</div><div class="v">${esc(dept)}</div></div>
+    <div><div class="k">Last edited by</div><div class="v">${esc(deptData.updatedBy || "—")}</div></div>
+  </div>
+</header>
+${deptIncome ? sect("Money", moneyBlock) : sect("Money", '<p class="empty">No Deal Check breakdown synced yet for this event.</p>')}
+${sect("Inventory blocked", invRows.length ? table(["Item", "Qty", "Rate / unit", "Total"], invRows, ["52%", "10%", "18%", "20%"]) + `<p class="meta">${blockedItemsGrouped.length} item${blockedItemsGrouped.length === 1 ? "" : "s"} held · ${money(rentalIncome)}</p>` : '<p class="empty">No inventory blocked for this department.</p>')}
+${sect("Manpower plan", crewRows.length ? table(["Crew type", "Count", "Rate / day", "Line total"], crewRows, ["40%", "20%", "20%", "20%"]) : '<p class="empty">No crew assigned.</p>')}
+${sect("Actual spend logged", spendRows.length ? table(["What", "Amount"], spendRows, ["70%", "30%"]) : '<p class="empty">Nothing logged yet.</p>')}
+${truckRows.length ? sect("Loading & dispatch", table(["#", "Vehicle", "Driver", "Phone", "Load", "Status"], truckRows, ["11%", "22%", "21%", "18%", "14%", "14%"])) : ""}
+${moveRows.length ? sect("Dismantle routing", table(["Item", "Goes to", "Qty", "Logged by"], moveRows, ["38%", "32%", "12%", "18%"])) : ""}
+${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour", "Required", "Available", "Status"], fabRows, ["40%", "20%", "20%", "20%"])) : ""}
+<footer data-block>
+  <span>Generated from Ambria IMS · ${esc(new Date().toLocaleString("en-IN"))} · ${esc(authUser?.name || "—")}</span>
+  <span>Figures are live at the moment of export</span>
+</footer>
+</div>
+</body></html>`;
+    return html;
+  };
+
+  // ── THE DOWNLOAD ──
+  // Renders the report offscreen, turns it into an A4 PDF and saves it, with no print dialog in
+  // the way. jsPDF and html2canvas are pulled in with a DYNAMIC import so Vite splits them into
+  // their own chunk: nobody who never presses this button pays for them, which is what kept a
+  // PDF library off the table when this was a print-window export.
+  //
+  // Paginated block by block rather than as one tall image sliced every 841pt. Slicing a single
+  // strip cuts through whatever happens to sit on the boundary — a table row bisected, a heading
+  // with its table on the next page. Each `data-block` is measured first and moved to a fresh
+  // page if it does not fit, so breaks land between sections. A block taller than a page (a long
+  // inventory table) still has to be cut, but it is the only thing that ever is.
+  const exportDeptPdf = async () => {
+    if (exporting) return;
+    setExporting(true);
+    const frame = document.createElement("iframe");
+    try {
+      const [{ jsPDF }, h2c] = await Promise.all([import("jspdf"), import("html2canvas")]);
+      const html2canvas = h2c.default;
+
+      // An iframe, not a div in this page: the report's CSS is written for a bare document, and
+      // dropped into the app it would inherit Tailwind's reset and its oklch() colours — which
+      // html2canvas cannot parse and silently renders as black.
+      // Offscreen via position, NOT display:none or visibility:hidden — an element with no
+      // layout box has nothing to rasterise, and the canvas would come back empty.
+      frame.setAttribute("aria-hidden", "true");
+      frame.style.cssText = "position:fixed;left:-10000px;top:0;width:794px;height:1200px;border:0;opacity:0;pointer-events:none";
+      document.body.appendChild(frame);
+      const doc = frame.contentDocument;
+      doc.open(); doc.write(buildReportHtml()); doc.close();
+      // The button exists for the fallback path only; it must not be rasterised into the file.
+      doc.querySelector(".noprint")?.remove();
+      // Let the iframe lay out and its webfont settle before measuring anything.
+      await new Promise(r => setTimeout(r, 120));
+      if (doc.fonts?.ready) { try { await doc.fonts.ready; } catch { /* font API absent — the fallback stack is fine */ } }
+
+      const sheet = doc.getElementById("sheet");
+      frame.style.height = Math.max(1200, sheet.scrollHeight + 80) + "px";
+      await new Promise(r => setTimeout(r, 60));
+
+      const pdf = new jsPDF({ unit: "pt", format: "a4", compress: true });
+      const pageW = pdf.internal.pageSize.getWidth();
+      const pageH = pdf.internal.pageSize.getHeight();
+      const MARGIN = 28;                       // pt of white around the content on every page
+      const usableW = pageW - MARGIN * 2;
+      const usableH = pageH - MARGIN * 2;
+
+      const blocks = [...sheet.querySelectorAll("[data-block], section")];
+      let y = MARGIN;
+      let first = true;
+      for (const el of blocks) {
+        const canvas = await html2canvas(el, { scale: 2, backgroundColor: "#ffffff", logging: false, useCORS: true, windowWidth: 794 });
+        const img = canvas.toDataURL("image/jpeg", 0.92);
+        const h = (canvas.height * usableW) / canvas.width;   // scaled to the content column
+        if (h <= usableH) {
+          // Fits whole. Start a new page if it will not fit in what is left of this one.
+          if (!first && y + h > pageH - MARGIN) { pdf.addPage(); y = MARGIN; }
+          pdf.addImage(img, "JPEG", MARGIN, y, usableW, h);
+          y += h + 10;
+        } else {
+          // Taller than a whole page — the only case we cut. Walk it down page by page.
+          if (!first) { pdf.addPage(); }
+          let drawn = 0;
+          while (drawn < h - 1) {
+            if (drawn > 0) pdf.addPage();
+            pdf.addImage(img, "JPEG", MARGIN, MARGIN - drawn, usableW, h);
+            // Mask whatever of the image spills past this page's bottom margin.
+            pdf.setFillColor(255, 255, 255);
+            pdf.rect(0, pageH - MARGIN, pageW, MARGIN, "F");
+            pdf.rect(0, 0, pageW, MARGIN, "F");
+            drawn += usableH;
+          }
+          y = pageH;   // force the next block onto a fresh page
+        }
+        first = false;
+      }
+
+      // Page numbers, added once the total is known.
+      const total = pdf.internal.getNumberOfPages();
+      for (let p = 1; p <= total; p++) {
+        pdf.setPage(p);
+        pdf.setFontSize(7.5);
+        pdf.setTextColor(148, 163, 184);
+        pdf.text(`${p} / ${total}`, pageW - MARGIN, pageH - 12, { align: "right" });
+      }
+
+      // Filename is what the file is called in someone's Downloads folder a month later, so it
+      // carries all three identifiers. Slashes and colons are illegal in filenames on Windows.
+      const safe = (s) => String(s || "").replace(/[\\/:*?"<>|]+/g, "-").trim();
+      pdf.save(`${safe(dept)} - ${safe(sel?.clientName || "Event")} - ${safe(selDateStr || "no date")}.pdf`);
+    } catch (err) {
+      // Anything at all went wrong — chunk blocked, canvas tainted, old browser. Fall back to
+      // the print window, which needs no libraries and has "Save as PDF" in its own dialog. A
+      // button that reports failure and leaves you with nothing is worse than one extra click.
+      console.error("PDF export failed, falling back to print:", err);
+      const w = window.open("", "_blank");
+      if (!w) { alert("Could not generate the PDF, and the pop-up fallback was blocked. Allow pop-ups for this site and try again."); return; }
+      w.document.write(buildReportHtml());
+      w.document.close();
+    } finally {
+      frame.remove();
+      setExporting(false);
+    }
+  };
+
   // ── VIEW CONTROLS: nearby count, activity bell, Planning / On-site ──
   // ONE home: the right-hand end of the event header. They had been split across two — the
   // income panel's figure row in Planning, a row of their own above the tiles in On-site — so
@@ -1087,6 +1441,23 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
         </span>
       </button>
     )}
+    {/* ── EXPORT THIS DEPARTMENT ──
+        Sits with the bell rather than inside a panel, because the report covers ALL of the
+        panels — money, inventory, crew, spend, trucks, dismantle — so it cannot belong to any
+        one of them. Here it is also scoped the way the page is: whatever department and event
+        the header names is exactly what the PDF contains.
+        Icon-only, like the bell: spelled out it was the widest thing in a row that already has
+        two tags to fit on a 390px screen. The tooltip and the sr-only label carry the meaning. */}
+    <button onClick={() => exportDeptPdf()} disabled={exporting}
+      className="group relative shrink-0 w-7 h-7 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-500 hover:text-gray-900 disabled:opacity-60 flex items-center justify-center transition-colors">
+      {exporting
+        ? <span aria-hidden="true" className="w-3.5 h-3.5 rounded-full border-2 border-gray-300 border-t-blue-600 animate-spin" />
+        : <IconDownload />}
+      <span className="sr-only">{exporting ? "Building the PDF…" : "Download this department as PDF"}</span>
+      <span role="tooltip" className="pointer-events-none absolute top-full right-0 mt-2 z-20 whitespace-nowrap rounded-md bg-gray-900 px-2 py-1 text-[11px] font-medium text-white opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+        {exporting ? "Building the PDF…" : `Download ${dept} as PDF`}
+      </span>
+    </button>
     {/* It briefly lived on the department row above — which does render in both views,
         but that row scrolls off the top the moment you start reading, and the switch
         was gone exactly when you wanted it. */}
@@ -1608,36 +1979,10 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
             {/* Department income (from Deal Check snapshot — matches Studio). Floral is split into real
                 (mandi) vs artificial; Manpower uses the LIVE edited plan so crew edits move the total. */}
             {deptIncome ? (() => {
-              // fp (floralPlan) is a whole-EVENT floral sourcing plan, not scoped per department —
-              // only show its real/artificial split under the Floral dept itself.
-              const artTotal = (dept === "Floral" && fp.artificial) ? Math.round(fp.artificial.total) : 0;
-              const realFloral = dept === "Floral" ? Math.max(0, Math.round((deptIncome.florals || 0) - artTotal)) : 0;
-              const liveManpower = Math.round(mpCost);   // edited crew plan (not the stale snapshot)
-              const liveTotal = Math.round((deptIncome.total || 0) - (deptIncome.manpower || 0) + liveManpower);
-              // Fixed order, so a head does not move the moment another one appears or drops to
-              // zero — the position of a figure is how you find it again on the next event.
-              const rows = [
-                { label: "Inventory rental", value: deptIncome.rental },
-                { label: "Truss", value: deptIncome.truss },
-                { label: "Fabric / draping", value: deptIncome.fabric },
-                { label: "Real flowers (mandi)", value: realFloral },
-                { label: "Artificial flowers", value: artTotal },
-                { label: "Manpower", value: liveManpower },
-                { label: "Production", value: deptIncome.production },
-                { label: "Buying", value: deptIncome.buying },
-                { label: "Transport", value: deptIncome.transport },
-              ];
-              // ── SHARE OF THE DEPARTMENT'S OWN INCOME ──
-              // The percentages are taken against the SUM OF THE HEADS SHOWN, not against
-              // liveTotal. liveTotal is deptIncome.total with the stale manpower swapped for
-              // the live edited crew, so it can carry heads this list does not — and a column
-              // of percentages that silently fails to reach 100 is worse than no percentages.
-              // Computed this way they always total 100, and `gap` below states it outright if
-              // the two figures disagree rather than leaving the reader to notice.
-              const shown = rows.filter(r => r.value > 0).map(r => ({ ...r, value: Math.round(r.value) }));
-              const shownSum = shown.reduce((s, r) => s + r.value, 0);
-              const gap = liveTotal - shownSum;
-              const pct = (v) => (shownSum > 0 ? Math.round((v / shownSum) * 100) : 0);
+              // The maths moved to the `income` memo so the PDF export and this panel cannot
+              // drift: a head added here but not there would put two different breakdowns of the
+              // same department in front of the same person.
+              const { shown, shownSum, gap, liveTotal, pct } = income;
               return (
               <div className="space-y-3">
                 {/* ── A READOUT, NOT CARDS ──
