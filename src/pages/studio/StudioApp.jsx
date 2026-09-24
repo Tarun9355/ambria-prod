@@ -4907,6 +4907,32 @@ export default function StudioApp() {
   // Layout, same reasoning as snapshotFnRef / saveSessionRef — read from synchronous paths.
   useLayoutEffect(() => { collectAllFunctionDataRef.current = collectAllFunctionData; });
 
+  // The SAME cross-function reuse quantities calcFunctionCost/calcFunctionBreakdown already build
+  // and fold into the Live Estimate/Summary/Deal Check totals for the active function — but Build's
+  // own LIVE per-card view (getElPrice/calcElsCost, called directly by StudioBuild.jsx, never
+  // threaded through venueName/crossFnReusePool at all) never received it. Result: an item that
+  // plainly qualifies (same deal, same venue, within 24h of the prior function) still showed full,
+  // undiscounted price on its own card even with the guest-discount toggle on, while the aggregate
+  // total elsewhere had already netted the very same discount out of its sum — the card and the
+  // total it's part of silently disagreed. Exposed via ctx so StudioBuild.jsx can thread this into
+  // its own calcElsCost/getElPrice calls too, same eligibility, same gating.
+  //
+  // A plain qty-by-invId OBJECT, not a ready-made Map — getElPriceFromInventory's crossFnReusePool
+  // is a MUTABLE Map it draws down as each element claims its share (so a second element on the same
+  // invId can't double-claim it), and calcFunctionCost/calcFunctionBreakdown deliberately build a
+  // FRESH Map on every invocation for exactly that reason. Memoizing a single shared Map here would
+  // have every call site draw down the SAME instance across one render (sectionCost, elCardSummary,
+  // zoneTotal, and every per-card getElPrice all price the same elements), silently exhausting the
+  // reuse quantity after the first caller and starving the rest. Each StudioBuild.jsx call site
+  // builds its own `new Map(Object.entries(activeCrossFnReuseQty))` right before using it instead.
+  const activeCrossFnReuseQty = useMemo(() => {
+    const all = collectAllFunctionData();
+    const fnData = all[activeFnIdx];
+    if (!fnData || hideDiscountFromClient || isFillerDateFor(fnData.fnDate)) return null;
+    const prevFn = findCrossFnReuseSource(fnData, all);
+    return prevFn ? computeFnInvQty(prevFn) : null;
+  }, [collectAllFunctionData, activeFnIdx, hideDiscountFromClient, dealCheckData, studioFloralData]);
+
   const calcFunctionCost = useCallback((fnData) => {
     if (!fnData) return { decor: 0, transport: 0, grand: 0 };
     const fZoneElements = fnData.zoneElements || {};
@@ -10558,7 +10584,7 @@ export default function StudioApp() {
     showLedgerRestoreWarning: ledgerLoadError && !activeClientId && !!restoreRef.current?.id,
     retryLedgerLoad,
     deleteSessionRows,
-    showClientForm, setShowClientForm, clientLedger, setClientLedger, saveClientLedger, activeClientId, setActiveClientId, clientSearch, setClientSearch, hideDiscountFromClient, guestPriceMultiplier, dateCategoryMultiplierFor,
+    showClientForm, setShowClientForm, clientLedger, setClientLedger, saveClientLedger, activeClientId, setActiveClientId, clientSearch, setClientSearch, hideDiscountFromClient, guestPriceMultiplier, dateCategoryMultiplierFor, activeCrossFnReuseQty,
     snapshotBuildState, restoreBuildState, switchActiveFn, fnSnapHasData, fnSnapHasBuild,
     sessionHistoryExpanded, setSessionHistoryExpanded,
     // LMS

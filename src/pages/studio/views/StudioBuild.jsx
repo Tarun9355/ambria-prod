@@ -623,7 +623,7 @@ export default function StudioBuild({ ctx }) {
     // zone photo groups (hand-picked leading photos, keyed by zone + function)
     zoneGroups = {}, writeZoneGroup,
     // date demand
-    dateTypes, clientLedger, activeClientId, saveClientLedger, hideDiscountFromClient, guestPriceMultiplier,
+    dateTypes, clientLedger, activeClientId, saveClientLedger, hideDiscountFromClient, guestPriceMultiplier, activeCrossFnReuseQty,
     // build canvas
     setShowCosts, grandTotal, totalCost, transportCalc, pricingReady,
     savedInsps, setStep, setPreviewImg,
@@ -791,9 +791,15 @@ export default function StudioBuild({ ctx }) {
   // arches/pillars/glass too (structural extras with no tile of their own); Platform's absorbs
   // carpet (bundled with the floor it sits on) — between the two, every rupee calcStructCost
   // produces lands on exactly one tile.
+  // A fresh Map per call, never a single shared one — see activeCrossFnReuseQty's own comment in
+  // StudioApp.jsx (ctx) for why: getElPriceFromInventory draws this pool DOWN as each element claims
+  // its share, and several unrelated call sites below (sectionCost, elCardSummary, zoneTotal, every
+  // per-card getElPrice) all price the SAME elements within one render — sharing one Map instance
+  // across them would have the first caller silently exhaust it for the rest.
+  const crossFnPool = () => activeCrossFnReuseQty ? new Map(Object.entries(activeCrossFnReuseQty)) : null;
   const sectionCost = (k, id) => {
     if (!showCosts) return 0;
-    if (id === "elements") return calcElsCost(zoneElements[k], true, zoneConfig[k], {checkAvailability:true});
+    if (id === "elements") return calcElsCost(zoneElements[k], true, zoneConfig[k], {checkAvailability:true, crossFnReusePool: crossFnPool()}, venue);
     const sc = zoneConfig[k] ? scaleStruct(calcStructCost(k, zoneConfig[k], structRates, structDiscountFor(zoneConfig[k]))) : null;
     if (id === "truss") return sc ? sc.truss + sc.masking + sc.arches + sc.pillars + sc.glass : 0;
     if (id === "platform") return sc ? sc.platform + sc.carpet : 0;
@@ -828,7 +834,7 @@ export default function StudioBuild({ ctx }) {
   const elCardSummary = (k) => {
     const els = zoneElements[k] || [];
     if (!els.length) return null;
-    const total = showCosts ? calcElsCost(els, true, zoneConfig[k], {checkAvailability:true}) : 0;
+    const total = showCosts ? calcElsCost(els, true, zoneConfig[k], {checkAvailability:true, crossFnReusePool: crossFnPool()}, venue) : 0;
     return <span style={{fontSize:10.5,fontWeight:600,color:textS,display:"inline-flex",alignItems:"center",gap:6,marginLeft:2}}>
       <span>{els.length} item{els.length === 1 ? "" : "s"}</span>
       {showCosts && total > 0 && <span style={{color:textP,fontWeight:700}}>{fmt(total)}</span>}
@@ -857,7 +863,7 @@ export default function StudioBuild({ ctx }) {
   // (shortfall-adjusted), so "By zone" + "Zones subtotal" quietly failed to add up to the number
   // above them. Same reasoning as calcFunctionCost's — this is what makes Build's own totals agree
   // with themselves, and with Summary/Deal Check's.
-  const zoneTotal = (k) => calcElsCost(zoneElements[k],true,zoneConfig[k],{checkAvailability:true})+(zoneConfig[k]?scaleStruct(calcStructCost(k,zoneConfig[k],structRates,structDiscountFor(zoneConfig[k]))).total:0)+dcCustomItems.filter(c=>c.fnIdx===(activeFnIdx||0)&&c.zoneKey===k).reduce((acc,c)=>acc+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0);
+  const zoneTotal = (k) => calcElsCost(zoneElements[k],true,zoneConfig[k],{checkAvailability:true, crossFnReusePool: crossFnPool()},venue)+(zoneConfig[k]?scaleStruct(calcStructCost(k,zoneConfig[k],structRates,structDiscountFor(zoneConfig[k]))).total:0)+dcCustomItems.filter(c=>c.fnIdx===(activeFnIdx||0)&&c.zoneKey===k).reduce((acc,c)=>acc+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0);
   void textSRaw;
 
   // Photo-filter pill. Was 9px in a 2px-tall chip with `textS` (~3.1:1) when inactive — too small
@@ -3558,8 +3564,15 @@ undefined
               {isElCardOpen(k)&&<div style={{background:isDark?"#12121F":"#FAFAFA",borderRadius:10,padding:"10px 14px",marginBottom:10}}>
                 {(zoneElements[k]||[]).length===0&&<div style={{fontSize:11,color:textS,lineHeight:1.5,padding:"2px 0"}}>No elements on this photo yet — use <strong style={{color:textP,fontWeight:600}}>+ Add element…</strong> above, or pick a photo that has an element card.</div>}
               <div className="el-grid" style={{"--el-cols":elCols}}>
-                {groupedEls(k).map(({ el, idx, isKit, firstKit }) => {
-                  const priceInfo = getElPrice(el, zoneConfig[k], { checkAvailability: true, zoneKey: k, elIdx: idx });
+                {(() => {
+                  // ONE pool instance shared across every row of THIS zone's map below — not a
+                  // fresh crossFnPool() per row, which would let two rows on the same invId (e.g. a
+                  // split into two colours) each see the full undrawn quantity and both get
+                  // discounted, double-counting reuse the same way calcElsCostForFn's own single
+                  // shared Map (built once per function, drawn down across its whole .reduce) avoids.
+                  const zonePool = crossFnPool();
+                  return groupedEls(k).map(({ el, idx, isKit, firstKit }) => {
+                  const priceInfo = getElPrice(el, zoneConfig[k], { checkAvailability: true, zoneKey: k, elIdx: idx, crossFnReusePool: zonePool }, venue);
                   const rc = priceInfo.rc;
                   const hasSizes = rcIsSMB(rc);
                   const isTrussSqft = rc && rc.unit === "truss_sqft";
@@ -3835,9 +3848,10 @@ undefined
                       textP={textP} textS={textS} border={border} cardBg={cardBg} accent={accent} isDark={isDark} fmt={fmt}
                     />}
                   </div>);
-                })}
+                });
+                })()}
               </div>
-                {(zoneElements[k]||[]).length>0&&showCosts&&<div style={{display:"flex",justifyContent:"flex-end",padding:"8px 0 0",fontWeight:700,color:textP}}>{fmt(calcElsCost(zoneElements[k],true,zoneConfig[k],{checkAvailability:true}))}</div>}
+                {(zoneElements[k]||[]).length>0&&showCosts&&<div style={{display:"flex",justifyContent:"flex-end",padding:"8px 0 0",fontWeight:700,color:textP}}>{fmt(calcElsCost(zoneElements[k],true,zoneConfig[k],{checkAvailability:true, crossFnReusePool: crossFnPool()},venue))}</div>}
               </div>}
             </div>
           ) : (
