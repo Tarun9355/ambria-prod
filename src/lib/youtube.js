@@ -11,7 +11,19 @@ export async function ytApi(action, params = {}) {
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${ANON_KEY}`, apikey: ANON_KEY },
     body: JSON.stringify({ action, params }),
   });
-  if (!r.ok) throw new Error(`YouTube ${r.status}`);
+  if (!r.ok) {
+    // The Edge Function (supabase/functions/youtube/index.ts) forwards YouTube's own error body
+    // through verbatim — {error:{code,message,errors:[{reason,...}]}} — but that's exactly what
+    // got thrown away here, leaving every caller's `.catch(() => ({}))` (StudioApp.jsx) with
+    // nothing to log but a bare status code. Every video on screen then falls back to "Untitled
+    // video" with zero trace of WHY — quota, rate limit, a bad key — all look identical. Reading
+    // the real body (best-effort; a non-JSON error page still falls back to the plain status) is
+    // what actually answers that the next time this fires, straight from the browser console, with
+    // no need to go pull Edge Function logs at all.
+    let detail = "";
+    try { const body = await r.json(); detail = body?.error?.message || body?.error?.errors?.[0]?.reason || JSON.stringify(body); } catch { /* non-JSON error body */ }
+    throw new Error(`YouTube ${r.status}${detail ? `: ${detail}` : ""}`);
+  }
   return r.json();
 }
 

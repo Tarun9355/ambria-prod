@@ -50,12 +50,25 @@ export default function TransportEditor({ ctx }) {
   };
   // Per-sub-category truck capacity, keyed by sub-category name (truckCap[].item === sub).
   const capForSub = (sub) => (truckCap || []).find((t) => String(t.item || "").toLowerCase().trim() === String(sub || "").toLowerCase().trim());
+  // Best-guess default unit for a pseudo-sub that has no truckCap row yet — used both when a row is
+  // actually created below AND by the render's own placeholder display before that row exists, so
+  // the two can never disagree about what unit a fresh row starts as. "masking" dropped from the
+  // sqft-matching keywords: it used to only ever mean the old wall-masking rate table, which never
+  // creates a truckCap row at all (see subsByCat's comment) — now it exclusively means the pc-based
+  // Fabric Allocation pseudo-sub, so sqft would be wrong.
+  const guessUnit = (sub) => {
+    const s = String(sub || "").toLowerCase().trim();
+    if (s === "liza" || s === "real flowers") return "kg";
+    if (s === "artificial flowers") return "bunch";
+    if (/truss|platform|carpet|fabric|batta|ceiling/.test(s)) return "sqft";
+    return "pc";
+  };
   const upsertSubCap = (sub, field, val) => {
     const existing = capForSub(sub);
     const conv = (f, v) => (f === "perTruck" ? Number(v) || 0 : v);
     let next;
     if (existing) next = (truckCap || []).map((t) => (t === existing ? { ...t, [field]: conv(field, val) } : t));
-    else next = [...(truckCap || []), { id: "TC" + Date.now().toString(36).slice(-5).toUpperCase(), item: sub, perTruck: field === "perTruck" ? Number(val) || 0 : 0, unit: field === "unit" ? val : (/truss|platform|carpet|masking|fabric|batta|ceiling/i.test(sub) ? "sqft" : "pc") }];
+    else next = [...(truckCap || []), { id: "TC" + Date.now().toString(36).slice(-5).toUpperCase(), item: sub, perTruck: field === "perTruck" ? Number(val) || 0 : 0, unit: field === "unit" ? val : guessUnit(sub) }];
     saveTR(null, next);
   };
   // Distinct sub-categories grouped by top-level category — sourced from `rateCardCategories`
@@ -115,9 +128,21 @@ export default function TransportEditor({ ctx }) {
     const have = new Set(Object.values(groups).flat().map((s) => String(s).toLowerCase().trim()));
     const structLabel = "Structural (by sqft)";
     ["Truss", "Platform", "Carpet"].forEach((s) => { if (!have.has(s.toLowerCase())) (groups[structLabel] = groups[structLabel] || []).push(s); });
-    const labels = Object.keys(groups).filter((l) => l !== "Other" && l !== structLabel).sort();
+    // Fabric Allocation (masking/liza/curtains, §23 Phase 2.9f) and floral material (real mandi +
+    // artificial) — same reasoning as Truss/Platform/Carpet above: both are computed from zone/
+    // recipe config, not real inventory sub-categories, so without a pseudo-sub here they'd have no
+    // row on this screen and no way to ever be given a real perTruck capacity. No name collision
+    // with the OLDER "Masking" wall-material system — that one prices off imsMaskingRates, a flat
+    // settings table, and was never a rate-card sub-category to begin with.
+    const fabricLabel = "Fabric Allocation (by pc/kg)";
+    ["Masking", "Liza", "Curtains"].forEach((s) => { if (!have.has(s.toLowerCase())) (groups[fabricLabel] = groups[fabricLabel] || []).push(s); });
+    const floralMatLabel = "Floral Material (by kg/bunch)";
+    ["Real Flowers", "Artificial Flowers"].forEach((s) => { if (!have.has(s.toLowerCase())) (groups[floralMatLabel] = groups[floralMatLabel] || []).push(s); });
+    const labels = Object.keys(groups).filter((l) => l !== "Other" && l !== structLabel && l !== fabricLabel && l !== floralMatLabel).sort();
     const out = labels.map((l) => ({ cat: { id: l, l, icon: CAT_ICON[l] || "📦" }, subs: groups[l] }));
     if (groups[structLabel]?.length) out.push({ cat: { id: structLabel, l: structLabel, icon: "🏗️" }, subs: groups[structLabel] });
+    if (groups[fabricLabel]?.length) out.push({ cat: { id: fabricLabel, l: fabricLabel, icon: "🧵" }, subs: groups[fabricLabel] });
+    if (groups[floralMatLabel]?.length) out.push({ cat: { id: floralMatLabel, l: floralMatLabel, icon: "🌸" }, subs: groups[floralMatLabel] });
     if (groups.Other?.length) out.push({ cat: { id: "Other", l: "Other", icon: "📁" }, subs: groups.Other });
     return out;
   })();
@@ -244,7 +269,7 @@ export default function TransportEditor({ ctx }) {
             </div>
             {open && (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))", gap: "4px 12px", padding: "8px 12px" }}>
-                {subs.map((sub) => { const tc = capForSub(sub); const pt = tc ? tc.perTruck : 0; const un = tc ? (tc.unit || "pc") : (/truss|platform|carpet|masking|fabric|batta|ceiling/i.test(sub) ? "sqft" : "pc"); return (
+                {subs.map((sub) => { const tc = capForSub(sub); const pt = tc ? tc.perTruck : 0; const un = tc ? (tc.unit || "pc") : guessUnit(sub); return (
                   <div key={sub} style={{ display: "flex", alignItems: "center", gap: 6 }}>
                     <span style={{ fontSize: 12, color: textP, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={sub}>{sub}</span>
                     <input type="number" value={pt || ""} placeholder="0" onChange={(e) => upsertSubCap(sub, "perTruck", e.target.value)} style={{ ...numInput, width: 52, padding: "3px 6px", fontSize: 13, color: (pt || 0) === 0 ? "#F59E0B" : (isDark ? "#fff" : "#000") }} />

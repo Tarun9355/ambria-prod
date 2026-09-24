@@ -528,7 +528,16 @@ export default function ManageSettings({ ctx }) {
                 <div style={{fontSize:12,color:textS}}>{c.phone||"—"}</div>
                 <div style={{fontSize:11,color:textP}}>{c.eventDate?new Date(c.eventDate+"T00:00:00").toLocaleDateString("en-IN",{day:"2-digit",month:"short"}):"—"}</div>
                 <div style={{fontSize:11,color:textP}}>{c.venue||"—"}</div>
-                <div style={{fontSize:11,color:textP}}>{c.fn||"—"}</div>
+                <div style={{fontSize:11,color:textP,display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
+                  <span>{c.fn||"—"}</span>
+                  {/* A lead with more than one function used to look identical to a single-function
+                      one here — the row only ever read the flat c.fn/c.shift (Fn1's own fields), with
+                      no reference to c.functions (the full array) anywhere in this table, collapsed OR
+                      expanded. This badge is the only signal on the collapsed row that there's more to
+                      see; the expanded "Functions" block below (replacing the old flat Sessions-only
+                      view) lists every one of them with its own total. */}
+                  {(c.functions?.length||0)>1 && <span title={`${c.functions.length} functions: ${c.functions.map(f=>f?.type||"?").join(", ")}`} style={{fontSize:9,fontWeight:700,padding:"1px 6px",borderRadius:8,background:"rgba(124,58,237,0.14)",color:"#7C3AED",whiteSpace:"nowrap"}}>+{c.functions.length-1} more</span>}
+                </div>
                 <div style={{fontSize:11,color:textS}}>{c.shift||"—"}</div>
                 <div style={{fontSize:11,color:textS}}>{c.createdBy||"—"}</div>
                 <div><span style={{fontSize:10,padding:"2px 8px",borderRadius:8,fontWeight:600,background:ST.bg,color:ST.fg,whiteSpace:"nowrap"}}>{ST.t}</span></div>
@@ -558,6 +567,28 @@ export default function ManageSettings({ ctx }) {
                   {c.bookedAt&&<span style={{color:"#10B981"}}>Booked: {new Date(c.bookedAt).toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"})} by {c.bookedBy}</span>}
                   {c.pax&&<span>👥 {c.pax} pax</span>}
                 </div>
+                {/* Per-function breakdown — each function's own latest total/tier, from
+                    sessions[0].fnTotals[idx] (carried forward across saves whenever that function
+                    isn't the one actively being priced — see saveSession's fnTotals comment). Without
+                    this, a 4-function deal's real money was scattered across the raw session-save
+                    history below with no way to tell which function a given save even belonged to. */}
+                {c.functions?.length>0&&<div style={{marginBottom:10}}>
+                  <div style={{fontSize:10,fontWeight:600,color:textS,marginBottom:4}}>Functions ({c.functions.length})</div>
+                  {c.functions.map((f,fi)=>{
+                    const ft = c.sessions?.[0]?.fnTotals?.[fi] ?? c.sessions?.[0]?.fnTotals?.[String(fi)] ?? null;
+                    const dateLabel = f?.date ? new Date(f.date+"T00:00:00").toLocaleDateString("en-IN",{day:"2-digit",month:"short"}) : "";
+                    return <div key={fi} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"4px 8px",marginBottom:2,borderRadius:6,background:isDark?"rgba(255,255,255,0.03)":"#fff",fontSize:11}}>
+                      <span style={{color:textP}}>
+                        <span style={{fontWeight:600}}>Fn{fi+1}</span>
+                        {f?.type?` · ${f.type}`:""}
+                        {dateLabel?` · ${dateLabel}`:""}
+                        {f?.shift?` · ${f.shift}`:""}
+                        {f?.venue&&f.venue!==c.venue?` · ${f.venue}`:""}
+                      </span>
+                      <span style={{fontWeight:600,color:accentText}}>{ft?.total?fmt(ft.total):"—"} <span style={{fontWeight:400,color:textS,fontSize:10}}>{ft?.tier||""}</span></span>
+                    </div>;
+                  })}
+                </div>}
                 {c.sessions?.length>0&&<div>
                   <div style={{fontSize:10,fontWeight:600,color:textS,marginBottom:4}}>Sessions ({c.sessions.length})</div>
                   {c.sessions.slice(0,5).map((s,si)=><div key={si} style={{display:"flex",justifyContent:"space-between",padding:"4px 8px",marginBottom:2,borderRadius:6,background:isDark?"rgba(255,255,255,0.03)":"#fff",fontSize:11}}>

@@ -1,13 +1,15 @@
 import { useState, useEffect } from "react";
 import { Badge, Modal, Tabs } from "../../components/ui";
 import { callClaudeStreaming } from "../../lib/ai";
-import { PROD_STATUSES, PROD_DEPTS, DIM_UNITS } from "../../lib/ims/constants";
+import { PROD_STATUSES, PROD_DEPTS, DIM_UNITS, hasIMSPerm } from "../../lib/ims/constants";
 import { canSeeProdDept } from "../../lib/ims/deptClassify";
 
 // Faithful rebuild of the reference IMS ProductionTab (Supply → Production sub-tab).
 // Kanban board (drag & drop), Confirm & Add to Inventory (with AI photo comparison),
 // History, plus the New Request / Confirm / Purchase modals and image lightbox.
 export default function ProductionTab({ prodRequests, setProdRequests, inventory, setInventory, projects, functions, purchase, setPurchase, authUser }) {
+  const canUpdate = hasIMSPerm(authUser, "prod_update");
+  const canAddInv = hasIMSPerm(authUser, "prod_addinv");
   const [subTab, setSubTab] = useState("board");
   const [deptFilter, setDeptFilter] = useState("All");
   // Department gate — same as Inventory (lib/ims/deptClassify.js): a department-scoped user only
@@ -74,6 +76,7 @@ export default function ProductionTab({ prodRequests, setProdRequests, inventory
   }
 
   function updateStatus(id, status) {
+    if (!canUpdate) return;
     setProdRequests(prev => prev.map(r => r.id === id ? { ...r, status } : r));
   }
 
@@ -115,6 +118,7 @@ Compare the two and return ONLY JSON:
 
   // ── Confirm & Add to Inventory ───────────────────────────────────────────────
   async function confirmAndAdd(req) {
+    if (!canAddInv) return;
     const finQty = parseInt(confirmForm.finishedQty) || 1;
     const finImg = confirmForm.finishedImg;
     setAiComparing(true);
@@ -271,8 +275,8 @@ Compare the two and return ONLY JSON:
                       const proj = projects.find(p => p.id === req.projectId);
                       const daysLeft = fn ? Math.ceil((new Date(fn.date) - new Date()) / (86400000)) : null;
                       return (
-                        <div key={req.id} draggable onDragStart={e => onDragStart(e, req.id)}
-                          className={"bg-white rounded-xl border shadow-sm hover:shadow-md transition-all cursor-grab active:cursor-grabbing select-none " + (dragId === req.id ? "opacity-40 scale-95" : "")}>
+                        <div key={req.id} draggable={canUpdate} onDragStart={e => onDragStart(e, req.id)}
+                          className={"bg-white rounded-xl border shadow-sm hover:shadow-md transition-all select-none " + (canUpdate ? "cursor-grab active:cursor-grabbing" : "") + (dragId === req.id ? " opacity-40 scale-95" : "")}>
                           {/* Reference image */}
                           {req.refImg
                             ? <img src={req.refImg} alt="" className="w-full h-20 object-cover rounded-t-xl border-b cursor-pointer hover:opacity-90 transition-opacity" onClick={e => { e.stopPropagation(); const slides = fn?.designFile?.extractedSlides; setViewImg(slides && slides.length > 1 ? { title: req.name + " — Design Slides", slides, idx: 0 } : { src: req.refImg, title: req.name + " — Reference" }); }} />
@@ -303,8 +307,8 @@ Compare the two and return ONLY JSON:
                             {proj && <p className="text-xs text-gray-400 truncate">{proj.name}</p>}
                             {/* Status dropdown */}
                             <select value={req.status} onChange={e => updateStatus(req.id, e.target.value)}
-                              onClick={e => e.stopPropagation()}
-                              className="mt-2 w-full border rounded-lg px-2 py-1.5 text-xs bg-gray-50 hover:bg-gray-100 cursor-pointer">
+                              onClick={e => e.stopPropagation()} disabled={!canUpdate}
+                              className={"mt-2 w-full border rounded-lg px-2 py-1.5 text-xs " + (canUpdate ? "bg-gray-50 hover:bg-gray-100 cursor-pointer" : "bg-gray-100 text-gray-400 cursor-not-allowed")}>
                               {PROD_STATUSES.map(s => <option key={s}>{s}</option>)}
                             </select>
                             {/* Purchase button */}
@@ -657,7 +661,8 @@ Compare the two and return ONLY JSON:
             </div>
 
             <button onClick={() => confirmAndAdd(confirmReq)}
-              disabled={!confirmForm.finishedImg || aiComparing}
+              disabled={!confirmForm.finishedImg || aiComparing || !canAddInv}
+              title={canAddInv ? undefined : "Requires \"Add to Inventory\""}
               className="w-full bg-green-600 hover:bg-green-700 disabled:opacity-40 text-white rounded-xl py-3 text-sm font-bold flex items-center justify-center gap-2">
               ✅ Confirm & Add to Inventory
             </button>

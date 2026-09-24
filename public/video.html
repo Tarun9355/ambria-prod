@@ -1,0 +1,29 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Ambria — Video</title>
+<style>
+  html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; overflow: hidden; }
+  iframe { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; }
+</style>
+</head>
+<body>
+<script>
+  // Served from our own real HTTPS origin (not a blob:/data: URL) on purpose — YouTube's iframe
+  // embed rejects playback with "Error 153: Video player configuration error" when the embedding
+  // document has no valid http(s) origin to check, which a blob: page has. A real static page here
+  // gets the exact same origin the old in-page modal always had, so the embed just works, while
+  // still being its own browser tab/document — separate from the Studio SPA's own busy main thread.
+  var id = (new URLSearchParams(location.search).get("v") || "").match(/^[a-zA-Z0-9_-]{6,20}$/) ? new URLSearchParams(location.search).get("v") : null;
+  if (id) {
+    var ifr = document.createElement("iframe");
+    ifr.src = "https://www.youtube.com/embed/" + id + "?autoplay=1&rel=0&modestbranding=1";
+    ifr.allow = "autoplay; encrypted-media; fullscreen";
+    ifr.allowFullscreen = true;
+    ifr.title = "Video";
+    document.body.appendChild(ifr);
+  }
+</script>
+</body>
+</html>

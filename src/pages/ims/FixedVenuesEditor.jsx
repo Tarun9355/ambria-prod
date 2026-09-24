@@ -197,6 +197,10 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
   // Which venue tab's picker is open, and what has been typed into it.
   const [pickQuery, setPickQuery] = useState({});
   const [pickOpen, setPickOpen] = useState(null);
+  // Search box over a venue's OWN already-added standing inventory — separate from pickQuery above
+  // (which searches the rest of IMS inventory to ADD something new). Keyed by venue id, same as
+  // pickQuery, so switching tabs doesn't carry one venue's filter onto another.
+  const [standingSearch, setStandingSearch] = useState({});
   // Pieces of a truss size available to assign HERE = stock (Planning) minus what other
   // fixed venues already hold standing.
   const trussAvail = (kind, size, vid) => {
@@ -284,11 +288,6 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
                 {venueOptions.map((n) => <option key={n} value={n}>{n}</option>)}
                 {!venueOptions.includes(v.name) && <option value={v.name}>{v.name} (not in venue list)</option>}
               </select>
-              <div className="flex items-center gap-1"><span className="text-xs text-gray-500">Min labour</span><input type="number" min="0" value={v.minLabour ?? 4} onChange={(e) => updVenue(v.id, { minLabour: parseInt(e.target.value) || 0 })} className="w-14 border rounded px-2 py-1 text-sm text-center" /></div>
-              {/* Fixed-venue discount — a % off this venue's own share of the booked deal amount
-                  (Deal Check's dealAmount, before the agency fee), same proration commission already
-                  uses for a multi-venue booking. 0 = no discount, the default for every venue today. */}
-              <div className="flex items-center gap-1"><span className="text-xs text-gray-500">Discount</span><input type="number" min="0" max="100" value={v.discountPct ?? 0} onChange={(e) => updVenue(v.id, { discountPct: parseFloat(e.target.value) || 0 })} className="w-14 border rounded px-2 py-1 text-sm text-center" /><span className="text-xs text-gray-500">%</span></div>
               <button onClick={() => delVenue(v.id)} className="text-red-400 hover:text-red-600 text-sm ml-auto">🗑️</button>
             </div>
 
@@ -305,8 +304,17 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
             </div>
 
             <div className="text-xs font-semibold text-gray-500 uppercase mb-1.5">Standing inventory <span className="font-normal text-gray-400 normal-case">— specific items installed here (location = {v.name})</span></div>
+            {v.items.length > 4 && (
+              <input value={standingSearch[v.id] || ""} onChange={(e) => setStandingSearch((s) => ({ ...s, [v.id]: e.target.value }))}
+                placeholder={`Search ${v.name}'s standing inventory…`}
+                className="border rounded-lg px-3 py-1.5 text-sm w-full max-w-md mb-1.5" />
+            )}
             <div className="space-y-1.5 mb-2">
-              {v.items.map((it) => {
+              {v.items.filter((it) => {
+                const q = (standingSearch[v.id] || "").trim().toLowerCase();
+                if (!q) return true;
+                return q.split(/\s+/).every((t) => (it.name || "").toLowerCase().includes(t));
+              }).map((it) => {
                 const inv = inventory.find((i) => i.id === it.invId);
                 const img = inv?.img || inv?.photoUrls?.[0] || "";
                 const dimsRaw = inv?.dims_LxWxH ?? inv?.dims?.lxwxh;
@@ -402,6 +410,9 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
               })}
               {/* Same plain wording as the placeholder — "designs" only means something to us. */}
               {v.items.length === 0 && <div className="text-xs text-gray-400 italic">Nothing added yet — search below for the items permanently installed at {v.name}.</div>}
+              {v.items.length > 0 && (standingSearch[v.id] || "").trim() && !v.items.some((it) => (standingSearch[v.id] || "").trim().toLowerCase().split(/\s+/).every((t) => (it.name || "").toLowerCase().includes(t))) && (
+                <div className="text-xs text-gray-400 italic">No standing item matches “{standingSearch[v.id]}”.</div>
+              )}
             </div>
 
             {/* ═══ ITEM PICKER ═══

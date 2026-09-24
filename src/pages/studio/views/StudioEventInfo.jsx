@@ -1446,25 +1446,29 @@ export default function StudioEventInfo({ ctx }) {
                         <button className="ei-btn ei-tint" onClick={refreshLmsSync} disabled={lmsSyncing} style={{marginLeft:"auto",padding:"2px 8px",borderRadius:4,border:"1px solid rgba(21,128,61,0.2)",background:"transparent",color:C.green,fontSize:9,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>{lmsSyncing ? "⏳ Syncing…" : "🔄 Refresh"}</button>
                       </div>
                       {visibleLmsLeads.map(lead => {
-                        const deptBadgeStyle = lead.dept === "decor"
-                          ? {background:"rgba(168,85,247,0.15)",color:C.purple}
-                          : {background:"rgba(59,130,246,0.15)",color:C.blue};
+                        // fnLabel/fnDate/venueLabel live on lead.functions[0], never on the lead
+                        // itself (lmsContractToLead, lib/ims/lms.js) — f0 is the top-level mirror,
+                        // same convention as the Studio client card below (c.fn/c.eventDate).
+                        const fns = Array.isArray(lead.functions) && lead.functions.length > 0 ? lead.functions : null;
+                        const f0 = fns ? fns[0] : null;
                         return <div key={lead.id || `${lead.source}-${lead.entryNo}`} className="ei-row" style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,padding:"8px 10px",marginBottom:4,borderRadius:8,background:isDark?"rgba(255,255,255,0.03)":"#fff",border:`1px solid ${border}`}}>
                           <div style={{flex:1,minWidth:0}}>
                             <div style={{fontSize:12,fontWeight:600,color:textP,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
                               <span>{lead.guestName || "(no name)"}</span>
                               {lead.phone && <span style={{color:textM,fontWeight:400}}>· {lead.phone}</span>}
-                              <span style={{padding:"1px 6px",borderRadius:4,fontSize:9,fontWeight:700,...deptBadgeStyle}}>{lead.dept === "venue" ? "VENUE" : "DECOR"} #{lead.entryNo}</span>
                               {lead.booked && <span title="Booked — this is a signed contract, not an open enquiry" style={{padding:"1px 6px",borderRadius:4,fontSize:9,fontWeight:700,background:"rgba(16,185,129,0.15)",color:C.emerald}}>BOOKED</span>}
-                              {lead.priority && <span style={{padding:"1px 6px",borderRadius:4,fontSize:9,fontWeight:700,background:"rgba(245,158,11,0.15)",color:C.amber}}>{lead.priority.toUpperCase()}</span>}
-                              {Array.isArray(lead.functions) && lead.functions.length > 1 && (
-                                <span style={{padding:"1px 6px",borderRadius:4,fontSize:9,fontWeight:700,background:"rgba(168,85,247,0.15)",color:C.purple}}>{lead.functions.length} FUNCTIONS</span>
+                              {f0?.fnLabel && <span style={{padding:"1px 6px",borderRadius:4,fontSize:9,fontWeight:700,background:"rgba(168,85,247,0.15)",color:C.purple}}>{String(f0.fnLabel).toUpperCase()}</span>}
+                              {f0?.fnDate && <span style={{padding:"1px 6px",borderRadius:4,fontSize:9,fontWeight:700,background:"rgba(99,102,241,0.15)",color:C.indigo,fontVariantNumeric:"tabular-nums"}}>
+                                {(() => { try { return new Date(f0.fnDate + "T00:00:00").toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"}); } catch { return f0.fnDate; } })()}
+                              </span>}
+                              {fns && fns.length > 1 && (
+                                <span title={`${fns.length} functions on this lead`} style={{padding:"1px 6px",borderRadius:4,fontSize:9,fontWeight:700,background:"rgba(168,85,247,0.15)",color:C.purple}}>+{fns.length - 1} FN</span>
                               )}
                             </div>
                             <div style={{fontSize:10,color:textM,marginTop:2}}>
                               {(() => {
-                                // Show all function labels + dates if multi-function, else single-function display
-                                const fns = Array.isArray(lead.functions) && lead.functions.length > 0 ? lead.functions : null;
+                                // A multi-function lead still lists every function's own label+date
+                                // here — the header badges above only mirror the first one.
                                 if (fns && fns.length > 1) {
                                   return fns.map((f, i) =>
                                     <span key={i}>
@@ -1473,11 +1477,8 @@ export default function StudioEventInfo({ ctx }) {
                                     </span>
                                   );
                                 }
-                                // Single function (or legacy back-compat)
                                 return <>
-                                  {lead.fnLabel && <>{lead.fnLabel}</>}
-                                  {lead.fnDate && <> · {lead.fnDate}</>}
-                                  {lead.venueLabel && <> · {lead.venueLabel}</>}
+                                  {(f0?.venueLabel || f0?.locationLabel) && <>{f0.venueLabel || f0.locationLabel}</>}
                                   {lead.status && <> · {lead.status}</>}
                                 </>;
                               })()}
@@ -1492,9 +1493,9 @@ export default function StudioEventInfo({ ctx }) {
                                   figure on exactly those.
                                   Hidden at zero rather than printed: an uncosted lead (#01290 Test
                                   amrit, no total and no functions) would otherwise show ₹0, which
-                                  next to a live PLATINUM badge reads as "worth nothing" instead of
-                                  "not costed yet". Payment status is deliberately absent —
-                                  collection is LMS's business, not part of a quote. */}
+                                  reads as "worth nothing" instead of "not costed yet". Payment
+                                  status is deliberately absent — collection is LMS's business, not
+                                  part of a quote. */}
                               {(() => {
                                 const decorSum = (Array.isArray(lead.functions) ? lead.functions : [])
                                   .reduce((s, f) => s + (Number(f?.decorLumpsum) || 0), 0);

@@ -132,9 +132,47 @@ export default function DCFloralsTab({ ctx }) {
                   const fnOverrides = activeFn.floralOverrides || { note: "", rows: [] };
                   const overrideByParentId = new Map();
                   (fnOverrides.rows || []).forEach(r => { if (r?.flowerId) overrideByParentId.set(r.flowerId, r); });
+                  // Repeat-zone floral discount — mirrors calcFnFloralSourcingCost (StudioApp.jsx), the
+                  // bottom-bar/GYV rollup this tab's totals must agree with. A pure QUANTITY cut, never
+                  // a direct ₹ discount: real flowers need 80% less fresh stock on a repeat zone
+                  // (qty × 0.2), artificial needs 30% less (qty × 0.7) — cost follows automatically.
+                  const REPEAT_REAL_QTY_MULT = 0.2;
+                  const REPEAT_ART_QTY_MULT = 0.7;
                   Object.entries(activeFn.zoneElements || {}).forEach(([zk, elems]) => {
                     if (!activeFn.enabledEls?.[zk]) return;
+                    const zoneRepeat = !!activeFn.zoneConfig?.[zk]?.repeat;
+                    const realQtyFrac = zoneRepeat ? REPEAT_REAL_QTY_MULT : 1;
+                    const artQtyFrac = zoneRepeat ? REPEAT_ART_QTY_MULT : 1;
+                    // A kit's own subItems can carry floral content of their own — a flower-recipe
+                    // add-on (si.patternId, e.g. a floral topper baked into a stage kit) or a
+                    // component item that is itself categorized as florals. Neither ever reached this
+                    // tab before: the loop below only ever looked at the outer element's own
+                    // invId/patternId/name, so a kit's floral pieces were priced correctly (Build's
+                    // getElPrice already folds kitFloralCompDelta/attachedPatterns into the rental
+                    // line) but never itemized here. Expanding each such subItem into its own
+                    // synthetic element — same shape the loop below already knows how to price —
+                    // surfaces it without duplicating any of that pricing logic.
+                    const expandedElems = [];
                     (elems || []).forEach(el => {
+                      expandedElems.push(el);
+                      const kitInvItem = el.invId ? (dcInventoryCache || []).find(i => i.id === el.invId) : null;
+                      if (kitInvItem && Array.isArray(kitInvItem.subItems) && kitInvItem.subItems.length > 0) {
+                        const outerQty = el.qty || 0;
+                        (kitInvItem.subItems || []).forEach(si => {
+                          const siQty = (Number(si.qty) || 0) * outerQty;
+                          if (siQty <= 0) return;
+                          if (si.patternId) {
+                            expandedElems.push({ name: `${el.name || kitInvItem.name} · recipe`, patternId: si.patternId, qty: siQty, size: el.size, _kitParent: el.name || kitInvItem.name });
+                            return;
+                          }
+                          const ci = si.itemId ? (dcInventoryCache || []).find(i => i.id === si.itemId) : null;
+                          if (ci && String(ci.cat || ci.category || "").toLowerCase() === "florals") {
+                            expandedElems.push({ name: ci.name, invId: ci.id, qty: siQty, size: el.size, _kitParent: el.name || kitInvItem.name });
+                          }
+                        });
+                      }
+                    });
+                    expandedElems.forEach(el => {
                       const elName = (el.name || "").toLowerCase().trim();
                       const elQty = el.qty || 0;
                       let rc = rcItems.find(i => (i.name || "").toLowerCase().trim() === elName);
@@ -172,15 +210,6 @@ export default function DCFloralsTab({ ctx }) {
                       const isFloral = !!el.patternId || invIsFloral || String(rc?.cat || "").toLowerCase() === "florals";
                       if (!isFloral) return;                 // lighting, structure, furniture — not this tab's business
                       if (elQty <= 0) return;
-                      // Floral, but nothing to price it by. Record rather than drop: the header used
-                      // to read "1 ELEMENT" while others were silently on the floor.
-                      if (!rc && !elPattern && !invItem) {
-                        uncosted.push({ name: el.name || "(unnamed)", zoneKey: zk, qty: elQty, reason: "No rate-card entry or recipe" });
-                        return;
-                      }
-                      const realPct = resolveRealPct(el, rc, invItem, elPattern);
-                      const realFrac = realPct / 100;
-                      const artFrac = 1 - realFrac;
                       // Prefer the recipe the BUILD actually priced this element with, checked in
                       // Build's own priority order (invId, then patternId, then Rate Card by name).
                       // Re-deriving it a different way could land on a different recipe than the
@@ -194,9 +223,28 @@ export default function DCFloralsTab({ ctx }) {
                       // backwards from how recipes are organised: a recipe is created PER SUB-CATEGORY
                       // and applies to every differently-named product in it — a pure name comparison
                       // would never find it, and risks false positives on short/generic names besides.
+                      // Computed BEFORE the "nothing to price it by" check below — this used to bail
+                      // to `uncosted` the moment rc/elPattern/invItem were all null, without ever
+                      // trying this same fallback the ROLLUP (calcFnFloralSourcingCost, StudioApp.jsx)
+                      // already attempts. A patternId that no longer resolves by id (its recipe was
+                      // recreated/renamed in IMS Mandi) but whose element name matches a live pattern's
+                      // own name EXACTLY (matchFlowerPattern's own last-resort branch) is a legitimate
+                      // recovery, not a coincidental guess — confirmed live: "Flower bedding" resolved
+                      // to a real pattern in the rollup this way and contributed real, correct money,
+                      // while this tab dropped it into uncosted and silently showed ₹0 for it.
                       let pattern = elPattern
                         || (invItem ? matchFlowerPattern(invItem, flowerPatterns) : null)
                         || matchFlowerPattern({ subcategory: rc?.sub, name: rc?.name || el.name }, flowerPatterns);
+                      // Floral, but nothing to price it by — genuinely, even after the name-fallback
+                      // above. Record rather than drop: the header used to read "1 ELEMENT" while
+                      // others were silently on the floor.
+                      if (!rc && !elPattern && !invItem && !pattern) {
+                        uncosted.push({ name: el.name || "(unnamed)", zoneKey: zk, qty: elQty, reason: "No rate-card entry or recipe" });
+                        return;
+                      }
+                      const realPct = resolveRealPct(el, rc, invItem, elPattern);
+                      const realFrac = realPct / 100;
+                      const artFrac = 1 - realFrac;
                       // Build sizes an invId floral element the same way regardless of any Rate Card
                       // "smb" mode (sizeClassToPatternKey/normalizeSizeClass, getElPriceFromInventory)
                       // — sizeFromMode below requires rc.inhouseMode==="smb" to honour el.size at all,
@@ -285,15 +333,25 @@ export default function DCFloralsTab({ ctx }) {
                             // Tier 1.9b — real_only flowers always 100% real, ignore element's blend
                             const flowerType = parent?.flowerType || (parent?.isGreen ? "green" : "flower");
                             const effectiveRealFrac = flowerType === "real_only" ? 1 : realFrac;
-                            const totalFlowerQty = (fl.qty || 0) * elQty * effectiveRealFrac;
+                            // Repeat-zone quantity cut applied at the source — real flowers need 80%
+                            // less fresh stock on a repeat zone, so every downstream figure (lineCost,
+                            // realLines, flowerAgg, and thus realCost/totalReal below) is already
+                            // working off the reduced quantity.
+                            // totalFlowerQtyFull is the SAME line pre-repeat-cut (realQtyFrac omitted) —
+                            // carried on the aggregate purely so the mandi list can show a shoppers'
+                            // guide of "was X, now Y" next to the discounted figure. It plays no part
+                            // in any cost math (that's totalFlowerQty, used everywhere above).
+                            const totalFlowerQtyFull = (fl.qty || 0) * elQty * effectiveRealFrac;
+                            const totalFlowerQty = totalFlowerQtyFull * realQtyFrac;
                             const lineCost = totalFlowerQty * unitPrice;
                             realCostPerUnit += (fl.qty || 0) * unitPrice;
                             const displayName = parent?.name || fl.flowerId;
                             realLines.push({ flowerId: parentId, name: displayName, perPattern: fl.qty || 0, qty: totalFlowerQty, unit: parent?.unit || "kg", unitPrice, lineCost, realOnly: flowerType === "real_only", variantPicked: override?.colorVariant?.label || null });
                             // Aggregate — KEYED BY PARENT ID (collapses old per-colour rows into one parent row)
                             if (totalFlowerQty > 0) {
-                              const prev = flowerAgg.get(parentId) || { flowerId: parentId, name: displayName, totalQty: 0, unit: parent?.unit || "kg", unitPrice, contributors: [], realOnly: flowerType === "real_only", flowerType, variantPicked: override?.colorVariant || null };
+                              const prev = flowerAgg.get(parentId) || { flowerId: parentId, name: displayName, totalQty: 0, totalQtyFull: 0, unit: parent?.unit || "kg", unitPrice, contributors: [], realOnly: flowerType === "real_only", flowerType, variantPicked: override?.colorVariant || null };
                               prev.totalQty += totalFlowerQty;
+                              prev.totalQtyFull += totalFlowerQtyFull;
                               prev.unitPrice = unitPrice; // refresh in case variant override applies
                               prev.variantPicked = override?.colorVariant || prev.variantPicked;
                               prev.contributors.push({
@@ -309,6 +367,8 @@ export default function DCFloralsTab({ ctx }) {
                       // Tier 1.9 (22 May 2026) — Artificial cost via real-to-bunch conversion.
                       // Iterate the recipe again to compute artificial bunches per real-flower line.
                       // Old formula (rental × artFrac) replaced entirely. No fallback for items without recipe.
+                      // realLines.qty already carries the repeat-zone quantity cut (applied above at
+                      // totalFlowerQty), so this sums straight through with no separate multiplier.
                       const realCost = realLines.reduce((s, l) => s + l.qty * l.unitPrice, 0) + patternExtraCost;
                       const artFlowerRatePerKg = Number(dealCheckData?.artificialFlowerRatePerKg ?? 50);
                       const artFlowerBunchesPerKg = Number(dealCheckData?.artificialFlowerBunchesPerKg ?? 16) || 16;
@@ -316,9 +376,13 @@ export default function DCFloralsTab({ ctx }) {
                       const artGreenBunchesPerKg = Number(dealCheckData?.artificialGreenBunchesPerKg ?? 23) || 23;
                       const flowerPerBunchRate = artFlowerRatePerKg / artFlowerBunchesPerKg;
                       const greenPerBunchRate = artGreenRatePerKg / artGreenBunchesPerKg;
-                      let artCost = 0;
+                      let artFlowerCost = 0;
                       const artLines = []; // breakdown for "how" panel
                       let artBunchesFlower = 0, artBunchesGreen = 0;
+                      // *Full = pre repeat-zone-cut (artQtyFrac omitted) — display-only, same purpose
+                      // as totalQtyFull on the real side: lets the Artificial Bunches card show what
+                      // the bunch count would have been without the discount, struck through.
+                      let artBunchesFlowerFull = 0, artBunchesGreenFull = 0;
                       if (artFrac > 0 && pattern) {
                         const sizes = pattern.sizes || {};
                         let comp = sizes[sizeKey] || sizes.medium;
@@ -353,10 +417,12 @@ export default function DCFloralsTab({ ctx }) {
                             // artificial cost silently computed as ₹0 (bunchesPerUnit falls back to 0
                             // since mapping flowers never have one set in IMS).
                             if (flowerType === "mapping") {
-                              const realUnitsReplaced = (fl.qty || 0) * elQty * artFrac;
+                              // artQtyFrac (repeat-zone quantity cut) applied at the source, same as
+                              // the real side — bunches/cost below both follow automatically.
+                              const realUnitsReplaced = (fl.qty || 0) * elQty * artFrac * artQtyFrac;
                               const mapCost = Number(parent?.artificialMapCost) || 0;
                               const lineCost = realUnitsReplaced * mapCost;
-                              artCost += lineCost;
+                              artFlowerCost += lineCost;
                               artLines.push({
                                 flowerId: parentId, name: parent?.name || fl.flowerId,
                                 realUnitsReplaced, unit: parent?.unit || "?",
@@ -367,13 +433,15 @@ export default function DCFloralsTab({ ctx }) {
                               return;
                             }
                             const bunchesPerUnit = Number(parent?.artificialBunchesPerUnit) || 0;
-                            const realUnitsReplaced = (fl.qty || 0) * elQty * artFrac;
+                            const realUnitsReplacedFull = (fl.qty || 0) * elQty * artFrac;
+                            const realUnitsReplaced = realUnitsReplacedFull * artQtyFrac;
                             const bunches = realUnitsReplaced * bunchesPerUnit;
+                            const bunchesFull = realUnitsReplacedFull * bunchesPerUnit;
                             const isGreen = flowerType === "green";
                             const perBunch = isGreen ? greenPerBunchRate : flowerPerBunchRate;
                             const lineCost = bunches * perBunch;
-                            if (isGreen) artBunchesGreen += bunches; else artBunchesFlower += bunches;
-                            artCost += lineCost;
+                            if (isGreen) { artBunchesGreen += bunches; artBunchesGreenFull += bunchesFull; } else { artBunchesFlower += bunches; artBunchesFlowerFull += bunchesFull; }
+                            artFlowerCost += lineCost;
                             artLines.push({
                               flowerId: parentId, name: parent?.name || fl.flowerId,
                               realUnitsReplaced, unit: parent?.unit || "?",
@@ -386,7 +454,7 @@ export default function DCFloralsTab({ ctx }) {
                       // Inventory ingredients join the ARTIFICIAL total here, outside the artFrac gate
                       // above — a manufactured piece is never fresh, and it goes out whatever the
                       // blend says. Charged in full: the blend governs flowers, not rented pieces.
-                      artCost += invItemCost;
+                      const artCost = artFlowerCost + invItemCost;
                       artLines.push(...invItemLines);
                       totalReal += realCost;
                       totalArtificial += artCost;
@@ -396,7 +464,7 @@ export default function DCFloralsTab({ ctx }) {
                       // breakdown below can skip showing it a second time here (with a "no pattern"
                       // warning that's really just "this was never supposed to have one").
                       const isInvOnlyNoPattern = !!invItem && !pattern;
-                      elementBreakdown.push({ name: el.name, zoneKey: zk, qty: elQty, realPct, realCost, artCost, total: realCost + artCost, hasPattern: !!pattern, realLines, size: sizeKey, artLines, artBunchesFlower, artBunchesGreen, flowerPerBunchRate, greenPerBunchRate, isInvOnlyNoPattern });
+                      elementBreakdown.push({ name: el.name, zoneKey: zk, qty: elQty, realPct, realCost, artCost, total: realCost + artCost, hasPattern: !!pattern, realLines, size: sizeKey, artLines, artBunchesFlower, artBunchesGreen, artBunchesFlowerFull, artBunchesGreenFull, flowerPerBunchRate, greenPerBunchRate, isInvOnlyNoPattern });
                     });
                   });
                   if (elementBreakdown.length === 0) {
@@ -419,6 +487,9 @@ export default function DCFloralsTab({ ctx }) {
                     const effectiveFromRate = Number(fromAgg.unitPrice) || 0;
                     // Reduce original (split) or zero it out (full)
                     if (isSplit) {
+                      // totalQtyFull moves by the same delta as totalQty — a swap doesn't apply its
+                      // own repeat-discount, it just relocates already-discounted qty to another row.
+                      fromAgg.totalQtyFull = Math.max(0, (fromAgg.totalQtyFull ?? fromAgg.totalQty) - swapQty);
                       fromAgg.totalQty = Math.max(0, fromAgg.totalQty - swapQty);
                       // Drop the row entirely if qty fell to 0
                       if (fromAgg.totalQty <= 0.0001) flowerAgg.delete(override.swapTo.fromParentId);
@@ -435,6 +506,7 @@ export default function DCFloralsTab({ ctx }) {
                     const existing = flowerAgg.get(targetId);
                     if (existing) {
                       existing.totalQty += newQty;
+                      existing.totalQtyFull = (existing.totalQtyFull ?? existing.totalQty - newQty) + newQty;
                       existing.contributors.push({
                         elName: "↪ swapped from " + (override.swapTo.fromName || ""), zoneKey: "—",
                         elQty: 1, perPattern: newQty, realFrac: 1, contribution: newQty,
@@ -445,6 +517,7 @@ export default function DCFloralsTab({ ctx }) {
                         flowerId: targetId,
                         name: targetParent.name,
                         totalQty: newQty,
+                        totalQtyFull: newQty,
                         unit: targetParent.unit || "kg",
                         unitPrice: targetRate,
                         contributors: [{
@@ -722,9 +795,27 @@ export default function DCFloralsTab({ ctx }) {
                                       </div>
                                     )}
                                   </td>
-                                  <td style={{padding:"6px 4px",color:"#1A1A2E",textAlign:"right",fontVariantNumeric:"tabular-nums"}}>{f.totalQty.toFixed(2)} {f.unit}</td>
-                                  <td style={{padding:"6px 4px",color:"#1A1A2E",textAlign:"right",fontVariantNumeric:"tabular-nums"}}>₹{Math.round(f.unitPrice).toLocaleString("en-IN")}/{f.unit}</td>
-                                  <td style={{padding:"6px 4px",color:"#1A1A2E",textAlign:"right",fontVariantNumeric:"tabular-nums",fontWeight:600}}>₹{Math.round(f.totalQty * f.unitPrice).toLocaleString("en-IN")}</td>
+                                  {/* Repeat-zone discount is a QUANTITY cut (§ see REPEAT_REAL_QTY_MULT
+                                      above), not a rate cut — the rate never changes, so the strike-
+                                      through goes on Qty/Total, the two figures the cut actually moves.
+                                      Without it the row just shows one number and a salesperson can't
+                                      tell whether a discount landed or the flower simply needed less. */}
+                                  {(() => {
+                                    const discounted = f.totalQtyFull != null && f.totalQtyFull > f.totalQty + 0.005;
+                                    return (
+                                      <>
+                                        <td style={{padding:"6px 4px",color:"#1A1A2E",textAlign:"right",fontVariantNumeric:"tabular-nums"}}>
+                                          {discounted && <span title="Qty before the repeat-zone discount" style={{textDecoration:"line-through",opacity:0.4,marginRight:6}}>{f.totalQtyFull.toFixed(2)}</span>}
+                                          <span title={discounted ? "♻ Repeat zone — 80% less fresh stock needed" : undefined} style={{color:discounted?"#10B981":undefined,fontWeight:discounted?700:400}}>{f.totalQty.toFixed(2)} {f.unit}</span>
+                                        </td>
+                                        <td style={{padding:"6px 4px",color:"#1A1A2E",textAlign:"right",fontVariantNumeric:"tabular-nums"}}>₹{Math.round(f.unitPrice).toLocaleString("en-IN")}/{f.unit}</td>
+                                        <td style={{padding:"6px 4px",color:"#1A1A2E",textAlign:"right",fontVariantNumeric:"tabular-nums",fontWeight:600}}>
+                                          {discounted && <span title="Cost before the repeat-zone discount" style={{textDecoration:"line-through",opacity:0.4,marginRight:6,fontWeight:400}}>₹{Math.round(f.totalQtyFull * f.unitPrice).toLocaleString("en-IN")}</span>}
+                                          <span style={{color:discounted?"#10B981":undefined}}>₹{Math.round(f.totalQty * f.unitPrice).toLocaleString("en-IN")}</span>
+                                        </td>
+                                      </>
+                                    );
+                                  })()}
                                   <td style={{padding:"6px 4px",textAlign:"right"}}>
                                     <div style={{display:"flex",gap:4,justifyContent:"flex-end",flexWrap:"wrap"}}>
                                       {fnIdx === activeFnIdx && (
@@ -821,12 +912,24 @@ export default function DCFloralsTab({ ctx }) {
                       {(() => {
                         const totalArtBunchesFlower = elementBreakdown.reduce((s,e)=>s+(e.artBunchesFlower||0),0);
                         const totalArtBunchesGreen = elementBreakdown.reduce((s,e)=>s+(e.artBunchesGreen||0),0);
-                        const flowerKg = totalArtBunchesFlower / (Number(dealCheckData?.artificialFlowerBunchesPerKg ?? 16) || 16);
-                        const greenKg = totalArtBunchesGreen / (Number(dealCheckData?.artificialGreenBunchesPerKg ?? 23) || 23);
+                        // *Full — same bunches pre repeat-zone-cut, display-only (see artBunchesFlowerFull
+                        // above). Used to strike through the pre-discount figure next to the real one.
+                        const totalArtBunchesFlowerFull = elementBreakdown.reduce((s,e)=>s+(e.artBunchesFlowerFull||0),0);
+                        const totalArtBunchesGreenFull = elementBreakdown.reduce((s,e)=>s+(e.artBunchesGreenFull||0),0);
+                        const bunchesPerKgFlower = Number(dealCheckData?.artificialFlowerBunchesPerKg ?? 16) || 16;
+                        const bunchesPerKgGreen = Number(dealCheckData?.artificialGreenBunchesPerKg ?? 23) || 23;
+                        const flowerKg = totalArtBunchesFlower / bunchesPerKgFlower;
+                        const greenKg = totalArtBunchesGreen / bunchesPerKgGreen;
+                        const flowerKgFull = totalArtBunchesFlowerFull / bunchesPerKgFlower;
+                        const greenKgFull = totalArtBunchesGreenFull / bunchesPerKgGreen;
                         const flowerRate = Number(dealCheckData?.artificialFlowerRatePerKg ?? 50);
                         const greenRate = Number(dealCheckData?.artificialGreenRatePerKg ?? 40);
                         const flowerCost = flowerKg * flowerRate;
                         const greenCost = greenKg * greenRate;
+                        const flowerCostFull = flowerKgFull * flowerRate;
+                        const greenCostFull = greenKgFull * greenRate;
+                        const flowerDiscounted = totalArtBunchesFlowerFull > totalArtBunchesFlower + 0.05;
+                        const greenDiscounted = totalArtBunchesGreenFull > totalArtBunchesGreen + 0.05;
                         const missingRatios = elementBreakdown.reduce((acc,e)=>{
                           (e.artLines||[]).forEach(al=>{ if(!al.realOnly && al.missingRatio && al.realUnitsReplaced > 0) acc.add(al.name); });
                           return acc;
@@ -849,13 +952,23 @@ export default function DCFloralsTab({ ctx }) {
                             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,fontSize:13}}>
                               <div style={{padding:"8px 10px",borderRadius:7,background:"rgba(236,72,153,0.06)"}}>
                                 <div style={{fontSize:12,color:"#EC4899",fontWeight:600,marginBottom:4}}>🌹 Flower bunches</div>
-                                <div style={{color:"#1A1A2E",fontVariantNumeric:"tabular-nums"}}>{totalArtBunchesFlower.toFixed(1)} bunches = <b>{flowerKg.toFixed(2)} kg</b></div>
-                                <div style={{fontSize:11,color:"#1A1A2E",marginTop:2}}>× ₹{flowerRate}/kg = <span style={{color:"#EC4899",fontWeight:600}}>₹{Math.round(flowerCost).toLocaleString("en-IN")}</span></div>
+                                <div style={{color:"#1A1A2E",fontVariantNumeric:"tabular-nums"}}>
+                                  {flowerDiscounted && <span title="Bunches before the repeat-zone discount" style={{textDecoration:"line-through",opacity:0.4,marginRight:5}}>{totalArtBunchesFlowerFull.toFixed(1)} bunches</span>}
+                                  <span title={flowerDiscounted ? "♻ Repeat zone — 30% less artificial stock needed" : undefined} style={{color:flowerDiscounted?"#10B981":undefined,fontWeight:flowerDiscounted?700:undefined}}>{totalArtBunchesFlower.toFixed(1)} bunches</span> = <b>{flowerKg.toFixed(2)} kg</b>
+                                </div>
+                                <div style={{fontSize:11,color:"#1A1A2E",marginTop:2}}>
+                                  × ₹{flowerRate}/kg = {flowerDiscounted && <span style={{textDecoration:"line-through",opacity:0.4,marginRight:4}}>₹{Math.round(flowerCostFull).toLocaleString("en-IN")}</span>}<span style={{color:"#EC4899",fontWeight:600}}>₹{Math.round(flowerCost).toLocaleString("en-IN")}</span>
+                                </div>
                               </div>
                               <div style={{padding:"8px 10px",borderRadius:7,background:"rgba(16,185,129,0.06)"}}>
                                 <div style={{fontSize:12,color:"#10B981",fontWeight:600,marginBottom:4}}>🌿 Green bunches</div>
-                                <div style={{color:"#1A1A2E",fontVariantNumeric:"tabular-nums"}}>{totalArtBunchesGreen.toFixed(1)} bunches = <b>{greenKg.toFixed(2)} kg</b></div>
-                                <div style={{fontSize:11,color:"#1A1A2E",marginTop:2}}>× ₹{greenRate}/kg = <span style={{color:"#10B981",fontWeight:600}}>₹{Math.round(greenCost).toLocaleString("en-IN")}</span></div>
+                                <div style={{color:"#1A1A2E",fontVariantNumeric:"tabular-nums"}}>
+                                  {greenDiscounted && <span title="Bunches before the repeat-zone discount" style={{textDecoration:"line-through",opacity:0.4,marginRight:5}}>{totalArtBunchesGreenFull.toFixed(1)} bunches</span>}
+                                  <span title={greenDiscounted ? "♻ Repeat zone — 30% less artificial stock needed" : undefined} style={{color:greenDiscounted?"#10B981":undefined,fontWeight:greenDiscounted?700:undefined}}>{totalArtBunchesGreen.toFixed(1)} bunches</span> = <b>{greenKg.toFixed(2)} kg</b>
+                                </div>
+                                <div style={{fontSize:11,color:"#1A1A2E",marginTop:2}}>
+                                  × ₹{greenRate}/kg = {greenDiscounted && <span style={{textDecoration:"line-through",opacity:0.4,marginRight:4}}>₹{Math.round(greenCostFull).toLocaleString("en-IN")}</span>}<span style={{color:"#10B981",fontWeight:600}}>₹{Math.round(greenCost).toLocaleString("en-IN")}</span>
+                                </div>
                               </div>
                             </div>
                             {mappedList.length > 0 && (

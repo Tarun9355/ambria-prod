@@ -179,6 +179,29 @@ export function priceForInvItem(item, factorByKey, allInventory, overrideSubItem
   return (Number(item.price) || 0) * factor;
 }
 
+// Walk a kit's own base AND every component (recursively), calling `visit(nodeItem, nodeQty)` once
+// per node — mirrors priceForInvItem's own recursion node-for-node, so "what counts as a kit's
+// parts" can never drift between pricing and any other per-node concern (truck-capacity counting,
+// a fixed-venue standing-item discount). A plain (non-kit) item just visits itself once with `qty`
+// unchanged, so callers can use this uniformly for both kit and non-kit elements. `qty` is the
+// OUTER element's own qty; each component's nodeQty is qty × that component's own qty-per-kit,
+// so a kit element with qty 3 and a component listed at qty 2 visits that component at nodeQty 6.
+export function walkKitUnits(item, qty, allInventory, overrideSubItems, visit, _seen) {
+  if (!item || !(Number(qty) > 0)) return;
+  visit(item, Number(qty));
+  if (!(Array.isArray(item.subItems) && item.subItems.length > 0)) return;
+  const seen = _seen ? new Set(_seen) : new Set();
+  if (item.id) { if (seen.has(item.id)) return; seen.add(item.id); } // cycle guard, same as priceForInvItem
+  const subItems = Array.isArray(overrideSubItems) ? overrideSubItems : (Array.isArray(item.subItems) ? item.subItems : []);
+  subItems.forEach((si) => {
+    if (si.patternId) return; // flower-recipe add-on — not a physical, truckable item
+    const ci = (allInventory || []).find((i) => i.id === si.itemId);
+    if (!ci) return;
+    const subOv = Array.isArray(si.subOverrides) ? si.subOverrides : undefined;
+    walkKitUnits(ci, qty * (Number(si.qty) || 0), allInventory, subOv, visit, seen);
+  });
+}
+
 export function mpDayCost(r, d, mpDay, mpWin, mpWinCount, rate) {
   const dayCount = mpEffDay(r, d, mpDay);
   const ids = mpEffWinIds(d, mpWin, r.type);

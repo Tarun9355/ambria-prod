@@ -190,7 +190,12 @@ export function makeFilterUI({ isDark, accent, textP, S }) {
   // full-width row instead of wrapping onto three cramped lines.
   // Row spacing is tighter than it was: the header tile now carries its own 9px of vertical
   // padding, so the previous 11 + 11 on top of that left the rows floating far apart.
-  const Section = ({ id, label, count, last, open, onToggle, cols = 3, children }) => (
+  // onDotClick/dotActive (both optional): lets a caller repurpose the small lead dot as its own
+  // independent click target, separate from the header's own open/close toggle — Build's Photo
+  // Filters panel is the only current user (a discreet per-deal control unrelated to filtering).
+  // Undefined for every other caller (Browse, Library), so the dot stays purely decorative there,
+  // exactly as before.
+  const Section = ({ id, label, count, last, open, onToggle, cols = 3, children, onDotClick, dotActive, dotTitle }) => (
     <div style={{ paddingBottom: last ? 0 : 5, marginBottom: last ? 0 : 5,
       borderBottom: last ? "none" : `1px solid ${hairline}` }}>
       {/* The negative margin matches the panel body's 16px padding less a 4px inset, so the hover
@@ -201,8 +206,11 @@ export function makeFilterUI({ isDark, accent, textP, S }) {
         aria-expanded={open} aria-controls={`sb-sec-${id}`}
         style={{width:"auto",display:"flex",alignItems:"center",gap:7,padding:"9px 12px",margin:"0 -12px",
           border:"none",background:"transparent",borderRadius:10,cursor:"pointer",textAlign:"left"}}>
-        <span style={{width:4,height:4,borderRadius:"50%",flexShrink:0,
-          background: count ? accent : (isDark ? "rgba(255,255,255,0.18)" : "rgba(26,26,46,0.16)")}}/>
+        <span onClick={onDotClick ? (e) => { e.stopPropagation(); onDotClick(); } : undefined}
+          title={dotTitle}
+          style={{width:onDotClick?7:4,height:onDotClick?7:4,borderRadius:"50%",flexShrink:0,cursor:onDotClick?"pointer":"inherit",
+          background: dotActive ? accent : (count ? accent : (isDark ? "rgba(255,255,255,0.18)" : "rgba(26,26,46,0.16)")),
+          boxShadow: dotActive ? `0 0 0 2px ${accent}33` : "none"}}/>
         <span style={{fontSize:10,fontWeight:700,color:count?gold:textM,textTransform:"uppercase",letterSpacing:0.9,flexShrink:0}}>{label}</span>
         {count > 0 && <span style={{marginLeft:"auto",flexShrink:0,fontSize:9,fontWeight:700,padding:"1px 6px",borderRadius:5,
           background:isDark?"rgba(201,169,110,0.18)":"#F6E7C8",color:gold,border:`1px solid ${accent}44`}}>{count}</span>}

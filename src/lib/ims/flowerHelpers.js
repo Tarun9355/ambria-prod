@@ -1,5 +1,4 @@
 // Flower recipe/cost helpers (faithful to the reference IMS app).
-import { priceForInvItem } from "./helpers";
 
 // Resolve a requested recipe size against a pattern's sizes object (with legacy aliases).
 export const resolveSizeKey = (sizesObj, requestedSize) => {
@@ -153,16 +152,17 @@ export const floralPatternUnitRates = (pattern, sizeKey, mandiCatalogue, setting
       return;
     }
     if (ft === "mapping") {
-      // Artificial version is a SPECIFIC inventory item — priced LIVE the same way every other
-      // inventory item in Studio is (priceForInvItem: item.price × its sub-category's
-      // rate_card_categories.scaling_factor), not the one-time artificialMapPrice/Cost snapshot
-      // taken when it was mapped. That snapshot is just item.price captured raw at map time (see
-      // AdminSettingsTab.jsx's picker) — no scaling factor, and it goes stale the moment either the
-      // item's own rate or its category's factor changes afterward. Falls back to the snapshot only
-      // if the mapped item can no longer be found (e.g. deleted from inventory since).
+      // Artificial version is a SPECIFIC inventory item — priced off its own RAW rate (not the
+      // rate_card_categories scaling factor priceForInvItem would apply — that's the general
+      // Studio inventory-pricing rule, and this ingredient is priced by the RECIPE's rules instead,
+      // same reasoning as the invItemId/real_only branches above) times whichever markup is higher:
+      // this recipe's own (`markup`) or the global Default Studio Markup (`artMarkup`) — so a mapped
+      // substitute can never undercut either configured markup, only exceed one of them. Falls back
+      // to the one-time artificialMapPrice/Cost snapshot only if the mapped item can no longer be
+      // found (e.g. deleted from inventory since).
       const invItem = (inventory || []).find((i) => i.id === parent?.artificialMapItemId);
-      const liveRate = invItem ? priceForInvItem(invItem, rcFactorByKey, inventory) : (Number(parent?.artificialMapPrice) || Number(parent?.artificialMapCost) || 0);
-      mappedFinal += (Number(fl?.qty) || 0) * liveRate;
+      const rawRate = invItem ? (Number(invItem.price ?? invItem.rentalCost) || 0) : (Number(parent?.artificialMapPrice) || Number(parent?.artificialMapCost) || 0);
+      mappedFinal += (Number(fl?.qty) || 0) * rawRate * Math.max(markup, artMarkup);
       return;
     }
     const bpu = Number(parent?.artificialBunchesPerUnit) || 0;

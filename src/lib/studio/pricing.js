@@ -355,6 +355,46 @@ export const calcZoneTrussPreview = (zc, trussInv) => {
   return out;
 };
 
+// Fixed-venue standing discount for ONE zone's truss — bridges two genuinely different pricing
+// models. The zone's actually-BILLED truss cost (trussRowCost, below) is a flat ₹/sqft-by-shape
+// formula with no concept of individual pillars/beams. The venue's own standing pillar/beam counts
+// (Admin → Settings → Fixed Venues) and their discount % only make sense against the DETAILED
+// pillar/beam RFT model (calcZoneTrussPreview, above) — the one the Deal Check Truss tab shows.
+// So this uses the detailed model PURELY to work out a ₹ savings figure (how many RFT of this
+// zone's pillar/beam need would be built from standing stock, capped at what's registered, at the
+// configured %), which callers then subtract from whichever total they actually charge — the
+// area-based one (calcStructCost) or the detailed one (dcCostRollup's own accumulator) — so both
+// end up net of the same real rupee amount even though their pre-discount baselines were never the
+// same number to begin with.
+//
+// Capped PER ZONE independently, not pooled across every zone/function sharing this venue — the
+// same simplification transport's carryover discount uses elsewhere for a different reason; doing
+// real cross-zone/cross-function pooling here would need the same booking-wide ordering machinery,
+// and a single main structure is the overwhelmingly common case.
+// Detailed version — pillar/beam split out separately, for a caller (Deal Check's own Truss tab)
+// that shows Pillars/Beams/Batta as their own line items and needs each one individually netted so
+// the lines still sum to the discounted total sitting next to them.
+export function zoneTrussStandingDiscountDetail(zc, trussInv, venueTruss) {
+  if (!venueTruss) return { pillar: 0, beam: 0, total: 0 };
+  const preview = calcZoneTrussPreview(zc, trussInv);
+  if (!preview?.costs) return { pillar: 0, beam: 0, total: 0 };
+  const pillarRftRate = trussInv?.rates?.pillarRftRate || 0;
+  const beamRftRate = trussInv?.rates?.beamRftRate || 0;
+  const standingRft = (bySize) => Object.entries(bySize || {}).reduce((s, [sz, cnt]) => s + (Number(sz) || 0) * (Number(cnt) || 0), 0);
+  const standingPillarRft = standingRft(venueTruss.pillars);
+  const standingBeamRft = standingRft(venueTruss.beams);
+  const pillarPct = Number(venueTruss.pillarDiscountPct) || 0;
+  const beamPct = Number(venueTruss.beamDiscountPct) || 0;
+  const usedPillarRft = Math.min(preview.costs.pillarRft || 0, standingPillarRft);
+  const usedBeamRft = Math.min(preview.costs.beamRft || 0, standingBeamRft);
+  const pillar = Math.round(usedPillarRft * pillarRftRate * pillarPct / 100);
+  const beam = Math.round(usedBeamRft * beamRftRate * beamPct / 100);
+  return { pillar, beam, total: pillar + beam };
+}
+export function zoneTrussStandingDiscount(zc, trussInv, venueTruss) {
+  return zoneTrussStandingDiscountDetail(zc, trussInv, venueTruss).total;
+}
+
 //   Full Box → CEILING DRAPE MODEL: kg = ceiling area × fabricFactors.kgPerSqft[density]
 //     Density comes from selected photo's library tag (libItem.dims.drapeDensity = "minimum|moderate|dense")
 // Curtains: count = pillarCount × curtainsPerPillar (default 4)

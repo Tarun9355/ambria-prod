@@ -91,12 +91,12 @@ const IV = {
 };
 // Money and counts are read down a column and compared, so they need fixed-width digits.
 const NUM = { fontVariantNumeric: "tabular-nums" };
-import { heavyExtraLabour, eventTimingMultFor } from "../../../lib/ims/constants";
-import { deptMpReconciled, itemImsSubcat, lookupBySubcat, itemDimsText } from "../../../lib/ims/helpers";
+import { heavyExtraLabour, eventTimingMultFor, SIT_MULT_DEFAULTS } from "../../../lib/ims/constants";
+import { deptMpReconciled, itemImsSubcat, lookupBySubcat, itemDimsText, walkKitUnits } from "../../../lib/ims/helpers";
 import { rentalSplit, availableAtVenue, isStandingAt, fixedVenueFor, standingReductionBySubcat, fixedVenueDealDiscount } from "../../../lib/ims/fixedVenues";
-import { calcZoneFabric, autoFillFabricAllocation, resolveTrussConfig } from "../../../lib/studio/pricing";
+import { calcZoneFabric, autoFillFabricAllocation, resolveTrussConfig, zoneTrussStandingDiscount } from "../../../lib/studio/pricing";
 import { carpetPricingFor, CARPET_OFF } from "../../../lib/studio/taxonomy";
-import { qtyUsedElsewhereInDealCheck } from "../../../lib/studio/dealAvailability";
+import { qtyUsedElsewhereInDealCheck, netOwnReservedBlocks } from "../../../lib/studio/dealAvailability";
 import { isHiddenSubcat, oosCostPctFor } from "../../../lib/rateCard";
 
 // Commission override box (one per venue, Commission tab below) — its OWN local draft state, not
@@ -156,6 +156,12 @@ export default function DealCheckOverlay({ ctx }) {
     return () => ro.disconnect();
   }, []);
   const [dcDept, setDcDept] = useState("Furniture"); // active Department-Income sub-tab
+  // Salesperson-facing "what is each department earning off this deal" modal — opened from a
+  // button near the FUNCTIONS sidebar, so it's reachable from whichever tab is open rather than
+  // requiring a trip to the (removed-from-the-strip) Dept Income tab. Owner ask: a salesperson
+  // negotiating with a department head over a discount needs to see that department's OWN share
+  // of the deal, not the whole project total, to know what room that head actually has to give.
+  const [dcDeptModalOpen, setDcDeptModalOpen] = useState(false);
   const deptSyncRef = useRef(""); // dedupe auto-push of the dept snapshot to IMS
   const [dcKitAddSearch, setDcKitAddSearch] = useState({}); // per-kit-card "add component" search text, keyed by editKey
   const [dcPrintForm, setDcPrintForm] = useState({ zoneKey: "", material: "", areaW: "", areaD: "", qty: 1 }); // Buying tab's own "+ Add print" row
@@ -191,7 +197,7 @@ export default function DealCheckOverlay({ ctx }) {
     // the exact same field Build's own Print tile writes.
     zoneConfig, setZoneConfig,
     // pricing helpers
-    collectAllFunctionData, calcFnFloralSourcingCost, calcFunctionBreakdown, calcFunctionCost,
+    collectAllFunctionData, calcFnFloralSourcingCost, calcFunctionBreakdown, calcFunctionCost, dateCategoryMultiplierFor,
     // Shared availability picker — the same one Build's IconBox control opens.
     openAvailModal,
     calcZoneTrussPreview, calcZoneFabricCost, calcZoneCarpet, buildPlatformPlan, imsField,
@@ -264,7 +270,18 @@ export default function DealCheckOverlay({ ctx }) {
   // venue at all — including a Repeat zone at a venue that isn't a configured Fixed Venue —
   // Repeat still applies (a reused setup can happen anywhere), just without a venue-specific cap:
   // the whole line at the sub-category default, same as before Fixed Venues data was read here.
-  const repeatAdjustedRental = (isRepeatZone, venueName, item, qty, baseRental) => {
+  // fnDate (optional) — folds in dateCategoryMultiplierFor (StudioApp.jsx), the SAME King's/
+  // Perfect/Filler market-pricing multiplier the guest build always applies to element rental
+  // (getElPrice/getElPriceForFn), which Deal Check never read at all: "Base price × multiplier =
+  // effective rental price charged to client" is a real fact about what will actually be billed,
+  // not a discount Ambria eats, so Deal Check's own margin figures were wrong by exactly this
+  // amount on any date marked King's/Perfect/Filler. Applied to baseRental BEFORE the existing
+  // Fixed-Venue/Repeat discount math below, which is untouched — this only changes the starting
+  // rate that math runs on, never its own logic. Omitting fnDate multiplies by 1 (no behavior
+  // change), so every call site not yet passing a date is still exactly as before.
+  const repeatAdjustedRental = (isRepeatZone, venueName, item, qty, baseRentalIn, fnDate) => {
+    const dateMult = fnDate ? dateCategoryMultiplierFor(fnDate) : 1;
+    const baseRental = baseRentalIn * dateMult;
     const full = qty * baseRental;
     if (!item) return full;
     // fixedVenueSubcatDiscount rides along here too — standingDiscountPct falls back to it when
@@ -358,7 +375,9 @@ export default function DealCheckOverlay({ ctx }) {
     const usedElsewhere = qtyUsedElsewhereInDealCheck(imsId, fns, dcCards, dcManualItems, dcKitEdits, dcInventoryCache, { fnIdx, ...exclude }, targetDate);
     if (usedElsewhere <= 0) return null;
     const fnBlocks = (dealCheckData?.blocksByDate || {})[targetDate] || {};
-    const otherEventsAvail = getStudioAvailable(it, fnBlocks);
+    // Net this SAME deal's own already-recorded reservation out first — see netOwnReservedBlocks.
+    const cliForAvail = clientLedger.find(c => c.id === activeClientId);
+    const otherEventsAvail = getStudioAvailable(it, netOwnReservedBlocks(fnBlocks, it.id, cliForAvail?.dcReservedInventory, fnIdx));
     return Math.max(0, otherEventsAvail - usedElsewhere);
   };
 
@@ -422,6 +441,13 @@ export default function DealCheckOverlay({ ctx }) {
   return (() => {
         const cli = clientLedger.find(c => c.id === activeClientId);
         const isSold = cli?.status === "booked";
+        // Every availability check below must net out THIS deal's own already-recorded reservation
+        // first (netOwnReservedBlocks) — otherwise a SOLD deal's own held stock counts as someone
+        // else's demand against itself the moment reconcileSoldInventoryBlocks writes its real
+        // `blocks` table rows, and previously-free stock reads "short" (billed at cost%, not the
+        // rental rate) purely because the deal got booked. Single choke point for every
+        // getStudioAvailable() call in this component from here down.
+        const dcAvailable = (item, fnBlocks, fnIdx) => item ? getStudioAvailable(item, netOwnReservedBlocks(fnBlocks, item.id, cli?.dcReservedInventory, fnIdx)) : 0;
         // The 2-run counter came out with the Generate button — nothing starts a run from this
         // screen any more, so there is no allowance left to display. dcRunCounter is still written
         // by runDealCheckGenerate in StudioApp; only this read of it is gone.
@@ -448,6 +474,12 @@ export default function DealCheckOverlay({ ctx }) {
         const dcCostRollup = (() => {
           const fns = collectAllFunctionData ? collectAllFunctionData() : [];
           let rental = 0, florals = 0, transport = 0, manpower = 0, truss = 0, genset = 0, printCost = 0;
+          // Per-function breakdown, one bucket per fn for every category that genuinely splits by
+          // function — the FUNCTIONS sidebar reads this to show whichever amount matches the active
+          // tab (truss cost while on Truss, transport while on Transport, etc.) instead of always
+          // showing rental. Manpower/commission/GYV-buffer have no clean per-function split (shared
+          // crew across overlapping days, deal-wide fee/margin) so they're left out here on purpose.
+          const byFn = fns.map(() => ({ rental: 0, truss: 0, florals: 0, transport: 0, genset: 0, production: 0, buying: 0 }));
           // Unavailable-shortfall pricing: a matched card's qty beyond what's actually free in
           // stock for the event date bills at item.cost × this sub-category's cost% instead of
           // the rental rate (rate_card_categories.cost_percent, IMS-owned). Default 100 (full
@@ -502,8 +534,8 @@ export default function DealCheckOverlay({ ctx }) {
                 splitArr.forEach(s => {
                   const it = dcInventoryCache.find(x => x.id === s.imsId); if (!it) return;
                   const q = Number(s.qty) || 0; const br = imsField.rentalCost(it);
-                  const line = repeatAdjustedRental(_rep, fn.fnVenue, it, q, br);
-                  rental += line;
+                  const line = repeatAdjustedRental(_rep, fn.fnVenue, it, q, br, fn.fnDate);
+                  rental += line; byFn[fi].rental += line;
                   const dd = catToDept(imsField.category(it));
                   addD(dd, "rental", line);
                   if (line > 0 && deptInv[dd]) deptInv[dd].push({ name: it.name, photo: imsField.photos(it)[0] || "", qty: q, unit: br, total: Math.round(line), sub: imsField.subcategory(it) || "", imsId: it.id });
@@ -527,37 +559,60 @@ export default function DealCheckOverlay({ ctx }) {
               const isKit = Array.isArray(item.subItems) && item.subItems.length > 0;
               let lineRental, shortQty = 0, shortCost = 0;
               if (isKit) {
-                lineRental = repeatAdjustedRental(_rep, fn.fnVenue, item, qty, baseR);
+                lineRental = repeatAdjustedRental(_rep, fn.fnVenue, item, qty, baseR, fn.fnDate);
               } else {
-                const available = getStudioAvailable(item, fnBlocks);
+                const available = dcAvailable(item, fnBlocks, fi);
                 const ownedQty = Math.min(qty, available);
                 shortQty = Math.max(0, qty - available);
-                const ownedRental = repeatAdjustedRental(_rep, fn.fnVenue, item, ownedQty, baseR);
+                const ownedRental = repeatAdjustedRental(_rep, fn.fnVenue, item, ownedQty, baseR, fn.fnDate);
                 shortCost = shortQty * (Number(item.cost) || 0) * (oosCostPctFor(item, costPctFor) / 100);
                 lineRental = ownedRental + shortCost;
               }
-              rental += lineRental;
+              rental += lineRental; byFn[fi].rental += lineRental;
               const dD = catToDept(imsField.category(item) || c.cat);
-              addD(dD, "rental", lineRental);
+              // A kit's own components each carry their OWN category — a stage kit filed under
+              // Structure but built from carpentry/fabric/floral sub-parts used to put 100% of its
+              // cost, and the ONLY Dept Ops visibility of those parts, under Structure alone.
+              // Carpentry/Fabric/Floral never saw their share of the money OR the physical item in
+              // their own blocked-inventory list. Each component now charges its OWN department,
+              // scaled by whatever discount applied to the kit as a whole (proportional to its share
+              // of the kit's undiscounted base cost) — the kit's own dD only keeps its own base share.
+              let components;
+              if (isKit) {
+                const edited = dcKitEdits[fi]?.[ck];
+                const comps = Array.isArray(edited) ? edited : item.subItems.map(s => ({ itemId: s.itemId, qty: Number(s.qty) || 1 }));
+                components = comps.map(cp => {
+                  const ci = dcInventoryCache.find(x => x.id === cp.itemId);
+                  if (!ci) return null;
+                  const cq = (Number(cp.qty) || 1) * qty;   // component qty × number of kits
+                  const cr = imsField.rentalCost(ci);
+                  return { ci, name: ci.name, imsId: ci.id, qty: cq, unit: cr, total: cr * cq, sub: imsField.subcategory(ci) || "", photo: imsField.photos(ci)[0] || "" };
+                }).filter(Boolean);
+              }
+              if (isKit && components && components.length) {
+                const fullBase = baseR * qty;
+                const compBaseTotal = components.reduce((s, cp) => s + cp.total, 0);
+                const scale = fullBase > 0 ? lineRental / fullBase : 0;
+                const kitOwnShare = (fullBase - compBaseTotal) * scale;
+                addD(dD, "rental", kitOwnShare);
+                components.forEach(cp => {
+                  const compDept = catToDept(imsField.category(cp.ci) || cp.sub);
+                  const compShare = cp.total * scale;
+                  addD(compDept, "rental", compShare);
+                  // A component filed under the SAME department as the kit itself already shows up
+                  // via the kit's own nested `components` list below — no separate card needed.
+                  if (compShare > 0 && compDept !== dD && deptInv[compDept]) {
+                    deptInv[compDept].push({ name: cp.name, photo: cp.photo, qty: cp.qty, unit: cp.unit, total: Math.round(compShare), sub: cp.sub, imsId: cp.imsId, fromKit: item.name || c.name || "Item" });
+                  }
+                });
+              } else {
+                addD(dD, "rental", lineRental);
+              }
               if (lineRental > 0 && deptInv[dD]) {
-                // Kit composite → also carry its component items (customised per-deal via dcKitEdits,
-                // else the master subItems) so Dept Ops can list each sub-element with its own rental.
-                let components;
-                if (Array.isArray(item.subItems) && item.subItems.length > 0) {
-                  const edited = dcKitEdits[fi]?.[ck];
-                  const comps = Array.isArray(edited) ? edited : item.subItems.map(s => ({ itemId: s.itemId, qty: Number(s.qty) || 1 }));
-                  components = comps.map(cp => {
-                    const ci = dcInventoryCache.find(x => x.id === cp.itemId);
-                    if (!ci) return null;
-                    const cq = (Number(cp.qty) || 1) * qty;   // component qty × number of kits
-                    const cr = imsField.rentalCost(ci);
-                    return { name: ci.name, imsId: ci.id, qty: cq, unit: cr, total: Math.round(cr * cq), sub: imsField.subcategory(ci) || "", photo: imsField.photos(ci)[0] || "" };
-                  }).filter(Boolean);
-                }
                 // shortQty > 0 means part (or all) of this line is priced at cost% because stock ran
                 // out for this event's date — Dept Ops badges it so a head knows to flag/chase it
                 // rather than assuming the full qty is sitting reserved and ready.
-                deptInv[dD].push({ name: item.name || c.name || "Item", photo: imsField.photos(item)[0] || "", qty, unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "", imsId: c.imsId, ...(components && components.length ? { isKit: true, components } : {}), ...(shortQty > 0 ? { shortQty, shortCost: Math.round(shortCost) } : {}) });
+                deptInv[dD].push({ name: item.name || c.name || "Item", photo: imsField.photos(item)[0] || "", qty, unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "", imsId: c.imsId, ...(components && components.length ? { isKit: true, components: components.map(({ci, ...rest}) => ({ ...rest, total: Math.round(rest.total) })) } : {}), ...(shortQty > 0 ? { shortQty, shortCost: Math.round(shortCost) } : {}) });
               }
             });
             // Manually-added inventory blocks (dcManualItems) — the salesperson added these directly in
@@ -570,19 +625,55 @@ export default function DealCheckOverlay({ ctx }) {
               // A manually added item can be a kit too — price it the same way as a matched card.
               const baseR = effKitRental(item, fi, null);
               const _rep = mi.zoneKey ? !!(fn.zoneConfig?.[mi.zoneKey]?.repeat) : false;
-              const lineRental = repeatAdjustedRental(_rep, fn.fnVenue, item, q, baseR);
-              rental += lineRental;
+              const lineRental = repeatAdjustedRental(_rep, fn.fnVenue, item, q, baseR, fn.fnDate);
+              rental += lineRental; byFn[fi].rental += lineRental;
               const dD = catToDept(imsField.category(item));
-              addD(dD, "rental", lineRental);
-              if (deptInv[dD]) deptInv[dD].push({ name: item.name || "Item", photo: imsField.photos(item)[0] || "", qty: q, unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "", imsId: mi.imsId });
+              // Same per-component department split as matched cards above — a manually-added kit
+              // used to have no components list AT ALL (not even for display), so its parts' cost and
+              // Dept Ops visibility went entirely to the kit's own department.
+              const miIsKit = Array.isArray(item.subItems) && item.subItems.length > 0;
+              let miComponents;
+              if (miIsKit) {
+                miComponents = item.subItems.map(s => {
+                  const ci = dcInventoryCache.find(x => x.id === s.itemId);
+                  if (!ci) return null;
+                  const cq = (Number(s.qty) || 1) * q;
+                  const cr = imsField.rentalCost(ci);
+                  return { ci, name: ci.name, imsId: ci.id, qty: cq, unit: cr, total: cr * cq, sub: imsField.subcategory(ci) || "", photo: imsField.photos(ci)[0] || "" };
+                }).filter(Boolean);
+              }
+              if (miIsKit && miComponents && miComponents.length) {
+                const fullBase = baseR * q;
+                const compBaseTotal = miComponents.reduce((s, cp) => s + cp.total, 0);
+                const scale = fullBase > 0 ? lineRental / fullBase : 0;
+                addD(dD, "rental", (fullBase - compBaseTotal) * scale);
+                miComponents.forEach(cp => {
+                  const compDept = catToDept(imsField.category(cp.ci) || cp.sub);
+                  const compShare = cp.total * scale;
+                  addD(compDept, "rental", compShare);
+                  if (compShare > 0 && compDept !== dD && deptInv[compDept]) {
+                    deptInv[compDept].push({ name: cp.name, photo: cp.photo, qty: cp.qty, unit: cp.unit, total: Math.round(compShare), sub: cp.sub, imsId: cp.imsId, fromKit: item.name || "Item" });
+                  }
+                });
+              } else {
+                addD(dD, "rental", lineRental);
+              }
+              if (deptInv[dD]) deptInv[dD].push({ name: item.name || "Item", photo: imsField.photos(item)[0] || "", qty: q, unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "", imsId: mi.imsId, ...(miComponents && miComponents.length ? { isKit: true, components: miComponents.map(({ci, ...rest}) => ({ ...rest, total: Math.round(rest.total) })) } : {}) });
             });
-            try { const fl = calcFnFloralSourcingCost(fn).grandTotal; florals += fl; addD("Floral", "florals", fl); } catch {}
+            try { const fl = calcFnFloralSourcingCost(fn).grandTotal; florals += fl; byFn[fi].florals += fl; addD("Floral", "florals", fl); } catch {}
             // `genset` (used only for the Power tab's own nav-pill amount) reads gensetCostOurs —
             // OUR real cost — not gensetCost (client-billed), so the pill agrees with the Power
-            // tab body it summarizes. `transport`/the "Transport" IMS dept line are untouched
-            // (still transportTotal, truck cost + client-billed genset bundled as before) — this
-            // is scoped to the Power calc only, not a redistribution of department cost.
-            try { const bd = calcFunctionBreakdown ? calcFunctionBreakdown(fn) : null; if (bd && bd.transportTotal) { transport += bd.transportTotal; addD("Transport", "transport", bd.transportTotal); genset += Number(bd.transport?.gensetCostOurs) || 0; } if (bd && bd.gensetTotal) { addD("Lighting", "rental", bd.gensetTotal); if (deptInv["Lighting"]) deptInv["Lighting"].push({ name: "Genset / power", photo: "", qty: 1, unit: 0, total: Math.round(bd.gensetTotal), sub: "genset" }); } } catch {}
+            // tab body it summarizes.
+            // `transport`/the "Transport" nav pill now reads bd.transport.truckTotal — pure truck
+            // cost — instead of bd.transportTotal, which bundles in gensetCost (what the CLIENT is
+            // billed for genset, revenue with margin baked in, not a cost). That bundling made the
+            // "Transport" pill disagree with the Transport tab's own summary bar (which has always
+            // totalled truckTotal only — it has no genset line at all) by exactly the genset revenue
+            // amount, and inflated `grand`/profit's cost side with a revenue figure. bd.gensetTotal
+            // (the old "add genset to Lighting dept income" branch below this) never existed on
+            // calcFunctionBreakdown's return at all — confirmed no writer anywhere in the codebase —
+            // so it never once ran; removed rather than left as dead code that looks intentional.
+            try { const bd = calcFunctionBreakdown ? calcFunctionBreakdown(fn) : null; const truckTotal = Number(bd?.transport?.truckTotal) || 0; if (truckTotal > 0) { transport += truckTotal; byFn[fi].transport += truckTotal; addD("Transport", "transport", truckTotal); } const gO = Number(bd?.transport?.gensetCostOurs) || 0; genset += gO; byFn[fi].genset += gO; } catch {}
             try {
               const tInv = dealCheckData?.trussInv;
               if (tInv) {
@@ -592,28 +683,49 @@ export default function DealCheckOverlay({ ctx }) {
                 const pObj = (imsPaletteCatalogue||[]).find(p => p.name === fnPalette);
                 const anchors = pObj?.anchorColours || [];
                 Object.keys(zc).forEach(zk => {
-                  // ♻️ Repeat zones reuse a standing structure — same treatment as Manpower's own
-                  // freshFn exclusion (this zone's truss/fabric was already built for a prior day).
-                  if (!en[zk] || !zc[zk] || zc[zk].repeat) return;
+                  if (!en[zk] || !zc[zk]) return;
+                  // ♻️ Repeat zone: the structure and its fabric are already standing from a prior
+                  // day, but reusing them isn't truly free — someone still has to check/re-tension
+                  // the rig and steam/re-hang or spot-repair the drape, rather than the ₹0 they used
+                  // to drop to entirely. One flat 30% discount (billed at 70%) across truss/pillar/
+                  // beam/batta (structure) AND masking/liza/curtain (fabric) — replaces the earlier
+                  // owner-decision split (structure billed at 30%, fabric at 50%) with a single rate
+                  // for both. The pillar/beam loadable-line listing below stays fully excluded for a
+                  // repeat zone — there's nothing NEW to source/haul in for a rig that isn't moving,
+                  // which is a separate question from what it costs to reuse it.
+                  const isRepeat = !!zc[zk].repeat;
+                  const repeatMult = isRepeat ? 0.7 : 1;
+                  const repeatFabMult = isRepeat ? 0.7 : 1;
                   const photoUrl = (fn.elSelectedPhoto || {})[zk];
                   let density = "moderate";
                   if (photoUrl) { const li = libItems.find(l => l.url === photoUrl); if (li?.dims?.drapeDensity) density = li.dims.drapeDensity; }
                   // A zone can carry more than one truss structure (row 0 = the zone's own scalar
                   // fields, plus any zc[zk].extraTrussRows added via "+ Add Truss") — sum cost per row.
+                  // Fixed-venue pillar/beam discount — this IS the detailed model
+                  // zoneTrussStandingDiscount was built against, so no bridging needed here (unlike
+                  // calcStructCost's area-based total, where the same helper's output has to be
+                  // subtracted from a completely different formula).
+                  const _venueTrussHere = fixedVenueFor({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, fn.fnVenue || "")?.truss;
                   [zc[zk], ...(zc[zk].extraTrussRows || [])].forEach(row => {
                     const pv = calcZoneTrussPreview(row, tInv);
-                    if (pv?.costs?.actual) { truss += pv.costs.actual; addD("Tenting", "truss", pv.costs.actual); } // truss steel → Tenting
+                    if (pv?.costs?.actual) {
+                      const discount = _venueTrussHere ? zoneTrussStandingDiscount(row, tInv, _venueTrussHere) : 0;
+                      const netActual = Math.max(0, pv.costs.actual - discount) * repeatMult;
+                      truss += netActual; byFn[fi].truss += netActual; addD("Tenting", "truss", netActual); // truss steel → Tenting
+                    }
                     // Truss requirement → loadable line items grouped BY SIZE (e.g. "Truss pillar 15ft").
-                    // Pushed per-zone here; the size-keyed names merge across all zones below.
-                    if (pv?.topology && deptInv["Tenting"]) {
+                    // Pushed per-zone here; the size-keyed names merge across all zones below. Still
+                    // skipped for a repeat zone — nothing NEW needs sourcing/hauling for a rig that
+                    // isn't moving, independent of what it costs to reuse it (handled above/below).
+                    if (!isRepeat && pv?.topology && deptInv["Tenting"]) {
                       const pmap = {}, bmap = {};
                       (pv.topology.pillars || []).forEach(p => { const ft = Math.round(Number(p.H) || 0); if (ft > 0) pmap[ft] = (pmap[ft] || 0) + 1; });
                       (pv.topology.beams || []).forEach(b => { const ft = Math.round(Number(b.lengthFt) || 0); if (ft > 0) bmap[ft] = (bmap[ft] || 0) + 1; });
                       Object.entries(pmap).forEach(([ft, n]) => deptInv["Tenting"].push({ name: `Truss pillar ${ft}ft`, photo: "", qty: n, unit: 0, total: 0, sub: "truss structure" }));
                       Object.entries(bmap).forEach(([ft, n]) => deptInv["Tenting"].push({ name: `Truss beam ${ft}ft`, photo: "", qty: n, unit: 0, total: 0, sub: "truss structure" }));
                     }
-                    const fabCost = calcZoneFabricCost(row, tInv, anchors, density);
-                    truss += fabCost; addD("Fabric", "fabric", fabCost); // truss/masking fabric → Fabric
+                    const fabCost = calcZoneFabricCost(row, tInv, anchors, density) * repeatFabMult;
+                    truss += fabCost; byFn[fi].truss += fabCost; addD("Fabric", "fabric", fabCost); // truss/masking fabric → Fabric
                   });
                 });
               }
@@ -625,7 +737,7 @@ export default function DealCheckOverlay({ ctx }) {
             if (pp) {
               const fattaR = pp.fattaItem ? imsField.rentalCost(pp.fattaItem) : 0;
               const standR = pp.standItem ? imsField.rentalCost(pp.standItem) : 0;
-              Object.values(pp.perZone || {}).forEach(z => { const pc = (z.fattas || 0) * fattaR + (z.stands || 0) * standR; rental += pc; addD("Tenting", "rental", pc); if (pc > 0 && deptInv["Tenting"]) deptInv["Tenting"].push({ name: "Platform (fatta + stand)", photo: "", qty: (z.fattas || 0) + (z.stands || 0), unit: 0, total: Math.round(pc), sub: `${z.fattas || 0} fatta · ${z.stands || 0} stand` }); }); // platform → Tenting
+              Object.entries(pp.perZone || {}).forEach(([k, z]) => { const pc = (z.fattas || 0) * fattaR + (z.stands || 0) * standR; rental += pc; const pfi = Number(k.split("|")[0]); if (byFn[pfi]) byFn[pfi].rental += pc; addD("Tenting", "rental", pc); if (pc > 0 && deptInv["Tenting"]) deptInv["Tenting"].push({ name: "Platform (fatta + stand)", photo: "", qty: (z.fattas || 0) + (z.stands || 0), unit: 0, total: Math.round(pc), sub: `${z.fattas || 0} fatta · ${z.stands || 0} stand` }); }); // platform → Tenting
             }
           } catch {}
           try {
@@ -654,7 +766,7 @@ export default function DealCheckOverlay({ ctx }) {
                 const pickedId = picks[zk];
                 const carpetItem = pickedId ? dcInventoryCache.find(x => x.id === pickedId) : null;
                 if (cc > 0) {
-                  rental += cc;
+                  rental += cc; byFn[fi].rental += cc;
                   addD("Tenting", "rental", cc);
                   if (deptInv["Tenting"]) deptInv["Tenting"].push({
                     name: carpetItem?.name || carpetPricingFor(zcz.cpT, imsCarpetMaterials).label || "Carpet",
@@ -680,7 +792,7 @@ export default function DealCheckOverlay({ ctx }) {
           // nothing ever surfaced it as a line item.
           try {
             const printMats = imsPrintMaterials || [];
-            fns.forEach((fn) => {
+            fns.forEach((fn, fi) => {
               const zc = fn.zoneConfig || {};
               const en = fn.enabledEls || {};
               Object.keys(zc).forEach(zk => {
@@ -692,7 +804,7 @@ export default function DealCheckOverlay({ ctx }) {
                   return sum + s * (m?.ratePerSqft || 0) * q;
                 }, 0);
                 if (pc > 0) {
-                  printCost += pc;
+                  printCost += pc; byFn[fi].buying += pc;
                   addD("Structure", "buying", pc);
                   if (deptInv["Structure"]) deptInv["Structure"].push({ name: "🖨 Print / signage", photo: "", qty: (zc[zk].prints || []).length, unit: 0, total: Math.round(pc), sub: "print", prodOrBuy: "buying" });
                 }
@@ -734,13 +846,26 @@ export default function DealCheckOverlay({ ctx }) {
             const defaultMinLabour = dealCheckData?.defaultMinLabour || 4;
             const eventTypeMultipliers = dealCheckData?.eventTypeMultipliers || { outdoor_budgeted:1.0 };
             const eventTimingMultipliers = dealCheckData?.eventTimingMultipliers || {};
-            const sayaMultiplier = dealCheckData?.sayaMultiplier || 1.3;
             const heavyElementRanges = dealCheckData?.heavyElementRanges || [];
             const fabricBangaliRanges = dealCheckData?.fabricBangaliRanges || [];
             const trussLabourRanges = dealCheckData?.trussLabourRanges || [];
             const flowerPatternsMP = dealCheckData?.flowerPatterns || [];
             const electricianProdMP = dealCheckData?.electricianProductivity || {};
             const seasonMapMP = dealCheckData?.seasonMap || {};
+            // Heavy Saya (King's-season, per-role pressure factor) — MUST match DCManpowerTab's
+            // heavySayaMultFor exactly, else a King's date bumps crew in the tab but not here. This
+            // rollup previously had NO such wrap at all for Flowerists/Electricians/Fabric Bangali/
+            // Truss Labour/tier-2 types (only Labours read a King's flag, and via the OLD flat
+            // sayaMultiplier below rather than this per-type config) — every other role's headcount
+            // silently ignored a King's date entirely, undercounting the bottom-bar Manpower total
+            // relative to the tab whenever one of those roles' pressure factor exceeded 1.
+            const situMultCap = dealCheckData?.situationalMultiplierCap || 1.8;
+            const sitMultsMP = dealCheckData?.situationalMultipliers || SIT_MULT_DEFAULTS;
+            const heavySayaMultFor = (fn, type) => {
+              if (seasonMapMP[fn.fnDate || ""] !== "kings") return 1.0;
+              const m = Number((sitMultsMP.heavySaya || {})[type]);
+              return m > 0 ? m : 1.0;
+            };
             const labourTypes = Object.keys(dihariSchemes);
             if (labourTypes.length && fns.length) {
               // Rate per type MUST match the Manpower tab exactly (else the bottom bar diverges from the tab):
@@ -788,16 +913,30 @@ export default function DealCheckOverlay({ ctx }) {
                   // (Inventory) or el.patternId (a pure flower-recipe element). No Rate-Card name-
                   // match fallback: Rate Card's own `.sub` is a separate, older vocabulary that
                   // doesn't track IMS's live Sub-Categories master.
-                  let rc = null;
-                  if (el.invId) {
-                    const invItem = (dcInventoryCache || []).find(i => i.id === el.invId);
-                    if (invItem) rc = { name: invItem.name, cat: invItem.cat || invItem.category || "", sub: invItem.subCat || invItem.subcategory || "" };
-                  }
-                  if (!rc && el.patternId) rc = { name: el.name || "", cat: "florals", sub: "" };
-                  if (!rc) return;
                   const qty = el.qty || 0;
                   if (qty <= 0) return;
-                  cb({ rc, el, qty, zk });
+                  if (el.invId) {
+                    const invItem = (dcInventoryCache || []).find(i => i.id === el.invId);
+                    if (invItem) {
+                      // A kit's components each carry their OWN cat/sub — a stage kit built from
+                      // carpentry/paint/fabric sub-parts used to count entirely under whatever the
+                      // kit itself is filed as. walkKitUnits (same node-walker Transport/Florals
+                      // already use) visits the kit's own node plus every component, so each feeds
+                      // crew-hours into its own bucket instead of one — MUST match DCManpowerTab's
+                      // own walkFnElements, which already had this; this copy never did, so Carpenters/
+                      // Painters (tier-2 sub-category types, the common home for kit components) came
+                      // in lower here than the tab whenever a kit had carpentry/paint sub-parts.
+                      if (Array.isArray(invItem.subItems) && invItem.subItems.length > 0) {
+                        walkKitUnits(invItem, qty, dcInventoryCache, el.kitOverrides, (node, nodeQty) => {
+                          cb({ rc: { name: node.name, cat: node.cat || node.category || "", sub: node.subCat || node.subcategory || "" }, el, qty: nodeQty, zk });
+                        });
+                      } else {
+                        cb({ rc: { name: invItem.name, cat: invItem.cat || invItem.category || "", sub: invItem.subCat || invItem.subcategory || "" }, el, qty, zk });
+                      }
+                      return;
+                    }
+                  }
+                  if (el.patternId) cb({ rc: { name: el.name || "", cat: "florals", sub: "" }, el, qty, zk });
                 }); });
               };
               // "Repeat" model (ANY venue): a repeat zone reuses an existing setup → no build labour, so we
@@ -813,7 +952,7 @@ export default function DealCheckOverlay({ ctx }) {
                 return { ...fn, enabledEls: nen };
               };
               const fixedCrewFloor = (fv, type) => { const c = fv.fixedCrew || {}; if (c[type] != null && c[type] !== "") return Number(c[type]) || 0; if (type === "Labours") return Number(fv.minLabour) || 0; return 0; };
-              const calcPpl = (fn, type) => {
+              const calcPplRaw = (fn, type) => {
                 if (type === "Flowerists") {
                   // Flowerists are fungible across ALL arrangements → sum every element's fractional need
                   // (qty ÷ units-per-flowerist) and ceil ONCE. MUST match DCManpowerTab.calcPeopleFlowerists
@@ -868,7 +1007,10 @@ export default function DealCheckOverlay({ ctx }) {
                   const em = eventTypeMultipliers["outdoor_budgeted"] || 1;
                   const base = Math.ceil(vm * em);
                   let sm = 1.0;
-                  if (!dcMpIncludeMinusOne) { const c = [dm]; const ss = seasonMapMP[fn.fnDate||""]; if (ss === "kings") c.push(sayaMultiplier); c.push(eventTimingMultFor(eventTimingMultipliers, shiftToTiming(fn.fnShift), "Labours", 1.0)); sm = Math.max(...c, 1.0); }
+                  // heavySayaMultFor(fn,"Labours") replaces the old flat sayaMultiplier — MUST match
+                  // DCManpowerTab.calcPeopleTier3Labours's own candidate list and cap exactly (the old
+                  // flat multiplier was also never capped by situMultCap here, unlike the tab).
+                  if (!dcMpIncludeMinusOne) { const c = [dm, heavySayaMultFor(fn, "Labours")]; c.push(eventTimingMultFor(eventTimingMultipliers, shiftToTiming(fn.fnShift), "Labours", 1.0)); sm = Math.min(situMultCap, Math.max(...c, 1.0)); }
                   const adj = Math.ceil(base * sm);
                   const sc = {}; walkFn(fn, ({rc, qty}) => { const _s = itemImsSubcat(rc); sc[_s] = (sc[_s]||0) + qty; });
                   // Net fixed-venue standing stock before heavy-element labour (fixed venues have installed pieces).
@@ -879,22 +1021,29 @@ export default function DealCheckOverlay({ ctx }) {
                 };
                 if (type === "Labours") return calcTier3(fn);
                 if (type === "Fabric Bangali") {
-                  // MUST match DCManpowerTab.calcPeopleFabricBangali — per-zone RFT from truss dims (not element L×W).
-                  let total = 0; const zc = fn.zoneConfig || {}, en = fn.enabledEls || {};
+                  // MUST match DCManpowerTab.calcPeopleFabricBangali — per-zone top (range table) +
+                  // optional masking-wall RFT (mkOn-gated) + batta RFT (wraps every pillar+beam,
+                  // ALWAYS — not gated on mkOn, since a truss gets wrapped in fabric whether or not its
+                  // separate, optional side-wall masking is switched on). Side RFT (walls + batta) is
+                  // pooled across every zone and ceiled ONCE, not per zone (per-zone ceiling throws away
+                  // real leftover capacity — see DCManpowerTab §23 Phase 2.9).
+                  let topTotal = 0, rftTotal = 0; const zc = fn.zoneConfig || {}, en = fn.enabledEls || {};
                   const engBackDepth = Number(dealCheckData?.trussInv?.settings?.defaultBackDepthFt) || 4;
                   const fabricRftPerWorker = Number(dealCheckData?.fabricRftPerWorker) || 100;
+                  const tInv = dealCheckData?.trussInv;
                   Object.keys(zc).forEach(zk => {
-                    if (!en[zk] || !zc[zk]) return; const z = zc[zk]; if (!z.mkOn) return;
+                    if (!en[zk] || !zc[zk]) return; const z = zc[zk];
                     const cfg = resolveTrussConfig(z); if (!cfg || !cfg.config) return; const config = cfg.config;
                     const dL = Number(z.dims?.L) || Number(z.dims?.S) || 0; const dW = Number(z.dims?.W) || Number(z.dims?.S) || 0;
                     const mw = z.mkWalls || {}; const sideDepth = Number(z.trussBackDepth) || engBackDepth;
                     let zoneTop = 0, zoneRft = 0;
-                    if (config === "full_box") { const topSqft = dL * dW; if (topSqft > 0 && fabricBangaliRanges.length > 0) { for (const r of fabricBangaliRanges) { if (topSqft <= r.upTo) { zoneTop = r.labour || 0; break; } } } if (mw.back && dW > 0) zoneRft += dW; if (mw.left && dL > 0) zoneRft += dL; if (mw.right && dL > 0) zoneRft += dL; }
-                    else if (config === "half_box") { const spanL = cfg.spanFt || dL || dW; if (mw.back && spanL > 0) zoneRft += spanL; if (mw.left && sideDepth > 0) zoneRft += sideDepth; if (mw.right && sideDepth > 0) zoneRft += sideDepth; }
-                    else if (config === "u_only") { const spanL = cfg.spanFt || dL || dW; if (mw.back && spanL > 0) zoneRft += spanL; }
-                    total += zoneTop + (zoneRft > 0 ? Math.ceil(zoneRft / fabricRftPerWorker) : 0);
+                    if (config === "full_box") { const topSqft = dL * dW; if (topSqft > 0 && fabricBangaliRanges.length > 0) { for (const r of fabricBangaliRanges) { if (topSqft <= r.upTo) { zoneTop = r.labour || 0; break; } } } if (z.mkOn) { if (mw.back && dW > 0) zoneRft += dW; if (mw.left && dL > 0) zoneRft += dL; if (mw.right && dL > 0) zoneRft += dL; } }
+                    else if (config === "half_box") { const spanL = cfg.spanFt || dL || dW; if (z.mkOn) { if (mw.back && spanL > 0) zoneRft += spanL; if (mw.left && sideDepth > 0) zoneRft += sideDepth; if (mw.right && sideDepth > 0) zoneRft += sideDepth; } }
+                    else if (config === "u_only") { const spanL = cfg.spanFt || dL || dW; if (z.mkOn && mw.back && spanL > 0) zoneRft += spanL; }
+                    if (tInv) { try { const pv = calcZoneTrussPreview(z, tInv); if (pv?.batta?.rftWithBuffer) zoneRft += pv.batta.rftWithBuffer; } catch {} }
+                    topTotal += zoneTop; rftTotal += zoneRft;
                   });
-                  return total;
+                  return topTotal + (rftTotal > 0 ? Math.ceil(rftTotal / fabricRftPerWorker) : 0);
                 }
                 if (type === "Truss Labour") {
                   // MUST match DCManpowerTab.calcPeopleTrussLabour — zone-topology pillarCount.
@@ -920,6 +1069,19 @@ export default function DealCheckOverlay({ ctx }) {
                 if (cfg && cfg.tier === 3) return calcTier3(fn);
                 if (type === "Supervisors") return 1;
                 return 0;
+              };
+              // Heavy Saya wrap — MUST match DCManpowerTab.calcPeopleForType's dispatcher exactly.
+              // Labours/tier-3 already folds heavySaya in internally (calcTier3, above) — skip the
+              // wrap for those so it isn't applied twice. Supervisors/Drivers have no pressure-factor
+              // config entry (SIT_MULT_DEFAULTS.heavySaya has no such key either), so heavySayaMultFor
+              // would just return 1.0 for them anyway, but skipping matches the tab's own explicit guard.
+              const calcPpl = (fn, type) => {
+                const raw = calcPplRaw(fn, type);
+                const cfg = labourTiers[type];
+                const isTier3Labours = type === "Labours" || (cfg && cfg.tier === 3);
+                if (isTier3Labours || type === "Supervisors" || type === "Drivers" || !(raw > 0)) return raw;
+                const m = Math.min(situMultCap, heavySayaMultFor(fn, type));
+                return m > 1 ? Math.ceil(raw * m) : raw;
               };
               // Per-function calculation trace (the "how" for each day) — mirrors manpowerPlanForBooking's
               // trace shapes so Dept Ops' renderMpTrace can show each day's own bifurcation table.
@@ -949,7 +1111,7 @@ export default function DealCheckOverlay({ ctx }) {
                   const vm = fv ? (fv.minLabour ?? defaultMinLabour) : 0; // min only for fixed venues
                   const em = eventTypeMultipliers["outdoor_budgeted"] || 1; const base = Math.ceil(vm * em);
                   let sm = 1.0;
-                  if (!dcMpIncludeMinusOne) { const c = [({ nearby: 1.0, medium: 1.1, far: 1.2 })[(dealCheckData?.venueDumping || {})[venueName] || "nearby"] || 1.0]; const ss = seasonMapMP[fn.fnDate || ""]; if (ss === "kings") c.push(sayaMultiplier); c.push(eventTimingMultFor(eventTimingMultipliers, shiftToTiming(fn.fnShift), "Labours", 1.0)); sm = Math.max(...c, 1.0); }
+                  if (!dcMpIncludeMinusOne) { const c = [({ nearby: 1.0, medium: 1.1, far: 1.2 })[(dealCheckData?.venueDumping || {})[venueName] || "nearby"] || 1.0, heavySayaMultFor(fn, "Labours")]; c.push(eventTimingMultFor(eventTimingMultipliers, shiftToTiming(fn.fnShift), "Labours", 1.0)); sm = Math.min(situMultCap, Math.max(...c, 1.0)); }
                   const adj = Math.ceil(base * sm); const sc = {}; walkFn(fn, ({ rc, qty }) => { const _s = itemImsSubcat(rc); sc[_s] = (sc[_s] || 0) + qty; });
                   const reduction = standingReductionBySubcat(fvCfg, venueName, (dcCards || {})[fns.indexOf(fn)], dealCheckData?.inventory || []);
                   let he = 0; heavyElementRanges.forEach(her => { const count = Math.max(0, (lookupBySubcat(sc, her.subCat) || 0) - (lookupBySubcat(reduction, her.subCat) || 0)); he += heavyExtraLabour(her, count); });
@@ -1002,7 +1164,25 @@ export default function DealCheckOverlay({ ctx }) {
                 if (dcMpIncludeMinusOne) dayList.push({date:addDays(earliest,-1),phase:"minusOne",fns:[]});
                 let cur = earliest;
                 while (cur <= latest) { const fd = fns.filter(f => f.fnDate === cur); dayList.push({date:cur,phase:fd.length?"event":"gap",fns:fd}); cur = addDays(cur,1); }
-                if (dcMpIncludeDismantle) dayList.push({date:addDays(latest,1),phase:"dismantle",fns:[]});
+                // MUST match DCManpowerTab's own dismantle-day construction exactly — a dismantle day
+                // after EVERY function, not just once at the very end of the booking. This rollup used
+                // to only ever push ONE dismantle day at `latest+1`, so a booking with a gap between
+                // functions (e.g. dates 24/26/28) silently missed the dismantle days after 24 and 26 —
+                // undercounting the bottom-bar Manpower total against the tab's own "whole booking"
+                // figure on any booking that isn't every function on consecutive calendar days. Two
+                // back-to-back functions (next day IS itself another event) get no dismantle day
+                // between them — the crew flows straight into the next setup.
+                if (dcMpIncludeDismantle) {
+                  const eventDatesSet = new Set(dayList.filter(d => d.phase === "event").map(d => d.date));
+                  dayList.filter(d => d.phase === "event").forEach(d => {
+                    const nextDate = addDays(d.date, 1);
+                    if (eventDatesSet.has(nextDate)) return;
+                    const existing = dayList.find(x => x.date === nextDate);
+                    if (existing) existing.phase = "dismantle";
+                    else dayList.push({ date: nextDate, phase: "dismantle", fns: [] });
+                  });
+                  dayList.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+                }
                 dcMpPhases = { minusOne: dayList.some(d=>d.phase==="minusOne"), eventDays: dayList.filter(d=>d.phase==="event").length, gapDays: dayList.filter(d=>d.phase==="gap").length, dismantle: dayList.some(d=>d.phase==="dismantle") };
                 const peopleByFn = {}; labourTypes.forEach(t => { peopleByFn[t] = {}; fns.forEach((fn, fi) => { const fv = fixedVenueFor(fvCfgMP, fn.fnVenue || ""); const computed = calcPpl(freshFnMP(fn), t) || 0; peopleByFn[t][fi] = fv ? Math.max(fixedCrewFloor(fv, t), computed) : computed; }); });
                 // Default labour split fraction (used for leading / no-element days) = aggregate usage share.
@@ -1067,6 +1247,7 @@ export default function DealCheckOverlay({ ctx }) {
           dcCustomItems.forEach(c => {
             const amt = (c.manualPrice || c.refPrice || 0) * (Number(c.qty) || 1);
             if (amt <= 0) return;
+            if (byFn[c.fnIdx]) byFn[c.fnIdx][c.type === "buying" ? "buying" : "production"] += amt;
             const d = catToDept(c.cat || c.subCat);
             addD(d, c.type === "buying" ? "buying" : "production", amt);
             if (deptInv[d]) deptInv[d].push({ name: c.subCat || c.cat || "Custom item", photo: c.photo || "", qty: Number(c.qty) || 1, unit: c.manualPrice || c.refPrice || 0, total: Math.round(amt), sub: c.subCat || "", imsId: c.refItemId || null, prodOrBuy: c.type === "buying" ? "buying" : "production" });
@@ -1156,16 +1337,27 @@ export default function DealCheckOverlay({ ctx }) {
           // everything else (Admin → Settings, default 20%). Pure Ambria income, so it always applies
           // — negotiated or not — rather than being read as an expense; the owner's own framing is
           // "this is income, not a cost".
+          //
+          // BUT: when negotiated, clientRevenue is already negotiatedAmount — the FINAL, all-inclusive
+          // figure the salesperson typed on Summary (it directly replaces eventGrandTotal there, which
+          // is itself system-total-plus-fee). Adding agencyFee on top of that a second time inflated a
+          // ₹1,50,000 negotiated deal into a ₹1,87,500 "Client Quote"/"Deal amount" — a real bug, not
+          // extra revenue. When negotiated, the fee is instead backed OUT of the already-final total
+          // (still shown as its own figure below, just not added again), so dealAmount stays exactly
+          // what was negotiated.
+          const isNegotiated = Number(cli?.negotiatedAmount) > 0;
           const agencyFeePct = Number(dealCheckData?.agencyFeePct) || 20;
-          const agencyFee = Math.round(discountedRevenue * agencyFeePct / 100);
-          // dealAmount — what the guest is ACTUALLY billed (clientRevenue − the fixed-venue discount
-          // + the agency fee). This is the number the profitability panel measures profit against;
-          // clientRevenue itself stays the commission base, untouched by either.
-          const dealAmount = discountedRevenue + agencyFee;
+          const agencyFee = isNegotiated
+            ? Math.round(discountedRevenue - discountedRevenue / (1 + agencyFeePct / 100))
+            : Math.round(discountedRevenue * agencyFeePct / 100);
+          // dealAmount — what the guest is ACTUALLY billed. Un-negotiated: clientRevenue (pre-fee) +
+          // agencyFee, same as eventGrandTotal's own formula. Negotiated: discountedRevenue itself —
+          // it's already the final billed figure, agencyFee above is just its fee share for display.
+          const dealAmount = isNegotiated ? discountedRevenue : discountedRevenue + agencyFee;
           const effGrand = hasActuals ? grandActual : grand;
           // ═══ Commission — % of the deal amount set aside per venue (IMS → Admin → Master Data →
           // Venues, one row per in-house property or outdoor venue). A booking spanning more than one
-          // venue splits clientRevenue across them by each venue's own share of the system cost
+          // venue splits dealAmount across them by each venue's own share of the system cost
           // (fns.length===1 just gets 100% of it, no proration needed). Salespeople can override the
           // computed amount per venue (cli.commissionOverrides), same pattern as negotiatedAmount.
           // Computed BEFORE profitPct below — it is a real payout out of this deal's revenue, so the
@@ -1174,6 +1366,12 @@ export default function DealCheckOverlay({ ctx }) {
           // income splits and IMS's per-department project total, and commission isn't a department's
           // production cost — it is a company-level venue payout, so it is subtracted only where
           // profit is actually measured.
+          //
+          // Based on dealAmount (fee-INCLUSIVE — what the guest is actually billed), not the pre-fee
+          // clientRevenue: a venue's commission agreement is a cut of the total money changing hands
+          // through the deal, and this is exactly what every other "Deal amount"/"Client Quote" figure
+          // in Deal Check (the bottom strip, the GYV tab) already means by that name — clientRevenue
+          // here would have been the one place quietly showing something smaller under the same label.
           const venueCommissionRates = dealCheckData?.venueCommission || {};
           const venueParentsForComm = dealCheckData?.venueParents || {};
           const resolveCommVenue = (vn) => venueParentsForComm[vn] || vn;
@@ -1191,7 +1389,7 @@ export default function DealCheckOverlay({ ctx }) {
           const venueKeys = Object.keys(fnGrandByVenue);
           const commissionByVenue = venueKeys.map(vKey => {
             const share = totalFnGrandForComm > 0 ? fnGrandByVenue[vKey] / totalFnGrandForComm : (venueKeys.length === 1 ? 1 : 0);
-            const revenueShare = clientRevenue * share;
+            const revenueShare = dealAmount * share;
             const pct = Number(venueCommissionRates[vKey]) || 0;
             const defaultAmt = Math.round(revenueShare * pct / 100);
             const overrideVal = commissionOverrides[vKey];
@@ -1203,10 +1401,41 @@ export default function DealCheckOverlay({ ctx }) {
           // Profit measured against dealAmount (fee included) — the fee is pure additional revenue
           // with no offsetting cost, so it flows straight through to profit, same as the owner asked.
           const profitPct = dealAmount > 0 ? Math.round(((dealAmount - effGrand - commissionTotal) / dealAmount) * 100) : 0;
-          return { rental, florals, transport, genset, manpower, truss, buyTotal, produceTotal, base, gyvFixed, bufferCost, grand, clientRevenue, venueDiscount, agencyFee, agencyFeePct, dealAmount, profitPct, fns, dept, DEPTS, deptInv, deptMp, mpRateByType,
+          // ── SMART-QUOTE-DRIVEN LIVE FIGURES (shared) ──
+          // Computed once here, off the SAME effGrand/commissionTotal/dealAmount every other field
+          // above already uses, so every tab that reads it (GYV & Buffer's profitability chips,
+          // Commission's own summary) sees one number instead of each re-deriving its own copy that
+          // can drift. Mirrors GYV & Buffer's own quote-calculator formula exactly. isSold gates it
+          // the same way that calculator does — a booked deal's quote is negotiated and done.
+          const smartQuoteActive = !isSold && dcDesiredMargin !== null;
+          const smartInternalCost = effGrand + commissionTotal;
+          const smartOrigProfitPct = dealAmount > 0 ? Math.round(((dealAmount - smartInternalCost) / dealAmount) * 100) : 0;
+          const smartDesiredPct = dcDesiredMargin !== null ? dcDesiredMargin : smartOrigProfitPct;
+          // Commission is a % of the deal amount, so it SCALES with the revised quote (see
+          // liveCommissionTotal below) rather than staying fixed at commissionTotal's original
+          // rupee value. Solving smartInternalCost/(1-desiredPct/100) treated commission as fixed
+          // while liveCommissionTotal still scales it against whatever quote that solve produces —
+          // so the Net Profit chip (liveQuote - effGrand - liveCommissionTotal) always undershot the
+          // desiredPct the salesperson picked, by exactly the extra commission the higher quote
+          // pulls in (confirmed: 15% chosen showed as 14% actual). Solving
+          // quote − effGrand − commRate·quote = (desiredPct/100)·quote for quote instead gives
+          // effGrand / (1 − commRate − desiredPct/100), which folds the scaling into the solve
+          // itself so the realized margin matches what was picked.
+          const commRate = dealAmount > 0 ? commissionTotal / dealAmount : 0;
+          const smartRevisedQuoteDenom = 1 - commRate - smartDesiredPct / 100;
+          const smartRevisedQuote = !smartQuoteActive ? dealAmount
+            : (smartRevisedQuoteDenom > 0 ? Math.round(effGrand / smartRevisedQuoteDenom) : smartInternalCost);
+          // liveQuote/liveCommissionTotal: what any "what does this deal look like right now" display
+          // should read instead of dealAmount/commissionTotal when the calculator is engaged. Commission
+          // scales proportionally with the live quote at the SAME blended rate (commissionTotal/dealAmount)
+          // — a one-way "quote moved, so commission follows" step, not fed back into the solve above.
+          const liveQuote = smartQuoteActive ? smartRevisedQuote : dealAmount;
+          const liveCommissionTotal = (smartQuoteActive && dealAmount > 0) ? Math.round(commissionTotal * (liveQuote / dealAmount)) : commissionTotal;
+          return { rental, florals, transport, genset, manpower, truss, buyTotal, produceTotal, base, gyvFixed, bufferCost, grand, clientRevenue, venueDiscount, agencyFee, agencyFeePct, dealAmount, profitPct, fns, dept, DEPTS, deptInv, deptMp, mpRateByType, byFn,
             mpPhases: dcMpPhases, mpSchedule, mpSharedTotals, deptDirectMap, directTotal, labourUsageByDept, labourUsageTotal, manpowerDetail, manpowerPlan: dcMpPlan,
             hasActuals, actualMandi, actualExpenses, effFlorals, baseActual, grandActual, projFlorals: florals, effManpower, mpDelta,
-            commissionByVenue, commissionTotal };
+            commissionByVenue, commissionTotal,
+            smartQuoteActive, smartOrigProfitPct, smartDesiredPct, liveQuote, liveCommissionTotal };
         })();
 
         // ── Build + auto-push the department snapshot to IMS whenever Deal Check is open (any tab),
@@ -1633,7 +1862,7 @@ export default function DealCheckOverlay({ ctx }) {
                   const TAB_AMOUNTS = {
                     inventory: fmtTab(rental), truss: fmtTab(truss), florals: fmtTab(florals),
                     manpower: fmtTab(manpower), production: fmtTab(produceTotal), buying: fmtTab(buyTotal),
-                    transport: fmtTab(Math.max(0, transport - genset)), power: fmtTab(genset),
+                    transport: fmtTab(transport), power: fmtTab(genset),
                     commission: fmtTab(commissionTotal), gyv: fmtTab(gyvFixed + bufferCost),
                   };
                   return TABS.map(t => {
@@ -1670,11 +1899,24 @@ export default function DealCheckOverlay({ ctx }) {
                   style={{width:36,height:36,padding:0,borderRadius:999,border:`1px solid ${border}`,background:"transparent",color:"#1A1A2E",fontSize:16,cursor:"pointer",lineHeight:1,display:"inline-flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>✕</button>
               </div>
             </div>
-            {/* BODY (3-column layout: left sidebar · main content · bottom strip is global) */}
+            {/* BODY (left sidebar column · main content). The sidebar column now stacks the function
+                list above the Project-total strip so the strip's own 220px width no longer leaves a
+                bottom-right gap — main content stretches the full column height beside it instead. */}
             <div style={{flex:1,display:"flex",overflow:"hidden"}}>
+              {/* LEFT COLUMN — function sidebar (scrolls) + Project total strip pinned under it */}
+              <div style={{width:220,flexShrink:0,display:"flex",flexDirection:"column",borderRight:`1px solid ${border}`,overflow:"hidden"}}>
               {/* LEFT SIDEBAR — function tabs + per-fn cost (skeletal in Patch 3, populated in Patch 5) */}
-              <div className="dc-glass" style={{width:220,borderRight:`1px solid ${border}`,padding:"14px 12px",overflowY:"auto"}}>
+              <div className="dc-glass" style={{flex:1,minHeight:0,padding:"14px 12px",overflowY:"auto"}}>
                 <div style={{fontSize:11,color:"#1A1A2E",letterSpacing:1.4,textTransform:"uppercase",marginBottom:10,fontWeight:700}}>Functions</div>
+                {/* Reachable from any tab, not just the (removed-from-the-strip) Dept Income one —
+                    a salesperson mid-negotiation with a department head shouldn't have to first
+                    figure out which tab used to hold this. */}
+                <button onClick={()=>setDcDeptModalOpen(true)}
+                  style={{width:"100%",textAlign:"left",padding:"9px 12px",borderRadius:10,marginBottom:10,cursor:"pointer",
+                    border:`1px solid ${border}`,background:"#fff",fontSize:12.5,fontWeight:700,color:"#1A1A2E",
+                    display:"flex",alignItems:"center",gap:7}}>
+                  🏦 Dept income
+                </button>
                 {/* Manpower/Transport/Power are booking-wide rollups — everywhere else (Inventory,
                     Production, Buying) already scopes to whichever function is selected below, so
                     this pill only needs to exist on the three tabs that used to ignore the
@@ -1692,71 +1934,20 @@ export default function DealCheckOverlay({ ctx }) {
                   {(() => {
                     const fns = collectAllFunctionData ? collectAllFunctionData() : [];
                     if (fns.length === 0) return <div style={{padding:"10px 12px",borderRadius:8,background:"rgba(26, 26, 46,0.03)",border:`1px solid ${border}`,fontSize:13,color:"#1A1A2E",fontStyle:"italic"}}>No functions yet</div>;
-                    // Platform (fatta+stand) — computed once for every function's zones, same source
-                    // the bottom-bar rollup uses, so this per-fn chip can add its own share below.
-                    const platformPlanForSidebar = buildPlatformPlan(fns, dealCheckData);
-                    const pfFattaR = platformPlanForSidebar?.fattaItem ? imsField.rentalCost(platformPlanForSidebar.fattaItem) : 0;
-                    const pfStandR = platformPlanForSidebar?.standItem ? imsField.rentalCost(platformPlanForSidebar.standItem) : 0;
+                    // Per-fn amount follows the active tab — Truss shows that fn's truss cost,
+                    // Transport shows its truck cost, Power its genset cost, etc — sourced from
+                    // dcCostRollup.byFn, which accumulates every category per-fn as it already loops
+                    // fn-by-fn for the booking-wide totals (one calc, not a second copy that can drift
+                    // — this sidebar used to run its own rental-only recompute here, which is why
+                    // switching tabs never changed what it showed). Manpower/Commission/GYV/Inventory
+                    // Status have no clean per-function split (shared crew across overlapping days,
+                    // deal-wide fee/margin) — those show "—" (byFnKey null) rather than silently
+                    // falling back to rental, which read as "Manpower's own per-fn cost" when it was
+                    // really just Inventory's rental figure reappearing under a different tab.
+                    const BYFN_KEY = { inventory: "rental", truss: "truss", florals: "florals", transport: "transport", power: "genset", production: "production", buying: "buying" };
+                    const byFnKey = BYFN_KEY[dcActiveTab] || null;
                     return fns.map((fn, fi) => {
-                      // Per-fn decor cost (rental + floral) — spec §7.9.3. Mirrors the logic the
-                      // shared cost rollup (dcCostRollup below) applies per zone/card, so this chip
-                      // matches the "X rental" totals shown per zone in the Inventory tab — it used
-                      // to just sum effKitRental(card.qty), silently dropping manually-added items
-                      // (dcManualItems), the fixed-venue Repeat discount, split-fulfilment cards, and
-                      // unavailable-shortfall (cost%) pricing that the zone chips already account for.
-                      const cards = dcCards[fi] || {};
-                      const fnBlocks = (dealCheckData?.blocksByDate || {})[fn.fnDate || clientDate] || {};
-                      const zoneIsRepeatFn = (ck) => { const zk = String(ck || "").split("::")[1]; return !!(zk && fn.zoneConfig?.[zk]?.repeat); };
-                      const costPctForFn = (subcat) => { const key = String(subcat || "").trim().toLowerCase(); const row = (rcSubcatFactors || []).find(r => r?.id === key); const v = row ? Number(row.cost_percent) : undefined; return (typeof v === "number" && isFinite(v) && v >= 0) ? v : 100; };
-                      let fnDecor = 0;
-                      Object.entries(cards).forEach(([ck, c]) => {
-                        const splitArr = Array.isArray(c.split) ? c.split.filter(s => s && s.imsId && (Number(s.qty) || 0) > 0) : [];
-                        if (splitArr.length) {
-                          const _rep = zoneIsRepeatFn(ck);
-                          splitArr.forEach(s => { const it = dcInventoryCache.find(x => x.id === s.imsId); if (!it) return; const q = Number(s.qty) || 0; const br = imsField.rentalCost(it); fnDecor += repeatAdjustedRental(_rep, fn.fnVenue, it, q, br); });
-                          return;
-                        }
-                        if (!c?.imsId) return;
-                        const item = dcInventoryCache.find(x => x.id === c.imsId);
-                        if (!item) return;
-                        const baseR = effKitRental(item, fi, ck);
-                        const qty = c.qty || 1;
-                        const _rep = zoneIsRepeatFn(ck);
-                        const isKit = Array.isArray(item.subItems) && item.subItems.length > 0;
-                        if (isKit) { fnDecor += repeatAdjustedRental(_rep, fn.fnVenue, item, qty, baseR); return; }
-                        const available = getStudioAvailable(item, fnBlocks);
-                        const ownedQty = Math.min(qty, available);
-                        const shortQty = Math.max(0, qty - available);
-                        const ownedRental = repeatAdjustedRental(_rep, fn.fnVenue, item, ownedQty, baseR);
-                        const shortCost = shortQty * (Number(item.cost) || 0) * (oosCostPctFor(item, costPctForFn) / 100);
-                        fnDecor += ownedRental + shortCost;
-                      });
-                      (dcManualItems || []).filter(mi => mi.fnIdx === fi).forEach(mi => {
-                        const item = dcInventoryCache.find(x => x.id === mi.imsId);
-                        if (!item) return;
-                        const q = Number(mi.qty) || 1;
-                        // Same as the rollup above — a manual item may be a kit.
-                        const baseR = effKitRental(item, fi, null);
-                        const _rep = mi.zoneKey ? !!(fn.zoneConfig?.[mi.zoneKey]?.repeat) : false;
-                        fnDecor += repeatAdjustedRental(_rep, fn.fnVenue, item, q, baseR);
-                      });
-                      // Platform (fatta+stand) + carpet — same math as the bottom-bar rollup (they have
-                      // no zone "card" to hang off of, so the sum above never saw them). This used to
-                      // leave the sidebar chip running short of the bottom strip by exactly these two
-                      // structural costs on any deal with a platform or carpet.
-                      Object.entries(platformPlanForSidebar?.perZone || {}).forEach(([k, z]) => { if (Number(k.split("|")[0]) === fi) fnDecor += (z.fattas || 0) * pfFattaR + (z.stands || 0) * pfStandR; });
-                      {
-                        const zc = fn.zoneConfig || {};
-                        const en = fn.enabledEls || {};
-                        Object.keys(zc).forEach(zk => {
-                          if (!en[zk] || !zc[zk] || zc[zk].cpT === CARPET_OFF) return;
-                          const zcz = zc[zk];
-                          const fd = zcz.floorDims || zcz.dims || {};
-                          const area = (Number(fd.L) || Number(fd.S) || 0) * (Number(fd.W) || Number(fd.S) || 0);
-                          const cRate = carpetPricingFor(zcz.cpT, imsCarpetMaterials).rate || 0;
-                          if (area > 0 && cRate > 0) fnDecor += area * cRate;
-                        });
-                      }
+                      const fnDecor = byFnKey ? (dcCostRollup.byFn?.[fi]?.[byFnKey] || 0) : null;
                       const isActive = fi === activeFnIdx && !dcShowAllFns;
                       return (
                         // THE SELECTED FUNCTION IS INKED, NOT TINTED. A gold-tinted card next to plain
@@ -1781,6 +1972,53 @@ export default function DealCheckOverlay({ ctx }) {
                     });
                   })()}
                 </div>
+              </div>
+              {/* BOTTOM STRIP — Project total only, pinned under the sidebar column. The per-group
+                  chips that used to sit beside it (Rental/Truss/Florals/Manpower/Buy/Produce/Genset/
+                  GYV/Buffer) now live on their own tab pill instead (see the tab strip above) —
+                  owner decision, so a group's number is right where you'd click to see the detail
+                  behind it, not repeated in a second row. */}
+              {(() => {
+                // ═══ Reads from shared dcCostRollup (§26.19) ═══
+                const { dealAmount: stripRevenue, profitPct: stripProfitPct, hasActuals, grandActual, grand: grandProj, commissionTotal } = dcCostRollup;
+                // Project total = production cost + GYV/buffer + venue commission — same definition as
+                // the GYV & Buffer tab's own "Project total" tile, so this strip can never disagree with it.
+                const grandWithOverheads = (hasActuals ? grandActual : grandProj) + commissionTotal;
+                const stripProfitColor = stripProfitPct >= 20 ? "#10B981" : stripProfitPct >= 10 ? "#F59E0B" : "#EF4444";
+                // Until Generate has run there are no matched cards, so every rollup figure is 0 and a
+                // department that genuinely costs nothing looked identical to one that was never
+                // calculated — both rendered "—". Split the two: "—" means not calculated yet, "₹0"
+                // means calculated and empty. Same source of truth the Inventory tab's empty state
+                // uses (dcCards), but across ALL functions, since this strip sums all of them.
+                const hasGenerated = Object.values(dcCards || {}).some(
+                  (fnCards) => fnCards && Object.keys(fnCards).length > 0
+                );
+                const fmt = (n) => n > 0
+                  ? "₹" + Math.round(n).toLocaleString("en-IN")
+                  : hasGenerated ? "₹0" : "—";
+                // ── SAVE DRAFT REMOVED ──
+                // The button it drove did nothing the background autosave was not already doing,
+                // and it did it worse. Three reasons it went:
+                //  · It wrote a SUBSET. The autosave persists dcDraft (the full snapshot: resolved,
+                //    photoOverrides, skipped, manualItems, dedupOverrides, productionAccepted,
+                //    artFlowerAlloc, floralColorPrefs, customItems) alongside the top-level fields.
+                //    This wrote only the top-level fields and bumped dcDraftSavedAt, leaving dcDraft
+                //    stale against fresh cards until the next autosave tick repaired it.
+                //  · It skipped the guards. The autosave refuses to write an empty dcCards (see the
+                //    ROOT-CAUSE GUARD in StudioApp.jsx) and refuses to write mid-Generate. This had
+                //    neither, so pressing it before a restore finished would persist an empty card
+                //    set over a good draft — exactly the corruption that guard exists to prevent.
+                //  · Nothing was ever unsaved. The autosave fires 2.5s after edits settle and
+                //    flushes on unmount (route switch, client change, close), and the header already
+                //    reports "Deal Check last saved by <name> · <when>".
+                // If a deliberate save action is ever wanted back, it must reuse the autosave's own
+                // doSave rather than reimplement a second, weaker write path.
+                return (
+                  <div className="dc-glass dc-bottom" style={{display:"flex",alignItems:"center",flexShrink:0,boxSizing:"border-box",padding:"10px 18px",borderTop:`1px solid ${border}`,gap:14}}>
+                    <div className="dc-bottomtotal" style={{flexShrink:0}}><div className="dc-cap" style={{color:"#1A1A2E",opacity:0.62}}>Project total</div><div className="dc-money" style={{fontSize:25,fontWeight:800,color:"#1A1A2E",marginTop:1,lineHeight:1.1}}>{fmt(grandWithOverheads)}</div>{stripRevenue > 0 && <div className="dc-money" style={{fontSize:11,color:stripProfitColor,fontWeight:700,marginTop:2,letterSpacing:0.1}}>Margin {stripProfitPct}% · {fmt(stripRevenue)} quote</div>}</div>
+                  </div>
+                );
+              })()}
               </div>
               {/* MAIN CONTENT */}
               <div style={{flex:1,overflowY:"auto",padding:"18px 22px"}}>
@@ -1829,7 +2067,35 @@ export default function DealCheckOverlay({ ctx }) {
                       if (Number(pfi) === fnIdx && !byZone[pzk]) byZone[pzk] = [];
                     });
                   }
+                  // A manually-added item (dcManualItems) is only ever rendered NESTED inside its own
+                  // zone's card (manualItemsInZone below, filtered by zoneKey === zk) — unlike cards
+                  // and platform above, nothing force-adds an entry for its zoneKey if that zone was
+                  // since renamed or removed. Without this, such an item is fully counted into
+                  // dcCostRollup's rental/byFn totals (that loop only filters by fnIdx, never checks
+                  // the zone still exists) while being completely invisible here — the sidebar and
+                  // this tab's own visible zones silently disagree by exactly that item's cost.
+                  (dcManualItems || []).forEach(mi => {
+                    if (mi.fnIdx !== fnIdx) return;
+                    const zk = mi.zoneKey || "(unzoned)";
+                    if (!byZone[zk]) byZone[zk] = [];
+                  });
+                  // Same gap, found live: a zone with carpet configured but NO cards/platform/manual
+                  // items of its own (dcCostRollup's carpet loop walks zoneConfig directly and charges
+                  // for ANY enabled zone whose cpT isn't explicitly CARPET_OFF — an unset/undefined
+                  // cpT still prices at carpetPricingFor's default rate, it is NOT free) was fully
+                  // counted into the sidebar total while never getting a byZone entry. First attempt
+                  // at this fix required `cpT` to be truthy, which is stricter than the cost loop's
+                  // own gate (`cpT === CARPET_OFF` to skip) — an undefined cpT zone with real carpet
+                  // cost (e.g. "centrelounge") passed the cost loop but failed this truthy check and
+                  // never got force-added. Matching the exact same condition here fixes that.
                   const activeFnForFlorals = fns[fnIdx];
+                  if (activeFnForFlorals?.zoneConfig) {
+                    Object.keys(activeFnForFlorals.zoneConfig).forEach(zk => {
+                      if (!activeFnForFlorals.enabledEls?.[zk]) return;
+                      const zc = activeFnForFlorals.zoneConfig[zk];
+                      if (zc && zc.cpT !== CARPET_OFF && !byZone[zk]) byZone[zk] = [];
+                    });
+                  }
                   const recipeSubcatsLC = (dealCheckData?.flowerRecipeSubcats || ["Flower Pattern"]).map(s => String(s||"").toLowerCase());
                   const flowerPatternsForCheck = dealCheckData?.flowerPatterns || [];
                   const findPatternByName = (name) => {
@@ -1960,9 +2226,16 @@ export default function DealCheckOverlay({ ctx }) {
                             that means SOMETHING NEEDS DOING, and it was the quietest thing there.
                             Red with a warning glyph when there is something, green when there is not.
                             Only the presentation moved; dirtyCount is untouched. */}
-                        {dirtyCount>0
-                          ? <div style={{fontSize:11,fontWeight:700,letterSpacing:0.6,color:"#E11D48",display:"inline-flex",alignItems:"center",gap:5,padding:"4px 9px",borderRadius:999,background:"rgba(225,29,72,0.10)",border:"1px solid rgba(225,29,72,0.22)"}}><span style={{fontSize:11,lineHeight:1}}>⚠</span>{dirtyCount} {dirtyCount===1?"issue":"issues"}</div>
-                          : <div style={{fontSize:11,fontWeight:700,letterSpacing:0.6,color:"#059669",display:"inline-flex",alignItems:"center",gap:5,padding:"4px 9px",borderRadius:999,background:"rgba(16,185,129,0.10)",border:"1px solid rgba(16,185,129,0.22)"}}><span style={{fontSize:11,lineHeight:1}}>✓</span>All clean</div>}
+                        <div style={{display:"flex",alignItems:"center",gap:8}}>
+                          {/* Same figure the nav-pill/sidebar already show for this function — reading
+                              dcCostRollup.byFn directly rather than re-summing the zone cards below
+                              means this can't drift from either of those the way a second, independent
+                              total would (see this whole file's history of exactly that bug). */}
+                          <div title="This function's total rental" style={{fontSize:11,fontWeight:700,letterSpacing:0.6,color:accent,display:"inline-flex",alignItems:"center",gap:5,padding:"4px 9px",borderRadius:999,background:"rgba(201,169,110,0.14)",border:"1px solid rgba(201,169,110,0.3)"}}>₹{Math.round(dcCostRollup.byFn?.[fnIdx]?.rental || 0).toLocaleString("en-IN")} rental</div>
+                          {dirtyCount>0
+                            ? <div style={{fontSize:11,fontWeight:700,letterSpacing:0.6,color:"#E11D48",display:"inline-flex",alignItems:"center",gap:5,padding:"4px 9px",borderRadius:999,background:"rgba(225,29,72,0.10)",border:"1px solid rgba(225,29,72,0.22)"}}><span style={{fontSize:11,lineHeight:1}}>⚠</span>{dirtyCount} {dirtyCount===1?"issue":"issues"}</div>
+                            : <div style={{fontSize:11,fontWeight:700,letterSpacing:0.6,color:"#059669",display:"inline-flex",alignItems:"center",gap:5,padding:"4px 9px",borderRadius:999,background:"rgba(16,185,129,0.10)",border:"1px solid rgba(16,185,129,0.22)"}}><span style={{fontSize:11,lineHeight:1}}>✓</span>All clean</div>}
+                        </div>
                       </div>
                       {zoneList.map(zk => {
                         const collapseKey = `${fnIdx}|${zk}`;
@@ -2017,12 +2290,13 @@ export default function DealCheckOverlay({ ctx }) {
                         const _zoneIsRepeat = (ck) => { const zzk = String(ck || "").split("::")[1]; return !!(zzk && fns[fnIdx]?.zoneConfig?.[zzk]?.repeat); };
                         const _costPctFor = (subcat) => { const key = String(subcat || "").trim().toLowerCase(); const row = (rcSubcatFactors || []).find(r => r?.id === key); const v = row ? Number(row.cost_percent) : undefined; return (typeof v === "number" && isFinite(v) && v >= 0) ? v : 100; };
                         const _fnVenueForRepeat = fns[fnIdx]?.fnVenue;
+                        const _fnDateForRepeat = fns[fnIdx]?.fnDate;
                         let zoneRentalTotal = 0;
                         zoneCards.forEach(c => {
                           const splitArr = Array.isArray(c.split) ? c.split.filter(s => s && s.imsId && (Number(s.qty) || 0) > 0) : [];
                           if (splitArr.length) {
                             const _rep = _zoneIsRepeat(c._cardKey);
-                            splitArr.forEach(s => { const it = dcInventoryCache.find(x => x.id === s.imsId); if (!it) return; const q = Number(s.qty) || 0; const br = imsField.rentalCost(it); zoneRentalTotal += repeatAdjustedRental(_rep, _fnVenueForRepeat, it, q, br); });
+                            splitArr.forEach(s => { const it = dcInventoryCache.find(x => x.id === s.imsId); if (!it) return; const q = Number(s.qty) || 0; const br = imsField.rentalCost(it); zoneRentalTotal += repeatAdjustedRental(_rep, _fnVenueForRepeat, it, q, br, _fnDateForRepeat); });
                             return;
                           }
                           if (!c.imsId) return;
@@ -2032,15 +2306,15 @@ export default function DealCheckOverlay({ ctx }) {
                           const qty = Number(c.qty) || 1;
                           const _rep = _zoneIsRepeat(c._cardKey);
                           const isKit = Array.isArray(it.subItems) && it.subItems.length > 0;
-                          if (isKit) { zoneRentalTotal += repeatAdjustedRental(_rep, _fnVenueForRepeat, it, qty, baseR); return; }
-                          const available = getStudioAvailable(it, fnBlocksForChip);
+                          if (isKit) { zoneRentalTotal += repeatAdjustedRental(_rep, _fnVenueForRepeat, it, qty, baseR, _fnDateForRepeat); return; }
+                          const available = dcAvailable(it, fnBlocksForChip, fnIdx);
                           const ownedQty = Math.min(qty, available);
                           const shortQty = Math.max(0, qty - available);
-                          const ownedRental = repeatAdjustedRental(_rep, _fnVenueForRepeat, it, ownedQty, baseR);
+                          const ownedRental = repeatAdjustedRental(_rep, _fnVenueForRepeat, it, ownedQty, baseR, _fnDateForRepeat);
                           const shortCost = shortQty * (Number(it.cost) || 0) * (oosCostPctFor(it, _costPctFor) / 100);
                           zoneRentalTotal += ownedRental + shortCost;
                         });
-                        manualItemsInZone.forEach(mi => { const it = dcInventoryCache.find(x => x.id === mi.imsId); if (!it) return; const q = Number(mi.qty) || 1; const baseR = effKitRental(it, fnIdx, null); const _rep = mi.zoneKey ? !!(fns[fnIdx]?.zoneConfig?.[mi.zoneKey]?.repeat) : false; zoneRentalTotal += repeatAdjustedRental(_rep, _fnVenueForRepeat, it, q, baseR); });
+                        manualItemsInZone.forEach(mi => { const it = dcInventoryCache.find(x => x.id === mi.imsId); if (!it) return; const q = Number(mi.qty) || 1; const baseR = effKitRental(it, fnIdx, null); const _rep = mi.zoneKey ? !!(fns[fnIdx]?.zoneConfig?.[mi.zoneKey]?.repeat) : false; zoneRentalTotal += repeatAdjustedRental(_rep, _fnVenueForRepeat, it, q, baseR, _fnDateForRepeat); });
                         platformEntriesForZone.forEach(({ pi }) => { zoneRentalTotal += (pi.fattas || 0) * platformFattaR + (pi.stands || 0) * platformStandR; });
                         {
                           const zcz = fns[fnIdx]?.zoneConfig?.[zk];
@@ -2196,15 +2470,24 @@ export default function DealCheckOverlay({ ctx }) {
                                 {/* §26.18 + §26.19 — Carpet block with visual tile picker */}
                                 {(()=>{
                                   const zc = fns[fnIdx]?.zoneConfig?.[zk];
-                                  // Unset cpT (nobody has picked a carpet material yet) skips this card
-                                  // too, same as the explicit OFF sentinel — otherwise it renders an
-                                  // "pick a carpet" prompt for a floor that isn't being charged carpet
-                                  // at all (see carpetPricingFor in taxonomy.js).
-                                  if (!zc || !zc.cpT || zc.cpT === CARPET_OFF) return null;
+                                  // An unset cpT is NOT the same as the explicit OFF sentinel —
+                                  // carpetPricingFor (taxonomy.js) defaults an unset cpT to "Carpet
+                                  // Old" and charges for it, same as dcCostRollup's carpet loop. This
+                                  // card used to require cpT to be truthy to render at all, which hid
+                                  // it for exactly the floors that are silently being charged the
+                                  // default rate — the zone showed a rental total with no card behind
+                                  // it. Only the explicit "— None —" pick (CARPET_OFF) should hide this.
+                                  if (!zc || zc.cpT === CARPET_OFF) return null;
                                   const fd = zc.floorDims || zc.dims || {};
                                   const neededSqft = Math.round((Number(fd.L)||0)*(Number(fd.W)||0));
                                   if (neededSqft <= 0) return null;
-                                  const carpetOpts = dcInventoryCache.filter(x => String(imsField.subcategory(x)||"").toLowerCase().includes("carpet"));
+                                  // Exact match, not .includes("carpet") — that substring match used to
+                                  // also pull in items filed under a DIFFERENT sub-category that merely
+                                  // contains the word "carpet" (e.g. "Rug Carpet"), leaking the wrong
+                                  // stock into this picker. "Carpet" is also the literal fallback string
+                                  // below and what openAvailModal itself needs as an exact sub-category
+                                  // to search within, so this now matches that same string precisely.
+                                  const carpetOpts = dcInventoryCache.filter(x => String(imsField.subcategory(x)||"").trim().toLowerCase() === "carpet");
                                   const pickedId = dcCarpetPick[fnIdx]?.[zk];
                                   const carpetItem = pickedId ? dcInventoryCache.find(x=>x.id===pickedId) : null;
                                   const markup = dealCheckData?.carpetFreshMarkup ?? 40;
@@ -2246,8 +2529,8 @@ export default function DealCheckOverlay({ ctx }) {
                                   // and dimensions in one list, rather than a bespoke search-and-thumbnail
                                   // grid duplicating that same question just for carpets. Falls back to
                                   // whichever sub-category an already-known carpet item carries (either
-                                  // the one currently picked, or the first of the broad "contains
-                                  // carpet" set above) since openAvailModal needs a concrete sub-category
+                                  // the one currently picked, or the first of the exact "Carpet"
+                                  // set above) since openAvailModal needs a concrete sub-category
                                   // to search within, not a substring. Also offers Split (opts.splitQty/
                                   // onSplit) so the modal's own "pick 2+ items" flow seeds splitLines —
                                   // exactly how a regular item card's split starts.
@@ -2402,7 +2685,7 @@ export default function DealCheckOverlay({ ctx }) {
                                   const _rep = !!(fns[fnIdx]?.zoneConfig?.[card.zoneKey]?.repeat);
                                   const _venue = fns[fnIdx]?.fnVenue;
                                   const _cardQty = Number(card.qty) || 1;
-                                  const _lineTotal = item ? repeatAdjustedRental(_rep, _venue, item, _cardQty, rental) : 0;
+                                  const _lineTotal = item ? repeatAdjustedRental(_rep, _venue, item, _cardQty, rental, _fnDateForRepeat) : 0;
                                   // The per-unit rate shown next to "×" — the discounted equivalent, not
                                   // the list rate, so the line's own arithmetic (rate × qty) reproduces
                                   // the total sitting right next to it instead of looking wrong.
@@ -2426,7 +2709,7 @@ export default function DealCheckOverlay({ ctx }) {
                                           <span style={{fontSize:14,fontWeight:700,letterSpacing:-0.1,color:IV.ink}}>{item?.name || card.rcName || "(unnamed)"}</span>
                                           <span title={sourceMeta.label} style={{fontSize:11,padding:"2px 6px",borderRadius:4,background:`${sourceMeta.color}22`,color:sourceMeta.color,fontWeight:700,letterSpacing:0.4}}>{sourceMeta.icon} {sourceMeta.label}</span>
                                           {hold && <span title={`Held by ${hold.salesperson} for ${hold.eventName}`} style={{fontSize:11,padding:"2px 6px",borderRadius:4,background:"rgba(245,158,11,0.20)",color:"#F59E0B",fontWeight:700,letterSpacing:0.4}}>⏳ {hold.salesperson}</span>}
-                                          {item && (()=>{ const cq=Number(card.qty)||1; const av=getStudioAvailable(item, fnBlocksForChip); return cq>av ? <span style={{fontSize:11,padding:"2px 6px",borderRadius:4,background:"rgba(239,68,68,0.18)",color:"#EF4444",fontWeight:700,letterSpacing:0.4}}>⚠ {av}</span> : null; })()}
+                                          {item && (()=>{ const cq=Number(card.qty)||1; const av=dcAvailable(item, fnBlocksForChip, fnIdx); return cq>av ?<span style={{fontSize:11,padding:"2px 6px",borderRadius:4,background:"rgba(239,68,68,0.18)",color:"#EF4444",fontWeight:700,letterSpacing:0.4}}>⚠ {av}</span> : null; })()}
                                           {card.imsId && reuseFnCount[card.imsId]?.size >= 2 && <span style={{fontSize:11,padding:"2px 6px",borderRadius:4,background:"rgba(16,185,129,0.18)",color:"#10B981",fontWeight:700,letterSpacing:0.4}}>♻ {reuseFnCount[card.imsId].size} fns</span>}
                                           <span onClick={()=>setDcCards(prev=>{const fn={...(prev[fnIdx]||{})}; delete fn[card._cardKey]; return {...prev,[fnIdx]:fn};})} title="Remove from Deal Check" style={{marginLeft:"auto",cursor:"pointer",color:"#EF4444",fontSize:15.5,fontWeight:700,padding:"0 4px",lineHeight:1,flexShrink:0,opacity:0.6,transition:"opacity 0.15s"}} onMouseEnter={e=>e.currentTarget.style.opacity=1} onMouseLeave={e=>e.currentTarget.style.opacity=0.6}>×</span>
                                         </div>
@@ -2655,7 +2938,7 @@ export default function DealCheckOverlay({ ctx }) {
                                         // Non-split reuses _lineTotal (computed once above, alongside the
                                         // "rate × qty" caption) rather than re-deriving it here.
                                         const tot = splitArr.length
-                                          ? splitArr.reduce((s,x)=>{ const it3=dcInventoryCache.find(y=>y.id===x.imsId); const q=Number(x.qty)||0; return s+(it3?repeatAdjustedRental(_rep,_venue,it3,q,imsField.rentalCost(it3)):0); },0)
+                                          ? splitArr.reduce((s,x)=>{ const it3=dcInventoryCache.find(y=>y.id===x.imsId); const q=Number(x.qty)||0; return s+(it3?repeatAdjustedRental(_rep,_venue,it3,q,imsField.rentalCost(it3),_fnDateForRepeat):0); },0)
                                           : _lineTotal;
                                         if (tot <= 0) return null;
                                         // alignSelf flex-start, not center: at half width the card grows tall
@@ -2732,10 +3015,6 @@ export default function DealCheckOverlay({ ctx }) {
                                                   const owned = cItem ? imsField.qtyOwned(cItem) : 0;
                                                   const short = cItem && needed > owned;
                                                   const unavailable = !cItem || short;
-                                                  // Same-subcategory alternatives with enough stock (for a short/missing component → one-tap swap).
-                                                  const cSub = cItem ? String(imsField.subcategory(cItem)||"") : "";
-                                                  const compAlts = unavailable && cSub ? dcInventoryCache.filter(x => x.id !== c.itemId && String(imsField.subcategory(x)||"").toLowerCase().trim() === cSub.toLowerCase().trim()).sort((a,b)=>imsField.qtyOwned(b)-imsField.qtyOwned(a)) : [];
-                                                  const compAltsFit = compAlts.filter(x => imsField.qtyOwned(x) >= needed);
                                                   const swapComp = (id)=> setComps(comps.map((x,i)=>i===ci?{...x,itemId:id}:x));
                                                   return (
                                                     <div key={ci} style={unavailable?{padding:"3px 5px",borderRadius:6,background:"rgba(239,68,68,0.08)",border:"1px solid rgba(239,68,68,0.3)"}:null}>
@@ -2772,12 +3051,21 @@ export default function DealCheckOverlay({ ctx }) {
                                                         ? <span style={{color:"#EF4444",fontWeight:700,whiteSpace:"nowrap",textAlign:"right",...NUM}}>⚠ need {needed}, only {owned}</span>
                                                         : <span style={{color:"#10B981",whiteSpace:"nowrap",textAlign:"right",...NUM}}>✓ {owned} avail</span>)}
                                                     </div>
-                                                    {unavailable && compAlts.length>0 && (
-                                                      <div style={{display:"flex",alignItems:"center",gap:5,flexWrap:"wrap",marginTop:4,paddingLeft:28}}>
-                                                        <span style={{fontSize:11,color:"#EF4444",fontWeight:600,whiteSpace:"nowrap"}}>↔ swap to:</span>
-                                                        {(compAltsFit.length?compAltsFit:compAlts).slice(0,5).map(a=>{ const ao=imsField.qtyOwned(a); const fit=ao>=needed; return (
-                                                          <span key={a.id} onClick={()=>swapComp(a.id)} title={`${a.name} · ${ao} available · ₹${imsField.rentalCost(a).toLocaleString("en-IN")}`} style={{cursor:"pointer",fontSize:11,padding:"2px 7px",borderRadius:8,border:`1px solid ${fit?"#10B981":border}`,background:fit?"rgba(16,185,129,0.12)":"transparent",color:fit?"#10B981":textS,whiteSpace:"nowrap"}}>{a.name} ({ao})</span>
-                                                        ); })}
+                                                    {unavailable && (
+                                                      <div style={{marginTop:4,paddingLeft:28}}>
+                                                        {/* Same availability picker Build's IconBox control opens (and the
+                                                            main card's own swap button above uses) — photo, dims, real free
+                                                            counts, search — instead of this row's own bespoke "N alternatives"
+                                                            pill list, which only ever showed a bare name and raw stock qty
+                                                            (not netted against what else this deal is already using). */}
+                                                        <button type="button" className="dci-btn"
+                                                          onClick={()=>openAvailModal?.(card.zoneKey || editKey, ci, { invId: c.itemId, imsId: c.itemId, name: cItem?.name || c.itemId }, null, (pick)=>{
+                                                            if (!pick) return;
+                                                            swapComp(pick.id);
+                                                          }, { pickHint: `Pick a replacement for this kit component — need ${needed}.` })}
+                                                          style={{display:"inline-flex",alignItems:"center",gap:5,padding:"3px 9px",borderRadius:6,border:"1px solid rgba(239,68,68,0.35)",background:"rgba(239,68,68,0.08)",color:"#EF4444",fontSize:11,fontWeight:600,cursor:"pointer"}}>
+                                                          <IconBox size={12}/> {cItem ? `⚠ need ${needed}, only ${owned} — swap` : "⚠ not in IMS — pick one"}
+                                                        </button>
                                                       </div>
                                                     )}
                                                     </div>
@@ -2849,12 +3137,12 @@ export default function DealCheckOverlay({ ctx }) {
                                   // Hard cap: you can't block more than is available at this venue.
                                   const _vName = (fns[fnIdx] || {}).fnVenue || "";
                                   const _rep = mi.zoneKey ? !!(fns[fnIdx]?.zoneConfig?.[mi.zoneKey]?.repeat) : false;
-                                  const lineTotal = item ? repeatAdjustedRental(_rep, _vName, item, mi.qty, rental) : 0;
+                                  const lineTotal = item ? repeatAdjustedRental(_rep, _vName, item, mi.qty, rental, _fnDateForRepeat) : 0;
                                   // Discounted equivalent of "rental" for the "× qty" caption below — so
                                   // that line's own arithmetic reproduces lineTotal instead of looking
                                   // like it doesn't add up (list rate × qty ≠ the discounted lineTotal).
                                   const _effRate = mi.qty > 0 ? Math.round(lineTotal / mi.qty) : rental;
-                                  const _avail = item ? Math.max(0, Math.min(getStudioAvailable(item, fnBlocksForChip), availableAtVenue({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, _vName, item))) : 0;
+                                  const _avail = item ? Math.max(0, Math.min(dcAvailable(item, fnBlocksForChip, fnIdx), availableAtVenue({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, _vName, item))) : 0;
                                   return (
                                     <div key={mi.manualId} className="dci-card" style={{padding:"12px 13px",borderRadius:10,boxShadow:IV.shadow,background:IV.card,border:`1px solid rgba(193,154,107,0.30)`,display:"flex",gap:11,alignItems:"flex-start"}}>
                                       {photo ? <HoverZoom src={thumbUrl(photo, 320)}><img loading="lazy" decoding="async" src={thumbUrl(photo, 56)} alt="" style={{width:54,height:54,borderRadius:7,objectFit:"cover",flexShrink:0,background:"#FFFFFF"}}/></HoverZoom> : <div style={{width:54,height:54,borderRadius:7,background:"#FFFFFF",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,color:IV.ink,flexShrink:0}}>?</div>}
@@ -2880,7 +3168,7 @@ export default function DealCheckOverlay({ ctx }) {
                                           const mAlts = dcInventoryCache.filter(x => x.id !== mi.imsId && String(imsField.subcategory(x)||"").toLowerCase().trim() === sub.toLowerCase().trim());
                                           if (!mAlts.length) return null;
                                           const _fvC = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
-                                          const altAvail = (a) => Math.max(0, Math.min(getStudioAvailable(a, fnBlocksForChip), availableAtVenue(_fvC, _vName, a)));
+                                          const altAvail = (a) => Math.max(0, Math.min(dcAvailable(a, fnBlocksForChip, fnIdx), availableAtVenue(_fvC, _vName, a)));
                                           return (
                                             <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center",marginTop:6}}>
                                               <span style={{fontSize:11,color:IV.ink,letterSpacing:0.6,textTransform:"uppercase",fontWeight:600}}>Alternatives:</span>
@@ -3654,7 +3942,7 @@ export default function DealCheckOverlay({ ctx }) {
                       const item = dcInventoryCache.find(x => x.id === card.imsId);
                       if (!item) return;
                       const cardQty = Number(card.qty) || 1;
-                      const available = getStudioAvailable(item, fnBlocks);
+                      const available = dcAvailable(item, fnBlocks, fi);
                       const hold = getActiveSoftHold(softHolds, card.imsId, authUser?.name, nowMs);
                       const isShort = cardQty > available;
                       const isHeld = !!hold;
@@ -3905,7 +4193,7 @@ export default function DealCheckOverlay({ ctx }) {
                   );
                 })() : dcActiveTab === "gyv" ? (() => {
                   // ═══ GYV FIXED & BUFFER COST TAB — reads from shared dcCostRollup ═══
-                  const { rental, florals, transport, manpower, truss, buyTotal, produceTotal, base: baseProj, gyvFixed: gyvCost, bufferCost, commissionTotal, grand: grandProj, venueDiscount, agencyFee, agencyFeePct, dealAmount, fns, hasActuals, actualMandi, actualExpenses, effFlorals, baseActual, grandActual, projFlorals, effManpower, mpDelta } = dcCostRollup;
+                  const { rental, florals, transport, manpower, truss, buyTotal, produceTotal, base: baseProj, gyvFixed: gyvCost, bufferCost, commissionTotal, grand: grandProj, venueDiscount, dealAmount, fns, hasActuals, actualMandi, actualExpenses, effFlorals, baseActual, grandActual, projFlorals, effManpower, mpDelta, smartQuoteActive, smartOrigProfitPct, smartDesiredPct, liveQuote, liveCommissionTotal } = dcCostRollup;
                   const baseCost = hasActuals ? baseActual : baseProj;
                   // Project total = production cost + GYV/buffer + venue commission. Commission used
                   // to be excluded here (a "company-level payout" kept out of "what building this event
@@ -3934,7 +4222,19 @@ export default function DealCheckOverlay({ ctx }) {
                     { icon: "🛒", label: "Buying",     value: buyTotal },
                     { icon: "🏭", label: "Production", value: produceTotal },
                     ...(actualExpenses > 0 ? [{ icon: "🧾", label: "On-site expenses", value: actualExpenses, flag: "actual", note: "billed on site" }] : []),
+                    // GYV fixed + buffer used to sit in their own "Overheads" card further down —
+                    // moved in as ordinary lines here so the whole cost side (production cost AND
+                    // overheads) reads as one list summing to one total, same reasoning the rows
+                    // above it already follow. Commission is NOT here — it's a payout, not a
+                    // production cost, and now lives only in the profitability chips below.
+                    { icon: "🏢", label: "GYV fixed", value: gyvCost, note: `${gyvPct}% of base cost` },
+                    { icon: "🧯", label: "Buffer",    value: bufferCost, note: `${bufferPct}% of base cost` },
                   ];
+                  // projectCost — base cost + GYV + buffer, commission deliberately excluded (see rows
+                  // above). This IS dcCostRollup's own grand/grandActual: that field was already
+                  // computed as exactly this sum before grandWithOverheads bolted commission on top of
+                  // it, so reading it directly here can never drift from the rows' own total.
+                  const projectCost = hasActuals ? grandActual : grandProj;
 
                   // ── ONE QUOTE FIGURE, NOT TWO ──
                   // dealAmount is dcCostRollup's own copy (clientRevenue + agencyFee, same negotiated-
@@ -3957,6 +4257,16 @@ export default function DealCheckOverlay({ ctx }) {
                         ? { ink: BAD, soft: BAD_SOFT, label: "Low" }
                         : { ink: BAD, soft: BAD_SOFT, label: "Loss" };
                   const overheads = gyvCost + bufferCost;
+                  // ── SMART-QUOTE-DRIVEN LIVE FIGURES ──
+                  // smartQuoteActive/smartDesiredPct/liveQuote/liveCommissionTotal come straight off
+                  // dcCostRollup (computed once, shared with the Commission tab — see its own comment
+                  // there) instead of being re-derived here, so the two tabs can't show two different
+                  // "live" numbers for the same slider position. Only what's specific to THIS tab's own
+                  // display — the tone color and the resulting net profit/margin — is computed locally.
+                  const smartTone = smartDesiredPct >= 20 ? GOOD : smartDesiredPct >= 10 ? GOLD : BAD;
+                  const liveCommission = liveCommissionTotal;
+                  const liveNetProfit = liveQuote - projectCost - liveCommission;
+                  const liveProfitPct = liveQuote > 0 ? Math.round((liveNetProfit / liveQuote) * 100) : 0;
 
                   // ── COLLAPSE STATE, ONE FACTORY ──
                   // Four sections need the same open/toggle pair, and four hand-rolled copies is
@@ -3971,7 +4281,6 @@ export default function DealCheckOverlay({ ctx }) {
                     return { open, toggle: () => setDcCollapsedFnBlocks(prev => ({ ...prev, [key]: !open })) };
                   };
                   const sBreak  = sect("gyv:breakdown");
-                  const sOver   = sect("gyv:overheads");
                   const sProfit = sect("gyv:profit");
                   const sQuote  = sect("gyv:quote");
 
@@ -4034,11 +4343,11 @@ export default function DealCheckOverlay({ ctx }) {
                             <span aria-hidden="true" style={ICON_TILE("#EBE8F4")}>💰</span>
                             <div style={{flex:"1 1 auto",minWidth:0}}>
                               <div style={SECT_TITLE}>Project cost breakdown</div>
-                              <div style={SECT_SUB}>What the booking costs Ambria, before overheads. {rows.length} line{rows.length===1?"":"s"}.</div>
+                              <div style={SECT_SUB}>What the booking costs Ambria, GYV and buffer included — commission excluded (see profitability below). {rows.length} line{rows.length===1?"":"s"}.</div>
                             </div>
                             <div style={{textAlign:"right",flexShrink:0}}>
-                              <div style={{fontSize:17,fontWeight:750,color:INK,letterSpacing:-0.45,lineHeight:1.1,...NUM}}>{fmt(baseCost)}</div>
-                              <div style={{fontSize:11,color:INK_3,marginTop:2}}>base cost</div>
+                              <div style={{fontSize:17,fontWeight:750,color:INK,letterSpacing:-0.45,lineHeight:1.1,...NUM}}>{fmt(projectCost)}</div>
+                              <div style={{fontSize:11,color:INK_3,marginTop:2}}>project cost</div>
                             </div>
                             {chev(sBreak.open)}
                           </div>
@@ -4059,44 +4368,9 @@ export default function DealCheckOverlay({ ctx }) {
                               </div>
                             ))}
                             <div style={{display:"flex",alignItems:"center",gap:10,padding:"11px 8px 3px",marginTop:4,borderTop:`1px solid ${HAIRLINE}`}}>
-                              <span style={{flex:"1 1 auto",fontSize:10.5,fontWeight:700,color:INK,letterSpacing:0.8,textTransform:"uppercase"}}>Base cost</span>
-                              <span style={{fontSize:15,fontWeight:750,color:INK,letterSpacing:-0.35,...NUM}}>{fmt(baseCost)}</span>
+                              <span style={{flex:"1 1 auto",fontSize:10.5,fontWeight:700,color:INK,letterSpacing:0.8,textTransform:"uppercase"}}>Project cost</span>
+                              <span style={{fontSize:15,fontWeight:750,color:INK,letterSpacing:-0.35,...NUM}}>{fmt(projectCost)}</span>
                             </div>
-                          </div>}
-                        </div>
-                      </div>
-
-                      {/* ── OVERHEADS ── */}
-                      <div className="dc2-card" style={{background:CARD_BG,border:`1px solid ${CARD_BORDER}`,borderRadius:14,boxShadow:CARD_SHADOW,overflow:"hidden",display:"flex"}}>
-                        <div aria-hidden="true" style={{width:4,flexShrink:0,background:"#C6A55E"}} />
-                        <div style={{flex:"1 1 auto",minWidth:0}}>
-                          <div onClick={sOver.toggle} className="dc2-hd" style={headStyle(sOver.open)}>
-                            <span aria-hidden="true" style={ICON_TILE("#F7F1E0")}>🏢</span>
-                            <div style={{flex:"1 1 auto",minWidth:0}}>
-                              <div style={SECT_TITLE}>GYV fixed, buffer &amp; commission</div>
-                              <div style={SECT_SUB}>GYV and buffer are a percentage of base cost; commission is set per venue in IMS. All three are carried into the project total in the bottom strip and count against profit — see Net profitability below.</div>
-                            </div>
-                            <div style={{textAlign:"right",flexShrink:0}}>
-                              <div style={{fontSize:17,fontWeight:750,color:INK,letterSpacing:-0.45,lineHeight:1.1,...NUM}}>{fmt(grandWithOverheads)}</div>
-                              <div style={{fontSize:11,color:INK_3,marginTop:2}}>project total</div>
-                            </div>
-                            {chev(sOver.open)}
-                          </div>
-                          {sOver.open && <div style={{padding:"12px 15px 14px",display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:12}}>
-                            {[
-                              { k: "GYV fixed", pct: gyvPct, v: gyvCost },
-                              { k: "Buffer", pct: bufferPct, v: bufferCost },
-                              { k: "Commission", pct: null, v: commissionTotal },
-                            ].map(o => (
-                              <div key={o.k} className="dc2-row" style={{borderRadius:12,background:TILE_BG,border:`1px solid ${TILE_BORDER}`,padding:"10px 12px"}}>
-                                <div style={{display:"flex",alignItems:"baseline",gap:8}}>
-                                  <span style={{flex:"1 1 auto",fontSize:10.5,fontWeight:700,color:INK,letterSpacing:0.8,textTransform:"uppercase"}}>{o.k}</span>
-                                  <span style={{fontSize:10,fontWeight:700,color:INK_3,...NUM}}>{o.pct != null ? `${o.pct}%` : "per venue"}</span>
-                                </div>
-                                <div style={{fontSize:17,fontWeight:750,color:INK,letterSpacing:-0.45,lineHeight:1.1,marginTop:6,...NUM}}>{fmt(o.v)}</div>
-                                <div style={{fontSize:10,color:INK_3,marginTop:3,...NUM}}>{o.pct != null ? `${o.pct}% of ${fmt(baseCost)}` : "rate set per venue in IMS"}</div>
-                              </div>
-                            ))}
                           </div>}
                         </div>
                       </div>
@@ -4109,26 +4383,27 @@ export default function DealCheckOverlay({ ctx }) {
                             <span aria-hidden="true" style={ICON_TILE(health.soft)}>📊</span>
                             <div style={{flex:"1 1 auto",minWidth:0}}>
                               <div style={SECT_TITLE}>Net profitability</div>
-                              <div style={SECT_SUB}>What is left after the project total and venue commission come out of the client quote.</div>
+                              <div style={SECT_SUB}>{smartQuoteActive ? "Live against the smart quote calculator's proposed quote below." : "What is left after the project cost and commission come out of the client quote."}</div>
                             </div>
                             <span style={{flexShrink:0,fontSize:10,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase",padding:"4px 10px",borderRadius:999,background:health.soft,color:health.ink,whiteSpace:"nowrap",...NUM}}>{health.label} · {profitPct}%</span>
                             {chev(sProfit.open)}
                           </div>
                           {sProfit.open && <div style={{padding:"12px 15px 14px",display:"flex",flexDirection:"column",gap:12}}>
+                            {/* Exactly 4 chips, always — Commission used to live in its own
+                                "Overheads" card; it's a payout against the quote, not a production
+                                cost, so it belongs here instead. Client Quote and Commission track
+                                the smart quote calculator below when it's engaged (same one-way
+                                "quote moved, so commission follows" step, not fed back into its own
+                                solve); Internal Cost is what building the event actually costs
+                                Ambria and never moves with it. Fixed-venue discount (when any) is
+                                folded into the Client Quote chip's own footnote instead of a 5th
+                                chip — it's already netted into that figure either way. */}
                             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))",gap:12}}>
                               {[
-                                { k: "Client quote", sub: Number(cli?.negotiatedAmount) > 0 ? "negotiated" : "from Build screen", v: fmt(quote), tone: INK },
-                                // Fixed-venue discount — % off this venue's own share of the deal (Admin
-                                // → Settings → Fixed Venues), applied before the agency fee below. Only
-                                // shown when a booked venue actually carries one.
-                                ...(venueDiscount > 0 ? [{ k: "Fixed-venue discount", sub: "already netted out of quote above", v: `−${fmt(venueDiscount)}`, tone: BAD }] : []),
-                                // Agency fee — flat % of the deal (Admin → Settings), billed to the guest
-                                // on top of everything else. Pure Ambria income, no offsetting cost — it's
-                                // already inside "Client quote" above, called out here so it reads as the
-                                // profit driver it is rather than a hidden markup.
-                                { k: "Agency fee", sub: `${agencyFeePct}% — income, incl. above`, v: fmt(agencyFee), tone: GOOD },
-                                { k: "Internal cost", sub: "incl. GYV + buffer + commission", v: fmt(internalCostForProfit), tone: INK },
-                                { k: "Net profit", sub: `${profitPct}% margin`, v: `${netProfit < 0 ? "−" : ""}${fmt(Math.abs(netProfit))}`, tone: health.ink },
+                                { k: "Client quote", sub: smartQuoteActive ? `at ${smartDesiredPct}% margin` : (venueDiscount > 0 ? `after −${fmt(venueDiscount)} venue discount` : (Number(cli?.negotiatedAmount) > 0 ? "negotiated" : "from Build screen")), v: fmt(liveQuote), tone: smartQuoteActive ? smartTone : INK },
+                                { k: "Internal cost", sub: "base + GYV + buffer, no commission", v: fmt(projectCost), tone: INK },
+                                { k: "Commission", sub: smartQuoteActive ? "scaled with the quote above" : "set per venue in IMS", v: fmt(liveCommission), tone: INK },
+                                { k: "Net profit", sub: `${liveProfitPct}% margin`, v: `${liveNetProfit < 0 ? "−" : ""}${fmt(Math.abs(liveNetProfit))}`, tone: smartQuoteActive ? smartTone : health.ink },
                               ].map(x => (
                                 <div key={x.k} className="dc2-row" style={{borderRadius:12,background:TILE_BG,border:`1px solid ${TILE_BORDER}`,padding:"10px 12px"}}>
                                   <div style={{fontSize:10.5,fontWeight:700,color:INK,letterSpacing:0.8,textTransform:"uppercase"}}>{x.k}</div>
@@ -4142,7 +4417,7 @@ export default function DealCheckOverlay({ ctx }) {
                                 what full width MEANS, which it never did. */}
                             <div>
                               <div style={{height:7,borderRadius:999,background:TILE_BG,border:`1px solid ${TILE_BORDER}`,overflow:"hidden"}}>
-                                <div style={{height:"100%",background:health.ink,width:`${Math.min(100,Math.max(0,profitPct))}%`,transition:"width 0.3s ease"}}/>
+                                <div style={{height:"100%",background:(smartQuoteActive?smartTone:health.ink),width:`${Math.min(100,Math.max(0,liveProfitPct))}%`,transition:"width 0.3s ease"}}/>
                               </div>
                               <div style={{display:"flex",justifyContent:"space-between",gap:10,marginTop:7,fontSize:11,color:INK_3,flexWrap:"wrap",...NUM}}>
                                 <span>Most a salesperson can discount before this deal stops making money: <strong style={{color:health.ink,fontWeight:700}}>{Math.max(0, profitPct)}%</strong></span>
@@ -4158,18 +4433,30 @@ export default function DealCheckOverlay({ ctx }) {
                           nothing left to pick a margin FOR — this stays for ongoing deals, where it's
                           still a live "what should I quote" tool. */}
                       {!isSold && (()=>{
-                        // Commission-inclusive, same figure Net profitability above uses — the margin
-                        // this calculator solves for has to be measured against the same "what we
-                        // actually keep" baseline, or its revised quote would understate what a given
-                        // margin actually requires.
+                        // origProfitPct/desiredPct/rev come straight off dcCostRollup (as
+                        // smartOrigProfitPct/smartDesiredPct/smartTone) — the same shared fields the
+                        // Net profitability chips further up and the Commission tab both read, so this
+                        // calculator can't show a different "live" number than either of them.
                         const internalCost = internalCostForProfit;
                         const origQuote = quote;
-                        const origProfitPct = origQuote > 0 ? Math.round(((origQuote - internalCost) / origQuote) * 100) : 0;
-                        const desiredPct = dcDesiredMargin !== null ? dcDesiredMargin : origProfitPct;
-                        const revisedQuote = desiredPct < 100 ? Math.round(internalCost / (1 - desiredPct / 100)) : internalCost;
+                        const origProfitPct = smartOrigProfitPct;
+                        const desiredPct = smartDesiredPct;
+                        // At "actual" (calculator untouched), show the real quote — not a value
+                        // rebuilt from origProfitPct. origProfitPct is origQuote's margin ROUNDED to
+                        // a whole percent (e.g. 30.75% → 31%), and inverting that rounded percent back
+                        // into a quote does not round-trip to origQuote: internalCost / (1-0.31) is a
+                        // few thousand rupees higher than the ₹816,755 that actually produces a 30.75%
+                        // margin. Only once the user picks an ACTUAL desired margin should this invert
+                        // the formula — that's the deliberate "what quote hits this round number"
+                        // question the calculator exists to answer, not a math error.
+                        // liveQuote, not a separately-hoisted "smartRevisedQuote": this card only ever
+                        // renders while !isSold (see the guard above), so smartQuoteActive reduces to
+                        // exactly "dcDesiredMargin !== null" here — the same condition this used to
+                        // gate on directly — making liveQuote identical to what this card needs.
+                        const revisedQuote = liveQuote;
                         const discount = origQuote - revisedQuote;
                         const discountPct = origQuote > 0 ? Math.round((discount / origQuote) * 100) : 0;
-                        const rev = desiredPct >= 20 ? GOOD : desiredPct >= 10 ? GOLD : BAD;
+                        const rev = smartTone;
                         const revSoft = desiredPct >= 20 ? GOOD_SOFT : desiredPct >= 10 ? GOLD_SOFT : BAD_SOFT;
                         const presets = [5, 10, 15, 20, 25, 30];
                         return (
@@ -4204,8 +4491,16 @@ export default function DealCheckOverlay({ ctx }) {
                                 </div>
                                 <div style={{display:"flex",alignItems:"center",gap:12}}>
                                   <span style={{fontSize:10.5,fontWeight:700,color:INK_2,letterSpacing:0.8,textTransform:"uppercase",whiteSpace:"nowrap"}}>Margin</span>
-                                  <input type="range" min={0} max={Math.min(origProfitPct + 5, 60)} value={desiredPct} onChange={e=>setDcDesiredMargin(Number(e.target.value))} style={{flex:1,accentColor:rev}} />
-                                  <span style={{fontSize:19,fontWeight:750,color:rev,minWidth:52,textAlign:"right",letterSpacing:-0.5,...NUM}}>{desiredPct}%</span>
+                                  {/* Used to cap at origProfitPct + 5 — with a 10% original margin
+                                      that maxed out at 15%, silently below every preset pill past
+                                      "15%" even though clicking one worked fine. The slider's own
+                                      ceiling now matches the presets/manual field (60%, the same
+                                      hard cap this already enforced further down). */}
+                                  <input type="range" min={0} max={60} value={desiredPct} onChange={e=>setDcDesiredMargin(Number(e.target.value))} style={{flex:1,accentColor:rev}} />
+                                  <input type="number" min={-100} max={200} step={1} value={desiredPct}
+                                    onChange={e=>{ const v = Number(e.target.value); if (Number.isFinite(v)) setDcDesiredMargin(Math.max(-100, Math.min(200, Math.round(v)))); }}
+                                    style={{width:60,fontSize:15,fontWeight:750,color:rev,textAlign:"right",padding:"4px 6px",borderRadius:8,border:`1px solid ${TILE_BORDER}`,background:TILE_BG,...NUM}}/>
+                                  <span style={{fontSize:19,fontWeight:750,color:rev,letterSpacing:-0.5,...NUM}}>%</span>
                                 </div>
                                 <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))",gap:12}}>
                                   {[
@@ -4236,7 +4531,7 @@ export default function DealCheckOverlay({ ctx }) {
                   // ═══ COMMISSION TAB — % of the deal amount set aside per venue, reads from shared
                   // dcCostRollup. The % itself is IMS master data (Admin → Master Data → Venues);
                   // the amount can be overridden per venue right here. ═══
-                  const { commissionByVenue, commissionTotal, clientRevenue } = dcCostRollup;
+                  const { commissionByVenue, commissionTotal, dealAmount, smartQuoteActive, smartDesiredPct, liveQuote, liveCommissionTotal } = dcCostRollup;
                   const fmt2 = (n) => (n >= 0 ? "₹" + Math.round(n).toLocaleString("en-IN") : "−₹" + Math.round(Math.abs(n)).toLocaleString("en-IN"));
                   const commitOverride = (venue, value) => {
                     const nextOverrides = { ...(cli?.commissionOverrides || {}) };
@@ -4247,18 +4542,31 @@ export default function DealCheckOverlay({ ctx }) {
                   // with several it does not — each venue takes its own cut of its own share, so the
                   // blended rate is the only figure that answers "what is this deal paying out".
                   // It was nowhere on the screen; you had to work it out from the total yourself.
-                  const effPct = clientRevenue > 0 ? (commissionTotal / clientRevenue) * 100 : 0;
+                  // Against dealAmount (fee-inclusive), matching what commissionByVenue's own
+                  // revenueShare is now computed against, above in dcCostRollup.
+                  const effPct = dealAmount > 0 ? (commissionTotal / dealAmount) * 100 : 0;
                   const overriddenCount = commissionByVenue.filter(r => r.overrideVal != null).length;
                   return (
                     <div style={{display:"flex",flexDirection:"column",gap:12}}>
                       <style>{DC_CSS}</style>
 
+                      {/* smartQuoteActive: the GYV & Buffer tab's smart quote calculator is engaged
+                          (dcDesiredMargin set) — Deal amount/Total commission below track its live
+                          proposed quote instead of the actual booked figures, same shared fields the
+                          GYV & Buffer tab itself reads, so the two can't disagree on what "live" means.
+                          The per-venue breakdown further down still shows the real, committed amounts —
+                          those are what actually gets paid out, not a hypothetical preview. */}
+                      {smartQuoteActive && (
+                        <div style={{padding:"9px 13px",borderRadius:10,background:GOLD_SOFT,border:`1px solid ${GOLD}33`,fontSize:11.5,color:GOLD,fontWeight:650}}>
+                          🧮 Live at the smart quote calculator's {smartDesiredPct}% margin — deal amount and commission below are a preview, not the committed figures.
+                        </div>
+                      )}
                       <div className="dc2-sum">
                         {[
                           { label: commissionByVenue.length === 1 ? "Venue" : "Venues", value: commissionByVenue.length, foot: overriddenCount ? `${overriddenCount} overridden by hand` : "all at the master rate" },
-                          { label: "Deal amount", value: fmt2(clientRevenue), foot: Number(cli?.negotiatedAmount) > 0 ? "negotiated" : "from Build screen" },
+                          { label: "Deal amount", value: fmt2(smartQuoteActive ? liveQuote : dealAmount), foot: smartQuoteActive ? `at ${smartDesiredPct}% margin` : (Number(cli?.negotiatedAmount) > 0 ? "negotiated" : "from Build screen"), tone: smartQuoteActive ? GOLD : undefined },
                           { label: "Effective rate", value: `${effPct.toFixed(effPct % 1 === 0 ? 0 : 1)}%`, foot: commissionByVenue.length > 1 ? "blended across venues" : "of the deal amount" },
-                          { label: "Total commission", value: fmt2(commissionTotal), foot: "set aside for venues", tone: GOLD },
+                          { label: "Total commission", value: fmt2(smartQuoteActive ? liveCommissionTotal : commissionTotal), foot: smartQuoteActive ? "scaled with the quote above" : "set aside for venues", tone: GOLD },
                         ].map((s, si) => (
                           <div key={si} className="dc2-card" style={{background:CARD_BG,border:`1px solid ${CARD_BORDER}`,borderRadius:11,boxShadow:CARD_SHADOW,padding:"9px 13px",minWidth:0}}>
                             <div style={{fontSize:9.5,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:INK_2,marginBottom:4,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{s.label}</div>
@@ -4280,8 +4588,8 @@ export default function DealCheckOverlay({ ctx }) {
                               </div>
                             </div>
                             <div style={{textAlign:"right",flexShrink:0}}>
-                              <div style={{fontSize:17,fontWeight:750,color:commissionTotal>0?INK:INK_3,letterSpacing:-0.45,lineHeight:1.1,...NUM}}>{fmt2(commissionTotal)}</div>
-                              <div style={{fontSize:11,color:INK_3,marginTop:2}}>total</div>
+                              <div style={{fontSize:17,fontWeight:750,color:(smartQuoteActive?liveCommissionTotal:commissionTotal)>0?INK:INK_3,letterSpacing:-0.45,lineHeight:1.1,...NUM}}>{fmt2(smartQuoteActive ? liveCommissionTotal : commissionTotal)}</div>
+                              <div style={{fontSize:11,color:INK_3,marginTop:2}}>{smartQuoteActive ? "total · live preview" : "total"}</div>
                             </div>
                           </div>
 
@@ -4296,7 +4604,13 @@ export default function DealCheckOverlay({ ctx }) {
                             <div style={{padding:"12px 15px 14px",display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))",gap:12}}>
                               {commissionByVenue.map(r => {
                                 const overridden = r.overrideVal != null;
-                                const amount = overridden ? r.overrideVal : r.defaultAmt;
+                                // Scale the AUTO-computed share/amount with the live quote when the
+                                // calculator is engaged — a manual override is a fixed payout someone
+                                // set on purpose, so it never moves with a hypothetical preview.
+                                const commScale = (smartQuoteActive && dealAmount > 0) ? liveQuote / dealAmount : 1;
+                                const liveRevenueShare = r.revenueShare * commScale;
+                                const liveDefaultAmt = Math.round(r.defaultAmt * commScale);
+                                const amount = overridden ? r.overrideVal : liveDefaultAmt;
                                 return (
                                   <div key={r.venue} className="dc2-row" style={{borderRadius:12,background:TILE_BG,border:`1px solid ${TILE_BORDER}`,overflow:"hidden",display:"flex"}}>
                                     <div aria-hidden="true" style={{width:3,flexShrink:0,background:overridden?GOLD:"#B9B2C4"}} />
@@ -4306,7 +4620,7 @@ export default function DealCheckOverlay({ ctx }) {
                                         <span style={{flexShrink:0,fontSize:10,fontWeight:700,letterSpacing:0.5,padding:"2px 8px",borderRadius:999,background:CHIP_BG,color:INK_2,whiteSpace:"nowrap",...NUM}}>{r.pct}%</span>
                                       </div>
                                       <div style={{fontSize:10.5,color:INK_3,marginTop:3,...NUM}}>
-                                        {r.pct}% of {fmt2(r.revenueShare)}{commissionByVenue.length > 1 ? " · this venue's share" : ""}
+                                        {overridden ? `${r.pct}% of ${fmt2(r.revenueShare)}` : `${r.pct}% of ${fmt2(liveRevenueShare)}`}{commissionByVenue.length > 1 ? " · this venue's share" : ""}{smartQuoteActive && !overridden ? " · live" : ""}
                                       </div>
 
                                       <div style={{fontSize:19,fontWeight:750,color:INK,letterSpacing:-0.5,lineHeight:1.1,marginTop:9,...NUM}}>{fmt2(amount)}</div>
@@ -4387,48 +4701,57 @@ export default function DealCheckOverlay({ ctx }) {
                 })() : null}
               </div>
             </div>
-            {/* BOTTOM STRIP — Project total only. The per-group chips that used to sit beside it
-                (Rental/Truss/Florals/Manpower/Buy/Produce/Genset/GYV/Buffer) now live on their own
-                tab pill instead (see the tab strip above) — owner decision, so a group's number is
-                right where you'd click to see the detail behind it, not repeated in a second row. */}
-            {(() => {
-              // ═══ Reads from shared dcCostRollup (§26.19) ═══
-              const { dealAmount: stripRevenue, profitPct: stripProfitPct, hasActuals, grandActual, grand: grandProj, commissionTotal } = dcCostRollup;
-              // Project total = production cost + GYV/buffer + venue commission — same definition as
-              // the GYV & Buffer tab's own "Project total" tile, so this strip can never disagree with it.
-              const grandWithOverheads = (hasActuals ? grandActual : grandProj) + commissionTotal;
-              const stripProfitColor = stripProfitPct >= 20 ? "#10B981" : stripProfitPct >= 10 ? "#F59E0B" : "#EF4444";
-              // Until Generate has run there are no matched cards, so every rollup figure is 0 and a
-              // department that genuinely costs nothing looked identical to one that was never
-              // calculated — both rendered "—". Split the two: "—" means not calculated yet, "₹0"
-              // means calculated and empty. Same source of truth the Inventory tab's empty state
-              // uses (dcCards), but across ALL functions, since this strip sums all of them.
-              const hasGenerated = Object.values(dcCards || {}).some(
-                (fnCards) => fnCards && Object.keys(fnCards).length > 0
-              );
-              const fmt = (n) => n > 0
-                ? "₹" + Math.round(n).toLocaleString("en-IN")
-                : hasGenerated ? "₹0" : "—";
-              // ── SAVE DRAFT REMOVED ──
-              // The button it drove did nothing the background autosave was not already doing,
-              // and it did it worse. Three reasons it went:
-              //  · It wrote a SUBSET. The autosave persists dcDraft (the full snapshot: resolved,
-              //    photoOverrides, skipped, manualItems, dedupOverrides, productionAccepted,
-              //    artFlowerAlloc, floralColorPrefs, customItems) alongside the top-level fields.
-              //    This wrote only the top-level fields and bumped dcDraftSavedAt, leaving dcDraft
-              //    stale against fresh cards until the next autosave tick repaired it.
-              //  · It skipped the guards. The autosave refuses to write an empty dcCards (see the
-              //    ROOT-CAUSE GUARD in StudioApp.jsx) and refuses to write mid-Generate. This had
-              //    neither, so pressing it before a restore finished would persist an empty card
-              //    set over a good draft — exactly the corruption that guard exists to prevent.
-              //  · Nothing was ever unsaved. The autosave fires 2.5s after edits settle and
-              //    flushes on unmount (route switch, client change, close), and the header already
-              //    reports "Deal Check last saved by <name> · <when>".
-              // If a deliberate save action is ever wanted back, it must reuse the autosave's own
-              // doSave rather than reimplement a second, weaker write path.
+            {/* ═══ Dept Income modal — salesperson-facing, reachable from any tab ═══
+                Same body/data the (removed-from-the-strip) Dept Income tab already renders —
+                dcCostRollup.dept, one source of truth — just in a modal instead of behind a tab
+                click, so a salesperson mid-call with a department head can pull it up from
+                wherever they are in Deal Check. */}
+            {dcDeptModalOpen && (() => {
+              const dd = dcCostRollup.dept || {};
+              const depts = dcCostRollup.DEPTS || [];
+              const deptIcon = { Furniture: "🛋️", Floral: "🌸", Structure: "🏛️", Tenting: "⛺", Transport: "🚚", Lighting: "💡", Fabric: "🧵" };
+              const cur = dd[dcDept] || { rental: 0, florals: 0, truss: 0, fabric: 0, transport: 0, manpower: 0, production: 0, buying: 0, total: 0 };
+              const grandAll = depts.reduce((s, d) => s + (dd[d]?.total || 0), 0);
+              const f2 = (n) => n > 0 ? "₹" + Math.round(n).toLocaleString("en-IN") : "₹0";
+              const lines = [
+                ["📦 Inventory rental", cur.rental], ["🌸 Floral (mandi)", cur.florals], ["🏗️ Truss", cur.truss],
+                ["🧵 Fabric / draping", cur.fabric], ["👷 Manpower", cur.manpower], ["🏭 Production", cur.production],
+                ["🛒 Buying", cur.buying], ["🚚 Transport", cur.transport],
+              ].filter(([, v]) => v > 0);
+              const syncToOps = async () => { await (persistDeptSnapshot && persistDeptSnapshot(buildDeptSnapshot())); showMsg && showMsg("📤 Department breakdown pushed to IMS Dept Ops", "green"); };
               return (
-                <div className="dc-glass dc-bottom" style={{display:"flex",alignItems:"center",padding:"10px 18px",borderTop:`1px solid ${border}`,gap:14}}>
-                  <div className="dc-bottomtotal" style={{flexShrink:0}}><div className="dc-cap" style={{color:"#1A1A2E",opacity:0.62}}>Project total</div><div className="dc-money" style={{fontSize:25,fontWeight:800,color:"#1A1A2E",marginTop:1,lineHeight:1.1}}>{fmt(grandWithOverheads)}</div>{stripRevenue > 0 && <div className="dc-money" style={{fontSize:11,color:stripProfitColor,fontWeight:700,marginTop:2,letterSpacing:0.1}}>Margin {stripProfitPct}% · {fmt(stripRevenue)} quote</div>}</div>
+                <div onClick={()=>setDcDeptModalOpen(false)} style={{position:"fixed",inset:0,zIndex:9100,background:"rgba(10,10,20,0.85)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+                  <div onClick={e=>e.stopPropagation()} style={{width:"min(560px, 100%)",maxHeight:"82vh",background:"#FFFFFF",borderRadius:14,border:`1px solid ${border}`,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+                    <div style={{padding:"14px 18px",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                      <div>
+                        <div style={{fontSize:14.5,fontWeight:700,color:"#1A1A2E",letterSpacing:0.2}}>🏦 Department Income</div>
+                        <div style={{fontSize:12,color:"#1A1A2E",letterSpacing:1,textTransform:"uppercase",marginTop:2}}>What each department is earning off this deal</div>
+                      </div>
+                      <button onClick={()=>setDcDeptModalOpen(false)} style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:"#1A1A2E",fontSize:14.5,cursor:"pointer",lineHeight:1}}>✕</button>
+                    </div>
+                    <div style={{padding:"14px 18px",overflowY:"auto"}}>
+                      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+                        <span style={{ fontSize:12, color:"#1A1A2E", alignSelf: "center", marginRight: 8 }}>Auto-syncs to IMS Dept Ops</span><button onClick={syncToOps} style={{ padding: "6px 14px", borderRadius: 8, border: `1px solid ${accent}`, background: `${accent}18`, color: accent, fontSize:13, fontWeight: 700, cursor: "pointer" }}>📤 Sync now</button>
+                      </div>
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
+                        {depts.map(d => { const on = dcDept === d; const t = dd[d]?.total || 0; return (
+                          <button key={d} onClick={() => setDcDept(d)} style={{ padding: "8px 12px", borderRadius: 10, border: `1.5px solid ${on ? accent : border}`, background: on ? `${accent}18` : "transparent", color: on ? "#1A1A2E" : textS, cursor: "pointer", display: "flex", flexDirection: "column", gap: 2, minWidth: 96, alignItems: "flex-start" }}>
+                            <span style={{ fontSize:13, fontWeight: on ? 700 : 500 }}>{deptIcon[d] || "🏦"} {d}</span>
+                            <span style={{ fontSize:14.5, fontWeight: 800, color: on ? "#1A1A2E" : textP }}>{f2(t)}</span>
+                          </button>); })}
+                      </div>
+                      <div style={{ borderRadius: 10, border: `1px solid ${border}`, overflow: "hidden" }}>
+                        <div style={{ padding: "10px 14px", background: "rgba(26, 26, 46,0.02)", fontSize:13.5, fontWeight: 700, color: "#1A1A2E", display: "flex", justifyContent: "space-between" }}>
+                          <span>{deptIcon[dcDept]} {dcDept} — Department Income</span><span>{f2(cur.total)}</span>
+                        </div>
+                        {lines.length === 0
+                          ? <div style={{ padding: 16, textAlign: "center", color:"#1A1A2E", fontSize:13 }}>No income for this department in the current deal.</div>
+                          : lines.map(([l, v], i) => <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "9px 14px", borderTop: `1px solid ${border}22`, fontSize:13.5 }}><span style={{ color:"#1A1A2E" }}>{l}</span><span style={{ color: "#1A1A2E", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{f2(v)}</span></div>)}
+                        <div style={{ display: "flex", justifyContent: "space-between", padding: "10px 14px", borderTop: `1px solid ${border}`, fontSize:13, color:"#1A1A2E" }}><span>Share of project</span><span style={{ fontWeight: 700, color: accent }}>{grandAll > 0 ? Math.round((cur.total / grandAll) * 100) : 0}%</span></div>
+                      </div>
+                      <div style={{ fontSize:12, color:"#1A1A2E", marginTop: 10, lineHeight: 1.5 }}>General labour & supervisors are split across departments by each one's direct-income share. Truss steel → Tenting · masking/drape fabric → Fabric · platform & carpet → Tenting · genset → Lighting · everything else → by its category.</div>
+                    </div>
+                  </div>
                 </div>
               );
             })()}
@@ -4466,7 +4789,7 @@ export default function DealCheckOverlay({ ctx }) {
                         const isCurrent = splitAdd ? _mSplitIds.includes(it.id) : it.id === _mCurId;
                         const _mExclude = manualId ? { manualId } : { cardKey };
                         const _mUsedElsewhere = qtyUsedElsewhereInDealCheck(it.id, _mFns, dcCards, dcManualItems, dcKitEdits, dcInventoryCache, { fnIdx, ..._mExclude }, (_mFns[fnIdx]||{}).fnDate || clientDate);
-                        const avail = Math.max(0, Math.min(getStudioAvailable(it, _mBlocks), availableAtVenue(_mFvC, _mVenue, it)) - _mUsedElsewhere);
+                        const avail = Math.max(0, Math.min(dcAvailable(it, _mBlocks, fnIdx), availableAtVenue(_mFvC, _mVenue, it)) - _mUsedElsewhere);
                         const isBlocked = !isCurrent && avail <= 0;
                         return (
                           <div key={it.id} onClick={()=>{

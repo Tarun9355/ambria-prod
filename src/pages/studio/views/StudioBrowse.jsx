@@ -1,4 +1,4 @@
-import { Fragment, useState, useRef, useEffect } from "react";
+import { Fragment, memo, useState, useRef, useEffect } from "react";
 import { makeFilterUI, useRailMaxHeight } from "../../../components/studio/filterUI.jsx";
 import { IconCheck, IconChevron, IconCrown, IconSave, IconPlay,
   IconPalette, IconClipboard, IconSearch, IconCalendar } from "../../../components/icons.jsx";
@@ -34,7 +34,27 @@ const PANEL_BG =
   Object.values(import.meta.glob("../../../assets/ambria-panel.{jpg,jpeg,png,webp}", { eager: true, query: "?url", import: "default" }))[0] ||
   null;
 
-export default function StudioBrowse({ ctx }) {
+// Play opens a real new TAB (not an in-page embed) — reported choppy/laggy playback on older
+// laptops, confirmed to play smoothly when the same video is opened directly on youtube.com.
+// Backgrounding the SPA's own tab (which is what opening any new tab does) lets the browser
+// throttle its realtime/autosave timers instead of them fighting the video decode for main-thread
+// time — that's the actual fix. But sending the guest to the full youtube.com website loses the
+// same full-bleed black "watching a look" presentation the old in-page modal had (and shows
+// unrelated recommended videos/comments/branding, not great over a salesperson's shoulder).
+// public/video.html recreates that same edge-to-edge black presentation — still just the YouTube
+// iframe underneath, so its native fullscreen button still works. It MUST be a real static page on
+// our own origin, not a blob:/data: URL: YouTube's embed rejects playback with "Error 153: Video
+// player configuration error" when the embedding document has no valid http(s) origin to check
+// (which is exactly what a blob: page has — an opaque origin) — a first attempt at this hit that
+// error in production. import.meta.env.BASE_URL is the deployed "/ambria-prod/" base path, so this
+// resolves correctly on GitHub Pages and in local dev alike.
+function openVideoTab(videoId) {
+  const id = String(videoId || "").match(/^[a-zA-Z0-9_-]{6,20}$/) ? videoId : null;
+  if (!id) return;
+  window.open(`${import.meta.env.BASE_URL}video.html?v=${id}`, "_blank");
+}
+
+function StudioBrowse({ ctx }) {
   // Which filter sections are expanded. All closed by default: six open sections made the panel
   // taller than the viewport, which is what buried Palette. Closed headers still show what's
   // selected, so nothing is hidden — you just don't scroll past options you aren't changing.
@@ -80,7 +100,7 @@ export default function StudioBrowse({ ctx }) {
     // taxonomy / palette
     taxonomy, imsPaletteCatalogue,
     // video modal / premia
-    setVideoModal, setVideoPlaying, setPremiaGate,
+    setPremiaGate,
     // multi-function
     extraFunctions, activeFnMeta, activeFnIdx, fnSnapHasData, fnSnapHasBuild,
     // build / session
@@ -241,10 +261,14 @@ export default function StudioBrowse({ ctx }) {
       const isPlatinum = v.tierCat === "Platinum";
       const priceTBD = v.price === null || v.price === undefined;
       const tierColor = tierColors(v.tierCat);
-      const videoUrl = `https://www.youtube.com/embed/${v.id}`;
       return (
         <div className="sb-card" style={{...S.card,cursor:"default",display:"flex",flexDirection:"column",boxShadow:tileShadow}}>
-          <div style={{background:"#1a1a2e",height:150,display:"flex",alignItems:"center",justifyContent:"center",position:"relative",overflow:"hidden",cursor:"pointer"}} onClick={()=>{setVideoModal({name:v.title, video:videoUrl, venue:v.venue, fn:v.fn});setVideoPlaying(true);}}>
+          {/* Play opens the real YouTube watch page in a new tab instead of an in-page embed —
+              reported choppy/laggy playback on older laptops, confirmed to play smoothly when the
+              same video is opened directly on youtube.com. The embedded iframe (autoplay + our own
+              page's own realtime/autosave churn fighting it for main-thread time) was the common
+              factor; a new tab gives the video its own process with none of that contention. */}
+          <div style={{background:"#1a1a2e",height:150,display:"flex",alignItems:"center",justifyContent:"center",position:"relative",overflow:"hidden",cursor:"pointer"}} onClick={()=>openVideoTab(v.id)}>
             <img className="sb-thumb" src={v.thumbnail} alt={v.title} loading="lazy" style={{width:"100%",height:"100%",objectFit:"cover",position:"absolute",inset:0}} onError={e=>{e.target.style.display="none"}}/>
             <div className="sb-play" style={{width:48,height:48,borderRadius:"50%",background:"rgba(255,255,255,0.25)",backdropFilter:"blur(4px)",WebkitBackdropFilter:"blur(4px)",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",position:"relative",zIndex:2}}><IconPlay size={20}/></div>
             {/* Click the tier pill to favourite this video for its own venue (see browseVideos'
@@ -1378,7 +1402,7 @@ export default function StudioBrowse({ ctx }) {
                     </div>
                     </div>
                     <div style={{display:"flex",gap:7}}>
-                    {!unavailable && <button onClick={(e)=>{e.stopPropagation();setVideoModal({name:videoTitle,video:`https://www.youtube.com/embed/${s.sourceVideoId}`,venue:s.venue||"",fn:s.fn||"",desc:"",gradient:"linear-gradient(135deg,#1a1a2e,#C9A96E)",photos:[],tags:[]});setVideoPlaying(true);}} className="sb-bnr-btn sb-bnr-out" style={{padding:"6px 11px",borderRadius:7,border:`1px solid ${isDark?"rgba(234,179,8,0.5)":"#D97706"}`,background:"transparent",color:isDark?"#FBBF24":"#B45309",fontSize:10,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",flex:"0 0 auto",display:"inline-flex",alignItems:"center",justifyContent:"center",gap:5}}><IconPlay size={11}/>Play</button>}
+                    {!unavailable && <button onClick={(e)=>{e.stopPropagation();openVideoTab(s.sourceVideoId);}} className="sb-bnr-btn sb-bnr-out" style={{padding:"6px 11px",borderRadius:7,border:`1px solid ${isDark?"rgba(234,179,8,0.5)":"#D97706"}`,background:"transparent",color:isDark?"#FBBF24":"#B45309",fontSize:10,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",flex:"0 0 auto",display:"inline-flex",alignItems:"center",justifyContent:"center",gap:5}}><IconPlay size={11}/>Play</button>}
                     {/* Pass _fnIdx so the restore lands on the function that HAS the build.
                         Blocked ONLY while a switch is in flight, because there the build state is
                         half-replaced and loading into it loses work — a wait that ends on its own.
@@ -1422,7 +1446,7 @@ export default function StudioBrowse({ ctx }) {
                     </div>
                     </div>
                     <div style={{display:"flex",gap:7}}>
-                    <button onClick={(e)=>{e.stopPropagation();setVideoModal({name:videoTitle,video:`https://www.youtube.com/embed/${bannerCurrentId}`,venue:venue||"",fn:activeFnMeta.type||"",desc:"",gradient:"linear-gradient(135deg,#1a1a2e,#6366F1)",photos:[],tags:[]});setVideoPlaying(true);}} className="sb-bnr-btn sb-bnr-out" style={{padding:"6px 11px",borderRadius:7,border:`1px solid ${isDark?"rgba(99,102,241,0.5)":"#6366F1"}`,background:"transparent",color:isDark?"#A5B4FC":"#4338CA",fontSize:10,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",flex:"0 0 auto",display:"inline-flex",alignItems:"center",justifyContent:"center",gap:5}}><IconPlay size={11}/>Play</button>
+                    <button onClick={(e)=>{e.stopPropagation();openVideoTab(bannerCurrentId);}} className="sb-bnr-btn sb-bnr-out" style={{padding:"6px 11px",borderRadius:7,border:`1px solid ${isDark?"rgba(99,102,241,0.5)":"#6366F1"}`,background:"transparent",color:isDark?"#A5B4FC":"#4338CA",fontSize:10,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",flex:"0 0 auto",display:"inline-flex",alignItems:"center",justifyContent:"center",gap:5}}><IconPlay size={11}/>Play</button>
                     <button onClick={(e)=>{e.stopPropagation();setStep(2);}} className="sb-bnr-btn sb-bnr-solid" style={{padding:"6px 12px",borderRadius:7,border:"none",background:isDark?"#4F46E5":"#4338CA",color:"#fff",fontSize:10,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap",flex:1}}>
                       Continue build {"→"}
                     </button>
@@ -1841,3 +1865,29 @@ export default function StudioBrowse({ ctx }) {
       </div>
     );
 }
+
+// This screen is huge (video/photo grid, ~6 filter sections, palette/venue pickers) and reads its
+// entire state through one `ctx` object that StudioApp rebuilds fresh on every render — so on its
+// own, wrapping this in React.memo would do nothing (a new `ctx` reference every time still reads as
+// "changed" props under the default shallow comparison) and enumerating every ctx field this
+// component actually depends on, to write a real comparator, would be the same too-risky exercise
+// StudioModals.jsx's memoization already decided against for a component this size.
+//
+// The video modal (VideoPlayerModal.jsx) is a `position:fixed inset:0 zIndex:100` layer with an
+// opaque `background:#000` — while it's open and playing, this whole component sits mounted but
+// fully hidden underneath it (Browse doesn't unmount when a video opens; the modal just paints over
+// it). Reported bug: playback stutter persisted even after memoizing the video modal itself, because
+// this component was still fully re-rendering — filtering/sorting the whole video+photo library,
+// rebuilding SVG panel paths, walking the palette/venue lists — on every Supabase realtime tick and
+// autosave tick, none of which the user could even see, all while competing with the YouTube iframe
+// for the same main-thread frame budget.
+//
+// So instead of a real prop comparator, this one only special-cases the one condition that matters:
+// treat props as unchanged (skip the render entirely) whenever a video is open AND actively playing.
+// That state is verifiably invisible (the overlay is fully opaque), so freezing it costs nothing the
+// user can see, and the moment the video is paused or closed this returns false again and everything
+// re-renders exactly as it did before this change — no other behavior is altered.
+export default memo(StudioBrowse, (prev, next) => {
+  if (next.ctx.videoModal && next.ctx.videoPlaying) return true;
+  return false;
+});

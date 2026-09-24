@@ -25,7 +25,7 @@ import DealCheckOverlay from "./dealcheck/DealCheckOverlay.jsx";
 import { kvGet, kvTryGet, kvSet, reliableSave } from "../../lib/ims/kv";
 import { makeAmendRequest } from "../../lib/ims/amend";
 import { catToDept } from "../../lib/ims/deptClassify";
-import { availableAtVenue, isStandingAt, rentalSplit, fixedVenueDealDiscount, fixedVenueDiscountPctFor, proratedVenueDiscount } from "../../lib/ims/fixedVenues";
+import { availableAtVenue, isStandingAt, rentalSplit, fixedVenueDealDiscount, fixedVenueDiscountPctFor, proratedVenueDiscount, fixedVenueFor, builtQty } from "../../lib/ims/fixedVenues";
 import { searchLmsLeads, triggerLmsSync, fetchCachedContracts, fetchLmsLeadByEntry } from "../../lib/ims/lms";
 import { uploadToStorage, compressImageForUpload, STORAGE_FOLDERS, listStorage, deleteStorageObjects, deleteStorageFolder } from "../../lib/storage";
 import { ytApi, ytDuration } from "../../lib/youtube";
@@ -71,13 +71,14 @@ import { RC_D, RC_CATS_DEFAULT } from "../../lib/studio/constants";
 import {
   resolveTrussConfig, findZoneForArea, findAreaForZone, makeZoneId,
   defaultZoneFromArea, resolveMandiFlower, calcZoneTrussPreview,
-  calcZoneFabricCost, calcZoneCarpet, buildPlatformPlan, getStudioAvailable,
+  calcZoneFabric, calcZoneFabricCost, calcZoneCarpet, buildPlatformPlan, getStudioAvailable,
   buildTopology, PLATFORM_FATTA_CODE, PLATFORM_STAND_CODE, trussRowCost,
 } from "../../lib/studio/pricing";
 import { allocateRowAvailability } from "../../lib/studio/dealAvailability";
 import { callClaudeStreaming } from "../../lib/ai";
-import { heavyExtraLabour, eventTimingMultFor } from "../../lib/ims/constants";
-import { itemImsSubcat, lookupBySubcat, priceForInvItem, itemDimsText } from "../../lib/ims/helpers";
+import { heavyExtraLabour, eventTimingMultFor, SETTINGS_DEFAULTS, SIT_MULT_DEFAULTS } from "../../lib/ims/constants";
+import { resolveDateCategory, getEffectivePricing } from "../../lib/inventory/helpers";
+import { itemImsSubcat, lookupBySubcat, priceForInvItem, itemDimsText, walkKitUnits } from "../../lib/ims/helpers";
 import { matchFlowerPattern, floralPatternUnitRates, sizeClassToPatternKey, normalizeSizeClass, kitFloralCompDelta } from "../../lib/ims/flowerHelpers";
 import { rowToRcItem, rcItemToRow, rcIsSMB, getFloralMode, oosCostPctFor } from "../../lib/rateCard";
 import { supabase, fetchAll, upsertRow, deleteRow, subscribeTable, keepaliveUpsert } from "../../lib/supabase";
@@ -180,6 +181,18 @@ const TR_DTC = [
   { id: "TC07", item: "Platform batch", perTruck: 0, unit: "sqft" },
   { id: "TC08", item: "Carpet batch", perTruck: 0, unit: "sqft" },
   { id: "TC09", item: "Arches", perTruck: 0, unit: "pc" },
+  // Fabric Allocation (masking/liza/curtains — §23 Phase 2.9f) and floral material (real mandi +
+  // artificial) never had a truck-capacity line at all: neither is a zoneElement, so both were
+  // silently invisible to every truck count in the app. Named exactly "Masking"/"Liza"/"Curtains"/
+  // "Real Flowers"/"Artificial Flowers" — computeTruckItems/calcFunctionCost/calcFunctionBreakdown
+  // all key truck capacity by exact (lowercased) item name, same as "Truss"/"Platform"/"Carpet".
+  // perTruck starts at 0 (same convention as Round Tables/Props/Arches above) — set a real capacity
+  // in Admin → Settings → Transport & Power once you know it.
+  { id: "TC10", item: "Masking", perTruck: 0, unit: "pc" },
+  { id: "TC11", item: "Liza", perTruck: 0, unit: "kg" },
+  { id: "TC12", item: "Curtains", perTruck: 0, unit: "pc" },
+  { id: "TC13", item: "Real Flowers", perTruck: 0, unit: "kg" },
+  { id: "TC14", item: "Artificial Flowers", perTruck: 0, unit: "bunch" },
 ];
 const TR_DBT = [
   { id: "BT01", label: "Below ₹1L", minBudget: 0, maxBudget: 100000, bufferTrucks: 0 },
@@ -246,7 +259,16 @@ const FLORAL_HARDPROP_DEFAULT = {
 // platformRowCost moved to lib/studio/taxonomy.js — the zone editor needs the same function to
 // show each floor card its own cost, and two copies of a pricing formula is how a card ends up
 // disagreeing with the bill.
-function calcStructCost(zk, zc, rates) {
+// applyDiscount is an OPTIONAL trailing param, resolved by the caller (StudioApp.jsx's
+// structDiscountFor / StudioBuild.jsx's own local equivalent) as: the discreet guest-discount
+// toggle is on AND (this zone is flagged ♻️ Repeat OR the venue is one of Deal Check's registered
+// Fixed Venues). Callers that don't pass it (there were none before this existed) just get no
+// discount, same as leaving it off.
+// Same flat pct as the component-scope GUEST_DISCOUNT_PCT (repeatAdjustedLineCost) — duplicated as
+// a module-level constant only because this function sits outside the component and can't close
+// over that one; kept in lockstep by being the one other place this number is allowed to live.
+const GUEST_STRUCT_DISCOUNT_PCT = 25;
+function calcStructCost(zk, zc, rates, applyDiscount) {
   if (!zc) return { truss: 0, masking: 0, platform: 0, carpet: 0, arches: 0, pillars: 0, glass: 0, print: 0, total: 0 };
   const d = zc.dims || {}, fd = zc.floorDims || d, r = { truss: 0, masking: 0, platform: 0, carpet: 0, arches: 0, pillars: 0, glass: 0 };
   // Material, drape density, and the ceiling-via-print toggle are all per-row — separate truss
@@ -273,7 +295,23 @@ function calcStructCost(zk, zc, rates) {
     const q = Math.max(1, Math.round(Number(p.qty) || 1));
     return sum + s * (m?.ratePerSqft || 0) * q;
   }, 0);
-  r.total = r.truss + r.masking + r.platform + r.carpet + r.arches + r.pillars + r.glass + r.print; return r;
+  r.total = r.truss + r.masking + r.platform + r.carpet + r.arches + r.pillars + r.glass + r.print;
+  // Flat 25% off every structural line — same guest-discount rule repeatAdjustedLineCost uses for
+  // elements (see its own comment): Deal Check keeps its own separate, config-driven pillar/beam
+  // discount (zoneTrussStandingDiscount, still called directly from DealCheckOverlay.jsx/
+  // DCTrussTab.jsx, untouched by this), while the guest build gets one flat pct off the full
+  // guest-facing total here — applied at the source, so every caller (Build's zone cards, Summary,
+  // the cost sheet) shows the same discounted number automatically.
+  if (applyDiscount) {
+    const pct = GUEST_STRUCT_DISCOUNT_PCT;
+    const before = r.total;
+    // Each field rounded to the rupee (a 25% cut rarely lands whole otherwise), then total is
+    // re-summed from the rounded fields so it never disagrees with what the tiles above add up to.
+    ["truss", "masking", "platform", "carpet", "arches", "pillars", "glass", "print"].forEach((k) => { r[k] = Math.round(r[k] * (1 - pct / 100)); });
+    r.total = r.truss + r.masking + r.platform + r.carpet + r.arches + r.pillars + r.glass + r.print;
+    r.trussDiscount = before - r.total;
+  }
+  return r;
 }
 // Resolves a deal's actual genset units + cost from the matched venue's own counts (resolveVenueGensets
 // — handles un-migrated legacy venues too) unless the deal explicitly overrides either size. null/undefined
@@ -298,7 +336,7 @@ function resolveGensetPlan(match, customGenset125, customGenset62, gensetRate, g
 // PREVIOUS function's raw data to find carryover (below), without recursing into a full
 // calcFunctionBreakdown call (which would repeat pricing/genset work we don't need here and would
 // double-net a chain of same-venue functions against each other).
-function computeFnSubQty(fnData, capBySub, imsInventory, flowerPatterns) {
+function computeFnSubQty(fnData, capBySub, imsInventory, flowerPatterns, trussInv, fvCfg, venueName) {
   const fZoneElements = fnData?.zoneElements || {};
   const fZoneConfig = fnData?.zoneConfig || {};
   const fEnabledEls = fnData?.enabledEls || {};
@@ -316,8 +354,27 @@ function computeFnSubQty(fnData, capBySub, imsInventory, flowerPatterns) {
     if (!fEnabledElsFresh[zk] || !elems) return;
     elems.forEach((el) => {
       const invItem = el.invId ? imsInventory.find((i) => i.id === el.invId) : null;
-      const pattern = (!invItem && el.patternId) ? flowerPatterns.find((p) => p.id === el.patternId) : null;
-      const sub = invItem?.subCat || invItem?.subcategory || pattern?.sub || "";
+      if (invItem) {
+        const kitSub = invItem.subCat || invItem.subcategory || "";
+        const kitTc = capBySub[String(kitSub || "").toLowerCase().trim()];
+        // sqft-unit items measure the OUTER element's own footprint — stays on the kit's own
+        // sub-category, not decomposed (see computeTruckItems' matching comment).
+        if (kitTc && String(kitTc.unit || "pc").toLowerCase().includes("sqft")) {
+          const L = Number(el.L || el.l || 0), W = Number(el.W || el.w || el.H || el.h || 0);
+          if (L > 0 && W > 0) add(kitSub, L * W * (Number(el.qty) || 1));
+        } else {
+          // Decompose a kit into its own base AND every component (recursively) — each counts
+          // under ITS OWN sub-category. See computeTruckItems' matching comment.
+          walkKitUnits(invItem, Number(el.qty) || 0, imsInventory, el.kitOverrides, (node, nodeQty) => {
+            const nodeSub = node.subCat || node.subcategory || "";
+            const freshQty = fvCfg && venueName ? builtQty(fvCfg, venueName, node.id, nodeQty) : nodeQty;
+            add(nodeSub, freshQty);
+          });
+        }
+        return;
+      }
+      const pattern = el.patternId ? flowerPatterns.find((p) => p.id === el.patternId) : null;
+      const sub = pattern?.sub || "";
       const tc = capBySub[String(sub || "").toLowerCase().trim()]; if (!tc) return;
       if (String(tc.unit || "pc").toLowerCase().includes("sqft")) {
         const L = Number(el.L || el.l || 0), W = Number(el.W || el.w || el.H || el.h || 0);
@@ -331,8 +388,84 @@ function computeFnSubQty(fnData, capBySub, imsInventory, flowerPatterns) {
     if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * Math.max(1, cfg.trussQty || 1); if (tSqft > 0) add("Truss", tSqft); }
     const sqft = (fd.L || 0) * (fd.W || 0);
     if (sqft > 0) { if (cfg.plH) add("Platform", sqft); if (cfg.cpT && cfg.cpT !== CARPET_OFF) add("Carpet", sqft); }
+    // Fabric Allocation (masking/liza/curtains) is a physical rental setup that can plausibly still
+    // be standing at the venue for the next same-day function, same reasoning as Truss/Platform/
+    // Carpet above — so it participates in carryover netting too. Base truss row only (matches
+    // Truss/Platform/Carpet's own scope here — extraTrussRows aren't counted for trucking).
+    // Density defaults to "moderate": precise photo-derived density only matters for rental PRICING
+    // (calcZoneFabricCost), not truck capacity, which is already an approximation.
+    if (trussInv) {
+      const fab = calcZoneFabric(cfg, trussInv, "moderate");
+      if (fab.maskingPieces > 0) add("Masking", fab.maskingPieces);
+      if (fab.lizaKg > 0) add("Liza", fab.lizaKg);
+      if (fab.curtainPieces > 0) add("Curtains", fab.curtainPieces);
+    }
   });
   return qty;
+}
+// Cross-function reuse (guest-facing): two functions of the SAME deal, same venue, within 24h of
+// each other — the owner's example is a Sundowner Cocktail followed the next night by the Wedding.
+// fnDate alone has no time-of-day, so a shift is mapped to a representative hour purely to compare
+// two functions' rough elapsed time; it is never shown to anyone or used for any other purpose.
+const SHIFT_HOUR = { Morning: 10, Lunch: 13, Sundowner: 17, Night: 19 };
+function fnTimestamp(fnData) {
+  if (!fnData?.fnDate) return null;
+  const hour = SHIFT_HOUR[fnData.fnShift] ?? 12;
+  const t = new Date(`${fnData.fnDate}T${String(hour).padStart(2, "0")}:00:00`).getTime();
+  return Number.isFinite(t) ? t : null;
+}
+// The ONE place "is there a reuse-eligible sibling function" is decided — both the guest-facing
+// item discount and the guest-facing transport waiver below read this, so they can't drift into
+// two different definitions of "within 24h at the same venue". Mirrors the venue-adjacency check
+// calcFunctionBreakdown's internal-cost truck carryover already used (immediately-preceding
+// function by date, same venue string, case/trim-insensitive) — this adds the actual time-window
+// check that check never had at all.
+function findCrossFnReuseSource(fnData, allFns) {
+  if (!fnData?.fnVenue) return null;
+  const sorted = [...(allFns || [])].sort((a, b) => (a.fnDate || "9999-12-31").localeCompare(b.fnDate || "9999-12-31"));
+  const myPos = sorted.findIndex(f => f.fnIdx === fnData.fnIdx);
+  const prev = myPos > 0 ? sorted[myPos - 1] : null;
+  if (!prev || !prev.fnVenue) return null;
+  if (prev.fnVenue.toLowerCase().trim() !== fnData.fnVenue.toLowerCase().trim()) return null;
+  const tMe = fnTimestamp(fnData), tPrev = fnTimestamp(prev);
+  if (tMe == null || tPrev == null) return null;
+  if (Math.abs(tMe - tPrev) > 24 * 60 * 60 * 1000) return null;
+  return prev;
+}
+// Per-invId qty a function used, top-level elements only (no kit-component walk — the guest-facing
+// cross-function discount is scoped to plain rental items, see repeatAdjustedLineCost). Sibling to
+// computeFnSubQty above, at item identity instead of truck-capacity-subcategory granularity.
+function computeFnInvQty(fnData) {
+  const m = {};
+  const fZoneElements = fnData?.zoneElements || {};
+  const fEnabledEls = fnData?.enabledEls || {};
+  Object.entries(fZoneElements).forEach(([zk, elems]) => {
+    if (!fEnabledEls[zk] || !elems) return;
+    elems.forEach(el => { if (el.invId) m[el.invId] = (m[el.invId] || 0) + (Number(el.qty) || 0); });
+  });
+  return m;
+}
+// Resolve a venue's own configured Transport & Power rate (trVenues, Admin -> Settings ->
+// Transport & Power) by name — trying a direct match first, then the venue's PARENT (via
+// venueParents, e.g. a sub-venue like "Aura" -> its property "Exotica") if the venue itself has no
+// row of its own. Every one of the (previously five, independent) `trVenues.find(v => v.name...
+// === venueName...)` call sites only ever tried the direct match: a sub-venue with no trip-rate row
+// of its own — the normal case, since a rate is configured once per PROPERTY, not once per hall
+// inside it — fell all the way through to "New venue" (a manual trip-rate placeholder) instead of
+// the property's own configured rate, silently mispricing trucking/genset for every booking at that
+// sub-venue. Centralized here instead of duplicating the fallback at every call site, the same
+// reasoning as computeTruckItems/computeFnSubQty existing as shared functions rather than N inline
+// copies.
+function resolveTrVenue(trVenues, venueName, venueParents) {
+  const norm = (s) => String(s || "").toLowerCase().trim();
+  const vn = norm(venueName);
+  if (!vn) return null;
+  const direct = (trVenues || []).find((v) => norm(v.name) === vn);
+  if (direct) return direct;
+  const parent = venueParents?.[venueName];
+  const pn = norm(parent);
+  if (pn && pn !== vn) return (trVenues || []).find((v) => norm(v.name) === pn) || null;
+  return null;
 }
 function initZP(zk, size) {
   const p = ZONE_PRESETS[zk]?.[size]; const zm = ZONE_META[zk]; if (!p || !zm) return null;
@@ -955,7 +1088,13 @@ function maxRepaintCostInSubcat(rcSub, imsInventory, fallback) {
 // Each truckCap entry is keyed by sub-category name (`item`), with `perTruck` (capacity) + `unit`
 // (pcs / sqft per truck). Capacity 0 → that sub-category is skipped. Deal items are aggregated by
 // their rate-card sub-category; truss / platform / carpet contribute sqft via the zone config.
-function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckCap, imsInventory, flowerPatterns) {
+// guestDiscountOn (the discreet Upload-bar toggle, inverted from hideDiscountFromClient): when on,
+// a ♻️ Repeat zone's elements/truss/platform/carpet/masking/liza/curtains truck at ZERO (the whole
+// setup is reused, nothing fresh to move), and a Fixed-Venue standing item's already-registered qty
+// nets out of its own truck load the same way. Off (the default), everything trucks in full — no
+// eligibility check even runs — matching the rule that NONE of this reaches the guest unless they
+// opted in, same guard repeatAdjustedLineCost uses for the rental discount itself.
+function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckCap, imsInventory, flowerPatterns, trussInv, flowerMaterialQty, fvCfg, venueName, guestDiscountOn) {
   const capBySub = {};
   (truckCap || []).forEach(tc => { if ((Number(tc.perTruck) || 0) > 0) capBySub[String(tc.item || "").toLowerCase().trim()] = tc; });
   const subAgg = {}; // subLower → { label, qty, perTruck, unit }
@@ -966,6 +1105,8 @@ function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckC
   };
   Object.entries(zoneElements || {}).forEach(([zk, elems]) => {
     if (!enabledEls[zk] || !elems) return;
+    // A repeat zone's whole setup is reused — nothing of it needs trucking for the guest.
+    if (guestDiscountOn && zoneConfig?.[zk]?.repeat) return;
     elems.forEach(el => {
       // An element's sub-category for truck-capacity purposes comes ONLY from live IMS identity —
       // el.invId (Inventory, the normal path for anything added via "+ Add element" today) or
@@ -974,8 +1115,34 @@ function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckC
       // master, and letting a name coincidentally match a Rate Card row override the element's real
       // Inventory sub-category was how this silently misclassified trucking for some elements.
       const invItem = el.invId ? (imsInventory || []).find(i => i.id === el.invId) : null;
-      const pattern = (!invItem && el.patternId) ? (flowerPatterns || []).find(p => p.id === el.patternId) : null;
-      const sub = invItem?.subCat || invItem?.subcategory || pattern?.sub || "";
+      if (invItem) {
+        const kitSub = invItem.subCat || invItem.subcategory || "";
+        const kitTc = capBySub[String(kitSub || "").toLowerCase().trim()];
+        // sqft-unit items are measured by the OUTER element's own footprint (a fabric panel priced
+        // by area) — a kit priced by area has no meaningful per-component footprint, so this stays
+        // on the kit's own sub-category exactly as before, not decomposed.
+        if (kitTc && String(kitTc.unit || "pc").toLowerCase().includes("sqft")) {
+          const L = Number(el.L || el.l || 0), W = Number(el.W || el.w || el.H || el.h || 0);
+          if (L > 0 && W > 0) addSub(kitSub, L * W * (Number(el.qty) || 1));
+        } else {
+          // Piece/qty-based: decompose a kit into its own base AND every component (recursively) —
+          // each counts toward transport under ITS OWN sub-category, not just the kit's, same
+          // reasoning as the kit's own per-piece pricing/standing-discount treatment. A plain
+          // (non-kit) item just visits itself once via walkKitUnits, so this covers both uniformly.
+          walkKitUnits(invItem, Number(el.qty) || 0, imsInventory, el.kitOverrides, (node, nodeQty) => {
+            const nodeSub = node.subCat || node.subcategory || "";
+            // A fixed-venue standing item (up to its registered standing qty) is already physically
+            // at this venue — no truck needed for that portion, same "already there" reasoning as
+            // its pricing discount. Checked per-node: a kit can have some pieces standing and others
+            // not, same as its discount.
+            const freshQty = (guestDiscountOn && fvCfg && venueName) ? builtQty(fvCfg, venueName, node.id, nodeQty) : nodeQty;
+            addSub(nodeSub, freshQty);
+          });
+        }
+        return;
+      }
+      const pattern = el.patternId ? (flowerPatterns || []).find(p => p.id === el.patternId) : null;
+      const sub = pattern?.sub || "";
       const tc = capBySub[String(sub || "").toLowerCase().trim()]; if (!tc) return;
       if (String(tc.unit || "pc").toLowerCase().includes("sqft")) { const L = Number(el.L || el.l || 0), W = Number(el.W || el.w || el.H || el.h || 0); if (L > 0 && W > 0) addSub(sub, L * W * (Number(el.qty) || 1)); }
       else addSub(sub, Number(el.qty) || 0);
@@ -983,6 +1150,7 @@ function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckC
   });
   Object.entries(zoneConfig || {}).forEach(([zk, cfg]) => {
     if (!enabledEls[zk] || !cfg) return;
+    if (guestDiscountOn && cfg.repeat) return; // same repeat waiver as the elements loop above
     // Zone dims use uppercase L/W/H (see buildZoneConfig) — this used to read lowercase dims.w/
     // dims.d, which never exist, so sqft was always 0 and every truss/platform/carpet truck-load
     // silently dropped out of Build's transport total (only element-based items ever counted).
@@ -992,7 +1160,24 @@ function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckC
     // cpT truthy AND not the explicit OFF sentinel — an untouched floor (cpT unset) gets no carpet
     // truck-load either, same as it gets no carpet cost (see CARPET_OFF in taxonomy.js).
     if (sqft > 0) { if (cfg.plH) addSub("Platform", sqft); if (cfg.cpT && cfg.cpT !== CARPET_OFF) addSub("Carpet", sqft); }
+    // Fabric Allocation (masking/liza/curtains) — never trucked before: it's computed from the truss
+    // config, not a zoneElement, so it fell through the element loop above entirely. Same base-row-
+    // only scope as Truss/Platform/Carpet; density defaults to "moderate" (see computeFnSubQty).
+    if (trussInv) {
+      const fab = calcZoneFabric(cfg, trussInv, "moderate");
+      if (fab.maskingPieces > 0) addSub("Masking", fab.maskingPieces);
+      if (fab.lizaKg > 0) addSub("Liza", fab.lizaKg);
+      if (fab.curtainPieces > 0) addSub("Curtains", fab.curtainPieces);
+    }
   });
+  // Floral material (real mandi flowers + artificial bunches) — also never trucked: it's derived
+  // from flower recipes, not a zoneElement either. One figure per function (not per zone), passed in
+  // by the caller (computing it needs calcFnFloralSourcingCost, a much heavier calc this pure helper
+  // has no business re-running). Real flowers' unit varies per mandi item (kg/bunch/dozen) and is
+  // summed here as one "kg" bucket regardless — an approximation, same spirit as every perTruck
+  // capacity already being a rough estimate, not a promise this is exact.
+  if (flowerMaterialQty?.realKg > 0) addSub("Real Flowers", flowerMaterialQty.realKg);
+  if (flowerMaterialQty?.artBunches > 0) addSub("Artificial Flowers", flowerMaterialQty.artBunches);
   let frac = 0; const breakdown = [];
   Object.values(subAgg).forEach(s => { const f = s.perTruck > 0 ? s.qty / s.perTruck : 0; frac += f; breakdown.push({ label: s.label, qty: Math.round(s.qty), perTruck: s.perTruck, unit: s.unit, trucks: f }); });
   return { itemTrucks: Math.ceil(frac), truckFraction: frac, breakdown };
@@ -1944,6 +2129,12 @@ export default function StudioApp() {
   const [elInspo, setElInspo] = useState({});
   const [elInspoLoading, setElInspoLoading] = useState({});
   const [elSelectedPhoto, setElSelectedPhoto] = useState({});
+  // Zone-grid tick selection ({ [zoneKey]: Set<libraryPhotoId> }) — the candidate photos ticked in
+  // ▦ grid view before (or without ever) hitting "Pin". Lifted here (was local to StudioBuild.jsx)
+  // so it rides the same per-function snapshot/restore path as elSelectedPhoto/zoneOrder/customZones
+  // below — a salesperson's in-progress tick set now survives a session reload/function switch
+  // instead of resetting every remount.
+  const [grpSel, setGrpSel] = useState({});
   const [elNotes, setElNotes] = useState({});
   const [elCostOpen, setElCostOpen] = useState({});
   const [customZones, setCustomZones] = useState([]);
@@ -2084,6 +2275,9 @@ export default function StudioApp() {
     enabledEls, elTiers, zoneConfig, zoneElements, itemQty, itemGrades,
     customMode, activeZones, zoneOrder, customZones,
     elSelectedPhoto, elInspo, elNotes, elCostOpen,
+    // Sets aren't JSON-safe — flatten to plain arrays here, the same serialization-boundary approach
+    // elSelectedPhoto's own sibling fields use, and rebuild the Sets in restoreBuildState below.
+    grpSel: Object.fromEntries(Object.entries(grpSel).map(([k, set]) => [k, [...set]])),
     sourceVideo, sourceEvent,
     savedInsps, selectedMoods, selectedPalettes, floralRatio,
     customGensets, genset62, customTripRate,
@@ -2101,7 +2295,7 @@ export default function StudioApp() {
       // zoneOrder resets with the rest. It is per function, so switching to one that has no saved
       // build must not inherit the previous function's arrangement.
       setZoneOrder([]);
-      setCustomZones([]); setElSelectedPhoto({}); setElInspo({}); setElNotes({});
+      setCustomZones([]); setElSelectedPhoto({}); setGrpSel({}); setElInspo({}); setElNotes({});
       setElCostOpen({}); setSourceVideo(null); setSourceEvent(null);
       setSavedInsps([]); setSelectedMoods([]); setSelectedPalettes([]); setFloralRatio(70);
       setCustomGensets(null); setGenset62(null); setCustomTripRate(0);
@@ -2119,6 +2313,7 @@ export default function StudioApp() {
     setZoneOrder(s.zoneOrder || []);
     setCustomZones(s.customZones || []);
     setElSelectedPhoto(s.elSelectedPhoto || {});
+    setGrpSel(Object.fromEntries(Object.entries(s.grpSel || {}).map(([k, arr]) => [k, new Set(arr)])));
     setElInspo(s.elInspo || {});
     setElNotes(s.elNotes || {});
     setElCostOpen(s.elCostOpen || {});
@@ -2164,6 +2359,15 @@ export default function StudioApp() {
   // saveSession clears this on the first save after a load, so collapsing resumes as normal within
   // the new meeting.
   const sessionBoundaryRef = useRef(false);
+  // What the top saved session (sessions[0]) was when THIS tab last loaded or saved this client —
+  // the build-path sibling of Deal Check's dcSaveBaselineRef (~line 9153, same fix, same reasoning).
+  // saveSession compares this against the live sessions[0] read fresh at save time
+  // (prevSnapForTotals) to tell "someone else saved a newer build while I was editing" apart from
+  // "my own last write echoing back", instead of blindly overwriting whichever tab's autosave lands
+  // last — the exact bug already once caught and only half-fixed in this file (see the "DELETION
+  // DISABLED" note near saveSession's own studio_sessions write).
+  const buildSaveBaselineRef = useRef(null);
+  const buildConflictWarnedAtRef = useRef(0);
   useEffect(() => { activeFnIdxRef.current = activeFnIdx; switchingRef.current = false; }, [activeFnIdx]);
   useEffect(() => { fnBuildsRef.current = fnBuilds; }, [fnBuilds]);
   // Layout for the same reason as saveSessionRef below — switchActiveFn calls this one
@@ -2377,7 +2581,20 @@ export default function StudioApp() {
   const studioSub = useCallback((parent, sub) => {
     if (isAdmin) return true;
     if (!(studioCfg?.tabs || []).includes(parent)) return false;
-    return (studioCfg?.subTabs?.[parent] || []).includes(sub); // explicit grant
+    // "Restriction is opt-in" (RoleAccessModal.jsx's own documented rule for this exact data shape):
+    // an absent/empty subTabs[parent] means every child is visible — no admin action ever
+    // restricted anything under this tab, so nothing under it should be hidden. This used to
+    // require an explicit grant unconditionally, silently hiding Deal Check (and viewpricing/
+    // export, and every Settings sub-view routed through here) for every Sales role that was
+    // never individually hand-customized, since the seeded default is {tabs:["design"],subTabs:{}}
+    // — an admin who never touched a single toggle for a role saw "nothing restricted" and
+    // reasonably assumed everything was visible, while this returned false for all of it.
+    // studioLibraryAllowed already implements this same rule correctly; this brings dealcheck/
+    // viewpricing/export/settings-sub-views (everything else routed through studioSub) in line
+    // with it instead of being the one path still requiring an explicit grant.
+    const subs = studioCfg?.subTabs?.[parent];
+    if (!subs || subs.length === 0) return true;
+    return subs.includes(sub);
   }, [isAdmin, studioCfg]);
   // Which Studio Settings sub-views (venues/tags/clients/calendar/users/zones/palettes/
   // priority) this role can see — consumed by ManageSettings.
@@ -2701,140 +2918,170 @@ export default function StudioApp() {
         if (v != null) { const td = parse(v); if (td && typeof td === "object" && !cancelled) { if (td.venues) setTrVenues(td.venues); if (td.truckCap) setTruckCap(td.truckCap); if (td.floralPerTruck) setFloralPerTruck(td.floralPerTruck); if (td.bufferTiers) setBufferTiers(td.bufferTiers); if (td.gensetRate !== undefined) setGensetRate(td.gensetRate); if (td.gensetRate62 !== undefined) setGensetRate62(td.gensetRate62); if (td.gensetCostRate !== undefined) setGensetCostRate(td.gensetCostRate); if (td.gensetCostRate62 !== undefined) setGensetCostRate62(td.gensetCostRate62); } }
       } catch {}
       if (!cancelled) trSettingsLoadedRef.current = true;
-      // Templates
-      try { const v = await kvGet(TPL_SK); if (v != null) { const tp = parse(v); if (Array.isArray(tp) && tp.length && !cancelled) setTemplates(tp); } } catch {}
-      // Zone definitions
-      let loadedZones = null;
-      try { const v = await kvGet(ZONE_DEF_SK); if (v != null) { const zp = parse(v); if (zp && zp.elements) { loadedZones = zp; if (!cancelled) setZoneDefs(zp); } } } catch {}
-      // Zone photo groups — normalised on read, so a blob written before groups were per-function
-      // (a bare id array per zone) loads as an any-function group instead of being ignored.
-      try { const v = await kvGet(ZONE_GROUPS_SK); if (v != null && !cancelled) { const zg = normaliseZoneGroups(parse(v)); zoneGroupsRef.current = zg; setZoneGroups(zg); } } catch {}
-      // Taxonomy — backfill missing keys from DEFAULT_TAX
-      let loadedTax = null;
-      try {
-        const v = await kvGet(TAX_SK);
-        if (v != null) {
-          const tp = parse(v);
-          if (tp && tp.eventType) {
-            const out = { ...tp };
-            let merged = false;
-            for (const k of Object.keys(DEFAULT_TAX)) { if (!Array.isArray(out[k])) { out[k] = DEFAULT_TAX[k]; merged = true; } }
-            // One-time: introduce the "Both" venue type (Indoor + Outdoor) into the already-saved
-            // shared taxonomy. Gated on a stored flag so that if someone later deletes "Both" in
-            // Manage Settings it stays gone — we don't auto-restore it (the taxonomy is user-managed).
-            try {
-              const bothDone = await kvGet(TAX_BOTH_MIG_SK);
-              if (bothDone == null) {
-                if (Array.isArray(out.venueType) && !out.venueType.includes("Both")) { out.venueType = [...out.venueType, "Both"]; merged = true; }
-                reliableSave(TAX_BOTH_MIG_SK, "1", "Taxonomy migration").catch(() => {});
+      // Everything below this point (through the "Deal Check boot loaders" at the end) used to be
+      // ~30 individually-awaited kvGet/fetchAll calls, one after another, IN SERIES — none of them
+      // read another's result (verified: loadedZones/loadedTax below are only ever used inside their
+      // OWN try-block), so there was never a reason for #2 to wait on #1's round trip finishing
+      // before even starting. At ~50-150ms per request (each doubled by its own CORS preflight),
+      // that's several seconds of serial network latency on every single Studio mount, during which
+      // this component keeps re-rendering on every one of the ~30 setState calls landing one at a
+      // time — a real, measurable contributor to "the app feels laggy right after opening it",
+      // traced from a user-supplied Network-tab capture showing this exact sequence of requests
+      // spread across a 30+ second window. Running them concurrently costs the same as the SLOWEST
+      // one instead of the SUM of all of them, and collapses ~30 separate re-render ticks into one.
+      // Split into two batches, not one, to preserve the pre-existing pricingReady ordering exactly:
+      // the comment on setPricingReady below promises it only flips once rate card/inventory/
+      // transport/the five structure-rate tables have landed — true before this change and still
+      // true after, since this first batch still fully resolves before that line runs.
+      await Promise.all([
+        // Templates
+        (async () => { try { const v = await kvGet(TPL_SK); if (v != null) { const tp = parse(v); if (Array.isArray(tp) && tp.length && !cancelled) setTemplates(tp); } } catch {} })(),
+        // Zone definitions
+        (async () => { try { const v = await kvGet(ZONE_DEF_SK); if (v != null) { const zp = parse(v); if (zp && zp.elements && !cancelled) setZoneDefs(zp); } } catch {} })(),
+        // Zone photo groups — normalised on read, so a blob written before groups were per-function
+        // (a bare id array per zone) loads as an any-function group instead of being ignored.
+        (async () => { try { const v = await kvGet(ZONE_GROUPS_SK); if (v != null && !cancelled) { const zg = normaliseZoneGroups(parse(v)); zoneGroupsRef.current = zg; setZoneGroups(zg); } } catch {} })(),
+        // Taxonomy — backfill missing keys from DEFAULT_TAX
+        (async () => {
+          try {
+            const v = await kvGet(TAX_SK);
+            if (v != null) {
+              const tp = parse(v);
+              if (tp && tp.eventType) {
+                const out = { ...tp };
+                let merged = false;
+                for (const k of Object.keys(DEFAULT_TAX)) { if (!Array.isArray(out[k])) { out[k] = DEFAULT_TAX[k]; merged = true; } }
+                // One-time: introduce the "Both" venue type (Indoor + Outdoor) into the already-saved
+                // shared taxonomy. Gated on a stored flag so that if someone later deletes "Both" in
+                // Manage Settings it stays gone — we don't auto-restore it (the taxonomy is user-managed).
+                try {
+                  const bothDone = await kvGet(TAX_BOTH_MIG_SK);
+                  if (bothDone == null) {
+                    if (Array.isArray(out.venueType) && !out.venueType.includes("Both")) { out.venueType = [...out.venueType, "Both"]; merged = true; }
+                    reliableSave(TAX_BOTH_MIG_SK, "1", "Taxonomy migration").catch(() => {});
+                  }
+                } catch {}
+                if (merged) reliableSave(TAX_SK, JSON.stringify(out), "Taxonomy").catch(() => {});
+                if (!cancelled) setTaxonomy(out);
               }
-            } catch {}
-            if (merged) reliableSave(TAX_SK, JSON.stringify(out), "Taxonomy").catch(() => {});
-            loadedTax = out; if (!cancelled) setTaxonomy(out);
+            } else { reliableSave(TAX_SK, JSON.stringify(DEFAULT_TAX), "Taxonomy").catch(() => {}); }
+          } catch {}
+        })(),
+        // Areas↔Zones auto-sync removed: the bidirectional sync (ZONE_META seeds, area→zone,
+        // zone→area) ran unconditionally on every load and silently restored deleted zones/areas
+        // from hardcoded defaults — same class of bug as the category orphan-recovery. Zones and
+        // taxonomy are now fully user-managed; create/delete via the Zone editor.
+        // Library — row-per-photo in the `library` TABLE, server-side paginated (no whole-table
+        // fetch on mount — see `libraryQueries.js` + `mergeLibItems`). Nothing to eagerly load here.
+        // Correction log (contribution tracking) — table-backed now, see photoCorrections.js
+        (async () => { try { const rows = await fetchPhotoCorrections(); if (!cancelled) { setCorrLog(rows); corrLogRef.current = rows; } } catch {} })(),
+        (async () => { try { const v = await kvGet(TAG_KB_SK); if (v != null) { const kb = parse(v); if (kb && typeof kb === "object" && !cancelled) setTagKB(kb); } } catch {} })(),
+        // Team
+        (async () => {
+          try {
+            const v = await kvGet(TEAM_SK);
+            if (v != null) { const tp = parse(v); if (tp && typeof tp === "object" && !Array.isArray(tp) && !cancelled) setTeamData(tp); }
+            else { reliableSave(TEAM_SK, JSON.stringify(DEFAULT_TEAM), "Team").catch(() => {}); }
+          } catch {}
+        })(),
+        // Premia config
+        (async () => { try { const v = await kvGet(PREMIA_CFG_SK); if (v != null) { const pc = parse(v); if (pc && typeof pc === "object" && !Array.isArray(pc) && !cancelled) setPremiaConfig({ ...PREMIA_DEFAULTS, ...pc }); } } catch {} })(),
+        // Notifications
+        (async () => { try { const v = await kvGet(NOTIF_SK); if (v != null) { const np = parse(v); if (Array.isArray(np) && !cancelled) setNotifications(np); } } catch {} })(),
+        // Video tags — the `video_tags` TABLE is the source of truth (migration 023). The legacy
+        // YT_TAG_SK blob is still written as a mirror for one release, and is read here only as a
+        // fallback, so this deploy is safe whether or not the migration has been applied yet.
+        // Empty table also falls through to the blob: a fresh environment has rows only after backfill.
+        (async () => {
+          try {
+            const rows = await fetchAll("video_tags");
+            if (Array.isArray(rows) && rows.length && !cancelled) setYtVideoTags(rowsToVideoTagMap(rows));
+            else if (!cancelled) throw new Error("video_tags empty");
+          } catch {
+            try { const v = await kvGet(YT_TAG_SK); if (v != null) { const tp = parse(v); if (tp && typeof tp === "object" && !cancelled) setYtVideoTags(tp); } } catch {}
           }
-        } else { reliableSave(TAX_SK, JSON.stringify(DEFAULT_TAX), "Taxonomy").catch(() => {}); loadedTax = DEFAULT_TAX; }
-      } catch {}
-      // Areas↔Zones auto-sync removed: the bidirectional sync (ZONE_META seeds, area→zone,
-      // zone→area) ran unconditionally on every load and silently restored deleted zones/areas
-      // from hardcoded defaults — same class of bug as the category orphan-recovery. Zones and
-      // taxonomy are now fully user-managed; create/delete via the Zone editor.
-      // Library — row-per-photo in the `library` TABLE, server-side paginated (no whole-table
-      // fetch on mount — see `libraryQueries.js` + `mergeLibItems`). Nothing to eagerly load here.
-      // Correction log (contribution tracking) — table-backed now, see photoCorrections.js
-      try { const rows = await fetchPhotoCorrections(); if (!cancelled) { setCorrLog(rows); corrLogRef.current = rows; } } catch {}
-      try { const v = await kvGet(TAG_KB_SK); if (v != null) { const kb = parse(v); if (kb && typeof kb === "object" && !cancelled) setTagKB(kb); } } catch {}
-      // Team
-      try {
-        const v = await kvGet(TEAM_SK);
-        if (v != null) { const tp = parse(v); if (tp && typeof tp === "object" && !Array.isArray(tp) && !cancelled) setTeamData(tp); }
-        else { reliableSave(TEAM_SK, JSON.stringify(DEFAULT_TEAM), "Team").catch(() => {}); }
-      } catch {}
-      // Premia config
-      try { const v = await kvGet(PREMIA_CFG_SK); if (v != null) { const pc = parse(v); if (pc && typeof pc === "object" && !Array.isArray(pc) && !cancelled) setPremiaConfig({ ...PREMIA_DEFAULTS, ...pc }); } } catch {}
-      // Notifications
-      try { const v = await kvGet(NOTIF_SK); if (v != null) { const np = parse(v); if (Array.isArray(np) && !cancelled) setNotifications(np); } } catch {}
-      // Video tags — the `video_tags` TABLE is the source of truth (migration 023). The legacy
-      // YT_TAG_SK blob is still written as a mirror for one release, and is read here only as a
-      // fallback, so this deploy is safe whether or not the migration has been applied yet.
-      // Empty table also falls through to the blob: a fresh environment has rows only after backfill.
-      try {
-        const rows = await fetchAll("video_tags");
-        if (Array.isArray(rows) && rows.length && !cancelled) setYtVideoTags(rowsToVideoTagMap(rows));
-        else if (!cancelled) throw new Error("video_tags empty");
-      } catch {
-        try { const v = await kvGet(YT_TAG_SK); if (v != null) { const tp = parse(v); if (tp && typeof tp === "object" && !cancelled) setYtVideoTags(tp); } } catch {}
-      }
-      // Date types
-      try { const v = await kvGet(DT_SK); if (v != null) { const dp = parse(v); if (dp && typeof dp === "object" && !cancelled) setDateTypes(dp); } } catch {}
-      // Event orders
-      try { const rows = await loadEoRows(); if (Array.isArray(rows) && !cancelled) setEventOrders(rows.map(rowToEO)); } catch { /* ignore */ }
-      // Photo→IMS cache
-      try { const v = await kvGet(PIMAP_SK); if (v != null) { const pm = parse(v); if (pm && typeof pm === "object" && !Array.isArray(pm) && !cancelled) setPhotoImsMap(pm); } } catch {}
-      // Scan history
-      try { const v = await kvGet(SCAN_HIST_SK); if (v != null) { const sh = parse(v); if (sh && typeof sh === "object" && !Array.isArray(sh) && !cancelled) setScanHistory(sh); } } catch {}
-      // Manual videos
-      try { const v = await kvGet(MANUAL_VID_SK); if (v != null) { const mp = parse(v); if (Array.isArray(mp) && !cancelled) setManualVideos(mp); } } catch {}
-      // Hidden videos
-      try { const v = await kvGet(HIDDEN_VID_SK); if (v != null) { const hp = parse(v); if (hp && typeof hp === "object" && !cancelled) setHiddenVideos(hp); } } catch {}
-      // Favourite videos
-      try { const v = await kvGet(FAV_VID_SK); if (v != null) { const fp = parse(v); if (fp && typeof fp === "object" && !cancelled) setFavVideos(fp); } } catch {}
-      // Favourite zone photos
-      try { const v = await kvGet(FAV_PHOTO_SK); if (v != null) { const fp = parse(v); if (fp && typeof fp === "object" && !cancelled) setFavPhotos(fp); } } catch {}
-      // Filter priority
-      try { const v = await kvGet(FILTER_PRIORITY_SK); if (v != null) { const fpp = parse(v); if (Array.isArray(fpp) && fpp.length === 5 && !cancelled) setFilterPriority(fpp); } } catch {}
-      // Tagging-hidden sub-categories (Pricing flags)
-      try { const v = await kvGet(TAG_HIDDEN_SUBS_SK); if (v != null) { const hs = parse(v); if (Array.isArray(hs) && !cancelled) setTagHiddenSubs(hs.filter((x) => typeof x === "string")); } } catch {}
-      // Palette catalogue (Studio-owned) + IMS settings (paint cats)
-      try {
-        const palv = await kvGet(PALETTE_SK);
-        if (palv != null) { const p = parse(palv); if (p && typeof p === "object" && !cancelled) { if (Array.isArray(p.colourCatalogue) && p.colourCatalogue.length) setImsColourCatalogue(p.colourCatalogue); if (Array.isArray(p.paletteCatalogue) && p.paletteCatalogue.length) setImsPaletteCatalogue(p.paletteCatalogue); } }
-        if (!cancelled) { paletteLoadedRef.current = true; setPaletteCatalogueLoaded(true); }
-        const sv = await kvGet(IMS_SETTINGS_SK);
-        if (sv != null) { const s = parse(sv); if (s && typeof s === "object" && !cancelled) { if (Array.isArray(s.paintableCategories) && s.paintableCategories.length) setImsPaintableCategories(s.paintableCategories); if (typeof s.defaultPaintCostPerItem === "number") setImsDefaultPaintCost(s.defaultPaintCostPerItem); } }
-      } catch {}
-      // AI Synonym Dictionary — IMS persists each settings field as its OWN row keyed by field name
-      // (IMS.jsx's setSettings), not nested under IMS_SETTINGS_SK, so it's fetched by its own key.
-      try { const synv = await kvGet("synonymDictionary"); if (synv != null) { const sd = parse(synv); if (Array.isArray(sd) && !cancelled) setImsSynonymDictionary(sd); } } catch {}
-      // Print Materials — same per-field kv row pattern as synonymDictionary above.
-      try { const pmv = await kvGet("printMaterials"); if (pmv != null) { const pm = parse(pmv); if (Array.isArray(pm) && !cancelled) setImsPrintMaterials(pm); } } catch {}
-      try { const cmv = await kvGet("carpetMaterials"); if (cmv != null) { const cm = parse(cmv); if (Array.isArray(cm) && !cancelled) setImsCarpetMaterials(cm); } } catch {}
-      // Truss & Masking Rates (IMS Admin → Settings → 🏗️) — same per-field kv row pattern.
-      try { const trv = await kvGet("trussRates"); if (trv != null) { const tr = parse(trv); if (Array.isArray(tr) && !cancelled) setImsTrussRates(tr); } } catch {}
-      try { const mrv = await kvGet("maskingRates"); if (mrv != null) { const mr = parse(mrv); if (Array.isArray(mr) && !cancelled) setImsMaskingRates(mr); } } catch {}
-      try { const prv = await kvGet("platformRates"); if (prv != null) { const pr = parse(prv); if (Array.isArray(pr) && !cancelled) setImsPlatformRates(pr); } } catch {}
+        })(),
+        // Date types
+        (async () => { try { const v = await kvGet(DT_SK); if (v != null) { const dp = parse(v); if (dp && typeof dp === "object" && !cancelled) setDateTypes(dp); } } catch {} })(),
+        // Event orders
+        (async () => { try { const rows = await loadEoRows(); if (Array.isArray(rows) && !cancelled) setEventOrders(rows.map(rowToEO)); } catch { /* ignore */ } })(),
+        // Photo→IMS cache
+        (async () => { try { const v = await kvGet(PIMAP_SK); if (v != null) { const pm = parse(v); if (pm && typeof pm === "object" && !Array.isArray(pm) && !cancelled) setPhotoImsMap(pm); } } catch {} })(),
+        // Scan history
+        (async () => { try { const v = await kvGet(SCAN_HIST_SK); if (v != null) { const sh = parse(v); if (sh && typeof sh === "object" && !Array.isArray(sh) && !cancelled) setScanHistory(sh); } } catch {} })(),
+        // Manual videos
+        (async () => { try { const v = await kvGet(MANUAL_VID_SK); if (v != null) { const mp = parse(v); if (Array.isArray(mp) && !cancelled) setManualVideos(mp); } } catch {} })(),
+        // Hidden videos
+        (async () => { try { const v = await kvGet(HIDDEN_VID_SK); if (v != null) { const hp = parse(v); if (hp && typeof hp === "object" && !cancelled) setHiddenVideos(hp); } } catch {} })(),
+        // Favourite videos
+        (async () => { try { const v = await kvGet(FAV_VID_SK); if (v != null) { const fp = parse(v); if (fp && typeof fp === "object" && !cancelled) setFavVideos(fp); } } catch {} })(),
+        // Favourite zone photos
+        (async () => { try { const v = await kvGet(FAV_PHOTO_SK); if (v != null) { const fp = parse(v); if (fp && typeof fp === "object" && !cancelled) setFavPhotos(fp); } } catch {} })(),
+        // Filter priority
+        (async () => { try { const v = await kvGet(FILTER_PRIORITY_SK); if (v != null) { const fpp = parse(v); if (Array.isArray(fpp) && fpp.length === 5 && !cancelled) setFilterPriority(fpp); } } catch {} })(),
+        // Tagging-hidden sub-categories (Pricing flags)
+        (async () => { try { const v = await kvGet(TAG_HIDDEN_SUBS_SK); if (v != null) { const hs = parse(v); if (Array.isArray(hs) && !cancelled) setTagHiddenSubs(hs.filter((x) => typeof x === "string")); } } catch {} })(),
+        // Palette catalogue (Studio-owned) + IMS settings (paint cats)
+        (async () => {
+          try {
+            const palv = await kvGet(PALETTE_SK);
+            if (palv != null) { const p = parse(palv); if (p && typeof p === "object" && !cancelled) { if (Array.isArray(p.colourCatalogue) && p.colourCatalogue.length) setImsColourCatalogue(p.colourCatalogue); if (Array.isArray(p.paletteCatalogue) && p.paletteCatalogue.length) setImsPaletteCatalogue(p.paletteCatalogue); } }
+            if (!cancelled) { paletteLoadedRef.current = true; setPaletteCatalogueLoaded(true); }
+            const sv = await kvGet(IMS_SETTINGS_SK);
+            if (sv != null) { const s = parse(sv); if (s && typeof s === "object" && !cancelled) { if (Array.isArray(s.paintableCategories) && s.paintableCategories.length) setImsPaintableCategories(s.paintableCategories); if (typeof s.defaultPaintCostPerItem === "number") setImsDefaultPaintCost(s.defaultPaintCostPerItem); } }
+          } catch {}
+        })(),
+        // AI Synonym Dictionary — IMS persists each settings field as its OWN row keyed by field name
+        // (IMS.jsx's setSettings), not nested under IMS_SETTINGS_SK, so it's fetched by its own key.
+        (async () => { try { const synv = await kvGet("synonymDictionary"); if (synv != null) { const sd = parse(synv); if (Array.isArray(sd) && !cancelled) setImsSynonymDictionary(sd); } } catch {} })(),
+        // Print Materials — same per-field kv row pattern as synonymDictionary above.
+        (async () => { try { const pmv = await kvGet("printMaterials"); if (pmv != null) { const pm = parse(pmv); if (Array.isArray(pm) && !cancelled) setImsPrintMaterials(pm); } } catch {} })(),
+        (async () => { try { const cmv = await kvGet("carpetMaterials"); if (cmv != null) { const cm = parse(cmv); if (Array.isArray(cm) && !cancelled) setImsCarpetMaterials(cm); } } catch {} })(),
+        // Truss & Masking Rates (IMS Admin → Settings → 🏗️) — same per-field kv row pattern.
+        (async () => { try { const trv = await kvGet("trussRates"); if (trv != null) { const tr = parse(trv); if (Array.isArray(tr) && !cancelled) setImsTrussRates(tr); } } catch {} })(),
+        (async () => { try { const mrv = await kvGet("maskingRates"); if (mrv != null) { const mr = parse(mrv); if (Array.isArray(mr) && !cancelled) setImsMaskingRates(mr); } } catch {} })(),
+        (async () => { try { const prv = await kvGet("platformRates"); if (prv != null) { const pr = parse(prv); if (Array.isArray(pr) && !cancelled) setImsPlatformRates(pr); } } catch {} })(),
+      ]);
       // Every input the estimate reads has now landed: the rate card and its scaling factors,
       // inventory, the transport settings, and all five structure-rate tables above. Anything loaded
       // after this line does not feed grandTotal. See pricingReady where it is declared.
       if (!cancelled) setPricingReady(true);
-      // Deal Check boot loaders
-      try { const rows = await fetchAll("amend_requests"); if (Array.isArray(rows) && !cancelled) setAmendRequests(rows.map((r) => ({ ...(r.data || {}), id: r.id, status: r.status ?? r.data?.status }))); } catch { /* ignore */ }
-      // Knowledge set — learned photo→IMS visual identity (fail-safe: table may not exist yet).
-      try { const rows = await fetchAll("dc_photo_knowledge"); if (Array.isArray(rows) && !cancelled) { const m = {}; for (const r of rows) { if (r?.id && r.data?.imsId) m[r.id] = r.data; } setPhotoKnowledge(m); } } catch { /* table missing → knowledge disabled, AI still works */ }
-      try { const v = await kvGet(FLORAL_HARDPROP_MAP_SK); if (v != null) { const m = parse(v); if (m && typeof m === "object" && !Array.isArray(m) && !cancelled) setFloralHardPropMap(m); } } catch {}
-      try { const v = await kvGet(DC_RUN_COUNTER_SK); if (v != null) { const rc = parse(v); if (rc && typeof rc === "object" && !Array.isArray(rc) && !cancelled) setDcRunCounter(rc); } } catch {}
-      try {
-        const rows = await fetchAll("soft_holds");
-        if (Array.isArray(rows) && !cancelled) {
-          const now = Date.now(); const live = {}; const expiredIds = [];
-          for (const r of rows) { const h = r.data || {}; const exp = typeof h.expiry === "number" ? h.expiry : Date.parse(h.expiry || ""); if (exp && exp > now) live[r.id] = h; else expiredIds.push(r.id); }
-          setSoftHolds(live);
-          for (const id of expiredIds) supabase.from("soft_holds").delete().eq("id", id).then(() => {});
-        }
-      } catch {}
-      try { const v = await kvGet(DC_CACHE_SK); if (v != null) { const dc = parse(v); if (dc && typeof dc === "object" && !Array.isArray(dc) && !cancelled) setDcCache(dc); } } catch {}
-      try {
-        const rows = await fetchAll("truss_allocations"); // now the shared table (IMS + Studio), off the blob
-        if (Array.isArray(rows) && !cancelled) {
-          const now = Date.now(); const cleaned = {};
-          for (const r of rows) {
-            const entry = rowToAlloc(r);
-            if (!Array.isArray(entry.events)) { cleaned[entry.date] = entry; continue; }
-            const liveEvents = entry.events.filter(ev => { if (ev.state !== "soft") return true; const exp = typeof ev.expiry === "number" ? ev.expiry : Date.parse(ev.expiry || ""); return exp && exp > now; });
-            cleaned[entry.date] = { ...entry, events: liveEvents };
-          }
-          setTrussAlloc(cleaned);
-        }
-      } catch {}
+      // Deal Check boot loaders — same "nothing here reads another's result" reasoning as the batch
+      // above, kept as its own separate Promise.all only so pricingReady's ordering above is untouched.
+      await Promise.all([
+        (async () => { try { const rows = await fetchAll("amend_requests"); if (Array.isArray(rows) && !cancelled) setAmendRequests(rows.map((r) => ({ ...(r.data || {}), id: r.id, status: r.status ?? r.data?.status }))); } catch { /* ignore */ } })(),
+        // Knowledge set — learned photo→IMS visual identity (fail-safe: table may not exist yet).
+        (async () => { try { const rows = await fetchAll("dc_photo_knowledge"); if (Array.isArray(rows) && !cancelled) { const m = {}; for (const r of rows) { if (r?.id && r.data?.imsId) m[r.id] = r.data; } setPhotoKnowledge(m); } } catch { /* table missing → knowledge disabled, AI still works */ } })(),
+        (async () => { try { const v = await kvGet(FLORAL_HARDPROP_MAP_SK); if (v != null) { const m = parse(v); if (m && typeof m === "object" && !Array.isArray(m) && !cancelled) setFloralHardPropMap(m); } } catch {} })(),
+        (async () => { try { const v = await kvGet(DC_RUN_COUNTER_SK); if (v != null) { const rc = parse(v); if (rc && typeof rc === "object" && !Array.isArray(rc) && !cancelled) setDcRunCounter(rc); } } catch {} })(),
+        (async () => {
+          try {
+            const rows = await fetchAll("soft_holds");
+            if (Array.isArray(rows) && !cancelled) {
+              const now = Date.now(); const live = {}; const expiredIds = [];
+              for (const r of rows) { const h = r.data || {}; const exp = typeof h.expiry === "number" ? h.expiry : Date.parse(h.expiry || ""); if (exp && exp > now) live[r.id] = h; else expiredIds.push(r.id); }
+              setSoftHolds(live);
+              for (const id of expiredIds) supabase.from("soft_holds").delete().eq("id", id).then(() => {});
+            }
+          } catch {}
+        })(),
+        (async () => { try { const v = await kvGet(DC_CACHE_SK); if (v != null) { const dc = parse(v); if (dc && typeof dc === "object" && !Array.isArray(dc) && !cancelled) setDcCache(dc); } } catch {} })(),
+        (async () => {
+          try {
+            const rows = await fetchAll("truss_allocations"); // now the shared table (IMS + Studio), off the blob
+            if (Array.isArray(rows) && !cancelled) {
+              const now = Date.now(); const cleaned = {};
+              for (const r of rows) {
+                const entry = rowToAlloc(r);
+                if (!Array.isArray(entry.events)) { cleaned[entry.date] = entry; continue; }
+                const liveEvents = entry.events.filter(ev => { if (ev.state !== "soft") return true; const exp = typeof ev.expiry === "number" ? ev.expiry : Date.parse(ev.expiry || ""); return exp && exp > now; });
+                cleaned[entry.date] = { ...entry, events: liveEvents };
+              }
+              setTrussAlloc(cleaned);
+            }
+          } catch {}
+        })(),
+      ]);
     })();
     return () => { cancelled = true; };
   }, []);
@@ -2851,10 +3098,24 @@ export default function StudioApp() {
   const saveVenues = useCallback(async (ih, od) => { setCustomInhouse(ih); setCustomOutdoor(od); await reliableSave(STORAGE_KEY + "-venues", JSON.stringify({ inhouse: ih, outdoor: od, properties: customPropertiesRef.current || [] }), "Venues"); }, []);
   // Sub-venue → parent map (Aura → Exotica) so fixed-venue rules match across sub-venues.
   // Persisted to settings so IMS reads it too.
-  const venueParents = useMemo(() => ({
-    ...Object.fromEntries((customInhouse || []).filter(v => v.name).map(v => [v.name, v.parent || v.name])),
-    ...Object.fromEntries((customOutdoor || []).filter(v => v.name).map(v => [v.name, v.name])),
-  }), [customInhouse, customOutdoor]);
+  //
+  // Resolves through propertyId FIRST — the real, stable relationship a sub-venue is created with
+  // (VenuesEditor.jsx's addSubVenue: { ...propertyId, parent: property?.name || "" }) — not the
+  // `.parent` name string alone. `.parent` is only a SNAPSHOT taken once at add-time: if the parent
+  // property is later renamed, every sub-venue's own `.parent` field stays stale forever (nothing
+  // re-derives it), while propertyId still points at the right property row and always resolves to
+  // its CURRENT name. Falling back to the stale `.parent` (then to the sub-venue's own name) only
+  // covers a sub-venue whose property has since been deleted, or one from before propertyId existed.
+  const venueParents = useMemo(() => {
+    const propNameById = new Map((customProperties || []).map((p) => [p.id, p.name]));
+    const out = {};
+    (customInhouse || []).forEach((v) => {
+      if (!v.name) return;
+      out[v.name] = (v.propertyId && propNameById.get(v.propertyId)) || v.parent || v.name;
+    });
+    (customOutdoor || []).forEach((v) => { if (v.name) out[v.name] = v.name; });
+    return out;
+  }, [customInhouse, customOutdoor, customProperties]);
   useEffect(() => { if (!customInhouse.length) return; reliableSave("venueParents", JSON.stringify(venueParents), "Venue parents").catch(() => {}); }, [venueParents]);
   // The Rate Card admin editor (Studio's RateCard.jsx, IMS's RateCardPanel.jsx) is gone — nobody
   // edits `rate_card` by hand anymore, recipes are IMS-native (flowerPatterns), and every element
@@ -2904,6 +3165,16 @@ export default function StudioApp() {
           else if (key === FAV_PHOTO_SK) { const fp = pj(await kvGet(FAV_PHOTO_SK)); if (fp && typeof fp === "object") setFavPhotos(fp); }
           else if (key === ZONE_GROUPS_SK) { const zg = normaliseZoneGroups(pj(await kvGet(ZONE_GROUPS_SK))); zoneGroupsRef.current = zg; setZoneGroups(zg); }
           else if (FLORAL_DATA_KEYS.includes(key)) { refreshStudioFloralData(); }
+          // roleTabs (IMS → Admin → Users → 🔐 Manage Access) was missing here — it's only ever
+          // loaded once, at mount (see the `useEffect(() => { kvGet("roleTabs")... }, [])` above
+          // isAdmin). A role's Studio tab/sub-tab grants (studioSub, hasStudioTab — what shows the
+          // Deal Check button, among everything else gated the same way) were computed from that
+          // one-time snapshot for the rest of the session, so a permission an admin had just granted
+          // never reached a user whose Studio tab was already open when it happened — same class of
+          // bug as every other "loaded once, never kept live" gap this file has already been fixed
+          // for. They saw it appear only after their next full reload, which reads as "my role has
+          // the permission and the button still isn't there."
+          else if (key === "roleTabs") { const rt = pj(await kvGet("roleTabs")); if (rt && typeof rt === "object") setStudioRoleTabs(rt); }
         } catch { /* ignore */ }
       })
       .subscribe();
@@ -3301,6 +3572,10 @@ export default function StudioApp() {
   // declared long before collectAllFunctionData exists, so a direct reference would be a TDZ
   // ReferenceError on first render.
   const collectAllFunctionDataRef = useRef(null);
+  // Same TDZ reasoning as collectAllFunctionDataRef just above — transportCalc/calcFunctionCost are
+  // both declared, and both need to call calcFnFloralSourcingCost for the flower-material truck
+  // count, before calcFnFloralSourcingCost itself is declared further down the file.
+  const calcFnFloralSourcingCostRef = useRef(null);
   const activeClientIdRef = useRef(null);
   useEffect(() => { activeClientIdRef.current = activeClientId; }, [activeClientId]);
   // Serialised snapshot of every client as last written, keyed by id. The dirty check USED to hold
@@ -3727,6 +4002,23 @@ export default function StudioApp() {
     return { rc: null, unitPrice, lineCost: qty * unitPrice, area: 0, warning: null, isFloralBlend: true, realPct, patternSMB: pattern.mode === "smb" };
   }, [dealCheckData, studioFloralData, rcFloralModeByKey, floralRatio, imsInventory, rcFactorByKey]);
 
+  // Price an element sourced directly from a raw mandi commodity (el.mandiId, sibling to
+  // el.patternId's getElPriceFromPattern) — e.g. "Loose Petals" added straight to a zone by the kg,
+  // with no recipe/blend and no rentable IMS stock behind it. Just qty × the chosen colour variant's
+  // own currentPrice, falling back to the parent flower's currentPrice when no variant is picked yet
+  // (see resolveMandiFlower in lib/ims/flowerHelpers.js for the same parent/variant lookup used
+  // elsewhere — this reads the variant's OWN price instead of that helper's always-parent-price
+  // behavior, since here the variant IS the specific thing being bought, not just a recipe label).
+  const getElPriceFromMandi = useCallback((el) => {
+    const floralSrc = dealCheckData || studioFloralData || {};
+    const parent = (floralSrc.mandiCatalogue || []).find((m) => m.id === el.mandiId);
+    if (!parent) return { rc: null, unitPrice: 0, lineCost: 0, area: 0, warning: null, isFloralBlend: false, realPct: null };
+    const variant = el.mandiVariantId ? (parent.colorVariants || []).find((v) => v.variantId === el.mandiVariantId) : null;
+    const unitPrice = Number((variant || parent).currentPrice) || 0;
+    const qty = el.qty || 0;
+    return { rc: null, unitPrice, lineCost: qty * unitPrice, area: 0, warning: null, isFloralBlend: false, realPct: null };
+  }, [dealCheckData, studioFloralData]);
+
   // Rate Card → IMS migration: price an element sourced directly from IMS inventory (Library
   // "+Add element" — no Rate Card lookup involved for these, by design, not as a fallback).
   // Returns the same shape getElPrice/getElPriceForFn do, so it drops into every existing caller
@@ -3739,29 +4031,114 @@ export default function StudioApp() {
   // has been opened once for this client; studioFloralData is fetched unconditionally on mount
   // and carries the same fixedVenues/fixedVenueSubcatDiscount, so a zone marked ♻️ Repeat prices
   // correctly here even before Deal Check has ever run.
+  //
+  // venueParents specifically: the LOCAL memo (always live, recomputed from customInhouse/
+  // customOutdoor/customProperties, which load at boot independent of Deal Check) now comes FIRST,
+  // ahead of dealCheckData's own copy — the reverse of every other field here. dealCheckData.
+  // venueParents is a snapshot taken whenever Deal Check last ran; a sub-venue added, or a property
+  // renamed, since then would silently keep resolving to the stale mapping for the rest of the
+  // session otherwise, the same "Deal-Check-gated" trap already fixed for agencyFeePct/trussInv —
+  // this one just runs the other direction (local-over-stale, not local-as-fallback) because the
+  // local computation is provably never staler than dealCheckData's own copy of the same data.
   const fvCfgForRepeat = useMemo(() => ({
     fixedVenues: (dealCheckData?.fixedVenues?.length ? dealCheckData.fixedVenues : studioFloralData?.fixedVenues) || [],
-    venueParents: dealCheckData?.venueParents || venueParents || {},
+    venueParents: venueParents || dealCheckData?.venueParents || {},
     fixedVenueSubcatDiscount: (dealCheckData?.fixedVenueSubcatDiscount && Object.keys(dealCheckData.fixedVenueSubcatDiscount).length ? dealCheckData.fixedVenueSubcatDiscount : studioFloralData?.fixedVenueSubcatDiscount) || {},
   }), [dealCheckData, studioFloralData, venueParents]);
-  // Repeat-billed line cost for `qty` units of `item` at `unitRate` — ports Deal Check's own
-  // repeatAdjustedRental formula (DealCheckOverlay.jsx) into Build's pricing, so a zone marked
-  // ♻️ Repeat actually prices lower here too, matching what the Repeat toggle's own tooltip
-  // already promises ("discounted rental") instead of being a silent no-op. Needs BOTH a repeat
-  // zone (zc?.repeat) and a resolved venue name — omit either and this returns the full price
-  // unchanged, so any call site that doesn't pass them keeps pricing exactly as before.
-  const repeatAdjustedLineCost = (item, qty, unitRate, zc, venueName) => {
+  // Owner ask: a discrete per-deal toggle (Build's reference banner, beside Upload) — OFF (hidden)
+  // BY DEFAULT: every Fixed-Venue/Repeat discount prices at full rate for the GUEST-facing numbers
+  // — Build's live canvas, Summary, and every export — until the checkbox is explicitly ticked to
+  // client_ledger.applyDiscountToClient. Deal Check (Ambria's own internal cost/ops side — it never
+  // reads any of the functions below, it has its own separate repeatAdjustedRental/dcCostRollup)
+  // always applies the real discount regardless of this checkbox. zc.repeat itself is untouched
+  // either way (the ✨Fresh/♻️Repeat toggle stays available and still flows to Deal Check as before)
+  // — only what that flag PRICES for the client depends on this.
+  const hideDiscountFromClient = !clientLedger.find(c => c.id === activeClientId)?.applyDiscountToClient;
+  // Feeds calcStructCost's flat 25% (see its own comment) — same eligibility rule
+  // repeatAdjustedLineCost uses for elements: the toggle is on AND (this zone is Repeat OR the
+  // venue itself is one of Deal Check's registered Fixed Venues — checked at the venue level here
+  // since structural cost has no per-item id the way an inventory element does).
+  const structDiscountFor = (zc, venueName) => !hideDiscountFromClient && (!!zc?.repeat || !!fixedVenueFor(fvCfgForRepeat, venueName));
+  // Owner ask: a second discrete per-deal lever, alongside hideDiscountFromClient — the small dot on
+  // each Photo Filters section (Build's left rail) doubles as a markup tier picker when clicked
+  // directly: Venue=1x, Event type=1.1x, Venue type=1.2x, Design style=1.3x, Color palette=1.4x,
+  // Day/Night=1.5x, Tier=1.6x (client_ledger.guestPriceMultiplier — a plain float, defaults to 1).
+  // Scales EVERYTHING the guest pays — element/"menu" pricing (getElPrice/getElPriceForFn), structural
+  // costs (calcStructCost's truss/masking/platform/carpet/print, via scaleStruct below), and
+  // Transport & Power (transportCalc/calcFunctionCost/calcFunctionBreakdown's truckTotal/gensetCost).
+  // NOT Deal Check — dcCostRollup/repeatAdjustedRental are Ambria's own cost-side numbers and never
+  // call any of the functions this multiplies, so they stay exactly as-is regardless of this lever.
+  const guestPriceMultiplier = (() => {
+    const m = Number(clientLedger.find(c => c.id === activeClientId)?.guestPriceMultiplier);
+    return (m >= 1 && m <= 2) ? m : 1;
+  })();
+  // Category Multipliers (IMS → Admin → Calendar → Date Pricing Config — King's/Perfect/Filler):
+  // "Base price × multiplier = effective rental price charged to client", scoped to element/rental
+  // pricing (getElPrice/getElPriceForFn) to match that text — not structural/transport, unlike
+  // guestPriceMultiplier above. Always on (not gated by hideDiscountFromClient — this is market
+  // pricing by date desirability, not a discount the client opts into). Reuses getEffectivePricing
+  // (lib/inventory/helpers.js) — the SAME function IMS's own Inventory tab/P&L report already read —
+  // so a date's category and its last-minute-booking override resolve identically everywhere.
+  // dealCheckData falls back to studioFloralData so this works before Deal Check has ever been
+  // opened, same reasoning as fixedVenues/agencyFeePct above.
+  const dateCategoryMultiplierFor = (dateStr) => {
+    const dp = dealCheckData?.datePricing || studioFloralData?.datePricing;
+    if (!dp || !dateStr) return 1;
+    const m = getEffectivePricing(1, dateStr, { datePricing: dp }).multiplier;
+    return (m > 0) ? m : 1;
+  };
+  // Owner ask: the guest-facing cross-function reuse discount/transport-waiver (findCrossFnReuseSource,
+  // below) must never fire for a function priced on a Filler ("non_saya") date — Filler dates are
+  // already the cheapest category, and the owner doesn't want an extra discount stacked on top of one.
+  // Only gates that ONE mechanism; every other date-category behavior above is unaffected.
+  const isFillerDateFor = (dateStr) => {
+    const dp = dealCheckData?.datePricing || studioFloralData?.datePricing;
+    if (!dp || !dateStr) return false;
+    return resolveDateCategory(dateStr, { datePricing: dp }) === "non_saya";
+  };
+  // calcStructCost is a plain module-level function (no closure over component state), so its
+  // truss/masking/platform/carpet/arches/pillars/glass/print/total/trussDiscount fields are all
+  // scaled here, once, at every guest-facing call site instead of threading the multiplier through
+  // calcStructCost's own signature (which Deal Check-adjacent code never calls anyway).
+  const scaleStruct = (r) => {
+    if (guestPriceMultiplier === 1 || !r) return r;
+    const s = { ...r };
+    ["truss", "masking", "platform", "carpet", "arches", "pillars", "glass", "print", "total", "trussDiscount"].forEach((k) => {
+      if (typeof s[k] === "number") s[k] = s[k] * guestPriceMultiplier;
+    });
+    return s;
+  };
+  // Repeat-billed line cost for `qty` units of `item` at `unitRate` (the full guest-facing,
+  // already-marked-up rate). Owner decision: Deal Check's own config — the Fixed Venues screen's
+  // per-item "% off" fields AND the "Repeat discounts by sub-category" table — is Ambria's own
+  // cost-side lever ONLY (still read via rentalSplit/repeatAdjustedRental in
+  // DealCheckOverlay.jsx, completely unaffected by any of this). The guest build never reads
+  // either of those % tables. Instead: a flat 25% off the FULL guest-facing price (markup
+  // included, not just raw cost) whenever the discreet toggle near Upload is on AND (the item is
+  // this venue's registered standing inventory — checked by qty, kit or not, top-level id only,
+  // same standingQty/rentalSplit plumbing Deal Check still uses for its own separate purpose — OR
+  // the zone is flagged ♻️ Repeat). Both true → still one 25%, never stacked. A registered-
+  // standing item's qty beyond what's actually registered (extra
+  // units built fresh for this event) still bills full — that's a real fact about physical
+  // availability, not a discount %, so the standing/fresh split stays. A Repeat zone has no such
+  // split: the whole zone is reused, so its full qty qualifies.
+  const GUEST_DISCOUNT_PCT = 25;
+  // crossFnReuseQty (optional, default 0): units of THIS same item (by invId) already used in an
+  // earlier function of this same deal, at the same venue, within 24h (findCrossFnReuseSource/
+  // computeFnInvQty above) — a SECOND eligibility source feeding the same discount split as the
+  // Fixed-Venue standingUnits below, not a separate discount. Both eligible amounts are capped at
+  // qty combined (never double-discount the same physical unit twice).
+  const repeatAdjustedLineCost = (item, qty, unitRate, zc, venueName, crossFnReuseQty = 0) => {
     const full = qty * unitRate;
-    if (!zc?.repeat || !venueName || !item) return full;
-    const { standingUnits, freshUnits, discountPct } = rentalSplit(fvCfgForRepeat, venueName, item.id, qty, imsInventory);
-    if (standingUnits > 0) return standingUnits * unitRate * (1 - discountPct / 100) + freshUnits * unitRate;
-    // Not registered standing at this specific venue — Repeat still applies (a reused setup can
-    // happen anywhere), just without a venue-specific cap: the sub-category default, same
-    // fallback Deal Check's own repeatAdjustedRental uses.
-    const key = String(item.subCat || item.subcategory || "").toLowerCase().trim();
-    const sc = key ? Number((fvCfgForRepeat.fixedVenueSubcatDiscount || {})[key]) : NaN;
-    const pct = Number.isFinite(sc) && sc > 0 ? sc : 0;
-    return full * (1 - pct / 100);
+    if (!item) return full;
+    if (hideDiscountFromClient) return full; // see hideDiscountFromClient above — guest-facing only
+    // Rounded to the rupee — a 25% cut rarely lands on a whole number otherwise (₹1,289 × 0.75 =
+    // ₹966.75), and every other price in the build is a whole rupee.
+    if (zc?.repeat) return Math.round(full * (1 - GUEST_DISCOUNT_PCT / 100));
+    const { standingUnits } = rentalSplit(fvCfgForRepeat, venueName, item.id, qty, imsInventory);
+    const discEligible = Math.min(qty, Math.max(0, standingUnits) + Math.max(0, crossFnReuseQty));
+    if (discEligible <= 0) return full;
+    return Math.round(discEligible * unitRate * (1 - GUEST_DISCOUNT_PCT / 100) + (qty - discEligible) * unitRate);
   };
   // opts.checkAvailability (Build view's live canvas ONLY — explicit opt-in, never a default) turns
   // on the same unavailable-shortfall pricing already built for Deal Check: qty within what's free
@@ -3774,6 +4151,19 @@ export default function StudioApp() {
     const item = imsInventory.find((i) => i.id === el.invId);
     if (!item) return { rc: null, unitPrice: 0, lineCost: 0, area: 0, warning: null, isFloralBlend: false, realPct: null };
     const qty = el.qty || 0;
+    // opts.crossFnReusePool (optional, a mutable Map<invId, remainingQty> built once per function
+    // by calcFunctionCost/calcFunctionBreakdown from the matching prior function — see
+    // findCrossFnReuseSource/computeFnInvQty) — how much of THIS invId is still unclaimed from that
+    // prior function. Drawn down here so a second element on the same invId in this function can't
+    // double-claim the same reused units; fed into repeatAdjustedLineCost below as a second
+    // discount-eligibility source alongside Fixed-Venue standingUnits.
+    const crossFnTake = (() => {
+      const pool = opts?.crossFnReusePool;
+      if (!pool) return 0;
+      const t = Math.min(qty, pool.get(el.invId) || 0);
+      if (t > 0) pool.set(el.invId, (pool.get(el.invId) || 0) - t);
+      return t;
+    })();
     const isKit = Array.isArray(item.subItems) && item.subItems.length > 0;
     // dealCheckData is null outside an active Deal Check session — floralArtUnitRate/patternExtra
     // already fall back to studioFloralData for this exact reason; mirror that here too.
@@ -3841,7 +4231,7 @@ export default function StudioApp() {
         const flowerCost = recipeCost(subCatPattern, item.subCat || item.subcategory) + attachedPatterns.reduce((sum, x) => sum + recipeCost(x.pattern, x.pattern.sub, x.qty, x.si), 0) + compDelta;
         const unitPrice = priceForInvItem(item, rcFactorByKey, imsInventory, el.kitOverrides) + flowerCost;
         const anySMB = subCatPattern?.mode === "smb" || attachedPatterns.some((x) => x.pattern.mode === "smb");
-        return { rc: null, unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName), area: 0, warning: null, isFloralBlend: false, realPct: null, patternSMB: anySMB };
+        return { rc: null, unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName, crossFnTake), area: 0, warning: null, isFloralBlend: false, realPct: null, patternSMB: anySMB };
       }
     }
 
@@ -3865,7 +4255,7 @@ export default function StudioApp() {
         // item's own rental (× its sub-category's scaling factor) is always added on top, alongside
         // the recipe's own generic "extra (pot/base)" figure.
         const unitPrice = Math.round(realPct / 100 * rates.realRate + (100 - realPct) / 100 * rates.artRate) + rates.extra + priceForInvItem(item, rcFactorByKey, imsInventory);
-        return { rc: null, unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName), area: 0, warning: null, isFloralBlend: true, realPct, patternSMB: pattern.mode === "smb" };
+        return { rc: null, unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName, crossFnTake), area: 0, warning: null, isFloralBlend: true, realPct, patternSMB: pattern.mode === "smb" };
       }
     }
 
@@ -3915,7 +4305,7 @@ export default function StudioApp() {
       // Repeat discount applies to the owned/available portion only — same ordering Deal Check's
       // own rollup already uses (DealCheckOverlay.jsx): the shortfall (not actually free in stock)
       // bills at cost% regardless, never discounted further on top of that.
-      const lineCost = repeatAdjustedLineCost(item, ownedQty, ownedRate, opts?.zc, opts?.venueName) + shortQty * shortRate;
+      const lineCost = repeatAdjustedLineCost(item, ownedQty, ownedRate, opts?.zc, opts?.venueName, crossFnTake) + shortQty * shortRate;
       const unitPrice = qty > 0 ? lineCost / qty : ownedRate;
       const warning = shortQty > 0 ? `⚠ ${shortQty} of ${qty} not free in stock for this date — priced at cost%` : null;
       // `available` here is "how much of THIS row's own qty is real stock" (= ownedQty) — the sole
@@ -3924,7 +4314,7 @@ export default function StudioApp() {
       return { rc: null, unitPrice, lineCost, area: 0, warning, isFloralBlend: false, realPct: null, available: ownedQty };
     }
     const unitPrice = priceForInvItem(item, rcFactorByKey, imsInventory, el.kitOverrides);
-    return { rc: null, unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName), area: 0, warning: null, isFloralBlend: false, realPct: null };
+    return { rc: null, unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName, crossFnTake), area: 0, warning: null, isFloralBlend: false, realPct: null };
   }, [imsInventory, rcFactorByKey, rcCostPctForSub, activeBlocksForDate, dealCheckData, studioFloralData, rcFloralModeByKey, floralRatio, fvCfgForRepeat, clientLedger, activeClientId, activeFnIdx, activeFnMeta, clientDate]);
   // Shared SMB/flat rate resolution — the one place `getElPrice`, `getElPriceForFn`, and
   // `calcFullEventCost` all resolve a rate-card item's base rate for an element's size, now with
@@ -4009,13 +4399,28 @@ export default function StudioApp() {
   const FLORAL_DATA_KEYS = [
     "flowerPatterns", "mandiCatalogue", "artificialFlowerRatePerKg", "artificialFlowerBunchesPerKg",
     "artificialGreenRatePerKg", "artificialGreenBunchesPerKg", "defaultStudioMarkup",
-    "fixedVenues", "fixedVenueSubcatDiscount",
+    "fixedVenues", "fixedVenueSubcatDiscount", "agencyFeePct", "datePricing",
   ];
   const refreshStudioFloralData = useCallback(async () => {
     try {
-      const { data } = await supabase.from("settings").select("key,value").in("key", FLORAL_DATA_KEYS);
+      // truss_inventory alongside settings, same parallel fetch shape — it's one row (key "main"),
+      // not the 600+-row `inventory` table, so it costs nothing extra to load on mount. Needed so the
+      // fixed-venue pillar/beam discount (calcStructCost's trussInv param) can compute before Deal
+      // Check has ever been opened — dealCheckData?.trussInv used to be the only source, so Build's/
+      // Summary's own total silently omitted this discount (showing a HIGHER total) until Deal Check
+      // loaded it, then stayed lower afterward — the other half of the "total changes after opening
+      // Deal Check" bug, alongside the agencyFeePct/fixedVenues gap fixed above.
+      const [{ data }, trussInvRows] = await Promise.all([
+        supabase.from("settings").select("key,value").in("key", FLORAL_DATA_KEYS),
+        fetchAll("truss_inventory").catch(() => []),
+      ]);
       const s = {};
       (data || []).forEach(r => { let v = r?.value; for (let i = 0; i < 2; i++) { if (typeof v === "string") { try { v = JSON.parse(v); } catch { break; } } } s[r.key] = v; });
+      let trussInv = null;
+      const trussMain = Array.isArray(trussInvRows) ? trussInvRows.find(r => r.key === "main") : null;
+      let tv = trussMain?.data;
+      for (let i = 0; i < 2; i++) { if (typeof tv === "string") { try { tv = JSON.parse(tv); } catch { break; } } }
+      if (tv && typeof tv === "object" && tv.pillars) trussInv = tv;
       setStudioFloralData({
         flowerPatterns: Array.isArray(s.flowerPatterns) ? s.flowerPatterns : [],
         mandiCatalogue: Array.isArray(s.mandiCatalogue) ? s.mandiCatalogue : [],
@@ -4026,6 +4431,18 @@ export default function StudioApp() {
         defaultStudioMarkup: Number(s.defaultStudioMarkup ?? 3) || 3,
         fixedVenues: Array.isArray(s.fixedVenues) ? s.fixedVenues : [],
         fixedVenueSubcatDiscount: (s.fixedVenueSubcatDiscount && typeof s.fixedVenueSubcatDiscount === "object") ? s.fixedVenueSubcatDiscount : {},
+        // Same reason fixedVenues lives here and not only in dealCheckData: eventGrandTotal/grandTotal/
+        // buildCombinedCostSheetData (Build's own live total, Summary's hero, the cost sheet) all need
+        // the REAL configured fee before Deal Check has ever been opened — dealCheckData stays null
+        // until then, and these totals used to silently fall back to a hardcoded 20% in the meantime,
+        // then visibly jump once Deal Check's fetch landed and stayed jumped (dealCheckData persists
+        // after Deal Check closes). This lightweight settings-only fetch closes that gap.
+        agencyFeePct: typeof s.agencyFeePct === "number" ? s.agencyFeePct : 20,
+        // Same reasoning as agencyFeePct/fixedVenues above — Category Multipliers (IMS → Calendar →
+        // Date Pricing Config) must scale the guest-facing rental price before Deal Check has ever
+        // been opened too, not just once dealCheckData's own copy has loaded.
+        datePricing: (s.datePricing && typeof s.datePricing === "object") ? s.datePricing : SETTINGS_DEFAULTS.datePricing,
+        trussInv,
       });
     } catch { /* ignore — floral auto-derive falls back to flat rate */ }
   }, []);
@@ -4120,8 +4537,9 @@ export default function StudioApp() {
   // already resolves that — function 0 or whichever extraFunctions entry is active) — every
   // existing caller of getElPrice/calcElsCost prices the active function's live canvas, so this
   // default is always correct for them without having to pass it explicitly at each call site.
-  const getElPrice = useCallback((el, zc, opts, venueName) => {
+  const getElPriceRaw = useCallback((el, zc, opts, venueName) => {
     if (el.invId) return getElPriceFromInventory(el, { ...opts, zc, venueName: venueName ?? activeFnMeta.venue }); // IMS inventory-sourced element — Rate Card never consulted
+    if (el.mandiId) return getElPriceFromMandi(el); // raw mandi commodity (e.g. Loose Petals), no recipe/inventory
     if (el.patternId) return getElPriceFromPattern(el); // pure flower-recipe element, no inventory item
     const rc = rcItems.find(i => i.name.toLowerCase() === (el.name || "").toLowerCase());
     if (!rc) return { rc: null, unitPrice: 0, lineCost: 0, area: 0, warning: null, isFloralBlend: false, realPct: null };
@@ -4158,7 +4576,21 @@ export default function StudioApp() {
       return { rc, unitPrice: up, lineCost: area * up, area, warning, isFloralBlend: isFloral, realPct };
     }
     return { rc, unitPrice: up, lineCost: (el.qty || 0) * up, area: 0, warning: null, isFloralBlend: isFloral, realPct };
-  }, [rcItems, getFloralMode, rcFloralModeByKey, floralRatio, floralArtUnitRate, patternExtra, resolveRcRate, getElPriceFromInventory, getElPriceFromPattern, activeFnMeta]);
+  }, [rcItems, getFloralMode, rcFloralModeByKey, floralRatio, floralArtUnitRate, patternExtra, resolveRcRate, getElPriceFromInventory, getElPriceFromPattern, getElPriceFromMandi, activeFnMeta]);
+  // guestPriceMultiplier + dateCategoryMultiplierFor(activeFnMeta.date) applied once, here, on top
+  // of whichever branch above priced the element — scales unitPrice/lineCost only, leaving area/
+  // warning/availability/realPct untouched. activeFnMeta.date is whichever function's tab is
+  // currently open in Build — clientDate is NOT that: it is always function 0's own date
+  // specifically (restoreBuildState, run on every function-tab switch, never touches it), so a
+  // deal's 2nd+ function priced here at clientDate's date-category instead of its own — e.g. a
+  // Filler-dated function 1 and a Kings-dated function 2 both silently priced at Filler while
+  // function 2 was the one open in Build.
+  const getElPrice = useCallback((el, zc, opts, venueName) => {
+    const r = getElPriceRaw(el, zc, opts, venueName);
+    const mult = guestPriceMultiplier * dateCategoryMultiplierFor(activeFnMeta.date);
+    if (mult === 1) return r;
+    return { ...r, unitPrice: r.unitPrice * mult, lineCost: r.lineCost * mult };
+  }, [getElPriceRaw, guestPriceMultiplier, activeFnMeta, dealCheckData, studioFloralData]);
 
   const calcElsCost = useCallback((elements, withFloral, zc, opts, venueName) => {
     return (elements || []).reduce((s, el) => {
@@ -4179,8 +4611,9 @@ export default function StudioApp() {
   // function snapshot" — callers iterate their OWN fns/fnData with its own fnVenue, so there is no
   // single correct default the way activeFnMeta.venue is for the always-active-function getElPrice.
   // Omit it and a Repeat zone here simply prices at full rate, same as before this existed.
-  const getElPriceForFn = useCallback((el, zc, fnRatio, checkAvail, venueName, blocksForDate) => {
-    if (el.invId) return getElPriceFromInventory(el, { checkAvailability: !!checkAvail, zc, venueName, blocksForDate }); // IMS inventory-sourced element — Rate Card never consulted
+  const getElPriceForFnRaw = useCallback((el, zc, fnRatio, checkAvail, venueName, blocksForDate, crossFnReusePool) => {
+    if (el.invId) return getElPriceFromInventory(el, { checkAvailability: !!checkAvail, zc, venueName, blocksForDate, crossFnReusePool }); // IMS inventory-sourced element — Rate Card never consulted
+    if (el.mandiId) return getElPriceFromMandi(el); // raw mandi commodity (e.g. Loose Petals), no recipe/inventory
     if (el.patternId) return getElPriceFromPattern(el); // pure flower-recipe element, no inventory item
     const rc = rcItems.find(i => i.name.toLowerCase() === (el.name || "").toLowerCase());
     if (!rc) return { rc: null, unitPrice: 0, lineCost: 0 };
@@ -4211,10 +4644,24 @@ export default function StudioApp() {
       return { rc, unitPrice: up, lineCost: area * up };
     }
     return { rc, unitPrice: up, lineCost: (el.qty || 0) * up };
-  }, [rcItems, getFloralMode, rcFloralModeByKey, floralArtUnitRate, patternExtra, resolveRcRate, getElPriceFromInventory, getElPriceFromPattern]);
+  }, [rcItems, getFloralMode, rcFloralModeByKey, floralArtUnitRate, patternExtra, resolveRcRate, getElPriceFromInventory, getElPriceFromPattern, getElPriceFromMandi]);
+  // Same guestPriceMultiplier + dateCategoryMultiplierFor fold as getElPrice, for the export/
+  // collectAllFunctionData path — fnDate (optional, new) is THIS function's own date (multi-function
+  // bookings can span several dates/categories), not necessarily the active function's clientDate.
+  // Omitted, it prices at 1x category multiplier same as before this existed.
+  const getElPriceForFn = useCallback((el, zc, fnRatio, checkAvail, venueName, blocksForDate, fnDate, crossFnReusePool) => {
+    const r = getElPriceForFnRaw(el, zc, fnRatio, checkAvail, venueName, blocksForDate, crossFnReusePool);
+    const mult = guestPriceMultiplier * dateCategoryMultiplierFor(fnDate);
+    if (mult === 1) return r;
+    return { ...r, unitPrice: r.unitPrice * mult, lineCost: r.lineCost * mult };
+  }, [getElPriceForFnRaw, guestPriceMultiplier, dealCheckData, studioFloralData]);
 
-  const calcElsCostForFn = useCallback((elements, zc, fnRatio, checkAvail, venueName, blocksForDate) => {
-    return (elements || []).reduce((s, el) => s + getElPriceForFn(el, zc, fnRatio, checkAvail, venueName, blocksForDate).lineCost, 0);
+  // crossFnReusePool (optional): a mutable Map<invId, remainingQty> from the matching prior
+  // function (see findCrossFnReuseSource/computeFnInvQty) — passed straight through to every
+  // element's pricing call so the same guest-facing cross-function reuse discount as Fixed-Venue
+  // standing units applies. Omitted by every existing caller that has no such pool (full price).
+  const calcElsCostForFn = useCallback((elements, zc, fnRatio, checkAvail, venueName, blocksForDate, fnDate, crossFnReusePool) => {
+    return (elements || []).reduce((s, el) => s + getElPriceForFn(el, zc, fnRatio, checkAvail, venueName, blocksForDate, fnDate, crossFnReusePool).lineCost, 0);
   }, [getElPriceForFn]);
 
   // The price badge on every UNSELECTED photo tile: what this zone would cost if you picked this
@@ -4228,9 +4675,9 @@ export default function StudioApp() {
   const calcPhotoCost = useCallback((zoneKey, photo) => {
     const zc = (photo?.dims && Object.values(photo.dims).some(v => v > 0)) ? buildZoneConfig(zoneKey, photo.dims) : null;
     const elCost = calcElsCost(photo?.elements, true, zc, { checkAvailability: true });
-    const structCost = zc ? calcStructCost(zoneKey, zc, structRates).total : 0;
+    const structCost = zc ? scaleStruct(calcStructCost(zoneKey, zc, structRates, structDiscountFor(zc, venue))).total : 0;
     return elCost + structCost;
-  }, [calcElsCost, structRates]);
+  }, [calcElsCost, structRates, guestPriceMultiplier, venue, hideDiscountFromClient, fvCfgForRepeat]);
 
   const calcFullEventCost = useCallback((ev) => {
     if (!ev) return 0;
@@ -4280,7 +4727,7 @@ export default function StudioApp() {
       });
     });
     const venueName = ev.venue || "";
-    const match = trVenues.find(v => v.name.toLowerCase() === venueName.toLowerCase());
+    const match = resolveTrVenue(trVenues, venueName, venueParents);
     const tripRate = match ? match.rate : 0;
     let truckFrac = 0;
     Object.entries(itemAgg).forEach(([tcId, qty]) => { const tc = truckCap.find(t => t.id === tcId); if (!tc || !tc.perTruck) return; truckFrac += qty / tc.perTruck; });
@@ -4297,7 +4744,7 @@ export default function StudioApp() {
     // behaviour — this is a Browse-card estimate, not the live deal's own priced total).
     const gensetCost = resolveGensetPlan(match, null, genset62, gensetRate, gensetRate62).gensetCost;
     return decorCost + truckTotal + gensetCost;
-  }, [ytVideoTags, libItems, rcItems, getElPrice, resolveRcRate, getElPriceFromInventory, getElPriceFromPattern, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, genset62, structRates]);
+  }, [ytVideoTags, libItems, rcItems, getElPrice, resolveRcRate, getElPriceFromInventory, getElPriceFromPattern, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, genset62, structRates, venueParents]);
 
   const fullCostMap = useMemo(() => {
     const m = {};
@@ -4333,7 +4780,9 @@ export default function StudioApp() {
     // every edit) — letting it override the live config silently priced a deal from an out-of-date
     // zone list whenever a session happened to still be carrying one.
     const zones = Object.entries(zoneConfig).filter(([zk, cfg]) => enabledEls[zk] && cfg).map(([zk, cfg]) => ({ id: zk, type: zk, name: zk, config: cfg }));
-    zones.forEach(z => { c += calcStructCost(z.type, z.config, structRates).total; });
+    // structDiscountFor is per-zone (zc.repeat varies per zone), unlike the old venue-only truss
+    // discount this replaced.
+    zones.forEach(z => { c += scaleStruct(calcStructCost(z.type, z.config, structRates, structDiscountFor(z.config, venue))).total; });
     Object.entries(zoneElements).forEach(([zk, elems]) => {
       if (!enabledEls[zk] || !elems) return;
       c += calcElsCost(elems, true, zoneConfig[zk], { checkAvailability: true }); // active fn's live canvas — see activeBlocksForDate
@@ -4348,11 +4797,11 @@ export default function StudioApp() {
       c += (ci.manualPrice || ci.refPrice || 0) * (Number(ci.qty) || 1);
     });
     return c;
-  }, [venue, enabledEls, zoneConfig, zoneElements, calcElsCost, dcCustomItems, activeFnIdx, structRates]);
+  }, [venue, enabledEls, zoneConfig, zoneElements, calcElsCost, dcCustomItems, activeFnIdx, structRates, dealCheckData, studioFloralData, fvCfgForRepeat, clientLedger, activeClientId]);
 
   const transportCalc = useMemo(() => {
     if (!venue) return { trucks: 0, tripRate: 0, total: 0, isNew: true, tier: "new", tierLabel: "", breakdown: [], floralTrucks: 0, bufferTrucks: 0, itemTrucks: 0 };
-    const match = trVenues.find(v => v.name.toLowerCase() === venue.toLowerCase());
+    const match = resolveTrVenue(trVenues, venue, venueParents);
     const isNew = !match;
     const tripRate = match ? match.rate : customTripRate;
     const tierId = match ? match.tier : "new";
@@ -4367,7 +4816,17 @@ export default function StudioApp() {
       return { trucks: 0, tripRate, total: 0, isNew, tier: tierId, tierLabel, breakdown: [], floralTrucks: 0, bufferTrucks: 0, itemTrucks: 0, totalFloralCost: 0, gensets: 0, venueGensets: venueOnly.genset125, venueGenset62: venueOnly.genset62, gensetCost: 0, gensetRate, gensetRate62, genset62: 0, truckTotal: 0 };
     }
     const breakdown = [];
-    const { itemTrucks, breakdown: itemBd } = computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckCap, imsInventory, (dealCheckData || studioFloralData)?.flowerPatterns);
+    const trussInvHere = dealCheckData?.trussInv || studioFloralData?.trussInv;
+    // Real-flower kg (summed across every mandi item regardless of its own unit — an approximation,
+    // see computeTruckItems' comment) + artificial bunches, for the Real Flowers / Artificial Flowers
+    // truck-capacity rows. Goes through the ref, not a direct call — see calcFnFloralSourcingCostRef's
+    // declaration for why (this memo is declared before calcFnFloralSourcingCost in the file).
+    const floralSourcingHere = calcFnFloralSourcingCostRef.current?.({ zoneElements, enabledEls, floralOverrides, fnIdx: activeFnIdx, fnDate: clientDate, floralRatio });
+    const flowerMaterialQty = {
+      realKg: (floralSourcingHere?.breakdown || []).reduce((s, f) => s + (f.qty || 0), 0),
+      artBunches: (floralSourcingHere?.artFlowerBunches || 0) + (floralSourcingHere?.artGreenBunches || 0),
+    };
+    const { itemTrucks, breakdown: itemBd } = computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckCap, imsInventory, (dealCheckData || studioFloralData)?.flowerPatterns, trussInvHere, flowerMaterialQty, fvCfgForRepeat, venue, !hideDiscountFromClient);
     itemBd.forEach(b => breakdown.push(b));
     const floralTrucks = 0, totalFloralCost = 0; // florals now counted via their sub-category capacity — no separate flower truck
     const bt = bufferTiers.find(b => decor >= b.minBudget && decor < b.maxBudget);
@@ -4383,22 +4842,26 @@ export default function StudioApp() {
     // (25% markup, the owner's requested starting point) for a venue nobody has set it on.
     const rawTruckTotal = allTrucks * tripRate * 2;
     const clientScale = Number(match?.clientScale) > 0 ? Number(match.clientScale) : 1.25;
-    const truckTotal = rawTruckTotal * clientScale;
-    const total = truckTotal + plan.gensetCost;
-    return { trucks: allTrucks, tripRate, total, isNew, tier: tierId, tierLabel, breakdown, floralTrucks, bufferTrucks: bufTrucks, itemTrucks, totalFloralCost, gensets: plan.genset125, venueGensets: plan.venueGenset125, venueGenset62: plan.venueGenset62, gensetCost: plan.gensetCost, gensetRate, gensetRate62, genset62: plan.genset62, truckTotal, clientScale };
-  }, [venue, customTripRate, customGensets, gensetRate, gensetRate62, genset62, trVenues, zoneElements, enabledEls, rcItems, truckCap, floralPerTruck, bufferTiers, totalCost, zoneConfig, imsInventory, dealCheckData, studioFloralData]);
+    const truckTotal = rawTruckTotal * clientScale * guestPriceMultiplier;
+    // gensetCost is already the GUEST-billed figure (resolveGensetPlan's own gensetCostOurs is the
+    // separate, unscaled figure Deal Check's Power tab reads for what we actually pay the vendor).
+    const gensetCostForGuest = plan.gensetCost * guestPriceMultiplier;
+    const total = truckTotal + gensetCostForGuest;
+    return { trucks: allTrucks, tripRate, total, isNew, tier: tierId, tierLabel, breakdown, floralTrucks, bufferTrucks: bufTrucks, itemTrucks, totalFloralCost, gensets: plan.genset125, venueGensets: plan.venueGenset125, venueGenset62: plan.venueGenset62, gensetCost: gensetCostForGuest, gensetRate, gensetRate62, genset62: plan.genset62, truckTotal, clientScale };
+  }, [venue, customTripRate, customGensets, gensetRate, gensetRate62, genset62, trVenues, zoneElements, enabledEls, rcItems, truckCap, floralPerTruck, bufferTiers, totalCost, zoneConfig, imsInventory, dealCheckData, studioFloralData, floralOverrides, floralRatio, activeFnIdx, clientDate, fvCfgForRepeat, venueParents, clientLedger, activeClientId]);
 
   const grandTotal = useMemo(() => {
     const base = totalCost() + transportCalc.total;
     // Fixed-venue discount — same as eventGrandTotal's, just for this one active function/venue.
-    const fvCfg = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
+    // Same studioFloralData/venueParents fallback as eventGrandTotal, for the same reason.
+    const fvCfg = { fixedVenues: (dealCheckData?.fixedVenues?.length ? dealCheckData.fixedVenues : studioFloralData?.fixedVenues) || [], venueParents: venueParents || dealCheckData?.venueParents || {} };
     const discounted = Math.max(0, base - fixedVenueDealDiscount(fvCfg, [{ fnVenue: venue }], () => base, base));
     // Agency fee (Admin → Settings, default 20%) — this is Build's own live "page total" for the
     // active function, the number a salesperson watches while building. It has to carry the fee too,
     // or it would visibly disagree with eventGrandTotal/Deal Check/the cost sheet, which all do.
-    const feePct = Number(dealCheckData?.agencyFeePct) || 20;
+    const feePct = Number(dealCheckData?.agencyFeePct ?? studioFloralData?.agencyFeePct) || 20;
     return discounted + Math.round(discounted * feePct / 100);
-  }, [totalCost, transportCalc, dealCheckData, venue]);
+  }, [totalCost, transportCalc, dealCheckData, venue, studioFloralData, venueParents]);
 
   const collectAllFunctionData = useCallback(() => {
     const all = [];
@@ -4451,6 +4914,13 @@ export default function StudioApp() {
     const fEnabledEls = fnData.enabledEls || {};
     const fVenue = fnData.fnVenue || "";
     const fFloralRatio = typeof fnData.floralRatio === "number" ? fnData.floralRatio : 70;
+    // Cross-function reuse (guest-facing) — see findCrossFnReuseSource/computeFnInvQty above. Two
+    // SEPARATELY-seeded pools (decor pricing vs transport truck-qty below): both walk fZoneElements
+    // in the same order, so they land on identical per-element allocations without needing to
+    // share mutable state across the two unrelated loops. Never fires when THIS function (the one
+    // being priced/billed) is on a Filler date — see isFillerDateFor above.
+    const crossFnPrevFn = (!hideDiscountFromClient && !isFillerDateFor(fnData.fnDate)) ? findCrossFnReuseSource(fnData, collectAllFunctionData()) : null;
+    const pricingPool = crossFnPrevFn ? new Map(Object.entries(computeFnInvQty(crossFnPrevFn))) : null;
     let decor = 0;
     // Always derive zones fresh from the live zoneConfig/enabledEls — see totalCost's matching
     // comment. `activeZones` no longer takes priority here. Also dropped the legacy itemQty
@@ -4458,7 +4928,7 @@ export default function StudioApp() {
     // which was already emptied out elsewhere, so the loop never actually added any cost;
     // removing it just retires visibly-dead code, it doesn't change any computed total.
     const zones = Object.entries(fZoneConfig).filter(([zk, cfg]) => fEnabledEls[zk] && cfg).map(([zk, cfg]) => ({ id: zk, type: zk, name: zk, config: cfg }));
-    zones.forEach(z => { decor += calcStructCost(z.type, z.config, structRates).total; });
+    zones.forEach(z => { decor += scaleStruct(calcStructCost(z.type, z.config, structRates, structDiscountFor(z.config, fVenue))).total; });
     // Availability-shortfall pricing now runs for EVERY function, each against its OWN date's
     // blocks (blocksByDate — warmed for every function's date, not just the active one). It used to
     // only run for whichever function was the active Build tab (activeBlocksForDate has no other
@@ -4470,7 +4940,7 @@ export default function StudioApp() {
     const fBlocksForDate = blocksByDate[fnData.fnDate];
     Object.entries(fZoneElements).forEach(([zk, elems]) => {
       if (!fEnabledEls[zk] || !elems) return;
-      decor += calcElsCostForFn(elems, fZoneConfig[zk], fFloralRatio, true, fVenue, fBlocksForDate);
+      decor += calcElsCostForFn(elems, fZoneConfig[zk], fFloralRatio, true, fVenue, fBlocksForDate, fnData.fnDate, pricingPool);
     });
     // Only count a custom item while its own zone is still enabled — matches calcFunctionBreakdown
     // (Summary's accordion), which already scoped this way; this one used to count every custom
@@ -4480,7 +4950,7 @@ export default function StudioApp() {
     });
     let transport = 0;
     if (fVenue && decor > 0) {
-      const match = trVenues.find(v => v.name.toLowerCase() === fVenue.toLowerCase());
+      const match = resolveTrVenue(trVenues, fVenue, venueParents);
       const fCustomTripRate = typeof fnData.customTripRate === "number" ? fnData.customTripRate : 0;
       const fCustomGensets = typeof fnData.customGensets === "number" ? fnData.customGensets : null;
       const fCustomGenset62 = typeof fnData.genset62 === "number" ? fnData.genset62 : null;
@@ -4493,12 +4963,39 @@ export default function StudioApp() {
       // a Rate-Card name-match — Rate Card's own `.sub` is a separate, older vocabulary that doesn't
       // track IMS's live Sub-Categories master.
       const fcFlowerPatterns = (dealCheckData || studioFloralData)?.flowerPatterns || [];
+      // Own pool, separate from pricingPool above — see the comment where crossFnPrevFn is computed.
+      const transportPool = crossFnPrevFn ? new Map(Object.entries(computeFnInvQty(crossFnPrevFn))) : null;
       Object.entries(fZoneElements).forEach(([zk, elems]) => {
         if (!fEnabledEls[zk] || !elems) return;
+        // Same guest-discount-gated repeat/fixed-venue transport waiver as computeTruckItems.
+        if (!hideDiscountFromClient && fZoneConfig[zk]?.repeat) return;
         elems.forEach(el => {
           const invItem = el.invId ? imsInventory.find(i => i.id === el.invId) : null;
-          const pattern = (!invItem && el.patternId) ? fcFlowerPatterns.find(p => p.id === el.patternId) : null;
-          const sub = invItem?.subCat || invItem?.subcategory || pattern?.sub || "";
+          if (invItem) {
+            const kitSub = invItem.subCat || invItem.subcategory || "";
+            const kitTc = capBySub[String(kitSub || "").toLowerCase().trim()];
+            // Cross-function reused qty doesn't need re-trucking — same units the 25% guest
+            // discount above already applies to, netted out before the kit/sqft split so it
+            // reduces the item's OWN contribution (and, if a kit, its components proportionally).
+            const reused = transportPool ? Math.min(Number(el.qty) || 0, transportPool.get(el.invId) || 0) : 0;
+            if (reused > 0) transportPool.set(el.invId, (transportPool.get(el.invId) || 0) - reused);
+            const effQty = Math.max(0, (Number(el.qty) || 0) - reused);
+            if (kitTc && String(kitTc.unit || "pc").toLowerCase().includes("sqft")) {
+              const L = Number(el.L || el.l || 0), W = Number(el.W || el.w || el.H || el.h || 0);
+              if (L > 0 && W > 0) addSub(kitSub, L * W * (Number(el.qty) || 1));
+            } else {
+              // Decompose a kit into its own base AND every component (recursively) — each counts
+              // under ITS OWN sub-category. See computeTruckItems' matching comment.
+              walkKitUnits(invItem, effQty, imsInventory, el.kitOverrides, (node, nodeQty) => {
+                const nodeSub = node.subCat || node.subcategory || "";
+                const freshQty = hideDiscountFromClient ? nodeQty : builtQty(fvCfgForRepeat, fVenue, node.id, nodeQty);
+                addSub(nodeSub, freshQty);
+              });
+            }
+            return;
+          }
+          const pattern = el.patternId ? fcFlowerPatterns.find(p => p.id === el.patternId) : null;
+          const sub = pattern?.sub || "";
           const tc = capBySub[String(sub || "").toLowerCase().trim()]; if (!tc) return;
           if (String(tc.unit || "pc").toLowerCase().includes("sqft")) { const L = Number(el.L || el.l || 0), W = Number(el.W || el.w || el.H || el.h || 0); if (L > 0 && W > 0) addSub(sub, L * W * (Number(el.qty) || 1)); }
           else addSub(sub, Number(el.qty) || 0);
@@ -4506,12 +5003,28 @@ export default function StudioApp() {
       });
       Object.entries(fZoneConfig).forEach(([zk, cfg]) => {
         if (!cfg || !fEnabledEls[zk]) return;
+        if (!hideDiscountFromClient && cfg.repeat) return;
         const d = cfg.dims || {};
         const fd = cfg.floorDims || d;
         if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * Math.max(1, cfg.trussQty || 1); if (tSqft > 0) addSub("Truss", tSqft); }
         const sqft = (fd.L || 0) * (fd.W || 0);
         if (sqft > 0) { if (cfg.plH) addSub("Platform", sqft); if (cfg.cpT && cfg.cpT !== CARPET_OFF) addSub("Carpet", sqft); }
+        // Fabric Allocation (masking/liza/curtains) — see computeTruckItems' matching comment.
+        const fcTrussInv = dealCheckData?.trussInv || studioFloralData?.trussInv;
+        if (fcTrussInv) {
+          const fab = calcZoneFabric(cfg, fcTrussInv, "moderate");
+          if (fab.maskingPieces > 0) addSub("Masking", fab.maskingPieces);
+          if (fab.lizaKg > 0) addSub("Liza", fab.lizaKg);
+          if (fab.curtainPieces > 0) addSub("Curtains", fab.curtainPieces);
+        }
       });
+      // Floral material (real mandi + artificial) — see computeTruckItems' matching comment. Through
+      // the ref: calcFnFloralSourcingCost is declared later in the file (TDZ).
+      const fcFloralSourcing = calcFnFloralSourcingCostRef.current?.(fnData);
+      const fcRealKg = (fcFloralSourcing?.breakdown || []).reduce((s, f) => s + (f.qty || 0), 0);
+      const fcArtBunches = (fcFloralSourcing?.artFlowerBunches || 0) + (fcFloralSourcing?.artGreenBunches || 0);
+      if (fcRealKg > 0) addSub("Real Flowers", fcRealKg);
+      if (fcArtBunches > 0) addSub("Artificial Flowers", fcArtBunches);
       let truckFrac = 0; Object.values(subAgg).forEach(s => { if (s.perTruck > 0) truckFrac += (s.qty || 0) / s.perTruck; });
       const itemTrucks = Math.ceil(truckFrac);
       const floralTrucks = 0; // florals counted via their sub-category capacity — no separate flower truck
@@ -4526,34 +5039,60 @@ export default function StudioApp() {
       // calcFunctionBreakdown's *Client fields and transportCalc above. Defaults to 1.25 (25%
       // markup, the owner's requested starting point) until a venue's own value is set.
       const clientScale = Number(match?.clientScale) > 0 ? Number(match.clientScale) : 1.25;
-      const truckTotal = rawTruckTotal * clientScale;
-      const gensetCost = resolveGensetPlan(match, fCustomGensets, fCustomGenset62, gensetRate, gensetRate62).gensetCost;
+      const truckTotal = rawTruckTotal * clientScale * guestPriceMultiplier;
+      const gensetCost = resolveGensetPlan(match, fCustomGensets, fCustomGenset62, gensetRate, gensetRate62).gensetCost * guestPriceMultiplier;
       transport = truckTotal + gensetCost;
     }
     return { decor, transport, grand: decor + transport };
-  }, [calcElsCostForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, dcCustomItems, structRates, blocksByDate, imsInventory, dealCheckData, studioFloralData]);
+  }, [calcElsCostForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, dcCustomItems, structRates, blocksByDate, imsInventory, dealCheckData, studioFloralData, fvCfgForRepeat, venueParents, clientLedger, activeClientId, hideDiscountFromClient, collectAllFunctionData]);
 
   const calcFnFloralSourcingCost = useCallback((fn) => {
-    const fp = dealCheckData?.flowerPatterns || [];
-    const mc = dealCheckData?.mandiCatalogue || [];
+    // fp/mc/the two BPK figures now also drive the truck-count wiring below (real-flower kg and
+    // artificial bunch counts feed computeTruckItems) — falling back to studioFloralData for those
+    // four is the same "no Deal-Check-gated pricing" fix applied to trussInv/agencyFeePct/fixedVenues
+    // elsewhere, now needed here too since this function's OUTPUT quantities are no longer purely
+    // internal-cost. mults/sMap/the two RATE figures still only affect the internal ₹ cost (not the
+    // quantities), so they're left Deal-Check-only for now.
+    const fp = dealCheckData?.flowerPatterns || studioFloralData?.flowerPatterns || [];
+    const mc = dealCheckData?.mandiCatalogue || studioFloralData?.mandiCatalogue || [];
     const mults = dealCheckData?.mandiPriceMultipliers || {};
     const sMap = dealCheckData?.seasonMap || {};
     const artFlowerRate = Number(dealCheckData?.artificialFlowerRatePerKg ?? 50);
-    const artFlowerBPK = Number(dealCheckData?.artificialFlowerBunchesPerKg ?? 16) || 16;
+    const artFlowerBPK = Number(dealCheckData?.artificialFlowerBunchesPerKg ?? studioFloralData?.artificialFlowerBunchesPerKg ?? 16) || 16;
     const artGreenRate = Number(dealCheckData?.artificialGreenRatePerKg ?? 40);
-    const artGreenBPK = Number(dealCheckData?.artificialGreenBunchesPerKg ?? 23) || 23;
+    const artGreenBPK = Number(dealCheckData?.artificialGreenBunchesPerKg ?? studioFloralData?.artificialGreenBunchesPerKg ?? 23) || 23;
     const fnRatio = typeof fn?.floralRatio === "number" ? fn.floralRatio : (typeof floralRatio === "number" ? floralRatio : 70);
     const szMap = (m, s) => { if (m === "smb") { const u = (s || "M").toUpperCase(); return u === "S" ? "small" : u === "B" ? "big" : "medium"; } return "medium"; };
-    const resRP = (el, rc) => {
+    // MUST mirror DCFloralsTab.jsx's own resolveRealPct exactly, precedence and all — this used to
+    // check rc.floralMode/rc.sub/rc.defaultRealPct FIRST, unconditionally, so a Rate Card row that
+    // merely happened to share an element's display name (e.g. a "Flower Bunch" bridal-bouquet row
+    // pinned to 100% real) overrode the element's own inventory/pattern sub-category — a real
+    // element's actual identity losing to a coincidental name match. The tab was already fixed to
+    // check invItem's/the pattern's OWN sub-category first and only fall back to rc when NEITHER
+    // identity exists; this rollup (which feeds the nav-pill/byFn florals total) never got the same
+    // fix, so the two silently priced the same element at two different real/artificial splits.
+    const resRP = (el, rc, invItem, elPattern) => {
       if (typeof el.realPct === "number" && el.realPct >= 0 && el.realPct <= 100) return el.realPct;
-      const m = String(rc?.floralMode || "").toLowerCase();
-      if (m === "real") return 100; if (m === "artificial") return 0;
-      const subKey = String(rc?.sub || rc?.imsAlias || "").trim().toLowerCase();
+      const subKey = String((invItem && (invItem.subCat || invItem.subcategory)) || elPattern?.sub || rc?.sub || rc?.imsAlias || "").trim().toLowerCase();
       const subMode = subKey ? rcFloralModeByKey[subKey] : undefined;
-      if (subMode === "real") return 100; if (subMode === "artificial") return 0;
-      if (typeof rc?.defaultRealPct === "number") return rc.defaultRealPct;
+      if (subMode === "real") return 100;
+      if (subMode === "artificial") return 0;
+      if (!invItem && !elPattern) {
+        const mode = String(rc?.floralMode || "").toLowerCase();
+        if (mode === "real") return 100;
+        if (mode === "artificial") return 0;
+        if (typeof rc?.defaultRealPct === "number") return rc.defaultRealPct;
+      }
       return Math.max(0, Math.min(100, 100 - fnRatio));
     };
+    // Repeat-zone floral discount, Deal Check's own internal cost lever (owner decision) — a pure
+    // QUANTITY cut, never a direct ₹ discount: real flowers need 80% less fresh stock on a repeat
+    // zone (qty × 0.2), artificial needs 30% less (qty × 0.7). Cost, the mandi shopping list
+    // (breakdown, below), and the artificial bunch counts (artFlowerBunches/artGreenBunches, which
+    // feed truck loading) all follow automatically from the reduced quantity — no separate cost
+    // multiplier anywhere.
+    const REPEAT_REAL_QTY_MULT = 0.2;
+    const REPEAT_ART_QTY_MULT = 0.7;
     let tArt = 0, realIncome = 0, artIncome = 0, artFlowerBunches = 0, artGreenBunches = 0, fixedExtras = 0;
     // Real-flower quantities/rates, aggregated by mandi parent id across every element in this
     // function — mirrors DCFloralsTab.jsx's own `flowerAgg`. Needed (not just a running total)
@@ -4569,7 +5108,37 @@ export default function StudioApp() {
     (fnOverrides.rows || []).forEach(r => { if (r?.flowerId) overrideByParentId.set(r.flowerId, r); });
     Object.entries(fn?.zoneElements || {}).forEach(([zk, elems]) => {
       if (!fn.enabledEls?.[zk]) return;
+      const zoneRepeat = !!fn.zoneConfig?.[zk]?.repeat;
+      // A kit's own subItems can carry floral content of their own (a flower-recipe add-on via
+      // si.patternId, or a component item itself categorized as florals, e.g. "Round Fibre Pot"
+      // nested inside a stage kit) — mirrors DCFloralsTab.jsx's own expandedElems fix exactly.
+      // That fix only ever landed in the tab; this rollup kept walking `elems` raw, so a kit's
+      // floral sub-components never existed here under their own name at all — not a resolution
+      // failure, the element simply never appeared in this loop to resolve in the first place.
+      // Confirmed live: "Round Fibre Pot"/"Iron bucket" (real florals-category sub-items of a kit)
+      // counted correctly in the tab via this exact expansion and never appeared in this rollup's
+      // diagnostic logging at all, at any gate — because there was nothing here named that to gate.
+      const expandedElems = [];
       (elems || []).forEach(el => {
+        expandedElems.push(el);
+        const kitInvItem = el.invId ? (imsInventory.find(i => i.id === el.invId) || (dcInventoryCache || []).find(i => i.id === el.invId)) : null;
+        if (kitInvItem && Array.isArray(kitInvItem.subItems) && kitInvItem.subItems.length > 0) {
+          const outerQty = el.qty || 0;
+          (kitInvItem.subItems || []).forEach(si => {
+            const siQty = (Number(si.qty) || 0) * outerQty;
+            if (siQty <= 0) return;
+            if (si.patternId) {
+              expandedElems.push({ name: `${el.name || kitInvItem.name} · recipe`, patternId: si.patternId, qty: siQty, size: el.size });
+              return;
+            }
+            const ci = si.itemId ? (imsInventory.find(i => i.id === si.itemId) || (dcInventoryCache || []).find(i => i.id === si.itemId)) : null;
+            if (ci && String(ci.cat || ci.category || "").toLowerCase() === "florals") {
+              expandedElems.push({ name: ci.name, invId: ci.id, qty: siQty, size: el.size });
+            }
+          });
+        }
+      });
+      expandedElems.forEach(el => {
         // Mirrors DCFloralsTab's resolution — the two must agree, or the tab lists elements the
         // bottom-bar total does not count. An exact-only rate-card match dropped "Blue Pottery Pot
         // Big" (the row is "Blue Pottery Pot"), and keying "is this floral" off the rate-card
@@ -4597,12 +5166,21 @@ export default function StudioApp() {
         // happened to match a Rate Card row, so most of a real build's florals silently contributed
         // NOTHING to this total, while DCFloralsTab.jsx (which resolves invId directly) kept showing
         // the correct, much larger figure. Same fix as that tab, ported here so the two agree.
-        const invItem = el.invId ? imsInventory.find(i => i.id === el.invId) : null;
+        // imsInventory is the boot-time snapshot (fetchAll("inventory") once at app load, patched
+        // only by realtime deltas afterward) — dcInventoryCache is Deal Check's own copy, freshly
+        // re-fetched every time Deal Check opens/regenerates. An item added or changed since boot
+        // (confirmed: "Round Fibre Pot"/"Iron bucket" resolved fine in DCFloralsTab.jsx via
+        // dcInventoryCache but came back undefined here) silently dropped out of this rollup's
+        // floral total while the tab kept counting it correctly. dcInventoryCache as a fallback,
+        // not primary, since this function must still work before Deal Check has ever been opened
+        // (dcInventoryCache is empty until then) — same "no Deal-Check-gated pricing" reasoning as
+        // the dealCheckData→studioFloralData fallbacks already in this function.
+        const invItem = el.invId ? (imsInventory.find(i => i.id === el.invId) || (dcInventoryCache || []).find(i => i.id === el.invId)) : null;
         const invIsFloral = !!invItem && String(invItem.cat || invItem.category || "").toLowerCase() === "florals";
         const elPat = el.patternId ? fp.find(p => p.id === el.patternId) : null;
         if (!el.patternId && !invIsFloral && String(rc?.cat || "").toLowerCase() !== "florals") return;
         const q = el.qty || 0; if (q <= 0) return;
-        const rp = resRP(el, rc) / 100, ap = 1 - rp;
+        const rp = resRP(el, rc, invItem, elPat) / 100, ap = 1 - rp;
         // Billed income split — EVERY floral arrangement bills (recipe-driven or not): the real
         // portion at the inhouse rate, the artificial portion at the artificial rate (mirrors
         // getElPrice's blend). Computed at element level, before the recipe gate below.
@@ -4663,20 +5241,21 @@ export default function StudioApp() {
           const variantRate = Number(override?.colorVariant?.rate) || 0;
           const basePrice = prefRate > 0 ? prefRate : variantRate > 0 ? variantRate : (Number(parent?.currentPrice) || 0);
           const bp = (prefRate > 0 || variantRate > 0) ? basePrice : basePrice * sMult;
-          const realUnits = (fl.qty || 0) * q * effR;
+          const realUnits = (fl.qty || 0) * q * effR * (zoneRepeat ? REPEAT_REAL_QTY_MULT : 1);
           if (realUnits > 0 && parent) {
             const agg = flowerAgg.get(parentId) || { totalQty: 0, unitPrice: bp, name: parent.name || "Flower", unit: parent.unit || "" };
             agg.totalQty += realUnits;
             agg.unitPrice = bp; // refresh — mirrors the Florals tab's own aggregation
             flowerAgg.set(parentId, agg);
           }
-          if (effA > 0) {
+          const effAQty = effA * (zoneRepeat ? REPEAT_ART_QTY_MULT : 1);
+          if (effAQty > 0) {
             if (ft === "mapping") {
               // Mapped to a specific artificial inventory item — sourcing cost = its purchase cost per unit.
-              tArt += (fl.qty || 0) * q * effA * (Number(parent?.artificialMapCost) || 0);
+              tArt += (fl.qty || 0) * q * effAQty * (Number(parent?.artificialMapCost) || 0);
             } else {
               const bpu = Number(parent?.artificialBunchesPerUnit) || 0;
-              const bunches = (fl.qty || 0) * q * effA * bpu;
+              const bunches = (fl.qty || 0) * q * effAQty * bpu;
               const isG = ft === "green";
               if (isG) artGreenBunches += bunches; else artFlowerBunches += bunches;
               tArt += bunches * (isG ? artGreenRate / artGreenBPK : artFlowerRate / artFlowerBPK);
@@ -4710,7 +5289,10 @@ export default function StudioApp() {
       else flowerAgg.set(targetId, { totalQty: swapQty, unitPrice: targetRate, name: targetParent.name || "Flower", unit: targetParent.unit || "" });
     });
     let tReal = fixedExtras;
-    const fbreak = {}; // flowerName → { name, qty, cost } (mandi shopping breakdown, real flowers)
+    // flowerName → { name, qty, cost } — the mandi shopping breakdown. v.totalQty already carries
+    // the repeat-zone 80% cut where it applies (real flowers only), so this list and the cost below
+    // both reflect the reduced quantity actually needed — no separate discount step here.
+    const fbreak = {};
     flowerAgg.forEach(v => {
       if (!(v.totalQty > 0)) return;
       const cost = v.totalQty * v.unitPrice;
@@ -4719,7 +5301,12 @@ export default function StudioApp() {
       fbreak[v.name].qty += v.totalQty; fbreak[v.name].cost += cost;
     });
     return { totalReal: tReal, totalArtificial: tArt, grandTotal: tReal + tArt, breakdown: Object.values(fbreak).map(f => ({ ...f, qty: Math.ceil(f.qty), cost: Math.round(f.cost) })).sort((a, b) => b.cost - a.cost), artFlowerBunches, artGreenBunches, income: { real: realIncome, art: artIncome } };
-  }, [dealCheckData, rcItems, floralRatio, resolveRcRate, rcFloralModeByKey, dcFloralColorPrefs, imsInventory]);
+  }, [dealCheckData, studioFloralData, rcItems, floralRatio, resolveRcRate, rcFloralModeByKey, dcFloralColorPrefs, imsInventory, dcInventoryCache]);
+  // Sync for calcFnFloralSourcingCostRef — see its declaration (near collectAllFunctionDataRef) for
+  // why transportCalc/calcFunctionCost need to reach this function through a ref instead of calling
+  // it directly: both are declared earlier in the file, so a direct reference would be a TDZ
+  // ReferenceError on first render.
+  useLayoutEffect(() => { calcFnFloralSourcingCostRef.current = calcFnFloralSourcingCost; });
 
   // Crew counts per manpower type for the whole booking, WITH a plain-English "basis" so the dept
   // head sees how the system derived each number (e.g. "6 = 12 arrangements ÷ 2 per flowerist").
@@ -4732,7 +5319,6 @@ export default function StudioApp() {
     const defaultMinLabour = d.defaultMinLabour || 4;
     const eventTypeMultipliers = d.eventTypeMultipliers || { outdoor_budgeted: 1 };
     const eventTimingMultipliers = d.eventTimingMultipliers || {};
-    const sayaMultiplier = d.sayaMultiplier || 1.3;
     const heavyElementRanges = d.heavyElementRanges || [];
     const fabricBangaliRanges = d.fabricBangaliRanges || [];
     const trussLabourRanges = d.trussLabourRanges || [];
@@ -4743,6 +5329,21 @@ export default function StudioApp() {
     if (!types.length || !(allFns || []).length) return [];
     const sizeFromMode = (mode, sz) => (mode === "flat" || !sz) ? "medium" : (String(sz).toLowerCase() || "medium");
     const shiftToTiming = (s) => { const sl = String(s || "").toLowerCase(); if (sl.includes("morning")) return "morning"; if (sl.includes("evening") || sl.includes("night")) return "evening"; return "day"; };
+    // Situational Multipliers (IMS → Admin → Calendar → Date Pricing Config): Heavy Saya — a
+    // King's-season date needs more crew per role, at that role's OWN configured pressure factor
+    // (heavySayaMultFor), not the old flat sayaMultiplier applied only to Labours. Combined via the
+    // same "biggest single pressure factor wins" max() the existing dumping/timing candidates
+    // already use below (not multiplied together), then capped — Premium Segment/Day-Prior aren't
+    // wired here yet: Premium has no per-function segment field to gate on (Studio hard-codes
+    // "outdoor_budgeted" everywhere a segment is read), and Day-Prior needs the separate -1-day
+    // phase/schedule engine (DCManpowerTab's dayList), not this whole-booking snapshot.
+    const situMultCap = d.situationalMultiplierCap || 1.8;
+    const sitMults = d.situationalMultipliers || SIT_MULT_DEFAULTS;
+    const heavySayaMultFor = (fn, type) => {
+      if (seasonMap[fn.fnDate || ""] !== "kings") return 1.0;
+      const m = Number((sitMults.heavySaya || {})[type]);
+      return m > 0 ? m : 1.0;
+    };
     // An element's cat/sub/inhouseMode for manpower purposes comes ONLY from live IMS identity now
     // — el.invId (Inventory, the normal path for anything added via "+ Add element" today) or
     // el.patternId (a pure flower-recipe element). The legacy Rate-Card name-match fallback is
@@ -4751,17 +5352,30 @@ export default function StudioApp() {
     // override the element's real Inventory sub-category for labour-batching purposes. An element
     // with neither identity (should not exist in a build made through today's UI) simply doesn't
     // count here, same as before this comment — it never did without SOME resolvable identity.
+    // A kit (invItem.subItems non-empty) used to contribute ONE bucket — its own top-level cat/sub —
+    // no matter what its components actually are. walkKitUnits (already the shared node-walker for
+    // transport/pricing) visits the kit's own node plus every component recursively, so a stage kit
+    // built from truss + fabric + lighting sub-parts now feeds crew-hours into each of THEIR
+    // categories too, instead of all of it landing under whatever the kit itself is filed as.
     const walk = (fn, cb) => { const en = fn.enabledEls || {}; const ze = fn.zoneElements || {}; Object.keys(en).forEach(zk => { if (!en[zk]) return; (ze[zk] || []).forEach(el => {
-      let rc = null;
+      const qty0 = Number(el.qty || el.count || 1);
       if (el.invId) {
         const invItem = imsInventory.find(i => i.id === el.invId);
-        if (invItem) rc = { name: invItem.name, cat: invItem.cat || invItem.category, sub: invItem.subCat || invItem.subcategory, inhouseMode: "flat" };
+        if (invItem) {
+          if (Array.isArray(invItem.subItems) && invItem.subItems.length > 0) {
+            walkKitUnits(invItem, qty0, imsInventory, el.kitOverrides, (node, nodeQty) => {
+              cb({ rc: { name: node.name, cat: node.cat || node.category, sub: node.subCat || node.subcategory, inhouseMode: "flat" }, el, qty: nodeQty });
+            });
+          } else {
+            cb({ rc: { name: invItem.name, cat: invItem.cat || invItem.category, sub: invItem.subCat || invItem.subcategory, inhouseMode: "flat" }, el, qty: qty0 });
+          }
+          return;
+        }
       }
-      if (!rc && el.patternId) {
+      if (el.patternId) {
         const pat = fps.find(p => p.id === el.patternId);
-        if (pat) rc = { name: pat.name, cat: "florals", sub: pat.sub, inhouseMode: pat.mode === "smb" ? "smb" : "flat" };
+        if (pat) cb({ rc: { name: pat.name, cat: "florals", sub: pat.sub, inhouseMode: pat.mode === "smb" ? "smb" : "flat" }, el, qty: qty0 });
       }
-      if (rc) cb({ rc, el, qty: Number(el.qty || el.count || 1) });
     }); }); };
     const calc = (fn, type) => {
       if (type === "Flowerists") {
@@ -4790,7 +5404,7 @@ export default function StudioApp() {
       if (type === "Labours") {
         const vc = venueMinLabour[fn.fnVenue || ""]; const vm = (vc && typeof vc === "object" ? vc.min : (typeof vc === "number" ? vc : null)) || defaultMinLabour;
         const em = eventTypeMultipliers["outdoor_budgeted"] || 1; const base = Math.ceil(vm * em);
-        const ss = seasonMap[fn.fnDate || ""]; const cand = [1.0]; if (ss === "kings") cand.push(sayaMultiplier); cand.push(eventTimingMultFor(eventTimingMultipliers, shiftToTiming(fn.fnShift), "Labours", 1.0)); const sm = Math.max(...cand, 1.0);
+        const cand = [1.0, heavySayaMultFor(fn, "Labours"), eventTimingMultFor(eventTimingMultipliers, shiftToTiming(fn.fnShift), "Labours", 1.0)]; const sm = Math.min(situMultCap, Math.max(...cand));
         const adj = Math.ceil(base * sm); const sc = {}; walk(fn, ({ rc, qty }) => { sc[rc.sub || ""] = (sc[rc.sub || ""] || 0) + qty; });
         let he = 0; heavyElementRanges.forEach(her => { he += heavyExtraLabour(her, lookupBySubcat(sc, her.subCat) || 0); });
         return { count: adj + he, basis: `venue min ${vm}${sm > 1 ? ` ×${sm.toFixed(2)} season/timing` : ""}${he ? ` + ${he} heavy-element` : ""}`, trace: { kind: "labours", venueMin: vm, mult: sm, heavy: he, result: adj + he } };
@@ -4825,7 +5439,16 @@ export default function StudioApp() {
     };
     return types.map(type => {
       let best = { count: 0, basis: "", trace: null };
-      (allFns || []).forEach(fn => { const r = calc(fn, type); if (r.count > best.count) best = r; });
+      (allFns || []).forEach(fn => {
+        let r = calc(fn, type);
+        // Labours already folds heavySaya into `sm` above; Supervisors is a fixed 1-per-booking role.
+        // Every other type gets the same King's-date pressure factor applied here, at its own rate.
+        if (type !== "Labours" && type !== "Supervisors" && r.count > 0) {
+          const m = Math.min(situMultCap, heavySayaMultFor(fn, type));
+          if (m > 1) r = { ...r, count: Math.ceil(r.count * m), basis: `${r.basis} ×${m.toFixed(2)} King's` };
+        }
+        if (r.count > best.count) best = r;
+      });
       return { type, count: best.count, basis: best.basis, rate: Number(dihari[type]?.rate) || 0, trace: best.trace || null };
     }).filter(r => r.count > 0);
   }, [dealCheckData, rcItems, imsInventory]);
@@ -4835,14 +5458,17 @@ export default function StudioApp() {
     const base = all.reduce((sum, fnData) => sum + calcFunctionCost(fnData).grand, 0);
     // Fixed-venue discount — % off a function's own share of the deal when its venue is a Fixed
     // Venue configured with one (Admin → Settings → Fixed Venues), applied before the agency fee.
-    const fvCfg = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
+    // Falls back to studioFloralData/local venueParents (both load on mount, no Deal Check needed)
+    // before dealCheckData exists — see refreshStudioFloralData's agencyFeePct comment for why this
+    // matters: without the fallback, this total was visibly wrong until Deal Check was first opened.
+    const fvCfg = { fixedVenues: (dealCheckData?.fixedVenues?.length ? dealCheckData.fixedVenues : studioFloralData?.fixedVenues) || [], venueParents: venueParents || dealCheckData?.venueParents || {} };
     const discounted = Math.max(0, base - fixedVenueDealDiscount(fvCfg, all, (fn) => calcFunctionCost(fn).grand, base));
     // Agency fee — flat % of the (post-discount) deal, billed to the guest on top of everything else
     // (Admin → Settings, default 20%). This is the number booking confirmation, Summary's hero,
     // and the negotiated-amount placeholder all read, so the fee has to sit inside it, not beside it.
-    const feePct = Number(dealCheckData?.agencyFeePct) || 20;
+    const feePct = Number(dealCheckData?.agencyFeePct ?? studioFloralData?.agencyFeePct) || 20;
     return discounted + Math.round(discounted * feePct / 100);
-  }, [collectAllFunctionData, calcFunctionCost, dealCheckData]);
+  }, [collectAllFunctionData, calcFunctionCost, dealCheckData, studioFloralData, venueParents]);
 
   const calcFunctionBreakdown = useCallback((fnData) => {
     if (!fnData) return { zones: [], transport: null, decorTotal: 0, transportTotal: 0, transportTotalClient: 0, grand: 0, grandClient: 0 };
@@ -4856,6 +5482,11 @@ export default function StudioApp() {
     const fFloralRatio = typeof fnData.floralRatio === "number" ? fnData.floralRatio : 70;
     // Every function's own date, not just the active one — see calcFunctionCost's matching comment.
     const fBlocksForDate = blocksByDate[fnData.fnDate];
+    // Cross-function reuse (guest-facing) — same source calcFunctionCost uses, so Summary's
+    // accordion/Build's Live Estimate agree with the revenue total on which units are discounted.
+    // Never fires when THIS function is on a Filler date — see isFillerDateFor above.
+    const crossFnPrevFn = (!hideDiscountFromClient && !isFillerDateFor(fnData.fnDate)) ? findCrossFnReuseSource(fnData, collectAllFunctionData()) : null;
+    const pricingPool = crossFnPrevFn ? new Map(Object.entries(computeFnInvQty(crossFnPrevFn))) : null;
     // Sorted by IMS/Studio Admin → Settings → Zone Types' configured order (zoneKeys), same as
     // buildZonesForFn below — enabledEls' own key order is whenever each zone was first toggled on
     // for THIS deal, not the admin's current order, and an old deal's order can predate a later
@@ -4892,7 +5523,7 @@ export default function StudioApp() {
           // checkAvail for every function now (see calcFunctionCost's comment) — keeps this
           // accordion's per-zone total matching Build's own live totalCost() when an item is
           // oversubscribed, for whichever function's zone this is, not just the active tab's.
-          const priceInfo = getElPriceForFn(el2, fZoneConfig[k], fFloralRatio, true, fVenue, fBlocksForDate);
+          const priceInfo = getElPriceForFn(el2, fZoneConfig[k], fFloralRatio, true, fVenue, fBlocksForDate, fnData.fnDate, pricingPool);
           ic += priceInfo.lineCost;
           // ── THE LINE ITEMS MUST BE THE SAME NUMBERS THAT MADE THE TOTAL ── (BUG-10)
           // Summary's accordion used to re-price each element itself with checkAvail=false and no
@@ -4907,7 +5538,7 @@ export default function StudioApp() {
           itemCount += (el2.qty || 0);
         });
       }
-      const zl = fZoneConfig[k] ? calcStructCost(k, fZoneConfig[k], structRates) : { truss: 0, masking: 0, platform: 0, carpet: 0, total: 0 };
+      const zl = fZoneConfig[k] ? scaleStruct(calcStructCost(k, fZoneConfig[k], structRates, structDiscountFor(fZoneConfig[k], fVenue))) : { truss: 0, masking: 0, platform: 0, carpet: 0, total: 0 };
       const customCost = dcCustomItems
         .filter(c => c.fnIdx === fnData.fnIdx && c.zoneKey === k)
         .reduce((s, c) => s + (c.manualPrice || c.refPrice || 0) * (Number(c.qty) || 1), 0);
@@ -4921,7 +5552,7 @@ export default function StudioApp() {
     let decorTotal = 0;
     zones.forEach(z => { decorTotal += z.tot; });
     if (fVenue && decorTotal > 0) {
-      const match = trVenues.find(v => v.name.toLowerCase() === fVenue.toLowerCase());
+      const match = resolveTrVenue(trVenues, fVenue, venueParents);
       const isNew = !match;
       const fCustomTripRate = typeof fnData.customTripRate === "number" ? fnData.customTripRate : 0;
       const fCustomGensets = typeof fnData.customGensets === "number" ? fnData.customGensets : null;
@@ -4939,7 +5570,19 @@ export default function StudioApp() {
       // else in the app read), not the sub-category's name or the truck-capacity bucket's label. Set
       // once from whichever element first fills a bucket — a given truck-capacity bucket is one
       // sub-category, which only ever belongs to one Inventory category in practice.
-      const addSub = (sub, qty, zoneKey, itemName, invCat) => { const k = String(sub || "").toLowerCase().trim(); const tc = capBySub[k]; if (!tc || !(qty > 0)) return; if (!subAgg[k]) subAgg[k] = { label: tc.item, subKey: k, invCat: invCat || "", perTruck: Number(tc.perTruck) || 0, unit: tc.unit || "pc", qty: 0, items: [] }; subAgg[k].qty += qty; if (itemName) subAgg[k].items.push({ zoneKey: zoneKey || "", name: itemName, qty }); };
+      // qtyFull (new): the SAME contribution with no repeat-zone/fixed-venue netting applied at all
+      // — what this function would truck if every zone/item were charged as freshly built. Tracked
+      // alongside the netted `qty` so the guest-facing truckFracClient below can pick whichever the
+      // discount toggle calls for, without touching qty/truckFrac (Ambria's own cost basis, which
+      // must stay netted unconditionally regardless of any guest-facing toggle).
+      const addSub = (sub, qty, qtyFull, zoneKey, itemName, invCat) => {
+        const k = String(sub || "").toLowerCase().trim(); const tc = capBySub[k];
+        if (!tc || (!(qty > 0) && !(qtyFull > 0))) return;
+        if (!subAgg[k]) subAgg[k] = { label: tc.item, subKey: k, invCat: invCat || "", perTruck: Number(tc.perTruck) || 0, unit: tc.unit || "pc", qty: 0, qtyFull: 0, items: [] };
+        subAgg[k].qty += (qty || 0);
+        subAgg[k].qtyFull += (qtyFull || 0);
+        if (itemName && qty > 0) subAgg[k].items.push({ zoneKey: zoneKey || "", name: itemName, qty });
+      };
       // An element's sub-category for truck-capacity purposes comes ONLY from live IMS identity —
       // el.invId (Inventory, the normal path for anything added via "+ Add element" today) or
       // el.patternId (a pure flower-recipe element). No Rate-Card name-match fallback.
@@ -4955,12 +5598,17 @@ export default function StudioApp() {
       let prevSubQty = {};
       let carriedOverFromFn = "";
       try {
-        const sortedFns = [...collectAllFunctionData()].sort((a, b) => (a.fnDate || "9999-12-31").localeCompare(b.fnDate || "9999-12-31"));
-        const myPos = sortedFns.findIndex(f => f.fnIdx === fnData.fnIdx);
-        const prevFnData = myPos > 0 ? sortedFns[myPos - 1] : null;
-        if (prevFnData && prevFnData.fnVenue && prevFnData.fnVenue.toLowerCase().trim() === fVenue.toLowerCase().trim()) {
-          prevSubQty = computeFnSubQty(prevFnData, capBySub, imsInventory, fFlowerPatterns);
-          carriedOverFromFn = prevFnData.fnType || "";
+        // findCrossFnReuseSource centralizes "is there a reuse-eligible sibling function" (same
+        // venue + within 24h — see its own comment) — this used to be an inline sort/findIndex/
+        // venue-string-check with NO time-window at all; now shares the exact definition the
+        // guest-facing pricingPool above (and the guest transport waiver below) also use, so
+        // Ambria's own cost carryover and the guest-facing waiver can't disagree on WHICH prior
+        // function counts. Unconditional (not gated by hideDiscountFromClient) — this is Ambria's
+        // own cost basis, always netted regardless of the guest-facing toggle.
+        const carryoverPrevFn = findCrossFnReuseSource(fnData, collectAllFunctionData());
+        if (carryoverPrevFn) {
+          prevSubQty = computeFnSubQty(carryoverPrevFn, capBySub, imsInventory, fFlowerPatterns, dealCheckData?.trussInv || studioFloralData?.trussInv, fvCfgForRepeat, fVenue);
+          carriedOverFromFn = carryoverPrevFn.fnType || "";
         }
       } catch { /* never let a carryover lookup failure break the transport calc */ }
       // ♻️ Repeat zones reuse a standing setup — nothing of theirs needs trucking. Mirrors Manpower's
@@ -4971,47 +5619,101 @@ export default function StudioApp() {
       // were left out and why, rather than a truck count just quietly coming out lower.
       const repeatZonesExcluded = Object.keys(fZoneConfig).filter(zk => fEnabledEls[zk] && fZoneConfig[zk]?.repeat)
         .map(zk => { const cz = fCustomZones.find(c => c.id === zk); return { zk, label: zoneLabelsD[zk]?.label || cz?.name || zk }; });
-      const fEnabledElsFresh = repeatZonesExcluded.length
-        ? { ...fEnabledEls, ...Object.fromEntries(repeatZonesExcluded.map(({ zk }) => [zk, false])) }
-        : fEnabledEls;
       Object.entries(fZoneElements).forEach(([zk, elems]) => {
-        if (!fEnabledElsFresh[zk] || !elems) return;
+        if (!fEnabledEls[zk] || !elems) return;
+        // A repeat zone's own setup is reused — nothing of it needs trucking (Ambria's own cost
+        // side, `qty` below). qtyFull always gets the raw, un-netted number regardless, so the
+        // guest-facing truckFracClient can still charge full unless the discount toggle is on.
+        const zoneRepeat = !!fZoneConfig[zk]?.repeat;
         elems.forEach(el => {
           const invItem = el.invId ? imsInventory.find(i => i.id === el.invId) : null;
-          const pattern = (!invItem && el.patternId) ? fFlowerPatterns.find(p => p.id === el.patternId) : null;
-          const sub = invItem?.subCat || invItem?.subcategory || pattern?.sub || "";
+          if (invItem) {
+            const kitSub = invItem.subCat || invItem.subcategory || "";
+            const kitTc = capBySub[String(kitSub || "").toLowerCase().trim()];
+            if (kitTc && String(kitTc.unit || "pc").toLowerCase().includes("sqft")) {
+              const L = Number(el.L || el.l || 0), W = Number(el.W || el.w || el.H || el.h || 0);
+              if (L > 0 && W > 0) { const full = L * W * (Number(el.qty) || 1); addSub(kitSub, zoneRepeat ? 0 : full, full, zk, el.name || invItem.name || kitSub, invItem.cat || invItem.category || ""); }
+            } else {
+              // Decompose a kit into its own base AND every component (recursively) — each counts
+              // under ITS OWN sub-category, with its OWN name/category in the breakdown's items[]
+              // (not the outer element's — a console kit's Fabric component shows as the fabric's
+              // own name, not "Console Table"). See computeTruckItems' matching comment.
+              walkKitUnits(invItem, Number(el.qty) || 0, imsInventory, el.kitOverrides, (node, nodeQty) => {
+                const nodeSub = node.subCat || node.subcategory || "";
+                // Fixed-venue standing netting is ALSO cost-only (`qty`) — qtyFull ignores it, same
+                // "as if nothing were reused" reasoning as the repeat zone treatment above.
+                const netQty = zoneRepeat ? 0 : builtQty(fvCfgForRepeat, fVenue, node.id, nodeQty);
+                const label = node.id === invItem.id ? (el.name || node.name || nodeSub) : (node.name || nodeSub);
+                addSub(nodeSub, netQty, nodeQty, zk, label, node.cat || node.category || "");
+              });
+            }
+            return;
+          }
+          const pattern = el.patternId ? fFlowerPatterns.find(p => p.id === el.patternId) : null;
+          const sub = pattern?.sub || "";
           const tc = capBySub[String(sub || "").toLowerCase().trim()]; if (!tc) return;
-          const elLabel = el.name || invItem?.name || pattern?.name || sub;
+          const elLabel = el.name || pattern?.name || sub;
           // A flower-recipe element (pattern, no invId at all) has no inventory row to read a
           // category off — it's a flower arrangement by definition, so it's Florals outright.
-          const invCat = invItem?.cat || invItem?.category || (pattern ? "Florals" : "");
-          if (String(tc.unit || "pc").toLowerCase().includes("sqft")) { const L = Number(el.L || el.l || 0), W = Number(el.W || el.w || el.H || el.h || 0); if (L > 0 && W > 0) addSub(sub, L * W * (Number(el.qty) || 1), zk, elLabel, invCat); }
-          else addSub(sub, Number(el.qty) || 0, zk, elLabel, invCat);
+          const invCat = pattern ? "Florals" : "";
+          if (String(tc.unit || "pc").toLowerCase().includes("sqft")) { const L = Number(el.L || el.l || 0), W = Number(el.W || el.w || el.H || el.h || 0); if (L > 0 && W > 0) { const full = L * W * (Number(el.qty) || 1); addSub(sub, zoneRepeat ? 0 : full, full, zk, elLabel, invCat); } }
+          else { const full = Number(el.qty) || 0; addSub(sub, zoneRepeat ? 0 : full, full, zk, elLabel, invCat); }
         });
       });
+      const bdTrussInv = dealCheckData?.trussInv || studioFloralData?.trussInv;
       Object.entries(fZoneConfig).forEach(([zk, cfg]) => {
-        if (!cfg || !fEnabledElsFresh[zk]) return;
+        if (!cfg || !fEnabledEls[zk]) return;
+        const zoneRepeat = !!cfg.repeat;
         const d = cfg.dims || {}; const fd = cfg.floorDims || d;
-        if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * Math.max(1, cfg.trussQty || 1); if (tSqft > 0) addSub("Truss", tSqft, zk, "Truss structure"); }
+        if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * Math.max(1, cfg.trussQty || 1); if (tSqft > 0) addSub("Truss", zoneRepeat ? 0 : tSqft, tSqft, zk, "Truss structure"); }
         const sqft = (fd.L || 0) * (fd.W || 0);
-        if (sqft > 0) { if (cfg.plH) addSub("Platform", sqft, zk, "Platform"); if (cfg.cpT && cfg.cpT !== CARPET_OFF) addSub("Carpet", sqft, zk, "Carpet"); }
+        if (sqft > 0) {
+          if (cfg.plH) addSub("Platform", zoneRepeat ? 0 : sqft, sqft, zk, "Platform");
+          if (cfg.cpT && cfg.cpT !== CARPET_OFF) addSub("Carpet", zoneRepeat ? 0 : sqft, sqft, zk, "Carpet");
+        }
+        // Fabric Allocation (masking/liza/curtains) — see computeTruckItems' matching comment.
+        if (bdTrussInv) {
+          const fab = calcZoneFabric(cfg, bdTrussInv, "moderate");
+          if (fab.maskingPieces > 0) addSub("Masking", zoneRepeat ? 0 : fab.maskingPieces, fab.maskingPieces, zk, "Wall masking");
+          if (fab.lizaKg > 0) addSub("Liza", zoneRepeat ? 0 : fab.lizaKg, fab.lizaKg, zk, "Liza drape");
+          if (fab.curtainPieces > 0) addSub("Curtains", zoneRepeat ? 0 : fab.curtainPieces, fab.curtainPieces, zk, "Velvet curtains");
+        }
       });
+      // Floral material (real mandi + artificial) — see computeTruckItems' matching comment.
+      // calcFnFloralSourcingCost is declared earlier in the file than this function, so — unlike
+      // transportCalc/calcFunctionCost — it's safe to call directly here, no ref needed.
+      const bdFloralSourcing = calcFnFloralSourcingCost(fnData);
+      const bdRealKg = (bdFloralSourcing?.breakdown || []).reduce((s, f) => s + (f.qty || 0), 0);
+      const bdArtBunches = (bdFloralSourcing?.artFlowerBunches || 0) + (bdFloralSourcing?.artGreenBunches || 0);
+      if (bdRealKg > 0) addSub("Real Flowers", bdRealKg, bdRealKg, null, "Real flowers");
+      if (bdArtBunches > 0) addSub("Artificial Flowers", bdArtBunches, bdArtBunches, null, "Artificial flowers");
       // truckFracClient: this function's own full requirement, exactly as before carryover existed —
-      // still what Build/Summary bill the guest for (truckTotalClient below stays keyed off this).
+      // still what Build/Summary bill the guest for (truckTotalClient below stays keyed off this) —
+      // UNLESS the discreet toggle is on, in which case the guest now also sees the same
+      // cross-function carryover Ambria's own cost side (truckFrac) already nets against; this used
+      // to always bill the guest the full qtyFull regardless of the toggle, which is the exact gap
+      // the owner asked to close ("don't charge the guest transport for the same repeat items").
       // truckFrac: netted against prevSubQty — Ambria's own truck-capacity/cost basis.
       let truckFrac = 0;
       let truckFracClient = 0;
       const carriedOver = [];
       Object.values(subAgg).forEach(s => {
         if (!(s.perTruck > 0)) return;
-        truckFracClient += (s.qty || 0) / s.perTruck;
         const carried = Math.min(s.qty || 0, prevSubQty[s.subKey] || 0);
         const netQty = Math.max(0, (s.qty || 0) - carried);
         truckFrac += netQty / s.perTruck;
         if (carried > 0) carriedOver.push({ label: s.label, subKey: s.subKey, qty: Math.round(carried) });
-        // trucksClient — this row's unnetted truck fraction (Summary's client-facing accordion
+        // hideDiscountFromClient off (the default) → guest is billed as if nothing were reused,
+        // same as before repeat/fixed-venue netting existed on the client side at all: qtyFull.
+        // On → guest sees the SAME netted qty Ambria's own cost side (s.qty) already uses, and the
+        // same cross-function carryover waiver (`carried`) subtracted off it too.
+        const clientBase = hideDiscountFromClient ? s.qtyFull : s.qty;
+        const clientCarried = hideDiscountFromClient ? 0 : carried;
+        const clientQty = Math.max(0, clientBase - clientCarried);
+        truckFracClient += clientQty / s.perTruck;
+        // trucksClient — this row's client-facing truck fraction (Summary's client-facing accordion
         // reads this); trucks is netted for carryover (Deal Check's own Transport tab reads that).
-        breakdown.push({ label: s.label, subKey: s.subKey, invCat: s.invCat, qty: Math.round(s.qty), perTruck: s.perTruck, unit: s.unit, trucks: netQty / s.perTruck, trucksClient: (s.qty || 0) / s.perTruck, carriedQty: Math.round(carried), items: s.items });
+        breakdown.push({ label: s.label, subKey: s.subKey, invCat: s.invCat, qty: Math.round(s.qty), perTruck: s.perTruck, unit: s.unit, trucks: netQty / s.perTruck, trucksClient: clientQty / s.perTruck, carriedQty: Math.round(carried), items: s.items });
       });
       const itemTrucks = Math.ceil(truckFrac);
       const itemTrucksClient = Math.ceil(truckFracClient);
@@ -5035,9 +5737,15 @@ export default function StudioApp() {
       // same-venue carryover above is an internal-cost optimisation only; the guest is still billed
       // as if every function trucked its own full requirement, exactly as before this existed.
       const clientScale = Number(match?.clientScale) > 0 ? Number(match.clientScale) : 1.25;
-      const truckTotalClient = allTrucksClient * tripRate * 2 * clientScale;
+      const truckTotalClient = allTrucksClient * tripRate * 2 * clientScale * guestPriceMultiplier;
+      // gensetCost (below, in the returned object) is already documented as the GUEST-facing genset
+      // figure — "Build/Summary keep showing gensetCost/gensetRate to the guest" — so it's the one
+      // guestPriceMultiplier scales; transportTotal here stays built from the raw plan.gensetCost so
+      // Deal Check's own Transport tab (which reads truckTotal/transportTotal, never gensetCost on
+      // its own) is completely unaffected.
+      const gensetCostForGuest = plan.gensetCost * guestPriceMultiplier;
       transportTotal = truckTotal + plan.gensetCost;
-      transportTotalClient = truckTotalClient + plan.gensetCost;
+      transportTotalClient = truckTotalClient + gensetCostForGuest;
       transport = { trucks: allTrucks, tripRate, total: transportTotal, isNew, tier: tierId, tierLabel,
         breakdown, floralTrucks, bufferTrucks: bufTrucks, itemTrucks, totalFloralCost, repeatZonesExcluded,
         // trucksClient — the UNNETTED truck count (this function priced on its own, no carryover),
@@ -5046,7 +5754,7 @@ export default function StudioApp() {
         trucksClient: allTrucksClient,
         carriedOver, carriedOverFromFn,
         gensets: plan.genset125, venueGensets: plan.venueGenset125, genset62: plan.genset62, venueGenset62: plan.venueGenset62,
-        gensetCost: plan.gensetCost, gensetRate, gensetRate62, truckTotal,
+        gensetCost: gensetCostForGuest, gensetRate, gensetRate62, truckTotal,
         // gensetCostOurs — OUR real cost for these gensets (gensetCostRate/62, Admin → Settings →
         // Transport & Power), independent of gensetCost above (what's billed to the client).
         // Deal Check's own Power tab reads this one; Build/Summary keep showing gensetCost/
@@ -5059,7 +5767,7 @@ export default function StudioApp() {
         clientScale, truckTotalClient, totalClient: transportTotalClient, tripRateClient: tripRate * clientScale };
     }
     return { zones, transport, decorTotal, transportTotal, transportTotalClient, grand: decorTotal + transportTotal, grandClient: decorTotal + transportTotalClient };
-  }, [getElPriceForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, gensetCostRate, gensetCostRate62, zoneLabelsD, zoneKeys, dcCustomItems, structRates, blocksByDate, imsInventory, dealCheckData, studioFloralData, collectAllFunctionData]);
+  }, [getElPriceForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, gensetCostRate, gensetCostRate62, zoneLabelsD, zoneKeys, dcCustomItems, structRates, blocksByDate, imsInventory, dealCheckData, studioFloralData, collectAllFunctionData, fvCfgForRepeat, calcFnFloralSourcingCost, venueParents, clientLedger, activeClientId, hideDiscountFromClient]);
 
   const cat = getCat(grandTotal);
 
@@ -5183,8 +5891,15 @@ export default function StudioApp() {
   const allVenueData = useMemo(() => {
     const merged = {};
     customInhouse.forEach(v => { merged[v.name] = { base: v.base || 0, label: v.label || "", type: v.type || "Outdoor" }; });
+    // Outdoor venues never carried a type at all (VenuesEditor's Outdoor Venues section had no field
+    // for it) — every one of them fell into the Indoor/Outdoor picker's Outdoor bucket unconditionally,
+    // so picking "Outside + Indoor" there could never return anything even for an outside venue with
+    // a real indoor banquet hall. Merged into the SAME map (not a separate lookup) so every caller
+    // that reads allVenueData[name].type — the Build zone-photo-picker's filter included — needs no
+    // second data source to check.
+    customOutdoor.forEach(v => { if (!merged[v.name]) merged[v.name] = { base: 0, label: "", type: v.type || "Outdoor" }; });
     return merged;
-  }, [customInhouse]);
+  }, [customInhouse, customOutdoor]);
   const allInhouseGroups = useMemo(() => {
     const groups = [];
     customInhouse.forEach(v => {
@@ -5614,7 +6329,7 @@ export default function StudioApp() {
   // pinned per-video — Build shows every zone-tagged library photo live instead (see
   // getLibPhotosForZone / StudioBuild.jsx's getMatchedPhotos).
   const buildVideoTagFromAI = useCallback(async (videoId) => {
-      const ytData = await ytApi("videos", { part: "snippet", id: videoId }).catch(() => ({}));
+      const ytData = await ytApi("videos", { part: "snippet", id: videoId }).catch((e) => { console.error("[youtube]", e); return {}; });
       const snippet = ytData.items?.[0]?.snippet;
       if (!snippet) return null;
       const desc = snippet.description || "";
@@ -5763,12 +6478,12 @@ export default function StudioApp() {
   // ── YouTube Data API loaders — rewired through the Supabase `youtube` Edge Function
   // (ytApi) + kv cache (YT_SK settings blob) instead of /api/youtube + window.storage. ──
   const fetchYTPlaylist = useCallback(async (playlistId, pageToken) => {
-    const d = await ytApi("playlistItems", { part: "snippet,contentDetails", maxResults: 50, playlistId, ...(pageToken ? { pageToken } : {}) }).catch(() => ({}));
+    const d = await ytApi("playlistItems", { part: "snippet,contentDetails", maxResults: 50, playlistId, ...(pageToken ? { pageToken } : {}) }).catch((e) => { console.error("[youtube]", e); return {}; });
     if (!d.items) return { items: [], nextPageToken: null };
     const videoIds = d.items.map((i) => i.contentDetails?.videoId).filter(Boolean).join(",");
     const durations = {};
     if (videoIds) {
-      const vd = await ytApi("videos", { part: "contentDetails", id: videoIds }).catch(() => ({}));
+      const vd = await ytApi("videos", { part: "contentDetails", id: videoIds }).catch((e) => { console.error("[youtube]", e); return {}; });
       (vd.items || []).forEach((v) => { durations[v.id] = ytDuration(v.contentDetails?.duration); });
     }
     const items = d.items.map((i) => ({
@@ -5789,7 +6504,7 @@ export default function StudioApp() {
     const out = [];
     const list = [...new Set((ids || []).filter(Boolean))];
     for (let i = 0; i < list.length; i += 50) {          // the videos endpoint caps at 50 ids
-      const d = await ytApi("videos", { part: "snippet,contentDetails", id: list.slice(i, i + 50).join(",") }).catch(() => ({}));
+      const d = await ytApi("videos", { part: "snippet,contentDetails", id: list.slice(i, i + 50).join(",") }).catch((e) => { console.error("[youtube]", e); return {}; });
       (d.items || []).forEach((v) => {
         out.push({
           id: v.id,
@@ -5847,7 +6562,7 @@ export default function StudioApp() {
     if (!query.trim()) return;
     setYtLoading(true);
     try {
-      const d = await ytApi("search", { part: "snippet", type: "video", maxResults: 20, q: query }).catch(() => ({}));
+      const d = await ytApi("search", { part: "snippet", type: "video", maxResults: 20, q: query }).catch((e) => { console.error("[youtube]", e); return {}; });
       const items = (d.items || []).map((i) => ({
         id: i.id?.videoId, title: i.snippet?.title || "", thumb: i.snippet?.thumbnails?.medium?.url || "",
         date: i.snippet?.publishedAt?.slice(0, 10) || "", duration: "", playlistId: "search",
@@ -6177,6 +6892,29 @@ export default function StudioApp() {
     // each function's own price can be carried forward — see fnTotals in the snapshot.
     const prevSnapForTotals = (((clientLedgerRef.current || clientLedger)
       .find(c => c.id === activeClientId)?.sessions) || [])[0] || null;
+    // ── STOP A STALE TAB FROM SILENTLY OVERWRITING A NEWER SAVE ──
+    // Same fix as Deal Check's dcDraft autosave (dcSaveBaselineRef, ~line 9153) — this file already
+    // has one confirmed incident of exactly this (see the "DELETION DISABLED" note further down):
+    // a ₹4,50,865 build was saved, then a DIFFERENT tab's autosave — still working from an older
+    // load — landed a ₹2,61,861 build on top of it a few minutes later. Disabling row deletion only
+    // stopped the older save from destroying the newer one's studio_sessions rows; it never stopped
+    // the older save from becoming sessions[0] (the build every screen treats as "current") in the
+    // first place. buildSaveBaselineRef is what sessions[0] was when THIS tab last loaded or saved —
+    // if the live sessions[0] (prevSnapForTotals, read fresh above) has moved past that AND it was
+    // someone else's save, this tab's own copy is stale: skip the write entirely rather than let it
+    // silently regress the deal, and say so.
+    const buildBaseline = buildSaveBaselineRef.current;
+    const buildRemoteSavedAt = prevSnapForTotals?.savedAt || 0;
+    const buildRemoteSavedBy = prevSnapForTotals?.savedBy || null;
+    const buildMe = authUser?.name || "—";
+    const buildConflict = !!(buildBaseline && buildRemoteSavedAt > buildBaseline.savedAt && buildRemoteSavedBy && buildRemoteSavedBy !== buildMe);
+    if (buildConflict) {
+      if (buildConflictWarnedAtRef.current !== buildRemoteSavedAt) {
+        buildConflictWarnedAtRef.current = buildRemoteSavedAt;
+        showMsg?.(`⚠ ${buildRemoteSavedBy} saved changes to this deal while you were editing — your changes were NOT auto-saved to avoid overwriting theirs. Reload to see the latest before continuing.`, "red");
+      }
+      return; // nothing local is discarded — it just isn't persisted until this tab reloads
+    }
     const takeSnapshot = snapshotFnRef.current || snapshotBuildState;
     for (let i = 0; i < totalFns; i++) {
       let snap;
@@ -6409,6 +7147,10 @@ export default function StudioApp() {
         ? [snapshot, ...prevSessions.slice(1)]
         : [snapshot, ...prevSessions];
       client.sessions = nextSessionList.slice(0, SESSION_KEEP);
+      // This save is now sessions[0] — advance the baseline to it so THIS tab's next save compares
+      // against its own latest write, not the load-time one (mirrors dcSaveBaselineRef's own advance
+      // after a successful dcDraft save).
+      buildSaveBaselineRef.current = { savedAt: snapshot.savedAt, savedBy: snapshot.savedBy };
       const prunedIds = nextSessionList.slice(SESSION_KEEP).map((x) => x?.id).filter(Boolean);
       sessionBoundaryRef.current = false;
       // ── THE SAME SAVE, ROW-LEVEL, TO `studio_sessions` (migration 026) ──
@@ -6424,33 +7166,44 @@ export default function StudioApp() {
       // The draft this save replaced, plus anything the ten-session cut dropped.
       const dropIds = [...new Set([replacedId, ...prunedIds].filter((x) => x && x !== snapshot.id))];
       if (rowsForSnapshot.length) {
-        (async () => {
-          try {
-            // ── DELETION DISABLED. DO NOT RE-ENABLE UNTIL THE COLLAPSE IS FIXED. ──
-            // A confirmed case of real work being destroyed: a client had a ₹4,50,865 build saved at
-            // 15:16; by 15:22 that session had been deleted and replaced by a ₹2,61,861 one — an
-            // autosave collapsed OVER newer work with an older build and then deleted the newer
-            // session's rows via `replacedId` below.
-            // The same path also enforces the ten-session cap (`prunedIds`), which only makes sense
-            // if those ten are ten distinct saves. They are not: consecutive auto-drafts are failing
-            // to collapse into one slot, so the ten fill with duplicates of one build and every save
-            // pushes a genuinely older save off the end and deletes it.
-            // Until that is understood, this writes and never deletes. Rows accumulate — untidy, and
-            // rowsToSessions caps the history at ten on read so the UI is unaffected — but no save
-            // can destroy another. Losing a salesperson's build is not a tidiness trade.
-            // dropIds is still computed above so the intended behaviour stays visible in the code.
-            void dropIds;
-            const { error } = await supabase.from("studio_sessions")
-              .upsert(rowsForSnapshot, { onConflict: "id" });
-            if (error) throw error;
-          } catch (e) {
-            // SAID OUT LOUD, not swallowed. A silent data-layer failure is how 249 tag verifications
-            // were lost in July (see the note on migration 023) — if these rows are not landing, the
-            // screen has to say so rather than look like it saved. The client_ledger mirror still
-            // holds the save either way, so this reports a sync problem, not lost work.
-            showMsg?.("Session rows not saved: " + (e?.message || e), "red");
-          }
-        })();
+        // ── DELETION DISABLED. DO NOT RE-ENABLE UNTIL THE COLLAPSE IS FIXED. ──
+        // A confirmed case of real work being destroyed: a client had a ₹4,50,865 build saved at
+        // 15:16; by 15:22 that session had been deleted and replaced by a ₹2,61,861 one — an
+        // autosave collapsed OVER newer work with an older build and then deleted the newer
+        // session's rows via `replacedId` below.
+        // The same path also enforces the ten-session cap (`prunedIds`), which only makes sense
+        // if those ten are ten distinct saves. They are not: consecutive auto-drafts are failing
+        // to collapse into one slot, so the ten fill with duplicates of one build and every save
+        // pushes a genuinely older save off the end and deletes it.
+        // Until that is understood, this writes and never deletes. Rows accumulate — untidy, and
+        // rowsToSessions caps the history at ten on read so the UI is unaffected — but no save
+        // can destroy another. Losing a salesperson's build is not a tidiness trade.
+        // dropIds is still computed above so the intended behaviour stays visible in the code.
+        void dropIds;
+        if (opts.keepalive) {
+          // CONFIRMED GAP, closed: this row IS the build — client_ledger.data has no `sessions` key
+          // at all any more (see clientToRow — the blob mirror was retired once this table's backfill
+          // completed), so a keepalive write of client_ledger protects a client's NAME/PHONE from
+          // being lost on refresh, not their zoneElements/zoneConfig. This is the write that actually
+          // needed the same protection and never had it — a plain (non-keepalive) fetch here is
+          // exactly the one a real browser refresh/close is free to cancel mid-flight, which is how a
+          // deal's amount was seen to drop after a hard refresh and only recover once a later,
+          // uninterrupted save re-landed the fuller build.
+          keepaliveUpsert("studio_sessions", rowsForSnapshot);
+        } else {
+          (async () => {
+            try {
+              const { error } = await supabase.from("studio_sessions")
+                .upsert(rowsForSnapshot, { onConflict: "id" });
+              if (error) throw error;
+            } catch (e) {
+              // SAID OUT LOUD, not swallowed. A silent data-layer failure is how 249 tag verifications
+              // were lost in July (see the note on migration 023) — if these rows are not landing, the
+              // screen has to say so rather than look like it saved.
+              showMsg?.("Session rows not saved: " + (e?.message || e), "red");
+            }
+          })();
+        }
       }
     }
     setActiveClientId(client.id);
@@ -6524,10 +7277,21 @@ export default function StudioApp() {
   // writes a session that is half one function and half another. The switch's own settled state
   // schedules a save straight after, so nothing is skipped — only mistimed.
   // True from the moment an edit schedules the 1.5s debounce until autoSaveBuild actually runs it —
-  // i.e. exactly the window a real browser refresh/tab-close can race against pagehide's
-  // fire-and-forget save and win (confirmed gap: pagehide fires the save, but nothing guarantees its
-  // network write lands before the browser tears the page down). Backs the beforeunload prompt below.
+  // i.e. exactly the window a real browser refresh/tab-close can race against pagehide's fire-and-
+  // forget save. pagehide/beforeunload DO fire a fresh save (not just rely on the debounce having
+  // already run), and as of the studio_sessions keepalive fix above that save's actual content-
+  // bearing write now uses `fetch(..., {keepalive:true})`, which the browser promises to keep
+  // delivering after teardown — closing the specific "confirmed gap" this comment used to describe
+  // (that write used to be a plain, cancellable fetch). Still not an absolute guarantee — keepalive
+  // requests share a small (~64KB) browser-wide payload budget — so the beforeunload prompt below
+  // stays as the belt-and-suspenders backstop for a build too large for that budget.
   const unsavedEditRef = useRef(false);
+  // Reactive mirror of unsavedEditRef, purely for the manual "Save now" pill in the header — the ref
+  // itself can't drive a render. Flipped true in lockstep with the ref (the debounced-edit effect
+  // below) and false wherever the ref is cleared (a real save landing, or the manual save button).
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [manualSaving, setManualSaving] = useState(false);
+  const [justSaved, setJustSaved] = useState(false);
   const autoSaveBuild = useCallback((opts = {}) => {
     // Both flags: switchingRef covers the click-to-commit half, fnSwitchingRef the render-and-settle
     // half. Either one alone leaves a window where a save can capture a half-loaded function.
@@ -6539,12 +7303,27 @@ export default function StudioApp() {
     // edit is never wrong to persist; only the four PRICE-DERIVED fields (tier/total/decorTotal/
     // transportTotal) can be — those still carry forward the previous save's values while pricing
     // isn't ready (see the snapshot construction in saveSession) instead of holding up everything.
-    if (buildHasDataRef.current) {
+    // opts.periodic (only the bare 15s interval passes this) skips the save entirely when
+    // unsavedEditRef is already false — i.e. the last debounced save (or a previous periodic tick)
+    // already landed and there is nothing new to persist. The periodic tick's own job, per its
+    // "fallback" name, is only to catch a save the 1.5s debounce MISSED (a backgrounded tab
+    // throttling its timer); if nothing has been edited since the last save, there is nothing to
+    // catch. Without this, saveSession — a deep clone of zoneConfig/zoneElements plus a full
+    // totalCost() recompute, then the state-update render cascade that follows (transportCalc,
+    // eventGrandTotal, calcFunctionCost/calcFunctionBreakdown all reading pricing-reactive state) —
+    // was re-running on this exact 15s clock indefinitely, edit or no edit, for as long as any deal
+    // with build data sat open. CPU long-task profiling (PerformanceObserver, not guesswork) measured
+    // ~700ms-1s of blocked main thread per occurrence, right in that window — a real, separate cause
+    // of the reported choppiness from the network fetches already fixed above, on the same 15s clock.
+    // pagehide/beforeunload/unmount are NOT gated — page teardown is rare enough that always saving
+    // there costs nothing ongoing, and it's the one place worth erring toward the safe side.
+    if (buildHasDataRef.current && (!opts.periodic || unsavedEditRef.current)) {
       // opts.keepalive: only ever passed true from the pagehide/visibility-hidden/beforeunload
       // handlers below — the page is actually going away, so this save has to survive teardown
       // (fetch keepalive) rather than trust a normal request to finish in time.
       try { saveSessionRef.current({ auto: true, keepalive: !!opts.keepalive }); } catch { /* ignore */ }
       unsavedEditRef.current = false;
+      setHasUnsavedChanges(false);
     }
     // Editing an inventory element's qty directly in Build (not through Deal Check) never touched
     // the real reservation before — the "short" badge here is a live LOCAL price/availability
@@ -6552,10 +7331,23 @@ export default function StudioApp() {
     // itself regenerated. On a SOLD deal, piggyback a silent, free (skipAi — no vision calls, no
     // run-limit cost) regenerate on the same debounce so the real IMS reservation follows Build's
     // qty edits within the same ~1.5s window instead of staying stale until Deal Check reopens.
-    try {
-      const cli = (clientLedgerRef.current || []).find((c) => c.id === activeClientIdRef.current);
-      if (cli?.status === "booked") runDealCheckGenerateRef.current?.(null, { skipAi: true, silent: true }).catch(() => {});
-    } catch { /* ignore */ }
+    //
+    // opts.edited only, NOT the bare 15s periodic tick / pagehide / unmount calls below: this
+    // regenerate does a full, uncached inventory+blocks refetch (fetchIMSData → fetchAll("inventory")
+    // is the whole table, ~150KB) plus re-matches every element against it — cheap once per real
+    // edit, but the periodic timer fires unconditionally every 15s whether or not anything changed,
+    // and was re-running this full cycle on that same fixed clock for the entire time any booked
+    // deal was open — including while just watching a video elsewhere in Studio, competing for the
+    // same main thread/network the whole time. Traced from a user-supplied Network-tab capture
+    // showing inventory?select=* (143KB) + blocks?select=* repeating on a ~15s cadence during
+    // reported playback stutter — nothing to do with rendering, which is why memoizing the video
+    // modal/Browse grid (reverted, see git history) never touched it.
+    if (opts.edited) {
+      try {
+        const cli = (clientLedgerRef.current || []).find((c) => c.id === activeClientIdRef.current);
+        if (cli?.status === "booked") runDealCheckGenerateRef.current?.(null, { skipAi: true, silent: true }).catch(() => {});
+      } catch { /* ignore */ }
+    }
   }, []);
   // Production/Buying items (dcCustomItems) get an instant save on top of the normal 1.5s debounce —
   // owner decision, after "add one, refresh shortly after, it's gone" kept resurfacing even with the
@@ -6569,13 +7361,14 @@ export default function StudioApp() {
   // ref-sync effect that keeps it current runs on every render, so one tick is enough.
   const setDcCustomItemsAndFlush = useCallback((updater) => {
     setDcCustomItems(updater);
-    setTimeout(() => autoSaveBuild(), 0);
+    setTimeout(() => autoSaveBuild({ edited: true }), 0);
   }, [autoSaveBuild]);
   // 1) Debounced on edits.
   useEffect(() => {
     if (!buildHasDataRef.current) return;
     unsavedEditRef.current = true;
-    const t = setTimeout(autoSaveBuild, 1500);
+    setHasUnsavedChanges(true);
+    const t = setTimeout(() => autoSaveBuild({ edited: true }), 1500);
     return () => clearTimeout(t);
     // Event Info fields are in here too — date, venue, function, shift, pax, the extra functions.
     // They were absent, so editing the deal's details never scheduled a save; only touching the
@@ -6595,7 +7388,7 @@ export default function StudioApp() {
   // teardown. The 15s periodic/unmount saves stay plain — the page isn't disappearing for either.
   useEffect(() => {
     const onHideOrUnload = () => autoSaveBuild({ keepalive: true });
-    const id = setInterval(() => autoSaveBuild(), 15000);
+    const id = setInterval(() => autoSaveBuild({ periodic: true }), 15000);
     const onVis = () => { if (document.visibilityState === "hidden") onHideOrUnload(); };
     document.addEventListener("visibilitychange", onVis);
     window.addEventListener("pagehide", onHideOrUnload);
@@ -6620,6 +7413,33 @@ export default function StudioApp() {
     window.addEventListener("beforeunload", onBeforeUnload);
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, []);
+  // Manual "Save now" — the header pill (below) only renders while hasUnsavedChanges is true, so this
+  // is always a real, user-initiated flush of a genuine pending edit, not a debounce race. Bypasses
+  // the 1.5s debounce and the periodic-tick "nothing changed" skip entirely by calling saveSession
+  // itself (auto:false — the manual "Save Draft" path, see its own comment) and AWAITING the actual
+  // network write before clearing the dirty flag, instead of firing-and-forgetting like the
+  // pagehide/beforeunload saves do. That's the point of this button: unlike those, its whole job is
+  // to let a refresh proceed KNOWING the save has actually landed, not just that it was kicked off.
+  const saveNow = useCallback(async () => {
+    if (manualSaving) return;
+    setManualSaving(true);
+    try {
+      const result = saveSessionRef.current({ auto: false });
+      // saveClientLedger never throws — it catches its own errors, shows a red toast itself, and
+      // resolves `false`. Only clear the dirty flag when it actually resolved true (or there was
+      // nothing to await, e.g. no session change at all), so a failed save leaves the pill up and
+      // the beforeunload warning armed rather than silently reporting success.
+      const ok = result?.savePromise ? await result.savePromise : !!result;
+      if (ok !== false) {
+        unsavedEditRef.current = false;
+        setHasUnsavedChanges(false);
+        setJustSaved(true);
+        setTimeout(() => setJustSaved(false), 2000);
+      }
+    } finally {
+      setManualSaving(false);
+    }
+  }, [manualSaving]);
   // 4) On-demand flush for the "new version available" banner (App.jsx), which lives above the
   // router and reloads the page on click. pagehide fires on reload too, but a reload can cancel an
   // in-flight fetch before it lands — the same network write that pagehide kicks off has no guarantee
@@ -6797,6 +7617,11 @@ export default function StudioApp() {
     // This IS the client's real identity as of this load — future edits away from it need an
     // explicit confirm (see loadedClientIdentityRef) before they're allowed to autosave.
     loadedClientIdentityRef.current = { name: client.name || "", phone: client.phone || "" };
+    // What sessions[0] IS on the server right now, as of this load — not necessarily `session`
+    // itself (a deliberate Resume can load an OLDER session while sessions[0] stays whatever it
+    // already was). saveSession compares its own next write against this to tell a stale tab from
+    // one that's actually caught up — see buildSaveBaselineRef's own comment.
+    buildSaveBaselineRef.current = { savedAt: Number(client.sessions?.[0]?.savedAt) || 0, savedBy: client.sessions?.[0]?.savedBy || null };
     setClientDate(client.eventDate || "");
     setVenue(client.venue || "");
     setFn(client.fn || "");
@@ -6826,10 +7651,19 @@ export default function StudioApp() {
     }
     if (session.fnSnapshots && typeof session.fnSnapshots === "object" && Object.keys(session.fnSnapshots).length > 0) {
       const fn0Snap = session.fnSnapshots[0] || session.fnSnapshots["0"] || null;
+      // MUST include idx 0 here (unlike the older version of this block) — it used to be excluded on
+      // the assumption that Fn0's data always lives in the live top-level state instead. True only
+      // when landingFnIdx is 0. Landing on any OTHER function (a refresh while Fn4 was active, say)
+      // left fnBuilds with no entry at all for Fn0 — not merely stale, ABSENT — so the very next
+      // autosave's collectAllFunctionData/saveSession loop (which reads fnBuilds[i] for every i that
+      // isn't the live index) found nothing for Fn0 and wrote a session with NO fnSnapshots[0] at all,
+      // permanently erasing Fn1's entire real build. resumeSavedSession (the explicit per-pill Resume
+      // button) already gets this right — it excludes whichever index IS being restored into, not a
+      // hardcoded 0 — this mount-restore path is fixed to match that same, correct pattern.
       const restoredBuilds = {};
       Object.entries(session.fnSnapshots).forEach(([k, v]) => {
         const idx = parseInt(k);
-        if (!isNaN(idx) && idx !== 0 && v) restoredBuilds[idx] = v;
+        if (!isNaN(idx) && v) restoredBuilds[idx] = v;
       });
       // The mount-restore effect (refresh/reopen) passes the function that was actually active
       // before — landing everyone back on Fn0's live state while labelling it "Function N" (a bare
@@ -6888,6 +7722,7 @@ export default function StudioApp() {
       setSourceVideo({ id: session.sourceVideoId, title: session.sourceVideoTitle || vid?.title || "Video", tags: vTag });
     }
     if (session.elSelectedPhoto) setElSelectedPhoto(session.elSelectedPhoto);
+    setGrpSel(Object.fromEntries(Object.entries(session.grpSel || {}).map(([k, arr]) => [k, new Set(arr)])));
     setStep(landingStep);
     // The single-function path's toast, gone for the reason given on the multi-function one above.
   }, [events, allVideos, ytVideoTags]);
@@ -7280,6 +8115,7 @@ export default function StudioApp() {
     setZoneElements(session.zoneElements || {});
     setElNotes(session.elNotes || {});
     setElSelectedPhoto(session.elSelectedPhoto || {});
+    setGrpSel(Object.fromEntries(Object.entries(session.grpSel || {}).map(([k, arr]) => [k, new Set(arr)])));
     setSelectedMoods(session.selectedMoods || []);
     setSelectedPalettes(session.selectedPalettes || []);
     setFloralOverrides({ note: "", rows: [] });
@@ -8165,7 +9001,7 @@ export default function StudioApp() {
       let items = [];
       if (ze && ze.length > 0) {
         ze.forEach(el2 => {
-          const priceInfo = getElPriceForFn(el2, fZoneConfig[k], fFloralRatio, false, fVenue);
+          const priceInfo = getElPriceForFn(el2, fZoneConfig[k], fFloralRatio, false, fVenue, undefined, fnData.fnDate);
           const rc = priceInfo.rc;
           const up = priceInfo.unitPrice;
           const lt = priceInfo.lineCost;
@@ -8181,7 +9017,20 @@ export default function StudioApp() {
           // deleted-from-IMS element keeps the name it was saved with rather than going blank.
           const liveInv = el2.invId ? (imsInventory || []).find(i => i.id === el2.invId) : null;
           const displayName = liveInv?.name || el2.name;
-          if (lt > 0) items.push({ name: displayName, size: el2.size || "", qty: el2.qty || 0, unit: el2.unit || "pc", rate: up, total: lt, isFloral: rc && (rc.cat || "").toLowerCase() === "florals" });
+          if (lt > 0) {
+            // `up` is the full, pre-discount unit rate (rental × sub-category factor) — `lt` already
+            // has any Fixed-Venue standing-item discount baked in (repeatAdjustedLineCost, inside
+            // getElPriceForFn). Surfacing both, plus the delta, lets the cost sheet show the guest the
+            // benefit explicitly instead of just a lower total they have no way to attribute.
+            const qtyN = el2.qty || 0;
+            const noDiscTotal = Math.round(up * qtyN);
+            const hasDiscount = qtyN > 0 && (noDiscTotal - lt) > 0.5;
+            items.push({
+              name: displayName, size: el2.size || "", qty: qtyN, unit: el2.unit || "pc", rate: up, total: lt,
+              isFloral: rc && (rc.cat || "").toLowerCase() === "florals",
+              hasDiscount, discRate: hasDiscount ? Math.round(lt / qtyN) : undefined, noDiscTotal: hasDiscount ? noDiscTotal : undefined,
+            });
+          }
           if (el2.qty > 0) {
             const imsInv = dealCheckData?.inventory || [];
             const invItem = imsInv.find(i => i.name === el2.name);
@@ -8207,7 +9056,7 @@ export default function StudioApp() {
           }
         });
       }
-      const zl = fZoneConfig[k] ? calcStructCost(k, fZoneConfig[k], structRates) : { truss: 0, masking: 0, platform: 0, carpet: 0, total: 0, arches: 0, pillars: 0, glass: 0 };
+      const zl = fZoneConfig[k] ? scaleStruct(calcStructCost(k, fZoneConfig[k], structRates, structDiscountFor(fZoneConfig[k], fVenue))) : { truss: 0, masking: 0, platform: 0, carpet: 0, total: 0, arches: 0, pillars: 0, glass: 0 };
       const structItems = [];
       const zc = fZoneConfig[k] || {};
       const zm = zoneMeta[k];
@@ -8302,7 +9151,7 @@ export default function StudioApp() {
       const ic = items.reduce((s, i) => s + i.total, 0);
       return { k, label: el.label, icon: el.icon, tier: t, items, structItems, structTotal: zl.total, itemTotal: ic, zoneTotal: ic + zl.total, note: fElNotes[k] || "", dims, dimLabel, photo: fElSelectedPhoto[k]?.src || null, photoName: fElSelectedPhoto[k]?.eventName || "" };
     }).filter(z => z.items.length > 0 || z.structItems.length > 0);
-  }, [getElPriceForFn, zoneLabelsD, zoneMeta, zoneKeys, dealCheckData, imsDefaultPaintCost, dcCustomItems, structRates, imsInventory]);
+  }, [getElPriceForFn, zoneLabelsD, zoneMeta, zoneKeys, dealCheckData, studioFloralData, imsDefaultPaintCost, dcCustomItems, structRates, imsInventory, fvCfgForRepeat, clientLedger, activeClientId]);
 
   const buildCombinedCostSheetData = useCallback(() => {
     const all = collectAllFunctionData();
@@ -8336,7 +9185,8 @@ export default function StudioApp() {
       const db = b.fnDate || "9999-12-31";
       return da.localeCompare(db);
     });
-    const fvCfg = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
+    // Same studioFloralData/venueParents fallback as eventGrandTotal/grandTotal, for the same reason.
+    const fvCfg = { fixedVenues: (dealCheckData?.fixedVenues?.length ? dealCheckData.fixedVenues : studioFloralData?.fixedVenues) || [], venueParents: venueParents || dealCheckData?.venueParents || {} };
     const functions = sorted.map(fnDataRaw => {
       const fnData = enrichFromSession(fnDataRaw);
       const zones = buildZonesForFn(fnData);
@@ -8374,15 +9224,41 @@ export default function StudioApp() {
     // Agency fee — same flat % of the deal as eventGrandTotal (StudioApp's own memo), applied here
     // too so the cost sheet's own grand total agrees with it, plus exposed as its own amount so the
     // sheet can print it as an explicit line rather than folding it silently into the total.
-    const agencyFeePct = Number(dealCheckData?.agencyFeePct) || 20;
+    const agencyFeePct = Number(dealCheckData?.agencyFeePct ?? studioFloralData?.agencyFeePct) || 20;
     const agencyFee = Math.round(discountedTotal * agencyFeePct / 100);
+    const systemGrandTotal = discountedTotal + agencyFee;
+    // A negotiated amount (Summary's own "Total Estimate" hero shows THIS instead of the system
+    // estimate the moment one is set — see commitNegotiatedAmount/StudioSummary.jsx) is the deal's
+    // real, agreed price. The cost sheet used to always show the pre-negotiation system total
+    // instead, on every function line and the grand total — a real deal with a negotiated price
+    // could show a completely different "Function Total" here than what the client actually agreed
+    // to and what Summary/the booking itself record. Each function's own line is rescaled
+    // proportionally by its share of the system total — same proration proratedVenueDiscount already
+    // uses above for a deal-wide figure that isn't itself split per function — so the sheet's
+    // per-function breakdown still sums to the real negotiated amount instead of the un-negotiated
+    // system estimate.
+    const negotiatedAmount = Number(ac?.negotiatedAmount) > 0 ? Number(ac.negotiatedAmount) : 0;
+    const eventGrandTotal = negotiatedAmount > 0 ? negotiatedAmount : systemGrandTotal;
+    // previewGrand — each function's own total with its proportional share of the venue discount +
+    // agency fee (or the negotiated rescale) already folded in, so the on-screen preview's function
+    // cards sum to eventGrandTotal on their own, with no separate discount/fee row needed under
+    // them. Kept SEPARATE from `grand` (left exactly as calcFunctionBreakdown produced it) because
+    // Excel/PPT/HTML's own "Event Summary" section already shows that same discount/fee/negotiated
+    // adjustment as its own explicit row against the raw per-function figures — folding it into
+    // `grand` too would double it there.
+    if (preFeeTotal > 0) {
+      const scale = eventGrandTotal / preFeeTotal;
+      functions.forEach(f => { f.previewGrand = Math.round((f.grand || 0) * scale); });
+    } else {
+      functions.forEach(f => { f.previewGrand = f.grand || 0; });
+    }
     return {
       functions,
-      eventGrandTotal: discountedTotal + agencyFee,
-      venueDiscount, agencyFee, agencyFeePct,
+      eventGrandTotal,
+      venueDiscount, agencyFee, agencyFeePct, negotiatedAmount,
       clientName, clientPhone, clientBrideGroom
     };
-  }, [collectAllFunctionData, buildZonesForFn, calcFunctionBreakdown, clientName, clientPhone, clientBrideGroom, clientLedger, activeClientId, activeFnIdx, dealCheckData]);
+  }, [collectAllFunctionData, buildZonesForFn, calcFunctionBreakdown, clientName, clientPhone, clientBrideGroom, clientLedger, activeClientId, activeFnIdx, dealCheckData, studioFloralData, venueParents]);
 
   // ═══════════════════════════════════════════════════════════════
   // DEAL CHECK orchestration — IMS fetch (Supabase) + AI photo-match loop +
@@ -8728,6 +9604,13 @@ export default function StudioApp() {
       if (s.eventTypeMultipliers && typeof s.eventTypeMultipliers === "object") eventTypeMultipliers = s.eventTypeMultipliers;
       if (s.eventTimingMultipliers && typeof s.eventTimingMultipliers === "object") eventTimingMultipliers = s.eventTimingMultipliers;
       const sayaMultiplier = typeof s.sayaMultiplier === "number" ? s.sayaMultiplier : 1.3;
+      // Category Multipliers (guest rental pricing) + Situational Multipliers (crew planning) —
+      // IMS → Admin → Calendar → Date Pricing Config. Both were persisted settings with nothing
+      // reading them; now wired into repeatAdjustedLineCost-adjacent pricing and manpowerPlanForBooking/
+      // DCManpowerTab's crew counts respectively — see dateCategoryMultiplierFor/heavySayaMultFor.
+      const datePricing = (s.datePricing && typeof s.datePricing === "object") ? s.datePricing : SETTINGS_DEFAULTS.datePricing;
+      const situationalMultipliers = (s.situationalMultipliers && typeof s.situationalMultipliers === "object") ? s.situationalMultipliers : SIT_MULT_DEFAULTS;
+      const situationalMultiplierCap = typeof s.situationalMultiplierCap === "number" ? s.situationalMultiplierCap : 1.8;
       const heavyElementRanges = Array.isArray(s.heavyElementRanges) ? s.heavyElementRanges : [];
       const fabricBangaliRanges = Array.isArray(s.fabricBangaliRanges) ? s.fabricBangaliRanges : [];
       const trussLabourRanges = Array.isArray(s.trussLabourRanges) ? s.trussLabourRanges : [];
@@ -8764,7 +9647,7 @@ export default function StudioApp() {
       (Array.isArray(venuesRaw?.properties) ? venuesRaw.properties : []).forEach(p => { if (p?.name && typeof p.commissionPct === "number") venueCommission[p.name] = p.commissionPct; });
       (Array.isArray(venuesRaw?.outdoor) ? venuesRaw.outdoor : []).forEach(v => { if (v?.name && typeof v.commissionPct === "number") venueCommission[v.name] = v.commissionPct; });
 
-      setDealCheckData({ inventory, blocksByDate, fetchedDates: uniqueDates, flowerPatterns, mandiCatalogue, mandiPriceMultipliers, seasonMap, electricianProductivity, artificialMixRatePerKg, artificialFlowerRatePerKg, artificialFlowerBunchesPerKg, artificialGreenRatePerKg, artificialGreenBunchesPerKg, flowerRecipeSubcats, dihariSchemes, defaultWindowsByPhase, labourTiers, venueMinLabour, defaultMinLabour, eventTypeMultipliers, eventTimingMultipliers, sayaMultiplier, heavyElementRanges, fabricBangaliRanges, trussLabourRanges, fabricRftPerWorker, vendors, trussInv, colourCatalogue, paletteCatalogue, paintableCategories, defaultPaintCostPerItem, carpetFreshMarkup, agencyFeePct, defaultStudioMarkup: Number(s.defaultStudioMarkup ?? 3) || 3, fixedVenues: Array.isArray(s.fixedVenues) ? s.fixedVenues : [], fixedVenueSubcatDiscount: (s.fixedVenueSubcatDiscount && typeof s.fixedVenueSubcatDiscount === "object") ? s.fixedVenueSubcatDiscount : {}, venueParents, venueCommission, venueDumping: (s.venueDumping && typeof s.venueDumping === "object") ? s.venueDumping : {}, categoryDepartments: (catDeptMap && Object.keys(catDeptMap).length) ? catDeptMap : ((s.categoryDepartments && typeof s.categoryDepartments === "object") ? s.categoryDepartments : {}) });
+      setDealCheckData({ inventory, blocksByDate, fetchedDates: uniqueDates, flowerPatterns, mandiCatalogue, mandiPriceMultipliers, seasonMap, electricianProductivity, artificialMixRatePerKg, artificialFlowerRatePerKg, artificialFlowerBunchesPerKg, artificialGreenRatePerKg, artificialGreenBunchesPerKg, flowerRecipeSubcats, dihariSchemes, defaultWindowsByPhase, labourTiers, venueMinLabour, defaultMinLabour, eventTypeMultipliers, eventTimingMultipliers, sayaMultiplier, datePricing, situationalMultipliers, situationalMultiplierCap, heavyElementRanges, fabricBangaliRanges, trussLabourRanges, fabricRftPerWorker, vendors, trussInv, colourCatalogue, paletteCatalogue, paintableCategories, defaultPaintCostPerItem, carpetFreshMarkup, agencyFeePct, defaultStudioMarkup: Number(s.defaultStudioMarkup ?? 3) || 3, fixedVenues: Array.isArray(s.fixedVenues) ? s.fixedVenues : [], fixedVenueSubcatDiscount: (s.fixedVenueSubcatDiscount && typeof s.fixedVenueSubcatDiscount === "object") ? s.fixedVenueSubcatDiscount : {}, venueParents, venueCommission, venueDumping: (s.venueDumping && typeof s.venueDumping === "object") ? s.venueDumping : {}, categoryDepartments: (catDeptMap && Object.keys(catDeptMap).length) ? catDeptMap : ((s.categoryDepartments && typeof s.categoryDepartments === "object") ? s.categoryDepartments : {}) });
       setDealCheckLoading(false);
       if (inventory.length === 0) {
         setDcAbortRef(null);
@@ -9091,6 +9974,22 @@ export default function StudioApp() {
         const change = now === 0 ? "removed" : was === 0 ? "added" : "qty_changed";
         if (!changesByDept[dept]) changesByDept[dept] = [];
         changesByDept[dept].push({ name: item?.name || id, qty: now || was, change });
+        // A kit's own components can belong to a completely different department than the kit
+        // itself (carpentry/fabric/floral sub-parts inside a Structure-filed stage kit) — those
+        // departments never learned an affected deal's kit changed at all, only the kit's own
+        // department did. Purely additive: this does NOT touch requiredByFn/blocks reservation
+        // above (still keyed on the kit's own id, matching how availability is checked everywhere
+        // else in the app) — only which department heads get told about the change.
+        if (Array.isArray(item?.subItems) && item.subItems.length > 0) {
+          item.subItems.forEach((si) => {
+            const ci = (inventoryList || []).find((x) => x.id === si.itemId);
+            if (!ci) return;
+            const compDept = catToDept(ci.cat || ci.category, dealCheckData?.categoryDepartments);
+            if (compDept === dept) return; // already notified via the kit's own department above
+            if (!changesByDept[compDept]) changesByDept[compDept] = [];
+            changesByDept[compDept].push({ name: `${ci.name} (in ${item?.name || id})`, qty: (now || was) * (Number(si.qty) || 1), change });
+          });
+        }
       });
     });
     if (!changed) return;
@@ -9251,7 +10150,7 @@ export default function StudioApp() {
         zonesProcessed += 1;
         setDcGenStatus(`Matching zone "${zoneKey}" (fn ${fnIdx + 1})…`);
         const venueName = fn.fnVenue || "";
-        const fvCfg = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || venueParents };
+        const fvCfg = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: venueParents || dealCheckData?.venueParents || {} };
         // Match one element spec → its card. The AI vision call dominates wall-clock, so these run in
         // parallel below (bounded) instead of one-at-a-time — the main "Generate is slow" fix.
         let zoneAborted = false;
@@ -9659,7 +10558,7 @@ export default function StudioApp() {
     showLedgerRestoreWarning: ledgerLoadError && !activeClientId && !!restoreRef.current?.id,
     retryLedgerLoad,
     deleteSessionRows,
-    showClientForm, setShowClientForm, clientLedger, setClientLedger, saveClientLedger, activeClientId, setActiveClientId, clientSearch, setClientSearch,
+    showClientForm, setShowClientForm, clientLedger, setClientLedger, saveClientLedger, activeClientId, setActiveClientId, clientSearch, setClientSearch, hideDiscountFromClient, guestPriceMultiplier, dateCategoryMultiplierFor,
     snapshotBuildState, restoreBuildState, switchActiveFn, fnSnapHasData, fnSnapHasBuild,
     sessionHistoryExpanded, setSessionHistoryExpanded,
     // LMS
@@ -9672,7 +10571,7 @@ export default function StudioApp() {
     // build canvas
     enabledEls, setEnabledEls, elTiers, setElTiers, customMode, setCustomMode, itemQty, setItemQty, itemGrades, setItemGrades,
     showInsp, setShowInsp, showAi, setShowAi, showPpt, setShowPpt, showCosts, setShowCosts,
-    elInspo, setElInspo, elInspoLoading, setElInspoLoading, elSelectedPhoto, setElSelectedPhoto, elNotes, setElNotes, elCostOpen, setElCostOpen,
+    elInspo, setElInspo, elInspoLoading, setElInspoLoading, elSelectedPhoto, setElSelectedPhoto, grpSel, setGrpSel, elNotes, setElNotes, elCostOpen, setElCostOpen,
     elMultiPhotos, isMultiPhotoZone, toggleMultiElPhoto,
     customZones, setCustomZones, newCzSrc, setNewCzSrc, elGallery, setElGallery, galleryIdx, setGalleryIdx, webPreview, setWebPreview,
     zoneConfig, setZoneConfig, activeZones, setActiveZones, zoneOrder, setZoneOrder,
@@ -10087,6 +10986,26 @@ export default function StudioApp() {
                vs this-mode) apart — side by side they read as one broken control. */}
         <div className="sa-nav-right" style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 12, flex: "1 1 0", minWidth: 0 }}>
           {/* The estimate chip lived here; Build's right-hand Live Estimate tile owns it now. */}
+          {/* Manual "Save now" pill — only rendered while there's something to save (or mid-save, or
+              just after one), so it never sits idle as decoration. Autosave already covers this
+              within ~1.5s of the last edit, but a refresh in that window (or right after, before the
+              keepalive write confirms) is exactly the gap this closes: click it, wait for the network
+              write to actually land, then refresh with nothing left to lose — the beforeunload
+              warning below only fires while hasUnsavedChanges is still true. */}
+          {mode === "studio" && authUser && (hasUnsavedChanges || manualSaving || justSaved) && (
+            <button onClick={saveNow} disabled={manualSaving}
+              title={manualSaving ? "Saving…" : hasUnsavedChanges ? "You have unsaved changes — click to save now" : "All changes saved"}
+              style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 13px", borderRadius: 999,
+                border: `1px solid ${hasUnsavedChanges ? "#F59E0B88" : "#22C55E88"}`,
+                background: hasUnsavedChanges ? "rgba(245,158,11,0.14)" : "rgba(34,197,94,0.14)",
+                color: hasUnsavedChanges ? "#F59E0B" : "#22C55E", fontSize: 11.5, fontWeight: 700,
+                fontFamily: "inherit", cursor: manualSaving ? "progress" : "pointer", flexShrink: 0,
+                whiteSpace: "nowrap", transition: "background .15s ease, color .15s ease" }}>
+              <span aria-hidden="true" style={{ width: 6, height: 6, borderRadius: "50%", flexShrink: 0,
+                background: "currentColor" }} />
+              {manualSaving ? "Saving…" : hasUnsavedChanges ? "Unsaved changes — Save now" : "Saved"}
+            </button>
+          )}
           {/* Mode switch — which part of Studio. Titled to distinguish it from the app switcher. */}
           <div style={NAV_GROUP}>
             {[["studio", "Studio", IconPalette, "Design Studio — build deals"], ...(canManageAny ? [["manage", "Manage", IconSliders, "Manage — library & settings"]] : [])].map(([id, label, Icon, tip]) => (

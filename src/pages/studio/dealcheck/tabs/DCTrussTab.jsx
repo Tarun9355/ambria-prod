@@ -1,5 +1,6 @@
 import { Fragment } from "react";
-import { calcZoneFabric, autoFillFabricAllocation, calcFabricAllocationTotal } from "../../../../lib/studio/pricing";
+import { calcZoneFabric, autoFillFabricAllocation, calcFabricAllocationTotal, zoneTrussStandingDiscountDetail } from "../../../../lib/studio/pricing";
+import { fixedVenueFor } from "../../../../lib/ims/fixedVenues";
 import { TRUSS_ALLOC_SK } from "../../../../lib/studio/keys.js";
 import { supabase } from "../../../../lib/supabase";
 
@@ -40,13 +41,13 @@ export default function DCTrussTab({ ctx }) {
                   }
 
                   // Helper — list of zones present in a fn (uses fn.zoneConfig + fn.enabledEls).
-                  // ♻️ Repeat zones excluded — same treatment as Manpower's freshFn (this zone's
-                  // truss/fabric was already built for a prior day, so nothing bills or previews
-                  // here for it) — must match dcCostRollup's own truss/fabric total.
+                  // ♻️ Repeat zones now STAY in this list — a repeat zone's truss still costs half
+                  // (see the per-row discount below) rather than nothing, so it needs its own preview
+                  // card instead of being invisible. Must match dcCostRollup's own truss total.
                   const zonesOf = (fn) => {
                     const zc = fn.zoneConfig || {};
                     const en = fn.enabledEls || {};
-                    return Object.keys(zc).filter(zk => en[zk] && zc[zk] && !zc[zk].repeat);
+                    return Object.keys(zc).filter(zk => en[zk] && zc[zk]);
                   };
 
                   // §23 Phase 3 — resolve reservation state for THIS client on the SELECTED fn date.
@@ -91,23 +92,62 @@ export default function DCTrussTab({ ctx }) {
                     // A zone can carry more than one truss structure (row 0 = the zone's own scalar
                     // fields, plus any zCfg.extraTrussRows added via "+ Add Truss" in Build) — one
                     // preview card per row, not per zone.
+                    // Fixed-venue pillar/beam discount for this function's own venue (Admin →
+                    // Settings → Fixed Venues) — netted out of each row below so the Pillars/Beams
+                    // line items still sum to the row's own discounted total, matching the
+                    // aggregate this tab (and dcCostRollup's own Truss figure) both now show.
+                    const venueTrussHere = fixedVenueFor({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, fn.fnVenue || "")?.truss;
                     const previews = zones.flatMap(zk => {
                       const zCfg = (fn.zoneConfig || {})[zk];
                       const zLabel = (zoneMeta?.[zk]?.label) || ((fn.customZones || []).find(cz => cz.id === zk)?.name) || zk;
                       const rows = [zCfg, ...(zCfg.extraTrussRows || [])];
+                      const isRepeat = !!zCfg.repeat;
                       return rows.map((row, rowIdx) => {
                         const pv = calcZoneTrussPreview(row, trussInv);
                         if (pv && pv.costs) {
+                          const disc = venueTrussHere ? zoneTrussStandingDiscountDetail(row, trussInv, venueTrussHere) : { pillar: 0, beam: 0, total: 0 };
+                          if (disc.total > 0) {
+                            pv.costs.pillarCost = Math.max(0, pv.costs.pillarCost - disc.pillar);
+                            pv.costs.beamCost = Math.max(0, pv.costs.beamCost - disc.beam);
+                            pv.costs.actual = Math.max(0, pv.costs.actual - disc.total);
+                            pv.costs.venueDiscount = disc.total;
+                            pv.costs.pillarDiscounted = disc.pillar > 0;
+                            pv.costs.beamDiscounted = disc.beam > 0;
+                          }
+                          // ♻️ Repeat zone: the structure is already standing, but reusing it isn't
+                          // free — someone still has to check/re-tension/touch it up — so it bills at
+                          // 70% (a flat 30% discount — see dcCostRollup's matching change). Covers
+                          // pillarCost/beamCost/battaCost individually (not just the .actual sum they
+                          // roll into) so the per-item tiles shown below agree with the card's own
+                          // total instead of quietly showing the old undiscounted figure. The
+                          // pillar/beam RFT and batta RFT figures stay OUT of the grand totals below
+                          // regardless — those drive truss-inventory sourcing, and a repeat zone needs
+                          // nothing new sourced for a rig that isn't moving.
+                          if (isRepeat) {
+                            pv.costs.pillarCost = Math.round(pv.costs.pillarCost * 0.7);
+                            pv.costs.beamCost = Math.round(pv.costs.beamCost * 0.7);
+                            pv.costs.battaCost = Math.round((pv.costs.battaCost || 0) * 0.7);
+                            pv.costs.actual = Math.round(pv.costs.actual * 0.7);
+                            pv.costs.isRepeat = true;
+                            // OR'd in, not overwritten — a zone can be BOTH a fixed-venue standing
+                            // match (disc.pillar>0 above) AND repeat; either reason is enough to show
+                            // the discount-applied colour on that tile.
+                            pv.costs.pillarDiscounted = pv.costs.pillarDiscounted || true;
+                            pv.costs.beamDiscounted = pv.costs.beamDiscounted || true;
+                            pv.costs.battaDiscounted = true;
+                          }
                           grandActual += pv.costs.actual;
-                          grandU      += pv.costs.uEquivalent;
-                          grandBox    += pv.costs.boxEquivalent;
-                          grandPillarRft += pv.costs.pillarRft;
-                          grandBeamRft   += pv.costs.beamRft;
-                          if (pv.batta?.rftWithBuffer) grandBattaRft += pv.batta.rftWithBuffer;
+                          if (!isRepeat) {
+                            grandU      += pv.costs.uEquivalent;
+                            grandBox    += pv.costs.boxEquivalent;
+                            grandPillarRft += pv.costs.pillarRft;
+                            grandBeamRft   += pv.costs.beamRft;
+                            if (pv.batta?.rftWithBuffer) grandBattaRft += pv.batta.rftWithBuffer;
+                          }
                         }
                         if (pv?.source === "default-on-forget") anyDefault = true;
                         if (pv?.smartFlag === "red") anyShortage = true;
-                        return { zk, zLabel: rowIdx > 0 ? `${zLabel} (truss #${rowIdx + 1})` : zLabel, pv, row, rowIdx };
+                        return { zk, zLabel: rowIdx > 0 ? `${zLabel} (truss #${rowIdx + 1})${isRepeat ? " · ♻️ Repeat (30%)" : ""}` : `${zLabel}${isRepeat ? " · ♻️ Repeat (30%)" : ""}`, pv, row, rowIdx };
                       });
                     }).filter(x => x.pv && x.pv.source !== "none");
                     return { fn, previews };
@@ -361,12 +401,14 @@ export default function DCTrussTab({ ctx }) {
                         const anchors = pObj?.anchorColours || [];
                         let fnGrand = 0;
                         previews.forEach(({ zk, pv }) => {
-                          fnGrand += pv?.costs?.actual || 0;
+                          fnGrand += pv?.costs?.actual || 0; // already halved above for a repeat zone
                           const zCfg = (fn.zoneConfig || {})[zk];
                           const photoUrl = (fn.elSelectedPhoto || {})[zk];
                           let density = "moderate";
                           if (photoUrl) { const li = libItems.find(l => l.url === photoUrl); if (li?.dims?.drapeDensity) density = li.dims.drapeDensity; }
-                          fnGrand += calcZoneFabricCost(zCfg, trussInv, anchors, density);
+                          // Same flat 30% discount (billed at 70%) as the truss steel above for a
+                          // repeat zone — see dcCostRollup's matching change.
+                          fnGrand += calcZoneFabricCost(zCfg, trussInv, anchors, density) * (zCfg?.repeat ? 0.7 : 1);
                         });
                         return (
                         <div key={fi} style={{display:"flex",flexDirection:"column",gap:10}}>
@@ -470,7 +512,7 @@ export default function DCTrussTab({ ctx }) {
                                       <div className="dct-tile" style={{flex:"1 1 200px",padding:"10px 12px",background:TILE_BG,borderRadius:7,fontSize:12}}>
                                         <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",gap:8,marginBottom:4}}>
                                           <span style={{fontSize:10.5,fontWeight:700,letterSpacing:0.6,textTransform:"uppercase",color:INK_2}}>🏛️ Pillars ({topo.pillars.length})</span>
-                                          {(costs?.pillarCost || 0) > 0 && <span style={{...NUM,fontSize:12.5,fontWeight:700,color:INK}}>₹{Math.round((costs?.pillarCost || 0)).toLocaleString("en-IN")}</span>}
+                                          {(costs?.pillarCost || 0) > 0 && <span title={costs?.pillarDiscounted?"Fixed-venue standing-pillar discount applied":undefined} style={{...NUM,fontSize:12.5,fontWeight:700,color:costs?.pillarDiscounted?"#10B981":INK}}>₹{Math.round((costs?.pillarCost || 0)).toLocaleString("en-IN")}</span>}
                                         </div>
                                         <div style={{...NUM,color:INK,fontWeight:600,lineHeight:1.5}}>
                                           {groupByLen(topo.pillars, p => p.H)} = {costs?.pillarRft || 0} RFT
@@ -479,7 +521,7 @@ export default function DCTrussTab({ ctx }) {
                                       <div className="dct-tile" style={{flex:"1 1 200px",padding:"10px 12px",background:TILE_BG,borderRadius:7,fontSize:12}}>
                                         <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",gap:8,marginBottom:4}}>
                                           <span style={{fontSize:10.5,fontWeight:700,letterSpacing:0.6,textTransform:"uppercase",color:INK_2}}>🔗 Beams ({topo.beams.length})</span>
-                                          {(costs?.beamCost || 0) > 0 && <span style={{...NUM,fontSize:12.5,fontWeight:700,color:INK}}>₹{Math.round((costs?.beamCost || 0)).toLocaleString("en-IN")}</span>}
+                                          {(costs?.beamCost || 0) > 0 && <span title={costs?.beamDiscounted?"Fixed-venue standing-beam discount applied":undefined} style={{...NUM,fontSize:12.5,fontWeight:700,color:costs?.beamDiscounted?"#10B981":INK}}>₹{Math.round((costs?.beamCost || 0)).toLocaleString("en-IN")}</span>}
                                         </div>
                                         <div style={{...NUM,color:INK,fontWeight:600,lineHeight:1.5}}>
                                           {groupByLen(topo.beams, b => b.lengthFt)} = {costs?.beamRft || 0} RFT
@@ -492,7 +534,7 @@ export default function DCTrussTab({ ctx }) {
                                         <div className="dct-tile" style={{flex:"1 1 200px",padding:"10px 12px",background:TILE_BG,borderRadius:7,fontSize:12}}>
                                           <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",gap:8,marginBottom:4}}>
                                           <span style={{fontSize:10.5,fontWeight:700,letterSpacing:0.6,textTransform:"uppercase",color:INK_2}}>🎗️ Batta (+{batta.bufferPct}% buffer)</span>
-                                          {(costs?.battaCost || 0) > 0 && <span style={{...NUM,fontSize:12.5,fontWeight:700,color:INK}}>₹{Math.round((costs?.battaCost || 0)).toLocaleString("en-IN")}</span>}
+                                          {(costs?.battaCost || 0) > 0 && <span title={costs?.battaDiscounted?"Repeat-zone discount applied":undefined} style={{...NUM,fontSize:12.5,fontWeight:700,color:costs?.battaDiscounted?"#10B981":INK}}>₹{Math.round((costs?.battaCost || 0)).toLocaleString("en-IN")}</span>}
                                         </div>
                                           <div style={{...NUM,color:INK,fontWeight:600,lineHeight:1.5}}>
                                             {batta.rftRequired} RFT
@@ -541,10 +583,14 @@ export default function DCTrussTab({ ctx }) {
                                       const lizaAlloc    = showLiza    ? resolveAlloc("lizaAllocation",    Math.ceil(fab.lizaKg),  trussInv.lizaStock,    "stockKg")     : [];
                                       const curtainAlloc = showCurtain ? resolveAlloc("curtainAllocation", fab.curtainPieces, trussInv.curtainStock, "stockPieces") : [];
 
-                                      // Cost rollup (internal margin tracking — never shown to client)
-                                      const maskingTotals = calcFabricAllocationTotal(maskingAlloc, trussInv.maskingStock, "stockPieces", trussInv.rates?.maskingPieceRate, trussInv.rates?.maskingPiecePurchase, fmkup.masking, trussInv.rates?.maskingPieceRateNew);
-                                      const lizaTotals    = calcFabricAllocationTotal(lizaAlloc,    trussInv.lizaStock,    "stockKg",     trussInv.rates?.lizaKgRate,       trussInv.rates?.lizaKgPurchase,       fmkup.liza,    trussInv.rates?.lizaKgRateNew);
-                                      const curtainTotals = calcFabricAllocationTotal(curtainAlloc, trussInv.curtainStock, "stockPieces", trussInv.rates?.curtainPieceRate, trussInv.rates?.curtainPiecePurchase, fmkup.curtain, trussInv.rates?.curtainPieceRateNew);
+                                      // Cost rollup (internal margin tracking — never shown to client).
+                                      // Same flat 30% repeat-zone discount (billed at 70%) as the truss
+                                      // steel above — costs?.isRepeat is this row's own flag, set above.
+                                      const repeatFabMult = costs?.isRepeat ? 0.7 : 1;
+                                      const applyRepeatFab = (t) => repeatFabMult === 1 ? t : { ...t, total: Math.round(t.total * repeatFabMult), reusedCost: Math.round(t.reusedCost * repeatFabMult), freshCost: Math.round(t.freshCost * repeatFabMult) };
+                                      const maskingTotals = applyRepeatFab(calcFabricAllocationTotal(maskingAlloc, trussInv.maskingStock, "stockPieces", trussInv.rates?.maskingPieceRate, trussInv.rates?.maskingPiecePurchase, fmkup.masking, trussInv.rates?.maskingPieceRateNew));
+                                      const lizaTotals    = applyRepeatFab(calcFabricAllocationTotal(lizaAlloc,    trussInv.lizaStock,    "stockKg",     trussInv.rates?.lizaKgRate,       trussInv.rates?.lizaKgPurchase,       fmkup.liza,    trussInv.rates?.lizaKgRateNew));
+                                      const curtainTotals = applyRepeatFab(calcFabricAllocationTotal(curtainAlloc, trussInv.curtainStock, "stockPieces", trussInv.rates?.curtainPieceRate, trussInv.rates?.curtainPiecePurchase, fmkup.curtain, trussInv.rates?.curtainPieceRateNew));
 
                                       // Write allocation to the correct row — row 0 sits directly on the zone,
                                       // extra rows sit on zoneConfig[zk].extraTrussRows[rowIdx-1].
@@ -591,7 +637,7 @@ export default function DCTrussTab({ ctx }) {
                                         </span>
                                       );
 
-                                      const FabricRow = ({ emoji, label, qty, unitLabel, allocs, totals, fabricType, allocField, breakdown }) => {
+                                      const FabricRow = ({ emoji, label, qty, unitLabel, allocs, totals, fabricType, allocField, breakdown, discounted }) => {
                                         const shortQty = totals.totalShort || 0;
                                         const hasShort = shortQty > 0;
                                         const marginLoss = totals.freshCost || 0;
@@ -619,10 +665,10 @@ export default function DCTrussTab({ ctx }) {
                                               <AllocChips allocs={allocs} unitLabel={unitLabel} />
                                               {hasShort ? (
                                                 <span style={{...NUM,fontSize:12,color:"#B45309",whiteSpace:"nowrap",fontWeight:700}}>
-                                                  ⚠️ {shortQty}{unitLabel} fresh · {fmtRs(totals.total)} <span style={{color:INK_2,fontWeight:400}}>(incl. {fmtRs(marginLoss)} fresh)</span>
+                                                  ⚠️ {shortQty}{unitLabel} fresh · <span title={discounted?"Repeat-zone discount applied":undefined} style={{color:discounted?"#10B981":undefined}}>{fmtRs(totals.total)}</span> <span style={{color:INK_2,fontWeight:400}}>(incl. {fmtRs(marginLoss)} fresh)</span>
                                                 </span>
                                               ) : allocs.length > 0 ? (
-                                                <span style={{...NUM,fontSize:12,color:"#059669",whiteSpace:"nowrap",fontWeight:600}}>✓ in stock · <span style={{color:INK,fontWeight:700}}>{fmtRs(totals.total)}</span> <span style={{color:INK_2,fontWeight:400}}>rental</span></span>
+                                                <span style={{...NUM,fontSize:12,color:"#059669",whiteSpace:"nowrap",fontWeight:600}}>✓ in stock · <span title={discounted?"Repeat-zone discount applied":undefined} style={{color:discounted?"#10B981":INK,fontWeight:700}}>{fmtRs(totals.total)}</span> <span style={{color:INK_2,fontWeight:400}}>rental</span></span>
                                               ) : (
                                                 <span style={{fontSize:12,color:INK_3,whiteSpace:"nowrap"}}>— not allocated</span>
                                               )}
@@ -648,16 +694,19 @@ export default function DCTrussTab({ ctx }) {
                                             emoji="🧱" label="Wall Masking" qty={fab.maskingPieces} unitLabel="pc"
                                             allocs={maskingAlloc} totals={maskingTotals} fabricType="masking" allocField="maskingAllocation"
                                             breakdown={`RFT ${Math.round((fab.maskL || 0) + 2*(fab.maskW || 0))} ÷ 13`}
+                                            discounted={costs?.isRepeat}
                                           />}
                                           {showLiza && <FabricRow
                                             emoji="🪡" label="Liza" qty={fab.lizaKg} unitLabel="kg"
                                             allocs={lizaAlloc} totals={lizaTotals} fabricType="liza" allocField="lizaAllocation"
                                             breakdown={fab.lizaModel === "wrap+ceiling" ? `wrap ${fab.lizaWrapKg}kg + ceiling ${fab.lizaCeilingKg}kg (${density})` : `wrap only`}
+                                            discounted={costs?.isRepeat}
                                           />}
                                           {showCurtain && <FabricRow
                                             emoji="🎀" label="Velvet Curtains" qty={fab.curtainPieces} unitLabel="pc"
                                             allocs={curtainAlloc} totals={curtainTotals} fabricType="curtain" allocField="curtainAllocation"
                                             breakdown={`${fab.curtainPillarCount || fab.pillarCount} ${fab.curtainPillarCount && fab.curtainPillarCount < fab.pillarCount ? "front " : ""}pillars × ${(row.curtainsPerPillar || 4)} curtains/pillar`}
+                                            discounted={costs?.isRepeat}
                                           />}
                                           </div>
                                         </div>

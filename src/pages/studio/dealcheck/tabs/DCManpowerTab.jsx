@@ -7,9 +7,9 @@
 import { useEffect } from "react";
 import { CARD_SHADOW, CARD_BG, CARD_BORDER, HAIRLINE, TILE_BG, TILE_BORDER, CHIP_BG, INK, INK_2, INK_3, GOLD, GOLD_SOFT, NUM } from "../../../../lib/studio/dcTokens";
 import { resolveTrussConfig } from "../../../../lib/studio/pricing";
-import { heavyExtraLabour, eventTimingMultFor, EVENT_TIMINGS } from "../../../../lib/ims/constants";
+import { heavyExtraLabour, eventTimingMultFor, EVENT_TIMINGS, SIT_MULT_DEFAULTS } from "../../../../lib/ims/constants";
 import { standingReductionBySubcat, fixedVenueFor } from "../../../../lib/ims/fixedVenues";
-import { itemImsSubcat, lookupBySubcat } from "../../../../lib/ims/helpers";
+import { itemImsSubcat, lookupBySubcat, walkKitUnits } from "../../../../lib/ims/helpers";
 import { matchFlowerPattern } from "../../../../lib/ims/flowerHelpers";
 import ManpowerFactorPills from "../../../../components/shared/ManpowerFactorPills.jsx";
 
@@ -191,7 +191,6 @@ export default function DCManpowerTab({ ctx }) {
                   const defaultMinLabour = dealCheckData?.defaultMinLabour || 4;
                   const eventTypeMultipliers = dealCheckData?.eventTypeMultipliers || { outdoor_budgeted:1.0 };
                   const eventTimingMultipliers = dealCheckData?.eventTimingMultipliers || {};
-                  const sayaMultiplier = dealCheckData?.sayaMultiplier || 1.3;
                   const heavyElementRanges = dealCheckData?.heavyElementRanges || [];
                   const fabricBangaliRanges = dealCheckData?.fabricBangaliRanges || [];
                   const trussLabourRanges = dealCheckData?.trussLabourRanges || [];
@@ -200,6 +199,22 @@ export default function DCManpowerTab({ ctx }) {
                   const flowerPatternsMP = dealCheckData?.flowerPatterns || [];
                   const electricianProdMP = dealCheckData?.electricianProductivity || {};
                   const seasonMapMP = dealCheckData?.seasonMap || {};
+                  // Situational Multipliers (IMS → Admin → Calendar → Date Pricing Config): Heavy
+                  // Saya — a King's-season date needs more crew per role, at that role's OWN
+                  // configured pressure factor, not the old flat sayaMultiplier applied only to
+                  // Labours. Combined via the same "biggest single pressure factor wins" max() the
+                  // existing dumping/timing candidates already use (not multiplied together), then
+                  // capped. Premium Segment/Day-Prior aren't wired yet — Premium has no per-function
+                  // segment field to gate on (this tab hard-codes "outdoor_budgeted" everywhere a
+                  // segment is read, see calcPeopleTier3Labours), and Day-Prior needs its own
+                  // reduction applied to the separate -1-day phase, not this per-type multiplier.
+                  const situMultCap = dealCheckData?.situationalMultiplierCap || 1.8;
+                  const sitMultsMP = dealCheckData?.situationalMultipliers || SIT_MULT_DEFAULTS;
+                  const heavySayaMultFor = (fn, type) => {
+                    if (seasonMapMP[fn.fnDate || ""] !== "kings") return 1.0;
+                    const m = Number((sitMultsMP.heavySaya || {})[type]);
+                    return m > 0 ? m : 1.0;
+                  };
                   // ── Vendor avg-rate lookup (22 May 2026) ─────────────
                   // For each labour type: avg of (vendor.storedRate.amount) where
                   // vendor.type==="Manpower Contractor", vendor.active, vendor.isFixed, vendor.labourType===type.
@@ -249,16 +264,27 @@ export default function DCManpowerTab({ ctx }) {
                         // `.sub` is a separate, older vocabulary that doesn't track IMS's live
                         // Sub-Categories master, and a name coincidentally matching a Rate Card row
                         // used to silently override the element's real Inventory sub-category.
-                        let rc = null;
-                        if (el.invId) {
-                          const invItem = (dcInventoryCache || []).find(i => i.id === el.invId);
-                          if (invItem) rc = { name: invItem.name, cat: invItem.cat || invItem.category || "", sub: invItem.subCat || invItem.subcategory || "" };
-                        }
-                        if (!rc && el.patternId) rc = { name: el.name || "", cat: "florals", sub: "" };
-                        if (!rc) return;
                         const qty = el.qty || 0;
                         if (qty <= 0) return;
-                        cb({ el, rc, qty, zoneKey: zk });
+                        if (el.invId) {
+                          const invItem = (dcInventoryCache || []).find(i => i.id === el.invId);
+                          if (invItem) {
+                            // A kit's components each carry their OWN cat/sub — a stage kit built from
+                            // truss + fabric + lighting sub-parts used to count entirely under whatever
+                            // the kit itself is filed as. walkKitUnits (the same node-walker Transport
+                            // already uses) visits the kit's own node plus every component, so each
+                            // feeds crew-hours into its own bucket instead of one.
+                            if (Array.isArray(invItem.subItems) && invItem.subItems.length > 0) {
+                              walkKitUnits(invItem, qty, dcInventoryCache, el.kitOverrides, (node, nodeQty) => {
+                                cb({ el, rc: { name: node.name, cat: node.cat || node.category || "", sub: node.subCat || node.subcategory || "" }, qty: nodeQty, zoneKey: zk });
+                              });
+                            } else {
+                              cb({ el, rc: { name: invItem.name, cat: invItem.cat || invItem.category || "", sub: invItem.subCat || invItem.subcategory || "" }, qty, zoneKey: zk });
+                            }
+                            return;
+                          }
+                        }
+                        if (el.patternId) cb({ el, rc: { name: el.name || "", cat: "florals", sub: "" }, qty, zoneKey: zk });
                       });
                     });
                   };
@@ -363,12 +389,10 @@ export default function DCManpowerTab({ ctx }) {
                     const dayPrior = dcMpIncludeMinusOne; // -1 day enabled = day-prior confirmed
                     let situationalMult = 1.0;
                     if (!dayPrior) {
-                      const candidates = [dumpingMult];
-                      const season = seasonMapMP[fn.fnDate||""];
-                      if (season === "kings") candidates.push(sayaMultiplier);
+                      const candidates = [dumpingMult, heavySayaMultFor(fn, "Labours")];
                       const timingId = shiftToTiming(fn.fnShift);
                       candidates.push(eventTimingMultFor(eventTimingMultipliers, timingId, "Labours", 1.0));
-                      situationalMult = Math.max(...candidates, 1.0);
+                      situationalMult = Math.min(situMultCap, Math.max(...candidates, 1.0));
                     }
                     const adjusted = Math.ceil(base * situationalMult);
                     // Heavy element add-ons
@@ -409,10 +433,10 @@ export default function DCManpowerTab({ ctx }) {
                     const zc = fn.zoneConfig || {};
                     const en = fn.enabledEls || {};
                     const engBackDepth = Number(dealCheckData?.trussInv?.settings?.defaultBackDepthFt) || 4;
+                    const tInv = dealCheckData?.trussInv;
                     Object.keys(zc).forEach(zk => {
                       if (!en[zk] || !zc[zk]) return;
                       const z = zc[zk];
-                      if (!z.mkOn) return;
                       const cfg = resolveTrussConfig(z);
                       if (!cfg || !cfg.config) return;
                       const config = cfg.config;
@@ -431,21 +455,34 @@ export default function DCManpowerTab({ ctx }) {
                             if (topSqft <= r.upTo) { topTotal += r.labour || 0; break; }
                           }
                         }
-                        // Side walls — back spans the WIDTH (dW), left/right span the DEPTH (dL). Never front.
-                        if (mw.back  && dW > 0) zoneRft += dW;
-                        if (mw.left  && dL > 0) zoneRft += dL;
-                        if (mw.right && dL > 0) zoneRft += dL;
+                        // Side walls — back spans the WIDTH (dW), left/right span the DEPTH (dL). Never
+                        // front. Optional, opt-in — only counts when Masking is switched on for this zone.
+                        if (z.mkOn) {
+                          if (mw.back  && dW > 0) zoneRft += dW;
+                          if (mw.left  && dL > 0) zoneRft += dL;
+                          if (mw.right && dL > 0) zoneRft += dL;
+                        }
                       } else if (config === "half_box") {
                         // Half Box — back (L-span) + left/right (backDepth) per-toggle
                         const spanL = cfg.spanFt || dL || dW;
-                        if (mw.back  && spanL > 0)      zoneRft += spanL;
-                        if (mw.left  && sideDepth > 0)  zoneRft += sideDepth;
-                        if (mw.right && sideDepth > 0)  zoneRft += sideDepth;
+                        if (z.mkOn) {
+                          if (mw.back  && spanL > 0)      zoneRft += spanL;
+                          if (mw.left  && sideDepth > 0)  zoneRft += sideDepth;
+                          if (mw.right && sideDepth > 0)  zoneRft += sideDepth;
+                        }
                       } else if (config === "u_only") {
                         // U Truss — only "back" checkbox (L-span). No left/right.
                         const spanL = cfg.spanFt || dL || dW;
-                        if (mw.back && spanL > 0) zoneRft += spanL;
+                        if (z.mkOn && mw.back && spanL > 0) zoneRft += spanL;
                       }
+
+                      // Batta wraps every pillar + every beam this zone's truss actually has — a fixed
+                      // part of building ANY truss, done by Fabric Bangali regardless of whether the
+                      // OPTIONAL side-wall Masking is switched on. Used to only be counted when mkOn was
+                      // true (the whole zone was skipped otherwise, via the removed `if (!z.mkOn) return`
+                      // above), so a zone with real draping labour but Masking off silently contributed
+                      // nothing here even though it has its own truss/pillar/beam cost in the Truss tab.
+                      if (tInv) { try { const pv = calcZoneTrussPreview(z, tInv); if (pv?.batta?.rftWithBuffer) zoneRft += pv.batta.rftWithBuffer; } catch {} }
 
                       rftTotal += zoneRft;
                     });
@@ -489,17 +526,25 @@ export default function DCManpowerTab({ ctx }) {
                     if (type === "Drivers") return 0;
                     return 0;
                   };
-                  // Dispatcher
+                  // Dispatcher. Labours (and anything configured as a generic tier-3 type, which
+                  // reuses calcPeopleTier3Labours wholesale) already folds heavySaya in internally —
+                  // skip the generic wrap below for those so it isn't applied twice. Every other type
+                  // gets the same King's-date per-role pressure factor applied here, uniformly,
+                  // instead of leaving every non-Labours role unaffected by a King's date the way
+                  // this tab always has.
                   const calcPeopleForType = (fn, type) => {
-                    if (type === "Flowerists") return calcPeopleFlowerists(fn);
-                    if (type === "Electricians") return calcPeopleElectricians(fn);
-                    if (type === "Labours") return calcPeopleTier3Labours(fn);
-                    if (type === "Fabric Bangali") return calcPeopleFabricBangali(fn);
-                    if (type === "Truss Labour") return calcPeopleTrussLabour(fn);
                     const cfg = labourTiers[type];
-                    if (cfg && cfg.tier === 2) return calcPeopleTier2(fn, type);
-                    if (cfg && cfg.tier === 3) return calcPeopleTier3Labours(fn);
-                    return calcPeopleDefault(fn, type);
+                    const isTier3Labours = type === "Labours" || (cfg && cfg.tier === 3);
+                    const raw = type === "Flowerists" ? calcPeopleFlowerists(fn)
+                      : type === "Electricians" ? calcPeopleElectricians(fn)
+                      : isTier3Labours ? calcPeopleTier3Labours(fn)
+                      : type === "Fabric Bangali" ? calcPeopleFabricBangali(fn)
+                      : type === "Truss Labour" ? calcPeopleTrussLabour(fn)
+                      : (cfg && cfg.tier === 2) ? calcPeopleTier2(fn, type)
+                      : calcPeopleDefault(fn, type);
+                    if (isTier3Labours || type === "Supervisors" || type === "Drivers" || !(raw > 0)) return raw;
+                    const m = Math.min(situMultCap, heavySayaMultFor(fn, type));
+                    return m > 1 ? Math.ceil(raw * m) : raw;
                   };
 
                   // ── Trace helpers (22 May 2026 · breakdown UI) ─────────────
@@ -599,14 +644,13 @@ export default function DCManpowerTab({ ctx }) {
                     const dumpingMult = ({ nearby:1.0, medium:1.1, far:1.2 })[dumpingLevel] || 1.0;
                     const eventMult = eventTypeMultipliers["outdoor_budgeted"] || 1;
                     const base = Math.ceil(venueMin * eventMult);
-                    const season = seasonMapMP[fn.fnDate||""];
-                    const sayaMult = season === "kings" ? sayaMultiplier : 1.0;
+                    const sayaMult = heavySayaMultFor(fn, "Labours");
                     const timingId = shiftToTiming(fn.fnShift);
                     const timingMult = eventTimingMultFor(eventTimingMultipliers, timingId, "Labours", 1.0);
                     const timingLabel = "⏰ " + (EVENT_TIMINGS.find(t => t.id === timingId)?.label || timingId);
                     let situationalMult = 1.0;
                     if (!dcMpIncludeMinusOne) {
-                      situationalMult = Math.max(dumpingMult, sayaMult, timingMult, 1.0);
+                      situationalMult = Math.min(situMultCap, Math.max(dumpingMult, sayaMult, timingMult, 1.0));
                     }
                     const adjusted = Math.ceil(base * situationalMult); // venue-min floor (with situational)
                     const subCounts = {};
@@ -651,10 +695,10 @@ export default function DCManpowerTab({ ctx }) {
                     const zc = fn.zoneConfig || {};
                     const en = fn.enabledEls || {};
                     const engBackDepth = Number(dealCheckData?.trussInv?.settings?.defaultBackDepthFt) || 4;
+                    const tInv = dealCheckData?.trussInv;
                     Object.keys(zc).forEach(zk => {
                       if (!en[zk] || !zc[zk]) return;
                       const z = zc[zk];
-                      if (!z.mkOn) return;
                       const cfg = resolveTrussConfig(z);
                       if (!cfg || !cfg.config) return;
                       const config = cfg.config;
@@ -677,20 +721,35 @@ export default function DCManpowerTab({ ctx }) {
                           }
                         }
                         parts.push({ kind: "top", label: `Top ${dL}×${dW} = ${topSqft} sqft → ${zoneTop} ppl`, workers: zoneTop });
-                        if (mw.back  && dW > 0) { parts.push({ kind: "rft", label: `Back RFT: ${dW}`,  rft: dW }); zoneRft += dW; }
-                        if (mw.left  && dL > 0) { parts.push({ kind: "rft", label: `Left RFT: ${dL}`,  rft: dL }); zoneRft += dL; }
-                        if (mw.right && dL > 0) { parts.push({ kind: "rft", label: `Right RFT: ${dL}`, rft: dL }); zoneRft += dL; }
+                        if (z.mkOn) {
+                          if (mw.back  && dW > 0) { parts.push({ kind: "rft", label: `Back RFT: ${dW}`,  rft: dW }); zoneRft += dW; }
+                          if (mw.left  && dL > 0) { parts.push({ kind: "rft", label: `Left RFT: ${dL}`,  rft: dL }); zoneRft += dL; }
+                          if (mw.right && dL > 0) { parts.push({ kind: "rft", label: `Right RFT: ${dL}`, rft: dL }); zoneRft += dL; }
+                        }
                       } else if (config === "half_box") {
                         const spanL = cfg.spanFt || dL || dW;
-                        if (mw.back  && spanL > 0)     { parts.push({ kind: "rft", label: `Back RFT: ${spanL} (L-span)`,  rft: spanL }); zoneRft += spanL; }
-                        if (mw.left  && sideDepth > 0) { parts.push({ kind: "rft", label: `Left RFT: ${sideDepth} (backDepth)`,  rft: sideDepth }); zoneRft += sideDepth; }
-                        if (mw.right && sideDepth > 0) { parts.push({ kind: "rft", label: `Right RFT: ${sideDepth} (backDepth)`, rft: sideDepth }); zoneRft += sideDepth; }
+                        if (z.mkOn) {
+                          if (mw.back  && spanL > 0)     { parts.push({ kind: "rft", label: `Back RFT: ${spanL} (L-span)`,  rft: spanL }); zoneRft += spanL; }
+                          if (mw.left  && sideDepth > 0) { parts.push({ kind: "rft", label: `Left RFT: ${sideDepth} (backDepth)`,  rft: sideDepth }); zoneRft += sideDepth; }
+                          if (mw.right && sideDepth > 0) { parts.push({ kind: "rft", label: `Right RFT: ${sideDepth} (backDepth)`, rft: sideDepth }); zoneRft += sideDepth; }
+                        }
                       } else if (config === "u_only") {
                         const spanL = cfg.spanFt || dL || dW;
-                        if (mw.back && spanL > 0) { parts.push({ kind: "rft", label: `Back RFT: ${spanL} (L-span)`, rft: spanL }); zoneRft += spanL; }
+                        if (z.mkOn && mw.back && spanL > 0) { parts.push({ kind: "rft", label: `Back RFT: ${spanL} (L-span)`, rft: spanL }); zoneRft += spanL; }
                       }
 
-                      // Skip zones with zero contribution (mkOn but no walls ticked)
+                      // Batta wraps every pillar + every beam this zone's truss actually has — always,
+                      // whether or not the OPTIONAL side-wall Masking above is switched on. Used to be
+                      // entirely invisible here: the whole zone was skipped unless mkOn was true.
+                      if (tInv) {
+                        try {
+                          const pv = calcZoneTrussPreview(z, tInv);
+                          const battaRft = pv?.batta?.rftWithBuffer || 0;
+                          if (battaRft > 0) { parts.push({ kind: "rft", label: `Batta RFT (wraps truss, buffered): ${battaRft}`, rft: battaRft }); zoneRft += battaRft; }
+                        } catch {}
+                      }
+
+                      // Skip zones with zero contribution (no top, no walls, no truss to batta-wrap)
                       if (zoneTop === 0 && zoneRft === 0) return;
 
                       grandTop += zoneTop;
@@ -1273,7 +1332,16 @@ export default function DCManpowerTab({ ctx }) {
                                         return (
                                           <div style={{display:"flex",flexDirection:"column",gap:8}}>
                                             {d.fns.map((cfn, cfi) => {
-                                              const trace = traceForType(cfn, t);
+                                              // freshFnMP — same Repeat-zone exclusion the real headcount uses
+                                              // (peopleByFn above calls calcPeopleForType(freshFnMP(fn), type)).
+                                              // This trace used to run on the raw cfn instead, so it explained a
+                                              // DIFFERENT number than the one actually shown at the top of this
+                                              // modal — a Repeat zone's own contribution (no fresh build labour
+                                              // needed, reused standing setup) still showed up in "how this was
+                                              // derived" even though it correctly never counted toward the real
+                                              // total, e.g. Fabric Bangali reading "8 ppl derived" here while the
+                                              // header above showed the correct 4.
+                                              const trace = traceForType(freshFnMP(cfn), t);
                                               return (
                                                 <div key={cfi} style={{padding:"10px 12px",background:"rgba(124,58,237,0.06)",border:"1px dashed rgba(167,139,250,0.35)",borderRadius:7}}>
                                                   <div style={{fontSize:11,color:"#7C3AED",fontWeight:600,letterSpacing:0.4,textTransform:"uppercase",marginBottom:8}}>

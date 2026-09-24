@@ -2,10 +2,15 @@ import { useState } from "react";
 import { Badge, Modal } from "../../components/ui";
 import { fmt } from "../../lib/format";
 import { INV_CATS } from "../../lib/inventory/constants";
-import { PRICE_HISTORY } from "../../lib/ims/constants";
+import { PRICE_HISTORY, hasIMSPerm } from "../../lib/ims/constants";
+import { useAuth } from "../../lib/AuthContext";
 
 // Faithful copy of the reference IMS PurchaseTab (Supply → Purchase sub-tab).
 export default function PurchaseTab({ purchase, setPurchase, inventory, setInventory, projects, functions, studio }) {
+  const { user: authUser } = useAuth();
+  const canRequest = hasIMSPerm(authUser, "purchase_request");
+  const canApprovePO = hasIMSPerm(authUser, "purchase_approve");
+  const canAddInv = hasIMSPerm(authUser, "purchase_add");
   const studioCatLabels = studio?.catLabels || [];
   const [filter, setFilter] = useState("All");
   const [modal, setModal] = useState(false);
@@ -25,6 +30,7 @@ export default function PurchaseTab({ purchase, setPurchase, inventory, setInven
   const filtered = (filter === "All" ? purchase : purchase.filter((p) => p.status === filter)).filter((p) => !isAiFlag(p));
 
   function createPR() {
+    if (!canRequest) return;
     const ts = Date.now();
     const id = "PR_" + ts;
     const poNum = `PO-${new Date().getFullYear()}-${String(purchase.length + 1).padStart(3, "0")}`;
@@ -52,6 +58,7 @@ export default function PurchaseTab({ purchase, setPurchase, inventory, setInven
   }
 
   function approve(id, action) {
+    if (!canApprovePO) return;
     setPurchase((prev) => prev.map((p) => p.id === id ? { ...p, status: action, approvedBy: "Tarun Sharma", approvedDate: new Date().toISOString().split("T")[0] } : p));
     setApproveId(null);
   }
@@ -71,6 +78,7 @@ export default function PurchaseTab({ purchase, setPurchase, inventory, setInven
   }
 
   function addToInventory(id) {
+    if (!canAddInv) return;
     const pr = purchase.find((p) => p.id === id);
     if (!pr) return;
     const newItem = {
@@ -101,7 +109,7 @@ export default function PurchaseTab({ purchase, setPurchase, inventory, setInven
             </button>
           ))}
         </div>
-        <button onClick={() => setModal(true)} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm">+ New Request</button>
+        {canRequest && <button onClick={() => setModal(true)} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm">+ New Request</button>}
       </div>
 
       <div className="space-y-3">
@@ -121,12 +129,12 @@ export default function PurchaseTab({ purchase, setPurchase, inventory, setInven
                 {pr.actualCost && <p className="text-xs font-medium text-green-700 mt-1">Actual cost: {fmt(pr.actualCost)} × {pr.actualQty} {pr.unit} = {fmt(pr.actualCost * pr.actualQty)}</p>}
               </div>
               <div className="flex gap-2 ml-4">
-                {pr.status === "Pending" && <>
+                {pr.status === "Pending" && canApprovePO && <>
                   <button onClick={() => approve(pr.id, "Approved")} className="text-xs bg-green-100 text-green-700 hover:bg-green-200 px-2 py-1 rounded-lg">✓ Approve</button>
                   <button onClick={() => approve(pr.id, "Rejected")} className="text-xs bg-red-100 text-red-700 hover:bg-red-200 px-2 py-1 rounded-lg">✗ Reject</button>
                 </>}
                 {pr.status === "Approved" && <button onClick={() => { setPurchaseId(pr.id); setPurchaseForm({ actualCost: pr.estimatedCost, actualQty: pr.qty, vendor: pr.vendor || "", mobile: "", contactPerson: "", invoiceRef: "" }); }} className="text-xs bg-blue-100 text-blue-700 hover:bg-blue-200 px-2 py-1 rounded-lg">📦 Log Purchase</button>}
-                {pr.status === "Purchased" && <button onClick={() => addToInventory(pr.id)} className="text-xs bg-purple-100 text-purple-700 hover:bg-purple-200 px-2 py-1 rounded-lg">+ Add to Inventory</button>}
+                {pr.status === "Purchased" && canAddInv && <button onClick={() => addToInventory(pr.id)} className="text-xs bg-purple-100 text-purple-700 hover:bg-purple-200 px-2 py-1 rounded-lg">+ Add to Inventory</button>}
               </div>
             </div>
           </div>

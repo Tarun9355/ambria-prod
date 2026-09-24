@@ -100,7 +100,7 @@ export const DEFAULT_FILTER_PRIORITY = [
 // ═══ TRANSPORT ═══
 // Lifted out of StudioApp so the IMS copy of the Transport & Power panel shares one definition
 // rather than a second list that drifts. Studio still owns the editor; IMS mounts the same one.
-export const TC_UNITS = [{ id: "pc", l: "pcs" }, { id: "sqft", l: "sqft" }, { id: "rft", l: "RFT" }, { id: "kg", l: "kg" }, { id: "bundle", l: "bundles" }];
+export const TC_UNITS = [{ id: "pc", l: "pcs" }, { id: "sqft", l: "sqft" }, { id: "rft", l: "RFT" }, { id: "kg", l: "kg" }, { id: "bundle", l: "bundles" }, { id: "bunch", l: "bunches" }];
 export const TR_TIERS = [
   { id: "inhouse", label: "Tier 1 — In-house Venues", icon: "🏠", desc: "Fixed cost per trip — always same" },
   { id: "empanelled", label: "Tier 2 — Empanelled Venues", icon: "🤝", desc: "Fixed cost per trip for partner venues" },

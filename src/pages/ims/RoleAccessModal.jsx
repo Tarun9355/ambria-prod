@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { PERM_GROUPS, PERM_LABELS, PERM_UNWIRED, effectiveRolePerms } from "../../lib/ims/constants";
 
 // ═══ ROLE ACCESS — dedicated modal, replacing the inline panel that used to expand below the
 // role card grid (UsersTab.jsx). Mirrors the REAL tab → sub-tab (→ sub-sub-tab, for Admin →
@@ -212,6 +213,19 @@ export default function RoleAccessModal({ role, settings, setSettings, onClose }
     return app === "studio" ? { ...cur, studio: { ...base, subTabs } } : { ...cur, subTabs };
   }); };
 
+  // ── Action-level permissions (settings.rolePerms[role]) — a flat array, unlike the tabs' nested
+  // subTabs shape, since these don't nest: a role either has "Delete Items" or it doesn't. Lazily
+  // seeded from effectiveRolePerms (ROLE_DEFAULTS until an admin first touches this role's Actions
+  // here) rather than written on read, so a role nobody has ever opened this section for still shows
+  // its real default instead of an empty list.
+  const rolePerms = effectiveRolePerms(role, settings);
+  const togglePerm = (id) => { if (role === "Admin") return; setSettings((s) => {
+    const all = { ...(s.rolePerms || {}) };
+    const cur = effectiveRolePerms(role, s);
+    all[role] = cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id];
+    return { ...s, rolePerms: all };
+  }); };
+
   const isAdminRole = role === "Admin";
 
   return (
@@ -244,6 +258,12 @@ export default function RoleAccessModal({ role, settings, setSettings, onClose }
               <div className="text-[11px] font-bold text-gray-400 uppercase tracking-wide mb-2">Studio · all areas</div>
               <div className="grid grid-cols-3 gap-2">
                 {STUDIO_TABS.map((t) => <div key={t.id} className="flex items-center gap-2 border rounded-lg px-2.5 py-2 bg-gray-50"><span className="text-xs opacity-60">{t.label.split(" ")[0]}</span><span className="text-xs text-gray-600 font-medium">{t.label.split(" ").slice(1).join(" ")}</span></div>)}
+              </div>
+            </div>
+            <div>
+              <div className="text-[11px] font-bold text-gray-400 uppercase tracking-wide mb-2">Actions · every permission granted</div>
+              <div className="flex flex-wrap gap-1.5">
+                {Object.values(PERM_LABELS).map((l) => <span key={l} className="inline-flex items-center rounded-full font-semibold text-[11.5px] px-2.5 py-1 bg-gray-50 text-gray-500 border border-gray-200">{l}</span>)}
               </div>
             </div>
           </div>
@@ -342,6 +362,45 @@ export default function RoleAccessModal({ role, settings, setSettings, onClose }
                       onToggleSub={(id) => toggleSub("studio", t.id, id)} />
                   );
                 })}
+              </div>
+            </div>
+
+            {/* ═══ ACTIONS ═══ — the fine-grained "can this role do X" flags that used to live only
+                as a per-user checkbox list on Edit User (UsersTab.jsx), disconnected from this
+                screen. This is now the one place that configures them: a role's default lives here,
+                Edit User just inherits it (with an optional per-user override on top). Flat toggles,
+                not nested like the tabs above — these don't have sub-levels of their own. */}
+            <div>
+              <div className="flex items-center gap-2 mb-2.5">
+                <span className="text-xs">⚡</span>
+                <span className="text-[11px] font-bold text-emerald-700 uppercase tracking-wide">Actions</span>
+                <div className="flex-1 h-px bg-emerald-50" />
+              </div>
+              <div className="space-y-2.5">
+                {Object.entries(PERM_GROUPS).map(([group, perms]) => (
+                  <div key={group} className="border border-emerald-100 rounded-lg px-3 py-2.5 bg-emerald-50/40">
+                    <div className="text-[11px] font-bold text-emerald-800 uppercase tracking-wide mb-1.5">{group}</div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {perms.map((p) => {
+                        const on = rolePerms.includes(p);
+                        const unwired = PERM_UNWIRED.has(p);
+                        return (
+                          <button key={p} type="button" onClick={() => togglePerm(p)}
+                            title={unwired ? "Not yet wired to any control in the app — safe to set, just has no effect yet" : undefined}
+                            className={`inline-flex items-center gap-1 rounded-full font-semibold text-[11.5px] px-2.5 py-1 ${on ? "bg-emerald-100 text-emerald-800" : "bg-white text-gray-400 border border-gray-200"}`}>
+                            {on ? "✓ " : ""}{PERM_LABELS[p] || p}{unwired ? " ⚪" : ""}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="text-[10.5px] text-gray-300 italic mt-2 pl-0.5">
+                ⚪ = no control in the app reads this permission yet (Events create/edit/view have no
+                dedicated IMS UI — that happens in Studio, the LMS sync, or Calendar/Dept Ops which
+                are already gated by tab access; Reports has no export button; Import Excel and Bulk
+                Block exist in the UI but nothing currently opens them).
               </div>
             </div>
 

@@ -4,7 +4,7 @@ import { canvaAuthUrl, canvaConnectionStatus, canvaClientId } from "../../lib/ca
 import { uploadToStorage, compressImageForUpload, STORAGE_FOLDERS } from "../../lib/storage";
 import { resolveMandiFlower, computePatternSizeCost, effectiveMarkup, studioUnitLabel } from "../../lib/ims/flowerHelpers";
 import { priceForInvItem } from "../../lib/ims/helpers";
-import { MANPOWER_TYPES, SIT_MULT_DEFAULTS, SIT_MULT_TYPES, DUMPING_LEVELS, EVENT_TIMINGS, eventTimingMultFor } from "../../lib/ims/constants";
+import { MANPOWER_TYPES, SIT_MULT_DEFAULTS, SIT_MULT_TYPES, DUMPING_LEVELS, EVENT_TIMINGS, eventTimingMultFor, hasIMSPerm } from "../../lib/ims/constants";
 import ImsTransportPanel from "./ImsTransportPanel.jsx";
 import { INV_CATS } from "../../lib/inventory/constants";
 import DihariTimingsPanel from "./DihariTimingsPanel.jsx";
@@ -40,6 +40,7 @@ function Placeholder({ name, note }) {
 }
 
 export default function AdminSettingsTab({ settings, setSettings, supervisors, setSupervisors, studio, mode, syncRecipeRatesToStudio, tier15LastSync, tier15Syncing, trussInv, setTrussInv, inventory = [], rateCardCategories = [], onUpdateSubcatFactor, onUpdateSubcatCostPercent, onAddSubcat, onRenameSubcat, onUpdateSubcatCategory, onSyncSubcatsFromInventory, onDeleteSubcat, onUpdateSubcatFloralMode, onUpdateSubcatTagHidden, rcItems = [], rcCats = [], authUser }) {
+  const canManageCategories = hasIMSPerm(authUser, "inv_categories");
   // The "+ sub-category" quick-add lists below (Manpower's Tier-2 batches, Heavy Element Add-ons)
   // used to suggest from studio.subcats — the LEGACY Rate Card items list — so a sub-category with
   // real inventory but no matching old-style Rate Card row of the same name (Console Table,
@@ -297,6 +298,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
     setSubcatCostPctEdits((prev) => { const n = { ...prev }; delete n[id]; return n; });
   }
   function commitSubcatLabel(id, currentLabel) {
+    if (!canManageCategories) return;
     const raw = subcatLabelEdits[id];
     setSubcatLabelEdits((prev) => { const n = { ...prev }; delete n[id]; return n; });
     if (raw === undefined) return;
@@ -305,12 +307,14 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
     onRenameSubcat?.(id, trimmed);
   }
   function addNewSubcat(label, categoryLabel) {
+    if (!canManageCategories) return;
     const trimmed = (label || "").trim();
     if (!trimmed) return;
     if (rateCardCategories.some((r) => r.id === trimmed.toLowerCase())) { alert(`"${trimmed}" already exists.`); return; }
     onAddSubcat?.(trimmed, categoryLabel);
   }
   function deleteSubcatRow(r) {
+    if (!canManageCategories) return;
     const n = inventory.filter((it) => String(it.subCat ?? it.subcategory ?? "").trim().toLowerCase() === r.id).length;
     if (n > 0) { alert(`Cannot delete "${r.label}" — ${n} inventory item(s) still use this sub-category.\n\nMove them to another sub-category first: Inventory tab → 🔀 Move Sub-Category.`); return; }
     if (!window.confirm(`Delete sub-category "${r.label}"? This cannot be undone.`)) return;
@@ -2161,8 +2165,8 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                 className={"text-[10px] font-semibold px-2 py-1 rounded-full whitespace-nowrap flex-shrink-0 " + (r.tag_hidden ? "bg-gray-200 text-gray-500" : "bg-emerald-100 text-emerald-700")}>
                 {r.tag_hidden ? "🚫 Hidden" : "🏷️ Taggable"}
               </button>
-              <button onClick={() => deleteSubcatRow(r)} title="Delete sub-category"
-                className="text-red-400 hover:text-red-600 text-xs px-1 flex-shrink-0">🗑️</button>
+              {canManageCategories && <button onClick={() => deleteSubcatRow(r)} title="Delete sub-category"
+                className="text-red-400 hover:text-red-600 text-xs px-1 flex-shrink-0">🗑️</button>}
             </div>
           );
         };
@@ -2232,8 +2236,8 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                     <div className="flex gap-2 mb-3">
                       <input value={subcatSearch} onChange={(e) => setSubcatSearch(e.target.value)}
                         placeholder="Search sub-categories…" className="flex-1 border rounded-lg px-3 py-2 text-sm" />
-                      <button onClick={() => { setSubcatAddOpen(!subcatAddOpen); setSubcatAddVal(""); }}
-                        className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-xs font-semibold whitespace-nowrap">+ Add Sub-Category</button>
+                      {canManageCategories && <button onClick={() => { setSubcatAddOpen(!subcatAddOpen); setSubcatAddVal(""); }}
+                        className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-xs font-semibold whitespace-nowrap">+ Add Sub-Category</button>}
                     </div>
 
                     {subcatAddOpen && (

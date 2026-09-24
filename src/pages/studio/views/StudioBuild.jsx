@@ -12,7 +12,7 @@ import {
 } from "../../../lib/studio/taxonomy";
 import { paletteNames, addPaletteInline } from "../../../lib/studio/colours";
 import PaletteQuickAdd from "../../../components/studio/PaletteQuickAdd.jsx";
-import { trussRowCost } from "../../../lib/studio/pricing";
+import { trussRowCost, zoneTrussStandingDiscountDetail } from "../../../lib/studio/pricing";
 import { paletteSearch, paletteMatches } from "../../../components/studio/filterUI.jsx";
 import { resolveTrussConfig } from "../../../lib/studio/pricing";
 import { qtyUsedElsewhereInBuild } from "../../../lib/studio/dealAvailability";
@@ -108,10 +108,17 @@ const cloneTrussRow = (src = {}) => ({
 // titled "Truss N", carrying a remove control and no Add button of its own. Reusing the component
 // rather than writing a cut-down row is what keeps an added truss genuinely equal to the first —
 // front extension, the auto Box/Single-U line, custom ceiling and its own masking all included.
-export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, showCosts, isDark, border, textP, textS, accent, customMaskingField, maskOpts = [], trussRates, structRates, nested = false, title, onRemove, rowIdx }) {
+export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, showCosts, isDark, border, textP, textS, accent, customMaskingField, maskOpts = [], trussRates, structRates, nested = false, title, onRemove, rowIdx, trussInv, venueTruss }) {
   // What THIS truss structure costs. Same function the cost engine sums over every row, so the
   // figure on the card and the figure in the bill cannot drift.
   const rowCost = trussRowCost(zc, structRates || { trussRates });
+  // TEMP — owner ask, pending team discussion, may be removed: this card prices off the flat
+  // sqft model (trussRowCost) while the fixed-venue pillar/beam discount is computed from the
+  // detailed RFT model (zoneTrussStandingDiscountDetail) — see calcStructCost, which bridges the
+  // two by subtracting this same rupee figure from its own total. Mirrored here so the card the
+  // salesperson is looking at agrees with that total instead of showing the pre-discount number.
+  const rowDiscount = venueTruss ? zoneTrussStandingDiscountDetail(zc, trussInv, venueTruss).total : 0;
+  const discountedTruss = Math.max(0, rowCost.truss - rowDiscount);
   // ═══ ONE SELECTED-STATE ═══ These three rows previously used a dark outline (material),
   // PINK (drape) and a borderless grey fill (masking). The borderless one was the real problem:
   // unselected options rendered as plain text and did not look clickable. `border` is never
@@ -166,6 +173,7 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                       const qty=Math.max(1,zc.trussQty||1);
                       return <span style={{fontSize:10.5,color:textS,fontWeight:400}}>
                         {base.a}×{base.b} = {base.area} sqft × {fmt(r.rate)}/sqft{qty>1?` × ${qty}`:""}
+                        {rowDiscount>0&&<span style={{color:"#10B981",fontWeight:600}}> − {fmt(rowDiscount)} venue discount</span>}
                       </span>;
                     })()}
                   </div>
@@ -178,7 +186,7 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                       extra cards, so the figures sat at two different x positions down the stack
                       and stopped reading as a column. */}
                   <span style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
-                    {showCosts&&<span style={{fontWeight:600,color:textP}}>{fmt(rowCost.truss)}</span>}
+                    {showCosts&&<span title={rowDiscount>0?"Fixed-venue standing pillar/beam discount applied":undefined} style={{fontWeight:600,color:rowDiscount>0?"#10B981":textP}}>{fmt(discountedTruss)}</span>}
                     <span style={{width:14,display:"inline-flex",justifyContent:"center",flexShrink:0}}>
                       {nested&&<span onClick={onRemove} title="Remove this truss" style={{cursor:"pointer",color:"#E11D48",fontSize:14,fontWeight:700,lineHeight:1}}>✕</span>}
                     </span>
@@ -435,10 +443,10 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
 //
 // calcStructCost has always summed zc.extraTrussRows, and Deal Check, the truss engine and the
 // stock reservation all read them — Build was simply the one place with no way to create one.
-export function TrussStack({ S, customCeilingField, customMaskingField, k, zc, zm, st, sZ, sD, fmt, showCosts, isDark, border, textP, textS, accent, maskOpts, trussRates, structRates }) {
+export function TrussStack({ S, customCeilingField, customMaskingField, k, zc, zm, st, sZ, sD, fmt, showCosts, isDark, border, textP, textS, accent, maskOpts, trussRates, structRates, trussInv, venueTruss }) {
   const rows = zc.extraTrussRows || [];
   const write = (next) => sZ({ extraTrussRows: next });
-  const shared = { S, customCeilingField, customMaskingField, k, zm, st, fmt, showCosts, isDark, border, textP, textS, accent, maskOpts, trussRates, structRates };
+  const shared = { S, customCeilingField, customMaskingField, k, zm, st, fmt, showCosts, isDark, border, textP, textS, accent, maskOpts, trussRates, structRates, trussInv, venueTruss };
   return (<>
     <TrussCard {...shared} zc={zc} sZ={sZ} sD={sD} title={rows.length ? "Truss 1" : "Truss"} />
     {rows.map((row, ri) => {
@@ -615,7 +623,7 @@ export default function StudioBuild({ ctx }) {
     // zone photo groups (hand-picked leading photos, keyed by zone + function)
     zoneGroups = {}, writeZoneGroup,
     // date demand
-    dateTypes, clientLedger, activeClientId,
+    dateTypes, clientLedger, activeClientId, saveClientLedger, hideDiscountFromClient, guestPriceMultiplier,
     // build canvas
     setShowCosts, grandTotal, totalCost, transportCalc, pricingReady,
     savedInsps, setStep, setPreviewImg,
@@ -625,7 +633,7 @@ export default function StudioBuild({ ctx }) {
     zoneElements, setZoneElements, zoneConfig, setZoneConfig, setActiveZones,
     zoneOrder, setZoneOrder,
     calcElsCost, calcStructCost, calcPhotoCost, getElPrice, applyFloralRatio,
-    elSelectedPhoto, selectElPhoto, setElSelectedPhoto, elNotes, setElNotes,
+    elSelectedPhoto, selectElPhoto, setElSelectedPhoto, grpSel, setGrpSel, elNotes, setElNotes,
     elMultiPhotos, isMultiPhotoZone, toggleMultiElPhoto,
     setElGallery, setGalleryIdx,
     newCzSrc, setNewCzSrc,
@@ -786,7 +794,7 @@ export default function StudioBuild({ ctx }) {
   const sectionCost = (k, id) => {
     if (!showCosts) return 0;
     if (id === "elements") return calcElsCost(zoneElements[k], true, zoneConfig[k], {checkAvailability:true});
-    const sc = zoneConfig[k] ? calcStructCost(k, zoneConfig[k], structRates) : null;
+    const sc = zoneConfig[k] ? scaleStruct(calcStructCost(k, zoneConfig[k], structRates, structDiscountFor(zoneConfig[k]))) : null;
     if (id === "truss") return sc ? sc.truss + sc.masking + sc.arches + sc.pillars + sc.glass : 0;
     if (id === "platform") return sc ? sc.platform + sc.carpet : 0;
     return sc ? sc.print : 0; // calcStructCost's own print total — same figure zoneTotal() now folds in below
@@ -849,7 +857,7 @@ export default function StudioBuild({ ctx }) {
   // (shortfall-adjusted), so "By zone" + "Zones subtotal" quietly failed to add up to the number
   // above them. Same reasoning as calcFunctionCost's — this is what makes Build's own totals agree
   // with themselves, and with Summary/Deal Check's.
-  const zoneTotal = (k) => calcElsCost(zoneElements[k],true,zoneConfig[k],{checkAvailability:true})+(zoneConfig[k]?calcStructCost(k,zoneConfig[k],structRates).total:0)+dcCustomItems.filter(c=>c.fnIdx===(activeFnIdx||0)&&c.zoneKey===k).reduce((acc,c)=>acc+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0);
+  const zoneTotal = (k) => calcElsCost(zoneElements[k],true,zoneConfig[k],{checkAvailability:true})+(zoneConfig[k]?scaleStruct(calcStructCost(k,zoneConfig[k],structRates,structDiscountFor(zoneConfig[k]))).total:0)+dcCustomItems.filter(c=>c.fnIdx===(activeFnIdx||0)&&c.zoneKey===k).reduce((acc,c)=>acc+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0);
   void textSRaw;
 
   // Photo-filter pill. Was 9px in a 2px-tall chip with `textS` (~3.1:1) when inactive — too small
@@ -874,11 +882,13 @@ export default function StudioBuild({ ctx }) {
   const pBorder = "rgba(255,255,255,0.17)";
   const pCard   = "rgba(255,255,255,0.06)";
   const zpPill = (active) => ({ display: "inline-flex", alignItems: "center", padding: "4px 11px", borderRadius: 999, fontSize: 10.5, lineHeight: 1.4, cursor: "pointer", whiteSpace: "nowrap", transition: "all 0.15s", background: active ? accent : "transparent", color: active ? (isDark ? "#1a1a2e" : "#fff") : zpTextM, border: `1px solid ${active ? accent : border}`, fontWeight: active ? 600 : 500 });
-  const zpIndoorVenues = allInhouseVenues.filter(v => (allVenueData[v]?.type || "Outdoor") === "Indoor");
-  const zpOutdoorVenues = [
-    ...allInhouseVenues.filter(v => (allVenueData[v]?.type || "Outdoor") !== "Indoor"),
-    ...(allOutdoorDB || []).map(v => v.name).filter(Boolean),
-  ];
+  // Outdoor venues now carry a real `type` too (allVenueData merges both — see its own comment in
+  // StudioApp.jsx), so they're run through the SAME type check as in-house venues instead of being
+  // dumped into the Outdoor bucket unconditionally. An outside venue nobody has tagged still behaves
+  // exactly as before (allVenueData falls back to "Outdoor" for anything untyped).
+  const zpAllVenueNames = [...allInhouseVenues, ...(allOutdoorDB || []).map(v => v.name).filter(Boolean)];
+  const zpIndoorVenues = zpAllVenueNames.filter(v => (allVenueData[v]?.type || "Outdoor") === "Indoor");
+  const zpOutdoorVenues = zpAllVenueNames.filter(v => (allVenueData[v]?.type || "Outdoor") !== "Indoor");
   const zpWantIndoor = (zpFilters.venueType || []).includes("Indoor");
   const zpWantOutdoor = (zpFilters.venueType || []).some(v => v === "Outdoor" || v === "Semi-Outdoor");
   const zpVenueChoices = zpWantIndoor && !zpWantOutdoor ? zpIndoorVenues
@@ -911,9 +921,11 @@ export default function StudioBuild({ ctx }) {
   // zone for the current function. Kept apart from elSelectedPhoto: that is the ONE photo whose
   // elements price the zone, and overloading the same click to also mean "put this in the group"
   // would make every grouping tick re-price the build.
-  const [grpSel, setGrpSel] = useState({});   // { [zoneKey]: Set<libraryPhotoId> } — the TRUE current
-  // membership once grid mode is on for a zone (pre-loaded from the saved group, see the grid-view
-  // toggle below), not just a pending pick. Ticking/unticking IS the group now — no separate confirm.
+  // grpSel — { [zoneKey]: Set<libraryPhotoId> }, the TRUE current membership once grid mode is on for
+  // a zone (pre-loaded from the saved group, see the grid-view toggle below), not just a pending
+  // pick. Ticking/unticking IS the group now — no separate confirm. Lifted to StudioApp.jsx (ctx)
+  // so it rides the per-function session snapshot/restore path and survives a reload — was local
+  // `useState({})` here, which reset on every remount.
   const grpSelFor = (k) => grpSel[k] || EMPTY_SET;
   // ── WHICH TICKS THE USER ACTUALLY ASKED FOR ──
   // Opening the grid, and picking a photo to build with, both pre-tick that photo — a convenience, so
@@ -983,9 +995,13 @@ export default function StudioBuild({ ctx }) {
     setGrpAuto(p => { const a = new Set(p[k] || []); a.add(id); return { ...p, [k]: a }; });
     return { ...prev, [k]: cur };
   });
-  // Hide the ticks locally WITHOUT touching the saved group — used when leaving grid view, where
-  // the ticks just stop being visible/actionable, same as the group being untouched always meant.
-  const hideGrpPick = (k) => { setGrpSel(prev => ({ ...prev, [k]: new Set() })); setGrpAuto(p => ({ ...p, [k]: new Set() })); };
+  // Leaving grid view used to wipe the tick set outright ("hide" = clear) — fine while grpSel was
+  // ephemeral local state anyway, but now that it's lifted into the session snapshot specifically so
+  // a salesperson's ticks survive a reload, clearing them the moment the grid closes defeated that
+  // the very first time anyone toggled back to strip view. Now it only resets grpAuto (the
+  // auto-vs-explicit bookkeeping, meaningless once you've stopped looking at this grid session) and
+  // leaves the actual tick membership alone — reopening the grid picks up right where you left it.
+  const hideGrpPick = (k) => { setGrpAuto(p => ({ ...p, [k]: new Set() })); };
   // Untick everything in this zone AND persist that — with the auto-save above, this empties the
   // saved group, same as unticking each photo individually would, just in one click.
   const clearGrpPick = (k, srcType, label) => setGrpSel(prev => {
@@ -1004,6 +1020,21 @@ export default function StudioBuild({ ctx }) {
   const [leftRailOpen, setLeftRailOpen] = useState(() => {
     try { return !window.matchMedia("(max-width: 900px)").matches; } catch { return true; }
   });
+  // Auto-fold the YOUR EVENT rail, once, the moment a client with an EXISTING build loads — a
+  // returning session already carries real work to review, and the intake sidebar (client name,
+  // demand badge, filters) is for STARTING a build, not something worth stealing width from a
+  // review of one that's already there. A brand-new/blank client is left exactly as the viewport-
+  // based default above decides. Guarded by a ref keyed to activeClientId so this fires exactly
+  // once per client switch and never re-fights a salesperson who reopens the rail afterward —
+  // loadClientSession/resumeSavedSession set activeClientId and restore zoneElements in the same
+  // synchronous call, so by the time this effect runs both are already consistent for the new client.
+  const railAutoDecidedFor = useRef(null);
+  useEffect(() => {
+    if (!activeClientId || railAutoDecidedFor.current === activeClientId) return;
+    railAutoDecidedFor.current = activeClientId;
+    const hasExistingBuild = grandTotal > 0 || Object.values(zoneElements || {}).some(arr => Array.isArray(arr) && arr.length > 0);
+    if (hasExistingBuild) setLeftRailOpen(false);
+  }, [activeClientId, grandTotal, zoneElements]);
   // Live Estimate starts folded — the build opens with every zone off and the total at ₹0, so on
   // arrival the rail is a column of zeroes taking width from the zones. Its tab on the right edge
   // brings it back the moment there is a number worth watching.
@@ -1194,6 +1225,23 @@ export default function StudioBuild({ ctx }) {
     venueParents: dealCheckData?.venueParents || venueParents || {},
   };
   const fixedVenueHere = fixedVenueFor(_fvCfg, activeFnMeta?.venue || venue);
+  // The ✨Fresh/♻️Repeat toggle above stays driven by fixedVenueHere as-is — zc.repeat still needs to
+  // flow to Deal Check exactly as before regardless of the hide-discount checkbox. Mirrors
+  // StudioApp.jsx's structDiscountFor: flat 25% off calcStructCost's total (see its own comment) when
+  // the toggle is on AND (this zone is Repeat OR the venue itself is a registered Fixed Venue).
+  const structDiscountFor = (zc) => !hideDiscountFromClient && (!!zc?.repeat || !!fixedVenueHere);
+  // Same scaleStruct StudioApp.jsx uses for its own guest-facing calcStructCost calls (getElPrice/
+  // getElPriceForFn already fold guestPriceMultiplier in there) — Build's own local truss/masking/
+  // platform/carpet/print previews (sc/zoneTotal/st below, and TrussStack's own displayed figures)
+  // need the same fold so what a salesperson sees while editing matches what Summary/exports charge.
+  const scaleStruct = (r) => {
+    if (guestPriceMultiplier === 1 || !r) return r;
+    const s = { ...r };
+    ["truss", "masking", "platform", "carpet", "arches", "pillars", "glass", "print", "total", "trussDiscount"].forEach((k) => {
+      if (typeof s[k] === "number") s[k] = s[k] * guestPriceMultiplier;
+    });
+    return s;
+  };
 
   // Live soft-blocking: how much of an inventory item is left for THIS event, after
   // netting out both other events' commitments (getStudioAvailable) and whatever
@@ -1549,10 +1597,16 @@ export default function StudioBuild({ ctx }) {
           No `action` either — Hide moved OUT of this header to the top of the rail, where Browse
           keeps it. It closes the whole panel, not the card it was sitting in, and a control belongs
           on the thing it acts on. */}
+      // Discreet per-deal markup lever, piggybacking on each section's own lead dot (see the Section
+      // component's onDotClick) — Venue=1x, Event type=1.1x, Venue type=1.2x, and so on down the
+      // list by 0.1x per section. Guest-facing element pricing only (getElPrice/getElPriceForFn in
+      // StudioApp.jsx) — unrelated to what these dots normally do (a filter's active-selection tint).
+      const curMultiplier = Number(clientLedger.find(c=>c.id===activeClientId)?.guestPriceMultiplier)||1;
       return <FPanel title="Filters" total={total} onClear={clearAll}
         scroll={railMaxH}>
         {groups.map((g,gi)=>{
           const sel=zpFilters[g.key]||[];
+          const gMult=Math.round((1+0.1*gi)*10)/10;
           // Groups with long values (palette, venue names) get fewer columns and left-aligned rows.
           const align = g.cols === 1 ? "start" : undefined;
           // Palette and Venue are the two long, hunt-through lists, so both get a search box. The
@@ -1580,7 +1634,10 @@ export default function StudioBuild({ ctx }) {
           const selectedHidden = sel.filter(v => all.includes(v) && !shown.includes(v));
           const optPill = (v) => <FPill key={v} on={sel.includes(v)} align={align} onClick={()=>zpToggleFilter(g.key,v)}>{optLabel(v)}</FPill>;
           return <FSection key={g.key} id={g.key} label={g.label} count={sel.length} last={gi===groups.length-1}
-            cols={g.cols || 3} open={!!zpOpen[g.key]} onToggle={()=>zpToggleOpen(g.key)}>
+            cols={g.cols || 3} open={!!zpOpen[g.key]} onToggle={()=>zpToggleOpen(g.key)}
+            dotActive={Math.abs(curMultiplier-gMult)<0.01}
+            dotTitle={`Guest price ${gMult}x`}
+            onDotClick={activeClientId?()=>saveClientLedger(clientLedger.map(c=>c.id===activeClientId?{...c,guestPriceMultiplier:gMult}:c)):undefined}>
             {/* Inhouse/Outside — narrows which venue names are offered below, same chips + same
                 reset-on-switch behaviour as Browse's Venue filter (clears the name pick, the search
                 and "see all" so nothing from the old group lingers hidden). */}
@@ -2534,7 +2591,21 @@ undefined
         One position, always. Uploading a client photo is an action on the BUILD, not a property of
         the reference, so it does not belong inside a card that describes the reference — and a
         control that stays put is one people can find without looking. */}
-    <div style={{flexShrink:0, display:"flex", justifyContent:"flex-end"}}>
+    <div style={{flexShrink:0, display:"flex", alignItems:"center", justifyContent:"flex-end", gap:8}}>
+      {/* Discrete, deliberately unlabeled — see hideDiscountFromClient (StudioApp.jsx). OFF by
+          default (unticked = hidden): every guest-facing number here in Build, Summary, and every
+          export prices at full rate. Ticking it applies the Fixed-Venue/Repeat discount to the
+          guest build too. Deal Check is unaffected either way — it has its own separate cost engine
+          and always applies the real discount regardless of this checkbox. */}
+      <label title="Apply fixed-venue / repeat discount to this customer's build too (off by default — Deal Check always applies it)"
+        style={{display:"inline-flex",alignItems:"center",opacity:!hideDiscountFromClient?0.85:0.25,cursor:activeClientId?"pointer":"not-allowed"}}>
+        <input type="checkbox" checked={!hideDiscountFromClient} disabled={!activeClientId}
+          onChange={e=>{
+            const v=e.target.checked;
+            saveClientLedger(clientLedger.map(c=>c.id===activeClientId?{...c,applyDiscountToClient:v}:c));
+          }}
+          style={{width:11,height:11,cursor:activeClientId?"pointer":"not-allowed",accentColor:accent}}/>
+      </label>
       {BANNER_UPLOAD}
     </div>
             </div>{/* .bd-rail-scroll */}
@@ -2898,13 +2969,22 @@ undefined
                 // showing up, because group membership does not follow tags.
                 // The auto-ticked ids go into grpAuto and are excluded from every save until the user
                 // toggles one by hand.
-                const initial=new Set(grpSaved);
+                // A zone that already has ticks — from earlier this session, or restored from a saved
+                // deal session on reload — keeps exactly those on reopen instead of being reseeded
+                // from the saved/pinned group. Reseeding unconditionally here used to throw away a
+                // session-restored tick set the moment the grid was reopened, which made persisting
+                // it pointless.
+                const already=grpSel[k];
+                const hasExisting=already&&already.size>0;
+                const initial=hasExisting?new Set(already):new Set(grpSaved);
                 const auto=new Set();
-                if(isMultiPhotoZone(el.label)){
-                  (elMultiPhotos[k]||[]).forEach(p=>{ if(p?.eventId && !initial.has(p.eventId)){ initial.add(p.eventId); auto.add(p.eventId); } });
-                } else {
-                  const selP=elSelectedPhoto[k];
-                  if(selP?.eventId && !initial.has(selP.eventId)){ initial.add(selP.eventId); auto.add(selP.eventId); }
+                if(!hasExisting){
+                  if(isMultiPhotoZone(el.label)){
+                    (elMultiPhotos[k]||[]).forEach(p=>{ if(p?.eventId && !initial.has(p.eventId)){ initial.add(p.eventId); auto.add(p.eventId); } });
+                  } else {
+                    const selP=elSelectedPhoto[k];
+                    if(selP?.eventId && !initial.has(selP.eventId)){ initial.add(selP.eventId); auto.add(selP.eventId); }
+                  }
                 }
                 setGrpSel(p=>({...p,[k]:initial}));
                 setGrpAuto(p=>({...p,[k]:auto}));
@@ -3166,13 +3246,20 @@ undefined
                   cursor:"pointer",position:"relative",background:isSelected?(isDark?"#0D2818":"#ECFDF5"):cardBg,
                   boxShadow:isSelected?"0 2px 12px rgba(5,150,105,0.2)":"none",
                   transition:"all 0.15s"}}>
-                  {/* Opens on this photo and hands the lightbox its own set — the group if this is
-                      a grouped photo, the rest of the zone otherwise — so the arrows stay inside
-                      what you were looking at and the counter reads against it. */}
+                  {/* Opens on this photo and hands the lightbox its own set — the live tick
+                      selection if this photo is one of the currently-ticked group (even before
+                      it's been pinned), else the saved pinned group if it's already grouped, else
+                      the rest of the zone — so the arrows stay inside what you were looking at and
+                      the counter reads against it. Ticks (grpPicked) used to only scope the
+                      lightbox once "Pin" had been clicked (ph.grouped) — before that, opening any
+                      of the ticked photos fell through to lbRest, which is the WHOLE unpinned zone,
+                      so arrowing through "the 4 I selected" walked every photo instead. */}
                   <div style={{position:"relative",cursor:"zoom-in"}} onClick={(e)=>{
                     e.stopPropagation();
                     if(phSwipedJustNow())return;
-                    const set = ph.grouped ? lbGrouped : lbRest;
+                    const isTicked = grpOn && ph.isLibrary && ph.eventId && grpPicked.has(ph.eventId);
+                    const tickedSet = isTicked ? matchedPhotos.filter(p => p.isLibrary && p.eventId && grpPicked.has(p.eventId)) : null;
+                    const set = (tickedSet && tickedSet.length) ? tickedSet : (ph.grouped ? lbGrouped : lbRest);
                     const at = set.indexOf(ph);
                     setLightbox({idx: at < 0 ? 0 : at, items: set.map(p=>({src:p.src,name:p.eventName}))});
                   }}>
@@ -3390,9 +3477,17 @@ undefined
                       // Searches IMS inventory + pure flower-recipe patterns with no inventory backing
                       // (Rate Card is not consulted here — see getElPriceFromInventory /
                       // getElPriceFromPattern in StudioApp.jsx).
-                      const invMatches=(imsInventory||[]).filter(it=>!(zoneElements[k]||[]).find(el=>el.invId===it.id)&&!kitCoveredIds.has(it.id)&&!isHiddenSubcat(it,rcSubcatFactors)&&(it.name.toLowerCase().includes(q)||(it.cat||"").toLowerCase().includes(q)||(it.subCat||it.subcategory||"").toLowerCase().includes(q))).slice(0,8);
-                      const patMatches=(recipeOnlyPatterns||[]).filter(pt=>!(zoneElements[k]||[]).find(el=>el.patternId===pt.id)&&pt.name.toLowerCase().includes(q)).slice(0,4);
-                      const matches=[...invMatches.map(it=>({kind:"inv",it})),...patMatches.map(pt=>({kind:"pat",pt}))].slice(0,8);
+                      const invMatches=(imsInventory||[]).filter(it=>!(zoneElements[k]||[]).find(el=>el.invId===it.id)&&!kitCoveredIds.has(it.id)&&!isHiddenSubcat(it,rcSubcatFactors)&&(it.name.toLowerCase().includes(q)||(it.cat||"").toLowerCase().includes(q)||(it.subCat||it.subcategory||"").toLowerCase().includes(q)));
+                      const patMatches=(recipeOnlyPatterns||[]).filter(pt=>!(zoneElements[k]||[]).find(el=>el.patternId===pt.id)&&pt.name.toLowerCase().includes(q));
+                      // Owner ask: exactly ONE raw mandi commodity — Loose Petals — is directly
+                      // addable as its own element (by the kg, variant picked afterward in the element
+                      // card), unlike every other mandi flower which only ever prices through a recipe.
+                      // Hardcoded by name rather than a new admin toggle, since it's a single named
+                      // exception, not a general feature.
+                      const ALLOWED_MANDI_ELEMENT_NAMES=["loose petals"];
+                      const mandiCatalogue=(dealCheckData||studioFloralData)?.mandiCatalogue||[];
+                      const mandiMatches=mandiCatalogue.filter(m=>ALLOWED_MANDI_ELEMENT_NAMES.includes(String(m.name||"").trim().toLowerCase())&&!(zoneElements[k]||[]).find(el=>el.mandiId===m.id)&&(m.name||"").toLowerCase().includes(q));
+                      const matches=[...invMatches.map(it=>({kind:"inv",it})),...patMatches.map(pt=>({kind:"pat",pt})),...mandiMatches.map(m=>({kind:"mandi",m}))];
                       if(!addElPos||addElPos.key!==k) return null;
                       return matches.length>0?createPortal(<div style={{position:"fixed",top:addElPos.top,bottom:addElPos.bottom,left:addElPos.left,zIndex:10000,background:cardBg,border:`1px solid ${border}`,borderRadius:8,boxShadow:"0 4px 16px rgba(0,0,0,0.2)",maxHeight:340,overflowY:"auto",width:320}}>
                         {matches.map(m=>{
@@ -3411,6 +3506,23 @@ undefined
                                 <span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(236,72,153,0.15)",color:"#EC4899",fontWeight:700,flexShrink:0}}>🌺 RECIPE</span>
                               </div>
                               <div style={{fontSize:11,color:textS,marginTop:2}}>{pt.sub?pt.sub+" › ":""}Flower recipe — no inventory item</div>
+                            </div>
+                          </div>; }
+                          if(m.kind==="mandi"){ const mi=m.m; const variants=Array.isArray(mi.colorVariants)?mi.colorVariants:[]; return <div key={"mandi:"+mi.id}
+                            onClick={()=>{
+                              if(!(zoneElements[k]||[]).find(el=>el.mandiId===mi.id)){setZoneElements(prev=>({...prev,[k]:[...(prev[k]||[]),{name:mi.name,qty:1,unit:mi.unit||"kg",size:"",mandiId:mi.id,mandiVariantId:variants.length===1?variants[0].variantId:""}]}));}
+                              setZoneElSearch(prev=>({...prev,[k]:""}));
+                            }}
+                            style={{padding:"8px 10px",fontSize:12,cursor:"pointer",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",gap:10}}>
+                            <div style={{width:56,height:56,borderRadius:8,overflow:"hidden",flexShrink:0,background:isDark?"#1a1a2e":"#eee",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                              {mi.photoUrl ? <img src={mi.photoUrl} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/> : <span style={{fontSize:22,opacity:0.5}}>🌸</span>}
+                            </div>
+                            <div style={{flex:1,minWidth:0}}>
+                              <div style={{fontWeight:500,color:textP,display:"flex",alignItems:"center",gap:4,minWidth:0}}>
+                                <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{mi.name}</span>
+                                <span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700,flexShrink:0}}>🌸 MANDI · {mi.unit||"kg"}</span>
+                              </div>
+                              <div style={{fontSize:11,color:textS,marginTop:2}}>{variants.length?`Choose a variant after adding (${variants.length} available)`:"Raw flower — no recipe/inventory item"}</div>
                             </div>
                           </div>; }
                           const it=m.it; const isKit=Array.isArray(it.subItems)&&it.subItems.length>0; const src=it.img||it.photoUrls?.[0];
@@ -3453,9 +3565,20 @@ undefined
                   const isTrussSqft = rc && rc.unit === "truss_sqft";
                   const rawUp = priceInfo.unitPrice;
                   const adjUp = applyFloralRatio(rawUp, rc);
+                  // priceInfo.lineCost (not qty×adjUp) — the Repeat/standing-venue discount
+                  // (repeatAdjustedLineCost) only lives inside lineCost; qty×adjUp is always the
+                  // undiscounted list total, which used to make this card disagree with the zone
+                  // total right above it (calcElsCost already sums lineCost, not qty×rate).
                   const lineTotal = isTrussSqft
                     ? applyFloralRatio(priceInfo.lineCost, rc)
-                    : (el.qty||0) * adjUp;
+                    : priceInfo.lineCost;
+                  // TEMP — owner ask, pending team discussion, may be removed: show the discounted
+                  // effective rate (and colour it) instead of leaving the benefit invisible inside
+                  // lineTotal's own math. Only for non-truss items — truss_sqft's own unit isn't a
+                  // simple per-piece rate to begin with.
+                  const _qtyForRate = el.qty || 0;
+                  const _effUp = (!isTrussSqft && _qtyForRate > 0) ? lineTotal / _qtyForRate : adjUp;
+                  const _rateDiscounted = !isTrussSqft && _effUp < adjUp - 0.5;
                   const invItem = el.invId ? (imsInventory||[]).find(i=>i.id===el.invId) : null;
                   const thumbItem = invItem || (imsInventory||[]).find(i=>i.name===el.name);
                   // A pure flower-recipe element (patternId, no invId) has no IMS inventory row at
@@ -3464,14 +3587,21 @@ undefined
                   // one (AdminSettingsTab.jsx, Flowers → Recipes), keyed by size, so resolve it the
                   // same way Deal Check resolves a recipe size (sizeClassToPatternKey + resolveSizeKey
                   // — handles the "large"/"big" legacy alias) instead of guessing the shape.
-                  const patternThumbSrc = (!thumbItem && el.patternId) ? (() => {
-                    const patterns = (dealCheckData||studioFloralData)?.flowerPatterns || recipeOnlyPatterns || [];
-                    const pat = patterns.find(pt => pt.id === el.patternId);
-                    const sk = resolveSizeKey(pat?.sizes, sizeClassToPatternKey(el.size));
-                    return sk ? pat.sizes[sk]?.img : null;
+                  const floralPattern = el.patternId ? ((dealCheckData||studioFloralData)?.flowerPatterns || recipeOnlyPatterns || []).find(pt => pt.id === el.patternId) : null;
+                  const patternThumbSrc = (!thumbItem && floralPattern) ? (() => {
+                    const sk = resolveSizeKey(floralPattern.sizes, sizeClassToPatternKey(el.size));
+                    return sk ? floralPattern.sizes[sk]?.img : null;
                   })() : null;
                   const thumbSrc = thumbItem?.img || thumbItem?.photoUrls?.[0] || patternThumbSrc;
                   const thumbKey = `${k}:${idx}`;
+                  // Per-size reference photo (set per S/M/B in IMS → Flowers → Recipes) for the S/M/B
+                  // pills below — lets a salesperson preview a size's actual flower photo on hover
+                  // before picking it, not just see the currently-selected size on the thumb above.
+                  const sizeImgFor = (s) => {
+                    if (!floralPattern) return null;
+                    const sk = resolveSizeKey(floralPattern.sizes, sizeClassToPatternKey(s));
+                    return sk ? floralPattern.sizes[sk]?.img : null;
+                  };
                   const isUnavail = !!el.invId && typeof priceInfo.available==="number" && priceInfo.available<=0 && (el.qty||0)>0;
                   return (
                   <div key={idx} className="el-row" data-kit={isKit?"1":"0"} style={{display:"flex",flexDirection:"column",gap:6,padding:"9px 10px",borderRadius:12,border:`1px solid ${isDark?"rgba(255,255,255,0.09)":"rgba(26,26,46,0.10)"}`,background:cardBg,gridColumn:isKit?(firstKit?`1 / span ${kitSpan}`:`span ${kitSpan}`):"span 1",minHeight:isKit?undefined:98,justifyContent:isKit?"flex-start":"space-between"}}>
@@ -3501,10 +3631,10 @@ undefined
                             document.body
                           )}
                         </div>
-                        <span title={isUnavail?"Not available for this date — tap the stock icon to pick a different item":undefined} style={{fontSize:12,fontWeight:500,color:isUnavail?"#EF4444":(rc||el.invId||el.patternId)?textP:"#F59E0B",textDecoration:isUnavail?"line-through":"none",minWidth:0,whiteSpace:"normal",overflowWrap:"anywhere"}}>{invItem?.name || el.name}</span>
-                        {showCosts&&<span title="Rate per unit" style={{flexShrink:0,fontSize:11,fontWeight:600,color:textS,whiteSpace:"nowrap"}}>{adjUp>0?`₹${adjUp.toLocaleString("en-IN")}/${isTrussSqft?"truss sqft":(invItem?.unit||rc?.unit||el.unit)}`:"₹0"}</span>}
+                        <span title={isUnavail?"Not available for this date — tap the stock icon to pick a different item":undefined} style={{fontSize:12,fontWeight:500,color:isUnavail?"#EF4444":(rc||el.invId||el.patternId||el.mandiId)?textP:"#F59E0B",textDecoration:isUnavail?"line-through":"none",minWidth:0,whiteSpace:"normal",overflowWrap:"anywhere"}}>{invItem?.name || el.name}</span>
+                        {showCosts&&<span title={_rateDiscounted?"Rate per unit — Repeat/standing-venue discount applied":"Rate per unit"} style={{flexShrink:0,fontSize:11,fontWeight:600,color:_rateDiscounted?"#10B981":textS,whiteSpace:"nowrap"}}>{_effUp>0?`₹${Math.round(_effUp).toLocaleString("en-IN")}/${isTrussSqft?"truss sqft":(invItem?.unit||rc?.unit||el.unit)}`:"₹0"}</span>}
                         {isKit&&<span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(99,102,241,0.15)",color:"#6366F1",fontWeight:700}}>KIT</span>}
-                        {!rc&&!el.invId&&!el.patternId&&<span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700}}>NEW</span>}
+                        {!rc&&!el.invId&&!el.patternId&&!el.mandiId&&<span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700}}>NEW</span>}
                         {el.invId&&priceInfo.warning&&<span title={priceInfo.warning} style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700}}>⚠ short</span>}
                         {(rc||el.invId)&&<span onClick={()=>openAvailModal(k, idx, el, rc)} title="Check stock availability & pick an item" style={{cursor:"pointer",fontSize:12,opacity:0.5,padding:"0 1px",lineHeight:1}}><IconBox size={12}/></span>}
                         {/* Only when the manually-pinned stock item's name actually differs from
@@ -3522,8 +3652,40 @@ undefined
                         {isTrussSqft&&priceInfo.area>0&&<span style={{fontSize:11,padding:"2px 7px",borderRadius:3,background:"rgba(59,130,246,0.12)",color:"#3B82F6",fontWeight:600}}>{priceInfo.area} sqft</span>}
                       </div>
                       <div style={{display:"flex",alignItems:"center",gap:4,marginTop:2,flexWrap:"wrap"}}>
+                        {!!el.mandiId&&(()=>{
+                          const mandiCat=(dealCheckData||studioFloralData)?.mandiCatalogue||[];
+                          const parent=mandiCat.find(m=>m.id===el.mandiId);
+                          const variants=Array.isArray(parent?.colorVariants)?parent.colorVariants:[];
+                          if(!variants.length) return null;
+                          return <select value={el.mandiVariantId||""} onChange={e=>{const v=e.target.value;const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],mandiVariantId:v};setZoneElements(p=>({...p,[k]:elems}));}} title="Which variant of this flower is being used" style={{fontSize:11,padding:"2px 6px",borderRadius:6,border:`1px solid ${el.mandiVariantId?border:"#F59E0B"}`,background:cardBg,color:textP}}>
+                            <option value="">Choose variant…</option>
+                            {variants.map(v=><option key={v.variantId} value={v.variantId}>{v.name}</option>)}
+                          </select>;
+                        })()}
                         {hasSizes&&!priceInfo.isFloralBlend&&["S","M","B"].map(s=><button key={s} onClick={()=>{const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],size:s};setZoneElements(p=>({...p,[k]:elems}));}} style={{padding:"1px 6px",borderRadius:4,border:"none",fontSize:11,fontWeight:(el.size||"M")===s?700:400,cursor:"pointer",background:(el.size||"M")===s?"rgba(0,0,0,0.06)":"transparent",color:(el.size||"M")===s?"#666":textS}}>{s}</button>)}
-                        {priceInfo.isFloralBlend&&priceInfo.patternSMB&&["S","M","B"].map(s=><button key={s} onClick={()=>{const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],size:s};setZoneElements(p=>({...p,[k]:elems}));}} style={{padding:"1px 6px",borderRadius:4,border:"none",fontSize:11,fontWeight:(el.size||"B")===s?700:400,cursor:"pointer",background:(el.size||"B")===s?"rgba(0,0,0,0.06)":"transparent",color:(el.size||"B")===s?"#666":textS}}>{s}</button>)}
+                        {priceInfo.isFloralBlend&&priceInfo.patternSMB&&["S","M","B"].map(s=>{
+                          const sImg = sizeImgFor(s);
+                          const sKey = `${k}:${idx}:sz:${s}`;
+                          return (
+                          <div key={s} style={{position:"relative",display:"inline-flex"}}
+                            onMouseEnter={sImg?(e)=>{
+                              const r=e.currentTarget.getBoundingClientRect();
+                              const POP=164;
+                              const openUp=window.innerHeight-r.bottom<POP+8 && r.top>POP+8;
+                              setElThumbHover({key:sKey,openUp,top:openUp?undefined:r.bottom+4,bottom:openUp?window.innerHeight-r.top+4:undefined,left:Math.min(r.left,window.innerWidth-168)});
+                            }:undefined}
+                            onMouseLeave={sImg?()=>setElThumbHover(null):undefined}>
+                            <button onClick={()=>{const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],size:s};setZoneElements(p=>({...p,[k]:elems}));}} style={{padding:"1px 6px",borderRadius:4,border:"none",fontSize:11,fontWeight:(el.size||"B")===s?700:400,cursor:"pointer",background:(el.size||"B")===s?"rgba(0,0,0,0.06)":"transparent",color:(el.size||"B")===s?"#666":textS}}>{s}</button>
+                            {/* Portal to <body> — same .el-row hover-transform gotcha as the card's own thumb above. */}
+                            {elThumbHover?.key===sKey && sImg && createPortal(
+                              <div style={{position:"fixed",top:elThumbHover.top,bottom:elThumbHover.bottom,left:elThumbHover.left,zIndex:10000,width:160,height:160,borderRadius:8,overflow:"hidden",border:`2px solid ${border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.4)",pointerEvents:"none"}}>
+                                <img src={sImg} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+                              </div>,
+                              document.body
+                            )}
+                          </div>
+                          );
+                        })}
                         {hasSizes&&!priceInfo.isFloralBlend&&<button onClick={()=>{const elems=[...(zoneElements[k]||[])];const used=new Set(elems.filter(e=>e.name===el.name).map(e=>e.size||"M"));const ns=["B","M","S"].find(s=>!used.has(s))||"B";elems.splice(idx+1,0,applyQty(k,{...el,size:ns},1));setZoneElements(p=>({...p,[k]:elems}));}} title="Split into another size (e.g. 3 Big + 2 Small)" style={{padding:"1px 6px",borderRadius:4,border:`1px dashed ${border}`,fontSize:11,fontWeight:600,cursor:"pointer",background:"transparent",color:accent}}>＋ size</button>}
                         {priceInfo.isFloralBlend&&<span style={{display:"flex",alignItems:"center",gap:3,fontSize:11,fontWeight:700}}>{"🌸"}<button onClick={()=>{const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],realPct:typeof el.realPct==="number"?undefined:100};setZoneElements(p=>({...p,[k]:elems}));}} title={typeof el.realPct==="number"?"Priced at "+el.realPct+"% of the recipe's Studio rate — tap to go back to this sub-category's default ratio":"Using this sub-category's default real/artificial ratio — tap to price at 100% of the recipe's Studio rate"} style={floralPill(typeof el.realPct==="number")}>{typeof el.realPct==="number"?`${el.realPct}%`:"Ratio"}</button><input type="number" min="0" max="100" value={el.realPct??""} placeholder={String(priceInfo.realPct??"")} onChange={e=>{const v=e.target.value;const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],realPct:v===""?undefined:Math.max(0,Math.min(100,parseFloat(v)||0))};setZoneElements(p=>({...p,[k]:elems}));}} title="Manually set the exact % real — overrides Ratio/100%" style={{width:44,padding:"2px 6px",borderRadius:6,border:`1px solid ${border}`,background:cardBg,color:textP,fontSize:11,textAlign:"center"}} /></span>}
                         {/* §23 Phase 2.9 → Paint Allocation Ops (05 Jun 2026) — item-level paintability */}
@@ -3800,7 +3962,7 @@ undefined
               create the entry on the first keystroke — calcStructCost already returns all-zero for
               an untouched config, and every field reads through `|| {}`. */}
           {(zoneSection[k]==="truss"||zoneSection[k]==="platform")&&(()=>{
-            const zm=zoneMeta[k],zc=zoneConfig[k]||{},st=calcStructCost(k,zc,structRates);
+            const zm=zoneMeta[k],zc=zoneConfig[k]||{},st=scaleStruct(calcStructCost(k,zc,structRates,structDiscountFor(zc)));
             const dl={L:"Depth",W:"Width",H:"Height",S:"Size"};
             const sZ=u=>{setActiveZones([]);setZoneConfig(p=>({...p,[k]:{...p[k],...u}}));};
             const sD=(d,v)=>{setActiveZones([]);setZoneConfig(p=>{const cur=p[k]||{};const dims={...(cur.dims||{}),[d]:parseFloat(v)||0};
@@ -3826,6 +3988,10 @@ undefined
                   chip row went earlier. */}
               {/* ── TRUSS (with masking nested inside it) → then the floor card ── */}
               
+              {/* trussInv/venueTruss dropped — that was the old Fixed-Venue pillar/beam config discount
+                  preview (zoneTrussStandingDiscountDetail), now replaced for the guest by the flat 25%
+                  st (scaleStruct(calcStructCost(...))) above already reflects; Deal Check's own
+                  DCTrussTab still shows that detailed breakdown for its own purposes, unaffected. */}
               {zoneSection[k]==="truss"&&<TrussStack S={S} customCeilingField={customCeilingField} k={k} zc={zc} zm={zm} st={st} sZ={sZ} sD={sD} fmt={fmt} showCosts={showCosts}
                 isDark={isDark} border={border} textP={textP} textS={textS} accent={accent}
                 customMaskingField={customMaskingField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} />}
@@ -4207,7 +4373,16 @@ undefined
             </div>;
           })()}
           {Object.keys(taxonomy).filter(key=>Array.isArray(taxonomy[key])).map(key=>{
-            const vals=key==="colorPalette"&&imsPaletteCatalogue.length>0?imsPaletteCatalogue.map(p=>p.name):taxonomy[key];
+            // "Areas / zones" used to read taxonomy.areasElements — its own, separately-persisted
+            // list that only ever gets best-effort synced with Manage → Zone Types on a rename, not
+            // a real source of truth. A zone added/renamed/removed any other way (customZones, direct
+            // zoneDefs.meta edits) silently drifted out of step with it. Mirror the colorPalette
+            // special-case just below: pull the live options straight from the same zoneKeys/
+            // customZones list Build's own zone pickers already use (StudioBuild.jsx:1473 etc.), so
+            // this panel can never show a stale zone list again.
+            const vals=key==="colorPalette"&&imsPaletteCatalogue.length>0?imsPaletteCatalogue.map(p=>p.name)
+              :key==="areasElements"?[...new Set([...zoneKeys.map(zk=>zoneLabelsD[zk]?.label||zk),...customZones.map(cz=>cz.name)])]
+              :taxonomy[key];
             return <div key={key} style={{marginBottom:8}}>
               <div style={{fontSize:10,color:textS,marginBottom:3,fontWeight:600}}>{taxLabel(key)}</div>
               <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
