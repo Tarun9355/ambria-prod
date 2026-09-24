@@ -185,7 +185,13 @@ export async function fetchLmsDeptContracts(dept, onProgress) {
   const PAGE_CEILING = 200;
   const allRows = [];
   let page = 1;
-  let prevCount = -1;
+  // Tracks RAW rows fetched (before the cancelled-filter below), not how many made it into
+  // allRows. The stall-guard below used to compare against allRows.length — if a single page's
+  // rows happened to be entirely cancelled contracts, allRows never grew that iteration and the
+  // sync stopped right there, silently never fetching every real, non-cancelled entry on every
+  // page after it. A genuinely real lead going missing from Studio's search traced back to this.
+  let totalRawSeen = 0;
+  let prevRawSeen = -1;
 
   while (page <= PAGE_CEILING) {
     try {
@@ -197,8 +203,12 @@ export async function fetchLmsDeptContracts(dept, onProgress) {
       if (!r.ok) break;
       const data = await r.json();
       const rows = data?.Contractinfo || [];
-      if (rows.length === 0 || allRows.length === prevCount) break;
-      prevCount = allRows.length;
+      // Stop on a genuinely empty page, or if the LMS API stalls (keeps returning the same
+      // non-empty page instead of ever going empty) — never on whether THIS page's rows all
+      // happened to be cancelled.
+      if (rows.length === 0 || totalRawSeen === prevRawSeen) break;
+      prevRawSeen = totalRawSeen;
+      totalRawSeen += rows.length;
       for (const row of rows) {
         const parsed = normalizeLmsRow(row, dept);
         if (!parsed.header.cancelled) allRows.push(parsed);

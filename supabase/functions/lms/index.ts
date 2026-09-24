@@ -181,9 +181,7 @@ async function fetchDecorLeads() {
     const results = await Promise.all(pages.map((p) =>
       lmsCall(LEAD_ENDPOINT, LEAD_REQ_BODY(p)).then((d) => ({ p, rows: d?.leadinfo || [] })).catch(() => ({ p, rows: [] }))
     ));
-    let hitEnd = false;
     for (const { rows } of results.sort((a, b) => a.p - b.p)) {
-      if (rows.length === 0) { hitEnd = true; continue; }
       for (const raw of rows) {
         const { header, fnDetail } = normalizeLeadRow(raw);
         if (!header.entryNo) continue;
@@ -194,9 +192,13 @@ async function fetchDecorLeads() {
           if (!bucket.some((f: any) => fnIdentity(f) === fnIdentity(fnDetail))) bucket.push(fnDetail);
         }
       }
-      if (rows.length < PAGE_SIZE) hitEnd = true;
     }
-    if (hitEnd) break;
+    // Stop only once the WHOLE batch (all 5 pages, fetched in parallel) comes back empty — a
+    // single short/empty page used to end the entire sync right there, even though sibling pages
+    // fetched in the very same round could still carry real, un-fetched data beyond it. A real
+    // entry was traced to being lost exactly this way. Costs at most one extra mostly-empty
+    // round at the very end; correctness here matters more than that one round-trip.
+    if (results.every((r) => r.rows.length === 0)) break;
     page += BATCH;
   }
   return Array.from(map.values());
@@ -210,9 +212,7 @@ async function fetchDept(dept: string) {
     const results = await Promise.all(pages.map((p) =>
       lmsCall(ENDPOINTS[dept], REQ_BODY[dept](p)).then((d) => ({ p, rows: d?.Contractinfo || [] })).catch(() => ({ p, rows: [] }))
     ));
-    let hitEnd = false;
     for (const { rows } of results.sort((a, b) => a.p - b.p)) {
-      if (rows.length === 0) { hitEnd = true; continue; }
       for (const raw of rows) {
         const { header, fnDetail } = normalizeRow(raw, dept);
         if (header.cancelled || !header.entryNo) continue;
@@ -223,9 +223,9 @@ async function fetchDept(dept: string) {
           if (!bucket.some((f: any) => fnIdentity(f) === fnIdentity(fnDetail))) bucket.push(fnDetail);
         }
       }
-      if (rows.length < PAGE_SIZE) hitEnd = true;
     }
-    if (hitEnd) break;
+    // Same reasoning as fetchDecorLeads above.
+    if (results.every((r) => r.rows.length === 0)) break;
     page += BATCH;
   }
   return Array.from(map.values());
