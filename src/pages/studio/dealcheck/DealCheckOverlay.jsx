@@ -2481,7 +2481,13 @@ export default function DealCheckOverlay({ ctx }) {
                                   const fd = zc.floorDims || zc.dims || {};
                                   const neededSqft = Math.round((Number(fd.L)||0)*(Number(fd.W)||0));
                                   if (neededSqft <= 0) return null;
-                                  const carpetOpts = dcInventoryCache.filter(x => String(imsField.subcategory(x)||"").toLowerCase().includes("carpet"));
+                                  // Exact match, not .includes("carpet") — that substring match used to
+                                  // also pull in items filed under a DIFFERENT sub-category that merely
+                                  // contains the word "carpet" (e.g. "Rug Carpet"), leaking the wrong
+                                  // stock into this picker. "Carpet" is also the literal fallback string
+                                  // below and what openAvailModal itself needs as an exact sub-category
+                                  // to search within, so this now matches that same string precisely.
+                                  const carpetOpts = dcInventoryCache.filter(x => String(imsField.subcategory(x)||"").trim().toLowerCase() === "carpet");
                                   const pickedId = dcCarpetPick[fnIdx]?.[zk];
                                   const carpetItem = pickedId ? dcInventoryCache.find(x=>x.id===pickedId) : null;
                                   const markup = dealCheckData?.carpetFreshMarkup ?? 40;
@@ -2523,8 +2529,8 @@ export default function DealCheckOverlay({ ctx }) {
                                   // and dimensions in one list, rather than a bespoke search-and-thumbnail
                                   // grid duplicating that same question just for carpets. Falls back to
                                   // whichever sub-category an already-known carpet item carries (either
-                                  // the one currently picked, or the first of the broad "contains
-                                  // carpet" set above) since openAvailModal needs a concrete sub-category
+                                  // the one currently picked, or the first of the exact "Carpet"
+                                  // set above) since openAvailModal needs a concrete sub-category
                                   // to search within, not a substring. Also offers Split (opts.splitQty/
                                   // onSplit) so the modal's own "pick 2+ items" flow seeds splitLines —
                                   // exactly how a regular item card's split starts.

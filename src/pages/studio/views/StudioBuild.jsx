@@ -4373,7 +4373,16 @@ undefined
             </div>;
           })()}
           {Object.keys(taxonomy).filter(key=>Array.isArray(taxonomy[key])).map(key=>{
-            const vals=key==="colorPalette"&&imsPaletteCatalogue.length>0?imsPaletteCatalogue.map(p=>p.name):taxonomy[key];
+            // "Areas / zones" used to read taxonomy.areasElements — its own, separately-persisted
+            // list that only ever gets best-effort synced with Manage → Zone Types on a rename, not
+            // a real source of truth. A zone added/renamed/removed any other way (customZones, direct
+            // zoneDefs.meta edits) silently drifted out of step with it. Mirror the colorPalette
+            // special-case just below: pull the live options straight from the same zoneKeys/
+            // customZones list Build's own zone pickers already use (StudioBuild.jsx:1473 etc.), so
+            // this panel can never show a stale zone list again.
+            const vals=key==="colorPalette"&&imsPaletteCatalogue.length>0?imsPaletteCatalogue.map(p=>p.name)
+              :key==="areasElements"?[...new Set([...zoneKeys.map(zk=>zoneLabelsD[zk]?.label||zk),...customZones.map(cz=>cz.name)])]
+              :taxonomy[key];
             return <div key={key} style={{marginBottom:8}}>
               <div style={{fontSize:10,color:textS,marginBottom:3,fontWeight:600}}>{taxLabel(key)}</div>
               <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
