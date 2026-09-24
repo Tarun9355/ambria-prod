@@ -35,10 +35,15 @@ export default function UsersTab({ users, setUsers, addUser, settings, setSettin
   const [roleEditor, setRoleEditor]=useState(null); // role name being edited
   const [newRoleName, setNewRoleName]=useState("");
   const [renameRole, setRenameRole]=useState(null); // {old, draft}
+  const [userSearch, setUserSearch]=useState("");
 
   // Dynamic roles from settings (fallback to hardcoded ROLES)
   const dynamicRoles = Array.isArray(settings?.rolesList) ? settings.rolesList : ROLES;
   const roleCounts=dynamicRoles.reduce((acc,r)=>({ ...acc, [r]:users.filter(u=>u.role===r).length }),{});
+  // Name / username / email / phone — a quick filter for the table below, purely local (no
+  // persisted state, no effect on roleCounts above which still reflects the FULL roster).
+  const q = userSearch.trim().toLowerCase();
+  const visibleUsers = q ? users.filter(u => [u.name, u.username, u.email, u.phone].some(v => String(v||"").toLowerCase().includes(q))) : users;
   // Whether the form's current permissions have been hand-edited away from what its role currently
   // resolves to in Edit Access — drives the "customized" callout in the modal's Permissions panel.
   const roleDefaultPerms = effectiveRolePerms(form.role, settings);
@@ -62,7 +67,17 @@ export default function UsersTab({ users, setUsers, addUser, settings, setSettin
   // Picking a role re-inherits ITS current Edit Access config (settings.rolePerms), not a frozen
   // constant — an admin who tightens a role in Edit Access sees that reflected the next time anyone
   // picks that role here, without having to also revisit every existing user of it.
-  function setRole(role){ setForm(f=>({...f, role, permissions:[...effectiveRolePerms(role, settings)], apps:defaultApps(role), departments:defaultDepartments(role)})); }
+  function setRole(role){
+    setForm(f=>{
+      // Don't clobber a manually-ticked department set just because the role field was touched
+      // (or a "X defaults" preset button clicked again for its permissions/apps) — only reset
+      // departments to the new role's inferred default when they still match the OLD role's
+      // default, i.e. nobody has customized them yet. Same "was this hand-edited" reasoning as
+      // permsOverridden above, applied to departments instead of permissions.
+      const deptsOverridden = JSON.stringify([...(f.departments||[])].sort()) !== JSON.stringify([...defaultDepartments(f.role)].sort());
+      return {...f, role, permissions:[...effectiveRolePerms(role, settings)], apps:defaultApps(role), departments: deptsOverridden ? f.departments : defaultDepartments(role)};
+    });
+  }
   function resetPermsToRoleDefault(){ setForm(f=>({...f, permissions:[...effectiveRolePerms(f.role, settings)]})); }
   function togglePerm(p){ setForm(f=>({ ...f, permissions:(f.permissions||[]).includes(p)?(f.permissions||[]).filter(x=>x!==p):[...(f.permissions||[]),p] })); }
   function toggleApp(a){ setForm(f=>{ const cur=f.apps || defaultApps(f.role); return { ...f, apps:cur.includes(a)?cur.filter(x=>x!==a):[...cur,a] }; }); }
@@ -165,9 +180,11 @@ export default function UsersTab({ users, setUsers, addUser, settings, setSettin
 
       {roleEditor && <RoleAccessModal key={roleEditor} role={roleEditor} settings={settings} setSettings={setSettings} onClose={()=>setRoleEditor(null)} />}
 
-      <div className="flex justify-end">
+      <div className="flex justify-between items-center gap-3">
+        <input value={userSearch} onChange={e=>setUserSearch(e.target.value)} placeholder="🔍 Search users by name, username, email, or phone…"
+          className="w-full max-w-xs border rounded-lg px-3 py-2 text-sm" />
         <button onClick={openAdd} disabled={!canManageUsers} title={canManageUsers ? undefined : "Requires \"Manage Users & Permissions\""}
-          className={"px-4 py-2 rounded-lg text-sm "+(canManageUsers?"bg-indigo-600 hover:bg-indigo-700 text-white":"bg-gray-200 text-gray-400 cursor-not-allowed")}>+ Add User</button>
+          className={"px-4 py-2 rounded-lg text-sm shrink-0 "+(canManageUsers?"bg-indigo-600 hover:bg-indigo-700 text-white":"bg-gray-200 text-gray-400 cursor-not-allowed")}>+ Add User</button>
       </div>
 
       <div className="bg-white border rounded-xl overflow-hidden">
@@ -180,7 +197,10 @@ export default function UsersTab({ users, setUsers, addUser, settings, setSettin
             </tr>
           </thead>
           <tbody>
-            {users.map(u=>(
+            {visibleUsers.length === 0 && (
+              <tr><td colSpan={6} className="px-4 py-6 text-center text-sm text-gray-400">No users match "{userSearch}"</td></tr>
+            )}
+            {visibleUsers.map(u=>(
               <tr key={u.id} className={"border-t "+(u.active?"":"opacity-50")}>
                 <td className="px-4 py-3">
                   <p className="font-medium text-gray-900">{u.name}</p>

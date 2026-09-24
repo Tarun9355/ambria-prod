@@ -1039,7 +1039,7 @@ Rules:
                     className="mt-1 w-full border-2 border-indigo-300 focus:border-indigo-500 rounded-lg px-3 py-2 text-sm font-medium outline-none"
                     placeholder="e.g. Rose Arch Large" />
                 </div>
-                {[["Category", "cat", "select", (studioCatLabels.length > 0 ? studioCatLabels : INV_CATS)], ["Type", "type", "select", ["Budgeted", "Premium", "In-house"]], ["Class", "itemClass", "select", ["discrete", "bulk"]], ["Unit", "unit", "select", ["Piece", "Set", "Kg", "Metre", "Bundle", "Roll", "Rft"]]].map(([l, k, t, opts]) => (
+                {[["Category", "cat", "select", (studioCatLabels.length > 0 ? studioCatLabels : INV_CATS)], ["Type", "type", "select", ["Budgeted", "Premium", "In-house"]], ["Class", "itemClass", "select", ["discrete", "bulk"]], ["Unit", "unit", "select", ["Piece", "Set", "Kg", "Metre", "Bundle", "Roll", "Rft", "Sqft"]]].map(([l, k, t, opts]) => (
                   <div key={k}>
                     <label className="text-xs text-gray-500">{l}</label>
                     <select value={form[k]} onChange={(e) => { setForm({ ...form, [k]: e.target.value, ...(k === "cat" ? { subCat: "" } : {}) }); setSubOtherAdd(false); }}
@@ -1190,7 +1190,7 @@ Rules:
             </div>
 
             {/* Selects */}
-            {[["Category", "cat", "select", (studioCatLabels.length > 0 ? studioCatLabels : INV_CATS)], ["Type", "type", "select", ["Budgeted", "Premium", "In-house"]], ["Class", "itemClass", "select", ["discrete", "bulk"]], ["Unit", "unit", "select", ["Piece", "Set", "Kg", "Metre", "Bundle", "Roll", "Rft"]]].map(([l, k, t, opts]) => (
+            {[["Category", "cat", "select", (studioCatLabels.length > 0 ? studioCatLabels : INV_CATS)], ["Type", "type", "select", ["Budgeted", "Premium", "In-house"]], ["Class", "itemClass", "select", ["discrete", "bulk"]], ["Unit", "unit", "select", ["Piece", "Set", "Kg", "Metre", "Bundle", "Roll", "Rft", "Sqft"]]].map(([l, k, t, opts]) => (
               <div key={k}>
                 <label className="text-xs text-gray-500">{l}</label>
                 <select value={form[k]} onChange={(e) => { setForm({ ...form, [k]: e.target.value, ...(k === "cat" ? { subCat: "" } : {}) }); }}
@@ -1513,7 +1513,7 @@ Rules:
                   <label className="text-xs text-gray-500">Unit</label>
                   <select value={editForm.unit || "Piece"} onChange={(e) => setEditForm((f) => ({ ...f, unit: e.target.value }))}
                     className="mt-1 w-full border rounded-lg px-3 py-2 text-sm">
-                    <option>Piece</option><option>Pieces</option><option>Set</option><option>Kg</option><option>Metre</option><option>Bundle</option><option>Roll</option><option>Rft</option>
+                    <option>Piece</option><option>Pieces</option><option>Set</option><option>Kg</option><option>Metre</option><option>Bundle</option><option>Roll</option><option>Rft</option><option>Sqft</option>
                   </select>
                 </div>
               </div>
