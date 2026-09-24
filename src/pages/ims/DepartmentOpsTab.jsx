@@ -1158,10 +1158,19 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
     // running the width of the sheet.
     const headRowsBar = income.shown.map(r =>
       `<tr><td>${esc(r.label)}</td><td class="n">${money(r.value)}</td><td class="bar"><i style="width:${Math.max(income.pct(r.value), 2)}%"></i></td><td class="n pct">${income.pct(r.value)}%</td></tr>`);
+    // The same four figures the panel shows, in the same order: income, the discount the head
+    // sets by hand, what was actually spent, and the net those three produce. Net is recomputed
+    // here from the same expression the card uses rather than read off the DOM, and an unlogged
+    // cost counts as zero in it — exactly as on screen, so the sheet cannot quote a different
+    // bottom line from the page it was exported from.
+    const discountNum = Number(discount) || 0;
+    const netAmount = income.liveTotal - discountNum - (hasActuals ? actualCost : 0);
     const moneyBlock = `
       <div class="cards">
         <div class="card hi"><div class="k">Total income</div><div class="v">${money(income.liveTotal)}</div><div class="s">What ${esc(dept)} earns · synced from Deal Check</div></div>
+        <div class="card"><div class="k">Discount to salesperson</div><div class="v ${discountNum ? "" : "muted"}">${discountNum ? money(discountNum) : "—"}</div><div class="s">Manual — set by the ${esc(dept)} head</div></div>
         <div class="card"><div class="k">Actual cost logged</div><div class="v ${hasActuals ? "" : "muted"}">${hasActuals ? money(actualCost) : "—"}</div><div class="s">${hasActuals ? "What you actually spent" : "Not logged yet"}</div></div>
+        <div class="card ${netAmount < 0 ? "neg" : "pos"}"><div class="k">Net</div><div class="v">${money(netAmount)}</div><div class="s">Income − discount − actual cost${hasActuals ? "" : " (cost not logged yet)"}</div></div>
       </div>
       ${table(["Head", "Amount", "", "Share"], headRowsBar, ["46%", "22%", "22%", "10%"])}
       ${income.gap !== 0 && income.shown.length ? `<p class="note">Heads above sum to ${money(income.shownSum)} — ${money(Math.abs(income.gap))} ${income.gap > 0 ? "less than" : "more than"} the department total. The total carries the live crew plan; a head may not be broken out here.</p>` : ""}`;
@@ -1257,13 +1266,17 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   td.bar{position:relative;background:linear-gradient(#EEF2F7,#EEF2F7) 9px center/calc(100% - 18px) 4px no-repeat}
   .pct{font-size:10px;color:#64748B;font-weight:600}
 
-  .cards{display:flex;gap:11px;margin-bottom:13px}
-  .card{flex:1;border:1px solid #E8ECF2;border-radius:9px;padding:12px 14px}
+  /* Four cards across 706px is ~166px each — the figure drops to 17px so a seven-digit amount
+     still fits on one line, since a wrapped "₹1,40,240" is worse than a smaller one. */
+  .cards{display:flex;gap:8px;margin-bottom:13px}
+  .card{flex:1;min-width:0;border:1px solid #E8ECF2;border-radius:9px;padding:10px 11px}
   .card.hi{background:#2563EB;border-color:#2563EB;color:#fff}
-  .card .k{font-size:8px;text-transform:uppercase;letter-spacing:.1em;font-weight:700;opacity:.72}
-  .card .v{font-size:23px;font-weight:700;margin:5px 0 3px;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+  .card.pos{background:#ECFDF5;border-color:#A7F3D0;color:#065F46}
+  .card.neg{background:#FEF2F2;border-color:#FECACA;color:#991B1B}
+  .card .k{font-size:7.5px;text-transform:uppercase;letter-spacing:.09em;font-weight:700;opacity:.72}
+  .card .v{font-size:17px;font-weight:700;margin:5px 0 3px;letter-spacing:-.02em;font-variant-numeric:tabular-nums;white-space:nowrap}
   .card .v.muted{color:#CBD5E1}
-  .card .s{font-size:9px;opacity:.72;line-height:1.35}
+  .card .s{font-size:8px;opacity:.72;line-height:1.3}
   .meta{color:#94A3B8;font-size:9.5px;margin:7px 0 0}
   .note{background:#FFFBEB;border-left:3px solid #F59E0B;color:#92400E;padding:7px 10px;border-radius:0 5px 5px 0;font-size:10px;margin:9px 0 0}
   .empty{color:#94A3B8;font-style:italic;font-size:10.5px;margin:2px 0 0}
