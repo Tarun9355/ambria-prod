@@ -1899,10 +1899,14 @@ export default function DealCheckOverlay({ ctx }) {
                   style={{width:36,height:36,padding:0,borderRadius:999,border:`1px solid ${border}`,background:"transparent",color:"#1A1A2E",fontSize:16,cursor:"pointer",lineHeight:1,display:"inline-flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>✕</button>
               </div>
             </div>
-            {/* BODY (3-column layout: left sidebar · main content · bottom strip is global) */}
+            {/* BODY (left sidebar column · main content). The sidebar column now stacks the function
+                list above the Project-total strip so the strip's own 220px width no longer leaves a
+                bottom-right gap — main content stretches the full column height beside it instead. */}
             <div style={{flex:1,display:"flex",overflow:"hidden"}}>
+              {/* LEFT COLUMN — function sidebar (scrolls) + Project total strip pinned under it */}
+              <div style={{width:220,flexShrink:0,display:"flex",flexDirection:"column",borderRight:`1px solid ${border}`,overflow:"hidden"}}>
               {/* LEFT SIDEBAR — function tabs + per-fn cost (skeletal in Patch 3, populated in Patch 5) */}
-              <div className="dc-glass" style={{width:220,borderRight:`1px solid ${border}`,padding:"14px 12px",overflowY:"auto"}}>
+              <div className="dc-glass" style={{flex:1,minHeight:0,padding:"14px 12px",overflowY:"auto"}}>
                 <div style={{fontSize:11,color:"#1A1A2E",letterSpacing:1.4,textTransform:"uppercase",marginBottom:10,fontWeight:700}}>Functions</div>
                 {/* Reachable from any tab, not just the (removed-from-the-strip) Dept Income one —
                     a salesperson mid-negotiation with a department head shouldn't have to first
@@ -1968,6 +1972,53 @@ export default function DealCheckOverlay({ ctx }) {
                     });
                   })()}
                 </div>
+              </div>
+              {/* BOTTOM STRIP — Project total only, pinned under the sidebar column. The per-group
+                  chips that used to sit beside it (Rental/Truss/Florals/Manpower/Buy/Produce/Genset/
+                  GYV/Buffer) now live on their own tab pill instead (see the tab strip above) —
+                  owner decision, so a group's number is right where you'd click to see the detail
+                  behind it, not repeated in a second row. */}
+              {(() => {
+                // ═══ Reads from shared dcCostRollup (§26.19) ═══
+                const { dealAmount: stripRevenue, profitPct: stripProfitPct, hasActuals, grandActual, grand: grandProj, commissionTotal } = dcCostRollup;
+                // Project total = production cost + GYV/buffer + venue commission — same definition as
+                // the GYV & Buffer tab's own "Project total" tile, so this strip can never disagree with it.
+                const grandWithOverheads = (hasActuals ? grandActual : grandProj) + commissionTotal;
+                const stripProfitColor = stripProfitPct >= 20 ? "#10B981" : stripProfitPct >= 10 ? "#F59E0B" : "#EF4444";
+                // Until Generate has run there are no matched cards, so every rollup figure is 0 and a
+                // department that genuinely costs nothing looked identical to one that was never
+                // calculated — both rendered "—". Split the two: "—" means not calculated yet, "₹0"
+                // means calculated and empty. Same source of truth the Inventory tab's empty state
+                // uses (dcCards), but across ALL functions, since this strip sums all of them.
+                const hasGenerated = Object.values(dcCards || {}).some(
+                  (fnCards) => fnCards && Object.keys(fnCards).length > 0
+                );
+                const fmt = (n) => n > 0
+                  ? "₹" + Math.round(n).toLocaleString("en-IN")
+                  : hasGenerated ? "₹0" : "—";
+                // ── SAVE DRAFT REMOVED ──
+                // The button it drove did nothing the background autosave was not already doing,
+                // and it did it worse. Three reasons it went:
+                //  · It wrote a SUBSET. The autosave persists dcDraft (the full snapshot: resolved,
+                //    photoOverrides, skipped, manualItems, dedupOverrides, productionAccepted,
+                //    artFlowerAlloc, floralColorPrefs, customItems) alongside the top-level fields.
+                //    This wrote only the top-level fields and bumped dcDraftSavedAt, leaving dcDraft
+                //    stale against fresh cards until the next autosave tick repaired it.
+                //  · It skipped the guards. The autosave refuses to write an empty dcCards (see the
+                //    ROOT-CAUSE GUARD in StudioApp.jsx) and refuses to write mid-Generate. This had
+                //    neither, so pressing it before a restore finished would persist an empty card
+                //    set over a good draft — exactly the corruption that guard exists to prevent.
+                //  · Nothing was ever unsaved. The autosave fires 2.5s after edits settle and
+                //    flushes on unmount (route switch, client change, close), and the header already
+                //    reports "Deal Check last saved by <name> · <when>".
+                // If a deliberate save action is ever wanted back, it must reuse the autosave's own
+                // doSave rather than reimplement a second, weaker write path.
+                return (
+                  <div className="dc-glass dc-bottom" style={{display:"flex",alignItems:"center",flexShrink:0,boxSizing:"border-box",padding:"10px 18px",borderTop:`1px solid ${border}`,gap:14}}>
+                    <div className="dc-bottomtotal" style={{flexShrink:0}}><div className="dc-cap" style={{color:"#1A1A2E",opacity:0.62}}>Project total</div><div className="dc-money" style={{fontSize:25,fontWeight:800,color:"#1A1A2E",marginTop:1,lineHeight:1.1}}>{fmt(grandWithOverheads)}</div>{stripRevenue > 0 && <div className="dc-money" style={{fontSize:11,color:stripProfitColor,fontWeight:700,marginTop:2,letterSpacing:0.1}}>Margin {stripProfitPct}% · {fmt(stripRevenue)} quote</div>}</div>
+                  </div>
+                );
+              })()}
               </div>
               {/* MAIN CONTENT */}
               <div style={{flex:1,overflowY:"auto",padding:"18px 22px"}}>
@@ -4644,56 +4695,6 @@ export default function DealCheckOverlay({ ctx }) {
                 })() : null}
               </div>
             </div>
-            {/* BOTTOM STRIP — Project total only. The per-group chips that used to sit beside it
-                (Rental/Truss/Florals/Manpower/Buy/Produce/Genset/GYV/Buffer) now live on their own
-                tab pill instead (see the tab strip above) — owner decision, so a group's number is
-                right where you'd click to see the detail behind it, not repeated in a second row. */}
-            {(() => {
-              // ═══ Reads from shared dcCostRollup (§26.19) ═══
-              const { dealAmount: stripRevenue, profitPct: stripProfitPct, hasActuals, grandActual, grand: grandProj, commissionTotal } = dcCostRollup;
-              // Project total = production cost + GYV/buffer + venue commission — same definition as
-              // the GYV & Buffer tab's own "Project total" tile, so this strip can never disagree with it.
-              const grandWithOverheads = (hasActuals ? grandActual : grandProj) + commissionTotal;
-              const stripProfitColor = stripProfitPct >= 20 ? "#10B981" : stripProfitPct >= 10 ? "#F59E0B" : "#EF4444";
-              // Until Generate has run there are no matched cards, so every rollup figure is 0 and a
-              // department that genuinely costs nothing looked identical to one that was never
-              // calculated — both rendered "—". Split the two: "—" means not calculated yet, "₹0"
-              // means calculated and empty. Same source of truth the Inventory tab's empty state
-              // uses (dcCards), but across ALL functions, since this strip sums all of them.
-              const hasGenerated = Object.values(dcCards || {}).some(
-                (fnCards) => fnCards && Object.keys(fnCards).length > 0
-              );
-              const fmt = (n) => n > 0
-                ? "₹" + Math.round(n).toLocaleString("en-IN")
-                : hasGenerated ? "₹0" : "—";
-              // ── SAVE DRAFT REMOVED ──
-              // The button it drove did nothing the background autosave was not already doing,
-              // and it did it worse. Three reasons it went:
-              //  · It wrote a SUBSET. The autosave persists dcDraft (the full snapshot: resolved,
-              //    photoOverrides, skipped, manualItems, dedupOverrides, productionAccepted,
-              //    artFlowerAlloc, floralColorPrefs, customItems) alongside the top-level fields.
-              //    This wrote only the top-level fields and bumped dcDraftSavedAt, leaving dcDraft
-              //    stale against fresh cards until the next autosave tick repaired it.
-              //  · It skipped the guards. The autosave refuses to write an empty dcCards (see the
-              //    ROOT-CAUSE GUARD in StudioApp.jsx) and refuses to write mid-Generate. This had
-              //    neither, so pressing it before a restore finished would persist an empty card
-              //    set over a good draft — exactly the corruption that guard exists to prevent.
-              //  · Nothing was ever unsaved. The autosave fires 2.5s after edits settle and
-              //    flushes on unmount (route switch, client change, close), and the header already
-              //    reports "Deal Check last saved by <name> · <when>".
-              // If a deliberate save action is ever wanted back, it must reuse the autosave's own
-              // doSave rather than reimplement a second, weaker write path.
-              // Width matches the left sidebar's own 220px column (the FUNCTIONS list above it) —
-              // this strip is Project Total, not a page footer, and stretching it the full width of
-              // the overlay left a wide band of empty glass beside a card only a few hundred pixels
-              // wide. Sitting directly under the sidebar it lines up with is also a clearer read:
-              // "this number belongs to that column".
-              return (
-                <div className="dc-glass dc-bottom" style={{display:"flex",alignItems:"center",width:220,boxSizing:"border-box",padding:"10px 18px",borderTop:`1px solid ${border}`,borderRight:`1px solid ${border}`,gap:14}}>
-                  <div className="dc-bottomtotal" style={{flexShrink:0}}><div className="dc-cap" style={{color:"#1A1A2E",opacity:0.62}}>Project total</div><div className="dc-money" style={{fontSize:25,fontWeight:800,color:"#1A1A2E",marginTop:1,lineHeight:1.1}}>{fmt(grandWithOverheads)}</div>{stripRevenue > 0 && <div className="dc-money" style={{fontSize:11,color:stripProfitColor,fontWeight:700,marginTop:2,letterSpacing:0.1}}>Margin {stripProfitPct}% · {fmt(stripRevenue)} quote</div>}</div>
-                </div>
-              );
-            })()}
             {/* ═══ Dept Income modal — salesperson-facing, reachable from any tab ═══
                 Same body/data the (removed-from-the-strip) Dept Income tab already renders —
                 dcCostRollup.dept, one source of truth — just in a modal instead of behind a tab
