@@ -34,6 +34,27 @@ const PANEL_BG =
   Object.values(import.meta.glob("../../../assets/ambria-panel.{jpg,jpeg,png,webp}", { eager: true, query: "?url", import: "default" }))[0] ||
   null;
 
+// Play opens a real new TAB (not an in-page embed) — reported choppy/laggy playback on older
+// laptops, confirmed to play smoothly when the same video is opened directly on youtube.com.
+// Backgrounding the SPA's own tab (which is what opening any new tab does) lets the browser
+// throttle its realtime/autosave timers instead of them fighting the video decode for main-thread
+// time — that's the actual fix. But sending the guest to the full youtube.com website loses the
+// same full-bleed black "watching a look" presentation the old in-page modal had (and shows
+// unrelated recommended videos/comments/branding, not great over a salesperson's shoulder). This
+// builds that same edge-to-edge presentation as its own tiny page — still just the YouTube iframe
+// underneath (so its native fullscreen button still works) — and opens THAT in the new tab instead
+// of youtube.com's own page.
+function openVideoTab(videoId) {
+  const id = String(videoId || "").match(/^[a-zA-Z0-9_-]{6,20}$/) ? videoId : null;
+  if (!id) return;
+  const embedSrc = `https://www.youtube.com/embed/${id}?autoplay=1&rel=0&modestbranding=1`;
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Ambria — Video</title>
+<style>html,body{margin:0;padding:0;width:100%;height:100%;background:#000;overflow:hidden}iframe{position:fixed;inset:0;width:100%;height:100%;border:0}</style>
+</head><body><iframe src="${embedSrc}" allow="autoplay; encrypted-media; fullscreen" allowfullscreen title="Video"></iframe></body></html>`;
+  const url = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+  window.open(url, "_blank");
+}
+
 function StudioBrowse({ ctx }) {
   // Which filter sections are expanded. All closed by default: six open sections made the panel
   // taller than the viewport, which is what buried Palette. Closed headers still show what's
@@ -248,7 +269,7 @@ function StudioBrowse({ ctx }) {
               same video is opened directly on youtube.com. The embedded iframe (autoplay + our own
               page's own realtime/autosave churn fighting it for main-thread time) was the common
               factor; a new tab gives the video its own process with none of that contention. */}
-          <div style={{background:"#1a1a2e",height:150,display:"flex",alignItems:"center",justifyContent:"center",position:"relative",overflow:"hidden",cursor:"pointer"}} onClick={()=>{window.open(`https://www.youtube.com/watch?v=${v.id}`,"_blank","noopener,noreferrer");}}>
+          <div style={{background:"#1a1a2e",height:150,display:"flex",alignItems:"center",justifyContent:"center",position:"relative",overflow:"hidden",cursor:"pointer"}} onClick={()=>openVideoTab(v.id)}>
             <img className="sb-thumb" src={v.thumbnail} alt={v.title} loading="lazy" style={{width:"100%",height:"100%",objectFit:"cover",position:"absolute",inset:0}} onError={e=>{e.target.style.display="none"}}/>
             <div className="sb-play" style={{width:48,height:48,borderRadius:"50%",background:"rgba(255,255,255,0.25)",backdropFilter:"blur(4px)",WebkitBackdropFilter:"blur(4px)",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",position:"relative",zIndex:2}}><IconPlay size={20}/></div>
             {/* Click the tier pill to favourite this video for its own venue (see browseVideos'
@@ -1382,7 +1403,7 @@ function StudioBrowse({ ctx }) {
                     </div>
                     </div>
                     <div style={{display:"flex",gap:7}}>
-                    {!unavailable && <button onClick={(e)=>{e.stopPropagation();window.open(`https://www.youtube.com/watch?v=${s.sourceVideoId}`,"_blank","noopener,noreferrer");}} className="sb-bnr-btn sb-bnr-out" style={{padding:"6px 11px",borderRadius:7,border:`1px solid ${isDark?"rgba(234,179,8,0.5)":"#D97706"}`,background:"transparent",color:isDark?"#FBBF24":"#B45309",fontSize:10,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",flex:"0 0 auto",display:"inline-flex",alignItems:"center",justifyContent:"center",gap:5}}><IconPlay size={11}/>Play</button>}
+                    {!unavailable && <button onClick={(e)=>{e.stopPropagation();openVideoTab(s.sourceVideoId);}} className="sb-bnr-btn sb-bnr-out" style={{padding:"6px 11px",borderRadius:7,border:`1px solid ${isDark?"rgba(234,179,8,0.5)":"#D97706"}`,background:"transparent",color:isDark?"#FBBF24":"#B45309",fontSize:10,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",flex:"0 0 auto",display:"inline-flex",alignItems:"center",justifyContent:"center",gap:5}}><IconPlay size={11}/>Play</button>}
                     {/* Pass _fnIdx so the restore lands on the function that HAS the build.
                         Blocked ONLY while a switch is in flight, because there the build state is
                         half-replaced and loading into it loses work — a wait that ends on its own.
@@ -1426,7 +1447,7 @@ function StudioBrowse({ ctx }) {
                     </div>
                     </div>
                     <div style={{display:"flex",gap:7}}>
-                    <button onClick={(e)=>{e.stopPropagation();window.open(`https://www.youtube.com/watch?v=${bannerCurrentId}`,"_blank","noopener,noreferrer");}} className="sb-bnr-btn sb-bnr-out" style={{padding:"6px 11px",borderRadius:7,border:`1px solid ${isDark?"rgba(99,102,241,0.5)":"#6366F1"}`,background:"transparent",color:isDark?"#A5B4FC":"#4338CA",fontSize:10,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",flex:"0 0 auto",display:"inline-flex",alignItems:"center",justifyContent:"center",gap:5}}><IconPlay size={11}/>Play</button>
+                    <button onClick={(e)=>{e.stopPropagation();openVideoTab(bannerCurrentId);}} className="sb-bnr-btn sb-bnr-out" style={{padding:"6px 11px",borderRadius:7,border:`1px solid ${isDark?"rgba(99,102,241,0.5)":"#6366F1"}`,background:"transparent",color:isDark?"#A5B4FC":"#4338CA",fontSize:10,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",flex:"0 0 auto",display:"inline-flex",alignItems:"center",justifyContent:"center",gap:5}}><IconPlay size={11}/>Play</button>
                     <button onClick={(e)=>{e.stopPropagation();setStep(2);}} className="sb-bnr-btn sb-bnr-solid" style={{padding:"6px 12px",borderRadius:7,border:"none",background:isDark?"#4F46E5":"#4338CA",color:"#fff",fontSize:10,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap",flex:1}}>
                       Continue build {"→"}
                     </button>
