@@ -3587,14 +3587,21 @@ undefined
                   // one (AdminSettingsTab.jsx, Flowers → Recipes), keyed by size, so resolve it the
                   // same way Deal Check resolves a recipe size (sizeClassToPatternKey + resolveSizeKey
                   // — handles the "large"/"big" legacy alias) instead of guessing the shape.
-                  const patternThumbSrc = (!thumbItem && el.patternId) ? (() => {
-                    const patterns = (dealCheckData||studioFloralData)?.flowerPatterns || recipeOnlyPatterns || [];
-                    const pat = patterns.find(pt => pt.id === el.patternId);
-                    const sk = resolveSizeKey(pat?.sizes, sizeClassToPatternKey(el.size));
-                    return sk ? pat.sizes[sk]?.img : null;
+                  const floralPattern = el.patternId ? ((dealCheckData||studioFloralData)?.flowerPatterns || recipeOnlyPatterns || []).find(pt => pt.id === el.patternId) : null;
+                  const patternThumbSrc = (!thumbItem && floralPattern) ? (() => {
+                    const sk = resolveSizeKey(floralPattern.sizes, sizeClassToPatternKey(el.size));
+                    return sk ? floralPattern.sizes[sk]?.img : null;
                   })() : null;
                   const thumbSrc = thumbItem?.img || thumbItem?.photoUrls?.[0] || patternThumbSrc;
                   const thumbKey = `${k}:${idx}`;
+                  // Per-size reference photo (set per S/M/B in IMS → Flowers → Recipes) for the S/M/B
+                  // pills below — lets a salesperson preview a size's actual flower photo on hover
+                  // before picking it, not just see the currently-selected size on the thumb above.
+                  const sizeImgFor = (s) => {
+                    if (!floralPattern) return null;
+                    const sk = resolveSizeKey(floralPattern.sizes, sizeClassToPatternKey(s));
+                    return sk ? floralPattern.sizes[sk]?.img : null;
+                  };
                   const isUnavail = !!el.invId && typeof priceInfo.available==="number" && priceInfo.available<=0 && (el.qty||0)>0;
                   return (
                   <div key={idx} className="el-row" data-kit={isKit?"1":"0"} style={{display:"flex",flexDirection:"column",gap:6,padding:"9px 10px",borderRadius:12,border:`1px solid ${isDark?"rgba(255,255,255,0.09)":"rgba(26,26,46,0.10)"}`,background:cardBg,gridColumn:isKit?(firstKit?`1 / span ${kitSpan}`:`span ${kitSpan}`):"span 1",minHeight:isKit?undefined:98,justifyContent:isKit?"flex-start":"space-between"}}>
@@ -3656,7 +3663,29 @@ undefined
                           </select>;
                         })()}
                         {hasSizes&&!priceInfo.isFloralBlend&&["S","M","B"].map(s=><button key={s} onClick={()=>{const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],size:s};setZoneElements(p=>({...p,[k]:elems}));}} style={{padding:"1px 6px",borderRadius:4,border:"none",fontSize:11,fontWeight:(el.size||"M")===s?700:400,cursor:"pointer",background:(el.size||"M")===s?"rgba(0,0,0,0.06)":"transparent",color:(el.size||"M")===s?"#666":textS}}>{s}</button>)}
-                        {priceInfo.isFloralBlend&&priceInfo.patternSMB&&["S","M","B"].map(s=><button key={s} onClick={()=>{const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],size:s};setZoneElements(p=>({...p,[k]:elems}));}} style={{padding:"1px 6px",borderRadius:4,border:"none",fontSize:11,fontWeight:(el.size||"B")===s?700:400,cursor:"pointer",background:(el.size||"B")===s?"rgba(0,0,0,0.06)":"transparent",color:(el.size||"B")===s?"#666":textS}}>{s}</button>)}
+                        {priceInfo.isFloralBlend&&priceInfo.patternSMB&&["S","M","B"].map(s=>{
+                          const sImg = sizeImgFor(s);
+                          const sKey = `${k}:${idx}:sz:${s}`;
+                          return (
+                          <div key={s} style={{position:"relative",display:"inline-flex"}}
+                            onMouseEnter={sImg?(e)=>{
+                              const r=e.currentTarget.getBoundingClientRect();
+                              const POP=164;
+                              const openUp=window.innerHeight-r.bottom<POP+8 && r.top>POP+8;
+                              setElThumbHover({key:sKey,openUp,top:openUp?undefined:r.bottom+4,bottom:openUp?window.innerHeight-r.top+4:undefined,left:Math.min(r.left,window.innerWidth-168)});
+                            }:undefined}
+                            onMouseLeave={sImg?()=>setElThumbHover(null):undefined}>
+                            <button onClick={()=>{const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],size:s};setZoneElements(p=>({...p,[k]:elems}));}} style={{padding:"1px 6px",borderRadius:4,border:"none",fontSize:11,fontWeight:(el.size||"B")===s?700:400,cursor:"pointer",background:(el.size||"B")===s?"rgba(0,0,0,0.06)":"transparent",color:(el.size||"B")===s?"#666":textS}}>{s}</button>
+                            {/* Portal to <body> — same .el-row hover-transform gotcha as the card's own thumb above. */}
+                            {elThumbHover?.key===sKey && sImg && createPortal(
+                              <div style={{position:"fixed",top:elThumbHover.top,bottom:elThumbHover.bottom,left:elThumbHover.left,zIndex:10000,width:160,height:160,borderRadius:8,overflow:"hidden",border:`2px solid ${border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.4)",pointerEvents:"none"}}>
+                                <img src={sImg} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+                              </div>,
+                              document.body
+                            )}
+                          </div>
+                          );
+                        })}
                         {hasSizes&&!priceInfo.isFloralBlend&&<button onClick={()=>{const elems=[...(zoneElements[k]||[])];const used=new Set(elems.filter(e=>e.name===el.name).map(e=>e.size||"M"));const ns=["B","M","S"].find(s=>!used.has(s))||"B";elems.splice(idx+1,0,applyQty(k,{...el,size:ns},1));setZoneElements(p=>({...p,[k]:elems}));}} title="Split into another size (e.g. 3 Big + 2 Small)" style={{padding:"1px 6px",borderRadius:4,border:`1px dashed ${border}`,fontSize:11,fontWeight:600,cursor:"pointer",background:"transparent",color:accent}}>＋ size</button>}
                         {priceInfo.isFloralBlend&&<span style={{display:"flex",alignItems:"center",gap:3,fontSize:11,fontWeight:700}}>{"🌸"}<button onClick={()=>{const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],realPct:typeof el.realPct==="number"?undefined:100};setZoneElements(p=>({...p,[k]:elems}));}} title={typeof el.realPct==="number"?"Priced at "+el.realPct+"% of the recipe's Studio rate — tap to go back to this sub-category's default ratio":"Using this sub-category's default real/artificial ratio — tap to price at 100% of the recipe's Studio rate"} style={floralPill(typeof el.realPct==="number")}>{typeof el.realPct==="number"?`${el.realPct}%`:"Ratio"}</button><input type="number" min="0" max="100" value={el.realPct??""} placeholder={String(priceInfo.realPct??"")} onChange={e=>{const v=e.target.value;const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],realPct:v===""?undefined:Math.max(0,Math.min(100,parseFloat(v)||0))};setZoneElements(p=>({...p,[k]:elems}));}} title="Manually set the exact % real — overrides Ratio/100%" style={{width:44,padding:"2px 6px",borderRadius:6,border:`1px solid ${border}`,background:cardBg,color:textP,fontSize:11,textAlign:"center"}} /></span>}
                         {/* §23 Phase 2.9 → Paint Allocation Ops (05 Jun 2026) — item-level paintability */}
