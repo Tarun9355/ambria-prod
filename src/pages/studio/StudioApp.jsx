@@ -7632,32 +7632,24 @@ export default function StudioApp() {
     // deal that has since been priced, or worse, stay silent on one that has been emptied.
     eventGrandTotal]);
 
-  // Reverses markSold — for when a booking falls through (couple cancels, deposit bounces, a
-  // salesperson fat-fingered Sold). Reverts client_ledger's own status/booked* fields back to
-  // "ongoing" and marks the linked IMS event order cancelled — never deleted, matching the
-  // event_orders row's own audit trail and studio_sessions/client_ledger's own "never physically
-  // delete" precedent elsewhere in this file — so Ops sees the job pulled rather than a phantom
-  // booking still sitting active. Deliberately does NOT touch anything already reconciled into
-  // IMS's own `blocks`/`functions`/`projects` tables (reconcileSoldInventoryBlocks) — unwinding
-  // physical inventory/truss holds already committed there is Ops' own call to make, said plainly
-  // in the confirm below, not something a click here should silently attempt.
+  // Reverses markSold — for when a booking was confirmed by mistake, or falls through afterward.
+  // Reverts client_ledger's own status/booked* fields back to "ongoing". Deliberately touches
+  // NOTHING else: not the linked IMS event order (owner call — a booking that's merely being
+  // un-booked in Studio is not the same thing as the contract with the client being cancelled, and
+  // this must never be read as one), and not anything already reconciled into IMS's own
+  // `blocks`/`functions`/`projects` tables (reconcileSoldInventoryBlocks) — both of those are Ops'
+  // own calls to make, separately, not something a click here should do on their behalf.
   const unbookDeal = useCallback(() => {
     try {
       const client = activeClient;
       if (!client || client.status !== "booked") return;
-      if (!confirm(`Un-book ${client.name}'s deal — ${client.eventDate || "—"} at ${client.venue || "—"}?\n\nThis reverts it to an ongoing deal in Studio and marks the linked IMS booking cancelled. It does NOT release any inventory/truss already held for it in IMS — coordinate that with Ops separately.`)) return;
+      if (!confirm(`Un-book ${client.name}'s deal — ${client.eventDate || "—"} at ${client.venue || "—"}?\n\nThis reverts it to an ongoing deal in Studio only. It does NOT cancel the linked IMS booking/contract or release any inventory/truss held for it — coordinate those with Ops separately if this booking is genuinely off.`)) return;
       const updated = clientLedger.map(c => c.id === client.id ? { ...c, status: "ongoing", bookedAt: null, bookedBy: null, finalSession: null, bookedSystemTotal: null } : c);
       saveClientLedger(updated);
-      const existingActive = eventOrders.find(e => e.clientId === client.id && e.date === client.eventDate && e.status !== "cancelled");
-      if (existingActive) {
-        const eo = { ...existingActive, status: "cancelled" };
-        saveEventOrders(eventOrders.map(e => e.id === eo.id ? eo : e));
-        supabase.from("event_orders").upsert({ id: eo.id, client_name: eo.clientName ?? null, event_id: eo.eventId ?? null, fn_id: eo.fnId ?? null, status: "cancelled", items: eo.items || [], manual_items: eo.manualItems || [], decisions: eo.decisions || {}, data: eo }, { onConflict: "id" }).then(({ error }) => { if (error) console.warn("[unbookDeal] event_orders table sync failed:", error.message); }).catch(() => {});
-      }
       logActivity("booking", `↩️ ${client.name} — Booking un-booked by ${authUser?.name || "—"}`);
       showMsg(`${client.name}'s deal un-booked`, "green");
     } catch (e) { showMsg("Error: " + (e.message || "unknown"), "red"); }
-  }, [activeClient, clientLedger, saveClientLedger, eventOrders, saveEventOrders, logActivity, authUser, showMsg]);
+  }, [activeClient, clientLedger, saveClientLedger, logActivity, authUser, showMsg]);
 
   // ── Load client session — VERBATIM ──
   const loadClientSession = useCallback((client, session, landingStep = 3, opts = {}) => {

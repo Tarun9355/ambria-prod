@@ -132,31 +132,6 @@ function customBgFor(kind) {
   return BG_BY_EVENT[String(kind || "").toLowerCase()] || BG_BY_EVENT.wedding || null;
 }
 
-// ═══ COUNT-UP ═══ Rolls the grand total from wherever it currently sits to the new figure, so a
-// re-price reads as movement instead of a silent swap. Interrupting mid-roll resumes from the
-// displayed value (fromRef tracks every frame), and reduced-motion snaps straight to the target.
-function useCountUp(target, ms = 900) {
-  const [val, setVal] = useState(target);
-  const fromRef = useRef(target);
-  useEffect(() => {
-    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-    const from = fromRef.current;
-    if (reduce || from === target) { fromRef.current = target; setVal(target); return; }
-    let raf = 0, start = null;
-    const tick = (t) => {
-      if (start === null) start = t;
-      const p = Math.min(1, (t - start) / ms);
-      const v = from + (target - from) * (1 - Math.pow(1 - p, 3)); // easeOutCubic
-      fromRef.current = v;
-      setVal(v);
-      if (p < 1) raf = requestAnimationFrame(tick); else fromRef.current = target;
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [target, ms]);
-  return val;
-}
-
 // ═══ CARD FIREWORKS ═══ Three small bursts looping inside the Total Estimate panel, staggered so
 // only one is ever in the air. Centres and angles are fixed at module scope rather than randomised
 // per render — random inline styles would change on every re-render and restart particles mid-flight.
@@ -184,13 +159,6 @@ const TE_FW_PARTICLES = TE_BURSTS.flatMap((b, bi) =>
     };
   })
 );
-
-// Own component, not a hook call in StudioSummary — the roll ticks every frame, and StudioSummary
-// re-renders the whole cost breakdown (collectAllFunctionData et al) each time it does. Keeping the
-// state down here means only this one line repaints.
-function AnimatedTotal({ value, fmt }) {
-  return <>{fmt(Math.round(useCountUp(value || 0)))}</>;
-}
 
 export default function StudioSummary({ ctx }) {
   const [txOpen, setTxOpen] = useState({}); // per-function transport detail expand (collapsed by default)
@@ -2540,8 +2508,8 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
 .sh-te-lbl{opacity:0;animation:shRise .5s cubic-bezier(.22,.61,.36,1) .64s forwards}
 /* Two animations: the entrance once, then the glow forever. Comma-separated so the second is not
    waiting on the first to be re-declared. */
-/* Tabular figures: AnimatedTotal counts the number up, and with proportional digits a 1 is narrower
-   than a 0 — so the whole figure shifts sideways on every frame of the count. */
+/* Tabular figures: with proportional digits a 1 is narrower than a 0, so the hero figure would
+   shift sideways as it's typed over. */
 .sh-te-amt{opacity:0;text-shadow:0 2px 18px rgba(201,169,110,.28);
   font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1;
   animation:shRise .55s cubic-bezier(.22,.61,.36,1) .72s forwards, teAmtGlow 3.4s ease-in-out 1.3s infinite}
@@ -2696,9 +2664,6 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
             and the same reason: eventGrandTotal sums calcFunctionCost over the functions, and that
             reads the rate card, its scaling factors and the truss/masking/carpet/platform tables.
             Until they land it is a real total over seed defaults.
-            The count-up makes it worse here than on Build, not better: AnimatedTotal rolls smoothly
-            to whatever it is handed, so each intermediate figure got animated to in turn — which
-            reads as the number being carefully calculated rather than as it being wrong.
             The tier pill goes with it; it is derived from the same figure. */}
         {(() => {
           const isBooked = activeClient?.status === "booked";
@@ -2706,13 +2671,16 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
           const displayTotal = hasNegotiated ? Number(activeClient.negotiatedAmount) : eventGrandTotal;
           return <>
         {pricingReady ? <>
-          {/* The hero figure IS the negotiated-amount field once the deal isn't booked — no separate
-              box underneath any more. Blurred, it shows the formatted amount (negotiated if one's
-              set, else the system estimate); focus it and it switches to raw digits so typing over
-              it is simple, then blur commits via the same commitNegotiatedAmount the old standalone
-              field used. A booked deal is already locked in — back to a plain read-only figure,
-              same as before, since there's nothing left to negotiate. */}
-          {!isBooked ? (
+          {/* The hero figure IS the negotiated-amount field, booked or not — no separate box
+              underneath any more. Blurred, it shows the formatted amount (negotiated if one's set,
+              else the system estimate); focus it and it switches to raw digits so typing over it
+              is simple, then blur commits via the same commitNegotiatedAmount the old standalone
+              field used. Used to lock read-only once a deal was booked — a real, repeated need to
+              keep negotiating with an already-booked guest (a further discount, a correction to a
+              mis-typed amount) had no path but un-booking the whole deal, which also had to touch
+              the linked IMS event order to make sense of "un-booked but still needs a number" — so
+              this field itself is the fix: editable at any status, exactly like every other field
+              in this app that keeps working after Sold (Build, Deal Check). */}
             <input
               type="text"
               inputMode="numeric"
@@ -2726,9 +2694,6 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
               title="Click to override the deal amount"
               style={{fontSize:46,fontWeight:700,letterSpacing:-1,marginBottom:11,display:"block",width:"100%",maxWidth:360,margin:"0 auto 11px",background:"transparent",border:"none",borderBottom:"1px dashed rgba(255,255,255,0.3)",outline:"none",color:"#fff",textAlign:"center",fontFamily:"inherit",padding:"0 0 2px"}}
             />
-          ) : (
-            <div className="sh-te-amt" style={{fontSize:46,fontWeight:700,letterSpacing:-1,marginBottom:11}}><AnimatedTotal value={displayTotal} fmt={fmt}/></div>
-          )}
           {/* BUG-3. A ₹0 total used to render the tier pill anyway, and getCat has no floor — anything
               under ₹3,50,000 lands in the catch-all "Silver" bucket, zero included. So a deal with
               nothing built announced itself as a Silver ₹0, which reads as a real (cheap) quote
