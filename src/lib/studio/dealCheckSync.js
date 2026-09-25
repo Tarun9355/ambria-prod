@@ -205,8 +205,17 @@ export function revertSplitToSingle(zoneElements, zoneKey, groupId, identity) {
  * @param {Array}  manualItemsForFn  dcManualItems filtered to this fnIdx
  * @param {Array}  inventoryCache  dcInventoryCache — only needed to name a split's new entries
  * @param {Function} parseCardKey  the same parser DealCheckOverlay.jsx already uses (ctx-provided)
+ * @param {boolean} manualItemsReady  true once dcManualItems is confirmed restored/reset for the
+ *   client THIS zoneElements belongs to (see StudioApp.jsx's dcManualItemsReadyRef). manualItemsForFn
+ *   is a plain array either way — "Deal Check hasn't restored its manual-item list yet" and "the
+ *   user deleted every manual item" are otherwise indistinguishable (both produce []), and pruning
+ *   is destructive (unlike the additive add-pass above), so the prune below only ever runs once this
+ *   is true. Confirmed live: DealCheckOverlay's mount effect (child) fires before the parent effect
+ *   that calls openDealCheck, and openDealCheck itself awaits a network fetch before restoring
+ *   dcManualItems — so without this gate, a fresh Deal Check open deleted every real, already-saved
+ *   manual item from Build the instant the overlay mounted, before the restore had even landed.
  */
-export function reconcileDealCheckIntoBuild(zoneElements, cardsForFn, kitEditsForFn, manualItemsForFn, inventoryCache, parseCardKey) {
+export function reconcileDealCheckIntoBuild(zoneElements, cardsForFn, kitEditsForFn, manualItemsForFn, inventoryCache, parseCardKey, manualItemsReady) {
   try {
     let ze = zoneElements || {};
     const cards = cardsForFn || {};
@@ -244,7 +253,9 @@ export function reconcileDealCheckIntoBuild(zoneElements, cardsForFn, kitEditsFo
       const pickItem = (inventoryCache || []).find((i) => i.id === mi.imsId);
       ze = syncManualItemToBuild(ze, mi.zoneKey, mi, pickItem);
     });
-    ze = removeStaleManualEntries(ze, new Set((manualItemsForFn || []).map((mi) => mi.manualId)));
+    if (manualItemsReady) {
+      ze = removeStaleManualEntries(ze, new Set((manualItemsForFn || []).map((mi) => mi.manualId)));
+    }
     return ze;
   } catch (err) {
     console.error("[dealCheckSync] reconcile failed — Build left untouched:", err);

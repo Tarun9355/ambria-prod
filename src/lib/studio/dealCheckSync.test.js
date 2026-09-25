@@ -135,13 +135,27 @@ describe("reconcileDealCheckIntoBuild", () => {
     expect(next.stage[0].invId).toBe("NEW");
   });
 
-  it("adds and then removes a manual item across two reconcile passes", () => {
+  it("adds and then removes a manual item across two reconcile passes, once manualItemsReady", () => {
     const ze = { entry: [] };
     const manualItems = [{ manualId: "m1", imsId: "I1", qty: 2, zoneKey: "entry" }];
-    const withItem = reconcileDealCheckIntoBuild(ze, {}, {}, manualItems, [{ id: "I1", name: "Chair" }], parseCardKey);
+    const withItem = reconcileDealCheckIntoBuild(ze, {}, {}, manualItems, [{ id: "I1", name: "Chair" }], parseCardKey, true);
     expect(withItem.entry).toHaveLength(1);
-    const withoutItem = reconcileDealCheckIntoBuild(withItem, {}, {}, [], [], parseCardKey);
+    const withoutItem = reconcileDealCheckIntoBuild(withItem, {}, {}, [], [], parseCardKey, true);
     expect(withoutItem.entry).toHaveLength(0);
+  });
+
+  it("never prunes a manual item while manualItemsReady is falsy — confirmed live bug guard", () => {
+    // dcManualItems restores asynchronously (a network fetch inside openDealCheck) while this
+    // reconcile effect can already be firing — manualItemsForFn is a plain [] either way ("Deal
+    // Check hasn't restored yet" and "the user deleted every manual item" are indistinguishable
+    // from the array alone), so the destructive prune must stay off until the caller confirms
+    // (via manualItemsReady) that dcManualItems is genuinely caught up for this client. Without
+    // this gate, opening Deal Check on ANY ongoing deal with a real manual item silently deleted
+    // it from Build the instant the sync effect first fired, with zero user action.
+    const ze = { entry: [{ name: "Chair", invId: "I1", qty: 2, _dcManualId: "m1" }] };
+    const next = reconcileDealCheckIntoBuild(ze, {}, {}, [], [], parseCardKey);
+    expect(next.entry).toHaveLength(1);
+    expect(next).toBe(ze);
   });
 
   it("never throws — a malformed parseCardKey leaves zoneElements untouched", () => {

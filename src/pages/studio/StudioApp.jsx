@@ -1860,6 +1860,16 @@ export default function StudioApp() {
   const [dcSkipped, setDcSkipped] = useState({});
   const [dcProductionAccepted, setDcProductionAccepted] = useState({});
   const [dcManualItems, setDcManualItems] = useState([]);
+  // Which client's dcManualItems the state above ACTUALLY reflects right now — null until
+  // openDealCheck has genuinely restored (or reset to []) this field for the client currently open.
+  // DealCheckOverlay.jsx's Build-sync effect can mount and fire before that restore lands (child
+  // effects run before the parent effect that calls openDealCheck, and openDealCheck itself awaits a
+  // network fetch before touching dcManualItems at all) — reading dcManualItems during that window
+  // sees either [] (true first-ever open) or the PREVIOUS client's leftover items, and
+  // removeStaleManualEntries (dealCheckSync.js) would delete any real manual item already saved in
+  // Build's zoneElements that isn't in that not-yet-correct set. Gates that one destructive call so
+  // it only runs once this ref confirms dcManualItems is correct for the client being synced.
+  const dcManualItemsReadyRef = useRef(null);
   const [dcManualSearch, setDcManualSearch] = useState({});
   const [dcDedupOverrides, setDcDedupOverrides] = useState({});
   const [dcBlockedFnOpen, setDcBlockedFnOpen] = useState({});
@@ -9724,7 +9734,16 @@ export default function StudioApp() {
       }
     } else {
       setDcResolved({});
+      // This client has no draft at all — dcManualItems must not be left holding whatever the
+      // PREVIOUSLY open client's manual items were (nothing else ever resets it). Without this, Deal
+      // Check opened fresh on a client that's never used it would sync the last client's manual
+      // items straight into THIS client's Build zoneElements the moment the reconcile effect fires.
+      setDcManualItems([]);
     }
+    // dcManualItems above is now correct for activeClientId (restored, or reset to [] when there was
+    // nothing to restore) — see dcManualItemsReadyRef's own declaration for why the sync effect needs
+    // to know this before it may prune manual items no longer listed.
+    dcManualItemsReadyRef.current = activeClientId;
     setDcResolving({});
     const allFns = collectAllFunctionData();
     const uniqueDates = [...new Set(allFns.map(f => f.fnDate).filter(Boolean))];
@@ -10831,7 +10850,7 @@ export default function StudioApp() {
     dcFloralExpanded, setDcFloralExpanded, dcFloralUnmatchedExpanded, setDcFloralUnmatchedExpanded, dcResolved, setDcResolved, dcResolving, setDcResolving, dcAbortRef, setDcAbortRef,
     dcFullPageOpen, setDcFullPageOpen, closeDealCheck, dcCards, setDcCards, dcZoneState, setDcZoneState, dcKitEdits, setDcKitEdits, dcCarpetPick, setDcCarpetPick, dcCarpetSplit, setDcCarpetSplit,
     dcCarpetSearch, setDcCarpetSearch, dcDesiredMargin, setDcDesiredMargin, dcRunCounter, setDcRunCounter, dcCache, setDcCache, dcGenerating, setDcGenerating,
-    dcSaveBaselineRef, dcConflictWarnedAtRef,
+    dcSaveBaselineRef, dcConflictWarnedAtRef, dcManualItemsReadyRef,
     dcGenStatus, setDcGenStatus, dcActiveTab, setDcActiveTab, dcShowAllFns, setDcShowAllFns, dcCollapsedFnBlocks, setDcCollapsedFnBlocks, dcMpOverrides, setDcMpOverrides, dcMpWinCount, setDcMpWinCount, dcMpIncludeMinusOne, setDcMpIncludeMinusOne,
     dcMpIncludeDismantle, setDcMpIncludeDismantle, dcMpCalcOpen, setDcMpCalcOpen, dcFloralCalcOpen, setDcFloralCalcOpen, dcCollapsedZones, setDcCollapsedZones,
     floralHardPropMap, setFloralHardPropMap, softHolds, setSoftHolds, trussAlloc, setTrussAlloc, dcAmendDiff, setDcAmendDiff, dcSavingDraft, setDcSavingDraft,
