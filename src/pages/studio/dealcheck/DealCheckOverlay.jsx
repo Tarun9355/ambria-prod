@@ -561,7 +561,13 @@ export default function DealCheckOverlay({ ctx }) {
               if (isKit) {
                 lineRental = repeatAdjustedRental(_rep, fn.fnVenue, item, qty, baseR, fn.fnDate);
               } else {
-                const available = dcAvailable(item, fnBlocks, fi);
+                // Owner ask: fixed venues keep a permanent standing allocation of certain items —
+                // that stock furnishes THOSE venues, not an outdoor (non-fixed-venue) deal. Folding
+                // availableAtVenue in as a second ceiling means an outdoor deal that needs more than
+                // what's left un-locked falls straight into the existing shortfall/cost% pricing
+                // below — a deal actually AT a fixed venue is exempted from its own venue's lock
+                // (availableAtVenue already excludes "this venue" from what counts as locked).
+                const available = Math.min(dcAvailable(item, fnBlocks, fi), availableAtVenue({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, fn.fnVenue, item));
                 const ownedQty = Math.min(qty, available);
                 shortQty = Math.max(0, qty - available);
                 const ownedRental = repeatAdjustedRental(_rep, fn.fnVenue, item, ownedQty, baseR, fn.fnDate);
@@ -2307,7 +2313,8 @@ export default function DealCheckOverlay({ ctx }) {
                           const _rep = _zoneIsRepeat(c._cardKey);
                           const isKit = Array.isArray(it.subItems) && it.subItems.length > 0;
                           if (isKit) { zoneRentalTotal += repeatAdjustedRental(_rep, _fnVenueForRepeat, it, qty, baseR, _fnDateForRepeat); return; }
-                          const available = dcAvailable(it, fnBlocksForChip, fnIdx);
+                          // Mirrors the main rollup's own fixed-venue standing-stock ceiling (see its comment) — this pill must agree with it.
+                          const available = Math.min(dcAvailable(it, fnBlocksForChip, fnIdx), availableAtVenue({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, _fnVenueForRepeat, it));
                           const ownedQty = Math.min(qty, available);
                           const shortQty = Math.max(0, qty - available);
                           const ownedRental = repeatAdjustedRental(_rep, _fnVenueForRepeat, it, ownedQty, baseR, _fnDateForRepeat);
@@ -2709,7 +2716,7 @@ export default function DealCheckOverlay({ ctx }) {
                                           <span style={{fontSize:14,fontWeight:700,letterSpacing:-0.1,color:IV.ink}}>{item?.name || card.rcName || "(unnamed)"}</span>
                                           <span title={sourceMeta.label} style={{fontSize:11,padding:"2px 6px",borderRadius:4,background:`${sourceMeta.color}22`,color:sourceMeta.color,fontWeight:700,letterSpacing:0.4}}>{sourceMeta.icon} {sourceMeta.label}</span>
                                           {hold && <span title={`Held by ${hold.salesperson} for ${hold.eventName}`} style={{fontSize:11,padding:"2px 6px",borderRadius:4,background:"rgba(245,158,11,0.20)",color:"#F59E0B",fontWeight:700,letterSpacing:0.4}}>⏳ {hold.salesperson}</span>}
-                                          {item && (()=>{ const cq=Number(card.qty)||1; const av=dcAvailable(item, fnBlocksForChip, fnIdx); return cq>av ?<span style={{fontSize:11,padding:"2px 6px",borderRadius:4,background:"rgba(239,68,68,0.18)",color:"#EF4444",fontWeight:700,letterSpacing:0.4}}>⚠ {av}</span> : null; })()}
+                                          {item && (()=>{ const cq=Number(card.qty)||1; const av=Math.min(dcAvailable(item, fnBlocksForChip, fnIdx), availableAtVenue({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, fns[fnIdx]?.fnVenue, item)); return cq>av ?<span style={{fontSize:11,padding:"2px 6px",borderRadius:4,background:"rgba(239,68,68,0.18)",color:"#EF4444",fontWeight:700,letterSpacing:0.4}}>⚠ {av}</span> : null; })()}
                                           {card.imsId && reuseFnCount[card.imsId]?.size >= 2 && <span style={{fontSize:11,padding:"2px 6px",borderRadius:4,background:"rgba(16,185,129,0.18)",color:"#10B981",fontWeight:700,letterSpacing:0.4}}>♻ {reuseFnCount[card.imsId].size} fns</span>}
                                           <span onClick={()=>setDcCards(prev=>{const fn={...(prev[fnIdx]||{})}; delete fn[card._cardKey]; return {...prev,[fnIdx]:fn};})} title="Remove from Deal Check" style={{marginLeft:"auto",cursor:"pointer",color:"#EF4444",fontSize:15.5,fontWeight:700,padding:"0 4px",lineHeight:1,flexShrink:0,opacity:0.6,transition:"opacity 0.15s"}} onMouseEnter={e=>e.currentTarget.style.opacity=1} onMouseLeave={e=>e.currentTarget.style.opacity=0.6}>×</span>
                                         </div>
@@ -3942,7 +3949,10 @@ export default function DealCheckOverlay({ ctx }) {
                       const item = dcInventoryCache.find(x => x.id === card.imsId);
                       if (!item) return;
                       const cardQty = Number(card.qty) || 1;
-                      const available = dcAvailable(item, fnBlocks, fi);
+                      // Same fixed-venue standing-stock ceiling as the main rollup — otherwise an
+                      // outdoor deal could bill at cost% for a real shortfall while this conflict
+                      // scan stayed silent about it.
+                      const available = Math.min(dcAvailable(item, fnBlocks, fi), availableAtVenue({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, fn.fnVenue, item));
                       const hold = getActiveSoftHold(softHolds, card.imsId, authUser?.name, nowMs);
                       const isShort = cardQty > available;
                       const isHeld = !!hold;

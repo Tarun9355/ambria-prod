@@ -4275,7 +4275,16 @@ export default function StudioApp() {
       const fnIdx = opts?.fnIdx ?? activeFnIdx;
       const ownReserved = cli?.dcReservedInventory?.[fnIdx]?.[item.id] || 0;
       const blocksForDate = ownReserved > 0 ? { ...rawBlocksForDate, [item.id]: Math.max(0, (rawBlocksForDate[item.id] || 0) - ownReserved) } : rawBlocksForDate;
-      const otherEventsAvail = getStudioAvailable(item, blocksForDate);
+      // Owner ask: fixed venues (our own properties) keep a permanent standing allocation of
+      // certain items — WARM LED, etc. That stock exists to furnish THOSE venues, not to be sold
+      // out from under them by an outdoor (non-fixed-venue) deal. availableAtVenue already computes
+      // exactly this: total owned qty minus whatever's locked as standing stock at every OTHER
+      // fixed venue (a deal actually held at a fixed venue is exempted from its OWN venue's lock,
+      // since that's the whole point of the allocation). Folding it in as a second ceiling means an
+      // outdoor deal that tries to draw past the un-locked remainder falls straight into the
+      // existing shortfall/cost% pricing below, exactly like running short on real date-blocked
+      // stock — no separate code path needed for it.
+      const otherEventsAvail = Math.min(getStudioAvailable(item, blocksForDate), availableAtVenue(fvCfgForRepeat, opts?.venueName, item));
       // otherEventsAvail alone still isn't "available for THIS card": it says nothing about a
       // SIBLING zone/function in this SAME unsaved build already drawing on the same item — e.g.
       // 3 used in zone A, then adding 1 more in zone B. dcReservedInventory only reflects the last
