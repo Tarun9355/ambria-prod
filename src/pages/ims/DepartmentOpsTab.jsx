@@ -1852,23 +1852,25 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                     </div>
                     {(() => {
                       const dayEvs = pickDay ? (pickByDate[pickDay] || []) : [];
-                      if (!pickDay) return <div className="px-4 pb-4 text-center text-[11px] text-gray-400">Tap a highlighted date to see its events.</div>;
+                      if (!pickDay) return <div className="px-4 pb-5 pt-1 text-center text-xs text-gray-400">Tap a highlighted date to see its events.</div>;
                       return (
-                        <div className="px-3 pb-3">
-                          <div className="flex items-baseline justify-between gap-2 px-1 pb-2">
-                            <span className="text-[13px] font-bold text-gray-900">Events on {dayLabel}</span>
-                            <span className="shrink-0 text-[11px] text-gray-400">{dayEvs.length} event{dayEvs.length === 1 ? "" : "s"}</span>
+                        <div className="px-3 pb-4 pt-1">
+                          {/* Heading and count on one line, the count as a small pill so it reads
+                              as a tally rather than a second, fainter heading. */}
+                          <div className="flex items-center justify-between gap-2 px-1 pb-3">
+                            <span className="text-[15px] font-semibold tracking-[-0.01em] text-gray-900">Events on {dayLabel}</span>
+                            <span className="shrink-0 text-[11px] font-semibold px-2 py-0.5 rounded-md bg-gray-100 text-gray-500 tabular-nums">{dayEvs.length} event{dayEvs.length === 1 ? "" : "s"}</span>
                           </div>
-                          <div className="space-y-2">
+                          <div className="space-y-2.5">
                             {dayEvs.map(eo => (
                               <button key={eo.id} onClick={() => setSelId(eo.id)}
-                                className="w-full text-left rounded-xl bg-gray-50 hover:bg-blue-50 active:bg-blue-100 px-3 py-3 flex items-center gap-3 transition-colors">
-                                <span aria-hidden="true" className="shrink-0 w-2.5 h-2.5 rounded-full bg-blue-500" />
+                                className="w-full text-left rounded-xl bg-gray-50 ring-1 ring-gray-100 hover:bg-blue-50 hover:ring-blue-100 active:bg-blue-100 px-4 py-3.5 flex items-center gap-3.5 cursor-pointer transition-colors">
+                                <span aria-hidden="true" className="shrink-0 w-2 h-2 rounded-full bg-blue-500 ring-4 ring-blue-100" />
                                 <span className="min-w-0 flex-1">
-                                  <span className="block text-sm font-semibold text-gray-900 truncate">{eo.clientName || "Event"}</span>
+                                  <span className="block text-[15px] font-semibold text-gray-900 leading-snug truncate">{eo.clientName || "Event"}</span>
                                   {/* Venue and shift, because that is what an event_order actually
                                       carries — there are no start/end times on one to show. */}
-                                  <span className="block text-[11px] text-gray-500 truncate">
+                                  <span className="mt-0.5 block text-xs text-gray-500 truncate">
                                     {eo.functionsDetail?.[0]?.venue || eo.venue || "—"}
                                     {eo.functionsDetail?.[0]?.shift ? ` · ${eo.functionsDetail[0].shift}` : ""}
                                   </span>
