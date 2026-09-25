@@ -246,7 +246,7 @@ export default function StudioSummary({ ctx }) {
     // build canvas / source
     sourceEvent, dcCustomItems, elNotes, fnBuilds, activeFnIdx, zoneLabelsD,
     // sold flow
-    showSoldConfetti, markSold,
+    showSoldConfetti, markSold, unbookDeal,
     // step + reset. The 48 individual setters that used to be listed here existed only to feed the
     // inline startNew(); that reset is now startNewDeal on ctx, so they came off with it.
     setStep, setActiveClientId, startNewDeal, isFnSwitching,
@@ -2786,8 +2786,15 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
         <div className="sh-te-cta" style={{marginTop:12}}>
         {activeClient?.status==="booked"
           ? /* Inline-flex, not a block — it shrinks to its text and the card's textAlign:center
-               keeps it centred, instead of stretching a near-empty bar the full panel width. */
-            <div style={{display:"inline-flex",alignItems:"center",gap:6,padding:"5px 12px",borderRadius:9,background:"rgba(16,185,129,0.12)",border:"1px solid rgba(16,185,129,0.3)"}}><span style={{fontSize:11.5}}>{"✅"}</span><span style={{fontSize:11.5,fontWeight:600,color:"#10B981"}}>Booked{activeClient.bookedAt&&` on ${new Date(activeClient.bookedAt).toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"})}`}</span>{activeClient.bookedBy&&<span style={{fontSize:10,color:"#a5b4fc"}}>by {activeClient.bookedBy}</span>}</div>
+               keeps it centred, instead of stretching a near-empty bar the full panel width.
+               Clickable — a real button, not the div this used to be — so a booking that fell
+               through (couple cancels, deposit bounces, a fat-fingered Sold) can be walked back
+               without going through Admin. unbookDeal itself carries the confirm + what it does
+               and does not touch (see its own comment in StudioApp.jsx). */
+            <button type="button" onClick={unbookDeal} title="Click to un-book this deal"
+              style={{display:"inline-flex",alignItems:"center",gap:6,padding:"5px 12px",borderRadius:9,background:"rgba(16,185,129,0.12)",border:"1px solid rgba(16,185,129,0.3)",cursor:"pointer",font:"inherit"}}>
+              <span style={{fontSize:11.5}}>{"✅"}</span><span style={{fontSize:11.5,fontWeight:600,color:"#10B981"}}>Booked{activeClient.bookedAt&&` on ${new Date(activeClient.bookedAt).toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"})}`}</span>{activeClient.bookedBy&&<span style={{fontSize:10,color:"#a5b4fc"}}>by {activeClient.bookedBy}</span>}
+            </button>
           : (()=>{const canSold=clientName.trim()&&clientDate&&venue;const missing=[];if(!clientName.trim())missing.push("name");if(!clientDate)missing.push("date");if(!venue)missing.push("venue");return <>
           {/* Enabled state gets its green + shadow from .sh-sold so the :hover rule can override
               them — an inline background would always win over the stylesheet. */}
