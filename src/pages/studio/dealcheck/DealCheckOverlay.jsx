@@ -3033,7 +3033,14 @@ export default function DealCheckOverlay({ ctx }) {
                                           const isEdited = Array.isArray(editedSub);
                                           const cardQty = Number(card.qty)||1;
                                           const setComps = (next)=> setDcKitEdits(prev=>({...prev,[fnIdx]:{...(prev[fnIdx]||{}),[editKey]: next}}));
-                                          const resetKit = ()=> setDcKitEdits(prev=>{ const fnE={...(prev[fnIdx]||{})}; delete fnE[editKey]; return {...prev,[fnIdx]:fnE}; });
+                                          // Explicit `null`, not delete — reconcileDealCheckIntoBuild (dealCheckSync.js) needs a
+                                          // real, stored "this card was deliberately reset" marker to sync the reset into Build,
+                                          // distinct from a key that was simply never touched (undefined) — see its own comment
+                                          // for the live bug this ambiguity caused (a Build-set kitOverrides silently wiped the
+                                          // instant Deal Check first opened, before anyone touched this card's kit editor at all).
+                                          // Every other reader here still checks Array.isArray(edited), so null reads exactly
+                                          // like undefined everywhere except that one reconcile call.
+                                          const resetKit = ()=> setDcKitEdits(prev=>({...prev,[fnIdx]:{...(prev[fnIdx]||{}),[editKey]: null}}));
                                           const kitBase = Number(item.kitBase) || 0;  // kit's own charge, added on top of parts
                                           const partsTotal = comps.reduce((s,c)=>{ const ci=dcInventoryCache.find(x=>x.id===c.itemId); return s + (ci?imsField.rentalCost(ci):0)*(Number(c.qty)||0); },0);
                                           const kitTotal = kitBase + partsTotal;

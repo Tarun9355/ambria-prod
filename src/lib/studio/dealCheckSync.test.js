@@ -49,11 +49,17 @@ describe("syncKitOverridesToBuild", () => {
     expect(syncKitOverridesToBuild(next, parsed, comps)).toBe(next);
   });
 
-  it("resets to default (drops the field) when comps is empty/undefined", () => {
+  it("resets to default (drops the field) only on an EXPLICIT [] — never touched (undefined) is a strict no-op", () => {
+    // Confirmed live bug: dcKitEdits starts empty every time Deal Check opens, so `undefined` used
+    // to read identically to "explicitly reset to default" and silently wiped a kitOverrides set
+    // entirely outside Deal Check (Library default, a template apply) the instant Deal Check first
+    // matched that card — before the user touched anything. `undefined` must leave Build's own
+    // kitOverrides completely alone; only a real, deliberate reset (stored as []) may strip it.
     const ze = { stage: [{ name: "Console", invId: "K1", kitOverrides: [{ itemId: "C1", qty: 2 }] }] };
-    const next = syncKitOverridesToBuild(ze, parsed, undefined);
+    expect(syncKitOverridesToBuild(ze, parsed, undefined)).toBe(ze);
+    const next = syncKitOverridesToBuild(ze, parsed, []);
     expect(next.stage[0].kitOverrides).toBeUndefined();
-    expect(syncKitOverridesToBuild(next, parsed, undefined)).toBe(next);
+    expect(syncKitOverridesToBuild(next, parsed, [])).toBe(next);
   });
 });
 

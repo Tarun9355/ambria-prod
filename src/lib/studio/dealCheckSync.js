@@ -69,10 +69,19 @@ export function syncSwapToBuild(zoneElements, parsed, pick, cardKey) {
 }
 
 // dcKitEdits[fnIdx][cardKey] and el.kitOverrides are the same shape ({itemId,qty}[] /
-// {patternId,qty}[]) — a direct copy. `comps` undefined/empty resets the element back to the
-// kit's own default recipe, matching Deal Check's own "reset to default" action.
+// {patternId,qty}[]) — a direct copy. `comps` explicitly [] resets the element back to the kit's
+// own default recipe, matching Deal Check's own "reset to default" action — but `comps` UNDEFINED
+// means "Deal Check has never touched this card's kit recipe at all" and must be a strict no-op.
+// Confirmed live bug: a kit's kitOverrides set entirely outside Deal Check (Library default, a
+// template apply, anything other than this tab's own kit editor) got silently stripped from Build
+// the instant Deal Check first opened and matched that card — dcKitEdits starts empty every time,
+// which used to read identically to "reset to default", wiping a real, deliberate override with
+// zero user action inside Deal Check. resetKit (DealCheckOverlay.jsx) now sets the key to an
+// explicit `[]` on a genuine reset instead of deleting it, so this can finally tell "never touched"
+// (undefined — leave Build's own kitOverrides exactly as-is) apart from "deliberately reset" ([]).
 export function syncKitOverridesToBuild(zoneElements, parsed, comps, cardKey) {
   if (!parsed || parsed.kind !== "el") return zoneElements;
+  if (comps === undefined) return zoneElements;
   const arr = zoneElements[parsed.zoneKey];
   const el = elAtIdxIsThisCard(arr, parsed, cardKey);
   if (!el) return zoneElements;
