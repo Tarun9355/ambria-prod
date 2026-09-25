@@ -7188,6 +7188,18 @@ export default function StudioApp() {
       // treated the same safe way (append, don't assume it's safe to collapse).
       const savedByMe = (prevSessions[0]?.savedBy || null) === (authUser?.name || "—");
       const collapseInPlace = opts.auto && prevSessions[0]?.auto && !sessionBoundaryRef.current && savedByMe;
+      // THE ACTUAL FIX for the "DELETION DISABLED" note below: reuse the row this save is replacing's
+      // own id when collapsing in place. `snapshot.id` was minted fresh ("SES_"+Date.now()) above,
+      // unconditionally, before collapseInPlace was even known — so "collapsing in place" only ever
+      // collapsed the CLIENT-SIDE array. studio_sessions is keyed by session_id (sessionToRows), and a
+      // fresh id every ~15s meant the upsert below inserted a BRAND NEW row every single autosave,
+      // forever, even while a deal just sat open and idle with nothing to actually save — hundreds of
+      // identical rows over time, since row deletion is (deliberately) disabled. Making the id itself
+      // stable across a collapse means the upsert below genuinely UPDATES the same row instead:
+      // replacedId a few lines down becomes equal to snapshot.id and drops out of dropIds on its own
+      // (already filtered there), so nothing new needs deleting for this, the overwhelmingly common,
+      // same-author rolling-draft case in the first place.
+      if (collapseInPlace) snapshot.id = prevSessions[0].id;
       // TEN PER CLIENT, and the table holds the same ten. Browse shows the newest as the full card
       // and the five after it in the collapsed list, so ten is the history with room to spare — and a
       // bounded row count is the point of keeping this in a table rather than letting a blob grow.
@@ -7217,16 +7229,22 @@ export default function StudioApp() {
       // The draft this save replaced, plus anything the ten-session cut dropped.
       const dropIds = [...new Set([replacedId, ...prunedIds].filter((x) => x && x !== snapshot.id))];
       if (rowsForSnapshot.length) {
-        // ── DELETION DISABLED. DO NOT RE-ENABLE UNTIL THE COLLAPSE IS FIXED. ──
+        // ── DELETION STILL DISABLED, on purpose, even now that the collapse itself is fixed above
+        // (snapshot.id reuse) ──
         // A confirmed case of real work being destroyed: a client had a ₹4,50,865 build saved at
         // 15:16; by 15:22 that session had been deleted and replaced by a ₹2,61,861 one — an
         // autosave collapsed OVER newer work with an older build and then deleted the newer
         // session's rows via `replacedId` below.
         // The same path also enforces the ten-session cap (`prunedIds`), which only makes sense
-        // if those ten are ten distinct saves. They are not: consecutive auto-drafts are failing
-        // to collapse into one slot, so the ten fill with duplicates of one build and every save
-        // pushes a genuinely older save off the end and deletes it.
-        // Until that is understood, this writes and never deletes. Rows accumulate — untidy, and
+        // if those ten are ten distinct saves. They were not: consecutive auto-drafts were failing
+        // to collapse into one slot (a fresh id every save, however "collapsed" the array looked —
+        // see collapseInPlace's own comment above), so the ten filled with duplicates of one build
+        // and every save pushed a genuinely older save off the end and deleted it.
+        // That root cause is fixed now, which should mean no NEW duplicate rows accumulate from here
+        // on for the same-author rolling-draft case — but re-enabling deletion is a separate,
+        // bigger-blast-radius decision than fixing the accumulation, and old rows from before this
+        // fix landed still sit in the table either way. Leaving this disabled until that decision is
+        // made deliberately, not by default. Rows accumulate — untidy, and
         // rowsToSessions caps the history at ten on read so the UI is unaffected — but no save
         // can destroy another. Losing a salesperson's build is not a tidiness trade.
         // dropIds is still computed above so the intended behaviour stays visible in the code.
