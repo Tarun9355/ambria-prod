@@ -614,7 +614,7 @@ export default function StudioBuild({ ctx }) {
     // client / function meta
     clientName, clientDate, activeFnMeta, venue, fn, extraFunctions, setExtraFunctions,
     clientPalette, setClientPalette,
-    studioFloralData, venueParents, loadAvailability, getStudioAvailable, activeBlocksForDate, openAvailModal,
+    studioFloralData, sharedFloralSettings, venueParents, loadAvailability, getStudioAvailable, activeBlocksForDate, openAvailModal,
     activeFnIdx, collectAllFunctionData, rcSubcatFactors, rcFactorByKey, rcFloralModeByKey,
     // palette / colour catalogues
     imsPaletteCatalogue, imsColourCatalogue, setImsPaletteCatalogue, savePaletteData,
@@ -3869,14 +3869,27 @@ undefined
                       overrides={el.kitOverrides}
                       onChange={(next)=>{const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],kitOverrides:next};setZoneElements(p=>({...p,[k]:elems}));}}
                       imsInventory={imsInventory}
-                      flowerPatterns={(dealCheckData||studioFloralData)?.flowerPatterns||recipeOnlyPatterns}
+                      // sharedFloralSettings (StudioApp.jsx), not the raw dealCheckData||studioFloralData
+                      // fallback — that older pattern prefers dealCheckData the instant Deal Check has
+                      // ever been opened once, freezing the kit's recipe/markup data on that one-time
+                      // snapshot for the rest of the session instead of following studioFloralData's own
+                      // live realtime updates. Same "no Deal-Check-gated pricing" fix already applied
+                      // everywhere else in StudioApp.jsx — this call site was the one place in
+                      // StudioBuild.jsx still doing it the old way.
+                      flowerPatterns={sharedFloralSettings.flowerPatterns||recipeOnlyPatterns}
                       qtyMultiplier={el.qty||1}
                       dealAwareness={{getRemaining:(itemId)=>remainingForItem(itemId,k,idx)}}
                       onCheckAvailability={(cItem,onPick,opts)=>openAvailModal(null,null,{invId:cItem.id,name:cItem.name},null,onPick,{priceMode:"cost",pickHint:"Pick the item this is based on — its production cost becomes the reference price.",splitQty:opts?.splitQty,onSplit:opts?.onSplit})}
                       rcSubcatFactors={rcSubcatFactors}
                       rcFactorByKey={rcFactorByKey}
-                      mandiCatalogue={(dealCheckData||studioFloralData)?.mandiCatalogue||[]} studioMarkup={Number((dealCheckData||studioFloralData)?.defaultStudioMarkup)||3} elSize={el.size}
-                      floralRatio={floralRatio} rcFloralModeByKey={rcFloralModeByKey} floralSettings={(dealCheckData||studioFloralData)||{}}
+                      mandiCatalogue={sharedFloralSettings.mandiCatalogue||[]} studioMarkup={Number(sharedFloralSettings.defaultStudioMarkup)||3} elSize={el.size}
+                      floralRatio={floralRatio} rcFloralModeByKey={rcFloralModeByKey} floralSettings={sharedFloralSettings||{}}
+                      // The kit's own real, fully-adjusted per-unit rate — same figure the badge next
+                      // to its name shows (getElPrice's lineCost/qty, already carrying the guest-price
+                      // dial, Category Multipliers, and the Repeat/Fixed-Venue discount). Lets this
+                      // breakdown's own raw total scale onto it instead of showing a second, discount-
+                      // blind number that never matched — see KitComponentsEditor's own `scale` comment.
+                      targetUnitPrice={_effUp}
                       textP={textP} textS={textS} border={border} cardBg={cardBg} accent={accent} isDark={isDark} fmt={fmt}
                     />}
                   </div>);

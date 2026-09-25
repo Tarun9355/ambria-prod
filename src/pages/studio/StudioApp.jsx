@@ -10868,7 +10868,7 @@ export default function StudioApp() {
     // deal check
     dealCheckData, setDealCheckData, dealCheckLoading, setDealCheckLoading, dealCheckError, setDealCheckError, catDeptMap, saveCatDeptMap,
     // mount-loaded fallbacks so Build works before Deal Check opens (fixed-venue Repeat chip, floral auto-derive)
-    studioFloralData, venueParents,
+    studioFloralData, sharedFloralSettings, venueParents,
     imsColourCatalogue, setImsColourCatalogue, imsPaletteCatalogue, setImsPaletteCatalogue, paletteCatalogueLoaded, imsPaintableCategories, setImsPaintableCategories,
     imsDefaultPaintCost, setImsDefaultPaintCost, savePaletteData, paintPickerTarget, setPaintPickerTarget, fabricPickerTarget, setFabricPickerTarget,
     dcPhotoOverrides, setDcPhotoOverrides, dcSkipped, setDcSkipped, dcProductionAccepted, setDcProductionAccepted, dcManualItems, setDcManualItems,

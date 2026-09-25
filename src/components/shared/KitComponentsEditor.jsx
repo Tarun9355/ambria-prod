@@ -26,7 +26,7 @@ import ItemHoverThumb from "./ItemHoverThumb";
 // same "swap to ONE item" / "split across 2+ items" choice a top-level element already has, instead
 // of being swap-only. Omit the prop (as Library does — it has no client/event-date context to check
 // availability against) and the icon simply never renders; nothing else about the component changes.
-export default function KitComponentsEditor({ item, overrides, onChange, imsInventory, flowerPatterns, qtyMultiplier = 1, dealAwareness, onCheckAvailability, rcSubcatFactors, rcFactorByKey, mandiCatalogue = [], studioMarkup = 3, elSize, floralRatio = 0, rcFloralModeByKey = {}, floralSettings = null, textP, textS, border, cardBg, accent, isDark, fmt }) {
+export default function KitComponentsEditor({ item, overrides, onChange, imsInventory, flowerPatterns, qtyMultiplier = 1, dealAwareness, onCheckAvailability, rcSubcatFactors, rcFactorByKey, mandiCatalogue = [], studioMarkup = 3, elSize, floralRatio = 0, rcFloralModeByKey = {}, floralSettings = null, targetUnitPrice, textP, textS, border, cardBg, accent, isDark, fmt }) {
   // rcFactorByKey = { subcatLower: scaling_factor } — the pricing multiplier map (priceForInvItem needs
   // this, NOT the rcSubcatFactors array which is for isHiddenSubcat). Fall back to {} so pricing is 1×.
   const _factorMap = (rcFactorByKey && typeof rcFactorByKey === "object" && !Array.isArray(rcFactorByKey)) ? rcFactorByKey : {};
@@ -120,6 +120,19 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
   const subCatRecipe = subCatPattern ? recipeRateFor(subCatPattern, item.subCat || item.subcategory) : 0;
   const flowerTotal = subCatRecipe + comps.reduce((s, c) => { if (!c.patternId) return s; const pat = (flowerPatterns || []).find(p => p.id === c.patternId); return s + recipeRateFor(pat, pat?.sub, c) * (Number(c.qty) || 0); }, 0) + floralCompDelta;
   const partsTotal = rentalMarked + flowerTotal;
+  // This breakdown and the kit's own actual billed rate (the badge next to the element's name)
+  // used to be two entirely independent calculations — this one never applied the guest-price dial,
+  // Category Multipliers (date-aware pricing), or the Repeat/Fixed-Venue standing-item discount, all
+  // of which the real charge (getElPriceFromInventory → getElPrice's guestPriceMultiplier ×
+  // dateCategoryMultiplierFor, folded on top of repeatAdjustedLineCost) does apply — so a kit's
+  // component-by-component total never matched its own header price, and users had no way to tell
+  // which number was real. `scale` closes that generically instead of re-deriving every current (and
+  // future) discount mechanism a second time in here: the caller already computed the true, fully-
+  // adjusted per-unit rate for this exact element (targetUnitPrice) — scaling this breakdown's own
+  // raw total onto that one number makes it reconcile exactly, whatever combination of discounts
+  // produced it. undefined (Library/ManageLibrary, StudioModals — no deal/date context to price
+  // against) leaves scale at 1, i.e. today's unscaled behavior, unchanged.
+  const scale = (typeof targetUnitPrice === "number" && targetUnitPrice >= 0 && partsTotal > 0) ? targetUnitPrice / partsTotal : 1;
   const setComps = (next) => onChange(next);
   // #A5B4FC is ~2:1 on the light kit background — fine in dark mode, unreadable in light.
   const indigo = isDark ? "#A5B4FC" : "#4F46E5";
@@ -187,7 +200,7 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
           <div style={rowGrid}>
             <span style={{ width: 22, height: 22, borderRadius: 4, background: isDark ? "rgba(99,102,241,0.14)" : "rgba(99,102,241,0.10)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, flexShrink: 0 }}><IconBox size={12}/></span>
             <span style={{ color: textP, fontWeight: 600, gridColumn: "2 / -3", minWidth: 0, whiteSpace: "normal", overflowWrap: "break-word" }}>{item.name}</span>
-            <span style={{ color: textS, whiteSpace: "nowrap", opacity: 0.85, textAlign: "right" }} title="the kit/console's own charge (× its sub-category multiplier), on top of the add-on items"><b style={{ color: indigo }}>₹{kitBaseMarked.toLocaleString("en-IN")}</b></span>
+            <span style={{ color: textS, whiteSpace: "nowrap", opacity: 0.85, textAlign: "right" }} title="the kit/console's own charge (× its sub-category multiplier), on top of the add-on items"><b style={{ color: indigo }}>₹{Math.round(kitBaseMarked * scale).toLocaleString("en-IN")}</b></span>
           </div>
         )}
         {comps.map((c, ci) => {
@@ -211,7 +224,7 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
                 {pat && ratioControls(c, ci, recipeModeDefault(pat, pat?.sub))}
                 </div>
                 {qtyMultiplier > 1 && <span style={{ color: textS, fontSize: 11.5, whiteSpace: "nowrap", textAlign: "right" }}>× {qtyMultiplier} = <b style={{ color: textP }}>{patQty * qtyMultiplier}</b></span>}
-                {(() => { const rr = recipeRateFor(pat, pat?.sub, c); return <span style={{ color: textS, whiteSpace: "nowrap", opacity: 0.85, textAlign: "right" }} title="recipe Studio rate (all-in)"><b style={{ color: "#EC4899" }}>🌸 ₹{(rr * patQty).toLocaleString("en-IN")}</b></span>; })()}
+                {(() => { const rr = recipeRateFor(pat, pat?.sub, c); return <span style={{ color: textS, whiteSpace: "nowrap", opacity: 0.85, textAlign: "right" }} title="recipe Studio rate (all-in)"><b style={{ color: "#EC4899" }}>🌸 ₹{Math.round(rr * patQty * scale).toLocaleString("en-IN")}</b></span>; })()}
                 <span onClick={() => setComps(comps.filter((_, i) => i !== ci))} style={{ color: "#EF4444", cursor: "pointer", fontSize: 14, padding: "0 2px" }} title="Remove component">×</span>
               </div>
             );
@@ -274,7 +287,7 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
                 </div>
                 </div>
                 {qtyMultiplier > 1 && <span style={{ color: textS, fontSize: 11.5, whiteSpace: "nowrap", textAlign: "right" }}>× {qtyMultiplier} = <b style={{ color: textP }}>{qtyEach * qtyMultiplier}</b></span>}
-                {cItem ? (() => { const marked = Math.round(cRate); return <span style={{ color: textS, whiteSpace: "nowrap", opacity: 0.85, textAlign: "right" }} title="client price (rental + margin, all-in)"><b style={{ color: indigo }}>₹{(marked * qtyEach).toLocaleString("en-IN")}</b></span>; })() : <span/>}
+                {cItem ? (() => { const marked = Math.round(cRate * scale); return <span style={{ color: textS, whiteSpace: "nowrap", opacity: 0.85, textAlign: "right" }} title="client price (rental + margin, all-in)"><b style={{ color: indigo }}>₹{(marked * qtyEach).toLocaleString("en-IN")}</b></span>; })() : <span/>}
                 <span onClick={() => setComps(comps.filter((_, i) => i !== ci))} style={{ color: "#EF4444", cursor: "pointer", fontSize: 14, padding: "0 2px" }} title="Remove component">×</span>
               </div>
               {/* Kit-inside-a-kit → fully editable, PER THIS PARENT INSTANCE. Edits are stored in this
@@ -310,7 +323,7 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
           <div style={rowGrid}>
             <span style={{ width: 22, height: 22, borderRadius: 4, background: isDark ? "rgba(236,72,153,0.12)" : "rgba(236,72,153,0.08)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, flexShrink: 0 }}>🌸</span>
             <span style={{ color: textP, fontWeight: 600, gridColumn: "2 / -3", minWidth: 0, whiteSpace: "normal", overflowWrap: "break-word" }}>{subCatPattern.name} <span style={{ color: "#EC4899", fontSize: 11, fontStyle: "italic" }}>· recipe (this kit's sub-category)</span></span>
-            <span style={{ color: textS, whiteSpace: "nowrap", opacity: 0.85, textAlign: "right" }} title="recipe Studio rate (all-in)"><b style={{ color: "#EC4899" }}>🌸 ₹{subCatRecipe.toLocaleString("en-IN")}</b></span>
+            <span style={{ color: textS, whiteSpace: "nowrap", opacity: 0.85, textAlign: "right" }} title="recipe Studio rate (all-in)"><b style={{ color: "#EC4899" }}>🌸 ₹{Math.round(subCatRecipe * scale).toLocaleString("en-IN")}</b></span>
           </div>
         )}
       </div>
@@ -359,10 +372,21 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
           );
         })()}
       </div>
-      <div style={{ marginTop: 5, paddingTop: 5, borderTop: `1px solid rgba(99,102,241,0.2)`, display: "flex", justifyContent: "space-between", fontSize: 11.5 }}>
-        <span style={{ color: textS }}>Kit total = addon ₹{itemsMarked.toLocaleString("en-IN")}{kitBaseMarked > 0 ? ` + main ₹${kitBaseMarked.toLocaleString("en-IN")}` : ""}{flowerTotal > 0 ? ` + recipe ₹${flowerTotal.toLocaleString("en-IN")}` : ""} = ₹{partsTotal.toLocaleString("en-IN")}{qtyMultiplier > 1 ? ` × ${qtyMultiplier}` : ""}</span>
-        <span style={{ color: indigo, fontWeight: 700 }}>{fmt ? fmt(partsTotal * qtyMultiplier) : `₹${(partsTotal * qtyMultiplier).toLocaleString("en-IN")}`}</span>
-      </div>
+      {(() => {
+        // Scaled once here rather than re-deriving inline three times — see `scale`'s own comment
+        // above for why this makes the footer (and every row above it) reconcile exactly to the
+        // kit's real, fully-adjusted billed rate instead of a raw, discount-blind sum.
+        const itemsDisp = Math.round(itemsMarked * scale);
+        const kitBaseDisp = Math.round(kitBaseMarked * scale);
+        const flowerDisp = Math.round(flowerTotal * scale);
+        const partsDisp = Math.round(partsTotal * scale);
+        return (
+          <div style={{ marginTop: 5, paddingTop: 5, borderTop: `1px solid rgba(99,102,241,0.2)`, display: "flex", justifyContent: "space-between", fontSize: 11.5 }}>
+            <span style={{ color: textS }}>Kit total = addon ₹{itemsDisp.toLocaleString("en-IN")}{kitBaseDisp > 0 ? ` + main ₹${kitBaseDisp.toLocaleString("en-IN")}` : ""}{flowerDisp > 0 ? ` + recipe ₹${flowerDisp.toLocaleString("en-IN")}` : ""} = ₹{partsDisp.toLocaleString("en-IN")}{qtyMultiplier > 1 ? ` × ${qtyMultiplier}` : ""}</span>
+            <span style={{ color: indigo, fontWeight: 700 }}>{fmt ? fmt(partsDisp * qtyMultiplier) : `₹${(partsDisp * qtyMultiplier).toLocaleString("en-IN")}`}</span>
+          </div>
+        );
+      })()}
     </div>
   );
 }
