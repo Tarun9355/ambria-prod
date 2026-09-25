@@ -2684,12 +2684,21 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
             </div>
 
             {/* Actuals → exact cost */}
-            <div className={"bg-emerald-50 rounded-xl overflow-hidden" + modalCls("actuals")}>
-              <div className="px-4 py-2.5 flex items-center justify-between flex-wrap gap-2">
-                <span className="text-sm font-semibold text-emerald-900">🧾 Actuals (real spend) <span className="text-xs font-normal text-emerald-600">— turns projected into exact P&L</span></span>
-                {hasActuals && <span className="text-sm font-bold text-emerald-800">{fmt(actualCost)}</span>}
+            {/* White card with the shared header shape, like every other block. The all-green
+                card with a green "— …" aside made this one look like a success message. */}
+            <div className={"bg-white rounded-xl shadow-[0_1px_2px_rgba(16,24,40,0.06),0_1px_3px_rgba(16,24,40,0.05)] overflow-hidden" + modalCls("actuals")}>
+              <div className="px-3 sm:px-4 py-3 bg-gray-50 flex items-center gap-3">
+                <span aria-hidden="true" className="shrink-0 w-9 h-9 rounded-lg bg-white shadow-[0_1px_2px_rgba(16,24,40,0.08)] flex items-center justify-center text-base leading-none">🧾</span>
+                <div className="min-w-0 flex-1">
+                  <div className="text-[15px] font-semibold text-gray-900">Actuals</div>
+                  <div className="text-xs text-gray-500">Real spend for this event</div>
+                </div>
+                <div className="shrink-0 text-right">
+                  <div className={"text-[15px] font-semibold tabular-nums " + (hasActuals ? "text-gray-900" : "text-gray-300")}>{hasActuals ? fmt(actualCost) : "—"}</div>
+                  <div className="text-[10px] text-gray-400">{hasActuals ? "logged" : "nothing yet"}</div>
+                </div>
               </div>
-              <div className="px-4 pb-3 space-y-2">
+              <div className="px-3 sm:px-4 py-3 space-y-2">
                 {dept === "Floral" && (() => {
                   const projectedTotal = Number(fp.projected) || 0;
                   const variance = mandiActualTotal - projectedTotal;
@@ -2821,92 +2830,177 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                     </div>
                   );
                 })()}
+                {expenses.length > 0 && (
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-gray-500 pt-1">On-site expenses</div>
+                )}
                 {expenses.map((ex, i) => (
                   <div key={i} className="flex items-center gap-2">
-                    <input value={ex.label} onChange={e => setExpense(i, "label", e.target.value)} placeholder="on-site expense" className="flex-1 border border-emerald-200 rounded-lg px-3 py-2 text-sm" />
-                    <input type="number" min="0" value={ex.amount} onChange={e => setExpense(i, "amount", e.target.value)} placeholder="₹" className="w-28 border border-emerald-200 rounded-lg px-3 py-2 text-sm text-right" />
-                    <button onClick={() => delExpense(i)} className="text-red-400 hover:text-red-600 text-sm px-1">×</button>
+                    <input value={ex.label} onChange={e => setExpense(i, "label", e.target.value)} placeholder="What was it for?" className="min-w-0 flex-1 h-9 rounded-lg bg-white ring-1 ring-gray-200 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                    <input type="number" min="0" value={ex.amount} onChange={e => setExpense(i, "amount", e.target.value)} placeholder="₹ 0" className="shrink-0 w-24 h-9 rounded-lg bg-white ring-1 ring-gray-200 px-3 text-sm text-right font-semibold tabular-nums placeholder:font-normal focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                    <button onClick={() => delExpense(i)} aria-label="Remove expense" title="Remove"
+                      className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-gray-300 hover:text-red-600 hover:bg-red-50 transition-colors">
+                      <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M3.5 3.5 L10.5 10.5 M10.5 3.5 L3.5 10.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" /></svg>
+                    </button>
                   </div>
                 ))}
-                <button onClick={addExpense} className="text-xs text-emerald-700 hover:text-emerald-900 font-medium">+ Add on-site expense</button>
+                {/* A real button, full width, rather than a line of green link text: it is the
+                    one action on the card when nothing has been logged yet. */}
+                <button onClick={addExpense} className="w-full h-9 inline-flex items-center justify-center gap-1.5 rounded-lg border border-dashed border-gray-300 text-xs font-semibold text-gray-600 hover:text-gray-900 hover:bg-gray-50 transition-colors">
+                  <span aria-hidden="true" className="text-sm leading-none">+</span> Add on-site expense
+                </button>
               </div>
             </div>
 
             {/* Loading / dispatch — cross-check inventory + essentials while loading the truck */}
             <div className={"bg-white rounded-xl shadow-[0_1px_2px_rgba(16,24,40,0.06),0_1px_3px_rgba(16,24,40,0.05)] overflow-hidden" + modalCls("load")}>
-              <div className="px-4 py-2.5 bg-gray-50 flex items-center justify-between flex-wrap gap-2">
-                <span className="text-sm font-semibold text-gray-800">🚚 Loading & dispatch <span className="text-xs font-normal text-gray-400">— split inventory across trucks; each prints its own challan</span></span>
-                <div className="flex items-center gap-2">
-                  <button onClick={() => setShowFleet(v => !v)} className="text-[11px] text-blue-600 hover:text-blue-800 font-medium">{showFleet ? "Done" : "⚙️ Manage fleet"}</button>
-                  <button onClick={addTruck} className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg font-medium">+ Add truck</button>
+              {/* Same header shape as the other blocks: icon tile, title, primary action at the
+                  right end, a one-line caption under it with the secondary action beside it. */}
+              <div className="px-3 sm:px-4 py-3 bg-gray-50">
+                <div className="flex items-center gap-3">
+                  <span aria-hidden="true" className="shrink-0 w-9 h-9 rounded-lg bg-white shadow-[0_1px_2px_rgba(16,24,40,0.08)] flex items-center justify-center text-base leading-none">🚚</span>
+                  <div className="min-w-0 flex-1 text-[15px] font-semibold text-gray-900">Loading &amp; dispatch</div>
+                  <button onClick={addTruck} className="shrink-0 h-8 inline-flex items-center gap-1 text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white px-3 rounded-lg transition-colors">
+                    <span aria-hidden="true" className="text-sm leading-none">+</span> Add truck
+                  </button>
+                </div>
+                <div className="mt-1.5 flex items-center justify-between gap-3">
+                  <span className="text-xs text-gray-500">Each truck prints its own challan.</span>
+                  <button onClick={() => setShowFleet(v => !v)} aria-expanded={showFleet}
+                    className={"shrink-0 text-xs font-semibold transition-colors " + (showFleet ? "text-gray-900" : "text-blue-600 hover:text-blue-800")}>
+                    {showFleet ? "Done" : "Manage fleet"}
+                  </button>
                 </div>
               </div>
               {showFleet && (
-                <div className="px-4 py-3 bg-gray-50 space-y-2">
-                  <div className="text-[10px] text-gray-400 uppercase tracking-wide font-semibold">Own fleet (shared across departments)</div>
-                  {fleet.map(f => (
-                    <div key={f.id} className="flex items-center gap-2 text-xs">
-                      <span className="flex-1 font-medium text-gray-700">🚛 {f.vehicle}</span>
-                      <span className="text-gray-500">{f.driver || "—"}</span>
-                      <span className="text-gray-400">{f.phone || ""}</span>
-                      <button onClick={() => delFleet(f.id)} className="text-red-300 hover:text-red-500">×</button>
+                <div className="px-3 sm:px-4 py-3 bg-gray-50 border-t border-gray-100 space-y-2.5">
+                  <div>
+                    <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-500">Own fleet</div>
+                    <div className="mt-0.5 text-[11px] text-gray-400">Shared across departments.</div>
+                  </div>
+                  {fleet.length > 0 && (
+                    <div className="rounded-lg bg-white ring-1 ring-gray-200 divide-y divide-gray-100">
+                      {fleet.map(f => (
+                        <div key={f.id} className="flex items-center gap-3 px-3 py-2">
+                          <div className="min-w-0 flex-1">
+                            <div className="text-xs font-semibold text-gray-800 truncate">{f.vehicle}</div>
+                            <div className="text-[11px] text-gray-500 truncate">{f.driver || "—"}{f.phone ? ` · ${f.phone}` : ""}</div>
+                          </div>
+                          <button onClick={() => delFleet(f.id)} aria-label={`Remove ${f.vehicle}`} title="Remove"
+                            className="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-gray-300 hover:text-red-600 hover:bg-red-50 transition-colors">
+                            <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M3.5 3.5 L10.5 10.5 M10.5 3.5 L3.5 10.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" /></svg>
+                          </button>
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                  <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_1fr_auto] gap-1.5 items-end">
-                    <input value={newVeh.vehicle} onChange={e => setNewVeh(v => ({ ...v, vehicle: e.target.value }))} placeholder="Vehicle no." className="border rounded px-2 py-1.5 text-xs" />
-                    <input value={newVeh.driver} onChange={e => setNewVeh(v => ({ ...v, driver: e.target.value }))} placeholder="Driver name" className="border rounded px-2 py-1.5 text-xs" />
-                    <input value={newVeh.phone} onChange={e => setNewVeh(v => ({ ...v, phone: e.target.value }))} placeholder="Phone" className="border rounded px-2 py-1.5 text-xs" />
-                    <button onClick={addFleet} className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded text-xs font-medium">Add</button>
+                  )}
+                  <div className="grid grid-cols-2 sm:grid-cols-[1fr_1fr_1fr_auto] gap-2">
+                    <input value={newVeh.vehicle} onChange={e => setNewVeh(v => ({ ...v, vehicle: e.target.value }))} placeholder="Vehicle no." className="h-9 rounded-lg bg-white ring-1 ring-gray-200 px-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                    <input value={newVeh.driver} onChange={e => setNewVeh(v => ({ ...v, driver: e.target.value }))} placeholder="Driver name" className="h-9 rounded-lg bg-white ring-1 ring-gray-200 px-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                    <input value={newVeh.phone} onChange={e => setNewVeh(v => ({ ...v, phone: e.target.value }))} placeholder="Phone" className="h-9 rounded-lg bg-white ring-1 ring-gray-200 px-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                    <button onClick={addFleet} className="h-9 bg-gray-900 hover:bg-black text-white px-3 rounded-lg text-xs font-semibold transition-colors">Add vehicle</button>
                   </div>
                 </div>
               )}
               {/* Per-item loaded summary across all trucks */}
               {blockedItems.length > 0 && trucks.length > 0 && (
-                <div className="px-4 py-2 bg-gray-50/40">
-                  <div className="text-[10px] uppercase text-gray-400 font-semibold mb-1">Loaded across trucks</div>
-                  <div className="flex flex-wrap gap-x-4 gap-y-1">
-                    {blockedItems.map(it => { const k = "inv:" + it.id; const ld = truckLoadedQty(k); const full = ld >= it.qty; return (
-                      <span key={k} className={"text-[11px] " + (full ? "text-emerald-600 font-semibold" : ld > 0 ? "text-amber-600" : "text-gray-400")}>{it.name}: {ld}/{it.qty}</span>
-                    ); })}
-                  </div>
-                </div>
+                /* ── LOADED ACROSS TRUCKS, AS A PROGRESS LIST ──
+                   Was "Name: 0/15" runs wrapping into each other, so neither the names nor the
+                   counts lined up. Now one row per item — name, a thin bar, count in its own
+                   right-aligned column — with the overall tally in the heading, which is the
+                   thing you check before dispatch. */
+                (() => {
+                  const rows = blockedItems.map(it => { const k = "inv:" + it.id; return { it, k, ld: truckLoadedQty(k) }; });
+                  const done = rows.filter(r => r.ld === r.it.qty).length;
+                  return (
+                    <div className="px-3 sm:px-4 py-3 border-t border-gray-100">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-gray-500">Loaded across trucks</span>
+                        <span className={"text-[10px] font-semibold px-1.5 py-0.5 rounded-md tabular-nums " + (done === rows.length ? "bg-emerald-50 text-emerald-700" : "bg-gray-100 text-gray-500")}>{done} of {rows.length} done</span>
+                      </div>
+                      <div className="mt-2 space-y-1.5">
+                        {rows.map(({ it, k, ld }) => {
+                          const pct = it.qty > 0 ? Math.min(100, Math.round((ld / it.qty) * 100)) : 0;
+                          const over = ld > it.qty, full = ld === it.qty;
+                          const tone = over ? "bg-red-500" : full ? "bg-emerald-500" : "bg-amber-400";
+                          return (
+                            <div key={k} className="flex items-center gap-3">
+                              <span className="min-w-0 flex-1 truncate text-xs text-gray-700" title={it.name}>{it.name}</span>
+                              <span aria-hidden="true" className="shrink-0 w-16 h-1.5 rounded-full bg-gray-100 overflow-hidden">
+                                <span className={"block h-full rounded-full " + tone} style={{ width: `${over ? 100 : pct}%` }} />
+                              </span>
+                              <span className={"shrink-0 w-12 text-right text-[11px] font-semibold tabular-nums " + (over ? "text-red-600" : full ? "text-emerald-600" : ld > 0 ? "text-amber-600" : "text-gray-400")}>{ld}/{it.qty}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })()
               )}
               {/* Trucks */}
               {trucks.length === 0 ? (
-                <div className="px-4 py-6 text-center text-xs text-gray-400">No trucks yet. Add a truck to load inventory for dispatch across one or more vehicles.</div>
+                /* An empty state that says what to do, not a sentence floating in white space. */
+                <div className="px-4 py-7 flex flex-col items-center text-center">
+                  <span aria-hidden="true" className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center text-lg leading-none">🚛</span>
+                  <div className="mt-2.5 text-sm font-semibold text-gray-800">No trucks yet</div>
+                  <div className="mt-0.5 text-xs text-gray-500">Add a truck to start loading.</div>
+                </div>
               ) : (
-                <div className="">
+                <div className="px-3 sm:px-4 py-3 space-y-3">
                   {trucks.map((t, ti) => (
-                    <div key={t.id} className="p-4 space-y-2">
-                      <div className="flex items-center justify-between flex-wrap gap-2">
-                        <span className="text-sm font-semibold text-gray-700">🚛 Truck {ti + 1}{t.driver ? <span className="font-normal text-gray-400"> · {t.driver}</span> : null}</span>
-                        <div className="flex items-center gap-2">
-                          {t.phone && <a href={"tel:" + t.phone} className="inline-flex items-center gap-0.5 text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-2 py-1 hover:bg-emerald-100" title={"Call " + (t.driver || "driver") + " · " + t.phone}>📞 Call</a>}
-                          <select value={t.status || "loading"} onChange={e => setTruck(t.id, { status: e.target.value })} className="border rounded-lg px-2 py-1 text-xs capitalize">{TRUCK_STATUS.map(s => <option key={s} value={s}>{s}</option>)}</select>
-                          <button onClick={() => printTruckChallan(t, ti + 1)} className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1 rounded-lg font-medium">🖨️ Challan</button>
-                          <button onClick={() => delTruck(t.id)} className="text-red-400 hover:text-red-600 text-sm">×</button>
-                        </div>
+                    /* Each truck is its own card. Stacked in bare padding they ran into each
+                       other, and nothing marked where one truck's items stopped. */
+                    <div key={t.id} className="rounded-xl ring-1 ring-gray-200 p-3 space-y-2.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="min-w-0 truncate text-sm font-semibold text-gray-900">Truck {ti + 1}{t.driver ? <span className="font-normal text-gray-500"> · {t.driver}</span> : null}</span>
+                        <button onClick={() => delTruck(t.id)} aria-label={`Remove truck ${ti + 1}`} title="Remove truck"
+                          className="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-gray-300 hover:text-red-600 hover:bg-red-50 transition-colors">
+                          <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M3.5 3.5 L10.5 10.5 M10.5 3.5 L3.5 10.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" /></svg>
+                        </button>
                       </div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <select value={t.status || "loading"} onChange={e => setTruck(t.id, { status: e.target.value })} className="h-8 rounded-lg bg-white ring-1 ring-gray-200 px-2 text-xs font-medium capitalize focus:outline-none focus:ring-2 focus:ring-blue-400">{TRUCK_STATUS.map(s => <option key={s} value={s}>{s}</option>)}</select>
+                        {t.phone && <a href={"tel:" + t.phone} className="h-8 inline-flex items-center text-xs font-semibold text-emerald-700 bg-emerald-50 ring-1 ring-emerald-200 rounded-lg px-2.5 hover:bg-emerald-100" title={"Call " + (t.driver || "driver") + " · " + t.phone}>Call {t.phone}</a>}
+                        <button onClick={() => printTruckChallan(t, ti + 1)} className="h-8 ml-auto text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white px-3 rounded-lg transition-colors">Print challan</button>
+                      </div>
+                      {/* Labelled, so the chips read as "pick one of these" rather than as tags
+                          already applied to the truck. Vehicle and driver stacked in the chip,
+                          not joined by a dot, so the plate number leads. */}
                       {eventTrucks.length > 0 && (
-                        <div className="flex flex-wrap gap-1.5">
-                          {eventTrucks.map(f => { const on = t.vehicle === f.vehicle && t.driver === f.driver; return (
-                            <button key={f.id} onClick={() => setTruck(t.id, { vehicle: f.vehicle || "", driver: f.driver || "", phone: f.phone || "" })} className={"text-[11px] px-2 py-1 rounded-lg border " + (on ? "bg-blue-600 border-blue-600 text-white" : "bg-white border-gray-200 text-gray-700 hover:bg-blue-50")}>🚛 {f.vehicle || f.driver}{f.vehicle && f.driver ? ` · ${f.driver}` : ""}</button>
-                          ); })}
+                        <div>
+                          <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">Pick from fleet</div>
+                          <div className="mt-1 flex flex-wrap gap-1.5">
+                            {eventTrucks.map(f => { const on = t.vehicle === f.vehicle && t.driver === f.driver; return (
+                              <button key={f.id} onClick={() => setTruck(t.id, { vehicle: f.vehicle || "", driver: f.driver || "", phone: f.phone || "" })} aria-pressed={on}
+                                className={"text-left px-2.5 py-1.5 rounded-lg ring-1 transition-colors " + (on ? "bg-blue-50 ring-blue-300" : "bg-white ring-gray-200 hover:bg-gray-50")}>
+                                <span className={"block text-[11px] font-semibold tabular-nums " + (on ? "text-blue-700" : "text-gray-800")}>{f.vehicle || f.driver}</span>
+                                {f.vehicle && f.driver && <span className={"block text-[10px] capitalize " + (on ? "text-blue-600" : "text-gray-500")}>{String(f.driver).toLowerCase()}</span>}
+                              </button>
+                            ); })}
+                          </div>
                         </div>
                       )}
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      {/* Two to a row on a phone, phone number full width under them — three
+                          full-width fields stacked made each truck a screen tall before its items. */}
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                         {[["Vehicle no.", "vehicle"], ["Driver", "driver"], ["Phone", "phone"]].map(([l, k]) => (
-                          <div key={k}><label className="text-[10px] text-gray-400">{l}</label><input value={t[k] || ""} onChange={e => setTruck(t.id, { [k]: e.target.value })} placeholder={k === "vehicle" ? "outside vehicle?" : ""} className="mt-0.5 w-full border rounded-lg px-2 py-1.5 text-sm" /></div>
+                          <div key={k} className={k === "phone" ? "col-span-2 sm:col-span-1" : ""}><label className="block text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">{l}</label><input value={t[k] || ""} onChange={e => setTruck(t.id, { [k]: e.target.value })} placeholder={k === "vehicle" ? "outside vehicle?" : ""} className="mt-1 w-full h-9 rounded-lg bg-white ring-1 ring-gray-200 px-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" /></div>
                         ))}
                       </div>
                       {blockedItems.length > 0 ? (
-                        <div className="rounded-lg bg-gray-50/60 p-1">
+                        /* One line per item: name over its loaded status, the "on this truck" box
+                           at the right. As a flex-wrap row the status and the box broke onto
+                           lines of their own at any width under ~500px. */
+                        <div className="rounded-lg bg-gray-50 divide-y divide-gray-100">
                           {blockedItems.map(it => { const k = "inv:" + it.id; const onThis = Number(t.items?.[k]) || 0; const totalLoaded = truckLoadedQty(k); const matchCls = totalLoaded === it.qty ? "text-emerald-600" : totalLoaded > it.qty ? "text-red-600" : totalLoaded > 0 ? "text-amber-600" : "text-gray-400"; return (
-                            <div key={k} className="flex items-center flex-wrap gap-x-3 gap-y-1.5 px-3 py-1.5">
-                              {it.photo ? <img src={it.photo} alt="" onClick={() => setZoomImg(it.photo)} className="w-8 h-8 rounded object-cover border cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-8 h-8 rounded bg-gray-100 flex items-center justify-center text-gray-300 text-xs shrink-0">📦</div>}
-                              <span className="flex-1 min-w-[120px] text-sm text-gray-800">{it.name} <span className="text-[10px] text-gray-400">need {it.qty}</span></span>
-                              <span className={"text-[11px] font-semibold w-28 text-right " + matchCls}>{totalLoaded}/{it.qty} loaded{totalLoaded > it.qty ? " ⚠️" : totalLoaded === it.qty ? " ✓" : ""}</span>
-                              <div className="flex items-center gap-1"><span className="text-[10px] text-gray-400">this truck</span><input type="number" min="0" value={onThis || ""} onChange={e => setTruckItem(t.id, k, e.target.value)} placeholder="0" className="w-14 border rounded px-2 py-1 text-sm text-center" /></div>
+                            <div key={k} className="flex items-center gap-2.5 px-2.5 py-2">
+                              {it.photo ? <img src={it.photo} alt="" onClick={() => setZoomImg(it.photo)} className="w-8 h-8 rounded-lg object-cover cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-xs shrink-0">📦</div>}
+                              <div className="min-w-0 flex-1">
+                                <div className="text-xs font-medium text-gray-800 leading-snug line-clamp-2" title={it.name}>{it.name}</div>
+                                <div className={"mt-0.5 text-[11px] font-semibold tabular-nums " + matchCls}>{totalLoaded} of {it.qty} loaded{totalLoaded > it.qty ? " · too many" : totalLoaded === it.qty ? " ✓" : ""}</div>
+                              </div>
+                              <input type="number" min="0" value={onThis || ""} onChange={e => setTruckItem(t.id, k, e.target.value)} placeholder="0" aria-label={`${it.name} on this truck`} title="On this truck"
+                                className="shrink-0 w-14 h-8 rounded-lg bg-white ring-1 ring-gray-200 px-2 text-sm text-center font-semibold tabular-nums placeholder:font-normal placeholder:text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-400" />
                             </div>
                           ); })}
                         </div>
@@ -2916,38 +3010,46 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                 </div>
               )}
               {/* Essentials / tools */}
-              <div className="bg-amber-50/40">
-                <div className="px-4 py-2 text-xs font-semibold text-amber-800 flex items-center justify-between">
-                  <span>🛠️ Essentials / tools <span className="font-normal text-amber-600">— things you carry but don't block (saved for every {dept} event)</span></span>
+              {/* ── ESSENTIALS ──
+                  An eyebrow and a short caption, like every other section marker, on the card's
+                  own white. The amber wash, amber text, amber input and amber button made a
+                  checklist look like a warning. */}
+              <div className="px-3 sm:px-4 py-3 border-t border-gray-100 space-y-2.5">
+                <div>
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-gray-500">Essentials</div>
+                  <div className="mt-0.5 text-[11px] text-gray-400">Carried, not blocked. Saved for every {dept} event.</div>
                 </div>
                 {deptTools.length > 0 && (
-                  <div className="">
+                  <div className="rounded-lg ring-1 ring-gray-200 divide-y divide-gray-100">
                     {deptTools.map((t, i) => {
                       const k = "tool:" + t.name; const on = !!loaded[k];
                       return (
-                        <div key={i} className="flex items-center gap-3 px-4 py-2">
-                          <input type="checkbox" checked={on} onChange={() => toggleLoaded(k)} className="w-4 h-4" />
-                          <span className={"flex-1 text-sm " + (on ? "line-through text-gray-400" : "text-gray-800")}>{t.name}</span>
-                          <input type="number" min="1" value={t.qty || 1} onChange={e => setTool(i, "qty", e.target.value)} className="w-14 border rounded px-1.5 py-1 text-xs text-center" title="qty" />
-                          <button onClick={() => delTool(i)} className="text-red-300 hover:text-red-500 text-xs">×</button>
-                        </div>
+                        <label key={i} className="flex items-center gap-3 px-3 py-2 cursor-pointer">
+                          <input type="checkbox" checked={on} onChange={() => toggleLoaded(k)} className="w-4 h-4 accent-blue-600 shrink-0" />
+                          <span className={"min-w-0 flex-1 truncate text-[13px] " + (on ? "line-through text-gray-400" : "text-gray-800")}>{t.name}</span>
+                          <input type="number" min="1" value={t.qty || 1} onChange={e => setTool(i, "qty", e.target.value)} aria-label={`${t.name} quantity`} title="Quantity"
+                            className="shrink-0 w-12 h-7 rounded-md bg-gray-50 ring-1 ring-gray-200 px-1.5 text-xs text-center font-semibold tabular-nums focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                          <button type="button" onClick={() => delTool(i)} aria-label={`Remove ${t.name}`} title="Remove"
+                            className="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-gray-300 hover:text-red-600 hover:bg-red-50 transition-colors">
+                            <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M3.5 3.5 L10.5 10.5 M10.5 3.5 L3.5 10.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" /></svg>
+                          </button>
+                        </label>
                       );
                     })}
                   </div>
                 )}
-                <div className="px-4 py-2.5 space-y-2">
-                  <div className="flex items-center gap-2">
-                    <input value={newTool} onChange={e => setNewTool(e.target.value)} onKeyDown={e => { if (e.key === "Enter") addTool(newTool); }} placeholder="Add an essential (e.g. ladder, nails)…" className="flex-1 border border-amber-200 rounded-lg px-3 py-1.5 text-sm" />
-                    <button onClick={() => addTool(newTool)} className="text-xs bg-amber-500 hover:bg-amber-600 text-white px-3 py-1.5 rounded-lg font-medium">Add</button>
-                  </div>
-                  {(DEFAULT_TOOLS[dept] || []).filter(s => !deptTools.some(t => (t.name || "").toLowerCase() === s.toLowerCase())).length > 0 && (
-                    <div className="flex flex-wrap gap-1.5">
-                      {(DEFAULT_TOOLS[dept] || []).filter(s => !deptTools.some(t => (t.name || "").toLowerCase() === s.toLowerCase())).map(s => (
-                        <button key={s} onClick={() => addTool(s)} className="text-[11px] px-2 py-1 rounded-full bg-white border border-amber-200 text-amber-700 hover:bg-amber-100">+ {s}</button>
-                      ))}
-                    </div>
-                  )}
+                <div className="flex items-center gap-2">
+                  <input value={newTool} onChange={e => setNewTool(e.target.value)} onKeyDown={e => { if (e.key === "Enter") addTool(newTool); }} placeholder="Add an item, e.g. ladder"
+                    className="min-w-0 flex-1 h-9 rounded-lg bg-white ring-1 ring-gray-200 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                  <button onClick={() => addTool(newTool)} className="shrink-0 h-9 text-xs font-semibold bg-gray-900 hover:bg-black text-white px-4 rounded-lg transition-colors">Add</button>
                 </div>
+                {(DEFAULT_TOOLS[dept] || []).filter(s => !deptTools.some(t => (t.name || "").toLowerCase() === s.toLowerCase())).length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {(DEFAULT_TOOLS[dept] || []).filter(s => !deptTools.some(t => (t.name || "").toLowerCase() === s.toLowerCase())).map(s => (
+                      <button key={s} onClick={() => addTool(s)} className="text-xs font-medium px-2.5 py-1 rounded-lg bg-gray-50 ring-1 ring-gray-200 text-gray-600 hover:bg-white hover:text-gray-900 transition-colors">+ {s}</button>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -2963,7 +3065,7 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                     <div className="min-w-0 flex-1 text-[15px] font-semibold text-gray-900">Dismantle plan</div>
                     <button onClick={resetDismantle} className="shrink-0 text-xs font-semibold text-red-600 border border-red-200 bg-red-50 hover:bg-red-100 px-2.5 py-1 rounded-lg whitespace-nowrap" title="Testing: clear this plan + all on-site movements so you can re-test splits">↺ Reset<span className="hidden sm:inline"> (testing)</span></button>
                   </div>
-                  <div className="mt-1.5 text-xs text-gray-500 leading-relaxed">Pick the transfer sites, then type how many of each item goes to each; the rest stay for production house.</div>
+                  <div className="mt-1.5 text-xs text-gray-500 leading-relaxed">Split items across sites; the rest go to production house.</div>
                 </div>
                 {/* ── SITE CHOOSER ──
                     Each site named here becomes a column in the matrix below, which is the thing
@@ -2983,7 +3085,10 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                          and it only turns red on hover, so a destructive control is not shouting
                          from a row you are only reading. */
                       <span key={s.id} className="group inline-flex items-center gap-1.5 text-xs font-semibold bg-white ring-1 ring-sky-200 text-sky-800 rounded-lg pl-2.5 pr-1 py-1">
-                        <span aria-hidden="true">↪️</span>
+                        {/* Drawn arrow: the ↪️ emoji renders as a blue tile on iOS and Windows. */}
+                        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true" className="text-sky-500 shrink-0">
+                          <path d="M3 4v3.5A2.5 2.5 0 0 0 5.5 10H13M10 7l3 3-3 3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
                         <span className="truncate max-w-[220px]">{s.name}</span>
                         {s.date && <span className="font-normal text-sky-500 tabular-nums">{s.date}</span>}
                         <button onClick={() => removeDismantleSite(s.id)} title={`Remove ${s.name}`} aria-label={`Remove ${s.name}`}
@@ -2999,7 +3104,9 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                             className={"inline-flex items-center gap-1.5 rounded-lg bg-white ring-1 px-3 py-1.5 text-xs font-semibold transition " + (siteMenu ? "ring-blue-400 text-blue-700" : "ring-gray-200 hover:ring-gray-300 text-gray-700")}>
                             <span aria-hidden="true" className="text-gray-400">＋</span>
                             Add a site
-                            <span aria-hidden="true" className={"text-gray-400 text-[9px] transition-transform " + (siteMenu ? "rotate-180" : "")}>▼</span>
+                            <svg width="11" height="11" viewBox="0 0 14 14" fill="none" aria-hidden="true" className={"text-gray-400 transition-transform " + (siteMenu ? "rotate-180" : "")}>
+                              <path d="M3.5 5 L7 8.5 L10.5 5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+                            </svg>
                           </button>
                           {siteMenu && (
                             <div role="listbox" style={{ position: "fixed", top: siteMenuPos.top, left: siteMenuPos.left, width: siteMenuPos.width, zIndex: 60 }}
@@ -3042,8 +3149,51 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                     </div>
                   )}
                 </div>
+                {/* ── PHONE: ONE CARD PER ITEM ──
+                    A column per site cannot fit a 350px screen: with one site added the names
+                    were cut to a word and the site header ran off the edge. So on a phone each
+                    item is its own card — the name at full width, then one line per
+                    destination with its number at the right. With no sites the production-house
+                    figure simply rides the item's own line. The table below is sm-and-up. */}
+                <div className="sm:hidden">
+                  {blockedItems.map(it => {
+                    const prod = planProdQty(it);
+                    const done = prod === 0;
+                    const prodPill = (
+                      <span className={"shrink-0 inline-flex items-center justify-center w-14 h-8 rounded-lg text-sm font-semibold tabular-nums " + (done ? "bg-gray-50 text-gray-300" : "bg-blue-50 text-blue-700")}
+                        title="Auto — whatever is left after the sites">{prod}</span>
+                    );
+                    return (
+                      <div key={it.id} className="px-3 py-3 border-t border-gray-100">
+                        <div className="flex items-center gap-2.5">
+                          {it.photo ? <img src={it.photo} alt="" onClick={() => setZoomImg(it.photo)} className="w-10 h-10 rounded-lg object-cover cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-xs shrink-0">📦</div>}
+                          <div className="min-w-0 flex-1">
+                            <div className="text-[13px] font-medium text-gray-900 leading-snug line-clamp-2" title={it.name}>{it.name}</div>
+                            <div className="mt-0.5 text-[11px] text-gray-500 tabular-nums">{it.qty} pc{it.qty === 1 ? "" : "s"}</div>
+                          </div>
+                          {dismantleSites.length === 0 && prodPill}
+                        </div>
+                        {dismantleSites.length > 0 && (
+                          <div className="mt-2.5 rounded-lg bg-gray-50 divide-y divide-gray-100">
+                            <div className="flex items-center gap-3 px-3 py-1.5">
+                              <span className="min-w-0 flex-1 text-xs text-gray-600">Production house <span className="text-gray-400">· auto</span></span>
+                              {prodPill}
+                            </div>
+                            {dismantleSites.map(s => (
+                              <label key={s.id} className="flex items-center gap-3 px-3 py-1.5">
+                                <span className="min-w-0 flex-1 text-xs text-gray-600 truncate" title={s.date}>{s.name}</span>
+                                <input type="number" min="0" max={it.qty} value={planSiteQty(it, s.id) || ""} onChange={e => setSiteQty(it, s.id, e.target.value)} placeholder="0"
+                                  className="shrink-0 w-14 h-8 rounded-lg bg-white ring-1 ring-gray-200 px-2 text-sm text-center tabular-nums font-semibold text-gray-800 placeholder:font-normal placeholder:text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-400 transition" />
+                              </label>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
                 {/* Matrix — one row per item, a column for production house (auto) + each site */}
-                <div className="overflow-x-auto">
+                <div className="hidden sm:block overflow-x-auto">
                   {/* ── NO RULES BETWEEN ROWS ──
                       Every row carried a full-width divider, so a dozen items read as a dozen
                       stripes before it read as a list. Rows are separated by their own height and
