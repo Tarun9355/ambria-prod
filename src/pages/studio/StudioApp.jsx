@@ -32,6 +32,7 @@ import { ytApi, ytDuration } from "../../lib/youtube";
 import { extractLabeledValue, bestTaxMatch } from "../../lib/studio/videoDescriptionTags";
 import { paletteNames, paletteInList } from "../../lib/studio/colours";
 import { makeS } from "../../lib/studio/styles";
+import { findCrossFnReuseSource, computeFnInvQty } from "../../lib/studio/crossFnReuse";
 
 // ═══ HEADER TYPE + CHIP SCALE ═══
 // The header used to mix 8/9/10/11/12/13px in a single row. It now has exactly two tiers:
@@ -402,48 +403,6 @@ function computeFnSubQty(fnData, capBySub, imsInventory, flowerPatterns, trussIn
     }
   });
   return qty;
-}
-// Cross-function reuse (guest-facing): two functions of the SAME deal, same venue, within 24h of
-// each other — the owner's example is a Sundowner Cocktail followed the next night by the Wedding.
-// fnDate alone has no time-of-day, so a shift is mapped to a representative hour purely to compare
-// two functions' rough elapsed time; it is never shown to anyone or used for any other purpose.
-const SHIFT_HOUR = { Morning: 10, Lunch: 13, Sundowner: 17, Night: 19 };
-function fnTimestamp(fnData) {
-  if (!fnData?.fnDate) return null;
-  const hour = SHIFT_HOUR[fnData.fnShift] ?? 12;
-  const t = new Date(`${fnData.fnDate}T${String(hour).padStart(2, "0")}:00:00`).getTime();
-  return Number.isFinite(t) ? t : null;
-}
-// The ONE place "is there a reuse-eligible sibling function" is decided — both the guest-facing
-// item discount and the guest-facing transport waiver below read this, so they can't drift into
-// two different definitions of "within 24h at the same venue". Mirrors the venue-adjacency check
-// calcFunctionBreakdown's internal-cost truck carryover already used (immediately-preceding
-// function by date, same venue string, case/trim-insensitive) — this adds the actual time-window
-// check that check never had at all.
-function findCrossFnReuseSource(fnData, allFns) {
-  if (!fnData?.fnVenue) return null;
-  const sorted = [...(allFns || [])].sort((a, b) => (a.fnDate || "9999-12-31").localeCompare(b.fnDate || "9999-12-31"));
-  const myPos = sorted.findIndex(f => f.fnIdx === fnData.fnIdx);
-  const prev = myPos > 0 ? sorted[myPos - 1] : null;
-  if (!prev || !prev.fnVenue) return null;
-  if (prev.fnVenue.toLowerCase().trim() !== fnData.fnVenue.toLowerCase().trim()) return null;
-  const tMe = fnTimestamp(fnData), tPrev = fnTimestamp(prev);
-  if (tMe == null || tPrev == null) return null;
-  if (Math.abs(tMe - tPrev) > 24 * 60 * 60 * 1000) return null;
-  return prev;
-}
-// Per-invId qty a function used, top-level elements only (no kit-component walk — the guest-facing
-// cross-function discount is scoped to plain rental items, see repeatAdjustedLineCost). Sibling to
-// computeFnSubQty above, at item identity instead of truck-capacity-subcategory granularity.
-function computeFnInvQty(fnData) {
-  const m = {};
-  const fZoneElements = fnData?.zoneElements || {};
-  const fEnabledEls = fnData?.enabledEls || {};
-  Object.entries(fZoneElements).forEach(([zk, elems]) => {
-    if (!fEnabledEls[zk] || !elems) return;
-    elems.forEach(el => { if (el.invId) m[el.invId] = (m[el.invId] || 0) + (Number(el.qty) || 0); });
-  });
-  return m;
 }
 // Resolve a venue's own configured Transport & Power rate (trVenues, Admin -> Settings ->
 // Transport & Power) by name — trying a direct match first, then the venue's PARENT (via
@@ -5147,9 +5106,17 @@ export default function StudioApp() {
     const fnOverrides = fn?.floralOverrides || { rows: [] };
     const overrideByParentId = new Map();
     (fnOverrides.rows || []).forEach(r => { if (r?.flowerId) overrideByParentId.set(r.flowerId, r); });
+    // Cross-function reuse (Ambria's own cost basis, always on — same reasoning as the Repeat-zone
+    // quantity cut just below): if the immediately-preceding function of this deal is at the same
+    // venue within 24h (findCrossFnReuseSource — the SAME definition truss/transport carryover and
+    // the guest-facing element discount all share) and it ALSO enabled this same zone key, this
+    // zone's flowers are being reused rather than sourced fresh for this function — same
+    // REPEAT_REAL_QTY_MULT/REPEAT_ART_QTY_MULT cut a manually-flagged Repeat zone gets, without
+    // requiring the salesperson to also tick Repeat on THIS function's own copy of the zone.
+    const crossFnPrevFnFloral = findCrossFnReuseSource(fn, collectAllFunctionData());
     Object.entries(fn?.zoneElements || {}).forEach(([zk, elems]) => {
       if (!fn.enabledEls?.[zk]) return;
-      const zoneRepeat = !!fn.zoneConfig?.[zk]?.repeat;
+      const zoneRepeat = !!fn.zoneConfig?.[zk]?.repeat || !!(crossFnPrevFnFloral?.enabledEls?.[zk] && crossFnPrevFnFloral?.zoneConfig?.[zk]);
       // A kit's own subItems can carry floral content of their own (a flower-recipe add-on via
       // si.patternId, or a component item itself categorized as florals, e.g. "Round Fibre Pot"
       // nested inside a stage kit) — mirrors DCFloralsTab.jsx's own expandedElems fix exactly.
@@ -5342,7 +5309,7 @@ export default function StudioApp() {
       fbreak[v.name].qty += v.totalQty; fbreak[v.name].cost += cost;
     });
     return { totalReal: tReal, totalArtificial: tArt, grandTotal: tReal + tArt, breakdown: Object.values(fbreak).map(f => ({ ...f, qty: Math.ceil(f.qty), cost: Math.round(f.cost) })).sort((a, b) => b.cost - a.cost), artFlowerBunches, artGreenBunches, income: { real: realIncome, art: artIncome } };
-  }, [dealCheckData, studioFloralData, rcItems, floralRatio, resolveRcRate, rcFloralModeByKey, dcFloralColorPrefs, imsInventory, dcInventoryCache]);
+  }, [dealCheckData, studioFloralData, rcItems, floralRatio, resolveRcRate, rcFloralModeByKey, dcFloralColorPrefs, imsInventory, dcInventoryCache, collectAllFunctionData]);
   // Sync for calcFnFloralSourcingCostRef — see its declaration (near collectAllFunctionDataRef) for
   // why transportCalc/calcFunctionCost need to reach this function through a ref instead of calling
   // it directly: both are declared earlier in the file, so a direct reference would be a TDZ
