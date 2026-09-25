@@ -3955,6 +3955,42 @@ export default function StudioApp() {
     return m;
   }, [rcSubcatFactors]);
 
+  // Shared Studio-wide pricing settings that BOTH Build's guest-facing formulas and Deal Check read.
+  // studioFloralData is loaded at mount and kept LIVE for the whole session (the realtime settings
+  // subscription refreshes it on every relevant change — see FLORAL_DATA_KEYS). dealCheckData is a
+  // ONE-TIME snapshot fetched only when Deal Check is opened, and is never refreshed again after
+  // that — no realtime subscription of its own. Every one of these fields used to prefer
+  // dealCheckData the instant it existed, which is backwards for anything past the first few
+  // seconds after Deal Check's own fetch lands: a mandi flower re-priced, a Fixed Venue's discount
+  // edited, a date-pricing tier changed in IMS an hour into a session would keep reaching Deal Check
+  // (freshly re-opened) and pre-Deal-Check Build correctly, via studioFloralData's own realtime
+  // updates — but once Deal Check had been opened even once, Build silently froze on whatever that
+  // one snapshot said, for the rest of the session, no matter how many more times the underlying
+  // setting changed. That is the exact mechanism behind "I open Deal Check and the total quietly
+  // drops with zero edits" — confirmed live: a kit's floral-component recipe cost (Photo Op zone,
+  // "Wooden Console") repriced the instant dealCheckData populated, autosaving a session ₹5,801.25
+  // lower moments after a Deal Check open with no edit in between.
+  // studioFloralData is therefore preferred here for every field it carries; dealCheckData only
+  // fills in what studioFloralData doesn't (it's missing before studioFloralData's own mount fetch
+  // has landed, a narrow window Deal Check can't be opened in anyway — no functions/date yet).
+  const sharedFloralSettings = useMemo(() => ({
+    flowerPatterns: studioFloralData?.flowerPatterns ?? dealCheckData?.flowerPatterns ?? [],
+    mandiCatalogue: studioFloralData?.mandiCatalogue ?? dealCheckData?.mandiCatalogue ?? [],
+    artificialFlowerRatePerKg: studioFloralData?.artificialFlowerRatePerKg ?? dealCheckData?.artificialFlowerRatePerKg,
+    artificialFlowerBunchesPerKg: studioFloralData?.artificialFlowerBunchesPerKg ?? dealCheckData?.artificialFlowerBunchesPerKg,
+    artificialGreenRatePerKg: studioFloralData?.artificialGreenRatePerKg ?? dealCheckData?.artificialGreenRatePerKg,
+    artificialGreenBunchesPerKg: studioFloralData?.artificialGreenBunchesPerKg ?? dealCheckData?.artificialGreenBunchesPerKg,
+    defaultStudioMarkup: studioFloralData?.defaultStudioMarkup ?? dealCheckData?.defaultStudioMarkup,
+    fixedVenues: (studioFloralData?.fixedVenues?.length ? studioFloralData.fixedVenues : dealCheckData?.fixedVenues) || [],
+    fixedVenueSubcatDiscount: (studioFloralData?.fixedVenueSubcatDiscount && Object.keys(studioFloralData.fixedVenueSubcatDiscount).length ? studioFloralData.fixedVenueSubcatDiscount : dealCheckData?.fixedVenueSubcatDiscount) || {},
+    agencyFeePct: studioFloralData?.agencyFeePct ?? dealCheckData?.agencyFeePct,
+    datePricing: studioFloralData?.datePricing ?? dealCheckData?.datePricing,
+    trussInv: studioFloralData?.trussInv ?? dealCheckData?.trussInv,
+    // Deal-Check-only concerns below — studioFloralData carries no equivalent, and neither ever fed
+    // Build's own guest-facing pricing (only Deal Check's internal florals-sourcing cost does).
+    mandiPriceMultipliers: dealCheckData?.mandiPriceMultipliers,
+    seasonMap: dealCheckData?.seasonMap,
+  }), [studioFloralData, dealCheckData]);
   // Flower-recipe patterns addable as their own standalone element (name-searchable alongside
   // inventory items in every "+Add element" box), independent of whether the recipe's sub-category
   // also has real inventory backing or is tag_hidden — a recipe must always be findable/addable by
@@ -3964,7 +4000,7 @@ export default function StudioApp() {
   // since the two are different addable things — one ties to physical stock, one doesn't). Only
   // non-empty recipes count (same "hasRecipe" bar the Recipes editor itself uses).
   const recipeOnlyPatterns = useMemo(() => {
-    const floralSrc = dealCheckData || studioFloralData || {};
+    const floralSrc = sharedFloralSettings;
     const patterns = floralSrc.flowerPatterns || [];
     if (!patterns.length) return [];
     return patterns
@@ -3977,7 +4013,7 @@ export default function StudioApp() {
   // there, minus the item-rental term (there's no physical item to add rental for) — flower cost
   // blends by real/artificial %, then the recipe's own "extra (pot/base)" is added once.
   const getElPriceFromPattern = useCallback((el) => {
-    const floralSrc = dealCheckData || studioFloralData || {};
+    const floralSrc = sharedFloralSettings;
     const pattern = (floralSrc.flowerPatterns || []).find((p) => p.id === el.patternId);
     if (!pattern) return { rc: null, unitPrice: 0, lineCost: 0, area: 0, warning: null, isFloralBlend: false, realPct: null };
     const qty = el.qty || 0;
@@ -4000,7 +4036,7 @@ export default function StudioApp() {
   // elsewhere — this reads the variant's OWN price instead of that helper's always-parent-price
   // behavior, since here the variant IS the specific thing being bought, not just a recipe label).
   const getElPriceFromMandi = useCallback((el) => {
-    const floralSrc = dealCheckData || studioFloralData || {};
+    const floralSrc = sharedFloralSettings;
     const parent = (floralSrc.mandiCatalogue || []).find((m) => m.id === el.mandiId);
     if (!parent) return { rc: null, unitPrice: 0, lineCost: 0, area: 0, warning: null, isFloralBlend: false, realPct: null };
     const variant = el.mandiVariantId ? (parent.colorVariants || []).find((v) => v.variantId === el.mandiVariantId) : null;
@@ -4017,24 +4053,24 @@ export default function StudioApp() {
   // formula covers kits and plain items alike.
   //
   // Fixed Venues config for repeat-rental discounting — same three keys Deal Check's own
-  // repeatAdjustedRental (DealCheckOverlay.jsx) builds. dealCheckData is null until Deal Check
-  // has been opened once for this client; studioFloralData is fetched unconditionally on mount
-  // and carries the same fixedVenues/fixedVenueSubcatDiscount, so a zone marked ♻️ Repeat prices
-  // correctly here even before Deal Check has ever run.
+  // repeatAdjustedRental (DealCheckOverlay.jsx) builds. fixedVenues/fixedVenueSubcatDiscount come
+  // from sharedFloralSettings (studioFloralData preferred — it's the one kept live via realtime for
+  // the whole session; dealCheckData is a one-time snapshot that freezes the instant Deal Check
+  // first opens — see sharedFloralSettings' own comment for the confirmed incident this caused).
   //
   // venueParents specifically: the LOCAL memo (always live, recomputed from customInhouse/
-  // customOutdoor/customProperties, which load at boot independent of Deal Check) now comes FIRST,
-  // ahead of dealCheckData's own copy — the reverse of every other field here. dealCheckData.
-  // venueParents is a snapshot taken whenever Deal Check last ran; a sub-venue added, or a property
-  // renamed, since then would silently keep resolving to the stale mapping for the rest of the
-  // session otherwise, the same "Deal-Check-gated" trap already fixed for agencyFeePct/trussInv —
-  // this one just runs the other direction (local-over-stale, not local-as-fallback) because the
-  // local computation is provably never staler than dealCheckData's own copy of the same data.
+  // customOutdoor/customProperties, which load at boot independent of Deal Check) comes FIRST,
+  // ahead of dealCheckData's own copy — studioFloralData carries no venueParents at all, so this
+  // one field still needs its own fallback here rather than living in sharedFloralSettings.
+  // dealCheckData.venueParents is a snapshot taken whenever Deal Check last ran; a sub-venue added,
+  // or a property renamed, since then would silently keep resolving to the stale mapping for the
+  // rest of the session otherwise — the local computation is provably never staler than
+  // dealCheckData's own copy of the same data.
   const fvCfgForRepeat = useMemo(() => ({
-    fixedVenues: (dealCheckData?.fixedVenues?.length ? dealCheckData.fixedVenues : studioFloralData?.fixedVenues) || [],
+    fixedVenues: sharedFloralSettings.fixedVenues,
     venueParents: venueParents || dealCheckData?.venueParents || {},
-    fixedVenueSubcatDiscount: (dealCheckData?.fixedVenueSubcatDiscount && Object.keys(dealCheckData.fixedVenueSubcatDiscount).length ? dealCheckData.fixedVenueSubcatDiscount : studioFloralData?.fixedVenueSubcatDiscount) || {},
-  }), [dealCheckData, studioFloralData, venueParents]);
+    fixedVenueSubcatDiscount: sharedFloralSettings.fixedVenueSubcatDiscount,
+  }), [sharedFloralSettings, dealCheckData, venueParents]);
   // Owner ask: a discrete per-deal toggle (Build's reference banner, beside Upload) — OFF (hidden)
   // BY DEFAULT: every Fixed-Venue/Repeat discount prices at full rate for the GUEST-facing numbers
   // — Build's live canvas, Summary, and every export — until the checkbox is explicitly ticked to
@@ -4081,7 +4117,7 @@ export default function StudioApp() {
   // dealCheckData falls back to studioFloralData so this works before Deal Check has ever been
   // opened, same reasoning as fixedVenues/agencyFeePct above.
   const dateCategoryMultiplierFor = (dateStr) => {
-    const dp = dealCheckData?.datePricing || studioFloralData?.datePricing;
+    const dp = sharedFloralSettings.datePricing;
     if (!dp || !dateStr) return 1;
     const m = getEffectivePricing(1, dateStr, { datePricing: dp }).multiplier;
     return (m > 0) ? m : 1;
@@ -4091,7 +4127,7 @@ export default function StudioApp() {
   // already the cheapest category, and the owner doesn't want an extra discount stacked on top of one.
   // Only gates that ONE mechanism; every other date-category behavior above is unaffected.
   const isFillerDateFor = (dateStr) => {
-    const dp = dealCheckData?.datePricing || studioFloralData?.datePricing;
+    const dp = sharedFloralSettings.datePricing;
     if (!dp || !dateStr) return false;
     return resolveDateCategory(dateStr, { datePricing: dp }) === "non_saya";
   };
@@ -4164,9 +4200,10 @@ export default function StudioApp() {
       return t;
     })();
     const isKit = Array.isArray(item.subItems) && item.subItems.length > 0;
-    // dealCheckData is null outside an active Deal Check session — floralArtUnitRate/patternExtra
-    // already fall back to studioFloralData for this exact reason; mirror that here too.
-    const floralSrc = dealCheckData || studioFloralData || {};
+    // studioFloralData preferred, dealCheckData only fills gaps — see sharedFloralSettings' own
+    // comment for why (dealCheckData freezes the instant Deal Check first opens; studioFloralData
+    // stays live via realtime for the whole session).
+    const floralSrc = sharedFloralSettings;
 
     // Kit + flower recipe, from either/both of two independent sources — both can apply to the
     // same kit at once:
@@ -4467,7 +4504,7 @@ export default function StudioApp() {
   // the client charge for the artificial portion is never ₹0 just because a flat rate wasn't typed in.
   // Returns null when the element has NO recipe (caller then falls back to the flat rate-card artificial rate).
   const floralArtUnitRate = useCallback((rc, size) => {
-    const src = dealCheckData || studioFloralData || {};
+    const src = sharedFloralSettings;
     const fp = src.flowerPatterns || [];
     if (!fp.length) return null;
     const mc = src.mandiCatalogue || [];
@@ -4533,7 +4570,7 @@ export default function StudioApp() {
 
   // Fixed extra cost (pot / base / frame) for a floral recipe element+size, added AFTER markup (flat ₹).
   const patternExtra = useCallback((rc, size) => {
-    const fp = (dealCheckData || studioFloralData)?.flowerPatterns || [];
+    const fp = sharedFloralSettings.flowerPatterns;
     if (!fp.length) return 0;
     const tn = String(rc?.name || "").toLowerCase().trim();
     let pat = fp.find(p => String(p?.name || "").toLowerCase().trim() === tn);
@@ -4830,7 +4867,7 @@ export default function StudioApp() {
       return { trucks: 0, tripRate, total: 0, isNew, tier: tierId, tierLabel, breakdown: [], floralTrucks: 0, bufferTrucks: 0, itemTrucks: 0, totalFloralCost: 0, gensets: 0, venueGensets: venueOnly.genset125, venueGenset62: venueOnly.genset62, gensetCost: 0, gensetRate, gensetRate62, genset62: 0, truckTotal: 0 };
     }
     const breakdown = [];
-    const trussInvHere = dealCheckData?.trussInv || studioFloralData?.trussInv;
+    const trussInvHere = sharedFloralSettings.trussInv;
     // Real-flower kg (summed across every mandi item regardless of its own unit — an approximation,
     // see computeTruckItems' comment) + artificial bunches, for the Real Flowers / Artificial Flowers
     // truck-capacity rows. Goes through the ref, not a direct call — see calcFnFloralSourcingCostRef's
@@ -4840,7 +4877,7 @@ export default function StudioApp() {
       realKg: (floralSourcingHere?.breakdown || []).reduce((s, f) => s + (f.qty || 0), 0),
       artBunches: (floralSourcingHere?.artFlowerBunches || 0) + (floralSourcingHere?.artGreenBunches || 0),
     };
-    const { itemTrucks, breakdown: itemBd } = computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckCap, imsInventory, (dealCheckData || studioFloralData)?.flowerPatterns, trussInvHere, flowerMaterialQty, fvCfgForRepeat, venue, !hideDiscountFromClient);
+    const { itemTrucks, breakdown: itemBd } = computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckCap, imsInventory, sharedFloralSettings.flowerPatterns, trussInvHere, flowerMaterialQty, fvCfgForRepeat, venue, !hideDiscountFromClient);
     itemBd.forEach(b => breakdown.push(b));
     const floralTrucks = 0, totalFloralCost = 0; // florals now counted via their sub-category capacity — no separate flower truck
     const bt = bufferTiers.find(b => decor >= b.minBudget && decor < b.maxBudget);
@@ -4868,14 +4905,14 @@ export default function StudioApp() {
     const base = totalCost() + transportCalc.total;
     // Fixed-venue discount — same as eventGrandTotal's, just for this one active function/venue.
     // Same studioFloralData/venueParents fallback as eventGrandTotal, for the same reason.
-    const fvCfg = { fixedVenues: (dealCheckData?.fixedVenues?.length ? dealCheckData.fixedVenues : studioFloralData?.fixedVenues) || [], venueParents: venueParents || dealCheckData?.venueParents || {} };
+    const fvCfg = { fixedVenues: sharedFloralSettings.fixedVenues, venueParents: venueParents || dealCheckData?.venueParents || {} };
     const discounted = Math.max(0, base - fixedVenueDealDiscount(fvCfg, [{ fnVenue: venue }], () => base, base));
     // Agency fee (Admin → Settings, default 20%) — this is Build's own live "page total" for the
     // active function, the number a salesperson watches while building. It has to carry the fee too,
     // or it would visibly disagree with eventGrandTotal/Deal Check/the cost sheet, which all do.
-    const feePct = Number(dealCheckData?.agencyFeePct ?? studioFloralData?.agencyFeePct) || 20;
+    const feePct = Number(sharedFloralSettings.agencyFeePct) || 20;
     return discounted + Math.round(discounted * feePct / 100);
-  }, [totalCost, transportCalc, dealCheckData, venue, studioFloralData, venueParents]);
+  }, [totalCost, transportCalc, dealCheckData, venue, studioFloralData, sharedFloralSettings, venueParents]);
 
   const collectAllFunctionData = useCallback(() => {
     const all = [];
@@ -5002,7 +5039,7 @@ export default function StudioApp() {
       // truck-capacity purposes comes ONLY from live IMS identity (el.invId or el.patternId), never
       // a Rate-Card name-match — Rate Card's own `.sub` is a separate, older vocabulary that doesn't
       // track IMS's live Sub-Categories master.
-      const fcFlowerPatterns = (dealCheckData || studioFloralData)?.flowerPatterns || [];
+      const fcFlowerPatterns = sharedFloralSettings.flowerPatterns;
       // Own pool, separate from pricingPool above — see the comment where crossFnPrevFn is computed.
       const transportPool = crossFnPrevFn ? new Map(Object.entries(computeFnInvQty(crossFnPrevFn))) : null;
       Object.entries(fZoneElements).forEach(([zk, elems]) => {
@@ -5050,7 +5087,7 @@ export default function StudioApp() {
         const sqft = (fd.L || 0) * (fd.W || 0);
         if (sqft > 0) { if (cfg.plH) addSub("Platform", sqft); if (cfg.cpT && cfg.cpT !== CARPET_OFF) addSub("Carpet", sqft); }
         // Fabric Allocation (masking/liza/curtains) — see computeTruckItems' matching comment.
-        const fcTrussInv = dealCheckData?.trussInv || studioFloralData?.trussInv;
+        const fcTrussInv = sharedFloralSettings.trussInv;
         if (fcTrussInv) {
           const fab = calcZoneFabric(cfg, fcTrussInv, "moderate");
           if (fab.maskingPieces > 0) addSub("Masking", fab.maskingPieces);
@@ -5093,14 +5130,14 @@ export default function StudioApp() {
     // elsewhere, now needed here too since this function's OUTPUT quantities are no longer purely
     // internal-cost. mults/sMap/the two RATE figures still only affect the internal ₹ cost (not the
     // quantities), so they're left Deal-Check-only for now.
-    const fp = dealCheckData?.flowerPatterns || studioFloralData?.flowerPatterns || [];
-    const mc = dealCheckData?.mandiCatalogue || studioFloralData?.mandiCatalogue || [];
-    const mults = dealCheckData?.mandiPriceMultipliers || {};
-    const sMap = dealCheckData?.seasonMap || {};
-    const artFlowerRate = Number(dealCheckData?.artificialFlowerRatePerKg ?? 50);
-    const artFlowerBPK = Number(dealCheckData?.artificialFlowerBunchesPerKg ?? studioFloralData?.artificialFlowerBunchesPerKg ?? 16) || 16;
-    const artGreenRate = Number(dealCheckData?.artificialGreenRatePerKg ?? 40);
-    const artGreenBPK = Number(dealCheckData?.artificialGreenBunchesPerKg ?? studioFloralData?.artificialGreenBunchesPerKg ?? 23) || 23;
+    const fp = sharedFloralSettings.flowerPatterns;
+    const mc = sharedFloralSettings.mandiCatalogue;
+    const mults = sharedFloralSettings.mandiPriceMultipliers || {};
+    const sMap = sharedFloralSettings.seasonMap || {};
+    const artFlowerRate = Number(sharedFloralSettings.artificialFlowerRatePerKg ?? 50);
+    const artFlowerBPK = Number(sharedFloralSettings.artificialFlowerBunchesPerKg ?? 16) || 16;
+    const artGreenRate = Number(sharedFloralSettings.artificialGreenRatePerKg ?? 40);
+    const artGreenBPK = Number(sharedFloralSettings.artificialGreenBunchesPerKg ?? 23) || 23;
     const fnRatio = typeof fn?.floralRatio === "number" ? fn.floralRatio : (typeof floralRatio === "number" ? floralRatio : 70);
     const szMap = (m, s) => { if (m === "smb") { const u = (s || "M").toUpperCase(); return u === "S" ? "small" : u === "B" ? "big" : "medium"; } return "medium"; };
     // MUST mirror DCFloralsTab.jsx's own resolveRealPct exactly, precedence and all — this used to
@@ -5349,7 +5386,7 @@ export default function StudioApp() {
       fbreak[v.name].qty += v.totalQty; fbreak[v.name].cost += cost;
     });
     return { totalReal: tReal, totalArtificial: tArt, grandTotal: tReal + tArt, breakdown: Object.values(fbreak).map(f => ({ ...f, qty: Math.ceil(f.qty), cost: Math.round(f.cost) })).sort((a, b) => b.cost - a.cost), artFlowerBunches, artGreenBunches, income: { real: realIncome, art: artIncome } };
-  }, [dealCheckData, studioFloralData, rcItems, floralRatio, resolveRcRate, rcFloralModeByKey, dcFloralColorPrefs, imsInventory, dcInventoryCache, collectAllFunctionData]);
+  }, [dealCheckData, studioFloralData, sharedFloralSettings, rcItems, floralRatio, resolveRcRate, rcFloralModeByKey, dcFloralColorPrefs, imsInventory, dcInventoryCache, collectAllFunctionData]);
   // Sync for calcFnFloralSourcingCostRef — see its declaration (near collectAllFunctionDataRef) for
   // why transportCalc/calcFunctionCost need to reach this function through a ref instead of calling
   // it directly: both are declared earlier in the file, so a direct reference would be a TDZ
@@ -5509,14 +5546,14 @@ export default function StudioApp() {
     // Falls back to studioFloralData/local venueParents (both load on mount, no Deal Check needed)
     // before dealCheckData exists — see refreshStudioFloralData's agencyFeePct comment for why this
     // matters: without the fallback, this total was visibly wrong until Deal Check was first opened.
-    const fvCfg = { fixedVenues: (dealCheckData?.fixedVenues?.length ? dealCheckData.fixedVenues : studioFloralData?.fixedVenues) || [], venueParents: venueParents || dealCheckData?.venueParents || {} };
+    const fvCfg = { fixedVenues: sharedFloralSettings.fixedVenues, venueParents: venueParents || dealCheckData?.venueParents || {} };
     const discounted = Math.max(0, base - fixedVenueDealDiscount(fvCfg, all, (fn) => calcFunctionCost(fn).grand, base));
     // Agency fee — flat % of the (post-discount) deal, billed to the guest on top of everything else
     // (Admin → Settings, default 20%). This is the number booking confirmation, Summary's hero,
     // and the negotiated-amount placeholder all read, so the fee has to sit inside it, not beside it.
-    const feePct = Number(dealCheckData?.agencyFeePct ?? studioFloralData?.agencyFeePct) || 20;
+    const feePct = Number(sharedFloralSettings.agencyFeePct) || 20;
     return discounted + Math.round(discounted * feePct / 100);
-  }, [collectAllFunctionData, calcFunctionCost, dealCheckData, studioFloralData, venueParents]);
+  }, [collectAllFunctionData, calcFunctionCost, dealCheckData, studioFloralData, sharedFloralSettings, venueParents]);
 
   const calcFunctionBreakdown = useCallback((fnData) => {
     if (!fnData) return { zones: [], transport: null, decorTotal: 0, transportTotal: 0, transportTotalClient: 0, grand: 0, grandClient: 0 };
@@ -5634,7 +5671,7 @@ export default function StudioApp() {
       // An element's sub-category for truck-capacity purposes comes ONLY from live IMS identity —
       // el.invId (Inventory, the normal path for anything added via "+ Add element" today) or
       // el.patternId (a pure flower-recipe element). No Rate-Card name-match fallback.
-      const fFlowerPatterns = (dealCheckData || studioFloralData)?.flowerPatterns || [];
+      const fFlowerPatterns = sharedFloralSettings.flowerPatterns;
       // ── Same-venue truck carryover (internal cost only) ──
       // Owner's rule: if the immediately preceding function (by date) is at this SAME venue, whatever
       // it already trucked in for a given truck-capacity sub-category (e.g. "Sofa") is still sitting
@@ -5655,7 +5692,7 @@ export default function StudioApp() {
         // own cost basis, always netted regardless of the guest-facing toggle.
         const carryoverPrevFn = findCrossFnReuseSource(fnData, collectAllFunctionData());
         if (carryoverPrevFn) {
-          prevSubQty = computeFnSubQty(carryoverPrevFn, capBySub, imsInventory, fFlowerPatterns, dealCheckData?.trussInv || studioFloralData?.trussInv, fvCfgForRepeat, fVenue);
+          prevSubQty = computeFnSubQty(carryoverPrevFn, capBySub, imsInventory, fFlowerPatterns, sharedFloralSettings.trussInv, fvCfgForRepeat, fVenue);
           carriedOverFromFn = carryoverPrevFn.fnType || "";
         }
       } catch { /* never let a carryover lookup failure break the transport calc */ }
@@ -5708,7 +5745,7 @@ export default function StudioApp() {
           else { const full = Number(el.qty) || 0; addSub(sub, zoneRepeat ? 0 : full, full, zk, elLabel, invCat); }
         });
       });
-      const bdTrussInv = dealCheckData?.trussInv || studioFloralData?.trussInv;
+      const bdTrussInv = sharedFloralSettings.trussInv;
       Object.entries(fZoneConfig).forEach(([zk, cfg]) => {
         if (!cfg || !fEnabledEls[zk]) return;
         const zoneRepeat = !!cfg.repeat;
@@ -9289,7 +9326,7 @@ export default function StudioApp() {
       return da.localeCompare(db);
     });
     // Same studioFloralData/venueParents fallback as eventGrandTotal/grandTotal, for the same reason.
-    const fvCfg = { fixedVenues: (dealCheckData?.fixedVenues?.length ? dealCheckData.fixedVenues : studioFloralData?.fixedVenues) || [], venueParents: venueParents || dealCheckData?.venueParents || {} };
+    const fvCfg = { fixedVenues: sharedFloralSettings.fixedVenues, venueParents: venueParents || dealCheckData?.venueParents || {} };
     const functions = sorted.map(fnDataRaw => {
       const fnData = enrichFromSession(fnDataRaw);
       const zones = buildZonesForFn(fnData);
@@ -9327,7 +9364,7 @@ export default function StudioApp() {
     // Agency fee — same flat % of the deal as eventGrandTotal (StudioApp's own memo), applied here
     // too so the cost sheet's own grand total agrees with it, plus exposed as its own amount so the
     // sheet can print it as an explicit line rather than folding it silently into the total.
-    const agencyFeePct = Number(dealCheckData?.agencyFeePct ?? studioFloralData?.agencyFeePct) || 20;
+    const agencyFeePct = Number(sharedFloralSettings.agencyFeePct) || 20;
     const agencyFee = Math.round(discountedTotal * agencyFeePct / 100);
     const systemGrandTotal = discountedTotal + agencyFee;
     // A negotiated amount (Summary's own "Total Estimate" hero shows THIS instead of the system
@@ -9361,7 +9398,7 @@ export default function StudioApp() {
       venueDiscount, agencyFee, agencyFeePct, negotiatedAmount,
       clientName, clientPhone, clientBrideGroom
     };
-  }, [collectAllFunctionData, buildZonesForFn, calcFunctionBreakdown, clientName, clientPhone, clientBrideGroom, clientLedger, activeClientId, activeFnIdx, dealCheckData, studioFloralData, venueParents]);
+  }, [collectAllFunctionData, buildZonesForFn, calcFunctionBreakdown, clientName, clientPhone, clientBrideGroom, clientLedger, activeClientId, activeFnIdx, dealCheckData, studioFloralData, sharedFloralSettings, venueParents]);
 
   // ═══════════════════════════════════════════════════════════════
   // DEAL CHECK orchestration — IMS fetch (Supabase) + AI photo-match loop +
