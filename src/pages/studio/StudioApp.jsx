@@ -1860,16 +1860,23 @@ export default function StudioApp() {
   const [dcSkipped, setDcSkipped] = useState({});
   const [dcProductionAccepted, setDcProductionAccepted] = useState({});
   const [dcManualItems, setDcManualItems] = useState([]);
-  // Which client's dcManualItems the state above ACTUALLY reflects right now — null until
-  // openDealCheck has genuinely restored (or reset to []) this field for the client currently open.
-  // DealCheckOverlay.jsx's Build-sync effect can mount and fire before that restore lands (child
-  // effects run before the parent effect that calls openDealCheck, and openDealCheck itself awaits a
-  // network fetch before touching dcManualItems at all) — reading dcManualItems during that window
-  // sees either [] (true first-ever open) or the PREVIOUS client's leftover items, and
-  // removeStaleManualEntries (dealCheckSync.js) would delete any real manual item already saved in
-  // Build's zoneElements that isn't in that not-yet-correct set. Gates that one destructive call so
-  // it only runs once this ref confirms dcManualItems is correct for the client being synced.
-  const dcManualItemsReadyRef = useRef(null);
+  // Which client ALL of Deal Check's own local per-client state (dcCards/dcZoneState/
+  // dcPhotoOverrides/dcSkipped/dcManualItems/dcDedupOverrides/dcProductionAccepted/
+  // dcArtFlowerAlloc/dcFloralColorPrefs/dcCustomItems) actually reflects right now — null until
+  // openDealCheck has genuinely reset-or-restored every one of them for the client currently open.
+  // Two separate races this protects against, both confirmed live:
+  //  1) DealCheckOverlay.jsx's Build-sync effect can mount and fire before openDealCheck's own
+  //     restore lands (child effects run before the parent effect that calls it, and openDealCheck
+  //     itself awaits a network fetch before touching any of this state) — reading dcManualItems
+  //     during that window sees the PREVIOUS client's leftover items, and removeStaleManualEntries
+  //     (dealCheckSync.js) would delete any real manual item already saved in Build's zoneElements
+  //     that isn't in that not-yet-correct set.
+  //  2) Switching to a client with no saved Deal Check draft never resets this state on its own
+  //     (openDealCheck only overwrote it from a `hasCache` branch) — without the reset this ref now
+  //     gates, dcZoneState/dcCards/etc. would silently carry the PREVIOUSLY open client's values into
+  //     an unrelated client's Deal Check session (dcZoneState is spread onto in runDealCheckGenerate,
+  //     `{...dcZoneState}`, not rebuilt fresh, so a stale merge, not just a stale read, was possible).
+  const dcStateReadyForClientRef = useRef(null);
   const [dcManualSearch, setDcManualSearch] = useState({});
   const [dcDedupOverrides, setDcDedupOverrides] = useState({});
   const [dcBlockedFnOpen, setDcBlockedFnOpen] = useState({});
@@ -9717,6 +9724,30 @@ export default function StudioApp() {
     const rowDraft = (clientRec?.dcDraft && typeof clientRec.dcDraft === "object" && !Array.isArray(clientRec.dcDraft)) ? clientRec.dcDraft : null;
     const cachedForThisClient = rowDraft;
     const hasCache = !!cachedForThisClient;
+    // Genuinely switching to a DIFFERENT client (or the true first-ever open this session) — none of
+    // dcCards/dcZoneState/dcPhotoOverrides/dcSkipped/dcManualItems/dcDedupOverrides/
+    // dcProductionAccepted/dcArtFlowerAlloc/dcFloralColorPrefs/dcCustomItems get reset by anything
+    // else, so without this they'd carry the PREVIOUSLY open client's values straight into this
+    // client's Deal Check session (and, for dcManualItems specifically, get synced into THIS client's
+    // Build zoneElements the moment the reconcile effect fires — confirmed live). Reset every one of
+    // them to empty FIRST, then let the restore below (if a cache exists) fill in the real values —
+    // so a switch always starts clean regardless of whether this client has ever used Deal Check.
+    // Deliberately does NOT run on a same-client reopen (dcStateReadyForClientRef.current already
+    // equals activeClientId then) — that path keeps its own existing "never clobber a good live set
+    // with a stale/empty cache read" guards below untouched.
+    const isClientSwitch = dcStateReadyForClientRef.current !== activeClientId;
+    if (isClientSwitch) {
+      setDcCards({});
+      setDcZoneState({});
+      setDcPhotoOverrides({});
+      setDcSkipped({});
+      setDcManualItems([]);
+      setDcDedupOverrides({});
+      setDcProductionAccepted({});
+      setDcArtFlowerAlloc({});
+      setDcFloralColorPrefs({});
+      setDcCustomItems([]);
+    }
     if (hasCache) {
       setDcResolved(cachedForThisClient.resolved || {});
       // Guard: never clobber a good card set with an empty one (belt-and-suspenders vs a race).
@@ -9729,21 +9760,16 @@ export default function StudioApp() {
       setDcProductionAccepted(cachedForThisClient.productionAccepted || {});
       setDcArtFlowerAlloc(cachedForThisClient.artFlowerAlloc || {});
       setDcFloralColorPrefs(cachedForThisClient.floralColorPrefs || {});
-      if (dcCustomItems.length === 0 && Array.isArray(cachedForThisClient.customItems) && cachedForThisClient.customItems.length > 0) {
+      if ((isClientSwitch || dcCustomItems.length === 0) && Array.isArray(cachedForThisClient.customItems) && cachedForThisClient.customItems.length > 0) {
         setDcCustomItems(cachedForThisClient.customItems);
       }
     } else {
       setDcResolved({});
-      // This client has no draft at all — dcManualItems must not be left holding whatever the
-      // PREVIOUSLY open client's manual items were (nothing else ever resets it). Without this, Deal
-      // Check opened fresh on a client that's never used it would sync the last client's manual
-      // items straight into THIS client's Build zoneElements the moment the reconcile effect fires.
-      setDcManualItems([]);
     }
-    // dcManualItems above is now correct for activeClientId (restored, or reset to [] when there was
-    // nothing to restore) — see dcManualItemsReadyRef's own declaration for why the sync effect needs
-    // to know this before it may prune manual items no longer listed.
-    dcManualItemsReadyRef.current = activeClientId;
+    // Everything above is now correct for activeClientId (restored from cache, or reset to empty
+    // when there was nothing to restore) — see dcStateReadyForClientRef's own declaration for why the
+    // Build-sync effect needs to know this before it may prune manual items no longer listed.
+    dcStateReadyForClientRef.current = activeClientId;
     setDcResolving({});
     const allFns = collectAllFunctionData();
     const uniqueDates = [...new Set(allFns.map(f => f.fnDate).filter(Boolean))];
@@ -10850,7 +10876,7 @@ export default function StudioApp() {
     dcFloralExpanded, setDcFloralExpanded, dcFloralUnmatchedExpanded, setDcFloralUnmatchedExpanded, dcResolved, setDcResolved, dcResolving, setDcResolving, dcAbortRef, setDcAbortRef,
     dcFullPageOpen, setDcFullPageOpen, closeDealCheck, dcCards, setDcCards, dcZoneState, setDcZoneState, dcKitEdits, setDcKitEdits, dcCarpetPick, setDcCarpetPick, dcCarpetSplit, setDcCarpetSplit,
     dcCarpetSearch, setDcCarpetSearch, dcDesiredMargin, setDcDesiredMargin, dcRunCounter, setDcRunCounter, dcCache, setDcCache, dcGenerating, setDcGenerating,
-    dcSaveBaselineRef, dcConflictWarnedAtRef, dcManualItemsReadyRef,
+    dcSaveBaselineRef, dcConflictWarnedAtRef, dcStateReadyForClientRef,
     dcGenStatus, setDcGenStatus, dcActiveTab, setDcActiveTab, dcShowAllFns, setDcShowAllFns, dcCollapsedFnBlocks, setDcCollapsedFnBlocks, dcMpOverrides, setDcMpOverrides, dcMpWinCount, setDcMpWinCount, dcMpIncludeMinusOne, setDcMpIncludeMinusOne,
     dcMpIncludeDismantle, setDcMpIncludeDismantle, dcMpCalcOpen, setDcMpCalcOpen, dcFloralCalcOpen, setDcFloralCalcOpen, dcCollapsedZones, setDcCollapsedZones,
     floralHardPropMap, setFloralHardPropMap, softHolds, setSoftHolds, trussAlloc, setTrussAlloc, dcAmendDiff, setDcAmendDiff, dcSavingDraft, setDcSavingDraft,

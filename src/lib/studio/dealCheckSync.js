@@ -206,7 +206,7 @@ export function revertSplitToSingle(zoneElements, zoneKey, groupId, identity) {
  * @param {Array}  inventoryCache  dcInventoryCache — only needed to name a split's new entries
  * @param {Function} parseCardKey  the same parser DealCheckOverlay.jsx already uses (ctx-provided)
  * @param {boolean} manualItemsReady  true once dcManualItems is confirmed restored/reset for the
- *   client THIS zoneElements belongs to (see StudioApp.jsx's dcManualItemsReadyRef). manualItemsForFn
+ *   client THIS zoneElements belongs to (see StudioApp.jsx's dcStateReadyForClientRef). manualItemsForFn
  *   is a plain array either way — "Deal Check hasn't restored its manual-item list yet" and "the
  *   user deleted every manual item" are otherwise indistinguishable (both produce []), and pruning
  *   is destructive (unlike the additive add-pass above), so the prune below only ever runs once this

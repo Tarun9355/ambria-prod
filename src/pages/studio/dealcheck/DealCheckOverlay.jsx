@@ -181,7 +181,7 @@ export default function DealCheckOverlay({ ctx }) {
     // "Set as correct match for this photo" control. That control is gone, and nothing else in
     // this file read them — re-add all three if the teach action comes back.
     dcDesiredMargin, setDcDesiredMargin, closeDealCheck,
-    dcSaveBaselineRef, dcConflictWarnedAtRef, flushDcAutosaveRef, dcManualItemsReadyRef,
+    dcSaveBaselineRef, dcConflictWarnedAtRef, flushDcAutosaveRef, dcStateReadyForClientRef,
     dcZoneState, dcMpOverrides, dcMpWinCount, dcMpIncludeMinusOne, dcMpIncludeDismantle,
     setDcResolved, setDcCards, setDcZoneState, setDcPhotoOverrides, setDcSkipped, setDcProductionAccepted,
     dealCheckData, imsPaletteCatalogue, softHolds, imsPrintMaterials, imsCarpetMaterials,
@@ -444,10 +444,10 @@ export default function DealCheckOverlay({ ctx }) {
     // when there's no such mismatch, i.e. when it equals activeFnIdxCommitted.
     const isActiveFn = fnIdx === activeFnIdxCommitted;
     const currentZE = isActiveFn ? zoneElements : (fnBuilds[fnIdx]?.zoneElements || {});
-    // See dcManualItemsReadyRef's own comment (StudioApp.jsx) — this effect can (and does) fire
-    // before openDealCheck has restored dcManualItems for activeClientId, so the destructive
+    // See dcStateReadyForClientRef's own comment (StudioApp.jsx) — this effect can (and does) fire
+    // before openDealCheck has reset-or-restored dcManualItems for activeClientId, so the destructive
     // stale-manual-item prune must stay off until the ref confirms it's actually caught up.
-    const manualItemsReady = dcManualItemsReadyRef?.current === activeClientId;
+    const manualItemsReady = dcStateReadyForClientRef?.current === activeClientId;
     const next = reconcileDealCheckIntoBuild(currentZE, dcCards[fnIdx], dcKitEdits[fnIdx], dcManualItems.filter(m => m.fnIdx === fnIdx), dcInventoryCache, parseCardKey, manualItemsReady);
     if (next === currentZE) return;
     if (isActiveFn) setZoneElements(next);
