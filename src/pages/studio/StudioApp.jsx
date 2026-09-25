@@ -1610,13 +1610,10 @@ export default function StudioApp() {
   // even just to see what shows up — got captured by the very next autosave and silently
   // overwrote the client's real name/phone with whatever partial text was sitting in the box.
   const loadedClientIdentityRef = useRef({ name: "", phone: "" });
-  const confirmClientRename = useCallback(() => {
-    loadedClientIdentityRef.current = { name: clientName.trim(), phone: clientPhone.trim() };
-  }, [clientName, clientPhone]);
-  const revertClientNameEdit = useCallback(() => {
-    setClientName(loadedClientIdentityRef.current.name);
-    setClientPhone(loadedClientIdentityRef.current.phone);
-  }, []);
+  // confirmClientRename/revertClientNameEdit are declared further down (right after autoSaveBuild),
+  // not here — confirming a rename needs to force an immediate save (see its own comment there),
+  // which needs autoSaveBuild to already exist as a real binding, not just a same-named forward
+  // reference resolved at call time.
   // Remember the active deal pointer + screen across a refresh / Studio↔IMS route switch (per-tab). The
   // build data itself lives in the client's rolling auto-session; these just say WHICH deal + WHERE to
   // restore on mount (see the restore effect after loadClientSession).
@@ -7417,6 +7414,22 @@ export default function StudioApp() {
         if (cli?.status === "booked") runDealCheckGenerateRef.current?.(null, { skipAi: true, silent: true }).catch(() => {});
       } catch { /* ignore */ }
     }
+  }, []);
+  // Confirming a rename un-blocks saveSession's pendingUnconfirmedIdentity guard (it only updates
+  // loadedClientIdentityRef — see its own declaration, back near clientName/clientPhone's state) but
+  // that alone changes no React state, so nothing else here would necessarily re-trigger the
+  // debounced-edit effect afterward. Left at that, the rename only actually reached the database on
+  // WHATEVER save happened to fire next for some other reason — if the visit ended there (Event Info
+  // was the only thing touched), it never did. The confirm banner disappears the instant the ref
+  // matches again, which reads as "saved", so this was silently losing renames while looking
+  // successful. Force an immediate real save, same as Production/Buying items already do just below.
+  const confirmClientRename = useCallback(() => {
+    loadedClientIdentityRef.current = { name: clientName.trim(), phone: clientPhone.trim() };
+    setTimeout(() => autoSaveBuild({ edited: true }), 0);
+  }, [clientName, clientPhone, autoSaveBuild]);
+  const revertClientNameEdit = useCallback(() => {
+    setClientName(loadedClientIdentityRef.current.name);
+    setClientPhone(loadedClientIdentityRef.current.phone);
   }, []);
   // Production/Buying items (dcCustomItems) get an instant save on top of the normal 1.5s debounce —
   // owner decision, after "add one, refresh shortly after, it's gone" kept resurfacing even with the
