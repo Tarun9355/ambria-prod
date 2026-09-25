@@ -1,10 +1,11 @@
 import { useState, useMemo, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { fmt } from "../../lib/format";
 import { mpDayWise, mpBaseDay, mpEffDay, mpEffWindows, mpLineCost, mpDayCost, isLiveEventOrder } from "../../lib/ims/helpers";
 import { uploadAudioToStorage } from "../../lib/storage";
 import { DEPTS as SHARED_DEPTS, catToDept as sharedCatToDept, userDepartments } from "../../lib/ims/deptClassify";
 import ManpowerFactorPills from "../../components/shared/ManpowerFactorPills.jsx";
-import { TabsMenu } from "../../components/ui";
+import { TabsMenu, useConfirm } from "../../components/ui";
 import { hasIMSPerm } from "../../lib/ims/constants";
 
 // ── THE SUMMARY TILE ROW ──
@@ -51,7 +52,7 @@ function crewIcon(type) {
    three share the row equally instead, because fixed columns plus a name do not fit 390px. */
 const StatCell = ({ label, w, children }) => (
   <div className={"flex-1 sm:flex-none text-right " + w}>
-    <div className="text-[9px] font-bold uppercase tracking-[0.08em] text-gray-400 leading-none">{label}</div>
+    <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400 leading-none">{label}</div>
     <div className="mt-1">{children}</div>
   </div>
 );
@@ -147,14 +148,64 @@ function VoiceRecorder({ value, onSave, compact = false, label = "voice note" })
     } catch { setErr("mic blocked"); }
   };
   const stop = () => { try { mrRef.current?.stop(); } catch {} setRec(false); };
-  if (busy) return <span className="text-[10px] text-gray-400 whitespace-nowrap">⏳ saving…</span>;
+  // Elapsed time while recording, so the button says how long you have been talking rather than
+  // just pulsing.
+  const [secs, setSecs] = useState(0);
+  useEffect(() => {
+    if (!rec) return undefined;
+    setSecs(0);
+    const t = setInterval(() => setSecs(s => s + 1), 1000);
+    return () => clearInterval(t);
+  }, [rec]);
+  const clock = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
+
+  // ── A LABELLED BUTTON, DRAWN ICONS ──
+  // Was a 🎤 emoji in a blue-outlined pill with no text in compact mode: the emoji renders
+  // differently on every platform and, unlabelled, nothing said what it did. Now one 28px button
+  // with a stroked icon and a word, in the same neutral style as the other secondary buttons, with
+  // a distinct look per state — idle, recording (red, with a timer), saving, saved.
+  const base = "h-7 inline-flex items-center gap-1.5 px-2.5 rounded-lg text-[11px] font-semibold whitespace-nowrap transition-colors";
+  const Mic = (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <rect x="5.5" y="1.75" width="5" height="8" rx="2.5" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M3 7.5a5 5 0 0 0 10 0M8 12.5v1.75" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+  if (busy) return (
+    <span className={base + " text-gray-500 bg-gray-50"}>
+      <span aria-hidden="true" className="w-3 h-3 rounded-full border-2 border-gray-300 border-t-blue-600 animate-spin" />
+      Saving…
+    </span>
+  );
   return (
-    <span className="inline-flex items-center gap-1">
-      {value && !rec && !compact && <audio src={value} controls className="h-6 max-w-[130px]" />}
-      {rec
-        ? <button onClick={stop} className="text-[10px] font-semibold text-white bg-red-600 rounded-full px-2 py-1 animate-pulse whitespace-nowrap">⏹ stop</button>
-        : <button onClick={start} className={"text-[10px] font-semibold rounded-full px-2 py-1 border whitespace-nowrap " + (value ? "text-emerald-700 border-emerald-200 bg-emerald-50 hover:bg-emerald-100" : "text-blue-600 border-blue-200 hover:bg-blue-50")} title={value ? "re-record " + label : "record " + label}>🎤 {value ? "✓" : (compact ? "" : label)}</button>}
-      {err && <span className="text-[10px] text-red-500">{err}</span>}
+    <span className="inline-flex items-center gap-1.5">
+      {value && !rec && !compact && <audio src={value} controls className="h-7 max-w-[130px]" />}
+      {rec ? (
+        <button type="button" onClick={stop} className={base + " bg-red-50 text-red-700 ring-1 ring-red-200 hover:bg-red-100"} aria-label={`Stop recording ${label}`}>
+          <span aria-hidden="true" className="w-2 h-2 rounded-full bg-red-600 animate-pulse" />
+          <span className="tabular-nums">{clock}</span>
+          <span className="text-red-400">·</span> Stop
+        </button>
+      ) : value ? (
+        <button type="button" onClick={start} className={base + " bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-100"} title={`Re-record ${label}`}>
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M3 8.5l3.25 3.25L13 5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          Note added
+        </button>
+      ) : (
+        <button type="button" onClick={start} className={base + " bg-white text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50 hover:text-gray-900"} title={`Record ${label}`}>
+          {Mic}
+          Voice note
+        </button>
+      )}
+      {/* Said in words, with the fix on hover: "mic blocked" alone left people guessing. */}
+      {err && (
+        <span className="text-[10px] font-medium text-red-600"
+          title={err === "mic blocked" ? "Allow microphone access for this site in the browser settings. Phones only allow it on https:// pages." : undefined}>
+          {err === "mic blocked" ? "Mic not allowed" : err === "no mic" ? "No mic on this device" : "Upload failed"}
+        </span>
+      )}
     </span>
   );
 }
@@ -187,7 +238,7 @@ const DEFAULT_TOOLS = {
   Furniture: ["Trolley", "Covers", "Cleaning cloth", "Cushion spares"],
 };
 
-export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventory, setInventory, blocks, settings, setSettings, trussInv, setTrussInv, authUser, amendRequests, focusEventId, focusSearch, focusLeadEntry, onFocusHandled, onGoToCalendar }) {
+export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEventOrders, inventory, setInventory, blocks, settings, setSettings, trussInv, setTrussInv, authUser, amendRequests, focusEventId, focusSearch, focusLeadEntry, onFocusHandled, onGoToCalendar }) {
   const catDeptCfg = (settings && settings.categoryDepartments && typeof settings.categoryDepartments === "object") ? settings.categoryDepartments : {};
   const catToDept = (cat) => sharedCatToDept(cat, catDeptCfg);
   const dihari = settings?.dihariSchemes || {};
@@ -243,6 +294,8 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   // line of plain text per row. position:fixed with measured coordinates because this card sets
   // overflow-hidden, which would clip an absolutely-positioned menu. Same approach FlowerPicker
   // in components/ui already uses for the same reason.
+  // In-app confirmation instead of window.confirm — see useConfirm in components/ui.
+  const [confirm, confirmDialog] = useConfirm();
   const [siteMenu, setSiteMenu] = useState(false);
   const siteBtnRef = useRef(null);
   const [siteMenuPos, setSiteMenuPos] = useState({ top: 0, left: 0, width: 0 });
@@ -250,7 +303,15 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
     if (!siteMenu) return undefined;
     const place = () => {
       const r = siteBtnRef.current?.getBoundingClientRect();
-      if (r) setSiteMenuPos({ top: r.bottom + 6, left: r.left, width: Math.max(r.width, 280) });
+      if (!r) return;
+      // Held inside the viewport. Anchored at the button's left edge at 280px, the menu ran off
+      // the right of a phone screen whenever the button sat past the middle — cutting off the
+      // same-day / ±days badge, which is the part you pick a site by.
+      const gap = 12;
+      const vw = document.documentElement.clientWidth;
+      const width = Math.min(Math.max(r.width, 280), vw - gap * 2);
+      const left = Math.max(gap, Math.min(r.left, vw - width - gap));
+      setSiteMenuPos({ top: r.bottom + 6, left, width });
     };
     place();
     const onDown = (e) => { if (!siteBtnRef.current?.parentElement?.contains(e.target)) setSiteMenu(false); };
@@ -287,8 +348,12 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   // happened. Same DOM either way; only these three class strings differ, so a block never has to
   // be moved or re-parented to change which form it takes.
   const PANEL_WRAP = "fixed inset-0 z-50 flex items-end bg-gray-900/40 sm:static sm:z-auto sm:block sm:bg-transparent";
-  const PANEL_CARD = "w-full max-h-[88vh] flex flex-col rounded-t-2xl bg-gray-50 ring-1 ring-gray-200 overflow-hidden sm:max-h-none sm:block sm:rounded-2xl";
-  const PANEL_BODY = "flex-1 min-h-0 overflow-y-auto overscroll-contain p-3 space-y-3 sm:flex-none sm:overflow-visible sm:p-4";
+  // On a phone the close button floats just above the sheet, on the dimmed backdrop, instead of
+  // taking a row inside it — that row was ~40px of empty sheet above the content. So the card is
+  // `relative` and not overflow-hidden below sm (the button sits outside its box); the body
+  // takes the rounded top and clips its own scroll instead. From sm the bar is back inside.
+  const PANEL_CARD = "relative w-full max-h-[85vh] flex flex-col rounded-t-2xl bg-gray-50 ring-1 ring-gray-200 sm:max-h-none sm:block sm:rounded-2xl sm:overflow-hidden";
+  const PANEL_BODY = "flex-1 min-h-0 overflow-y-auto overscroll-contain rounded-t-2xl p-3 space-y-3 sm:rounded-none sm:flex-none sm:overflow-visible sm:p-4";
   // Tapping the dimmed area closes, the way every sheet on the platform does. Guarded on the
   // phone breakpoint: from sm up this same element is the plain inline wrapper, and a click that
   // lands on it rather than on a child would otherwise shut the panel for no visible reason.
@@ -325,6 +390,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   const [manCond, setManCond] = useState({}); // on-site condition per manifest item: {[groupKey::itemKey]:{repair,broken}}
   const [manNote, setManNote] = useState({}); // on-site voice note per manifest item: {[groupKey::itemKey]:url}
   const [manOpen, setManOpen] = useState({}); // Loading-manifest destination groups: collapsed by default
+  const [manIssue, setManIssue] = useState({}); // manifest items whose Repair / Broken / note fields are opened: {[groupKey::itemKey]:true}
   const [osMp, setOsMp] = useState({}); // on-site crew rows expanded to the per-day / per-shift editor
   const [showFleet, setShowFleet] = useState(false); // toggle the own-fleet manager
   const [newVeh, setNewVeh] = useState({ vehicle: "", driver: "", phone: "" }); // new fleet entry
@@ -834,12 +900,16 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   const confirmAllPlanned = () => logMovements(buildPlannedMovements(blockedItems));
   // TESTING: wipe the dept-head plan + all on-site movements for this dept/event so the split flow can
   // be re-tried without making a new client. Restores stock for any "broken" write-offs first.
-  const resetDismantle = () => {
+  const resetDismantle = async () => {
     if (!sel) return;
-    if (!window.confirm(`Reset the dismantle plan AND all on-site movements for ${sel.clientName || "this event"} · ${dept}? (for testing)`)) return;
+    if (!(await confirm({
+      title: "Reset dismantle plan?",
+      body: "Clears the plan, sites and on-site movements.",
+      confirmLabel: "Reset",
+    }))) return;
     movements.filter(m => m.type === "damage").forEach(m => adjustInventory(m.invId, +(Number(m.qty) || 0)));
     saveDept({ dismantlePlan: {}, movements: [], dismantleSites: [] });
-    setManTruck({}); setManSel({}); setManCond({}); setRouteDraft({});
+    setManTruck({}); setManSel({}); setManCond({}); setManIssue({}); setRouteDraft({});
   };
   // Destination-grouped manifest: everything going to each place (warehouse / repair / broken / each
   // transfer site) as its own list with item qtys — so ops loads per destination, not per item.
@@ -1168,7 +1238,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
     const moneyBlock = `
       <div class="cards">
         <div class="card hi"><div class="k">Total income</div><div class="v">${money(income.liveTotal)}</div><div class="s">What ${esc(dept)} earns · synced from Deal Check</div></div>
-        <div class="card"><div class="k">Discount to salesperson</div><div class="v ${discountNum ? "" : "muted"}">${discountNum ? money(discountNum) : "—"}</div><div class="s">Manual — set by the ${esc(dept)} head</div></div>
+        <div class="card"><div class="k">Sales discount</div><div class="v ${discountNum ? "" : "muted"}">${discountNum ? money(discountNum) : "—"}</div><div class="s">Manual — set by the ${esc(dept)} head</div></div>
         <div class="card"><div class="k">Actual cost logged</div><div class="v ${hasActuals ? "" : "muted"}">${hasActuals ? money(actualCost) : "—"}</div><div class="s">${hasActuals ? "What you actually spent" : "Not logged yet"}</div></div>
         <div class="card ${netAmount < 0 ? "neg" : "pos"}"><div class="k">Net</div><div class="v">${money(netAmount)}</div><div class="s">Income − discount − actual cost${hasActuals ? "" : " (cost not logged yet)"}</div></div>
       </div>
@@ -1435,8 +1505,12 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
   // strip that existed only to hold them. The header renders in both views, sits outside the
   // planning-only block (so On-site keeps its way back to Planning), travels with the event
   // these controls scope, and had an empty right half since the toggle last moved out of it.
-  const viewControls = sel ? (
-  <div className="flex items-center gap-2 shrink-0">
+  // Split in two so a phone can place them apart: the bell and PDF icons ride the title row's
+  // top-right corner, and the Planning / On-site switch gets a full-width row of its own. Wrapped
+  // together as one group they broke onto a second line in no particular order, which is most
+  // of what made the header read as cluttered. From sm they sit side by side again.
+  const actionIcons = sel ? (
+  <div className="flex items-center gap-1.5 shrink-0">
     {/* ── ACTIVITY BEHIND A BELL ──
         The log was a permanent panel between the header and the content, so an
         event with two edits pushed the whole page down to say so — every time, even
@@ -1479,6 +1553,10 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
         {exporting ? "Building the PDF…" : `Download ${dept} as PDF`}
       </span>
     </button>
+  </div>
+  ) : null;
+  const viewSwitch = sel ? (
+  <div className="grid grid-cols-2 gap-2 flex-1 sm:flex sm:flex-none sm:items-center">
     {/* It briefly lived on the department row above — which does render in both views,
         but that row scrolls off the top the moment you start reading, and the switch
         was gone exactly when you wanted it. */}
@@ -1496,11 +1574,16 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
       const on = opsView === k;
       return (
         <button key={k} onClick={() => setOpsView(k)} aria-pressed={on}
-          className={"shrink-0 h-7 inline-flex items-center gap-1.5 px-2.5 rounded-lg text-[12px] font-semibold transition-colors "
+          /* cursor-pointer is explicit: Tailwind v4 dropped the pointer cursor from buttons, so
+             without it these gave no sign of being clickable even with a hover colour. The
+             inactive tag previews the active one on hover (a soft blue wash and a blue icon),
+             so the hover says where the click will take you; the active one only deepens a
+             step, since clicking it does nothing new. */
+          className={"group shrink-0 h-7 inline-flex items-center justify-center gap-1.5 px-2.5 rounded-lg text-[12px] font-semibold cursor-pointer transition-colors "
             + (on
-              ? "bg-blue-100 text-blue-700 ring-1 ring-blue-200"
-              : "text-gray-500 hover:text-gray-900 hover:bg-gray-100")}>
-          <span className={on ? "text-blue-600" : "text-gray-400"}><Icon s={13} /></span>
+              ? "bg-blue-100 text-blue-700 ring-1 ring-blue-200 hover:bg-blue-200/70"
+              : "bg-gray-50 sm:bg-transparent text-gray-500 hover:bg-blue-50 hover:text-blue-700 hover:ring-1 hover:ring-blue-100")}>
+          <span className={"transition-colors " + (on ? "text-blue-600" : "text-gray-400 group-hover:text-blue-500")}><Icon s={13} /></span>
           {label}
         </button>
       );
@@ -1525,7 +1608,10 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
        simply stopped short of the space it had.
        Still capped rather than full-width: the IMS shell is left-aligned and unbounded, and past
        ~1600px the wide tables turn into strips with their content pinned to both far edges. */
-    <div className="space-y-4 xl:max-w-[1600px]">
+    /* font-body on the whole tab, not just the event header card: with it on one card only,
+       everything else fell back to the system font, so the page mixed two sans faces. */
+    <div className="font-body antialiased space-y-4 xl:max-w-[1600px]">
+      {confirmDialog}
       {/* ── DEPARTMENT PICKER ──
           Was a <select> buried at the top of the left rail. A dropdown hides its options until
           you open it, so the one thing that scopes this entire page — every figure, every tile,
@@ -1538,7 +1624,19 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
           The switch lives HERE rather than in the income panel, because that panel only renders
           in Planning view — putting the switch inside it would leave On-site with no way back.
           This row renders in both. */}
-      <div className="flex items-center justify-between gap-3 flex-wrap">
+      {/* With a slot from PlanningTab, the phone picker is portalled into the section picker's
+          row (see pickerSlot below) and this row is desktop-only; hidden rather than left empty,
+          or its space-y gap would still open a blank band above the event. Without a slot it
+          falls back to the old pulled-up placement. */}
+      {pickerSlot && createPortal(
+        <div className="sm:hidden">
+          {roleDept && !isAdmin
+            ? <span className="inline-flex px-3 py-2 rounded-xl bg-blue-50 text-blue-700 text-[13px] font-semibold whitespace-nowrap">{DEPT_ICON[roleDept]} {roleDept}</span>
+            : <TabsMenu tabs={deptOptions.map(d => ({ id: d, label: `${DEPT_ICON[d]} ${d}` }))} active={dept} onChange={setDept} tone="accent" />}
+        </div>,
+        pickerSlot
+      )}
+      <div className={(pickerSlot ? "hidden sm:flex" : "flex") + " items-center justify-between gap-3 flex-wrap"}>
       {/* w-fit so the bar ends where the last department does. As a block element it stretched
           the full measure, leaving most of it empty white — a panel the width of the page reads
           as a section header rather than as the control it is.
@@ -1564,7 +1662,7 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
           {/* The eyebrow earns its place beside a row of chips, where the row needs naming. Beside
               a dropdown that already reads "🛋 Furniture" it is just a second label for the same
               thing, so it drops out on phone. */}
-          <span className="hidden sm:inline shrink-0 text-[9px] font-bold uppercase tracking-[0.08em] text-gray-400 pr-1.5">Department</span>
+          <span className="hidden sm:inline shrink-0 text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400 pr-1.5">Department</span>
           {/* ── PHONE: THE SAME MENU THE SUB-TABS USE ──
               Eight chips on one scrolling line showed three, and the other five gave no sign
               they existed — a horizontal scroller with no visible edge reads as the whole list.
@@ -1674,7 +1772,7 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                 <div className="bg-white rounded-2xl shadow-[0_1px_2px_rgba(16,24,40,0.07),0_4px_12px_-4px_rgba(16,24,40,0.12)] overflow-hidden">
                   <div className="px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
                     <div className="min-w-0">
-                      <div className="text-[10px] font-bold uppercase tracking-[0.08em] text-gray-400">Pick an event to plan</div>
+                      <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">Pick an event to plan</div>
                       <h3 className="mt-0.5 text-base font-bold text-gray-900 tracking-tight">{first.toLocaleDateString("en-IN", { month: "long", year: "numeric" })}</h3>
                       <div className="text-[11px] text-gray-500 mt-0.5">{monthTotal} sold event{monthTotal === 1 ? "" : "s"} this month · {DEPT_ICON[dept]} {dept}</div>
                     </div>
@@ -1833,8 +1931,12 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                 font-body puts Inter on the card's running text; the title takes Playfair from
                 font-display below. Scoped to this card and not to `body`, because Studio has its
                 own typography and is not part of this system. */}
-            <div className="font-body bg-white rounded-2xl shadow-[0_1px_2px_rgba(16,24,40,0.04),0_8px_24px_-12px_rgba(16,24,40,0.2)] px-3 py-2.5 flex items-center justify-between flex-wrap gap-x-2 gap-y-1.5">
-              <div className="flex items-center gap-2 min-w-0">
+            {/* ── TWO ROWS ON A PHONE ──
+                Row one is the event: back, title block, and the bell / PDF icons in its corner.
+                Row two, under a hairline, is the Planning / On-site switch at full width. From sm
+                it is one row again with every control at the right end. */}
+            <div className="font-body bg-white rounded-2xl shadow-[0_1px_2px_rgba(16,24,40,0.04),0_8px_24px_-12px_rgba(16,24,40,0.2)] px-3 py-2.5 sm:flex sm:items-center sm:justify-between sm:gap-2">
+              <div className="flex items-start sm:items-center gap-2.5 sm:gap-2 min-w-0">
                 {/* ── THE WAY BACK ──
                     Picking an event on the calendar replaces it with this header, and there was
                     no route back — the calendar only renders while nothing is selected, so the
@@ -1855,8 +1957,10 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                     instead. Blue rather than grey also separates it from the back button
                     beside it, which is now white: two grey squares side by side read as a
                     pair of buttons, and only one of them is one. */}
-                <span aria-hidden="true" className="shrink-0 w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center text-[15px] leading-none">{DEPT_ICON[dept]}</span>
-                <div className="min-w-0">
+                {/* Hidden on a phone: the title already names the department, and at that width
+                    a second square beside the back button read as two buttons. */}
+                <span aria-hidden="true" className="hidden sm:flex shrink-0 w-8 h-8 rounded-lg bg-blue-100 items-center justify-center text-[15px] leading-none">{DEPT_ICON[dept]}</span>
+                <div className="min-w-0 flex-1">
                   {/* ── TEXT ELEMENTS (design system §8) ──
                       Playfair SemiBold for the title, Inter Regular for the line under it — the
                       system's one typographic rule, serif for what names the thing and sans for
@@ -1868,7 +1972,11 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                       also carries more weight per pixel than the sans it replaced, so 16px here
                       is not smaller than the 15px plain title it started as. Full spec sizes
                       from sm up, where there is room for them. */}
-                  <div className="font-display text-[16px] sm:text-[22px] font-semibold text-gray-900 leading-tight sm:leading-snug truncate">{dept} — {sel.clientName || "Event"}</div>
+                  {/* Inter, not Playfair. The serif was the only one on the page, set beside an
+                      Inter card and system-font content, so the header read as a third typeface
+                      rather than as a title. One face at a heavier weight and slightly tighter
+                      tracking does the same job. */}
+                  <div className="text-[16px] sm:text-[20px] font-semibold tracking-[-0.01em] text-gray-900 leading-tight sm:leading-snug truncate">{dept} — {sel.clientName || "Event"}</div>
                   {/* Wraps to a second line on a phone rather than truncating. Three facts are
                       joined here — date, venue, who touched it last — and a single line at 390px
                       always cut the third one mid-name, which is the one piece you would be
@@ -1882,8 +1990,8 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                       number Studio does, but only Studio can fold it into the deal value (Apply button
                       on the Summary hero) — this view has no action for it. */}
                   {sel.dealValue && (
-                    <div className="text-xs mt-1 flex items-center gap-2 flex-wrap">
-                      <span className="font-semibold text-gray-700">💰 Deal value: ₹{Number(sel.dealValue.amount || 0).toLocaleString("en-IN")}</span>
+                    <div className="text-xs mt-0.5 flex items-center gap-2 flex-wrap">
+                      <span className="text-gray-500">Deal value <span className="font-semibold text-gray-900 tabular-nums">₹{Number(sel.dealValue.amount || 0).toLocaleString("en-IN")}</span></span>
                       {!!sel.dealValue.pending && (
                         <span className={"font-bold px-1.5 py-0.5 rounded text-[11px] " + (sel.dealValue.pending > 0 ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700")}>
                           {sel.dealValue.pending > 0 ? "+" : ""}₹{Number(sel.dealValue.pending).toLocaleString("en-IN")} pending (not yet applied in Studio)
@@ -1892,8 +2000,12 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                     </div>
                   )}
                 </div>
+                <div className="sm:hidden">{actionIcons}</div>
               </div>
-              {viewControls}
+              <div className="mt-2 pt-2 border-t border-gray-100 flex items-center gap-2 sm:mt-0 sm:pt-0 sm:border-0 sm:shrink-0">
+                <div className="hidden sm:block">{actionIcons}</div>
+                {viewSwitch}
+              </div>
             </div>
 
             {/* Recent changes — a salesperson can now add/remove/change items on a sold deal at any
@@ -1905,14 +2017,26 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
               const shown = recentChanges;
               if (!logOpen || !shown.length) return null;
               return (
-                <div className="fixed inset-0 z-50 flex items-stretch sm:items-center justify-center sm:p-6">
+                /* ── A SHEET THAT FITS ITS CONTENT ──
+                   On a phone this was a full-screen white page, so one entry sat at the top of
+                   an empty screen. Now it is a bottom sheet like the Planning / On-site panels:
+                   as tall as the log, up to 85% of the screen, then it scrolls. */
+                <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-6">
                   <div className="absolute inset-0 bg-gray-900/50" onClick={() => setLogOpen(false)} />
-                  <div role="dialog" aria-modal="true" className="relative w-full sm:max-w-2xl bg-white sm:rounded-2xl shadow-2xl overflow-y-auto max-h-full sm:max-h-[80vh]">
-                  <div className="sticky top-0 z-10 bg-white px-4 py-3 flex items-center gap-2">
-                    <span aria-hidden="true" className="shrink-0 w-9 h-9 rounded-lg bg-amber-100 flex items-center justify-center text-base leading-none">🕑</span>
+                  <div role="dialog" aria-modal="true" aria-label="Activity log"
+                    className="relative w-full sm:max-w-xl bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl flex flex-col max-h-[85vh] sm:max-h-[80vh]">
+                  {/* Grab handle: the platform's mark for "this is a sheet, swipe or tap out". */}
+                  <div aria-hidden="true" className="sm:hidden pt-2 flex justify-center"><span className="w-9 h-1 rounded-full bg-gray-200" /></div>
+                  <div className="shrink-0 px-4 pt-3 pb-3 flex items-center gap-3 border-b border-gray-100">
                     <div className="min-w-0 flex-1">
-                      <div className="text-sm font-semibold text-gray-900">Activity log</div>
-                      <div className="text-[11px] text-gray-500">Read-only · written from Studio · {dept} · {sel.clientName || "Event"}</div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[15px] font-semibold text-gray-900">Activity log</span>
+                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-gray-100 text-gray-500 tabular-nums">{shown.length}</span>
+                      </div>
+                      {/* One short line. The old subtitle restated the department and client the
+                          page header already names, and "Read-only" is evident: there is nothing
+                          here to edit. */}
+                      <div className="mt-0.5 text-xs text-gray-500">Changes made in Studio</div>
                     </div>
                     <button onClick={() => setLogOpen(false)} aria-label="Close"
                       className="group shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-red-600 hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400 transition-colors">
@@ -1925,12 +2049,12 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                     </svg>
                   </button>
                   </div>
-                  <div className="px-4 py-3">
+                  <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
                   {/* A timeline, not a paragraph list. Each entry is one edit at one time, and a
                       dot with a connecting rule says that at a glance — the previous version ran
                       the author, the change and the timestamp together as prose, so telling two
                       entries apart meant reading both in full. */}
-                  <div className="">
+                  <div className="divide-y divide-gray-100">
                     {shown.map(r => {
                       /* ── THE VERB IS SAID ONCE, NOT PER ITEM ──
                          This was one run-on sentence that repeated the verb for every item:
@@ -1941,9 +2065,9 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                          three verbs get their own colour and their own mark — added, removed and
                          qty-changed are genuinely different events. */
                       const VERB = {
-                        added: { label: "Added", mark: "+", tile: "bg-emerald-100 text-emerald-700", item: "bg-white border-emerald-200 text-emerald-900" },
-                        removed: { label: "Removed", mark: "−", tile: "bg-rose-100 text-rose-700", item: "bg-white border-rose-200 text-rose-900" },
-                        qty_changed: { label: "Quantity changed", mark: "±", tile: "bg-amber-100 text-amber-700", item: "bg-white border-amber-200 text-amber-900" },
+                        added: { label: "Added", mark: "+", tile: "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200", qty: "text-emerald-700" },
+                        removed: { label: "Removed", mark: "−", tile: "bg-rose-50 text-rose-700 ring-1 ring-rose-200", qty: "text-rose-700" },
+                        qty_changed: { label: "Quantity changed", mark: "±", tile: "bg-amber-50 text-amber-700 ring-1 ring-amber-200", qty: "text-amber-700" },
                       };
                       const groups = {};
                       (r.items || []).forEach(it => {
@@ -1959,26 +2083,35 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                       const count = (r.items || []).length;
                       const stamp = r.requestedAt ? new Date(r.requestedAt).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "";
                       return (
-                        <div key={r.id} className="flex gap-3 py-2.5 first:pt-1">
-                          <span aria-hidden="true" className={"shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-sm font-bold leading-none " + VERB[lead].tile}>{VERB[lead].mark}</span>
+                        <div key={r.id} className="flex gap-3 py-3.5">
+                          <span aria-hidden="true" className={"shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-sm font-semibold leading-none " + VERB[lead].tile}>{VERB[lead].mark}</span>
                           <div className="min-w-0 flex-1">
+                            {/* What happened on the first line; who and when under it. Squeezed
+                                onto one line, the author read as part of the headline. */}
                             <div className="flex items-baseline justify-between gap-3">
-                              <span className="min-w-0 truncate text-xs font-bold text-gray-900">
+                              <span className="min-w-0 truncate text-[13px] font-semibold text-gray-900">
                                 {keys.length === 1 ? `${VERB[lead].label} ${count} item${count === 1 ? "" : "s"}` : `${count} item${count === 1 ? "" : "s"} changed`}
-                                <span className="font-medium text-gray-500"> · {r.requestedBy || "—"}</span>
                               </span>
                               {/* Exact time stays on the title — the shorthand is for scanning,
                                   not a replacement for the record. */}
-                              <span className="shrink-0 text-[10px] font-medium text-gray-400 whitespace-nowrap tabular-nums" title={stamp}>{relTime(r.requestedAt)}</span>
+                              <span className="shrink-0 text-[11px] text-gray-400 whitespace-nowrap tabular-nums" title={stamp}>{relTime(r.requestedAt)}</span>
                             </div>
+                            <div className="mt-0.5 text-xs text-gray-500">by {r.requestedBy || "—"}</div>
+                            {/* ── A LIST, NOT CHIPS ──
+                                Outlined green chips wrapped into a ragged block with the quantity
+                                buried at the end of each name. One row per item — name left, qty
+                                right-aligned in a column — scans like the inventory it is. */}
                             {keys.map(k => (
-                              <div key={k} className="mt-1.5 flex items-start gap-1.5 flex-wrap">
-                                {keys.length > 1 && <span className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-gray-400 pt-0.5">{VERB[k].label}</span>}
-                                {groups[k].map((it, ii) => (
-                                  <span key={ii} className={"text-[11px] px-2 py-0.5 rounded border " + VERB[k].item}>
-                                    {it.name}{it.qty ? <span className="font-semibold tabular-nums"> ×{it.qty}</span> : null}
-                                  </span>
-                                ))}
+                              <div key={k} className="mt-2.5">
+                                {keys.length > 1 && <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">{VERB[k].label}</div>}
+                                <div className="rounded-lg bg-gray-50 divide-y divide-gray-100">
+                                  {groups[k].map((it, ii) => (
+                                    <div key={ii} className="flex items-center justify-between gap-3 px-3 py-2">
+                                      <span className="min-w-0 truncate text-xs text-gray-700" title={it.name}>{it.name}</span>
+                                      {it.qty ? <span className={"shrink-0 text-xs font-semibold tabular-nums " + VERB[k].qty}>×{it.qty}</span> : null}
+                                    </div>
+                                  ))}
+                                </div>
                               </div>
                             ))}
                           </div>
@@ -2029,40 +2162,40 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                       with the snapshot crew swapped for the live crew plan. They differed only by
                       however much the crew had been edited since the sync — on an untouched deal,
                       by nothing but rounding.) */}
-                  {/* flex-1 min-w-0 below sm, so the pair sits two-up on a phone instead of
-                      stacking: at 210px minimum they could not share a 390px screen and the
-                      comparison — earned against spent — turned into two unrelated figures a
-                      scroll apart. From sm the old minimum is back, which is what keeps them
-                      equally sized whatever the two numbers are. */}
-                  <div className="px-4 py-3 flex items-stretch gap-3 flex-wrap">
+                  {/* A 2×2 grid below sm. With four cards on one flex row at min-w-0, a 390px
+                      screen gave each about 70px, which clipped the figures and stacked the
+                      captions a word per line. Two-up keeps earned beside spent and the figures
+                      whole. From sm it is the flex row again, where the 210px minimum is what
+                      keeps them equally sized whatever the numbers are. */}
+                  <div className="px-3 sm:px-4 py-3 grid grid-cols-2 gap-2.5 sm:flex sm:items-stretch sm:gap-3 sm:flex-wrap">
                     {/* The earned figure is filled, not another grey box. It is the number the
                         whole panel is about and everything below is it taken apart, so it carries
                         the page's one block of colour. Its partner stays grey: two filled cards
                         would be a pair of headlines with nothing to compare them against. */}
-                    <div className="rounded-xl bg-blue-600 px-4 py-3 flex-1 min-w-0 sm:min-w-[210px] shadow-[0_1px_2px_rgba(37,99,235,0.25),0_8px_20px_-10px_rgba(37,99,235,0.75)]">
-                      <div className="text-[9px] font-bold uppercase tracking-[0.08em] text-blue-200">Total income</div>
-                      <div className="mt-1.5 text-[20px] leading-none font-bold text-white tabular-nums tracking-tight">{fmt(liveTotal)}</div>
-                      <div className="mt-1.5 text-[10px] text-blue-100">What {dept} earns · synced from Deal Check</div>
+                    <div className="rounded-xl bg-blue-600 px-3 sm:px-4 py-3.5 flex-1 min-w-0 sm:min-w-[210px] shadow-[0_1px_2px_rgba(37,99,235,0.2),0_6px_14px_-8px_rgba(37,99,235,0.5)]">
+                      <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-blue-200">Total income</div>
+                      <div className="mt-2 text-[22px] leading-none font-semibold text-white tabular-nums tracking-tight">{fmt(liveTotal)}</div>
+                      <div className="mt-2 text-[11px] text-blue-100">From Deal Check</div>
                     </div>
                     {/* Not synced from anywhere, unlike its neighbours — a plain manual figure the
                         department head types in themselves. Amber, not grey/blue, so it never looks
                         like another system-derived readout. */}
-                    <div className="rounded-xl bg-amber-50 px-4 py-3 flex-1 min-w-0 sm:min-w-[210px] ring-1 ring-amber-200">
-                      <div className="text-[9px] font-bold uppercase tracking-[0.08em] text-amber-600">Discount to salesperson</div>
-                      <div className="mt-1.5 flex items-center gap-1">
-                        <span className="text-[16px] font-bold text-amber-900">₹</span>
+                    <div className="rounded-xl bg-amber-50 px-3 sm:px-4 py-3.5 flex-1 min-w-0 sm:min-w-[210px] ring-1 ring-amber-200">
+                      <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-amber-600">Sales discount</div>
+                      <div className="mt-2 flex items-center gap-1">
+                        <span className="text-[22px] leading-none font-semibold text-amber-900">₹</span>
                         <input type="number" min="0" value={discount}
                           onChange={e => saveDept({ discount: e.target.value === "" ? "" : Math.max(0, Number(e.target.value) || 0) })}
-                          placeholder="0" className="w-full bg-transparent text-[20px] leading-none font-bold text-amber-900 tabular-nums tracking-tight outline-none" />
+                          placeholder="0" className="w-full bg-transparent text-[22px] leading-none font-semibold text-amber-900 tabular-nums tracking-tight outline-none" />
                       </div>
-                      <div className="mt-1.5 text-[10px] text-amber-700">Manual — set by {dept} head for the salesperson on this deal</div>
+                      <div className="mt-2 text-[11px] text-amber-700">Set by {dept} head</div>
                     </div>
-                    <div className="rounded-xl bg-gray-50 px-4 py-3 flex-1 min-w-0 sm:min-w-[210px]">
-                      <div className="text-[9px] font-bold uppercase tracking-[0.08em] text-gray-400">Actual cost logged</div>
+                    <div className="rounded-xl bg-gray-50 px-3 sm:px-4 py-3.5 flex-1 min-w-0 sm:min-w-[210px] ring-1 ring-gray-200">
+                      <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-500">Actual cost</div>
                       {/* Grey dash until something is logged. A ₹0 here would read as "spent
                           nothing", which is a different claim from "not recorded yet". */}
-                      <div className={"mt-1.5 text-[20px] leading-none font-bold tabular-nums tracking-tight " + (hasActuals ? "text-gray-900" : "text-gray-300")}>{hasActuals ? fmt(actualCost) : "—"}</div>
-                      <div className="mt-1.5 text-[10px] text-gray-500">{hasActuals ? "What you actually spent" : "Not logged yet"}</div>
+                      <div className={"mt-2 text-[22px] leading-none font-semibold tabular-nums tracking-tight " + (hasActuals ? "text-gray-900" : "text-gray-300")}>{hasActuals ? fmt(actualCost) : "—"}</div>
+                      <div className="mt-2 text-[11px] text-gray-500">{hasActuals ? "Actually spent" : "Not logged yet"}</div>
                     </div>
                     {/* Net = income − discount − actual cost. The bottom line the first three cards
                         add up to, so it gets its own colour rather than sharing grey/amber with a
@@ -2072,10 +2205,10 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                       const netAmount = liveTotal - (Number(discount) || 0) - (hasActuals ? actualCost : 0);
                       const neg = netAmount < 0;
                       return (
-                        <div className={"rounded-xl px-4 py-3 flex-1 min-w-0 sm:min-w-[210px] ring-1 " + (neg ? "bg-red-50 ring-red-200" : "bg-emerald-50 ring-emerald-200")}>
-                          <div className={"text-[9px] font-bold uppercase tracking-[0.08em] " + (neg ? "text-red-600" : "text-emerald-600")}>Net</div>
-                          <div className={"mt-1.5 text-[20px] leading-none font-bold tabular-nums tracking-tight " + (neg ? "text-red-900" : "text-emerald-900")}>{fmt(netAmount)}</div>
-                          <div className={"mt-1.5 text-[10px] " + (neg ? "text-red-700" : "text-emerald-700")}>Income − discount − actual cost{!hasActuals ? " (cost not logged yet)" : ""}</div>
+                        <div className={"rounded-xl px-3 sm:px-4 py-3.5 flex-1 min-w-0 sm:min-w-[210px] ring-1 " + (neg ? "bg-red-50 ring-red-200" : "bg-emerald-50 ring-emerald-200")}>
+                          <div className={"text-[10px] font-semibold uppercase tracking-[0.06em] " + (neg ? "text-red-600" : "text-emerald-600")}>Net</div>
+                          <div className={"mt-2 text-[22px] leading-none font-semibold tabular-nums tracking-tight " + (neg ? "text-red-900" : "text-emerald-900")}>{fmt(netAmount)}</div>
+                          <div className={"mt-2 text-[11px] " + (neg ? "text-red-700" : "text-emerald-700")}>Income − discount − cost</div>
                         </div>
                       );
                     })()}
@@ -2084,7 +2217,7 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                       are the one above taken apart — and nothing on the panel said so, which is
                       the whole reason it needed reading twice. */}
                   <div className="px-4 py-1.5 bg-gray-50 flex items-center justify-between gap-3 flex-wrap">
-                    <span className="text-[9px] font-bold uppercase tracking-[0.08em] text-gray-500">What makes up this total</span>
+                    <span className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-500">What makes up this total</span>
                     <span className="text-[9px] font-semibold text-gray-400 tabular-nums">{shown.length} head{shown.length === 1 ? "" : "s"} · {fmt(shownSum)}</span>
                   </div>
                   {/* gap-px over a grey ground, not divide-x: with divide-x the hairline is drawn
@@ -2117,13 +2250,6 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                         <div className="mt-1 pl-9 text-[9px] font-medium text-gray-400 tabular-nums">{pct(r.value)}% of total</div>
                       </div>
                     ))}
-                  </div>
-                  {/* Came off the P&L panel that used to close the page. It explains where the
-                      "Actual cost logged" figure above goes, so it belongs with it — and without
-                      it, nothing tells ops that what they record here is what the salesperson
-                      sees in Studio. */}
-                  <div className="px-4 py-2 bg-gray-50 text-[10px] text-gray-500">
-                    Actuals you save here flow to the event&apos;s P&amp;L, visible to the salesperson in Studio.
                   </div>
                 </div>
 
@@ -2173,17 +2299,16 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                          glance which of the five the panel below belongs to. */
                       onClickCapture={e => { if (modal === t.k) { e.stopPropagation(); setModal(null); } }}
                       className={"group text-left rounded-xl p-3 sm:p-3.5 h-full flex flex-col transition-all duration-150 shadow-[0_1px_2px_rgba(16,24,40,0.07),0_4px_12px_-4px_rgba(16,24,40,0.12)] hover:-translate-y-0.5 hover:shadow-[0_2px_6px_rgba(16,24,40,0.1),0_14px_28px_-10px_rgba(16,24,40,0.28)] " + (modal === t.k ? "ring-2 ring-blue-500 " : "") + (t.tone || "bg-white")}>
-                      {/* One size at every width now. The phone tile used to be the full column
-                          wide — one per row — so its type was bumped a step to fill it. Two to a
-                          row it is about 170px, narrower than the desktop tile, and the bumped
-                          sizes wrapped every title onto three lines. items-start rather than
-                          centred for the same reason: once a title can wrap, the icon has to
-                          stay level with its first line. */}
-                      <div className="flex items-start gap-2.5">
+                      {/* Icon above the title on a phone, beside it from sm. Two to a row a tile
+                          is ~170px; with a 36px icon beside it the title had ~110px and
+                          "Inventory blocked" broke over two lines. Stacked, the title gets the
+                          tile's full width and every tile reads top-down the same way: mark,
+                          name, detail, figure. */}
+                      <div className="flex flex-col gap-2.5 sm:flex-row sm:items-start">
                         <span aria-hidden="true" className={"shrink-0 w-9 h-9 rounded-lg flex items-center justify-center text-base leading-none " + (t.alert ? "bg-white shadow-[0_1px_2px_rgba(16,24,40,0.08)]" : "bg-gray-100")}>{t.icon}</span>
                         <div className="min-w-0 flex-1">
-                          <div className="text-[13px] font-semibold text-gray-900 leading-tight">{t.title}</div>
-                          <div className="text-[11px] text-gray-500 leading-tight mt-0.5">{t.sub}</div>
+                          <div className="text-[13px] font-semibold text-gray-900 leading-snug">{t.title}</div>
+                          <div className="text-[11px] text-gray-500 leading-snug mt-0.5">{t.sub}</div>
                         </div>
                         {/* gray-300 put this at ~1.5:1 on white — present in the markup, absent
                             on screen. gray-500 is 4.8:1, and it darkens on hover so the chevron
@@ -2194,7 +2319,7 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                       </div>
                       {/* Only tiles that HAVE a headline figure reserve room for one — an empty
                           line on the others would read as a number that failed to load. */}
-                      {t.value && <div className="mt-auto pt-2.5 text-lg font-bold text-gray-900 tabular-nums tracking-tight">{t.value}</div>}
+                      {t.value && <div className="mt-auto pt-3 text-[17px] leading-none font-semibold text-gray-900 tabular-nums tracking-tight">{t.value}</div>}
                     </button>
                   ))}
                 </div>
@@ -2220,10 +2345,9 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                     shut, and Escape still closes it. On a phone it is pinned by the flex column
                     instead — the body scrolls under it — so the close button is always reachable
                     without scrolling a sheet back to the top. */}
-                <div className="shrink-0 bg-white px-4 py-2.5 flex items-center justify-between gap-3">
-                  <div className="min-w-0 text-[13px] font-semibold text-gray-600 truncate">{DEPT_ICON[dept]} {dept} · {sel.clientName || "Event"}</div>
+                <div className="absolute -top-12 right-3 sm:static sm:shrink-0 sm:px-2 sm:pt-2 sm:pb-1 sm:flex sm:items-center sm:justify-end">
                   <button onClick={() => setModal(null)} aria-label="Close"
-                    className="group shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-red-600 hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400 transition-colors">
+                    className="group shrink-0 w-10 h-10 rounded-full bg-white shadow-lg text-gray-600 sm:w-8 sm:h-8 sm:rounded-lg sm:bg-transparent sm:shadow-none sm:text-gray-400 flex items-center justify-center hover:text-red-600 hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400 transition-colors">
                     {/* A drawn cross, not the ✕ character. The glyph is a font fallback away
                        from rendering at the wrong weight or off-centre, and it cannot be given
                        a real stroke width. Grey at rest, red on hover: a permanently red X reads
@@ -2830,15 +2954,16 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
             {/* Dismantle plan — dept head pre-sets where each item goes; ops just confirms on-site */}
             {blockedItems.length > 0 && (
               <div className={"bg-white rounded-xl shadow-[0_1px_2px_rgba(16,24,40,0.06),0_1px_3px_rgba(16,24,40,0.05)] overflow-hidden" + modalCls("dism")}>
-                <div className="px-4 py-3 bg-gray-50 flex items-center justify-between gap-2 flex-wrap">
-                  <div className="flex items-center gap-3 min-w-0">
+                {/* Reset rides on the title row instead of wrapping onto a line of its own under
+                    the description — on a phone that orphaned it at the left, a full row of height
+                    spent on one small button. The description gets the full width under both. */}
+                <div className="px-3 sm:px-4 py-3 bg-gray-50">
+                  <div className="flex items-center gap-3">
                     <span aria-hidden="true" className="shrink-0 w-9 h-9 rounded-lg bg-white shadow-[0_1px_2px_rgba(16,24,40,0.08)] flex items-center justify-center text-base leading-none">🔁</span>
-                    <div className="min-w-0">
-                      <div className="text-[15px] font-semibold text-gray-900">Dismantle plan</div>
-                      <div className="text-xs text-gray-500">Pick the transfer sites, then type how many of each item goes to each; the rest stay for production house.</div>
-                    </div>
+                    <div className="min-w-0 flex-1 text-[15px] font-semibold text-gray-900">Dismantle plan</div>
+                    <button onClick={resetDismantle} className="shrink-0 text-xs font-semibold text-red-600 border border-red-200 bg-red-50 hover:bg-red-100 px-2.5 py-1 rounded-lg whitespace-nowrap" title="Testing: clear this plan + all on-site movements so you can re-test splits">↺ Reset<span className="hidden sm:inline"> (testing)</span></button>
                   </div>
-                  <button onClick={resetDismantle} className="text-xs font-semibold text-red-600 border border-red-200 bg-red-50 hover:bg-red-100 px-3 py-1.5 rounded-lg whitespace-nowrap" title="Testing: clear this plan + all on-site movements so you can re-test splits">↺ Reset (testing)</button>
+                  <div className="mt-1.5 text-xs text-gray-500 leading-relaxed">Pick the transfer sites, then type how many of each item goes to each; the rest stay for production house.</div>
                 </div>
                 {/* ── SITE CHOOSER ──
                     Each site named here becomes a column in the matrix below, which is the thing
@@ -2847,9 +2972,9 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                     it so the row states what it has done rather than just what it is.
                     The sky wash is gone: it tinted a strip across a white card for no reason
                     other than that the sites are sky-coloured elsewhere. */}
-                <div className="px-4 py-2.5 bg-gray-50">
+                <div className="px-3 sm:px-4 pt-0 pb-3 sm:py-2.5 bg-gray-50">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-gray-500 shrink-0">
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-gray-500 shrink-0">
                       Transfer sites
                       {dismantleSites.length > 0 && <span className="ml-1.5 text-gray-400 tabular-nums">{dismantleSites.length}</span>}
                     </span>
@@ -2879,7 +3004,7 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                           {siteMenu && (
                             <div role="listbox" style={{ position: "fixed", top: siteMenuPos.top, left: siteMenuPos.left, width: siteMenuPos.width, zIndex: 60 }}
                               className="rounded-xl bg-white shadow-[0_4px_12px_rgba(16,24,40,0.1),0_16px_40px_-12px_rgba(16,24,40,0.3)] ring-1 ring-gray-200 overflow-hidden">
-                              <div className="px-3 py-2 bg-gray-50 text-[10px] font-bold uppercase tracking-[0.08em] text-gray-500">
+                              <div className="px-3 py-2 bg-gray-50 text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-500">
                                 Send items to another event
                               </div>
                               <div className="max-h-64 overflow-y-auto">
@@ -2926,12 +3051,17 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                       number into it, the hover is what actually helps here, which a static line
                       never did. The one rule left is under the header, where it marks the change
                       from labels to data. */}
-                  <table className="w-full min-w-[520px] text-sm border-separate border-spacing-0">
+                  {/* No fixed minimum width on a phone. The old min-w-[520px] on a ~350px screen
+                      pushed the Production House column off the edge with nothing to say it was
+                      there. Now the table fits: names wrap to two lines and the header wraps.
+                      Once sites are added and it does have to scroll, the item column is pinned,
+                      so every number you type stays next to the item it belongs to. */}
+                  <table className="w-full sm:min-w-[520px] text-sm border-separate border-spacing-0">
                     <thead>
                       <tr>
-                        <th className="text-left text-[11px] font-bold uppercase tracking-[0.08em] text-gray-500 px-4 py-3">Item</th>
-                        <th className="text-center text-[11px] font-bold uppercase tracking-[0.08em] text-gray-500 px-3 py-3 whitespace-nowrap">🏭 Production House</th>
-                        {dismantleSites.map(s => <th key={s.id} className="text-center text-[11px] font-bold uppercase tracking-[0.08em] text-gray-500 px-3 py-3 whitespace-nowrap" title={s.date}>↪️ {s.name}</th>)}
+                        <th className="sticky left-0 z-10 bg-white text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-gray-500 px-3 sm:px-4 py-3">Item</th>
+                        <th className="text-center text-[11px] font-semibold uppercase tracking-[0.06em] text-gray-500 px-2 sm:px-3 py-3 sm:whitespace-nowrap">🏭 Production House</th>
+                        {dismantleSites.map(s => <th key={s.id} className="text-center text-[11px] font-semibold uppercase tracking-[0.06em] text-gray-500 px-2 sm:px-3 py-3 whitespace-nowrap" title={s.date}>↪️ {s.name}</th>)}
                       </tr>
                     </thead>
                     <tbody>
@@ -2942,19 +3072,24 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                         const done = prod === 0;
                         return (
                           <tr key={it.id} className="group hover:bg-blue-50/40 transition-colors">
-                            <td className="px-4 py-2.5">
-                              <div className="flex items-center gap-2.5 min-w-0">
+                            <td className="sticky left-0 z-10 bg-white group-hover:bg-[#f7f9ff] transition-colors px-3 sm:px-4 py-2">
+                              <div className="flex items-center gap-2.5 min-w-0 max-w-[11rem] sm:max-w-none">
                                 {it.photo ? <img src={it.photo} alt="" onClick={() => setZoomImg(it.photo)} className="w-9 h-9 rounded-lg object-cover cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-9 h-9 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-xs shrink-0">📦</div>}
-                                <span className="min-w-0 truncate text-sm font-medium text-gray-800">{it.name}</span>
-                                <span className="shrink-0 text-[11px] font-semibold text-gray-400 tabular-nums">×{it.qty}</span>
+                                {/* Quantity under the name on a phone. Beside it, a wrapped
+                                    two-line name left the ×qty floating in the gap before the
+                                    next column, reading as neither the item's nor the column's. */}
+                                <div className="min-w-0 flex flex-col sm:flex-row sm:items-center sm:gap-2.5">
+                                  <span className="min-w-0 line-clamp-2 sm:truncate text-sm font-medium text-gray-800 leading-snug" title={it.name}>{it.name}</span>
+                                  <span className="shrink-0 text-[11px] font-semibold text-gray-400 tabular-nums">×{it.qty}</span>
+                                </div>
                               </div>
                             </td>
-                            <td className="px-3 py-2.5 text-center">
+                            <td className="px-2 sm:px-3 py-2 text-center">
                               <span className={"inline-block min-w-[2.75rem] px-2.5 py-1.5 rounded-lg text-sm font-bold tabular-nums " + (done ? "bg-gray-50 text-gray-300" : "bg-blue-50 text-blue-700")}
                                 title="Auto — whatever is left after the sites below">{prod}</span>
                             </td>
                             {dismantleSites.map(s => (
-                              <td key={s.id} className="px-3 py-2.5 text-center">
+                              <td key={s.id} className="px-2 sm:px-3 py-2 text-center">
                                 {/* Borderless until you touch it: a grid of outlined boxes was
                                     the heaviest thing on the table, and most of them hold 0. */}
                                 <input type="number" min="0" max={it.qty} value={planSiteQty(it, s.id) || ""} onChange={e => setSiteQty(it, s.id, e.target.value)} placeholder="0"
@@ -3004,18 +3139,18 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                          glance which of the five the panel below belongs to. */
                       onClickCapture={e => { if (modal === t.k) { e.stopPropagation(); setModal(null); } }}
                       className={"group text-left rounded-xl p-3.5 h-full flex flex-col transition-all duration-150 shadow-[0_1px_2px_rgba(16,24,40,0.07),0_4px_12px_-4px_rgba(16,24,40,0.12)] hover:-translate-y-0.5 hover:shadow-[0_2px_6px_rgba(16,24,40,0.1),0_14px_28px_-10px_rgba(16,24,40,0.28)] " + (modal === t.k ? "ring-2 ring-blue-500 " : "") + (t.tone || "bg-white")}>
-                      <div className="flex items-start gap-2.5">
+                      <div className="flex flex-col gap-2.5 sm:flex-row sm:items-start">
                         <span aria-hidden="true" className={"shrink-0 w-9 h-9 rounded-lg flex items-center justify-center text-base leading-none " + (t.alert ? "bg-white shadow-[0_1px_2px_rgba(16,24,40,0.08)]" : "bg-white shadow-[0_1px_2px_rgba(16,24,40,0.08)]")}>{t.icon}</span>
                         <div className="min-w-0 flex-1">
-                          <div className="text-[13px] font-semibold text-gray-900 leading-tight">{t.title}</div>
-                          <div className="text-[11px] text-gray-500 leading-tight mt-0.5">{t.sub}</div>
+                          <div className="text-[13px] font-semibold text-gray-900 leading-snug">{t.title}</div>
+                          <div className="text-[11px] text-gray-500 leading-snug mt-0.5">{t.sub}</div>
                         </div>
                         {/* gray-300 put this at ~1.5:1 on white — present in the markup, absent
                             on screen. gray-500 is 4.8:1, and it darkens on hover so the chevron
                             confirms the whole tile is the target, not just the corner it sits in. */}
-                        <span aria-hidden="true" className="shrink-0 text-gray-500 group-hover:text-gray-900 text-base font-semibold leading-none transition-colors">›</span>
+                        <span aria-hidden="true" className="hidden sm:block shrink-0 text-gray-500 group-hover:text-gray-900 text-base font-semibold leading-none transition-colors">›</span>
                       </div>
-                      {t.value && <div className="mt-auto pt-2.5 text-lg font-bold text-gray-900 tabular-nums tracking-tight">{t.value}</div>}
+                      {t.value && <div className="mt-auto pt-3 text-[17px] leading-none font-semibold text-gray-900 tabular-nums tracking-tight">{t.value}</div>}
                     </button>
                   ))}
                 </div>
@@ -3032,10 +3167,9 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
               <div className={PANEL_CARD}>
                 {/* NOT sticky — see the Planning panel above: inline, a sticky bar just hovers
                     over the block beneath it and hides its subtitle. */}
-                <div className="shrink-0 bg-white px-4 py-2.5 flex items-center justify-between gap-3">
-                  <div className="min-w-0 text-[13px] font-semibold text-gray-600 truncate">{DEPT_ICON[dept]} {dept} · {sel.clientName || "Event"}</div>
+                <div className="absolute -top-12 right-3 sm:static sm:shrink-0 sm:px-2 sm:pt-2 sm:pb-1 sm:flex sm:items-center sm:justify-end">
                   <button onClick={() => setModal(null)} aria-label="Close"
-                    className="group shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-red-600 hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400 transition-colors">
+                    className="group shrink-0 w-10 h-10 rounded-full bg-white shadow-lg text-gray-600 sm:w-8 sm:h-8 sm:rounded-lg sm:bg-transparent sm:shadow-none sm:text-gray-400 flex items-center justify-center hover:text-red-600 hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400 transition-colors">
                     {/* A drawn cross, not the ✕ character. The glyph is a font fallback away
                        from rendering at the wrong weight or off-centre, and it cannot be given
                        a real stroke width. Grey at rest, red on hover: a permanently red X reads
@@ -3088,20 +3222,33 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
 
             {/* Dismantle & return routing */}
             <div className={"bg-white rounded-xl shadow-[0_1px_2px_rgba(16,24,40,0.06),0_1px_3px_rgba(16,24,40,0.05)] overflow-hidden" + modalCls("route")}>
-              <div className="px-4 py-2.5 bg-gray-50 flex items-center justify-between gap-2 flex-wrap">
-                <span className="text-sm font-semibold text-gray-800">🔁 Dismantle & return routing <span className="text-xs font-normal text-gray-400">— confirm the dept head's plan, or tap a chip to route the full remaining qty</span></span>
-                <div className="flex items-center gap-1.5">
-                  {blockedItems.some(it => unroutedQty(it) > 0) && (<>
-                    <button onClick={confirmAllPlanned} className="text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg whitespace-nowrap">✓ Confirm all as planned</button>
-                    <button onClick={routeAllToWarehouse} className="text-xs font-bold bg-gray-800 hover:bg-gray-900 text-white px-3 py-1.5 rounded-lg whitespace-nowrap">🏬 All → warehouse</button>
-                  </>)}
-                  <button onClick={resetDismantle} className="text-xs font-semibold text-red-600 border border-red-200 bg-red-50 hover:bg-red-100 px-2.5 py-1.5 rounded-lg whitespace-nowrap" title="Testing: clear the plan + all movements so you can re-test">↺ Reset (testing)</button>
+              {/* Same header shape as the Planning dismantle block: title row with Reset at its
+                  right end, the description under it, then the bulk actions on their own row.
+                  All three buttons on one unwrapping row ran off a phone screen, and the
+                  description trailing the title as a "— …" aside wrapped into it. */}
+              <div className="px-3 sm:px-4 py-3 bg-gray-50 space-y-2">
+                <div className="flex items-center gap-3">
+                  <span aria-hidden="true" className="shrink-0 w-9 h-9 rounded-lg bg-white shadow-[0_1px_2px_rgba(16,24,40,0.08)] flex items-center justify-center text-base leading-none">🔁</span>
+                  <div className="min-w-0 flex-1 text-[15px] font-semibold text-gray-900">Dismantle &amp; return routing</div>
+                  <button onClick={resetDismantle} className="shrink-0 text-xs font-semibold text-red-600 border border-red-200 bg-red-50 hover:bg-red-100 px-2.5 py-1 rounded-lg whitespace-nowrap" title="Testing: clear the plan + all movements so you can re-test">↺ Reset<span className="hidden sm:inline"> (testing)</span></button>
                 </div>
+                <div className="text-xs text-gray-500 leading-relaxed">Confirm the dept head&apos;s plan, or send everything left to the warehouse.</div>
+                {blockedItems.some(it => unroutedQty(it) > 0) && (
+                  <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+                    <button onClick={confirmAllPlanned} className="text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 sm:py-1.5 rounded-lg whitespace-nowrap">✓ Confirm all as planned</button>
+                    <button onClick={routeAllToWarehouse} className="text-xs font-bold bg-gray-800 hover:bg-gray-900 text-white px-3 py-2 sm:py-1.5 rounded-lg whitespace-nowrap">🏬 All → warehouse</button>
+                  </div>
+                )}
               </div>
               {/* Loading manifest — grouped by destination (the dept head's plan). Each list = one place. */}
               {destGroups.length > 0 && (
-                <div className="px-4 py-3 space-y-2 bg-sky-50/40">
-                  <div className="text-xs font-semibold text-gray-600">📦 Loading manifest — by destination · put the truck details, mark anything broken/repair, then confirm</div>
+                <div className="px-3 sm:px-4 py-3 space-y-2">
+                  {/* An eyebrow like the other section markers, with the how-to as a caption
+                      under it — as one run-on line it read as a paragraph, not a heading. */}
+                  <div>
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-gray-500">Loading manifest</div>
+                    <div className="mt-0.5 text-[11px] text-gray-400">By destination. Add truck details, mark anything broken or for repair, then confirm.</div>
+                  </div>
                   {destGroups.map(g => {
                     const isTransfer = g.type === "transfer";
                     const truck = manTruck[g.key] || {};
@@ -3110,12 +3257,34 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                     const canConfirm = selRows.length > 0 && (!isTransfer || hasTruck);
                     const open = !!manOpen[g.key];
                     return (
-                    <div key={g.key} className="bg-white border rounded-lg overflow-hidden">
-                      <div className="px-3 py-2 bg-gray-50 flex items-center justify-between gap-2 flex-wrap">
-                        <button onClick={() => setManOpen(o => ({ ...o, [g.key]: !o[g.key] }))} className="text-sm font-semibold text-gray-800 flex items-center gap-1.5 text-left">
-                          <span className="text-gray-400">{open ? "▾" : "▸"}</span>{g.label} <span className="text-[10px] text-gray-400">· {g.items.reduce((s, x) => s + x.qty, 0)} pc · {g.items.length} item{g.items.length > 1 ? "s" : ""}</span>{isTransfer && hasTruck ? <span className="text-[10px] text-emerald-600">· 🚛 {truck.vehicle || truck.driver || "truck set"}</span> : null}
+                    /* ring-gray-200, not a bare `border`: under Tailwind v4 an uncoloured border
+                       takes currentColor, which drew this box in near-black. */
+                    <div key={g.key} className="bg-white rounded-xl ring-1 ring-gray-200 overflow-hidden">
+                      <div className="px-3 py-2.5 flex items-center gap-2">
+                        {/* Name over counts, not one run: the name at 14px and the counts at 10px
+                            on a shared baseline read as a heading with a stray footnote. */}
+                        <button onClick={() => setManOpen(o => ({ ...o, [g.key]: !o[g.key] }))} aria-expanded={open}
+                          className="min-w-0 flex-1 flex items-center gap-2 text-left rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400">
+                          {/* A drawn chevron, not "▶": iOS and Windows render that character as
+                              a blue emoji button. */}
+                          <svg width="12" height="12" viewBox="0 0 15 15" fill="none" aria-hidden="true"
+                            className={"shrink-0 text-gray-400 transition-transform " + (open ? "rotate-90" : "")}>
+                            <path d="M5.5 3.5 L10 7.5 L5.5 11.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                          <span className="min-w-0">
+                            <span className="block text-sm font-semibold text-gray-900 truncate">{g.label}</span>
+                            <span className="block text-[11px] text-gray-500 tabular-nums">
+                              {g.items.reduce((s, x) => s + x.qty, 0)} pc · {g.items.length} item{g.items.length > 1 ? "s" : ""}
+                              {isTransfer && hasTruck ? <span className="text-emerald-600"> · 🚛 {truck.vehicle || truck.driver || "truck set"}</span> : null}
+                            </span>
+                          </span>
                         </button>
-                        <button onClick={() => confirmGroup(g)} disabled={!canConfirm} className="text-[11px] font-bold bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white px-3 py-1 rounded-lg whitespace-nowrap">{isTransfer ? `✓ Loaded on this truck${selRows.length < g.items.length ? ` (${selRows.length})` : ""}` : "✓ Confirm — back to production house"}</button>
+                        {/* Issues reported in this group, so a collapsed card still says it
+                            is not a clean return. */}
+                        {(() => {
+                          const n = g.items.filter(({ it }) => { const c = condOf(gKey(g.key, it)); return (Number(c.repair) || 0) + (Number(c.broken) || 0) > 0; }).length;
+                          return n > 0 ? <span className="shrink-0 text-[10px] font-bold px-2 py-1 rounded-md bg-amber-50 text-amber-700 tabular-nums">{n} issue{n > 1 ? "s" : ""}</span> : null;
+                        })()}
                       </div>
                       {open && (<>
                       {/* Truck details — only for transfers to another site (production house needs none) */}
@@ -3130,9 +3299,9 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                             </div>
                           )}
                           <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5">
-                            <input value={truck.vehicle || ""} onChange={e => setTruckField(g.key, "vehicle", e.target.value)} placeholder="Vehicle no." className="border rounded px-2 py-1 text-xs" />
-                            <input value={truck.driver || ""} onChange={e => setTruckField(g.key, "driver", e.target.value)} placeholder="Driver" className="border rounded px-2 py-1 text-xs" />
-                            <input value={truck.phone || ""} onChange={e => setTruckField(g.key, "phone", e.target.value)} placeholder="Phone" className="border rounded px-2 py-1 text-xs" />
+                            <input value={truck.vehicle || ""} onChange={e => setTruckField(g.key, "vehicle", e.target.value)} placeholder="Vehicle no." className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs" />
+                            <input value={truck.driver || ""} onChange={e => setTruckField(g.key, "driver", e.target.value)} placeholder="Driver" className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs" />
+                            <input value={truck.phone || ""} onChange={e => setTruckField(g.key, "phone", e.target.value)} placeholder="Phone" className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs" />
                           </div>
                           {g.items.length > 1 && <div className="text-[10px] text-gray-400">Tick only what fits on this truck — untick the rest and confirm them on a second truck.</div>}
                         </div>
@@ -3143,20 +3312,66 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                           const rep = Number(c.repair) || 0, brk = Number(c.broken) || 0;
                           const dest = Math.max(0, qty - rep - brk);
                           const sel = isSel(ck);
+                          // Open when asked for, and kept open while it holds anything — closing
+                          // a row with a broken count in it would hide the one line that matters.
+                          const hasIssue = rep + brk > 0 || !!manNote[ck];
+                          const issueOpen = !!manIssue[ck] || hasIssue;
                           return (
-                          <div key={i} className={"flex items-center gap-2 px-3 py-1.5 flex-wrap " + (isTransfer && !sel ? "opacity-40" : "")}>
-                            {isTransfer && <input type="checkbox" checked={sel} onChange={() => toggleManSel(ck)} className="w-4 h-4" title="load this item on this truck" />}
-                            {it.photo ? <img src={it.photo} alt="" onClick={() => setZoomImg(it.photo)} className="w-7 h-7 rounded object-cover border cursor-zoom-in" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-7 h-7 rounded bg-gray-100 flex items-center justify-center text-gray-300 text-[10px]">📦</div>}
-                            <span className="flex-1 text-xs text-gray-700 min-w-[80px]">{it.name}</span>
-                            <span className={"text-[11px] font-bold w-14 text-right " + (dest > 0 ? "text-gray-900" : "text-gray-300")} title="going to this destination">→ {dest}</span>
-                            <label className="flex items-center gap-0.5 text-[10px] text-amber-700" title="needs repair (kept in stock)">🔧<input type="number" min="0" max={qty} value={c.repair ?? ""} onChange={e => setManCondVal(ck, "repair", e.target.value, qty)} placeholder="0" className="w-10 border border-amber-200 rounded px-1 py-0.5 text-center" /></label>
-                            <label className="flex items-center gap-0.5 text-[10px] text-red-600" title="broken — written off, removed from stock">❌<input type="number" min="0" max={qty} value={c.broken ?? ""} onChange={e => setManCondVal(ck, "broken", e.target.value, qty)} placeholder="0" className="w-10 border border-red-200 rounded px-1 py-0.5 text-center" /></label>
-                            <span className="text-[10px] text-gray-400 w-10 text-right">of {qty}</span>
-                            <VoiceRecorder compact value={manNote[ck]} onSave={url => setManNote(m => ({ ...m, [ck]: url }))} label="note for site" />
+                          /* ── ONE LINE PER ITEM, ISSUES ON DEMAND ──
+                             Most items come back fine, so a row is just the item and how many are
+                             going. Repair / Broken / voice note open under it only for the one
+                             that has a problem, via "Report issue" — the old row showed all three
+                             on every item, which made a clean return of ten items a wall of
+                             empty inputs. */
+                          <div key={i} className={"px-3 py-2.5 border-t border-gray-100 " + (isTransfer && !sel ? "opacity-40" : "")}>
+                            <div className="flex items-center gap-2.5">
+                              {isTransfer && <input type="checkbox" checked={sel} onChange={() => toggleManSel(ck)} className="w-4 h-4 shrink-0" title="load this item on this truck" />}
+                              {it.photo ? <img src={it.photo} alt="" onClick={() => setZoomImg(it.photo)} className="shrink-0 w-9 h-9 rounded-lg object-cover cursor-zoom-in" onError={e => { e.target.style.display = "none"; }} /> : <div className="shrink-0 w-9 h-9 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-xs">📦</div>}
+                              <div className="min-w-0 flex-1">
+                                <div className="text-xs font-medium text-gray-800 leading-snug line-clamp-2" title={it.name}>{it.name}</div>
+                                <div className="mt-0.5 text-[11px] text-gray-500 tabular-nums" title="going to this destination">
+                                  <span className={"font-bold " + (dest > 0 ? "text-gray-900" : "text-gray-300")}>{dest}</span> of {qty} going
+                                  {rep > 0 && <span className="ml-1.5 font-semibold text-amber-700">· {rep} repair</span>}
+                                  {brk > 0 && <span className="ml-1.5 font-semibold text-red-600">· {brk} broken</span>}
+                                </div>
+                              </div>
+                              {!hasIssue && (
+                                <button type="button" onClick={() => setManIssue(s => ({ ...s, [ck]: !s[ck] }))} aria-expanded={issueOpen}
+                                  className={"shrink-0 text-[11px] font-semibold px-2.5 py-1.5 rounded-lg transition-colors " + (issueOpen ? "bg-gray-100 text-gray-700" : "text-gray-500 ring-1 ring-gray-200 hover:bg-gray-50 hover:text-gray-800")}>
+                                  {issueOpen ? "Done" : "Report issue"}
+                                </button>
+                              )}
+                            </div>
+                            {issueOpen && (
+                              /* A panel of its own under the row, not inline pieces. Wrapping in a
+                                 flex row, the two fields and the voice button broke onto lines of
+                                 different lengths at different indents. Here the two counts are an
+                                 equal pair with labels above, and the note sits on its own line. */
+                              <div className="mt-2.5 rounded-lg bg-gray-50 p-2.5 space-y-2.5">
+                                <div className="grid grid-cols-2 gap-2.5">
+                                  <label className="block" title="needs repair (kept in stock)">
+                                    <span className="block mb-1 text-[10px] font-semibold uppercase tracking-[0.06em] text-amber-700">Repair</span>
+                                    <input type="number" min="0" max={qty} value={c.repair ?? ""} onChange={e => setManCondVal(ck, "repair", e.target.value, qty)} placeholder="0"
+                                      className="w-full h-8 rounded-lg bg-white ring-1 ring-amber-200 px-2 text-sm text-center font-semibold tabular-nums text-amber-900 placeholder:font-normal placeholder:text-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-400" />
+                                  </label>
+                                  <label className="block" title="broken — written off, removed from stock">
+                                    <span className="block mb-1 text-[10px] font-semibold uppercase tracking-[0.06em] text-red-600">Broken</span>
+                                    <input type="number" min="0" max={qty} value={c.broken ?? ""} onChange={e => setManCondVal(ck, "broken", e.target.value, qty)} placeholder="0"
+                                      className="w-full h-8 rounded-lg bg-white ring-1 ring-red-200 px-2 text-sm text-center font-semibold tabular-nums text-red-900 placeholder:font-normal placeholder:text-red-300 focus:outline-none focus:ring-2 focus:ring-red-400" />
+                                  </label>
+                                </div>
+                                <VoiceRecorder compact value={manNote[ck]} onSave={url => setManNote(m => ({ ...m, [ck]: url }))} label="note for site" />
+                              </div>
+                            )}
                           </div>
                         ); })}
                       </div>
                       </>)}
+                      {/* At the foot of the card: look over the items, then confirm. Above them
+                          it asked for the confirmation before you had seen what you confirmed. */}
+                      <div className="px-3 pb-3 pt-2">
+                        <button onClick={() => confirmGroup(g)} disabled={!canConfirm} className="w-full text-xs font-bold bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white px-3 py-2 rounded-lg whitespace-nowrap">{isTransfer ? `✓ Loaded on this truck${selRows.length < g.items.length ? ` (${selRows.length})` : ""}` : "✓ Confirm — back to production house"}</button>
+                      </div>
                     </div>
                   ); })}
                 </div>
@@ -3174,17 +3389,38 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
               )}
               {/* Movement log for this event */}
               {movements.length > 0 && (
-                <div className="bg-gray-50/40">
-                  <div className="px-4 py-1.5 text-[10px] uppercase text-gray-400 font-semibold">Movement log</div>
-                  <div className="">
-                    {movements.slice().reverse().map(m => (
-                      <div key={m.id} className="flex items-center justify-between gap-2 px-4 py-1.5 text-xs flex-wrap">
-                        <span className={m.type === "damage" ? "text-red-600 font-semibold" : m.type === "repair" ? "text-amber-600 font-semibold" : m.type === "transfer" ? "text-sky-700" : "text-gray-600"}>
-                          {m.type === "damage" ? "⚠️ Broken" : m.type === "repair" ? "🔧 Needs repair" : m.type === "transfer" ? `↪️ Reused → ${m.toEventName || "event"}` : "↩️ Returned"} · {m.qty}× {m.name}
-                        </span>
-                        <span className="flex items-center gap-2 text-[10px] text-gray-400">{m.voiceNote && <audio src={m.voiceNote} controls className="h-6 max-w-[130px]" title="voice note" />}{m.by}{m.type === "damage" && m.invId ? " · stock −" + m.qty : m.type === "repair" ? " · kept in stock" : ""}<button onClick={() => delMovement(m.id)} className="text-red-300 hover:text-red-500 text-sm">×</button></span>
-                      </div>
-                    ))}
+                <div className="px-3 sm:px-4 pt-3 pb-2 border-t border-gray-100">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-gray-500">Movement log</div>
+                  {/* One row per movement: what happened as a small coloured tag, the item and
+                      qty as the line you read, who logged it underneath. The old row put all of
+                      it in one run with a red × on every line, which made a log of routine
+                      returns look like a list of errors. */}
+                  <div className="mt-1">
+                    {movements.slice().reverse().map(m => {
+                      const tag = m.type === "damage" ? { t: "Broken", c: "bg-red-50 text-red-700" }
+                        : m.type === "repair" ? { t: "Repair", c: "bg-amber-50 text-amber-700" }
+                        : m.type === "transfer" ? { t: "Reused", c: "bg-sky-50 text-sky-700" }
+                        : { t: "Returned", c: "bg-gray-100 text-gray-600" };
+                      const note = m.type === "damage" && m.invId ? `stock −${m.qty}` : m.type === "repair" ? "kept in stock" : m.type === "transfer" ? `→ ${m.toEventName || "event"}` : "";
+                      return (
+                        <div key={m.id} className="flex items-center gap-2.5 py-2">
+                          <span className={"shrink-0 w-[4.5rem] text-center text-[10px] font-bold px-1.5 py-1 rounded-md " + tag.c}>{tag.t}</span>
+                          <div className="min-w-0 flex-1">
+                            <div className="text-xs font-medium text-gray-800 truncate" title={m.name}>
+                              <span className="font-semibold tabular-nums">{m.qty}×</span> {m.name}
+                            </div>
+                            <div className="text-[10px] text-gray-400 truncate">{m.by}{note ? ` · ${note}` : ""}</div>
+                          </div>
+                          {m.voiceNote && <audio src={m.voiceNote} controls className="h-6 max-w-[110px] shrink-0" title="voice note" />}
+                          <button onClick={() => delMovement(m.id)} aria-label={`Remove ${m.name} movement`} title="Remove"
+                            className="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-gray-300 hover:text-red-600 hover:bg-red-50 transition-colors">
+                            <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+                              <path d="M3.5 3.5 L10.5 10.5 M10.5 3.5 L3.5 10.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+                            </svg>
+                          </button>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -3195,11 +3431,19 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                 cost in this event's P&L and reflects back to the salesperson in Studio. */}
             {mpRows.length > 0 && (
               <div className={"bg-white rounded-xl shadow-[0_1px_2px_rgba(16,24,40,0.06),0_1px_3px_rgba(16,24,40,0.05)] overflow-hidden" + modalCls("oscrew")}>
-                <div className="px-4 py-2.5 bg-gray-50 flex items-center justify-between gap-2 flex-wrap">
-                  <span className="text-sm font-semibold text-gray-800">👷 On-site crew — actual held <span className="text-xs font-normal text-gray-400">— log the crew you actually kept; sets the real manpower cost</span></span>
-                  <span className="text-sm font-bold text-gray-900">{fmt(mpCost)}{mpEdited && <span className="ml-1 text-[10px] font-semibold text-amber-600">actual</span>}</span>
-                </div>
-                <div className="">
+                {/* Same header shape as the dismantle blocks: icon tile, title, the figure at the
+                    right end, description under. The old one ran the description on as a
+                    "— …" aside to the title and the total wrapped onto a line by itself. */}
+                <div className="px-3 sm:px-4 py-3 bg-gray-50">
+                  <div className="flex items-center gap-3">
+                    <span aria-hidden="true" className="shrink-0 w-9 h-9 rounded-lg bg-white shadow-[0_1px_2px_rgba(16,24,40,0.08)] flex items-center justify-center text-base leading-none">👷</span>
+                    <div className="min-w-0 flex-1 text-[15px] font-semibold text-gray-900">On-site crew</div>
+                    <div className="shrink-0 text-right">
+                      <div className="text-[15px] font-bold text-gray-900 tabular-nums leading-tight">{fmt(mpCost)}</div>
+                      <div className={"text-[10px] font-semibold " + (mpEdited ? "text-amber-600" : "text-gray-400")}>{mpEdited ? "actual held" : "as planned"}</div>
+                    </div>
+                  </div>                </div>
+                <div>
                   {mpRows.map((r, i) => {
                     if (r.type === "Supervisors") return null; // ops IS the supervisor — no separate line for him
                     const daywise = mpDayWise(r);
@@ -3217,32 +3461,76 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                     const planDihari = rate > 0 ? Math.round(planCost / rate) : 0;
                     const planPeak = Number(r.sysCount) || 0;
                     return (
-                      <div key={i} className="px-4 py-2.5 hover:bg-gray-50/70 transition-colors">
-                        <div className="flex items-center gap-3 flex-wrap">
-                          <span className="flex-1 text-sm font-medium text-gray-800 min-w-[90px]">{r.type}{r.shared && <span className="ml-2 text-[10px] bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded font-semibold">SHARED</span>}</span>
-                          {readOnly ? <span className="text-[10px] text-gray-400">split allocation · {fmt(actCost)}</span> : daywise ? (<>
-                            <div className="flex items-center gap-1"><span className="text-[10px] text-gray-400">dihari</span><span className={"w-14 rounded-lg px-2 py-1 text-sm text-center font-semibold " + (edited ? "bg-amber-50 text-amber-700 border border-amber-300" : "bg-gray-100 text-gray-700")} title="Total dihari held (crew × shifts across all days) — matches the plan until you edit below">{actDihari}</span></div>
-                            {sched.length > 0 && <button onClick={() => setOsMp(o => ({ ...o, [i]: !o[i] }))} className="text-[10px] font-semibold text-blue-600 hover:text-blue-800 border border-blue-200 rounded px-1.5 py-1" title="Adjust crew per day and per shift (e.g. drop the evening, or keep 1 in evening)">{expanded ? "▾ by day/shift" : "▸ by day/shift"}</button>}
-                            <span className="text-sm font-semibold text-gray-700 w-24 text-right">{fmt(actCost)}</span>
-                            {edited && <button onClick={() => resetMpLine(r)} className="text-[10px] text-blue-500 hover:underline whitespace-nowrap" title="revert to the dept head's planned crew">↺ plan</button>}
-                          </>) : (<>
-                            <div className="flex items-center gap-1"><span className="text-[10px] text-gray-400">people</span><input type="number" min="0" value={Number(r.count) || 0} onChange={e => setActualCrew(r, i, e.target.value)} className={"w-14 border rounded-lg px-2 py-1 text-sm text-center " + ((Number(r.count) || 0) !== planPeak ? "border-amber-400 bg-amber-50 font-bold" : "")} /></div>
-                            <span className="text-sm font-semibold text-gray-700 w-24 text-right">{fmt(actCost)}</span>
-                            {edited && <button onClick={() => resetMpLine(r)} className="text-[10px] text-blue-500 hover:underline whitespace-nowrap" title="revert to the dept head's planned crew">↺ plan</button>}
-                          </>)}
+                      /* ── ONE CREW LINE ──
+                         Name and cost on the first line, the plan it is measured against under
+                         the name, then the controls on a row of their own. In one flex-wrap row
+                         the cost, the dihari box and the shift toggle broke wherever the width
+                         ran out, so the cost ended up alone mid-card with no label. */
+                      <div key={i} className="px-3 sm:px-4 py-3 border-t border-gray-100 first:border-t-0">
+                        <div className="flex items-start gap-3">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-sm font-semibold text-gray-900">{r.type}</span>
+                              {r.shared && <span className="text-[10px] font-semibold uppercase tracking-[0.06em] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">Shared</span>}
+                            </div>
+                            <div className="mt-0.5 text-[11px] text-gray-500 tabular-nums">
+                              {readOnly ? "Split allocation" : daywise
+                                ? <>Planned {planDihari} dihari · {fmt(planCost)}</>
+                                : <>Planned {planPeak} · {fmt(planCost)}</>}
+                            </div>
+                          </div>
+                          <div className="shrink-0 text-right">
+                            <div className={"text-sm font-bold tabular-nums " + (edited ? "text-amber-700" : "text-gray-900")}>{fmt(actCost)}</div>
+                            {edited && <div className="text-[10px] font-semibold text-amber-600">edited</div>}
+                          </div>
                         </div>
-                        {!readOnly && <div className="text-[10px] text-gray-400 mt-0.5 pl-0.5">{daywise
-                          ? <>Planned {planDihari} dihari · {fmt(planCost)}{edited ? <span className="text-amber-600 font-semibold"> → actual {actDihari} dihari = {fmt(actCost)}</span> : ""}</>
-                          : <>Planned {planPeak} × {fmt(planCost)}{edited ? <span className="text-amber-600 font-semibold"> → actual {Number(r.count) || 0} = {fmt(actCost)}</span> : ""}</>}</div>}
+                        {!readOnly && (
+                          <div className="mt-2.5 flex items-center gap-2 flex-wrap">
+                            {daywise ? (
+                              <span className={"h-8 inline-flex items-center gap-2 rounded-lg px-2.5 " + (edited ? "bg-amber-50 ring-1 ring-amber-200" : "bg-gray-50 ring-1 ring-gray-200")}
+                                title="Total dihari held (crew × shifts across all days) — matches the plan until you edit it by day/shift">
+                                <span className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">Dihari</span>
+                                <span className={"text-sm font-bold tabular-nums " + (edited ? "text-amber-700" : "text-gray-800")}>{actDihari}</span>
+                              </span>
+                            ) : (
+                              <label className="h-8 inline-flex items-center gap-2 rounded-lg px-2.5 bg-gray-50 ring-1 ring-gray-200">
+                                <span className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">People</span>
+                                <input type="number" min="0" value={Number(r.count) || 0} onChange={e => setActualCrew(r, i, e.target.value)}
+                                  className={"w-12 bg-transparent text-sm text-center font-bold tabular-nums focus:outline-none " + ((Number(r.count) || 0) !== planPeak ? "text-amber-700" : "text-gray-800")} />
+                              </label>
+                            )}
+                            {daywise && sched.length > 0 && (
+                              <button onClick={() => setOsMp(o => ({ ...o, [i]: !o[i] }))} aria-expanded={expanded}
+                                className={"h-8 inline-flex items-center gap-1.5 rounded-lg px-2.5 text-[11px] font-semibold transition-colors " + (expanded ? "bg-blue-50 text-blue-700 ring-1 ring-blue-200" : "bg-white text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50 hover:text-gray-900")}
+                                title="Adjust crew per day and per shift (e.g. drop the evening, or keep 1 in evening)">
+                                <svg width="11" height="11" viewBox="0 0 15 15" fill="none" aria-hidden="true" className={"transition-transform " + (expanded ? "rotate-90" : "")}>
+                                  <path d="M5.5 3.5 L10 7.5 L5.5 11.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+                                </svg>
+                                By day / shift
+                              </button>
+                            )}
+                            {edited && (
+                              <button onClick={() => resetMpLine(r)} className="h-8 inline-flex items-center rounded-lg px-2.5 text-[11px] font-semibold text-gray-500 hover:text-gray-900 hover:bg-gray-100 transition-colors" title="Revert to the dept head's planned crew">
+                                ↺ Back to plan
+                              </button>
+                            )}
+                          </div>
+                        )}
+                        {/* The event-wide labour figure, laid out as a field: what it is and what
+                            it does on the left, the number on the right. As one wrapped line the
+                            input sat between the label and a sentence that read as its unit. */}
                         {r.type === "Labours" && anyLabours && (
-                          <div className="mt-1.5 bg-blue-50 border border-blue-100 rounded-lg px-2 py-1.5 flex items-center gap-2 flex-wrap text-[11px]">
-                            <span className="font-semibold text-blue-700">👥 All-dept labour total</span>
-                            <input type="number" min="0" value={eventLabourDihari} onChange={e => setEventLabourTotal(e.target.value)} className="w-16 border border-blue-300 rounded px-2 py-0.5 text-center font-semibold" />
-                            <span className="text-blue-600">dihari — set the whole event's labour; auto-splits across every department by usage</span>
+                          <div className="mt-2.5 rounded-lg bg-blue-50/70 ring-1 ring-blue-100 px-3 py-2.5 flex items-center gap-3">
+                            <div className="min-w-0 flex-1">
+                              <div className="text-xs font-semibold text-blue-800">All-department labour</div>
+                              <div className="mt-0.5 text-[11px] text-blue-600/80 leading-snug">Total dihari for the whole event. Split across departments by usage.</div>
+                            </div>
+                            <input type="number" min="0" value={eventLabourDihari} onChange={e => setEventLabourTotal(e.target.value)}
+                              className="shrink-0 w-16 h-8 rounded-lg bg-white ring-1 ring-blue-200 px-2 text-sm text-center font-bold tabular-nums text-blue-900 focus:outline-none focus:ring-2 focus:ring-blue-400" />
                           </div>
                         )}
                         {expanded && daywise && sched.length > 0 && (
-                          <div className="mt-1.5 bg-gray-50 border rounded-lg p-2 space-y-1">
+                          <div className="mt-2.5 bg-gray-50 ring-1 ring-gray-200 rounded-lg p-2.5 space-y-1">
                             <div className="text-[10px] text-gray-400">Set the crew per day & per dihari (shift). Add a dihari to split a day — e.g. 2 in the day shift + 1 in the evening; each shift is billed. Set 0 or remove to drop one.</div>
                             {sched.map((d, di) => {
                               const ids = effWinIds(r, d) || [];
@@ -3254,16 +3542,16 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                                   {hasSlots ? (
                                     <div className="flex items-center gap-1.5 flex-wrap flex-1">
                                       {ids.map((id, si) => { const wd = winDefs.find(w => w.id === id); const lbl = wd ? wd.label : `dihari ${si + 1}`; return (
-                                        <span key={id} className="inline-flex items-center gap-1 border rounded-lg px-1.5 py-0.5 bg-white">
+                                        <span key={id} className="inline-flex items-center gap-1 ring-1 ring-gray-200 rounded-lg px-1.5 py-0.5 bg-white">
                                           <span className="text-gray-400">{lbl}</span>
-                                          <input type="number" min="0" value={effShift(r, d, id)} onChange={e => setShiftCount(r.type, d.date, id, e.target.value, ids)} className="w-11 border rounded px-1 py-0.5 text-center" />
+                                          <input type="number" min="0" value={effShift(r, d, id)} onChange={e => setShiftCount(r.type, d.date, id, e.target.value, ids)} className="w-11 border border-gray-200 rounded px-1 py-0.5 text-center" />
                                           {ids.length > 1 && <button onClick={() => removeDihari(r.type, d.date, id, ids)} className="text-red-300 hover:text-red-500" title="remove this dihari">×</button>}
                                         </span>
                                       ); })}
                                       <button onClick={() => addDihari(r, d.date, ids)} className="text-[10px] font-semibold text-blue-600 hover:text-blue-800 border border-blue-200 rounded-full px-2 py-0.5" title="Add another dihari (shift) for this day">+ dihari</button>
                                     </div>
                                   ) : (
-                                    <label className="flex items-center gap-1 flex-1"><span className="text-gray-400">crew</span><input type="number" min="0" value={Math.round(effDay(r, d))} onChange={e => setMpDay(r.type, d.date, e.target.value)} className="w-12 border rounded px-1 py-0.5 text-center" /></label>
+                                    <label className="flex items-center gap-1 flex-1"><span className="text-gray-400">crew</span><input type="number" min="0" value={Math.round(effDay(r, d))} onChange={e => setMpDay(r.type, d.date, e.target.value)} className="w-12 border border-gray-200 rounded px-1 py-0.5 text-center" /></label>
                                   )}
                                   <span className="text-gray-400 pt-1">= {fmt(Math.round(dayCost))}</span>
                                 </div>
@@ -3275,9 +3563,22 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                     );
                   })}
                 </div>
-                <div className="px-4 py-2 bg-gray-50 flex items-center justify-between text-xs gap-2 flex-wrap">
-                  <span className="text-gray-500">Planned manpower <b className="text-gray-700">{fmt(mpPlannedCost)}</b></span>
-                  <span className="text-gray-800 font-semibold">Actual held {fmt(mpCost)} {mpCost !== mpPlannedCost && <span className={mpCost < mpPlannedCost ? "text-emerald-600" : "text-red-600"}>({mpCost < mpPlannedCost ? "▼ saved " : "▲ over "}{fmt(Math.abs(mpCost - mpPlannedCost))})</span>}</span>
+                {/* Planned against actual as two figures side by side, the difference as a tag
+                    under the actual — not one sentence each at the two ends of a line. */}
+                <div className="px-3 sm:px-4 py-3 bg-gray-50 grid grid-cols-2 gap-3">
+                  <div>
+                    <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">Planned</div>
+                    <div className="mt-0.5 text-sm font-semibold text-gray-700 tabular-nums">{fmt(mpPlannedCost)}</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">Actual held</div>
+                    <div className="mt-0.5 text-sm font-bold text-gray-900 tabular-nums">{fmt(mpCost)}</div>
+                    {mpCost !== mpPlannedCost && (
+                      <span className={"mt-1 inline-block text-[10px] font-bold px-1.5 py-0.5 rounded tabular-nums " + (mpCost < mpPlannedCost ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700")}>
+                        {mpCost < mpPlannedCost ? "Saved " : "Over by "}{fmt(Math.abs(mpCost - mpPlannedCost))}
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
             )}

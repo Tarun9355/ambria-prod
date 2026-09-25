@@ -30,10 +30,19 @@ export default function PlanningTab({ projects, functions, setFunctions, invento
   const tabs = allowed.length > 0 ? allowed : allTabs;
   const [sub, setSub] = useState(() => { const saved = sessionStorage.getItem("ambria-ims-planning-sub"); return tabs.some((t) => t.id === saved) ? saved : (tabs[0]?.id || "deptops"); });
   useEffect(() => { sessionStorage.setItem("ambria-ims-planning-sub", sub); }, [sub]);
+  // ── ONE ROW FOR BOTH PICKERS ON A PHONE ──
+  // Dept Ops portals its department dropdown into this slot, so the section picker and the
+  // department picker are real siblings in one flex row and centre on the same line. They used
+  // to be separate blocks, with the department one dragged up by a hand-tuned negative margin
+  // that never quite matched and left it sitting a few pixels low.
+  const [pickerSlot, setPickerSlot] = useState(null);
   return (
     <div className="space-y-4">
-      <Tabs tabs={tabs} active={sub} onChange={setSub} />
-      {sub === "deptops" && <DepartmentOpsTab eventOrders={eventOrders} setEventOrders={setEventOrders} inventory={inventory} setInventory={setInventory} blocks={blocks} settings={settings} setSettings={setSettings} trussInv={trussInv} setTrussInv={setTrussInv} authUser={authUser} amendRequests={amendRequests} focusEventId={focusEventId} focusSearch={focusSearch} focusLeadEntry={focusLeadEntry} onFocusHandled={onFocusHandled} onGoToCalendar={onGoToCalendar} />}
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0 flex-1"><Tabs tabs={tabs} active={sub} onChange={setSub} /></div>
+        <div ref={setPickerSlot} className="sm:hidden shrink-0 empty:hidden" />
+      </div>
+      {sub === "deptops" && <DepartmentOpsTab pickerSlot={pickerSlot} eventOrders={eventOrders} setEventOrders={setEventOrders} inventory={inventory} setInventory={setInventory} blocks={blocks} settings={settings} setSettings={setSettings} trussInv={trussInv} setTrussInv={setTrussInv} authUser={authUser} amendRequests={amendRequests} focusEventId={focusEventId} focusSearch={focusSearch} focusLeadEntry={focusLeadEntry} onFocusHandled={onFocusHandled} onGoToCalendar={onGoToCalendar} />}
       {sub === "truss" && <TrussPlanningTab trussAlloc={trussAlloc} setTrussAlloc={setTrussAlloc} trussInv={trussInv} eventOrders={eventOrders} authUser={authUser} />}
       {sub === "paint" && <PaintPlanningTab projects={projects} functions={functions} inventory={inventory} settings={settings} />}
       {sub === "trussbatta" && <AdminSettingsTab mode="trussbatta" settings={settings} setSettings={setSettings} studio={studio} trussInv={trussInv} setTrussInv={setTrussInv} />}

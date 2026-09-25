@@ -132,12 +132,14 @@ export function useConfirm() {
   // would make this a downgrade for anyone working quickly through a list.
   useEffect(() => {
     if (!state) return;
+    // Capture phase + stopPropagation: the dialog is on top, so the key is its alone. Without
+    // this, Escape also reached whatever sheet opened the dialog and closed that too.
     const onKey = (e) => {
-      if (e.key === "Escape") { e.preventDefault(); settle(false); }
-      if (e.key === "Enter") { e.preventDefault(); settle(true); }
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); settle(false); }
+      if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); settle(true); }
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
   }, [state]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const dialog = !state ? null : (
