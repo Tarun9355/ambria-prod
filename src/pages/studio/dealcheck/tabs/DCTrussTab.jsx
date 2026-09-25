@@ -1,5 +1,5 @@
 import { Fragment } from "react";
-import { calcZoneFabric, autoFillFabricAllocation, calcFabricAllocationTotal, zoneTrussStandingDiscountDetail } from "../../../../lib/studio/pricing";
+import { calcZoneFabric, autoFillFabricAllocation, calcFabricAllocationTotal, zoneTrussStandingDiscountDetail, repeatCatFor } from "../../../../lib/studio/pricing";
 import { fixedVenueFor } from "../../../../lib/ims/fixedVenues";
 import { TRUSS_ALLOC_SK } from "../../../../lib/studio/keys.js";
 import { supabase } from "../../../../lib/supabase";
@@ -101,7 +101,7 @@ export default function DCTrussTab({ ctx }) {
                       const zCfg = (fn.zoneConfig || {})[zk];
                       const zLabel = (zoneMeta?.[zk]?.label) || ((fn.customZones || []).find(cz => cz.id === zk)?.name) || zk;
                       const rows = [zCfg, ...(zCfg.extraTrussRows || [])];
-                      const isRepeat = !!zCfg.repeat;
+                      const isRepeat = repeatCatFor(zCfg, "truss");
                       return rows.map((row, rowIdx) => {
                         const pv = calcZoneTrussPreview(row, trussInv);
                         if (pv && pv.costs) {

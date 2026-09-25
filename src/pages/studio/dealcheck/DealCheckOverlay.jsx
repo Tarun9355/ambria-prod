@@ -94,7 +94,7 @@ const NUM = { fontVariantNumeric: "tabular-nums" };
 import { heavyExtraLabour, eventTimingMultFor, SIT_MULT_DEFAULTS } from "../../../lib/ims/constants";
 import { deptMpReconciled, itemImsSubcat, lookupBySubcat, itemDimsText, walkKitUnits } from "../../../lib/ims/helpers";
 import { rentalSplit, availableAtVenue, isStandingAt, fixedVenueFor, standingReductionBySubcat, fixedVenueDealDiscount } from "../../../lib/ims/fixedVenues";
-import { calcZoneFabric, autoFillFabricAllocation, resolveTrussConfig, zoneTrussStandingDiscount } from "../../../lib/studio/pricing";
+import { calcZoneFabric, autoFillFabricAllocation, resolveTrussConfig, zoneTrussStandingDiscount, repeatCatFor } from "../../../lib/studio/pricing";
 import { carpetPricingFor, CARPET_OFF } from "../../../lib/studio/taxonomy";
 import { qtyUsedElsewhereInDealCheck, netOwnReservedBlocks } from "../../../lib/studio/dealAvailability";
 import { isHiddenSubcat, oosCostPctFor } from "../../../lib/rateCard";
@@ -534,7 +534,7 @@ export default function DealCheckOverlay({ ctx }) {
           // Fixed-venue "Repeat" rental — see repeatAdjustedRental above for the actual formula
           // (venue-specific standing qty + that item's own IMS discount, falling back to the
           // sub-category default at any other venue). This just says WHICH zones are Repeat.
-          const zoneIsRepeat = (fn, ck) => { const zk = String(ck || "").split("::")[1]; return !!(zk && fn.zoneConfig?.[zk]?.repeat); };
+          const zoneIsRepeat = (fn, ck) => { const zk = String(ck || "").split("::")[1]; return !!zk && repeatCatFor(fn.zoneConfig?.[zk], "elements"); };
           fns.forEach((fn, fi) => {
             const cards = dcCards[fi] || {};
             // Cross-function reuse — the immediately-preceding function of this deal, same venue,
@@ -655,7 +655,7 @@ export default function DealCheckOverlay({ ctx }) {
               const q = Number(mi.qty) || 1;
               // A manually added item can be a kit too — price it the same way as a matched card.
               const baseR = effKitRental(item, fi, null);
-              const _rep = mi.zoneKey ? !!(fn.zoneConfig?.[mi.zoneKey]?.repeat) : false;
+              const _rep = mi.zoneKey ? repeatCatFor(fn.zoneConfig?.[mi.zoneKey], "elements") : false;
               const lineRental = repeatAdjustedRental(_rep, fn.fnVenue, item, q, baseR, fn.fnDate, crossFnTake(item.id, q));
               rental += lineRental; byFn[fi].rental += lineRental;
               const dD = catToDept(imsField.category(item));
@@ -730,7 +730,7 @@ export default function DealCheckOverlay({ ctx }) {
                   // still standing here too — zone keys are a shared taxonomy across functions (the
                   // same "entrance"/"stage"/etc vocabulary), so the same key in two consecutive
                   // functions at the same venue is the same physical setup.
-                  const isRepeat = !!zc[zk].repeat || !!(crossFnPrevFn?.enabledEls?.[zk] && crossFnPrevFn?.zoneConfig?.[zk]);
+                  const isRepeat = repeatCatFor(zc[zk], "truss") || !!(crossFnPrevFn?.enabledEls?.[zk] && crossFnPrevFn?.zoneConfig?.[zk]);
                   const repeatMult = isRepeat ? 0.7 : 1;
                   const repeatFabMult = isRepeat ? 0.7 : 1;
                   const photoUrl = (fn.elSelectedPhoto || {})[zk];
@@ -1524,7 +1524,10 @@ export default function DealCheckOverlay({ ctx }) {
                 const anchors = pObj?.anchorColours || [];
                 Object.keys(zc).forEach(zk => {
                   // ♻️ Repeat zones reuse standing fabric — nothing new to stock/reorder for them.
-                  if (!en[zk] || !zc[zk] || zc[zk].repeat) return;
+                  // Truss & Masking's own category flag — same one dcCostRollup's fabric ×0.7 above
+                  // reads — not the zone-wide toggle, so this Fabric-head projection can't disagree
+                  // with what the zone is actually billed for.
+                  if (!en[zk] || !zc[zk] || repeatCatFor(zc[zk], "truss")) return;
                   let density = "moderate";
                   const photoUrl = (fn.elSelectedPhoto || {})[zk];
                   if (photoUrl) { const li = (libItems || []).find(l => l.url === photoUrl); if (li?.dims?.drapeDensity) density = li.dims.drapeDensity; }
@@ -2324,7 +2327,7 @@ export default function DealCheckOverlay({ ctx }) {
                         // pill used to run well under both of those. Also folds in this zone's own share of
                         // platform (fatta/stand) and carpet — real rental cost that already shows as its own
                         // card below but was never added into the "X rental" total above it.
-                        const _zoneIsRepeat = (ck) => { const zzk = String(ck || "").split("::")[1]; return !!(zzk && fns[fnIdx]?.zoneConfig?.[zzk]?.repeat); };
+                        const _zoneIsRepeat = (ck) => { const zzk = String(ck || "").split("::")[1]; return !!zzk && repeatCatFor(fns[fnIdx]?.zoneConfig?.[zzk], "elements"); };
                         const _costPctFor = (subcat) => { const key = String(subcat || "").trim().toLowerCase(); const row = (rcSubcatFactors || []).find(r => r?.id === key); const v = row ? Number(row.cost_percent) : undefined; return (typeof v === "number" && isFinite(v) && v >= 0) ? v : 100; };
                         const _fnVenueForRepeat = fns[fnIdx]?.fnVenue;
                         const _fnDateForRepeat = fns[fnIdx]?.fnDate;
@@ -2361,7 +2364,7 @@ export default function DealCheckOverlay({ ctx }) {
                           const shortCost = shortQty * (Number(it.cost) || 0) * (oosCostPctFor(it, _costPctFor) / 100);
                           zoneRentalTotal += ownedRental + shortCost;
                         });
-                        manualItemsInZone.forEach(mi => { const it = dcInventoryCache.find(x => x.id === mi.imsId); if (!it) return; const q = Number(mi.qty) || 1; const baseR = effKitRental(it, fnIdx, null); const _rep = mi.zoneKey ? !!(fns[fnIdx]?.zoneConfig?.[mi.zoneKey]?.repeat) : false; zoneRentalTotal += repeatAdjustedRental(_rep, _fnVenueForRepeat, it, q, baseR, _fnDateForRepeat, _crossFnTakePill(it.id, q)); });
+                        manualItemsInZone.forEach(mi => { const it = dcInventoryCache.find(x => x.id === mi.imsId); if (!it) return; const q = Number(mi.qty) || 1; const baseR = effKitRental(it, fnIdx, null); const _rep = mi.zoneKey ? repeatCatFor(fns[fnIdx]?.zoneConfig?.[mi.zoneKey], "elements") : false; zoneRentalTotal += repeatAdjustedRental(_rep, _fnVenueForRepeat, it, q, baseR, _fnDateForRepeat, _crossFnTakePill(it.id, q)); });
                         platformEntriesForZone.forEach(({ pi }) => { zoneRentalTotal += (pi.fattas || 0) * platformFattaR + (pi.stands || 0) * platformStandR; });
                         {
                           const zcz = fns[fnIdx]?.zoneConfig?.[zk];
@@ -2736,7 +2739,7 @@ export default function DealCheckOverlay({ ctx }) {
                                   // Repeat/standing discount context for this card — computed once so
                                   // every display below (the "rate × qty" caption and the right-aligned
                                   // total) reads the same discounted figures instead of drifting apart.
-                                  const _rep = !!(fns[fnIdx]?.zoneConfig?.[card.zoneKey]?.repeat);
+                                  const _rep = repeatCatFor(fns[fnIdx]?.zoneConfig?.[card.zoneKey], "elements");
                                   const _venue = fns[fnIdx]?.fnVenue;
                                   const _cardQty = Number(card.qty) || 1;
                                   const _lineTotal = item ? repeatAdjustedRental(_rep, _venue, item, _cardQty, rental, _fnDateForRepeat, _crossFnTakeCards(item.id, _cardQty)) : 0;
@@ -3204,7 +3207,7 @@ export default function DealCheckOverlay({ ctx }) {
                                   const sub = item ? imsField.subcategory(item) : "";
                                   // Hard cap: you can't block more than is available at this venue.
                                   const _vName = (fns[fnIdx] || {}).fnVenue || "";
-                                  const _rep = mi.zoneKey ? !!(fns[fnIdx]?.zoneConfig?.[mi.zoneKey]?.repeat) : false;
+                                  const _rep = mi.zoneKey ? repeatCatFor(fns[fnIdx]?.zoneConfig?.[mi.zoneKey], "elements") : false;
                                   const lineTotal = item ? repeatAdjustedRental(_rep, _vName, item, mi.qty, rental, _fnDateForRepeat, _crossFnTakeManual(item.id, mi.qty)) : 0;
                                   // Discounted equivalent of "rental" for the "× qty" caption below — so
                                   // that line's own arithmetic reproduces lineTotal instead of looking

@@ -12,7 +12,7 @@ import {
 } from "../../../lib/studio/taxonomy";
 import { paletteNames, addPaletteInline } from "../../../lib/studio/colours";
 import PaletteQuickAdd from "../../../components/studio/PaletteQuickAdd.jsx";
-import { trussRowCost, zoneTrussStandingDiscountDetail } from "../../../lib/studio/pricing";
+import { trussRowCost, zoneTrussStandingDiscountDetail, repeatCatFor } from "../../../lib/studio/pricing";
 import { paletteSearch, paletteMatches } from "../../../components/studio/filterUI.jsx";
 import { resolveTrussConfig } from "../../../lib/studio/pricing";
 import { qtyUsedElsewhereInBuild } from "../../../lib/studio/dealAvailability";
@@ -746,6 +746,14 @@ export default function StudioBuild({ ctx }) {
     const isHigh = booked >= 2 || dt === "saya";
     return { dt, booked, ongoing, isHigh, isMod: !isHigh && booked === 1 };
   })();
+  // ═══ SECONDARY TEXT COLOUR ═══
+  // The theme's `textS` is #8b8fa3 — a pale lavender-grey measuring ~3.1:1 on the light card,
+  // below WCAG AA. It's what made disabled zone names ("Stage", "Centre Lounge") look washed out.
+  // Shadowing it here upgrades all 125 call sites on this page at once, with no churn: every
+  // `color: textS` below now resolves to the AA-contrast value. `textSRaw` keeps the original
+  // available should anything ever need the lighter tone. Defined this early (moved up from much
+  // further down the file) because railTab, just below, is the first of many call sites.
+  const textS = isDark ? "#A6ADC0" : "#5A6076";   // 6.4:1 on white
   // The scroll-to-zone effect that lived here is gone with its only caller. It was local to this
   // file and nothing else referenced it, so it was dead once Details stopped scrolling.
   const toggleZoneCollapse = (k) => {
@@ -797,6 +805,14 @@ export default function StudioBuild({ ctx }) {
   // per-card getElPrice) all price the SAME elements within one render — sharing one Map instance
   // across them would have the first caller silently exhaust it for the rest.
   const crossFnPool = () => activeCrossFnReuseQty ? new Map(Object.entries(activeCrossFnReuseQty)) : null;
+  const isRepeat = (k) => !!(zoneConfig[k] && zoneConfig[k].repeat);
+  const toggleRepeat = (k) => setZoneConfig(p => ({ ...p, [k]: { ...(p[k] || {}), repeat: !(p[k] && p[k].repeat) } }));
+  // Per-chip override (Elements/Truss & Masking/Platform/Print — the same `cat` ids ZONE_SECTIONS
+  // uses). Deliberately does NOT touch the zone-wide `repeat` toggle above — that stays the shared
+  // default every category falls back to (repeatCatFor) until a chip is individually flipped away
+  // from it, and flipping the zone toggle later must not silently wipe an earlier per-chip choice.
+  const isRepeatCat = (k, cat) => repeatCatFor(zoneConfig[k], cat);
+  const toggleRepeatCat = (k, cat) => setZoneConfig(p => ({ ...p, [k]: { ...(p[k] || {}), repeatCats: { ...(p[k]?.repeatCats), [cat]: !isRepeatCat(k, cat) } } }));
   const sectionCost = (k, id) => {
     if (!showCosts) return 0;
     if (id === "elements") return calcElsCost(zoneElements[k], true, zoneConfig[k], {checkAvailability:true, crossFnReusePool: crossFnPool()}, venue);
@@ -809,6 +825,7 @@ export default function StudioBuild({ ctx }) {
     const on = zoneSection[k] === sec.id;
     const sub = zoneSectionSub(k, sec.id);
     const cost = sectionCost(k, sec.id);
+    const catRepeat = isRepeatCat(k, sec.id);
     return <div key={sec.id} className="sec-tile" data-on={on?"1":"0"} onClick={()=>openZoneSection(k,sec.id)}
       style={{display:"flex",alignItems:"center",gap:9,padding:"11px 12px",borderRadius:10,cursor:"pointer",
         border:`1px solid ${on?accent:border}`,background:on?`${accent}12`:cardBg}}>
@@ -817,6 +834,15 @@ export default function StudioBuild({ ctx }) {
         <div style={{fontSize:12.5,fontWeight:700,color:on?accent:textP}}>{sec.label}</div>
         {sub&&<div style={{fontSize:10.5,color:textS,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sub}</div>}
       </div>
+      {/* Per-chip Repeat override — defaults to the zone's own ✨Fresh/♻️Repeat toggle (repeatCatFor)
+          until flipped here specifically for this one category. Icon-only: the tile is already
+          dense (icon, label, cost, chevron), and the same glyph/colour pairing the zone-level chip
+          uses (IconRepeat/IconSparkle, emerald when Repeat) carries the meaning without a label. */}
+      <span onClick={e=>{e.stopPropagation();toggleRepeatCat(k,sec.id);}}
+        title={`${sec.label}: ${catRepeat?"reusing an existing setup — discounted":"new build this time — full price"}. Click to ${catRepeat?"mark Fresh":"mark Repeat"} for just this one.`}
+        style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:22,height:22,borderRadius:7,flexShrink:0,color:catRepeat?"#059669":textS,background:catRepeat?"#05966918":"transparent"}}>
+        {catRepeat?<IconRepeat size={12}/>:<IconSparkle size={12}/>}
+      </span>
       {cost>0&&<div style={{fontSize:11.5,fontWeight:700,color:on?accent:textP,flexShrink:0}}>{fmt(cost)}</div>}
       <span style={{display:"flex",flexShrink:0,color:on?accent:textS,transform:on?"rotate(180deg)":"none",transition:"transform .18s ease"}}><IconChevron size={12}/></span>
     </div>;
@@ -848,13 +874,6 @@ export default function StudioBuild({ ctx }) {
 
   const getLibPhotosForZone = ctx.getLibPhotosForZone;
   // ═══ Zone-photo filter pills — shared style + venue-type-aware venue list ═══
-  // ═══ SECONDARY TEXT COLOUR ═══
-  // The theme's `textS` is #8b8fa3 — a pale lavender-grey measuring ~3.1:1 on the light card,
-  // below WCAG AA. It's what made disabled zone names ("Stage", "Centre Lounge") look washed out.
-  // Shadowing it here upgrades all 125 call sites on this page at once, with no churn: every
-  // `color: textS` below now resolves to the AA-contrast value. `textSRaw` keeps the original
-  // available should anything ever need the lighter tone.
-  const textS = isDark ? "#A6ADC0" : "#5A6076";   // 6.4:1 on white
 
   // One definition of "what does this zone cost" — lifted verbatim out of the zone header so the
   // header and the live-pricing tile share it and cannot drift apart. `{checkAvailability:true}`
@@ -1234,8 +1253,13 @@ export default function StudioBuild({ ctx }) {
   // The ✨Fresh/♻️Repeat toggle above stays driven by fixedVenueHere as-is — zc.repeat still needs to
   // flow to Deal Check exactly as before regardless of the hide-discount checkbox. Mirrors
   // StudioApp.jsx's structDiscountFor: flat 25% off calcStructCost's total (see its own comment) when
-  // the toggle is on AND (this zone is Repeat OR the venue itself is a registered Fixed Venue).
-  const structDiscountFor = (zc) => !hideDiscountFromClient && (!!zc?.repeat || !!fixedVenueHere);
+  // the toggle is on AND (this category is Repeat OR the venue itself is a registered Fixed Venue).
+  // Per-category object, not one bool — each of the Truss & Masking/Platform/Print chips below can
+  // now override the zone's own default independently (repeatCatFor, lib/studio/pricing.js).
+  const structDiscountFor = (zc) => {
+    if (hideDiscountFromClient) return false;
+    return { truss: !!fixedVenueHere || repeatCatFor(zc, "truss"), platform: !!fixedVenueHere || repeatCatFor(zc, "platform"), print: !!fixedVenueHere || repeatCatFor(zc, "print") };
+  };
   // Same scaleStruct StudioApp.jsx uses for its own guest-facing calcStructCost calls (getElPrice/
   // getElPriceForFn already fold guestPriceMultiplier in there) — Build's own local truss/masking/
   // platform/carpet/print previews (sc/zoneTotal/st below, and TrussStack's own displayed figures)
@@ -1267,9 +1291,6 @@ export default function StudioBuild({ ctx }) {
     const otherEventsAvail = getStudioAvailable(it, activeBlocksForDate);
     return Math.max(0, otherEventsAvail - usedElsewhere);
   };
-
-  const isRepeat = (k) => !!(zoneConfig[k] && zoneConfig[k].repeat);
-  const toggleRepeat = (k) => setZoneConfig(p => ({ ...p, [k]: { ...(p[k] || {}), repeat: !(p[k] && p[k].repeat) } }));
 
   // ── Scale By (Centre Pieces) ─────────────────────────────────────────────────────────────────
   // A single "set of N" multiplier for a zone: instead of hand-bumping each element (1 table, 6 chairs…),
@@ -4244,7 +4265,7 @@ undefined
         const zoneCfgMap={...(master?.zoneConfigByType||{})};
         let libDims=master?.dims;
         if(liveCfg){
-          const {repeat,scale,...rest}=liveCfg;
+          const {repeat,repeatCats,scale,...rest}=liveCfg;
           zoneCfgMap[zk]=JSON.parse(JSON.stringify(rest));
           // Mirror the primary dims into the master's Library-shape dims too, so browse thumbnails,
           // the Library editor and buildZoneConfig's fallback all reflect the corrected measurements.

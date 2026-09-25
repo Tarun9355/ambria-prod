@@ -11,6 +11,21 @@ import { CARPET_OFF, trussRateFor, maskingRateFor, trussBaseArea } from "./taxon
 import { priceForInvItem } from "../ims/helpers.js";
 export { resolveMandiFlower };
 
+// One shared resolver for "is THIS pricing category of a zone repeat-discounted". Build's own
+// per-zone ✨Fresh/♻️Repeat toggle (zc.repeat) sets the DEFAULT for every category at once;
+// zc.repeatCats then lets each of the four Build chips — Elements, Truss & Masking, Platform,
+// Print (the same ids ZONE_SECTIONS/sectionTile in StudioBuild.jsx use) — be independently
+// overridden without losing what the zone-level toggle itself still means everywhere else
+// (manpower crew drop-out, cross-function reuse zone-matching, Ops' fabric-plan snapshot all still
+// read zc.repeat directly — those weren't asked to go per-category, only the four chips' own
+// pricing was). Sparse by design: repeatCats only ever needs to hold the categories that were
+// EXPLICITLY flipped away from the zone's own default, so "set the whole zone to Repeat, then turn
+// Platform back to Fresh" is just `{ platform: false }` — the other three still track zc.repeat.
+export function repeatCatFor(zc, cat) {
+  const v = zc?.repeatCats?.[cat];
+  return typeof v === "boolean" ? v : !!zc?.repeat;
+}
+
 // ═══ AREAS ↔ ZONES SYNC HELPERS ═══
 export const AZ_SYNC_SK = "ambria-areas-zones-synced-v1";
 // Normalize a label/name for fuzzy matching. "Entry Passage" ≈ "Entry & Passage" both → "entrypassage".

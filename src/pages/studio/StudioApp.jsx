@@ -73,7 +73,7 @@ import {
   resolveTrussConfig, findZoneForArea, findAreaForZone, makeZoneId,
   defaultZoneFromArea, resolveMandiFlower, calcZoneTrussPreview,
   calcZoneFabric, calcZoneFabricCost, calcZoneCarpet, buildPlatformPlan, getStudioAvailable,
-  buildTopology, PLATFORM_FATTA_CODE, PLATFORM_STAND_CODE, trussRowCost,
+  buildTopology, PLATFORM_FATTA_CODE, PLATFORM_STAND_CODE, trussRowCost, repeatCatFor,
 } from "../../lib/studio/pricing";
 import { allocateRowAvailability } from "../../lib/studio/dealAvailability";
 import { callClaudeStreaming } from "../../lib/ai";
@@ -262,9 +262,13 @@ const FLORAL_HARDPROP_DEFAULT = {
 // disagreeing with the bill.
 // applyDiscount is an OPTIONAL trailing param, resolved by the caller (StudioApp.jsx's
 // structDiscountFor / StudioBuild.jsx's own local equivalent) as: the discreet guest-discount
-// toggle is on AND (this zone is flagged ♻️ Repeat OR the venue is one of Deal Check's registered
-// Fixed Venues). Callers that don't pass it (there were none before this existed) just get no
-// discount, same as leaving it off.
+// toggle is on AND (this zone/category is flagged ♻️ Repeat OR the venue is one of Deal Check's
+// registered Fixed Venues). Callers that don't pass it (there were none before this existed) just
+// get no discount, same as leaving it off. Two shapes: `true` (legacy/whole-zone — every group
+// discounted alike, still used by callers that never needed per-category granularity, e.g. the
+// Browse-card estimate) or a per-category object `{ truss, platform, print }` — Build's Repeat
+// toggle can now be set per chip (Elements/Truss & Masking/Platform/Print), not just per zone, so
+// the three structural groups here each need their own gate.
 // Same flat pct as the component-scope GUEST_DISCOUNT_PCT (repeatAdjustedLineCost) — duplicated as
 // a module-level constant only because this function sits outside the component and can't close
 // over that one; kept in lockstep by being the one other place this number is allowed to live.
@@ -297,18 +301,27 @@ function calcStructCost(zk, zc, rates, applyDiscount) {
     return sum + s * (m?.ratePerSqft || 0) * q;
   }, 0);
   r.total = r.truss + r.masking + r.platform + r.carpet + r.arches + r.pillars + r.glass + r.print;
-  // Flat 25% off every structural line — same guest-discount rule repeatAdjustedLineCost uses for
+  // Flat 25% off each structural group — same guest-discount rule repeatAdjustedLineCost uses for
   // elements (see its own comment): Deal Check keeps its own separate, config-driven pillar/beam
   // discount (zoneTrussStandingDiscount, still called directly from DealCheckOverlay.jsx/
   // DCTrussTab.jsx, untouched by this), while the guest build gets one flat pct off the full
   // guest-facing total here — applied at the source, so every caller (Build's zone cards, Summary,
   // the cost sheet) shows the same discounted number automatically.
   if (applyDiscount) {
+    const flags = applyDiscount === true
+      ? { truss: true, platform: true, print: true }
+      : { truss: !!applyDiscount.truss, platform: !!applyDiscount.platform, print: !!applyDiscount.print };
     const pct = GUEST_STRUCT_DISCOUNT_PCT;
     const before = r.total;
-    // Each field rounded to the rupee (a 25% cut rarely lands whole otherwise), then total is
-    // re-summed from the rounded fields so it never disagrees with what the tiles above add up to.
-    ["truss", "masking", "platform", "carpet", "arches", "pillars", "glass", "print"].forEach((k) => { r[k] = Math.round(r[k] * (1 - pct / 100)); });
+    // Truss & Masking chip = truss/masking/arches/pillars/glass (StudioBuild's own sectionCost
+    // groups them the same way); Platform chip = platform/carpet; Print chip = print alone. Each
+    // field rounded to the rupee (a 25% cut rarely lands whole otherwise), then total is re-summed
+    // from the rounded fields so it never disagrees with what the tiles above add up to.
+    const GROUP_KEYS = { truss: ["truss", "masking", "arches", "pillars", "glass"], platform: ["platform", "carpet"], print: ["print"] };
+    Object.entries(GROUP_KEYS).forEach(([grp, keys]) => {
+      if (!flags[grp]) return;
+      keys.forEach((k) => { r[k] = Math.round(r[k] * (1 - pct / 100)); });
+    });
     r.total = r.truss + r.masking + r.platform + r.carpet + r.arches + r.pillars + r.glass + r.print;
     r.trussDiscount = before - r.total;
   }
@@ -4035,10 +4048,19 @@ export default function StudioApp() {
   // — only what that flag PRICES for the client depends on this.
   const hideDiscountFromClient = !clientLedger.find(c => c.id === activeClientId)?.applyDiscountToClient;
   // Feeds calcStructCost's flat 25% (see its own comment) — same eligibility rule
-  // repeatAdjustedLineCost uses for elements: the toggle is on AND (this zone is Repeat OR the
+  // repeatAdjustedLineCost uses for elements: the toggle is on AND (this category is Repeat OR the
   // venue itself is one of Deal Check's registered Fixed Venues — checked at the venue level here
-  // since structural cost has no per-item id the way an inventory element does).
-  const structDiscountFor = (zc, venueName) => !hideDiscountFromClient && (!!zc?.repeat || !!fixedVenueFor(fvCfgForRepeat, venueName));
+  // since structural cost has no per-item id the way an inventory element does; a Fixed Venue
+  // discounts every structural group alike, unlike the zone's own Repeat toggle which Build's
+  // Truss & Masking/Platform/Print chips can each override independently — see repeatCatFor).
+  // Returns a per-category object (not a single bool) once discount-eligible in principle, so
+  // calcStructCost can gate its three structural groups separately; false short-circuits it
+  // entirely, same as before, when the client-facing discount toggle itself is off.
+  const structDiscountFor = (zc, venueName) => {
+    if (hideDiscountFromClient) return false;
+    const fv = !!fixedVenueFor(fvCfgForRepeat, venueName);
+    return { truss: fv || repeatCatFor(zc, "truss"), platform: fv || repeatCatFor(zc, "platform"), print: fv || repeatCatFor(zc, "print") };
+  };
   // Owner ask: a second discrete per-deal lever, alongside hideDiscountFromClient — the small dot on
   // each Photo Filters section (Build's left rail) doubles as a markup tier picker when clicked
   // directly: Venue=1x, Event type=1.1x, Venue type=1.2x, Design style=1.3x, Color palette=1.4x,
@@ -4114,7 +4136,7 @@ export default function StudioApp() {
     if (hideDiscountFromClient) return full; // see hideDiscountFromClient above — guest-facing only
     // Rounded to the rupee — a 25% cut rarely lands on a whole number otherwise (₹1,289 × 0.75 =
     // ₹966.75), and every other price in the build is a whole rupee.
-    if (zc?.repeat) return Math.round(full * (1 - GUEST_DISCOUNT_PCT / 100));
+    if (repeatCatFor(zc, "elements")) return Math.round(full * (1 - GUEST_DISCOUNT_PCT / 100));
     const { standingUnits } = rentalSplit(fvCfgForRepeat, venueName, item.id, qty, imsInventory);
     const discEligible = Math.min(qty, Math.max(0, standingUnits) + Math.max(0, crossFnReuseQty));
     if (discEligible <= 0) return full;
@@ -8940,7 +8962,9 @@ export default function StudioApp() {
     if (cfg) {
       // Same reason as above — scale/repeat are live deal choices, not part of what a reference
       // photo's config describes. Preserve them across the replace instead of losing them.
-      setZoneConfig(p => ({ ...p, [elKey]: { ...cfg, scale: p[elKey]?.scale, repeat: p[elKey]?.repeat } }));
+      // repeatCats rides alongside repeat — the per-chip (Elements/Truss & Masking/Platform/Print)
+      // overrides are just as much a live deal choice as the zone-wide toggle they refine.
+      setZoneConfig(p => ({ ...p, [elKey]: { ...cfg, scale: p[elKey]?.scale, repeat: p[elKey]?.repeat, repeatCats: p[elKey]?.repeatCats } }));
     }
     setActiveZones([]);
     setCustomMode(p => ({ ...p, [elKey]: false }));
