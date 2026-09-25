@@ -3267,7 +3267,12 @@ undefined
                 // the tallest card in the row; that slack now belongs to the select target instead
                 // of being dead space.
                 return (
-                <div key={i} className="ph-tile" style={{flexShrink:0,width:"auto",minWidth:0,borderRadius:10,overflow:"hidden",
+                /* Keyed by the photo itself, not its position. Selecting a photo moves it to the
+                   front, so position keys handed every tile a different photo in place: each <img>
+                   swapped src (a blank, a reload, the fade-in again) — a flash across the whole
+                   strip on every pick, worst on tablets. With the photo as the key the tiles move
+                   instead and keep their loaded images. */
+                <div key={(ph.src || "") + "|" + (ph.eventId || "") || i} className="ph-tile" style={{flexShrink:0,width:"auto",minWidth:0,borderRadius:10,overflow:"hidden",
                   display:"flex",flexDirection:"column",
                   border:isSelected?`3px solid #059669`:isSource?`2px solid #C9A96E`:`2px solid ${border}`,
                   cursor:"pointer",position:"relative",background:isSelected?(isDark?"#0D2818":"#ECFDF5"):cardBg,

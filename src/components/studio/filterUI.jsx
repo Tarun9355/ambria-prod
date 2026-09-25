@@ -24,7 +24,15 @@ export function useRailMaxHeight(ref, stickyTop, gap = 16) {
       if (!el) return;
       // Floor of 240px: on a very short window a rail collapsed to nothing is worse than one that
       // overflows a little.
-      const next = Math.max(240, Math.round(window.innerHeight - el.getBoundingClientRect().top - gap)) + "px";
+      // documentElement.clientHeight, not window.innerHeight: on Android Chrome innerHeight changes
+      // every time the address bar slides in or out mid-scroll, and each change re-rendered the
+      // whole Browse / Build view (40 video cards) during the scroll — a large part of the flicker
+      // on tablets. The layout viewport height stays put while the bar moves.
+      const vh = document.documentElement.clientHeight || window.innerHeight;
+      // Snapped to 8px steps, so the few-pixel drift while the rail approaches its sticky point
+      // does not commit a new height (and a full re-render) on every frame.
+      const raw = Math.max(240, Math.round(vh - el.getBoundingClientRect().top - gap));
+      const next = Math.round(raw / 8) * 8 + "px";
       // Only commit real changes. The rail's height can feed back into page height when it is the
       // tallest column, and re-setting the same value every scroll frame would spin.
       setH((prev) => (prev === next ? prev : next));

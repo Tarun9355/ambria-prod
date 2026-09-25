@@ -2480,7 +2480,7 @@ export default function StudioApp() {
   // moves off the browser's native dialog. Resolves false on every dismissal route.
   const askConfirmAsync = useCallback((msg, opts = {}) => new Promise((resolve) => {
     openConfirm({
-      msg, note: opts.note, yesLabel: opts.yesLabel || "Confirm",
+      msg, note: opts.note, yesLabel: opts.yesLabel || "Confirm", tone: opts.tone,
       onYes: () => resolve(true), onCancel: () => resolve(false),
     });
   }), []);
@@ -3728,12 +3728,31 @@ export default function StudioApp() {
     // Signature of the WHOLE projected breakdown (income + per-dept manpower + inventory + fabric) —
     // used to skip redundant writes. Covering all of it (not just income totals) means a change to the
     // manpower split or fabric plan also re-syncs, so the stored snapshot can't drift out of sync.
-    const sig = JSON.stringify({ inc: snap.income || {}, mp: snap.manpowerDetail || {}, inv: snap.inventory || {}, fab: snap.fabricPlan || {}, dv: snap.dealValue || null });
+    // ── THE ZONE LAYOUT RIDES ALONG ──
+    // functionsDetail (each function's zone element lists, zone photos, zone dims) was written only
+    // at Sold, so anything added to a zone after booking existed in deptInventory (refreshed here)
+    // but not in any zone — and the Dept Ops PDF filed it under "From production". Refresh just
+    // those layout fields from the live build on every sync. Only functions the event order already
+    // has are touched; nothing else on a function (costs, skips, overrides) changes here.
+    const layout = new Map();
+    try {
+      (collectAllFunctionDataRef.current?.() || []).forEach(fd => {
+        layout.set(fd.fnIdx, {
+          zones: JSON.parse(JSON.stringify(fd.zoneConfig || {})),
+          elements: JSON.parse(JSON.stringify(fd.zoneElements || {})),
+          enabledEls: { ...(fd.enabledEls || {}) },
+          elSelectedPhoto: Object.fromEntries(Object.entries(fd.elSelectedPhoto || {}).map(([k, v]) => [k, { src: v?.src, eventName: v?.eventName, isLibrary: v?.isLibrary, eventId: v?.eventId }])),
+          dims: Object.fromEntries(Object.entries(fd.zoneConfig || {}).map(([zk, zc]) => [zk, zc?.dims || {}])),
+        });
+      });
+    } catch { /* layout refresh is best-effort — the money snapshot still goes */ }
+    const sig = JSON.stringify({ inc: snap.income || {}, mp: snap.manpowerDetail || {}, inv: snap.inventory || {}, fab: snap.fabricPlan || {}, dv: snap.dealValue || null, lay: [...layout.entries()] });
     // Merge ONLY the Studio-owned projected fields. deptOps (the dept head's edits / actuals — IMS-owned)
     // is preserved verbatim, so re-syncing never wipes their work.
     // After a regenerate, wipe deptOps (dept head's plan + actuals) so IMS starts fresh from the new plan.
     const wipe = deptWipeRef.current; if (wipe) deptWipeRef.current = false; // one-shot per regenerate
-    const applySnap = (base) => ({ ...base, ...(wipe ? { deptOps: {} } : {}), deptIncome: snap.income || {}, deptInventory: snap.inventory || {}, floralPlan: snap.floralPlan || base.floralPlan || null, fabricPlan: snap.fabricPlan || base.fabricPlan || null, manpowerPlan: snap.manpowerPlan || [], manpowerDetail: snap.manpowerDetail || {}, mpPhases: snap.mpPhases || null, deptSeason: snap.season || null, deptIncomeSig: sig, deptSyncedAt: Date.now(), dealValue: snap.dealValue || base.dealValue || null });
+    const withLayout = (fns) => Array.isArray(fns) && layout.size ? fns.map(f => (f && layout.has(f.fnIdx)) ? { ...f, ...layout.get(f.fnIdx) } : f) : fns;
+    const applySnap = (base) => ({ ...base, ...(wipe ? { deptOps: {} } : {}), functionsDetail: withLayout(base.functionsDetail), deptIncome: snap.income || {}, deptInventory: snap.inventory || {}, floralPlan: snap.floralPlan || base.floralPlan || null, fabricPlan: snap.fabricPlan || base.fabricPlan || null, manpowerPlan: snap.manpowerPlan || [], manpowerDetail: snap.manpowerDetail || {}, mpPhases: snap.mpPhases || null, deptSeason: snap.season || null, deptIncomeSig: sig, deptSyncedAt: Date.now(), dealValue: snap.dealValue || base.dealValue || null });
     try {
       // Read the FRESHEST row so we never clobber IMS-owned fields with Studio's stale local copy.
       const { data: row } = await supabase.from("event_orders").select("data").eq("id", eo.id).maybeSingle();
@@ -7586,7 +7605,7 @@ export default function StudioApp() {
   }, []);
 
   // ── Mark sold (writes Event Order) — VERBATIM ──
-  const markSold = useCallback(() => {
+  const markSold = useCallback(async () => {
     try {
       if (!clientName.trim()) { showMsg("Client name is required", "red"); return; }
       if (!clientDate) { showMsg("Event date is required", "red"); return; }
@@ -7604,11 +7623,16 @@ export default function StudioApp() {
       // structurally required, whereas a zero total is a judgement call — a deal can legitimately be
       // committed before the build is priced. What it must not be is invisible.
       if (!(eventGrandTotal > 0)) warns.push("💸 ₹0 — nothing has been built for this event yet");
-      const warnStr = warns.length ? "\n\n⚠️ " + warns.join("\n⚠️ ") : "";
       // The amount is in the question now. Confirming a booking without being shown what you are
       // committing to was the other half of how a ₹0 slipped through unnoticed.
-      const amountStr = eventGrandTotal > 0 ? ` for ₹${Math.round(eventGrandTotal).toLocaleString("en-IN")}` : "";
-      if (!confirm(`Confirm booking for ${clientName.trim()}${amountStr} — ${clientDate} at ${venue}?${warnStr}`)) return;
+      // Studio's own in-app confirm, not window.confirm: the browser's box said
+      // "tarun9355.github.io says" and ran the warnings together as one block of text.
+      const amountStr = eventGrandTotal > 0 ? `₹${Math.round(eventGrandTotal).toLocaleString("en-IN")} · ` : "";
+      if (!(await askConfirmAsync(`Confirm booking for ${clientName.trim()}?`, {
+        note: `${amountStr}${clientDate} at ${venue}${warns.length ? "\n" + warns.join("\n") : ""}`,
+        yesLabel: "Confirm booking",
+        tone: "positive",
+      }))) return;
       const result = saveSession();
       if (!result || !result.client) { showMsg("Save a client first", "red"); return; }
       const { client, ledger } = result;
@@ -7720,7 +7744,7 @@ export default function StudioApp() {
     // Listed because the ₹0 check above reads it. Without this the callback holds whatever
     // eventGrandTotal was when it was last rebuilt — which could warn "nothing has been built" on a
     // deal that has since been priced, or worse, stay silent on one that has been emptied.
-    eventGrandTotal]);
+    eventGrandTotal, askConfirmAsync]);
 
   // Reverses markSold — for when a booking was confirmed by mistake, or falls through afterward.
   // Reverts client_ledger's own status/booked* fields back to "ongoing". Deliberately touches
@@ -7729,17 +7753,20 @@ export default function StudioApp() {
   // this must never be read as one), and not anything already reconciled into IMS's own
   // `blocks`/`functions`/`projects` tables (reconcileSoldInventoryBlocks) — both of those are Ops'
   // own calls to make, separately, not something a click here should do on their behalf.
-  const unbookDeal = useCallback(() => {
+  const unbookDeal = useCallback(async () => {
     try {
       const client = activeClient;
       if (!client || client.status !== "booked") return;
-      if (!confirm(`Un-book ${client.name}'s deal — ${client.eventDate || "—"} at ${client.venue || "—"}?\n\nThis reverts it to an ongoing deal in Studio only. It does NOT cancel the linked IMS booking/contract or release any inventory/truss held for it — coordinate those with Ops separately if this booking is genuinely off.`)) return;
+      if (!(await askConfirmAsync(`Un-book ${client.name}'s deal?`, {
+        note: `${client.eventDate || "—"} at ${client.venue || "—"}. Reverts it to an ongoing deal in Studio only — it does not cancel the IMS booking or release inventory held for it; coordinate that with Ops.`,
+        yesLabel: "Un-book",
+      }))) return;
       const updated = clientLedger.map(c => c.id === client.id ? { ...c, status: "ongoing", bookedAt: null, bookedBy: null, finalSession: null, bookedSystemTotal: null } : c);
       saveClientLedger(updated);
       logActivity("booking", `↩️ ${client.name} — Booking un-booked by ${authUser?.name || "—"}`);
       showMsg(`${client.name}'s deal un-booked`, "green");
     } catch (e) { showMsg("Error: " + (e.message || "unknown"), "red"); }
-  }, [activeClient, clientLedger, saveClientLedger, logActivity, authUser, showMsg]);
+  }, [activeClient, clientLedger, saveClientLedger, logActivity, authUser, showMsg, askConfirmAsync]);
 
   // ── Load client session — VERBATIM ──
   const loadClientSession = useCallback((client, session, landingStep = 3, opts = {}) => {
@@ -10910,6 +10937,55 @@ export default function StudioApp() {
            it just finds the bar a slightly different colour than a minute ago. */
         @keyframes saSheen { from { transform: translateX(0) } to { transform: translateX(-56.5%) } }
         @media (prefers-reduced-motion: reduce) { .sa-sheen::before { animation: none; will-change: auto } }
+        /* ══ TOUCH DEVICES: HOLD THE DECOR STILL ══
+           Android tablets flickered badly across all four steps. The cause is the page decoration,
+           not the content: full-viewport blurs over forever-moving bands, drifting blurred strips
+           that repaint every frame, 80px-blurred 760px blobs kept as permanent GPU layers, glass
+           (backdrop-filter) buttons on every video card, and hover lifts that Android applies on tap
+           and never releases. A mid-range tablet GPU cannot re-composite all of that per frame, so it
+           drops tiles — the flashing.
+           (hover:none) and (pointer:coarse) is a touch screen with no mouse: phones and tablets, not
+           a touch laptop with a trackpad. There the decor keeps its colours and simply stops
+           moving — the same "hold still" each view already defines for prefers-reduced-motion, so
+           nothing is left half-animated or invisible (entrance animations that start at opacity 0
+           are finished, not cancelled). */
+        @media (hover: none) and (pointer: coarse) {
+          /* the moving background on every step */
+          .ei-band, .sb-band, .bd-band, .sh-band, .ei-wave,
+          .ei-wash-a, .ei-wash-b, .ei-wash-c, .ei-glow,
+          .sb-wash-top, .bd-wash-top, .sa-sheen::before { animation: none !important; will-change: auto !important }
+          .ei-wash-a, .ei-wash-b, .ei-wash-c, .ei-glow { opacity: 1 !important }
+          /* the big blobs are radial gradients that already fade to nothing — the 80px blur on top
+             only cost a huge GPU layer each */
+          .ei-wash span, .sb-wash span, .bd-wash span, .sh-wash span { filter: none !important; will-change: auto !important; transform: none !important }
+          /* Event Info's brand panel: photo drift, candle flicker, sheen, blobs, motes, shimmer */
+          .ei-blob-a, .ei-blob-b, .ei-wordmark, .ei-brand-rule, .ei-brand-img, .ei-ember, .ei-brand-inner { animation: none !important }
+          .ei-brand-img { transform: scale(1.06) !important }
+          .ei-ember { transform: translateX(-50%) !important; opacity: .6 !important }
+          .ei-wordmark { background-position: 50% 0 !important }
+          .ei-sheen, .ei-mote { display: none !important }
+          /* Summary: the estimate card's auroras, sheen, glows and pulses; entrances land finished */
+          .sh-te-aurora, .sh-te-aurora2 { animation: none !important; opacity: .45 !important }
+          .sh-te-sheen { animation: none !important; opacity: 0 !important }
+          .sh-te, .sh-te-lbl, .sh-te-amt, .sh-te-pill, .sh-te-cta,
+          .sh-badge, .sh-1, .sh-2, .sh-3, .sh-4 { animation: none !important; opacity: 1 !important; transform: none !important }
+          .sh-rule { animation: none !important; opacity: 1 !important; width: 56px !important }
+          .sh-halo { animation: none !important; opacity: 0 !important }
+          .sh-badge-ring, .sh-deck-glow { animation: none !important }
+          .sh-pv { animation: none !important; box-shadow: 0 0 0 1px rgba(201,169,110,.7) !important }
+          .sh-pv-glow { animation: none !important; opacity: .4 !important }
+          /* no glass on touch: every video card's play / fix-tags buttons, the frosted rails, the
+             drawer scrim — each one re-blurs whatever scrolls behind it, every frame */
+          .sb-card [style*="backdrop-filter"], .sb-panel, .sb-rcard, .bd-scrim,
+          .sb-rail .sb-panel, .bd-rail-l .sb-rcard { backdrop-filter: none !important; -webkit-backdrop-filter: none !important }
+          /* hover lifts: Android fires :hover on tap and keeps it until the next tap elsewhere, so a
+             tapped card stayed lifted and scaled — and moved again on the next touch */
+          .sb-card:hover, .sb-card:hover .sb-thumb, .sb-card:hover .sb-play, .sb-pill:hover, .sb-rcard:hover,
+          .el-row:hover, .ph-tile:hover, .ph-tile:hover img, .sec-tile:hover,
+          .zone-row button:hover, .ei-btn:hover, .ei-row:hover, .sm-zcard:hover, .sh-sold:hover { transform: none !important }
+          /* photo tiles fade in on mount; on a tablet re-render that read as a flash */
+          .ph-img { animation: none !important }
+        }
         /* ── THE SHEEN MUST NOT START WITH AN EDGE ──
            On Browse and Build the bar is transparent across the panel so the panel shows through, and
            the sheen is pushed over to begin at the panel's edge (see the .sa-sheen override in those
@@ -10985,19 +11061,35 @@ export default function StudioApp() {
       {/* CONFIRM DIALOG — centred on screen over a dimmed backdrop, so a destructive question stops
           the eye instead of arriving as a pill that reads like a status message. Backdrop click and
           Escape both cancel; only the red button commits. */}
-      {confirmToast && (
-        <div onClick={() => closeConfirm(false)} style={{ position: "fixed", inset: 0, zIndex: 100001, background: "rgba(15,15,26,0.44)", backdropFilter: "blur(2px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, animation: "studioDlgFade 0.16s ease-out" }}>
-          <div role="alertdialog" aria-modal="true" aria-label={confirmToast.msg} onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 380, background: "#fff", borderRadius: 16, padding: "24px 24px 18px", boxShadow: "0 24px 60px rgba(15,15,26,0.30)", textAlign: "center", animation: "studioDlgPop 0.2s cubic-bezier(0.34,1.4,0.64,1)" }}>
-            <div style={{ width: 44, height: 44, borderRadius: "50%", background: "rgba(220,38,38,0.10)", color: "#dc2626", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 21, fontWeight: 700, margin: "0 auto 14px" }}>!</div>
-            <div style={{ fontSize: 16.5, fontWeight: 700, color: "#111827", letterSpacing: -0.2, marginBottom: 6 }}>{confirmToast.msg}</div>
-            <div style={{ fontSize: 12.5, color: "#6B7280", lineHeight: 1.5, marginBottom: 20 }}>{confirmToast.note || "This can’t be undone — its elements and pricing go with it."}</div>
-            <div style={{ display: "flex", gap: 9 }}>
-              <button onClick={() => closeConfirm(false)} style={{ flex: 1, background: "#F3F4F6", color: "#374151", border: "none", padding: "11px 0", borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>Cancel</button>
-              <button autoFocus onClick={() => closeConfirm(true)} style={{ flex: 1, background: "#dc2626", color: "#fff", border: "none", padding: "11px 0", borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>{confirmToast.yesLabel}</button>
+      {/* In Studio's own palette — warm ivory card, gold hairline, the serif the Summary uses for
+          the client name, gold as the committing colour. tone:"positive" (confirming a booking)
+          gets a gold check mark and a gold button; everything else is a destructive question and
+          keeps red, so the two can never be mistaken for each other. */}
+      {confirmToast && (() => {
+        const positive = confirmToast.tone === "positive";
+        const GOLD = "#C9A96E", GOLD_D = "#A8844A";
+        return (
+        <div onClick={() => closeConfirm(false)} style={{ position: "fixed", inset: 0, zIndex: 100001, background: "rgba(15,15,26,0.5)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, animation: "studioDlgFade 0.16s ease-out" }}>
+          <div role="alertdialog" aria-modal="true" aria-label={confirmToast.msg} onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 400, background: "linear-gradient(180deg,#FFFDF8 0%,#FBF6EC 100%)", border: "1px solid rgba(201,169,110,0.35)", borderRadius: 18, padding: "26px 26px 20px", boxShadow: "0 28px 70px rgba(15,15,26,0.38), 0 0 0 1px rgba(255,255,255,0.6) inset", textAlign: "center", animation: "studioDlgPop 0.2s cubic-bezier(0.34,1.4,0.64,1)" }}>
+            <div aria-hidden="true" style={{ width: 46, height: 46, borderRadius: "50%", margin: "0 auto 14px", display: "flex", alignItems: "center", justifyContent: "center",
+              background: positive ? "rgba(201,169,110,0.16)" : "rgba(220,38,38,0.09)", border: `1px solid ${positive ? "rgba(201,169,110,0.45)" : "rgba(220,38,38,0.25)"}`, color: positive ? GOLD_D : "#dc2626" }}>
+              {positive
+                ? <svg width="20" height="20" viewBox="0 0 16 16" fill="none"><path d="M3.5 8.5l3 3L12.5 5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                : <svg width="20" height="20" viewBox="0 0 16 16" fill="none"><path d="M8 4.5v4.25M8 11.25v.25" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" /></svg>}
+            </div>
+            <div style={{ fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 23, fontWeight: 600, fontStyle: "italic", color: "#1A1A2E", lineHeight: 1.2, marginBottom: 8 }}>{confirmToast.msg}</div>
+            <div style={{ width: 36, height: 1, background: GOLD, opacity: 0.6, margin: "0 auto 10px" }} />
+            <div style={{ fontSize: 12.5, color: "#6B6457", lineHeight: 1.6, marginBottom: 22, whiteSpace: "pre-line" }}>{confirmToast.note || "This can’t be undone — its elements and pricing go with it."}</div>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={() => closeConfirm(false)} style={{ flex: 1, background: "transparent", color: "#6B6457", border: "1px solid rgba(26,26,46,0.14)", padding: "11px 0", borderRadius: 11, fontSize: 12, fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase", cursor: "pointer" }}>Cancel</button>
+              <button autoFocus onClick={() => closeConfirm(true)} style={{ flex: 1, border: "none", padding: "11px 0", borderRadius: 11, fontSize: 12, fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase", cursor: "pointer",
+                background: positive ? `linear-gradient(135deg, ${GOLD} 0%, ${GOLD_D} 100%)` : "#dc2626", color: positive ? "#1A1A2E" : "#fff",
+                boxShadow: positive ? "0 8px 20px -8px rgba(168,132,74,0.7)" : "0 8px 20px -8px rgba(220,38,38,0.6)" }}>{confirmToast.yesLabel}</button>
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* GLOBAL BULK-TAG PROGRESS PILL — visible on every Studio screen while tagging runs */}
       {bulkTag.running && (

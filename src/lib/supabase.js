@@ -12,10 +12,26 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 // ─── Helpers ───────────────────────────────────────────
 
 /** Fetch all rows from a table */
+// Paged, because a single select is silently capped at the project's max-rows (1000 by default):
+// with 1060 rows in `inventory`, the last 60 never reached the app — missing from the Inventory
+// tab and unmatchable on the Dept Ops PDF.
+// The first request is the same plain select as before, so every small table (most of them, and
+// the key-value ones like `settings` / `truss_inventory` that have no `id` column) behaves exactly
+// as it did. Only a table that fills that first page is re-read in ordered pages — ordered by id
+// so no row is skipped or repeated between requests.
+const PAGE = 1000;
 export const fetchAll = async (table) => {
   const { data, error } = await supabase.from(table).select("*");
   if (error) throw error;
-  return data || [];
+  if (!data || data.length < PAGE) return data || [];
+  const rows = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data: page, error: pageErr } = await supabase.from(table).select("*").order("id", { ascending: true }).range(from, from + PAGE - 1);
+    if (pageErr) { console.warn(`[fetchAll] paging ${table} failed, keeping the first ${data.length} rows:`, pageErr.message); return data; }
+    rows.push(...(page || []));
+    if (!page || page.length < PAGE) break;
+  }
+  return rows;
 };
 
 /** Fetch a single row by ID */

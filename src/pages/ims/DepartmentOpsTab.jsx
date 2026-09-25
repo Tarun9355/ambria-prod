@@ -7,6 +7,43 @@ import { DEPTS as SHARED_DEPTS, catToDept as sharedCatToDept, userDepartments } 
 import ManpowerFactorPills from "../../components/shared/ManpowerFactorPills.jsx";
 import { TabsMenu, useConfirm } from "../../components/ui";
 import { hasIMSPerm } from "../../lib/ims/constants";
+import { ZONE_META } from "../../lib/studio/taxonomy";
+import { ZONE_DEF_SK } from "../../lib/studio/keys";
+import { LOGO_ASSET, LOGO_BOX } from "../../lib/studio/brand.js";
+
+// ── THE OFFICIAL LOGO, READY FOR THE PDF ──
+// ambria-logo.png is a WHITE wordmark with a gold dot and gold "DESIGN & DECOR", on a transparent
+// canvas mostly made of padding. Returns two data URLs, both cropped to the mark (LOGO_BOX):
+//   light — as supplied, for the cover photo;
+//   dark  — the white strokes recoloured near-black, gold untouched, for cream pages where a
+//           white mark would vanish.
+// Data URLs, so html2canvas draws them with no CORS round-trip. Resolves nulls on any failure and
+// the report falls back to the text wordmark.
+const loadPdfLogos = () => new Promise((resolve) => {
+  if (!LOGO_ASSET) { resolve({ light: null, dark: null }); return; }
+  const img = new Image();
+  img.onload = () => {
+    try {
+      const W = 1000, H = Math.round(W * LOGO_BOX.ch / LOGO_BOX.cw);
+      const c = document.createElement("canvas"); c.width = W; c.height = H;
+      const ctx = c.getContext("2d");
+      ctx.drawImage(img, LOGO_BOX.x, LOGO_BOX.y, LOGO_BOX.cw, LOGO_BOX.ch, 0, 0, W, H);
+      const light = c.toDataURL("image/png");
+      const px = ctx.getImageData(0, 0, W, H);
+      const d = px.data;
+      for (let i = 0; i < d.length; i += 4) {
+        // White / near-white (and its anti-aliased greys) → ink. Gold has a low blue channel, so
+        // it never passes this test and keeps its colour.
+        if (d[i + 3] > 0 && d[i] > 170 && d[i + 1] > 170 && d[i + 2] > 170) { d[i] = 26; d[i + 1] = 26; d[i + 2] = 26; }
+      }
+      ctx.putImageData(px, 0, 0);
+      resolve({ light, dark: c.toDataURL("image/png") });
+    } catch { resolve({ light: null, dark: null }); }
+  };
+  img.onerror = () => resolve({ light: null, dark: null });
+  img.src = LOGO_ASSET;
+});
+import { kvGet } from "../../lib/ims/kv";
 
 // ── THE SUMMARY TILE ROW ──
 // auto-FIT, not auto-fill. The difference only shows when there are fewer tiles than columns
@@ -1211,7 +1248,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   // with no server to render on, and a bundled generator would add hundreds of kilobytes to
   // every page load for a button used occasionally. "Save as PDF" is in the print dialog of every
   // browser the team uses, and the same approach already prints the loading challans above.
-  const buildReportHtml = () => {
+  const buildReportHtml = (zoneLabels = {}, logos = {}) => {
     // Anything that reaches the page goes through this first. The values are client names,
     // venues, crew types and item names typed by staff in Studio — an apostrophe or a stray
     // "<" in one of them would otherwise break the markup or inject into it.
@@ -1296,8 +1333,196 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     const fabRows = dept === "Fabric" ? fabricReqRows.flatMap(ft => ft.rows.map(r =>
       `<tr><td>${esc(ft.label)} · ${esc(r.colour)}</td><td class="n">${esc(r.required)} ${esc(ft.unit)}</td><td class="n">${esc(r.avail)} ${esc(ft.unit)}</td><td class="n ${r.short > 0 ? "bad" : "ok"}">${r.short > 0 ? `short ${esc(r.short)} ${esc(ft.unit)}` : "ok"}</td></tr>`)) : [];
 
+    /* ── ZONE LAYOUT PAGES ──
+       One page per zone of the event: the zone's reference photo in the middle band, and this
+       department's items that go into that zone as cards above and below it, each with an arrow
+       to the photo. A card carries the item's own photo, qty, dimensions and the zone it goes in.
+       Built from the event order's functionsDetail — each function's zone element lists
+       (`elements[zoneKey]`), zone photos (`elSelectedPhoto`) and zone dims — with each element
+       resolved to its inventory item (by invId / imsId, else by name) for the photo and dims.
+       An element whose inventory item belongs to another department is skipped. Items this
+       department holds that no zone lists land on a final "Other items" page, so the PDF never
+       drops something that is going to the event.
+       Arrows point at the photo's edge, not at a spot inside it: nothing records where in the
+       photo an item stands. */
+    const invById = new Map((inventory || []).map(i => [String(i.id), i]));
+    const invByName = new Map((inventory || []).map(i => [String(i.name || "").trim().toLowerCase(), i]));
+    const heldByInv = new Map(blockedItemsGrouped.filter(b => b.invId).map(b => [String(b.invId), b]));
+    const heldByName = new Map(blockedItemsGrouped.map(b => [String(b.name || "").trim().toLowerCase(), b]));
+    const hasDeptSnapshot = Array.isArray(sel?.deptInventory?.[dept]) && sel.deptInventory[dept].length > 0;
+    const invDims = (inv) => {
+      if (!inv) return "";
+      if (inv.size) return String(inv.size);
+      const d = inv.dims_LxWxH;
+      const parts = d ? [d.l, d.w, d.h].filter(v => Number(v) > 0) : [];
+      return parts.length ? parts.join(" × ") + (d.unit ? " " + d.unit : "") : "";
+    };
+    const invPhoto = (inv, held) => (Array.isArray(inv?.photoUrls) && inv.photoUrls[0]) || inv?.img || held?.photo || "";
+    // Admin-edited zone names first (Studio's zone settings, fetched at export time), then the
+    // built-in defaults, then the key itself tidied up.
+    const zoneName = (zk) => zoneLabels[zk] || ZONE_META[zk]?.label || String(zk).replace(/[_-]+/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+    const zoneDimsText = (d) => {
+      if (!d) return "";
+      const parts = [["L", d.L], ["W", d.W], ["H", d.H]].filter(([, v]) => Number(v) > 0);
+      return parts.length ? parts.map(([k, v]) => `${k} ${v}`).join(" × ") + " ft" : "";
+    };
+    // The image goes INSIDE the element's one style attribute. An element that already has a
+    // style (the zone photo carries its position) must not get a second style="" — browsers keep
+    // only the first, which is how the zone photo came out blank while the cards' photos showed.
+    const bgCss = (url) => url ? `background-image:url('${esc(url)}');` : "";
+    const bgData = (url) => url ? `data-bg="${esc(url)}"` : "";
+    const bg = (url) => url ? `style="${bgCss(url)}" ${bgData(url)}` : "";
+
+    const zonePages = [];
+    const placed = new Set();
+    const fns = Array.isArray(sel?.functionsDetail) ? sel.functionsDetail : [];
+    fns.forEach((fn, fi) => {
+      const els = fn?.elements || {};
+      Object.keys(els).forEach(zk => {
+        if (fn.enabledEls && fn.enabledEls[zk] === false) return;
+        const merged = new Map();
+        (Array.isArray(els[zk]) ? els[zk] : []).forEach(el => {
+          const id = el?.invId || el?.imsId;
+          const nm = String(el?.name || "").trim().toLowerCase();
+          const inv = (id && invById.get(String(id))) || invByName.get(nm) || null;
+          const invNm = String(inv?.name || "").trim().toLowerCase();
+          const held = (inv && heldByInv.get(String(inv.id))) || (invNm && heldByName.get(invNm)) || heldByName.get(nm) || null;
+          // ── WHICH DEPARTMENT AN ITEM IS ON ──
+          // Deal Check's own split is the authority: an item is this department's if this
+          // department's Deal Check snapshot holds it. The inventory category is only a fallback
+          // for an event never run through Deal Check — the two disagree often enough (Wooden
+          // Console is Floral in Deal Check but categorised as Furniture) that the category alone
+          // put items on the wrong department's PDF and left Floral's empty.
+          // Flower arrangements (patterns) are not inventory at all; they go on the Floral sheet.
+          const isPattern = !inv && !!el?.patternId;
+          const mine = held ? true
+            : isPattern ? dept === "Floral"
+            : hasDeptSnapshot ? false
+            : inv ? catToDept(inv.category || inv.cat) === dept : false;
+          if (!mine) return;
+          if (held) placed.add(held.id);
+          const key = inv ? "i:" + inv.id : "n:" + nm;
+          const prev = merged.get(key);
+          const qty = Number(el?.qty) || 1;
+          if (prev) { prev.qty += qty; return; }
+          merged.set(key, { name: inv?.name || el?.name || held?.name || "Item", qty, photo: invPhoto(inv, held), dims: invDims(inv) });
+        });
+        const items = [...merged.values()];
+        if (!items.length) return;
+        zonePages.push({
+          zk,
+          title: zoneName(zk),
+          fnLabel: [fn.type || (fns.length > 1 ? `Function ${fi + 1}` : ""), fn.date].filter(Boolean).join(" · "),
+          photo: fn.elSelectedPhoto?.[zk]?.src || "",
+          zoneDims: zoneDimsText(fn.dims?.[zk] || fn.zones?.[zk]?.dims),
+          items,
+        });
+      });
+    });
+    const unplaced = blockedItemsGrouped.filter(b => !placed.has(b.id)).map(b => {
+      const inv = (b.invId && invById.get(String(b.invId))) || invByName.get(String(b.name || "").trim().toLowerCase()) || null;
+      return { name: b.name, qty: Number(b.qty) || 0, photo: invPhoto(inv, b), dims: invDims(inv), prodOrBuy: b.prodOrBuy || null, source: b.prodOrBuy === "buying" ? "To buy" : b.prodOrBuy === "production" ? "Production" : "" };
+    });
+    // Only what Deal Check actually marks PRODUCTION goes on the production page. Everything else
+    // not found in a zone (usually an item added to a zone after the booking, before the next Deal
+    // Check sync refreshes the zone lists) is listed honestly as unplaced, not as production.
+    const prodItems = unplaced.filter(it => it.prodOrBuy === "production");
+    const otherItems = unplaced.filter(it => it.prodOrBuy !== "production");
+
+    // Geometry, in the sheet's 706px content width. Cards sit four to a row: top row, the photo
+    // band, bottom row. Each card's arrow drops straight onto the photo edge below / above it.
+    // A4's usable area is ~1.46× taller than it is wide, so at this 706px column a full page is
+    // ~1020px. The stage is sized to fill it: the photo takes whatever height the card rows leave,
+    // so a zone with four items gets a large photo instead of a small one and half a blank page.
+    // HEAD_PX covers the section's own padding plus the header card (eyebrow, title, ornament,
+    // date) and the gap under it — so header + card rows + photo add up to exactly one page.
+    const CARD_W = 224, COL_GAP = 17, ROW_H = 300, ARROW = 40, PAGE_PX = 1020, HEAD_PX = 186;
+    const colX = (i, n) => { const span = n * CARD_W + (n - 1) * COL_GAP; return (706 - span) / 2 + i * (CARD_W + COL_GAP); };
+    const card = (it, zone, num) => `
+      <div class="zc-ph" ${bg(it.photo)}>${it.photo ? "" : "<span>No photo</span>"}</div>
+      ${num ? `<div class="zc-no">${num}</div>` : ""}
+      <div class="zc-b">
+        <div class="zc-n">${esc(it.name)}</div>
+        <div class="zc-r"><span>Qty</span><b>${esc(it.qty)}</b></div>
+        <div class="zc-r"><span>Size</span><b>${esc(it.dims || "—")}</b></div>
+        ${it.source ? `<div class="zc-r"><span>From</span><b>${esc(it.source)}</b></div>` : ""}
+      </div>`;
+    const zoneSection = (pg, chunk, part, parts, zoneNo, offset) => {
+      const top = chunk.slice(0, 3), bot = chunk.slice(3, 6);
+      const rows = bot.length ? 2 : 1;
+      const PHOTO_H = Math.max(260, PAGE_PX - HEAD_PX - rows * (ROW_H + ARROW));
+      const photoTop = ROW_H + ARROW;
+      const botTop = photoTop + PHOTO_H + ARROW;
+      // No item numbers (removed by request) — each card's arrow alone ties it to the photo.
+      const cards = [
+        ...top.map((it, i) => { const x = colX(i, top.length); return `<div class="zc" style="left:${x}px;top:0">${card(it, pg.title)}</div>
+          <div class="za down" style="left:${x + CARD_W / 2 - 1}px;top:${ROW_H}px;height:${ARROW}px"></div>`; }),
+        ...bot.map((it, i) => { const x = colX(i, bot.length); return `<div class="zc" style="left:${x}px;top:${botTop}px">${card(it, pg.title)}</div>
+          <div class="za up" style="left:${x + CARD_W / 2 - 1}px;top:${photoTop + PHOTO_H}px;height:${ARROW}px"></div>`; }),
+      ].join("");
+      const stageH = bot.length ? botTop + ROW_H : photoTop + PHOTO_H;
+      return `<section data-block data-page class="zp"><div class="pc tl"></div><div class="pc tr"></div>
+        <div class="zh">
+          <div><div class="zk"><b>Zone ${String(zoneNo).padStart(2, "0")}</b>${parts > 1 ? ` · Part ${part} of ${parts}` : ""}</div><h2>${esc(pg.title)}</h2>
+            <div class="orn l"><i></i><b></b><i></i></div>
+            <div class="zm">${esc(pg.fnLabel || selDateStr || "")}</div></div>
+          <div class="zt">${pg.zoneDims ? `<span>${esc(pg.zoneDims)}</span>` : ""}<span>${pg.items.length} item${pg.items.length === 1 ? "" : "s"}</span></div>
+        </div>
+        <div class="zs" style="height:${stageH}px">
+          <div class="zphoto" style="top:${photoTop}px;height:${PHOTO_H}px;${bgCss(pg.photo)}" ${bgData(pg.photo)}>${pg.photo ? "" : "<span>No zone photo</span>"}</div>
+          ${cards}
+        </div>
+      </section>`;
+    };
+    const chunks = (arr, n) => { const out = []; for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n)); return out; };
+    // A plain grid page (no zone photo) for a list of items — used for production items and for
+    // anything not placed in a zone.
+    const listPages = (items, eyebrow, title, note) => items.length ? chunks(items, 9).map((c, i, all) => `<section data-block data-page class="zp"><div class="pc tl"></div><div class="pc tr"></div>
+        <div class="zh"><div><div class="zk"><b>${esc(eyebrow)}</b>${all.length > 1 ? ` · Part ${i + 1} of ${all.length}` : ""}</div><h2>${esc(title)}</h2>
+          <div class="orn l"><i></i><b></b><i></i></div>
+          <div class="zm">${esc(note)}</div></div>
+          <div class="zt"><span>${items.length} item${items.length === 1 ? "" : "s"}</span></div></div>
+        <div class="zg">${c.map(it => `<div class="zc st">${card(it, "")}</div>`).join("")}</div>
+      </section>`) : [];
+    const zoneHtml = [
+      ...zonePages.flatMap((pg, zi) => { const cs = chunks(pg.items, 6); return cs.map((c, i) => zoneSection(pg, c, i + 1, cs.length, zi + 1, i * 6)); }),
+      ...listPages(prodItems, "Production", "From production", "Made by the production team for this event"),
+      ...listPages(otherItems, "Not in a zone", "Other items", "Held for this event but not placed in any zone yet"),
+    ].join("");
+
+    // The cover's backdrop: this event's Stage photo when it has one (the setup the book is
+    // really about), otherwise the first zone that has a photo.
+    const coverPhoto = (zonePages.find(p => /stage/i.test(p.zk) && p.photo) || zonePages.find(p => p.photo) || {}).photo || "";
+    // The event's sessions (its functions) for the cover: what, when, and the details that shape
+    // a setup — shift, headcount and, when it differs from the event's main venue, where.
+    const niceDate = (ds) => {
+      if (!ds) return "Date to be set";
+      const d = new Date(ds + "T00:00:00");
+      return isNaN(d) ? String(ds) : d.toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+    };
+    // `skipped` on a function is the LIST of Deal Check lines skipped in it, not a flag — an empty
+    // array is truthy, so filtering on it dropped every session and the cover showed none.
+    const sessions = fns.filter(Boolean).map((f, i) => ({
+      type: f.type || `Session ${i + 1}`,
+      date: niceDate(f.date),
+      // Short form for the card's DATE cell ("Sat, 29 Aug 2026") — the long one does not fit a column.
+      dateShort: (() => { if (!f.date) return "To be set"; const d = new Date(f.date + "T00:00:00"); return isNaN(d) ? String(f.date) : d.toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric" }); })(),
+      shift: f.shift ? String(f.shift) : "",
+      pax: Number(f.pax) > 0 ? String(f.pax) : "",
+      place: f.venue && f.venue !== venue ? f.venue : "",
+    }));
+    // One colour per kind of function, so a three-function book reads at a glance. Anything not
+    // listed takes the next colour in the rotation.
+    const SES_TONES = { wedding: "wine", reception: "navy", cocktail: "navy", sangeet: "plum", mehendi: "sage", mehndi: "sage", haldi: "amber", engagement: "rose", ring: "rose", birthday: "amber" };
+    const TONE_ROT = ["wine", "sage", "navy", "amber", "plum", "rose"];
+    const sesTone = (t, i) => SES_TONES[Object.keys(SES_TONES).find(k => String(t).toLowerCase().includes(k))] || TONE_ROT[i % TONE_ROT.length];
+    // Gold line — diamond — gold line: the one ornament, reused on the cover and on every zone page.
+    const ornament = `<div class="orn"><i></i><b></b><i></i></div>`;
+
     const html = `<!doctype html><html><head><meta charset="utf-8">
 <title>${esc(dept)} — ${esc(sel?.clientName || "Event")} — Ambria</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700;800&family=Inter:wght@400;500;600;700&display=swap">
 <style>
   /* ── A PAGE, NOT A WEB PAGE ──
      The first version had no width at all, so the browser laid it out across the whole window:
@@ -1307,34 +1532,99 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   *{box-sizing:border-box}
   html,body{margin:0;background:#EEF1F6}
   body{font-family:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;color:#111827;font-size:11px;line-height:1.5;-webkit-font-smoothing:antialiased}
-  .sheet{width:794px;margin:0 auto;background:#fff;padding:38px 44px 30px}
+  .sheet{width:794px;margin:0 auto;background:#F4F1EA;padding:38px 44px 30px}
 
   /* Header: a rule of colour, the department as the headline, the event beneath it, and the
      facts that identify this sheet as labelled pairs — a report is found again by its
      identifiers, so they are the one thing that must never be a run-on sentence. */
-  .hdr{border-top:3px solid #2563EB;padding-top:14px;margin-bottom:20px}
-  .brand{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px}
-  .brand .co{font-size:10px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:#2563EB}
-  .brand .kind{font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:#9CA3AF}
-  h1{font-size:25px;line-height:1.15;margin:0;color:#0F172A;letter-spacing:-.02em;font-weight:700}
-  h1 span{color:#94A3B8;font-weight:400}
-  .facts{display:flex;gap:26px;margin-top:14px;padding-top:12px;border-top:1px solid #E8ECF2}
-  .facts div{min-width:0}
-  .facts .k{font-size:8px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#9CA3AF;margin-bottom:2px}
-  .facts .v{font-size:11.5px;font-weight:600;color:#1F2937}
+  /* Generous line-heights and bottom padding throughout the header: html2canvas draws text a few
+     px below where the browser lays it out, and with tight boxes the bottoms of the fact values
+     ("2026-09-29", "Aura") were sliced off at the block's edge. */
+  /* ── AMBRIA HOUSE STYLE ──
+     The same palette as Studio: deep navy, warm ivory, and gold as the one accent. Titles in
+     Playfair Display, bold and upright, the serif the app's own zone views use — everything else in
+     Inter. Gold is kept to rules, labels and markers so it reads as a detail, not a colour. */
+  /* The cover is one full page (1020px ≈ A4's usable height at this width): brand at the top,
+     the title block in the upper-middle, the facts and the contents anchored to the foot. As a
+     short band it left two thirds of page one empty. */
+  /* ── THE COVER: FULL BLEED ──
+     A whole A4 page (794 × 1123px) edge to edge — the exporter draws it with no margin. The
+     event's own Stage photo (else its first zone photo) fills the page under a warm dark shade,
+     and a cream card floats on it holding the title, the facts and the contents. So every
+     event's book opens on its own decor rather than a generic panel. */
+  .cover{position:relative;width:794px;height:1123px;margin:-38px -44px 0;background:#2A2419 center/cover no-repeat;line-height:1.6;overflow:hidden}
+  .cv-shade{position:absolute;inset:0;background:linear-gradient(180deg,rgba(24,18,10,.45) 0%,rgba(24,18,10,.25) 45%,rgba(24,18,10,.6) 100%)}
+  /* The card is laid out on one centre line: logo, kind, title, client, ornament, facts, the
+     sessions, the contents. Gold corner brackets frame it like an invitation. */
+  .cv-card{position:absolute;left:40px;right:40px;top:80px;bottom:92px;background:#F4F1EA;border-radius:30px;padding:44px 40px 34px;box-shadow:0 30px 60px -20px rgba(0,0,0,.55);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
+  .cv-corner{position:absolute;width:34px;height:34px;border-color:#B8935A;border-style:solid;border-width:0}
+  .cv-corner.tl{top:18px;left:18px;border-top-width:1.5px;border-left-width:1.5px;border-top-left-radius:12px}
+  .cv-corner.tr{top:18px;right:18px;border-top-width:1.5px;border-right-width:1.5px;border-top-right-radius:12px}
+  .cv-corner.bl{bottom:18px;left:18px;border-bottom-width:1.5px;border-left-width:1.5px;border-bottom-left-radius:12px}
+  .cv-corner.br{bottom:18px;right:18px;border-bottom-width:1.5px;border-right-width:1.5px;border-bottom-right-radius:12px}
+  .cv-mark{font-size:14px;font-weight:700;letter-spacing:.3em;color:#A8844A}
+  /* The official mark (cropped to its own ink, so its height IS the wordmark's height). Dark
+     version on the cream card, the white original on the cover photo. */
+  .cv-logo{display:block;height:50px;width:auto}
+  .cv-logo-l{display:block;height:30px;width:auto}
+  .ft-logo{display:block;height:26px;width:auto;margin:0 auto}
+  .cv-kind{margin-top:22px;font-size:10.5px;line-height:1.7;font-weight:700;letter-spacing:.34em;text-transform:uppercase;color:#8A8272}
+  .cv-title{font-family:"Playfair Display",Georgia,serif;font-weight:800;font-size:76px;line-height:1.15;letter-spacing:-.01em;color:#1A1A1A;margin-top:18px}
+  .cv-for{font-family:"Playfair Display",Georgia,serif;font-weight:600;font-size:28px;line-height:1.4;color:#8B6F42;margin-top:4px}
+  /* The ornament: gold hairline, a small gold diamond, gold hairline. */
+  .orn{display:flex;align-items:center;justify-content:center;gap:10px;margin:26px 0}
+  .orn i{display:block;width:90px;height:1px;background:#C9A96E}
+  .orn b{display:block;width:8px;height:8px;background:#C9A96E;transform:rotate(45deg)}
+  .cv-facts{display:flex;justify-content:center;gap:0}
+  .cv-facts > div{padding:0 26px;border-left:1px solid #DDD6C6}
+  .cv-facts > div:first-child{border-left:0}
+  .cv-facts .k{font-size:9.5px;line-height:1.7;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:#8A8272;margin-bottom:5px}
+  .cv-facts .v{font-size:15px;line-height:1.6;font-weight:700;color:#1A1A1A}
+  .cv-sec{font-size:9.5px;line-height:1.7;font-weight:700;letter-spacing:.3em;text-transform:uppercase;color:#A8844A;margin:34px 0 12px}
+  /* One card per session, each in its own colour (wine, navy, sage, amber, plum, rose): a tinted
+     face, a border and offset shadow in the deep shade, the type in the serif, the full date,
+     then the shift and headcount as chips. */
+  /* Larger and quieter: the type as the headline, a hairline in the card's own colour, then the
+     facts as labelled columns (DATE | SHIFT | GUESTS) instead of a filled pill — which also cured
+     the pill's clipped text. Every text box carries line-height 1.7+ and bottom padding, because
+     html2canvas draws text a few px low and a tight box slices the letters. */
+  .cv-sessions{display:flex;flex-wrap:wrap;justify-content:center;gap:18px;width:100%}
+  .cv-ses{flex:0 1 330px;border-radius:22px;padding:20px 22px 18px;border:1.5px solid var(--d);box-shadow:5px 5px 0 var(--d);background:var(--l)}
+  .cv-ses .sk{font-size:9.5px;line-height:1.8;font-weight:700;letter-spacing:.3em;text-transform:uppercase;color:var(--d);opacity:.8}
+  .cv-ses .st{font-family:"Playfair Display",Georgia,serif;font-weight:800;font-size:34px;line-height:1.3;color:var(--d);padding-bottom:2px}
+  .cv-ses .sl{height:1px;background:var(--d);opacity:.28;margin:12px 6px 14px}
+  .cv-ses .sg{display:flex;justify-content:center}
+  .cv-ses .sf{padding:0 12px 2px;border-left:1px solid rgba(26,26,26,.14)}
+  .cv-ses .sf:first-child{border-left:0}
+  .cv-ses .sf .k{font-size:8.5px;line-height:1.8;font-weight:700;letter-spacing:.2em;text-transform:uppercase;color:#7A7468}
+  .cv-ses .sf .v{font-size:13.5px;line-height:1.7;font-weight:700;color:#1A1A1A;white-space:nowrap;text-transform:capitalize;padding-bottom:2px}
+  .cv-ses .sm{font-size:11px;line-height:1.8;color:#6F6A5E;margin-top:8px;padding-bottom:2px}
+  .t-wine{--d:#7A2E3B;--l:#F6E3E5}
+  .t-navy{--d:#23345C;--l:#E3E9F5}
+  .t-sage{--d:#3F6150;--l:#E2EEE5}
+  .t-amber{--d:#9A6412;--l:#FBEFD2}
+  .t-plum{--d:#5B3470;--l:#EFE4F4}
+  .t-rose{--d:#A2445E;--l:#F9E4EA}
+  /* Colour on the card itself: a jewel-tone ribbon across the top, a warmer ivory face, and the
+     client's name in wine. */
+  .cv-card{overflow:hidden;background:linear-gradient(180deg,#FCF8F0 0%,#F3EADB 100%)}
+  .cv-ribbon{position:absolute;left:0;right:0;top:0;height:9px;background:linear-gradient(90deg,#7A2E3B 0%,#B8935A 30%,#3F6150 55%,#23345C 80%,#5B3470 100%)}
+  .cv-for{color:#7A2E3B}
+  .cv-facts .v{color:#23345C}
+  .cv-bottom{position:absolute;left:62px;right:62px;bottom:36px;display:flex;align-items:center;justify-content:space-between;font-size:10px;line-height:1.7;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:rgba(244,241,234,.8)}
 
   /* Section head: a number, the name, and a rule that runs out to the margin. The number is
      what lets someone on a phone call say "look at section 3" instead of "scroll down a bit". */
   section{margin-bottom:20px}
   .sh{display:flex;align-items:center;gap:9px;margin-bottom:9px}
-  .sh .sn{font-size:8.5px;font-weight:700;color:#2563EB;background:#EFF6FF;border-radius:3px;padding:2px 5px;letter-spacing:.04em}
-  .sh h3{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#334155;margin:0;white-space:nowrap}
-  .sh i{flex:1;height:1px;background:#E8ECF2}
+  .sh .sn{font-size:8.5px;line-height:1.7;font-weight:600;color:#A8844A;border:1px solid rgba(201,169,110,.5);border-radius:3px;padding:1px 5px;letter-spacing:.06em}
+  .sh h3{font-family:"Playfair Display",Georgia,serif;font-size:17px;line-height:1.4;font-weight:700;color:#15152B;margin:0;white-space:nowrap}
+  .sh i{flex:1;height:1px;background:rgba(201,169,110,.4)}
 
   table{width:100%;border-collapse:collapse;table-layout:fixed}
   th,td{padding:6px 9px;text-align:left;vertical-align:middle;word-wrap:break-word}
-  th{font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.09em;color:#94A3B8;border-bottom:1px solid #CBD5E1;padding-bottom:5px}
-  td{border-bottom:1px solid #F1F5F9;font-size:11px}
+  th{font-size:7.5px;line-height:1.7;font-weight:600;text-transform:uppercase;letter-spacing:.18em;color:#A8844A;border-bottom:1px solid rgba(201,169,110,.45);padding-bottom:5px}
+  td{border-bottom:1px solid #F3EEE4;font-size:11px;line-height:1.7}
   tbody tr:last-child td{border-bottom:0}
   .n{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
   .b{font-weight:700;color:#0F172A}
@@ -1366,7 +1656,65 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   .empty{color:#94A3B8;font-style:italic;font-size:10.5px;margin:2px 0 0}
   .ok{color:#059669;font-weight:600}
   .bad{color:#DC2626;font-weight:700}
-  footer{margin-top:26px;padding-top:11px;border-top:1px solid #E8ECF2;color:#94A3B8;font-size:8.5px;display:flex;justify-content:space-between;gap:16px}
+  footer{margin-top:28px;padding-top:14px;padding-bottom:8px;line-height:1.8;border-top:1px solid rgba(201,169,110,.45);text-align:center}
+  .ft-mark{font-size:11px;font-weight:600;letter-spacing:.38em;color:#A8844A}
+  .ft-meta{font-size:10px;color:#A39A89;margin-top:2px}
+
+  /* ── ZONE LAYOUT PAGES ──
+     Absolutely positioned inside a fixed 706px stage, so the arrows land exactly on the card
+     centres. Photos are background images with background-size, not <img object-fit>: html2canvas
+     does not honour object-fit and would stretch them. */
+  /* html2canvas draws text a few px lower than the browser lays it out, so anything with a
+     tight line-height or overflow:hidden loses the bottom of its letters. Everything here gets a
+     generous line-height and nothing that holds text clips. */
+  /* Zone page head: a gold eyebrow with the zone number, the name in the house serif, the
+     function and date under it; size and count as gold-outlined tags on the right. */
+  .zh{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;padding-bottom:6px;margin-bottom:26px}
+  .zk{font-size:10px;line-height:1.7;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#6B6B6B}
+  .zk b{font-weight:700}
+  .zh h2{font-family:"Playfair Display",Georgia,serif;font-size:38px;line-height:1.3;margin:0 0 2px;color:#1A1A1A;font-weight:700;letter-spacing:-.01em}
+  .zm{font-size:12.5px;line-height:1.7;color:#6B6B6B}
+  .zt{display:flex;gap:6px;flex-shrink:0}
+  .zt span{font-size:11.5px;line-height:1.7;font-weight:700;color:#1A1A1A;background:#E6E1D5;border-radius:20px;padding:5px 14px;white-space:nowrap}
+  .zs{position:relative;width:706px}
+  /* The zone photo is mounted like a print: a white mat and a gold hairline, lifted off the
+     page by a soft shadow. */
+  .zphoto{position:absolute;left:0;width:700px;border-radius:16px;background:#E6E1D5 center/cover no-repeat;border:1.5px solid #1A1A1A;box-shadow:5px 6px 0 #1A1A1A;display:flex;align-items:center;justify-content:center}
+  .zphoto span,.zc-ph span{font-size:13px;line-height:1.7;color:#A39A89;font-family:"Inter",Arial,sans-serif}
+  .zc{position:absolute;width:224px;height:300px;border:1.5px solid #1A1A1A;border-radius:16px;background:#FFFDF8;box-shadow:4px 4px 0 #1A1A1A}
+  .zc.st{position:relative;height:auto;min-height:300px}
+  .zc-ph{height:168px;margin:7px 7px 0;border-radius:11px;background:#fff center/contain no-repeat;border:1px solid #E6E1D5;display:flex;align-items:center;justify-content:center}
+  /* The item number: a gold disc on the card's photo corner, matched by the pin on the photo. */
+  .zc-no{position:absolute;top:13px;left:13px;width:22px;height:22px;border-radius:50%;background:#1A1A1A;color:#F4F1EA;font-size:11px;font-weight:700;line-height:22px;text-align:center;box-shadow:0 0 0 2px #FFFDF8}
+  .zc-b{padding:9px 11px 8px}
+  .zc-n{font-family:"Playfair Display",Georgia,serif;font-size:13.5px;font-weight:700;color:#1A1A1A;line-height:1.4;min-height:36px;margin-bottom:5px}
+  .zc-r{display:flex;justify-content:space-between;align-items:baseline;gap:8px;line-height:1.8;border-top:1px solid #EDE8DC}
+  .zc-r span{color:#6B6B6B;text-transform:uppercase;letter-spacing:.12em;font-size:8.5px;font-weight:700;flex-shrink:0}
+  .zc-r b{color:#1A1A1A;font-size:11px;font-weight:700;text-align:right}
+  /* The arrow: a gold shaft with a drawn head at the photo end and a dot at the card end. */
+  .za{position:absolute;width:1.5px;background:#1A1A1A}
+  .za::after{content:"";position:absolute;left:-4px;border-left:4.75px solid transparent;border-right:4.75px solid transparent}
+  .za.down::after{bottom:-1px;border-top:7px solid #1A1A1A}
+  .za.up::after{top:-1px;border-bottom:7px solid #1A1A1A}
+  .za::before{content:"";position:absolute;left:-2.5px;width:6.5px;height:6.5px;border-radius:50%;background:#1A1A1A}
+  .za.down::before{top:-3px}
+  .za.up::before{bottom:-3px}
+  .zpin{position:absolute;width:22px;height:22px;border-radius:50%;background:#1A1A1A;color:#F4F1EA;font-size:11px;font-weight:700;line-height:22px;text-align:center;box-shadow:0 0 0 2px rgba(255,253,248,.9),0 3px 8px rgba(0,0,0,.35)}
+  .zg{display:grid;grid-template-columns:repeat(3,224px);gap:17px;justify-content:center}
+  /* ── THE PAGE PATTERN ──
+     A faint gold dot grid behind each zone page, and gold corner brackets echoing the cover's.
+     The dots are an SVG tile rather than a CSS radial-gradient: html2canvas draws gradients once,
+     stretched, but repeats an image tile faithfully. Photos and cards sit over it opaque, so it
+     only shows in the margins and gaps. */
+  .zp{position:relative;padding:14px 0 6px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18'%3E%3Ccircle cx='3' cy='3' r='1.1' fill='%23B8935A' fill-opacity='.32'/%3E%3C/svg%3E");background-repeat:repeat}
+  .zp .pc{position:absolute;width:26px;height:26px;border-color:#B8935A;border-style:solid;border-width:0}
+  .zp .pc.tl{top:0;left:0;border-top-width:1.5px;border-left-width:1.5px;border-top-left-radius:9px}
+  .zp .pc.tr{top:0;right:0;border-top-width:1.5px;border-right-width:1.5px;border-top-right-radius:9px}
+  .zh{position:relative;background:#F4F1EA;border-radius:14px;padding:6px 14px 10px}
+  /* Clear space above the ornament: the 38px title's descenders and html2canvas's low text offset
+     put the line through the bottom of the letters at a 6px gap. */
+  .orn.l{justify-content:flex-start;margin:14px 0 8px}
+  .orn.l i{width:46px}
 
   /* The button is screen furniture. It is hidden from print, and the exporter removes it from
      the DOM outright before rendering, so it can never appear in the file either way. */
@@ -1377,31 +1725,52 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     .noprint{display:none!important}
     .sheet{width:auto;padding:14mm 14mm 10mm}
     section{break-inside:avoid}
+    .zp{break-before:page}
     tr{break-inside:avoid}
   }
 </style></head><body>
 <button class="noprint" onclick="window.print()">Save as PDF</button>
 <div class="sheet" id="sheet">
-<header class="hdr" data-block>
-  <div class="brand"><span class="co">Ambria</span><span class="kind">Department report</span></div>
-  <h1>${esc(dept)} <span>— ${esc(sel?.clientName || "Event")}</span></h1>
-  <div class="facts">
-    <div><div class="k">Event date</div><div class="v">${esc(selDateStr || "—")}</div></div>
-    <div><div class="k">Venue</div><div class="v">${esc(venue)}</div></div>
-    <div><div class="k">Department</div><div class="v">${esc(dept)}</div></div>
-    <div><div class="k">Last edited by</div><div class="v">${esc(deptData.updatedBy || "—")}</div></div>
+<header class="cover" data-block data-cover style="${bgCss(coverPhoto)}" ${bgData(coverPhoto)}>
+  <div class="cv-shade"></div>
+  <div class="cv-card">
+    <div class="cv-ribbon"></div>
+    <div class="cv-corner tl"></div><div class="cv-corner tr"></div><div class="cv-corner bl"></div><div class="cv-corner br"></div>
+    ${logos.dark ? `<img class="cv-logo" src="${logos.dark}" alt="Ambria — Design &amp; Decor">` : `<div class="cv-mark">AMBRIA</div>`}
+    <div class="cv-kind">Setup book</div>
+    <div class="cv-title">${esc(dept)}</div>
+    <div class="cv-for">${esc(sel?.clientName || "Event")}</div>
+    ${ornament}
+    <div class="cv-facts">
+      <div><div class="k">Venue</div><div class="v">${esc(venue)}</div></div>
+      <div><div class="k">Department</div><div class="v">${esc(dept)}</div></div>
+      <div><div class="k">Prepared by</div><div class="v">${esc(deptData.updatedBy || authUser?.name || "—")}</div></div>
+    </div>
+    ${sessions.length ? `<div class="cv-sec">${sessions.length === 1 ? "The event" : `${sessions.length} sessions`}</div>
+    <div class="cv-sessions">${sessions.map((s, i) => `<div class="cv-ses t-${sesTone(s.type, i)}">
+      <div class="sk">Event type</div>
+      <div class="st">${esc(s.type)}</div>
+      <div class="sl"></div>
+      <div class="sg">
+        <div class="sf"><div class="k">Date</div><div class="v">${esc(s.dateShort)}</div></div>
+        ${s.shift ? `<div class="sf"><div class="k">Shift</div><div class="v">${esc(s.shift)}</div></div>` : ""}
+        ${s.pax ? `<div class="sf"><div class="k">Guests</div><div class="v">${esc(s.pax)}</div></div>` : ""}
+      </div>
+      ${s.place ? `<div class="sm">${esc(s.place)}</div>` : ""}
+    </div>`).join("")}</div>` : ""}
   </div>
+  <div class="cv-bottom"><span>${esc(dept)} / ${esc((selDateStr || "").slice(0, 4) || new Date().getFullYear())}</span>${logos.light ? `<img class="cv-logo-l" src="${logos.light}" alt="Ambria — Design &amp; Decor">` : `<span>Ambria · Design &amp; Decor</span>`}</div>
 </header>
-${deptIncome ? sect("Money", moneyBlock) : sect("Money", '<p class="empty">No Deal Check breakdown synced yet for this event.</p>')}
-${sect("Inventory blocked", invRows.length ? table(["Item", "Qty", "Rate / unit", "Total"], invRows, ["52%", "10%", "18%", "20%"]) + `<p class="meta">${blockedItemsGrouped.length} item${blockedItemsGrouped.length === 1 ? "" : "s"} held · ${money(rentalIncome)}</p>` : '<p class="empty">No inventory blocked for this department.</p>')}
-${sect("Manpower plan", crewRows.length ? table(["Crew type", "Count", "Rate / day", "Line total"], crewRows, ["40%", "20%", "20%", "20%"]) : '<p class="empty">No crew assigned.</p>')}
-${sect("Actual spend logged", spendRows.length ? table(["What", "Amount"], spendRows, ["70%", "30%"]) : '<p class="empty">Nothing logged yet.</p>')}
+${/* Money, the priced inventory table, the crew plan and logged spend are left out: this sheet
+     goes to the people setting up the event, who need what goes where, not what it costs. The
+     zone layout pages below carry every item, with photo, qty and size. */ ""}
+${zoneHtml}
 ${truckRows.length ? sect("Loading & dispatch", table(["#", "Vehicle", "Driver", "Phone", "Load", "Status"], truckRows, ["11%", "22%", "21%", "18%", "14%", "14%"])) : ""}
 ${moveRows.length ? sect("Dismantle routing", table(["Item", "Goes to", "Qty", "Logged by"], moveRows, ["38%", "32%", "12%", "18%"])) : ""}
 ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour", "Required", "Available", "Status"], fabRows, ["40%", "20%", "20%", "20%"])) : ""}
 <footer data-block>
-  <span>Generated from Ambria IMS · ${esc(new Date().toLocaleString("en-IN"))} · ${esc(authUser?.name || "—")}</span>
-  <span>Figures are live at the moment of export</span>
+  ${logos.dark ? `<img class="ft-logo" src="${logos.dark}" alt="Ambria — Design &amp; Decor">` : `<div class="ft-mark">AMBRIA · DESIGN &amp; DECOR</div>`}
+  <div class="ft-meta">Generated ${esc(new Date().toLocaleString("en-IN"))} · ${esc(authUser?.name || "—")}</div>
 </footer>
 </div>
 </body></html>`;
@@ -1422,6 +1791,15 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
   const exportDeptPdf = async () => {
     if (exporting) return;
     setExporting(true);
+    // Zone names as the admin set them in Studio (e.g. "Centre Lounge"), not the raw keys. A
+    // failed read just falls back to the built-in names.
+    const zoneLabels = {};
+    try {
+      let v = await kvGet(ZONE_DEF_SK);
+      for (let i = 0; i < 2 && typeof v === "string"; i++) { try { v = JSON.parse(v); } catch { break; } }
+      Object.entries(v?.meta || {}).forEach(([k, m]) => { if (m?.label) zoneLabels[k] = m.label; });
+    } catch { /* built-in names it is */ }
+    const logos = await loadPdfLogos();
     const frame = document.createElement("iframe");
     try {
       const [{ jsPDF }, h2c] = await Promise.all([import("jspdf"), import("html2canvas")]);
@@ -1436,18 +1814,54 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
       frame.style.cssText = "position:fixed;left:-10000px;top:0;width:794px;height:1200px;border:0;opacity:0;pointer-events:none";
       document.body.appendChild(frame);
       const doc = frame.contentDocument;
-      doc.open(); doc.write(buildReportHtml()); doc.close();
+      doc.open(); doc.write(buildReportHtml(zoneLabels, logos)); doc.close();
       // The button exists for the fallback path only; it must not be rasterised into the file.
       doc.querySelector(".noprint")?.remove();
       // Let the iframe lay out and its webfont settle before measuring anything.
       await new Promise(r => setTimeout(r, 120));
+      // The house serif comes from Google Fonts. fonts.ready alone is not enough: it resolves as
+      // soon as nothing is *pending*, which is true before the stylesheet has even arrived. So wait
+      // for the stylesheet, then ask for both faces explicitly (3s cap each — a blocked font just
+      // falls back to Georgia / the system sans rather than stalling the export).
+      const capped = (p, ms) => Promise.race([p, new Promise(r => setTimeout(r, ms))]);
+      const fontLink = doc.querySelector('link[rel="stylesheet"][href*="fonts.googleapis"]');
+      if (fontLink && !fontLink.sheet) await capped(new Promise(r => { fontLink.onload = r; fontLink.onerror = r; }), 3000);
+      if (doc.fonts?.load) {
+        try {
+          await capped(Promise.all([
+            doc.fonts.load('700 38px "Playfair Display"'),
+            doc.fonts.load('600 16px "Playfair Display"'),
+            doc.fonts.load('400 11px "Inter"'),
+            doc.fonts.load('600 11px "Inter"'),
+          ]), 3000);
+        } catch { /* fallback stack is fine */ }
+      }
       if (doc.fonts?.ready) { try { await doc.fonts.ready; } catch { /* font API absent — the fallback stack is fine */ } }
+
+      // The zone pages are mostly photos, set as CSS backgrounds — which nothing waits for. Load
+      // each one first (CORS-enabled, as html2canvas's useCORS will request it), so the capture
+      // does not run while they are still blank. A slow or broken image gives up after 8s and
+      // the card simply renders without it rather than stalling the whole export.
+      const bgUrls = [...new Set([...doc.querySelectorAll("[data-bg]")].map(n => n.getAttribute("data-bg")).filter(Boolean))];
+      await Promise.all(bgUrls.map(src => new Promise(res => {
+        const im = new Image();
+        im.crossOrigin = "anonymous";
+        const done = () => res();
+        im.onload = done; im.onerror = done;
+        setTimeout(done, 8000);
+        im.src = src;
+      })));
 
       const sheet = doc.getElementById("sheet");
       frame.style.height = Math.max(1200, sheet.scrollHeight + 80) + "px";
       await new Promise(r => setTimeout(r, 60));
 
       const pdf = new jsPDF({ unit: "pt", format: "a4", compress: true });
+      // Every page is painted the sheet's cream edge to edge, so the margins around each block are
+      // not a white frame around a cream page.
+      const paintPage = () => { pdf.setFillColor(244, 241, 234); pdf.rect(0, 0, pdf.internal.pageSize.getWidth(), pdf.internal.pageSize.getHeight(), "F"); };
+      const newPage = () => { pdf.addPage(); paintPage(); };
+      paintPage();
       const pageW = pdf.internal.pageSize.getWidth();
       const pageH = pdf.internal.pageSize.getHeight();
       const MARGIN = 28;                       // pt of white around the content on every page
@@ -1457,40 +1871,80 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
       const blocks = [...sheet.querySelectorAll("[data-block], section")];
       let y = MARGIN;
       let first = true;
+      // Set after a zone layout: the NEXT content block starts a fresh page. It is a flag rather
+      // than pushing y to the page bottom, because the footer is allowed to stay on the layout's
+      // page — forcing it over is what left a page holding nothing but the footer line.
+      let afterOwnPage = false;
+      let hasCover = false;
       for (const el of blocks) {
-        const canvas = await html2canvas(el, { scale: 2, backgroundColor: "#ffffff", logging: false, useCORS: true, windowWidth: 794 });
+        // A zone layout is a page of its own: always start it on a fresh page, and send the next
+        // table to the next one, so a table never shares a sheet with a layout.
+        const ownPage = el.hasAttribute("data-page");
+        const isFooter = el.tagName === "FOOTER";
+        if (!first && y > MARGIN && (ownPage || (afterOwnPage && !isFooter))) { newPage(); y = MARGIN; }
+        afterOwnPage = false;
+        const canvas = await html2canvas(el, { scale: 2, backgroundColor: "#F4F1EA", logging: false, useCORS: true, windowWidth: 794 });
+        // Nothing drawn (an element with no height) must not cost a page either.
+        if (!canvas.width || canvas.height < 4) continue;
         const img = canvas.toDataURL("image/jpeg", 0.92);
         const h = (canvas.height * usableW) / canvas.width;   // scaled to the content column
-        if (h <= usableH) {
+        if (el.hasAttribute("data-cover")) {
+          // Full bleed: the cover is drawn across the whole page, no margin, and whatever follows
+          // starts on page two.
+          if (!first) newPage();
+          pdf.addImage(img, "JPEG", 0, 0, pageW, pageH);
+          y = pageH; afterOwnPage = true; first = false; hasCover = true;
+          continue;
+        }
+        // With a cover, the footer's only job (saying whose book this is) is already done by it —
+        // never let the footer be the sole thing on an extra page.
+        if (isFooter && hasCover && y + h > pageH - MARGIN) continue;
+        if (ownPage && h > usableH) {
+          // A zone layout is one page by design. If it comes out a little taller than the page,
+          // shrink it to fit rather than slicing it: slicing is what left a page holding nothing
+          // but the overflow strip of dot pattern.
+          const k = usableH / h, w = usableW * k;
+          pdf.addImage(img, "JPEG", MARGIN + (usableW - w) / 2, MARGIN, w, usableH);
+          y = pageH; afterOwnPage = true; first = false;
+          continue;
+        }
+        if (isFooter && y + h <= pageH - MARGIN) {
+          // The footer closes the last page, sitting on its bottom margin wherever the content
+          // above it ended, instead of starting a page of its own.
+          pdf.addImage(img, "JPEG", MARGIN, pageH - MARGIN - h, usableW, h);
+          y = pageH;
+        } else if (h <= usableH) {
           // Fits whole. Start a new page if it will not fit in what is left of this one.
-          if (!first && y + h > pageH - MARGIN) { pdf.addPage(); y = MARGIN; }
+          if (!first && y + h > pageH - MARGIN) { newPage(); y = MARGIN; }
           pdf.addImage(img, "JPEG", MARGIN, y, usableW, h);
           y += h + 10;
         } else {
           // Taller than a whole page — the only case we cut. Walk it down page by page.
-          if (!first) { pdf.addPage(); }
+          if (!first && y > MARGIN) { newPage(); }
           let drawn = 0;
           while (drawn < h - 1) {
-            if (drawn > 0) pdf.addPage();
+            if (drawn > 0) newPage();
             pdf.addImage(img, "JPEG", MARGIN, MARGIN - drawn, usableW, h);
             // Mask whatever of the image spills past this page's bottom margin.
-            pdf.setFillColor(255, 255, 255);
+            pdf.setFillColor(244, 241, 234);
             pdf.rect(0, pageH - MARGIN, pageW, MARGIN, "F");
             pdf.rect(0, 0, pageW, MARGIN, "F");
             drawn += usableH;
           }
           y = pageH;   // force the next block onto a fresh page
         }
+        if (ownPage) afterOwnPage = true;
         first = false;
       }
 
       // Page numbers, added once the total is known.
       const total = pdf.internal.getNumberOfPages();
-      for (let p = 1; p <= total; p++) {
+      // The cover carries no number — it would sit on the photo — so counting starts under it.
+      for (let p = hasCover ? 2 : 1; p <= total; p++) {
         pdf.setPage(p);
-        pdf.setFontSize(7.5);
-        pdf.setTextColor(148, 163, 184);
-        pdf.text(`${p} / ${total}`, pageW - MARGIN, pageH - 12, { align: "right" });
+        pdf.setFontSize(8);
+        pdf.setTextColor(122, 116, 104);
+        pdf.text(`${String(p).padStart(2, "0")} / ${String(total).padStart(2, "0")}`, pageW - MARGIN, pageH - 12, { align: "right" });
       }
 
       // Filename is what the file is called in someone's Downloads folder a month later, so it
@@ -1504,7 +1958,7 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
       console.error("PDF export failed, falling back to print:", err);
       const w = window.open("", "_blank");
       if (!w) { alert("Could not generate the PDF, and the pop-up fallback was blocked. Allow pop-ups for this site and try again."); return; }
-      w.document.write(buildReportHtml());
+      w.document.write(buildReportHtml(zoneLabels, logos));
       w.document.close();
     } finally {
       frame.remove();
@@ -2154,7 +2608,7 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
               // The maths moved to the `income` memo so the PDF export and this panel cannot
               // drift: a head added here but not there would put two different breakdowns of the
               // same department in front of the same person.
-              const { shown, shownSum, gap, liveTotal, pct } = income;
+              const { liveTotal } = income;
               return (
               <div className="space-y-3">
                 {/* ── A READOUT, NOT CARDS ──
@@ -2231,60 +2685,9 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                       );
                     })()}
                   </div>
-                  {/* Saying it in words. The heads below are not a second set of numbers, they
-                      are the one above taken apart — and nothing on the panel said so, which is
-                      the whole reason it needed reading twice. */}
-                  <div className="px-4 py-1.5 bg-white/40 flex items-center justify-between gap-3 flex-wrap">
-                    <span className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-500">What makes up this total</span>
-                    <span className="text-[9px] font-semibold text-gray-400 tabular-nums">{shown.length} head{shown.length === 1 ? "" : "s"} · {fmt(shownSum)}</span>
-                  </div>
-                  {/* gap-px over a grey ground, not divide-x: with divide-x the hairline is drawn
-                      per element, so a wrapped row gets a stray rule down its leading edge. The
-                      grid gap shows the ground through and separates cells correctly however
-                      many heads a department has and however they wrap. */}
-                  {/* Translucent cells over a white-tinted ground: the hairlines between them stay
-                      (the ground shows through the 1px gaps) while the glass shows through both. */}
-                  <div className="grid gap-px bg-white/60" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))" }}>
-                    {shown.map((r, i) => (
-                      <div key={i} className="bg-white/35 px-4 py-2.5">
-                        {/* The emoji sits in a neutral tile rather than loose beside the label.
-                            Loose, a column of them read as clutter — each glyph renders at its
-                            own weight and colour, so they never looked like a set. Boxed at one
-                            size on one grey, the tile is the repeated shape and the glyph inside
-                            it is just what distinguishes this row, the same way it works on the
-                            blocks below.
-                            Sentence case, not uppercase: these are names to read, and "Real
-                            flowers (mandi)" set in tracked capitals is slower than it looks. */}
-                        <div className="flex items-center gap-2 min-w-0">
-                          <span aria-hidden="true" className="shrink-0 w-7 h-7 rounded-lg bg-gray-100 flex items-center justify-center text-[13px] leading-none">{HEAD_ICON[r.label] || "•"}</span>
-                          <div className="min-w-0 flex-1">
-                            <div className="text-[11px] font-semibold text-gray-700 truncate" title={r.label}>{r.label}</div>
-                            <div className="mt-0.5 text-[14px] leading-none font-bold text-gray-900 tabular-nums tracking-tight">{fmt(r.value)}</div>
-                          </div>
-                        </div>
-                        {/* No drawn bar. The share is stated, not plotted: at these widths the
-                            bar was a full-width blue rule under every head, which read as a
-                            divider before it read as a measure — and the number beside it was
-                            the part anyone actually used.
-                            "42%" alone begs the question "of what", so the two words stay. */}
-                        <div className="mt-1 pl-9 text-[9px] font-medium text-gray-400 tabular-nums">{pct(r.value)}% of total</div>
-                      </div>
-                    ))}
-                  </div>
+                  {/* The "What makes up this total" strip of income heads is gone by request —
+                      the four cards above are the whole readout now. */}
                 </div>
-
-                {shown.length === 0 && (
-                  <div className="bg-white rounded-xl shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] px-4 py-5 text-center text-xs text-gray-400">No income heads on this department yet.</div>
-                )}
-                {/* The donut and its legend are gone — every figure they carried (label, share,
-                    amount) is already on the cards above, so the ring restated the strip in a
-                    second, less precise form. This note is NOT decoration and stays: it is the
-                    only place the page says the heads and the department total disagree. */}
-                {gap !== 0 && shown.length > 0 && (
-                  <div className="bg-amber-50 rounded-xl px-4 py-2.5 text-[11px] text-amber-800">
-                    Heads above sum to {fmt(shownSum)} — {fmt(Math.abs(gap))} {gap > 0 ? "less than" : "more than"} the department total. The total carries the live crew plan; a head may not be broken out here.
-                  </div>
-                )}
               </div>
               );
             })() : (

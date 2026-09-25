@@ -2757,8 +2757,15 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
                without going through Admin. unbookDeal itself carries the confirm + what it does
                and does not touch (see its own comment in StudioApp.jsx). */
             <button type="button" onClick={unbookDeal} title="Click to un-book this deal"
-              style={{display:"inline-flex",alignItems:"center",gap:6,padding:"5px 12px",borderRadius:9,background:"rgba(16,185,129,0.12)",border:"1px solid rgba(16,185,129,0.3)",cursor:"pointer",font:"inherit"}}>
-              <span style={{fontSize:11.5}}>{"✅"}</span><span style={{fontSize:11.5,fontWeight:600,color:"#10B981"}}>Booked{activeClient.bookedAt&&` on ${new Date(activeClient.bookedAt).toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"})}`}</span>{activeClient.bookedBy&&<span style={{fontSize:10,color:"#a5b4fc"}}>by {activeClient.bookedBy}</span>}
+              style={{display:"inline-flex",alignItems:"center",gap:8,padding:"6px 14px 6px 8px",borderRadius:999,background:"rgba(16,185,129,0.10)",border:"1px solid rgba(52,211,153,0.35)",cursor:"pointer",font:"inherit"}}>
+              {/* A drawn check in a filled disc, not the ✅ emoji — the emoji renders as a green
+                  tile on some platforms and a glossy box on others, never matching the pill. */}
+              <span aria-hidden="true" style={{width:18,height:18,borderRadius:"50%",background:"#10B981",display:"inline-flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                <svg width="10" height="10" viewBox="0 0 16 16" fill="none"><path d="M3.5 8.5l3 3L12.5 5" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+              </span>
+              <span style={{fontSize:10.5,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:"#34D399"}}>Booked</span>
+              {activeClient.bookedAt&&<span style={{fontSize:11.5,fontWeight:600,color:"rgba(255,255,255,0.85)"}}>{new Date(activeClient.bookedAt).toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"})}</span>}
+              {activeClient.bookedBy&&<span style={{fontSize:11,color:"rgba(255,255,255,0.5)"}}>· {activeClient.bookedBy}</span>}
             </button>
           : (()=>{const canSold=clientName.trim()&&clientDate&&venue;const missing=[];if(!clientName.trim())missing.push("name");if(!clientDate)missing.push("date");if(!venue)missing.push("venue");return <>
           {/* Enabled state gets its green + shadow from .sh-sold so the :hover rule can override
