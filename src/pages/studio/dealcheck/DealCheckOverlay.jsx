@@ -2831,6 +2831,12 @@ export default function DealCheckOverlay({ ctx }) {
                                                     splitGroupId: prevCard.splitGroupId || newSplitGroupId(),
                                                     source: "manual-swap" } } }; }); setTimeout(() => flushDcAutosaveRef?.current?.(), 0); },
                                                 priceMode: "rental",
+                                                // Same discount this card itself already shows (_effRate above) — Fixed-
+                                                // Venue/Repeat/date-category, always on regardless of Build's guest-discount
+                                                // checkbox, since this is Deal Check's own cost basis. Without it a
+                                                // candidate's price here could differ from what the card shows the instant
+                                                // it's actually picked.
+                                                rateFn: (it) => repeatAdjustedRental(_rep, _venue, it, 1, effKitRental(it, fnIdx, null), _fnDateForRepeat),
                                               })}
                                               title={`Check stock availability & pick an item${subToUse ? ` — ${subTotal} in ${subToUse}` : ""}`}
                                               aria-label="Check stock availability and pick an item"
@@ -3069,7 +3075,15 @@ export default function DealCheckOverlay({ ctx }) {
                                                           onClick={()=>openAvailModal?.(card.zoneKey || editKey, ci, { invId: c.itemId, imsId: c.itemId, name: cItem?.name || c.itemId }, null, (pick)=>{
                                                             if (!pick) return;
                                                             swapComp(pick.id);
-                                                          }, { pickHint: `Pick a replacement for this kit component — need ${needed}.` })}
+                                                          }, {
+                                                            pickHint: `Pick a replacement for this kit component — need ${needed}.`,
+                                                            priceMode: "rental",
+                                                            // Same Fixed-Venue/Repeat/date discount as the main card's own swap
+                                                            // button — this used to have no priceMode at all, silently falling
+                                                            // through to Build's guest-facing formula (wrong venue/date context
+                                                            // entirely for a Deal Check picker).
+                                                            rateFn: (it) => repeatAdjustedRental(_rep, _venue, it, 1, effKitRental(it, fnIdx, null), _fnDateForRepeat),
+                                                          })}
                                                           style={{display:"inline-flex",alignItems:"center",gap:5,padding:"3px 9px",borderRadius:6,border:"1px solid rgba(239,68,68,0.35)",background:"rgba(239,68,68,0.08)",color:"#EF4444",fontSize:11,fontWeight:600,cursor:"pointer"}}>
                                                           <IconBox size={12}/> {cItem ? `⚠ need ${needed}, only ${owned} — swap` : "⚠ not in IMS — pick one"}
                                                         </button>

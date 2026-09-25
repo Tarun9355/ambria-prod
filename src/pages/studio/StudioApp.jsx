@@ -9469,11 +9469,28 @@ export default function StudioApp() {
         // has no business here. Plain imsField.rentalCost matches every other rental figure Deal
         // Check already shows (effKitRental, the zone/bottom-bar rollups) — this picker was the one
         // place still quietly multiplying by that factor.
-        .map(it => ({ id: it.id, name: it.name, photo: (Array.isArray(it.photoUrls) && it.photoUrls[0]) || it.img || "", free: getStudioAvailable(it, blocksForDate), unit: it.unit || "", price: opts?.priceMode === "cost" ? (Number(it.cost) || 0) : opts?.priceMode === "rental" ? imsField.rentalCost(it) : priceForInvItem(it, rcFactorByKey, inventory), dims: itemDimsText(it) }))
+        // opts.rateFn (optional): a caller-supplied per-item pricer, checked FIRST. Neither the
+        // default branch below (Build's own formula) nor "rental" (flat, undiscounted) reflect any
+        // Repeat/Fixed-Venue/date/cross-function discount — a candidate could show one price here
+        // and a different one the moment it's actually picked and rendered as a card. Build doesn't
+        // need this (its own closure already has everything repeatAdjustedLineCost needs — see the
+        // default branch), but Deal Check's own repeatAdjustedRental is private to
+        // DealCheckOverlay.jsx's closure (dealCheckData/dcInventoryCache), so its callers pass a
+        // rateFn instead of this file trying to duplicate that formula.
+        .map(it => ({ id: it.id, name: it.name, photo: (Array.isArray(it.photoUrls) && it.photoUrls[0]) || it.img || "", free: getStudioAvailable(it, blocksForDate), unit: it.unit || "",
+          price: opts?.rateFn ? opts.rateFn(it)
+            : opts?.priceMode === "cost" ? (Number(it.cost) || 0)
+            : opts?.priceMode === "rental" ? imsField.rentalCost(it)
+            // Default (Build's own guest-facing swap): same formula the card itself shows —
+            // base rate × sub-category factor, Repeat/Fixed-Venue discount (gated by the
+            // discreet checkbox, same as always), then the guest-price dial + date-category
+            // multiplier — so a candidate never shows a price that changes the instant it's picked.
+            : repeatAdjustedLineCost(it, 1, priceForInvItem(it, rcFactorByKey, inventory), zoneConfig[zoneKey], venue) * guestPriceMultiplier * dateCategoryMultiplierFor(date),
+          dims: itemDimsText(it) }))
         .sort((a, b) => b.free - a.free);
       setAvailModal(m => (m && m.zoneKey === zoneKey && m.idx === idx) ? { ...m, loading: false, items } : m);
     } catch { setAvailModal(m => m ? { ...m, loading: false } : m); }
-  }, [imsInventory, activeFnMeta, clientDate, loadAvailability, getStudioAvailable, rcFactorByKey]);
+  }, [imsInventory, activeFnMeta, clientDate, loadAvailability, getStudioAvailable, rcFactorByKey, zoneConfig, venue, guestPriceMultiplier, hideDiscountFromClient, fvCfgForRepeat, dealCheckData, studioFloralData]);
   const saveAvailPick = useCallback(() => {
     if (!availModal) return;
     const { zoneKey, idx, selectedId, items, onPick } = availModal;
