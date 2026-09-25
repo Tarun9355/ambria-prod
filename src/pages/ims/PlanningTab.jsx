@@ -37,7 +37,20 @@ export default function PlanningTab({ projects, functions, setFunctions, invento
   // that never quite matched and left it sitting a few pixels low.
   const [pickerSlot, setPickerSlot] = useState(null);
   return (
-    <div className="space-y-4">
+    // `relative isolate` so the glow layer's -z-10 stays inside this page's own stacking context:
+    // it paints behind the Planning content only, never over the nav rail or the header.
+    <div className="relative isolate space-y-4">
+      {/* ── THE GROUND FOR THE GLASS ──
+          Frosted cards need something behind them to frost. On flat slate a translucent card
+          just looks faded, so this lays three large, heavily blurred colour fields behind the
+          page. They are soft-edged circles, not a filled box, so the layer has no visible
+          boundary; overflow-hidden keeps them from adding a sideways scroll. */}
+      <div aria-hidden="true" className="pointer-events-none absolute -inset-4 sm:-inset-6 -z-10 overflow-hidden">
+        {/* Kept to one hue at low strength — three saturated fields read as decoration and
+            fought the blue accents on the cards. This is just enough for the glass to register. */}
+        <div className="absolute -top-20 -left-24 w-80 h-80 rounded-full bg-blue-200/30 blur-3xl" />
+        <div className="absolute top-72 -right-28 w-80 h-80 rounded-full bg-blue-100/40 blur-3xl" />
+      </div>
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0 flex-1"><Tabs tabs={tabs} active={sub} onChange={setSub} /></div>
         <div ref={setPickerSlot} className="sm:hidden shrink-0 empty:hidden" />

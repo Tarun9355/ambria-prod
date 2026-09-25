@@ -253,7 +253,7 @@ export function TabsMenu({ tabs, active, onChange, tone = "plain" }) {
                which is on the design system's blue. The plain branch stays indigo because nine
                other IMS tabs render it and they are not on the system yet. */
             ? "bg-blue-600 text-white shadow-[0_1px_2px_rgba(37,99,235,0.3),0_6px_16px_-8px_rgba(37,99,235,0.7)] " + (open ? "ring-2 ring-blue-300" : "hover:bg-blue-700")
-            : "bg-white text-gray-900 shadow-[0_1px_2px_rgba(16,24,40,0.06)] " + (open ? "ring-2 ring-indigo-400" : "ring-1 ring-gray-200 hover:ring-gray-300 hover:shadow-[0_1px_2px_rgba(16,24,40,0.08),0_4px_10px_-6px_rgba(16,24,40,0.25)]"))}>
+            : "bg-white text-gray-900 shadow-[0_1px_3px_rgba(15,23,42,0.1),0_6px_16px_-8px_rgba(15,23,42,0.3)] " + (open ? "ring-2 ring-indigo-400" : "ring-1 ring-gray-200 hover:ring-gray-300 hover:shadow-[0_1px_2px_rgba(16,24,40,0.08),0_4px_10px_-6px_rgba(16,24,40,0.25)]"))}>
         <span className="truncate pl-3 pr-2 py-2">{current?.label}</span>
         <span aria-hidden="true" className={"shrink-0 self-stretch flex items-center px-2 rounded-r-xl transition-colors "
           + (accent

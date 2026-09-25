@@ -24,6 +24,13 @@ import { hasIMSPerm } from "../../lib/ims/constants";
 // gives a sensible answer. Written as classes rather than the inline style this replaces because
 // an inline style has no breakpoints.
 const GRID = "grid gap-3 sm:gap-4 items-stretch grid-cols-2 sm:[grid-template-columns:repeat(auto-fit,minmax(212px,1fr))]";
+// ── GLASS SURFACE ──
+// The Planning page lays soft colour fields behind itself (PlanningTab); these top-level cards
+// frost over them: translucent white, a strong backdrop blur with a little extra saturation so
+// the colour reads through as a tint rather than as grey, and a white hairline for the pane's
+// edge. Only the page-level cards take it — content inside a card stays on solid white so text
+// and inputs keep full contrast.
+const GLASS = "bg-white/60 backdrop-blur-xl backdrop-saturate-150 ring-1 ring-white/70";
 
 /* ── THE CARD'S ICONS ──
    Drawn, not emoji, and only for the event header card the design system specifies. Emoji were
@@ -347,12 +354,19 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   // the tiles" puts the panel a screen and a half below the tap — it reads as nothing having
   // happened. Same DOM either way; only these three class strings differ, so a block never has to
   // be moved or re-parented to change which form it takes.
-  const PANEL_WRAP = "fixed inset-0 z-50 flex items-end bg-gray-900/40 sm:static sm:z-auto sm:block sm:bg-transparent";
+  // Blurred as well as dimmed on a phone: with only a tint, the tiles and figures behind the
+  // sheet stayed sharp enough to read and competed with it. sm:backdrop-blur-none because from
+  // sm this same element is the plain inline wrapper, where a blur would frost the page itself.
+  const PANEL_WRAP = "fixed inset-0 z-50 flex items-end bg-gray-900/30 backdrop-blur-md sm:static sm:z-auto sm:block sm:bg-transparent sm:backdrop-blur-none";
   // On a phone the close button floats just above the sheet, on the dimmed backdrop, instead of
   // taking a row inside it — that row was ~40px of empty sheet above the content. So the card is
   // `relative` and not overflow-hidden below sm (the button sits outside its box); the body
   // takes the rounded top and clips its own scroll instead. From sm the bar is back inside.
-  const PANEL_CARD = "relative w-full max-h-[85vh] flex flex-col rounded-t-2xl bg-gray-50 ring-1 ring-gray-200 sm:max-h-none sm:block sm:rounded-2xl sm:overflow-hidden";
+  // The sheet is a translucent pane over the already-blurred backdrop. It carries no
+  // backdrop-filter of its own on purpose: a backdrop-filter makes an element the containing
+  // block for position:fixed descendants, and the "Add a site" menu inside it is fixed-positioned
+  // from viewport coordinates — it would open offset by the sheet's own position.
+  const PANEL_CARD = "relative w-full max-h-[85vh] flex flex-col rounded-t-2xl bg-white/85 ring-1 ring-white/70 sm:bg-gray-50 sm:ring-gray-200 sm:max-h-none sm:block sm:rounded-2xl sm:overflow-hidden";
   const PANEL_BODY = "flex-1 min-h-0 overflow-y-auto overscroll-contain rounded-t-2xl p-3 space-y-3 sm:rounded-none sm:flex-none sm:overflow-visible sm:p-4";
   // Tapping the dimmed area closes, the way every sheet on the platform does. Guarded on the
   // phone breakpoint: from sm up this same element is the plain inline wrapper, and a click that
@@ -1556,7 +1570,9 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
   </div>
   ) : null;
   const viewSwitch = sel ? (
-  <div className="grid grid-cols-2 gap-2 flex-1 sm:flex sm:flex-none sm:items-center">
+  /* Sized to their labels at every width. As two full-width halves on a phone they were the
+     largest controls on the card — bigger than the title they sit under. */
+  <div className="flex items-center gap-1.5">
     {/* It briefly lived on the department row above — which does render in both views,
         but that row scrolls off the top the moment you start reading, and the switch
         was gone exactly when you wanted it. */}
@@ -1581,8 +1597,8 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
              step, since clicking it does nothing new. */
           className={"group shrink-0 h-7 inline-flex items-center justify-center gap-1.5 px-2.5 rounded-lg text-[12px] font-semibold cursor-pointer transition-colors "
             + (on
-              ? "bg-blue-100 text-blue-700 ring-1 ring-blue-200 hover:bg-blue-200/70"
-              : "bg-gray-50 sm:bg-transparent text-gray-500 hover:bg-blue-50 hover:text-blue-700 hover:ring-1 hover:ring-blue-100")}>
+              ? "bg-blue-100 text-blue-700 ring-1 ring-blue-200 hover:bg-blue-200/70 shadow-[0_4px_10px_-4px_rgba(37,99,235,0.45)]"
+              : "bg-white/70 shadow-[0_1px_3px_rgba(15,23,42,0.1),0_4px_10px_-6px_rgba(15,23,42,0.25)] text-gray-500 hover:bg-blue-50 hover:text-blue-700 hover:ring-1 hover:ring-blue-100")}>
           <span className={"transition-colors " + (on ? "text-blue-600" : "text-gray-400 group-hover:text-blue-500")}><Icon s={13} /></span>
           {label}
         </button>
@@ -1654,7 +1670,7 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
           their heights cannot diverge — and ml-auto keeps this one on the right, clear of it.
           56 rather than the bare 48: this sits inside a `flex items-center` row that adds a few
           pixels of its own above the control, which the raw height calculation does not see. */}
-      <div className="w-fit max-w-full ml-auto -mt-14 sm:mt-0 sm:ml-0 sm:bg-white sm:rounded-xl sm:shadow-[0_1px_2px_rgba(16,24,40,0.07),0_4px_12px_-4px_rgba(16,24,40,0.12)] sm:px-3 sm:py-2">
+      <div className="w-fit max-w-full ml-auto -mt-14 sm:mt-0 sm:ml-0 sm:bg-white sm:rounded-xl sm:shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] sm:px-3 sm:py-2">
         {/* Scrolls sideways rather than wrapping to a second row: eight departments at a phone
             width would otherwise turn a one-line control into a four-line block. Bar hidden, as
             everywhere else on this page. */}
@@ -1769,7 +1785,7 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
               for (let i = 1; mCells.length % 7 !== 0; i++) { const dt = new Date(y, m + 1, i); mCells.push({ d: dt.getDate(), ds: iso(dt), out: true }); }
               const dayLabel = pickDay ? new Date(pickDay + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" }) : "";
               return (
-                <div className="bg-white rounded-2xl shadow-[0_1px_2px_rgba(16,24,40,0.07),0_4px_12px_-4px_rgba(16,24,40,0.12)] overflow-hidden">
+                <div className="bg-white rounded-2xl shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] overflow-hidden">
                   <div className="px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
                     <div className="min-w-0">
                       <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">Pick an event to plan</div>
@@ -1935,7 +1951,7 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                 Row one is the event: back, title block, and the bell / PDF icons in its corner.
                 Row two, under a hairline, is the Planning / On-site switch at full width. From sm
                 it is one row again with every control at the right end. */}
-            <div className="font-body bg-white rounded-2xl shadow-[0_1px_2px_rgba(16,24,40,0.04),0_8px_24px_-12px_rgba(16,24,40,0.2)] px-3 py-2.5 sm:flex sm:items-center sm:justify-between sm:gap-2">
+            <div className={"font-body rounded-2xl shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] px-3 py-2.5 " + GLASS + " sm:flex sm:items-center sm:justify-between sm:gap-2"}>
               <div className="flex items-start sm:items-center gap-2.5 sm:gap-2 min-w-0">
                 {/* ── THE WAY BACK ──
                     Picking an event on the calendar replaces it with this header, and there was
@@ -2022,7 +2038,7 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                    an empty screen. Now it is a bottom sheet like the Planning / On-site panels:
                    as tall as the log, up to 85% of the screen, then it scrolls. */
                 <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-6">
-                  <div className="absolute inset-0 bg-gray-900/50" onClick={() => setLogOpen(false)} />
+                  <div className="absolute inset-0 bg-gray-900/30 backdrop-blur-md" onClick={() => setLogOpen(false)} />
                   <div role="dialog" aria-modal="true" aria-label="Activity log"
                     className="relative w-full sm:max-w-xl bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl flex flex-col max-h-[85vh] sm:max-h-[80vh]">
                   {/* Grab handle: the platform's mark for "this is a sheet, swipe or tap out". */}
@@ -2148,7 +2164,7 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                     So: one surface. The total sits on the left behind a blue rule, the heads
                     that make it up are stat columns beside it. Nothing here can be mistaken for
                     something to press. */}
-                <div className="rounded-xl bg-white shadow-[0_1px_2px_rgba(16,24,40,0.07),0_4px_12px_-4px_rgba(16,24,40,0.12)] overflow-hidden">
+                <div className={"rounded-2xl shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] overflow-hidden " + GLASS}>
                   {/* The total is its own tier. Sharing a line with the heads made it just the
                       leftmost of four numbers; on its own row at twice their size it reads as
                       the figure the others add up to. */}
@@ -2172,7 +2188,7 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                         whole panel is about and everything below is it taken apart, so it carries
                         the page's one block of colour. Its partner stays grey: two filled cards
                         would be a pair of headlines with nothing to compare them against. */}
-                    <div className="rounded-xl bg-blue-600 px-3 sm:px-4 py-3.5 flex-1 min-w-0 sm:min-w-[210px] shadow-[0_1px_2px_rgba(37,99,235,0.2),0_6px_14px_-8px_rgba(37,99,235,0.5)]">
+                    <div className="rounded-xl bg-blue-600 px-3 sm:px-4 py-3.5 flex-1 min-w-0 sm:min-w-[210px] shadow-[0_2px_4px_rgba(37,99,235,0.25),0_14px_28px_-8px_rgba(37,99,235,0.6)]">
                       <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-blue-200">Total income</div>
                       <div className="mt-2 text-[22px] leading-none font-semibold text-white tabular-nums tracking-tight">{fmt(liveTotal)}</div>
                       <div className="mt-2 text-[11px] text-blue-100">From Deal Check</div>
@@ -2180,7 +2196,7 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                     {/* Not synced from anywhere, unlike its neighbours — a plain manual figure the
                         department head types in themselves. Amber, not grey/blue, so it never looks
                         like another system-derived readout. */}
-                    <div className="rounded-xl bg-amber-50 px-3 sm:px-4 py-3.5 flex-1 min-w-0 sm:min-w-[210px] ring-1 ring-amber-200">
+                    <div className="rounded-xl bg-amber-50 shadow-[0_8px_20px_-10px_rgba(15,23,42,0.3)] px-3 sm:px-4 py-3.5 flex-1 min-w-0 sm:min-w-[210px] ring-1 ring-amber-200">
                       <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-amber-600">Sales discount</div>
                       <div className="mt-2 flex items-center gap-1">
                         <span className="text-[22px] leading-none font-semibold text-amber-900">₹</span>
@@ -2190,7 +2206,7 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                       </div>
                       <div className="mt-2 text-[11px] text-amber-700">Set by {dept} head</div>
                     </div>
-                    <div className="rounded-xl bg-gray-50 px-3 sm:px-4 py-3.5 flex-1 min-w-0 sm:min-w-[210px] ring-1 ring-gray-200">
+                    <div className="rounded-xl bg-gray-50 shadow-[0_8px_20px_-10px_rgba(15,23,42,0.3)] px-3 sm:px-4 py-3.5 flex-1 min-w-0 sm:min-w-[210px] ring-1 ring-gray-200">
                       <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-500">Actual cost</div>
                       {/* Grey dash until something is logged. A ₹0 here would read as "spent
                           nothing", which is a different claim from "not recorded yet". */}
@@ -2205,7 +2221,7 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                       const netAmount = liveTotal - (Number(discount) || 0) - (hasActuals ? actualCost : 0);
                       const neg = netAmount < 0;
                       return (
-                        <div className={"rounded-xl px-3 sm:px-4 py-3.5 flex-1 min-w-0 sm:min-w-[210px] ring-1 " + (neg ? "bg-red-50 ring-red-200" : "bg-emerald-50 ring-emerald-200")}>
+                        <div className={"rounded-xl shadow-[0_8px_20px_-10px_rgba(15,23,42,0.3)] px-3 sm:px-4 py-3.5 flex-1 min-w-0 sm:min-w-[210px] ring-1 " + (neg ? "bg-red-50 ring-red-200" : "bg-emerald-50 ring-emerald-200")}>
                           <div className={"text-[10px] font-semibold uppercase tracking-[0.06em] " + (neg ? "text-red-600" : "text-emerald-600")}>Net</div>
                           <div className={"mt-2 text-[22px] leading-none font-semibold tabular-nums tracking-tight " + (neg ? "text-red-900" : "text-emerald-900")}>{fmt(netAmount)}</div>
                           <div className={"mt-2 text-[11px] " + (neg ? "text-red-700" : "text-emerald-700")}>Income − discount − cost</div>
@@ -2216,7 +2232,7 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                   {/* Saying it in words. The heads below are not a second set of numbers, they
                       are the one above taken apart — and nothing on the panel said so, which is
                       the whole reason it needed reading twice. */}
-                  <div className="px-4 py-1.5 bg-gray-50 flex items-center justify-between gap-3 flex-wrap">
+                  <div className="px-4 py-1.5 bg-white/40 flex items-center justify-between gap-3 flex-wrap">
                     <span className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-500">What makes up this total</span>
                     <span className="text-[9px] font-semibold text-gray-400 tabular-nums">{shown.length} head{shown.length === 1 ? "" : "s"} · {fmt(shownSum)}</span>
                   </div>
@@ -2224,9 +2240,11 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                       per element, so a wrapped row gets a stray rule down its leading edge. The
                       grid gap shows the ground through and separates cells correctly however
                       many heads a department has and however they wrap. */}
-                  <div className="grid gap-px bg-gray-100" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))" }}>
+                  {/* Translucent cells over a white-tinted ground: the hairlines between them stay
+                      (the ground shows through the 1px gaps) while the glass shows through both. */}
+                  <div className="grid gap-px bg-white/60" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))" }}>
                     {shown.map((r, i) => (
-                      <div key={i} className="bg-white px-4 py-2.5">
+                      <div key={i} className="bg-white/35 px-4 py-2.5">
                         {/* The emoji sits in a neutral tile rather than loose beside the label.
                             Loose, a column of them read as clutter — each glyph renders at its
                             own weight and colour, so they never looked like a set. Boxed at one
@@ -2254,7 +2272,7 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                 </div>
 
                 {shown.length === 0 && (
-                  <div className="bg-white rounded-xl shadow-[0_1px_2px_rgba(16,24,40,0.06),0_1px_3px_rgba(16,24,40,0.05)] px-4 py-5 text-center text-xs text-gray-400">No income heads on this department yet.</div>
+                  <div className="bg-white rounded-xl shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] px-4 py-5 text-center text-xs text-gray-400">No income heads on this department yet.</div>
                 )}
                 {/* The donut and its legend are gone — every figure they carried (label, share,
                     amount) is already on the cards above, so the ring restated the strip in a
@@ -2298,14 +2316,14 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                          is a toggle, not a launcher. The open one is ringed so you can tell at a
                          glance which of the five the panel below belongs to. */
                       onClickCapture={e => { if (modal === t.k) { e.stopPropagation(); setModal(null); } }}
-                      className={"group text-left rounded-xl p-3 sm:p-3.5 h-full flex flex-col transition-all duration-150 shadow-[0_1px_2px_rgba(16,24,40,0.07),0_4px_12px_-4px_rgba(16,24,40,0.12)] hover:-translate-y-0.5 hover:shadow-[0_2px_6px_rgba(16,24,40,0.1),0_14px_28px_-10px_rgba(16,24,40,0.28)] " + (modal === t.k ? "ring-2 ring-blue-500 " : "") + (t.tone || "bg-white")}>
+                      className={"group text-left rounded-xl p-3 sm:p-3.5 h-full flex flex-col transition-all duration-150 shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] hover:-translate-y-0.5 hover:shadow-[0_4px_8px_rgba(15,23,42,0.1),0_22px_40px_-12px_rgba(15,23,42,0.45)] " + (modal === t.k ? "ring-2 ring-blue-500 " + (t.tone || "bg-white/80 backdrop-blur-xl") : (t.tone || GLASS))}>
                       {/* Icon above the title on a phone, beside it from sm. Two to a row a tile
                           is ~170px; with a 36px icon beside it the title had ~110px and
                           "Inventory blocked" broke over two lines. Stacked, the title gets the
                           tile's full width and every tile reads top-down the same way: mark,
                           name, detail, figure. */}
                       <div className="flex flex-col gap-2.5 sm:flex-row sm:items-start">
-                        <span aria-hidden="true" className={"shrink-0 w-9 h-9 rounded-lg flex items-center justify-center text-base leading-none " + (t.alert ? "bg-white shadow-[0_1px_2px_rgba(16,24,40,0.08)]" : "bg-gray-100")}>{t.icon}</span>
+                        <span aria-hidden="true" className={"shrink-0 w-9 h-9 rounded-lg flex items-center justify-center text-base leading-none " + (t.alert ? "bg-white shadow-[0_1px_3px_rgba(15,23,42,0.12),0_4px_10px_-4px_rgba(15,23,42,0.22)]" : "bg-gray-100")}>{t.icon}</span>
                         <div className="min-w-0 flex-1">
                           <div className="text-[13px] font-semibold text-gray-900 leading-snug">{t.title}</div>
                           <div className="text-[11px] text-gray-500 leading-snug mt-0.5">{t.sub}</div>
@@ -2378,7 +2396,7 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                   </div>
                 )}
                 {/* This event's requirement vs available */}
-                <div className={"bg-white rounded-xl shadow-[0_1px_2px_rgba(16,24,40,0.06),0_1px_3px_rgba(16,24,40,0.05)] overflow-hidden" + modalCls("fabreq")}>
+                <div className={"bg-white rounded-xl shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] overflow-hidden" + modalCls("fabreq")}>
                   <div className="px-4 py-2.5 bg-gray-50 flex items-center justify-between flex-wrap gap-2">
                     <span className="text-sm font-semibold text-gray-800">🧵 Fabric required vs available <span className="text-xs font-normal text-gray-400">— for this event</span></span>
                     <span className="text-xs text-gray-400">Available = Old + New stock</span>
@@ -2408,7 +2426,7 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
             )}
 
             {/* Blocked inventory */}
-            <div className={"bg-white rounded-xl shadow-[0_1px_2px_rgba(16,24,40,0.06),0_1px_3px_rgba(16,24,40,0.05)] overflow-hidden" + modalCls("inv")}>
+            <div className={"bg-white rounded-xl shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] overflow-hidden" + modalCls("inv")}>
               {/* Summary strip. Tinted blue rather than grey and the figure set in a white pill:
                   with the rows below now white cards on a light ground, a grey header read as
                   one more row instead of as the thing they add up to. */}
@@ -2418,7 +2436,7 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                   lets it truncate rather than push the figure off the row. */}
               <div className="m-2.5 mb-0 px-2.5 py-2 rounded-xl bg-blue-50 flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2 min-w-0">
-                  <span aria-hidden="true" className="shrink-0 w-8 h-8 rounded-lg bg-white shadow-[0_1px_2px_rgba(16,24,40,0.08)] flex items-center justify-center text-sm leading-none">📦</span>
+                  <span aria-hidden="true" className="shrink-0 w-8 h-8 rounded-lg bg-white shadow-[0_1px_3px_rgba(15,23,42,0.12),0_4px_10px_-4px_rgba(15,23,42,0.22)] flex items-center justify-center text-sm leading-none">📦</span>
                   <div className="min-w-0">
                     <div className="text-[13px] font-semibold text-gray-900 truncate">Inventory blocked for {dept}</div>
                     <div className="text-[10px] text-gray-500 truncate">{blockedItemsGrouped.length} item{blockedItemsGrouped.length === 1 ? "" : "s"} held for this event</div>
@@ -2544,7 +2562,7 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
             </div>
 
             {/* Manpower plan (editable / override) */}
-            <div className={"bg-white rounded-xl shadow-[0_1px_2px_rgba(16,24,40,0.06),0_1px_3px_rgba(16,24,40,0.05)] overflow-hidden" + modalCls("mp")}>
+            <div className={"bg-white rounded-xl shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] overflow-hidden" + modalCls("mp")}>
               {/* Same compact tinted strip the Inventory panel uses, deliberately. The reference
                   for this panel draws a taller header with the figure on its own line below the
                   caption — but that is the shape that was just trimmed off Inventory for being
@@ -2552,7 +2570,7 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                   about what their own header looks like. */}
               <div className="m-2.5 mb-0 px-2.5 py-2 rounded-xl bg-blue-50 flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2 min-w-0">
-                  <span aria-hidden="true" className="shrink-0 w-8 h-8 rounded-lg bg-white shadow-[0_1px_2px_rgba(16,24,40,0.08)] flex items-center justify-center text-sm leading-none">👷</span>
+                  <span aria-hidden="true" className="shrink-0 w-8 h-8 rounded-lg bg-white shadow-[0_1px_3px_rgba(15,23,42,0.12),0_4px_10px_-4px_rgba(15,23,42,0.22)] flex items-center justify-center text-sm leading-none">👷</span>
                   <div className="min-w-0">
                     <div className="text-[13px] font-semibold text-gray-900 truncate">Manpower plan</div>
                     <div className="text-[10px] text-gray-500 truncate">From Studio; edit any field, it saves. Sum matches the income card.</div>
@@ -2686,9 +2704,9 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
             {/* Actuals → exact cost */}
             {/* White card with the shared header shape, like every other block. The all-green
                 card with a green "— …" aside made this one look like a success message. */}
-            <div className={"bg-white rounded-xl shadow-[0_1px_2px_rgba(16,24,40,0.06),0_1px_3px_rgba(16,24,40,0.05)] overflow-hidden" + modalCls("actuals")}>
+            <div className={"bg-white rounded-xl shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] overflow-hidden" + modalCls("actuals")}>
               <div className="px-3 sm:px-4 py-3 bg-gray-50 flex items-center gap-3">
-                <span aria-hidden="true" className="shrink-0 w-9 h-9 rounded-lg bg-white shadow-[0_1px_2px_rgba(16,24,40,0.08)] flex items-center justify-center text-base leading-none">🧾</span>
+                <span aria-hidden="true" className="shrink-0 w-9 h-9 rounded-lg bg-white shadow-[0_1px_3px_rgba(15,23,42,0.12),0_4px_10px_-4px_rgba(15,23,42,0.22)] flex items-center justify-center text-base leading-none">🧾</span>
                 <div className="min-w-0 flex-1">
                   <div className="text-[15px] font-semibold text-gray-900">Actuals</div>
                   <div className="text-xs text-gray-500">Real spend for this event</div>
@@ -2852,12 +2870,12 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
             </div>
 
             {/* Loading / dispatch — cross-check inventory + essentials while loading the truck */}
-            <div className={"bg-white rounded-xl shadow-[0_1px_2px_rgba(16,24,40,0.06),0_1px_3px_rgba(16,24,40,0.05)] overflow-hidden" + modalCls("load")}>
+            <div className={"bg-white rounded-xl shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] overflow-hidden" + modalCls("load")}>
               {/* Same header shape as the other blocks: icon tile, title, primary action at the
                   right end, a one-line caption under it with the secondary action beside it. */}
               <div className="px-3 sm:px-4 py-3 bg-gray-50">
                 <div className="flex items-center gap-3">
-                  <span aria-hidden="true" className="shrink-0 w-9 h-9 rounded-lg bg-white shadow-[0_1px_2px_rgba(16,24,40,0.08)] flex items-center justify-center text-base leading-none">🚚</span>
+                  <span aria-hidden="true" className="shrink-0 w-9 h-9 rounded-lg bg-white shadow-[0_1px_3px_rgba(15,23,42,0.12),0_4px_10px_-4px_rgba(15,23,42,0.22)] flex items-center justify-center text-base leading-none">🚚</span>
                   <div className="min-w-0 flex-1 text-[15px] font-semibold text-gray-900">Loading &amp; dispatch</div>
                   <button onClick={addTruck} className="shrink-0 h-8 inline-flex items-center gap-1 text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white px-3 rounded-lg transition-colors">
                     <span aria-hidden="true" className="text-sm leading-none">+</span> Add truck
@@ -3055,13 +3073,13 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
 
             {/* Dismantle plan — dept head pre-sets where each item goes; ops just confirms on-site */}
             {blockedItems.length > 0 && (
-              <div className={"bg-white rounded-xl shadow-[0_1px_2px_rgba(16,24,40,0.06),0_1px_3px_rgba(16,24,40,0.05)] overflow-hidden" + modalCls("dism")}>
+              <div className={"bg-white rounded-xl shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] overflow-hidden" + modalCls("dism")}>
                 {/* Reset rides on the title row instead of wrapping onto a line of its own under
                     the description — on a phone that orphaned it at the left, a full row of height
                     spent on one small button. The description gets the full width under both. */}
                 <div className="px-3 sm:px-4 py-3 bg-gray-50">
                   <div className="flex items-center gap-3">
-                    <span aria-hidden="true" className="shrink-0 w-9 h-9 rounded-lg bg-white shadow-[0_1px_2px_rgba(16,24,40,0.08)] flex items-center justify-center text-base leading-none">🔁</span>
+                    <span aria-hidden="true" className="shrink-0 w-9 h-9 rounded-lg bg-white shadow-[0_1px_3px_rgba(15,23,42,0.12),0_4px_10px_-4px_rgba(15,23,42,0.22)] flex items-center justify-center text-base leading-none">🔁</span>
                     <div className="min-w-0 flex-1 text-[15px] font-semibold text-gray-900">Dismantle plan</div>
                     <button onClick={resetDismantle} className="shrink-0 text-xs font-semibold text-red-600 border border-red-200 bg-red-50 hover:bg-red-100 px-2.5 py-1 rounded-lg whitespace-nowrap" title="Testing: clear this plan + all on-site movements so you can re-test splits">↺ Reset<span className="hidden sm:inline"> (testing)</span></button>
                   </div>
@@ -3288,9 +3306,9 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                          is a toggle, not a launcher. The open one is ringed so you can tell at a
                          glance which of the five the panel below belongs to. */
                       onClickCapture={e => { if (modal === t.k) { e.stopPropagation(); setModal(null); } }}
-                      className={"group text-left rounded-xl p-3.5 h-full flex flex-col transition-all duration-150 shadow-[0_1px_2px_rgba(16,24,40,0.07),0_4px_12px_-4px_rgba(16,24,40,0.12)] hover:-translate-y-0.5 hover:shadow-[0_2px_6px_rgba(16,24,40,0.1),0_14px_28px_-10px_rgba(16,24,40,0.28)] " + (modal === t.k ? "ring-2 ring-blue-500 " : "") + (t.tone || "bg-white")}>
+                      className={"group text-left rounded-xl p-3.5 h-full flex flex-col transition-all duration-150 shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] hover:-translate-y-0.5 hover:shadow-[0_4px_8px_rgba(15,23,42,0.1),0_22px_40px_-12px_rgba(15,23,42,0.45)] " + (modal === t.k ? "ring-2 ring-blue-500 " + (t.tone || "bg-white/80 backdrop-blur-xl") : (t.tone || GLASS))}>
                       <div className="flex flex-col gap-2.5 sm:flex-row sm:items-start">
-                        <span aria-hidden="true" className={"shrink-0 w-9 h-9 rounded-lg flex items-center justify-center text-base leading-none " + (t.alert ? "bg-white shadow-[0_1px_2px_rgba(16,24,40,0.08)]" : "bg-white shadow-[0_1px_2px_rgba(16,24,40,0.08)]")}>{t.icon}</span>
+                        <span aria-hidden="true" className={"shrink-0 w-9 h-9 rounded-lg flex items-center justify-center text-base leading-none " + (t.alert ? "bg-white shadow-[0_1px_3px_rgba(15,23,42,0.12),0_4px_10px_-4px_rgba(15,23,42,0.22)]" : "bg-white shadow-[0_1px_3px_rgba(15,23,42,0.12),0_4px_10px_-4px_rgba(15,23,42,0.22)]")}>{t.icon}</span>
                         <div className="min-w-0 flex-1">
                           <div className="text-[13px] font-semibold text-gray-900 leading-snug">{t.title}</div>
                           <div className="text-[11px] text-gray-500 leading-snug mt-0.5">{t.sub}</div>
@@ -3371,14 +3389,14 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
             )}
 
             {/* Dismantle & return routing */}
-            <div className={"bg-white rounded-xl shadow-[0_1px_2px_rgba(16,24,40,0.06),0_1px_3px_rgba(16,24,40,0.05)] overflow-hidden" + modalCls("route")}>
+            <div className={"bg-white rounded-xl shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] overflow-hidden" + modalCls("route")}>
               {/* Same header shape as the Planning dismantle block: title row with Reset at its
                   right end, the description under it, then the bulk actions on their own row.
                   All three buttons on one unwrapping row ran off a phone screen, and the
                   description trailing the title as a "— …" aside wrapped into it. */}
               <div className="px-3 sm:px-4 py-3 bg-gray-50 space-y-2">
                 <div className="flex items-center gap-3">
-                  <span aria-hidden="true" className="shrink-0 w-9 h-9 rounded-lg bg-white shadow-[0_1px_2px_rgba(16,24,40,0.08)] flex items-center justify-center text-base leading-none">🔁</span>
+                  <span aria-hidden="true" className="shrink-0 w-9 h-9 rounded-lg bg-white shadow-[0_1px_3px_rgba(15,23,42,0.12),0_4px_10px_-4px_rgba(15,23,42,0.22)] flex items-center justify-center text-base leading-none">🔁</span>
                   <div className="min-w-0 flex-1 text-[15px] font-semibold text-gray-900">Dismantle &amp; return routing</div>
                   <button onClick={resetDismantle} className="shrink-0 text-xs font-semibold text-red-600 border border-red-200 bg-red-50 hover:bg-red-100 px-2.5 py-1 rounded-lg whitespace-nowrap" title="Testing: clear the plan + all movements so you can re-test">↺ Reset<span className="hidden sm:inline"> (testing)</span></button>
                 </div>
@@ -3580,13 +3598,13 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                 writes the same mpDay/mpWin/mpOverrides the plan uses, so it becomes the exact manpower
                 cost in this event's P&L and reflects back to the salesperson in Studio. */}
             {mpRows.length > 0 && (
-              <div className={"bg-white rounded-xl shadow-[0_1px_2px_rgba(16,24,40,0.06),0_1px_3px_rgba(16,24,40,0.05)] overflow-hidden" + modalCls("oscrew")}>
+              <div className={"bg-white rounded-xl shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] overflow-hidden" + modalCls("oscrew")}>
                 {/* Same header shape as the dismantle blocks: icon tile, title, the figure at the
                     right end, description under. The old one ran the description on as a
                     "— …" aside to the title and the total wrapped onto a line by itself. */}
                 <div className="px-3 sm:px-4 py-3 bg-gray-50">
                   <div className="flex items-center gap-3">
-                    <span aria-hidden="true" className="shrink-0 w-9 h-9 rounded-lg bg-white shadow-[0_1px_2px_rgba(16,24,40,0.08)] flex items-center justify-center text-base leading-none">👷</span>
+                    <span aria-hidden="true" className="shrink-0 w-9 h-9 rounded-lg bg-white shadow-[0_1px_3px_rgba(15,23,42,0.12),0_4px_10px_-4px_rgba(15,23,42,0.22)] flex items-center justify-center text-base leading-none">👷</span>
                     <div className="min-w-0 flex-1 text-[15px] font-semibold text-gray-900">On-site crew</div>
                     <div className="shrink-0 text-right">
                       <div className="text-[15px] font-bold text-gray-900 tabular-nums leading-tight">{fmt(mpCost)}</div>
