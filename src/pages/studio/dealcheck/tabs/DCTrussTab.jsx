@@ -400,15 +400,27 @@ export default function DCTrussTab({ ctx }) {
                         const pObj = (imsPaletteCatalogue||[]).find(p => p.name === fnPalette);
                         const anchors = pObj?.anchorColours || [];
                         let fnGrand = 0;
-                        previews.forEach(({ zk, pv }) => {
+                        // Per-preview-row fabric cost, kept alongside so the collapsed zone card
+                        // below can show the SAME truss+fabric total this header sums, instead of
+                        // only its own truss/pillar/beam/batta portion with fabric silently missing
+                        // until the card is expanded (which is why the header total never matched
+                        // the sum of the collapsed rows).
+                        const fabricCostByPreviewIdx = [];
+                        previews.forEach(({ zk, pv, row }, idx) => {
                           fnGrand += pv?.costs?.actual || 0; // already halved above for a repeat zone
-                          const zCfg = (fn.zoneConfig || {})[zk];
                           const photoUrl = (fn.elSelectedPhoto || {})[zk];
                           let density = "moderate";
                           if (photoUrl) { const li = libItems.find(l => l.url === photoUrl); if (li?.dims?.drapeDensity) density = li.dims.drapeDensity; }
                           // Same flat 30% discount (billed at 70%) as the truss steel above for a
-                          // repeat zone — see dcCostRollup's matching change.
-                          fnGrand += calcZoneFabricCost(zCfg, trussInv, anchors, density) * (zCfg?.repeat ? 0.7 : 1);
+                          // repeat zone — see dcCostRollup's matching change. Scoped to THIS row's
+                          // own truss config (row 0 = the zone's own scalar fields; an extra truss
+                          // row — "+ Add Truss" in Build — carries its own separate fabric
+                          // allocation) rather than always reading the zone's top-level zCfg, which
+                          // used to double-count row 0's fabric once per extra row a zone had, and
+                          // always missed an extra row's own fabric entirely.
+                          const fabCost = calcZoneFabricCost(row, trussInv, anchors, density) * (pv?.costs?.isRepeat ? 0.7 : 1);
+                          fabricCostByPreviewIdx[idx] = fabCost;
+                          fnGrand += fabCost;
                         });
                         return (
                         <div key={fi} style={{display:"flex",flexDirection:"column",gap:10}}>
@@ -423,11 +435,18 @@ export default function DCTrussTab({ ctx }) {
                               </div>
                             )}
                           </div>
-                          {previews.map(({ zk, zLabel, pv, row, rowIdx }) => {
+                          {previews.map(({ zk, zLabel, pv, row, rowIdx }, previewIdx) => {
                             const isInvalid = pv.smartFlag === "red";
                             const topo = pv.topology;
                             const costs = pv.costs;
                             const batta = pv.batta;
+                            // Truss + this row's own fabric (Masking/Liza/Curtains) together — the
+                            // same two figures fnGrand above sums into "Truss total". Showing only
+                            // costs.actual here (truss/pillar/beam/batta) used to leave fabric out
+                            // of the collapsed row entirely — it only appeared once the card was
+                            // expanded — so the header total could never be reconciled against the
+                            // sum of what the collapsed rows showed.
+                            const zoneRowTotal = (costs?.actual || 0) + (fabricCostByPreviewIdx[previewIdx] || 0);
                             const configLabel = pv.config === "u_only" ? "U Truss"
                                               : pv.config === "half_box" ? "Half Box"
                                               : pv.config === "full_box" ? "Full Box" : "—";
@@ -463,9 +482,9 @@ export default function DCTrussTab({ ctx }) {
                                       Method {topo.method} · {topo.pillarCount} pillar{topo.pillarCount===1?"":"s"} · {topo.beamCount} beam segment{topo.beamCount===1?"":"s"} · {topo.totals?.totalJoints || (topo.pillarCount + topo.beamCount - 1)} joint{((topo.totals?.totalJoints || 0))===1?"":"s"} expected
                                     </div>}
                                   </div>
-                                  {costs?.actual > 0 && (
+                                  {zoneRowTotal > 0 && (
                                     <span style={{...NUM,marginLeft:"auto",marginTop:2,fontSize:13.5,fontWeight:700,color:"#8A6A32",whiteSpace:"nowrap",flexShrink:0}}>
-                                      ₹{costs.actual.toLocaleString("en-IN")}
+                                      ₹{Math.round(zoneRowTotal).toLocaleString("en-IN")}
                                     </span>
                                   )}
                                 </button>

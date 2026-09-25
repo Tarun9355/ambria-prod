@@ -2799,9 +2799,31 @@ export default function StudioApp() {
       // and treating that as "still loading" would hold the skeleton up for the rest of the session
       // with nothing on the way to replace it. Ready means "we have asked", not "we found work".
       if (!cancelled) setLedgerReady(true);
+      // Events/Venues/Rate Card/Sub-category factors/Inventory/Rate-Card-Categories/Transport — 8
+      // independent reads that used to run one at a time, in series, none reading another's result
+      // (the two soft cross-references — venue migration checking its own flag, rate-card-category
+      // orphan-recovery checking the rate-card rows — only ever need the OTHER read's already-landed
+      // VALUE, never a fresh round trip of their own). Fired together so this block costs the
+      // slowest single request instead of the sum of all eight — including the two heaviest queries
+      // in the whole mount path (rate_card, inventory) — directly shortening time-to-pricingReady
+      // (see the comment on setPricingReady below). Each promise swallows its own failure so one
+      // slow/broken read still lets every other one's state update land, matching the original
+      // per-block try/catch isolation exactly.
+      const [
+        eventsVal, venuesVal, venueMigFlag, rcRows, rcSubcatRows, invRows, rcCatsVal, trVal,
+      ] = await Promise.all([
+        kvGet(STORAGE_KEY).catch(() => null),
+        kvGet(STORAGE_KEY + "-venues").catch(() => null),
+        kvGet(VENUE_MIG_SK).catch(() => null),
+        loadRcRows().catch(() => null),
+        fetchAll("rate_card_categories").catch(() => null),
+        fetchAll("inventory").catch(() => null),
+        kvGet(RC_SK_CATS).catch(() => null),
+        kvGet(RC_SK_TR).catch(() => null),
+      ]);
       // Events — auto-wrap to multi-function shape (functions[]).
       try {
-        const v = await kvGet(STORAGE_KEY);
+        const v = eventsVal;
         if (v != null) {
           let p = parse(v);
           const cleaned = Array.isArray(p) ? p.filter(e => !(e && e.id >= 1 && e.id <= 14 && typeof e.img === "string" && e.img.includes("pexels.com"))) : [];
@@ -2811,11 +2833,10 @@ export default function StudioApp() {
       } catch {}
       // Venues
       try {
-        const v = await kvGet(STORAGE_KEY + "-venues");
+        const v = venuesVal;
         let inhouseArr = [], outdoorArr = [], propertiesArr = [];
         if (v != null) { const vd = parse(v); if (vd && Array.isArray(vd.inhouse)) inhouseArr = vd.inhouse; if (vd && Array.isArray(vd.outdoor)) outdoorArr = vd.outdoor; if (vd && Array.isArray(vd.properties)) propertiesArr = vd.properties; }
-        const migFlag = await kvGet(VENUE_MIG_SK);
-        if (!migFlag) {
+        if (!venueMigFlag) {
           LEGACY_VENUE_SEED.inhouse.forEach(s => { if (!inhouseArr.some(x => x.name === s.name)) inhouseArr.push(s); });
           LEGACY_VENUE_SEED.outdoor.forEach(s => { if (!outdoorArr.some(x => x.name === s.name)) outdoorArr.push(s); });
           const payload = JSON.stringify({ inhouse: inhouseArr, outdoor: outdoorArr, properties: propertiesArr });
@@ -2827,7 +2848,7 @@ export default function StudioApp() {
       // Rate Card — now row-per-item in the `rate_card` TABLE (off the settings blob; shared with IMS).
       let loadedRcItems = null;
       try {
-        const rows = await loadRcRows();
+        const rows = rcRows;
         if (Array.isArray(rows) && rows.length) { const mapped = rows.map(rowToRcItem).filter(Boolean); loadedRcItems = mapped; if (!cancelled) setRcItems(mapped); }
         else { // empty table → seed defaults as rows (first boot)
           try { await supabase.from("rate_card").upsert(RC_D.map(i => ({ ...rcItemToRow(i), updated_at: new Date().toISOString() })), { onConflict: "id" }); } catch { /* ignore */ }
@@ -2837,13 +2858,13 @@ export default function StudioApp() {
       // Sub-category scaling factors — Rate Card → IMS migration Phase 1. IMS-owned table
       // (rate_card_categories); Studio just reads it live, no write path here yet (that's Phase 2).
       try {
-        const rows = await fetchAll("rate_card_categories");
+        const rows = rcSubcatRows;
         if (Array.isArray(rows) && !cancelled) setRcSubcatFactors(rows);
       } catch { /* ignore — table may not exist yet in this environment */ }
       // IMS inventory — always-on copy for Library's "+Add element" search (sources from
       // inventory now, not the Rate Card). Not deal-scoped like dealCheckData.inventory.
       try {
-        const rows = await fetchAll("inventory");
+        const rows = invRows;
         if (Array.isArray(rows) && !cancelled) setImsInventory(rows.map(rowToItem).filter(Boolean));
       } catch { /* ignore */ }
       // Rate Card Categories — on first boot (v == null), seed defaults and recover orphaned
@@ -2851,7 +2872,7 @@ export default function StudioApp() {
       // skip recovery entirely: the team intentionally manages categories via the editor and
       // orphan-recovery would silently undo deliberate deletes.
       try {
-        const v = await kvGet(RC_SK_CATS);
+        const v = rcCatsVal;
         let cats = (v != null) ? (Array.isArray(parse(v)) ? parse(v) : null) : null;
         if (!cats || !cats.length) { cats = RC_CATS_DEFAULT; if (v == null) reliableSave(RC_SK_CATS, JSON.stringify(RC_CATS_DEFAULT), "Categories").catch(() => {}); }
         const items = loadedRcItems || [];
@@ -2873,7 +2894,7 @@ export default function StudioApp() {
       } catch {}
       // Transport
       try {
-        const v = await kvGet(RC_SK_TR);
+        const v = trVal;
         if (v != null) { const td = parse(v); if (td && typeof td === "object" && !cancelled) { if (td.venues) setTrVenues(td.venues); if (td.truckCap) setTruckCap(td.truckCap); if (td.floralPerTruck) setFloralPerTruck(td.floralPerTruck); if (td.bufferTiers) setBufferTiers(td.bufferTiers); if (td.gensetRate !== undefined) setGensetRate(td.gensetRate); if (td.gensetRate62 !== undefined) setGensetRate62(td.gensetRate62); if (td.gensetCostRate !== undefined) setGensetCostRate(td.gensetCostRate); if (td.gensetCostRate62 !== undefined) setGensetCostRate62(td.gensetCostRate62); } }
       } catch {}
       if (!cancelled) trSettingsLoadedRef.current = true;
