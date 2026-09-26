@@ -2760,7 +2760,25 @@ export default function DealCheckOverlay({ ctx }) {
                                   const _rep = repeatCatFor(fns[fnIdx]?.zoneConfig?.[card.zoneKey], "elements");
                                   const _venue = fns[fnIdx]?.fnVenue;
                                   const _cardQty = Number(card.qty) || 1;
-                                  const _lineTotal = item ? repeatAdjustedRental(_rep, _venue, item, _cardQty, rental, _fnDateForRepeat, _crossFnTakeCards(item.id, _cardQty)) : 0;
+                                  // This card's own total used to price its WHOLE qty at the plain owned
+                                  // rate regardless of the ⚠ shortage badge right next to it — the badge
+                                  // was purely decorative, never affecting the number shown. Same owned/
+                                  // true-shortfall split as the main cost rollup and its zone-header pill
+                                  // (see repeatAdjustedRental's own call site comment there) — a kit has
+                                  // no such split (matches those two sites), only a plain inventory item.
+                                  const _isCardKit = item && Array.isArray(item.subItems) && item.subItems.length > 0;
+                                  let _lineTotal = 0;
+                                  if (item && _isCardKit) {
+                                    _lineTotal = repeatAdjustedRental(_rep, _venue, item, _cardQty, rental, _fnDateForRepeat, _crossFnTakeCards(item.id, _cardQty));
+                                  } else if (item) {
+                                    const _cardAvail = Math.min(dcAvailable(item, fnBlocksForChip, fnIdx), availableAtVenue({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, _venue, item));
+                                    const _cardCrossFn = _crossFnTakeCards(item.id, _cardQty);
+                                    const _cardOwnedQty = Math.min(_cardQty, _cardAvail + _cardCrossFn);
+                                    const _cardShortQty = Math.max(0, _cardQty - _cardOwnedQty);
+                                    const _cardCostPctFor = (subcat) => { const key = String(subcat || "").trim().toLowerCase(); const row = (rcSubcatFactors || []).find(r => r?.id === key); const v = row ? Number(row.cost_percent) : undefined; return (typeof v === "number" && isFinite(v) && v >= 0) ? v : 100; };
+                                    const _cardShortRate = (Number(item.cost) || 0) * (oosCostPctFor(item, _cardCostPctFor) / 100);
+                                    _lineTotal = repeatAdjustedRental(_rep, _venue, item, _cardOwnedQty, rental, _fnDateForRepeat, _cardCrossFn) + _cardShortQty * _cardShortRate;
+                                  }
                                   // The per-unit rate shown next to "×" — the discounted equivalent, not
                                   // the list rate, so the line's own arithmetic (rate × qty) reproduces
                                   // the total sitting right next to it instead of looking wrong.
