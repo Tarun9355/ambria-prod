@@ -2161,7 +2161,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                 <span className="text-xs text-gray-400">% cost</span>
               </div>
               <button onClick={() => onUpdateSubcatTagHidden?.(r.id, !r.tag_hidden)}
-                title={r.tag_hidden ? "Hidden from AI photo-tagging — click to make taggable again" : "Included in AI photo-tagging's vocabulary — click to hide"}
+                title={r.tag_hidden ? "Hidden from AI photo-tagging AND un-addable in Build/Deal Check/Library's manual add-search — click to make taggable and addable again" : "Included in AI photo-tagging's vocabulary and addable everywhere — click to hide from both"}
                 className={"text-[10px] font-semibold px-2 py-1 rounded-full whitespace-nowrap flex-shrink-0 " + (r.tag_hidden ? "bg-gray-200 text-gray-500" : "bg-emerald-100 text-emerald-700")}>
                 {r.tag_hidden ? "🚫 Hidden" : "🏷️ Taggable"}
               </button>
