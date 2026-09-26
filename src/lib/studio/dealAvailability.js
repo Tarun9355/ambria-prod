@@ -7,6 +7,8 @@
 //
 // Pure, synchronous, no Supabase calls — operates only on already-in-memory arrays.
 
+import { walkKitUnits } from "../ims/helpers";
+
 // Build: sum qty already assigned to invId across all zones of all functions, scoped
 // to targetDate (an item committed on a different calendar day doesn't starve this one —
 // mirrors buildPlatformPlan's per-fnDate bucketing in this same lib).
@@ -26,11 +28,15 @@ export function qtyUsedElsewhereInBuild(invId, fns, imsInventory, exclude = {}, 
         if (isExcluded) return;
         if (!el?.invId) return; // pattern-only / recipe rows never consume real stock
         const elQty = Number(el.qty) || 0;
-        if (el.invId === invId) { used += elQty; return; }
-        // kit sub-component coverage, qty-aware (comp.qty × the kit instance's own qty)
-        const kitItem = (imsInventory || []).find((i) => i.id === el.invId);
-        const comps = Array.isArray(el.kitOverrides) ? el.kitOverrides : (kitItem?.subItems || []);
-        (comps || []).forEach((c) => { if (c.itemId === invId) used += (Number(c.qty) || 0) * elQty; });
+        if (elQty <= 0) return;
+        // walkKitUnits (lib/ims/helpers.js) — same node-walker pricing/transport/reservation share —
+        // visits el.invId itself (a plain item just matches directly, one visit) AND every
+        // component recursively, so a component nested TWO levels down (a kit-inside-a-kit) is no
+        // longer invisible to this check the way a one-level-only "el.kitOverrides || item.subItems"
+        // scan used to leave it.
+        const topItem = (imsInventory || []).find((i) => i.id === el.invId);
+        if (!topItem) { if (el.invId === invId) used += elQty; return; }
+        walkKitUnits(topItem, elQty, imsInventory, el.kitOverrides, (node, nodeQty) => { if (node?.id === invId) used += nodeQty; });
       });
     });
   });
@@ -55,14 +61,15 @@ export function allocateRowAvailability(invId, fns, imsInventory, target, target
     Object.entries(fn?.zoneElements || {}).forEach(([zk, elems]) => {
       (elems || []).forEach((el, elIdx) => {
         if (!el?.invId) return;
+        const elQty = Number(el.qty) || 0;
         let qty = 0;
-        if (el.invId === invId) {
-          qty = Number(el.qty) || 0;
-        } else {
-          const kitItem = (imsInventory || []).find((i) => i.id === el.invId);
-          const comps = Array.isArray(el.kitOverrides) ? el.kitOverrides : (kitItem?.subItems || []);
-          const compQtyEach = (comps || []).reduce((s, c) => s + (c.itemId === invId ? (Number(c.qty) || 0) : 0), 0);
-          qty = compQtyEach * (Number(el.qty) || 0);
+        if (elQty > 0) {
+          // walkKitUnits recurses through a nested kit-inside-a-kit — see qtyUsedElsewhereInBuild's
+          // own comment for why the old one-level component scan could miss a component two levels
+          // down.
+          const topItem = (imsInventory || []).find((i) => i.id === el.invId);
+          if (!topItem) { if (el.invId === invId) qty = elQty; }
+          else walkKitUnits(topItem, elQty, imsInventory, el.kitOverrides, (node, nodeQty) => { if (node?.id === invId) qty += nodeQty; });
         }
         if (qty > 0) rows.push({ fnIdx, zk, elIdx, qty });
       });
@@ -121,12 +128,14 @@ export function qtyUsedElsewhereInDealCheck(imsId, fns, dcCards, dcManualItems, 
       if (!card?.imsId) return;
       const qty = Number(card.qty) || 1;
       if (card.imsId === imsId) { used += qty; return; }
-      // kit sub-component coverage
+      // kit sub-component coverage, recursing into kits-inside-kits
       const kitItem = (inventory || []).find((i) => i.id === card.imsId);
       if (kitItem && Array.isArray(kitItem.subItems) && kitItem.subItems.length) {
         const edited = dcKitEdits?.[fnIdx]?.[ck];
-        const comps = Array.isArray(edited) ? edited : kitItem.subItems.map((s) => ({ itemId: s.itemId, qty: Number(s.qty) || 1 }));
-        comps.forEach((c) => { if (c.itemId === imsId) used += (Number(c.qty) || 0) * qty; });
+        const overrideSubItems = Array.isArray(edited) ? edited : undefined;
+        walkKitUnits(kitItem, qty, inventory, overrideSubItems, (node, nodeQty) => {
+          if (node?.id === imsId) used += nodeQty;
+        });
       }
     });
     (dcManualItems || []).filter((mi) => mi.fnIdx === fnIdx).forEach((mi) => {

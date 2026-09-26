@@ -10151,13 +10151,34 @@ export default function StudioApp() {
     // practice (a whole-function delete on an already-sold, already-reserved deal); flagged rather
     // than silently handled.
     // Required qty per (fnIdx, itemId) from THIS run's matched cards.
+    // Confirmed live gap: a kit used to reserve ONLY its own top-level id — none of its components
+    // ever got a blocks entry of their own, so two different deals each drawing on the same
+    // component (e.g. "Round Fibre Pot") via two different kits could each believe the full stock
+    // was theirs, with nothing here to catch it. walkKitUnits is the SAME node-walker
+    // priceForInvItem/transport/crew-hours already share — visits the kit's own node (preserving
+    // today's existing top-level reservation) AND every component recursively, including a kit
+    // nested inside this kit, so nothing about "what counts as this kit's parts" can drift from
+    // what pricing/transport/crew already agree on. dcKitEdits is this card's own per-instance
+    // component override, same lookup syncKitOverridesToBuild/effKitRental already use.
     const requiredByFn = {};
     fnsToProcess.forEach((fn, i) => {
       const fnIdx = fn.fnIdx ?? i;
       const byItem = {};
-      Object.values(newCards[fnIdx] || {}).forEach((c) => {
+      Object.entries(newCards[fnIdx] || {}).forEach(([cardKey, c]) => {
         if (!c.imsId) return;
-        byItem[c.imsId] = (byItem[c.imsId] || 0) + (Number(c.qty) || 0);
+        const qty = Number(c.qty) || 0;
+        if (qty <= 0) return;
+        const topItem = (inventoryList || []).find((x) => x.id === c.imsId);
+        if (topItem && Array.isArray(topItem.subItems) && topItem.subItems.length > 0) {
+          const edited = dcKitEdits?.[fnIdx]?.[cardKey];
+          const overrideSubItems = Array.isArray(edited) ? edited : undefined;
+          walkKitUnits(topItem, qty, inventoryList, overrideSubItems, (node, nodeQty) => {
+            if (!node?.id) return;
+            byItem[node.id] = (byItem[node.id] || 0) + nodeQty;
+          });
+        } else {
+          byItem[c.imsId] = (byItem[c.imsId] || 0) + qty;
+        }
       });
       requiredByFn[fnIdx] = byItem;
     });
@@ -10342,7 +10363,7 @@ export default function StudioApp() {
       }), status: "logged" };
       submitAmendRequest(amendReq);
     }
-  }, [eventOrders, dealCheckData, clientLedger, saveClientLedger, submitAmendRequest, authUser]);
+  }, [eventOrders, dealCheckData, clientLedger, saveClientLedger, submitAmendRequest, authUser, dcKitEdits]);
 
   // ═══ DEAL CHECK REBUILD — Generate orchestrator (§7.9 · Deploy 1) — VERBATIM ═══
   // `skipAi` runs the matcher deterministically — knowledge + name-match only, no vision calls.
