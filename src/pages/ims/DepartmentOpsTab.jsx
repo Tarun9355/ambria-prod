@@ -1370,6 +1370,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       const parts = [["L", d.L], ["W", d.W], ["H", d.H]].filter(([, v]) => Number(v) > 0);
       return parts.length ? parts.map(([k, v]) => `${k} ${v}`).join(" × ") + " ft" : "";
     };
+
     // The image goes INSIDE the element's one style attribute. An element that already has a
     // style (the zone photo carries its position) must not get a second style="" — browsers keep
     // only the first, which is how the zone photo came out blank while the cards' photos showed.
@@ -1442,6 +1443,39 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       const parent = String(b?.fromKit || "").trim().toLowerCase();
       return !!parent && placedElementNames.has(parent);
     };
+    /* ── TENTING, BROKEN DOWN BY ZONE ──
+       Tenting's held rows are whole-event totals with no zone on them at all — the Deal Check
+       rollup adds every zone's truss together and keeps only "Truss pillar 12ft x6", so there is
+       nothing in the item list to attribute. A tenting crew cannot work from that: six pillars
+       are useless until you know which structure they belong to.
+       The zone CONFIG does survive the sync, though, and it is the part that matters here —
+       each zone's span, truss type and material, extra rows, floor area and masking. So this
+       table is built from the zones rather than from the items: what to build, zone by zone,
+       with the item list left as the loading total it actually is. */
+    const tentRows = dept !== "Tenting" ? [] : (fns || []).flatMap((fn, fi) => {
+      const zs = fn?.zones || {};
+      return Object.entries(zs).map(([zk, z]) => {
+        const dims = zoneDimsText(fn?.dims?.[zk] || z?.dims);
+        const fd = z?.floorDims || {};
+        const floor = [fd.L, fd.W].every(v => Number(v) > 0) ? `${fd.L} x ${fd.W} ft` : "";
+        const extras = Array.isArray(z?.extraTrussRows) ? z.extraTrussRows.length : 0;
+        const plats = Array.isArray(z?.extraPlatformRows) ? z.extraPlatformRows.length : 0;
+        const truss = [z?.trT ? String(z.trT) : "", z?.trussQty ? `x${z.trussQty}` : "", z?.trussMaterial ? String(z.trussMaterial) : ""].filter(Boolean).join(" ");
+        const notes = [
+          extras ? `${extras} extra truss row${extras === 1 ? "" : "s"}` : "",
+          plats ? `${plats} extra platform row${plats === 1 ? "" : "s"}` : "",
+          z?.plH ? `platform ${z.plH} ft high` : "",
+          z?.mkOn ? "masking" : "",
+        ].filter(Boolean).join(" · ");
+        // A zone with no span, no truss and no floor has nothing for this department to build.
+        if (!dims && !truss && !floor && !notes) return null;
+        return { zk, fi, name: zoneName(zk), dims, truss, floor, notes };
+      }).filter(Boolean);
+    });
+    const tentTableRows = tentRows.map(r =>
+      `<tr><td><b>${esc(r.name)}</b>${(fns || []).length > 1 ? `<div class="sub">${esc(fns[r.fi]?.type || `Function ${r.fi + 1}`)}</div>` : ""}</td><td>${esc(r.dims || "—")}</td><td>${esc(r.truss || "—")}</td><td>${esc(r.floor || "—")}</td><td>${esc(r.notes || "—")}</td></tr>`);
+
+
     const unplaced = blockedItemsGrouped.filter(b => !placed.has(b.id) && !inPlacedKit(b)).map(b => {
       const inv = (b.invId && invById.get(String(b.invId))) || invByName.get(String(b.name || "").trim().toLowerCase()) || null;
       return { name: b.name, qty: Number(b.qty) || 0, photo: invPhoto(inv, b), dims: invDims(inv), prodOrBuy: b.prodOrBuy || null, source: b.prodOrBuy === "buying" ? "Buying" : b.prodOrBuy === "production" ? "Production" : "" };
@@ -1811,6 +1845,7 @@ ${/* Money, the priced inventory table, the crew plan and logged spend are left 
 ${zoneHtml}
 ${truckRows.length ? sect("Loading & dispatch", table(["#", "Vehicle", "Driver", "Phone", "Load", "Status"], truckRows, ["11%", "22%", "21%", "18%", "14%", "14%"])) : ""}
 ${moveRows.length ? sect("Dismantle routing", table(["Item", "Goes to", "Qty", "Logged by"], moveRows, ["38%", "32%", "12%", "18%"])) : ""}
+${tentTableRows.length ? sect("Tenting by zone", table(["Zone", "Span (L x W x H)", "Truss", "Floor / carpet", "Also"], tentTableRows, ["24%", "20%", "18%", "16%", "22%"])) : ""}
 ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour", "Required", "Available", "Status"], fabRows, ["40%", "20%", "20%", "20%"])) : ""}
 <footer data-block>
   ${logos.dark ? `<img class="ft-logo" src="${logos.dark}" alt="Ambria — Design &amp; Decor">` : `<div class="ft-mark">AMBRIA · DESIGN &amp; DECOR</div>`}
