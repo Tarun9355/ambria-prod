@@ -9,6 +9,7 @@
 // ═══════════════════════════════════════════════════════════════
 import { Fragment, useState } from "react";
 import { matchFlowerPattern, sizeClassToPatternKey, normalizeSizeClass } from "../../../../lib/ims/flowerHelpers";
+import { findCrossFnReuseSource } from "../../../../lib/studio/crossFnReuse";
 
 // ═══ THE FLORAL GROUND ═══
 // Drop the artwork at src/assets/ambria-florals.(jpg|jpeg|png|webp) and this tab is drawn on it.
@@ -31,7 +32,7 @@ export default function DCFloralsTab({ ctx }) {
     // build / fn state
     activeFnIdx, collectAllFunctionData, rcItems,
     // deal check data + pricing
-    dealCheckData, floralRatio, resolveMandiFlower, imsField, dcInventoryCache, rcFloralModeByKey,
+    dealCheckData, floralRatio, resolveMandiFlower, imsField, imsInventory, dcInventoryCache, rcFloralModeByKey,
     // floral state
     dcFloralCalcOpen, setDcFloralCalcOpen,
     dcArtFlowerAlloc, setDcArtFlowerAlloc, dcArtFlowerModal, setDcArtFlowerModal,
@@ -138,9 +139,20 @@ export default function DCFloralsTab({ ctx }) {
                   // (qty × 0.2), artificial needs 30% less (qty × 0.7) — cost follows automatically.
                   const REPEAT_REAL_QTY_MULT = 0.2;
                   const REPEAT_ART_QTY_MULT = 0.7;
+                  // Cross-function reuse (Ambria's own cost basis, always on) — same
+                  // findCrossFnReuseSource definition truss/transport carryover and calcFnFloralSourcingCost's
+                  // OWN repeat-zone check already share: if the immediately-preceding function of this deal
+                  // is at the same venue within a day and ALSO enabled this same zone, treat it as reused
+                  // without requiring the salesperson to also tick this function's own Repeat toggle. This
+                  // tab's own comment two blocks up says its totals "must agree with" calcFnFloralSourcingCost
+                  // — that rollup already applies this half of the repeat check (StudioApp.jsx); it never
+                  // made it here, so a cross-function-reused zone was still priced at full real+artificial
+                  // quantity in this tab while the sidebar/GYV rollup correctly priced it at the discounted
+                  // quantity, producing a real, confirmed-live "Total Floral" mismatch between the two.
+                  const crossFnPrevFnFloral = findCrossFnReuseSource(activeFn, fns);
                   Object.entries(activeFn.zoneElements || {}).forEach(([zk, elems]) => {
                     if (!activeFn.enabledEls?.[zk]) return;
-                    const zoneRepeat = !!activeFn.zoneConfig?.[zk]?.repeat;
+                    const zoneRepeat = !!activeFn.zoneConfig?.[zk]?.repeat || !!(crossFnPrevFnFloral?.enabledEls?.[zk] && crossFnPrevFnFloral?.zoneConfig?.[zk]);
                     const realQtyFrac = zoneRepeat ? REPEAT_REAL_QTY_MULT : 1;
                     const artQtyFrac = zoneRepeat ? REPEAT_ART_QTY_MULT : 1;
                     // A kit's own subItems can carry floral content of their own — a flower-recipe
@@ -290,7 +302,13 @@ export default function DCFloralsTab({ ctx }) {
                             // here and the artificial loop skips it entirely (contributes nothing
                             // there), rather than being scaled by realFrac.
                             if (fl.invItemId) {
-                              const item = (dcInventoryCache || []).find(i => i.id === fl.invItemId);
+                              // dcInventoryCache first (this tab's own established preference — its own
+                              // Deal Check re-fetch is what everything else here resolves invId against),
+                              // imsInventory as a fallback for an item added to IMS since this cache was
+                              // last populated. Was dcInventoryCache-only, the opposite one-sided gap from
+                              // calcFnFloralSourcingCost's own imsInventory-only lookup for this exact
+                              // branch — see that rollup's own comment.
+                              const item = (dcInventoryCache || []).find(i => i.id === fl.invItemId) || (imsInventory || []).find(i => i.id === fl.invItemId);
                               const rawPrice = item ? (Number(item.price ?? item.rentalCost) || 0) : 0;
                               const totalQty = (fl.qty || 0) * elQty;
                               const lineCost = totalQty * rawPrice;

@@ -5337,14 +5337,21 @@ export default function StudioApp() {
         comp.flowers.forEach(fl => {
           // A direct IMS Inventory ingredient in the recipe (fl.invItemId set, no flowerId at all) —
           // a physical rented piece bundled into the recipe (a vase, a wire base), not a mandi
-          // flower. DCFloralsTab.jsx counts it in FULL as real cost, never scaled by the real/
-          // artificial slider (there's no "artificial" version of a physical prop) — this rollup had
-          // no branch for it, so resolveMandiFlower(undefined, ...) below returned null and the whole
-          // line silently dropped out of both totalReal and totalArtificial.
+          // flower — counts in FULL regardless of the real/artificial slider (there's no "artificial"
+          // version of a physical prop). Bucketed into tArt, NOT fixedExtras/tReal: DCFloralsTab.jsx
+          // (this rollup's own "must agree with" tab, see its comment) holds it aside and adds it to
+          // its OWN artificial total — "manufactured pieces charged in full, so the real/artificial
+          // blend does not scale them" per that tab's UI copy. This rollup used to add it to
+          // fixedExtras/tReal instead — same total either way (grandTotal = tReal+tArt), but the
+          // Real/Artificial SPLIT the two screens report for the same function disagreed, which is
+          // its own confusing "the numbers don't match" bug independent of the total itself.
+          // imsInventory falls back to dcInventoryCache — same "no Deal-Check-gated pricing" reasoning
+          // as every other invId lookup in this rollup (an item added to IMS after boot but before a
+          // reload resolves via the freshly-fetched dcInventoryCache instead of pricing at ₹0).
           if (fl.invItemId) {
-            const item = imsInventory.find(i => i.id === fl.invItemId);
+            const item = imsInventory.find(i => i.id === fl.invItemId) || (dcInventoryCache || []).find(i => i.id === fl.invItemId);
             const rawPrice = item ? (Number(item.price ?? item.rentalCost) || 0) : 0;
-            fixedExtras += (fl.qty || 0) * q * rawPrice;
+            tArt += (fl.qty || 0) * q * rawPrice;
             return;
           }
           const resolved = resolveMandiFlower(fl.flowerId, mc);
