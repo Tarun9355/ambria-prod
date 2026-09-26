@@ -403,7 +403,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                       )}
                       <div className="flex items-center gap-1 ml-auto">
                         <span className="text-xs text-gray-500">Dismantle:</span>
-                        <input type="number" min="0" max="100" value={cfg.dismantlingPct ?? ""} onChange={(e) => setSettings((s) => ({ ...s, labourTiers: { ...s.labourTiers, [type]: { ...cfg, dismantlingPct: parseInt(e.target.value) || 0 } } }))} placeholder="—" className="w-14 border rounded px-2 py-1 text-xs text-center" />
+                        <input type="number" min="0" max="100" value={cfg.dismantlingPct ?? ""} onChange={(e) => { const v = e.target.value; const n = v === "" ? undefined : (parseInt(v) || 0); setSettings((s) => ({ ...s, labourTiers: { ...s.labourTiers, [type]: { ...cfg, dismantlingPct: n } } })); }} placeholder="—" className="w-14 border rounded px-2 py-1 text-xs text-center" />
                         <span className="text-xs text-gray-400">%</span>
                       </div>
                     </div>
