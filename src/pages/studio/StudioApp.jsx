@@ -4404,7 +4404,8 @@ export default function StudioApp() {
       shortQty -= crossFnBonus;
       const ownedRate = priceForInvItem(item, rcFactorByKey, imsInventory, el.kitOverrides);
       const shortRate = (Number(item.cost) || 0) * (oosCostPctFor(item, rcCostPctForSub) / 100);
-      const lineCost = repeatAdjustedLineCost(item, ownedQty, ownedRate, opts?.zc, opts?.venueName, crossFnTake) + shortQty * shortRate;
+      const shortCost = shortQty * shortRate;
+      const lineCost = repeatAdjustedLineCost(item, ownedQty, ownedRate, opts?.zc, opts?.venueName, crossFnTake) + shortCost;
       const unitPrice = qty > 0 ? lineCost / qty : ownedRate;
       const warning = shortQty > 0 ? `⚠ ${shortQty} of ${qty} not free in stock for this date — priced at cost%` : null;
       // `available` here is "how much of THIS row's own qty is real stock" (= ownedQty) — the sole
@@ -4416,7 +4417,9 @@ export default function StudioApp() {
       // SAME blended (repeat-discount + shortfall-cost%) figure as the effective rate, so comparing
       // it against itself never found a difference and the badge silently never went green for any
       // item that ever took this availability-checked path — which is every element card in Build.
-      return { rc: null, unitPrice, fullUnitPrice: ownedRate, lineCost, area: 0, warning, isFloralBlend: false, realPct: null, available: ownedQty };
+      // shortCost (raw, pre-date-multiplier) — getElPrice's own wrapper reads this to keep the
+      // date-category multiplier off a true shortfall's cost-basis price (see its own comment).
+      return { rc: null, unitPrice, fullUnitPrice: ownedRate, lineCost, area: 0, warning, isFloralBlend: false, realPct: null, available: ownedQty, shortCost };
     }
     const unitPrice = priceForInvItem(item, rcFactorByKey, imsInventory, el.kitOverrides);
     return { rc: null, unitPrice, fullUnitPrice: unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName, crossFnTake), area: 0, warning: null, isFloralBlend: false, realPct: null };
@@ -4694,7 +4697,22 @@ export default function StudioApp() {
     const r = getElPriceRaw(el, zc, opts, venueName);
     const mult = guestPriceMultiplier * dateCategoryMultiplierFor(activeFnMeta.date);
     if (mult === 1) return r;
-    return { ...r, unitPrice: r.unitPrice * mult, fullUnitPrice: r.fullUnitPrice != null ? r.fullUnitPrice * mult : undefined, lineCost: r.lineCost * mult };
+    // r.shortCost (getElPriceFromInventory only — every other branch has none, so shortCost is
+    // always 0 there and this reduces to the exact same blanket multiplication as before) is the
+    // RAW, pre-multiplier cost of a true shortfall — units nothing exists for anywhere, genuinely
+    // fresh production. Owner ask: that cost-basis figure must not move with the date's King's/
+    // Perfect/Filler market-rental category, only with the guest-price dial (a manual salesperson
+    // setting, not a date rule) — so dateCategoryMultiplierFor is scoped to the owned/discount-
+    // eligible portion of lineCost only, never the shortfall's own contribution to it.
+    const shortCost = Number(r.shortCost) || 0;
+    if (shortCost <= 0) {
+      return { ...r, unitPrice: r.unitPrice * mult, fullUnitPrice: r.fullUnitPrice != null ? r.fullUnitPrice * mult : undefined, lineCost: r.lineCost * mult };
+    }
+    const ownedLineCost = r.lineCost - shortCost;
+    const lineCost = ownedLineCost * mult + shortCost * guestPriceMultiplier;
+    const qty = el.qty || 0;
+    const unitPrice = qty > 0 ? lineCost / qty : r.unitPrice * mult;
+    return { ...r, unitPrice, fullUnitPrice: r.fullUnitPrice != null ? r.fullUnitPrice * mult : undefined, lineCost };
   }, [getElPriceRaw, guestPriceMultiplier, activeFnMeta, dealCheckData, studioFloralData]);
 
   const calcElsCost = useCallback((elements, withFloral, zc, opts, venueName) => {
@@ -4758,7 +4776,16 @@ export default function StudioApp() {
     const r = getElPriceForFnRaw(el, zc, fnRatio, checkAvail, venueName, blocksForDate, crossFnReusePool);
     const mult = guestPriceMultiplier * dateCategoryMultiplierFor(fnDate);
     if (mult === 1) return r;
-    return { ...r, unitPrice: r.unitPrice * mult, lineCost: r.lineCost * mult };
+    // Same shortCost carve-out as getElPrice's own wrapper (its comment has the full reasoning) —
+    // r.shortCost is only ever set by getElPriceFromInventory, so every other element type reduces
+    // to the exact same blanket multiplication as before.
+    const shortCost = Number(r.shortCost) || 0;
+    if (shortCost <= 0) return { ...r, unitPrice: r.unitPrice * mult, lineCost: r.lineCost * mult };
+    const ownedLineCost = r.lineCost - shortCost;
+    const lineCost = ownedLineCost * mult + shortCost * guestPriceMultiplier;
+    const qty = el.qty || 0;
+    const unitPrice = qty > 0 ? lineCost / qty : r.unitPrice * mult;
+    return { ...r, unitPrice, lineCost };
   }, [getElPriceForFnRaw, guestPriceMultiplier, dealCheckData, studioFloralData]);
 
   // crossFnReusePool (optional): a mutable Map<invId, remainingQty> from the matching prior
