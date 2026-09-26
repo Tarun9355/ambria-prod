@@ -1677,6 +1677,28 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   .cv-ses .sf:first-child{border-left:0}
   .cv-ses .sf .k{font-size:10.5px;line-height:1.8;font-weight:700;letter-spacing:.2em;text-transform:uppercase;color:#7A7468}
   .cv-ses .sf .v{font-size:19px;line-height:1.7;font-weight:700;color:#1A1A1A;white-space:nowrap;text-transform:capitalize;padding-bottom:2px}
+  .cv-sessions.many .cv-ses{flex:0 1 300px;padding:18px 20px 16px;border-radius:20px}
+  .cv-sessions.many .cv-ses .sk{font-size:9.5px}
+  .cv-sessions.many .cv-ses .st{font-size:28px}
+  .cv-sessions.many .cv-ses .sl{margin:11px 6px 12px}
+  .cv-sessions.many .cv-ses .sf{padding:0 13px 2px}
+  .cv-sessions.many .cv-ses .sf .k{font-size:9px}
+  .cv-sessions.many .cv-ses .sf .v{font-size:15px;white-space:normal}
+  /* The fields must be allowed to wrap here, or the card cannot shrink at all: a flex item
+     never goes below its min-content width, and a nowrap Date+Shift+Guests row is ~406px of
+     min-content. That pinned every card to one per row and the extra rows fell off the cover.
+     Wrapping lets the card reach its 300px basis, so two fit on a row. */
+  .cv-sessions.many .cv-ses .sg{flex-wrap:wrap;row-gap:6px}
+  /* Five or more sessions need three to a row, not two, or the third row falls off the cover.
+     A wedding week (haldi, mehendi, sangeet, wedding, reception) hits this exactly. */
+  .cv-sessions.dense .cv-ses{flex:0 1 196px;padding:11px 14px 10px;border-radius:16px;box-shadow:3px 3px 0 var(--d)}
+  .cv-sessions.dense .cv-ses .sk{font-size:8.5px;letter-spacing:.2em}
+  .cv-sessions.dense .cv-ses .st{font-size:20px;line-height:1.2}
+  .cv-sessions.dense .cv-ses .sl{margin:6px 4px 7px}
+  .cv-sessions.dense .cv-ses .sf{padding:0 9px 2px}
+  .cv-sessions.dense .cv-ses .sf .k{font-size:8px;letter-spacing:.14em}
+  .cv-sessions.dense .cv-ses .sf .v{font-size:13px}
+  .cv-sessions.dense{gap:14px}
   .cv-ses .sm{font-size:12.5px;line-height:1.8;color:#6F6A5E;margin-top:8px;padding-bottom:2px}
   .t-wine{--d:#7A2E3B;--l:#F6E3E5}
   .t-navy{--d:#23345C;--l:#E3E9F5}
@@ -1825,7 +1847,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       <div><div class="k">Prepared by</div><div class="v">${esc(deptData.updatedBy || authUser?.name || "—")}</div></div>
     </div>
     ${sessions.length ? `<div class="cv-sec">${sessions.length === 1 ? "The event" : `${sessions.length} sessions`}</div>
-    <div class="cv-sessions">${sessions.map((s, i) => `<div class="cv-ses t-${sesTone(s.type, i)}">
+    <div class="cv-sessions${sessions.length > 4 ? " many dense" : sessions.length > 2 ? " many" : ""}">${sessions.map((s, i) => `<div class="cv-ses t-${sesTone(s.type, i)}">
       <div class="sk">Event type</div>
       <div class="st">${esc(s.type)}</div>
       <div class="sl"></div>
