@@ -4211,17 +4211,36 @@ export default function StudioApp() {
   // computeFnInvQty above) — a SECOND eligibility source feeding the same discount split as the
   // Fixed-Venue standingUnits below, not a separate discount. Both eligible amounts are capped at
   // qty combined (never double-discount the same physical unit twice).
-  const repeatAdjustedLineCost = (item, qty, unitRate, zc, venueName, crossFnReuseQty = 0) => {
-    const full = qty * unitRate;
+  // shortfall (optional): { qty, rate } — units beyond what's actually available, priced at
+  // item.cost × sub-category cost% (see the caller below) rather than unitRate at all. Owner-
+  // confirmed fix, mirrors DealCheckOverlay.jsx's own repeatAdjustedRental: a whole-zone Repeat
+  // discount and any leftover cross-function-reuse credit are both facts about this zone/deal's
+  // status, not about which specific units happened to be physically in stock, so they now apply to
+  // a shortfall unit too — only the Fixed-Venue STANDING split stays scoped to ownedQty, since that
+  // one really is about a specific registered stock a freshly-produced unit was never part of.
+  const repeatAdjustedLineCost = (item, qty, unitRate, zc, venueName, crossFnReuseQty = 0, shortfall = null) => {
+    const shortQty = Math.max(0, Number(shortfall?.qty) || 0);
+    const shortRate = Number(shortfall?.rate) || 0;
+    const full = qty * unitRate + shortQty * shortRate;
     if (!item) return full;
     if (hideDiscountFromClient) return full; // see hideDiscountFromClient above — guest-facing only
     // Rounded to the rupee — a 25% cut rarely lands on a whole number otherwise (₹1,289 × 0.75 =
     // ₹966.75), and every other price in the build is a whole rupee.
     if (repeatCatFor(zc, "elements")) return Math.round(full * (1 - GUEST_DISCOUNT_PCT / 100));
     const { standingUnits } = rentalSplit(fvCfgForRepeat, venueName, item.id, qty, imsInventory);
-    const discEligible = Math.min(qty, Math.max(0, standingUnits) + Math.max(0, crossFnReuseQty));
-    if (discEligible <= 0) return full;
-    return Math.round(discEligible * unitRate * (1 - GUEST_DISCOUNT_PCT / 100) + (qty - discEligible) * unitRate);
+    const stand = Math.max(0, standingUnits);
+    const freshUnits = Math.max(0, qty - stand);
+    // crossFnReuseQty spends against the owned/fresh units first (unchanged); whatever it doesn't
+    // claim there can still discount the shortfall — same physical carried-over item, wherever the
+    // availability split happened to land it.
+    const crossFnForOwned = Math.min(freshUnits, Math.max(0, crossFnReuseQty));
+    const crossFnForShort = Math.min(shortQty, Math.max(0, crossFnReuseQty) - crossFnForOwned);
+    const discEligible = Math.min(qty, stand + crossFnForOwned);
+    const shortCost = crossFnForShort > 0
+      ? crossFnForShort * shortRate * (1 - GUEST_DISCOUNT_PCT / 100) + (shortQty - crossFnForShort) * shortRate
+      : shortQty * shortRate;
+    if (discEligible <= 0) return Math.round(qty * unitRate + shortCost);
+    return Math.round(discEligible * unitRate * (1 - GUEST_DISCOUNT_PCT / 100) + (qty - discEligible) * unitRate + shortCost);
   };
   // opts.checkAvailability (Build view's live canvas ONLY — explicit opt-in, never a default) turns
   // on the same unavailable-shortfall pricing already built for Deal Check: qty within what's free
@@ -4395,10 +4414,11 @@ export default function StudioApp() {
       }
       const ownedRate = priceForInvItem(item, rcFactorByKey, imsInventory, el.kitOverrides);
       const shortRate = (Number(item.cost) || 0) * (oosCostPctFor(item, rcCostPctForSub) / 100);
-      // Repeat discount applies to the owned/available portion only — same ordering Deal Check's
-      // own rollup already uses (DealCheckOverlay.jsx): the shortfall (not actually free in stock)
-      // bills at cost% regardless, never discounted further on top of that.
-      const lineCost = repeatAdjustedLineCost(item, ownedQty, ownedRate, opts?.zc, opts?.venueName, crossFnTake) + shortQty * shortRate;
+      // Owner-confirmed fix, mirrors DealCheckOverlay.jsx's own repeatAdjustedRental: a whole-zone
+      // Repeat discount and any leftover cross-function-reuse credit now extend to the shortfall
+      // portion too (repeatAdjustedLineCost's own shortfall param handles the split) — only the
+      // Fixed-Venue standing-stock discount stays scoped to ownedQty, unchanged.
+      const lineCost = repeatAdjustedLineCost(item, ownedQty, ownedRate, opts?.zc, opts?.venueName, crossFnTake, { qty: shortQty, rate: shortRate });
       const unitPrice = qty > 0 ? lineCost / qty : ownedRate;
       const warning = shortQty > 0 ? `⚠ ${shortQty} of ${qty} not free in stock for this date — priced at cost%` : null;
       // `available` here is "how much of THIS row's own qty is real stock" (= ownedQty) — the sole

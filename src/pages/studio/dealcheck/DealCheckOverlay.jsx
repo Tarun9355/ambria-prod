@@ -292,10 +292,22 @@ export default function DealCheckOverlay({ ctx }) {
   // Repeat %, since there's no venue-specific registered rate for "reused from yesterday" the way
   // Fixed-Venue standing has its own. Only ever eats into freshUnits (whatever the Fixed-Venue
   // standing split above didn't already claim), so the same physical unit is never discounted twice.
-  const repeatAdjustedRental = (isRepeatZone, venueName, item, qty, baseRentalIn, fnDate, crossFnReuseQty = 0) => {
+  // shortfall (optional): { qty, rate } — units beyond what's actually available (dcAvailable/
+  // availableAtVenue), priced at item.cost × sub-category cost% (oosCostPctFor) rather than the
+  // rental rate at all, computed by the caller and passed straight through. Owner-confirmed bug fix:
+  // these units used to bill at that flat cost%-of-production rate ALONE, with none of the discounts
+  // below — but a whole-zone Repeat discount and cross-function reuse credit are both facts about
+  // this ZONE/DEAL's status, not about which specific units happened to be in stock, so they still
+  // apply to a shortfall unit exactly as they would if it had been available. The Fixed-Venue
+  // STANDING discount is the one exception, deliberately NOT extended to the shortfall — it's about
+  // one specific venue's registered physical stock, which a freshly-produced/purchased unit was
+  // never part of, matching this function's own existing "beyond registered qty bills full" rule.
+  const repeatAdjustedRental = (isRepeatZone, venueName, item, qty, baseRentalIn, fnDate, crossFnReuseQty = 0, shortfall = null) => {
     const dateMult = fnDate ? dateCategoryMultiplierFor(fnDate) : 1;
     const baseRental = baseRentalIn * dateMult;
-    const full = qty * baseRental;
+    const shortQty = Math.max(0, Number(shortfall?.qty) || 0);
+    const shortRate = Number(shortfall?.rate) || 0;
+    const full = qty * baseRental + shortQty * shortRate;
     if (!item) return full;
     // fixedVenueSubcatDiscount rides along here too — standingDiscountPct falls back to it when
     // a standing item has no per-item override of its own, so that fallback needs it on the
@@ -309,16 +321,29 @@ export default function DealCheckOverlay({ ctx }) {
     const key = String(imsField.subcategory(item) || "").toLowerCase().trim();
     const sc = key ? Number((dealCheckData?.fixedVenueSubcatDiscount || {})[key]) : NaN;
     const subcatPct = Number.isFinite(sc) && sc > 0 ? sc : 0;
-    const crossFnEligible = Math.max(0, Math.min(freshUnits, crossFnReuseQty));
-    if (standingUnits > 0 || crossFnEligible > 0) {
-      const trulyFresh = freshUnits - crossFnEligible;
-      return standingUnits * baseRental * (1 - discountPct / 100) + crossFnEligible * baseRental * (1 - subcatPct / 100) + trulyFresh * baseRental;
+    // crossFnReuseQty spends against the owned/fresh units first (unchanged); whatever it doesn't
+    // claim there can still cover shortfall units — the same physical carried-over item, wherever
+    // the venue-availability split happened to land it.
+    const crossFnForOwned = Math.max(0, Math.min(freshUnits, crossFnReuseQty));
+    const crossFnForShort = Math.max(0, Math.min(shortQty, crossFnReuseQty - crossFnForOwned));
+    let ownedCost;
+    if (standingUnits > 0 || crossFnForOwned > 0) {
+      const trulyFresh = freshUnits - crossFnForOwned;
+      ownedCost = standingUnits * baseRental * (1 - discountPct / 100) + crossFnForOwned * baseRental * (1 - subcatPct / 100) + trulyFresh * baseRental;
+    } else if (isRepeatZone) {
+      // Not a specifically-registered standing item, so there's nothing "always there" about it —
+      // the sub-category-level Repeat discount only makes sense when THIS event's own setup is
+      // being reused across days, which is exactly what isRepeatZone means. Stays gated on it.
+      ownedCost = qty * baseRental * (1 - subcatPct / 100);
+    } else {
+      ownedCost = qty * baseRental;
     }
-    // Not a specifically-registered standing item, so there's nothing "always there" about it — the
-    // sub-category-level Repeat discount only makes sense when THIS event's own setup is being
-    // reused across days, which is exactly what isRepeatZone means. Stays gated on it.
-    if (!isRepeatZone) return full;
-    return full * (1 - subcatPct / 100);
+    let shortCost;
+    if (shortQty <= 0) shortCost = 0;
+    else if (crossFnForShort > 0) shortCost = crossFnForShort * shortRate * (1 - subcatPct / 100) + (shortQty - crossFnForShort) * shortRate;
+    else if (isRepeatZone) shortCost = shortQty * shortRate * (1 - subcatPct / 100);
+    else shortCost = shortQty * shortRate;
+    return ownedCost + shortCost;
   };
 
   // One function's print jobs (Flex/Vinyl/Sunboard etc., zoneConfig[zk].prints) priced out — the
@@ -601,9 +626,13 @@ export default function DealCheckOverlay({ ctx }) {
                 const available = Math.min(dcAvailable(item, fnBlocks, fi), availableAtVenue({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, fn.fnVenue, item));
                 const ownedQty = Math.min(qty, available);
                 shortQty = Math.max(0, qty - available);
-                const ownedRental = repeatAdjustedRental(_rep, fn.fnVenue, item, ownedQty, baseR, fn.fnDate, crossFnTake(item.id, ownedQty));
-                shortCost = shortQty * (Number(item.cost) || 0) * (oosCostPctFor(item, costPctFor) / 100);
-                lineRental = ownedRental + shortCost;
+                // crossFnTake draws against the FULL originally-needed qty (not just ownedQty) —
+                // repeatAdjustedRental itself now splits whatever the pool gives back between the
+                // owned and shortfall portions, so the pool must be asked for the true total or a
+                // shortfall unit could never receive its own leftover share of it.
+                const shortRate = (Number(item.cost) || 0) * (oosCostPctFor(item, costPctFor) / 100);
+                lineRental = repeatAdjustedRental(_rep, fn.fnVenue, item, ownedQty, baseR, fn.fnDate, crossFnTake(item.id, qty), { qty: shortQty, rate: shortRate });
+                shortCost = shortQty * shortRate; // pre-discount reference only — byFn/dept totals below read lineRental, not this
               }
               rental += lineRental; byFn[fi].rental += lineRental;
               const dD = catToDept(imsField.category(item) || c.cat);
@@ -2366,9 +2395,10 @@ export default function DealCheckOverlay({ ctx }) {
                           const available = Math.min(dcAvailable(it, fnBlocksForChip, fnIdx), availableAtVenue({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, _fnVenueForRepeat, it));
                           const ownedQty = Math.min(qty, available);
                           const shortQty = Math.max(0, qty - available);
-                          const ownedRental = repeatAdjustedRental(_rep, _fnVenueForRepeat, it, ownedQty, baseR, _fnDateForRepeat, _crossFnTakePill(it.id, ownedQty));
-                          const shortCost = shortQty * (Number(it.cost) || 0) * (oosCostPctFor(it, _costPctFor) / 100);
-                          zoneRentalTotal += ownedRental + shortCost;
+                          const shortRate = (Number(it.cost) || 0) * (oosCostPctFor(it, _costPctFor) / 100);
+                          // See the main rollup's own comment (repeatAdjustedRental) — Repeat/cross-function
+                          // discount now extends to the shortfall portion too, so this pill agrees with it.
+                          zoneRentalTotal += repeatAdjustedRental(_rep, _fnVenueForRepeat, it, ownedQty, baseR, _fnDateForRepeat, _crossFnTakePill(it.id, qty), { qty: shortQty, rate: shortRate });
                         });
                         manualItemsInZone.forEach(mi => { const it = dcInventoryCache.find(x => x.id === mi.imsId); if (!it) return; const q = Number(mi.qty) || 1; const baseR = effKitRental(it, fnIdx, null); const _rep = mi.zoneKey ? repeatCatFor(fns[fnIdx]?.zoneConfig?.[mi.zoneKey], "elements") : false; zoneRentalTotal += repeatAdjustedRental(_rep, _fnVenueForRepeat, it, q, baseR, _fnDateForRepeat, _crossFnTakePill(it.id, q)); });
                         platformEntriesForZone.forEach(({ pi }) => { zoneRentalTotal += (pi.fattas || 0) * platformFattaR + (pi.stands || 0) * platformStandR; });
