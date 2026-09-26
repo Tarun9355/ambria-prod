@@ -1,6 +1,7 @@
 import { Fragment } from "react";
 import { calcZoneFabric, autoFillFabricAllocation, calcFabricAllocationTotal, zoneTrussStandingDiscountDetail, repeatCatFor } from "../../../../lib/studio/pricing";
 import { fixedVenueFor } from "../../../../lib/ims/fixedVenues";
+import { findCrossFnReuseSource } from "../../../../lib/studio/crossFnReuse";
 import { TRUSS_ALLOC_SK } from "../../../../lib/studio/keys.js";
 import { supabase } from "../../../../lib/supabase";
 
@@ -97,11 +98,19 @@ export default function DCTrussTab({ ctx }) {
                     // line items still sum to the row's own discounted total, matching the
                     // aggregate this tab (and dcCostRollup's own Truss figure) both now show.
                     const venueTrussHere = fixedVenueFor({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, fn.fnVenue || "")?.truss;
+                    // Same definition dcCostRollup's own truss block uses for its "isRepeat" flag — a
+                    // zone this deal's immediately-preceding same-venue function (within 24h) already
+                    // built needs nothing new either, same physical fact as a manually-flagged Repeat
+                    // zone. Missing this OR-clause is why this tab's own per-zone/per-function totals
+                    // used to disagree with the sidebar's function totals (which already read
+                    // dcCostRollup, not this tab's own preview) for any function 2+ that cross-fn-
+                    // reuses a prior function's structure, even with no zone manually flagged Repeat.
+                    const crossFnPrevFn = findCrossFnReuseSource(fn, fns);
                     const previews = zones.flatMap(zk => {
                       const zCfg = (fn.zoneConfig || {})[zk];
                       const zLabel = (zoneMeta?.[zk]?.label) || ((fn.customZones || []).find(cz => cz.id === zk)?.name) || zk;
                       const rows = [zCfg, ...(zCfg.extraTrussRows || [])];
-                      const isRepeat = repeatCatFor(zCfg, "truss");
+                      const isRepeat = repeatCatFor(zCfg, "truss") || !!(crossFnPrevFn?.enabledEls?.[zk] && crossFnPrevFn?.zoneConfig?.[zk]);
                       return rows.map((row, rowIdx) => {
                         const pv = calcZoneTrussPreview(row, trussInv);
                         if (pv && pv.costs) {
