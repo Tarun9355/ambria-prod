@@ -594,12 +594,24 @@ export default function DealCheckOverlay({ ctx }) {
               const _rep = zoneIsRepeat(fn, ck);
               // Unavailable-shortfall pricing: qty beyond what's actually free in stock for this
               // function's date bills at item.cost × sub-category cost%, not the rental rate.
-              // Kits are excluded — their base+components pricing model doesn't map onto a simple
-              // per-unit reused/fresh split (same reasoning calcZoneCarpet already uses for carpet).
+              // Kits get the SAME treatment now, checked against the kit's OWN top-level stock (its
+              // own item.id/item.cost) — same as Build's own getElPriceFromInventory already does for
+              // a plain (non-floral) kit. Only the kit's OWN pre-assembled units vs. needing to build
+              // more from scratch is checked here — a component running short even while the kit's
+              // own top-level stock is fine (e.g. enough assembled "Wooden Console" units physically
+              // exist, but this specific one is missing a part) is a separate, not-yet-built concept;
+              // see effKitRental's own comment on component-level pricing for why that's not attempted
+              // here without answering a few open discount/reservation-consistency questions first.
               const isKit = Array.isArray(item.subItems) && item.subItems.length > 0;
               let lineRental, shortQty = 0, shortCost = 0;
               if (isKit) {
-                lineRental = repeatAdjustedRental(_rep, fn.fnVenue, item, qty, baseR, fn.fnDate, crossFnTake(item.id, qty));
+                const _kitAvail = Math.min(dcAvailable(item, fnBlocks, fi), availableAtVenue({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, fn.fnVenue, item));
+                const _kitCrossFn = crossFnTake(item.id, qty);
+                const _kitOwnedQty = Math.min(qty, _kitAvail + _kitCrossFn);
+                shortQty = Math.max(0, qty - _kitOwnedQty);
+                const _kitShortRate = (Number(item.cost) || 0) * (oosCostPctFor(item, costPctFor) / 100);
+                lineRental = repeatAdjustedRental(_rep, fn.fnVenue, item, _kitOwnedQty, baseR, fn.fnDate, _kitCrossFn) + shortQty * _kitShortRate;
+                shortCost = shortQty * _kitShortRate;
               } else {
                 // Owner ask: fixed venues keep a permanent standing allocation of certain items —
                 // that stock furnishes THOSE venues, not an outdoor (non-fixed-venue) deal. Folding
@@ -2380,7 +2392,17 @@ export default function DealCheckOverlay({ ctx }) {
                           const qty = Number(c.qty) || 1;
                           const _rep = _zoneIsRepeat(c._cardKey);
                           const isKit = Array.isArray(it.subItems) && it.subItems.length > 0;
-                          if (isKit) { zoneRentalTotal += repeatAdjustedRental(_rep, _fnVenueForRepeat, it, qty, baseR, _fnDateForRepeat, _crossFnTakePill(it.id, qty)); return; }
+                          if (isKit) {
+                            // Same kit-level (not component-level — see the main rollup's own comment)
+                            // shortfall split as the main rollup, so this pill agrees with it.
+                            const _kitAvailP = Math.min(dcAvailable(it, fnBlocksForChip, fnIdx), availableAtVenue({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, _fnVenueForRepeat, it));
+                            const _kitCrossFnP = _crossFnTakePill(it.id, qty);
+                            const _kitOwnedQtyP = Math.min(qty, _kitAvailP + _kitCrossFnP);
+                            const _kitShortQtyP = Math.max(0, qty - _kitOwnedQtyP);
+                            const _kitShortRateP = (Number(it.cost) || 0) * (oosCostPctFor(it, _costPctFor) / 100);
+                            zoneRentalTotal += repeatAdjustedRental(_rep, _fnVenueForRepeat, it, _kitOwnedQtyP, baseR, _fnDateForRepeat, _kitCrossFnP) + _kitShortQtyP * _kitShortRateP;
+                            return;
+                          }
                           // Mirrors the main rollup's own fixed-venue standing-stock ceiling AND its
                           // cross-function-reuse/true-shortfall split (see repeatAdjustedRental's own
                           // call site comment) — this pill must agree with it.
@@ -2773,12 +2795,19 @@ export default function DealCheckOverlay({ ctx }) {
                                   // rate regardless of the ⚠ shortage badge right next to it — the badge
                                   // was purely decorative, never affecting the number shown. Same owned/
                                   // true-shortfall split as the main cost rollup and its zone-header pill
-                                  // (see repeatAdjustedRental's own call site comment there) — a kit has
-                                  // no such split (matches those two sites), only a plain inventory item.
+                                  // (see repeatAdjustedRental's own call site comment there) — including
+                                  // for a kit, checked against its own top-level stock (kit-level, not
+                                  // component-level — see the main rollup's comment).
                                   const _isCardKit = item && Array.isArray(item.subItems) && item.subItems.length > 0;
                                   let _lineTotal = 0;
                                   if (item && _isCardKit) {
-                                    _lineTotal = repeatAdjustedRental(_rep, _venue, item, _cardQty, rental, _fnDateForRepeat, _crossFnTakeCards(item.id, _cardQty));
+                                    const _kitAvailC = Math.min(dcAvailable(item, fnBlocksForChip, fnIdx), availableAtVenue({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, _venue, item));
+                                    const _kitCrossFnC = _crossFnTakeCards(item.id, _cardQty);
+                                    const _kitOwnedQtyC = Math.min(_cardQty, _kitAvailC + _kitCrossFnC);
+                                    const _kitShortQtyC = Math.max(0, _cardQty - _kitOwnedQtyC);
+                                    const _kitCostPctForC = (subcat) => { const key = String(subcat || "").trim().toLowerCase(); const row = (rcSubcatFactors || []).find(r => r?.id === key); const v = row ? Number(row.cost_percent) : undefined; return (typeof v === "number" && isFinite(v) && v >= 0) ? v : 100; };
+                                    const _kitShortRateC = (Number(item.cost) || 0) * (oosCostPctFor(item, _kitCostPctForC) / 100);
+                                    _lineTotal = repeatAdjustedRental(_rep, _venue, item, _kitOwnedQtyC, rental, _fnDateForRepeat, _kitCrossFnC) + _kitShortQtyC * _kitShortRateC;
                                   } else if (item) {
                                     const _cardAvail = Math.min(dcAvailable(item, fnBlocksForChip, fnIdx), availableAtVenue({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, _venue, item));
                                     const _cardCrossFn = _crossFnTakeCards(item.id, _cardQty);
