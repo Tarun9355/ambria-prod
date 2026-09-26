@@ -302,12 +302,15 @@ export default function DCManpowerTab({ ctx }) {
                     return { ...fn, enabledEls: nen };
                   };
                   const fixedCrewFloor = (fv, type) => { const c = fv.fixedCrew || {}; if (c[type] != null && c[type] !== "") return Number(c[type]) || 0; if (type === "Labours") return Number(fv.minLabour) || 0; return 0; };
-                  // Usage-based labour floor — MUST match the project-total rollup (DealCheckOverlay):
-                  // Labours = ceil(Σ sub-cat units ÷ per-unit) over FRESH zones (repeat excluded).
+                  // Usage-based labour floor: Labours = ceil(Σ sub-cat units ÷ per-unit), per ceremony.
+                  // Confirmed live bug (now fixed at calcPeopleTier3Labours' own call site below): this
+                  // used to also compute a SHARED, whole-booking total here (summed across every
+                  // function via fns.forEach) and apply THAT SAME number as a floor to every individual
+                  // function's own count — so one small ceremony's Labours silently got clamped up to
+                  // the entire booking's combined heavy-element usage. Removed; each function now sums
+                  // only its own elements, inline where it's used.
                   const _labBatches = {}; heavyElementRanges.forEach(her => { if (her && her.subCat && Number(her.perCount) > 0) _labBatches[her.subCat] = Number(her.perCount); });
                   const labourUsageMode = Object.keys(_labBatches).length > 0;
-                  let labourUsageTotal = 0;
-                  if (labourUsageMode) fns.forEach(fn => walkFnElements(freshFnMP(fn), ({ rc, qty }) => { const b = lookupBySubcat(_labBatches, itemImsSubcat(rc)); if (b) labourUsageTotal += (Number(qty) || 0) / b; }));
 
                   // ── People count per ceremony per labour type ─────────────
                   // Mirror of IMS App.jsx calcTier1Flowerist (line 1701). DO NOT diverge without IMS commit.
@@ -408,8 +411,19 @@ export default function DCManpowerTab({ ctx }) {
                       const count = Math.max(0, (lookupBySubcat(subCounts, her.subCat) || 0) - (lookupBySubcat(reduction, her.subCat) || 0));
                       heavyExtra += heavyExtraLabour(her, count);
                     });
-                    // Usage-based floor (matches the rollup / quote): never fewer than 1 labour per N units.
-                    return labourUsageMode ? Math.max(adjusted + heavyExtra, Math.ceil(labourUsageTotal)) : (adjusted + heavyExtra);
+                    // Usage-based floor: never fewer than 1 labour per N units — for THIS function's
+                    // own elements only (subCounts, just built above). Confirmed live bug: this used
+                    // to read the shared, whole-booking labourUsageTotal (summed across every function
+                    // via fns.forEach, computed once outside this per-function call) — so a small
+                    // ceremony's own Labours count got clamped up to the ENTIRE booking's combined
+                    // heavy-element usage instead of just its own share, silently forcing every single
+                    // function (and, through the cumulative-MAX day carry-forward, every day) up to
+                    // whatever the booking's biggest day alone needed. traceTier3Labours (the "how"
+                    // popup) already computed this correctly per-function the whole time — the real
+                    // count and its own displayed explanation had quietly disagreed.
+                    let fnUsageTotal = 0;
+                    if (labourUsageMode) Object.keys(subCounts).forEach(sub => { const b = lookupBySubcat(_labBatches, sub); if (b) fnUsageTotal += (subCounts[sub] || 0) / b; });
+                    return labourUsageMode ? Math.max(adjusted + heavyExtra, Math.ceil(fnUsageTotal)) : (adjusted + heavyExtra);
                   };
                   // §23 Phase 2.9 — Fabric Bangali: top stays per-zone, side RFT pools across zones
                   //   • Top sqft: still a per-zone range-table lookup — a canopy is a physical panel,
