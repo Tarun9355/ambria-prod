@@ -3595,6 +3595,8 @@ export default function StudioApp() {
   // both declared, and both need to call calcFnFloralSourcingCost for the flower-material truck
   // count, before calcFnFloralSourcingCost itself is declared further down the file.
   const calcFnFloralSourcingCostRef = useRef(null);
+  // Same TDZ reasoning again — totalCost is declared before activeCrossFnReuseQty exists.
+  const activeCrossFnReuseQtyRef = useRef(null);
   const activeClientIdRef = useRef(null);
   useEffect(() => { activeClientIdRef.current = activeClientId; }, [activeClientId]);
   // Serialised snapshot of every client as last written, keyed by id. The dirty check USED to hold
@@ -4915,9 +4917,18 @@ export default function StudioApp() {
     // structDiscountFor is per-zone (zc.repeat varies per zone), unlike the old venue-only truss
     // discount this replaced.
     zones.forEach(z => { c += scaleStruct(calcStructCost(z.type, z.config, structRates, structDiscountFor(z.config, venue))).total; });
+    // Cross-function reuse (guest-facing) — same eligibility activeCrossFnReuseQty already computes
+    // for StudioBuild.jsx's own per-card display (see its own declaration comment for the full
+    // history): this total used to have NO mechanism for it at all, so a function with a same-venue,
+    // within-24h predecessor showed full undiscounted price here even while its own per-card display
+    // (already threaded through) showed the correct discounted figure — the headline Live Estimate
+    // disagreeing with its own cards, and with Summary/eventGrandTotal/the cost sheet, all of which
+    // already netted this out. A fresh Map per call, same reasoning activeCrossFnReuseQty's own
+    // comment gives for not sharing one mutable instance across callers.
+    const crossFnReusePool = activeCrossFnReuseQtyRef.current ? new Map(Object.entries(activeCrossFnReuseQtyRef.current)) : null;
     Object.entries(zoneElements).forEach(([zk, elems]) => {
       if (!enabledEls[zk] || !elems) return;
-      c += calcElsCost(elems, true, zoneConfig[zk], { checkAvailability: true }); // active fn's live canvas — see activeBlocksForDate
+      c += calcElsCost(elems, true, zoneConfig[zk], { checkAvailability: true, crossFnReusePool }); // active fn's live canvas — see activeBlocksForDate
     });
     const fnIdx = activeFnIdx || 0;
     // Only count a custom Production/Buying item while its own zone is still enabled — matches
@@ -5076,6 +5087,9 @@ export default function StudioApp() {
     const prevFn = findCrossFnReuseSource(fnData, all);
     return prevFn ? computeFnInvQty(prevFn) : null;
   }, [collectAllFunctionData, activeFnIdx, hideDiscountFromClient, dealCheckData, studioFloralData]);
+  // Layout, same TDZ reasoning as collectAllFunctionDataRef — totalCost (declared above this) reads
+  // the ref instead of the memo directly.
+  useLayoutEffect(() => { activeCrossFnReuseQtyRef.current = activeCrossFnReuseQty; });
 
   const calcFunctionCost = useCallback((fnData) => {
     if (!fnData) return { decor: 0, transport: 0, grand: 0 };
