@@ -484,9 +484,7 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
   // the same footprint, so this no longer falls back to zc.dims (the truss's own dims) the way it
   // used to for the zone's first floor row — a zone with no floor dims of its own now genuinely has
   // no Platform/Carpet area (₹0) until someone types one, same as an extra platform row already
-  // required. See calcStructCost's own comment (StudioApp.jsx) for the engine-side half of this and
-  // backfillFloorDims for the one-time migration that keeps an existing deal's price from silently
-  // dropping to ₹0 the moment this shipped.
+  // required. See calcStructCost's own comment (StudioApp.jsx) for the engine-side half of this.
   const rowDims = zc.floorDims || {};
   const rowCost = platformRowCost(
     { plH: zc.plH, floorDims: rowDims, cpT: zc.cpT },

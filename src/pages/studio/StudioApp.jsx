@@ -278,10 +278,8 @@ function calcStructCost(zk, zc, rates, applyDiscount) {
   // fd (Platform/Carpet's own floor size) no longer falls back to the truss's dims (d) — owner ask:
   // adding/sizing a truss must never silently size a Platform/Carpet at the same footprint. A zone
   // with plH/cpT set but no floorDims of its own now prices at 0 sqft until someone types a real
-  // size, same as any other required field left blank — see backfillFloorDims (near restoreBuildState)
-  // for the one-time migration that bakes today's effective (truss-inherited) footprint into
-  // floorDims explicitly on load, so an existing deal's price doesn't silently drop the moment this
-  // shipped.
+  // size, same as any other required field left blank. Deliberately no migration for a deal already
+  // relying on the old fallback — owner call: let those prices drop to 0 rather than paper over it.
   const d = zc.dims || {}, fd = zc.floorDims || {}, r = { truss: 0, masking: 0, platform: 0, carpet: 0, arches: 0, pillars: 0, glass: 0 };
   // Material, drape density, and the ceiling-via-print toggle are all per-row — separate truss
   // structures in the same zone can be a different material, density, or handle their ceiling
@@ -333,28 +331,6 @@ function calcStructCost(zk, zc, rates, applyDiscount) {
     r.trussDiscount = before - r.total;
   }
   return r;
-}
-// One-time migration for the "Platform/Carpet no longer inherits the truss's own dims" change above:
-// every OTHER pricing/quantity site in this codebase that reads a zone's Platform/Carpet floor size
-// used to fall back to zc.dims (the truss's own L×W) whenever zc.floorDims wasn't set — a zone with
-// plH/cpT turned on this way is currently being charged a real, non-zero price off the truss's
-// footprint. Removing that fallback (owner ask) would otherwise silently drop that price to ₹0 the
-// next time this exact deal loads, with nobody having changed anything. Bakes today's EFFECTIVE
-// footprint into floorDims explicitly, once, on load — so the price stays exactly what it already
-// was; only a zone that turns on Platform/Carpet for the first time after this ships starts genuinely
-// blank. Never touches a zone that already has its own floorDims (even a partial one — someone typed
-// SOMETHING deliberately) or one with neither plH nor cpT set (nothing was ever being charged off the
-// fallback there). Returns the SAME reference when nothing needs migrating.
-function backfillFloorDims(zoneConfig) {
-  if (!zoneConfig || typeof zoneConfig !== "object") return zoneConfig;
-  let changed = false;
-  const next = {};
-  for (const [zk, cfg] of Object.entries(zoneConfig)) {
-    const needsBackfill = cfg && (cfg.plH || cfg.cpT) && !(cfg.floorDims && (cfg.floorDims.L || cfg.floorDims.W));
-    if (needsBackfill) { changed = true; next[zk] = { ...cfg, floorDims: { ...(cfg.dims || {}) } }; }
-    else next[zk] = cfg;
-  }
-  return changed ? next : zoneConfig;
 }
 // Resolves a deal's actual genset units + cost from the matched venue's own counts (resolveVenueGensets
 // — handles un-migrated legacy venues too) unless the deal explicitly overrides either size. null/undefined
@@ -2319,7 +2295,7 @@ export default function StudioApp() {
     }
     setEnabledEls(s.enabledEls || {});
     setElTiers(s.elTiers || {});
-    setZoneConfig(backfillFloorDims(s.zoneConfig || {}));
+    setZoneConfig(s.zoneConfig || {});
     setZoneElements(s.zoneElements || {});
     setItemQty(s.itemQty || {});
     setItemGrades(s.itemGrades || {});
@@ -7922,7 +7898,7 @@ export default function StudioApp() {
     if (session.fn) setFn(session.fn);
     setEnabledEls(session.enabledEls || {});
     setElTiers(session.elTiers || {});
-    setZoneConfig(backfillFloorDims(session.zoneConfig || {}));
+    setZoneConfig(session.zoneConfig || {});
     setZoneElements(session.zoneElements || {});
     setElNotes(session.elNotes || {});
     setSelectedMoods(session.selectedMoods || []);
@@ -8329,7 +8305,7 @@ export default function StudioApp() {
     if (idx !== 0) setActiveFnIdx(0);   // legacy sessions are flat — their data belongs to Fn1
     setEnabledEls(session.enabledEls || {});
     setElTiers(session.elTiers || {});
-    setZoneConfig(backfillFloorDims(session.zoneConfig || {}));
+    setZoneConfig(session.zoneConfig || {});
     setZoneElements(session.zoneElements || {});
     setElNotes(session.elNotes || {});
     setElSelectedPhoto(session.elSelectedPhoto || {});
