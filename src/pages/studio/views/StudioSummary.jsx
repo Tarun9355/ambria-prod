@@ -3067,14 +3067,26 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
         d.agencyFee=Math.round(discountedTotal*feePct/100);
         const negotiatedAmount=Number(d.negotiatedAmount)||0;
         d.eventGrandTotal=negotiatedAmount>0?negotiatedAmount:(discountedTotal+d.agencyFee);
-        // Fold that discount/fee (or negotiated rescale) proportionally back into every function's
-        // own previewGrand — same as buildCombinedCostSheetData's initial pass — so the on-screen
-        // cards keep summing to eventGrandTotal after a live quantity edit, not just on first open.
-        if(preFeeTotal>0){
-          const scale=d.eventGrandTotal/preFeeTotal;
-          d.functions.forEach(f=>{f.previewGrand=Math.round((f.grand||0)*scale);});
+        // Fold that discount/fee (or negotiated rescale) back into every function's own previewGrand
+        // — same as buildCombinedCostSheetData's initial pass — so the on-screen cards keep summing
+        // to eventGrandTotal after a live quantity edit, not just on first open. A blended average
+        // scale is only correct for a negotiated lump sum (which has no per-function true share of
+        // its own); un-negotiated, each function keeps its OWN discountPct instead, matching Build's
+        // own per-function Live Estimate exactly rather than drifting toward whichever function is
+        // closest to the deal-wide average.
+        if(negotiatedAmount>0){
+          if(preFeeTotal>0){
+            const scale=d.eventGrandTotal/preFeeTotal;
+            d.functions.forEach(f=>{f.previewGrand=Math.round((f.grand||0)*scale);});
+          } else {
+            d.functions.forEach(f=>{f.previewGrand=f.grand||0;});
+          }
         } else {
-          d.functions.forEach(f=>{f.previewGrand=f.grand||0;});
+          d.functions.forEach(f=>{
+            const fDiscount=Math.round((f.grand||0)*(f.discountPct||0)/100);
+            const fDiscounted=Math.max(0,(f.grand||0)-fDiscount);
+            f.previewGrand=fDiscounted+Math.round(fDiscounted*feePct/100);
+          });
         }
         setCsData(d);
       };

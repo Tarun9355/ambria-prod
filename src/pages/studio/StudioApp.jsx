@@ -9488,18 +9488,40 @@ export default function StudioApp() {
     // system estimate.
     const negotiatedAmount = Number(ac?.negotiatedAmount) > 0 ? Number(ac.negotiatedAmount) : 0;
     const eventGrandTotal = negotiatedAmount > 0 ? negotiatedAmount : systemGrandTotal;
-    // previewGrand — each function's own total with its proportional share of the venue discount +
-    // agency fee (or the negotiated rescale) already folded in, so the on-screen preview's function
-    // cards sum to eventGrandTotal on their own, with no separate discount/fee row needed under
-    // them. Kept SEPARATE from `grand` (left exactly as calcFunctionBreakdown produced it) because
-    // Excel/PPT/HTML's own "Event Summary" section already shows that same discount/fee/negotiated
-    // adjustment as its own explicit row against the raw per-function figures — folding it into
-    // `grand` too would double it there.
-    if (preFeeTotal > 0) {
-      const scale = eventGrandTotal / preFeeTotal;
-      functions.forEach(f => { f.previewGrand = Math.round((f.grand || 0) * scale); });
+    // previewGrand — each function's own total with its share of the venue discount + agency fee (or
+    // the negotiated rescale) already folded in, so the on-screen preview's function cards sum to
+    // eventGrandTotal on their own, with no separate discount/fee row needed under them. Kept
+    // SEPARATE from `grand` (left exactly as calcFunctionBreakdown produced it) because Excel/PPT/
+    // HTML's own "Event Summary" section already shows that same discount/fee/negotiated adjustment
+    // as its own explicit row against the raw per-function figures — folding it into `grand` too
+    // would double it there.
+    if (negotiatedAmount > 0) {
+      // A negotiated lump sum has no inherent "this function's own true share" of its own — it's an
+      // arbitrary agreed number, not a discount+fee applied to a real per-function base — so
+      // proportional-by-raw-grand is the only sensible way to split it across functions.
+      if (preFeeTotal > 0) {
+        const scale = eventGrandTotal / preFeeTotal;
+        functions.forEach(f => { f.previewGrand = Math.round((f.grand || 0) * scale); });
+      } else {
+        functions.forEach(f => { f.previewGrand = f.grand || 0; });
+      }
     } else {
-      functions.forEach(f => { f.previewGrand = f.grand || 0; });
+      // Un-negotiated: each function's OWN discount% (already stamped in above, per its own venue)
+      // and the same flat agency fee%, not a deal-wide blended average. A blended scale is exactly
+      // right only when every function shares the same discount rate; the moment two functions sit
+      // at different venues with different Fixed-Venue discount rates, the average stops matching
+      // EITHER function's own true rate — which is exactly why this used to visibly disagree with
+      // Build's own Live Estimate (computed per-function, never blended) for every function except
+      // whichever one happened to sit closest to the average. This still sums to eventGrandTotal:
+      // proratedVenueDiscount's own per-item math (share × revenueTotal, revenueTotal = preFeeTotal)
+      // reduces to exactly round(f.grand × f.discountPct/100) per function, the same rounding the
+      // aggregate venueDiscount above already sums — only the fee's rounding can drift by a rupee or
+      // two across functions, same tolerance Dept Ops already accepts elsewhere.
+      functions.forEach(f => {
+        const fDiscount = Math.round((f.grand || 0) * (f.discountPct || 0) / 100);
+        const fDiscounted = Math.max(0, (f.grand || 0) - fDiscount);
+        f.previewGrand = fDiscounted + Math.round(fDiscounted * agencyFeePct / 100);
+      });
     }
     return {
       functions,
