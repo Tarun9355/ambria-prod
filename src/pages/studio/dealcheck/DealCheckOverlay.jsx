@@ -3399,7 +3399,7 @@ export default function DealCheckOverlay({ ctx }) {
                                         <div style={{marginTop:6,padding:"10px 12px",fontSize:13,color:"#1A1A2E",fontStyle:"italic",textAlign:"center",borderRadius:7,background:"rgba(26, 26, 46,0.02)"}}>No matches in IMS for "{searchText}"</div>
                                       )}
                                       {showResults && matches.length > 0 && (
-                                        <div style={{marginTop:6,borderRadius:8,border:`1px solid ${border}`,background:"rgba(15,15,26,0.95)",maxHeight:280,overflowY:"auto"}}>
+                                        <div style={{marginTop:6,borderRadius:8,border:`1px solid ${border}`,background:"#F4F2EC",boxShadow:"0 8px 24px rgba(0,0,0,0.15)",maxHeight:280,overflowY:"auto"}}>
                                           {matches.map(item => {
                                             const itemPhoto = imsField.photos(item)[0];
                                             const itemSub = imsField.subcategory(item);
