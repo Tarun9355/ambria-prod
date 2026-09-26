@@ -1333,7 +1333,7 @@ export default function DealCheckOverlay({ ctx }) {
             if (deptInv[d]) deptInv[d].push({ name: c.subCat || c.cat || "Custom item", photo: c.photo || "", qty: Number(c.qty) || 1, unit: c.manualPrice || c.refPrice || 0, total: Math.round(amt), sub: c.subCat || "", imsId: c.refItemId || null, prodOrBuy: c.type === "buying" ? "buying" : "production" });
           });
           // ── Distribute manpower per type to departments ──
-          const MP_DEPT = { "Flowerists": "Floral", "Carpenters": "Structure", "Painters": "Tenting", "Truss Labour": "Tenting", "Fabric Bangali": "Fabric", "Electricians": "Lighting", "Drivers": "Transport" };
+          const MP_DEPT = { "Flowerists": "Floral", "Carpenters": "Structure", "Painters": "Tenting", "Truss Labour": "Tenting", "Fabric Bangali": "Tenting", "Electricians": "Lighting", "Drivers": "Transport" };
           // Direct-income share per dept (rental+florals+truss+fabric+production+buying) — drives the
           // proportional split of general Labours + Supervisors across all departments.
           const directOf = (d) => dept[d].rental + dept[d].florals + dept[d].truss + dept[d].fabric + dept[d].production + dept[d].buying;
