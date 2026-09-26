@@ -553,7 +553,11 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const blockedItemsGrouped = useMemo(() => {
     if (!sel) return [];
     if (deptInvSnap && deptInvSnap.length) {
-      const rows = deptInvSnap.map((x, i) => ({ id: x.name + i, invId: x.imsId || null, name: x.name, photo: x.photo || "", qty: x.qty || 0, unit: x.unit || 0, total: x.total || 0, sub: x.sub || "", isKit: !!x.isKit, components: Array.isArray(x.components) ? x.components : null, shortQty: x.shortQty || 0, shortCost: x.shortCost || 0, prodOrBuy: x.prodOrBuy || null, isSwapped: swapInfo.has(x.name), swappedFrom: swapInfo.get(x.name)?.swappedFrom || null }));
+      // fromKit carried through from the snapshot: Deal Check splits a kit's parts across
+      // departments by each part's own category, so a row can be a component of a kit owned by
+      // another department. It is the only record of that parent, and the PDF needs it to avoid
+      // reporting a bolted-on part as a loose item.
+      const rows = deptInvSnap.map((x, i) => ({ id: x.name + i, invId: x.imsId || null, name: x.name, photo: x.photo || "", qty: x.qty || 0, unit: x.unit || 0, total: x.total || 0, sub: x.sub || "", isKit: !!x.isKit, fromKit: x.fromKit || null, components: Array.isArray(x.components) ? x.components : null, shortQty: x.shortQty || 0, shortCost: x.shortCost || 0, prodOrBuy: x.prodOrBuy || null, isSwapped: swapInfo.has(x.name), swappedFrom: swapInfo.get(x.name)?.swappedFrom || null }));
       // Short items first (need chasing/ordering), then Production/Buying (not real stock — worth
       // knowing apart from what's actually reserved), then everything else — the order requested
       // for this list. Stable within each group: Array.prototype.sort is stable, so ties keep the
@@ -1341,7 +1345,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
        (`elements[zoneKey]`), zone photos (`elSelectedPhoto`) and zone dims — with each element
        resolved to its inventory item (by invId / imsId, else by name) for the photo and dims.
        An element whose inventory item belongs to another department is skipped. Items this
-       department holds that no zone lists land on a final "Other items" page, so the PDF never
+       department holds that no zone lists land on a final page of their own, so the PDF never
        drops something that is going to the event.
        Arrows point at the photo's edge, not at a spot inside it: nothing records where in the
        photo an item stands. */
@@ -1419,15 +1423,54 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         });
       });
     });
-    const unplaced = blockedItemsGrouped.filter(b => !placed.has(b.id)).map(b => {
+    // ── A KIT'S PARTS ARE PLACED WHEN THE KIT IS ──
+    // Zone element lists name the KIT ("Wooden Coffee Table") and carry no components array at
+    // all, so matching held items against those lists can never see a part. Meanwhile Deal Check
+    // splits a kit's parts across departments by each part's own category, so Floral ends up
+    // holding a terracotta element that is physically bolted to a Furniture coffee table sitting
+    // in the photobooth. Reported as "not in a zone" that is worse than useless: it sends someone
+    // hunting for a loose item that is already on the truck inside something else.
+    // The held row records its parent in `fromKit`, so resolve through it: if the parent kit is
+    // named by any zone list, the part is placed too.
+    const placedElementNames = new Set();
+    (fns || []).forEach(fn => Object.values(fn?.elements || {}).forEach(list =>
+      (Array.isArray(list) ? list : []).forEach(el => {
+        const n = String(el?.name || "").trim().toLowerCase();
+        if (n) placedElementNames.add(n);
+      })));
+    const inPlacedKit = (b) => {
+      const parent = String(b?.fromKit || "").trim().toLowerCase();
+      return !!parent && placedElementNames.has(parent);
+    };
+    const unplaced = blockedItemsGrouped.filter(b => !placed.has(b.id) && !inPlacedKit(b)).map(b => {
       const inv = (b.invId && invById.get(String(b.invId))) || invByName.get(String(b.name || "").trim().toLowerCase()) || null;
       return { name: b.name, qty: Number(b.qty) || 0, photo: invPhoto(inv, b), dims: invDims(inv), prodOrBuy: b.prodOrBuy || null, source: b.prodOrBuy === "buying" ? "To buy" : b.prodOrBuy === "production" ? "Production" : "" };
     });
-    // Only what Deal Check actually marks PRODUCTION goes on the production page. Everything else
-    // not found in a zone (usually an item added to a zone after the booking, before the next Deal
-    // Check sync refreshes the zone lists) is listed honestly as unplaced, not as production.
+    // ── TWO PAGES, AND WHY THEY STAY TWO ──
+    // Briefly merged into one "From production" page, which was wrong: on pratik test's 29 Aug
+    // event the Floral department holds ten items, eight of which the zone lists claim. The two
+    // that are left — "Muradabad Metal Prop " and "S shape Iron Btr Frame " — carry no prodOrBuy
+    // at all, so calling their page "From production" told the crew to collect from a production
+    // house that was never making them.
+    // Not in a zone is a DIFFERENT fact from made by production, and only Deal Check knows the
+    // second one. An item landing in the second bucket usually means the Studio build placed it
+    // after the last Deal Check sync, so the right response is to go look at the build — which is
+    // what the page now says, instead of the silent "Other items" that started all this.
     const prodItems = unplaced.filter(it => it.prodOrBuy === "production");
-    const otherItems = unplaced.filter(it => it.prodOrBuy !== "production");
+    const looseItems = unplaced.filter(it => it.prodOrBuy !== "production");
+    // ── DATE THE ZONE PLAN, DO NOT JUST ASSERT THE ITEM IS LOOSE ──
+    // An item lands here for one of two reasons that look identical on the page: it really is an
+    // extra nobody put in a zone, or IMS's copy of the zone lists is simply older than the held
+    // list. Until 2026-09-25 the zone lists were written only at Sold while deptInventory was
+    // refreshed on every sync, so the second reason was routine — and any order last synced
+    // before that date still carries the stale lists. Printing the sync date lets whoever reads
+    // the book tell the two apart instead of trusting a claim the data cannot actually support.
+    const syncedOn = sel?.deptSyncedAt
+      ? new Date(sel.deptSyncedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })
+      : "";
+    const looseNote = syncedOn
+      ? `Held for this event, but no zone lists these. The zone plan here was last synced from Deal Check on ${syncedOn} — re-sync if they belong in a zone.`
+      : "Held for this event, but no zone lists these — re-sync Deal Check if they belong in a zone.";
 
     // Geometry, in the sheet's 706px content width. Cards sit four to a row: top row, the photo
     // band, bottom row. Each card's arrow drops straight onto the photo edge below / above it.
@@ -1487,7 +1530,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     const zoneHtml = [
       ...zonePages.flatMap((pg, zi) => { const cs = chunks(pg.items, 6); return cs.map((c, i) => zoneSection(pg, c, i + 1, cs.length, zi + 1, i * 6)); }),
       ...listPages(prodItems, "Production", "From production", "Made by the production team for this event"),
-      ...listPages(otherItems, "Not in a zone", "Other items", "Held for this event but not placed in any zone yet"),
+      ...listPages(looseItems, "Not in a zone", "Also on site", looseNote),
     ].join("");
 
     // The cover's backdrop: this event's Stage photo when it has one (the setup the book is
@@ -1869,6 +1912,7 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
       const usableH = pageH - MARGIN * 2;
 
       const blocks = [...sheet.querySelectorAll("[data-block], section")];
+      const skipped = [];
       let y = MARGIN;
       let first = true;
       // Set after a zone layout: the NEXT content block starts a fresh page. It is a flag rather
@@ -1883,10 +1927,33 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
         const isFooter = el.tagName === "FOOTER";
         if (!first && y > MARGIN && (ownPage || (afterOwnPage && !isFooter))) { newPage(); y = MARGIN; }
         afterOwnPage = false;
-        const canvas = await html2canvas(el, { scale: 2, backgroundColor: "#F4F1EA", logging: false, useCORS: true, windowWidth: 794 });
+        // ── ONE BAD BLOCK MUST NOT LOSE THE WHOLE REPORT ──
+        // html2canvas can fail on a single element for reasons that have nothing to do with the
+        // other twenty — a photo that taints the canvas, a CSS value its 1.4 parser does not
+        // understand, a block too tall for the browser's canvas limit. Unguarded, any one of
+        // those threw out of the loop and the entire export failed, which is what a user sees as
+        // "could not generate the PDF" even though nineteen pages were fine. Skipped blocks are
+        // counted and reported at the end instead.
+        let canvas;
+        try {
+          canvas = await html2canvas(el, { scale: 2, backgroundColor: "#F4F1EA", logging: false, useCORS: true, windowWidth: 794 });
+        } catch (blockErr) {
+          console.error("PDF: skipped a block that failed to render", el.className || el.tagName, blockErr);
+          skipped.push(el.className || el.tagName);
+          continue;
+        }
         // Nothing drawn (an element with no height) must not cost a page either.
         if (!canvas.width || canvas.height < 4) continue;
-        const img = canvas.toDataURL("image/jpeg", 0.92);
+        let img;
+        try {
+          img = canvas.toDataURL("image/jpeg", 0.92);
+        } catch (taintErr) {
+          // Almost always a tainted canvas: a photo served without CORS headers was drawn into
+          // it, and the browser then refuses to let anyone read the pixels back out.
+          console.error("PDF: block rendered but could not be read back (tainted canvas)", el.className || el.tagName, taintErr);
+          skipped.push(el.className || el.tagName);
+          continue;
+        }
         const h = (canvas.height * usableW) / canvas.width;   // scaled to the content column
         if (el.hasAttribute("data-cover")) {
           // Full bleed: the cover is drawn across the whole page, no margin, and whatever follows
@@ -1937,6 +2004,10 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
         first = false;
       }
 
+      // Every single block failed — there is no report, only blank pages. Hand this to the
+      // fallback rather than saving an empty file that looks like success.
+      if (skipped.length && skipped.length === blocks.length) throw new Error(`every section failed to render (${skipped.length})`);
+
       // Page numbers, added once the total is known.
       const total = pdf.internal.getNumberOfPages();
       // The cover carries no number — it would sit on the photo — so counting starts under it.
@@ -1951,15 +2022,39 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
       // carries all three identifiers. Slashes and colons are illegal in filenames on Windows.
       const safe = (s) => String(s || "").replace(/[\\/:*?"<>|]+/g, "-").trim();
       pdf.save(`${safe(dept)} - ${safe(sel?.clientName || "Event")} - ${safe(selDateStr || "no date")}.pdf`);
+      // Said out loud, because a report quietly missing a page is worse than one that failed
+      // outright — you would only find out when the crew on site needed the page that is gone.
+      if (skipped.length) {
+        alert(`The PDF saved, but ${skipped.length} section${skipped.length === 1 ? "" : "s"} could not be drawn and ${skipped.length === 1 ? "is" : "are"} missing from it.\n\nThis is usually a photo that will not load. The browser console lists which.`);
+      }
     } catch (err) {
-      // Anything at all went wrong — chunk blocked, canvas tainted, old browser. Fall back to
-      // the print window, which needs no libraries and has "Save as PDF" in its own dialog. A
-      // button that reports failure and leaves you with nothing is worse than one extra click.
-      console.error("PDF export failed, falling back to print:", err);
-      const w = window.open("", "_blank");
-      if (!w) { alert("Could not generate the PDF, and the pop-up fallback was blocked. Allow pop-ups for this site and try again."); return; }
-      w.document.write(buildReportHtml(zoneLabels, logos));
-      w.document.close();
+      // ── THE FALLBACK IS A FILE, NOT A POP-UP ──
+      // This used to call window.open here. It could never work: by the time we reach this
+      // catch we are many awaits past the click, so the browser no longer counts it as
+      // user-initiated and blocks it every time — the "pop-up fallback was blocked" message was
+      // not a browser setting to change, it was this bug. Opening the window up front instead
+      // would flash an empty tab on every successful export.
+      // A Blob download needs no pop-up and leaves something usable: the report as an .html
+      // file, which opens in any browser and prints to PDF from there.
+      console.error("PDF export failed, falling back to an HTML download:", err);
+      try {
+        const safe = (s) => String(s || "").replace(/[\\/:*?"<>|]+/g, "-").trim();
+        const blob = new Blob([buildReportHtml(zoneLabels, logos)], { type: "text/html;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `${safe(dept)} - ${safe(sel?.clientName || "Event")} - ${safe(selDateStr || "no date")}.html`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        // Revoked on a timer, not immediately: Chrome cancels an in-flight download if the
+        // object URL disappears in the same tick as the click.
+        setTimeout(() => URL.revokeObjectURL(url), 10000);
+        alert(`The PDF could not be generated, so the report downloaded as an HTML file instead — open it and print to PDF.\n\nReason: ${err?.message || err}`);
+      } catch (fallbackErr) {
+        console.error("PDF: the HTML fallback failed too", fallbackErr);
+        alert(`Could not produce the report.\n\n${err?.message || err}`);
+      }
     } finally {
       frame.remove();
       setExporting(false);
