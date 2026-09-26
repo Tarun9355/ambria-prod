@@ -1444,7 +1444,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     };
     const unplaced = blockedItemsGrouped.filter(b => !placed.has(b.id) && !inPlacedKit(b)).map(b => {
       const inv = (b.invId && invById.get(String(b.invId))) || invByName.get(String(b.name || "").trim().toLowerCase()) || null;
-      return { name: b.name, qty: Number(b.qty) || 0, photo: invPhoto(inv, b), dims: invDims(inv), prodOrBuy: b.prodOrBuy || null, source: b.prodOrBuy === "buying" ? "To buy" : b.prodOrBuy === "production" ? "Production" : "" };
+      return { name: b.name, qty: Number(b.qty) || 0, photo: invPhoto(inv, b), dims: invDims(inv), prodOrBuy: b.prodOrBuy || null, source: b.prodOrBuy === "buying" ? "Buying" : b.prodOrBuy === "production" ? "Production" : "" };
     });
     // ── TWO PAGES, AND WHY THEY STAY TWO ──
     // Briefly merged into one "From production" page, which was wrong: on pratik test's 29 Aug
@@ -1457,7 +1457,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     // after the last Deal Check sync, so the right response is to go look at the build — which is
     // what the page now says, instead of the silent "Other items" that started all this.
     const prodItems = unplaced.filter(it => it.prodOrBuy === "production");
-    const looseItems = unplaced.filter(it => it.prodOrBuy !== "production");
+    const buyItems = unplaced.filter(it => it.prodOrBuy === "buying");
+    const looseItems = unplaced.filter(it => it.prodOrBuy !== "production" && it.prodOrBuy !== "buying");
     // ── DATE THE ZONE PLAN, DO NOT JUST ASSERT THE ITEM IS LOOSE ──
     // An item lands here for one of two reasons that look identical on the page: it really is an
     // extra nobody put in a zone, or IMS's copy of the zone lists is simply older than the held
@@ -1530,6 +1531,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     const zoneHtml = [
       ...zonePages.flatMap((pg, zi) => { const cs = chunks(pg.items, 6); return cs.map((c, i) => zoneSection(pg, c, i + 1, cs.length, zi + 1, i * 6)); }),
       ...listPages(prodItems, "Production", "From production", "Made by the production team for this event"),
+      ...listPages(buyItems, "Buying", "To buy", "Bought in for this event — not from our own stock"),
       ...listPages(looseItems, "Not in a zone", "Also on site", looseNote),
     ].join("");
 
@@ -1619,11 +1621,11 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   .orn i{display:block;width:90px;height:1px;background:#C9A96E}
   .orn b{display:block;width:8px;height:8px;background:#C9A96E;transform:rotate(45deg)}
   .cv-facts{display:flex;justify-content:center;gap:0}
-  .cv-facts > div{padding:0 26px;border-left:1px solid #DDD6C6}
+  .cv-facts > div{padding:0 34px;border-left:1px solid #DDD6C6}
   .cv-facts > div:first-child{border-left:0}
-  .cv-facts .k{font-size:9.5px;line-height:1.7;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:#8A8272;margin-bottom:5px}
-  .cv-facts .v{font-size:15px;line-height:1.6;font-weight:700;color:#1A1A1A}
-  .cv-sec{font-size:9.5px;line-height:1.7;font-weight:700;letter-spacing:.3em;text-transform:uppercase;color:#A8844A;margin:34px 0 12px}
+  .cv-facts .k{font-size:11px;line-height:1.7;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:#8A8272;margin-bottom:6px}
+  .cv-facts .v{font-size:19px;line-height:1.5;font-weight:700;color:#1A1A1A}
+  .cv-sec{font-size:11px;line-height:1.7;font-weight:700;letter-spacing:.3em;text-transform:uppercase;color:#A8844A;margin:34px 0 12px}
   /* One card per session, each in its own colour (wine, navy, sage, amber, plum, rose): a tinted
      face, a border and offset shadow in the deep shade, the type in the serif, the full date,
      then the shift and headcount as chips. */
@@ -1631,17 +1633,17 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
      facts as labelled columns (DATE | SHIFT | GUESTS) instead of a filled pill — which also cured
      the pill's clipped text. Every text box carries line-height 1.7+ and bottom padding, because
      html2canvas draws text a few px low and a tight box slices the letters. */
-  .cv-sessions{display:flex;flex-wrap:wrap;justify-content:center;gap:18px;width:100%}
-  .cv-ses{flex:0 1 330px;border-radius:22px;padding:20px 22px 18px;border:1.5px solid var(--d);box-shadow:5px 5px 0 var(--d);background:var(--l)}
-  .cv-ses .sk{font-size:9.5px;line-height:1.8;font-weight:700;letter-spacing:.3em;text-transform:uppercase;color:var(--d);opacity:.8}
-  .cv-ses .st{font-family:"Playfair Display",Georgia,serif;font-weight:800;font-size:34px;line-height:1.3;color:var(--d);padding-bottom:2px}
-  .cv-ses .sl{height:1px;background:var(--d);opacity:.28;margin:12px 6px 14px}
+  .cv-sessions{display:flex;flex-wrap:wrap;justify-content:center;gap:22px;width:100%}
+  .cv-ses{flex:0 1 400px;border-radius:24px;padding:26px 28px 24px;border:1.5px solid var(--d);box-shadow:5px 5px 0 var(--d);background:var(--l)}
+  .cv-ses .sk{font-size:11px;line-height:1.8;font-weight:700;letter-spacing:.3em;text-transform:uppercase;color:var(--d);opacity:.8}
+  .cv-ses .st{font-family:"Playfair Display",Georgia,serif;font-weight:800;font-size:40px;line-height:1.3;color:var(--d);padding-bottom:2px}
+  .cv-ses .sl{height:1px;background:var(--d);opacity:.28;margin:16px 6px 18px}
   .cv-ses .sg{display:flex;justify-content:center}
-  .cv-ses .sf{padding:0 12px 2px;border-left:1px solid rgba(26,26,26,.14)}
+  .cv-ses .sf{padding:0 20px 2px;border-left:1px solid rgba(26,26,26,.14)}
   .cv-ses .sf:first-child{border-left:0}
-  .cv-ses .sf .k{font-size:8.5px;line-height:1.8;font-weight:700;letter-spacing:.2em;text-transform:uppercase;color:#7A7468}
-  .cv-ses .sf .v{font-size:13.5px;line-height:1.7;font-weight:700;color:#1A1A1A;white-space:nowrap;text-transform:capitalize;padding-bottom:2px}
-  .cv-ses .sm{font-size:11px;line-height:1.8;color:#6F6A5E;margin-top:8px;padding-bottom:2px}
+  .cv-ses .sf .k{font-size:10.5px;line-height:1.8;font-weight:700;letter-spacing:.2em;text-transform:uppercase;color:#7A7468}
+  .cv-ses .sf .v{font-size:19px;line-height:1.7;font-weight:700;color:#1A1A1A;white-space:nowrap;text-transform:capitalize;padding-bottom:2px}
+  .cv-ses .sm{font-size:12.5px;line-height:1.8;color:#6F6A5E;margin-top:8px;padding-bottom:2px}
   .t-wine{--d:#7A2E3B;--l:#F6E3E5}
   .t-navy{--d:#23345C;--l:#E3E9F5}
   .t-sage{--d:#3F6150;--l:#E2EEE5}
@@ -1786,7 +1788,6 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     ${ornament}
     <div class="cv-facts">
       <div><div class="k">Venue</div><div class="v">${esc(venue)}</div></div>
-      <div><div class="k">Department</div><div class="v">${esc(dept)}</div></div>
       <div><div class="k">Prepared by</div><div class="v">${esc(deptData.updatedBy || authUser?.name || "—")}</div></div>
     </div>
     ${sessions.length ? `<div class="cv-sec">${sessions.length === 1 ? "The event" : `${sessions.length} sessions`}</div>
