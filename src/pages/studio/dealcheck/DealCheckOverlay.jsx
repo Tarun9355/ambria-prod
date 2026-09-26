@@ -93,7 +93,7 @@ const IV = {
 const NUM = { fontVariantNumeric: "tabular-nums" };
 import { heavyExtraLabour, eventTimingMultFor, SIT_MULT_DEFAULTS } from "../../../lib/ims/constants";
 import { deptMpReconciled, itemImsSubcat, lookupBySubcat, itemDimsText, walkKitUnits } from "../../../lib/ims/helpers";
-import { rentalSplit, availableAtVenue, isStandingAt, fixedVenueFor, standingReductionBySubcat, fixedVenueDealDiscount } from "../../../lib/ims/fixedVenues";
+import { rentalSplit, availableAtVenue, isStandingAt, fixedVenueFor, standingReductionBySubcat, fixedVenueDealDiscount, reservedByVenueToday, venueSlackFor } from "../../../lib/ims/fixedVenues";
 import { calcZoneFabric, autoFillFabricAllocation, resolveTrussConfig, zoneTrussStandingDiscount, repeatCatFor } from "../../../lib/studio/pricing";
 import { carpetPricingFor, CARPET_OFF } from "../../../lib/studio/taxonomy";
 import { qtyUsedElsewhereInDealCheck, netOwnReservedBlocks } from "../../../lib/studio/dealAvailability";
@@ -169,6 +169,8 @@ export default function DealCheckOverlay({ ctx }) {
   const {
     // chrome / theme
     border, textS, textP, accent, fmt,
+    // fixed-venue cross-venue slack (venueSlackFor) needs this to resolve a block's eventId → venue
+    eventOrders,
     // client + auth
     clientLedger, activeClientId, activeClient, clientName, clientDate, authUser, eventGrandTotal,
     // deal check state
@@ -3224,7 +3226,14 @@ export default function DealCheckOverlay({ ctx }) {
                                   // that line's own arithmetic reproduces lineTotal instead of looking
                                   // like it doesn't add up (list rate × qty ≠ the discounted lineTotal).
                                   const _effRate = mi.qty > 0 ? Math.round(lineTotal / mi.qty) : rental;
-                                  const _avail = item ? Math.max(0, Math.min(dcAvailable(item, fnBlocksForChip, fnIdx), availableAtVenue({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, _vName, item))) : 0;
+                                  const _mFvCfg = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
+                                  // Genuine same-date cross-venue slack (owner ask) — a Fixed Venue's
+                                  // unused standing allocation is real, bookable stock, not permanently
+                                  // locked, so this feeds availableAtVenue's own qty cap AND is shown
+                                  // broken out per venue below instead of vanishing into one opaque number.
+                                  const _mReserved = item ? reservedByVenueToday((dealCheckData?.blocksDetailByDate || {})[_fnDateForRepeat]?.[item.id], eventOrders) : {};
+                                  const _mSlack = item ? venueSlackFor(_mFvCfg, _vName, item, _mReserved) : [];
+                                  const _avail = item ? Math.max(0, Math.min(dcAvailable(item, fnBlocksForChip, fnIdx), availableAtVenue(_mFvCfg, _vName, item, _mReserved))) : 0;
                                   return (
                                     <div key={mi.manualId} className="dci-card" style={{padding:"12px 13px",borderRadius:10,boxShadow:IV.shadow,background:IV.card,border:`1px solid rgba(193,154,107,0.30)`,display:"flex",gap:11,alignItems:"flex-start"}}>
                                       {photo ? <HoverZoom src={thumbUrl(photo, 320)}><img loading="lazy" decoding="async" src={thumbUrl(photo, 56)} alt="" style={{width:54,height:54,borderRadius:7,objectFit:"cover",flexShrink:0,background:"#FFFFFF"}}/></HoverZoom> : <div style={{width:54,height:54,borderRadius:7,background:"#FFFFFF",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,color:IV.ink,flexShrink:0}}>?</div>}
@@ -3245,12 +3254,21 @@ export default function DealCheckOverlay({ ctx }) {
                                           <span style={{...NUM,color:IV.ink2}}>of {_avail} avail · <span style={{color:_effRate<rental?"#10B981":IV.ink2,fontWeight:_effRate<rental?700:400}}>₹{_effRate.toLocaleString("en-IN")} × {mi.qty} = ₹{lineTotal.toLocaleString("en-IN")}</span></span>
                                           {dims && <span style={{color:IV.ink3}}>· {dims}</span>}
                                         </div>
+                                        {/* Cross-venue slack (owner ask) — _avail above already folds this in, so it's not
+                                            extra stock beyond what's pickable; this just shows WHERE it's coming from,
+                                            since "100 avail" alone gives no reason to believe more than the outdoor pool
+                                            is actually usable. */}
+                                        {_mSlack.length > 0 && (
+                                          <div style={{fontSize:11,color:IV.ink3,marginTop:2}}>
+                                            + idle stock at other Fixed Venues: {_mSlack.map(s => `${s.slack} ${s.name}`).join(" · ")}
+                                          </div>
+                                        )}
                                         {/* Same-subcategory alternatives + Browse (with per-item availability) — swap a manual block to another item */}
                                         {sub && (()=>{
                                           const mAlts = dcInventoryCache.filter(x => x.id !== mi.imsId && String(imsField.subcategory(x)||"").toLowerCase().trim() === sub.toLowerCase().trim());
                                           if (!mAlts.length) return null;
                                           const _fvC = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
-                                          const altAvail = (a) => Math.max(0, Math.min(dcAvailable(a, fnBlocksForChip, fnIdx), availableAtVenue(_fvC, _vName, a)));
+                                          const altAvail = (a) => Math.max(0, Math.min(dcAvailable(a, fnBlocksForChip, fnIdx), availableAtVenue(_fvC, _vName, a, reservedByVenueToday((dealCheckData?.blocksDetailByDate || {})[_fnDateForRepeat]?.[a.id], eventOrders))));
                                           return (
                                             <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center",marginTop:6}}>
                                               <span style={{fontSize:11,color:IV.ink,letterSpacing:0.6,textTransform:"uppercase",fontWeight:600}}>Alternatives:</span>
@@ -3304,7 +3322,10 @@ export default function DealCheckOverlay({ ctx }) {
                                             const itemSub = imsField.subcategory(item);
                                             const _venueName = (fns[fnIdx] || {}).fnVenue || "";
                                             const _fvCfg = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
-                                            const itemQty = availableAtVenue(_fvCfg, _venueName, item); // venue-scoped total (locked stock at other venues excluded)
+                                            const _searchDate = (fns[fnIdx]||{}).fnDate || clientDate;
+                                            const _searchReserved = reservedByVenueToday((dealCheckData?.blocksDetailByDate || {})[_searchDate]?.[item.id], eventOrders);
+                                            const itemQty = availableAtVenue(_fvCfg, _venueName, item, _searchReserved); // venue-scoped total, PLUS genuine same-date slack idle at other Fixed Venues
+                                            const _searchSlack = venueSlackFor(_fvCfg, _venueName, item, _searchReserved);
                                             const itemBlocked = Number(item?.blocked) || 0;
                                             const free = Math.max(0, itemQty - itemBlocked);
                                             const usedElsewhereInDeal = qtyUsedElsewhereInDealCheck(item.id, fns, dcCards, dcManualItems, dcKitEdits, dcInventoryCache, { fnIdx, zoneKey: zk }, (fns[fnIdx]||{}).fnDate || clientDate);
@@ -3326,12 +3347,13 @@ export default function DealCheckOverlay({ ctx }) {
                                                 setDcManualItems(prev => [...prev, newItem]);
                                                 setDcManualSearch(prev => ({...prev, [searchKey]: ""}));
                                               }} style={{display:"flex",gap:10,padding:"8px 10px",alignItems:"center",cursor:isBlocked?"not-allowed":"pointer",borderBottom:`1px solid rgba(26, 26, 46,0.04)`,opacity:isBlocked?0.45:1}}
+                                              title={_searchSlack.length ? `+ idle stock at other Fixed Venues: ${_searchSlack.map(s=>`${s.slack} ${s.name}`).join(" · ")}` : undefined}
                                               onMouseEnter={e=>{ if(!isBlocked) e.currentTarget.style.background="rgba(193,154,107,0.10)"; }}
                                               onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
                                                 <ItemHoverThumb src={itemPhoto} size={36} rounded={5} name={item.name} sub={itemSub} dims={_dims} border="rgba(26, 26, 46,0.15)" cardBg="#FFFFFF" textP="#1a1a2e" textS={textS} emptyBg="#F4F2EC" placeholder="?" />
                                                 <div style={{flex:1,minWidth:0}}>
                                                   <div style={{fontSize:13,fontWeight:600,color:"#1A1A2E",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.name}{_standing && <span style={{marginLeft:6,fontSize:10,padding:"1px 5px",borderRadius:3,background:"rgba(16,185,129,0.2)",color:"#10B981",fontWeight:700,letterSpacing:0.3}}>🏛️ INSTALLED HERE</span>}{isBlocked && <span style={{marginLeft:6,fontSize:10,padding:"1px 5px",borderRadius:3,background:"rgba(239,68,68,0.2)",color:"#EF4444",fontWeight:700,letterSpacing:0.3}}>🚫 fully used in this event</span>}</div>
-                                                  <div style={{fontSize:11,color:"#1A1A2E",marginTop:1}}>{itemSub || "—"}{_dims ? ` · 📐 ${_dims}` : ""} · {free} free of {itemQty}{usedElsewhereInDeal>0 ? ` · ${remaining} left for this event` : ""}</div>
+                                                  <div style={{fontSize:11,color:"#1A1A2E",marginTop:1}}>{itemSub || "—"}{_dims ? ` · 📐 ${_dims}` : ""} · {free} free of {itemQty}{usedElsewhereInDeal>0 ? ` · ${remaining} left for this event` : ""}{_searchSlack.length>0 ? ` · +${_searchSlack.reduce((s,x)=>s+x.slack,0)} idle at other Fixed Venues` : ""}</div>
                                                 </div>
                                                 <span style={{fontSize:12,color:"#C19A6B",fontWeight:700,letterSpacing:0.3}}>+ ADD</span>
                                               </div>
@@ -4847,7 +4869,8 @@ export default function DealCheckOverlay({ ctx }) {
               const card = dcCards[fnIdx]?.[cardKey];
               // Availability (free on the event date, netted with fixed-venue locks) per item.
               const _mFns = collectAllFunctionData ? collectAllFunctionData() : [];
-              const _mBlocks = (dealCheckData?.blocksByDate || {})[(_mFns[fnIdx] || {}).fnDate || clientDate] || {};
+              const _mDate = (_mFns[fnIdx] || {}).fnDate || clientDate;
+              const _mBlocks = (dealCheckData?.blocksByDate || {})[_mDate] || {};
               const _mVenue = (_mFns[fnIdx] || {}).fnVenue || "";
               const _mFvC = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
               const _mSplitIds = splitAdd ? (Array.isArray(card?.split) ? card.split.filter(s=>s&&s.imsId).map(s=>s.imsId) : []) : [];
@@ -4874,7 +4897,9 @@ export default function DealCheckOverlay({ ctx }) {
                         const isCurrent = splitAdd ? _mSplitIds.includes(it.id) : it.id === _mCurId;
                         const _mExclude = manualId ? { manualId } : { cardKey };
                         const _mUsedElsewhere = qtyUsedElsewhereInDealCheck(it.id, _mFns, dcCards, dcManualItems, dcKitEdits, dcInventoryCache, { fnIdx, ..._mExclude }, (_mFns[fnIdx]||{}).fnDate || clientDate);
-                        const avail = Math.max(0, Math.min(dcAvailable(it, _mBlocks, fnIdx), availableAtVenue(_mFvC, _mVenue, it)) - _mUsedElsewhere);
+                        const _mReservedIt = reservedByVenueToday((dealCheckData?.blocksDetailByDate || {})[_mDate]?.[it.id], eventOrders);
+                        const _mSlackIt = venueSlackFor(_mFvC, _mVenue, it, _mReservedIt);
+                        const avail = Math.max(0, Math.min(dcAvailable(it, _mBlocks, fnIdx), availableAtVenue(_mFvC, _mVenue, it, _mReservedIt)) - _mUsedElsewhere);
                         const isBlocked = !isCurrent && avail <= 0;
                         return (
                           <div key={it.id} onClick={()=>{
@@ -4905,7 +4930,7 @@ export default function DealCheckOverlay({ ctx }) {
                               <div style={{fontSize:12,color:"#1A1A2E",marginTop:2}}>₹{rental.toLocaleString("en-IN")}{dims&&" · "+dims}</div>
                             </div>
                             {/* Free-on-date availability badge (nets out other zones/cards in this same deal too) */}
-                            <div title={isBlocked?"🚫 fully used in this event":"Free for this event"} style={{position:"absolute",bottom:38,right:5,fontSize:12,fontWeight:800,minWidth:20,textAlign:"center",background:avail>0?"rgba(16,185,129,0.92)":"rgba(239,68,68,0.92)",borderRadius:6,padding:"2px 6px",color:"#1A1A2E"}}>{avail}</div>
+                            <div title={isBlocked?"🚫 fully used in this event":_mSlackIt.length?`Free for this event (includes idle stock at other Fixed Venues: ${_mSlackIt.map(s=>`${s.slack} ${s.name}`).join(" · ")})`:"Free for this event"} style={{position:"absolute",bottom:38,right:5,fontSize:12,fontWeight:800,minWidth:20,textAlign:"center",background:avail>0?"rgba(16,185,129,0.92)":"rgba(239,68,68,0.92)",borderRadius:6,padding:"2px 6px",color:"#1A1A2E"}}>{avail}</div>
                             {hold && <div style={{position:"absolute",top:5,right:5,fontSize:11,background:"rgba(245,158,11,0.92)",borderRadius:4,padding:"2px 5px",color:"#0F0F1A",fontWeight:700,letterSpacing:0.3}}>⏳ {hold.salesperson}</div>}
                             {isCurrent && <div style={{position:"absolute",top:5,left:5,fontSize:11,background:`${accent}ee`,borderRadius:4,padding:"2px 5px",color:"#0F0F1A",fontWeight:700,letterSpacing:0.3}}>{splitAdd?"✓ in split":"✓ current"}</div>}
                           </div>

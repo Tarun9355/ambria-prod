@@ -1199,14 +1199,21 @@ async function fetchIMSData(date) {
     const blocks = {};
     for (const r of (Array.isArray(blockRows) ? blockRows : [])) { const id = r.item_id || r.id; if (id) blocks[id] = Array.isArray(r.data) ? r.data : []; }
     const blocksForDate = {};
+    // blocksDetailForDate keeps the per-entry {eventId, qty} list (not just the summed total) for
+    // this exact date — venueSlackFor (lib/ims/fixedVenues.js) resolves eventId → the reserving
+    // event's own venue (via eventOrders) so it can tell how much of item A is ACTUALLY reserved AT
+    // a specific Fixed Venue today, versus that venue's whole standing allocation just sitting
+    // configured. blocksForDate itself is untouched — every existing caller of fetchIMSData still
+    // gets exactly the same aggregate it always did.
+    const blocksDetailForDate = {};
     for (const [imsId, blockList] of Object.entries(blocks)) {
       if (!Array.isArray(blockList)) continue;
-      const total = blockList
-        .filter(b => b && b.date === date && (b.status === "confirmed" || b.status === "final" || b.status === "held"))
-        .reduce((sum, b) => sum + (Number(b.qty) || 0), 0);
+      const activeToday = blockList.filter(b => b && b.date === date && (b.status === "confirmed" || b.status === "final" || b.status === "held"));
+      const total = activeToday.reduce((sum, b) => sum + (Number(b.qty) || 0), 0);
       if (total > 0) blocksForDate[imsId] = total;
+      if (activeToday.length) blocksDetailForDate[imsId] = activeToday.map(b => ({ eventId: b.eventId, qty: Number(b.qty) || 0 }));
     }
-    return { inventory, blocksForDate };
+    return { inventory, blocksForDate, blocksDetailForDate };
   } catch (e) {
     console.error("[preflight] fetchIMSData failed:", e);
     return null;
@@ -9815,7 +9822,8 @@ export default function StudioApp() {
       // "No IMS match" after a refresh. (Root cause of the recurring load bug.)
       setDcInventoryCache(inventory);
       const blocksByDate = {};
-      uniqueDates.forEach((d, i) => { blocksByDate[d] = invResults[i]?.blocksForDate || {}; });
+      const blocksDetailByDate = {};
+      uniqueDates.forEach((d, i) => { blocksByDate[d] = invResults[i]?.blocksForDate || {}; blocksDetailByDate[d] = invResults[i]?.blocksDetailForDate || {}; });
       // Reduce settings rows → object s (EXACT key/field names the reference uses)
       const s = {};
       (settingsRows || []).forEach(r => {
@@ -9889,7 +9897,7 @@ export default function StudioApp() {
       (Array.isArray(venuesRaw?.properties) ? venuesRaw.properties : []).forEach(p => { if (p?.name && typeof p.commissionPct === "number") venueCommission[p.name] = p.commissionPct; });
       (Array.isArray(venuesRaw?.outdoor) ? venuesRaw.outdoor : []).forEach(v => { if (v?.name && typeof v.commissionPct === "number") venueCommission[v.name] = v.commissionPct; });
 
-      setDealCheckData({ inventory, blocksByDate, fetchedDates: uniqueDates, flowerPatterns, mandiCatalogue, mandiPriceMultipliers, seasonMap, electricianProductivity, artificialMixRatePerKg, artificialFlowerRatePerKg, artificialFlowerBunchesPerKg, artificialGreenRatePerKg, artificialGreenBunchesPerKg, flowerRecipeSubcats, dihariSchemes, defaultWindowsByPhase, labourTiers, venueMinLabour, defaultMinLabour, eventTypeMultipliers, eventTimingMultipliers, sayaMultiplier, datePricing, situationalMultipliers, situationalMultiplierCap, heavyElementRanges, fabricBangaliRanges, trussLabourRanges, fabricRftPerWorker, vendors, trussInv, colourCatalogue, paletteCatalogue, paintableCategories, defaultPaintCostPerItem, carpetFreshMarkup, agencyFeePct, defaultStudioMarkup: Number(s.defaultStudioMarkup ?? 3) || 3, fixedVenues: Array.isArray(s.fixedVenues) ? s.fixedVenues : [], fixedVenueSubcatDiscount: (s.fixedVenueSubcatDiscount && typeof s.fixedVenueSubcatDiscount === "object") ? s.fixedVenueSubcatDiscount : {}, venueParents, venueCommission, venueDumping: (s.venueDumping && typeof s.venueDumping === "object") ? s.venueDumping : {}, categoryDepartments: (catDeptMap && Object.keys(catDeptMap).length) ? catDeptMap : ((s.categoryDepartments && typeof s.categoryDepartments === "object") ? s.categoryDepartments : {}) });
+      setDealCheckData({ inventory, blocksByDate, blocksDetailByDate, fetchedDates: uniqueDates, flowerPatterns, mandiCatalogue, mandiPriceMultipliers, seasonMap, electricianProductivity, artificialMixRatePerKg, artificialFlowerRatePerKg, artificialFlowerBunchesPerKg, artificialGreenRatePerKg, artificialGreenBunchesPerKg, flowerRecipeSubcats, dihariSchemes, defaultWindowsByPhase, labourTiers, venueMinLabour, defaultMinLabour, eventTypeMultipliers, eventTimingMultipliers, sayaMultiplier, datePricing, situationalMultipliers, situationalMultiplierCap, heavyElementRanges, fabricBangaliRanges, trussLabourRanges, fabricRftPerWorker, vendors, trussInv, colourCatalogue, paletteCatalogue, paintableCategories, defaultPaintCostPerItem, carpetFreshMarkup, agencyFeePct, defaultStudioMarkup: Number(s.defaultStudioMarkup ?? 3) || 3, fixedVenues: Array.isArray(s.fixedVenues) ? s.fixedVenues : [], fixedVenueSubcatDiscount: (s.fixedVenueSubcatDiscount && typeof s.fixedVenueSubcatDiscount === "object") ? s.fixedVenueSubcatDiscount : {}, venueParents, venueCommission, venueDumping: (s.venueDumping && typeof s.venueDumping === "object") ? s.venueDumping : {}, categoryDepartments: (catDeptMap && Object.keys(catDeptMap).length) ? catDeptMap : ((s.categoryDepartments && typeof s.categoryDepartments === "object") ? s.categoryDepartments : {}) });
       setDealCheckLoading(false);
       if (inventory.length === 0) {
         setDcAbortRef(null);

@@ -81,16 +81,69 @@ export function rentalSplit(settings, venueName, invId, qty, inventory) {
 // Units of an item AVAILABLE to an event at `venueName` = total minus units that are
 // standing (installed) at OTHER fixed venues. So another venue can't book a venue's
 // fixed stock; only genuinely free units (e.g. at Production House) are offered.
-export function availableAtVenue(settings, venueName, item) {
+//
+// `reservedByVenue` (optional — see reservedByVenueToday below): { [normalizedVenueName]: qty }
+// genuinely reserved at each OTHER fixed venue on the SPECIFIC date being checked. Owner ask: a
+// Fixed Venue's entire standing allocation used to count as permanently locked regardless of
+// whether that venue actually has anything using it that day — an outdoor deal needing 120 units
+// with 300 total stock (200 configured across fixed venues, 100 in the general/outdoor pool) was
+// told only 100 were available even when, say, Pushpanjali's 200-unit allocation had only 195
+// genuinely reserved that date, leaving 5 sitting idle. When `reservedByVenue` is supplied, only the
+// ACTUALLY-reserved portion of each other venue's standing qty counts as locked, so that real slack
+// becomes available stock the outdoor event can draw from. Omitted → exact old behavior (the whole
+// configured allocation stays locked), so every caller that hasn't been updated to pass it is
+// unaffected.
+export function availableAtVenue(settings, venueName, item, reservedByVenue) {
   const total = Number(item?.qty ?? item?.qtyOwned) || 0;
   const own = fixedVenueFor(settings, venueName); // parent-aware "this venue"
   let lockedElsewhere = 0;
   (settings?.fixedVenues || []).forEach((v) => {
     if (own && v === own) return; // own venue → its standing stock is available here
     const it = (v.items || []).find((i) => i.invId === item?.id);
-    if (it) lockedElsewhere += Number(it.qty) || 0;
+    if (!it) return;
+    const standing = Number(it.qty) || 0;
+    lockedElsewhere += reservedByVenue ? Math.min(standing, Number(reservedByVenue[normVenue(v.name)]) || 0) : standing;
   });
   return Math.max(0, total - lockedElsewhere);
+}
+
+// Resolves each of `item`'s block entries active on the checked date back to the venue of the
+// event that reserved them (blocks carry only {eventId, qty} — the venue lives on the linked
+// event_orders row), and sums genuinely-reserved qty per Fixed Venue. `blockEntriesForItem` is
+// `dealCheckData.blocksDetailByDate[date][item.id]` (StudioApp.jsx's fetchIMSData); `eventOrders` is
+// Studio's own already-loaded event_orders list — no extra fetch needed. A block whose event can't
+// be resolved (deleted, or a manual/legacy entry with no matching order) contributes nothing rather
+// than being guessed at.
+export function reservedByVenueToday(blockEntriesForItem, eventOrders) {
+  const out = {};
+  if (!Array.isArray(blockEntriesForItem) || !blockEntriesForItem.length) return out;
+  const eoById = new Map((eventOrders || []).map((e) => [e.id, e]));
+  blockEntriesForItem.forEach((b) => {
+    const venueName = eoById.get(b?.eventId)?.venue;
+    if (!venueName) return;
+    const key = normVenue(venueName);
+    out[key] = (out[key] || 0) + (Number(b?.qty) || 0);
+  });
+  return out;
+}
+
+// The genuine cross-venue slack availableAtVenue's `reservedByVenue` param newly unlocks, broken out
+// per venue for DISPLAY — "5 free at Pushpanjali, 15 free at Exotica" instead of a single opaque
+// number. Own venue excluded (already counted as this venue's own available stock, not "elsewhere").
+// Only venues with real slack (> 0) are returned.
+export function venueSlackFor(settings, venueName, item, reservedByVenue) {
+  const own = fixedVenueFor(settings, venueName);
+  const out = [];
+  (settings?.fixedVenues || []).forEach((v) => {
+    if (own && v === own) return;
+    const it = (v.items || []).find((i) => i.invId === item?.id);
+    const standing = it ? Number(it.qty) || 0 : 0;
+    if (standing <= 0) return;
+    const reserved = Number((reservedByVenue || {})[normVenue(v.name)]) || 0;
+    const slack = Math.max(0, standing - reserved);
+    if (slack > 0) out.push({ name: v.name, slack });
+  });
+  return out;
 }
 
 // Total standing PILLARS installed at a fixed venue (sum across sizes) — drives the
