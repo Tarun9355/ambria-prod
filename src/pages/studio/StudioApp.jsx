@@ -25,7 +25,7 @@ import DealCheckOverlay from "./dealcheck/DealCheckOverlay.jsx";
 import { kvGet, kvTryGet, kvSet, reliableSave } from "../../lib/ims/kv";
 import { makeAmendRequest } from "../../lib/ims/amend";
 import { catToDept } from "../../lib/ims/deptClassify";
-import { availableAtVenue, isStandingAt, rentalSplit, fixedVenueDealDiscount, fixedVenueDiscountPctFor, proratedVenueDiscount, fixedVenueFor, builtQty } from "../../lib/ims/fixedVenues";
+import { availableAtVenue, isStandingAt, rentalSplit, fixedVenueDealDiscount, fixedVenueDiscountPctFor, proratedVenueDiscount, fixedVenueFor, builtQty, reservedByVenueToday, venueSlackFor } from "../../lib/ims/fixedVenues";
 import { searchLmsLeads, triggerLmsSync, fetchCachedContracts, fetchLmsLeadByEntry } from "../../lib/ims/lms";
 import { uploadToStorage, compressImageForUpload, STORAGE_FOLDERS, listStorage, deleteStorageObjects, deleteStorageFolder } from "../../lib/storage";
 import { ytApi, ytDuration } from "../../lib/youtube";
@@ -4211,36 +4211,17 @@ export default function StudioApp() {
   // computeFnInvQty above) — a SECOND eligibility source feeding the same discount split as the
   // Fixed-Venue standingUnits below, not a separate discount. Both eligible amounts are capped at
   // qty combined (never double-discount the same physical unit twice).
-  // shortfall (optional): { qty, rate } — units beyond what's actually available, priced at
-  // item.cost × sub-category cost% (see the caller below) rather than unitRate at all. Owner-
-  // confirmed fix, mirrors DealCheckOverlay.jsx's own repeatAdjustedRental: a whole-zone Repeat
-  // discount and any leftover cross-function-reuse credit are both facts about this zone/deal's
-  // status, not about which specific units happened to be physically in stock, so they now apply to
-  // a shortfall unit too — only the Fixed-Venue STANDING split stays scoped to ownedQty, since that
-  // one really is about a specific registered stock a freshly-produced unit was never part of.
-  const repeatAdjustedLineCost = (item, qty, unitRate, zc, venueName, crossFnReuseQty = 0, shortfall = null) => {
-    const shortQty = Math.max(0, Number(shortfall?.qty) || 0);
-    const shortRate = Number(shortfall?.rate) || 0;
-    const full = qty * unitRate + shortQty * shortRate;
+  const repeatAdjustedLineCost = (item, qty, unitRate, zc, venueName, crossFnReuseQty = 0) => {
+    const full = qty * unitRate;
     if (!item) return full;
     if (hideDiscountFromClient) return full; // see hideDiscountFromClient above — guest-facing only
     // Rounded to the rupee — a 25% cut rarely lands on a whole number otherwise (₹1,289 × 0.75 =
     // ₹966.75), and every other price in the build is a whole rupee.
     if (repeatCatFor(zc, "elements")) return Math.round(full * (1 - GUEST_DISCOUNT_PCT / 100));
     const { standingUnits } = rentalSplit(fvCfgForRepeat, venueName, item.id, qty, imsInventory);
-    const stand = Math.max(0, standingUnits);
-    const freshUnits = Math.max(0, qty - stand);
-    // crossFnReuseQty spends against the owned/fresh units first (unchanged); whatever it doesn't
-    // claim there can still discount the shortfall — same physical carried-over item, wherever the
-    // availability split happened to land it.
-    const crossFnForOwned = Math.min(freshUnits, Math.max(0, crossFnReuseQty));
-    const crossFnForShort = Math.min(shortQty, Math.max(0, crossFnReuseQty) - crossFnForOwned);
-    const discEligible = Math.min(qty, stand + crossFnForOwned);
-    const shortCost = crossFnForShort > 0
-      ? crossFnForShort * shortRate * (1 - GUEST_DISCOUNT_PCT / 100) + (shortQty - crossFnForShort) * shortRate
-      : shortQty * shortRate;
-    if (discEligible <= 0) return Math.round(qty * unitRate + shortCost);
-    return Math.round(discEligible * unitRate * (1 - GUEST_DISCOUNT_PCT / 100) + (qty - discEligible) * unitRate + shortCost);
+    const discEligible = Math.min(qty, Math.max(0, standingUnits) + Math.max(0, crossFnReuseQty));
+    if (discEligible <= 0) return full;
+    return Math.round(discEligible * unitRate * (1 - GUEST_DISCOUNT_PCT / 100) + (qty - discEligible) * unitRate);
   };
   // opts.checkAvailability (Build view's live canvas ONLY — explicit opt-in, never a default) turns
   // on the same unavailable-shortfall pricing already built for Deal Check: qty within what's free
@@ -4412,13 +4393,18 @@ export default function StudioApp() {
         ownedQty = Math.min(qty, otherEventsAvail);
         shortQty = Math.max(0, qty - otherEventsAvail);
       }
+      // Cross-function reuse also counts as "not truly short" — that many units are already
+      // physically installed from the deal's own preceding function, so they price like any other
+      // owned/reused unit (Repeat/date-category/standing-stock rules all apply normally via
+      // repeatAdjustedLineCost below), not at flat production cost. Owner ask: only a unit with
+      // NOTHING left to reuse — genuinely fresh production/purchase — should skip Repeat/date-
+      // category and price at cost% alone.
+      const crossFnBonus = Math.max(0, Math.min(shortQty, crossFnTake));
+      ownedQty += crossFnBonus;
+      shortQty -= crossFnBonus;
       const ownedRate = priceForInvItem(item, rcFactorByKey, imsInventory, el.kitOverrides);
       const shortRate = (Number(item.cost) || 0) * (oosCostPctFor(item, rcCostPctForSub) / 100);
-      // Owner-confirmed fix, mirrors DealCheckOverlay.jsx's own repeatAdjustedRental: a whole-zone
-      // Repeat discount and any leftover cross-function-reuse credit now extend to the shortfall
-      // portion too (repeatAdjustedLineCost's own shortfall param handles the split) — only the
-      // Fixed-Venue standing-stock discount stays scoped to ownedQty, unchanged.
-      const lineCost = repeatAdjustedLineCost(item, ownedQty, ownedRate, opts?.zc, opts?.venueName, crossFnTake, { qty: shortQty, rate: shortRate });
+      const lineCost = repeatAdjustedLineCost(item, ownedQty, ownedRate, opts?.zc, opts?.venueName, crossFnTake) + shortQty * shortRate;
       const unitPrice = qty > 0 ? lineCost / qty : ownedRate;
       const warning = shortQty > 0 ? `⚠ ${shortQty} of ${qty} not free in stock for this date — priced at cost%` : null;
       // `available` here is "how much of THIS row's own qty is real stock" (= ownedQty) — the sole
@@ -9628,8 +9614,9 @@ export default function StudioApp() {
     // declared rather than inferred — the same correction made for priceMode above.
     setAvailModal({ zoneKey, idx, elName: el?.name || "", subcat, date, loading: true, items: [], selectedId: el?.imsId || el?.invId || null, onPick: onPick || null, splitQty: Number(opts?.splitQty) || 0, onSplit: opts?.onSplit || null, pickHint: opts?.pickHint || "", neededLabel: opts?.neededLabel || "", unitLabel: opts?.unitLabel || "" });
     try {
-      const { inventory, blocksForDate } = await loadAvailability(date);
+      const { inventory, blocksForDate, blocksDetailForDate } = await loadAvailability(date);
       const target = String(subcat).toLowerCase().trim();
+      const pickerVenue = activeFnMeta?.venue || venue || "";
       const items = (inventory || [])
         .filter(it => String(it.subCat || it.subcategory || "").toLowerCase().trim() === target)
         // ── PRICE THE WAY THE CALLER WILL USE IT ── (BUG-15)
@@ -9660,16 +9647,27 @@ export default function StudioApp() {
         // default branch), but Deal Check's own repeatAdjustedRental is private to
         // DealCheckOverlay.jsx's closure (dealCheckData/dcInventoryCache), so its callers pass a
         // rateFn instead of this file trying to duplicate that formula.
-        .map(it => ({ id: it.id, name: it.name, photo: (Array.isArray(it.photoUrls) && it.photoUrls[0]) || it.img || "", free: getStudioAvailable(it, blocksForDate), unit: it.unit || "",
-          price: opts?.rateFn ? opts.rateFn(it)
-            : opts?.priceMode === "cost" ? (Number(it.cost) || 0)
-            : opts?.priceMode === "rental" ? imsField.rentalCost(it)
-            // Default (Build's own guest-facing swap): same formula the card itself shows —
-            // base rate × sub-category factor, Repeat/Fixed-Venue discount (gated by the
-            // discreet checkbox, same as always), then the guest-price dial + date-category
-            // multiplier — so a candidate never shows a price that changes the instant it's picked.
-            : repeatAdjustedLineCost(it, 1, priceForInvItem(it, rcFactorByKey, inventory), zoneConfig[zoneKey], venue) * guestPriceMultiplier * dateCategoryMultiplierFor(date),
-          dims: itemDimsText(it) }))
+        .map(it => {
+          // Venue-scoped availability (owner-confirmed bug: this list used to show the item's whole
+          // remaining stock with no regard for Fixed-Venue standing allocations at all — a "251
+          // free" that included units permanently installed at other venues, with no way to tell).
+          // Cross-venue slack (StudioApp.jsx's Deal Check picker fix, lib/ims/fixedVenues.js) folds
+          // in too: a Fixed Venue's OWN unused standing stock for this date counts as real, pickable
+          // availability instead of vanishing into "not free here."
+          const _reserved = reservedByVenueToday((blocksDetailForDate || {})[it.id], eventOrders);
+          const _slack = venueSlackFor(fvCfgForRepeat, pickerVenue, it, _reserved);
+          const free = Math.min(getStudioAvailable(it, blocksForDate), availableAtVenue(fvCfgForRepeat, pickerVenue, it, _reserved));
+          return { id: it.id, name: it.name, photo: (Array.isArray(it.photoUrls) && it.photoUrls[0]) || it.img || "", free, venueSlack: _slack, unit: it.unit || "",
+            price: opts?.rateFn ? opts.rateFn(it)
+              : opts?.priceMode === "cost" ? (Number(it.cost) || 0)
+              : opts?.priceMode === "rental" ? imsField.rentalCost(it)
+              // Default (Build's own guest-facing swap): same formula the card itself shows —
+              // base rate × sub-category factor, Repeat/Fixed-Venue discount (gated by the
+              // discreet checkbox, same as always), then the guest-price dial + date-category
+              // multiplier — so a candidate never shows a price that changes the instant it's picked.
+              : repeatAdjustedLineCost(it, 1, priceForInvItem(it, rcFactorByKey, inventory), zoneConfig[zoneKey], venue) * guestPriceMultiplier * dateCategoryMultiplierFor(date),
+            dims: itemDimsText(it) };
+        })
         .sort((a, b) => b.free - a.free);
       setAvailModal(m => (m && m.zoneKey === zoneKey && m.idx === idx) ? { ...m, loading: false, items } : m);
     } catch { setAvailModal(m => m ? { ...m, loading: false } : m); }

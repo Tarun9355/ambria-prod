@@ -242,7 +242,9 @@ export default function StudioModals({ ctx }) {
                     const sel = inSplit ? splitIds.includes(it.id) : availModal.selectedId===it.id;
                     const out = it.free<=0;
                     return (
-                      <div key={it.id} onClick={()=>inSplit ? toggleSplitId(it.id) : setAvailModal(m=>({...m,selectedId: sel?null:it.id}))} style={{cursor:"pointer",borderRadius:12,overflow:"hidden",border:`2px solid ${sel?"#059669":border}`,background:isDark?"#0F0F1A":"#FAFAFA",position:"relative"}}>
+                      <div key={it.id} onClick={()=>inSplit ? toggleSplitId(it.id) : setAvailModal(m=>({...m,selectedId: sel?null:it.id}))}
+                        title={it.venueSlack?.length ? `+ idle stock at other Fixed Venues: ${it.venueSlack.map(s=>`${s.slack} ${s.name}`).join(" · ")}` : undefined}
+                        style={{cursor:"pointer",borderRadius:12,overflow:"hidden",border:`2px solid ${sel?"#059669":border}`,background:isDark?"#0F0F1A":"#FAFAFA",position:"relative"}}>
                         {sel&&<span style={{position:"absolute",top:6,left:6,zIndex:2,fontSize:9,fontWeight:700,padding:"2px 7px",borderRadius:6,background:"#059669",color:"#fff"}}>✓</span>}
                         <div title="Free on the event date" style={{position:"absolute",top:6,right:6,zIndex:2,fontSize:12,fontWeight:800,minWidth:22,textAlign:"center",padding:"2px 7px",borderRadius:8,background:out?"rgba(239,68,68,0.92)":"rgba(16,185,129,0.92)",color:"#fff"}}>{it.free}</div>
                         {it.photo ? <img src={it.photo} alt="" style={{width:"100%",height:120,objectFit:"cover",display:"block",opacity:out?0.5:1}}/> : <div style={{width:"100%",height:120,display:"flex",alignItems:"center",justifyContent:"center",fontSize:30,background:isDark?"#1a1a2e":"#eee"}}><IconBox size={22}/></div>}
@@ -258,6 +260,13 @@ export default function StudioModals({ ctx }) {
                               already, so "Piece" was mislabeling the exact same 42 as a count of rugs
                               instead of the sqft that number has always meant. */}
                           <div style={{fontSize:9.5,marginTop:2,color:out?"#EF4444":"#059669",fontWeight:600}}>{it.free} {availModal.unitLabel || it.unit || "pc"} free</div>
+                          {/* Owner ask: this "free" figure already folds in genuine idle slack at other
+                              Fixed Venues (see StudioApp.jsx's openAvailModal) — spelled out here too,
+                              not just on hover, since the whole point is making that slack visible
+                              instead of it silently vanishing into one opaque number. */}
+                          {it.venueSlack?.length > 0 && (
+                            <div style={{fontSize:8.5,marginTop:1,color:textS}}>+{it.venueSlack.reduce((s,x)=>s+x.slack,0)} idle at other Fixed Venues</div>
+                          )}
                           {it.dims && <div style={{fontSize:9,color:textS,marginTop:2}}><IconRuler size={9}/> {it.dims}</div>}
                           <div style={{fontSize:11,fontWeight:700,color:accent,marginTop:2}}>{fmt(Math.round(it.price))}</div>
                         </div>
