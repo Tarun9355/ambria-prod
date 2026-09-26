@@ -800,7 +800,7 @@ export default function DealCheckOverlay({ ctx }) {
                 // stock/availability checks — but the money now comes from the same place the quote
                 // does, so the two agree.
                 const zcz = zc[zk];
-                const fd = zcz.floorDims || zcz.dims || {};
+                const fd = zcz.floorDims || {}; // no truss-dims fallback — see calcStructCost's own comment (StudioApp.jsx)
                 const area = (Number(fd.L) || Number(fd.S) || 0) * (Number(fd.W) || Number(fd.S) || 0);
                 const cRate = carpetPricingFor(zcz.cpT, imsCarpetMaterials).rate || 0;
                 const cc = area > 0 ? area * cRate : 0;
@@ -2373,7 +2373,7 @@ export default function DealCheckOverlay({ ctx }) {
                         {
                           const zcz = fns[fnIdx]?.zoneConfig?.[zk];
                           if (zcz && zcz.cpT !== CARPET_OFF) {
-                            const fd = zcz.floorDims || zcz.dims || {};
+                            const fd = zcz.floorDims || {}; // no truss-dims fallback — see calcStructCost's own comment (StudioApp.jsx)
                             const area = (Number(fd.L) || Number(fd.S) || 0) * (Number(fd.W) || Number(fd.S) || 0);
                             const cRate = carpetPricingFor(zcz.cpT, imsCarpetMaterials).rate || 0;
                             if (area > 0 && cRate > 0) zoneRentalTotal += area * cRate;
@@ -2539,7 +2539,7 @@ export default function DealCheckOverlay({ ctx }) {
                                   // default rate — the zone showed a rental total with no card behind
                                   // it. Only the explicit "— None —" pick (CARPET_OFF) should hide this.
                                   if (!zc || zc.cpT === CARPET_OFF) return null;
-                                  const fd = zc.floorDims || zc.dims || {};
+                                  const fd = zc.floorDims || {}; // no truss-dims fallback — see calcStructCost's own comment (StudioApp.jsx)
                                   const neededSqft = Math.round((Number(fd.L)||0)*(Number(fd.W)||0));
                                   if (neededSqft <= 0) return null;
                                   // Exact match, not .includes("carpet") — that substring match used to

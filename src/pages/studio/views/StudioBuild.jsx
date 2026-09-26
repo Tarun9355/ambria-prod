@@ -479,12 +479,15 @@ export function TrussStack({ S, customCeilingField, customMaskingField, k, zc, z
 export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, nested = false, title, onRemove }) {
   // What THIS footprint costs, via the same function the cost engine sums over every row.
   //
-  // Dims are read off zc, NOT off the `fd` prop, and that distinction is the whole thing: the prop
-  // is `zc.floorDims || {}`, while the engine uses `zc.floorDims || zc.dims` — a zone with no floor
-  // dims of its own is priced on its TRUSS dims (hence the "Uses truss L×W if empty" caption).
-  // Taking the prop showed ₹0 on a floor that was being charged for. An extra platform gets no such
-  // fallback, in the engine or here: its dims live on its own row.
-  const rowDims = nested ? (zc.floorDims || {}) : (zc.floorDims || zc.dims || {});
+  // Dims are read off zc, NOT off the `fd` prop — the prop is always `zc.floorDims || {}`, whether
+  // nested or not. Owner ask: adding/sizing a truss must never silently size a Platform/Carpet at
+  // the same footprint, so this no longer falls back to zc.dims (the truss's own dims) the way it
+  // used to for the zone's first floor row — a zone with no floor dims of its own now genuinely has
+  // no Platform/Carpet area (₹0) until someone types one, same as an extra platform row already
+  // required. See calcStructCost's own comment (StudioApp.jsx) for the engine-side half of this and
+  // backfillFloorDims for the one-time migration that keeps an existing deal's price from silently
+  // dropping to ₹0 the moment this shipped.
+  const rowDims = zc.floorDims || {};
   const rowCost = platformRowCost(
     { plH: zc.plH, floorDims: rowDims, cpT: zc.cpT },
     { platformRates: imsPlatformRates, carpetMaterials: imsCarpetMaterials },
@@ -553,9 +556,12 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
                   the explicit CARPET_OFF sentinel) to bill this one floor at ₹0. */}
               <div style={{display:"flex",gap:8,marginBottom:4,alignItems:"flex-end",flexWrap:"wrap"}}>
                 <div style={{flex:1,minWidth:96}}><div style={{fontSize:11.5,color:textS,marginBottom:3}}>Floor Width (ft)</div>
-                  <input type="number" value={fd.W||""} onChange={e=>sFD("W",e.target.value)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}} placeholder={zc.dims?.W||"—"}/></div>
+                  {/* Placeholder no longer previews the truss's own dims — owner ask: a Platform/
+                      Carpet floor size must never silently follow the truss's footprint, so nothing
+                      here should suggest it still does. A blank field really does mean 0 sqft now. */}
+                  <input type="number" value={fd.W||""} onChange={e=>sFD("W",e.target.value)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}} placeholder="—"/></div>
                 <div style={{flex:1,minWidth:96}}><div style={{fontSize:11.5,color:textS,marginBottom:3}}>Floor Depth (ft)</div>
-                  <input type="number" value={fd.L||""} onChange={e=>sFD("L",e.target.value)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}} placeholder={zc.dims?.L||"—"}/></div>
+                  <input type="number" value={fd.L||""} onChange={e=>sFD("L",e.target.value)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}} placeholder="—"/></div>
                 <div style={{flex:1.5,minWidth:150}}>
                   <div style={{fontSize:11.5,color:textS,marginBottom:3,display:"inline-flex",alignItems:"center",gap:5}}><IconCarpet size={12}/>Carpet</div>
                   <select value={zc.cpT===CARPET_OFF?"":(zc.cpT||defaultCarpetMatId(imsCarpetMaterials)||"")} onChange={e=>sZ({cpT:e.target.value||CARPET_OFF})}
@@ -565,7 +571,7 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
                   </select></div>
                 {showCosts&&<div style={{fontSize:11.5,color:textS,paddingBottom:8,whiteSpace:"nowrap"}}>Carpet <span style={{fontWeight:600,color:textP}}>{fmt(rowCost.carpet)}</span></div>}
               </div>
-              <div style={{fontSize:11.5,color:textS,lineHeight:1.3,marginBottom:4}}>{(fd.L||fd.W)?`${fd.L||0}×${fd.W||0} = ${(fd.L||0)*(fd.W||0)} sqft`:"Uses truss L×W if empty"}</div>
+              <div style={{fontSize:11.5,color:textS,lineHeight:1.3,marginBottom:4}}>{(fd.L||fd.W)?`${fd.L||0}×${fd.W||0} = ${(fd.L||0)*(fd.W||0)} sqft`:"No floor size set — priced at 0 sqft until you enter one below"}</div>
 
               </div>
   );

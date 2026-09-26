@@ -275,7 +275,14 @@ const FLORAL_HARDPROP_DEFAULT = {
 const GUEST_STRUCT_DISCOUNT_PCT = 25;
 function calcStructCost(zk, zc, rates, applyDiscount) {
   if (!zc) return { truss: 0, masking: 0, platform: 0, carpet: 0, arches: 0, pillars: 0, glass: 0, print: 0, total: 0 };
-  const d = zc.dims || {}, fd = zc.floorDims || d, r = { truss: 0, masking: 0, platform: 0, carpet: 0, arches: 0, pillars: 0, glass: 0 };
+  // fd (Platform/Carpet's own floor size) no longer falls back to the truss's dims (d) — owner ask:
+  // adding/sizing a truss must never silently size a Platform/Carpet at the same footprint. A zone
+  // with plH/cpT set but no floorDims of its own now prices at 0 sqft until someone types a real
+  // size, same as any other required field left blank — see backfillFloorDims (near restoreBuildState)
+  // for the one-time migration that bakes today's effective (truss-inherited) footprint into
+  // floorDims explicitly on load, so an existing deal's price doesn't silently drop the moment this
+  // shipped.
+  const d = zc.dims || {}, fd = zc.floorDims || {}, r = { truss: 0, masking: 0, platform: 0, carpet: 0, arches: 0, pillars: 0, glass: 0 };
   // Material, drape density, and the ceiling-via-print toggle are all per-row — separate truss
   // structures in the same zone can be a different material, density, or handle their ceiling
   // differently, so each extra row carries its own (set via its own card in the zone editor).
@@ -326,6 +333,28 @@ function calcStructCost(zk, zc, rates, applyDiscount) {
     r.trussDiscount = before - r.total;
   }
   return r;
+}
+// One-time migration for the "Platform/Carpet no longer inherits the truss's own dims" change above:
+// every OTHER pricing/quantity site in this codebase that reads a zone's Platform/Carpet floor size
+// used to fall back to zc.dims (the truss's own L×W) whenever zc.floorDims wasn't set — a zone with
+// plH/cpT turned on this way is currently being charged a real, non-zero price off the truss's
+// footprint. Removing that fallback (owner ask) would otherwise silently drop that price to ₹0 the
+// next time this exact deal loads, with nobody having changed anything. Bakes today's EFFECTIVE
+// footprint into floorDims explicitly, once, on load — so the price stays exactly what it already
+// was; only a zone that turns on Platform/Carpet for the first time after this ships starts genuinely
+// blank. Never touches a zone that already has its own floorDims (even a partial one — someone typed
+// SOMETHING deliberately) or one with neither plH nor cpT set (nothing was ever being charged off the
+// fallback there). Returns the SAME reference when nothing needs migrating.
+function backfillFloorDims(zoneConfig) {
+  if (!zoneConfig || typeof zoneConfig !== "object") return zoneConfig;
+  let changed = false;
+  const next = {};
+  for (const [zk, cfg] of Object.entries(zoneConfig)) {
+    const needsBackfill = cfg && (cfg.plH || cfg.cpT) && !(cfg.floorDims && (cfg.floorDims.L || cfg.floorDims.W));
+    if (needsBackfill) { changed = true; next[zk] = { ...cfg, floorDims: { ...(cfg.dims || {}) } }; }
+    else next[zk] = cfg;
+  }
+  return changed ? next : zoneConfig;
 }
 // Resolves a deal's actual genset units + cost from the matched venue's own counts (resolveVenueGensets
 // — handles un-migrated legacy venues too) unless the deal explicitly overrides either size. null/undefined
@@ -398,7 +427,7 @@ function computeFnSubQty(fnData, capBySub, imsInventory, flowerPatterns, trussIn
   });
   Object.entries(fZoneConfig).forEach(([zk, cfg]) => {
     if (!cfg || !fEnabledElsFresh[zk]) return;
-    const d = cfg.dims || {}; const fd = cfg.floorDims || d;
+    const d = cfg.dims || {}; const fd = cfg.floorDims || {}; // no truss-dims fallback — see calcStructCost's own comment
     if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * Math.max(1, cfg.trussQty || 1); if (tSqft > 0) add("Truss", tSqft); }
     const sqft = (fd.L || 0) * (fd.W || 0);
     if (sqft > 0) { if (cfg.plH) add("Platform", sqft); if (cfg.cpT && cfg.cpT !== CARPET_OFF) add("Carpet", sqft); }
@@ -1126,7 +1155,7 @@ function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckC
     // Zone dims use uppercase L/W/H (see buildZoneConfig) — this used to read lowercase dims.w/
     // dims.d, which never exist, so sqft was always 0 and every truss/platform/carpet truck-load
     // silently dropped out of Build's transport total (only element-based items ever counted).
-    const d = cfg.dims || {}; const fd = cfg.floorDims || d;
+    const d = cfg.dims || {}; const fd = cfg.floorDims || {}; // no truss-dims fallback — see calcStructCost's own comment
     if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * Math.max(1, cfg.trussQty || 1); if (tSqft > 0) addSub("Truss", tSqft); }
     const sqft = (fd.L || 0) * (fd.W || 0);
     // cpT truthy AND not the explicit OFF sentinel — an untouched floor (cpT unset) gets no carpet
@@ -2290,7 +2319,7 @@ export default function StudioApp() {
     }
     setEnabledEls(s.enabledEls || {});
     setElTiers(s.elTiers || {});
-    setZoneConfig(s.zoneConfig || {});
+    setZoneConfig(backfillFloorDims(s.zoneConfig || {}));
     setZoneElements(s.zoneElements || {});
     setItemQty(s.itemQty || {});
     setItemGrades(s.itemGrades || {});
@@ -5118,7 +5147,7 @@ export default function StudioApp() {
         if (!cfg || !fEnabledEls[zk]) return;
         if (!hideDiscountFromClient && cfg.repeat) return;
         const d = cfg.dims || {};
-        const fd = cfg.floorDims || d;
+        const fd = cfg.floorDims || {}; // no truss-dims fallback — see calcStructCost's own comment
         if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * Math.max(1, cfg.trussQty || 1); if (tSqft > 0) addSub("Truss", tSqft); }
         const sqft = (fd.L || 0) * (fd.W || 0);
         if (sqft > 0) { if (cfg.plH) addSub("Platform", sqft); if (cfg.cpT && cfg.cpT !== CARPET_OFF) addSub("Carpet", sqft); }
@@ -5792,7 +5821,7 @@ export default function StudioApp() {
       Object.entries(fZoneConfig).forEach(([zk, cfg]) => {
         if (!cfg || !fEnabledEls[zk]) return;
         const zoneRepeat = !!cfg.repeat;
-        const d = cfg.dims || {}; const fd = cfg.floorDims || d;
+        const d = cfg.dims || {}; const fd = cfg.floorDims || {}; // no truss-dims fallback — see calcStructCost's own comment
         if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * Math.max(1, cfg.trussQty || 1); if (tSqft > 0) addSub("Truss", zoneRepeat ? 0 : tSqft, tSqft, zk, "Truss structure"); }
         const sqft = (fd.L || 0) * (fd.W || 0);
         if (sqft > 0) {
@@ -7893,7 +7922,7 @@ export default function StudioApp() {
     if (session.fn) setFn(session.fn);
     setEnabledEls(session.enabledEls || {});
     setElTiers(session.elTiers || {});
-    setZoneConfig(session.zoneConfig || {});
+    setZoneConfig(backfillFloorDims(session.zoneConfig || {}));
     setZoneElements(session.zoneElements || {});
     setElNotes(session.elNotes || {});
     setSelectedMoods(session.selectedMoods || []);
@@ -8300,7 +8329,7 @@ export default function StudioApp() {
     if (idx !== 0) setActiveFnIdx(0);   // legacy sessions are flat — their data belongs to Fn1
     setEnabledEls(session.enabledEls || {});
     setElTiers(session.elTiers || {});
-    setZoneConfig(session.zoneConfig || {});
+    setZoneConfig(backfillFloorDims(session.zoneConfig || {}));
     setZoneElements(session.zoneElements || {});
     setElNotes(session.elNotes || {});
     setElSelectedPhoto(session.elSelectedPhoto || {});
@@ -9254,8 +9283,9 @@ export default function StudioApp() {
       const dims = zc.dims || {};
       const dimLabel = zm ? ["L", "W", "H"].map(d => `${dims[d] || 0}ft`).join(" × ") : "";
       // Footprint used by platform/carpet — a separate figure from the truss's own L×W×H (a platform
-      // can be a different shape from the truss standing on it), same fallback calcStructCost uses.
-      const floorDims = zc.floorDims || dims;
+      // can be a different shape from the truss standing on it). No truss-dims fallback — see
+      // calcStructCost's own comment.
+      const floorDims = zc.floorDims || {};
       const floorArea = (floorDims.L || floorDims.S || 0) * (floorDims.W || (floorDims.S || 0));
       const floorDimLabel = `${floorDims.L || floorDims.S || 0}×${floorDims.W || floorDims.S || 0}ft`;
       if (zl.truss > 0) {

@@ -641,7 +641,10 @@ const imsField = {
 export const calcZoneCarpet = (zc, carpetItem, markupPct) => {
   const out = { needed: 0, reused: 0, fresh: 0, reusedCost: 0, freshCost: 0, cost: 0, rentalRate: 0, purchaseRate: 0 };
   if (!zc || !zc.cpT || zc.cpT === CARPET_OFF || !carpetItem) return out;
-  const fd = zc.floorDims || zc.dims || {};
+  // No truss-dims (zc.dims) fallback — Carpet must never silently size itself off the truss's own
+  // footprint; see StudioApp.jsx's calcStructCost for the full reasoning and the one-time migration
+  // (backfillFloorDims) that preserves already-priced existing deals across this change.
+  const fd = zc.floorDims || {};
   const needed = Math.round((Number(fd.L) || 0) * (Number(fd.W) || 0));
   if (needed <= 0) return out;
   const owned = imsField.qtyOwned(carpetItem);
@@ -720,7 +723,8 @@ export function buildPlatformPlan(fns, dealCheckData) {
     enabledKeys.forEach(zoneKey => {
       const zc = fn.zoneConfig[zoneKey];
       if (!zc) return;
-      const rows = [{ plH: zc.plH, floorDims: zc.floorDims || zc.dims || {} }, ...(zc.extraPlatformRows || [])];
+      // No truss-dims fallback — see calcStructCost's own comment (StudioApp.jsx).
+      const rows = [{ plH: zc.plH, floorDims: zc.floorDims || {} }, ...(zc.extraPlatformRows || [])];
       rows.forEach((row, rowIdx) => {
         if (!row.plH) return;
         const fd = row.floorDims || {};
