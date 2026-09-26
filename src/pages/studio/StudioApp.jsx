@@ -4982,6 +4982,19 @@ export default function StudioApp() {
     return { trucks: allTrucks, tripRate, total, isNew, tier: tierId, tierLabel, breakdown, floralTrucks, bufferTrucks: bufTrucks, itemTrucks, totalFloralCost, gensets: plan.genset125, venueGensets: plan.venueGenset125, venueGenset62: plan.venueGenset62, gensetCost: gensetCostForGuest, gensetRate, gensetRate62, genset62: plan.genset62, truckTotal, clientScale };
   }, [venue, customTripRate, customGensets, gensetRate, gensetRate62, genset62, trVenues, zoneElements, enabledEls, rcItems, truckCap, floralPerTruck, bufferTiers, totalCost, zoneConfig, imsInventory, dealCheckData, studioFloralData, floralOverrides, floralRatio, activeFnIdx, clientDate, fvCfgForRepeat, venueParents, clientLedger, activeClientId]);
 
+  // agencyFeeAmt is split out of grandTotal (not just an inline Math.round(grandTotal*pct/(100+pct)))
+  // so Build's own Live Estimate rail can show the fee as its own visible line — same "its own line,
+  // not folded silently into any total" convention the Cost Sheet's Agency Fee row already uses.
+  // Without it, Décor + Transport (+ By-zone) never added back up to the headline number, which read
+  // exactly like the fee had been dropped even though grandTotal already carried it.
+  const agencyFeeAmt = useMemo(() => {
+    const base = totalCost() + transportCalc.total;
+    const fvCfg = { fixedVenues: sharedFloralSettings.fixedVenues, venueParents: venueParents || dealCheckData?.venueParents || {} };
+    const discounted = Math.max(0, base - fixedVenueDealDiscount(fvCfg, [{ fnVenue: venue }], () => base, base));
+    const feePct = Number(sharedFloralSettings.agencyFeePct) || 20;
+    return Math.round(discounted * feePct / 100);
+  }, [totalCost, transportCalc, dealCheckData, venue, studioFloralData, sharedFloralSettings, venueParents]);
+
   const grandTotal = useMemo(() => {
     const base = totalCost() + transportCalc.total;
     // Fixed-venue discount — same as eventGrandTotal's, just for this one active function/venue.
@@ -4991,9 +5004,8 @@ export default function StudioApp() {
     // Agency fee (Admin → Settings, default 20%) — this is Build's own live "page total" for the
     // active function, the number a salesperson watches while building. It has to carry the fee too,
     // or it would visibly disagree with eventGrandTotal/Deal Check/the cost sheet, which all do.
-    const feePct = Number(sharedFloralSettings.agencyFeePct) || 20;
-    return discounted + Math.round(discounted * feePct / 100);
-  }, [totalCost, transportCalc, dealCheckData, venue, studioFloralData, sharedFloralSettings, venueParents]);
+    return discounted + agencyFeeAmt;
+  }, [totalCost, transportCalc, dealCheckData, venue, studioFloralData, sharedFloralSettings, venueParents, agencyFeeAmt]);
 
   const collectAllFunctionData = useCallback(() => {
     const all = [];
@@ -10976,7 +10988,7 @@ export default function StudioApp() {
     dcSwapSearch, setDcSwapSearch, dcSwapPicked, setDcSwapPicked, dcSwapMode, setDcSwapMode, dcSwapSplitQty, setDcSwapSplitQty,
     // pricing helpers
     rcIsSMB, buildZoneConfig, getFloralMode, applyFloralRatio, getElPrice, getElPriceForFn, calcElsCost, calcElsCostForFn, rcCostPctForSub,
-    calcPhotoCost, calcStructCost, calcFullEventCost, getFullCost, totalCost, transportCalc, grandTotal, pricingReady,
+    calcPhotoCost, calcStructCost, calcFullEventCost, getFullCost, totalCost, transportCalc, grandTotal, agencyFeeAmt, pricingReady,
     collectAllFunctionData, calcFunctionCost, calcFnFloralSourcingCost, eventGrandTotal, calcFunctionBreakdown, manpowerPlanForBooking, persistDeptSnapshot, syncDealValueNow, dcEoActuals, refreshDcEoActuals,
     // deal check orchestration + persistence (overlay)
     openDealCheck, runDealCheckGenerate, getStudioAvailable, loadAvailability, getActiveSoftHold, reliableSave, DC_CACHE_SK,

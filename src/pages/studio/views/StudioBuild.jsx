@@ -629,7 +629,7 @@ export default function StudioBuild({ ctx }) {
     // date demand
     dateTypes, clientLedger, activeClientId, saveClientLedger, hideDiscountFromClient, guestPriceMultiplier, activeCrossFnReuseQty,
     // build canvas
-    setShowCosts, grandTotal, totalCost, transportCalc, pricingReady,
+    setShowCosts, grandTotal, agencyFeeAmt, totalCost, transportCalc, pricingReady,
     savedInsps, setStep, setPreviewImg,
     floralRatio, setFloralRatio,
     zoneKeys, customZones, setCustomZones, zoneLabelsD, zoneMeta,
@@ -1882,6 +1882,11 @@ export default function StudioBuild({ ctx }) {
         <div style={{padding:"9px 15px",borderBottom:`1px solid ${rule}`}}>
           {line("Décor", fmt(totalCost()))}
           {line("Transport", fmt(transportCalc.total))}
+          {/* Its own line, not folded silently into the headline — same convention the Cost Sheet's
+              Agency Fee row already uses. Without it, Décor + Transport never added back up to the
+              total above, which read exactly like the fee had been dropped even though it was always
+              inside that number. */}
+          {line(`Agency fee (${Number(sharedFloralSettings.agencyFeePct) || 20}%)`, fmt(agencyFeeAmt))}
         </div>
         <div style={{padding:"11px 15px"}}>
           <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:4}}>
