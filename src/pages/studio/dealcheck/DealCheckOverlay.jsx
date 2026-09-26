@@ -251,9 +251,18 @@ export default function DealCheckOverlay({ ctx }) {
     const parts = Array.isArray(edited) ? edited : item.subItems;
     return (Number(item.kitBase) || 0) + parts.reduce((s, cp) => {
       const ci = dcInventoryCache.find(x => x.id === (cp.itemId ?? cp.id));
+      if (!ci) return s;
       // An explicit 0 means the component was removed; a missing qty on a master row means one.
       const q = cp.qty == null ? 1 : (Number(cp.qty) || 0);
-      return s + (ci ? imsField.rentalCost(ci) : 0) * q;
+      // A component that is ITSELF a kit (kit-inside-a-kit) recurses through this same function —
+      // its own kitBase + its own components — instead of a flat imsField.rentalCost lookup, which
+      // used to silently ignore everything a nested kit is actually built from and price it as one
+      // bare rental line. No cardKey to look up a Deal-Check-specific per-instance override at this
+      // nested level (dcKitEdits only tracks the outer card's own edits), so a nested kit always
+      // prices off its own live default recipe here — same limitation StudioApp.jsx's own
+      // priceForInvItem has for a component with no subOverrides of its own.
+      const ciRental = (Array.isArray(ci.subItems) && ci.subItems.length) ? effKitRental(ci, fnIdx, null) : imsField.rentalCost(ci);
+      return s + ciRental * q;
     }, 0);
   };
 
