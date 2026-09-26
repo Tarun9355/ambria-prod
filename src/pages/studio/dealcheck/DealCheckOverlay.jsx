@@ -801,8 +801,23 @@ export default function DealCheckOverlay({ ctx }) {
                       const pmap = {}, bmap = {};
                       (pv.topology.pillars || []).forEach(p => { const ft = Math.round(Number(p.H) || 0); if (ft > 0) pmap[ft] = (pmap[ft] || 0) + 1; });
                       (pv.topology.beams || []).forEach(b => { const ft = Math.round(Number(b.lengthFt) || 0); if (ft > 0) bmap[ft] = (bmap[ft] || 0) + 1; });
-                      Object.entries(pmap).forEach(([ft, n]) => deptInv["Tenting"].push({ name: `Truss pillar ${ft}ft`, photo: "", qty: n, unit: 0, total: 0, sub: "truss structure" }));
-                      Object.entries(bmap).forEach(([ft, n]) => deptInv["Tenting"].push({ name: `Truss beam ${ft}ft`, photo: "", qty: n, unit: 0, total: 0, sub: "truss structure" }));
+                      // Per-piece rate = this zone's own effective ₹/RFT (cost ÷ total RFT, already
+                      // material-aware via trussInvForMaterial inside calcZoneTrussPreview) × the
+                      // piece's own length — e.g. a 12ft pillar at ₹20/RFT prices at ₹240 each. Used to
+                      // show the "how" here, not to re-derive it — the zone's actually-billed truss
+                      // cost (netActual, added to `truss` above) stays the source of truth; for a
+                      // half_box zone that cost is a U/box hybrid average, so these lines' own sum can
+                      // legitimately disagree with it (Dept Ops already flags such a row instead of
+                      // treating the mismatch as a bug — see its own "WHY THE TOTAL IS NOT ALWAYS RATE
+                      // × QTY" comment).
+                      const pillarRftRateEff = pv.costs.pillarRft > 0 ? pv.costs.pillarCost / pv.costs.pillarRft : 0;
+                      const beamRftRateEff = pv.costs.beamRft > 0 ? pv.costs.beamCost / pv.costs.beamRft : 0;
+                      Object.entries(pmap).forEach(([ft, n]) => { const unit = Math.round(Number(ft) * pillarRftRateEff); deptInv["Tenting"].push({ name: `Truss pillar ${ft}ft`, photo: "", qty: n, unit, total: unit * n, sub: "truss structure" }); });
+                      Object.entries(bmap).forEach(([ft, n]) => { const unit = Math.round(Number(ft) * beamRftRateEff); deptInv["Tenting"].push({ name: `Truss beam ${ft}ft`, photo: "", qty: n, unit, total: unit * n, sub: "truss structure" }); });
+                      if (pv.batta?.rftWithBuffer > 0 && pv.costs.battaCost > 0) {
+                        const battaUnit = Math.round(pv.costs.battaCost / pv.batta.rftWithBuffer);
+                        deptInv["Tenting"].push({ name: "Batta", photo: "", qty: pv.batta.rftWithBuffer, unit: battaUnit, total: Math.round(pv.costs.battaCost), sub: "truss structure" });
+                      }
                     }
                     const fabCost = calcZoneFabricCost(row, tInv, anchors, density) * repeatFabMult;
                     truss += fabCost; byFn[fi].truss += fabCost; addD("Fabric", "fabric", fabCost); // truss/masking fabric → Fabric
