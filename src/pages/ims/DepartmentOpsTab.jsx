@@ -43,6 +43,65 @@ const loadPdfLogos = () => new Promise((resolve) => {
   img.onerror = () => resolve({ light: null, dark: null });
   img.src = LOGO_ASSET;
 });
+
+// ── WHY EXPORTED TEXT SAT LOW, AND THE FIX ──
+// html2canvas 1.4.1 draws each run of text at `bounds.top + baseline`, where the baseline comes
+// from its FontMetrics — measured in the GLOBAL `document` (this app page), not in the report's
+// iframe where the webfonts actually live, then rounded to whole px and padded by a hard-coded
+// +2. So every line of text in the PDF landed 1–3px below where the browser draws it on a test
+// machine, and ~5px on the owner's (it depends on which fonts the app page has and on zoom).
+// That is why the pills, card badges and Qty/Size rows kept looking off-centre in the file while
+// looking right on screen, and why CSS nudges never held: the error is not a constant.
+// The cure is to correct it where it happens: while an export runs, fillText on html2canvas's own
+// (detached) canvases is shifted by the exact difference between the baseline html2canvas
+// computed — recomputed here the same way it does — and the true one measured in the report doc.
+// Measured across 90–150% zoom this puts every text within ~1px of the on-screen layout.
+// Returns the restore function; it MUST be called when the export ends.
+const H2C_TINY_IMG = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+const fixH2cTextBaseline = (reportDoc) => {
+  const proto = window.CanvasRenderingContext2D?.prototype;
+  if (!proto || !reportDoc?.body) return () => {};
+  const orig = proto.fillText;
+  const cache = new Map();
+  // Baseline from the top of the text's box: as html2canvas measures it (its own recipe, in its
+  // own document, integer offsets and all), and as the report's document really lays it out.
+  const measure = (d, font, family, size, exact) => {
+    const box = d.createElement("div"), img = d.createElement("img"), span = d.createElement("span");
+    box.style.visibility = "hidden"; box.style.margin = "0"; box.style.padding = "0"; box.style.whiteSpace = "nowrap";
+    img.src = H2C_TINY_IMG; img.width = 1; img.height = 1; img.style.margin = "0"; img.style.padding = "0"; img.style.verticalAlign = "baseline";
+    span.style.margin = "0"; span.style.padding = "0";
+    if (exact) { box.style.position = "absolute"; box.style.left = "-9999px"; box.style.top = "0"; box.style.font = font; span.style.font = font; }
+    else { box.style.fontFamily = family; box.style.fontSize = size; span.style.fontFamily = family; span.style.fontSize = size; }
+    span.appendChild(d.createTextNode("Hidden Text"));
+    box.appendChild(span); box.appendChild(img);
+    d.body.appendChild(box);
+    const b = exact ? img.getBoundingClientRect().bottom - span.getBoundingClientRect().top : img.offsetTop - span.offsetTop + 2;
+    d.body.removeChild(box);
+    return b;
+  };
+  const shift = (font) => {
+    if (cache.has(font)) return cache.get(font);
+    let dy = 0;
+    try {
+      const m = /(\d*\.?\d+)px\s+(.+)$/.exec(font);
+      if (m) {
+        const drawn = measure(document, font, m[2], m[1] + "px", false);
+        const truth = measure(reportDoc, font, m[2], m[1] + "px", true);
+        // A wild value means a measurement went wrong — draw it as html2canvas would rather than move text far.
+        if (Number.isFinite(drawn) && Number.isFinite(truth) && Math.abs(truth - drawn) < 12) dy = truth - drawn;
+      }
+    } catch { dy = 0; }
+    cache.set(font, dy);
+    return dy;
+  };
+  // Only html2canvas's canvases: they are never attached to the page, so a chart or anything else
+  // drawing text on a visible canvas meanwhile is left alone.
+  proto.fillText = function (text, x, y, ...rest) {
+    const dy = this.textBaseline === "alphabetic" && this.canvas && !this.canvas.isConnected ? shift(this.font) : 0;
+    return orig.call(this, text, x, y + dy, ...rest);
+  };
+  return () => { proto.fillText = orig; };
+};
 import { kvGet } from "../../lib/ims/kv";
 
 // ── THE SUMMARY TILE ROW ──
@@ -1691,6 +1750,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     // How far in it goes is not recorded anywhere — the zone is as precise as the data gets, so
     // the page says the zone and leaves the spot to the reference photo on that zone's page.
     const zonesByName = new Map();
+    // How many of each the zone lists call for — the only count there is for a kit another
+    // department holds, since this department's sheet carries just its parts.
+    const zoneQtyByName = new Map();
     (fns || []).forEach(fn => Object.entries(fn?.elements || {}).forEach(([zk, list]) => {
       if (fn.enabledEls && fn.enabledEls[zk] === false) return;
       (Array.isArray(list) ? list : []).forEach(el => {
@@ -1698,21 +1760,24 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         if (!n) return;
         if (!zonesByName.has(n)) zonesByName.set(n, new Set());
         zonesByName.get(n).add(zoneName(zk));
+        zoneQtyByName.set(n, (zoneQtyByName.get(n) || 0) + (Number(el?.qty) || 1));
       });
     }));
     const zonesFor = (nm) => [...(zonesByName.get(String(nm || "").trim().toLowerCase()) || [])];
+    const zoneQtyFor = (nm) => zoneQtyByName.get(String(nm || "").trim().toLowerCase()) || 0;
 
     const kitBlocks = [];
     blockedItemsGrouped.forEach(it => {
       if (it.isKit && Array.isArray(it.components) && it.components.length) {
         const kInv = (it.invId && invById.get(String(it.invId))) || invByName.get(String(it.name || "").trim().toLowerCase()) || null;
-        kitBlocks.push({ name: it.name, ours: true, photo: invPhoto(kInv, it), zones: zonesFor(it.name), parts: it.components.map(c => ({ name: c.name, qty: c.qty })) });
+        // The held quantity is the kit's own count; the parts under it are already totals for all of them.
+        kitBlocks.push({ name: it.name, ours: true, qty: Number(it.qty) || zoneQtyFor(it.name), photo: invPhoto(kInv, it), zones: zonesFor(it.name), parts: it.components.map(c => ({ name: c.name, qty: c.qty })) });
       }
     });
     [...partsByKit.values()].forEach(parts => {
       const label = String(parts[0]?.fromKit || "").trim();
       if (!label || kitBlocks.some(k => String(k.name).trim().toLowerCase() === label.toLowerCase())) return;
-      kitBlocks.push({ name: label, ours: false, photo: invPhoto(invByName.get(label.toLowerCase()) || null, null), zones: zonesFor(label), parts: parts.map(p => ({ name: p.name, qty: p.qty })) });
+      kitBlocks.push({ name: label, ours: false, qty: zoneQtyFor(label), photo: invPhoto(invByName.get(label.toLowerCase()) || null, null), zones: zonesFor(label), parts: parts.map(p => ({ name: p.name, qty: p.qty })) });
     });
     // ── PACK BY HEIGHT, NOT BY COUNT ──
     // Four blocks to a page suited a floor of seven-part consoles and nothing else: three kits
@@ -1743,6 +1808,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           <div class="kb-h">
             ${k.photo ? `<div class="kb-ph" ${bg(k.photo)}></div>` : ""}
             <div class="kb-t"><div class="kb-no">Kit ${String(kitNo).padStart(2, "0")}</div><div class="kb-nm">${esc(k.name)}</div></div>
+            ${k.qty ? `<div class="kb-z kb-q"><div class="kb-zk">Qty</div><div class="kb-zv">${esc(k.qty)}</div></div>` : ""}
             <div class="kb-z"><div class="kb-zk">${k.zones.length > 1 ? "Zones" : "Zone"}</div><div class="kb-zv${k.zones.length ? "" : " none"}">${k.zones.length ? esc(k.zones.join(" · ")) : "Not in a zone"}</div></div>
           </div>
           ${k.ours ? "" : `<div class="kb-w">The kit is on another department's sheet — ${esc(dept)} carries only the parts below</div>`}
@@ -1939,7 +2005,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   .tag{display:inline-block;background:#DBEAFE;color:#1D4ED8;font-size:9px;font-weight:700;padding:1.5px 4px;border-radius:2.5px;vertical-align:middle;letter-spacing:.04em;margin-left:3px}
   /* The share bar gets its own narrow column so it stays a measure instead of becoming a rule
      across the sheet, which is what made it read as a divider on screen. */
-  .bar{padding-right:4px}
+  /* The cells are top-aligned so a figure sits level with a name that carries a sub-line
+     (see td above). A 4px bar has no text to sit level with, though, and top alignment left it
+     floating above the amount it measures — so this one column centres on its row instead. */
+  .bar{padding-right:4px;vertical-align:middle}
   .bar i{display:block;height:4px;border-radius:2px;background:#2563EB;min-width:2px}
   td.bar{position:relative;background:linear-gradient(#EEF2F7,#EEF2F7) 9px center/calc(100% - 18px) 4px no-repeat}
   .pct{font-size:10px;color:#64748B;font-weight:600}
@@ -1983,7 +2052,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
      centres on screen and then sits low in the export, because html2canvas draws text a few px
      lower than the browser lays it out (see the note above). align-items keeps two chips of
      different content on one centre line instead of stretching the shorter one. */
-  .zt{display:flex;align-items:center;gap:6px;flex-shrink:0}
+  /* The negative margin lines the chips' text up with the function/date line beside them: the
+     head bottom-aligns its two sides, which put the 28px chips' centres ~4.5px above the 21px
+     date line's. */
+  .zt{display:flex;align-items:center;gap:6px;flex-shrink:0;margin-bottom:-4.5px}
   .zt span{box-sizing:border-box;height:28px;line-height:28px;padding:0 14px;font-size:11.5px;font-weight:700;color:#1A1A1A;background:#E6E1D5;border-radius:20px;white-space:nowrap}
   /* Says WHAT is being measured. On its own "L 52 × W 14 × H 12 ft" could be the zone, the
      structure or a single prop; it is the zone's own span. */
@@ -2044,6 +2116,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   .kb-zk{font-family:"Inter",Arial,sans-serif;font-size:8.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#9A8F76;line-height:1.5}
   .kb-zv{font-family:"Inter",Arial,sans-serif;font-size:12px;font-weight:700;color:#1A1A1A;line-height:1.4}
   .kb-zv.none{font-weight:600;color:#A39A89}
+  /* The kit count sits beside the zone, split from it by a hairline, so "2" is not read as part of the zone name. */
+  .kb-q{padding-right:13px;border-right:1px solid #D9D2C2}
   .kb-w{font-family:"Inter",Arial,sans-serif;font-size:10.5px;color:#8A7F68;padding:8px 13px 0}
   .kb-l{display:grid;grid-template-columns:1fr 1fr;gap:0 26px;list-style:none;margin:0;padding:8px 13px 11px}
   .kb-l.one{grid-template-columns:1fr}
@@ -2156,6 +2230,7 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
     } catch { /* built-in names it is */ }
     const logos = await loadPdfLogos();
     const frame = document.createElement("iframe");
+    let restoreFillText = null;
     try {
       const [{ jsPDF }, h2c] = await Promise.all([import("jspdf"), import("html2canvas")]);
       const html2canvas = h2c.default;
@@ -2211,6 +2286,8 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
       const sheet = doc.getElementById("sheet");
       frame.style.height = Math.max(1200, sheet.scrollHeight + 80) + "px";
       await new Promise(r => setTimeout(r, 60));
+      // Fonts are settled by now, so the true baselines measured in the report doc are final.
+      restoreFillText = fixH2cTextBaseline(doc);
 
       const pdf = new jsPDF({ unit: "pt", format: "a4", compress: true });
       // Every page is painted the sheet's cream edge to edge, so the margins around each block are
@@ -2369,6 +2446,7 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
         alert(`Could not produce the report.\n\n${err?.message || err}`);
       }
     } finally {
+      restoreFillText?.();
       frame.remove();
       setExporting(false);
     }
