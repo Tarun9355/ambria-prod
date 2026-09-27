@@ -1486,16 +1486,11 @@ export default function IMS() {
         ) : tab === "dashboard" ? (
           <DashboardTab projects={projects} functions={functions} inventory={items} />
         ) : tab === "attendance" ? (
-          <div className="bg-white rounded-2xl p-6 sm:p-8 shadow-[0_1px_2px_rgba(16,24,40,0.06),0_8px_24px_-12px_rgba(16,24,40,0.18)] max-w-2xl">
-            <div className="flex items-start gap-3">
-              <span aria-hidden="true" className="shrink-0 w-10 h-10 rounded-xl bg-blue-100 flex items-center justify-center text-lg leading-none">🕑</span>
-              <div className="min-w-0">
-                <h2 className="text-lg font-bold text-gray-900">Attendance</h2>
-                <p className="mt-1 text-sm text-gray-500">Not built yet — the tab is here so it can be given to the right roles, but nothing records attendance behind it.</p>
-                <p className="mt-4 text-sm text-gray-600">Tell me what a day should capture and I will build it: which crew turned up per event and department, or per person across the week; whether it is marked by the department head on site or by the office afterwards; and whether it should feed the manpower cost that Dept Ops already logs.</p>
-              </div>
-            </div>
-          </div>
+          /* Deliberately empty until attendance is built. The tab stays so it can be granted to
+             roles now (RoleAccessModal keeps its own copy of this list), but the placeholder that
+             used to sit here was removed — it addressed the owner directly, which is not something
+             to show on a live screen. */
+          null
         ) : tab === "inventory" ? (
           <InventoryTab
             inventory={items} setInventory={setInventory}
