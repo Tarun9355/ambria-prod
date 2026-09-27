@@ -20,6 +20,20 @@ import { qtyUsedElsewhereInBuild } from "../../lib/studio/dealAvailability";
 import { isHiddenSubcat } from "../../lib/rateCard";
 import { itemDimsText, priceForInvItem } from "../../lib/ims/helpers";
 
+// Short codes for the availability picker's per-venue idle-slack breakdown — substring match
+// (case-insensitive) rather than an exact one, so "Ambria Restro"/"Restro"/a future venue-group
+// rename all still resolve, instead of only ever matching one exact spelling of each venue name.
+const VENUE_SHORT_CODES = [
+  { code: "AP", match: "pushpanjali" },
+  { code: "AE", match: "exotica" },
+  { code: "MKT", match: "manaktala" },
+  { code: "AR", match: "restro" },
+];
+const venueShortCode = (name) => {
+  const n = String(name || "").toLowerCase();
+  return VENUE_SHORT_CODES.find((v) => n.includes(v.match))?.code || name;
+};
+
 export default function StudioModals({ ctx }) {
   const {
     // dcCustomModal
@@ -265,7 +279,7 @@ export default function StudioModals({ ctx }) {
                               not just on hover, since the whole point is making that slack visible
                               instead of it silently vanishing into one opaque number. */}
                           {it.venueSlack?.length > 0 && (
-                            <div style={{fontSize:8.5,marginTop:1,color:textS}}>+{it.venueSlack.reduce((s,x)=>s+x.slack,0)} idle at other Fixed Venues</div>
+                            <div style={{fontSize:8.5,marginTop:1,color:textS}}>+{it.venueSlack.map(s=>`${s.slack} ${venueShortCode(s.name)}`).join(", ")}</div>
                           )}
                           {it.dims && <div style={{fontSize:9,color:textS,marginTop:2}}><IconRuler size={9}/> {it.dims}</div>}
                           <div style={{fontSize:11,fontWeight:700,color:accent,marginTop:2}}>{fmt(Math.round(it.price))}</div>
