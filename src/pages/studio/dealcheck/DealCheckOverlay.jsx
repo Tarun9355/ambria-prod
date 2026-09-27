@@ -1619,7 +1619,42 @@ export default function DealCheckOverlay({ ctx }) {
           const dealValue = hasNegotiated
             ? { amount: Math.round(negotiatedAmount), pending: activeClient?.bookedSystemTotal != null ? Math.round(eventGrandTotal - activeClient.bookedSystemTotal) : 0 }
             : { amount: Math.round(eventGrandTotal || 0), pending: 0 };
-          return { income: incomeRounded, inventory: dcCostRollup.deptInv, floralPlan, manpowerPlan, manpowerDetail, season: dcSeasonInfo, fabricPlan, mpPhases: dcCostRollup.mpPhases || null, dealValue };
+          // ── PER-DEPARTMENT TRUCK ROWS, FOR THE IMS SETUP BOOK ──
+          // The Transport tab groups its truck-capacity rows by department while it DRAWS them,
+          // and nothing ever wrote that grouping down. The only transport figure reaching IMS was
+          // the booking's whole truck cost, filed to the Transport department wholesale by the
+          // addD("Transport", …) call in dcCostRollup — so every other department's book showed
+          // transport as zero and could not say which trucks its own props account for.
+          // Classified exactly as the tab classifies it, so the two can never disagree: the
+          // contributing inventory item's own category first, then the Sub-Categories tab's
+          // admin-set grouping, then keyword-matching the row's own label.
+          let transportPlan = null;
+          try {
+            const subcatCatLabelById = {};
+            (rcSubcatFactors || []).forEach(r => { if (r?.id && r.category_label) subcatCatLabelById[r.id] = r.category_label; });
+            const byDept = {}; const tiers = new Set();
+            let totalTrucks = 0, totalCost = 0;
+            (dcCostRollup.fns || []).forEach((fn, fi) => {
+              let bd = null; try { bd = calcFunctionBreakdown ? calcFunctionBreakdown(fn) : null; } catch { /* ignore */ }
+              const tr = bd?.transport; if (!tr) return;
+              totalTrucks += Number(tr.trucks) || 0;
+              totalCost += Number(tr.truckTotal) || 0;
+              if (tr.tierLabel) tiers.add(String(tr.tierLabel));
+              const fnLabel = [fn?.type || `Function ${fi + 1}`, fn?.date].filter(Boolean).join(" · ");
+              (tr.breakdown || []).forEach(r => {
+                const subcatCat = subcatCatLabelById[r.subKey];
+                const classifyText = r.invCat || ((subcatCat && subcatCat !== "Other") ? subcatCat : r.label);
+                const d = r.isBuffer ? "Buffer" : sharedCatToDept(classifyText, dealCheckData?.categoryDepartments);
+                const slot = byDept[d] = byDept[d] || { trucks: 0, rows: [] };
+                const t = Number(r.trucks) || 0;
+                slot.trucks += t;
+                slot.rows.push({ fn: fnLabel, label: r.label, qty: Number(r.qty) || 0, unit: r.unit || "", perTruck: Number(r.perTruck) || 0, trucks: Math.round(t * 100) / 100, buffer: !!r.isBuffer });
+              });
+            });
+            Object.values(byDept).forEach(v => { v.trucks = Math.round(v.trucks * 100) / 100; });
+            transportPlan = { byDept, totalTrucks: Math.round(totalTrucks * 100) / 100, truckTotal: Math.round(totalCost), tierLabel: [...tiers].join(", "), capturedAt: Date.now() };
+          } catch { /* a book extra — never fail the whole department sync over it */ }
+          return { income: incomeRounded, inventory: dcCostRollup.deptInv, floralPlan, manpowerPlan, manpowerDetail, season: dcSeasonInfo, fabricPlan, mpPhases: dcCostRollup.mpPhases || null, dealValue, transportPlan };
         };
         if (isSold && persistDeptSnapshot) {
           const _sig = JSON.stringify((dcCostRollup.DEPTS || []).map(d => Math.round(dcCostRollup.dept?.[d]?.total || 0)));

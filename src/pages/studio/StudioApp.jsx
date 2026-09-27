@@ -3783,7 +3783,7 @@ export default function StudioApp() {
     // After a regenerate, wipe deptOps (dept head's plan + actuals) so IMS starts fresh from the new plan.
     const wipe = deptWipeRef.current; if (wipe) deptWipeRef.current = false; // one-shot per regenerate
     const withLayout = (fns) => Array.isArray(fns) && layout.size ? fns.map(f => (f && layout.has(f.fnIdx)) ? { ...f, ...layout.get(f.fnIdx) } : f) : fns;
-    const applySnap = (base) => ({ ...base, ...(wipe ? { deptOps: {} } : {}), functionsDetail: withLayout(base.functionsDetail), deptIncome: snap.income || {}, deptInventory: snap.inventory || {}, floralPlan: snap.floralPlan || base.floralPlan || null, fabricPlan: snap.fabricPlan || base.fabricPlan || null, manpowerPlan: snap.manpowerPlan || [], manpowerDetail: snap.manpowerDetail || {}, mpPhases: snap.mpPhases || null, deptSeason: snap.season || null, deptIncomeSig: sig, deptSyncedAt: Date.now(), dealValue: snap.dealValue || base.dealValue || null });
+    const applySnap = (base) => ({ ...base, ...(wipe ? { deptOps: {} } : {}), functionsDetail: withLayout(base.functionsDetail), deptIncome: snap.income || {}, deptInventory: snap.inventory || {}, floralPlan: snap.floralPlan || base.floralPlan || null, fabricPlan: snap.fabricPlan || base.fabricPlan || null, manpowerPlan: snap.manpowerPlan || [], manpowerDetail: snap.manpowerDetail || {}, mpPhases: snap.mpPhases || null, deptSeason: snap.season || null, deptIncomeSig: sig, deptSyncedAt: Date.now(), dealValue: snap.dealValue || base.dealValue || null, transportPlan: snap.transportPlan ?? null });
     try {
       // Read the FRESHEST row so we never clobber IMS-owned fields with Studio's stale local copy.
       const { data: row } = await supabase.from("event_orders").select("data").eq("id", eo.id).maybeSingle();
@@ -3792,7 +3792,12 @@ export default function StudioApp() {
         // Skip only when truly in sync: same signature AND the income snapshot is actually present.
         // (If the income was lost but the marker lingered, we must re-push to heal it.)
         const incomeOk = cur.deptIncome && Object.keys(cur.deptIncome).length > 0;
-        if (cur.deptSyncedAt && cur.deptIncomeSig === sig && incomeOk) return; // already in sync — leave the head's edits untouched
+        // Same heal as incomeOk, for the transport rows the setup book needs: an order synced
+        // before transportPlan existed has a matching signature and would be skipped forever.
+        // The KEY's presence is the test, not its value — a booking with no venue or no decor
+        // legitimately has none, and testing the value would re-push that order on every pass.
+        const transportOk = Object.prototype.hasOwnProperty.call(cur, "transportPlan");
+        if (cur.deptSyncedAt && cur.deptIncomeSig === sig && incomeOk && transportOk) return; // already in sync — leave the head's edits untouched
         await supabase.from("event_orders").update({ data: applySnap(cur) }).eq("id", eo.id);
       } else {
         // No table row yet → create it from the local EO (first sync).
