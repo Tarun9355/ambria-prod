@@ -1620,7 +1620,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           <div><div class="zk"><b>Zone ${String(zoneNo).padStart(2, "0")}</b>${parts > 1 ? ` · Part ${part} of ${parts}` : ""}</div><h2>${esc(pg.title)}</h2>
             <div class="orn l"><i></i><b></b><i></i></div>
             <div class="zm">${esc(pg.fnLabel || selDateStr || "")}</div></div>
-          <div class="zt">${pg.zoneDims ? `<span>${esc(pg.zoneDims)}</span>` : ""}<span>${pg.items.length ? `${pg.items.length} item${pg.items.length === 1 ? "" : "s"}` : `No ${esc(dept)} items`}</span></div>
+          <div class="zt">${pg.zoneDims ? `<span><i class="zl">Zone</i>${esc(pg.zoneDims)}</span>` : ""}<span>${pg.items.length ? `${pg.items.length} item${pg.items.length === 1 ? "" : "s"}` : `No ${esc(dept)} items`}</span></div>
         </div>
         <div class="zs" style="height:${stageH}px">
           <div class="zphoto" style="top:${photoTop}px;height:${PHOTO_H}px;${bgCss(pg.photo)}" ${bgData(pg.photo)}>${pg.photo ? "" : "<span>No zone photo</span>"}</div>
@@ -1911,8 +1911,16 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   .zk b{font-weight:700}
   .zh h2{font-family:"Playfair Display",Georgia,serif;font-size:38px;line-height:1.3;margin:0 0 2px;color:#1A1A1A;font-weight:700;letter-spacing:-.01em}
   .zm{font-size:12.5px;line-height:1.7;color:#6B6B6B}
-  .zt{display:flex;gap:6px;flex-shrink:0}
-  .zt span{font-size:11.5px;line-height:1.7;font-weight:700;color:#1A1A1A;background:#E6E1D5;border-radius:20px;padding:5px 14px;white-space:nowrap}
+  /* Pills centre their text by line-height against a fixed height — the pattern .zc-no above
+     has always used — rather than by padding around a font-dependent line box. Padding alone
+     centres on screen and then sits low in the export, because html2canvas draws text a few px
+     lower than the browser lays it out (see the note above). align-items keeps two chips of
+     different content on one centre line instead of stretching the shorter one. */
+  .zt{display:flex;align-items:center;gap:6px;flex-shrink:0}
+  .zt span{box-sizing:border-box;height:28px;line-height:28px;padding:0 14px;font-size:11.5px;font-weight:700;color:#1A1A1A;background:#E6E1D5;border-radius:20px;white-space:nowrap}
+  /* Says WHAT is being measured. On its own "L 52 × W 14 × H 12 ft" could be the zone, the
+     structure or a single prop; it is the zone's own span. */
+  .zt .zl{font-style:normal;font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#7A7263;margin-right:7px}
   .zs{position:relative;width:706px}
   /* The zone photo is mounted like a print: a white mat and a gold hairline, lifted off the
      page by a soft shadow. */
@@ -1938,8 +1946,17 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   .za.up::before{bottom:-3px}
   .zpin{position:absolute;width:22px;height:22px;border-radius:50%;background:#1A1A1A;color:#F4F1EA;font-size:11px;font-weight:700;line-height:22px;text-align:center;box-shadow:0 0 0 2px rgba(255,253,248,.9),0 3px 8px rgba(0,0,0,.35)}
   .zg{display:grid;grid-template-columns:repeat(3,224px);gap:17px;justify-content:center}
-  .zc-kt{position:absolute;top:13px;right:13px;padding:2.5px 8px;border-radius:10px;background:#1A1A1A;color:#F4F1EA;font-size:9.5px;font-weight:700;letter-spacing:.1em;box-shadow:0 0 0 2px #FFFDF8;font-family:"Inter",Arial,sans-serif}
-  .zc-sz{position:absolute;top:13px;left:13px;padding:2.5px 9px;border-radius:10px;background:#FFFDF8;color:#1A1A1A;border:1.5px solid #1A1A1A;font-size:9.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;font-family:"Inter",Arial,sans-serif}
+  /* ── THE TWO CORNER BADGES MUST BE ONE BOX ──
+     They sit at the same top on the same card, so any difference in their metrics reads as a
+     misalignment. The size badge is outlined and the kit badge was not, which made it 3px taller
+     (1.5px of border top and bottom) and dropped its text half a pixel lower. The kit badge now
+     carries the same border in its own fill colour — invisible, but the same box.
+     Both also declare a line-height: without one the glyph box came from the font's defaults, and
+     since html2canvas draws text a few px lower than the browser (see the note above), the word
+     sat on the bottom border in the export while looking fine on screen. */
+  .zc-kt,.zc-sz{position:absolute;top:13px;box-sizing:border-box;height:20px;line-height:17px;padding:0 9px;border-radius:10px;font-size:9.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;border:1.5px solid transparent;box-shadow:0 0 0 2px #FFFDF8;font-family:"Inter",Arial,sans-serif;white-space:nowrap}
+  .zc-kt{right:13px;background:#1A1A1A;color:#F4F1EA;border-color:#1A1A1A}
+  .zc-sz{left:13px;background:#FFFDF8;color:#1A1A1A;border-color:#1A1A1A}
   /* A kit block reads as a small card with a titled band, the way the zone cards do: the kit's
      own photo, a serial, the name, and a count chip. The parts below use dotted leaders rather
      than a rule per row — a rule under a single-part kit read as an underline on the heading. */
