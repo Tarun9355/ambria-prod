@@ -1276,9 +1276,21 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       sectionNo += 1;
       return `<section data-block><div class="sh"><span class="sn">${String(sectionNo).padStart(2, "0")}</span><h3>${esc(title)}</h3><i></i></div>${body}</section>`;
     };
-    const table = (heads, rows, widths) => rows.length
-      ? `<table><colgroup>${widths.map(w => `<col style="width:${w}">`).join("")}</colgroup><thead><tr>${heads.map((h, i) => `<th${i ? ' class="n"' : ""}>${esc(h)}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table>`
-      : "";
+    /* ── A HEADING IS ALIGNED BY ITS OWN COLUMN, NOT BY ITS POSITION ──
+       This right-aligned every heading after the first, on the assumption that only column one
+       holds words and the rest hold figures. Half the tables in this book break that assumption
+       — the truck list (vehicle, driver, phone, status), tenting by zone, dismantle routing —
+       so their headings sat hard right above left-aligned data, a column's width apart from the
+       values they name. That is what "nothing lines up" looks like.
+       The first body row is the authority: a column whose cell is marked numeric gets a numeric
+       heading, everything else gets a plain one. Any table added later inherits it for free,
+       which is the point — the old rule was a guess that no new table could know it had to meet. */
+    const table = (heads, rows, widths) => {
+      if (!rows.length) return "";
+      const cells = rows[0].match(/<td\b[^>]*>/g) || [];
+      const numeric = (i) => /class="[^"]*\bn\b[^"]*"/.test(cells[i] || "");
+      return `<table><colgroup>${widths.map(w => `<col style="width:${w}">`).join("")}</colgroup><thead><tr>${heads.map((h, i) => `<th${numeric(i) ? ' class="n"' : ""}>${esc(h)}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table>`;
+    };
 
     const venue = sel?.functionsDetail?.[0]?.venue || sel?.venue || "—";
 
@@ -1335,10 +1347,21 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     ];
     if (spendRows.length) spendRows.push(`<tr class="tot"><td>Total logged</td><td class="n b">${money(actualCost)}</td></tr>`);
 
-    const truckRows = trucks.map((t, i) => {
-      const n = blockedItems.filter(it => (Number(t.items?.["inv:" + it.id]) || 0) > 0).length;
-      return `<tr><td>Truck ${i + 1}</td><td>${esc(t.vehicle || "—")}</td><td>${esc(t.driver || "—")}</td><td>${esc(t.phone || "—")}</td><td class="n">${n} item${n === 1 ? "" : "s"}</td><td>${esc(t.status || "—")}</td></tr>`;
-    });
+    const truckRows = trucks.map((t, i) =>
+      `<tr><td>Truck ${i + 1}</td><td>${esc(t.vehicle || "—")}</td><td>${esc(t.driver || "—")}</td><td>${esc(t.phone || "—")}</td><td>${esc(t.status || "—")}</td></tr>`);
+
+    /* ── WHAT IS ACTUALLY GOING ON THE TRUCKS ──
+       The truck table used to carry a "Load" column reading "7 items", which is a number nobody
+       can load from: it says how many distinct lines a truck was ticked against, not what they
+       are or how many of each. The list below is the thing the loading screen shows and the
+       thing a loader needs — every physical item by name with its full quantity.
+       Built from the FLAT list (blockedItems), so a kit appears as its shell plus each part as
+       its own line, exactly as it is carried, rather than as one row saying "console".
+       Ordering is left alone: it is the loading screen's own order, and two lists that disagree
+       about sequence are worse than one that is not sorted the way you would choose. */
+    const loadUnits = blockedItems.reduce((a, it) => a + (Number(it.qty) || 0), 0);
+    const loadRows = blockedItems.map(it =>
+      `<tr><td>${esc(it.name)}${it.kitOf ? `<div class="sub">part of ${esc(it.kitOf)}</div>` : ""}</td><td class="n b">${esc(it.qty)}</td></tr>`);
 
     const moveRows = movements.map(m =>
       `<tr><td>${esc(m.name)}</td><td>${esc(m.type === "transfer" ? `Transfer → ${m.toEventName || "site"}` : m.type === "damage" ? "Damaged" : "Back to production house")}</td><td class="n">${esc(m.qty)}</td><td>${esc(m.by || "—")}</td></tr>`);
@@ -1688,7 +1711,6 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           <div class="kb-h">
             ${k.photo ? `<div class="kb-ph" ${bg(k.photo)}></div>` : ""}
             <div class="kb-t"><div class="kb-no">Kit ${String(kitNo).padStart(2, "0")}</div><div class="kb-nm">${esc(k.name)}</div></div>
-            <div class="kb-c">${k.parts.length} part${k.parts.length === 1 ? "" : "s"}</div>
           </div>
           ${k.ours ? "" : `<div class="kb-w">The kit is on another department's sheet — ${esc(dept)} carries only the parts below</div>`}
           <ul class="kb-l${kitCols(k) === 1 ? " one" : ""}">${k.parts.map(p => `<li><i class="kb-x"></i><span>${esc(p.name)}</span><i class="kb-d"></i><b>${esc(p.qty)}</b></li>`).join("")}</ul>
@@ -1783,7 +1805,17 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   .ft-logo{display:block;height:26px;width:auto;margin:0 auto}
   .cv-kind{margin-top:22px;font-size:10.5px;line-height:1.7;font-weight:700;letter-spacing:.34em;text-transform:uppercase;color:#8A8272}
   .cv-title{font-family:"Playfair Display",Georgia,serif;font-weight:800;font-size:76px;line-height:1.15;letter-spacing:-.01em;color:#1A1A1A;margin-top:18px}
-  .cv-for{font-family:"Playfair Display",Georgia,serif;font-weight:600;font-size:28px;line-height:1.4;color:#8B6F42;margin-top:4px}
+  /* ── THE COVER'S NAMES ARE SET IN THE SANS, DELIBERATELY ──
+     html2canvas paints Playfair on this card with no advance on the space glyph, so "pratik
+     test" came out "pratiktest". It is specific to the cover: the same face sets item names and
+     kit names elsewhere in the book and those are fine. Ruled out as causes: windowWidth,
+     centring, flex layout, the font weight, the Google Fonts weight set, non-breaking spaces,
+     white-space:pre, per-word spans with margins, and flex gap — none restore the space. A
+     word-spacing compensation fixed two-word names and still lost gaps in four-word ones.
+     Inter renders correctly on this same card at every length, so the two lines that carry real
+     multi-word names use it. The department title above stays in the serif: it is always a
+     single word, so it cannot hit this. */
+  .cv-for{font-family:"Inter",-apple-system,"Segoe UI",Arial,sans-serif;font-weight:600;font-size:27px;line-height:1.45;letter-spacing:-.01em;color:#8B6F42;margin-top:6px}
   /* The ornament: gold hairline, a small gold diamond, gold hairline. */
   .orn{display:flex;align-items:center;justify-content:center;gap:10px;margin:26px 0}
   .orn i{display:block;width:90px;height:1px;background:#C9A96E}
@@ -1804,7 +1836,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   .cv-sessions{display:flex;flex-wrap:wrap;justify-content:center;gap:22px;width:100%}
   .cv-ses{flex:0 1 400px;border-radius:24px;padding:26px 28px 24px;border:1.5px solid var(--d);box-shadow:5px 5px 0 var(--d);background:var(--l)}
   .cv-ses .sk{font-size:11px;line-height:1.8;font-weight:700;letter-spacing:.3em;text-transform:uppercase;color:var(--d);opacity:.8}
-  .cv-ses .st{font-family:"Playfair Display",Georgia,serif;font-weight:800;font-size:40px;line-height:1.3;color:var(--d);padding-bottom:2px}
+  .cv-ses .st{font-family:"Inter",-apple-system,"Segoe UI",Arial,sans-serif;font-weight:700;font-size:37px;line-height:1.3;letter-spacing:-.02em;color:var(--d);padding-bottom:2px}
   .cv-ses .sl{height:1px;background:var(--d);opacity:.28;margin:16px 6px 18px}
   .cv-ses .sg{display:flex;justify-content:center}
   .cv-ses .sf{padding:0 20px 2px;border-left:1px solid rgba(26,26,26,.14)}
@@ -1861,7 +1893,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   table{width:100%;border-collapse:collapse;table-layout:fixed}
   th,td{padding:6px 9px;text-align:left;vertical-align:middle;word-wrap:break-word}
   th{font-size:9.5px;line-height:1.7;font-weight:600;text-transform:uppercase;letter-spacing:.18em;color:#A8844A;border-bottom:1px solid rgba(201,169,110,.45);padding-bottom:5px}
-  td{border-bottom:1px solid #F3EEE4;font-size:11.5px;line-height:1.75}
+  /* top, not middle: a row whose name carries a sub-line ("part of Wooden Coffee Table") had its
+     quantity floating half a line below the name it belongs to. */
+  td{border-bottom:1px solid #F3EEE4;font-size:11.5px;line-height:1.75;vertical-align:top}
   tbody tr:last-child td{border-bottom:0}
   .n{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
   .b{font-weight:700;color:#0F172A}
@@ -1970,7 +2004,6 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
      the export cut in half along the band's border. A long kit name takes a second line instead
      and the band grows with it. */
   .kb-nm{font-family:"Playfair Display",Georgia,serif;font-size:14.5px;font-weight:700;color:#1A1A1A;line-height:1.5;margin-top:1px}
-  .kb-c{flex-shrink:0;font-family:"Inter",Arial,sans-serif;font-size:9.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#F4F1EA;background:#1A1A1A;border-radius:9px;padding:3px 8px;line-height:1.5}
   .kb-w{font-family:"Inter",Arial,sans-serif;font-size:10.5px;color:#8A7F68;padding:8px 13px 0}
   .kb-l{display:grid;grid-template-columns:1fr 1fr;gap:0 26px;list-style:none;margin:0;padding:8px 13px 11px}
   .kb-l.one{grid-template-columns:1fr}
@@ -2042,7 +2075,10 @@ ${/* Money, the priced inventory table, the crew plan and logged spend are left 
      goes to the people setting up the event, who need what goes where, not what it costs. The
      zone layout pages below carry every item, with photo, qty and size. */ ""}
 ${zoneHtml}
-${truckRows.length ? sect("Loading & dispatch", table(["#", "Vehicle", "Driver", "Phone", "Load", "Status"], truckRows, ["11%", "22%", "21%", "18%", "14%", "14%"])) : ""}
+${(truckRows.length || loadRows.length) ? sect("Loading & dispatch",
+  (truckRows.length ? table(["#", "Vehicle", "Driver", "Phone", "Status"], truckRows, ["12%", "26%", "24%", "20%", "18%"]) : "")
+  + (loadRows.length ? `<p class="meta">Everything going to site — ${blockedItems.length} item${blockedItems.length === 1 ? "" : "s"}, ${loadUnits} piece${loadUnits === 1 ? "" : "s"} in total.</p>`
+    + table(["Item", "Qty"], loadRows, ["80%", "20%"]) : "")) : ""}
 ${trRows.length ? sect("Transport", table(["Load", "Quantity", "Fits per truck", "Trucks"], trRows, ["46%", "20%", "22%", "12%"]) + `<p class="note">${trNote}</p>`) : ""}
 ${moveRows.length ? sect("Dismantle routing", table(["Item", "Goes to", "Qty", "Logged by"], moveRows, ["38%", "32%", "12%", "18%"])) : ""}
 ${tentTableRows.length ? sect("Tenting by zone", table(["Zone", "Span (L x W x H)", "Truss", "Floor / carpet", "Also"], tentTableRows, ["24%", "20%", "18%", "16%", "22%"])) : ""}
@@ -2116,6 +2152,7 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
         } catch { /* fallback stack is fine */ }
       }
       if (doc.fonts?.ready) { try { await doc.fonts.ready; } catch { /* font API absent — the fallback stack is fine */ } }
+
 
       // The zone pages are mostly photos, set as CSS backgrounds — which nothing waits for. Load
       // each one first (CORS-enabled, as html2canvas's useCORS will request it), so the capture
@@ -3657,42 +3694,6 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                     <button onClick={addFleet} className="h-9 bg-gray-900 hover:bg-black text-white px-3 rounded-lg text-xs font-semibold transition-colors">Add vehicle</button>
                   </div>
                 </div>
-              )}
-              {/* Per-item loaded summary across all trucks */}
-              {blockedItems.length > 0 && trucks.length > 0 && (
-                /* ── LOADED ACROSS TRUCKS, AS A PROGRESS LIST ──
-                   Was "Name: 0/15" runs wrapping into each other, so neither the names nor the
-                   counts lined up. Now one row per item — name, a thin bar, count in its own
-                   right-aligned column — with the overall tally in the heading, which is the
-                   thing you check before dispatch. */
-                (() => {
-                  const rows = blockedItems.map(it => { const k = "inv:" + it.id; return { it, k, ld: truckLoadedQty(k) }; });
-                  const done = rows.filter(r => r.ld === r.it.qty).length;
-                  return (
-                    <div className="px-3 sm:px-4 py-3 border-t border-gray-100">
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-gray-500">Loaded across trucks</span>
-                        <span className={"text-[10px] font-semibold px-1.5 py-0.5 rounded-md tabular-nums " + (done === rows.length ? "bg-emerald-50 text-emerald-700" : "bg-gray-100 text-gray-500")}>{done} of {rows.length} done</span>
-                      </div>
-                      <div className="mt-2 space-y-1.5">
-                        {rows.map(({ it, k, ld }) => {
-                          const pct = it.qty > 0 ? Math.min(100, Math.round((ld / it.qty) * 100)) : 0;
-                          const over = ld > it.qty, full = ld === it.qty;
-                          const tone = over ? "bg-red-500" : full ? "bg-emerald-500" : "bg-amber-400";
-                          return (
-                            <div key={k} className="flex items-center gap-3">
-                              <span className="min-w-0 flex-1 truncate text-xs text-gray-700" title={it.name}>{it.name}</span>
-                              <span aria-hidden="true" className="shrink-0 w-16 h-1.5 rounded-full bg-gray-100 overflow-hidden">
-                                <span className={"block h-full rounded-full " + tone} style={{ width: `${over ? 100 : pct}%` }} />
-                              </span>
-                              <span className={"shrink-0 w-12 text-right text-[11px] font-semibold tabular-nums " + (over ? "text-red-600" : full ? "text-emerald-600" : ld > 0 ? "text-amber-600" : "text-gray-400")}>{ld}/{it.qty}</span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  );
-                })()
               )}
               {/* Trucks */}
               {trucks.length === 0 ? (
