@@ -912,6 +912,13 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const unroutedQty = (it) => { const k = "inv:" + it.id; return Math.max(0, it.qty - (movedQty(k, "return") + movedQty(k, "transfer") + movedQty(k, "damage") + movedQty(k, "repair"))); };
   const routeRemaining = (it, type, extra = {}) => { const q = unroutedQty(it); if (q > 0) addMovement(it, type, q, extra); };
   const routeAllToWarehouse = () => { const rest = blockedItems.filter(it => unroutedQty(it) > 0); if (!rest.length) return; saveDept({ movements: [...movements, ...rest.map(it => ({ id: "mv_" + Date.now() + "_" + Math.floor(Math.random() * 100000), itemKey: "inv:" + it.id, invId: it.invId || null, name: it.name, type: "return", qty: unroutedQty(it), at: Date.now(), by: authUser?.name || "—" }))] }); };
+  // ── THE DISMANTLE PLAN IS AN ON-SITE JOB ──
+  // It used to open in Planning as well, which put the same decision in two places: here against
+  // the booked quantities, and in On-site → "Dismantle & routing" against what is actually
+  // standing at the venue. Only the second one can be right, because it is made at teardown.
+  // The block below is left intact and simply not rendered in Planning — flip this to true to
+  // bring it back, rather than rebuilding two hundred lines of matrix.
+  const SHOW_DISMANTLE_IN_PLANNING = false;
   // Dept-head dismantle PLAN (set in Planning; ops confirms on-site). Per item = an ARRAY of splits
   // so one item can go to several places: { [itemKey]: [{qty, type, toEventId, toEventName}, …] }.
   const dismantlePlan = (deptData.dismantlePlan && typeof deptData.dismantlePlan === "object") ? deptData.dismantlePlan : {};
@@ -1261,6 +1268,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     // data-block marks a unit the paginator will try to keep on one page. Sections are the
     // natural unit: a heading stranded at the foot of a page with its table overleaf is the
     // single thing that makes a generated report look generated.
+    // S / M / B spelled out: a lone "S" on a card is a letter, "Small" is an instruction.
+    const SMB_LABEL = { S: "Small", M: "Medium", B: "Big" };
     let sectionNo = 0;
     const sect = (title, body) => {
       if (!body) return "";
@@ -1353,6 +1362,18 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     const invByName = new Map((inventory || []).map(i => [String(i.name || "").trim().toLowerCase(), i]));
     const heldByInv = new Map(blockedItemsGrouped.filter(b => b.invId).map(b => [String(b.invId), b]));
     const heldByName = new Map(blockedItemsGrouped.map(b => [String(b.name || "").trim().toLowerCase(), b]));
+    // ── WHERE A KIT'S PARTS HIDE ──
+    // Deal Check splits a kit across departments by each PART's own category, so Floral ends up
+    // holding a terracotta element bolted to a coffee table that Furniture owns. The zone lists
+    // only ever name the kit and carry no components at all, so such a part is unreachable by
+    // name — `fromKit` is the only record of the parent, and this index the only way back to it.
+    const partsByKit = new Map();
+    blockedItemsGrouped.forEach(b => {
+      const p = String(b.fromKit || "").trim().toLowerCase();
+      if (!p) return;
+      if (!partsByKit.has(p)) partsByKit.set(p, []);
+      partsByKit.get(p).push(b);
+    });
     const hasDeptSnapshot = Array.isArray(sel?.deptInventory?.[dept]) && sel.deptInventory[dept].length > 0;
     const invDims = (inv) => {
       if (!inv) return "";
@@ -1383,7 +1404,15 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     const fns = Array.isArray(sel?.functionsDetail) ? sel.functionsDetail : [];
     fns.forEach((fn, fi) => {
       const els = fn?.elements || {};
-      Object.keys(els).forEach(zk => {
+      // ── EVERY ZONE OF THE EVENT, NOT ONLY THE ONES THIS DEPARTMENT FILLS ──
+      // A zone is described in three places and none of them is complete on its own: the element
+      // lists, the zone config (dims, truss) and the chosen reference photos — a zone can easily
+      // have a photo picked and no elements yet. Walking only the element lists dropped those,
+      // and dropped every zone whose elements all belong to OTHER departments, which on a Floral
+      // book is most of the bar, the food stalls and the centrepieces. The crew sets up alongside
+      // everyone else, so those zones belong in the book too — as the reference photo, at least.
+      const zoneKeys = [...new Set([...Object.keys(els), ...Object.keys(fn?.zones || {}), ...Object.keys(fn?.elSelectedPhoto || {})])];
+      zoneKeys.forEach(zk => {
         if (fn.enabledEls && fn.enabledEls[zk] === false) return;
         const merged = new Map();
         (Array.isArray(els[zk]) ? els[zk] : []).forEach(el => {
@@ -1400,49 +1429,72 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           // put items on the wrong department's PDF and left Floral's empty.
           // Flower arrangements (patterns) are not inventory at all; they go on the Floral sheet.
           const isPattern = !inv && !!el?.patternId;
+          // ── A KIT'S PARTS ARE PLACED WHERE THE KIT IS ──
+          // When this department holds parts of the kit named here, they belong on THIS zone's
+          // page: they are bolted to something already standing in it. Reporting them as "not in
+          // a zone" was worse than useless — it sent someone hunting for a loose item already on
+          // the truck inside something else — but merely hiding them (what this did until now)
+          // dropped them out of the book altogether, which is worse again.
+          const kitParts = nm ? (partsByKit.get(nm) || []) : [];
           const mine = held ? true
+            : kitParts.length ? true
             : isPattern ? dept === "Floral"
             : hasDeptSnapshot ? false
             : inv ? catToDept(inv.category || inv.cat) === dept : false;
           if (!mine) return;
+          const kitLabel = String(inv?.name || el?.name || "").trim() || "kit";
+          kitParts.forEach(p => {
+            if (placed.has(p.id)) return; // one physical part, on the first zone that claims it
+            placed.add(p.id);
+            const pInv = (p.invId && invById.get(String(p.invId))) || invByName.get(String(p.name || "").trim().toLowerCase()) || null;
+            merged.set("p:" + p.id, { name: p.name, qty: Number(p.qty) || 0, photo: invPhoto(pInv, p), dims: invDims(pInv), source: "Inside " + kitLabel });
+          });
+          // Only the parts are ours — the kit shell itself sits on another department's sheet.
+          if (!held && kitParts.length) return;
           if (held) placed.add(held.id);
-          const key = inv ? "i:" + inv.id : "n:" + nm;
+          // ── S / M / B ──
+          // Florals (and some lighting) are quoted at a size, not just a count: the same
+          // arrangement is a different build at Small than at Big, and `el.size` is where the
+          // salesperson's choice lives. It is only ever set where it applies — 118 of 693 live
+          // zone elements carry one, always S, M or B — so an item without one simply has none.
+          // It joins the merge key because two sizes of one item are two different things to
+          // make: merged on name alone they collapsed into a single card with the quantities
+          // added, which is the one thing a crew must not read.
+          // An UNSET size is not "no size": Studio's Build row highlights B for a floral recipe
+          // (and M for anything else with sizes) without ever writing it, so `size` stays ""
+          // while the salesperson sees B selected — and Deal Check prices it at B too, via
+          // `normalizeSizeClass(el.size || "B")`. Printing nothing there contradicted both the
+          // screen and the quote. A recipe element therefore falls back to the same B the price
+          // was built on; anything else is left blank, because without the rate card IMS cannot
+          // tell an unsized item from an unset one, and a wrong size is worse than none.
+          const rawSize = String(el?.size || "").trim().toUpperCase();
+          const elSize = SMB_LABEL[rawSize] || (!rawSize && el?.patternId ? SMB_LABEL.B : "");
+          const key = (inv ? "i:" + inv.id : "n:" + nm) + (elSize ? "|" + elSize : "");
           const prev = merged.get(key);
           const qty = Number(el?.qty) || 1;
           if (prev) { prev.qty += qty; return; }
-          merged.set(key, { name: inv?.name || el?.name || held?.name || "Item", qty, photo: invPhoto(inv, held), dims: invDims(inv) });
+          merged.set(key, { name: inv?.name || el?.name || held?.name || "Item", qty, photo: invPhoto(inv, held), dims: invDims(inv), size: elSize, kit: (held?.isKit && Array.isArray(held.components)) ? held.components.length : 0 });
         });
         const items = [...merged.values()];
-        if (!items.length) return;
+        const zPhoto = fn.elSelectedPhoto?.[zk]?.src || "";
+        const zDims = zoneDimsText(fn.dims?.[zk] || fn.zones?.[zk]?.dims);
+        // The only zone still worth skipping is one with nothing to put on the page at all: none
+        // of our items, no reference photo and no dimensions. That page would be a heading.
+        if (!items.length && !zPhoto && !zDims) return;
         zonePages.push({
           zk,
           title: zoneName(zk),
           fnLabel: [fn.type || (fns.length > 1 ? `Function ${fi + 1}` : ""), fn.date].filter(Boolean).join(" · "),
-          photo: fn.elSelectedPhoto?.[zk]?.src || "",
-          zoneDims: zoneDimsText(fn.dims?.[zk] || fn.zones?.[zk]?.dims),
+          photo: zPhoto,
+          zoneDims: zDims,
           items,
         });
       });
     });
-    // ── A KIT'S PARTS ARE PLACED WHEN THE KIT IS ──
-    // Zone element lists name the KIT ("Wooden Coffee Table") and carry no components array at
-    // all, so matching held items against those lists can never see a part. Meanwhile Deal Check
-    // splits a kit's parts across departments by each part's own category, so Floral ends up
-    // holding a terracotta element that is physically bolted to a Furniture coffee table sitting
-    // in the photobooth. Reported as "not in a zone" that is worse than useless: it sends someone
-    // hunting for a loose item that is already on the truck inside something else.
-    // The held row records its parent in `fromKit`, so resolve through it: if the parent kit is
-    // named by any zone list, the part is placed too.
-    const placedElementNames = new Set();
-    (fns || []).forEach(fn => Object.values(fn?.elements || {}).forEach(list =>
-      (Array.isArray(list) ? list : []).forEach(el => {
-        const n = String(el?.name || "").trim().toLowerCase();
-        if (n) placedElementNames.add(n);
-      })));
-    const inPlacedKit = (b) => {
-      const parent = String(b?.fromKit || "").trim().toLowerCase();
-      return !!parent && placedElementNames.has(parent);
-    };
+    // A kit's parts are marked placed by the zone loop above, on the page of the zone their
+    // parent stands in. An earlier version instead matched part -> parent by name down here and
+    // dropped the match from the loose list; since the parent kit belongs to another department
+    // it never appeared on a zone page either, so the part vanished from the book entirely.
     /* ── TENTING, BROKEN DOWN BY ZONE ──
        Tenting's held rows are whole-event totals with no zone on them at all — the Deal Check
        rollup adds every zone's truss together and keeps only "Truss pillar 12ft x6", so there is
@@ -1476,9 +1528,27 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       `<tr><td><b>${esc(r.name)}</b>${(fns || []).length > 1 ? `<div class="sub">${esc(fns[r.fi]?.type || `Function ${r.fi + 1}`)}</div>` : ""}</td><td>${esc(r.dims || "—")}</td><td>${esc(r.truss || "—")}</td><td>${esc(r.floor || "—")}</td><td>${esc(r.notes || "—")}</td></tr>`);
 
 
-    const unplaced = blockedItemsGrouped.filter(b => !placed.has(b.id) && !inPlacedKit(b)).map(b => {
+    /* ── THE TRUCKS THIS DEPARTMENT FILLS ──
+       Deal Check sizes a booking's transport by filling trucks sub-category by sub-category
+       ("Chandelier: 40 pcs, 30 to a truck"), and its Transport tab groups those rows by
+       department on screen. That grouping was never written down, so the only transport figure
+       reaching IMS was the whole truck cost filed to the Transport department — every other
+       book showed transport as zero. transportPlan carries the same grouping, classified the
+       same way, so a department can now state its own share: what it sends and how much of a
+       truck that fills. Buffer trucks are a booking-wide allowance rather than anyone's load,
+       so they stay in their own group and out of this table.
+       Absent on any order last synced before this shipped — the section simply does not print
+       until Deal Check pushes the department breakdown again. */
+    const trPlan = sel?.transportPlan || null;
+    const trMine = trPlan?.byDept?.[dept] || null;
+    const trRows = (trMine?.rows || []).map(r =>
+      `<tr><td><b>${esc(r.label)}</b>${(fns || []).length > 1 && r.fn ? `<div class="sub">${esc(r.fn)}</div>` : ""}</td><td class="n">${esc(r.qty)}${r.unit ? " " + esc(r.unit) : ""}</td><td class="n">${Number(r.perTruck) > 0 ? esc(r.perTruck) + (r.unit ? " " + esc(r.unit) : "") + " per truck" : "—"}</td><td class="n b">${esc(r.trucks)}</td></tr>`);
+    const trNote = !trMine ? "" : `${esc(dept)} fills ${trMine.trucks} of the ${trPlan.totalTrucks} truck${trPlan.totalTrucks === 1 ? "" : "s"} this event needs${trPlan.tierLabel ? ` · ${esc(trPlan.tierLabel)}` : ""}. A truck is counted by capacity, so a part-truck share is normal — the loads travel together.`;
+
+    const unplaced = blockedItemsGrouped.filter(b => !placed.has(b.id)).map(b => {
       const inv = (b.invId && invById.get(String(b.invId))) || invByName.get(String(b.name || "").trim().toLowerCase()) || null;
-      return { name: b.name, qty: Number(b.qty) || 0, photo: invPhoto(inv, b), dims: invDims(inv), prodOrBuy: b.prodOrBuy || null, source: b.prodOrBuy === "buying" ? "Buying" : b.prodOrBuy === "production" ? "Production" : "" };
+      const kitOf = String(b.fromKit || "").trim();
+      return { name: b.name, qty: Number(b.qty) || 0, photo: invPhoto(inv, b), dims: invDims(inv), prodOrBuy: b.prodOrBuy || null, kit: (b.isKit && Array.isArray(b.components)) ? b.components.length : 0, source: b.prodOrBuy === "buying" ? "Buying" : b.prodOrBuy === "production" ? "Production" : kitOf ? "Inside " + kitOf : "" };
     });
     // ── TWO PAGES, AND WHY THEY STAY TWO ──
     // Briefly merged into one "From production" page, which was wrong: on pratik test's 29 Aug
@@ -1519,6 +1589,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     const card = (it, zone, num) => `
       <div class="zc-ph" ${bg(it.photo)}>${it.photo ? "" : "<span>No photo</span>"}</div>
       ${num ? `<div class="zc-no">${num}</div>` : ""}
+      ${it.kit ? `<div class="zc-kt">KIT · ${esc(it.kit)}</div>` : ""}
+      ${it.size ? `<div class="zc-sz">${esc(it.size)}</div>` : ""}
       <div class="zc-b">
         <div class="zc-n">${esc(it.name)}</div>
         <div class="zc-r"><span>Qty</span><b>${esc(it.qty)}</b></div>
@@ -1526,10 +1598,14 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         ${it.source ? `<div class="zc-r"><span>From</span><b>${esc(it.source)}</b></div>` : ""}
       </div>`;
     const zoneSection = (pg, chunk, part, parts, zoneNo, offset) => {
+      // A zone this department has nothing in still gets its page — the reference photo, run the
+      // full height of the sheet, so the crew can see the setup they are working alongside.
+      // Without this the geometry below would reserve a 340px card row and print a blank band.
+      const bare = !chunk.length;
       const top = chunk.slice(0, 3), bot = chunk.slice(3, 6);
       const rows = bot.length ? 2 : 1;
-      const PHOTO_H = Math.max(260, PAGE_PX - HEAD_PX - rows * (ROW_H + ARROW));
-      const photoTop = ROW_H + ARROW;
+      const PHOTO_H = bare ? PAGE_PX - HEAD_PX : Math.max(260, PAGE_PX - HEAD_PX - rows * (ROW_H + ARROW));
+      const photoTop = bare ? 0 : ROW_H + ARROW;
       const botTop = photoTop + PHOTO_H + ARROW;
       // No item numbers (removed by request) — each card's arrow alone ties it to the photo.
       const cards = [
@@ -1538,13 +1614,13 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         ...bot.map((it, i) => { const x = colX(i, bot.length); return `<div class="zc" style="left:${x}px;top:${botTop}px">${card(it, pg.title)}</div>
           <div class="za up" style="left:${x + CARD_W / 2 - 1}px;top:${photoTop + PHOTO_H}px;height:${ARROW}px"></div>`; }),
       ].join("");
-      const stageH = bot.length ? botTop + ROW_H : photoTop + PHOTO_H;
+      const stageH = bare ? PHOTO_H : bot.length ? botTop + ROW_H : photoTop + PHOTO_H;
       return `<section data-block data-page class="zp"><div class="pc tl"></div><div class="pc tr"></div>
         <div class="zh">
           <div><div class="zk"><b>Zone ${String(zoneNo).padStart(2, "0")}</b>${parts > 1 ? ` · Part ${part} of ${parts}` : ""}</div><h2>${esc(pg.title)}</h2>
             <div class="orn l"><i></i><b></b><i></i></div>
             <div class="zm">${esc(pg.fnLabel || selDateStr || "")}</div></div>
-          <div class="zt">${pg.zoneDims ? `<span>${esc(pg.zoneDims)}</span>` : ""}<span>${pg.items.length} item${pg.items.length === 1 ? "" : "s"}</span></div>
+          <div class="zt">${pg.zoneDims ? `<span>${esc(pg.zoneDims)}</span>` : ""}<span>${pg.items.length ? `${pg.items.length} item${pg.items.length === 1 ? "" : "s"}` : `No ${esc(dept)} items`}</span></div>
         </div>
         <div class="zs" style="height:${stageH}px">
           <div class="zphoto" style="top:${photoTop}px;height:${PHOTO_H}px;${bgCss(pg.photo)}" ${bgData(pg.photo)}>${pg.photo ? "" : "<span>No zone photo</span>"}</div>
@@ -1562,8 +1638,66 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           <div class="zt"><span>${items.length} item${items.length === 1 ? "" : "s"}</span></div></div>
         <div class="zg">${c.map(it => `<div class="zc st">${card(it, "")}</div>`).join("")}</div>
       </section>`) : [];
+    /* ── WHAT IS INSIDE EVERY KIT ──
+       A kit travels as ONE line everywhere else in this book: one card on its zone page, one row
+       in the inventory table. That is right for costing and useless for loading — Floral is
+       almost entirely kits (a console runs 4-7 parts), so on a typical event fifteen to twenty
+       real props — the pots, candles, lamps and glass the crew actually carries — were named
+       nowhere a crew member would look. This page names each one, with a box to tick, so a kit
+       can be checked off part by part before it leaves the godown.
+       Two sources: kits this department holds outright (their `components`), and kits owned by
+       another department that this one holds parts of (`partsByKit`). */
+    const kitBlocks = [];
+    blockedItemsGrouped.forEach(it => {
+      if (it.isKit && Array.isArray(it.components) && it.components.length) {
+        const kInv = (it.invId && invById.get(String(it.invId))) || invByName.get(String(it.name || "").trim().toLowerCase()) || null;
+        kitBlocks.push({ name: it.name, ours: true, photo: invPhoto(kInv, it), parts: it.components.map(c => ({ name: c.name, qty: c.qty })) });
+      }
+    });
+    [...partsByKit.values()].forEach(parts => {
+      const label = String(parts[0]?.fromKit || "").trim();
+      if (!label || kitBlocks.some(k => String(k.name).trim().toLowerCase() === label.toLowerCase())) return;
+      kitBlocks.push({ name: label, ours: false, photo: invPhoto(invByName.get(label.toLowerCase()) || null, null), parts: parts.map(p => ({ name: p.name, qty: p.qty })) });
+    });
+    // ── PACK BY HEIGHT, NOT BY COUNT ──
+    // Four blocks to a page suited a floor of seven-part consoles and nothing else: three kits
+    // of one part each left three quarters of the sheet blank. Each block's height is known
+    // before it is rendered — header band, one row per pair of parts, padding — so fill the page
+    // to the same 1020px budget every other page in this book is built against.
+    // Under four parts a kit drops to a single column: two columns of one item printed a name
+    // and a quantity stranded in the left half of the sheet.
+    const kitCols = (k) => (k.parts.length >= 4 ? 2 : 1);
+    // Names wrap rather than being cut, so a long one costs a second line. Roughly 44 characters
+    // fit a two-column row and about 100 a full-width one; anything past that is counted twice so
+    // a page of long names still stops at the same budget instead of running off the sheet.
+    const kitLongNames = (k) => { const per = kitCols(k) === 2 ? 44 : 100; return k.parts.filter(p => String(p.name || "").trim().length > per).length; };
+    const kitH = (k) => 86 + (Math.ceil(k.parts.length / kitCols(k)) + Math.ceil(kitLongNames(k) / kitCols(k))) * 24 + 21 + 14 + (k.ours ? 0 : 15);
+    const kitChunks = [];
+    kitBlocks.forEach(k => {
+      const last = kitChunks[kitChunks.length - 1], h = kitH(k);
+      if (!last || last.h + h > PAGE_PX - HEAD_PX) kitChunks.push({ h, list: [k] });
+      else { last.h += h; last.list.push(k); }
+    });
+    let kitNo = 0;
+    const kitPages = kitChunks.map((pgk, i, all) => `<section data-block data-page class="zp"><div class="pc tl"></div><div class="pc tr"></div>
+        <div class="zh"><div><div class="zk"><b>Kits</b>${all.length > 1 ? ` · Part ${i + 1} of ${all.length}` : ""}</div><h2>What is inside each kit</h2>
+          <div class="orn l"><i></i><b></b><i></i></div>
+          <div class="zm">Tick every part off before the kit leaves the godown</div></div>
+          <div class="zt"><span>${kitBlocks.length} kit${kitBlocks.length === 1 ? "" : "s"}</span></div></div>
+        ${pgk.list.map(k => { kitNo++; return `<div class="kb">
+          <div class="kb-h">
+            ${k.photo ? `<div class="kb-ph" ${bg(k.photo)}></div>` : ""}
+            <div class="kb-t"><div class="kb-no">Kit ${String(kitNo).padStart(2, "0")}</div><div class="kb-nm">${esc(k.name)}</div></div>
+            <div class="kb-c">${k.parts.length} part${k.parts.length === 1 ? "" : "s"}</div>
+          </div>
+          ${k.ours ? "" : `<div class="kb-w">The kit is on another department's sheet — ${esc(dept)} carries only the parts below</div>`}
+          <ul class="kb-l${kitCols(k) === 1 ? " one" : ""}">${k.parts.map(p => `<li><i class="kb-x"></i><span>${esc(p.name)}</span><i class="kb-d"></i><b>${esc(p.qty)}</b></li>`).join("")}</ul>
+        </div>`; }).join("")}
+      </section>`);
+
     const zoneHtml = [
-      ...zonePages.flatMap((pg, zi) => { const cs = chunks(pg.items, 6); return cs.map((c, i) => zoneSection(pg, c, i + 1, cs.length, zi + 1, i * 6)); }),
+      ...zonePages.flatMap((pg, zi) => { const cs = pg.items.length ? chunks(pg.items, 6) : [[]]; return cs.map((c, i) => zoneSection(pg, c, i + 1, cs.length, zi + 1, i * 6)); }),
+      ...kitPages,
       ...listPages(prodItems, "Production", "From production", "Made by the production team for this event"),
       ...listPages(buyItems, "Buying", "To buy", "Bought in for this event — not from our own stock"),
       ...listPages(looseItems, "Not in a zone", "Also on site", looseNote),
@@ -1718,22 +1852,24 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
      what lets someone on a phone call say "look at section 3" instead of "scroll down a bit". */
   section{margin-bottom:20px}
   .sh{display:flex;align-items:center;gap:9px;margin-bottom:9px}
-  .sh .sn{font-size:8.5px;line-height:1.7;font-weight:600;color:#A8844A;border:1px solid rgba(201,169,110,.5);border-radius:3px;padding:1px 5px;letter-spacing:.06em}
-  .sh h3{font-family:"Playfair Display",Georgia,serif;font-size:17px;line-height:1.4;font-weight:700;color:#15152B;margin:0;white-space:nowrap}
+  .sh .sn{font-size:9.5px;line-height:1.7;font-weight:600;color:#A8844A;border:1px solid rgba(201,169,110,.5);border-radius:3px;padding:1px 5px;letter-spacing:.06em}
+  /* No nowrap: a heading longer than the rule was written for used to be cut off rather than
+     wrap. Nothing that holds words clips — see the html2canvas note further down. */
+  .sh h3{font-family:"Playfair Display",Georgia,serif;font-size:17.5px;line-height:1.4;font-weight:700;color:#15152B;margin:0}
   .sh i{flex:1;height:1px;background:rgba(201,169,110,.4)}
 
   table{width:100%;border-collapse:collapse;table-layout:fixed}
   th,td{padding:6px 9px;text-align:left;vertical-align:middle;word-wrap:break-word}
-  th{font-size:7.5px;line-height:1.7;font-weight:600;text-transform:uppercase;letter-spacing:.18em;color:#A8844A;border-bottom:1px solid rgba(201,169,110,.45);padding-bottom:5px}
-  td{border-bottom:1px solid #F3EEE4;font-size:11px;line-height:1.7}
+  th{font-size:9.5px;line-height:1.7;font-weight:600;text-transform:uppercase;letter-spacing:.18em;color:#A8844A;border-bottom:1px solid rgba(201,169,110,.45);padding-bottom:5px}
+  td{border-bottom:1px solid #F3EEE4;font-size:11.5px;line-height:1.75}
   tbody tr:last-child td{border-bottom:0}
   .n{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
   .b{font-weight:700;color:#0F172A}
-  .sub{color:#94A3B8;font-size:9.5px;margin-top:1px}
-  .kit td{color:#475569;font-size:10px;background:#F8FAFF;border-bottom:1px solid #EEF2FF}
+  .sub{color:#94A3B8;font-size:10.5px;margin-top:1.5px}
+  .kit td{color:#475569;font-size:10.5px;background:#F8FAFF;border-bottom:1px solid #EEF2FF}
   .kit td:first-child{padding-left:26px;color:#64748B}
   .tot td{background:#F8FAFC;font-weight:700;border-top:1.5px solid #CBD5E1;border-bottom:0;color:#0F172A}
-  .tag{display:inline-block;background:#DBEAFE;color:#1D4ED8;font-size:7.5px;font-weight:700;padding:1.5px 4px;border-radius:2.5px;vertical-align:middle;letter-spacing:.04em;margin-left:3px}
+  .tag{display:inline-block;background:#DBEAFE;color:#1D4ED8;font-size:9px;font-weight:700;padding:1.5px 4px;border-radius:2.5px;vertical-align:middle;letter-spacing:.04em;margin-left:3px}
   /* The share bar gets its own narrow column so it stays a measure instead of becoming a rule
      across the sheet, which is what made it read as a divider on screen. */
   .bar{padding-right:4px}
@@ -1748,11 +1884,11 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   .card.hi{background:#2563EB;border-color:#2563EB;color:#fff}
   .card.pos{background:#ECFDF5;border-color:#A7F3D0;color:#065F46}
   .card.neg{background:#FEF2F2;border-color:#FECACA;color:#991B1B}
-  .card .k{font-size:7.5px;text-transform:uppercase;letter-spacing:.09em;font-weight:700;opacity:.72}
+  .card .k{font-size:9px;text-transform:uppercase;letter-spacing:.09em;font-weight:700;opacity:.72}
   .card .v{font-size:17px;font-weight:700;margin:5px 0 3px;letter-spacing:-.02em;font-variant-numeric:tabular-nums;white-space:nowrap}
   .card .v.muted{color:#CBD5E1}
-  .card .s{font-size:8px;opacity:.72;line-height:1.3}
-  .meta{color:#94A3B8;font-size:9.5px;margin:7px 0 0}
+  .card .s{font-size:9.5px;opacity:.72;line-height:1.5}
+  .meta{color:#94A3B8;font-size:10.5px;margin:7px 0 0}
   .note{background:#FFFBEB;border-left:3px solid #F59E0B;color:#92400E;padding:7px 10px;border-radius:0 5px 5px 0;font-size:10px;margin:9px 0 0}
   .empty{color:#94A3B8;font-style:italic;font-size:10.5px;margin:2px 0 0}
   .ok{color:#059669;font-weight:600}
@@ -1790,7 +1926,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   .zc-b{padding:9px 11px 8px}
   .zc-n{font-family:"Playfair Display",Georgia,serif;font-size:13.5px;font-weight:700;color:#1A1A1A;line-height:1.4;min-height:36px;margin-bottom:5px}
   .zc-r{display:flex;justify-content:space-between;align-items:baseline;gap:8px;line-height:1.8;border-top:1px solid #EDE8DC}
-  .zc-r span{color:#6B6B6B;text-transform:uppercase;letter-spacing:.12em;font-size:8.5px;font-weight:700;flex-shrink:0}
+  .zc-r span{color:#6B6B6B;text-transform:uppercase;letter-spacing:.1em;font-size:9.5px;font-weight:700;flex-shrink:0}
   .zc-r b{color:#1A1A1A;font-size:11px;font-weight:700;text-align:right}
   /* The arrow: a gold shaft with a drawn head at the photo end and a dot at the card end. */
   .za{position:absolute;width:1.5px;background:#1A1A1A}
@@ -1802,6 +1938,30 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   .za.up::before{bottom:-3px}
   .zpin{position:absolute;width:22px;height:22px;border-radius:50%;background:#1A1A1A;color:#F4F1EA;font-size:11px;font-weight:700;line-height:22px;text-align:center;box-shadow:0 0 0 2px rgba(255,253,248,.9),0 3px 8px rgba(0,0,0,.35)}
   .zg{display:grid;grid-template-columns:repeat(3,224px);gap:17px;justify-content:center}
+  .zc-kt{position:absolute;top:13px;right:13px;padding:2.5px 8px;border-radius:10px;background:#1A1A1A;color:#F4F1EA;font-size:9.5px;font-weight:700;letter-spacing:.1em;box-shadow:0 0 0 2px #FFFDF8;font-family:"Inter",Arial,sans-serif}
+  .zc-sz{position:absolute;top:13px;left:13px;padding:2.5px 9px;border-radius:10px;background:#FFFDF8;color:#1A1A1A;border:1.5px solid #1A1A1A;font-size:9.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;font-family:"Inter",Arial,sans-serif}
+  /* A kit block reads as a small card with a titled band, the way the zone cards do: the kit's
+     own photo, a serial, the name, and a count chip. The parts below use dotted leaders rather
+     than a rule per row — a rule under a single-part kit read as an underline on the heading. */
+  .kb{border:1.5px solid #1A1A1A;border-radius:14px;background:#FFFDF8;box-shadow:3px 3px 0 #1A1A1A;margin-top:14px;overflow:hidden}
+  .kb-h{display:flex;align-items:center;gap:13px;padding:10px 13px;background:#F4F1EA;border-bottom:1.5px solid #1A1A1A;min-height:64px}
+  .kb-ph{width:64px;height:64px;border-radius:10px;border:1px solid #D9D2C2;background:#fff center/cover no-repeat;flex-shrink:0}
+  .kb-t{flex:1;min-width:0}
+  .kb-no{font-family:"Inter",Arial,sans-serif;font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#8A7F68;line-height:1.45}
+  /* No ellipsis here, and a generous line-height — see the html2canvas note above. This name was
+     briefly clipped to one nowrap line at line-height 1.25, which Chrome spilled harmlessly and
+     the export cut in half along the band's border. A long kit name takes a second line instead
+     and the band grows with it. */
+  .kb-nm{font-family:"Playfair Display",Georgia,serif;font-size:14.5px;font-weight:700;color:#1A1A1A;line-height:1.5;margin-top:1px}
+  .kb-c{flex-shrink:0;font-family:"Inter",Arial,sans-serif;font-size:9.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#F4F1EA;background:#1A1A1A;border-radius:9px;padding:3px 8px;line-height:1.5}
+  .kb-w{font-family:"Inter",Arial,sans-serif;font-size:10.5px;color:#8A7F68;padding:8px 13px 0}
+  .kb-l{display:grid;grid-template-columns:1fr 1fr;gap:0 26px;list-style:none;margin:0;padding:8px 13px 11px}
+  .kb-l.one{grid-template-columns:1fr}
+  .kb-l li{display:flex;align-items:baseline;gap:8px;line-height:2;font-size:11.5px;color:#1A1A1A}
+  .kb-l li span{flex-shrink:1;min-width:0}
+  .kb-l li b{flex-shrink:0;font-size:11.5px;font-weight:700;font-variant-numeric:tabular-nums}
+  .kb-d{flex:1 1 auto;min-width:12px;border-bottom:1px dotted #C7BFAC;transform:translateY(-3px)}
+  .kb-x{width:11px;height:11px;border:1.5px solid #1A1A1A;border-radius:3px;flex-shrink:0;background:#fff;align-self:center}
   /* ── THE PAGE PATTERN ──
      A faint gold dot grid behind each zone page, and gold corner brackets echoing the cover's.
      The dots are an SVG tile rather than a CSS radial-gradient: html2canvas draws gradients once,
@@ -1866,6 +2026,7 @@ ${/* Money, the priced inventory table, the crew plan and logged spend are left 
      zone layout pages below carry every item, with photo, qty and size. */ ""}
 ${zoneHtml}
 ${truckRows.length ? sect("Loading & dispatch", table(["#", "Vehicle", "Driver", "Phone", "Load", "Status"], truckRows, ["11%", "22%", "21%", "18%", "14%", "14%"])) : ""}
+${trRows.length ? sect("Transport", table(["Load", "Quantity", "Fits per truck", "Trucks"], trRows, ["46%", "20%", "22%", "12%"]) + `<p class="note">${trNote}</p>`) : ""}
 ${moveRows.length ? sect("Dismantle routing", table(["Item", "Goes to", "Qty", "Logged by"], moveRows, ["38%", "32%", "12%", "18%"])) : ""}
 ${tentTableRows.length ? sect("Tenting by zone", table(["Zone", "Span (L x W x H)", "Truss", "Floor / carpet", "Also"], tentTableRows, ["24%", "20%", "18%", "16%", "22%"])) : ""}
 ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour", "Required", "Available", "Status"], fabRows, ["40%", "20%", "20%", "20%"])) : ""}
@@ -2859,8 +3020,10 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                 { k: "inv", icon: "📦", title: "Inventory blocked", sub: n(blockedItemsGrouped.length, "item") + " held", value: fmt(rentalIncome) },
                 { k: "mp", icon: "👷", title: "Manpower plan", sub: mpRows.length ? n(mpRows.length, "crew line") : "no crew assigned", value: fmt(mpCost) },
                 { k: "actuals", icon: "🧾", title: "Actuals", sub: hasActuals ? "real spend logged" : "nothing logged yet", value: hasActuals ? fmt(actualCost) : null },
-                { k: "load", icon: "🚚", title: "Loading & dispatch", sub: trucks.length ? n(trucks.length, "truck") : "no trucks yet" },
-                blockedItems.length > 0 && { k: "dism", icon: "🔁", title: "Dismantle plan", sub: "where each item goes after" },
+                /* Was two tiles — Loading & dispatch and Dismantle plan. The dismantle plan has
+                   since moved to On-site entirely (it is a teardown decision, not a planning one),
+                   so what is left is the one thing Planning owns: what goes out, on which truck. */
+                { k: "truck", icon: "🚚", title: "Truck planning", sub: trucks.length ? n(trucks.length, "truck") : "no trucks yet" },
               ].filter(Boolean);
               return (
                 <div className={GRID}>
@@ -3427,8 +3590,9 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
               </div>
             </div>
 
-            {/* Loading / dispatch — cross-check inventory + essentials while loading the truck */}
-            <div className={"bg-white rounded-xl shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] overflow-hidden" + modalCls("load")}>
+            {/* Loading / dispatch — cross-check inventory + essentials while loading the truck.
+                Opens under the Truck planning tile, with the dismantle plan directly below it. */}
+            <div className={"bg-white rounded-xl shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] overflow-hidden" + modalCls("truck")}>
               {/* Same header shape as the other blocks: icon tile, title, primary action at the
                   right end, a one-line caption under it with the secondary action beside it. */}
               <div className="px-3 sm:px-4 py-3 bg-gray-50">
@@ -3629,9 +3793,11 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
               </div>
             </div>
 
-            {/* Dismantle plan — dept head pre-sets where each item goes; ops just confirms on-site */}
-            {blockedItems.length > 0 && (
-              <div className={"bg-white rounded-xl shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] overflow-hidden" + modalCls("dism")}>
+            {/* Dismantle plan — kept, but not shown here: it belongs to On-site, where
+                "Dismantle & routing" makes the same call against live at-site quantities.
+                See SHOW_DISMANTLE_IN_PLANNING above. */}
+            {SHOW_DISMANTLE_IN_PLANNING && blockedItems.length > 0 && (
+              <div className={"bg-white rounded-xl shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] overflow-hidden" + modalCls("truck")}>
                 {/* Reset rides on the title row instead of wrapping onto a line of its own under
                     the description — on a phone that orphaned it at the left, a full row of height
                     spent on one small button. The description gets the full width under both. */}
