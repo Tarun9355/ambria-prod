@@ -517,7 +517,7 @@ ${(fnObj.transport.breakdown || []).map(bd => `<div class="tr-row"><div class="t
 <div class="summary-table"><table><tr><th>Function</th><th style="text-align:left">Date · Venue</th><th style="text-align:right">Decor</th><th style="text-align:right">Transport</th><th style="text-align:right">Grand</th></tr>
 ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnType || "—"}</td><td style="text-align:left;color:#6B7280">${fmtDate(fnObj.fnDate)} · ${fnObj.fnVenue || "—"}</td><td style="text-align:right">${fnObj.isEmpty ? "—" : f(fnObj.decorTotal)}</td><td style="text-align:right;color:#4F46E5">${fnObj.isEmpty ? "—" : f(fnObj.transportTotal)}</td><td style="text-align:right;font-weight:700">${fnObj.isEmpty ? "—" : f(fnObj.grand)}</td></tr>`).join("")}
 ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91C1C">Fixed-Venue Discount</td><td style="text-align:left;color:#6B7280">applied to booked venue's share</td><td style="text-align:right">—</td><td style="text-align:right">—</td><td style="text-align:right;font-weight:700;color:#B91C1C">−${f(combined.venueDiscount)}</td></tr>` : ""}
-<tr><td style="font-weight:600">Agency Fee</td><td style="text-align:left;color:#6B7280">${combined.agencyFeePct ?? 20}% of decor + transport + power</td><td style="text-align:right">—</td><td style="text-align:right">—</td><td style="text-align:right;font-weight:700">${f(combined.agencyFee || 0)}</td></tr>
+<tr><td style="font-weight:600">Professional Design, Management &amp; Execution Fees</td><td style="text-align:left;color:#6B7280">${combined.agencyFeePct ?? 20}% of decor + transport + power</td><td style="text-align:right">—</td><td style="text-align:right">—</td><td style="text-align:right;font-weight:700">${f(combined.agencyFee || 0)}</td></tr>
 </table></div>
 <div class="grand"><div class="g-label">Event Grand Total</div><div class="g-amt">${f(combined.eventGrandTotal)}</div></div>
 <div class="footer"><strong>Ambria Decorations</strong> · Pushpanjali, Bijwasan, New Delhi · thefusiondecor.com<br>This is an estimate. Final pricing may vary based on customization and availability.</div>
@@ -853,7 +853,7 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
         ]);
       }
       sumRows.push([
-        { text: "Agency Fee", options: { fontSize: 10, color: dark, bold: true } },
+        { text: "Professional Design, Management & Execution Fees", options: { fontSize: 10, color: dark, bold: true } },
         { text: `${combined.agencyFeePct ?? 20}% of decor + transport + power`, options: { fontSize: 9, color: gray, italic: true } },
         { text: "", options: {} }, { text: "", options: {} },
         { text: f(combined.agencyFee || 0), options: { fontSize: 10, align: "right", color: dark, bold: true } }
@@ -1057,7 +1057,7 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
       // Agency fee — flat % of the deal (Admin → Settings, default 20%), billed to the guest on top
       // of every function's own decor+transport+power total. Its own line, not folded silently into
       // any function's total, so the guest can see exactly what it is.
-      const agencyFeeRow = sw.addRow(["AGENCY FEE", `${combined.agencyFeePct ?? 20}% of decor + transport + power`, "", "", combined.agencyFee || 0]);
+      const agencyFeeRow = sw.addRow(["PROFESSIONAL DESIGN, MANAGEMENT & EXECUTION FEES", `${combined.agencyFeePct ?? 20}% of decor + transport + power`, "", "", combined.agencyFee || 0]);
       sw.mergeCells(agencyFeeRow.number, 1, agencyFeeRow.number, 4);
       agencyFeeRow.getCell(1).font = { bold: true, color: { argb: "FF4F46E5" } };
       agencyFeeRow.getCell(2).font = { color: { argb: "FF6B7280" }, italic: true };

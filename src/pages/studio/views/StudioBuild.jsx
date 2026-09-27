@@ -1886,7 +1886,7 @@ export default function StudioBuild({ ctx }) {
               Agency Fee row already uses. Without it, Décor + Transport never added back up to the
               total above, which read exactly like the fee had been dropped even though it was always
               inside that number. */}
-          {line(`Agency fee (${Number(sharedFloralSettings.agencyFeePct) || 20}%)`, fmt(agencyFeeAmt))}
+          {line(`Professional Design, Management & Execution Fees (${Number(sharedFloralSettings.agencyFeePct) || 20}%)`, fmt(agencyFeeAmt))}
         </div>
         <div style={{padding:"11px 15px"}}>
           <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:4}}>
