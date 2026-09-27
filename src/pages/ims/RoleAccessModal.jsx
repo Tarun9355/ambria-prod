@@ -24,13 +24,14 @@ import { PERM_GROUPS, PERM_LABELS, PERM_UNWIRED, effectiveRolePerms } from "../.
 // editor carried — e.g. Planning was missing "Dept Ops", Flowers had a phantom "Function
 // Planning" nobody's FlowersTab.jsx has ever had) ──
 const IMS_TABS = [
-  { id: "dashboard", label: "🏠 Dashboard" },
+  { id: "dashboard", label: "📊 Dashboard" },
+  { id: "attendance", label: "👥 Attendance" },
   { id: "inventory", label: "📦 Inventory" },
-  { id: "calendar", label: "📅 Calendar" },
-  { id: "planning", label: "🔧 Planning" },
+  { id: "calendar", label: "🗓️ Calendar" },
+  { id: "planning", label: "📋 Planning" },
   { id: "supply", label: "🛒 Supply" },
   { id: "flowers", label: "🌺 Flowers" },
-  { id: "finance", label: "📊 Finance" },
+  { id: "finance", label: "💰 Finance" },
   { id: "admin", label: "⚙️ Admin" },
 ];
 const IMS_SUBTABS = {

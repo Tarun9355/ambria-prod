@@ -36,24 +36,25 @@ const blocksRowsToMap = (rows) => Object.fromEntries((rows || []).map((r) => [r.
 
 // Exact tab set + labels from the reference IMS app.
 const TABS = [
-  { id: "dashboard", label: "🏠 Dashboard" },
+  { id: "dashboard", label: "📊 Dashboard" },
+  { id: "attendance", label: "👥 Attendance" },
   { id: "inventory", label: "📦 Inventory" },
-  { id: "calendar", label: "📅 Calendar" },
-  { id: "planning", label: "🔧 Planning" },
+  { id: "calendar", label: "🗓️ Calendar" },
+  { id: "planning", label: "📋 Planning" },
   { id: "supply", label: "🛒 Supply" },
   { id: "flowers", label: "🌺 Flowers" },
-  { id: "finance", label: "📊 Finance" },
+  { id: "finance", label: "💰 Finance" },
   { id: "admin", label: "⚙️ Admin" },
 ];
 
 // Vertical nav rail. Shared by the lg+ sidebar and the mobile drawer so the two can never
 // drift — the drawer only differs in closing itself after a pick.
-// Labels arrive as "🏠 Dashboard" (and "✅ Approvals (3)" when there are pending ones), so the
+// Labels arrive as "📊 Dashboard" (and "✅ Approvals (3)" when there are pending ones), so the
 // leading glyph is split off to sit in its own column: with the icons aligned, the rail can be
 // read down the labels alone, which a strip of emoji-prefixed pills could not do.
 function IMSNav({ tabs, active, onChange }) {
   return (
-    <nav className="flex flex-col gap-0.5">
+    <nav className="flex flex-col gap-1">
       {tabs.map((t) => {
         const sp = t.label.indexOf(" ");
         const icon = sp > 0 ? t.label.slice(0, sp) : "•";
@@ -65,7 +66,7 @@ function IMSNav({ tabs, active, onChange }) {
              over. transition-all so the shadow and the nudge arrive together — `transition`
              alone animates neither transform nor box-shadow to the same curve here. */
           <button key={t.id} onClick={() => onChange(t.id)} aria-current={on ? "page" : undefined}
-            className={"w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm text-left transition-all duration-150 " +
+            className={"w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-left transition-all duration-150 " +
               (on
                 ? "bg-indigo-50 text-indigo-700 font-semibold shadow-[0_1px_2px_rgba(79,70,229,0.14),0_4px_10px_-4px_rgba(79,70,229,0.3)]"
                 : "text-gray-600 font-medium hover:bg-gray-50 hover:text-gray-900 hover:translate-x-0.5 hover:shadow-[0_1px_2px_rgba(16,24,40,0.06),0_4px_10px_-6px_rgba(16,24,40,0.2)]")}>
@@ -1438,7 +1439,12 @@ export default function IMS() {
           {/* Column, so the nav scrolls and the account block stays pinned to the foot rather
               than floating wherever the tab list happens to end. */}
           <div className="h-full flex flex-col bg-white rounded-2xl p-3 shadow-[0_1px_2px_rgba(16,24,40,0.06),0_8px_24px_-12px_rgba(16,24,40,0.18)]">
-            <div className="flex-1 min-h-0 overflow-y-auto">
+            {/* overflow-x-hidden, or a horizontal scrollbar appears across the foot of the rail.
+                  CSS computes the other axis to 'auto' the moment one axis is not 'visible', so
+                  overflow-y-auto alone leaves overflow-x scrollable — and the rows nudge 2px
+                  right on hover (hover:translate-x-0.5), which counts toward scrollable overflow.
+                  Two pixels of transform were enough to put a full scrollbar on screen. */}
+              <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
               <IMSNav tabs={allowedTabs} active={tab} onChange={setTab} />
             </div>
             {accountBlock}
@@ -1461,7 +1467,12 @@ export default function IMS() {
                 <span className="text-xs font-bold uppercase tracking-wide text-gray-400">Menu</span>
                 <button onClick={() => setNavOpen(false)} aria-label="Close navigation" className="w-7 h-7 rounded-lg flex items-center justify-center text-red-500 hover:text-red-600 hover:bg-red-50 transition">✕</button>
               </div>
-              <div className="flex-1 min-h-0 overflow-y-auto">
+              {/* overflow-x-hidden, or a horizontal scrollbar appears across the foot of the rail.
+                  CSS computes the other axis to 'auto' the moment one axis is not 'visible', so
+                  overflow-y-auto alone leaves overflow-x scrollable — and the rows nudge 2px
+                  right on hover (hover:translate-x-0.5), which counts toward scrollable overflow.
+                  Two pixels of transform were enough to put a full scrollbar on screen. */}
+              <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
                 <IMSNav tabs={allowedTabs} active={tab} onChange={(id) => { setTab(id); setNavOpen(false); }} />
               </div>
               {accountBlock}
@@ -1474,6 +1485,17 @@ export default function IMS() {
           <div className="text-center text-gray-400 py-20"><div className="text-3xl mb-2">⏳</div>Loading Ambria IMS…</div>
         ) : tab === "dashboard" ? (
           <DashboardTab projects={projects} functions={functions} inventory={items} />
+        ) : tab === "attendance" ? (
+          <div className="bg-white rounded-2xl p-6 sm:p-8 shadow-[0_1px_2px_rgba(16,24,40,0.06),0_8px_24px_-12px_rgba(16,24,40,0.18)] max-w-2xl">
+            <div className="flex items-start gap-3">
+              <span aria-hidden="true" className="shrink-0 w-10 h-10 rounded-xl bg-blue-100 flex items-center justify-center text-lg leading-none">🕑</span>
+              <div className="min-w-0">
+                <h2 className="text-lg font-bold text-gray-900">Attendance</h2>
+                <p className="mt-1 text-sm text-gray-500">Not built yet — the tab is here so it can be given to the right roles, but nothing records attendance behind it.</p>
+                <p className="mt-4 text-sm text-gray-600">Tell me what a day should capture and I will build it: which crew turned up per event and department, or per person across the week; whether it is marked by the department head on site or by the office afterwards; and whether it should feed the manpower cost that Dept Ops already logs.</p>
+              </div>
+            </div>
+          </div>
         ) : tab === "inventory" ? (
           <InventoryTab
             inventory={items} setInventory={setInventory}
