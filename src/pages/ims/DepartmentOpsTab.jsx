@@ -1501,6 +1501,19 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         const items = [...merged.values()];
         const zPhoto = fn.elSelectedPhoto?.[zk]?.src || "";
         const zDims = zoneDimsText(fn.dims?.[zk] || fn.zones?.[zk]?.dims);
+        // ── WHOSE DIMENSIONS ARE THESE? ──
+        // The chip used to say "Zone", which names where the figures apply, not what they
+        // measure. A zone's L x W x H is the span of the STRUCTURE standing in it: across every
+        // event on record, all 44 zones carrying dimensions also carry a truss type, and the
+        // floor is held separately in floorDims. So the chip names the truss, falling back to
+        // the platform and then to the zone itself for a shape that has neither.
+        // The short word is deliberate: this chip is nowrap and shares the header with a 38px
+        // zone title, and "Single U Truss" there costs enough width to wrap the title onto a
+        // second line. The truss TYPE is already spelled out in the Tenting-by-zone table.
+        const zCfg = fn?.zones?.[zk] || {};
+        const zDimsOf = (zCfg.trT || Number(zCfg.trussQty) > 0) ? "Truss"
+          : Number(zCfg.plH) > 0 ? "Platform"
+          : "Zone";
         // The only zone still worth skipping is one with nothing to put on the page at all: none
         // of our items, no reference photo and no dimensions. That page would be a heading.
         if (!items.length && !zPhoto && !zDims) return;
@@ -1510,6 +1523,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           fnLabel: [fn.type || (fns.length > 1 ? `Function ${fi + 1}` : ""), fn.date].filter(Boolean).join(" · "),
           photo: zPhoto,
           zoneDims: zDims,
+          dimsOf: zDimsOf,
           items,
         });
       });
@@ -1643,7 +1657,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           <div><div class="zk"><b>Zone ${String(zoneNo).padStart(2, "0")}</b>${parts > 1 ? ` · Part ${part} of ${parts}` : ""}</div><h2>${esc(pg.title)}</h2>
             <div class="orn l"><i></i><b></b><i></i></div>
             <div class="zm">${esc(pg.fnLabel || selDateStr || "")}</div></div>
-          <div class="zt">${pg.zoneDims ? `<span><i class="zl">Zone</i>${esc(pg.zoneDims)}</span>` : ""}<span>${pg.items.length ? `${pg.items.length} item${pg.items.length === 1 ? "" : "s"}` : `No ${esc(dept)} items`}</span></div>
+          <div class="zt">${pg.zoneDims ? `<span><i class="zl">${esc(pg.dimsOf)}</i>${esc(pg.zoneDims)}</span>` : ""}<span>${pg.items.length ? `${pg.items.length} item${pg.items.length === 1 ? "" : "s"}` : `No ${esc(dept)} items`}</span></div>
         </div>
         <div class="zs" style="height:${stageH}px">
           <div class="zphoto" style="top:${photoTop}px;height:${PHOTO_H}px;${bgCss(pg.photo)}" ${bgData(pg.photo)}>${pg.photo ? "" : "<span>No zone photo</span>"}</div>
@@ -1670,17 +1684,35 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
        can be checked off part by part before it leaves the godown.
        Two sources: kits this department holds outright (their `components`), and kits owned by
        another department that this one holds parts of (`partsByKit`). */
+    // ── WHERE EACH KIT STANDS ──
+    // Built from every function's zone lists rather than from this department's own items: a kit
+    // whose shell belongs to another department still has to be found and built, and its zone is
+    // only ever named there. A kit used in two zones lists both.
+    // How far in it goes is not recorded anywhere — the zone is as precise as the data gets, so
+    // the page says the zone and leaves the spot to the reference photo on that zone's page.
+    const zonesByName = new Map();
+    (fns || []).forEach(fn => Object.entries(fn?.elements || {}).forEach(([zk, list]) => {
+      if (fn.enabledEls && fn.enabledEls[zk] === false) return;
+      (Array.isArray(list) ? list : []).forEach(el => {
+        const n = String(el?.name || "").trim().toLowerCase();
+        if (!n) return;
+        if (!zonesByName.has(n)) zonesByName.set(n, new Set());
+        zonesByName.get(n).add(zoneName(zk));
+      });
+    }));
+    const zonesFor = (nm) => [...(zonesByName.get(String(nm || "").trim().toLowerCase()) || [])];
+
     const kitBlocks = [];
     blockedItemsGrouped.forEach(it => {
       if (it.isKit && Array.isArray(it.components) && it.components.length) {
         const kInv = (it.invId && invById.get(String(it.invId))) || invByName.get(String(it.name || "").trim().toLowerCase()) || null;
-        kitBlocks.push({ name: it.name, ours: true, photo: invPhoto(kInv, it), parts: it.components.map(c => ({ name: c.name, qty: c.qty })) });
+        kitBlocks.push({ name: it.name, ours: true, photo: invPhoto(kInv, it), zones: zonesFor(it.name), parts: it.components.map(c => ({ name: c.name, qty: c.qty })) });
       }
     });
     [...partsByKit.values()].forEach(parts => {
       const label = String(parts[0]?.fromKit || "").trim();
       if (!label || kitBlocks.some(k => String(k.name).trim().toLowerCase() === label.toLowerCase())) return;
-      kitBlocks.push({ name: label, ours: false, photo: invPhoto(invByName.get(label.toLowerCase()) || null, null), parts: parts.map(p => ({ name: p.name, qty: p.qty })) });
+      kitBlocks.push({ name: label, ours: false, photo: invPhoto(invByName.get(label.toLowerCase()) || null, null), zones: zonesFor(label), parts: parts.map(p => ({ name: p.name, qty: p.qty })) });
     });
     // ── PACK BY HEIGHT, NOT BY COUNT ──
     // Four blocks to a page suited a floor of seven-part consoles and nothing else: three kits
@@ -1711,6 +1743,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           <div class="kb-h">
             ${k.photo ? `<div class="kb-ph" ${bg(k.photo)}></div>` : ""}
             <div class="kb-t"><div class="kb-no">Kit ${String(kitNo).padStart(2, "0")}</div><div class="kb-nm">${esc(k.name)}</div></div>
+            <div class="kb-z"><div class="kb-zk">${k.zones.length > 1 ? "Zones" : "Zone"}</div><div class="kb-zv${k.zones.length ? "" : " none"}">${k.zones.length ? esc(k.zones.join(" · ")) : "Not in a zone"}</div></div>
           </div>
           ${k.ours ? "" : `<div class="kb-w">The kit is on another department's sheet — ${esc(dept)} carries only the parts below</div>`}
           <ul class="kb-l${kitCols(k) === 1 ? " one" : ""}">${k.parts.map(p => `<li><i class="kb-x"></i><span>${esc(p.name)}</span><i class="kb-d"></i><b>${esc(p.qty)}</b></li>`).join("")}</ul>
@@ -1988,7 +2021,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
      Both also declare a line-height: without one the glyph box came from the font's defaults, and
      since html2canvas draws text a few px lower than the browser (see the note above), the word
      sat on the bottom border in the export while looking fine on screen. */
-  .zc-kt,.zc-sz{position:absolute;top:13px;box-sizing:border-box;height:20px;line-height:17px;padding:0 9px;border-radius:10px;font-size:9.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;border:1.5px solid transparent;box-shadow:0 0 0 2px #FFFDF8;font-family:"Inter",Arial,sans-serif;white-space:nowrap}
+  /* Centred as a flex box rather than by a line box: line-height centring depends on the
+     font's own metrics, and html2canvas draws text a few px lower than it lays out, which
+     pushed the word off centre in the export while looking right on screen. */
+  .zc-kt,.zc-sz{position:absolute;top:13px;box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;height:21px;line-height:1;padding:0 9px;border-radius:11px;font-size:9.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;border:1.5px solid transparent;box-shadow:0 0 0 2px #FFFDF8;font-family:"Inter",Arial,sans-serif;white-space:nowrap}
   .zc-kt{right:13px;background:#1A1A1A;color:#F4F1EA;border-color:#1A1A1A}
   .zc-sz{left:13px;background:#FFFDF8;color:#1A1A1A;border-color:#1A1A1A}
   /* A kit block reads as a small card with a titled band, the way the zone cards do: the kit's
@@ -2004,6 +2040,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
      the export cut in half along the band's border. A long kit name takes a second line instead
      and the band grows with it. */
   .kb-nm{font-family:"Playfair Display",Georgia,serif;font-size:14.5px;font-weight:700;color:#1A1A1A;line-height:1.5;margin-top:1px}
+  .kb-z{flex-shrink:0;max-width:46%;text-align:right}
+  .kb-zk{font-family:"Inter",Arial,sans-serif;font-size:8.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#9A8F76;line-height:1.5}
+  .kb-zv{font-family:"Inter",Arial,sans-serif;font-size:12px;font-weight:700;color:#1A1A1A;line-height:1.4}
+  .kb-zv.none{font-weight:600;color:#A39A89}
   .kb-w{font-family:"Inter",Arial,sans-serif;font-size:10.5px;color:#8A7F68;padding:8px 13px 0}
   .kb-l{display:grid;grid-template-columns:1fr 1fr;gap:0 26px;list-style:none;margin:0;padding:8px 13px 11px}
   .kb-l.one{grid-template-columns:1fr}
