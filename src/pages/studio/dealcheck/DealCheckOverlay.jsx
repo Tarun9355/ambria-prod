@@ -550,7 +550,18 @@ export default function DealCheckOverlay({ ctx }) {
           // Fixed-venue "Repeat" rental — see repeatAdjustedRental above for the actual formula
           // (venue-specific standing qty + that item's own IMS discount, falling back to the
           // sub-category default at any other venue). This just says WHICH zones are Repeat.
-          const zoneIsRepeat = (fn, ck) => { const zk = String(ck || "").split("::")[1]; return !!zk && repeatCatFor(fn.zoneConfig?.[zk], "elements"); };
+          // A card's own manually-set Repeat/Fresh chip (el.repeatOverride, on the originating
+          // zoneElement — parseCardKey's own `idx` is that element's index within zoneElements[zk],
+          // the same backlink isZoneDirty already relies on) wins over the zone's section-level
+          // toggle, matching Build's own repeatAdjustedLineCost. Falls back to the zone-level flag
+          // whenever the override is unset or the card key isn't a matched-element one at all.
+          const zoneIsRepeat = (fn, ck) => {
+            const parsed = parseCardKey(ck);
+            const zk = parsed?.zoneKey || String(ck || "").split("::")[1];
+            if (!zk) return false;
+            const override = parsed?.idx != null ? fn.zoneElements?.[zk]?.[parsed.idx]?.repeatOverride : undefined;
+            return typeof override === "boolean" ? override : repeatCatFor(fn.zoneConfig?.[zk], "elements");
+          };
           fns.forEach((fn, fi) => {
             const cards = dcCards[fi] || {};
             // Cross-function reuse — the immediately-preceding function of this deal, same venue,
@@ -2420,7 +2431,14 @@ export default function DealCheckOverlay({ ctx }) {
                         // pill used to run well under both of those. Also folds in this zone's own share of
                         // platform (fatta/stand) and carpet — real rental cost that already shows as its own
                         // card below but was never added into the "X rental" total above it.
-                        const _zoneIsRepeat = (ck) => { const zzk = String(ck || "").split("::")[1]; return !!zzk && repeatCatFor(fns[fnIdx]?.zoneConfig?.[zzk], "elements"); };
+                        // Same per-element override precedence as the main rollup's own zoneIsRepeat.
+                        const _zoneIsRepeat = (ck) => {
+                          const parsed = parseCardKey(ck);
+                          const zzk = parsed?.zoneKey || String(ck || "").split("::")[1];
+                          if (!zzk) return false;
+                          const override = parsed?.idx != null ? fns[fnIdx]?.zoneElements?.[zzk]?.[parsed.idx]?.repeatOverride : undefined;
+                          return typeof override === "boolean" ? override : repeatCatFor(fns[fnIdx]?.zoneConfig?.[zzk], "elements");
+                        };
                         const _costPctFor = (subcat) => { const key = String(subcat || "").trim().toLowerCase(); const row = (rcSubcatFactors || []).find(r => r?.id === key); const v = row ? Number(row.cost_percent) : undefined; return (typeof v === "number" && isFinite(v) && v >= 0) ? v : 100; };
                         const _fnVenueForRepeat = fns[fnIdx]?.fnVenue;
                         const _fnDateForRepeat = fns[fnIdx]?.fnDate;
@@ -2849,7 +2867,10 @@ export default function DealCheckOverlay({ ctx }) {
                                   // Repeat/standing discount context for this card — computed once so
                                   // every display below (the "rate × qty" caption and the right-aligned
                                   // total) reads the same discounted figures instead of drifting apart.
-                                  const _rep = repeatCatFor(fns[fnIdx]?.zoneConfig?.[card.zoneKey], "elements");
+                                  // Same per-element override precedence as the main rollup's zoneIsRepeat.
+                                  const _repParsed = parseCardKey(card._cardKey);
+                                  const _repOverride = _repParsed?.idx != null ? fns[fnIdx]?.zoneElements?.[card.zoneKey]?.[_repParsed.idx]?.repeatOverride : undefined;
+                                  const _rep = typeof _repOverride === "boolean" ? _repOverride : repeatCatFor(fns[fnIdx]?.zoneConfig?.[card.zoneKey], "elements");
                                   const _venue = fns[fnIdx]?.fnVenue;
                                   const _cardQty = Number(card.qty) || 1;
                                   // This card's own total used to price its WHOLE qty at the plain owned
@@ -2904,6 +2925,29 @@ export default function DealCheckOverlay({ ctx }) {
                                         <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:3}}>
                                           <span style={{fontSize:14,fontWeight:700,letterSpacing:-0.1,color:IV.ink}}>{item?.name || card.rcName || "(unnamed)"}</span>
                                           <span title={sourceMeta.label} style={{fontSize:11,padding:"2px 6px",borderRadius:4,background:`${sourceMeta.color}22`,color:sourceMeta.color,fontWeight:700,letterSpacing:0.4}}>{sourceMeta.icon} {sourceMeta.label}</span>
+                                          {/* Per-element Repeat/Fresh override — same field (el.repeatOverride) and
+                                              3-state cycle (inherit → Repeat → Fresh → inherit) as Build's own chip on
+                                              this card's originating element; editing it here writes back to whichever
+                                              function actually owns the live canvas (isActiveFn) or its fnBuilds snapshot
+                                              otherwise, same pattern DCTrussTab's own per-fn zoneConfig writes use. */}
+                                          {_repParsed?.idx != null && (
+                                            <span onClick={() => {
+                                              const isActiveFn = fnIdx === activeFnIdxCommitted;
+                                              const cur = _repOverride;
+                                              const next = cur === undefined ? true : cur === true ? false : undefined;
+                                              if (isActiveFn) {
+                                                setZoneElements(prev => { const arr = [...(prev[card.zoneKey] || [])]; if (!arr[_repParsed.idx]) return prev; arr[_repParsed.idx] = { ...arr[_repParsed.idx], repeatOverride: next }; return { ...prev, [card.zoneKey]: arr }; });
+                                              } else {
+                                                setFnBuilds(prev => { const snap = prev[fnIdx] || {}; const curZE = snap.zoneElements || {}; const arr = [...(curZE[card.zoneKey] || [])]; if (!arr[_repParsed.idx]) return prev; arr[_repParsed.idx] = { ...arr[_repParsed.idx], repeatOverride: next }; return { ...prev, [fnIdx]: { ...snap, zoneElements: { ...curZE, [card.zoneKey]: arr } } }; });
+                                              }
+                                            }}
+                                              title={typeof _repOverride === "boolean"
+                                                ? `Manually set: ${_rep ? "Repeat (discounted)" : "Fresh (full price)"} for just this element. Click to ${_rep ? "set Fresh" : "follow the zone default"}.`
+                                                : `Following the zone/section default: ${_rep ? "Repeat (discounted)" : "Fresh (full price)"}. Click to override for just this element.`}
+                                              style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:20,height:20,borderRadius:6,flexShrink:0,cursor:"pointer",color:_rep?"#059669":IV.ink,background:_rep?"rgba(5,150,105,0.15)":"transparent",border:typeof _repOverride==="boolean"?`1px solid ${_rep?"#059669":IV.ink}66`:`1px solid transparent`,opacity:typeof _repOverride==="boolean"?1:0.55}}>
+                                              {_rep ? <IconRepeat size={11}/> : <IconSparkle size={11}/>}
+                                            </span>
+                                          )}
                                           {hold && <span title={`Held by ${hold.salesperson} for ${hold.eventName}`} style={{fontSize:11,padding:"2px 6px",borderRadius:4,background:"rgba(245,158,11,0.20)",color:"#F59E0B",fontWeight:700,letterSpacing:0.4}}>⏳ {hold.salesperson}</span>}
                                           {item && (()=>{ const cq=Number(card.qty)||1; const av=Math.min(dcAvailable(item, fnBlocksForChip, fnIdx), availableAtVenue({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, fns[fnIdx]?.fnVenue, item)); return cq>av ?<span style={{fontSize:11,padding:"2px 6px",borderRadius:4,background:"rgba(239,68,68,0.18)",color:"#EF4444",fontWeight:700,letterSpacing:0.4}}>⚠ {av}</span> : null; })()}
                                           {card.imsId && reuseFnCount[card.imsId]?.size >= 2 && <span style={{fontSize:11,padding:"2px 6px",borderRadius:4,background:"rgba(16,185,129,0.18)",color:"#10B981",fontWeight:700,letterSpacing:0.4}}>♻ {reuseFnCount[card.imsId].size} fns</span>}

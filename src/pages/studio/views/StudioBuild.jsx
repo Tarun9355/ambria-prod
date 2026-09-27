@@ -3706,6 +3706,27 @@ undefined
                         {isTrussSqft&&priceInfo.area>0&&<span style={{fontSize:11,padding:"2px 7px",borderRadius:3,background:"rgba(59,130,246,0.12)",color:"#3B82F6",fontWeight:600}}>{priceInfo.area} sqft</span>}
                       </div>
                       <div style={{display:"flex",alignItems:"center",gap:4,marginTop:2,flexWrap:"wrap"}}>
+                        {/* Per-element Repeat/Fresh override — same ✨Fresh/♻️Repeat convention as the
+                            section header's own chip (isRepeatCat/toggleRepeatCat above), but scoped
+                            to just this one element instead of the whole "Elements" section. Cycles
+                            undefined (follow the zone/section default, shown dim with no ring) → true
+                            (manually Repeat, filled + ringed) → false (manually Fresh, ringed) → back
+                            to undefined. Read by repeatAdjustedLineCost (el.repeatOverride) and Deal
+                            Check's own zoneIsRepeat (via the card key's element index), so whichever
+                            way a salesperson sets it here is what actually gets billed everywhere. */}
+                        {(() => {
+                          const _repResolved = typeof el.repeatOverride === "boolean" ? el.repeatOverride : repeatCatFor(zoneConfig[k], "elements");
+                          const _repManual = typeof el.repeatOverride === "boolean";
+                          return (
+                            <span onClick={e => { e.stopPropagation(); const elems = [...(zoneElements[k] || [])]; const cur = elems[idx].repeatOverride; const next = cur === undefined ? true : cur === true ? false : undefined; elems[idx] = { ...elems[idx], repeatOverride: next }; setZoneElements(p => ({ ...p, [k]: elems })); }}
+                              title={_repManual
+                                ? `Manually set: ${_repResolved ? "Repeat (discounted)" : "Fresh (full price)"} for just this element. Click to ${_repResolved ? "set Fresh" : "follow the zone default"}.`
+                                : `Following the zone/section default: ${_repResolved ? "Repeat (discounted)" : "Fresh (full price)"}. Click to override for just this element.`}
+                              style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:18,height:18,borderRadius:6,flexShrink:0,cursor:"pointer",color:_repResolved?"#059669":textS,background:_repResolved?"#05966918":"transparent",border:_repManual?`1px solid ${_repResolved?"#059669":textS}66`:"1px solid transparent",opacity:_repManual?1:0.55}}>
+                              {_repResolved ? <IconRepeat size={11}/> : <IconSparkle size={11}/>}
+                            </span>
+                          );
+                        })()}
                         {!!el.mandiId&&(()=>{
                           const mandiCat=(dealCheckData||studioFloralData)?.mandiCatalogue||[];
                           const parent=mandiCat.find(m=>m.id===el.mandiId);
