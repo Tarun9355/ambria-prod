@@ -23,6 +23,11 @@ export const STORAGE_FOLDERS = {
   // Per-size (Small/Medium/Big) reference photos on a flower recipe — what the finished piece
   // actually looks like at that size, distinct from MANDI's raw-flower stock photos.
   RECIPE_REF: "flower-recipe-ref",
+  // Punch-in/out selfies (Attendance tab).
+  ATTENDANCE: "attendance",
+  // The admin-uploaded punch-in briefing video — self-hosted, not a YouTube link (see
+  // AttendanceVideoPlayer.jsx for why). Its own folder, distinct from the selfie photos above.
+  ATTENDANCE_VIDEO: "attendance-video",
 };
 
 /**

@@ -434,3 +434,84 @@ export function IconCanvaMark({ size = 14 }) {
     </svg>
   );
 }
+
+// ═══ ATTENDANCE ═══
+
+// Clock face — the live-time widget.
+export function IconClock({ size = 15 }) {
+  return (
+    <svg {...svg(size)}>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M12 7.5V12l3 2" />
+    </svg>
+  );
+}
+
+// Two overlapping heads — a headcount stat (days present).
+export function IconUsers({ size = 15 }) {
+  return (
+    <svg {...svg(size)}>
+      <circle cx="9" cy="8.5" r="3" />
+      <path d="M3.5 20v-1.2A4.8 4.8 0 0 1 8.3 14h1.4a4.8 4.8 0 0 1 4.8 4.8V20" />
+      <path d="M15.5 6.4a3 3 0 0 1 0 5.8" />
+      <path d="M15 14.3c2 .3 3.5 1.9 3.5 3.9V20" />
+    </svg>
+  );
+}
+
+// Hourglass — hours-worked stat.
+export function IconHourglass({ size = 15 }) {
+  return (
+    <svg {...svg(size)}>
+      <path d="M6.5 3h11M6.5 21h11" />
+      <path d="M7.5 3c0 4 2.5 6 4.5 8-2 2-4.5 4-4.5 8M16.5 3c0 4-2.5 6-4.5 8 2 2 4.5 4 4.5 8" />
+    </svg>
+  );
+}
+
+// Clock with an alert tick — an incomplete-punch stat (never punched out).
+export function IconClockAlert({ size = 15 }) {
+  return (
+    <svg {...svg(size)}>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M12 8v4.3l2.6 1.5" />
+    </svg>
+  );
+}
+
+// Filled square — Punch Out (stop).
+export function IconStop({ size = 15 }) {
+  return (
+    <svg {...svg(size)}>
+      <rect x="6.5" y="6.5" width="11" height="11" rx="2" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+// Map pin — a punch's captured location.
+export function IconPin({ size = 15 }) {
+  return (
+    <svg {...svg(size)}>
+      <path d="M12 21.5s-7-6.4-7-11.8a7 7 0 1 1 14 0c0 5.4-7 11.8-7 11.8z" />
+      <circle cx="12" cy="9.7" r="2.3" />
+    </svg>
+  );
+}
+
+// Three ruled lines — a plain list/timeline heading.
+export function IconList({ size = 15 }) {
+  return (
+    <svg {...svg(size)}>
+      <path d="M4 6.5h16M4 12h16M4 17.5h16" />
+    </svg>
+  );
+}
+
+// X — close / remove.
+export function IconX({ size = 15 }) {
+  return (
+    <svg {...svg(size)}>
+      <path d="M6 6l12 12M18 6 6 18" />
+    </svg>
+  );
+}

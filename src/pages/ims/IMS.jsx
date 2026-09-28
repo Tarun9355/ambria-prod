@@ -7,6 +7,7 @@ import { computePatternSizeCost, effectiveMarkup } from "../../lib/ims/flowerHel
 import { SETTINGS_DEFAULTS, INIT_TRUSS_INV } from "../../lib/ims/constants";
 import { RC_CATS_DEFAULT } from "../../lib/studio/constants";
 import InventoryTab from "./InventoryTab.jsx";
+import AttendanceTab from "./AttendanceTab.jsx";
 import DashboardTab from "./DashboardTab.jsx";
 import AdminTab from "./AdminTab.jsx";
 import SupplyTab from "./SupplyTab.jsx";
@@ -1486,11 +1487,7 @@ export default function IMS() {
         ) : tab === "dashboard" ? (
           <DashboardTab projects={projects} functions={functions} inventory={items} />
         ) : tab === "attendance" ? (
-          /* Deliberately empty until attendance is built. The tab stays so it can be granted to
-             roles now (RoleAccessModal keeps its own copy of this list), but the placeholder that
-             used to sit here was removed — it addressed the owner directly, which is not something
-             to show on a live screen. */
-          null
+          <AttendanceTab authUser={user} settings={settings} setSettings={setSettings} users={users} />
         ) : tab === "inventory" ? (
           <InventoryTab
             inventory={items} setInventory={setInventory}
