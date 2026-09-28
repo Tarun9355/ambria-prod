@@ -19,6 +19,7 @@ import { qtyUsedElsewhereInBuild } from "../../../lib/studio/dealAvailability";
 import { isHiddenSubcat } from "../../../lib/rateCard";
 import { groupIdsForZones } from "../../../lib/studio/zoneGroups";
 import { CUSTOM_ZONE_TAG_PREFIX } from "../../../lib/studio/keys.js";
+import { thumbUrl } from "../../../lib/studio/thumb.js";
 import { makeS } from "../../../lib/studio/styles";
 import { WASH_BANDS, GRAIN_URL } from "../../../lib/studio/pageWash";
 
@@ -2795,30 +2796,27 @@ undefined
         return zpFilterPhoto(li);
       });
       const hiddenByFilters = Math.max(0, unfilteredPhotos.length - matchedPhotos.length);
-      // Venue ranks instead of filtering — picking one floats its photos to the front of the strip
-      // and keeps the rest behind them, because there is rarely enough tagged per venue to build a
-      // zone from on its own. Stable partition, so relevance order survives inside each group.
-      // A photo earns the verified star only if someone confirmed it AND it actually carries
-      // elements. A verified-but-empty photo prices to nothing, so badging it sent salespeople to
-      // tiles that look trustworthy and then apply an empty zone. Same test drives the ordering
-      // below, so the badge and the sort can never disagree.
+      // Verified first, unverified after. Stable, so relevance order survives inside each half.
+      // Strip view only — the grid's own ranking (below) uses "has elements" instead, without
+      // requiring verification, since an unverified photo with elements still prices correctly.
       const phVerified = (ph) => {
         const li = ph.isLibrary && ph.eventId ? libById.get(ph.eventId) : null;
         return !!li?._verified && (ph.elements || []).length > 0;
       };
-      // Verified first, unverified after. Stable, so relevance order survives inside each half.
       const verifiedFirst = (arr) => {
         const yes = [], no = [];
         for (const ph of arr) (phVerified(ph) ? yes : no).push(ph);
         return [...yes, ...no];
       };
-      // ═══ PREFERENCE RANKING ═══ Event type and colour palette are enforced as a hard filter
-      // earlier (getMatchedPhotos / zpFilterPhoto) — every photo reaching this point already
-      // matches both, or neither was picked, so there's nothing left to rank them by here. Venue,
-      // venue type, design style and time/setting all rank instead of hiding: a photo's score is how
-      // many of the ACTIVE preference dimensions it matches, highest score first; verified-first
-      // still decides order within a tie, same as before. The counts feed the caption below — an
-      // unlabelled list that still shows non-matches reads as the filter having quietly broken.
+      // ═══ PREFERENCE RANKING (strip only) ═══ Event type and colour palette are enforced as a
+      // hard filter earlier (getMatchedPhotos / zpFilterPhoto) — every photo reaching this point
+      // already matches both, or neither was picked, so there's nothing left to rank them by here.
+      // Venue, venue type, design style and time/setting all rank instead of hiding: a photo's score
+      // is how many of the ACTIVE preference dimensions it matches, highest score first;
+      // verified-first still decides order within a tie, same as before. The counts feed the caption
+      // below — an unlabelled list that still shows non-matches reads as the filter having quietly
+      // broken. The grid ranks by favourites/elements instead (below) — venue/style preference
+      // doesn't factor into its order, only the strip's.
       const venueOn = !!(zpFilters.venue || []).length;
       const venueTypeOn = !!(zpFilters.venueType || []).length;
       const designStyleOn = !!(zpFilters.designStyle || []).length;
@@ -2826,7 +2824,16 @@ undefined
       const tierOn = !!(zpFilters.tier || []).length;
       const anyPrefOn = venueOn || venueTypeOn || designStyleOn || timeSettingOn || tierOn;
       let venuePrefCount = 0, venueTypePrefCount = 0, designStylePrefCount = 0, timeSettingPrefCount = 0, tierPrefCount = 0;
-      if (anyPrefOn) {
+      if (gridZones[k]) {
+        // ═══ GRID RANKING ═══ Whatever still carries elements — i.e. actually prices to something —
+        // leads, everything else follows. No preference score, no verified requirement: the grid is
+        // a browse-everything view, and burying an unverified-but-priceable photo behind a verified
+        // empty one made no sense here. Favourites (below) are layered on top of this.
+        const hasEls = (ph) => (ph.elements || []).length > 0;
+        const withEls = [], without = [];
+        for (const ph of matchedPhotos) (hasEls(ph) ? withEls : without).push(ph);
+        matchedPhotos = [...withEls, ...without];
+      } else if (anyPrefOn) {
         const byScore = new Map();
         for (const ph of matchedPhotos) {
           const li = ph.isLibrary && ph.eventId ? libById.get(ph.eventId) : null;
@@ -2845,29 +2852,39 @@ undefined
       } else {
         matchedPhotos = verifiedFirst(matchedPhotos);
       }
-      // The hand-picked group (Manage → Library → Grouping) outranks both venue and verified, so it
-      // partitions last — someone chose these photos for this zone deliberately, which is a stronger
-      // signal than any of the automatic ordering above. Re-sorted on groupRank because the sorts
-      // above are stable only within their own buckets and would otherwise interleave the group.
+      // The hand-picked group (Manage → Library → Grouping) outranks everything above, in both
+      // views — someone chose these photos for this zone deliberately, which is a stronger signal
+      // than any automatic ranking. It partitions LAST, and favourites (next) only reorder inside
+      // the "rest" bucket below — a favourited-but-ungrouped photo can no longer jump back in front
+      // of the group, which used to be possible (favourites reordered the WHOLE list, group and all)
+      // and silently undid the "group outranks everything" promise this comment already made.
       const groupedCount = matchedPhotos.reduce((n, ph) => n + (ph.grouped ? 1 : 0), 0);
+      // My own favourites (per salesperson — see saveFavPhotos) lead the rest. Keyed by the photo's
+      // own id/src, never a (photo, zone) pair, so re-tagging a photo to a different zone doesn't
+      // orphan its favourite — it just keeps applying wherever the photo currently matches. In the
+      // grid, photos favourited by someone ELSE get their own tier right after yours, ahead of the
+      // has-elements ranking above; the strip keeps its narrower "mine only" behaviour.
+      const favKey = (ph) => ph.eventId || ph.src;
+      const isMyFavPhoto = (ph) => !!favPhotos[favKey(ph)]?.[authUser?.id];
+      const isAnyFavPhoto = (ph) => { const m = favPhotos[favKey(ph)]; return !!m && Object.values(m).some(Boolean); };
+      const favOrder = (arr) => {
+        if (gridZones[k]) {
+          const mine = [], others = [], rest2 = [];
+          for (const ph of arr) (isMyFavPhoto(ph) ? mine : isAnyFavPhoto(ph) ? others : rest2).push(ph);
+          return [...mine, ...others, ...rest2];
+        }
+        if (!arr.some(isMyFavPhoto)) return arr;
+        const favd = [], rest2 = [];
+        for (const ph of arr) (isMyFavPhoto(ph) ? favd : rest2).push(ph);
+        return [...favd, ...rest2];
+      };
       if (groupedCount) {
         const inGroup = [], rest = [];
         for (const ph of matchedPhotos) (ph.grouped ? inGroup : rest).push(ph);
         inGroup.sort((a, b) => (a.groupRank ?? Infinity) - (b.groupRank ?? Infinity));
-        matchedPhotos = [...inGroup, ...rest];
-      }
-      // My own favourites (per salesperson — see saveFavPhotos) lead everything above except the
-      // hand-picked group, which stays a stronger signal. Keyed by the photo's own id/src, never a
-      // (photo, zone) pair, so re-tagging a photo to a different zone doesn't orphan its favourite —
-      // it just keeps applying wherever the photo currently matches. Respects whatever the Photo
-      // Filters already narrowed matchedPhotos to; it only reorders, it doesn't pull in anything
-      // the filters excluded.
-      const favKey = (ph) => ph.eventId || ph.src;
-      const isMyFavPhoto = (ph) => !!favPhotos[favKey(ph)]?.[authUser?.id];
-      if (matchedPhotos.some(isMyFavPhoto)) {
-        const favd = [], rest = [];
-        for (const ph of matchedPhotos) (isMyFavPhoto(ph) ? favd : rest).push(ph);
-        matchedPhotos = [...favd, ...rest];
+        matchedPhotos = [...inGroup, ...favOrder(rest)];
+      } else {
+        matchedPhotos = favOrder(matchedPhotos);
       }
       // Pin the last-selected photo to the FRONT of the strip (and force it in even if relevance/
       // filters would drop it), so re-opening a saved session shows the saved pick first — no
@@ -3199,30 +3216,25 @@ undefined
                 const start = page * perPage;
                 const shown = matchedPhotos.slice(start, start + perPage);
                 // ═══ SECTION HEADINGS ═══ Browse splits its ranked list under headings for a
-                // reason: unlabelled, a list that still shows other venues just looks like a broken
-                // filter. Same three sections here, derived from the FINAL order so the pinned
-                // group and the selected photo keep their places inside them.
+                // reason: unlabelled, a list that still shows other-tier photos just looks like a
+                // broken filter. Four sections here, matching the grid's own ranking above exactly
+                // (favourites, then has-elements, then the rest) — derived from the FINAL order so
+                // the pinned group and the selected photo keep their places inside them.
                 // Grid view only — the strip paginates four at a time, and a heading that appears
                 // on whichever page its tier happens to start on explains nothing.
                 const secOf = (ph) => {
-                  const li = ph.isLibrary && ph.eventId ? libById.get(ph.eventId) : null;
-                  if ((venueOn && zpVenueMatch(li)) || (venueTypeOn && zpVenueTypeMatch(li)) || (designStyleOn && zpDesignStyleMatch(li)) || (timeSettingOn && zpTimeSettingMatch(li)) || (tierOn && zpTierMatch(li))) return 0;
-                  return (li?.tags?.venue || ph.venue) ? 1 : 2;
+                  if (isMyFavPhoto(ph)) return 0;
+                  if (isAnyFavPhoto(ph)) return 1;
+                  return (ph.elements || []).length > 0 ? 2 : 3;
                 };
-                const sectioned = gridZones[k] && anyPrefOn;
-                const secs = [[], [], []];
+                const sectioned = gridZones[k];
+                const secs = [[], [], [], []];
                 if (sectioned) shown.forEach((ph) => secs[secOf(ph)].push(ph));
-                const prefLabel = [
-                  venueOn && (zpFilters.venue.length === 1 ? zpFilters.venue[0] : "Selected venues"),
-                  venueTypeOn && (zpFilters.venueType.length === 1 ? zpFilters.venueType[0] : "Selected venue types"),
-                  designStyleOn && (zpFilters.designStyle.length === 1 ? zpFilters.designStyle[0] : "Selected styles"),
-                  timeSettingOn && (zpFilters.timeSetting.length === 1 ? zpFilters.timeSetting[0] : "Selected times"),
-                  tierOn && (zpFilters.tier.length === 1 ? zpFilters.tier[0] : "Selected tiers"),
-                ].filter(Boolean).join(" · ") || "Selected";
                 const SEC_META = [
-                  [prefLabel, (n) => `${n} tagged here`],
-                  ["More references", (n) => `${n} from other venues`],
-                  ["Not tagged to a venue", (n) => `${n} — still usable, but nobody has said where they were shot`],
+                  ["Your favourites", (n) => `${n} you've favourited`],
+                  ["Favourited by others", (n) => `${n} favourited by someone else on your team`],
+                  ["Has elements", (n) => `${n} already priced and ready`],
+                  ["More references", (n) => `${n} — nothing priced from these yet`],
                 ];
                 // Headings ride in the same list as the photos, marked with __head, so one map
                 // renders both and the grid lays them out together. `i = start + pi` is only a
@@ -3304,7 +3316,7 @@ undefined
                     const at = set.indexOf(ph);
                     setLightbox({idx: at < 0 ? 0 : at, items: set.map(p=>({src:p.src,name:p.eventName}))});
                   }}>
-                    <img src={ph.src} alt={ph.eventName} loading="lazy" className="ph-img" style={{width:"100%",height:gridZones[k]?95:190,objectFit:"cover",display:"block",opacity:isSelected?1:0.85}} onError={e=>{e.target.style.display="none"}}/>
+                    <img src={thumbUrl(ph.src, gridZones[k]?95:190)} alt={ph.eventName} loading="lazy" className="ph-img" style={{width:"100%",height:gridZones[k]?95:190,objectFit:"cover",display:"block",opacity:isSelected?1:0.85}} onError={e=>{e.target.style.display="none"}}/>
                     {showCosts&&!isCollapsed(k)&&photoFullCost>0&&<div style={{position:"absolute",bottom:6,right:6,background:isSelected?"#059669":"rgba(0,0,0,0.7)",color:"#fff",padding:gridZones[k]?"3px 7px":"3px 8px",borderRadius:gridZones[k]?5:6,fontSize:gridZones[k]?9:12.5,fontWeight:gridZones[k]?600:700}}>{fmt(photoFullCost)}</div>}
                     {/* Favourite marker — bottom-right, a small dot, deliberately subtle (same
                         reasoning as Browse's tier-pill ring: this can be on screen in front of a
