@@ -63,6 +63,13 @@ export function getStoredUser() {
   }
 }
 
+// Refresh the cached profile in place — used when a realtime update to the signed-in user's OWN
+// row (role, apps, departments, permissions changed by an admin elsewhere) should stick across a
+// reload without them having to log out and back in. See AuthContext's own-row subscription.
+export function cacheUser(user) {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(user)); } catch { /* ignore */ }
+}
+
 /**
  * Which apps a user may access. Resolution order:
  *   1. Explicit per-user `apps` array (Admin → Users add/edit form) — wins if set.
