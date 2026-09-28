@@ -695,9 +695,14 @@ Rules:
     setImportStep(4);
   }
 
+  // Scoped to departments this user may see (canSeeDept/deptClassify.js) — the per-row table below
+  // already gates on this (matchDept, in `filtered`); the chip counts must match, or a Furniture-only
+  // dept head learns Structure's exact stock count from the tab itself despite never being able to
+  // open a single Structure row.
+  const visibleInventory = inventory.filter((i) => canSeeDept(authUser, catToDept(i.cat, settings?.categoryDepartments)));
   // Category chips: normalised + counted so "Flower"/"Floral"/"Florals" collapse to one chip.
   const catCounts = {};
-  for (const i of inventory) { const c = normCat(i.cat) || "Uncategorised"; catCounts[c] = (catCounts[c] || 0) + 1; }
+  for (const i of visibleInventory) { const c = normCat(i.cat) || "Uncategorised"; catCounts[c] = (catCounts[c] || 0) + 1; }
   const catChips = Object.keys(catCounts).sort((a, b) => catCounts[b] - catCounts[a]); // busiest first
   const selItem = inventory.find((i) => i.id === detailItem);
   const blockInv = inventory.find((i) => i.id === blockModal);
@@ -741,7 +746,7 @@ Rules:
                 className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700 text-sm">✕</button>
             )}
           </div>
-          <span className="text-xs text-gray-500 font-medium">{filtered.length} of {inventory.length}</span>
+          <span className="text-xs text-gray-500 font-medium">{filtered.length} of {visibleInventory.length}</span>
           {(search || filterCat !== "All" || filterSubCat !== "All" || filterType !== "All" || filterNeedsReview) && (
             <button onClick={() => { setSearch(""); setFilterCat("All"); setFilterSubCat("All"); setFilterType("All"); setFilterNeedsReview(false); setSubChipSearch(""); setInvPage(0); }}
               className="text-xs text-indigo-600 hover:underline">Clear all filters</button>
@@ -787,7 +792,7 @@ Rules:
         <div className="flex flex-wrap gap-1.5 items-center">
           <button onClick={() => { setFilterCat("All"); setFilterSubCat("All"); setSubChipSearch(""); setInvPage(0); }}
             className={"px-2.5 py-1 rounded-full text-xs font-semibold transition-all " + (filterCat === "All" ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200")}>
-            All ({inventory.length})
+            All ({visibleInventory.length})
           </button>
           {catChips.map((c) => (
             <button key={c} onClick={() => { setFilterCat(c); setFilterSubCat("All"); setSubChipSearch(""); setInvPage(0); }}
@@ -810,7 +815,7 @@ Rules:
 
       {/* Sub-Category filter strip — Studio sub-cats + any normalised ones actually present */}
       {filterCat !== "All" && (() => {
-        const itemsInCat = inventory.filter((i) => normCat(i.cat) === filterCat);
+        const itemsInCat = visibleInventory.filter((i) => normCat(i.cat) === filterCat);
         const subCounts = {};
         for (const i of itemsInCat) { const s = normSub(i.subCat); if (s) subCounts[s] = (subCounts[s] || 0) + 1; }
         // Studio sub-cats first (in order), then any extra spellings present in the data.
