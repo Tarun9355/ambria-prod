@@ -14,9 +14,23 @@ export function AuthProvider({ children }) {
     let active = true;
     // Rehydrate from a live Supabase session on load (post-migration source of truth).
     supabase.auth.getSession().then(async ({ data }) => {
-      if (!active || !data?.session) return;
-      const profile = await fetchProfile();
-      if (active && profile) setUser(profile);
+      if (!active) return;
+      if (data?.session) {
+        const profile = await fetchProfile();
+        if (active && profile) setUser(profile);
+        return;
+      }
+      // No live Supabase session — still on the legacy cached-login path (see login() in auth.js),
+      // which has nothing that re-derives this profile on its own. A cached id from before some
+      // past `users` change (a reseed, an id scheme migration, the row itself being removed) would
+      // otherwise sit unnoticed in localStorage indefinitely — fine for reads, since nothing here
+      // enforces referential integrity, but a hard failure the moment it hits something that does
+      // (a foreign key, e.g. attendance.user_id). Confirm it's still a real, active row and drop
+      // the session if not, rather than let every write from a dead-end id fail one at a time.
+      const cached = getStoredUser();
+      if (!cached?.id) return;
+      const { data: row } = await supabase.from("users").select("id, active").eq("id", cached.id).maybeSingle();
+      if (active && (!row || row.active === false)) { await doLogout(); setUser(null); }
     });
     // React to auth changes (token refresh, sign-out, sign-in from another tab).
     const { data: sub } = supabase.auth.onAuthStateChange(async (event) => {
