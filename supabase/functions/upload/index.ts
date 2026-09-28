@@ -47,6 +47,10 @@ const FOLDERS = new Set([
   // Per-size (S/M/B) reference photos on a flower recipe (src/lib/storage.js's RECIPE_REF) —
   // added client-side without adding it here, so every upload 400'd with "Folder not allowed".
   "flower-recipe-ref",
+  // Punch-in/out selfies (src/lib/storage.js's ATTENDANCE).
+  "attendance",
+  // The self-hosted punch-in briefing video (src/lib/storage.js's ATTENDANCE_VIDEO).
+  "attendance-video",
 ]);
 
 const EXT: Record<string, string> = {

@@ -165,6 +165,15 @@ export const SETTINGS_DEFAULTS = {
   flowerCategories: ["Rose", "Daisy", "Carnation", "Stock", "Lily & Orchid", "Gladiolus", "Anthurium", "Guldavari", "Marigold", "Mogra", "Tuberose", "Sunflower", "Ranunculus", "Filler & Green", "Palm & Leaf", "Patti (Leaves)", "Specialty", "Other"],
   flowerPatterns: [],
   flowerRecipeSubcats: ["Flower Pattern"],
+  // Attendance's punch-in briefing, one per BUILD DEPARTMENT (IMS → Quiz Setup) — a YouTube video
+  // + the questions asked about it, keyed by department name (lib/ims/attendance.js's
+  // ATTENDANCE_QUIZ_DEPTS). Shown on every punch-in, chosen by the puncher's own department.
+  // Superseded the single shared `attendanceTraining` key this app briefly had.
+  attendanceTrainingByDept: {},
+  // Named punch-in locations — {id, name, lat, lng} — set by an admin standing at each one
+  // (Attendance → "📍 Manage Locations"). A punch within 300m of one is tagged with its name;
+  // otherwise the raw coordinates are still saved and it reads "Unknown location".
+  attendanceLocations: [],
   defaultStudioMarkup: 3,
   colourCatalogue: [
     { name: "Ivory", hex: "#F5F0E1", isNeutral: true }, { name: "Cream", hex: "#FFFDD0", isNeutral: true },

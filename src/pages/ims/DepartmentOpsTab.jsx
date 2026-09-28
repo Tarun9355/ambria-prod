@@ -356,6 +356,16 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const deptOptions = isAdmin || !myDepts ? DEPTS : DEPTS.filter((d) => myDepts.includes(d));
 
   const [dept, setDept] = useState(roleDept || deptOptions[0] || "Floral");
+  // ── EXPORTING A DEPARTMENT THAT IS NOT THE ONE ON SCREEN ──
+  // The report is built from ~25 memos keyed on `dept`, so there is no pure "build the book for
+  // department X" to call: the only thing that produces X's numbers is a render with dept === X.
+  // The combined export therefore switches department, waits for React to commit, and then reads
+  // the builder back out of a ref. Calling buildReportHtml directly would run the closure from
+  // the render that started the export — i.e. the OLD department's data under the new heading.
+  const deptRef = useRef(dept);
+  deptRef.current = dept;
+  const buildReportRef = useRef(null);
+  const [exportNote, setExportNote] = useState("");
   const [search, setSearch] = useState("");
   const [leadEntry, setLeadEntry] = useState(null); // LMS entry no of the lead we arrived from
   // Month shown by the event picker below. Starts on the current month and is nudged, once, to a
@@ -571,6 +581,12 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   }, [focusEventId, focusSearch, focusLeadEntry, eventOrders, onFocusHandled]);
 
   const sel = (eventOrders || []).find(e => e.id === selId);
+  // Which departments actually have something to report on this event — the same gate the
+  // report itself uses (hasDeptSnapshot / blockedItemsGrouped both key off deptInventory[dept]).
+  // A combined book skips an empty department rather than printing a cover with nothing behind it.
+  const deptsWithWork = useMemo(() =>
+    deptOptions.filter(d => Array.isArray(sel?.deptInventory?.[d]) && sel.deptInventory[d].length > 0),
+    [deptOptions, sel]);
   const selDateStr = sel ? eventDate(sel) : "";
   // Lifted out of the activity-log block so the bell in the event header can show the count
   // without recomputing it — one query, two readers, and they cannot disagree about how many
@@ -2215,6 +2231,10 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
 </body></html>`;
     return html;
   };
+  // Reassigned on every render, unconditionally — not in a useEffect, which would only run
+  // AFTER paint, one tick too late for the export loop below, which calls settleDept and reads
+  // this ref back in the same frame it resolves.
+  buildReportRef.current = buildReportHtml;
 
   // ── THE DOWNLOAD ──
   // Renders the report offscreen, turns it into an A4 PDF and saves it, with no print dialog in
@@ -2227,8 +2247,23 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
   // with its table on the next page. Each `data-block` is measured first and moved to a fresh
   // page if it does not fit, so breaks land between sections. A block taller than a page (a long
   // inventory table) still has to be cut, but it is the only thing that ever is.
-  const exportDeptPdf = async () => {
+  // Wait for a department switch to actually land. deptRef is assigned during render, so it
+  // flips only once React has committed and every memo has recomputed.
+  const settleDept = (d) => new Promise((resolve) => {
+    if (deptRef.current === d) { resolve(); return; }
+    setDept(d);
+    let tries = 0;
+    const tick = () => {
+      if (deptRef.current === d || ++tries > 600) resolve();
+      else requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+
+  const exportPdf = async (depts) => {
     if (exporting) return;
+    const multi = depts.length > 1;
+    const startedOn = dept;
     setExporting(true);
     // Zone names as the admin set them in Studio (e.g. "Centre Lounge"), not the raw keys. A
     // failed read just falls back to the built-in names.
@@ -2239,11 +2274,37 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
       Object.entries(v?.meta || {}).forEach(([k, m]) => { if (m?.label) zoneLabels[k] = m.label; });
     } catch { /* built-in names it is */ }
     const logos = await loadPdfLogos();
-    const frame = document.createElement("iframe");
+    let frame = null;
     let restoreFillText = null;
     try {
       const [{ jsPDF }, h2c] = await Promise.all([import("jspdf"), import("html2canvas")]);
       const html2canvas = h2c.default;
+
+      const pdf = new jsPDF({ unit: "pt", format: "a4", compress: true });
+      // Every page is painted the sheet's cream edge to edge, so the margins around each block are
+      // not a white frame around a cream page.
+      const paintPage = () => { pdf.setFillColor(244, 241, 234); pdf.rect(0, 0, pdf.internal.pageSize.getWidth(), pdf.internal.pageSize.getHeight(), "F"); };
+      const newPage = () => { pdf.addPage(); paintPage(); };
+      paintPage();
+      const pageW = pdf.internal.pageSize.getWidth();
+      const pageH = pdf.internal.pageSize.getHeight();
+      const MARGIN = 28;                       // pt of white around the content on every page
+      const usableW = pageW - MARGIN * 2;
+      const usableH = pageH - MARGIN * 2;
+      const skipped = [];
+      let blocksSeen = 0;
+      const coverPages = new Set(); // physical page numbers a cover was drawn on — see below
+
+      // ── ONE PASS PER DEPARTMENT, ALL INTO THE SAME FILE ──
+      // Each pass builds that department's book in its own iframe and appends its pages. A second
+      // and later department starts on a fresh page, with `first` reset so its cover still draws
+      // full bleed onto that page rather than adding another.
+      for (let di = 0; di < depts.length; di++) {
+        const d = depts[di];
+        if (multi) { setExportNote(`${d} — ${di + 1} of ${depts.length}`); await settleDept(d); }
+        const html = (buildReportRef.current || buildReportHtml)(zoneLabels, logos);
+        if (di > 0) { newPage(); }
+        frame = document.createElement("iframe");
 
       // An iframe, not a div in this page: the report's CSS is written for a bare document, and
       // dropped into the app it would inherit Tailwind's reset and its oklch() colours — which
@@ -2254,7 +2315,7 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
       frame.style.cssText = "position:fixed;left:-10000px;top:0;width:794px;height:1200px;border:0;opacity:0;pointer-events:none";
       document.body.appendChild(frame);
       const doc = frame.contentDocument;
-      doc.open(); doc.write(buildReportHtml(zoneLabels, logos)); doc.close();
+      doc.open(); doc.write(html); doc.close();
       // The button exists for the fallback path only; it must not be rasterised into the file.
       doc.querySelector(".noprint")?.remove();
       // Let the iframe lay out and its webfont settle before measuring anything.
@@ -2299,20 +2360,8 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
       // Fonts are settled by now, so the true baselines measured in the report doc are final.
       restoreFillText = fixH2cTextBaseline(doc);
 
-      const pdf = new jsPDF({ unit: "pt", format: "a4", compress: true });
-      // Every page is painted the sheet's cream edge to edge, so the margins around each block are
-      // not a white frame around a cream page.
-      const paintPage = () => { pdf.setFillColor(244, 241, 234); pdf.rect(0, 0, pdf.internal.pageSize.getWidth(), pdf.internal.pageSize.getHeight(), "F"); };
-      const newPage = () => { pdf.addPage(); paintPage(); };
-      paintPage();
-      const pageW = pdf.internal.pageSize.getWidth();
-      const pageH = pdf.internal.pageSize.getHeight();
-      const MARGIN = 28;                       // pt of white around the content on every page
-      const usableW = pageW - MARGIN * 2;
-      const usableH = pageH - MARGIN * 2;
-
       const blocks = [...sheet.querySelectorAll("[data-block], section")];
-      const skipped = [];
+      blocksSeen += blocks.length;
       let y = MARGIN;
       let first = true;
       // Set after a zone layout: the NEXT content block starts a fresh page. It is a flag rather
@@ -2360,6 +2409,7 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
           // starts on page two.
           if (!first) newPage();
           pdf.addImage(img, "JPEG", 0, 0, pageW, pageH);
+          coverPages.add(pdf.internal.getNumberOfPages());
           y = pageH; afterOwnPage = true; first = false; hasCover = true;
           continue;
         }
@@ -2403,15 +2453,22 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
         if (ownPage) afterOwnPage = true;
         first = false;
       }
+        // This department is drawn; release its iframe before building the next one, so a
+        // seven-department export holds one document at a time rather than seven.
+        restoreFillText?.(); restoreFillText = null;
+        frame.remove(); frame = null;
+      }
 
       // Every single block failed — there is no report, only blank pages. Hand this to the
       // fallback rather than saving an empty file that looks like success.
-      if (skipped.length && skipped.length === blocks.length) throw new Error(`every section failed to render (${skipped.length})`);
+      if (skipped.length && skipped.length === blocksSeen) throw new Error(`every section failed to render (${skipped.length})`);
 
-      // Page numbers, added once the total is known.
+      // Page numbers, added once the total is known. A cover carries no number — it would sit
+      // on the photo — so each page in coverPages is skipped rather than assuming it is page one:
+      // a combined book has one cover per department, not only at the front.
       const total = pdf.internal.getNumberOfPages();
-      // The cover carries no number — it would sit on the photo — so counting starts under it.
-      for (let p = hasCover ? 2 : 1; p <= total; p++) {
+      for (let p = 1; p <= total; p++) {
+        if (coverPages.has(p)) continue;
         pdf.setPage(p);
         pdf.setFontSize(8);
         pdf.setTextColor(122, 116, 104);
@@ -2421,7 +2478,7 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
       // Filename is what the file is called in someone's Downloads folder a month later, so it
       // carries all three identifiers. Slashes and colons are illegal in filenames on Windows.
       const safe = (s) => String(s || "").replace(/[\\/:*?"<>|]+/g, "-").trim();
-      pdf.save(`${safe(dept)} - ${safe(sel?.clientName || "Event")} - ${safe(selDateStr || "no date")}.pdf`);
+      pdf.save(`${safe(multi ? "All departments" : depts[0])} - ${safe(sel?.clientName || "Event")} - ${safe(selDateStr || "no date")}.pdf`);
       // Said out loud, because a report quietly missing a page is worse than one that failed
       // outright — you would only find out when the crew on site needed the page that is gone.
       if (skipped.length) {
@@ -2437,13 +2494,17 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
       // A Blob download needs no pop-up and leaves something usable: the report as an .html
       // file, which opens in any browser and prints to PDF from there.
       console.error("PDF export failed, falling back to an HTML download:", err);
+      // In a combined export this falls back to whichever department the failure landed on, not
+      // the whole book — rebuilding every remaining department's HTML here would risk a second
+      // failure in the same code path that just failed. The filename says so, so a partial
+      // download is never mistaken for the complete set.
       try {
         const safe = (s) => String(s || "").replace(/[\\/:*?"<>|]+/g, "-").trim();
         const blob = new Blob([buildReportHtml(zoneLabels, logos)], { type: "text/html;charset=utf-8" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = `${safe(dept)} - ${safe(sel?.clientName || "Event")} - ${safe(selDateStr || "no date")}.html`;
+        a.download = `${safe(multi ? `${dept} (partial — combined export failed)` : dept)} - ${safe(sel?.clientName || "Event")} - ${safe(selDateStr || "no date")}.html`;
         document.body.appendChild(a);
         a.click();
         a.remove();
@@ -2457,10 +2518,18 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
       }
     } finally {
       restoreFillText?.();
-      frame.remove();
+      frame?.remove();
+      setExportNote("");
+      // Put the tab back where the user left it — the switching above is a mechanism, not a
+      // navigation they asked for.
+      if (multi) setDept(startedOn);
       setExporting(false);
     }
   };
+
+  // Declared after exportPdf on purpose: a const referenced above its own declaration is a
+  // TDZ error the build does not catch.
+  const exportDeptPdf = (depts) => exportPdf(Array.isArray(depts) && depts.length ? depts : [dept]);
 
   // ── VIEW CONTROLS: nearby count, activity bell, Planning / On-site ──
   // ONE home: the right-hand end of the event header. They had been split across two — the
@@ -2654,6 +2723,22 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
               </button>
             );
           })}
+          {/* ── ONE BOOK FOR THE WHOLE EVENT ──
+              Sits after the last department because that is what it is: not another department,
+              but every one of them in a single file, in the order of the row it follows.
+              Only the departments that actually have something on this event are included — a
+              seven-book file where four books are empty is worse than four books.
+              Hidden until an event is picked, since there is nothing to export before that. */}
+          {sel && deptsWithWork.length > 1 && (
+            <button onClick={() => exportDeptPdf(deptsWithWork)} disabled={exporting}
+              title={exporting ? "Building the PDF…" : `One PDF with all ${deptsWithWork.length} departments on this event`}
+              className="hidden sm:inline-flex shrink-0 items-center gap-1.5 ml-1 px-3 py-1.5 rounded-lg text-sm font-semibold whitespace-nowrap border border-gray-200 bg-white text-gray-700 hover:text-gray-900 hover:bg-gray-50 hover:-translate-y-0.5 hover:shadow-[0_1px_2px_rgba(16,24,40,0.06),0_4px_10px_-6px_rgba(16,24,40,0.2)] disabled:opacity-60 disabled:hover:translate-y-0 transition-all duration-150">
+              {exporting
+                ? <span aria-hidden="true" className="w-3.5 h-3.5 rounded-full border-2 border-gray-300 border-t-blue-600 animate-spin" />
+                : <IconDownload />}
+              <span>{exporting && exportNote ? exportNote : "Download PDF"}</span>
+            </button>
+          )}
         </div>
       </div>
       </div>
