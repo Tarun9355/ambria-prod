@@ -1249,6 +1249,15 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           const dayKey = `${r.type}|${d.date}`;
           const howOpen = !!mpDayHow[dayKey];
           const hasShare = r.shared && d.share != null;
+          // The crew figure above is rounded for display (you can't book "0.6 of a person"), but the
+          // day's TOTAL dihari below is summed from the unrounded fractional share so the line's cost
+          // stays reconciled to the rupee. That makes "1 crew × 2 shifts" on one day and "1 crew × 1
+          // shift" on another look like they should add to 3 dihari when the actual total is 2 — this
+          // hint surfaces the real fraction behind the rounded "1" so the two numbers stop disagreeing
+          // at a glance. Suppressed once the head has typed an explicit override (ov): effDay then
+          // returns that exact integer, so raw and rounded already match and there's nothing to show.
+          const rawShare = hasShare ? effDay(r, d) : null;
+          const shareHint = rawShare != null && Math.abs(rawShare - showDay(r, d)) >= 0.05 ? rawShare.toFixed(2) : null;
           return (
             <div key={i} className="py-1">
               <div className="flex justify-between items-center">
@@ -1263,6 +1272,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
                         className={"w-10 border rounded px-1 py-0.5 text-[10px] text-center " + (ov ? "border-amber-400 bg-amber-50 font-bold" : "") + (canManpower ? "" : " opacity-50 cursor-not-allowed")} />
                     : <b>{d.count}</b>}
                   crew × {shifts} shift{shifts === 1 ? "" : "s"}
+                  {shareHint && <span className="text-gray-400 font-normal" title="This day's exact fractional crew share, before rounding for display — the day-wise total below is summed from this, not from the rounded number above.">({shareHint} share)</span>}
                 </span>
               </div>
               {/* Per-dihari (per-shift) crew — dept head can hold different crew per shift (e.g. 6 in the day
