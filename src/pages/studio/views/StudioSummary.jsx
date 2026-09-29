@@ -2661,7 +2661,10 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
             them: bigger than a caption, smaller than the name it belongs to.
             Same face as Event Info, Browse and Build, so all four steps are set in one voice. */}
         <div className="sh-1 sh-eyebrow">Decor Estimate</div>
-        {clientName&&<div className="sh-2 sh-hero-face">{clientName}</div>}
+        {/* textTransform, not a rewritten string: the name is SHOWN with each word capitalised
+            ("bishwadeep akhouri" → "Bishwadeep Akhouri") while the saved client name stays exactly
+            as typed, so searches and matches against it are unaffected. */}
+        {clientName&&<div className="sh-2 sh-hero-face" style={{textTransform:"capitalize"}}>{clientName}</div>}
         {/* Not textS. That is #8b8fa3 — the filter kit measured it at ~3.1:1 on this page, below AA,
             and it showed: the line naming the venue and the date read as a caption you skip. */}
         <div className="sh-3" style={{fontSize:16.5,color:isDark?"rgba(255,255,255,0.80)":"#3F4557",

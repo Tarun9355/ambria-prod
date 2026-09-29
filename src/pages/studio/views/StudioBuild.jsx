@@ -2502,7 +2502,7 @@ undefined
                 </button>
               </div>
               <div className="bd-hero-face" style={{fontSize:30,fontWeight:600,color:PANEL_INK,letterSpacing:-0.3,lineHeight:1.08,marginBottom:14}}>
-                {clientName ? <>Welcome, {clientName}</> : "Build Your Decor"}
+                {clientName ? <>Welcome, <span style={{textTransform:"capitalize"}}>{clientName}</span></> : "Build Your Decor"}
               </div>
               {(()=>{
                 const row=(icon,text,tone)=>(

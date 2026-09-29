@@ -1278,7 +1278,7 @@ function StudioBrowse({ ctx }) {
               </button>
             </div>
             {clientName && <div className="sb-hero-face" style={{fontSize:27,fontWeight:600,color:PANEL_INK,letterSpacing:-0.3,lineHeight:1.08,marginBottom:12}}>
-              Welcome, {clientName}
+              Welcome, <span style={{textTransform:"capitalize"}}>{clientName}</span>
             </div>}
             {(()=>{
               const row=(icon,text)=>(
