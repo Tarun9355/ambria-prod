@@ -944,6 +944,15 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
         { header: "Amount", key: "amount", width: 13 },
       ];
       const money = { numFmt: '"₹"#,##0' };
+      // Each function's share of the Professional Design, Management & Execution fee — on its own
+      // total after its own fixed-venue discount (fnObj.discountPct), same as the on-screen preview.
+      // One helper so the Event Summary's Grand column and each function tab's fee row agree.
+      const feePctNum = Number(combined.agencyFeePct) || 20;
+      const fnFeeOf = (fnObj) => {
+        if (!fnObj || fnObj.isEmpty) return 0;
+        const keep = Math.max(0, 1 - (Number(fnObj.discountPct) || 0) / 100);
+        return Math.round((fnObj.grand || 0) * keep * feePctNum / 100);
+      };
       const usedSheetNames = new Set();
       const sheetNameFor = (fnObj, i) => {
         // Excel sheet names: max 31 chars, no  : \ / ? * [ ] , and must be unique.
@@ -1037,12 +1046,14 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
       // per-function tabs below. A guest opening the file should see the headline numbers before
       // wading into per-zone line items. ═══
       const sw = workbook.addWorksheet("Event Summary");
+      // Widths only, no `header`: ExcelJS writes any column header into row 1, which put a stray
+      // "Function" above the EVENT SUMMARY band. The real header row is added explicitly below.
       sw.columns = [
-        { header: "Function", key: "fn", width: 20 },
-        { header: "Date · Venue", key: "dv", width: 30 },
-        { header: "Decor", key: "decor", width: 14 },
-        { header: "Transport & Power", key: "transport", width: 20 },
-        { header: "Grand", key: "grand", width: 14 },
+        { key: "fn", width: 20 },
+        { key: "dv", width: 30 },
+        { key: "decor", width: 14 },
+        { key: "transport", width: 20 },
+        { key: "grand", width: 16 },
       ];
       const swRow1 = sw.addRow(["EVENT SUMMARY", "", "", "", ""]);
       sw.mergeCells(1, 1, 1, 5);
@@ -1057,7 +1068,9 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
       combined.functions.forEach(fnObj => {
         const row = sw.addRow([
           fnObj.fnType || "—", `${fmtDate(fnObj.fnDate)} · ${fnObj.fnVenue || "—"}`,
-          fnObj.isEmpty ? 0 : (fnObj.decorTotal || 0), fnObj.isEmpty ? 0 : (fnObj.transportTotal || 0), fnObj.isEmpty ? 0 : (fnObj.grand || 0),
+          // Grand includes this function's fee — it points at the tab's FUNCTION TOTAL WITH FEES
+          // (wired below), so the fee is carried in each function's row, not on a separate line.
+          fnObj.isEmpty ? 0 : (fnObj.decorTotal || 0), fnObj.isEmpty ? 0 : (fnObj.transportTotal || 0), fnObj.isEmpty ? 0 : ((fnObj.grand || 0) + fnFeeOf(fnObj)),
         ]);
         [3, 4, 5].forEach(ci => { row.getCell(ci).numFmt = money.numFmt; row.getCell(ci).alignment = { horizontal: "right" }; });
         swFnRows.push(row);
@@ -1074,15 +1087,10 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
         discountRow.getCell(5).alignment = { horizontal: "right" };
         discountRow.getCell(5).font = { color: { argb: "FFB91C1C" } };
       }
-      // Agency fee — flat % of the deal (Admin → Settings, default 20%), billed to the guest on top
-      // of every function's own decor+transport+power total. Its own line, not folded silently into
-      // any function's total, so the guest can see exactly what it is.
-      const agencyFeeRow = sw.addRow(["PROFESSIONAL DESIGN, MANAGEMENT & EXECUTION FEES", `${combined.agencyFeePct ?? 20}% of decor + transport + power`, "", "", combined.agencyFee || 0]);
-      sw.mergeCells(agencyFeeRow.number, 1, agencyFeeRow.number, 4);
-      agencyFeeRow.getCell(1).font = { bold: true, color: { argb: "FF4F46E5" } };
-      agencyFeeRow.getCell(2).font = { color: { argb: "FF6B7280" }, italic: true };
-      agencyFeeRow.getCell(5).numFmt = money.numFmt;
-      agencyFeeRow.getCell(5).alignment = { horizontal: "right" };
+      // No separate fee line here any more (by request): the Professional Design, Management &
+      // Execution fee is already inside each function's Grand above, and shown as its own row on
+      // every function tab. The grand total is therefore those Grand figures (plus the discount
+      // line, when there is one) — see the wiring pass below.
       const gtRow = sw.addRow(["EVENT GRAND TOTAL", "", "", "", combined.eventGrandTotal || 0]);
       sw.mergeCells(gtRow.number, 1, gtRow.number, 4);
       gtRow.getCell(1).font = { bold: true, size: 12, color: { argb: white } };
@@ -1227,20 +1235,14 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
 
         // ── THIS FUNCTION'S SHARE OF THE FEE ──
         // The Event Summary bills one fee on the whole event. Each function's tab now shows its own
-        // share too, so a guest reading a single tab sees what that function costs all-in — not
-        // only its décor and transport. It sits BELOW the FUNCTION TOTAL band, which stays the
-        // pre-fee figure: Event Summary's Grand column points at that cell and adds the fee once at
-        // event level, so pulling the fee into it would charge it twice.
-        // Same % as the event-level row. The fee is charged AFTER the fixed-venue discount, and that
-        // discount is per function (each venue has its own rate — fnObj.discountPct), so each
-        // function's fee is on its OWN discounted total. Same math as the on-screen preview's
-        // previewGrand, so the sheet and the screen agree function by function; the per-function
-        // fees still add up to the event's fee line give or take a rupee of rounding.
-        const feePctNum = Number(combined.agencyFeePct) || 20;
+        // share, so a guest reading a single tab sees what that function costs all-in. FUNCTION
+        // TOTAL above stays the pre-fee figure; FUNCTION TOTAL WITH FEES below is what the Event
+        // Summary's Grand column points at, so the fee is counted exactly once per function.
+        // The fee is charged AFTER the function's own fixed-venue discount (fnObj.discountPct),
+        // same as the on-screen preview's previewGrand — see fnFeeOf.
         const fnDiscPct = Number(fnObj.discountPct) || 0;
-        const keepShare = Math.max(0, 1 - fnDiscPct / 100);
         const shareTxt = fnDiscPct > 0 ? `*(1-${fnDiscPct}/100)` : "";
-        const fnFee = Math.round((fnObj.grand || 0) * keepShare * feePctNum / 100);
+        const fnFee = fnFeeOf(fnObj);
         const feeRow = ws.addRow([`PROFESSIONAL DESIGN, MANAGEMENT & EXECUTION FEES (${feePctNum}%)`, "", "", "", "", "", "", ""]);
         ws.mergeCells(feeRow.number, 1, feeRow.number, 7);
         feeRow.getCell(1).font = { italic: true, bold: true, color: { argb: "FF6B7280" } };
@@ -1259,7 +1261,7 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
         allInRow.getCell(8).numFmt = money.numFmt;
         allInRow.getCell(8).alignment = { horizontal: "right" };
         allInRow.height = 20;
-        fnRefs.push({ isEmpty: false, sheetName, decorRows, transportRow, ftRow: ftRow.number });
+        fnRefs.push({ isEmpty: false, sheetName, decorRows, transportRow, ftRow: ftRow.number, allInRow: allInRow.number });
       });
 
       // ═══ Wire Event Summary's per-function rows + grand total to the sheets just built ═══
@@ -1274,21 +1276,16 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
         const sn = qsheet(ref.sheetName);
         if (ref.decorRows.length) row.getCell(3).value = { formula: `SUM(${ref.decorRows.map(r => `${sn}!H${r}`).join(",")})`, result: fnObj.decorTotal || 0 };
         row.getCell(4).value = ref.transportRow ? { formula: `${sn}!H${ref.transportRow}`, result: fnObj.transportTotal || 0 } : 0;
-        row.getCell(5).value = { formula: `${sn}!H${ref.ftRow}`, result: fnObj.grand || 0 };
+        // Grand = the tab's FUNCTION TOTAL WITH FEES, so each function's row already carries its fee.
+        row.getCell(5).value = { formula: `${sn}!H${ref.allInRow}`, result: (fnObj.grand || 0) + fnFeeOf(fnObj) };
       });
-      const grandRefs = fnRefs.filter(r => r && !r.isEmpty).map(r => `${qsheet(r.sheetName)}!H${r.ftRow}`);
-      // The fee row itself becomes a live formula too (not just the grand total below it) — editing
-      // a Qty on a per-function tab should recalculate the fee's base, not leave it stuck at whatever
-      // it was when the sheet was built. Matches csUpdateQty's own on-screen re-derivation above.
-      // The discount row stays a static number — it's a per-venue proration (see
-      // proratedVenueDiscount), not a flat %, so it isn't worth reproducing as an Excel formula —
-      // but the fee/grand total below still reference its cell, so at least THEY stay internally
-      // consistent with whatever the discount row says.
-      if (grandRefs.length) {
-        const preFeeFormula = `SUM(${grandRefs.join(",")})${discountRow ? `+E${discountRow.number}` : ""}`;
-        const feePct = Number(combined.agencyFeePct) || 20;
-        agencyFeeRow.getCell(5).value = { formula: `ROUND((${preFeeFormula})*${feePct}/100,0)`, result: combined.agencyFee || 0 };
-        gtRow.getCell(5).value = { formula: `${preFeeFormula}+E${agencyFeeRow.number}`, result: combined.eventGrandTotal || 0 };
+      // EVENT GRAND TOTAL = the Grand column (fees included) plus the fixed-venue discount line when
+      // there is one (a negative number). Summing the column on this sheet keeps it live: edit any
+      // function tab and its row, then this total, follow. The discount row stays a static number —
+      // it's a per-venue proration (see proratedVenueDiscount), not a flat %.
+      if (swFnRows.length) {
+        const first = swFnRows[0].number, last = swFnRows[swFnRows.length - 1].number;
+        gtRow.getCell(5).value = { formula: `SUM(E${first}:E${last})${discountRow ? `+E${discountRow.number}` : ""}`, result: combined.eventGrandTotal || 0 };
       }
 
       // File name: guest name + the earliest function's date + venue — functions are already
