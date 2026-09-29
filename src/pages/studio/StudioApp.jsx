@@ -9525,9 +9525,14 @@ export default function StudioApp() {
       // proportional-by-raw-grand is the only sensible way to split it across functions.
       if (preFeeTotal > 0) {
         const scale = eventGrandTotal / preFeeTotal;
-        functions.forEach(f => { f.previewGrand = Math.round((f.grand || 0) * scale); });
+        functions.forEach(f => {
+          f.previewGrand = Math.round((f.grand || 0) * scale);
+          // Same proportional-by-raw-grand split as previewGrand itself, off the deal-wide fee
+          // amount — a negotiated lump sum has no per-function "own rate" for the fee either.
+          f.agencyFee = Math.round(agencyFee * (f.grand || 0) / preFeeTotal);
+        });
       } else {
-        functions.forEach(f => { f.previewGrand = f.grand || 0; });
+        functions.forEach(f => { f.previewGrand = f.grand || 0; f.agencyFee = 0; });
       }
     } else {
       // Un-negotiated: each function's OWN discount% (already stamped in above, per its own venue)
@@ -9544,7 +9549,10 @@ export default function StudioApp() {
       functions.forEach(f => {
         const fDiscount = Math.round((f.grand || 0) * (f.discountPct || 0) / 100);
         const fDiscounted = Math.max(0, (f.grand || 0) - fDiscount);
-        f.previewGrand = fDiscounted + Math.round(fDiscounted * agencyFeePct / 100);
+        // Exposed on its own (not just folded into previewGrand) so the Excel/PPT/PDF cost sheets
+        // can print each function's own share of the fee as its own column/line.
+        f.agencyFee = Math.round(fDiscounted * agencyFeePct / 100);
+        f.previewGrand = fDiscounted + f.agencyFee;
       });
     }
     return {
