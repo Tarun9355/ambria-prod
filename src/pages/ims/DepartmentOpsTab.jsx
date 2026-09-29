@@ -126,7 +126,11 @@ const GRID = "grid gap-3 sm:gap-4 items-stretch grid-cols-2 sm:[grid-template-co
 // the colour reads through as a tint rather than as grey, and a white hairline for the pane's
 // edge. Only the page-level cards take it — content inside a card stays on solid white so text
 // and inputs keep full contrast.
-const GLASS = "bg-white/60 backdrop-blur-xl backdrop-saturate-150 ring-1 ring-white/70";
+// PAINTED, not sampled: no backdrop-filter. A live backdrop blur on in-flow cards made Safari
+// (Mac and iPhone) re-sample it on every scroll frame, and the tiles' hover lift made it drop out
+// and snap back — the flicker. A translucent white over the page's soft colour glow keeps the glass
+// look (the tint still shows through) without asking the browser to blur anything.
+const GLASS = "bg-white/75 ring-1 ring-white/80";
 
 /* ── THE CARD'S ICONS ──
    Drawn, not emoji, and only for the event header card the design system specifies. Emoji were
@@ -3304,7 +3308,7 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                          is a toggle, not a launcher. The open one is ringed so you can tell at a
                          glance which of the five the panel below belongs to. */
                       onClickCapture={e => { if (modal === t.k) { e.stopPropagation(); setModal(null); } }}
-                      className={"group text-left rounded-xl p-3 sm:p-3.5 h-full flex flex-col transition-all duration-150 shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] hover:-translate-y-0.5 hover:shadow-[0_4px_8px_rgba(15,23,42,0.1),0_22px_40px_-12px_rgba(15,23,42,0.45)] " + (modal === t.k ? "ring-2 ring-blue-500 " + (t.tone || "bg-white/80 backdrop-blur-xl") : (t.tone || GLASS))}>
+                      className={"group text-left rounded-xl p-3 sm:p-3.5 h-full flex flex-col transition-[transform,box-shadow] duration-150 shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] hover:-translate-y-0.5 hover:shadow-[0_4px_8px_rgba(15,23,42,0.1),0_22px_40px_-12px_rgba(15,23,42,0.45)] " + (modal === t.k ? "ring-2 ring-blue-500 " + (t.tone || "bg-white/90") : (t.tone || GLASS))}>
                       {/* Icon above the title on a phone, beside it from sm. Two to a row a tile
                           is ~170px; with a 36px icon beside it the title had ~110px and
                           "Inventory blocked" broke over two lines. Stacked, the title gets the
@@ -4261,7 +4265,7 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                          is a toggle, not a launcher. The open one is ringed so you can tell at a
                          glance which of the five the panel below belongs to. */
                       onClickCapture={e => { if (modal === t.k) { e.stopPropagation(); setModal(null); } }}
-                      className={"group text-left rounded-xl p-3.5 h-full flex flex-col transition-all duration-150 shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] hover:-translate-y-0.5 hover:shadow-[0_4px_8px_rgba(15,23,42,0.1),0_22px_40px_-12px_rgba(15,23,42,0.45)] " + (modal === t.k ? "ring-2 ring-blue-500 " + (t.tone || "bg-white/80 backdrop-blur-xl") : (t.tone || GLASS))}>
+                      className={"group text-left rounded-xl p-3.5 h-full flex flex-col transition-[transform,box-shadow] duration-150 shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] hover:-translate-y-0.5 hover:shadow-[0_4px_8px_rgba(15,23,42,0.1),0_22px_40px_-12px_rgba(15,23,42,0.45)] " + (modal === t.k ? "ring-2 ring-blue-500 " + (t.tone || "bg-white/90") : (t.tone || GLASS))}>
                       <div className="flex flex-col gap-2.5 sm:flex-row sm:items-start">
                         <span aria-hidden="true" className={"shrink-0 w-9 h-9 rounded-lg flex items-center justify-center text-base leading-none " + (t.alert ? "bg-white shadow-[0_1px_3px_rgba(15,23,42,0.12),0_4px_10px_-4px_rgba(15,23,42,0.22)]" : "bg-white shadow-[0_1px_3px_rgba(15,23,42,0.12),0_4px_10px_-4px_rgba(15,23,42,0.22)]")}>{t.icon}</span>
                         <div className="min-w-0 flex-1">

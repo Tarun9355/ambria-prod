@@ -10,7 +10,7 @@
 //
 // Inline styles preserved verbatim (NOT converted to Tailwind).
 // ═══════════════════════════════════════════════════════════════
-import { useState, useEffect, useRef, Fragment } from "react";
+import { useState, useEffect, useRef, useMemo, Fragment } from "react";
 import { IconSparkle, IconExcelMark, IconCanvaMark, IconEye, IconRepeat } from "../../../components/icons.jsx";
 import { LOGO_ASSET, logoCrop } from "../../../lib/studio/brand.js";
 import { getCat, carpetPricingFor, trussRateFor, trussBaseArea } from "../../../lib/studio/taxonomy";
@@ -219,6 +219,23 @@ export default function StudioSummary({ ctx }) {
     // inline startNew(); that reset is now startNewDeal on ctx, so they came off with it.
     setStep, setActiveClientId, startNewDeal, isFnSwitching,
   } = ctx;
+
+  // The sold fireworks' random layout, rolled ONCE per celebration. It used to call Math.random()
+  // during render, so any re-render inside the 4s it is on screen (an autosave, a toast) moved every
+  // one of the 168 particles to a new spot mid-flight — the whole burst visibly jumping.
+  const soldBursts = useMemo(() => {
+    if (!showSoldConfetti) return [];
+    return Array.from({ length: 7 }).map((_, b) => ({
+      cx: 10 + Math.random() * 80, cy: 14 + Math.random() * 46,       // burst centre, in %
+      col: ["#C9A96E", "#10B981", "#F59E0B", "#EC4899", "#8B5CF6", "#3B82F6", "#EF4444"][b % 7],
+      delay: b * 0.26 + Math.random() * 0.18,                           // staggered, not simultaneous
+      parts: Array.from({ length: 24 }).map((__, p) => {
+        const ang = (p / 24) * Math.PI * 2 + Math.random() * 0.2;
+        const dist = 80 + Math.random() * 80;
+        return { dx: Math.cos(ang) * dist, dy: Math.sin(ang) * dist };
+      }),
+    }));
+  }, [showSoldConfetti]);
 
   // Negotiated deal amount — a plain, infrequently-edited number, not a field worth threading
   // through the giant 1.5s-debounced autosave alongside every Build edit. Local draft state,
@@ -2676,19 +2693,13 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
       {/* ═══ FIREWORKS ═══ Seven bursts across the screen, each throwing particles out radially
           with a little gravity droop. Everything finishes inside the 4s markSold keeps the flag on. */}
       {showSoldConfetti&&<div style={{position:"fixed",inset:0,pointerEvents:"none",zIndex:9999,overflow:"hidden"}}>
-        {Array.from({length:7}).map((_,b)=>{
-          const cx=10+Math.random()*80, cy=14+Math.random()*46;          // burst centre, in %
-          const col=["#C9A96E","#10B981","#F59E0B","#EC4899","#8B5CF6","#3B82F6","#EF4444"][b%7];
-          const delay=b*0.26+Math.random()*0.18;                        // staggered, not simultaneous
-          return Array.from({length:24}).map((__,p)=>{
-            const ang=(p/24)*Math.PI*2+Math.random()*0.2;
-            const dist=80+Math.random()*80;
-            return <span key={b+"-"+p} className="fw-p" style={{position:"absolute",left:`${cx}%`,top:`${cy}%`,
-              width:5,height:5,borderRadius:"50%",background:col,boxShadow:`0 0 8px ${col}`,opacity:0,
-              "--dx":`${Math.cos(ang)*dist}px`,"--dy":`${Math.sin(ang)*dist}px`,
-              animation:`fwBurst 1.3s cubic-bezier(.15,.6,.3,1) ${delay}s forwards`}}/>;
-          });
-        })}
+        {/* Layout comes from soldBursts (rolled once per celebration) — see its declaration. */}
+        {soldBursts.map(({ cx, cy, col, delay, parts }, b) => parts.map(({ dx, dy }, p) => (
+          <span key={b+"-"+p} className="fw-p" style={{position:"absolute",left:`${cx}%`,top:`${cy}%`,
+            width:5,height:5,borderRadius:"50%",background:col,boxShadow:`0 0 8px ${col}`,opacity:0,
+            "--dx":`${dx}px`,"--dy":`${dy}px`,
+            animation:`fwBurst 1.3s cubic-bezier(.15,.6,.3,1) ${delay}s forwards`}}/>
+        )))}
         <style>{`@keyframes fwBurst{
           0%{transform:translate(0,0) scale(1);opacity:1}
           60%{opacity:1}

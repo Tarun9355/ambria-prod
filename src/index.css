@@ -38,6 +38,14 @@
   --text-secondary: #6B7280;
 }
 
+/* Always keep the scrollbar's space. Several screens (Studio's Event Info / Summary, Deal Check,
+   the video player, the phone sheets) lock page scrolling while open, which removed the scrollbar
+   on Windows and shifted the whole layout ~15px sideways each time one opened or closed — a visible
+   jump on every step change. Mac / iPhone overlay scrollbars take no space, so nothing changes there. */
+html {
+  scrollbar-gutter: stable;
+}
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   background: var(--bg);
