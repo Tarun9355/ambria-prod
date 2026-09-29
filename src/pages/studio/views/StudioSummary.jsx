@@ -2892,9 +2892,25 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
           return "📅";
         };
         const fmtDate = (d) => d ? new Date(d + "T00:00:00").toLocaleDateString("en-IN", {day:"2-digit", month:"short", year:"numeric"}) : "No date";
+        // Same per-function figures the Excel cost sheet prints (buildCombinedCostSheetData), so this
+        // breakdown shows the guest-facing total, the fee row and the total with fees exactly as the
+        // sheet does. The fee is on the function's total after its own fixed-venue discount — the
+        // same rule as the Excel export's fnFeeOf.
+        const combinedCs = buildCombinedCostSheetData();
+        const csFnByIdx = {};
+        (combinedCs?.functions || []).forEach(f => { csFnByIdx[f.fnIdx] = f; });
+        const feePctNum = Number(combinedCs?.agencyFeePct) || 20;
+        const feeOf = (f) => {
+          if (!f || f.isEmpty) return 0;
+          const keep = Math.max(0, 1 - (Number(f.discountPct) || 0) / 100);
+          return Math.round((f.grand || 0) * keep * feePctNum / 100);
+        };
         return sortedFns.map((fnData) => {
           const breakdown = calcFunctionBreakdown(fnData);
-          const fnGrand = breakdown.grand;
+          const csFn = csFnByIdx[fnData.fnIdx];
+          const fnTotal = csFn ? (csFn.grand || 0) : (breakdown.grandClient ?? breakdown.grand);
+          const fnFee = csFn ? feeOf(csFn) : 0;
+          const fnGrand = fnTotal + fnFee;
           const isExpanded = expandedSummaryFnIdx === fnData.fnIdx;
           return (
             <div key={fnData.fnIdx} style={{...S.card, marginBottom:14, overflow:"hidden"}}>
@@ -3038,7 +3054,7 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
                           <span style={{fontSize:11,color:textS,transition:"transform 0.15s",display:"inline-block",transform:txOpen[fnData.fnIdx]?"rotate(0)":"rotate(-90deg)"}}>▼</span>
                           <span style={{fontSize:18}}>🚛</span>
                           <div>
-                            <div style={{fontSize:14,fontWeight:600}}>Transport <span style={{fontSize:10,fontWeight:400,color:textS}}>· tap to {txOpen[fnData.fnIdx]?"hide":"see"} details</span></div>
+                            <div style={{fontSize:14,fontWeight:600}}>Transport & Power <span style={{fontSize:10,fontWeight:400,color:textS}}>· tap to {txOpen[fnData.fnIdx]?"hide":"see"} details</span></div>
                             <div style={{display:"flex",gap:6,alignItems:"center"}}>
                               <span style={{fontSize:10,padding:"1px 8px",borderRadius:4,background:breakdown.transport.isNew?"rgba(245,158,11,0.15)":"rgba(99,102,241,0.15)",color:breakdown.transport.isNew?"#F59E0B":"#818cf8"}}>{breakdown.transport.isNew?"New venue":breakdown.transport.tierLabel}</span>
                               <span style={{fontSize:10,color:textS}}>{fnData.fnVenue}</span>
@@ -3063,9 +3079,18 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
                       )}
                     </div>
                   )}
-                  {/* Function grand total */}
+                  {/* Function total, its fee share, and the total with fees — same three rows as the
+                      function's tab in the Excel cost sheet. */}
+                  <div style={{display:"flex",justifyContent:"space-between",padding:"12px 20px",borderTop:`1px solid ${border}`}}>
+                    <div style={{fontSize:13,fontWeight:700,color:textP}}>{fnData.fnType || "Function"} Total</div>
+                    <div style={{fontSize:14,fontWeight:700,color:accentText}}>{pricingReady ? fmt(fnTotal) : "…"}</div>
+                  </div>
+                  <div style={{display:"flex",justifyContent:"space-between",gap:12,padding:"10px 20px",borderTop:`1px solid ${border}`}}>
+                    <div style={{fontSize:11.5,fontWeight:600,fontStyle:"italic",color:textS}}>Professional Design, Management & Execution Fees ({feePctNum}%)</div>
+                    <div style={{fontSize:13,fontWeight:600,fontStyle:"italic",color:textS,flexShrink:0}}>{pricingReady ? fmt(fnFee) : "…"}</div>
+                  </div>
                   <div style={{display:"flex",justifyContent:"space-between",padding:"16px 20px",background:"linear-gradient(135deg,#0F0F1A,#2d1b69)"}}>
-                    <div style={{fontSize:14,fontWeight:700,color:"#fff"}}>{fnData.fnType || "Function"} Total</div>
+                    <div style={{fontSize:14,fontWeight:700,color:"#fff"}}>{fnData.fnType || "Function"} Total with Fees</div>
                     {pricingReady
                       ? <div style={{fontSize:18,fontWeight:700,color:"#C9A96E"}}>{fmt(fnGrand)}</div>
                       : <span style={{display:"inline-block",width:96,height:18,borderRadius:5,background:"rgba(255,255,255,0.14)",animation:"shPulse 1.15s ease-in-out infinite"}}/>}
