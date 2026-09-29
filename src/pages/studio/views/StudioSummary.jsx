@@ -1231,13 +1231,15 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
         // only its décor and transport. It sits BELOW the FUNCTION TOTAL band, which stays the
         // pre-fee figure: Event Summary's Grand column points at that cell and adds the fee once at
         // event level, so pulling the fee into it would charge it twice.
-        // Same % as the event-level row. When a fixed-venue discount applies, the event fee is
-        // charged on the DISCOUNTED total, so each function carries the same discounted share of its
-        // own total — that keeps the per-function fees adding up to the event's fee line.
+        // Same % as the event-level row. The fee is charged AFTER the fixed-venue discount, and that
+        // discount is per function (each venue has its own rate — fnObj.discountPct), so each
+        // function's fee is on its OWN discounted total. Same math as the on-screen preview's
+        // previewGrand, so the sheet and the screen agree function by function; the per-function
+        // fees still add up to the event's fee line give or take a rupee of rounding.
         const feePctNum = Number(combined.agencyFeePct) || 20;
-        const preFeeAll = combined.functions.reduce((s, x) => s + (x.isEmpty ? 0 : (x.grand || 0)), 0);
-        const keepShare = preFeeAll > 0 ? Math.max(0, preFeeAll - (combined.venueDiscount || 0)) / preFeeAll : 1;
-        const shareTxt = keepShare < 1 ? `*${Number(keepShare.toFixed(6))}` : "";
+        const fnDiscPct = Number(fnObj.discountPct) || 0;
+        const keepShare = Math.max(0, 1 - fnDiscPct / 100);
+        const shareTxt = fnDiscPct > 0 ? `*(1-${fnDiscPct}/100)` : "";
         const fnFee = Math.round((fnObj.grand || 0) * keepShare * feePctNum / 100);
         const feeRow = ws.addRow([`PROFESSIONAL DESIGN, MANAGEMENT & EXECUTION FEES (${feePctNum}%)`, "", "", "", "", "", "", ""]);
         ws.mergeCells(feeRow.number, 1, feeRow.number, 7);
