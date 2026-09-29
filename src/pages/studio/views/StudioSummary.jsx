@@ -992,13 +992,33 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
           const [start, end] = opts.sumRange;
           row.getCell(8).value = { formula: `SUM(H${start}:H${end})`, result: Number(total) || 0 };
         } else {
-          if (typeof qty === "number" && typeof rate === "number" && typeof listAmount === "number" && Math.abs(qty * rate - listAmount) < 1) {
-            row.getCell(7).value = { formula: `C${row.number}*D${row.number}`, result: listAmount };
+          const r = row.number;
+          if (typeof discRate === "number") {
+            // Discounted line: List Amount = Qty × Rate, Amount = Qty × Disc. Rate, and Disc. Rate
+            // itself follows Rate at the line's own discount ratio — so changing the Rate re-derives
+            // the discounted rate and both amounts, not just the list one.
+            if (typeof qty === "number" && typeof rate === "number" && typeof listAmount === "number" && Math.abs(qty * rate - listAmount) < 1) {
+              row.getCell(7).value = { formula: `C${r}*D${r}`, result: listAmount };
+            }
+            if (typeof rate === "number" && rate > 0) {
+              const ratio = Number((discRate / rate).toFixed(6));
+              row.getCell(5).value = { formula: `ROUND(D${r}*${ratio},2)`, result: discRate };
+            }
+            if (typeof qty === "number" && typeof total === "number" && Math.abs(qty * discRate - total) < 1) {
+              row.getCell(8).value = { formula: `C${r}*E${r}`, result: total };
+            }
+          } else if (typeof qty === "number" && typeof rate === "number" && typeof total === "number" && Math.abs(qty * rate - total) < 1) {
+            // Plain line (no discount) — the common case, and the one that used to be a flat number:
+            // Amount = Qty × Rate, so editing either one reprices the line and every total above it.
+            row.getCell(8).value = { formula: `C${r}*D${r}`, result: total };
           }
-          if (typeof qty === "number" && typeof discRate === "number" && typeof total === "number" && Math.abs(qty * discRate - total) < 1) {
-            row.getCell(8).value = { formula: `C${row.number}*E${row.number}`, result: total };
+          if (typeof qty === "number" && typeof rate === "number" && typeof total === "number" && opts.tripsX) {
+            // Trucks: each truck is billed both ways — Amount = Trucks × Trip rate × 2.
+            row.getCell(8).value = { formula: `C${r}*D${r}*${opts.tripsX}`, result: total };
           }
         }
+        row.getCell(4).numFmt = money.numFmt;
+        if (typeof discRate === "number") row.getCell(5).numFmt = money.numFmt;
         row.getCell(7).numFmt = money.numFmt;
         row.getCell(8).numFmt = money.numFmt;
         row.getCell(3).alignment = { horizontal: "center" };
@@ -1021,7 +1041,7 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
         { header: "Function", key: "fn", width: 20 },
         { header: "Date · Venue", key: "dv", width: 30 },
         { header: "Decor", key: "decor", width: 14 },
-        { header: "Transport", key: "transport", width: 14 },
+        { header: "Transport & Power", key: "transport", width: 20 },
         { header: "Grand", key: "grand", width: 14 },
       ];
       const swRow1 = sw.addRow(["EVENT SUMMARY", "", "", "", ""]);
@@ -1029,7 +1049,7 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
       swRow1.getCell(1).font = { bold: true, size: 13, color: { argb: white } };
       swRow1.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: dark } };
       swRow1.height = 22;
-      const swHead = sw.addRow(["Function", "Date · Venue", "Decor", "Transport", "Grand"]);
+      const swHead = sw.addRow(["Function", "Date · Venue", "Decor", "Transport & Power", "Grand"]);
       swHead.eachCell(c => { c.font = { bold: true, color: { argb: white } }; c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: tan } }; });
       // Placeholder flat values for now — swapped for cross-sheet formulas once the per-function
       // tabs (built below) exist to point at; swFnRows keeps each row so that pass can reach it.
@@ -1131,7 +1151,8 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
         // function total picks that up too, all without re-exporting.
         const totalRefRows = [];
         fnObj.zones.forEach(z => {
-          addSectionRow(ws, `${z.label}${z.dimLabel ? "  (" + z.dimLabel + ")" : ""}   —   ${f(z.zoneTotal)}`, { fill: "FFEFE9DD", color: "FF1A1A2E" });
+          const zoneHead = `${z.label}${z.dimLabel ? "  (" + z.dimLabel + ")" : ""}`;
+          const zoneHeadRow = addSectionRow(ws, `${zoneHead}   —   ${f(z.zoneTotal)}`, { fill: "FFEFE9DD", color: "FF1A1A2E" });
           addTableHeaderRow(ws);
           const itemStartRow = ws.rowCount + 1;
           z.structItems.forEach(si => addItemRow(ws, [si.name, si.size || "—", si.qty ?? "—", si.rate ?? "—", "—", si.unit || "—", "—", si.total], { italic: true }));
@@ -1139,6 +1160,12 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
           const itemEndRow = ws.rowCount;
           const subtotalRow = addItemRow(ws, [`${z.label} Subtotal`, "", "", "", "", "", "", z.zoneTotal], { bold: true, fill: subtle, sumRange: itemEndRow >= itemStartRow ? [itemStartRow, itemEndRow] : null });
           totalRefRows.push(subtotalRow.number);
+          // The zone heading's amount follows its subtotal too — otherwise an edited sheet shows a
+          // live subtotal under a heading still quoting the old figure.
+          zoneHeadRow.getCell(1).value = {
+            formula: `"${`${zoneHead}   —   ₹`.replace(/"/g, '""')}"&TEXT(H${subtotalRow.number},"#,##0")`,
+            result: `${zoneHead}   —   ${f(z.zoneTotal)}`,
+          };
           if (z.note) {
             const row = ws.addRow([`📝 ${z.note}`]);
             ws.mergeCells(row.number, 1, row.number, COLS.length);
@@ -1151,8 +1178,11 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
 
         if (fnObj.transport) {
           addSectionRow(ws, "TRANSPORT & POWER", { fill: "FF312E81", color: "FFA5B4FC" });
-          const row = ws.addRow(["Item", "Details", "", "", "", "", "", "Amount"]);
-          row.eachCell((c, idx) => { if ([1, 2, 8].includes(idx)) { c.font = { bold: true, color: { argb: white } }; c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF4F46E5" } }; c.alignment = { horizontal: idx === 8 ? "right" : "left" }; } });
+          // Same columns as the décor tables (Qty in C, Rate in D), so Trucks and Genset carry real
+          // numbers a formula can use — they used to be text ("3 trucks × ₹5,000 × 2") with a flat
+          // amount beside it, which no edit could move.
+          const row = ws.addRow(["Item", "Details", "Qty", "Rate", "", "Unit", "", "Amount"]);
+          row.eachCell((c, idx) => { if ([1, 2, 3, 4, 6, 8].includes(idx)) { c.font = { bold: true, color: { argb: white } }; c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF4F46E5" } }; c.alignment = { horizontal: idx >= 3 ? "right" : "left" }; } });
           // One row for the whole truck count, not one per sub-category — the per-sub-category
           // breakdown (fnObj.transport.breakdown) is a fractional-truck WORKING figure (e.g. a
           // sub-category using 0.00005 of a truck), never individually billed; only the CEILED
@@ -1164,11 +1194,16 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
           // Client-facing export: truckTotalClient/tripRateClient (Admin → Settings → Transport &
           // Power's per-venue "client scale") rather than the raw cost fields — Deal Check's own
           // Transport tab is the one place that still reads truckTotal/tripRate unscaled.
-          const truckRow = ws.addRow(["Trucks", `${trucks} truck${trucks !== 1 ? "s" : ""} × ${f(fnObj.transport.tripRateClient ?? fnObj.transport.tripRate)} × 2`, "", "", "", "", "", fnObj.transport.truckTotalClient ?? fnObj.transport.truckTotal ?? 0]);
-          truckRow.getCell(8).numFmt = money.numFmt; truckRow.getCell(8).alignment = { horizontal: "right" };
-          const gRow = ws.addRow(["Genset", `${fnObj.transport.gensets || 0} units × ${f(fnObj.transport.gensetRate || 0)}`, "", "", "", "", "", fnObj.transport.gensetCost || 0]);
-          gRow.getCell(8).numFmt = money.numFmt; gRow.getCell(8).alignment = { horizontal: "right" };
-          const tRow = ws.addRow(["Transport Total", "", "", "", "", "", "", ""]);
+          const tripRate = Number(fnObj.transport.tripRateClient ?? fnObj.transport.tripRate) || 0;
+          const truckTotal = Number(fnObj.transport.truckTotalClient ?? fnObj.transport.truckTotal) || 0;
+          // Amount = Trucks × Trip rate × 2 (there and back) — wired only when that reproduces the
+          // billed figure, same rule as every item row; otherwise the true figure stays as-is.
+          const truckRow = addItemRow(ws, ["Trucks", "Round trip (× 2)", Number(trucks) || 0, tripRate, "—", "truck", "—", truckTotal],
+            Math.abs((Number(trucks) || 0) * tripRate * 2 - truckTotal) < 1 ? { tripsX: 2 } : {});
+          const gensets = Number(fnObj.transport.gensets) || 0;
+          const gensetRate = Number(fnObj.transport.gensetRate) || 0;
+          const gRow = addItemRow(ws, ["Genset", "Power", gensets, gensetRate, "—", "unit", "—", Number(fnObj.transport.gensetCost) || 0]);
+          const tRow = ws.addRow(["Transport & Power Total", "", "", "", "", "", "", ""]);
           tRow.eachCell(c => { c.font = { bold: true, color: { argb: "FF4F46E5" } }; c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFEEF2FF" } }; });
           tRow.getCell(8).value = { formula: `SUM(H${truckRow.number}:H${gRow.number})`, result: fnObj.transport.totalClient ?? fnObj.transport.total ?? 0 };
           tRow.getCell(8).numFmt = money.numFmt; tRow.getCell(8).alignment = { horizontal: "right" };
@@ -1189,6 +1224,39 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
         ftRow.getCell(8).numFmt = money.numFmt;
         ftRow.getCell(8).alignment = { horizontal: "right" };
         ftRow.height = 22;
+
+        // ── THIS FUNCTION'S SHARE OF THE FEE ──
+        // The Event Summary bills one fee on the whole event. Each function's tab now shows its own
+        // share too, so a guest reading a single tab sees what that function costs all-in — not
+        // only its décor and transport. It sits BELOW the FUNCTION TOTAL band, which stays the
+        // pre-fee figure: Event Summary's Grand column points at that cell and adds the fee once at
+        // event level, so pulling the fee into it would charge it twice.
+        // Same % as the event-level row. When a fixed-venue discount applies, the event fee is
+        // charged on the DISCOUNTED total, so each function carries the same discounted share of its
+        // own total — that keeps the per-function fees adding up to the event's fee line.
+        const feePctNum = Number(combined.agencyFeePct) || 20;
+        const preFeeAll = combined.functions.reduce((s, x) => s + (x.isEmpty ? 0 : (x.grand || 0)), 0);
+        const keepShare = preFeeAll > 0 ? Math.max(0, preFeeAll - (combined.venueDiscount || 0)) / preFeeAll : 1;
+        const shareTxt = keepShare < 1 ? `*${Number(keepShare.toFixed(6))}` : "";
+        const fnFee = Math.round((fnObj.grand || 0) * keepShare * feePctNum / 100);
+        const feeRow = ws.addRow([`PROFESSIONAL DESIGN, MANAGEMENT & EXECUTION FEES (${feePctNum}%)`, "", "", "", "", "", "", ""]);
+        ws.mergeCells(feeRow.number, 1, feeRow.number, 7);
+        feeRow.getCell(1).font = { italic: true, bold: true, color: { argb: "FF6B7280" } };
+        feeRow.getCell(8).value = { formula: `ROUND(H${ftRow.number}${shareTxt}*${feePctNum}/100,0)`, result: fnFee };
+        feeRow.getCell(8).font = { italic: true, bold: true, color: { argb: "FF6B7280" } };
+        feeRow.getCell(8).numFmt = money.numFmt;
+        feeRow.getCell(8).alignment = { horizontal: "right" };
+        feeRow.height = 20;
+        const allInRow = ws.addRow(["FUNCTION TOTAL WITH FEES", "", "", "", "", "", "", ""]);
+        ws.mergeCells(allInRow.number, 1, allInRow.number, 7);
+        allInRow.getCell(1).font = { bold: true, size: 11, color: { argb: gold } };
+        allInRow.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: dark } };
+        allInRow.getCell(8).value = { formula: `H${ftRow.number}+H${feeRow.number}`, result: (fnObj.grand || 0) + fnFee };
+        allInRow.getCell(8).font = { bold: true, size: 12, color: { argb: gold } };
+        allInRow.getCell(8).fill = { type: "pattern", pattern: "solid", fgColor: { argb: dark } };
+        allInRow.getCell(8).numFmt = money.numFmt;
+        allInRow.getCell(8).alignment = { horizontal: "right" };
+        allInRow.height = 20;
         fnRefs.push({ isEmpty: false, sheetName, decorRows, transportRow, ftRow: ftRow.number });
       });
 
