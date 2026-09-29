@@ -60,6 +60,7 @@ const LMS_FUNCTION_TYPES = {
   "31": "Kitty Party", "32": "Restaurant Sale", "33": "Lohri", "34": "Diwali Party",
   "35": "Get Together", "36": "Mata Ki Chowki",
 };
+export const LMS_FUNCTION_TYPE_NAMES = [...new Set(Object.values(LMS_FUNCTION_TYPES))];
 
 const LMS_ENDPOINTS = {
   venue: "/api/v1/processerp_api/get_venue_contract_information_list",

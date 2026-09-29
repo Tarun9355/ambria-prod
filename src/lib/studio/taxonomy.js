@@ -17,6 +17,15 @@ export const FUNCTIONS=["Wedding","Reception","Sangeet","Cocktail","Haldi","Mehe
 // Commit 3 taxonomy — length-safe fallback. Returns fallback when taxonomy list is missing OR empty array.
 // Fixes the silent-bug where taxOr(taxonomy.eventType, FUNCTIONS) gives [] instead of FUNCTIONS when admin clears taxonomy.
 export const taxOr = (arr, fb) => (Array.isArray(arr) && arr.length > 0) ? arr : fb;
+// Concatenates lists in order, dropping case-insensitive repeats (first spelling wins).
+export const mergeUniqueCI = (...lists) => {
+  const seen = new Set(), out = [];
+  for (const list of lists) for (const v of (list || [])) {
+    const k = String(v || "").trim().toLowerCase();
+    if (k && !seen.has(k)) { seen.add(k); out.push(v); }
+  }
+  return out;
+};
 export const MOODS=[
   {id:"royal",label:"Royal & Grand",emoji:"👑",colors:["#8B0000","#FFD700","#4A0E2B"]},
   {id:"modern",label:"Modern Minimal",emoji:"◻️",colors:["#1a1a2e","#e0e0e0","#fff"]},

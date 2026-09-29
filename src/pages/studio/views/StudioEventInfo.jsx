@@ -1,5 +1,6 @@
 import { useState, useEffect, useLayoutEffect, useRef } from "react";
-import { taxOr, FUNCTIONS, CLIENT_SHIFTS_DD } from "../../../lib/studio/taxonomy";
+import { taxOr, mergeUniqueCI, FUNCTIONS, CLIENT_SHIFTS_DD } from "../../../lib/studio/taxonomy";
+import { LMS_FUNCTION_TYPE_NAMES } from "../../../lib/ims/lms";
 // The SAME test the save path stamps `has_data` with. Asking the question a second way here is how
 // the card and the row drift apart, and a disagreement about "does this have a build" is what let an
 // empty auto-save erase a visible one once already.
@@ -1742,7 +1743,7 @@ export default function StudioEventInfo({ ctx }) {
                   </div>
                 </div>
                 <div className="ei-two" style={{gap:14,marginBottom:12}}>
-                  <div><div style={label}>Event Type <span style={{color:C.red}}>*</span></div><select value={f.type || ""} onChange={e => updateType(e.target.value)} style={{...S.select,width:"100%"}}><option value="">Select event type</option>{taxOr(taxonomy.eventType, FUNCTIONS).map(et => <option key={et} value={et}>{et}</option>)}</select></div>
+                  <div><div style={label}>Event Type <span style={{color:C.red}}>*</span></div><select value={f.type || ""} onChange={e => updateType(e.target.value)} style={{...S.select,width:"100%"}}><option value="">Select event type</option>{mergeUniqueCI(taxOr(taxonomy.eventType, FUNCTIONS), LMS_FUNCTION_TYPE_NAMES, f.type ? [f.type] : []).map(et => <option key={et} value={et}>{et}</option>)}</select></div>
                   {/* Asterisked on every function, but only Function 1's is gated — same as Event
                       Type above it. Blocking on Functions 2+ would trap anyone who adds the next
                       function before the client has settled its date, which is the normal order. */}
