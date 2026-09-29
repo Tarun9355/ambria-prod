@@ -5827,12 +5827,20 @@ export default function StudioApp() {
       // alongside the netted `qty` so the guest-facing truckFracClient below can pick whichever the
       // discount toggle calls for, without touching qty/truckFrac (Ambria's own cost basis, which
       // must stay netted unconditionally regardless of any guest-facing toggle).
-      const addSub = (sub, qty, qtyFull, zoneKey, itemName, invCat) => {
+      // qtyClient (optional): what the GUEST is trucked for — the ITEM-ONLY reuse rule (owner's
+      // choice): only the same inventory items the preceding function already brought in are spared,
+      // exactly as calcFunctionCost (the Total Estimate / booking amount) and Build's Live Estimate
+      // count it. Omitted, it is the guest-facing netting with no reuse at all (hideDiscountFromClient
+      // on → qtyFull, off → qty), which is what every non-inventory row (truss, platform, carpet,
+      // masking, flowers, patterns, sqft items) gets in calcFunctionCost too. Ambria's own cost side
+      // (qty / truckFrac) keeps the sub-category carryover below, untouched.
+      const addSub = (sub, qty, qtyFull, zoneKey, itemName, invCat, qtyClient) => {
         const k = String(sub || "").toLowerCase().trim(); const tc = capBySub[k];
         if (!tc || (!(qty > 0) && !(qtyFull > 0))) return;
-        if (!subAgg[k]) subAgg[k] = { label: tc.item, subKey: k, invCat: invCat || "", perTruck: Number(tc.perTruck) || 0, unit: tc.unit || "pc", qty: 0, qtyFull: 0, items: [] };
+        if (!subAgg[k]) subAgg[k] = { label: tc.item, subKey: k, invCat: invCat || "", perTruck: Number(tc.perTruck) || 0, unit: tc.unit || "pc", qty: 0, qtyFull: 0, qtyClient: 0, items: [] };
         subAgg[k].qty += (qty || 0);
         subAgg[k].qtyFull += (qtyFull || 0);
+        subAgg[k].qtyClient += (qtyClient != null ? qtyClient : (hideDiscountFromClient ? (qtyFull || 0) : (qty || 0)));
         if (itemName && qty > 0) subAgg[k].items.push({ zoneKey: zoneKey || "", name: itemName, qty });
       };
       // An element's sub-category for truck-capacity purposes comes ONLY from live IMS identity —
@@ -5869,6 +5877,9 @@ export default function StudioApp() {
       // their full décor cost, this only affects how many trucks the trip needs. Exposed on the
       // returned `transport` object (repeatZonesExcluded) so the Transport tab can say which zones
       // were left out and why, rather than a truck count just quietly coming out lower.
+      // The guest's own reuse pool for trucks — same source and same per-element draw-down order as
+      // calcFunctionCost's transportPool, so the two count the guest's trucks identically.
+      const clientTruckPool = crossFnPrevFn ? new Map(Object.entries(computeFnInvQty(crossFnPrevFn))) : null;
       const repeatZonesExcluded = Object.keys(fZoneConfig).filter(zk => fEnabledEls[zk] && fZoneConfig[zk]?.repeat)
         .map(zk => { const cz = fCustomZones.find(c => c.id === zk); return { zk, label: zoneLabelsD[zk]?.label || cz?.name || zk }; });
       Object.entries(fZoneElements).forEach(([zk, elems]) => {
@@ -5890,13 +5901,21 @@ export default function StudioApp() {
               // under ITS OWN sub-category, with its OWN name/category in the breakdown's items[]
               // (not the outer element's — a console kit's Fabric component shows as the fabric's
               // own name, not "Console Table"). See computeTruckItems' matching comment.
-              walkKitUnits(invItem, Number(el.qty) || 0, imsInventory, el.kitOverrides, (node, nodeQty) => {
+              // Guest side, item-only reuse (see addSub's qtyClient): the same units of THIS item the
+              // preceding function already has on site are not trucked again. Kit walks scale
+              // linearly with the element qty, so the reused share is applied as a ratio per node.
+              const elQty = Number(el.qty) || 0;
+              const reused = (!hideDiscountFromClient && clientTruckPool) ? Math.min(elQty, clientTruckPool.get(el.invId) || 0) : 0;
+              if (reused > 0) clientTruckPool.set(el.invId, (clientTruckPool.get(el.invId) || 0) - reused);
+              const effRatio = elQty > 0 ? Math.max(0, elQty - reused) / elQty : 0;
+              walkKitUnits(invItem, elQty, imsInventory, el.kitOverrides, (node, nodeQty) => {
                 const nodeSub = node.subCat || node.subcategory || "";
                 // Fixed-venue standing netting is ALSO cost-only (`qty`) — qtyFull ignores it, same
                 // "as if nothing were reused" reasoning as the repeat zone treatment above.
                 const netQty = zoneRepeat ? 0 : builtQty(fvCfgForRepeat, fVenue, node.id, nodeQty);
                 const label = node.id === invItem.id ? (el.name || node.name || nodeSub) : (node.name || nodeSub);
-                addSub(nodeSub, netQty, nodeQty, zk, label, node.cat || node.category || "");
+                const clientQty = hideDiscountFromClient ? nodeQty : (zoneRepeat ? 0 : builtQty(fvCfgForRepeat, fVenue, node.id, nodeQty * effRatio));
+                addSub(nodeSub, netQty, nodeQty, zk, label, node.cat || node.category || "", clientQty);
               });
             }
             return;
@@ -5959,9 +5978,13 @@ export default function StudioApp() {
         // same as before repeat/fixed-venue netting existed on the client side at all: qtyFull.
         // On → guest sees the SAME netted qty Ambria's own cost side (s.qty) already uses, and the
         // same cross-function carryover waiver (`carried`) subtracted off it too.
-        const clientBase = hideDiscountFromClient ? s.qtyFull : s.qty;
-        const clientCarried = hideDiscountFromClient ? 0 : carried;
-        const clientQty = Math.max(0, clientBase - clientCarried);
+        // Guest side: the ITEM-ONLY reuse rule (owner's choice), accumulated per element in
+        // qtyClient — NOT this sub-category carryover. The sub-category netting (`carried`) spares a
+        // whole category's worth of trucking because the previous function had SOME of that
+        // category on site, which is Ambria's own cost view; the guest is only spared the same items
+        // actually reused. This is what calcFunctionCost (the Total Estimate / booking amount) and
+        // Build's Live Estimate count, so the cost sheet now bills the same number of trucks.
+        const clientQty = Math.max(0, s.qtyClient || 0);
         truckFracClient += clientQty / s.perTruck;
         // trucksClient — this row's client-facing truck fraction (Summary's client-facing accordion
         // reads this); trucks is netted for carryover (Deal Check's own Transport tab reads that).
@@ -11180,47 +11203,57 @@ export default function StudioApp() {
            it just finds the bar a slightly different colour than a minute ago. */
         @keyframes saSheen { from { transform: translateX(0) } to { transform: translateX(-56.5%) } }
         @media (prefers-reduced-motion: reduce) { .sa-sheen::before { animation: none; will-change: auto } }
-        /* ══ TOUCH DEVICES: HOLD THE DECOR STILL ══
-           Android tablets flickered badly across all four steps. The cause is the page decoration,
-           not the content: full-viewport blurs over forever-moving bands, drifting blurred strips
-           that repaint every frame, 80px-blurred 760px blobs kept as permanent GPU layers, glass
-           (backdrop-filter) buttons on every video card, and hover lifts that Android applies on tap
-           and never releases. A mid-range tablet GPU cannot re-composite all of that per frame, so it
-           drops tiles — the flashing.
+        /* ══ EVERY DEVICE: HOLD THE DECOR STILL ══
+           The page decoration, not the content, is what flickered — first reported on Android
+           tablets, and the same triggers are known to flash on Safari (Mac and iPhone) and to drop
+           frames on laptops: full-viewport blurs recomputed every frame over forever-moving bands,
+           blurred + blended strips animating background-position (a repaint per frame), a
+           clip-path:url() brand panel full of animated blurred layers, a masked sticky-header sheen,
+           and frosted (backdrop-filter) buttons and rails that Safari drops and re-draws while the
+           page scrolls. So on EVERY device the decor keeps its colours and simply stops moving — the
+           same "hold still" each view already defines for prefers-reduced-motion, so nothing is left
+           half-animated or invisible (entrances that start at opacity 0 land finished, not hidden).
+           The only rules kept touch-only are the ones that exist for touch reasons (below). */
+        /* the moving background on every step */
+        .ei-band, .sb-band, .bd-band, .sh-band, .ei-wave,
+        .ei-wash-a, .ei-wash-b, .ei-wash-c, .ei-glow,
+        .sb-wash-top, .bd-wash-top, .sa-sheen::before { animation: none !important; will-change: auto !important }
+        .ei-wash-a, .ei-wash-b, .ei-wash-c, .ei-glow { opacity: 1 !important }
+        /* Event Info's brand panel: photo drift, candle flicker, sheen, blobs, motes, shimmer */
+        .ei-blob-a, .ei-blob-b, .ei-wordmark, .ei-brand-rule, .ei-brand-img, .ei-ember, .ei-brand-inner { animation: none !important }
+        .ei-brand-img { transform: scale(1.06) !important }
+        .ei-ember { transform: translateX(-50%) !important; opacity: .6 !important }
+        .ei-wordmark { background-position: 50% 0 !important }
+        .ei-sheen, .ei-mote { display: none !important }
+        /* Summary: the estimate card's auroras, sheen, glows and pulses; entrances land finished */
+        .sh-te-aurora, .sh-te-aurora2 { animation: none !important; opacity: .45 !important }
+        .sh-te-sheen { animation: none !important; opacity: 0 !important }
+        .sh-te, .sh-te-lbl, .sh-te-amt, .sh-te-pill, .sh-te-cta,
+        .sh-badge, .sh-1, .sh-2, .sh-3, .sh-4 { animation: none !important; opacity: 1 !important; transform: none !important }
+        .sh-rule { animation: none !important; opacity: 1 !important; width: 56px !important }
+        .sh-halo { animation: none !important; opacity: 0 !important }
+        .sh-badge-ring, .sh-deck-glow { animation: none !important }
+        .sh-pv { animation: none !important; box-shadow: 0 0 0 1px rgba(201,169,110,.7) !important }
+        .sh-pv-glow { animation: none !important; opacity: .4 !important }
+        /* Safari: a rounded overflow:hidden box around blurred / transformed children flashes at the
+           corners and lets the blur bleed past the radius. isolation + a mask pins the clip. */
+        .sh-te { isolation: isolate; -webkit-mask-image: -webkit-radial-gradient(white, black) }
+        /* No glass where it re-samples a moving or scrolling backdrop: every video card's play /
+           fix-tags buttons, the frosted rails and rail cards, the drawer scrim. Browse already
+           removed it from its own rail cards for exactly this ("pulsed dim" on Safari); these are the
+           ones that were left. Their tinted fills stay, so they still read as panels. */
+        .sb-card [style*="backdrop-filter"], .sb-panel, .sb-rcard, .bd-scrim,
+        .sb-rail .sb-panel, .bd-rail-l .sb-rcard, .bd-rail-l .sb-panel { backdrop-filter: none !important; -webkit-backdrop-filter: none !important }
+        /* Same corner-clip fix for the cards that scale their photo on hover (desktop hover). */
+        .sb-card, .ph-tile { isolation: isolate }
+
+        /* ══ TOUCH DEVICES ONLY ══
            (hover:none) and (pointer:coarse) is a touch screen with no mouse: phones and tablets, not
-           a touch laptop with a trackpad. There the decor keeps its colours and simply stops
-           moving — the same "hold still" each view already defines for prefers-reduced-motion, so
-           nothing is left half-animated or invisible (entrance animations that start at opacity 0
-           are finished, not cancelled). */
+           a touch laptop with a trackpad. */
         @media (hover: none) and (pointer: coarse) {
-          /* the moving background on every step */
-          .ei-band, .sb-band, .bd-band, .sh-band, .ei-wave,
-          .ei-wash-a, .ei-wash-b, .ei-wash-c, .ei-glow,
-          .sb-wash-top, .bd-wash-top, .sa-sheen::before { animation: none !important; will-change: auto !important }
-          .ei-wash-a, .ei-wash-b, .ei-wash-c, .ei-glow { opacity: 1 !important }
           /* the big blobs are radial gradients that already fade to nothing — the 80px blur on top
-             only cost a huge GPU layer each */
+             only cost a huge GPU layer each, which a tablet GPU runs out of */
           .ei-wash span, .sb-wash span, .bd-wash span, .sh-wash span { filter: none !important; will-change: auto !important; transform: none !important }
-          /* Event Info's brand panel: photo drift, candle flicker, sheen, blobs, motes, shimmer */
-          .ei-blob-a, .ei-blob-b, .ei-wordmark, .ei-brand-rule, .ei-brand-img, .ei-ember, .ei-brand-inner { animation: none !important }
-          .ei-brand-img { transform: scale(1.06) !important }
-          .ei-ember { transform: translateX(-50%) !important; opacity: .6 !important }
-          .ei-wordmark { background-position: 50% 0 !important }
-          .ei-sheen, .ei-mote { display: none !important }
-          /* Summary: the estimate card's auroras, sheen, glows and pulses; entrances land finished */
-          .sh-te-aurora, .sh-te-aurora2 { animation: none !important; opacity: .45 !important }
-          .sh-te-sheen { animation: none !important; opacity: 0 !important }
-          .sh-te, .sh-te-lbl, .sh-te-amt, .sh-te-pill, .sh-te-cta,
-          .sh-badge, .sh-1, .sh-2, .sh-3, .sh-4 { animation: none !important; opacity: 1 !important; transform: none !important }
-          .sh-rule { animation: none !important; opacity: 1 !important; width: 56px !important }
-          .sh-halo { animation: none !important; opacity: 0 !important }
-          .sh-badge-ring, .sh-deck-glow { animation: none !important }
-          .sh-pv { animation: none !important; box-shadow: 0 0 0 1px rgba(201,169,110,.7) !important }
-          .sh-pv-glow { animation: none !important; opacity: .4 !important }
-          /* no glass on touch: every video card's play / fix-tags buttons, the frosted rails, the
-             drawer scrim — each one re-blurs whatever scrolls behind it, every frame */
-          .sb-card [style*="backdrop-filter"], .sb-panel, .sb-rcard, .bd-scrim,
-          .sb-rail .sb-panel, .bd-rail-l .sb-rcard { backdrop-filter: none !important; -webkit-backdrop-filter: none !important }
           /* hover lifts: Android fires :hover on tap and keeps it until the next tap elsewhere, so a
              tapped card stayed lifted and scaled — and moved again on the next touch */
           .sb-card:hover, .sb-card:hover .sb-thumb, .sb-card:hover .sb-play, .sb-pill:hover, .sb-rcard:hover,
