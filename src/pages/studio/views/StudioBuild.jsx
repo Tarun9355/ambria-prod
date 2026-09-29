@@ -743,6 +743,11 @@ export default function StudioBuild({ ctx }) {
   // Pricing was never affected: collectAllFunctionData resolves per-function dates independently,
   // which is why the money was right while the panel lied about which day it was for.
   const fnDate = activeFnMeta?.date || clientDate;
+  // The ACTIVE function's venue for every price on this page. `venue` is function 1's: passing it
+  // (or no venue at all, for the structure discount) priced a later function's items and truss /
+  // platform at function 1's venue — so Build could quote a different figure from Summary, the
+  // cost sheet and the Total Estimate, which all use each function's own venue.
+  const aVenue = activeFnMeta?.venue || venue;
   const dateDemand = (() => {
     if (!fnDate) return null;
     const dt = dateTypes[fnDate];
@@ -820,8 +825,8 @@ export default function StudioBuild({ ctx }) {
   const toggleRepeatCat = (k, cat) => setZoneConfig(p => ({ ...p, [k]: { ...(p[k] || {}), repeatCats: { ...(p[k]?.repeatCats), [cat]: !isRepeatCat(k, cat) } } }));
   const sectionCost = (k, id) => {
     if (!showCosts) return 0;
-    if (id === "elements") return calcElsCost(zoneElements[k], true, zoneConfig[k], {checkAvailability:true, crossFnReusePool: crossFnPool()}, venue);
-    const sc = zoneConfig[k] ? scaleStruct(calcStructCost(k, zoneConfig[k], structRates, structDiscountFor(zoneConfig[k]))) : null;
+    if (id === "elements") return calcElsCost(zoneElements[k], true, zoneConfig[k], {checkAvailability:true, crossFnReusePool: crossFnPool(), zoneKey: k}, aVenue);
+    const sc = zoneConfig[k] ? scaleStruct(calcStructCost(k, zoneConfig[k], structRates, structDiscountFor(zoneConfig[k], aVenue))) : null;
     if (id === "truss") return sc ? sc.truss + sc.masking + sc.arches + sc.pillars + sc.glass : 0;
     if (id === "platform") return sc ? sc.platform + sc.carpet : 0;
     return sc ? sc.print : 0; // calcStructCost's own print total — same figure zoneTotal() now folds in below
@@ -865,7 +870,7 @@ export default function StudioBuild({ ctx }) {
   const elCardSummary = (k) => {
     const els = zoneElements[k] || [];
     if (!els.length) return null;
-    const total = showCosts ? calcElsCost(els, true, zoneConfig[k], {checkAvailability:true, crossFnReusePool: crossFnPool()}, venue) : 0;
+    const total = showCosts ? calcElsCost(els, true, zoneConfig[k], {checkAvailability:true, crossFnReusePool: crossFnPool(), zoneKey: k}, aVenue) : 0;
     return <span style={{fontSize:10.5,fontWeight:600,color:textS,display:"inline-flex",alignItems:"center",gap:6,marginLeft:2}}>
       <span>{els.length} item{els.length === 1 ? "" : "s"}</span>
       {showCosts && total > 0 && <span style={{color:textP,fontWeight:700}}>{fmt(total)}</span>}
@@ -887,7 +892,7 @@ export default function StudioBuild({ ctx }) {
   // (shortfall-adjusted), so "By zone" + "Zones subtotal" quietly failed to add up to the number
   // above them. Same reasoning as calcFunctionCost's — this is what makes Build's own totals agree
   // with themselves, and with Summary/Deal Check's.
-  const zoneTotal = (k) => calcElsCost(zoneElements[k],true,zoneConfig[k],{checkAvailability:true, crossFnReusePool: crossFnPool()},venue)+(zoneConfig[k]?scaleStruct(calcStructCost(k,zoneConfig[k],structRates,structDiscountFor(zoneConfig[k]))).total:0)+dcCustomItems.filter(c=>c.fnIdx===(activeFnIdx||0)&&c.zoneKey===k).reduce((acc,c)=>acc+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0);
+  const zoneTotal = (k) => calcElsCost(zoneElements[k],true,zoneConfig[k],{checkAvailability:true, crossFnReusePool: crossFnPool(), zoneKey: k},aVenue)+(zoneConfig[k]?scaleStruct(calcStructCost(k,zoneConfig[k],structRates,structDiscountFor(zoneConfig[k],aVenue))).total:0)+dcCustomItems.filter(c=>c.fnIdx===(activeFnIdx||0)&&c.zoneKey===k).reduce((acc,c)=>acc+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0);
   void textSRaw;
 
   // Photo-filter pill. Was 9px in a 2px-tall chip with `textS` (~3.1:1) when inactive — too small
@@ -3619,7 +3624,7 @@ undefined
                   // shared Map (built once per function, drawn down across its whole .reduce) avoids.
                   const zonePool = crossFnPool();
                   return groupedEls(k).map(({ el, idx, isKit, firstKit }) => {
-                  const priceInfo = getElPrice(el, zoneConfig[k], { checkAvailability: true, zoneKey: k, elIdx: idx, crossFnReusePool: zonePool }, venue);
+                  const priceInfo = getElPrice(el, zoneConfig[k], { checkAvailability: true, zoneKey: k, elIdx: idx, crossFnReusePool: zonePool }, aVenue);
                   const rc = priceInfo.rc;
                   const hasSizes = rcIsSMB(rc);
                   const isTrussSqft = rc && rc.unit === "truss_sqft";
@@ -3940,7 +3945,7 @@ undefined
                 });
                 })()}
               </div>
-                {(zoneElements[k]||[]).length>0&&showCosts&&<div style={{display:"flex",justifyContent:"flex-end",padding:"8px 0 0",fontWeight:700,color:textP}}>{fmt(calcElsCost(zoneElements[k],true,zoneConfig[k],{checkAvailability:true, crossFnReusePool: crossFnPool()},venue))}</div>}
+                {(zoneElements[k]||[]).length>0&&showCosts&&<div style={{display:"flex",justifyContent:"flex-end",padding:"8px 0 0",fontWeight:700,color:textP}}>{fmt(calcElsCost(zoneElements[k],true,zoneConfig[k],{checkAvailability:true, crossFnReusePool: crossFnPool(), zoneKey: k},aVenue))}</div>}
               </div>}
             </div>
           ) : (
@@ -4065,7 +4070,7 @@ undefined
               create the entry on the first keystroke — calcStructCost already returns all-zero for
               an untouched config, and every field reads through `|| {}`. */}
           {(zoneSection[k]==="truss"||zoneSection[k]==="platform")&&(()=>{
-            const zm=zoneMeta[k],zc=zoneConfig[k]||{},st=scaleStruct(calcStructCost(k,zc,structRates,structDiscountFor(zc)));
+            const zm=zoneMeta[k],zc=zoneConfig[k]||{},st=scaleStruct(calcStructCost(k,zc,structRates,structDiscountFor(zc,aVenue)));
             const dl={L:"Depth",W:"Width",H:"Height",S:"Size"};
             const sZ=u=>{setActiveZones([]);setZoneConfig(p=>({...p,[k]:{...p[k],...u}}));};
             const sD=(d,v)=>{setActiveZones([]);setZoneConfig(p=>{const cur=p[k]||{};const dims={...(cur.dims||{}),[d]:parseFloat(v)||0};

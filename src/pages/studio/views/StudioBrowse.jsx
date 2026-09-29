@@ -3,7 +3,7 @@ import { makeFilterUI, useRailMaxHeight } from "../../../components/studio/filte
 import { IconCheck, IconChevron, IconCrown, IconSave, IconPlay,
   IconPalette, IconClipboard, IconSearch, IconCalendar } from "../../../components/icons.jsx";
 import { paletteNames } from "../../../lib/studio/colours";
-import { venueTypeLabel } from "../../../lib/studio/taxonomy";
+import { venueTypeLabel, getCat } from "../../../lib/studio/taxonomy";
 import { paletteSearch, paletteMatches } from "../../../components/studio/filterUI.jsx";
 import { makeS } from "../../../lib/studio/styles";
 import { WASH_BANDS, GRAIN_URL } from "../../../lib/studio/pageWash";
@@ -113,6 +113,23 @@ function StudioBrowse({ ctx }) {
     clientLedger, saveClientLedger, askConfirm,
     favVideos, saveFavVideos,
   } = ctx;
+
+  // ── A PRICE ONLY ONCE IT HAS SETTLED ──
+  // pricingReady only says the rate tables are in. Stock availability for each date, inventory and
+  // the other functions' builds keep landing after it, and each one moves the live total — which is
+  // why the card read ₹2,90… and then ₹3,16,845 a second later. So the card waits until the figure
+  // has stopped moving: pricing ready AND the live total unchanged for 1.5s. Until then it says it is
+  // loading. Any later real change (an edit, a new reservation) briefly shows loading again, then the
+  // new figure — never a number that is about to be replaced.
+  const liveTarget = ctx.pricingReady && !ctx.isFnSwitching ? Math.round((Number(ctx.grandTotal) || 0) * 10) / 10 : null;
+  const [settledTotal, setSettledTotal] = useState(null);
+  useEffect(() => {
+    setSettledTotal(null);
+    if (liveTarget == null) return undefined;
+    const t = setTimeout(() => setSettledTotal(liveTarget), 1500);
+    return () => clearTimeout(t);
+  }, [liveTarget]);
+  const priceSettled = settledTotal != null;
   // Customize/Exact Look both hand off to pickAndLoadFromVideo → loadEvent, which REPLACES
   // enabledEls wholesale (down to just `{lighting:true}`) for whichever function is active — it
   // never merges with what's already turned on. If that function's live canvas already holds a
@@ -1119,6 +1136,10 @@ function StudioBrowse({ ctx }) {
   .sb-fix{opacity:1}
   .sb-icb{width:34px;height:34px}
 }
+/* The loading spinner and skeleton pulse used by the saved-session card. Both were referenced by
+   name but never defined, so the "Loading…" spinner sat still and the skeleton bars never pulsed. */
+@keyframes sbSkelSpin{to{transform:rotate(360deg)}}
+@keyframes sbSkelPulse{0%,100%{opacity:1}50%{opacity:.45}}
 @media (prefers-reduced-motion: reduce){
   /* The ground keeps its colour, it just stops drifting. */
   .sb-band,.sb-wash-top{animation:none}
@@ -1395,9 +1416,26 @@ function StudioBrowse({ ctx }) {
                           savedActiveFnIdx records which function the number was taken from. If it is
                           not this card's, the figure is not this card's either, and no price is
                           better than another function's price. */}
-                      <div style={{fontSize:10,color:textS,marginTop:3,lineHeight:1.4}}>
-                        Saved {bannerFmtDate(s.savedAt)}{s.savedBy?` by ${s.savedBy}`:""}
-                        {ownsTotal ? ` · ${fmt(shownTotal.total)}${shownTotal.tier?` ${shownTotal.tier}`:""}` : ""}
+                      {/* ── NO PRICE UNTIL PRICING HAS LOADED ──
+                          Until the rate tables land (pricingReady) the figure on screen is either a
+                          stored snapshot about to be replaced or a sum over seed-default rates — so the
+                          card flickered from one number to another a few seconds after opening.
+                          Loading first, then one figure. And for the build you are IN (isCurrent) that
+                          figure is the live Live Estimate — exactly what the next autosave will store —
+                          rather than the last save's, which could be another user's older number. */}
+                      <div style={{fontSize:10,color:textS,marginTop:3,lineHeight:1.4,display:"flex",alignItems:"center",flexWrap:"wrap",gap:4}}>
+                        <span>Saved {bannerFmtDate(s.savedAt)}{s.savedBy?` by ${s.savedBy}`:""}</span>
+                        {!priceSettled ? (
+                          <span style={{display:"inline-flex",alignItems:"center",gap:5}}>
+                            <span>·</span>
+                            <span aria-hidden="true" style={{width:9,height:9,borderRadius:"50%",border:`1.5px solid ${isDark?"rgba(234,179,8,0.35)":"rgba(217,119,6,0.35)"}`,borderTopColor:isDark?"#FBBF24":"#B45309",animation:"sbSkelSpin .6s linear infinite"}}/>
+                            <span style={{fontStyle:"italic"}}>Loading price…</span>
+                          </span>
+                        ) : (() => {
+                          const live = isCurrent && settledTotal > 0 ? { total: settledTotal, tier: getCat(settledTotal).label } : null;
+                          const show = live || (ownsTotal ? shownTotal : null);
+                          return show ? <span>· {fmt(show.total)}{show.tier ? ` ${show.tier}` : ""}</span> : null;
+                        })()}
                       </div>
                     </div>
                     </div>
@@ -1412,7 +1450,13 @@ function StudioBrowse({ ctx }) {
                         for good and the build behind it could not be reached at all. The figure is
                         only ever a label; the restore reads this function's own snapshot, which is
                         correct whatever the session-level total happens to say. */}
-                    {(()=>{ const notReady = ctx.isFnSwitching;
+                    {/* Also blocked until the page's pricing has SETTLED (priceSettled) — continuing
+                        into a build while its prices are still landing is how a half-priced build got
+                        saved over a real one. This waits on the page-wide settle, NOT on this card
+                        having a price of its own (the trap described above): priceSettled always turns
+                        true shortly after load (pricingReady has a 10s backstop), so the button can
+                        never be stuck disabled. */}
+                    {(()=>{ const notReady = ctx.isFnSwitching || !priceSettled;
                     return (
                     <button disabled={notReady}
                       // Always resumeSavedSession, even when isCurrent (the live sourceVideo already
@@ -1424,7 +1468,7 @@ function StudioBrowse({ ctx }) {
                       // the SAME snapshot object, so it's a safe no-op when the build really was
                       // already loaded, and a real fix when it wasn't.
                       onClick={(e)=>{e.stopPropagation();if(notReady)return;resumeSavedSession(s,s._fnIdx);}}
-                      title={ctx.isFnSwitching?"Still loading this function…":(s._fnIdx!==activeFnIdx?`Switches to Function ${s._fnIdx+1} and loads this build`:undefined)}
+                      title={ctx.isFnSwitching?"Still loading this function…":!priceSettled?"Loading prices…":(s._fnIdx!==activeFnIdx?`Switches to Function ${s._fnIdx+1} and loads this build`:undefined)}
                       className="sb-bnr-btn sb-bnr-solid" style={{padding:"6px 12px",borderRadius:7,border:"none",background:isDark?"#D97706":"#B45309",color:"#fff",fontSize:10,fontWeight:700,whiteSpace:"nowrap",flex:1,
                         cursor:notReady?"progress":"pointer",opacity:notReady?0.5:1}}>
                       {isCurrent?"Continue":"Resume"} build {"→"}
@@ -1487,7 +1531,9 @@ function StudioBrowse({ ctx }) {
                       return (
                       <div key={s.id||i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,padding:"5px 7px",borderRadius:6,background:isDark?"rgba(255,255,255,0.03)":"#FAFAFB"}}>
                         <span style={{fontSize:10,color:textS,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-                          {bannerFmtDate(s.savedAt)}{s.savedBy?` · ${s.savedBy}`:""}{hShown?` · ${fmt(hShown.total)}${hShown.tier?` ${hShown.tier}`:""}`:""}
+                          {/* Same rule as the card above: no figures until pricing has loaded, so the
+                              list does not show one set of prices and then re-render with another. */}
+                          {bannerFmtDate(s.savedAt)}{s.savedBy?` · ${s.savedBy}`:""}{!priceSettled ? " · loading…" : (hShown?` · ${fmt(hShown.total)}${hShown.tier?` ${hShown.tier}`:""}`:"")}
                         </span>
                         <span style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
                           {/* Guarded like the primary Resume button above it (BUG-22). That button
@@ -1497,11 +1543,14 @@ function StudioBrowse({ ctx }) {
                               rather than the big button. Mid-switch the build state is half-replaced,
                               and restoring into it loses work — a wait that ends on its own, which is
                               why this refuses rather than queuing. */}
+                          {/* Same wait as the main button: not until the prices have settled. */}
+                          {(() => { const hBusy = ctx.isFnSwitching || !priceSettled; return (
                           <span role="button" tabIndex={0}
-                            aria-disabled={ctx.isFnSwitching ? "true" : undefined}
-                            title={ctx.isFnSwitching ? "Still loading this function…" : "Resume this session"}
-                            onClick={()=>{ if (ctx.isFnSwitching) { showMsg("Still loading this function — try again in a moment", "red"); return; } resumeSavedSession(s, hIdx ?? undefined); }}
-                            style={{fontSize:9.5,fontWeight:700,color:accent,cursor:ctx.isFnSwitching?"progress":"pointer",opacity:ctx.isFnSwitching?0.5:1,whiteSpace:"nowrap"}}>↻ Resume</span>
+                            aria-disabled={hBusy ? "true" : undefined}
+                            title={ctx.isFnSwitching ? "Still loading this function…" : !priceSettled ? "Loading prices…" : "Resume this session"}
+                            onClick={()=>{ if (hBusy) { showMsg(ctx.isFnSwitching ? "Still loading this function — try again in a moment" : "Prices are still loading — one moment", "red"); return; } resumeSavedSession(s, hIdx ?? undefined); }}
+                            style={{fontSize:9.5,fontWeight:700,color:accent,cursor:hBusy?"progress":"pointer",opacity:hBusy?0.5:1,whiteSpace:"nowrap"}}>↻ Resume</span>
+                          ); })()}
                           {s.id && <span onClick={()=>deleteSession(s.id)} title="Delete this session" style={{fontSize:11,color:textS,cursor:"pointer",lineHeight:1}}>✕</span>}
                         </span>
                       </div>

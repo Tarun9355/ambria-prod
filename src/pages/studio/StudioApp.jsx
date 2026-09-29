@@ -1071,7 +1071,11 @@ function maxRepaintCostInSubcat(rcSub, imsInventory, fallback) {
 // nets out of its own truck load the same way. Off (the default), everything trucks in full — no
 // eligibility check even runs — matching the rule that NONE of this reaches the guest unless they
 // opted in, same guard repeatAdjustedLineCost uses for the rental discount itself.
-function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckCap, imsInventory, flowerPatterns, trussInv, flowerMaterialQty, fvCfg, venueName, guestDiscountOn) {
+// reusePool (optional, trailing): a Map<invId, qty> of units already installed by this deal's
+// preceding function (findCrossFnReuseSource/computeFnInvQty) — drawn down per element exactly as
+// calcFunctionCost/calcFunctionBreakdown do, so Build's Live Estimate stops trucking reused units
+// that the Total Estimate, Summary and the cost sheet already treat as "already there".
+function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckCap, imsInventory, flowerPatterns, trussInv, flowerMaterialQty, fvCfg, venueName, guestDiscountOn, reusePool) {
   const capBySub = {};
   (truckCap || []).forEach(tc => { if ((Number(tc.perTruck) || 0) > 0) capBySub[String(tc.item || "").toLowerCase().trim()] = tc; });
   const subAgg = {}; // subLower → { label, qty, perTruck, unit }
@@ -1095,6 +1099,10 @@ function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckC
       if (invItem) {
         const kitSub = invItem.subCat || invItem.subcategory || "";
         const kitTc = capBySub[String(kitSub || "").toLowerCase().trim()];
+        // Cross-function reused units need no truck — same netting, same order as calcFunctionCost.
+        const reused = reusePool ? Math.min(Number(el.qty) || 0, reusePool.get(el.invId) || 0) : 0;
+        if (reused > 0) reusePool.set(el.invId, (reusePool.get(el.invId) || 0) - reused);
+        const effQty = Math.max(0, (Number(el.qty) || 0) - reused);
         // sqft-unit items are measured by the OUTER element's own footprint (a fabric panel priced
         // by area) — a kit priced by area has no meaningful per-component footprint, so this stays
         // on the kit's own sub-category exactly as before, not decomposed.
@@ -1106,7 +1114,7 @@ function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckC
           // each counts toward transport under ITS OWN sub-category, not just the kit's, same
           // reasoning as the kit's own per-piece pricing/standing-discount treatment. A plain
           // (non-kit) item just visits itself once via walkKitUnits, so this covers both uniformly.
-          walkKitUnits(invItem, Number(el.qty) || 0, imsInventory, el.kitOverrides, (node, nodeQty) => {
+          walkKitUnits(invItem, effQty, imsInventory, el.kitOverrides, (node, nodeQty) => {
             const nodeSub = node.subCat || node.subcategory || "";
             // A fixed-venue standing item (up to its registered standing qty) is already physically
             // at this venue — no truck needed for that portion, same "already there" reasoning as
@@ -4067,7 +4075,11 @@ export default function StudioApp() {
   // (el.patternId, sibling to el.invId's getElPriceFromInventory). Same formula as the floral branch
   // there, minus the item-rental term (there's no physical item to add rental for) — flower cost
   // blends by real/artificial %, then the recipe's own "extra (pot/base)" is added once.
-  const getElPriceFromPattern = useCallback((el) => {
+  // fnRatio (optional): the real/artificial mix of the function being priced — same fix as
+  // getElPriceFromInventory's fnFloralRatio. Omitted by Build's live cards, which price the active
+  // function and so correctly fall back to its own floralRatio.
+  const getElPriceFromPattern = useCallback((el, fnRatio) => {
+    const fnFloralRatio = typeof fnRatio === "number" ? fnRatio : floralRatio;
     const floralSrc = sharedFloralSettings;
     const pattern = (floralSrc.flowerPatterns || []).find((p) => p.id === el.patternId);
     if (!pattern) return { rc: null, unitPrice: 0, lineCost: 0, area: 0, warning: null, isFloralBlend: false, realPct: null };
@@ -4077,7 +4089,7 @@ export default function StudioApp() {
     if (!rates) return { rc: null, unitPrice: 0, lineCost: 0, area: 0, warning: null, isFloralBlend: false, realPct: null };
     const subKey = squeezeKey(pattern.sub);
     const subMode = subKey ? rcFloralModeByKey[subKey] : undefined;
-    const modeDefault = subMode === "real" ? 100 : subMode === "artificial" ? 0 : Math.max(0, Math.min(100, 100 - floralRatio));
+    const modeDefault = subMode === "real" ? 100 : subMode === "artificial" ? 0 : Math.max(0, Math.min(100, 100 - fnFloralRatio));
     const realPct = (typeof el.realPct === "number" && el.realPct >= 0 && el.realPct <= 100) ? el.realPct : modeDefault;
     const unitPrice = Math.round(realPct / 100 * rates.realRate + (100 - realPct) / 100 * rates.artRate) + rates.extra;
     return { rc: null, unitPrice, lineCost: qty * unitPrice, area: 0, warning: null, isFloralBlend: true, realPct, patternSMB: pattern.mode === "smb" };
@@ -4260,6 +4272,13 @@ export default function StudioApp() {
       return t;
     })();
     const isKit = Array.isArray(item.subItems) && item.subItems.length > 0;
+    // The real/artificial mix of the function BEING PRICED. Every event-level caller (event total,
+    // Summary breakdown, cost sheet) prices all functions in one pass and passes each one's own
+    // ratio as opts.fnRatio; falling back to `floralRatio` (the ACTIVE function's mix) priced every
+    // function's flowers at whichever tab happened to be open, so the event total moved on each tab
+    // switch. Build's own live cards omit it and keep using the active function's mix, as they
+    // should — the active function is the one they show.
+    const fnFloralRatio = typeof opts?.fnRatio === "number" ? opts.fnRatio : floralRatio;
     // studioFloralData preferred, dealCheckData only fills gaps — see sharedFloralSettings' own
     // comment for why (dealCheckData freezes the instant Deal Check first opens; studioFloralData
     // stays live via realtime for the whole session).
@@ -4298,7 +4317,7 @@ export default function StudioApp() {
         if (!rates) return 0;
         const sk = String(subKey || pattern.sub || "").trim().toLowerCase();
         const subMode = sk ? rcFloralModeByKey[sk] : undefined;
-        const modeDefault = subMode === "real" ? 100 : subMode === "artificial" ? 0 : Math.max(0, Math.min(100, 100 - floralRatio));
+        const modeDefault = subMode === "real" ? 100 : subMode === "artificial" ? 0 : Math.max(0, Math.min(100, 100 - fnFloralRatio));
         const realPct = (typeof override?.realPct === "number" && override.realPct >= 0 && override.realPct <= 100) ? override.realPct : modeDefault;
         const blended = Math.round(realPct / 100 * rates.realRate + (100 - realPct) / 100 * rates.artRate) + rates.extra;
         return blended * (Number(recipeQty) || 0);
@@ -4319,7 +4338,7 @@ export default function StudioApp() {
       const compDelta = kitFloralCompDelta({
         comps: effectiveSubItems, inventory: imsInventory, flowerPatterns: floralSrc.flowerPatterns || [],
         mandiCatalogue: floralSrc.mandiCatalogue || [], floralSettings: floralSrc,
-        rcFloralModeByKey, floralRatio, elSize: el.size, rcFactorByKey,
+        rcFloralModeByKey, floralRatio: fnFloralRatio, elSize: el.size, rcFactorByKey,
       });
       // compDelta alone is enough to take this branch — a kit can have floral components without
       // carrying a sub-category recipe or any add-on of its own.
@@ -4345,7 +4364,7 @@ export default function StudioApp() {
       if (rates) {
         const subKey = String(item.subCat || item.subcategory || "").trim().toLowerCase();
         const subMode = subKey ? rcFloralModeByKey[subKey] : undefined;
-        const modeDefault = subMode === "real" ? 100 : subMode === "artificial" ? 0 : Math.max(0, Math.min(100, 100 - floralRatio));
+        const modeDefault = subMode === "real" ? 100 : subMode === "artificial" ? 0 : Math.max(0, Math.min(100, 100 - fnFloralRatio));
         const realPct = (typeof el.realPct === "number" && el.realPct >= 0 && el.realPct <= 100) ? el.realPct : modeDefault;
         // Flower cost blends by real/artificial %; the pot/container itself doesn't — this specific
         // item's own rental (× its sub-category's scaling factor) is always added on top, alongside
@@ -4368,6 +4387,8 @@ export default function StudioApp() {
       // sync by reconcileSoldInventoryBlocks after every real write) is this deal's own last-synced
       // reservation per function — subtract it so only OTHER deals' usage counts against "available".
       const cli = clientLedger.find((c) => c.id === activeClientId);
+      // opts.fnIdx is the function being priced (event-level callers pass it); without it this netted
+      // out the ACTIVE function's own reservation from every other function's date — see fnFloralRatio.
       const fnIdx = opts?.fnIdx ?? activeFnIdx;
       const ownReserved = cli?.dcReservedInventory?.[fnIdx]?.[item.id] || 0;
       const blocksForDate = ownReserved > 0 ? { ...rawBlocksForDate, [item.id]: Math.max(0, (rawBlocksForDate[item.id] || 0) - ownReserved) } : rawBlocksForDate;
@@ -4399,7 +4420,7 @@ export default function StudioApp() {
       // as short again too, when only one unit total was ever actually missing).
       let ownedQty, shortQty;
       if (opts?.zoneKey != null && opts?.elIdx != null) {
-        const alloc = allocateRowAvailability(item.id, collectAllFunctionDataRef.current ? collectAllFunctionDataRef.current() : [], imsInventory, { fnIdx, zoneKey: opts.zoneKey, elIdx: opts.elIdx }, activeFnMeta?.date || clientDate, otherEventsAvail);
+        const alloc = allocateRowAvailability(item.id, collectAllFunctionDataRef.current ? collectAllFunctionDataRef.current() : [], imsInventory, { fnIdx, zoneKey: opts.zoneKey, elIdx: opts.elIdx }, opts?.fnDate || activeFnMeta?.date || clientDate, otherEventsAvail);
         ownedQty = alloc.ownedQty; shortQty = alloc.shortQty;
       } else {
         ownedQty = Math.min(qty, otherEventsAvail);
@@ -4728,8 +4749,11 @@ export default function StudioApp() {
   }, [getElPriceRaw, guestPriceMultiplier, activeFnMeta, dealCheckData, studioFloralData]);
 
   const calcElsCost = useCallback((elements, withFloral, zc, opts, venueName) => {
-    return (elements || []).reduce((s, el) => {
-      const { rc, lineCost } = getElPrice(el, zc, opts, venueName);
+    return (elements || []).reduce((s, el, i) => {
+      // With opts.zoneKey, each row is priced by the same booking-wide shortfall allocation as
+      // Build's own element cards (zoneKey + elIdx) — so zone totals and the Live Estimate add up
+      // to the cards, and match the Total Estimate / cost sheet, which price the same way.
+      const { rc, lineCost } = getElPrice(el, zc, opts?.zoneKey != null ? { ...opts, elIdx: i } : opts, venueName);
       if (!withFloral || !rc) return s + lineCost;
       if (rc.unit === "truss_sqft") return s + applyFloralRatio(lineCost, rc);
       return s + (el.qty || 0) * applyFloralRatio(lineCost / (el.qty || 1), rc);
@@ -4746,10 +4770,13 @@ export default function StudioApp() {
   // function snapshot" — callers iterate their OWN fns/fnData with its own fnVenue, so there is no
   // single correct default the way activeFnMeta.venue is for the always-active-function getElPrice.
   // Omit it and a Repeat zone here simply prices at full rate, same as before this existed.
-  const getElPriceForFnRaw = useCallback((el, zc, fnRatio, checkAvail, venueName, blocksForDate, crossFnReusePool) => {
-    if (el.invId) return getElPriceFromInventory(el, { checkAvailability: !!checkAvail, zc, venueName, blocksForDate, crossFnReusePool }); // IMS inventory-sourced element — Rate Card never consulted
+  // fnIdx (optional, trailing): the index of the function being priced. Passed through with fnRatio
+  // so inventory/recipe pricing uses THIS function's own flower mix and own stock reservation, not
+  // the active tab's — that fallback made the event total change with whichever tab was open.
+  const getElPriceForFnRaw = useCallback((el, zc, fnRatio, checkAvail, venueName, blocksForDate, crossFnReusePool, fnIdx, zoneKey, elIdx, fnDate) => {
+    if (el.invId) return getElPriceFromInventory(el, { checkAvailability: !!checkAvail, zc, venueName, blocksForDate, crossFnReusePool, fnRatio, fnIdx, zoneKey, elIdx, fnDate }); // zoneKey+elIdx → the same booking-wide shortfall allocation Build's own cards use // IMS inventory-sourced element — Rate Card never consulted
     if (el.mandiId) return getElPriceFromMandi(el); // raw mandi commodity (e.g. Loose Petals), no recipe/inventory
-    if (el.patternId) return getElPriceFromPattern(el); // pure flower-recipe element, no inventory item
+    if (el.patternId) return getElPriceFromPattern(el, fnRatio); // pure flower-recipe element, no inventory item
     const rc = rcItems.find(i => i.name.toLowerCase() === (el.name || "").toLowerCase());
     if (!rc) return { rc: null, unitPrice: 0, lineCost: 0 };
     const isFloral = (rc.cat || "").toLowerCase() === "florals";
@@ -4784,8 +4811,8 @@ export default function StudioApp() {
   // collectAllFunctionData path — fnDate (optional, new) is THIS function's own date (multi-function
   // bookings can span several dates/categories), not necessarily the active function's clientDate.
   // Omitted, it prices at 1x category multiplier same as before this existed.
-  const getElPriceForFn = useCallback((el, zc, fnRatio, checkAvail, venueName, blocksForDate, fnDate, crossFnReusePool) => {
-    const r = getElPriceForFnRaw(el, zc, fnRatio, checkAvail, venueName, blocksForDate, crossFnReusePool);
+  const getElPriceForFn = useCallback((el, zc, fnRatio, checkAvail, venueName, blocksForDate, fnDate, crossFnReusePool, fnIdx, zoneKey, elIdx) => {
+    const r = getElPriceForFnRaw(el, zc, fnRatio, checkAvail, venueName, blocksForDate, crossFnReusePool, fnIdx, zoneKey, elIdx, fnDate);
     const mult = guestPriceMultiplier * dateCategoryMultiplierFor(fnDate);
     if (mult === 1) return r;
     // Same shortCost carve-out as getElPrice's own wrapper (its comment has the full reasoning) —
@@ -4804,8 +4831,8 @@ export default function StudioApp() {
   // function (see findCrossFnReuseSource/computeFnInvQty) — passed straight through to every
   // element's pricing call so the same guest-facing cross-function reuse discount as Fixed-Venue
   // standing units applies. Omitted by every existing caller that has no such pool (full price).
-  const calcElsCostForFn = useCallback((elements, zc, fnRatio, checkAvail, venueName, blocksForDate, fnDate, crossFnReusePool) => {
-    return (elements || []).reduce((s, el) => s + getElPriceForFn(el, zc, fnRatio, checkAvail, venueName, blocksForDate, fnDate, crossFnReusePool).lineCost, 0);
+  const calcElsCostForFn = useCallback((elements, zc, fnRatio, checkAvail, venueName, blocksForDate, fnDate, crossFnReusePool, fnIdx, zoneKey) => {
+    return (elements || []).reduce((s, el, i) => s + getElPriceForFn(el, zc, fnRatio, checkAvail, venueName, blocksForDate, fnDate, crossFnReusePool, fnIdx, zoneKey, zoneKey != null ? i : undefined).lineCost, 0);
   }, [getElPriceForFn]);
 
   // The price badge on every UNSELECTED photo tile: what this zone would cost if you picked this
@@ -4819,7 +4846,7 @@ export default function StudioApp() {
   const calcPhotoCost = useCallback((zoneKey, photo) => {
     const zc = (photo?.dims && Object.values(photo.dims).some(v => v > 0)) ? buildZoneConfig(zoneKey, photo.dims) : null;
     const elCost = calcElsCost(photo?.elements, true, zc, { checkAvailability: true });
-    const structCost = zc ? scaleStruct(calcStructCost(zoneKey, zc, structRates, structDiscountFor(zc, venue))).total : 0;
+    const structCost = zc ? scaleStruct(calcStructCost(zoneKey, zc, structRates, structDiscountFor(zc, activeFnMeta?.venue || venue))).total : 0;
     return elCost + structCost;
   }, [calcElsCost, structRates, guestPriceMultiplier, venue, hideDiscountFromClient, fvCfgForRepeat]);
 
@@ -4926,7 +4953,7 @@ export default function StudioApp() {
     const zones = Object.entries(zoneConfig).filter(([zk, cfg]) => enabledEls[zk] && cfg).map(([zk, cfg]) => ({ id: zk, type: zk, name: zk, config: cfg }));
     // structDiscountFor is per-zone (zc.repeat varies per zone), unlike the old venue-only truss
     // discount this replaced.
-    zones.forEach(z => { c += scaleStruct(calcStructCost(z.type, z.config, structRates, structDiscountFor(z.config, venue))).total; });
+    zones.forEach(z => { c += scaleStruct(calcStructCost(z.type, z.config, structRates, structDiscountFor(z.config, activeFnMeta?.venue || venue))).total; }); // the ACTIVE function's venue, not function 1's
     // Cross-function reuse (guest-facing) — same eligibility activeCrossFnReuseQty already computes
     // for StudioBuild.jsx's own per-card display (see its own declaration comment for the full
     // history): this total used to have NO mechanism for it at all, so a function with a same-venue,
@@ -4938,7 +4965,7 @@ export default function StudioApp() {
     const crossFnReusePool = activeCrossFnReuseQtyRef.current ? new Map(Object.entries(activeCrossFnReuseQtyRef.current)) : null;
     Object.entries(zoneElements).forEach(([zk, elems]) => {
       if (!enabledEls[zk] || !elems) return;
-      c += calcElsCost(elems, true, zoneConfig[zk], { checkAvailability: true, crossFnReusePool }); // active fn's live canvas — see activeBlocksForDate
+      c += calcElsCost(elems, true, zoneConfig[zk], { checkAvailability: true, crossFnReusePool, zoneKey: zk }); // active fn's live canvas — see activeBlocksForDate
     });
     const fnIdx = activeFnIdx || 0;
     // Only count a custom Production/Buying item while its own zone is still enabled — matches
@@ -4953,8 +4980,15 @@ export default function StudioApp() {
   }, [venue, enabledEls, zoneConfig, zoneElements, calcElsCost, dcCustomItems, activeFnIdx, structRates, dealCheckData, studioFloralData, fvCfgForRepeat, clientLedger, activeClientId]);
 
   const transportCalc = useMemo(() => {
-    if (!venue) return { trucks: 0, tripRate: 0, total: 0, isNew: true, tier: "new", tierLabel: "", breakdown: [], floralTrucks: 0, bufferTrucks: 0, itemTrucks: 0 };
-    const match = resolveTrVenue(trVenues, venue, venueParents);
+    // The ACTIVE function's own venue and date. `venue` / `clientDate` are function 1's — using them
+    // here priced every function's trucks at function 1's venue rate and its floral sourcing at
+    // function 1's date, so Build's Live Estimate could disagree with Summary / the cost sheet /
+    // the Total Estimate (which all read each function's own venue and date) on multi-venue or
+    // multi-date bookings.
+    const aVenue = activeFnMeta?.venue || venue;
+    const aDate = activeFnMeta?.date || clientDate;
+    if (!aVenue) return { trucks: 0, tripRate: 0, total: 0, isNew: true, tier: "new", tierLabel: "", breakdown: [], floralTrucks: 0, bufferTrucks: 0, itemTrucks: 0 };
+    const match = resolveTrVenue(trVenues, aVenue, venueParents);
     const isNew = !match;
     const tripRate = match ? match.rate : customTripRate;
     const tierId = match ? match.tier : "new";
@@ -4974,12 +5008,21 @@ export default function StudioApp() {
     // see computeTruckItems' comment) + artificial bunches, for the Real Flowers / Artificial Flowers
     // truck-capacity rows. Goes through the ref, not a direct call — see calcFnFloralSourcingCostRef's
     // declaration for why (this memo is declared before calcFnFloralSourcingCost in the file).
-    const floralSourcingHere = calcFnFloralSourcingCostRef.current?.({ zoneElements, enabledEls, floralOverrides, fnIdx: activeFnIdx, fnDate: clientDate, floralRatio });
+    const floralSourcingHere = calcFnFloralSourcingCostRef.current?.({ zoneElements, enabledEls, floralOverrides, fnIdx: activeFnIdx, fnDate: aDate, floralRatio });
     const flowerMaterialQty = {
       realKg: (floralSourcingHere?.breakdown || []).reduce((s, f) => s + (f.qty || 0), 0),
       artBunches: (floralSourcingHere?.artFlowerBunches || 0) + (floralSourcingHere?.artGreenBunches || 0),
     };
-    const { itemTrucks, breakdown: itemBd } = computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckCap, imsInventory, sharedFloralSettings.flowerPatterns, trussInvHere, flowerMaterialQty, fvCfgForRepeat, venue, !hideDiscountFromClient);
+    // Cross-function reuse pool for the ACTIVE function — the same source calcFunctionCost /
+    // calcFunctionBreakdown use, so a function that reuses the previous function's setup (e.g. a
+    // Reception straight after the Wedding) is not charged a truck for those units here while
+    // Summary and the cost sheet correctly are not. Read through the ref: collectAllFunctionData
+    // is declared further down (TDZ). The active function's own build is taken from live state.
+    const allFnsNow = collectAllFunctionDataRef.current?.() || [];
+    const activeFnData = { ...(allFnsNow.find(f => f.fnIdx === activeFnIdx) || {}), fnIdx: activeFnIdx, fnDate: aDate, fnVenue: aVenue, zoneElements, zoneConfig, enabledEls };
+    const crossFnPrev = (!hideDiscountFromClient && !isFillerDateFor(aDate) && allFnsNow.length > 1) ? findCrossFnReuseSource(activeFnData, allFnsNow) : null;
+    const reusePool = crossFnPrev ? new Map(Object.entries(computeFnInvQty(crossFnPrev))) : null;
+    const { itemTrucks, breakdown: itemBd } = computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckCap, imsInventory, sharedFloralSettings.flowerPatterns, trussInvHere, flowerMaterialQty, fvCfgForRepeat, aVenue, !hideDiscountFromClient, reusePool);
     itemBd.forEach(b => breakdown.push(b));
     const floralTrucks = 0, totalFloralCost = 0; // florals now counted via their sub-category capacity — no separate flower truck
     const bt = bufferTiers.find(b => decor >= b.minBudget && decor < b.maxBudget);
@@ -5001,7 +5044,7 @@ export default function StudioApp() {
     const gensetCostForGuest = plan.gensetCost * guestPriceMultiplier;
     const total = truckTotal + gensetCostForGuest;
     return { trucks: allTrucks, tripRate, total, isNew, tier: tierId, tierLabel, breakdown, floralTrucks, bufferTrucks: bufTrucks, itemTrucks, totalFloralCost, gensets: plan.genset125, venueGensets: plan.venueGenset125, venueGenset62: plan.venueGenset62, gensetCost: gensetCostForGuest, gensetRate, gensetRate62, genset62: plan.genset62, truckTotal, clientScale };
-  }, [venue, customTripRate, customGensets, gensetRate, gensetRate62, genset62, trVenues, zoneElements, enabledEls, rcItems, truckCap, floralPerTruck, bufferTiers, totalCost, zoneConfig, imsInventory, dealCheckData, studioFloralData, floralOverrides, floralRatio, activeFnIdx, clientDate, fvCfgForRepeat, venueParents, clientLedger, activeClientId]);
+  }, [venue, customTripRate, customGensets, gensetRate, gensetRate62, genset62, trVenues, zoneElements, enabledEls, rcItems, truckCap, floralPerTruck, bufferTiers, totalCost, zoneConfig, imsInventory, dealCheckData, studioFloralData, floralOverrides, floralRatio, activeFnIdx, clientDate, fvCfgForRepeat, venueParents, clientLedger, activeClientId, activeFnMeta, fnBuilds, extraFunctions, hideDiscountFromClient]);
 
   // agencyFeeAmt is split out of grandTotal (not just an inline Math.round(grandTotal*pct/(100+pct)))
   // so Build's own Live Estimate rail can show the fee as its own visible line — same "its own line,
@@ -5011,22 +5054,22 @@ export default function StudioApp() {
   const agencyFeeAmt = useMemo(() => {
     const base = totalCost() + transportCalc.total;
     const fvCfg = { fixedVenues: sharedFloralSettings.fixedVenues, venueParents: venueParents || dealCheckData?.venueParents || {} };
-    const discounted = Math.max(0, base - fixedVenueDealDiscount(fvCfg, [{ fnVenue: venue }], () => base, base));
+    const discounted = Math.max(0, base - fixedVenueDealDiscount(fvCfg, [{ fnVenue: activeFnMeta?.venue || venue }], () => base, base)); // the ACTIVE function's venue — see transportCalc
     const feePct = Number(sharedFloralSettings.agencyFeePct) || 20;
     return Math.round(discounted * feePct / 100);
-  }, [totalCost, transportCalc, dealCheckData, venue, studioFloralData, sharedFloralSettings, venueParents]);
+  }, [totalCost, transportCalc, dealCheckData, venue, activeFnMeta, studioFloralData, sharedFloralSettings, venueParents]);
 
   const grandTotal = useMemo(() => {
     const base = totalCost() + transportCalc.total;
     // Fixed-venue discount — same as eventGrandTotal's, just for this one active function/venue.
     // Same studioFloralData/venueParents fallback as eventGrandTotal, for the same reason.
     const fvCfg = { fixedVenues: sharedFloralSettings.fixedVenues, venueParents: venueParents || dealCheckData?.venueParents || {} };
-    const discounted = Math.max(0, base - fixedVenueDealDiscount(fvCfg, [{ fnVenue: venue }], () => base, base));
+    const discounted = Math.max(0, base - fixedVenueDealDiscount(fvCfg, [{ fnVenue: activeFnMeta?.venue || venue }], () => base, base)); // the ACTIVE function's venue — see transportCalc
     // Agency fee (Admin → Settings, default 20%) — this is Build's own live "page total" for the
     // active function, the number a salesperson watches while building. It has to carry the fee too,
     // or it would visibly disagree with eventGrandTotal/Deal Check/the cost sheet, which all do.
     return discounted + agencyFeeAmt;
-  }, [totalCost, transportCalc, dealCheckData, venue, studioFloralData, sharedFloralSettings, venueParents, agencyFeeAmt]);
+  }, [totalCost, transportCalc, dealCheckData, venue, activeFnMeta, studioFloralData, sharedFloralSettings, venueParents, agencyFeeAmt]);
 
   const collectAllFunctionData = useCallback(() => {
     const all = [];
@@ -5134,7 +5177,7 @@ export default function StudioApp() {
     const fBlocksForDate = blocksByDate[fnData.fnDate];
     Object.entries(fZoneElements).forEach(([zk, elems]) => {
       if (!fEnabledEls[zk] || !elems) return;
-      decor += calcElsCostForFn(elems, fZoneConfig[zk], fFloralRatio, true, fVenue, fBlocksForDate, fnData.fnDate, pricingPool);
+      decor += calcElsCostForFn(elems, fZoneConfig[zk], fFloralRatio, true, fVenue, fBlocksForDate, fnData.fnDate, pricingPool, fnData.fnIdx, zk);
     });
     // Only count a custom item while its own zone is still enabled — matches calcFunctionBreakdown
     // (Summary's accordion), which already scoped this way; this one used to count every custom
@@ -5722,7 +5765,7 @@ export default function StudioApp() {
       let ic = 0, itemCount = 0;
       const elemLines = [];   // per-element lineCost, index-aligned with `ze` — see BUG-10 below
       if (ze && ze.length > 0) {
-        (ze || []).forEach(el2 => {
+        (ze || []).forEach((el2, ei) => {
           // `priceInfo.rc` is only ever set for a legacy Rate-Card name match — every IMS
           // inventory-backed, kit, and pure flower-recipe element prices through
           // getElPriceFromInventory/getElPriceFromPattern instead, which always return `rc: null`
@@ -5732,7 +5775,7 @@ export default function StudioApp() {
           // checkAvail for every function now (see calcFunctionCost's comment) — keeps this
           // accordion's per-zone total matching Build's own live totalCost() when an item is
           // oversubscribed, for whichever function's zone this is, not just the active tab's.
-          const priceInfo = getElPriceForFn(el2, fZoneConfig[k], fFloralRatio, true, fVenue, fBlocksForDate, fnData.fnDate, pricingPool);
+          const priceInfo = getElPriceForFn(el2, fZoneConfig[k], fFloralRatio, true, fVenue, fBlocksForDate, fnData.fnDate, pricingPool, fnData.fnIdx, k, ei);
           ic += priceInfo.lineCost;
           // ── THE LINE ITEMS MUST BE THE SAME NUMBERS THAT MADE THE TOTAL ── (BUG-10)
           // Summary's accordion used to re-price each element itself with checkAvail=false and no
@@ -9243,6 +9286,16 @@ export default function StudioApp() {
     const fElTiers = fnData.elTiers || {};
     const fFloralRatio = typeof fnData.floralRatio === "number" ? fnData.floralRatio : 70;
     const fVenue = fnData.fnVenue || "";
+    // ── THE COST SHEET PRICES EXACTLY LIKE THE TOTAL ── (BUG-10, second half)
+    // Same three inputs calcFunctionCost (the Total Estimate) and calcFunctionBreakdown (Summary)
+    // price with: this function's own date's reservations (availability shortfall), the
+    // cross-function reuse pool, and its own index. This used to price every line with
+    // checkAvail=false and no reuse pool, so the Excel's FUNCTION TOTAL — a SUM over these lines —
+    // disagreed with the Total Estimate whenever an item was short in stock or reused from an
+    // earlier function.
+    const fBlocksForDate = blocksByDate[fnData.fnDate];
+    const crossFnPrevFn = (!hideDiscountFromClient && !isFillerDateFor(fnData.fnDate)) ? findCrossFnReuseSource(fnData, collectAllFunctionData()) : null;
+    const pricingPool = crossFnPrevFn ? new Map(Object.entries(computeFnInvQty(crossFnPrevFn))) : null;
     // Sorted by IMS/Studio Admin → Settings → Zone Types' configured order (zoneKeys, same order
     // Build's own zone list renders in — see StudioBuild.jsx's `[...zoneKeys, ...customZones]`),
     // not by Object.entries' insertion order. enabledEls is a per-deal record that gained its keys
@@ -9272,8 +9325,8 @@ export default function StudioApp() {
       const ze = fZoneElements[k];
       let items = [];
       if (ze && ze.length > 0) {
-        ze.forEach(el2 => {
-          const priceInfo = getElPriceForFn(el2, fZoneConfig[k], fFloralRatio, false, fVenue, undefined, fnData.fnDate);
+        ze.forEach((el2, ei) => {
+          const priceInfo = getElPriceForFn(el2, fZoneConfig[k], fFloralRatio, true, fVenue, fBlocksForDate, fnData.fnDate, pricingPool, fnData.fnIdx, k, ei);
           const rc = priceInfo.rc;
           const up = priceInfo.unitPrice;
           const lt = priceInfo.lineCost;
@@ -9424,7 +9477,7 @@ export default function StudioApp() {
       const ic = items.reduce((s, i) => s + i.total, 0);
       return { k, label: el.label, icon: el.icon, tier: t, items, structItems, structTotal: zl.total, itemTotal: ic, zoneTotal: ic + zl.total, note: fElNotes[k] || "", dims, dimLabel, photo: fElSelectedPhoto[k]?.src || null, photoName: fElSelectedPhoto[k]?.eventName || "" };
     }).filter(z => z.items.length > 0 || z.structItems.length > 0);
-  }, [getElPriceForFn, zoneLabelsD, zoneMeta, zoneKeys, dealCheckData, studioFloralData, imsDefaultPaintCost, dcCustomItems, structRates, imsInventory, fvCfgForRepeat, clientLedger, activeClientId]);
+  }, [getElPriceForFn, zoneLabelsD, zoneMeta, zoneKeys, dealCheckData, studioFloralData, imsDefaultPaintCost, dcCustomItems, structRates, imsInventory, fvCfgForRepeat, clientLedger, activeClientId, blocksByDate, hideDiscountFromClient, collectAllFunctionData]);
 
   const buildCombinedCostSheetData = useCallback(() => {
     const all = collectAllFunctionData();
