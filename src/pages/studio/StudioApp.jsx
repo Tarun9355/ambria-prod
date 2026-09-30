@@ -25,7 +25,7 @@ import DealCheckOverlay from "./dealcheck/DealCheckOverlay.jsx";
 import { kvGet, kvTryGet, kvSet, reliableSave } from "../../lib/ims/kv";
 import { makeAmendRequest } from "../../lib/ims/amend";
 import { catToDept } from "../../lib/ims/deptClassify";
-import { availableAtVenue, isStandingAt, rentalSplit, fixedVenueDealDiscount, fixedVenueDiscountPctFor, proratedVenueDiscount, fixedVenueFor, builtQty, reservedByVenueToday, venueSlackFor } from "../../lib/ims/fixedVenues";
+import { availableAtVenue, isStandingAt, rentalSplit, fixedVenueDealDiscount, fixedVenueDiscountPctFor, proratedVenueDiscount, fixedVenueFor, builtQty, venueSlackFor } from "../../lib/ims/fixedVenues";
 import { searchLmsLeads, triggerLmsSync, fetchCachedContracts, fetchLmsLeadByEntry } from "../../lib/ims/lms";
 import { uploadToStorage, compressImageForUpload, STORAGE_FOLDERS, listStorage, deleteStorageObjects, deleteStorageFolder } from "../../lib/storage";
 import { ytApi, ytDuration } from "../../lib/youtube";
@@ -9783,13 +9783,14 @@ export default function StudioApp() {
     // declared rather than inferred — the same correction made for priceMode above.
     setAvailModal({ zoneKey, idx, elName: el?.name || "", subcat, date, loading: true, items: [], selectedId: el?.imsId || el?.invId || null, onPick: onPick || null, splitQty: Number(opts?.splitQty) || 0, onSplit: opts?.onSplit || null, pickHint: opts?.pickHint || "", neededLabel: opts?.neededLabel || "", unitLabel: opts?.unitLabel || "" });
     try {
-      const { inventory, blocksForDate, blocksDetailForDate } = await loadAvailability(date);
+      const { inventory, blocksForDate } = await loadAvailability(date);
       const target = String(subcat).toLowerCase().trim();
       const pickerVenue = activeFnMeta?.venue || venue || "";
       // Where each inventory item is already placed for THIS guest — every function of the deal,
       // every enabled zone — minus the element being swapped right now, so picking it here would
       // be the same piece used twice for one client. Shown on the card as a swap warning.
       const usedElsewhere = {};
+      const usedQty = {};
       (collectAllFunctionData() || []).forEach((f) => {
         Object.entries(f.zoneElements || {}).forEach(([zk, elems]) => {
           if (!f.enabledEls?.[zk] || !Array.isArray(elems)) return;
@@ -9797,6 +9798,7 @@ export default function StudioApp() {
             if (!e?.invId) return;
             if (f.fnIdx === activeFnIdx && zk === zoneKey && ei === idx) return;
             (usedElsewhere[e.invId] ||= []).push(`${f.fnType || `Function ${f.fnIdx + 1}`} · ${zk}`);
+            usedQty[e.invId] = (usedQty[e.invId] || 0) + (Number(e.qty) || 0);
           });
         });
       });
@@ -9837,9 +9839,13 @@ export default function StudioApp() {
           // Cross-venue slack (StudioApp.jsx's Deal Check picker fix, lib/ims/fixedVenues.js) folds
           // in too: a Fixed Venue's OWN unused standing stock for this date counts as real, pickable
           // availability instead of vanishing into "not free here."
-          const _reserved = reservedByVenueToday((blocksDetailForDate || {})[it.id], eventOrders);
-          const _slack = venueSlackFor(fvCfgForRepeat, pickerVenue, it, _reserved);
-          const free = Math.min(getStudioAvailable(it, blocksForDate), availableAtVenue(fvCfgForRepeat, pickerVenue, it, _reserved));
+          // Owner ask (supersedes the earlier "count other venues' idle slack as free"): in this
+          // picker, free = total − whatever is allocated to OTHER Fixed Venues (the whole standing
+          // allocation, idle or not) − what this same guest already has placed elsewhere in the deal,
+          // capped by what's blocked on the date. Other venues' stock is still listed on the card
+          // ("30 at AP") so it's visible, it just isn't offered as pickable.
+          const _slack = venueSlackFor(fvCfgForRepeat, pickerVenue, it);
+          const free = Math.max(0, Math.min(getStudioAvailable(it, blocksForDate), availableAtVenue(fvCfgForRepeat, pickerVenue, it)) - (usedQty[it.id] || 0));
           return { id: it.id, name: it.name, photo: (Array.isArray(it.photoUrls) && it.photoUrls[0]) || it.img || "", free, total: Number(it.qty) || 0, usedIn: usedElsewhere[it.id] || [], venueSlack: _slack, unit: it.unit || "",
             price: opts?.rateFn ? opts.rateFn(it)
               : opts?.priceMode === "cost" ? (Number(it.cost) || 0)

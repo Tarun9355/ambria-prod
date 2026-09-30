@@ -971,6 +971,11 @@ export default function StudioBuild({ ctx }) {
   // These ids are ticked but NOT persisted. An explicit toggle promotes an id out of this set — at
   // that point the user has said something about it — and only then can it reach the saved group.
   const [grpAuto, setGrpAuto] = useState({});   // { [zoneKey]: Set<libraryPhotoId> }
+  // Photos just unticked in the grid, most recent first — { [zoneKey]: libraryPhotoId[] }. Once a
+  // photo leaves the group it would otherwise fall back to wherever the automatic sort puts it,
+  // often pages down, which reads as the photo having vanished. These sit right after the group
+  // instead. Session-only on purpose: it's "what I was just looking at", not a saved order.
+  const [grpUnticked, setGrpUnticked] = useState({});
   // { [zoneKey]: "saving" | "saved" | "error" } — feedback for the auto-save below, since there's no
   // button press to feel like confirmation anymore.
   const [grpSaveStatus, setGrpSaveStatus] = useState({});
@@ -1009,6 +1014,11 @@ export default function StudioBuild({ ctx }) {
       promoted = new Set(promoted); promoted.delete(id);
       setGrpAuto(p => ({ ...p, [k]: promoted }));
     }
+    const wasTicked = (grpSel[k] || EMPTY_SET).has(id);
+    setGrpUnticked(p => {
+      const rest = (p[k] || []).filter(x => x !== id);
+      return { ...p, [k]: wasTicked ? [id, ...rest] : rest };
+    });
     setGrpSel(prev => {
       const cur = new Set(prev[k] || []);
       cur.has(id) ? cur.delete(id) : cur.add(id);
@@ -1040,6 +1050,8 @@ export default function StudioBuild({ ctx }) {
   // Untick everything in this zone AND persist that — with the auto-save above, this empties the
   // saved group, same as unticking each photo individually would, just in one click.
   const clearGrpPick = (k, srcType, label) => setGrpSel(prev => {
+    const was = [...(prev[k] || [])];
+    if (was.length) setGrpUnticked(p => ({ ...p, [k]: [...was, ...(p[k] || []).filter(x => !was.includes(x))] }));
     scheduleGroupSave(k, srcType, label, new Set());
     setGrpAuto(p => ({ ...p, [k]: new Set() }));   // nothing is ticked, so nothing is auto either
     return { ...prev, [k]: new Set() };
@@ -1518,6 +1530,16 @@ export default function StudioBuild({ ctx }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [zoneKeys, customZones, matchGen]);
 
+  // One library photo as the strip/grid tile expects it — shared by the zone's own matches and
+  // the just-unticked photos pulled back in below, so both render identically.
+  const libPhotoEntry = (img, groupRank = Infinity) => ({
+    groupRank,
+    src: img.url, eventId: img.id, eventName: img.name || "Library",
+    fn: "", space: "", mood: "", venue: "", video: "",
+    tags: [], zones: [], itemGrades: {}, itemQtys: {}, enabledEls: [],
+    isLibrary: true, elements: img.elements || [], dims: img.dims || {},
+    grouped: !!img._grouped,
+  });
   const getMatchedPhotos = (elKey) => {
     const areaNames = areaNamesFor(elKey);
     const photos = [];
@@ -1539,16 +1561,9 @@ export default function StudioBuild({ ctx }) {
       for (const img of allMatches) {
         if (!img.url || seen.has(img.url)) continue;
         seen.add(img.url);
-        photos.push({
-          // Rank within the hand-picked group. Carried per photo because the venue and verified
-          // sorts below reshuffle the array, and the group's arranged order has to survive them.
-          groupRank: img._grouped ? groupRank++ : Infinity,
-          src: img.url, eventId: img.id, eventName: img.name || "Library",
-          fn: "", space: "", mood: "", venue: "", video: "",
-          tags: [], zones: [], itemGrades: {}, itemQtys: {}, enabledEls: [],
-          isLibrary: true, elements: img.elements || [], dims: img.dims || {},
-          grouped: !!img._grouped,
-        });
+        // Rank within the hand-picked group. Carried per photo because the venue and verified
+        // sorts below reshuffle the array, and the group's arranged order has to survive them.
+        photos.push(libPhotoEntry(img, img._grouped ? groupRank++ : Infinity));
       }
     }
 
@@ -2857,18 +2872,12 @@ undefined
       } else {
         matchedPhotos = verifiedFirst(matchedPhotos);
       }
-      // The hand-picked group (Manage → Library → Grouping) outranks everything above, in both
-      // views — someone chose these photos for this zone deliberately, which is a stronger signal
-      // than any automatic ranking. It partitions LAST, and favourites (next) only reorder inside
-      // the "rest" bucket below — a favourited-but-ungrouped photo can no longer jump back in front
-      // of the group, which used to be possible (favourites reordered the WHOLE list, group and all)
-      // and silently undid the "group outranks everything" promise this comment already made.
-      const groupedCount = matchedPhotos.reduce((n, ph) => n + (ph.grouped ? 1 : 0), 0);
-      // My own favourites (per salesperson — see saveFavPhotos) lead the rest. Keyed by the photo's
-      // own id/src, never a (photo, zone) pair, so re-tagging a photo to a different zone doesn't
-      // orphan its favourite — it just keeps applying wherever the photo currently matches. In the
-      // grid, photos favourited by someone ELSE get their own tier right after yours, ahead of the
-      // has-elements ranking above; the strip keeps its narrower "mine only" behaviour.
+      // My own favourites (per salesperson — see saveFavPhotos) lead the automatic order. Keyed by
+      // the photo's own id/src, never a (photo, zone) pair, so re-tagging a photo to a different
+      // zone doesn't orphan its favourite. In the grid, photos favourited by someone ELSE get their
+      // own tier right after yours; the strip keeps its narrower "mine only" behaviour. The group
+      // partition below runs AFTER this, so a favourited-but-ungrouped photo can never jump in
+      // front of the group.
       const favKey = (ph) => ph.eventId || ph.src;
       const isMyFavPhoto = (ph) => !!favPhotos[favKey(ph)]?.[authUser?.id];
       const isAnyFavPhoto = (ph) => { const m = favPhotos[favKey(ph)]; return !!m && Object.values(m).some(Boolean); };
@@ -2883,13 +2892,40 @@ undefined
         for (const ph of arr) (isMyFavPhoto(ph) ? favd : rest2).push(ph);
         return [...favd, ...rest2];
       };
-      if (groupedCount) {
+      matchedPhotos = favOrder(matchedPhotos);
+      // The group leads EVERYTHING, favourites included — it partitions last, over the fav order
+      // above (the old order ran favourites after the group, which put them in front of it). In
+      // the grid, "group" is the live tick set, so a photo moves to the front the moment it's
+      // ticked instead of after the save round-trip. Saved members keep their arranged order
+      // (groupRank); newly ticked ones follow them.
+      const grpOn = !!gridZones[k];
+      const grpPicked = grpOn ? grpSelFor(k) : EMPTY_SET;
+      const inGrp = (ph) => (grpOn && ph.isLibrary && ph.eventId) ? grpPicked.has(ph.eventId) : ph.grouped;
+      if (matchedPhotos.some(inGrp)) {
         const inGroup = [], rest = [];
-        for (const ph of matchedPhotos) (ph.grouped ? inGroup : rest).push(ph);
+        for (const ph of matchedPhotos) (inGrp(ph) ? inGroup : rest).push(ph);
         inGroup.sort((a, b) => (a.groupRank ?? Infinity) - (b.groupRank ?? Infinity));
-        matchedPhotos = [...inGroup, ...favOrder(rest)];
-      } else {
-        matchedPhotos = favOrder(matchedPhotos);
+        matchedPhotos = [...inGroup, ...rest];
+      }
+      // Just-unticked photos sit right after the group (most recent first) rather than dropping
+      // back to wherever the automatic sort would bury them.
+      const unticked = grpOn ? (grpUnticked[k] || []) : [];
+      if (unticked.length) {
+        // A group member needn't be tagged to this zone — applyZoneGroupOrder pulls it in from the
+        // library by id. Unticked, nothing pulls it in any more, so it would drop out of the list
+        // entirely. Bring it back from libById the same way (filters still apply, as for groups).
+        const present = new Set(matchedPhotos.map(ph => ph.eventId).filter(Boolean));
+        for (const id of unticked) {
+          if (present.has(id)) continue;
+          const li = libById.get(id);
+          if (li?.url && (!zpHasFilters || zpFilterPhoto(li))) matchedPhotos.push(libPhotoEntry({ ...li, _grouped: false }));
+        }
+        const order = new Map(unticked.map((id, i) => [id, i]));
+        const isUn = (ph) => ph.isLibrary && ph.eventId && order.has(ph.eventId) && !inGrp(ph);
+        const grpPart = [], unPart = [], rest = [];
+        for (const ph of matchedPhotos) (inGrp(ph) ? grpPart : isUn(ph) ? unPart : rest).push(ph);
+        unPart.sort((a, b) => order.get(a.eventId) - order.get(b.eventId));
+        matchedPhotos = [...grpPart, ...unPart, ...rest];
       }
       // Pin the last-selected photo to the FRONT of the strip (and force it in even if relevance/
       // filters would drop it), so re-opening a saved session shows the saved pick first — no
@@ -2925,8 +2961,6 @@ undefined
       // kinds of tick is genuinely confusing. With the merge now off (see isMultiPhotoZone in
       // StudioApp) there is only one kind left, and pinning is worth having everywhere: it reorders
       // the picker, it does not touch the build.
-      const grpOn = !!gridZones[k];
-      const grpPicked = grpOn ? grpSelFor(k) : EMPTY_SET;
       const grpArea = groupAreaFor(srcType, el.label);
       // The EXACT list for this function, not groupIdsFor's any-function fallback.
       const grpSaved = zoneGroups?.[grpArea]?.[groupFn] || [];
