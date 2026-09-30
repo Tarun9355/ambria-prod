@@ -262,7 +262,7 @@ export default function StudioModals({ ctx }) {
                     const SWAP = "#F97316";
                     return (
                       <div key={it.id} onClick={()=>inSplit ? toggleSplitId(it.id) : setAvailModal(m=>({...m,selectedId: sel?null:it.id}))}
-                        title={swap ? `Already used for this guest: ${usedIn.join(" · ")}` : it.venueSlack?.length ? `+ idle stock at other Fixed Venues: ${it.venueSlack.map(s=>`${s.slack} ${s.name}`).join(" · ")}` : undefined}
+                        title={swap ? `Already used for this guest: ${usedIn.join(" · ")}` : it.venueSlack?.length ? `Allocated to other Fixed Venues (not counted as free): ${it.venueSlack.map(s=>`${s.slack} ${s.name}`).join(" · ")}` : undefined}
                         style={{cursor:"pointer",borderRadius:12,overflow:"hidden",border:`2px solid ${sel?"#059669":swap?SWAP:border}`,background:isDark?"#0F0F1A":"#FAFAFA",position:"relative"}}>
                         {sel&&<span style={{position:"absolute",top:6,left:6,zIndex:2,fontSize:9,fontWeight:700,padding:"2px 7px",borderRadius:6,background:"#059669",color:"#fff"}}>✓</span>}
                         <div title="Free on the event date" style={{position:"absolute",top:6,right:6,zIndex:2,fontSize:12,fontWeight:800,minWidth:22,textAlign:"center",padding:"2px 7px",borderRadius:8,background:out?"rgba(239,68,68,0.92)":"rgba(16,185,129,0.92)",color:"#fff"}}>{it.free}</div>
@@ -279,12 +279,11 @@ export default function StudioModals({ ctx }) {
                               already, so "Piece" was mislabeling the exact same 42 as a count of rugs
                               instead of the sqft that number has always meant. */}
                           <div style={{fontSize:9.5,marginTop:2,color:out?"#EF4444":"#059669",fontWeight:600}}>{it.total ?? it.free} {availModal.unitLabel || it.unit || "pc"} total</div>
-                          {/* Owner ask: this "free" figure already folds in genuine idle slack at other
-                              Fixed Venues (see StudioApp.jsx's openAvailModal) — spelled out here too,
-                              not just on hover, since the whole point is making that slack visible
-                              instead of it silently vanishing into one opaque number. */}
+                          {/* Stock allocated to OTHER Fixed Venues — excluded from the free badge (see
+                              openAvailModal in StudioApp.jsx), listed here so it's visible rather than
+                              silently vanishing from the count. */}
                           {it.venueSlack?.length > 0 && (
-                            <div style={{fontSize:8.5,marginTop:1,color:textS}}>+{it.venueSlack.map(s=>`${s.slack} ${venueShortCode(s.name)}`).join(", ")}</div>
+                            <div style={{fontSize:8.5,marginTop:1,color:textS}}>{it.venueSlack.map(s=>`${s.slack} at ${venueShortCode(s.name)}`).join(", ")} (fixed venue)</div>
                           )}
                           {it.dims && <div style={{fontSize:9,color:textS,marginTop:2}}><IconRuler size={9}/> {it.dims}</div>}
                           {swap && (
