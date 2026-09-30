@@ -3750,7 +3750,7 @@ undefined
                           )}
                         </div>
                         <span title={isUnavail?"Not available for this date — tap the stock icon to pick a different item":undefined} style={{fontSize:12,fontWeight:500,color:isUnavail?"#EF4444":(rc||el.invId||el.patternId||el.mandiId)?textP:"#F59E0B",textDecoration:isUnavail?"line-through":"none",minWidth:0,whiteSpace:"normal",overflowWrap:"anywhere"}}>{invItem?.name || el.name}</span>
-                        {showCosts&&<span title={_rateDiscounted?"Rate per unit — Repeat/standing-venue discount applied":"Rate per unit"} style={{flexShrink:0,fontSize:11,fontWeight:600,color:_rateDiscounted?"#10B981":textS,whiteSpace:"nowrap"}}>{_effUp>0?`₹${Math.round(_effUp).toLocaleString("en-IN")}/${isTrussSqft?"truss sqft":(invItem?.unit||rc?.unit||el.unit)}`:"₹0"}</span>}
+                        {showCosts&&<span title={el.swappedFrom?`Swapped within the same category — the original item had none free on this date`:_rateDiscounted?"Rate per unit — Repeat/standing-venue discount applied":"Rate per unit"} style={{flexShrink:0,fontSize:11,fontWeight:600,color:el.swappedFrom?"#F97316":_rateDiscounted?"#10B981":textS,whiteSpace:"nowrap"}}>{_effUp>0?`₹${Math.round(_effUp).toLocaleString("en-IN")}/${isTrussSqft?"truss sqft":(invItem?.unit||rc?.unit||el.unit)}`:"₹0"}</span>}
                         {isKit&&<span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(99,102,241,0.15)",color:"#6366F1",fontWeight:700}}>KIT</span>}
                         {!rc&&!el.invId&&!el.patternId&&!el.mandiId&&<span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700}}>NEW</span>}
                         {el.invId&&priceInfo.warning&&<span title={priceInfo.warning} style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700}}>⚠ short</span>}
@@ -3955,7 +3955,7 @@ undefined
                         </>
                       )}
                       </div>
-                      {showCosts?<div style={{fontSize:13,fontWeight:600,color:lineTotal>0?textP:textS,textAlign:"left",whiteSpace:"nowrap"}}>{lineTotal>0?fmt(lineTotal):"—"}</div>:<span/>}
+                      {showCosts?<div style={{fontSize:13,fontWeight:600,color:el.swappedFrom&&lineTotal>0?"#F97316":lineTotal>0?textP:textS,textAlign:"left",whiteSpace:"nowrap"}}>{lineTotal>0?fmt(lineTotal):"—"}</div>:<span/>}
                       <span onClick={()=>{const elems=(zoneElements[k]||[]).filter((_,i)=>i!==idx);setZoneElements(p=>({...p,[k]:elems}));}} style={{marginLeft:"auto",cursor:"pointer",color:"#E11D48",fontWeight:700,fontSize:12.5}}>×</span>
                     </div>
                     </div>

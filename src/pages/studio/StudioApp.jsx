@@ -9869,9 +9869,17 @@ export default function StudioApp() {
     setZoneElements(p => {
       const elems = [...(p[zoneKey] || [])];
       if (!elems[idx]) return p;
+      // Swap marker (owner ask): the element's ORIGINAL item — the one it came with, kept across
+      // repeat swaps — had nothing free, so this is a like-for-like swap within the same
+      // sub-category (the picker only ever lists that sub-category). Build shows its price in
+      // orange. Picking the original back, or picking while the original is still free, drops it.
+      const origId = elems[idx].swappedFrom || elems[idx].invId;
+      const orig = (items || []).find(i => i.id === origId);
+      const isSwap = !!(selectedId && pick && origId && selectedId !== origId && orig && orig.free <= 0);
       elems[idx] = (selectedId && pick)
-        ? { ...elems[idx], invId: selectedId, name: pick.name || elems[idx].name, imsId: selectedId, imsName: pick.name || "", imsPhoto: pick.photo || "" }
-        : (() => { const e = { ...elems[idx] }; delete e.imsId; delete e.imsName; delete e.imsPhoto; return e; })();
+        ? { ...elems[idx], invId: selectedId, name: pick.name || elems[idx].name, imsId: selectedId, imsName: pick.name || "", imsPhoto: pick.photo || "", swappedFrom: isSwap ? origId : undefined }
+        : (() => { const e = { ...elems[idx] }; delete e.imsId; delete e.imsName; delete e.imsPhoto; delete e.swappedFrom; return e; })();
+      if (!elems[idx].swappedFrom) delete elems[idx].swappedFrom;
       return { ...p, [zoneKey]: elems };
     });
     setAvailModal(null);
