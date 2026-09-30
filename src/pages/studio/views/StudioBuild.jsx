@@ -3591,6 +3591,16 @@ undefined
                           // % of the item's production cost, per sub-category). The badge stays as a
                           // heads-up, not a lock.
                           const remaining=remainingForItem(it.id,k); const isFullyUsed=remaining!=null&&remaining<=0;
+                          // Real stock for THIS EVENT DATE, not just "used elsewhere in this same
+                          // deal" — remainingForItem above only warns once a sibling zone/function
+                          // has already drawn on the item, so an item every OTHER event already has
+                          // fully booked showed no warning at all here: it added clean, then only
+                          // surfaced as "Not available for this date" (StudioBuild's own isUnavail
+                          // badge) after it was already sitting in the zone. Same getStudioAvailable
+                          // call remainingForItem already makes, just without that gate, so a genuinely
+                          // 0-free item is flagged at the moment it's picked, not after.
+                          const dateFree=getStudioAvailable(it,activeBlocksForDate);
+                          const isDateUnavail=dateFree<=0;
                           return <div key={"inv:"+it.id}
                             onClick={()=>{
                               if(!(zoneElements[k]||[]).find(el=>el.invId===it.id)){setZoneElements(prev=>({...prev,[k]:[...(prev[k]||[]),{name:it.name,qty:1,unit:it.unit,size:"",invId:it.id}]}));}
@@ -3602,8 +3612,11 @@ undefined
                               <div style={{fontWeight:500,color:textP,display:"flex",alignItems:"center",gap:4,minWidth:0}}>
                                 <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.name}</span>
                                 {isKit&&<span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(99,102,241,0.15)",color:"#6366F1",fontWeight:700,flexShrink:0}}>KIT</span>}
-                                {isFullyUsed&&<span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700,flexShrink:0}}>fully used — priced at cost%</span>}
-                                {!isFullyUsed&&remaining!=null&&<span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700,flexShrink:0}}>{remaining} left for this event</span>}
+                                {isDateUnavail
+                                  ? <span title="0 free for this event date — will price at cost% instead of rental" style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700,flexShrink:0}}>0 free — not available</span>
+                                  : (isFullyUsed
+                                    ? <span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700,flexShrink:0}}>fully used — priced at cost%</span>
+                                    : (remaining!=null&&<span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700,flexShrink:0}}>{remaining} left for this event</span>))}
                               </div>
                               <div style={{fontSize:11,color:textS,marginTop:2}}>{(it.subCat||it.subcategory)?(it.subCat||it.subcategory)+" › ":""}{it.cat}{itemDimsText(it)?` · ${itemDimsText(it)}`:""}</div>
                             </div>

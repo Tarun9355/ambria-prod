@@ -9601,9 +9601,14 @@ export default function StudioApp() {
       // proportional-by-raw-grand is the only sensible way to split it across functions.
       if (preFeeTotal > 0) {
         const scale = eventGrandTotal / preFeeTotal;
-        functions.forEach(f => { f.previewGrand = Math.round((f.grand || 0) * scale); });
+        functions.forEach(f => {
+          f.previewGrand = Math.round((f.grand || 0) * scale);
+          // Same proportional-by-raw-grand split as previewGrand itself, off the deal-wide fee
+          // amount — a negotiated lump sum has no per-function "own rate" for the fee either.
+          f.agencyFee = Math.round(agencyFee * (f.grand || 0) / preFeeTotal);
+        });
       } else {
-        functions.forEach(f => { f.previewGrand = f.grand || 0; });
+        functions.forEach(f => { f.previewGrand = f.grand || 0; f.agencyFee = 0; });
       }
     } else {
       // Un-negotiated: each function's OWN discount% (already stamped in above, per its own venue)
@@ -9620,7 +9625,10 @@ export default function StudioApp() {
       functions.forEach(f => {
         const fDiscount = Math.round((f.grand || 0) * (f.discountPct || 0) / 100);
         const fDiscounted = Math.max(0, (f.grand || 0) - fDiscount);
-        f.previewGrand = fDiscounted + Math.round(fDiscounted * agencyFeePct / 100);
+        // Exposed on its own (not just folded into previewGrand) so the Excel/PPT/PDF cost sheets
+        // can print each function's own share of the fee as its own column/line.
+        f.agencyFee = Math.round(fDiscounted * agencyFeePct / 100);
+        f.previewGrand = fDiscounted + f.agencyFee;
       });
     }
     return {
@@ -9778,6 +9786,20 @@ export default function StudioApp() {
       const { inventory, blocksForDate, blocksDetailForDate } = await loadAvailability(date);
       const target = String(subcat).toLowerCase().trim();
       const pickerVenue = activeFnMeta?.venue || venue || "";
+      // Where each inventory item is already placed for THIS guest — every function of the deal,
+      // every enabled zone — minus the element being swapped right now, so picking it here would
+      // be the same piece used twice for one client. Shown on the card as a swap warning.
+      const usedElsewhere = {};
+      (collectAllFunctionData() || []).forEach((f) => {
+        Object.entries(f.zoneElements || {}).forEach(([zk, elems]) => {
+          if (!f.enabledEls?.[zk] || !Array.isArray(elems)) return;
+          elems.forEach((e, ei) => {
+            if (!e?.invId) return;
+            if (f.fnIdx === activeFnIdx && zk === zoneKey && ei === idx) return;
+            (usedElsewhere[e.invId] ||= []).push(`${f.fnType || `Function ${f.fnIdx + 1}`} · ${zk}`);
+          });
+        });
+      });
       const items = (inventory || [])
         .filter(it => String(it.subCat || it.subcategory || "").toLowerCase().trim() === target)
         // ── PRICE THE WAY THE CALLER WILL USE IT ── (BUG-15)
@@ -9818,7 +9840,7 @@ export default function StudioApp() {
           const _reserved = reservedByVenueToday((blocksDetailForDate || {})[it.id], eventOrders);
           const _slack = venueSlackFor(fvCfgForRepeat, pickerVenue, it, _reserved);
           const free = Math.min(getStudioAvailable(it, blocksForDate), availableAtVenue(fvCfgForRepeat, pickerVenue, it, _reserved));
-          return { id: it.id, name: it.name, photo: (Array.isArray(it.photoUrls) && it.photoUrls[0]) || it.img || "", free, venueSlack: _slack, unit: it.unit || "",
+          return { id: it.id, name: it.name, photo: (Array.isArray(it.photoUrls) && it.photoUrls[0]) || it.img || "", free, total: Number(it.qty) || 0, usedIn: usedElsewhere[it.id] || [], venueSlack: _slack, unit: it.unit || "",
             price: opts?.rateFn ? opts.rateFn(it)
               : opts?.priceMode === "cost" ? (Number(it.cost) || 0)
               : opts?.priceMode === "rental" ? imsField.rentalCost(it)
@@ -9832,7 +9854,7 @@ export default function StudioApp() {
         .sort((a, b) => b.free - a.free);
       setAvailModal(m => (m && m.zoneKey === zoneKey && m.idx === idx) ? { ...m, loading: false, items } : m);
     } catch { setAvailModal(m => m ? { ...m, loading: false } : m); }
-  }, [imsInventory, activeFnMeta, clientDate, loadAvailability, getStudioAvailable, rcFactorByKey, zoneConfig, venue, guestPriceMultiplier, hideDiscountFromClient, fvCfgForRepeat, dealCheckData, studioFloralData]);
+  }, [imsInventory, activeFnMeta, clientDate, loadAvailability, getStudioAvailable, rcFactorByKey, zoneConfig, venue, guestPriceMultiplier, hideDiscountFromClient, fvCfgForRepeat, dealCheckData, studioFloralData, collectAllFunctionData, activeFnIdx]);
   const saveAvailPick = useCallback(() => {
     if (!availModal) return;
     const { zoneKey, idx, selectedId, items, onPick } = availModal;
