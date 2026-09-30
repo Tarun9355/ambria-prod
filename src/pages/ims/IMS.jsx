@@ -1361,7 +1361,17 @@ export default function IMS() {
   // Role-based tab filtering (faithful to reference).
   const roleConfig = (settings?.roleTabs || {})[user?.role] || { tabs: TABS.map((t) => t.id) };
   const isAdmin = user?.role === "Admin" || user?.id === "u_admin";
-  let allowedTabs = isAdmin ? TABS : TABS.filter((t) => (roleConfig.tabs || []).includes(t.id));
+  // Dashboard is Admin-only, full stop — not something a per-role Tab Access config can grant.
+  // It's a company-wide rollup (total stock, finance-adjacent numbers, every upcoming function),
+  // not scoped to what a role is otherwise allowed to see, so it's excluded here rather than left
+  // to whatever an admin happened to tick for that role in Admin → Users → Tab Access.
+  //
+  // Attendance is the opposite: every role gets it unconditionally, never gated by that same
+  // config. It's how anyone punches in or out — the "test"/"sub admin"/etc. tab lists above were
+  // all saved before this feature existed, so nobody had ticked it for any role, and without this
+  // force-include every non-admin would be unable to reach Attendance at all until an admin went
+  // and edited every single role by hand.
+  let allowedTabs = isAdmin ? TABS : TABS.filter((t) => t.id !== "dashboard" && (t.id === "attendance" || (roleConfig.tabs || []).includes(t.id)));
   // Department heads (+ Admin) get an Approvals tab for last-minute amendment requests.
   // Dept Ops offers a "pick an event from the Calendar" button, but only to roles that actually
   // have the Calendar tab — otherwise it would send someone to a tab their permissions exclude.

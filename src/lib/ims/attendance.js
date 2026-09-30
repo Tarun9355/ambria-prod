@@ -245,7 +245,10 @@ function isAnswerCorrect(q, given) {
   }
   if (type === "fill_blank") {
     const norm = (s) => String(s || "").trim().toLowerCase();
-    return (q.acceptedAnswers || []).some((a) => norm(a) && norm(a) === norm(given));
+    // Accepts either script — the punch-time quiz shows the Hindi translation alongside the
+    // English original (see AttendanceTab.jsx), so an answer typed in Hindi must match too.
+    const accepted = [...(q.acceptedAnswers || []), ...(q.acceptedAnswersHi || [])];
+    return accepted.some((a) => norm(a) && norm(a) === norm(given));
   }
   if (type === "short_answer") return String(given || "").trim().length > 0;
   return false;

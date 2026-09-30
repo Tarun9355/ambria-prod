@@ -153,6 +153,16 @@ export default function AttendanceAdminLog({ users }) {
     return map;
   }, [users]);
 
+  // Admin's own punches get their own group rather than landing in "Unassigned" alongside roles
+  // that genuinely have no department (Sales, a role with no dept in its name, …) — an admin
+  // punching in isn't a data gap the way an unclassified staff member's row is. Same isAdmin
+  // convention used everywhere else in this app (role === "Admin" or the legacy u_admin id).
+  const isAdminByUserId = useMemo(() => {
+    const map = {};
+    (users || []).forEach((u) => { map[u.id] = u.role === "Admin" || u.id === "u_admin"; });
+    return map;
+  }, [users]);
+
   useEffect(() => {
     let active = true;
     setLoading(true);
@@ -171,17 +181,23 @@ export default function AttendanceAdminLog({ users }) {
 
   const term = search.trim().toLowerCase();
   const searched = term ? rows.filter((r) => (r.user_name || "").toLowerCase().includes(term)) : rows;
-  const filtered = dept === "all" ? searched : searched.filter((r) => (deptByUserId[r.user_id] || []).includes(dept));
+  const filtered = dept === "all" ? searched
+    : dept === "Admin" ? searched.filter((r) => isAdminByUserId[r.user_id])
+    : searched.filter((r) => (deptByUserId[r.user_id] || []).includes(dept));
 
   // Grouped by department only in the "all" view — a specific department's own filter above
   // already narrows the flat list to just that one, so a repeated section header would be noise.
-  // A row with no roster match (deleted user, or a role with no department — Admin/Sales/…) falls
-  // into "Unassigned" rather than being silently dropped from the log.
+  // Admin gets its own group (checked first, before department at all — an admin's own row never
+  // also gets filed under a department). A row with no roster match at all (deleted user, or a
+  // non-admin role with no department — Sales, …) falls into "Unassigned" rather than being
+  // silently dropped from the log.
   const groups = dept !== "all" ? null : (() => {
     const byDept = {};
     DEPTS.forEach((d) => { byDept[d] = []; });
+    byDept.Admin = [];
     byDept.Unassigned = [];
     filtered.forEach((r) => {
+      if (isAdminByUserId[r.user_id]) { byDept.Admin.push(r); return; }
       const ds = deptByUserId[r.user_id];
       if (Array.isArray(ds) && ds.length) ds.forEach((d) => byDept[d]?.push(r));
       else byDept.Unassigned.push(r);
@@ -238,7 +254,7 @@ export default function AttendanceAdminLog({ users }) {
         <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by name…"
           className="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400" />
         <SelectPopover value={dept} onChange={setDept}
-          options={[{ value: "all", label: "All departments" }, ...DEPTS.map((d) => ({ value: d, label: d }))]} />
+          options={[{ value: "all", label: "All departments" }, ...DEPTS.map((d) => ({ value: d, label: d })), { value: "Admin", label: "Admin" }]} />
       </div>
 
       {loading ? (

@@ -282,6 +282,8 @@ export default function RoleAccessModal({ role, settings, setSettings, onClose }
                 {IMS_TABS.map((t) => {
                   const on = (rc.tabs || []).includes(t.id);
                   if (t.id === "admin") return null; // rendered separately below (full-depth tree)
+                  if (t.id === "dashboard") return null; // Admin-only, hardcoded in IMS.jsx — no per-role toggle to show
+                  if (t.id === "attendance") return null; // every role gets it unconditionally, hardcoded in IMS.jsx — no per-role toggle to show
                   const subs = IMS_SUBTABS[t.id];
                   return (
                     <SectionRow key={t.id} icon={t.label.split(" ")[0]} label={t.label.replace(/^\S+\s/, "")}

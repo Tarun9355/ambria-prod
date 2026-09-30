@@ -435,6 +435,17 @@ export function IconCanvaMark({ size = 14 }) {
   );
 }
 
+// YouTube — the red rounded rectangle with its play triangle.
+export function IconYoutubeMark({ size = 14 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" focusable="false"
+      style={{ display: "block", flexShrink: 0 }}>
+      <rect x="2" y="5" width="20" height="14" rx="4" fill="#FF0000" />
+      <path d="M10 8.7v6.6l6-3.3z" fill="#fff" />
+    </svg>
+  );
+}
+
 // ═══ ATTENDANCE ═══
 
 // Clock face — the live-time widget.
@@ -512,6 +523,57 @@ export function IconX({ size = 15 }) {
   return (
     <svg {...svg(size)}>
       <path d="M6 6l12 12M18 6 6 18" />
+    </svg>
+  );
+}
+
+// Trash can — delete an item outright (vs. IconX's plain close/remove).
+export function IconTrash({ size = 15 }) {
+  return (
+    <svg {...svg(size)}>
+      <path d="M4.5 7h15M9.5 7V4.8a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1V7M18 7l-.8 12.2a1.8 1.8 0 0 1-1.8 1.7H8.6a1.8 1.8 0 0 1-1.8-1.7L6 7" />
+      <path d="M10 11v6M14 11v6" />
+    </svg>
+  );
+}
+
+// Chain link — a pasted URL field.
+export function IconLink({ size = 15 }) {
+  return (
+    <svg {...svg(size)}>
+      <path d="M9.5 14.5 14.5 9.5" />
+      <path d="M11 7.5l1.5-1.5a3.2 3.2 0 0 1 4.5 4.5L15.5 12" />
+      <path d="M13 16.5 11.5 18a3.2 3.2 0 0 1-4.5-4.5L8.5 12" />
+    </svg>
+  );
+}
+
+// i-in-a-circle — a hover/tap explanation.
+export function IconInfo({ size = 15 }) {
+  return (
+    <svg {...svg(size)}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 11v6" />
+      <circle cx="12" cy="7.8" r="0.9" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+// Plus-in-a-circle — an inline "add another" action, more deliberate than a bare "+".
+export function IconPlusCircle({ size = 15 }) {
+  return (
+    <svg {...svg(size)}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 8v8M8 12h8" />
+    </svg>
+  );
+}
+
+// Rightward arrow — a "go/submit/continue" action, not a nav chevron.
+export function IconArrowRight({ size = 15 }) {
+  return (
+    <svg {...svg(size)}>
+      <path d="M4 12h15.5M13.5 6l6 6-6 6" />
     </svg>
   );
 }

@@ -13,7 +13,7 @@ import QuizSetupPanel from "./QuizSetupPanel.jsx";
 import AttendanceLocationsPanel from "./AttendanceLocationsPanel.jsx";
 import {
   IconUsers, IconClockAlert, IconHourglass, IconPlay, IconStop, IconClipboard, IconBook, IconPin,
-  IconCamera, IconList,
+  IconCamera, IconList, IconClipboardCheck, IconX, IconArrowRight,
 } from "../../components/icons.jsx";
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -400,7 +400,7 @@ export default function AttendanceTab({ authUser, settings, setSettings, users }
       )}
 
       {isAdmin && adminView && (
-        <div className={adminView === "log" ? "max-w-3xl" : "max-w-2xl"}>
+        <div className={adminView === "log" ? "max-w-3xl" : adminView === "quiz" ? "max-w-4xl" : "max-w-2xl"}>
           <button onClick={() => setAdminView(null)}
             className="flex items-center gap-1.5 text-sm font-semibold text-gray-500 bg-white ring-1 ring-gray-200 shadow-sm rounded-xl px-3 py-1.5 mb-3 hover:bg-gray-50 hover:text-gray-700 transition">
             ← Back to Attendance
@@ -424,16 +424,36 @@ export default function AttendanceTab({ authUser, settings, setSettings, users }
               ? "h-full sm:h-auto flex flex-col sm:block sm:max-h-[90vh] sm:max-w-md rounded-none sm:rounded-2xl p-5 sm:p-6"
               : "max-h-[90vh] rounded-2xl p-6 " + ((flow.step === "video" || flow.step === "quiz") ? "max-w-2xl" : "max-w-md"))}>
             {flow.step !== "saving" && (
-              <button onClick={() => setFlow(null)} className="absolute top-3 right-3 text-gray-300 hover:text-gray-500 text-2xl leading-none" title="Cancel (Esc)">×</button>
+              <button onClick={() => setFlow(null)}
+                className="absolute top-4 right-4 w-9 h-9 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-500 flex items-center justify-center transition z-10" title="Cancel (Esc)">
+                <IconX size={16} />
+              </button>
             )}
 
-            <h3 className="text-lg font-bold text-gray-900 pr-6">
-              {flow.type === "in" ? "Punch In" : "Punch Out"}
-            </h3>
+            {(flow.step === "photo" || flow.step === "video" || flow.step === "quiz") ? (
+              <div className="flex items-start gap-3 pr-10">
+                <div className="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
+                  {flow.step === "photo" && <IconCamera size={22} />}
+                  {flow.step === "video" && <IconPlay size={22} />}
+                  {flow.step === "quiz" && <IconClipboardCheck size={22} />}
+                </div>
+                <div className="min-w-0 pt-1">
+                  <h3 className="text-xl font-bold text-gray-900">{flow.type === "in" ? "Punch In" : "Punch Out"}</h3>
+                  <p className="text-sm text-gray-500 mt-0.5">
+                    {flow.step === "photo" && `Take a photo of yourself to ${flow.type === "in" ? "punch in" : "punch out"}.`}
+                    {flow.step === "video" && "Watch this, then answer a couple of questions."}
+                    {flow.step === "quiz" && "Quick check before you're punched in."}
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <h3 className="text-lg font-bold text-gray-900 pr-6">
+                {flow.type === "in" ? "Punch In" : "Punch Out"}
+              </h3>
+            )}
 
             {flow.step === "photo" && (
               <div className="mt-4 flex-1 flex flex-col min-h-0 sm:flex-none sm:block">
-                <p className="text-sm text-gray-500 mb-3">Take a photo of yourself to {flow.type === "in" ? "punch in" : "punch out"}.</p>
                 {flow.photoDataUrl ? (
                   <div className="relative rounded-xl overflow-hidden bg-black flex-1 sm:flex-none sm:aspect-square sm:max-w-[260px] sm:mx-auto">
                     <img src={flow.photoDataUrl} alt="" className="w-full h-full object-cover opacity-70" />
@@ -487,7 +507,6 @@ export default function AttendanceTab({ authUser, settings, setSettings, users }
                     Two wrong answers — watch it again before the next try.
                   </p>
                 )}
-                <p className="text-sm text-gray-500 mb-3">Watch this, then answer a couple of questions.</p>
                 <AttendanceVideoPlayer videoUrl={myTraining.videoUrl}
                   onEnded={() => setFlow((f) => f && ({ ...f, videoDone: true }))}
                   onError={() => setFlow((f) => f && ({ ...f, videoBroken: true }))} />
@@ -501,39 +520,50 @@ export default function AttendanceTab({ authUser, settings, setSettings, users }
             )}
 
             {flow.step === "quiz" && (
-              <div className="mt-4">
-                <p className="text-sm text-gray-500 mb-3">Quick check before you're punched in.</p>
+              <div className="mt-5">
                 <div className="space-y-4">
                   {flow.questions.map((q, qi) => {
                     const type = q.type || "single";
                     const wrong = flow.quizWrong?.includes(q.id);
                     const setAnswer = (val) => setFlow((f) => f && ({ ...f, answers: { ...f.answers, [q.id]: val } }));
                     return (
-                      <div key={q.id}>
-                        <p className={"text-sm font-medium mb-1.5 " + (wrong ? "text-red-600" : "text-gray-800")}>
-                          {qi + 1}. {q.text}
-                        </p>
-                        {type === "single" && (
-                          <div className="space-y-1 ml-1">
-                            {q.options.map((opt, oi) => (
-                              <label key={oi} className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
-                                <input type="radio" name={`q_${q.id}`} checked={flow.answers[q.id] === oi} onChange={() => setAnswer(oi)} />
-                                {opt}
-                              </label>
-                            ))}
+                      <div key={q.id}
+                        className={"rounded-2xl p-5 transition " + (wrong ? "bg-red-50 ring-1 ring-red-200" : "bg-gray-50")}>
+                        <div className="flex items-start gap-3 mb-3">
+                          <span className={"shrink-0 w-8 h-8 rounded-xl flex items-center justify-center text-sm font-bold "
+                            + (wrong ? "bg-red-100 text-red-600" : "bg-indigo-100 text-indigo-600")}>
+                            {qi + 1}
+                          </span>
+                          <div className="min-w-0 pt-0.5">
+                            <p className={"text-base font-bold " + (wrong ? "text-red-700" : "text-gray-900")}>
+                              {q.textHi || q.text}
+                            </p>
+                            {/* The English/Hinglish source stays visible too — a bilingual pair, not a
+                                replacement, since a mistranslation should never be the only text shown. */}
+                            {q.textHi && <p className="text-sm text-gray-400 mt-0.5">{q.text}</p>}
                           </div>
-                        )}
-                        {type === "multi" && (
-                          <div className="space-y-1 ml-1">
-                            <p className="text-xs text-gray-400 mb-1">Select all that apply.</p>
+                        </div>
+                        {type === "multi" && <p className="text-sm text-gray-400 mb-2 ml-11">Select all that apply.</p>}
+                        {(type === "single" || type === "multi") && (
+                          <div className="space-y-2">
                             {q.options.map((opt, oi) => {
-                              const cur = Array.isArray(flow.answers[q.id]) ? flow.answers[q.id] : [];
-                              const checked = cur.includes(oi);
+                              const optHi = (q.optionsHi || [])[oi];
+                              const cur = type === "multi" ? (Array.isArray(flow.answers[q.id]) ? flow.answers[q.id] : []) : null;
+                              const checked = type === "multi" ? cur.includes(oi) : flow.answers[q.id] === oi;
+                              const pick = () => setAnswer(type === "multi" ? (checked ? cur.filter((i) => i !== oi) : [...cur, oi]) : oi);
                               return (
-                                <label key={oi} className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
-                                  <input type="checkbox" checked={checked}
-                                    onChange={() => setAnswer(checked ? cur.filter((i) => i !== oi) : [...cur, oi])} />
-                                  {opt}
+                                <label key={oi} onClick={pick}
+                                  className={"flex items-center gap-3 rounded-xl px-4 py-3 bg-white ring-1 cursor-pointer transition "
+                                    + (checked ? "ring-indigo-400 shadow-sm" : "ring-gray-200 hover:ring-gray-300")}>
+                                  <span className={"shrink-0 w-5 h-5 border-2 flex items-center justify-center transition "
+                                    + (type === "multi" ? "rounded-md" : "rounded-full")
+                                    + " " + (checked ? "border-indigo-600 bg-indigo-600" : "border-gray-300")}>
+                                    {checked && <span className={"bg-white " + (type === "multi" ? "w-2.5 h-2.5 rounded-sm" : "w-2 h-2 rounded-full")} />}
+                                  </span>
+                                  <span className="text-sm text-gray-800">
+                                    <span className="font-semibold">{optHi || opt}</span>
+                                    {optHi && <span className="text-gray-400"> · {opt}</span>}
+                                  </span>
                                 </label>
                               );
                             })}
@@ -541,11 +571,11 @@ export default function AttendanceTab({ authUser, settings, setSettings, users }
                         )}
                         {type === "fill_blank" && (
                           <input value={flow.answers[q.id] || ""} onChange={(e) => setAnswer(e.target.value)}
-                            placeholder="Type your answer" className="w-full border rounded-lg px-3 py-1.5 text-sm" />
+                            placeholder="Type your answer" className="ml-11 w-[calc(100%-2.75rem)] border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300" />
                         )}
                         {type === "short_answer" && (
                           <textarea value={flow.answers[q.id] || ""} onChange={(e) => setAnswer(e.target.value)}
-                            placeholder="Write your answer" rows={2} className="w-full border rounded-lg px-3 py-1.5 text-sm" />
+                            placeholder="Write your answer" rows={2} className="ml-11 w-[calc(100%-2.75rem)] border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300" />
                         )}
                       </div>
                     );
@@ -557,8 +587,9 @@ export default function AttendanceTab({ authUser, settings, setSettings, users }
                     {flow.quizAttempts >= 1 && " One more miss and you'll need to rewatch the video."}
                   </p>
                 )}
-                <button onClick={submitQuiz} className="mt-4 w-full py-2.5 rounded-xl font-semibold text-white bg-indigo-600 hover:bg-indigo-700 transition">
-                  Submit answers
+                <button onClick={submitQuiz}
+                  className="mt-5 w-full flex items-center justify-center gap-2 py-3 rounded-xl font-semibold text-white bg-indigo-600 hover:bg-indigo-700 shadow-sm transition">
+                  Submit answers <IconArrowRight size={16} />
                 </button>
               </div>
             )}
