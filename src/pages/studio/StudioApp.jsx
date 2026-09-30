@@ -2107,6 +2107,10 @@ export default function StudioApp() {
   // ═══ ZONE UPLOAD STATE — VERBATIM (Cloudinary + AI tag) ═══
   const [zoneUploading, setZoneUploading] = useState(null); // elKey currently uploading
   const [zoneUploadReview, setZoneUploadReview] = useState(null);
+  // Library ids uploaded into each zone this session, newest first — { [zoneKey]: libId[] }. Build's
+  // grid shows them right after favourites (and pulls them in even before the zone's cached photo
+  // pool refetches), so a fresh upload never looks like it vanished.
+  const [recentUploads, setRecentUploads] = useState({});
   const [zurElSearch, setZurElSearch] = useState("");
   const [inspQ, setInspQ] = useState("");
   const [inspResults, setInspResults] = useState([]);
@@ -9140,7 +9144,10 @@ export default function StudioApp() {
   }, [storageEntries, saveLib, showMsg, taxonomy]);
 
   // ── Zone upload (Cloudinary → AI tag → review) — VERBATIM ──
-  const handleZoneUpload = async (elKey, file) => {
+  // areaFor (optional): zoneKey → the area name that zone's photos are tagged with (Build's own
+  // areaNamesFor, which this file doesn't have). Kept on the review so the photo is tagged to
+  // whichever zone it's finally applied to, even if the review step's zone picker changes it.
+  const handleZoneUpload = async (elKey, file, areaFor) => {
     if (!file || zoneUploading) return;
     setZoneUploading(elKey);
     showMsg("📷 Uploading…", "blue");
@@ -9160,7 +9167,7 @@ export default function StudioApp() {
       let aiResult = null;
       try { aiResult = await Promise.race([aiTagImage(cldUrl), new Promise((_, r) => setTimeout(() => r(new Error("timeout")), 25000))]); } catch (e) { showMsg("AI tagging skipped — edit manually", "red"); }
       setZoneUploadReview({
-        elKey, url: cldUrl,
+        elKey, url: cldUrl, areaFor: typeof areaFor === "function" ? areaFor : null,
         name: aiResult?.name || file.name?.replace(/\.[^.]+$/, "") || "Client Upload",
         tags: aiResult?.tags || { eventType: [], venueType: [], areasElements: [], colorPalette: [], categoryTier: [], designStyle: [], timeSetting: [] },
         elements: aiResult?.elements || [],
@@ -10948,15 +10955,26 @@ export default function StudioApp() {
     // same name never inherits this photo. Whatever else was picked in Areas & elements still
     // applies too — this only adds a private channel, it never touches the visible tags.
     const customOther = customZones.find((cz) => cz.id === r.elKey && !cz.sourceType);
-    const tags = customOther
+    let tags = customOther
       ? { ...r.tags, customZoneIds: [...new Set([...(r.tags?.customZoneIds || []), customOther.id])] }
       : r.tags;
+    // A standard zone matches photos by tags.areasElements, and that was left entirely to the AI's
+    // guess — a photo uploaded INTO Entry & Passage the AI tagged "Stage" never showed up in Entry &
+    // Passage at all. Tag it with the zone it was uploaded into, on top of whatever the AI/review
+    // picked (never replacing those).
+    if (!customOther) {
+      const area = r.areaFor?.(r.elKey);
+      if (area && !String(area).startsWith(CUSTOM_ZONE_TAG_PREFIX)) {
+        tags = { ...(tags || {}), areasElements: [...new Set([...((tags || {}).areasElements || []), area])] };
+      }
+    }
     const libImg = { id: libId, url: r.url, name: r.name, tags, elements: r.elements, dims: r.dims, prints: r.prints || [], addedAt: Date.now(), source: "client-upload", tagSource: TAG_SOURCE.BUILD, _aiTagged: true, _aiTaggedAt: Date.now() };
     // NOT mergeLibItems first: that writes libItemsRef, which is exactly what saveLib diffs against
     // to decide what changed. Pre-merging made saveLib compare the new photo to itself, find no
     // difference, and skip the upsert entirely — so every Build upload since this was written lived
     // in local state only and vanished on refresh. saveLib already merges into the ref and state.
     saveLib([libImg]);
+    setRecentUploads(p => ({ ...p, [r.elKey]: [libId, ...(p[r.elKey] || []).filter(x => x !== libId)] }));
     logActivity("uploaded client photo", libImg.name + " → " + (zoneLabelsD[r.elKey]?.label || r.elKey));
     // A custom ("Other") zone that already has a photo selected — a second upload joins it as
     // another option in the gallery (tagged above, same as the first) instead of silently swapping
@@ -11000,7 +11018,7 @@ export default function StudioApp() {
     // zone photo filters + upload
     zpFilterOpen, setZpFilterOpen, zpFilters, setZpFilters, zpToggleFilter, zpHasFilters, zpFilterPhoto, zpVenueMatch, zpPaletteMatch,
     zpVenueTypeMatch, zpDesignStyleMatch, zpTimeSettingMatch, zpTierMatch,
-    zoneUploading, setZoneUploading, zoneUploadReview, setZoneUploadReview, closeZoneUploadReview, zurElSearch, setZurElSearch, applyZoneUpload,
+    zoneUploading, setZoneUploading, zoneUploadReview, setZoneUploadReview, closeZoneUploadReview, zurElSearch, setZurElSearch, applyZoneUpload, recentUploads,
     // auth
     authUser, isAdmin, hasPerm, doLogout, teamData, setTeamData, userVenueScope, studioSettingsAllowed, studioLibraryAllowed,
     // app mode + steps

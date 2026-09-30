@@ -643,7 +643,7 @@ export default function StudioBuild({ ctx }) {
     setElGallery, setGalleryIdx,
     newCzSrc, setNewCzSrc,
     // uploads / ai
-    zoneUploading, handleZoneUpload,
+    zoneUploading, handleZoneUpload, recentUploads,
     zoneElSearch, setZoneElSearch, zonePrintSearch, setZonePrintSearch,
     // zone-photo filters
     zpFilterOpen, setZpFilterOpen, zpHasFilters, zpFilters, setZpFilters, zpToggleFilter, zpFilterPhoto, zpVenueMatch, zpPaletteMatch,
@@ -976,6 +976,10 @@ export default function StudioBuild({ ctx }) {
   // often pages down, which reads as the photo having vanished. These sit right after the group
   // instead. Session-only on purpose: it's "what I was just looking at", not a saved order.
   const [grpUnticked, setGrpUnticked] = useState({});
+  // The zone card the salesperson last clicked into — where the banner's Upload sends a photo.
+  // It used to always target the FIRST switched-on zone, so uploading while working in Entry &
+  // Passage quietly sent the photo to Stage (or whatever happened to be first).
+  const [uploadZone, setUploadZone] = useState(null);
   // { [zoneKey]: "saving" | "saved" | "error" } — feedback for the auto-save below, since there's no
   // button press to feel like confirmation anymore.
   const [grpSaveStatus, setGrpSaveStatus] = useState({});
@@ -1935,10 +1939,16 @@ export default function StudioBuild({ ctx }) {
   // off a zone, so a page-level control needs a target: default to the first switched-on zone, and
   // the review modal offers a picker to change it before applying. With no zone on there is nothing
   // to apply to, so the control says that instead of silently doing nothing.
-  const uploadTargetZone = [...zoneKeys, ...customZones.map(cz => cz.id)].find(k => enabledEls[k]) || null;
+  const _allZoneKeys = [...zoneKeys, ...customZones.map(cz => cz.id)];
+  const uploadTargetZone = (uploadZone && enabledEls[uploadZone] && _allZoneKeys.includes(uploadZone))
+    ? uploadZone
+    : (_allZoneKeys.find(k => enabledEls[k]) || null);
   const uploadTargetLabel = uploadTargetZone
     ? (customZones.find(cz => cz.id === uploadTargetZone)?.name || zoneLabelsD[uploadTargetZone]?.label || uploadTargetZone)
     : "";
+  // zoneKey → the area name its photos are tagged with, so applyZoneUpload can tag an upload INTO
+  // the zone it lands in (duplicate zones resolve through their source zone, same as everywhere).
+  const uploadAreaFor = (key) => { const cz = customZones.find(c => c.id === key); return areaNamesFor(cz?.sourceType || key)[0] || ""; };
   const BANNER_UPLOAD = (
     <label className="zone-upload" data-busy={(zoneUploading || !uploadTargetZone) ? "1" : "0"}
       title={uploadTargetZone
@@ -1955,9 +1965,9 @@ export default function StudioBuild({ ctx }) {
         fontSize:10.5,fontWeight:700,opacity:uploadTargetZone?1:0.45,
         cursor:!uploadTargetZone?"not-allowed":zoneUploading?"wait":"pointer",
         display:"inline-flex",alignItems:"center",gap:4,whiteSpace:"nowrap"}}>
-      {zoneUploading?"Uploading…":<><IconCamera size={11}/>Upload</>}
+      {zoneUploading?"Uploading…":<><IconCamera size={11}/>Upload{uploadTargetLabel&&<span style={{fontWeight:600,opacity:0.85,maxWidth:130,overflow:"hidden",textOverflow:"ellipsis"}}>· {uploadTargetLabel}</span>}</>}
       <input type="file" accept="image/*" style={{display:"none"}} disabled={!!zoneUploading||!uploadTargetZone}
-        onChange={e=>{const f=e.target.files?.[0];if(f&&uploadTargetZone)handleZoneUpload(uploadTargetZone,f);e.target.value="";}}/>
+        onChange={e=>{const f=e.target.files?.[0];if(f&&uploadTargetZone)handleZoneUpload(uploadTargetZone,f,uploadAreaFor);e.target.value="";}}/>
     </label>
   );
   // Wider than S.main's 1200px cap, which left ~350px of dead gutter either side on a desktop
@@ -2892,6 +2902,24 @@ undefined
         for (const ph of arr) (isMyFavPhoto(ph) ? favd : rest2).push(ph);
         return [...favd, ...rest2];
       };
+      // This session's uploads into this zone, newest first — right after favourites. The zone's
+      // photo pool is cached per area and doesn't refetch on an upload, so a brand-new photo isn't in
+      // it yet; pull it in from libById the same way group members are (filters still apply).
+      const uploads = (recentUploads || {})[k] || [];
+      if (uploads.length) {
+        const present = new Set(matchedPhotos.map(ph => ph.eventId).filter(Boolean));
+        for (const id of uploads) {
+          if (present.has(id)) continue;
+          const li = libById.get(id);
+          if (li?.url && (!zpHasFilters || zpFilterPhoto(li))) matchedPhotos.push(libPhotoEntry({ ...li, _grouped: false }));
+        }
+        // Moved to the front BEFORE favOrder: favOrder's partitions are stable, so favourites land
+        // first and these follow them, ahead of everything else.
+        const upOrder = new Map(uploads.map((id, i) => [id, i]));
+        const isUp = (ph) => ph.isLibrary && ph.eventId && upOrder.has(ph.eventId);
+        const up = matchedPhotos.filter(isUp).sort((a, b) => upOrder.get(a.eventId) - upOrder.get(b.eventId));
+        matchedPhotos = [...up, ...matchedPhotos.filter(ph => !isUp(ph))];
+      }
       matchedPhotos = favOrder(matchedPhotos);
       // The group leads EVERYTHING, favourites included — it partitions last, over the fav order
       // above (the old order ran favourites after the group, which put them in front of it). In
@@ -2968,6 +2996,7 @@ undefined
       /* Drop target is the whole card; the drag HANDLE is the grip in the header below. Making
          the card itself draggable would fight every text selection and every control inside it. */
       return(<div key={k} id={`zone-${k}`} className="zone-row"
+        onPointerDownCapture={()=>{ if (uploadZone !== k) setUploadZone(k); }}
         /* Reorder LIVE as you drag over a card, rather than only on drop. That is what makes the
            other zones slide out of the way while you are still holding the card — the list you
            are looking at is already the list you will get, so there is nothing to guess at. The
@@ -3502,7 +3531,7 @@ undefined
                 {zpHasFilters&&<button onClick={()=>setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[],timeSetting:[],venue:[],tier:[]})} style={{padding:"6px 13px",borderRadius:8,border:`1px solid ${accent}`,background:"transparent",color:accent,fontSize:11,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>Clear filters</button>}
                 <label style={{display:"inline-flex",alignItems:"center",gap:4,padding:"6px 14px",borderRadius:8,border:"none",background:accent,color:"#0F0F1A",fontSize:11,fontWeight:600,whiteSpace:"nowrap",cursor:zoneUploading?"wait":"pointer"}}>
                   {zoneUploading===k?"Uploading…":<><IconCamera size={12}/>Upload Client Photo</>}
-                  <input type="file" accept="image/*" style={{display:"none"}} disabled={!!zoneUploading} onChange={e=>{const f=e.target.files?.[0];if(f)handleZoneUpload(k,f);e.target.value="";}}/>
+                  <input type="file" accept="image/*" style={{display:"none"}} disabled={!!zoneUploading} onChange={e=>{const f=e.target.files?.[0];if(f)handleZoneUpload(k,f,uploadAreaFor);e.target.value="";}}/>
                 </label>
               </div>
             </div>
