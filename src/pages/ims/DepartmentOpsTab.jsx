@@ -2609,7 +2609,7 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
         read as clutter rather than as three controls. Unringed, the inactive tag is just a
         label until you want it, and the one that is outlined is the one that means something.
         28px tall, matching the bell. */}
-    {[["planning", "Planning", IconClipboard], ["onsite", "On-site", IconTruck]].map(([k, label, Icon]) => {
+    {[["planning", "Department Head", IconClipboard], ["onsite", "Site Supervisor", IconTruck]].map(([k, label, Icon]) => {
       const on = opsView === k;
       return (
         <button key={k} onClick={() => setOpsView(k)} aria-pressed={on}
