@@ -197,6 +197,22 @@ function StudioBrowse({ ctx }) {
   // videoId → userId → true, so a favourite is per salesperson: mine and a colleague's are
   // independent, and browseVideos already floats them to the top of their group.
   const myFavIds = new Set(Object.keys(favVideos || {}).filter(id => !!favVideos[id]?.[authUser?.id]));
+  // Videos this salesperson recently played or customised, newest first — shown right after their
+  // favourites at the top of the grid, so the reference they were just looking at doesn't vanish
+  // the moment they switch function or touch a filter. Per user, per browser (localStorage), capped
+  // at 12. A convenience only: unavailable storage just means an empty list, never an error.
+  const RECENT_VIDS_KEY = `ambria-recent-videos:${authUser?.id || "anon"}`;
+  const [recentVids, setRecentVids] = useState(() => {
+    try { const v = JSON.parse(localStorage.getItem(RECENT_VIDS_KEY) || "[]"); return Array.isArray(v) ? v : []; } catch { return []; }
+  });
+  const markVideoViewed = (id) => {
+    if (!id) return;
+    setRecentVids(p => {
+      const next = [id, ...p.filter(x => x !== id)].slice(0, 12);
+      try { localStorage.setItem(RECENT_VIDS_KEY, JSON.stringify(next)); } catch { /* storage off — keep it in memory */ }
+      return next;
+    });
+  };
   // ═══ PAGINATION ═══
   // 377 videos in one grid is 377 YouTube thumbnails and 377 cards on the page at once. 40 a page.
   const PER_PAGE = 40;
@@ -232,12 +248,29 @@ function StudioBrowse({ ctx }) {
   // Token-AND over the fields a card actually shows, so word order does not matter.
   const shownVideos = (() => {
     const tokens = vq.toLowerCase().split(/\s+/).filter(Boolean);
-    if (!tokens.length) return browseVideos;
-    return browseVideosAll.filter((v) => {
+    const base = !tokens.length ? browseVideos : browseVideosAll.filter((v) => {
       const hay = [v.title, v.venue, v.fn, ...(v.fns || []), v.space, v.tier, ...(v.styles || []), ...(v.colors || [])]
         .filter(Boolean).join(" ").toLowerCase();
       return tokens.every((t) => hay.includes(t));
     });
+    // Pinned block (_pin): my favourites first, then recently viewed, ahead of everything else.
+    // A recently viewed video is pulled back in from the full catalog even when the current filters
+    // or function would hide it — that is the whole point, it mustn't disappear. Not while a search
+    // is typed, though: then the list is "what matches", and an injected non-match would read wrong.
+    const favs = base.filter(v => myFavIds.has(v.id));
+    const byId = new Map(base.map(v => [v.id, v]));
+    const allById = new Map((browseVideosAll || []).map(v => [v.id, v]));
+    const recent = recentVids
+      .filter(id => !myFavIds.has(id))
+      .map(id => byId.get(id) || (!tokens.length ? allById.get(id) : null))
+      .filter(Boolean);
+    if (!favs.length && !recent.length) return base;
+    const pinnedIds = new Set([...favs, ...recent].map(v => v.id));
+    return [
+      ...favs.map(v => ({ ...v, _pin: "fav" })),
+      ...recent.map(v => ({ ...v, _pin: "recent" })),
+      ...base.filter(v => !pinnedIds.has(v.id)),
+    ];
   })();
 
     // Resting elevation for the video tiles. Declared above VideoCard so it can't repeat the
@@ -286,7 +319,7 @@ function StudioBrowse({ ctx }) {
               same video is opened directly on youtube.com. The embedded iframe (autoplay + our own
               page's own realtime/autosave churn fighting it for main-thread time) was the common
               factor; a new tab gives the video its own process with none of that contention. */}
-          <div style={{background:"#1a1a2e",height:150,display:"flex",alignItems:"center",justifyContent:"center",position:"relative",overflow:"hidden",cursor:"pointer"}} onClick={()=>openVideoTab(v.id)}>
+          <div style={{background:"#1a1a2e",height:150,display:"flex",alignItems:"center",justifyContent:"center",position:"relative",overflow:"hidden",cursor:"pointer"}} onClick={()=>{markVideoViewed(v.id);openVideoTab(v.id);}}>
             <img className="sb-thumb" src={v.thumbnail} alt={v.title} loading="lazy" decoding="async" style={{width:"100%",height:"100%",objectFit:"cover",position:"absolute",inset:0}} onError={e=>{e.target.style.display="none"}}/>
             <div className="sb-play" style={{width:48,height:48,borderRadius:"50%",background:"rgba(255,255,255,0.25)",backdropFilter:"blur(4px)",WebkitBackdropFilter:"blur(4px)",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",position:"relative",zIndex:2}}><IconPlay size={20}/></div>
             {/* Click the tier pill to favourite this video for its own venue (see browseVideos'
@@ -355,7 +388,7 @@ function StudioBrowse({ ctx }) {
                       control that looks live and then rejects the click is its own bug — and this
                       one used to go through and take the build with it. */}
                   <button className="sb-vc" disabled={ctx.isFnSwitching}
-                    onClick={(e)=>{e.stopPropagation();guardedPickAndLoadFromVideo(v.id,1);}}
+                    onClick={(e)=>{e.stopPropagation();markVideoViewed(v.id);guardedPickAndLoadFromVideo(v.id,1);}}
                     title={ctx.isFnSwitching?"Still loading this function…":"Load this as the reference and start building"}
                     style={{border:"none",background:"transparent",padding:0,color:accentText,fontSize:11.5,fontWeight:700,
                       cursor:ctx.isFnSwitching?"progress":"pointer",opacity:ctx.isFnSwitching?0.45:1,
@@ -1792,13 +1825,17 @@ function StudioBrowse({ ctx }) {
             // group separately would mean three sets of controls and pages of wildly different
             // lengths; this way every page is 40 and the headings still describe what is under them
             // — a page can simply run out of "tagged here" partway down and continue into the rest.
-            const preferred = pageVideos.filter(v=>v._venueMatch);
+            // Favourites + recently viewed (shownVideos' _pin) get their own block first, so the venue
+            // split below can't scatter them back into "tagged here" / "other venues".
+            const pinned = pageVideos.filter(v=>v._pin);
+            const restPage = pageVideos.filter(v=>!v._pin);
+            const preferred = restPage.filter(v=>v._venueMatch);
             // Three groups, not two. The tail used to be labelled "from other venues", but ~191 of
             // the library has no venue tag at all, so that heading was describing them wrongly. They
             // are worth showing AND worth naming: an untagged video is a usable reference and a
             // to-do at the same time, and lumping it in with real venues hides both facts.
-            const otherVenues = pageVideos.filter(v=>!v._venueMatch && v.venue);
-            const noVenue = pageVideos.filter(v=>!v._venueMatch && !v.venue);
+            const otherVenues = restPage.filter(v=>!v._venueMatch && v.venue);
+            const noVenue = restPage.filter(v=>!v._venueMatch && !v.venue);
             const grid = {display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))",gap:14};
             const heading = (text,sub)=><div style={{display:"flex",alignItems:"baseline",gap:9,margin:"6px 0 12px"}}>
               <span className="sb-sect-head" style={{fontSize:10,color:pageGold}}>{text}</span>
@@ -1814,8 +1851,16 @@ function StudioBrowse({ ctx }) {
             // re-rendered this component every 15 seconds, so it happened on a timer too.
             // Invoking it returns the same plain <div> element type, so React updates in place.
             // Safe because VideoCard holds no hooks — it is a pure render helper.
-            if (!preferred.length || (!otherVenues.length && !noVenue.length)) return <div className="sb-grid" style={grid}>{pageVideos.map(v=><Fragment key={v.id}>{VideoCard({v})}</Fragment>)}</div>;
+            const favN = pinned.filter(v=>v._pin==="fav").length, recentN = pinned.length - favN;
+            const pinnedBlock = pinned.length>0 && <>
+              {heading(favN&&recentN?"Favourites & recently viewed":favN?"Your favourites":"Recently viewed",
+                [favN?`${favN} favourite${favN===1?"":"s"}`:"", recentN?`${recentN} recently viewed`:""].filter(Boolean).join(" · "))}
+              <div className="sb-grid" style={grid}>{pinned.map(v=><Fragment key={v.id}>{VideoCard({v})}</Fragment>)}</div>
+              {restPage.length>0&&rule}
+            </>;
+            if (!preferred.length || (!otherVenues.length && !noVenue.length)) return <>{pinnedBlock}{restPage.length>0&&<div className="sb-grid" style={grid}>{restPage.map(v=><Fragment key={v.id}>{VideoCard({v})}</Fragment>)}</div>}</>;
             return <>
+              {pinnedBlock}
               {heading(browseVenues.length===1?browseVenues[0]:"Selected venues",`${preferred.length} tagged here`)}
               <div className="sb-grid" style={grid}>{preferred.map(v=><Fragment key={v.id}>{VideoCard({v})}</Fragment>)}</div>
               {otherVenues.length>0&&<>
