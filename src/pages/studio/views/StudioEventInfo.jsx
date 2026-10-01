@@ -181,7 +181,7 @@ export default function StudioEventInfo({ ctx }) {
     venue, setVenue, fn, setFn,
     clientName, setClientName, clientDate, setClientDate, clientPhone, setClientPhone,
     clientBrideGroom, setClientBrideGroom, clientShift, setClientShift, clientPax, setClientPax,
-    clientVenueOther, setClientVenueOther, clientPalette, setClientPalette, fnBuilds, setFnBuilds, restoreBuildState,
+    clientVenueOther, setClientVenueOther, clientPalette, setClientPalette, setClientFlowerPalette, fnBuilds, setFnBuilds, restoreBuildState,
     extraFunctions, setExtraFunctions, expandedFnIdx, setExpandedFnIdx,
     activeFnIdx, setActiveFnIdx, switchActiveFn,
     clientLedger, saveClientLedger, activeClientId, setActiveClientId, setClientSearch, ledgerReady,
@@ -471,6 +471,7 @@ export default function StudioEventInfo({ ctx }) {
       setClientShift(next.shift || "");
       setClientPax(next.pax || "");
       setClientPalette(next.palette || "Custom");
+      setClientFlowerPalette(next.flowerPalette || "");
       setExtraFunctions(prev => prev.slice(1));
     } else {
       setExtraFunctions(prev => prev.filter((_, i) => i !== idx - 1));

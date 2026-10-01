@@ -619,7 +619,7 @@ export default function StudioBuild({ ctx }) {
     getFullCost, findTemplate, templates,
     // client / function meta
     clientName, clientDate, activeFnMeta, venue, fn, extraFunctions, setExtraFunctions,
-    clientPalette, setClientPalette,
+    clientPalette, setClientPalette, clientFlowerPalette, setClientFlowerPalette,
     studioFloralData, sharedFloralSettings, venueParents, loadAvailability, getStudioAvailable, activeBlocksForDate, openAvailModal,
     activeFnIdx, collectAllFunctionData, rcSubcatFactors, rcFactorByKey, rcFloralModeByKey,
     // palette / colour catalogues
@@ -1131,6 +1131,7 @@ export default function StudioBuild({ ctx }) {
   // click handling needed): open shows a search box + dropdown, picking a value closes it.
   const [fabricPaletteOpen, setFabricPaletteOpen] = useState(false);
   const [fabricPaletteQ, setFabricPaletteQ] = useState("");
+  const [flowerPaletteOpen, setFlowerPaletteOpen] = useState(false);
   const zpMorePill = () => ({ ...zpPill(false), borderStyle: "dashed", fontWeight: 700, color: accent });
   const PH_COLS = 4;                          // always four across: a wider column means BIGGER
   // One row, rails open or folded. Folding them used to add a second row of four, which is the
@@ -2732,6 +2733,44 @@ undefined
             </div>
           </div>}
         </div>
+        {/* ── FLOWER PALETTE ── The floral colour family for this function, beside the fabric one.
+            Stored per function exactly like Fabric Palette: function 1 in clientFlowerPalette, every
+            other one as extraFunctions[i].flowerPalette. A fixed short list, so no search box. */}
+        {(()=>{
+          const FLOWER_PALETTES = [["White","#F5F3EE"],["Pastel","#F4C6D7"],["Maroon","#7A1F2B"],["Yellow","#F2C230"],["Green","#5E8C4A"]];
+          const curF = isPrimaryFn ? (clientFlowerPalette || "") : (extraFunctions[activeFnIdx - 1]?.flowerPalette || "");
+          const setFlower = (v) => {
+            if (isPrimaryFn) setClientFlowerPalette(v);
+            else setExtraFunctions(p => p.map((f, i) => i === activeFnIdx - 1 ? { ...f, flowerPalette: v } : f));
+            setFlowerPaletteOpen(false);
+          };
+          const dot = (hex) => <span style={{width:10,height:10,borderRadius:"50%",background:hex,border:"1px solid rgba(0,0,0,0.18)",flexShrink:0}}/>;
+          const curHex = FLOWER_PALETTES.find(([n])=>n===curF)?.[1];
+          return <>
+            <span style={{display:"flex",color:accent,marginLeft:10}}><IconFlower size={13}/></span>
+            <span style={{fontSize:11.5,fontWeight:600,color:textP}}>Flower Palette</span>
+            <div style={{position:"relative"}}>
+              <div onClick={()=>setFlowerPaletteOpen(o=>!o)} title="Click to change"
+                style={{display:"inline-flex",alignItems:"center",gap:6,padding:"4px 10px",borderRadius:8,
+                  border:`1px solid ${flowerPaletteOpen?accent:border}`,background:cardBg,cursor:"pointer",
+                  fontSize:11,fontWeight:600,color:curF?textP:textS}}>
+                {curHex&&dot(curHex)}
+                {curF || "Choose"}
+                <span style={{display:"inline-flex",transform:flowerPaletteOpen?"rotate(180deg)":"none",transition:"transform .15s ease",color:textS}}><IconChevron size={10}/></span>
+              </div>
+              {flowerPaletteOpen&&<div style={{position:"absolute",top:"100%",left:0,zIndex:60,marginTop:4,width:170,
+                background:cardBg,border:`1px solid ${border}`,borderRadius:9,boxShadow:"0 6px 20px rgba(0,0,0,0.22)",padding:6}}>
+                {FLOWER_PALETTES.map(([name,hex])=>(
+                  <div key={name} onClick={()=>setFlower(name)} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 9px",borderRadius:6,cursor:"pointer",fontSize:11,
+                    fontWeight:curF===name?700:400,background:curF===name?`${accent}18`:"transparent",color:curF===name?accent:textP}}>
+                    {dot(hex)}{name}
+                  </div>
+                ))}
+                {curF&&<div onClick={()=>setFlower("")} style={{padding:"5px 9px",borderRadius:6,cursor:"pointer",fontSize:10.5,color:textS,borderTop:`1px solid ${border}`,marginTop:4}}>Clear</div>}
+              </div>}
+            </div>
+          </>;
+        })()}
       </div>;
     })()}
 

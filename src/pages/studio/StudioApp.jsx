@@ -1604,6 +1604,10 @@ export default function StudioApp() {
   const [clientPax, setClientPax] = useState("");
   const [clientVenueOther, setClientVenueOther] = useState("");
   const [clientPalette, setClientPalette] = useState("Custom");
+  // Function 1's flower colour family (White / Pastel / Maroon / Yellow / Green), set beside Fabric
+  // Palette in Build. Every OTHER function keeps its own as extraFunctions[i].flowerPalette — same
+  // split as clientPalette / extraFunctions[i].palette. "" = not chosen.
+  const [clientFlowerPalette, setClientFlowerPalette] = useState("");
   const [extraFunctions, setExtraFunctions] = useState([]);
   const [expandedFnIdx, setExpandedFnIdx] = useState(0);
   const [activeFnIdx, setActiveFnIdx] = useState(0);
@@ -5103,8 +5107,8 @@ export default function StudioApp() {
     const totalFns = 1 + (extraFunctions || []).length;
     for (let idx = 0; idx < totalFns; idx++) {
       const meta = idx === 0
-        ? { type: fn || "", date: clientDate || "", venue: venue || "", shift: clientShift || "", pax: clientPax || "", palette: clientPalette || "Custom" }
-        : (() => { const ef = extraFunctions[idx - 1] || {}; return { type: ef.type || "", date: ef.date || "", venue: ef.venue || "", shift: ef.shift || "", pax: ef.pax || "", palette: ef.palette || "Custom" }; })();
+        ? { type: fn || "", date: clientDate || "", venue: venue || "", shift: clientShift || "", pax: clientPax || "", palette: clientPalette || "Custom", flowerPalette: clientFlowerPalette || "" }
+        : (() => { const ef = extraFunctions[idx - 1] || {}; return { type: ef.type || "", date: ef.date || "", venue: ef.venue || "", shift: ef.shift || "", pax: ef.pax || "", palette: ef.palette || "Custom", flowerPalette: ef.flowerPalette || "" }; })();
       const isActive = idx === activeFnIdx;
       const snap = isActive
         ? { zoneElements, zoneConfig, enabledEls, elSelectedPhoto, itemQty, itemGrades, activeZones, zoneOrder, customZones, elTiers, floralRatio, genset62, customGensets, customTripRate, elNotes, floralOverrides }
@@ -5138,7 +5142,7 @@ export default function StudioApp() {
       });
     }
     return all;
-  }, [fn, clientDate, venue, clientShift, clientPax, clientPalette, zoneElements, zoneConfig, enabledEls, elSelectedPhoto, itemQty, itemGrades, activeZones, zoneOrder, customZones, elTiers, floralRatio, customGensets, customTripRate, elNotes, floralOverrides, extraFunctions, fnBuilds, activeFnIdx]);
+  }, [fn, clientDate, venue, clientShift, clientPax, clientPalette, clientFlowerPalette, zoneElements, zoneConfig, enabledEls, elSelectedPhoto, itemQty, itemGrades, activeZones, zoneOrder, customZones, elTiers, floralRatio, customGensets, customTripRate, elNotes, floralOverrides, extraFunctions, fnBuilds, activeFnIdx]);
   // Layout, same reasoning as snapshotFnRef / saveSessionRef — read from synchronous paths.
   useLayoutEffect(() => { collectAllFunctionDataRef.current = collectAllFunctionData; });
 
@@ -7390,7 +7394,7 @@ export default function StudioApp() {
     client.pax = clientPax || client.pax || "";
     client.brideGroom = clientBrideGroom || client.brideGroom || "";
     client.functions = [
-      { type: fn, date: clientDate, venue: venue, shift: clientShift, pax: clientPax, palette: clientPalette || "Custom" },
+      { type: fn, date: clientDate, venue: venue, shift: clientShift, pax: clientPax, palette: clientPalette || "Custom", flowerPalette: clientFlowerPalette || "" },
       ...extraFunctions
     ];
     if (!client.createdBy) client.createdBy = authUser?.name || "—";
@@ -7545,7 +7549,7 @@ export default function StudioApp() {
     const savePromise = saveClientLedger(finalLedger, undefined, { keepalive: !!opts.keepalive });
     if (!opts.auto) showMsg("✓ Session saved to " + client.name, "green");
     return { client, ledger: finalLedger, savePromise };
-  }, [clientName, clientPhone, clientDate, clientShift, clientPax, clientPalette, clientBrideGroom, venue, fn, extraFunctions, grandTotal, totalCost, transportCalc, enabledEls, elTiers, zoneConfig, zoneElements, elNotes, elSelectedPhoto, sourceEvent, sourceVideo, selectedMoods, selectedPalettes, floralRatio, clientLedger, activeClientId, authUser, saveClientLedger, activeFnIdx, fnBuilds, itemQty, itemGrades, customMode, activeZones, zoneOrder, customZones, customGensets, customTripRate, dcCustomItems,
+  }, [clientName, clientPhone, clientDate, clientShift, clientPax, clientPalette, clientFlowerPalette, clientBrideGroom, venue, fn, extraFunctions, grandTotal, totalCost, transportCalc, enabledEls, elTiers, zoneConfig, zoneElements, elNotes, elSelectedPhoto, sourceEvent, sourceVideo, selectedMoods, selectedPalettes, floralRatio, clientLedger, activeClientId, authUser, saveClientLedger, activeFnIdx, fnBuilds, itemQty, itemGrades, customMode, activeZones, zoneOrder, customZones, customGensets, customTripRate, dcCustomItems,
     // Explicitly listed, not left to be picked up by accident. grandTotal is in this list and does
     // usually change when the real rates land, which would rebuild this callback and pick up the new
     // pricingReady for free — but "usually" is not a guarantee: a deal whose seed-default total
@@ -7993,6 +7997,7 @@ export default function StudioApp() {
     setClientBrideGroom(client.brideGroom || "");
     const f0 = Array.isArray(client.functions) && client.functions[0] ? client.functions[0] : null;
     setClientPalette(f0?.palette || "Custom");
+    setClientFlowerPalette(f0?.flowerPalette || "");
     if (Array.isArray(client.functions) && client.functions.length > 1) {
       setExtraFunctions(client.functions.slice(1).map(f => ({
         type: f?.type || "",
@@ -8001,6 +8006,7 @@ export default function StudioApp() {
         shift: f?.shift || "",
         pax: f?.pax || "",
         palette: f?.palette || "Custom",
+        flowerPalette: f?.flowerPalette || "",
       })));
     } else {
       setExtraFunctions([]);
@@ -8168,7 +8174,7 @@ export default function StudioApp() {
   // showing as selected and the grid quietly narrowed for a client nobody had set them on. The other
   // four filters here (cat/fn/space/venue) were always cleared, which is what made it look handled.
   const startNewDeal = useCallback(() => {
-    setStep(0);setEnabledEls({});setElTiers({});setCustomMode({});setItemQty({});setItemGrades({});setSelectedMoods([]);setSelectedPalettes([]);setVenue("");setFn("");setClientName("");setClientDate("");setClientPhone("");setActiveClientId(null);setClientSearch("");setSavedInsps([]);setFilterCat([]);setFilterFn([]);setFilterSpace([]);setFilterVenue("All");setFilterMood([]);setFilterPalette([]);setElSelectedPhoto({});setElInspo({});setSourceEvent(null);setSourceVideo(null);setBrowseVenues([]);setVenueGroup(userVenueScope==="all"?"all":userVenueScope);setOutsideSub("all");setShowMoreOutside(false);setElNotes({});setElGallery(null);setZoneConfig({});setActiveZones([]);setShowCosts(false);setZoneElements({});setCustomTripRate(0);setVenueCustom(false);setCustomGensets(null);setCustomZones([]);setClientBrideGroom("");setClientShift("");setClientPax("");setClientVenueOther("");setExtraFunctions([]);setExpandedFnIdx(0);setActiveFnIdx(0);setFnBuilds({});setFloralOverrides({note:"",rows:[]});setClientPalette("Custom");
+    setStep(0);setEnabledEls({});setElTiers({});setCustomMode({});setItemQty({});setItemGrades({});setSelectedMoods([]);setSelectedPalettes([]);setVenue("");setFn("");setClientName("");setClientDate("");setClientPhone("");setActiveClientId(null);setClientSearch("");setSavedInsps([]);setFilterCat([]);setFilterFn([]);setFilterSpace([]);setFilterVenue("All");setFilterMood([]);setFilterPalette([]);setElSelectedPhoto({});setElInspo({});setSourceEvent(null);setSourceVideo(null);setBrowseVenues([]);setVenueGroup(userVenueScope==="all"?"all":userVenueScope);setOutsideSub("all");setShowMoreOutside(false);setElNotes({});setElGallery(null);setZoneConfig({});setActiveZones([]);setShowCosts(false);setZoneElements({});setCustomTripRate(0);setVenueCustom(false);setCustomGensets(null);setCustomZones([]);setClientBrideGroom("");setClientShift("");setClientPax("");setClientVenueOther("");setExtraFunctions([]);setExpandedFnIdx(0);setActiveFnIdx(0);setFnBuilds({});setFloralOverrides({note:"",rows:[]});setClientPalette("Custom");setClientFlowerPalette("");
     loadedClientIdentityRef.current = { name: "", phone: "" };
   }, [userVenueScope]);
 
@@ -8225,6 +8231,7 @@ export default function StudioApp() {
     setClientName(lead.guestName || "");
     setClientPhone(lead.phone || "");
     setClientPalette("Custom");
+    setClientFlowerPalette("");
     setExpandedFnIdx(0);
     setActiveFnIdx(0);
     const allKnownVenues = [
@@ -11075,7 +11082,7 @@ export default function StudioApp() {
     selectedMoods, setSelectedMoods, selectedPalettes, setSelectedPalettes,
     venue, setVenue, fn, setFn, clientName, setClientName, clientDate, setClientDate, clientPhone, setClientPhone,
     clientBrideGroom, setClientBrideGroom, clientShift, setClientShift, clientPax, setClientPax, clientVenueOther, setClientVenueOther,
-    clientPalette, setClientPalette, extraFunctions, setExtraFunctions, expandedFnIdx, setExpandedFnIdx,
+    clientPalette, setClientPalette, clientFlowerPalette, setClientFlowerPalette, extraFunctions, setExtraFunctions, expandedFnIdx, setExpandedFnIdx,
     activeFnIdx, setActiveFnIdx, activeFnMeta, fnBuilds, setFnBuilds, isFnSwitching, ledgerReady,
     // The optimistic index — which function was CLICKED, before the switch commits. Build's own
     // pill nav has always read `fnPending ?? activeFnIdx`; Deal Check never received it, so it had
