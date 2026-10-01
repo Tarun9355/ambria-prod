@@ -67,6 +67,7 @@ export default function StudioModals({ ctx }) {
     paintPickerTarget, setPaintPickerTarget, zoneElements, setZoneElements,
     imsDefaultPaintCost, activeFnIdx, clientPalette, extraFunctions,
     normalizePaintAllocation, imsColourCatalogue, imsPaletteCatalogue, setImsPaletteCatalogue, savePaletteData,
+    isSubcatPaintable, PAINT_TOKENS_FALLBACK,
     // live soft-blocking (used by the zone-upload-review "+ Add element" and kit-component searches)
     collectAllFunctionData, activeFnMeta, activeBlocksForDate, getStudioAvailable, clientDate, rcSubcatFactors, rcFactorByKey, rcFloralModeByKey, floralRatio,
     // per-element / per-reference stock availability picker — shared by Build's own 📦 icon and
@@ -231,6 +232,31 @@ export default function StudioModals({ ctx }) {
                 )}
               </div>
               <div style={{display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
+                {/* Paint — hands off to the element's existing paint-allocation picker (the same one
+                    the 🎨 pill on Build's element row opens). Closes this picker first rather than
+                    stacking two dialogs. Only for a Build element (Deal Check's callers pass onPick
+                    and have no zone element to paint) and only when this sub-category is paintable —
+                    the same rule the Build row uses, with the same keyword fallback when IMS
+                    inventory hasn't loaded yet. */}
+                {(() => {
+                  if (availModal.onPick || availModal.zoneKey == null || availModal.idx == null) return null;
+                  const sub = availModal.subcat;
+                  const chk = isSubcatPaintable ? isSubcatPaintable(sub, dealCheckData?.inventory || []) : null;
+                  const paintable = (chk === null || chk === undefined)
+                    ? (PAINT_TOKENS_FALLBACK || []).some(t => String(sub || "").toLowerCase().includes(t))
+                    : chk;
+                  // Always shown, so it never looks missing — dimmed (like Split) when this
+                  // sub-category can't be painted, with the reason on hover.
+                  return (
+                    <button disabled={!paintable}
+                      onClick={() => { if (!paintable) return; const t = { zoneKey: availModal.zoneKey, elIdx: availModal.idx }; closeModal(); setPaintPickerTarget(t); }}
+                      title={paintable ? "Allocate paint colours for this element" : `"${sub || "This sub-category"}" isn't paintable — no item in it has a paint cost set in IMS`}
+                      style={{padding:"5px 11px",borderRadius:7,border:`1px solid ${border}`,background:"transparent",color:textS,fontSize:11,fontWeight:700,whiteSpace:"nowrap",display:"inline-flex",alignItems:"center",gap:5,
+                        opacity:paintable?1:0.42,cursor:paintable?"pointer":"not-allowed"}}>
+                      <IconPalette size={12}/> Paint
+                    </button>
+                  );
+                })()}
                 {splitCapable && (
                   <button
                     disabled={!splitEligible}
