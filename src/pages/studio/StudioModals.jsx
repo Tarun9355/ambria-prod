@@ -19,6 +19,8 @@ import { calcZoneFabric, autoFillFabricAllocation } from "../../lib/studio/prici
 import { qtyUsedElsewhereInBuild } from "../../lib/studio/dealAvailability";
 import { isHiddenSubcat } from "../../lib/rateCard";
 import { itemDimsText, priceForInvItem } from "../../lib/ims/helpers";
+import { thumbUrl, fitUrl } from "../../lib/studio/thumb.js";
+import { AVAIL_THUMB } from "../../lib/studio/prefetchImages.js";
 
 // Short codes for the availability picker's per-venue idle-slack breakdown — substring match
 // (case-insensitive) rather than an exact one, so "Ambria Restro"/"Restro"/a future venue-group
@@ -266,7 +268,7 @@ export default function StudioModals({ ctx }) {
                         style={{cursor:"pointer",borderRadius:12,overflow:"hidden",border:`2px solid ${sel?"#059669":swap?SWAP:border}`,background:isDark?"#0F0F1A":"#FAFAFA",position:"relative"}}>
                         {sel&&<span style={{position:"absolute",top:6,left:6,zIndex:2,fontSize:9,fontWeight:700,padding:"2px 7px",borderRadius:6,background:"#059669",color:"#fff"}}>✓</span>}
                         <div title="Free on the event date" style={{position:"absolute",top:6,right:6,zIndex:2,fontSize:12,fontWeight:800,minWidth:22,textAlign:"center",padding:"2px 7px",borderRadius:8,background:out?"rgba(239,68,68,0.92)":"rgba(16,185,129,0.92)",color:"#fff"}}>{it.free}</div>
-                        {it.photo ? <img src={it.photo} alt="" style={{width:"100%",height:120,objectFit:"cover",display:"block",opacity:out?0.5:1}}/> : <div style={{width:"100%",height:120,display:"flex",alignItems:"center",justifyContent:"center",fontSize:30,background:isDark?"#1a1a2e":"#eee"}}><IconBox size={22}/></div>}
+                        {it.photo ? <img src={thumbUrl(it.photo, AVAIL_THUMB)} alt="" decoding="async" style={{width:"100%",height:120,objectFit:"cover",display:"block",opacity:out?0.5:1}}/> : <div style={{width:"100%",height:120,display:"flex",alignItems:"center",justifyContent:"center",fontSize:30,background:isDark?"#1a1a2e":"#eee"}}><IconBox size={22}/></div>}
                         <div style={{padding:"8px 10px"}}>
                           <div style={{fontSize:11,fontWeight:600,color:textP,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.name}</div>
                           {/* The corner badge is deliberately a bare number (no room for a unit in a
@@ -820,11 +822,11 @@ export default function StudioModals({ ctx }) {
                               setZurElHoverImg({ idx, openUp, top: openUp ? undefined : r.bottom + 4, bottom: openUp ? window.innerHeight - r.top + 4 : undefined, left: Math.min(r.left, window.innerWidth - 168) });
                             }}
                             onMouseLeave={() => setZurElHoverImg(null)}>
-                            {thumbSrc ? <img src={thumbSrc} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <span style={{ fontSize: 10, opacity: 0.3 }}>📦</span>}
+                            {thumbSrc ? <img src={thumbUrl(thumbSrc,20)} decoding="async" alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <span style={{ fontSize: 10, opacity: 0.3 }}>📦</span>}
                           </div>
                           {zurElHoverImg?.idx === idx && thumbSrc && (
                             <div style={{ position: "fixed", top: zurElHoverImg.top, bottom: zurElHoverImg.bottom, left: zurElHoverImg.left, zIndex: 10000, width: 160, height: 160, borderRadius: 8, overflow: "hidden", border: `2px solid ${border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.4)", pointerEvents: "none" }}>
-                              <img src={thumbSrc} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                              <img src={thumbUrl(thumbSrc,160)} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                             </div>
                           )}
                           <span>{invItem?.name || el.name}</span>
@@ -1060,7 +1062,7 @@ export default function StudioModals({ ctx }) {
                 <div key={i} style={{borderRadius:14,overflow:"hidden",background:isSelected?"#0D2818":"#1A1A2E",border:isSelected?"3px solid #059669":"3px solid transparent",cursor:"pointer",transition:"all 0.15s"}}
                   onClick={()=>setGalleryIdx(i)}>
                   <div style={{position:"relative"}}>
-                    <img src={ph.src} alt={ph.eventName||ph.title||""} loading="lazy" style={{width:"100%",height:220,objectFit:"cover",display:"block"}} onError={e=>{e.target.style.display="none"}}/>
+                    <img src={fitUrl(ph.src,420)} decoding="async" alt={ph.eventName||ph.title||""} loading="lazy" style={{width:"100%",height:220,objectFit:"cover",display:"block"}} onError={e=>{e.target.style.display="none"}}/>
                     {showCosts&&<div style={{position:"absolute",top:12,left:12,background:isSelected?"#059669":"rgba(0,0,0,0.7)",color:"#fff",padding:"5px 12px",borderRadius:8,fontSize:14,fontWeight:700}}>{fmt(photoElCost)}</div>}
                     {isSelected&&<div style={{position:"absolute",top:12,right:12,background:"#059669",color:"#fff",width:32,height:32,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,fontWeight:700}}>✓</div>}
                     {ph.category&&<div style={{position:"absolute",bottom:12,left:12,display:"flex",gap:6}}>

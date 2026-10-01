@@ -29,6 +29,7 @@ import { deleteStorageObjects, listStorageTree } from "../../../lib/storage";
 import { itemDimsText, priceForInvItem } from "../../../lib/ims/helpers";
 import { addPaletteInline } from "../../../lib/studio/colours";
 import PaletteQuickAdd from "../../../components/studio/PaletteQuickAdd.jsx";
+import { thumbUrl, fitUrl } from "../../../lib/studio/thumb.js";
 
 // Server-side paginated + status-scoped browse grid. Resets to page 1 whenever the status chip,
 // any sidebar filter, venue selection, or (debounced) search term changes.
@@ -929,7 +930,7 @@ export default function ManageLibrary({ ctx }) {
             <div key={img.id} title={img.name || "Untitled"} className={(isSel || libEditImg?.id === img.id) ? undefined : "ml-tile"} onClick={() => libStatus === LIB_STATUS.UNTAGGED && libSelected.size > 0 ? setLibSelected(prev => { const n = new Set(prev); n.has(img.id) ? n.delete(img.id) : n.add(img.id); return n; }) : (logPhotoOpen(authUser, img), setLibEditImg(img))} style={{ borderRadius: 10, overflow: "hidden", border: `1.5px solid ${isSel ? "#7C3AED" : libEditImg?.id === img.id ? accent : "transparent"}`, cursor: "pointer", background: isSel ? "#7C3AED0A" : libEditImg?.id === img.id ? cardBg : undefined, position: "relative" }}>
               {/* Height comes from .ml-grid's breakpoints (var set there), not from a fixed inline
                   value, so it tracks the column count. */}
-              <img className="ml-thumb" src={img.url} alt="" loading="lazy" style={{ width: "100%", objectFit: "cover", display: "block" }} onError={() => markImgBroken(img.id)} />
+              <img className="ml-thumb" src={fitUrl(img.url, 260)} alt="" loading="lazy" decoding="async" style={{ width: "100%", objectFit: "cover", display: "block" }} onError={() => markImgBroken(img.id)} />
               {(() => {
                 const st = photoStatus(img);
                 const m = st === LIB_STATUS.VERIFIED ? { t: "✅", c: "#059669" } : st === LIB_STATUS.REVIEW ? { t: "🤖", c: "#7C3AED" } : { t: "❓", c: "#9CA3AF" };
@@ -1649,11 +1650,11 @@ export default function ManageLibrary({ ctx }) {
                                 setElHoverImg({ idx, openUp, top: openUp ? undefined : r.bottom + 4, bottom: openUp ? window.innerHeight - r.top + 4 : undefined, left: Math.min(r.left, window.innerWidth - 168) });
                               }}
                               onMouseLeave={() => setElHoverImg(null)}>
-                              {thumbSrc ? <img src={thumbSrc} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <span style={{ fontSize: 10, opacity: 0.3 }}>📦</span>}
+                              {thumbSrc ? <img src={thumbUrl(thumbSrc, 20)} decoding="async" alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <span style={{ fontSize: 10, opacity: 0.3 }}>📦</span>}
                             </div>
                             {elHoverImg?.idx === idx && thumbSrc && (
                               <div style={{ position: "fixed", top: elHoverImg.top, bottom: elHoverImg.bottom, left: elHoverImg.left, zIndex: 10000, width: 160, height: 160, borderRadius: 8, overflow: "hidden", border: `2px solid ${border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.4)", pointerEvents: "none" }}>
-                                <img src={thumbSrc} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                                <img src={thumbUrl(thumbSrc, 160)} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                               </div>
                             )}
                             <span>{invItem?.name || el.name}</span>
@@ -2028,7 +2029,7 @@ export default function ManageLibrary({ ctx }) {
                       {/* The kind glyph sits in a tinted tile when there is no thumbnail, so a row
                           without one keeps the same left edge as a row with one. */}
                       {thumb
-                        ? <img src={thumb} alt="" loading="lazy" style={{ width: 42, height: 30, objectFit: "cover", borderRadius: 6, flexShrink: 0 }} onError={ev => { ev.target.style.display = "none"; }} />
+                        ? <img src={fitUrl(thumb, 50)} alt="" loading="lazy" decoding="async" style={{ width: 42, height: 30, objectFit: "cover", borderRadius: 6, flexShrink: 0 }} onError={ev => { ev.target.style.display = "none"; }} />
                         : <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 42, height: 30, borderRadius: 6, flexShrink: 0, background: `${accent}14`, color: accent }}>{isVid ? <IconPlay size={13} /> : <IconCamera size={13} />}</span>}
                       <div style={{ minWidth: 0 }}>
                         <div style={{ fontSize: 12, fontWeight: 600, color: textP, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{e.photoName || e.photoId || "(item)"}</div>

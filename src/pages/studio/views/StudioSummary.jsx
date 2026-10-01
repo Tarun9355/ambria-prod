@@ -19,7 +19,7 @@ import { makeDeleteClient } from "../../../lib/studio/clientDelete";
 import { swatchHexFor, nearestColourName } from "../../../lib/studio/colours";
 import { paletteFromPhotos } from "../../../lib/studio/photoPalette";
 import { canvaConnectionStatus, canvaCreateImport, canvaPollImport, canvaExportPdfUrl } from "../../../lib/canva";
-import { deckImageUrl, isInventoryPhoto } from "../../../lib/studio/thumb";
+import { deckImageUrl, isInventoryPhoto, fitUrl } from "../../../lib/studio/thumb";
 import { detailShots } from "../../../lib/studio/detailShots";
 import { gammaCreateGeneration, gammaPollGeneration } from "../../../lib/gamma";
 import { WASH_BANDS, GRAIN_URL } from "../../../lib/studio/pageWash";
@@ -3424,7 +3424,7 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
                         title={zOpen?"Hide the costing":"Show the costing"}
                         style={{cursor:"pointer",borderRadius:12,overflow:"hidden",border:`1px solid ${zOpen?accentText:(isDark?"rgba(255,255,255,0.14)":"rgba(255,255,255,0.9)")}`}}>
                         {z.photo
-                          ? <img src={z.photo} alt={z.label} style={{width:"100%",aspectRatio:"4 / 3",objectFit:"cover",display:"block",background:isDark?"#0A0A14":"#F3EFE9"}} onError={e=>{e.target.style.display="none"}}/>
+                          ? <img src={fitUrl(z.photo, 600)} decoding="async" alt={z.label} style={{width:"100%",aspectRatio:"4 / 3",objectFit:"cover",display:"block",background:isDark?"#0A0A14":"#F3EFE9"}} onError={e=>{e.target.style.display="none"}}/>
                           : <div className="cs-tile-ph" style={{width:"100%",aspectRatio:"4 / 3",display:"flex",alignItems:"center",justifyContent:"center",fontSize:26,background:isDark?"#0A0A14":"#F3EFE9",color:textS}}>{z.icon||"📦"}</div>}
                         {/* Tighter now that the card itself carries 7px — the two paddings used to
                             stack into a band of empty glass under every photograph. */}

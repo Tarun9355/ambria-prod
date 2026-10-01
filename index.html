@@ -31,6 +31,15 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <!--
+      Image hosts: Browse's video thumbnails (i.ytimg.com) and every inventory/library photo
+      (Supabase Storage). Opening these connections at page load means the first thumbnail on a
+      grid isn't also paying for DNS + TLS. Supabase gets both forms: images load without CORS,
+      the app's own API/function calls with it, and each needs its own connection.
+    -->
+    <link rel="preconnect" href="https://i.ytimg.com" />
+    <link rel="preconnect" href="%VITE_SUPABASE_URL%" />
+    <link rel="preconnect" href="%VITE_SUPABASE_URL%" crossorigin />
+    <!--
       Inter joins the list for the IMS design system (body, labels, buttons). Four weights only —
       the sheet asks for Regular / Medium / SemiBold / Bold and nothing else, and each extra weight
       is a separate font file every visitor pays for. Playfair Display was already here for

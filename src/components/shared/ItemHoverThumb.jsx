@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { createPortal } from "react-dom";
+import { thumbUrl, fitUrl } from "../../lib/studio/thumb.js";
 
 // A small item thumbnail that enlarges into a fixed-position popup on hover — image, name,
 // sub-category, and physical dimensions (if the item has any). Used by every "search inventory to
@@ -26,7 +27,7 @@ export default function ItemHoverThumb({
       }}
       onMouseLeave={() => setHover(null)}>
       <div style={{ width: size, height: size, borderRadius: rounded, overflow: "hidden", flexShrink: 0, background: emptyBg || "#eee", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        {src ? <img src={src} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <span style={{ fontSize: size * 0.4, opacity: 0.35 }}>{placeholder}</span>}
+        {src ? <img src={thumbUrl(src, size)} decoding="async" alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <span style={{ fontSize: size * 0.4, opacity: 0.35 }}>{placeholder}</span>}
       </div>
       {/* Portal to <body> — some callers render this inside a card whose own :hover state applies a
           CSS transform (e.g. Build's .el-row lift-on-hover). A transformed ancestor becomes the
@@ -34,7 +35,7 @@ export default function ItemHoverThumb({
           portal the popup can silently land in the wrong place the moment its own hover fires. */}
       {hover && src && createPortal(
         <div style={{ position: "fixed", top: hover.top, bottom: hover.bottom, left: hover.left, zIndex: 10000, width: 200, borderRadius: 8, overflow: "hidden", border: `1px solid ${border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.45)", pointerEvents: "none", background: cardBg }}>
-          <img src={src} alt="" style={{ width: "100%", height: 160, objectFit: "cover", display: "block" }} />
+          <img src={fitUrl(src, 220)} alt="" style={{ width: "100%", height: 160, objectFit: "cover", display: "block" }} />
           <div style={{ padding: "6px 8px" }}>
             {name && <div style={{ fontSize: 11, fontWeight: 700, color: textP, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</div>}
             {(sub || badge) && <div style={{ fontSize: 10, color: textS, marginTop: 1 }}>{sub}{badge ? (sub ? " · " : "") + badge : ""}</div>}

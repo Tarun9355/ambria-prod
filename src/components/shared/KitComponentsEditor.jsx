@@ -5,6 +5,7 @@ import { isHiddenSubcat } from "../../lib/rateCard";
 import { studioUnitLabel, matchFlowerPattern, floralPatternUnitRates, kitFloralCompDelta } from "../../lib/ims/flowerHelpers";
 import { kitTotalFromInventory, itemDimsText, priceForInvItem } from "../../lib/ims/helpers";
 import ItemHoverThumb from "./ItemHoverThumb";
+import { thumbUrl } from "../../lib/studio/thumb.js";
 
 // Shared "expand a kit element to its components, with editable per-instance counts" block —
 // used by Library's Element Breakdown (ManageLibrary.jsx) and the Build page (StudioBuild.jsx) so
@@ -249,7 +250,7 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
                     setHoverImg({ idx: ci, openUp, top: openUp ? undefined : r.bottom + 4, bottom: openUp ? window.innerHeight - r.top + 4 : undefined, left: Math.min(r.left, window.innerWidth - 168) });
                   }}
                   onMouseLeave={() => setHoverImg(null)}>
-                  {cSrc ? <img src={cSrc} alt="" style={{ width: 22, height: 22, borderRadius: 4, objectFit: "cover", cursor: "zoom-in" }} /> : <span style={{ width: 22, height: 22, borderRadius: 4, background: isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.05)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12 }}><IconBox size={11}/></span>}
+                  {cSrc ? <img src={thumbUrl(cSrc, 22)} decoding="async" alt="" style={{ width: 22, height: 22, borderRadius: 4, objectFit: "cover", cursor: "zoom-in" }} /> : <span style={{ width: 22, height: 22, borderRadius: 4, background: isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.05)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12 }}><IconBox size={11}/></span>}
                   {/* Portal to <body> — this editor renders inside Build's .el-row card, whose
                       :hover state applies a CSS transform to lift the row. A transformed ancestor
                       hijacks position:fixed descendants (they position relative to IT, not the
@@ -257,7 +258,7 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
                       place — hovering never visibly showed anything. */}
                   {hoverImg?.idx === ci && cSrc && createPortal(
                     <div style={{ position: "fixed", top: hoverImg.top, bottom: hoverImg.bottom, left: hoverImg.left, zIndex: 10000, width: 160, height: 160, borderRadius: 8, overflow: "hidden", border: `2px solid ${border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.4)", pointerEvents: "none" }}>
-                      <img src={cSrc} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                      <img src={thumbUrl(cSrc, 160)} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                     </div>,
                     document.body
                   )}

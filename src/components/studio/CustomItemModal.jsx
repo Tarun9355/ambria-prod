@@ -3,6 +3,7 @@ import { fetchAll } from "../../lib/supabase";
 import { uploadToStorage, STORAGE_FOLDERS } from "../../lib/storage";
 import ItemHoverThumb from "../shared/ItemHoverThumb.jsx";
 import { itemDimsText } from "../../lib/ims/helpers";
+import { thumbUrl } from "../../lib/studio/thumb.js";
 
 // ═══ superset-schema field accessors (copied VERBATIM from reference module scope) ═══
 // IMS items post-02-May migration carry BOTH legacy (cat/qty/price/img/size) and new
@@ -148,7 +149,7 @@ export default function CustomItemModal({ config, customItems, setCustomItems, i
             <div style={{flexShrink:0}}>
               {cForm.photo ? (
                 <div style={{position:"relative"}}>
-                  <img src={cForm.photo} alt="Reference" style={{width:80,height:80,borderRadius:10,objectFit:"cover",border:`2px solid ${color}`}} />
+                  <img src={thumbUrl(cForm.photo, 80)} decoding="async" alt="Reference" style={{width:80,height:80,borderRadius:10,objectFit:"cover",border:`2px solid ${color}`}} />
                   <button onClick={()=>setCForm(f=>({...f,photo:""}))} style={{position:"absolute",top:-4,right:-4,width:18,height:18,borderRadius:"50%",background:"#EF4444",color:"#fff",border:"none",fontSize:10,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
                 </div>
               ) : (

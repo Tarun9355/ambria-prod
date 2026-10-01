@@ -7,6 +7,7 @@ import { venueTypeLabel, getCat } from "../../../lib/studio/taxonomy";
 import { paletteSearch, paletteMatches } from "../../../components/studio/filterUI.jsx";
 import { makeS } from "../../../lib/studio/styles";
 import { WASH_BANDS, GRAIN_URL } from "../../../lib/studio/pageWash";
+import { prefetchImages } from "../../../lib/studio/prefetchImages.js";
 
 // The panel's right edge. Event Info's gesture, but a FLATTER waist — 0.90 rather than 0.80.
 // Event Info's panel holds a logo and nothing else, so it can afford to lose a fifth of its width
@@ -286,7 +287,7 @@ function StudioBrowse({ ctx }) {
               page's own realtime/autosave churn fighting it for main-thread time) was the common
               factor; a new tab gives the video its own process with none of that contention. */}
           <div style={{background:"#1a1a2e",height:150,display:"flex",alignItems:"center",justifyContent:"center",position:"relative",overflow:"hidden",cursor:"pointer"}} onClick={()=>openVideoTab(v.id)}>
-            <img className="sb-thumb" src={v.thumbnail} alt={v.title} loading="lazy" style={{width:"100%",height:"100%",objectFit:"cover",position:"absolute",inset:0}} onError={e=>{e.target.style.display="none"}}/>
+            <img className="sb-thumb" src={v.thumbnail} alt={v.title} loading="lazy" decoding="async" style={{width:"100%",height:"100%",objectFit:"cover",position:"absolute",inset:0}} onError={e=>{e.target.style.display="none"}}/>
             <div className="sb-play" style={{width:48,height:48,borderRadius:"50%",background:"rgba(255,255,255,0.25)",backdropFilter:"blur(4px)",WebkitBackdropFilter:"blur(4px)",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",position:"relative",zIndex:2}}><IconPlay size={20}/></div>
             {/* Click the tier pill to favourite this video for its own venue (see browseVideos'
                 favFirst) — it then LEADS that venue's results. It does not survive the filters:
@@ -619,6 +620,11 @@ function StudioBrowse({ ctx }) {
     // and it is also what glass actually is: it picks up light, it does not absorb it.
     const pBorder = "rgba(255,255,255,0.17)";
     const pCard   = "rgba(255,255,255,0.06)";
+    // The FILTER card only. The light film above works over near-black ink, but this panel sits
+    // over the candle photograph (PANEL_BG), where a 6% film let the bright candles show straight
+    // through and the section labels (VENUE, TIER, …) washed out against them. A dark, mostly
+    // opaque ground keeps the photo as warm depth at the edges while the list itself stays legible.
+    const pFilterCard = "rgba(16,13,22,0.74)";
     const pTextS  = "rgba(245,241,231,0.62)";
     // ═══ GOLD, ON THE PAGE ═══
     // The kit's `gold` is #D9BE86 because it was asked for the DARK skin — correct inside the ink
@@ -653,6 +659,14 @@ function StudioBrowse({ ctx }) {
     const pageVideos = shownVideos.slice((safePage - 1) * PER_PAGE, safePage * PER_PAGE);
     const pageFrom = shownVideos.length ? (safePage - 1) * PER_PAGE + 1 : 0;
     const pageTo = Math.min(safePage * PER_PAGE, shownVideos.length);
+    // Warm this page's thumbnails in parallel (the lazy <img>s below the fold would otherwise only
+    // start downloading as they scroll in), then the next page's, so "Next" opens onto a grid that's
+    // already in cache. Deferred out of render; repeats are free (prefetchImages dedupes).
+    {
+      const nextVideos = shownVideos.slice(safePage * PER_PAGE, (safePage + 1) * PER_PAGE);
+      const urls = [...pageVideos, ...nextVideos].map(v => v.thumbnail);
+      setTimeout(() => prefetchImages(urls, { concurrency: 8 }), 0);
+    }
 
     // There is deliberately no featured banner here. The reference design had one, but it carried a
     // hand-written blurb under a curated title — editorial content this app has no way to author.
@@ -1571,7 +1585,7 @@ function StudioBrowse({ ctx }) {
               that is six rows of glass followed by 400px of empty glass, which reads as something
               failed to load. It now ends where its content ends, and still SHRINKS (the 1 in the
               middle) with its own scrollport when the sections are open and the rail runs out. */}
-          <div className="sb-panel" style={{...S.card,background:pCard,border:`1px solid ${pBorder}`,padding:0,width:"100%",display:"flex",flexDirection:"column",minHeight:0,overflow:"hidden",flex:"0 1 auto"}}>
+          <div className="sb-panel" style={{...S.card,background:pFilterCard,border:`1px solid ${pBorder}`,padding:0,width:"100%",display:"flex",flexDirection:"column",minHeight:0,overflow:"hidden",flex:"0 1 auto"}}>
             {/* Panel header — total active count + one-click reset. Outside the scrollport, so it
                 stays visible while the sections below scroll. */}
             {/* The card's own header. A gold rule under it rather than the kit's hairline, and a

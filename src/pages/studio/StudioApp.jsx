@@ -114,6 +114,8 @@ import { applyAiTagResult } from "../../lib/studio/tagging/applyResult.js";
 import { fnSnapHasData as fnSnapHasDataPure, fnSnapHasBuild, autoSaveWouldDestroy, snapshotContentEqual, sessionToRows, findLatestBuild } from "../../lib/studio/sessionData.js";
 import { LOGO_ASSET, logoCrop } from "../../lib/studio/brand.js";
 import { registerFlushBeforeReload, unregisterFlushBeforeReload, flushBeforeReload } from "../../lib/pendingSaveRegistry.js";
+import { thumbUrl } from "../../lib/studio/thumb.js";
+import { prefetchImages, AVAIL_THUMB } from "../../lib/studio/prefetchImages.js";
 
 // ═══════════════════════════════════════════════════════════════
 // MODULE-SCOPE CONSTANTS / HELPERS — copied VERBATIM from the reference.
@@ -4251,6 +4253,23 @@ export default function StudioApp() {
     if (discEligible <= 0) return full;
     return Math.round(discEligible * unitRate * (1 - GUEST_DISCOUNT_PCT / 100) + (qty - discEligible) * unitRate);
   };
+  // Owner ask: florals get the same Repeat 25% as everything else. An inventory-linked floral already
+  // does (it goes through repeatAdjustedLineCost above), but a floral priced off a flower RECIPE
+  // (el.patternId), the MANDI (el.mandiId) or the RATE CARD has no inventory item and never reached
+  // that function — so in a ♻️ Repeat zone every other element went green at 25% off while these
+  // stayed at full price. Same rule, same switch: Repeat (element override, else the zone/section),
+  // and nothing at all while the discount is hidden from the client. Only the Repeat flag applies —
+  // the standing-stock / cross-function eligibility needs an inventory item, which these don't have.
+  // fullUnitPrice keeps the undiscounted rate (Build's card compares the two to colour the rate
+  // green), unitPrice becomes the effective one — the same shape getElPriceFromInventory returns.
+  const floralRepeatDiscount = (r, el, zc) => {
+    if (!r || !(r.lineCost > 0) || hideDiscountFromClient) return r;
+    const isRepeat = typeof el.repeatOverride === "boolean" ? el.repeatOverride : repeatCatFor(zc, "elements");
+    if (!isRepeat) return r;
+    const lineCost = Math.round(r.lineCost * (1 - GUEST_DISCOUNT_PCT / 100));
+    const per = r.rc?.unit === "truss_sqft" ? (r.area || 0) : (el.qty || 0);
+    return { ...r, fullUnitPrice: r.fullUnitPrice ?? r.unitPrice, unitPrice: per > 0 ? lineCost / per : r.unitPrice, lineCost };
+  };
   // opts.checkAvailability (Build view's live canvas ONLY — explicit opt-in, never a default) turns
   // on the same unavailable-shortfall pricing already built for Deal Check: qty within what's free
   // in stock for the active date bills at the normal rate, qty beyond that bills at item.cost ×
@@ -4684,8 +4703,8 @@ export default function StudioApp() {
   // default is always correct for them without having to pass it explicitly at each call site.
   const getElPriceRaw = useCallback((el, zc, opts, venueName) => {
     if (el.invId) return getElPriceFromInventory(el, { ...opts, zc, venueName: venueName ?? activeFnMeta.venue }); // IMS inventory-sourced element — Rate Card never consulted
-    if (el.mandiId) return getElPriceFromMandi(el); // raw mandi commodity (e.g. Loose Petals), no recipe/inventory
-    if (el.patternId) return getElPriceFromPattern(el); // pure flower-recipe element, no inventory item
+    if (el.mandiId) return floralRepeatDiscount(getElPriceFromMandi(el), el, zc); // raw mandi commodity (e.g. Loose Petals), no recipe/inventory
+    if (el.patternId) return floralRepeatDiscount(getElPriceFromPattern(el), el, zc); // pure flower-recipe element, no inventory item
     const rc = rcItems.find(i => i.name.toLowerCase() === (el.name || "").toLowerCase());
     if (!rc) return { rc: null, unitPrice: 0, lineCost: 0, area: 0, warning: null, isFloralBlend: false, realPct: null };
     const isFloral = (rc.cat || "").toLowerCase() === "florals";
@@ -4718,10 +4737,12 @@ export default function StudioApp() {
         if (area > 0) warning = "⚠ No box truss — using floor area; confirm venue has pre-built structure for hangings";
         else warning = "⚠ Add box truss or zone dimensions for hanging area";
       }
-      return { rc, unitPrice: up, lineCost: area * up, area, warning, isFloralBlend: isFloral, realPct };
+      const tr = { rc, unitPrice: up, lineCost: area * up, area, warning, isFloralBlend: isFloral, realPct };
+      return isFloral ? floralRepeatDiscount(tr, el, zc) : tr;
     }
-    return { rc, unitPrice: up, lineCost: (el.qty || 0) * up, area: 0, warning: null, isFloralBlend: isFloral, realPct };
-  }, [rcItems, getFloralMode, rcFloralModeByKey, floralRatio, floralArtUnitRate, patternExtra, resolveRcRate, getElPriceFromInventory, getElPriceFromPattern, getElPriceFromMandi, activeFnMeta]);
+    const r = { rc, unitPrice: up, lineCost: (el.qty || 0) * up, area: 0, warning: null, isFloralBlend: isFloral, realPct };
+    return isFloral ? floralRepeatDiscount(r, el, zc) : r;
+  }, [rcItems, getFloralMode, rcFloralModeByKey, floralRatio, floralArtUnitRate, patternExtra, resolveRcRate, getElPriceFromInventory, getElPriceFromPattern, getElPriceFromMandi, activeFnMeta, hideDiscountFromClient]);
   // guestPriceMultiplier + dateCategoryMultiplierFor(activeFnMeta.date) applied once, here, on top
   // of whichever branch above priced the element — scales unitPrice/lineCost only, leaving area/
   // warning/availability/realPct untouched. activeFnMeta.date is whichever function's tab is
@@ -4779,8 +4800,8 @@ export default function StudioApp() {
   // the active tab's — that fallback made the event total change with whichever tab was open.
   const getElPriceForFnRaw = useCallback((el, zc, fnRatio, checkAvail, venueName, blocksForDate, crossFnReusePool, fnIdx, zoneKey, elIdx, fnDate) => {
     if (el.invId) return getElPriceFromInventory(el, { checkAvailability: !!checkAvail, zc, venueName, blocksForDate, crossFnReusePool, fnRatio, fnIdx, zoneKey, elIdx, fnDate }); // zoneKey+elIdx → the same booking-wide shortfall allocation Build's own cards use // IMS inventory-sourced element — Rate Card never consulted
-    if (el.mandiId) return getElPriceFromMandi(el); // raw mandi commodity (e.g. Loose Petals), no recipe/inventory
-    if (el.patternId) return getElPriceFromPattern(el, fnRatio); // pure flower-recipe element, no inventory item
+    if (el.mandiId) return floralRepeatDiscount(getElPriceFromMandi(el), el, zc); // raw mandi commodity (e.g. Loose Petals), no recipe/inventory
+    if (el.patternId) return floralRepeatDiscount(getElPriceFromPattern(el, fnRatio), el, zc); // pure flower-recipe element, no inventory item
     const rc = rcItems.find(i => i.name.toLowerCase() === (el.name || "").toLowerCase());
     if (!rc) return { rc: null, unitPrice: 0, lineCost: 0 };
     const isFloral = (rc.cat || "").toLowerCase() === "florals";
@@ -4807,10 +4828,12 @@ export default function StudioApp() {
       let area = 0;
       if (zc && zc.trT === "box") area = (d.L || 0) * (d.W || 0);
       else area = (fd.L || 0) * (fd.W || 0);
-      return { rc, unitPrice: up, lineCost: area * up };
+      const tr = { rc, unitPrice: up, lineCost: area * up, area };
+      return isFloral ? floralRepeatDiscount(tr, el, zc) : tr;
     }
-    return { rc, unitPrice: up, lineCost: (el.qty || 0) * up };
-  }, [rcItems, getFloralMode, rcFloralModeByKey, floralArtUnitRate, patternExtra, resolveRcRate, getElPriceFromInventory, getElPriceFromPattern, getElPriceFromMandi]);
+    const r = { rc, unitPrice: up, lineCost: (el.qty || 0) * up };
+    return isFloral ? floralRepeatDiscount(r, el, zc) : r;
+  }, [rcItems, getFloralMode, rcFloralModeByKey, floralArtUnitRate, patternExtra, resolveRcRate, getElPriceFromInventory, getElPriceFromPattern, getElPriceFromMandi, hideDiscountFromClient]);
   // Same guestPriceMultiplier + dateCategoryMultiplierFor fold as getElPrice, for the export/
   // collectAllFunctionData path — fnDate (optional, new) is THIS function's own date (multi-function
   // bookings can span several dates/categories), not necessarily the active function's clientDate.
@@ -9865,6 +9888,9 @@ export default function StudioApp() {
             dims: itemDimsText(it) };
         })
         .sort((a, b) => b.free - a.free);
+      // Start every card's thumbnail downloading now, in parallel, rather than one by one as the
+      // grid paints. Same URL the modal's <img> asks for (AVAIL_THUMB), so these land in its cache.
+      prefetchImages(items.map(i => i.photo && thumbUrl(i.photo, AVAIL_THUMB)), { concurrency: 8 });
       setAvailModal(m => (m && m.zoneKey === zoneKey && m.idx === idx) ? { ...m, loading: false, items } : m);
     } catch { setAvailModal(m => m ? { ...m, loading: false } : m); }
   }, [imsInventory, activeFnMeta, clientDate, loadAvailability, getStudioAvailable, rcFactorByKey, zoneConfig, venue, guestPriceMultiplier, hideDiscountFromClient, fvCfgForRepeat, dealCheckData, studioFloralData, collectAllFunctionData, activeFnIdx]);

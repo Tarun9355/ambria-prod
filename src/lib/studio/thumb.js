@@ -72,6 +72,28 @@ export function deckImageUrl(url, width = 1600, height = 900, quality = 85) {
  * @param {number} size   rendered box size in CSS px (these thumbnails are square)
  * @param {number} [quality=60]
  */
+/**
+ * A smaller copy of a Supabase Storage image that KEEPS ITS SHAPE — the longer side capped at `size`
+ * CSS px (×2 for HiDPI), nothing cropped. For boxes that aren't square (wide tiles, masonry grids,
+ * hover previews): thumbUrl's square crop would change the framing there, and a CSS object-fit:cover
+ * on top of an already-square image crops twice. resize=contain fits inside the box, unlike
+ * resize=cover (thumbUrl) and unlike width-only (see thumbUrl's note on why that stretches).
+ * Non-Supabase URLs are returned untouched, same as thumbUrl.
+ *
+ * @param {string} url
+ * @param {number} size     longest side, CSS px
+ * @param {number} [quality=65]
+ */
+export function fitUrl(url, size, quality = 65) {
+  if (typeof url !== "string" || !url) return url;
+  if (!url.includes(SB_PUBLIC)) return url;
+  if (url.includes("/render/image/")) return url;
+  const px = Math.max(32, Math.round((Number(size) || 200) * 2));
+  const [base, query] = url.split("?");
+  const rendered = base.replace(SB_PUBLIC, SB_RENDER);
+  return `${rendered}?${query ? query + "&" : ""}width=${px}&height=${px}&resize=contain&quality=${quality}`;
+}
+
 export function thumbUrl(url, size, quality = 60) {
   if (typeof url !== "string" || !url) return url;
   if (!url.includes(SB_PUBLIC)) return url;              // not Supabase Storage — leave it alone

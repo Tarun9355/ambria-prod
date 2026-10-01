@@ -10,6 +10,7 @@
 import { Fragment, useState } from "react";
 import { matchFlowerPattern, sizeClassToPatternKey, normalizeSizeClass } from "../../../../lib/ims/flowerHelpers";
 import { findCrossFnReuseSource } from "../../../../lib/studio/crossFnReuse";
+import { thumbUrl, fitUrl } from "../../../../lib/studio/thumb.js";
 
 // ═══ THE FLORAL GROUND ═══
 // Drop the artwork at src/assets/ambria-florals.(jpg|jpeg|png|webp) and this tab is drawn on it.
@@ -1350,7 +1351,7 @@ export default function DCFloralsTab({ ctx }) {
                     <div key={v.variantId} onClick={()=>applyVariant(v)}
                       style={{cursor:"pointer",padding:12,borderRadius:10,border:isSelected?"2px solid #C084FC":`1px solid ${border}`,background:isSelected?"rgba(192,132,252,0.12)":"rgba(26, 26, 46,0.03)",display:"flex",flexDirection:"column",gap:6,minHeight:120}}>
                       {v.photoUrl ? (
-                        <img src={v.photoUrl} alt={v.name||""} style={{width:"100%",height:50,objectFit:"cover",borderRadius:6,background:"#1A1A2E"}} />
+                        <img src={fitUrl(v.photoUrl, 160)} decoding="async" alt={v.name||""} style={{width:"100%",height:50,objectFit:"cover",borderRadius:6,background:"#1A1A2E"}} />
                       ) : (
                         <div style={{width:"100%",height:50,borderRadius:6,background:"rgba(26, 26, 46,0.05)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,color:"#1A1A2E"}}>🌸</div>
                       )}
@@ -1414,7 +1415,7 @@ export default function DCFloralsTab({ ctx }) {
                   {prefs.map((p, i) => (
                     <div key={p.variantId} style={{display:"flex",alignItems:"center",gap:6,padding:"5px 10px",borderRadius:8,border:`1.5px solid ${rankColors[i]}`,background:`${rankColors[i]}15`}}>
                       <span style={{fontSize:13,fontWeight:700,color:rankColors[i]}}>{i+1}</span>
-                      {p.photoUrl && <img src={p.photoUrl} alt="" style={{width:20,height:20,borderRadius:4,objectFit:"cover"}}/>}
+                      {p.photoUrl && <img src={thumbUrl(p.photoUrl, 20)} decoding="async" alt="" style={{width:20,height:20,borderRadius:4,objectFit:"cover"}}/>}
                       <span style={{fontSize:13,fontWeight:600,color:"#1A1A2E"}}>{p.label}</span>
                       <span style={{fontSize:11,color:"#1A1A2E"}}>₹{Math.round(p.rate)}</span>
                       <button className="dcf-btn" onClick={()=>togglePref({variantId:p.variantId})} style={{fontSize:12,color:"#EF4444",background:"none",border:"none",cursor:"pointer",padding:0,lineHeight:1}}>✕</button>
@@ -1443,7 +1444,7 @@ export default function DCFloralsTab({ ctx }) {
                             <div style={{position:"absolute",top:-6,right:-6,width:22,height:22,borderRadius:"50%",background:rankColors[rank],color:"#1A1A2E",fontSize:13,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 2px 6px rgba(0,0,0,0.3)"}}>{rank+1}</div>
                           )}
                           {v.photoUrl ? (
-                            <img src={v.photoUrl} alt={v.name||""} style={{width:"100%",height:50,objectFit:"cover",borderRadius:6,background:isDark?"#1A1A2E":"#eee"}} />
+                            <img src={fitUrl(v.photoUrl, 160)} decoding="async" alt={v.name||""} style={{width:"100%",height:50,objectFit:"cover",borderRadius:6,background:isDark?"#1A1A2E":"#eee"}} />
                           ) : (
                             <div style={{width:"100%",height:50,borderRadius:6,background:isDark?"rgba(26, 26, 46,0.05)":"#eee",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,color:"#1A1A2E"}}>🌸</div>
                           )}
@@ -1514,7 +1515,7 @@ export default function DCFloralsTab({ ctx }) {
                 {draft.length > 0 && <div style={{marginBottom:16}}>
                   <div style={{fontSize:12,fontWeight:700,color:"#1A1A2E",letterSpacing:0.5,textTransform:"uppercase",marginBottom:8}}>Current Allocation</div>
                   {draft.map((a, idx) => <div key={a.itemId} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",borderRadius:10,background:"rgba(236,72,153,0.06)",border:"1px solid rgba(236,72,153,0.2)",marginBottom:6}}>
-                    {a.photo ? <img src={a.photo} alt="" style={{width:40,height:40,borderRadius:6,objectFit:"cover"}} /> : <div style={{width:40,height:40,borderRadius:6,background:"rgba(236,72,153,0.15)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>🌸</div>}
+                    {a.photo ? <img src={thumbUrl(a.photo, 40)} decoding="async" alt="" style={{width:40,height:40,borderRadius:6,objectFit:"cover"}} /> : <div style={{width:40,height:40,borderRadius:6,background:"rgba(236,72,153,0.15)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>🌸</div>}
                     <div style={{flex:1}}>
                       <div style={{fontSize:13.5,fontWeight:600,color:"#1A1A2E"}}>{a.colour || a.name}</div>
                       <div style={{fontSize:11,color:"#1A1A2E"}}>{a.name}</div>
@@ -1541,7 +1542,7 @@ export default function DCFloralsTab({ ctx }) {
                       const hasStock = (it._stock || 0) > 0;
                       return (
                         <div key={it.id} onClick={() => hasStock && addItem(it)} style={{cursor:hasStock?"pointer":"not-allowed",padding:10,borderRadius:10,border:`1px solid ${border}`,background:isDark?"rgba(26, 26, 46,0.03)":"#FAFAFA",opacity:hasStock?1:0.4,display:"flex",flexDirection:"column",gap:6}}>
-                          {it._photo ? <img src={it._photo} alt="" style={{width:"100%",height:60,objectFit:"cover",borderRadius:6}} /> : <div style={{width:"100%",height:60,borderRadius:6,background:"rgba(236,72,153,0.1)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24}}>🌸</div>}
+                          {it._photo ? <img src={fitUrl(it._photo, 160)} decoding="async" alt="" style={{width:"100%",height:60,objectFit:"cover",borderRadius:6}} /> : <div style={{width:"100%",height:60,borderRadius:6,background:"rgba(236,72,153,0.1)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24}}>🌸</div>}
                           <div style={{fontSize:13,fontWeight:600,color:"#1A1A2E",lineHeight:1.2}}>{it.name}</div>
                           <div style={{fontSize:11,color:"#1A1A2E"}}>{it._stock || 0} kg stock</div>
                         </div>

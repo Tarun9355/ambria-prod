@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { priceForInvItem, itemDimsText } from "../../lib/ims/helpers";
+import { fitUrl } from "../../lib/studio/thumb.js";
 
 // Generic "pick one IMS inventory item from a category/sub-category" modal — used by the truss
 // section's Custom Ceiling button (Fabric › Ceiling) and the masking section's Custom Masking
@@ -56,7 +57,7 @@ export default function InventoryItemPickerModal({
                     onMouseLeave={(e) => { e.currentTarget.style.borderColor = border; e.currentTarget.style.boxShadow = "none"; }}>
                     <div style={{ width: "100%", height: 120, background: isDark ? "#1a1a2e" : "#eee", position: "relative", flexShrink: 0 }}>
                       {src
-                        ? <img src={src} alt={it.name} loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} onError={(e) => { e.target.style.display = "none"; }} />
+                        ? <img src={fitUrl(src, 200)} alt={it.name} loading="lazy" decoding="async" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} onError={(e) => { e.target.style.display = "none"; }} />
                         : <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 26, color: textS }}>{icon}</div>}
                       <div style={{ position: "absolute", bottom: 0, right: 0, background: accent, color: "#fff", padding: "2px 8px", borderTopLeftRadius: 8, fontSize: 11, fontWeight: 700 }}>₹{Math.round(price).toLocaleString("en-IN")}</div>
                     </div>

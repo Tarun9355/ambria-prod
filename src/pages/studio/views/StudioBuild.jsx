@@ -19,7 +19,8 @@ import { qtyUsedElsewhereInBuild } from "../../../lib/studio/dealAvailability";
 import { isHiddenSubcat } from "../../../lib/rateCard";
 import { groupIdsForZones } from "../../../lib/studio/zoneGroups";
 import { CUSTOM_ZONE_TAG_PREFIX } from "../../../lib/studio/keys.js";
-import { thumbUrl } from "../../../lib/studio/thumb.js";
+import { thumbUrl, fitUrl } from "../../../lib/studio/thumb.js";
+import { prefetchImages } from "../../../lib/studio/prefetchImages.js";
 import { makeS } from "../../../lib/studio/styles";
 import { WASH_BANDS, GRAIN_URL } from "../../../lib/studio/pageWash";
 
@@ -2976,6 +2977,14 @@ undefined
       // reorder above (including the selected-photo pin), so a grouped photo moved to the front is
       // still counted as grouped rather than assumed to be at a fixed index.
       // With no group, everything lands in lbRest and this is the old whole-zone behaviour.
+      // Grid open: warm every tile's thumbnail in parallel now, so scrolling the grid reads from
+      // cache instead of each lazy <img> starting its download only as it scrolls into view. Same
+      // size the grid <img> asks for (95), so it's the same URL. Deferred out of render; repeat
+      // calls are free (prefetchImages skips anything it has already fetched).
+      if (gridZones[k]) {
+        const urls = matchedPhotos.map(ph => thumbUrl(ph.src, 95));
+        setTimeout(() => prefetchImages(urls, { concurrency: 8 }), 0);
+      }
       const lbGrouped = matchedPhotos.filter(p => p.grouped);
       const lbRest = matchedPhotos.filter(p => !p.grouped);
       // Grouping selection for this zone, plus how much of it is already pinned — that decides
@@ -3384,7 +3393,7 @@ undefined
                     const at = set.indexOf(ph);
                     setLightbox({idx: at < 0 ? 0 : at, items: set.map(p=>({src:p.src,name:p.eventName}))});
                   }}>
-                    <img src={thumbUrl(ph.src, gridZones[k]?95:190)} alt={ph.eventName} loading="lazy" className="ph-img" style={{width:"100%",height:gridZones[k]?95:190,objectFit:"cover",display:"block",opacity:isSelected?1:0.85}} onError={e=>{e.target.style.display="none"}}/>
+                    <img src={thumbUrl(ph.src, gridZones[k]?95:190)} alt={ph.eventName} loading="lazy" decoding="async" className="ph-img" style={{width:"100%",height:gridZones[k]?95:190,objectFit:"cover",display:"block",opacity:isSelected?1:0.85}} onError={e=>{e.target.style.display="none"}}/>
                     {showCosts&&!isCollapsed(k)&&photoFullCost>0&&<div style={{position:"absolute",bottom:6,right:6,background:isSelected?"#059669":"rgba(0,0,0,0.7)",color:"#fff",padding:gridZones[k]?"3px 7px":"3px 8px",borderRadius:gridZones[k]?5:6,fontSize:gridZones[k]?9:12.5,fontWeight:gridZones[k]?600:700}}>{fmt(photoFullCost)}</div>}
                     {/* Favourite marker — bottom-right, a small dot, deliberately subtle (same
                         reasoning as Browse's tier-pill ring: this can be on screen in front of a
@@ -3764,7 +3773,7 @@ undefined
                             setElThumbHover({key:thumbKey,openUp,top:openUp?undefined:r.bottom+4,bottom:openUp?window.innerHeight-r.top+4:undefined,left:Math.min(r.left,window.innerWidth-168)});
                           }}
                           onMouseLeave={()=>setElThumbHover(null)}>
-                          {thumbSrc ? <img src={thumbSrc} alt="" style={{width:20,height:20,borderRadius:4,objectFit:"cover",cursor:"zoom-in"}}/> : <div style={{width:20,height:20,borderRadius:4,background:isDark?"rgba(255,255,255,0.06)":"rgba(0,0,0,0.05)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11.5}}><IconBox size={12}/></div>}
+                          {thumbSrc ? <img src={thumbUrl(thumbSrc,20)} decoding="async" alt="" style={{width:20,height:20,borderRadius:4,objectFit:"cover",cursor:"zoom-in"}}/> : <div style={{width:20,height:20,borderRadius:4,background:isDark?"rgba(255,255,255,0.06)":"rgba(0,0,0,0.05)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11.5}}><IconBox size={12}/></div>}
                           {/* Portal straight to <body> — .el-row lifts on :hover via a CSS transform,
                               and a transformed ancestor turns position:fixed descendants into
                               position:absolute-relative-to-THAT-ancestor instead of the viewport, so
@@ -3773,7 +3782,7 @@ undefined
                               is the fix — the popup no longer has a transformed ancestor to inherit. */}
                           {elThumbHover?.key===thumbKey && thumbSrc && createPortal(
                             <div style={{position:"fixed",top:elThumbHover.top,bottom:elThumbHover.bottom,left:elThumbHover.left,zIndex:10000,width:160,height:160,borderRadius:8,overflow:"hidden",border:`2px solid ${border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.4)",pointerEvents:"none"}}>
-                              <img src={thumbSrc} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+                              <img src={thumbUrl(thumbSrc,160)} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
                             </div>,
                             document.body
                           )}
@@ -3849,7 +3858,7 @@ undefined
                             {/* Portal to <body> — same .el-row hover-transform gotcha as the card's own thumb above. */}
                             {elThumbHover?.key===sKey && sImg && createPortal(
                               <div style={{position:"fixed",top:elThumbHover.top,bottom:elThumbHover.bottom,left:elThumbHover.left,zIndex:10000,width:160,height:160,borderRadius:8,overflow:"hidden",border:`2px solid ${border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.4)",pointerEvents:"none"}}>
-                                <img src={sImg} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+                                <img src={thumbUrl(sImg,160)} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
                               </div>,
                               document.body
                             )}
@@ -4088,14 +4097,14 @@ undefined
                     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginTop:7,alignItems:"start"}}>
                       <div>
                     <input value={p.refImageUrl||""} onChange={e=>setPrint({refImageUrl:e.target.value})} placeholder="Reference image URL (optional)" style={{...S.input,fontSize:11.5,padding:"3px 8px",marginTop:6,marginBottom:0,width:"100%"}} />
-                    {p.refImageUrl&&<img src={p.refImageUrl} alt="" style={{marginTop:6,width:"100%",maxHeight:100,objectFit:"cover",borderRadius:6}} onError={e=>{e.target.style.display="none";}} />}
+                    {p.refImageUrl&&<img src={fitUrl(p.refImageUrl,300)} decoding="async" alt="" style={{marginTop:6,width:"100%",maxHeight:100,objectFit:"cover",borderRadius:6}} onError={e=>{e.target.style.display="none";}} />}
                       </div>
                       <div style={{position:"relative"}}>
                     {/* Optional link to an inventory element — for cross-reference only, never required */}
                     {p.invId ? (
                       <div style={{display:"flex",alignItems:"center",gap:6}}>
                         <div style={{width:20,height:20,borderRadius:4,overflow:"hidden",flexShrink:0,background:isDark?"#1a1a2e":"#eee",display:"flex",alignItems:"center",justifyContent:"center"}}>
-                          {thumbSrc?<img src={thumbSrc} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:<span style={{opacity:0.3,display:"flex"}}><IconBox size={12}/></span>}
+                          {thumbSrc?<img src={thumbUrl(thumbSrc,20)} decoding="async" alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:<span style={{opacity:0.3,display:"flex"}}><IconBox size={12}/></span>}
                         </div>
                         <span style={{fontSize:11.5,color:invItem?textS:"#F59E0B",flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{invItem?invItem.name:`⚠ ${p.invId} not in IMS`}</span>
                         <span onClick={()=>setPrint({invId:null})} style={{cursor:"pointer",color:textS,fontSize:11,textDecoration:"underline"}}>Unlink</span>
@@ -4118,7 +4127,7 @@ undefined
                                 setZonePrintSearch(prev=>({...prev,[p.id]:""}));
                               }} style={{padding:"8px 10px",fontSize:12,cursor:"pointer",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",gap:10}}>
                                 <div style={{width:32,height:32,borderRadius:6,overflow:"hidden",flexShrink:0,background:isDark?"#1a1a2e":"#eee",display:"flex",alignItems:"center",justifyContent:"center"}}>
-                                  {src?<img src={src} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:<span style={{opacity:0.3,display:"flex"}}><IconBox size={15}/></span>}
+                                  {src?<img src={thumbUrl(src,32)} decoding="async" alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:<span style={{opacity:0.3,display:"flex"}}><IconBox size={15}/></span>}
                                 </div>
                                 <div style={{flex:1,minWidth:0}}>
                                   <div style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontWeight:500}}>{it.name}</div>
