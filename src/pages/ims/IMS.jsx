@@ -1079,7 +1079,23 @@ export default function IMS() {
       for (const fn of next) {
         const before = prevMap.get(fn.id);
         if (!before || JSON.stringify(before) !== JSON.stringify(fn)) {
-          const { error: e } = await supabase.from("functions").upsert(fnToRow(fn), { onConflict: "id" });
+          let { error: e } = await supabase.from("functions").upsert(fnToRow(fn), { onConflict: "id" });
+          // functions.project_id → projects.id. A brand-new event (eventAutoConfirm) creates its
+          // project and functions together, and the two saves run in parallel — the function row
+          // could land first and hit the FK before its project existed ("functions_project_id_fkey").
+          // So on that error: write the project (already in projectsRef, set just before) and retry.
+          // If the project really is gone, save the function unlinked rather than not at all — its
+          // projectId is still in the row's data blob.
+          if (e && e.code === "23503" && fn.projectId) {
+            const proj = projectsRef.current.find((p) => p.id === fn.projectId);
+            if (proj) {
+              const pr = await supabase.from("projects").upsert(projectToRow(proj), { onConflict: "id" });
+              if (!pr.error) ({ error: e } = await supabase.from("functions").upsert(fnToRow(fn), { onConflict: "id" }));
+            } else {
+              console.warn(`[ims] function ${fn.id}: project ${fn.projectId} not found — saving without the link`);
+              ({ error: e } = await supabase.from("functions").upsert({ ...fnToRow(fn), project_id: null }, { onConflict: "id" }));
+            }
+          }
           if (e) setError(`Save failed: ${e.message}`);
         }
       }
