@@ -948,6 +948,27 @@ export default function StudioBuild({ ctx }) {
   const [correctPhoto, setCorrectPhoto] = useState(null);
   const [corrVenueGrp, setCorrVenueGrp] = useState(""); // build correction modal: inhouse|outside venue group
   const [gridZones, setGridZones] = useState({}); // per-zone: show the photo picker as a wrapping grid vs horizontal strip
+  // Zone photos this salesperson recently opened (lightbox) or picked, newest first, keyed like
+  // favourites (eventId || src). They lead the grid under a "Recently viewed" heading and fill the
+  // strip's four tiles. Per user, per browser (localStorage), same convention as Browse's recent
+  // videos — unavailable storage just means an empty list.
+  const RECENT_PHOTOS_KEY = `ambria-recent-photos:${authUser?.id || "anon"}`;
+  const [recentPhotos, setRecentPhotos] = useState(() => {
+    try { const v = JSON.parse(localStorage.getItem(RECENT_PHOTOS_KEY) || "[]"); return Array.isArray(v) ? v : []; } catch { return []; }
+  });
+  const markPhotoViewed = (ph) => {
+    const id = ph && (ph.eventId || ph.src);
+    if (!id) return;
+    setRecentPhotos(p => {
+      if (p[0] === id) return p;
+      const next = [id, ...p.filter(x => x !== id)].slice(0, 40);
+      try { localStorage.setItem(RECENT_PHOTOS_KEY, JSON.stringify(next)); } catch { /* storage off — keep it in memory */ }
+      return next;
+    });
+  };
+  // The grid orders by the recent list as it stood when the grid OPENED — a live order would yank
+  // the tile you just clicked to the front, out from under the cursor. Dropped when the grid closes.
+  const gridRecentSnapRef = useRef({});
   // Name for the "Other" entry in the Add Zone picker. Local, not in ctx: it is transient text that
   // only this panel reads, and it is cleared the moment the zone is added or the picker changes.
   const [newCzOtherName, setNewCzOtherName] = useState("");
@@ -2995,6 +3016,22 @@ undefined
         unPart.sort((a, b) => order.get(a.eventId) - order.get(b.eventId));
         matchedPhotos = [...grpPart, ...unPart, ...rest];
       }
+      // ═══ FINAL TIERS ═══ Recently viewed leads both views (most recent first), so the strip's four
+      // tiles are the photos this salesperson was last looking at. The grid then runs your
+      // favourites → others' favourites → has elements → the rest. Stable partitions over the order
+      // built above, so the group / unticked placement still holds inside each tier.
+      if (gridZones[k]) { if (!gridRecentSnapRef.current[k]) gridRecentSnapRef.current[k] = recentPhotos; }
+      else delete gridRecentSnapRef.current[k];
+      const recentList = gridZones[k] ? gridRecentSnapRef.current[k] : recentPhotos;
+      const recentRank = new Map(recentList.map((id, i) => [id, i]));
+      const isRecentPhoto = (ph) => recentRank.has(favKey(ph));
+      const phTier = (ph) => isRecentPhoto(ph) ? 0 : !gridZones[k] ? 1 : isMyFavPhoto(ph) ? 1 : isAnyFavPhoto(ph) ? 2 : (ph.elements || []).length > 0 ? 3 : 4;
+      {
+        const tiers = [[], [], [], [], []];
+        for (const ph of matchedPhotos) tiers[phTier(ph)].push(ph);
+        tiers[0].sort((a, b) => recentRank.get(favKey(a)) - recentRank.get(favKey(b)));
+        matchedPhotos = tiers.flat();
+      }
       // Pin the last-selected photo to the FRONT of the strip (and force it in even if relevance/
       // filters would drop it), so re-opening a saved session shows the saved pick first — no
       // scrolling left/right to hunt for it. Its saved elements & dims live in zoneElements/
@@ -3331,35 +3368,20 @@ undefined
                 const page = Math.min(phPage[k] || 0, pageCount - 1);   // clamp: filters can shrink the list
                 const start = page * perPage;
                 const shown = matchedPhotos.slice(start, start + perPage);
-                // ═══ SECTION HEADINGS ═══ Browse splits its ranked list under headings for a
-                // reason: unlabelled, a list that still shows other-tier photos just looks like a
-                // broken filter. Four sections here, matching the grid's own ranking above exactly
-                // (favourites, then has-elements, then the rest) — derived from the FINAL order so
-                // the pinned group and the selected photo keep their places inside them.
-                // Grid view only — the strip paginates four at a time, and a heading that appears
-                // on whichever page its tier happens to start on explains nothing.
-                const secOf = (ph) => {
-                  if (isMyFavPhoto(ph)) return 0;
-                  if (isAnyFavPhoto(ph)) return 1;
-                  return (ph.elements || []).length > 0 ? 2 : 3;
-                };
+                // ═══ SECTION HEADING ═══ Grid view only, and only one: "Recently viewed" over the
+                // photos this salesperson last opened/picked (tier 0 of FINAL TIERS above). Everything
+                // after it — your favourites, others' favourites, has elements, the rest — runs on as
+                // one continuous grid, in that order, with no headings of its own (owner ask).
                 const sectioned = gridZones[k];
-                const secs = [[], [], [], []];
-                if (sectioned) shown.forEach((ph) => secs[secOf(ph)].push(ph));
-                const SEC_META = [
-                  ["Your favourites", (n) => `${n} you've favourited`],
-                  ["Favourited by others", (n) => `${n} favourited by someone else on your team`],
-                  ["Has elements", (n) => `${n} already priced and ready`],
-                  ["More references", (n) => `${n} — nothing priced from these yet`],
-                ];
+                const recentShown = sectioned ? shown.filter(isRecentPhoto) : [];
+                const SEC_META = [["Recently viewed", (n) => `${n} you opened recently`]];
                 // Headings ride in the same list as the photos, marked with __head, so one map
                 // renders both and the grid lays them out together. `i = start + pi` is only a
                 // React key now, so the extra entries shifting it is harmless.
-                const firstSec = secs.findIndex(s => s.length);
-                const renderList = sectioned
-                  ? secs.flatMap((list, si) => list.length
-                      ? [{ __head: si, __n: list.length, __first: si === firstSec }, ...list]
-                      : [])
+                const renderList = recentShown.length
+                  ? [{ __head: 0, __n: recentShown.length, __first: true }, ...recentShown,
+                     ...(recentShown.length < shown.length ? [{ __break: true }] : []),
+                     ...shown.filter(ph => !isRecentPhoto(ph))]
                   : shown;
                 return (<>
               {/* No maxHeight/overflow on the grid any more: with a pager under it, an inner scroll
@@ -3377,6 +3399,9 @@ undefined
                     <span style={{fontSize:10,color:textS,fontWeight:400}}>{SEC_META[ph.__head][1](ph.__n)}</span>
                   </div>
                 );
+                // Unlabelled gap between Recently viewed and everything after it — a full-width row
+                // with a faint rule, so the two read as separate without a second heading.
+                if (ph.__break) return <div key="secbreak" style={{gridColumn:"1/-1",height:1,margin:"10px 0",background:border}}/>;
                 const i = start + pi;   // absolute index across pages — keeps React keys unique
                 const isSource = sourceEvent && ph.eventName === sourceEvent.name;
                 const multiZone = isMultiPhotoZone(el.label);
@@ -3431,6 +3456,7 @@ undefined
                     const set = (tickedSet && tickedSet.length) ? tickedSet : (ph.grouped ? lbGrouped : lbRest);
                     const at = set.indexOf(ph);
                     setLightbox({idx: at < 0 ? 0 : at, items: set.map(p=>({src:p.src,name:p.eventName}))});
+                    markPhotoViewed(ph);
                   }}>
                     <img src={thumbUrl(ph.src, gridZones[k]?95:190)} alt={ph.eventName} loading="lazy" decoding="async" className="ph-img" style={{width:"100%",height:gridZones[k]?95:190,objectFit:"cover",display:"block",opacity:isSelected?1:0.85}} onError={e=>{e.target.style.display="none"}}/>
                     {showCosts&&!isCollapsed(k)&&photoFullCost>0&&<div style={{position:"absolute",bottom:6,right:6,background:isSelected?"#059669":"rgba(0,0,0,0.7)",color:"#fff",padding:gridZones[k]?"3px 7px":"3px 8px",borderRadius:gridZones[k]?5:6,fontSize:gridZones[k]?9:12.5,fontWeight:gridZones[k]?600:700}}>{fmt(photoFullCost)}</div>}
@@ -3513,6 +3539,7 @@ undefined
                     // jumping to page 0 here would strand you on a page that doesn't even show the
                     // photo you just clicked. Only the strip still pins-and-jumps; the grid leaves
                     // you exactly where you were.
+                    markPhotoViewed(ph);
                     if(multiZone){toggleMultiElPhoto(k,ph);}else{selectElPhoto(k,ph);if(!gridZones[k]){phGoTo(k,0,phPage[k]||0);phScrollTop(k);}}
                     // Same rule as opening the grid: whatever you actually pick to build with belongs
                     // in the group already, not just whatever happened to be ticked before. Add-only —
