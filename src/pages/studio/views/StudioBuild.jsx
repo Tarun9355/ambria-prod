@@ -2201,6 +2201,13 @@ export default function StudioBuild({ ctx }) {
 /* ═══ SECTION TILES ═══ The four entry points into a zone body, all in one row. They share the
    build column with two 258px rails, so they fall back to 2×2 and then to a single column rather
    than squashing "Truss & Masking" into an ellipsis. */
+/* Flower Palette + Fabric Palette dropdown rows. The chosen row keeps its own inline tint (data-on), so hover only
+   lights the others, and the colour dot grows a touch so the row reads as the one being pointed at. */
+.fp-opt{transition:background .12s ease,color .12s ease}
+.fp-opt > span:first-child{transition:transform .12s ease}
+.fp-opt:not([data-on="1"]):hover{background:rgba(201,169,110,0.12) !important}
+.fp-opt:hover > span:first-child{transform:scale(1.15)}
+.fp-clear:hover{background:rgba(225,29,72,0.08) !important;color:#E11D48 !important}
 .sec-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin-bottom:12px}
 @media (max-width:1200px){.sec-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:700px){.sec-grid{grid-template-columns:minmax(0,1fr)}}
@@ -2726,7 +2733,7 @@ undefined
       const anchorsOf = (name) => (imsPaletteCatalogue||[]).find(p=>p.name===name)?.anchorColours;
       const matched = fabricPaletteQ.trim() ? paletteSearch(opts, fabricPaletteQ, anchorsOf) : opts;
       const optRow = (v, isCustom) => (
-        <div key={v} onClick={()=>setPalette(v)} style={{padding:"5px 9px",borderRadius:6,cursor:"pointer",fontSize:11,
+        <div key={v} className="fp-opt" data-on={current===v?"1":"0"} onClick={()=>setPalette(v)} style={{padding:"5px 9px",borderRadius:6,cursor:"pointer",fontSize:11,
           fontWeight:current===v?700:isCustom?500:400,
           background:current===v?`${accent}18`:"transparent",
           color:current===v?accent:textP}}>{v}</div>
@@ -2787,12 +2794,12 @@ undefined
               {flowerPaletteOpen&&<div style={{position:"absolute",top:"100%",left:0,zIndex:60,marginTop:4,width:170,
                 background:cardBg,border:`1px solid ${border}`,borderRadius:9,boxShadow:"0 6px 20px rgba(0,0,0,0.22)",padding:6}}>
                 {FLOWER_PALETTES.map(([name,hex])=>(
-                  <div key={name} onClick={()=>setFlower(name)} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 9px",borderRadius:6,cursor:"pointer",fontSize:11,
+                  <div key={name} className="fp-opt" data-on={curF===name?"1":"0"} onClick={()=>setFlower(name)} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 9px",borderRadius:6,cursor:"pointer",fontSize:11,
                     fontWeight:curF===name?700:400,background:curF===name?`${accent}18`:"transparent",color:curF===name?accent:textP}}>
                     {dot(hex)}{name}
                   </div>
                 ))}
-                {curF&&<div onClick={()=>setFlower("")} style={{padding:"5px 9px",borderRadius:6,cursor:"pointer",fontSize:10.5,color:textS,borderTop:`1px solid ${border}`,marginTop:4}}>Clear</div>}
+                {curF&&<div className="fp-clear" onClick={()=>setFlower("")} style={{padding:"5px 9px",borderRadius:6,cursor:"pointer",fontSize:10.5,color:textS,borderTop:`1px solid ${border}`,marginTop:4}}>Clear</div>}
               </div>}
             </div>
           </>;
