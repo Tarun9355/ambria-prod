@@ -1380,6 +1380,11 @@ export default function IMS() {
     const pendN = (amendRequests || []).filter((r) => r.status === "pending").length;
     allowedTabs = [...allowedTabs, { id: "approvals", label: `✅ Approvals${pendN ? ` (${pendN})` : ""}` }];
   }
+  // The tab actually rendered. `tab` starts as "dashboard" on a fresh browser tab (and can be any
+  // remembered/deep-linked id), and the body used to render it as-is — so a non-admin opening IMS
+  // in a new tab landed on the admin Dashboard. Anything this user isn't allowed falls back to their
+  // first allowed tab (Attendance for every non-admin, since it is always included above).
+  const activeTab = allowedTabs.some((t) => t.id === tab) ? tab : (allowedTabs[0]?.id || "attendance");
 
   return (
     /* The page ground is what makes a white card a card. At bg-gray-50 (#F9FAFB) the ground and
@@ -1456,7 +1461,7 @@ export default function IMS() {
                   right on hover (hover:translate-x-0.5), which counts toward scrollable overflow.
                   Two pixels of transform were enough to put a full scrollbar on screen. */}
               <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
-              <IMSNav tabs={allowedTabs} active={tab} onChange={setTab} />
+              <IMSNav tabs={allowedTabs} active={activeTab} onChange={setTab} />
             </div>
             {accountBlock}
           </div>
@@ -1484,7 +1489,7 @@ export default function IMS() {
                   right on hover (hover:translate-x-0.5), which counts toward scrollable overflow.
                   Two pixels of transform were enough to put a full scrollbar on screen. */}
               <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
-                <IMSNav tabs={allowedTabs} active={tab} onChange={(id) => { setTab(id); setNavOpen(false); }} />
+                <IMSNav tabs={allowedTabs} active={activeTab} onChange={(id) => { setTab(id); setNavOpen(false); }} />
               </div>
               {accountBlock}
             </div>
@@ -1494,11 +1499,11 @@ export default function IMS() {
       <div className="flex-1 min-w-0 px-4 sm:px-6 py-6">
         {loading ? (
           <div className="text-center text-gray-400 py-20"><div className="text-3xl mb-2">⏳</div>Loading Ambria IMS…</div>
-        ) : tab === "dashboard" ? (
+        ) : activeTab === "dashboard" ? (
           <DashboardTab projects={projects} functions={functions} inventory={items} />
-        ) : tab === "attendance" ? (
+        ) : activeTab === "attendance" ? (
           <AttendanceTab authUser={user} settings={settings} setSettings={setSettings} users={users} />
-        ) : tab === "inventory" ? (
+        ) : activeTab === "inventory" ? (
           <InventoryTab
             inventory={items} setInventory={setInventory}
             functions={functions} setFunctions={setFunctions}
@@ -1506,7 +1511,7 @@ export default function IMS() {
             settings={settings} studio={studio}
             rateCardCategories={rateCardCategories} authUser={user}
           />
-        ) : tab === "admin" ? (
+        ) : activeTab === "admin" ? (
           <AdminTab
             vendors={vendors} setVendors={setVendors} functions={functions}
             settings={settings} setSettings={setSettings}
@@ -1519,7 +1524,7 @@ export default function IMS() {
             onUpdateSubcatFloralMode={updateSubcatFloralMode} onUpdateSubcatTagHidden={updateSubcatTagHidden}
             rcItems={studioRcItems} rcCats={studioRcCats} authUser={user}
           />
-        ) : tab === "supply" ? (
+        ) : activeTab === "supply" ? (
           <SupplyTab
             purchase={purchase} setPurchase={setPurchase}
             inventory={items} setInventory={setInventory}
@@ -1527,7 +1532,7 @@ export default function IMS() {
             prodRequests={prodRequests} setProdRequests={setProdRequests}
             studio={studio} authUser={user} settings={settings}
           />
-        ) : tab === "planning" ? (
+        ) : activeTab === "planning" ? (
           <PlanningTab
             projects={projects} functions={functions} setFunctions={setFunctions} inventory={items} setInventory={setInventory}
             settings={settings} setSettings={setSettings}
@@ -1537,20 +1542,20 @@ export default function IMS() {
             focusEventId={focusEventId} focusSearch={focusSearch} focusLeadEntry={focusLeadEntry} onFocusHandled={clearFocusEvent}
             onGoToCalendar={canSeeCalendar ? goToCalendar : undefined}
           />
-        ) : tab === "finance" ? (
+        ) : activeTab === "finance" ? (
           <FinanceTab
             projects={projects} functions={functions} inventory={items} purchase={purchase}
             settings={settings} setSettings={setSettings}
             overheads={overheads} setOverheads={setOverheads} authUser={user}
           />
-        ) : tab === "calendar" ? (
+        ) : activeTab === "calendar" ? (
           <CalendarTab
             lmsContracts={lmsContracts} studioLmsCache={studioLmsCache}
             onSyncLms={syncLms} lmsSyncing={lmsSyncing} settings={settings} setSettings={setSettings}
             eventOrders={eventOrders} setEventOrders={setEventOrders} saveEventOrders={saveEventOrders}
             blocks={blocks} setBlocks={setBlocks} saveBlocks={saveBlocks}
           />
-        ) : tab === "flowers" ? (
+        ) : activeTab === "flowers" ? (
           <FlowersTab
             settings={settings} setSettings={setSettings}
             functions={functions} setFunctions={setFunctions}
@@ -1559,7 +1564,7 @@ export default function IMS() {
             syncRecipeRatesToStudio={syncRecipeRatesToStudio} tier15LastSync={tier15LastSync} tier15Syncing={tier15Syncing}
             inventory={items} rateCardCategories={rateCardCategories}
           />
-        ) : tab === "approvals" ? (
+        ) : activeTab === "approvals" ? (
           <ApprovalsTab
             amendRequests={amendRequests} saveAmendRequests={saveAmendRequests}
             authUser={user} inventory={items}
