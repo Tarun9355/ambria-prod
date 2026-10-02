@@ -1553,10 +1553,13 @@ export default function IMS() {
           </div>
         </aside>
 
-        {/* Mobile drawer — same nav, same component, over a scrim. */}
-        {navOpen && (
-          <div className="lg:hidden fixed inset-0 z-50 flex">
-            <div className="absolute inset-0 bg-gray-900/40" onClick={() => setNavOpen(false)} />
+        {/* Mobile drawer — same nav, same component, over a scrim. Always mounted so it can
+            animate: the panel slides in from the left and the scrim fades, both on the same 300ms
+            ease-out; closed, it ignores taps (pointer-events-none) and is inert, so nothing in it
+            can take focus. -translate-x-[120%], not -full, so the panel's shadow is off screen too. */}
+          <div inert={!navOpen} className={"lg:hidden fixed inset-0 z-50 flex " + (navOpen ? "" : "pointer-events-none")}>
+            <div onClick={() => setNavOpen(false)}
+              className={"absolute inset-0 bg-gray-900/40 transition-opacity duration-300 ease-out motion-reduce:transition-none " + (navOpen ? "opacity-100" : "opacity-0")} />
             {/* flex column, and the scroll moved onto the nav list inside — with overflow on the
                 panel itself the account block scrolled away with the tabs instead of sitting at
                 the foot of the drawer. */}
@@ -1564,7 +1567,8 @@ export default function IMS() {
                 for the desktop rail's content, not its own, and at 80vw it covered most of the
                 page it is navigating. Narrower also leaves more of that page visible behind the
                 scrim, which is what tells you the drawer is temporary. */}
-            <div className="relative w-52 max-w-[72vw] h-full bg-white rounded-r-2xl shadow-2xl py-4 px-2.5 flex flex-col">
+            <div className={"relative w-52 max-w-[72vw] h-full bg-white rounded-r-2xl shadow-2xl py-4 px-2.5 flex flex-col transition-transform duration-300 ease-[cubic-bezier(0.22,0.61,0.36,1)] motion-reduce:transition-none will-change-transform "
+              + (navOpen ? "translate-x-0" : "-translate-x-[120%]")}>
               <div className="flex items-center justify-between px-2 pb-2 mb-1">
                 <span className="text-xs font-bold uppercase tracking-wide text-gray-400">Menu</span>
                 <button onClick={() => setNavOpen(false)} aria-label="Close navigation" className="w-7 h-7 rounded-lg flex items-center justify-center text-red-500 hover:text-red-600 hover:bg-red-50 transition">✕</button>
@@ -1582,7 +1586,6 @@ export default function IMS() {
               {accountBlock}
             </div>
           </div>
-        )}
 
       <div className="flex-1 min-w-0 px-4 sm:px-6 py-6">
         {loading ? (
