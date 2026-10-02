@@ -32,7 +32,9 @@ function getDetector() {
         // every caller, live or one-shot, goes through nextTimestamp() below rather than rolling
         // its own.
         runningMode: "VIDEO",
-        minDetectionConfidence: 0.5,
+        // 0.6 at the model, and realFace() below then asks for 0.75 plus a face-shaped layout —
+        // at 0.5 alone a finger or a palm over the lens was being reported as a face.
+        minDetectionConfidence: 0.6,
       });
     })();
     // A failed load (offline, CDN blocked) must not wedge every later punch attempt with the
@@ -41,6 +43,42 @@ function getDetector() {
   }
   return detectorPromise;
 }
+
+// ── IS IT REALLY A FACE? ──
+// BlazeFace will put a box on a finger, a palm or a patterned shirt at modest confidence. A real,
+// upright face also has a LAYOUT, and the detector hands us its six landmarks (normalised 0–1:
+// right eye, left eye, nose tip, mouth, right ear, left ear), so a detection only counts when:
+//   • confidence ≥ MIN_SCORE
+//   • the box is a plausible size (not a speck) and roughly face-proportioned (not a sliver)
+//   • the two eyes are far enough apart for the box, and roughly level with each other
+//   • the nose sits below the eyes, and the mouth below the nose
+// Thresholds are loose enough for a selfie at arm's length or a guard photographing a labour a
+// couple of metres away, in a phone held upright.
+const MIN_SCORE = 0.75;
+const MIN_FACE_FRACTION = 0.12;   // box width ≥ 12% of the frame's shorter side
+
+function realFace(det, frameW, frameH) {
+  const score = det?.categories?.[0]?.score ?? 0;
+  if (score < MIN_SCORE) return false;
+  const bb = det.boundingBox;
+  if (!bb || !(bb.width > 0) || !(bb.height > 0)) return false;
+  if (bb.width < Math.min(frameW, frameH) * MIN_FACE_FRACTION) return false;
+  const ratio = bb.width / bb.height;
+  if (ratio < 0.6 || ratio > 1.6) return false;
+  const k = det.keypoints || [];
+  if (k.length < 4) return false;
+  const P = (i) => ({ x: k[i].x * frameW, y: k[i].y * frameH });
+  const rEye = P(0), lEye = P(1), nose = P(2), mouth = P(3);
+  const eyeDist = Math.hypot(lEye.x - rEye.x, lEye.y - rEye.y);
+  if (eyeDist < bb.width * 0.22) return false;                 // eyes squashed together → not a face
+  if (Math.abs(lEye.y - rEye.y) > eyeDist * 0.6) return false; // head tilted past ~30°, or not eyes
+  const eyeY = (lEye.y + rEye.y) / 2;
+  if (!(nose.y > eyeY)) return false;                           // nose below the eyes
+  if (!(mouth.y > nose.y)) return false;                        // mouth below the nose
+  return true;
+}
+
+const hasRealFace = (result, w, h) => (result?.detections || []).some((d) => realFace(d, w, h));
 
 let lastTs = 0;
 function nextTimestamp() {
@@ -61,6 +99,11 @@ function nextTimestamp() {
 export function watchFaceInVideo(videoEl, onChange) {
   let stopped = false;
   let timer = null;
+  // Debounced both ways: green only after GOOD_TO_GO consecutive real-face frames (~0.7s), back
+  // to white after LOST consecutive misses — so one lucky frame of a thumb can't light the oval,
+  // and one blink or motion-blurred frame doesn't flicker it off.
+  const GOOD_TO_GO = 3, LOST = 2;
+  let good = 0, bad = 0, state = false;
   const tick = async () => {
     if (stopped) return;
     try {
@@ -68,7 +111,9 @@ export function watchFaceInVideo(videoEl, onChange) {
         const detector = await getDetector();
         if (stopped) return;
         const result = detector.detectForVideo(videoEl, nextTimestamp());
-        onChange(!!result?.detections?.length);
+        if (hasRealFace(result, videoEl.videoWidth, videoEl.videoHeight)) { good++; bad = 0; } else { bad++; good = 0; }
+        if (!state && good >= GOOD_TO_GO) { state = true; onChange(true); }
+        else if (state && bad >= LOST) { state = false; onChange(false); }
       }
     } catch {
       // A transient decode/model hiccup shouldn't flip the oval for one frame — leave the last
@@ -92,8 +137,8 @@ export async function checkFaceInPhoto(dataUrl) {
     await loaded;
     const detector = await getDetector();
     const result = detector.detectForVideo(img, nextTimestamp());
-    if (!result?.detections?.length) {
-      return { ok: false, reason: "No face found in the photo — hold the phone at arm's length, facing you, in good light." };
+    if (!hasRealFace(result, img.naturalWidth || img.width, img.naturalHeight || img.height)) {
+      return { ok: false, reason: "No clear face in the photo — face the camera straight on, fully in frame, in good light." };
     }
     return { ok: true };
   } catch (err) {
