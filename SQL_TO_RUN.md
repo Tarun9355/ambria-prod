@@ -148,3 +148,12 @@ No redeploy needed — this column is only read/written by the client (`src/lib/
 
 ## Appended automatically as the build proceeds
 (New tables/migrations for later phases are added below as they're created.)
+
+## Labour group punch (migration 033) — ✅ run 2026-10-02 (verified: all 3 tables live)
+Attendance → **Labour Punch**: a guard/supervisor punches a department's labours in and out (one
+photo each). Creates `labours`, `labour_attendance`, `labour_punch_access` (open anon policy +
+realtime, same as every other table) and an 18h auto-close cron for forgotten punch-outs (needs the
+`pg_cron` extension that migration 031 already uses).
+Run the whole file in the SQL Editor: `supabase/migrations/033_labour_attendance.sql`.
+Until it runs, the Labour Punch screen shows a "relation … does not exist" error; the staff punch
+in/out is unaffected.

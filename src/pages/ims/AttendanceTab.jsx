@@ -11,6 +11,8 @@ import AttendanceVideoPlayer, { extractYouTubeId } from "./AttendanceVideoPlayer
 import AttendanceAdminLog from "./AttendanceAdminLog.jsx";
 import QuizSetupPanel from "./QuizSetupPanel.jsx";
 import AttendanceLocationsPanel from "./AttendanceLocationsPanel.jsx";
+import LabourPunchPanel from "./LabourPunchPanel.jsx";
+import { fetchMyLabourAccess, labourPunchDepts } from "../../lib/ims/labourAttendance";
 import {
   IconUsers, IconClockAlert, IconHourglass, IconPlay, IconStop, IconClipboard, IconBook, IconPin,
   IconCamera, IconList, IconClipboardCheck, IconX, IconArrowRight,
@@ -77,8 +79,19 @@ export default function AttendanceTab({ authUser, settings, setSettings, users }
   const [loadingStatus, setLoadingStatus] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [flow, setFlow] = useState(null);
-  // null | "quiz" | "log" | "location" — which admin sub-view (if any) has taken over the page.
+  // null | "quiz" | "log" | "location" | "labour" — which sub-view (if any) has taken over the page.
+  // The first three are Admin-only; "labour" is open to anyone who can punch labours (see below).
   const [adminView, setAdminView] = useState(null);
+  // Labour punch access granted to THIS user by Admin (lib/ims/labourAttendance.js). Admin needs
+  // no row — labourPunchDepts gives Admin every department.
+  // A failed load (e.g. the 033 migration not run yet) just means no granted rows.
+  const [myLabourAccess, setMyLabourAccess] = useState([]);
+  const loadMyLabourAccess = () => {
+    if (!authUser?.id) return;
+    fetchMyLabourAccess(authUser.id).then(setMyLabourAccess).catch(() => setMyLabourAccess([]));
+  };
+  useEffect(loadMyLabourAccess, [authUser?.id]); // eslint-disable-line -- reload only when the user changes
+  const canLabourPunch = labourPunchDepts(authUser, myLabourAccess).length > 0;
   // Mobile only — collapsed by default so the phone view opens on the stat cards + calendar, not
   // a long scrolling list of today's punches; desktop always shows it expanded regardless (see the
   // "hidden lg:block" pairing below, the standard Tailwind way to make a collapse mobile-only).
@@ -307,19 +320,29 @@ export default function AttendanceTab({ authUser, settings, setSettings, users }
           are hidden while either is open, and a Back button is the only way out. */}
       {!adminView && (
         <>
-          {isAdmin && (
+          {(isAdmin || canLabourPunch) && (
             <div className="flex items-center flex-wrap gap-x-1.5 gap-y-1 text-xs font-semibold text-gray-500">
-              <button onClick={() => setAdminView("quiz")} className="flex items-center gap-1 hover:text-blue-600 transition px-1 py-0.5">
-                <IconClipboard size={13} /> Quiz Setup
-              </button>
-              <span className="text-gray-300">/</span>
-              <button onClick={() => setAdminView("log")} className="flex items-center gap-1 hover:text-blue-600 transition px-1 py-0.5">
-                <IconBook size={13} /> Staff Log
-              </button>
-              <span className="text-gray-300">/</span>
-              <button onClick={() => setAdminView("location")} className="flex items-center gap-1 hover:text-blue-600 transition px-1 py-0.5">
-                <IconPin size={13} /> Manage Locations
-              </button>
+              {canLabourPunch && (
+                <button onClick={() => setAdminView("labour")} className="flex items-center gap-1 text-indigo-600 hover:text-indigo-800 transition px-1 py-0.5">
+                  <IconUsers size={13} /> Labour Punch
+                </button>
+              )}
+              {isAdmin && (
+                <>
+                  {canLabourPunch && <span className="text-gray-300">/</span>}
+                  <button onClick={() => setAdminView("quiz")} className="flex items-center gap-1 hover:text-blue-600 transition px-1 py-0.5">
+                    <IconClipboard size={13} /> Quiz Setup
+                  </button>
+                  <span className="text-gray-300">/</span>
+                  <button onClick={() => setAdminView("log")} className="flex items-center gap-1 hover:text-blue-600 transition px-1 py-0.5">
+                    <IconBook size={13} /> Staff Log
+                  </button>
+                  <span className="text-gray-300">/</span>
+                  <button onClick={() => setAdminView("location")} className="flex items-center gap-1 hover:text-blue-600 transition px-1 py-0.5">
+                    <IconPin size={13} /> Manage Locations
+                  </button>
+                </>
+              )}
             </div>
           )}
 
@@ -399,8 +422,8 @@ export default function AttendanceTab({ authUser, settings, setSettings, users }
         </>
       )}
 
-      {isAdmin && adminView && (
-        <div className={adminView === "log" ? "max-w-3xl" : adminView === "quiz" ? "max-w-4xl" : "max-w-2xl"}>
+      {adminView && (isAdmin || (adminView === "labour" && canLabourPunch)) && (
+        <div className={adminView === "log" || adminView === "labour" ? "max-w-3xl" : adminView === "quiz" ? "max-w-4xl" : "max-w-2xl"}>
           <button onClick={() => setAdminView(null)}
             className="flex items-center gap-1.5 text-sm font-semibold text-gray-500 bg-white ring-1 ring-gray-200 shadow-sm rounded-xl px-3 py-1.5 mb-3 hover:bg-gray-50 hover:text-gray-700 transition">
             ← Back to Attendance
@@ -408,6 +431,9 @@ export default function AttendanceTab({ authUser, settings, setSettings, users }
           {adminView === "quiz" && <QuizSetupPanel settings={settings} setSettings={setSettings} />}
           {adminView === "log" && <AttendanceAdminLog users={users} />}
           {adminView === "location" && <AttendanceLocationsPanel settings={settings} setSettings={setSettings} />}
+          {adminView === "labour" && (
+            <LabourPunchPanel authUser={authUser} users={users} settings={settings} myAccess={myLabourAccess} onAccessChanged={loadMyLabourAccess} />
+          )}
         </div>
       )}
 
