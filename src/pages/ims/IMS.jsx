@@ -1463,8 +1463,10 @@ export default function IMS() {
     /* The page ground is what makes a white card a card. At bg-gray-50 (#F9FAFB) the ground and
        the cards sat at ~1.03:1 contrast — indistinguishable — so every card needed a drawn
        outline to exist at all. slate-100 roughly triples that separation, which lets the cards
-       drop their rings and be told apart by fill and shadow instead of by a line. */
-    <div className="min-h-screen bg-slate-100 font-sans">
+       drop their rings and be told apart by fill and shadow instead of by a line.
+       overflow-x-clip: on a phone, anything a few px too wide made the whole page pan sideways.
+       clip, not hidden — hidden would make this a scroll container and unstick the sticky header. */
+    <div className="min-h-screen bg-slate-100 font-sans overflow-x-clip">
       {error && (
         <div style={{ position: "fixed", top: 8, right: 8, zIndex: 99999, background: "#dc2626", color: "#fff", padding: "12px 14px", borderRadius: 8, fontSize: 13, maxWidth: 380, boxShadow: "0 6px 20px rgba(0,0,0,0.25)", border: "1px solid #991b1b" }}>
           <div style={{ fontWeight: 700, marginBottom: 4 }}>❌ {error}</div>

@@ -281,7 +281,7 @@ export default function AttendanceAdminLog({ users }) {
 
       <div className="flex gap-2 mb-4">
         <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by name…"
-          className="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400" />
+          className="flex-1 min-w-0 border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400" />
         <SelectPopover value={dept} onChange={setDept}
           options={[{ value: "all", label: "All departments" }, ...DEPTS.map((d) => ({ value: d, label: d })), { value: "Admin", label: "Admin" }]} />
       </div>
