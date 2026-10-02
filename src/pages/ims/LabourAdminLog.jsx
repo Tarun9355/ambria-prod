@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { Modal } from "../../components/ui";
-import { todayStr, dayHours, punchLocationLabel } from "../../lib/ims/attendance";
+import { todayStr, dayHours, daySummary, punchLocationLabel } from "../../lib/ims/attendance";
+import { loadExcelJS, downloadWorkbook, styleHeader } from "../../lib/excel";
 import { LABOUR_DEPTS, DEPT_ICON, fetchLabourPunchesRange, fetchAllActiveLabours } from "../../lib/ims/labourAttendance";
 import { DatePickerPopover, SelectPopover } from "./AttendanceAdminLog.jsx";
-import { IconPin, IconCalendar, IconUsers } from "../../components/icons.jsx";
+import { IconPin, IconCalendar, IconUsers, IconExcelMark } from "../../components/icons.jsx";
 
 // ═══ ADMIN: LABOUR LOG ═══ (Attendance → Labour Log)
 // Everything the Labour Punch screen records, across every department, for Admin:
@@ -15,6 +16,7 @@ import { IconPin, IconCalendar, IconUsers } from "../../components/icons.jsx";
 const fmtTime = (iso) => { try { return new Date(iso).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }); } catch { return "—"; } };
 const fmtHours = (h) => (h > 0 ? `${h.toFixed(1)}h` : "—");
 const pad2 = (n) => String(n).padStart(2, "0");
+const fmtDay = (dateStr) => new Date(dateStr + "T00:00:00").toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" });
 // Full literal class strings (not assembled) so Tailwind's build can see every one.
 const STAT_STYLES = {
   green: { box: "bg-green-50", label: "text-green-700" },
@@ -44,6 +46,8 @@ export default function LabourAdminLog() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [viewing, setViewing] = useState(null);   // the punch whose photo is open big
+  const [openId, setOpenId] = useState(null);      // month row expanded to its day-by-day in/out
+  const [exporting, setExporting] = useState(false);
 
   const range = view === "day"
     ? [date, date]
@@ -93,18 +97,111 @@ export default function LabourAdminLog() {
     return acc;
   }, { present: 0, stillIn: 0, hours: 0 });
 
-  // Month rows
-  const monthRows = view !== "month" ? [] : labours.map((l) => {
+  // Month rows — every roster labour too, punched or not, so the month reads as a complete list
+  // for payment (same as the staff month log).
+  const monthBase = view !== "month" ? [] : [
+    ...labours,
+    ...roster.filter((l) => !byLabour.has(l.id) && keep(l.name, l.department)).map((l) => ({ id: l.id, name: l.name, department: l.department, punches: [] })),
+  ].sort((a, b) => a.name.localeCompare(b.name));
+  const monthRows = monthBase.map((l) => {
     const byDate = {};
     l.punches.forEach((p) => { (byDate[p.date] ||= []).push(p); });
     const days = Object.values(byDate);
     return {
       ...l,
+      byDate,
       daysPresent: days.filter((ps) => ps.some((p) => p.type === "in")).length,
       hours: days.reduce((s, ps) => s + dayHours(ps), 0),
       openDays: days.filter((ps) => ps[ps.length - 1]?.type === "in" || ps.some((p) => p.auto_closed)).length,
     };
   });
+
+  // Month → Excel: what is on screen (search + department), same four sheets as the staff month log
+  // (Summary, Daily grid, Day-wise in/out, every Punch with its photo link) plus who punched them.
+  async function exportExcel() {
+    setExporting(true);
+    try {
+      const ExcelJS = await loadExcelJS();
+      const wb = new ExcelJS.Workbook();
+      wb.creator = "Ambria IMS";
+      const daysInMonth = new Date(ym.y, ym.m, 0).getDate();
+      const r1 = (h) => Math.round(h * 10) / 10;
+
+      const s1 = wb.addWorksheet("Summary");
+      s1.columns = [
+        { header: "Labour", key: "name", width: 24 }, { header: "Department", key: "dept", width: 14 },
+        { header: "Days present", key: "days", width: 13 }, { header: "Total hours", key: "hours", width: 12 },
+        { header: "Days without punch-out", key: "open", width: 22 },
+      ];
+      monthRows.forEach((r) => s1.addRow({ name: r.name, dept: r.department, days: r.daysPresent, hours: r1(r.hours), open: r.openDays }));
+      s1.addRow({ name: `Total (${monthRows.length})`, days: monthRows.reduce((s, r) => s + r.daysPresent, 0), hours: r1(monthRows.reduce((s, r) => s + r.hours, 0)), open: monthRows.reduce((s, r) => s + r.openDays, 0) }).font = { bold: true };
+      styleHeader(s1);
+
+      const s2 = wb.addWorksheet("Daily");
+      const dayCols = Array.from({ length: daysInMonth }, (_, i) => ({
+        key: `${ym.y}-${pad2(ym.m)}-${pad2(i + 1)}`,
+        header: new Date(ym.y, ym.m - 1, i + 1).toLocaleDateString("en-IN", { day: "numeric", weekday: "short" }),
+        width: 24,
+      }));
+      s2.columns = [{ header: "Labour", key: "name", width: 24 }, { header: "Department", key: "dept", width: 14 }, ...dayCols, { header: "Total h", key: "total", width: 10 }];
+      monthRows.forEach((r) => {
+        const row = { name: r.name, dept: r.department, total: r1(r.hours) };
+        dayCols.forEach(({ key }) => {
+          const ps = r.byDate[key];
+          if (!ps?.length) return;
+          const d = daySummary(ps);
+          row[key] = d.open ? `${fmtTime(d.inAt)}–… (no out)` : `${fmtTime(d.inAt)}–${fmtTime(d.outAt)}${d.auto ? " (auto)" : ""} · ${r1(d.hours)}h`;
+        });
+        s2.addRow(row);
+      });
+      styleHeader(s2);
+      s2.views = [{ state: "frozen", ySplit: 1, xSplit: 2 }];
+
+      const s3 = wb.addWorksheet("Day-wise");
+      s3.columns = [
+        { header: "Date", key: "date", width: 12 }, { header: "Labour", key: "name", width: 22 }, { header: "Department", key: "dept", width: 14 },
+        { header: "Punch in", key: "in", width: 11 }, { header: "Punch out", key: "out", width: 11 }, { header: "Hours", key: "hours", width: 8 },
+        { header: "Punched by", key: "by", width: 20 }, { header: "Note", key: "note", width: 18 },
+      ];
+      Object.keys(Object.assign({}, ...monthRows.map((r) => r.byDate))).sort().forEach((date) => {
+        monthRows.forEach((r) => {
+          const ps = r.byDate[date];
+          if (!ps?.length) return;
+          const d = daySummary(ps);
+          s3.addRow({
+            date, name: r.name, dept: r.department, in: d.inAt ? fmtTime(d.inAt) : "", out: d.outAt ? fmtTime(d.outAt) : "", hours: r1(d.hours),
+            by: [...new Set(ps.map((p) => p.punched_by_name).filter(Boolean))].join(", "),
+            note: d.open ? "No punch-out" : d.auto ? "Auto punched out" : "",
+          });
+        });
+      });
+      styleHeader(s3);
+
+      const s4 = wb.addWorksheet("Punches");
+      s4.columns = [
+        { header: "Date", key: "date", width: 12 }, { header: "Labour", key: "name", width: 22 }, { header: "Department", key: "dept", width: 14 },
+        { header: "Punch", key: "type", width: 16 }, { header: "Time", key: "time", width: 10 }, { header: "Location", key: "loc", width: 28 },
+        { header: "Punched by", key: "by", width: 20 }, { header: "Photo", key: "photo", width: 14 },
+      ];
+      const ids = new Set(monthRows.map((r) => r.id));
+      rows.filter((p) => ids.has(p.labour_id)).forEach((p) => {
+        const row = s4.addRow({
+          date: p.date, name: p.labour_name || "—", dept: p.department,
+          type: p.type === "in" ? "Punched in" : p.auto_closed ? "Auto punched out" : "Punched out",
+          time: fmtTime(p.at), loc: punchLocationLabel(p), by: p.punched_by_name || "",
+        });
+        if (p.photo) { const c = row.getCell("photo"); c.value = { text: "View photo", hyperlink: p.photo }; c.font = { color: { argb: "FF2563EB" }, underline: true }; }
+      });
+      styleHeader(s4);
+
+      const deptPart = dept === "all" ? "" : `_${dept.replace(/[^a-zA-Z0-9]+/g, "_")}`;
+      await downloadWorkbook(wb, `Ambria_Labour_Attendance_${ym.y}-${pad2(ym.m)}${deptPart}.xlsx`);
+    } catch (e) {
+      setError(e.message || "Couldn't export");
+    } finally {
+      setExporting(false);
+    }
+  }
 
   const thumb = (p) => (
     <button key={p.id} onClick={() => p.photo && setViewing(p)} title={p.photo ? "View photo" : "No photo"}
@@ -212,8 +309,16 @@ export default function LabourAdminLog() {
           )}
         </>
       ) : monthRows.length === 0 ? (
-        <p className="text-sm text-gray-400 text-center py-10">No labour punches {term || dept !== "all" ? "match that filter" : "this month"}.</p>
+        <p className="text-sm text-gray-400 text-center py-10">No labours {term || dept !== "all" ? "match that filter" : "on the roster"}.</p>
       ) : (
+        <>
+        <div className="flex items-center justify-between gap-3 mb-3">
+          <p className="text-xs text-gray-400">{monthRows.length} labour{monthRows.length === 1 ? "" : "s"} · tap a name for in/out times</p>
+          <button onClick={exportExcel} disabled={exporting}
+            className="shrink-0 inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold text-gray-700 bg-white ring-1 ring-gray-200 hover:ring-green-400 hover:text-green-700 hover:bg-green-50 disabled:opacity-40 disabled:cursor-not-allowed transition">
+            <IconExcelMark size={15} /> {exporting ? "Exporting…" : "Export to Excel"}
+          </button>
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -226,15 +331,50 @@ export default function LabourAdminLog() {
               </tr>
             </thead>
             <tbody>
-              {monthRows.map((r) => (
-                <tr key={r.id} className="border-b border-gray-50 hover:bg-gray-50">
-                  <td className="py-2 pr-3 font-semibold text-gray-800">{r.name}</td>
-                  <td className="py-2 pr-3 text-gray-500">{DEPT_ICON[r.department] || ""} {r.department}</td>
-                  <td className="py-2 pr-3 text-right font-semibold text-gray-800">{r.daysPresent}</td>
-                  <td className="py-2 pr-3 text-right text-gray-700">{fmtHours(r.hours)}</td>
-                  <td className={"py-2 text-right " + (r.openDays ? "text-amber-600 font-semibold" : "text-gray-300")}>{r.openDays || "—"}</td>
-                </tr>
-              ))}
+              {monthRows.map((r) => {
+                const isOpen = openId === r.id;
+                const dates = Object.keys(r.byDate).sort();
+                return (
+                  <Fragment key={r.id}>
+                    <tr onClick={() => dates.length && setOpenId(isOpen ? null : r.id)}
+                      className={"border-b border-gray-50 hover:bg-gray-50 " + (r.daysPresent ? "cursor-pointer" : "text-gray-400")}>
+                      <td className={"py-2 pr-3 font-semibold " + (r.daysPresent ? "text-gray-800" : "")}>
+                        {dates.length > 0 && <span className={"inline-block w-3 text-gray-400 text-[10px] transition-transform " + (isOpen ? "rotate-90" : "")}>▸</span>}
+                        {r.name}
+                      </td>
+                      <td className="py-2 pr-3 text-gray-500">{DEPT_ICON[r.department] || ""} {r.department}</td>
+                      <td className={"py-2 pr-3 text-right font-semibold " + (r.daysPresent ? "text-gray-800" : "")}>{r.daysPresent}</td>
+                      <td className="py-2 pr-3 text-right text-gray-700">{fmtHours(r.hours)}</td>
+                      <td className={"py-2 text-right " + (r.openDays ? "text-amber-600 font-semibold" : "text-gray-300")}>{r.openDays || "—"}</td>
+                    </tr>
+                    {isOpen && (
+                      <tr className="bg-gray-50/70">
+                        <td colSpan={5} className="px-3 py-2">
+                          <div className="grid grid-cols-[minmax(0,1fr)_auto_auto_auto] gap-x-4 gap-y-1 text-xs">
+                            <div className="font-bold text-gray-400 uppercase tracking-wide text-[10px]">Day</div>
+                            <div className="font-bold text-gray-400 uppercase tracking-wide text-[10px] text-right">In</div>
+                            <div className="font-bold text-gray-400 uppercase tracking-wide text-[10px] text-right">Out</div>
+                            <div className="font-bold text-gray-400 uppercase tracking-wide text-[10px] text-right">Hours</div>
+                            {dates.map((date) => {
+                              const d = daySummary(r.byDate[date]);
+                              return (
+                                <Fragment key={date}>
+                                  <div className="text-gray-700">{fmtDay(date)}</div>
+                                  <div className="text-right text-green-700 font-semibold tabular-nums">{d.inAt ? fmtTime(d.inAt) : "—"}</div>
+                                  <div className={"text-right font-semibold tabular-nums " + (d.open || d.auto ? "text-amber-600" : "text-red-600")}>
+                                    {d.open ? "no out" : `${fmtTime(d.outAt)}${d.auto ? " auto" : ""}`}
+                                  </div>
+                                  <div className="text-right text-gray-700 tabular-nums">{fmtHours(d.hours)}</div>
+                                </Fragment>
+                              );
+                            })}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
             </tbody>
             <tfoot>
               <tr className="text-gray-900 font-bold">
@@ -246,6 +386,7 @@ export default function LabourAdminLog() {
             </tfoot>
           </table>
         </div>
+        </>
       )}
 
       <Modal open={!!viewing} onClose={() => setViewing(null)} title={viewing?.labour_name || "Punch photo"}>

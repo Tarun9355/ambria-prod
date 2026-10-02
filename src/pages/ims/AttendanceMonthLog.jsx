@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { fetchRangePunches, dayHours, punchLocationLabel, punchLabel } from "../../lib/ims/attendance";
+import { fetchRangePunches, dayHours, daySummary, punchLocationLabel, punchLabel } from "../../lib/ims/attendance";
 import { loadExcelJS, downloadWorkbook, styleHeader } from "../../lib/excel";
 import { IconExcelMark } from "../../components/icons.jsx";
 
@@ -14,14 +14,6 @@ const pad2 = (n) => String(n).padStart(2, "0");
 const fmtTime = (iso) => { try { return new Date(iso).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }); } catch { return ""; } };
 const fmtHours = (h) => (h > 0 ? `${h.toFixed(1)}h` : "—");
 const round1 = (h) => Math.round(h * 10) / 10;
-// One day at a glance from its oldest-first punches: first punch-in, final punch-out (null while
-// still in / never punched out), whether that out was the 18h auto-close, and hours worked.
-const daySummary = (ps) => {
-  const firstIn = ps.find((p) => p.type === "in");
-  const last = ps[ps.length - 1];
-  const out = last?.type === "out" ? last : null;
-  return { inAt: firstIn?.at || null, outAt: out?.at || null, auto: !!out?.auto_closed, open: last?.type === "in", hours: dayHours(ps) };
-};
 const fmtDay = (dateStr) => new Date(dateStr + "T00:00:00").toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" });
 
 export default function AttendanceMonthLog({ users, ym, search, dept, deptByUserId, isAdminByUserId }) {

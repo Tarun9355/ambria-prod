@@ -202,6 +202,17 @@ export function dayHours(dayPunches) {
   return ms / 3600000;
 }
 
+/** One day at a glance from its oldest-first punches (staff or labour rows — same shape): first
+ * punch-in, final punch-out (null while still in / never punched out), whether that out was the
+ * 18h auto-close, whether the day is still open, and hours worked (dayHours). */
+export function daySummary(dayPunches) {
+  const ps = dayPunches || [];
+  const firstIn = ps.find((p) => p.type === "in");
+  const last = ps[ps.length - 1];
+  const out = last?.type === "out" ? last : null;
+  return { inAt: firstIn?.at || null, outAt: out?.at || null, auto: !!out?.auto_closed, open: last?.type === "in", hours: dayHours(ps) };
+}
+
 /**
  * A day's status from its punches — deliberately not the fuller "Half Day" / leave-aware picture a
  * payroll system would show: this app has no shift-length or holiday/weekly-off calendar anywhere,
