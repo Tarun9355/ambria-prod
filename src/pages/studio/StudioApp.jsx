@@ -32,7 +32,7 @@ import { ytApi, ytDuration } from "../../lib/youtube";
 import { extractLabeledValue, bestTaxMatch } from "../../lib/studio/videoDescriptionTags";
 import { paletteNames, paletteInList } from "../../lib/studio/colours";
 import { makeS } from "../../lib/studio/styles";
-import { findCrossFnReuseSource, computeFnInvQty } from "../../lib/studio/crossFnReuse";
+import { findCrossFnReuseSource, computeFnInvQty, findSiblingFnInvUse } from "../../lib/studio/crossFnReuse";
 
 // ═══ HEADER TYPE + CHIP SCALE ═══
 // The header used to mix 8/9/10/11/12/13px in a single row. It now has exactly two tiers:
@@ -5174,6 +5174,13 @@ export default function StudioApp() {
   // Layout, same TDZ reasoning as collectAllFunctionDataRef — totalCost (declared above this) reads
   // the ref instead of the memo directly.
   useLayoutEffect(() => { activeCrossFnReuseQtyRef.current = activeCrossFnReuseQty; });
+  // invId → sibling function names (same venue, same/next day) that also use that item — drives the
+  // orange rate on Build's element cards. Deliberately NOT gated by hideDiscountFromClient or the Filler
+  // date rule: it is a heads-up for the salesperson, not a price change.
+  const activeSiblingFnInvUse = useMemo(() => {
+    const all = collectAllFunctionData();
+    return all[activeFnIdx] ? findSiblingFnInvUse(all[activeFnIdx], all) : {};
+  }, [collectAllFunctionData, activeFnIdx]);
 
   const calcFunctionCost = useCallback((fnData) => {
     if (!fnData) return { decor: 0, transport: 0, grand: 0 };
@@ -10887,7 +10894,12 @@ export default function StudioApp() {
     setDcGenerating(false);
     setDcGenStatus("");
     setDcAbortRef(null);
-    if (!silent) showMsg(`Deal Check generated · ${cardsResolved} matched · ${cardsUnmatched} unmatched · ${cardsNameMatch} name-match (no AI cost) · ${cardsAi} AI calls`, "green");
+    // Salesperson-facing wording only — the matcher's internals (name-match vs AI calls) mean nothing
+    // to them. The full breakdown still goes to the console for debugging.
+    console.info(`[dealcheck] generated · ${cardsResolved} matched · ${cardsUnmatched} unmatched · ${cardsNameMatch} name-match · ${cardsAi} AI calls`);
+    if (!silent) showMsg(cardsUnmatched > 0
+      ? `Deal Check ready · ${cardsUnmatched} item${cardsUnmatched === 1 ? "" : "s"} couldn't be matched to IMS — please check`
+      : "Deal Check ready", "green");
     return { ok: true, summary: { zonesProcessed, cardsResolved, cardsAi, cardsNameMatch, cardsUnmatched } };
   }, [activeClientId, clientLedger, dcRunCounter, dcCards, dcZoneState, floralHardPropMap, softHolds, collectAllFunctionData, clientDate, authUser, showMsg, rcItems, trussAlloc, dealCheckData, writeStudioTrussSoftHolds, reconcileSoldInventoryBlocks]);
   useEffect(() => { runDealCheckGenerateRef.current = runDealCheckGenerate; });
@@ -11095,7 +11107,7 @@ export default function StudioApp() {
     showLedgerRestoreWarning: ledgerLoadError && !activeClientId && !!restoreRef.current?.id,
     retryLedgerLoad,
     deleteSessionRows,
-    showClientForm, setShowClientForm, clientLedger, setClientLedger, saveClientLedger, activeClientId, setActiveClientId, clientSearch, setClientSearch, hideDiscountFromClient, guestPriceMultiplier, dateCategoryMultiplierFor, activeCrossFnReuseQty,
+    showClientForm, setShowClientForm, clientLedger, setClientLedger, saveClientLedger, activeClientId, setActiveClientId, clientSearch, setClientSearch, hideDiscountFromClient, guestPriceMultiplier, dateCategoryMultiplierFor, activeCrossFnReuseQty, activeSiblingFnInvUse,
     snapshotBuildState, restoreBuildState, switchActiveFn, fnSnapHasData, fnSnapHasBuild,
     sessionHistoryExpanded, setSessionHistoryExpanded,
     // LMS

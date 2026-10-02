@@ -47,3 +47,28 @@ export function computeFnInvQty(fnData) {
   });
   return m;
 }
+
+// Build's orange "already used in another function" marker. Unlike findCrossFnReuseSource (which only
+// looks BACK at the one immediately-preceding function, because a discount can only be claimed once),
+// this looks both ways at EVERY sibling function of the deal at the same venue on the same or next
+// calendar date — same adjacency rule as above — so the shared item is flagged in both functions.
+// Returns { [invId]: [label, ...] } with each sibling's type/date as the label, or {} when none.
+export function findSiblingFnInvUse(fnData, allFns) {
+  const out = {};
+  if (!fnData?.fnVenue || !fnData?.fnDate) return out;
+  const venue = fnData.fnVenue.toLowerCase().trim();
+  const t = Date.parse(fnData.fnDate);
+  if (!Number.isFinite(t)) return out;
+  (allFns || []).forEach(f => {
+    if (f.fnIdx === fnData.fnIdx || !f.fnVenue || !f.fnDate) return;
+    if (f.fnVenue.toLowerCase().trim() !== venue) return;
+    const t2 = Date.parse(f.fnDate);
+    if (!Number.isFinite(t2) || Math.abs(Math.round((t2 - t) / (24 * 60 * 60 * 1000))) > 1) return;
+    const label = f.fnType || `Function ${f.fnIdx + 1}`;
+    Object.entries(computeFnInvQty(f)).forEach(([invId, q]) => {
+      if (!(q > 0)) return;
+      (out[invId] ||= []).includes(label) || out[invId].push(label);
+    });
+  });
+  return out;
+}

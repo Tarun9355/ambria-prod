@@ -137,6 +137,38 @@ function CommissionOverrideInput({ defaultAmt, overrideVal, border, onCommit }) 
   );
 }
 
+// Shown over the main column until prices have settled (dcPriceSettled) — the same shape as what loads
+// (zone cards with item cards; the sidebar keeps its real names and skeletons only its figures), so the page
+// fills in rather than jumping. Shimmer comes from .dc-sk in the overlay's own stylesheet.
+function DealCheckSkeleton() {
+  const bar = (w, h = 10, extra) => <span className="dc-sk" style={{ display: "block", width: w, height: h, borderRadius: 6, ...extra }} />;
+  const card = { background: "rgba(255,255,255,0.85)", border: "1px solid rgba(26,26,46,0.08)", borderRadius: 14 };
+  return (
+    <div role="status" aria-label="Loading prices" style={{ position: "absolute", top: 0, right: 0, bottom: 0, left: 220, zIndex: 20, display: "flex", background: "#FAF9F6" }}>
+      <div style={{ flex: 1, minWidth: 0, padding: "22px 22px", display: "flex", flexDirection: "column", gap: 14, overflow: "hidden" }}>
+        {bar(220, 9)}
+        {[3, 2].map((n, z) => (
+          <div key={z} style={{ ...card, padding: 16, display: "flex", flexDirection: "column", gap: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              {bar(22, 22, { borderRadius: 6 })}{bar(46, 34, { borderRadius: 6 })}{bar(110, 16)}{bar(90, 22, { borderRadius: 999 })}
+            </div>
+            {bar("100%", 64, { borderRadius: 12 })}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(260px,1fr))", gap: 12 }}>
+              {Array.from({ length: n }, (_, i) => (
+                <div key={i} style={{ ...card, borderRadius: 12, padding: 13, display: "flex", gap: 12 }}>
+                  {bar(54, 54, { borderRadius: 8, flexShrink: 0 })}
+                  <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8 }}>{bar("70%", 12)}{bar("50%", 10)}{bar(26, 20, { borderRadius: 6 })}</div>
+                  {bar(64, 16, { flexShrink: 0 })}
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function DealCheckOverlay({ ctx }) {
   // ── THE APP'S NAVBAR STAYS ON SCREEN ──
   // This overlay was inset:0 at z-index 9000, so it covered the header — and with it the step nav, the
@@ -466,6 +498,34 @@ export default function DealCheckOverlay({ ctx }) {
     else setFnBuilds(prev => ({ ...prev, [fnIdx]: { ...(prev[fnIdx] || {}), zoneElements: next } }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dcCards, dcKitEdits, dcManualItems, isSoldForSync, isFnSwitching, activeFnIdx, activeFnIdxCommitted, activeClientId]);
+
+  // ── NO PRICES UNTIL THEY HAVE SETTLED ── (same rule as Browse's saved-session card)
+  // pricingReady only says the rate tables are in; stock availability, inventory and the other
+  // functions' builds keep landing after it and each one moves the figures — so the sidebar read one
+  // total and then another a second later. The body stays covered until pricing is ready, no function
+  // switch / generate is in flight, AND the rollup's figures (dcPriceSigRef, written during render
+  // below) have not moved for 1.5s. "Ready" also waits for this open's IMS fetch (openDealCheck
+  // clears dealCheckData and refetches it on every open) and the auto-fill generate that follows it —
+  // without those the figures sat still on the PREVIOUS data for 1.5s mid-fetch, the skeleton lifted,
+  // and then every price jumped. It loads ONCE per open: the rollup already prices every function in
+  // one pass, so after settling nothing re-covers it — not a qty edit, a function switch or a tab.
+  const dcPriceSigRef = useRef(null);
+  const dcSettleRef = useRef({ sig: undefined, timer: null });
+  const [dcSettledFor, setDcSettledFor] = useState(null);
+  const dcPriceSettled = dcSettledFor === activeClientId;
+  useEffect(() => {
+    if (dcPriceSettled) return;
+    const s = dcSettleRef.current;
+    const ready = ctx.pricingReady && dealCheckData && !ctx.dealCheckLoading && !isFnSwitching && !dcGenerating;
+    const sig = ready ? dcPriceSigRef.current : null;
+    if (sig === s.sig) return;
+    s.sig = sig;
+    clearTimeout(s.timer);
+    if (sig == null) return;
+    const clientId = activeClientId;
+    s.timer = setTimeout(() => setDcSettledFor(clientId), 1500);
+  });
+  useEffect(() => () => clearTimeout(dcSettleRef.current.timer), []);
 
   if (!(authUser && true)) return null;
 
@@ -1543,6 +1603,10 @@ export default function DealCheckOverlay({ ctx }) {
             commissionByVenue, commissionTotal,
             smartQuoteActive, smartOrigProfitPct, smartDesiredPct, liveQuote, liveCommissionTotal };
         })();
+        // Read by the settle effect above — every figure the sidebar, tab pills and project total show.
+        dcPriceSigRef.current = [dcCostRollup.grand, dcCostRollup.grandActual, dcCostRollup.dealAmount, dcCostRollup.commissionTotal, dcCostRollup.manpower, dcCostRollup.florals,
+          ...(dcCostRollup.byFn || []).map(b => b.rental + b.truss + b.florals + b.transport + b.genset + b.production + b.buying)]
+          .map(n => Math.round(Number(n) || 0)).join("|");
 
         // ── Build + auto-push the department snapshot to IMS whenever Deal Check is open (any tab),
         // so Dept Ops mirrors Studio without anyone navigating to the Dept Income tab. ──
@@ -1704,6 +1768,10 @@ export default function DealCheckOverlay({ ctx }) {
                 :hover — so the tab strip and the cost chips had no feedback at all and read as
                 labels rather than things you can point at. */}
             <style>{`
+@keyframes dcSk{0%{background-position:100% 0}100%{background-position:-100% 0}}
+.dc-sk{background:linear-gradient(90deg,rgba(26,26,46,0.06) 25%,rgba(26,26,46,0.12) 37%,rgba(26,26,46,0.06) 63%);background-size:200% 100%;animation:dcSk 1.3s ease-in-out infinite}
+.dc-sk-inv{background:linear-gradient(90deg,rgba(255,255,255,0.10) 25%,rgba(255,255,255,0.22) 37%,rgba(255,255,255,0.10) 63%);background-size:200% 100%}
+@media (prefers-reduced-motion:reduce){.dc-sk{animation:none}}
 .dc-tab{transition:background .14s ease,color .14s ease,border-color .14s ease}
 /* Navy IS the selected state (see the inline style on the button), so hover must not also be navy —
    two tabs reading as chosen at once is worse than no hover at all. A cold tab warms toward navy
@@ -2021,7 +2089,7 @@ export default function DealCheckOverlay({ ctx }) {
                           <span style={{fontSize:14,lineHeight:1}}>{t.icon}</span>{t.label}
                           {!t.live && <span style={{marginLeft:6,fontSize:10,padding:"2px 5px",borderRadius:4,background:"rgba(245,158,11,0.18)",color:"#F59E0B",fontWeight:700,letterSpacing:0.4}}>{t.ship}</span>}
                         </span>
-                        <span className="dc-money" style={{fontSize:10.5,fontWeight:700,opacity:amount?(on?0.85:0.55):0,marginTop:1}}>{amount || " "}</span>
+                        <span className="dc-money" style={{fontSize:10.5,fontWeight:700,opacity:amount?(on?0.85:0.55):0,marginTop:1}}>{!dcPriceSettled && amount ? <span aria-label="Loading price" className="dc-sk" style={{display:"inline-block",width:46,height:9,borderRadius:4,verticalAlign:"-1px"}}/> : amount || " "}</span>
                       </button>
                     );
                   });
@@ -2046,7 +2114,8 @@ export default function DealCheckOverlay({ ctx }) {
             {/* BODY (left sidebar column · main content). The sidebar column now stacks the function
                 list above the Project-total strip so the strip's own 220px width no longer leaves a
                 bottom-right gap — main content stretches the full column height beside it instead. */}
-            <div style={{flex:1,display:"flex",overflow:"hidden"}}>
+            <div style={{flex:1,display:"flex",overflow:"hidden",position:"relative"}}>
+              {!dcPriceSettled && <DealCheckSkeleton/>}
               {/* LEFT COLUMN — function sidebar (scrolls) + Project total strip pinned under it */}
               <div style={{width:220,flexShrink:0,display:"flex",flexDirection:"column",borderRight:`1px solid ${border}`,overflow:"hidden"}}>
               {/* LEFT SIDEBAR — function tabs + per-fn cost (skeletal in Patch 3, populated in Patch 5) */}
@@ -2110,7 +2179,7 @@ export default function DealCheckOverlay({ ctx }) {
                               conditional. Swept separately.) */}
                           <div className="dc-title" style={{fontSize:17,color:isActive?"#fff":"#1A1A2E"}}>{fn?.fnType || `Function ${fi+1}`}</div>
                           <div className="dc-cap" style={{fontSize:9.5,color:isActive?"rgba(255,255,255,0.6)":"#1A1A2E",opacity:isActive?1:0.5,letterSpacing:1.3}}>{fn?.fnDate || "—"}{fn?.fnShift?` · ${fn.fnShift}`:""}</div>
-                          <div className="dc-money" style={{fontSize:15,fontWeight:700,color:fnDecor>0?(isActive?accent:"#1A1A2E"):(isActive?"rgba(255,255,255,0.5)":textS),marginTop:3}}>{fnDecor>0?`₹${Math.round(fnDecor).toLocaleString("en-IN")}`:"—"}</div>
+                          <div className="dc-money" style={{fontSize:15,fontWeight:700,color:fnDecor>0?(isActive?accent:"#1A1A2E"):(isActive?"rgba(255,255,255,0.5)":textS),marginTop:3}}>{!dcPriceSettled ? <span className={isActive?"dc-sk dc-sk-inv":"dc-sk"} aria-label="Loading price" style={{display:"block",width:76,height:15,borderRadius:5,marginTop:2}}/> : fnDecor>0?`₹${Math.round(fnDecor).toLocaleString("en-IN")}`:"—"}</div>
                         </button>
                       );
                     });
@@ -2159,7 +2228,7 @@ export default function DealCheckOverlay({ ctx }) {
                 // doSave rather than reimplement a second, weaker write path.
                 return (
                   <div className="dc-glass dc-bottom" style={{display:"flex",alignItems:"center",flexShrink:0,boxSizing:"border-box",padding:"10px 18px",borderTop:`1px solid ${border}`,gap:14}}>
-                    <div className="dc-bottomtotal" style={{flexShrink:0}}><div className="dc-cap" style={{color:"#1A1A2E",opacity:0.62}}>Project total</div><div className="dc-money" style={{fontSize:25,fontWeight:800,color:"#1A1A2E",marginTop:1,lineHeight:1.1}}>{fmt(grandWithOverheads)}</div>{stripRevenue > 0 && <div className="dc-money" style={{fontSize:11,color:stripProfitColor,fontWeight:700,marginTop:2,letterSpacing:0.1}}>Margin {stripProfitPct}% · {fmt(stripRevenue)} quote</div>}</div>
+                    <div className="dc-bottomtotal" style={{flexShrink:0}}><div className="dc-cap" style={{color:"#1A1A2E",opacity:0.62}}>Project total</div><div className="dc-money" style={{fontSize:25,fontWeight:800,color:"#1A1A2E",marginTop:1,lineHeight:1.1}}>{dcPriceSettled ? fmt(grandWithOverheads) : <span className="dc-sk" aria-label="Loading price" style={{display:"block",width:140,height:26,borderRadius:6,marginTop:2}}/>}</div>{!dcPriceSettled ? <span className="dc-sk" style={{display:"block",width:170,height:10,borderRadius:4,marginTop:5}}/> : stripRevenue > 0 && <div className="dc-money" style={{fontSize:11,color:stripProfitColor,fontWeight:700,marginTop:2,letterSpacing:0.1}}>Margin {stripProfitPct}% · {fmt(stripRevenue)} quote</div>}</div>
                   </div>
                 );
               })()}
