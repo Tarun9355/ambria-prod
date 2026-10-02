@@ -534,7 +534,7 @@ ${(fnObj.transport.breakdown || []).map(bd => `<div class="tr-row"><div class="t
 <div class="summary-table"><table><tr><th>Function</th><th style="text-align:left">Date · Venue</th><th style="text-align:right">Decor</th><th style="text-align:right">Transport</th><th style="text-align:right">Grand</th></tr>
 ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnType || "—"}</td><td style="text-align:left;color:#6B7280">${fmtDate(fnObj.fnDate)} · ${fnObj.fnVenue || "—"}</td><td style="text-align:right">${fnObj.isEmpty ? "—" : f(fnObj.decorTotal)}</td><td style="text-align:right;color:#4F46E5">${fnObj.isEmpty ? "—" : f(fnObj.transportTotal)}</td><td style="text-align:right;font-weight:700">${fnObj.isEmpty ? "—" : f(fnObj.grand)}</td></tr>`).join("")}
 ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91C1C">Fixed-Venue Discount</td><td style="text-align:left;color:#6B7280">applied to booked venue's share</td><td style="text-align:right">—</td><td style="text-align:right">—</td><td style="text-align:right;font-weight:700;color:#B91C1C">−${f(combined.venueDiscount)}</td></tr>` : ""}
-<tr><td style="font-weight:600">Professional Design, Management &amp; Execution Fees</td><td style="text-align:left;color:#6B7280">${combined.agencyFeePct ?? 20}% of decor + transport + power</td><td style="text-align:right">—</td><td style="text-align:right">—</td><td style="text-align:right;font-weight:700">${f(combined.agencyFee || 0)}</td></tr>
+<tr><td style="font-weight:600">Design and Management Fee</td><td style="text-align:left;color:#6B7280">${combined.agencyFeePct ?? 20}% of decor + transport + power</td><td style="text-align:right">—</td><td style="text-align:right">—</td><td style="text-align:right;font-weight:700">${f(combined.agencyFee || 0)}</td></tr>
 </table></div>
 <div class="grand"><div class="g-label">Event Grand Total</div><div class="g-amt">${f(combined.eventGrandTotal)}</div></div>
 <div class="footer"><strong>Ambria Decorations</strong> · Pushpanjali, Bijwasan, New Delhi · thefusiondecor.com<br>This is an estimate. Final pricing may vary based on customization and availability.</div>
@@ -870,7 +870,7 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
         ]);
       }
       sumRows.push([
-        { text: "Professional Design, Management & Execution Fees", options: { fontSize: 10, color: dark, bold: true } },
+        { text: "Design and Management Fee", options: { fontSize: 10, color: dark, bold: true } },
         { text: `${combined.agencyFeePct ?? 20}% of decor + transport + power`, options: { fontSize: 9, color: gray, italic: true } },
         { text: "", options: {} }, { text: "", options: {} },
         { text: f(combined.agencyFee || 0), options: { fontSize: 10, align: "right", color: dark, bold: true } }
@@ -1260,7 +1260,7 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
         const fnDiscPct = Number(fnObj.discountPct) || 0;
         const shareTxt = fnDiscPct > 0 ? `*(1-${fnDiscPct}/100)` : "";
         const fnFee = fnFeeOf(fnObj);
-        const feeRow = ws.addRow([`PROFESSIONAL DESIGN, MANAGEMENT & EXECUTION FEES (${feePctNum}%)`, "", "", "", "", "", "", ""]);
+        const feeRow = ws.addRow(["DESIGN AND MANAGEMENT FEE", "", "", "", "", "", "", ""]);
         ws.mergeCells(feeRow.number, 1, feeRow.number, 7);
         feeRow.getCell(1).font = { italic: true, bold: true, color: { argb: "FF6B7280" } };
         feeRow.getCell(8).value = { formula: `ROUND(H${ftRow.number}${shareTxt}*${feePctNum}/100,0)`, result: fnFee };
@@ -3086,7 +3086,7 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
                     <div style={{fontSize:14,fontWeight:700,color:accentText}}>{pricingReady ? fmt(fnTotal) : "…"}</div>
                   </div>
                   <div style={{display:"flex",justifyContent:"space-between",gap:12,padding:"10px 20px",borderTop:`1px solid ${border}`}}>
-                    <div style={{fontSize:11.5,fontWeight:600,fontStyle:"italic",color:textS}}>Professional Design, Management & Execution Fees ({feePctNum}%)</div>
+                    <div style={{fontSize:11.5,fontWeight:600,fontStyle:"italic",color:textS}}>Design and Management Fee</div>
                     <div style={{fontSize:13,fontWeight:600,fontStyle:"italic",color:textS,flexShrink:0}}>{pricingReady ? fmt(fnFee) : "…"}</div>
                   </div>
                   <div style={{display:"flex",justifyContent:"space-between",padding:"16px 20px",background:"linear-gradient(135deg,#0F0F1A,#2d1b69)"}}>
