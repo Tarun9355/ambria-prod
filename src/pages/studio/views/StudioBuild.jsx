@@ -3454,8 +3454,12 @@ undefined
                   <div style={{position:"relative",cursor:"zoom-in"}} onClick={(e)=>{
                     e.stopPropagation();
                     if(phSwipedJustNow())return;
-                    const isTicked = grpOn && ph.isLibrary && ph.eventId && grpPicked.has(ph.eventId);
-                    const tickedSet = isTicked ? matchedPhotos.filter(p => p.isLibrary && p.eventId && grpPicked.has(p.eventId)) : null;
+                    // The zone's tick set whether or not the grid is open — closing the grid keeps the
+                    // ticks (hideGrpPick), so opening a ticked photo from the strip must walk those same
+                    // ticked photos too. Gating this on grpOn sent the strip to lbRest: "1 / 19" for 6 ticks.
+                    const ticks = grpSelFor(k);
+                    const isTicked = ph.isLibrary && ph.eventId && ticks.has(ph.eventId);
+                    const tickedSet = isTicked ? matchedPhotos.filter(p => p.isLibrary && p.eventId && ticks.has(p.eventId)) : null;
                     const set = (tickedSet && tickedSet.length) ? tickedSet : (ph.grouped ? lbGrouped : lbRest);
                     const at = set.indexOf(ph);
                     setLightbox({idx: at < 0 ? 0 : at, items: set.map(p=>({src:p.src,name:p.eventName}))});
