@@ -18,6 +18,7 @@ import FlowersTab from "./FlowersTab.jsx";
 import ApprovalsTab from "./ApprovalsTab.jsx";
 import { useEventOrderAutoConfirm } from "../../lib/ims/eventAutoConfirm";
 import { AMEND_SK, canApprove } from "../../lib/ims/amend";
+import { fetchMyLabourAccess, labourPunchDepts } from "../../lib/ims/labourAttendance";
 import AppSwitcher from "../../components/AppSwitcher.jsx";
 import { triggerLmsSync, fetchCachedContracts, fetchSeason, buildDateCategories } from "../../lib/ims/lms";
 import { allocateForDate, buildEventAllocation, eoToFnList, expireStaleSoftHolds, appendTrussAudit, TRUSS_P3_BACKFILLED_SK } from "../../lib/ims/trussEngine";
@@ -53,31 +54,67 @@ const TABS = [
 // Labels arrive as "📊 Dashboard" (and "✅ Approvals (3)" when there are pending ones), so the
 // leading glyph is split off to sit in its own column: with the icons aligned, the rail can be
 // read down the labels alone, which a strip of emoji-prefixed pills could not do.
-function IMSNav({ tabs, active, onChange }) {
+// A tab may carry `children` (Attendance's sub-views): collapsed by default, shown indented under
+// it while expanded[tab.id] is set (IMS.jsx owns that, so the rail and the phone drawer agree) or
+// while one of them is the open view. Picking one calls onSub(tabId, childId). The parent row reads
+// as current only while no child is open, so exactly one row in the rail is ever highlighted.
+function IMSNav({ tabs, active, onChange, activeSub, onSub, expanded = {} }) {
   return (
     <nav className="flex flex-col gap-1">
       {tabs.map((t) => {
         const sp = t.label.indexOf(" ");
         const icon = sp > 0 ? t.label.slice(0, sp) : "•";
         const text = sp > 0 ? t.label.slice(sp + 1) : t.label;
-        const on = active === t.id;
+        const hasKids = t.children?.length > 0;
+        const on = active === t.id && !(hasKids && activeSub);
+        const showKids = hasKids && (!!expanded[t.id] || (active === t.id && !!activeSub));
+        return (
+          <div key={t.id}>
+          {navRow(t, icon, text, on, onChange, hasKids ? showKids : null)}
+          {hasKids && showKids && (
+            <div className="mt-0.5 mb-1 ml-5 pl-3 border-l border-gray-200 flex flex-col gap-0.5">
+              {t.children.map((c) => {
+                const con = active === t.id && activeSub === c.id;
+                return (
+                  <button key={c.id} onClick={() => onSub(t.id, c.id)} aria-current={con ? "page" : undefined}
+                    className={"w-full text-left px-2.5 py-1.5 rounded-lg text-[13px] truncate transition-colors " +
+                      (con ? "bg-indigo-50 text-indigo-700 font-semibold" : "text-gray-500 font-medium hover:bg-gray-50 hover:text-gray-900")}>
+                    {c.label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          </div>
+        );
+      })}
+    </nav>
+  );
+}
+
+// One top-level rail row (the key lives on the wrapper in IMSNav).
+// `open` is null for a row with no sub-items, else whether they are showing (draws the chevron).
+function navRow(t, icon, text, on, onChange, open) {
         return (
           /* The hover lifts and nudges right rather than only tinting: the rail is a column of
              identical rows, and a tint alone is easy to miss on the row the cursor is actually
              over. transition-all so the shadow and the nudge arrive together — `transition`
              alone animates neither transform nor box-shadow to the same curve here. */
-          <button key={t.id} onClick={() => onChange(t.id)} aria-current={on ? "page" : undefined}
+          <button onClick={() => onChange(t.id)} aria-current={on ? "page" : undefined}
             className={"w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-left transition-all duration-150 " +
               (on
                 ? "bg-indigo-50 text-indigo-700 font-semibold shadow-[0_1px_2px_rgba(79,70,229,0.14),0_4px_10px_-4px_rgba(79,70,229,0.3)]"
                 : "text-gray-600 font-medium hover:bg-gray-50 hover:text-gray-900 hover:translate-x-0.5 hover:shadow-[0_1px_2px_rgba(16,24,40,0.06),0_4px_10px_-6px_rgba(16,24,40,0.2)]")}>
             <span aria-hidden="true" className="shrink-0 w-5 text-center text-base leading-none">{icon}</span>
-            <span className="min-w-0 truncate">{text}</span>
+            <span className="min-w-0 flex-1 truncate">{text}</span>
+            {open != null && (
+              <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true"
+                className={"shrink-0 text-gray-400 transition-transform duration-150 " + (open ? "rotate-90" : "")}>
+                <path d="M5 3.5 L8.5 7 L5 10.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            )}
           </button>
         );
-      })}
-    </nav>
-  );
 }
 
 // ── functions (events) row ⇄ object mapping. Events tab is a later phase; we load
@@ -169,6 +206,19 @@ export default function IMS() {
     return saved && isValidTab(saved) ? saved : "dashboard";
   });
   useEffect(() => { sessionStorage.setItem("ambria-ims-tab", tab); }, [tab]);
+  // Attendance's open sub-view (null = the punch screen) — picked from the sidebar's Attendance
+  // sub-items, so it lives here rather than inside AttendanceTab. Not persisted: a reload lands on
+  // the punch screen, which is what most people opening Attendance came for.
+  const [attView, setAttView] = useState(null);
+  const [attOpen, setAttOpen] = useState(false);   // Attendance's sub-items showing in the rail
+  // Labour-punch access granted to this user (Admin grants it). Loaded here because it decides
+  // whether the sidebar shows "Labour Punch" at all. A failed load (table missing) = no rows.
+  const [myLabourAccess, setMyLabourAccess] = useState([]);
+  const reloadLabourAccess = useCallback(() => {
+    if (!user?.id) return;
+    fetchMyLabourAccess(user.id).then(setMyLabourAccess).catch(() => setMyLabourAccess([]));
+  }, [user?.id]);
+  useEffect(() => { reloadLabourAccess(); }, [reloadLabourAccess]);
   // Mobile nav drawer. Deliberately not persisted — a drawer that reopens itself on reload is
   // a drawer nobody asked for.
   const [navOpen, setNavOpen] = useState(false);
@@ -1385,6 +1435,29 @@ export default function IMS() {
   // in a new tab landed on the admin Dashboard. Anything this user isn't allowed falls back to their
   // first allowed tab (Attendance for every non-admin, since it is always included above).
   const activeTab = allowedTabs.some((t) => t.id === tab) ? tab : (allowedTabs[0]?.id || "attendance");
+  // Attendance's sub-items in the rail — only the ones this user can open. Same gates AttendanceTab
+  // applies when it renders them: Labour Punch needs labour access (Admin always has it), the
+  // rest are Admin-only.
+  const attSubs = [
+    labourPunchDepts(user, myLabourAccess).length > 0 && { id: "labour", label: "Labour Punch" },
+    isAdmin && { id: "quiz", label: "Quiz Setup" },
+    isAdmin && { id: "log", label: "Staff Log" },
+    isAdmin && { id: "labourlog", label: "Labour Log" },
+    isAdmin && { id: "location", label: "Manage Locations" },
+  ].filter(Boolean);
+  allowedTabs = allowedTabs.map((t) => (t.id === "attendance" && attSubs.length ? { ...t, children: attSubs } : t));
+  // Rail: a top-level row clears any open Attendance sub-view (Attendance itself = the punch
+  // screen); a sub-item opens Attendance on that view.
+  // Sub-items start collapsed. Clicking Attendance opens the punch screen and its sub-items;
+  // clicking it again while already on the punch screen folds them; any other tab folds them.
+  const pickTab = (id) => {
+    if (id === "attendance") setAttOpen((o) => (activeTab === "attendance" && !attView ? !o : true));
+    else setAttOpen(false);
+    setTab(id); setAttView(null);
+  };
+  const pickSub = (id, sub) => { setTab(id); setAttView(sub); setAttOpen(true); };
+  const navSub = activeTab === "attendance" ? attView : null;
+  const navExpanded = { attendance: attOpen };
 
   return (
     /* The page ground is what makes a white card a card. At bg-gray-50 (#F9FAFB) the ground and
@@ -1466,7 +1539,7 @@ export default function IMS() {
                   right on hover (hover:translate-x-0.5), which counts toward scrollable overflow.
                   Two pixels of transform were enough to put a full scrollbar on screen. */}
               <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
-              <IMSNav tabs={allowedTabs} active={activeTab} onChange={setTab} />
+              <IMSNav tabs={allowedTabs} active={activeTab} onChange={pickTab} activeSub={navSub} onSub={pickSub} expanded={navExpanded} />
             </div>
             {accountBlock}
           </div>
@@ -1494,7 +1567,9 @@ export default function IMS() {
                   right on hover (hover:translate-x-0.5), which counts toward scrollable overflow.
                   Two pixels of transform were enough to put a full scrollbar on screen. */}
               <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
-                <IMSNav tabs={allowedTabs} active={activeTab} onChange={(id) => { setTab(id); setNavOpen(false); }} />
+                {/* Tapping Attendance keeps the drawer open — it unfolds its sub-items, and
+                    closing on that tap hid them before they could be picked. */}
+                <IMSNav tabs={allowedTabs} active={activeTab} onChange={(id) => { pickTab(id); if (!(id === "attendance" && attSubs.length)) setNavOpen(false); }} activeSub={navSub} onSub={(id, sub) => { pickSub(id, sub); setNavOpen(false); }} expanded={navExpanded} />
               </div>
               {accountBlock}
             </div>
@@ -1507,7 +1582,8 @@ export default function IMS() {
         ) : activeTab === "dashboard" ? (
           <DashboardTab projects={projects} functions={functions} inventory={items} />
         ) : activeTab === "attendance" ? (
-          <AttendanceTab authUser={user} settings={settings} setSettings={setSettings} users={users} />
+          <AttendanceTab authUser={user} settings={settings} setSettings={setSettings} users={users}
+            view={attView} setView={setAttView} myLabourAccess={myLabourAccess} reloadLabourAccess={reloadLabourAccess} />
         ) : activeTab === "inventory" ? (
           <InventoryTab
             inventory={items} setInventory={setInventory}

@@ -13,9 +13,9 @@ import QuizSetupPanel from "./QuizSetupPanel.jsx";
 import AttendanceLocationsPanel from "./AttendanceLocationsPanel.jsx";
 import LabourPunchPanel from "./LabourPunchPanel.jsx";
 import LabourAdminLog from "./LabourAdminLog.jsx";
-import { fetchMyLabourAccess, labourPunchDepts } from "../../lib/ims/labourAttendance";
+import { labourPunchDepts } from "../../lib/ims/labourAttendance";
 import {
-  IconUsers, IconClockAlert, IconHourglass, IconPlay, IconStop, IconClipboard, IconBook, IconPin,
+  IconUsers, IconClockAlert, IconHourglass, IconPlay, IconStop, IconClipboard, IconPin,
   IconCamera, IconList, IconClipboardCheck, IconX, IconArrowRight,
 } from "../../components/icons.jsx";
 
@@ -70,7 +70,7 @@ function StatCard({ variant, icon, label, value, sub }) {
   );
 }
 
-export default function AttendanceTab({ authUser, settings, setSettings, users }) {
+export default function AttendanceTab({ authUser, settings, setSettings, users, view, setView, myLabourAccess = [], reloadLabourAccess }) {
   const isAdmin = (authUser?.role || "").toLowerCase() === "admin" || authUser?.id === "u_admin";
   // null when this user has no single matching build department — same as no video configured
   // (see attendanceQuizDept's own comment for exactly who that covers).
@@ -80,19 +80,13 @@ export default function AttendanceTab({ authUser, settings, setSettings, users }
   const [loadingStatus, setLoadingStatus] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [flow, setFlow] = useState(null);
-  // null | "quiz" | "log" | "location" | "labour" — which sub-view (if any) has taken over the page.
-  // The first three are Admin-only; "labour" is open to anyone who can punch labours (see below).
-  const [adminView, setAdminView] = useState(null);
-  // Labour punch access granted to THIS user by Admin (lib/ims/labourAttendance.js). Admin needs
-  // no row — labourPunchDepts gives Admin every department.
-  // A failed load (e.g. the 033 migration not run yet) just means no granted rows.
-  const [myLabourAccess, setMyLabourAccess] = useState([]);
-  const loadMyLabourAccess = () => {
-    if (!authUser?.id) return;
-    fetchMyLabourAccess(authUser.id).then(setMyLabourAccess).catch(() => setMyLabourAccess([]));
-  };
-  useEffect(loadMyLabourAccess, [authUser?.id]); // eslint-disable-line -- reload only when the user changes
+  // null | "labour" | "quiz" | "log" | "labourlog" | "location" — which sub-view has taken over the
+  // page. Owned by IMS.jsx, because the sub-views are picked from the sidebar (Attendance's
+  // sub-items) rather than a link row on this page. "labour" needs labour-punch access; the rest
+  // are Admin-only — anything this user may not open falls back to the punch screen.
   const canLabourPunch = labourPunchDepts(authUser, myLabourAccess).length > 0;
+  const adminView = !view ? null : view === "labour" ? (canLabourPunch ? view : null) : (isAdmin ? view : null);
+  const setAdminView = (v) => setView?.(v);
   // Mobile only — collapsed by default so the phone view opens on the stat cards + calendar, not
   // a long scrolling list of today's punches; desktop always shows it expanded regardless (see the
   // "hidden lg:block" pairing below, the standard Tailwind way to make a collapse mobile-only).
@@ -316,41 +310,11 @@ export default function AttendanceTab({ authUser, settings, setSettings, users }
 
   return (
     <div className="max-w-6xl mx-auto space-y-5">
-      {/* Quiz Setup and the staff log are each a full takeover of this page, not a panel that
-          expands alongside the punch card and calendar — those two plus the other admin toggle
-          are hidden while either is open, and a Back button is the only way out. */}
+      {/* The sub-views (Labour Punch, Quiz Setup, Staff Log, Labour Log, Manage Locations) are picked
+          from the sidebar — Attendance's sub-items (IMS.jsx). Each is a full takeover of this page;
+          the Back button returns to the punch screen. */}
       {!adminView && (
         <>
-          {(isAdmin || canLabourPunch) && (
-            <div className="flex items-center flex-wrap gap-x-1.5 gap-y-1 text-xs font-semibold text-gray-500">
-              {canLabourPunch && (
-                <button onClick={() => setAdminView("labour")} className="flex items-center gap-1 text-indigo-600 hover:text-indigo-800 transition px-1 py-0.5">
-                  <IconUsers size={13} /> Labour Punch
-                </button>
-              )}
-              {isAdmin && (
-                <>
-                  {canLabourPunch && <span className="text-gray-300">/</span>}
-                  <button onClick={() => setAdminView("quiz")} className="flex items-center gap-1 hover:text-blue-600 transition px-1 py-0.5">
-                    <IconClipboard size={13} /> Quiz Setup
-                  </button>
-                  <span className="text-gray-300">/</span>
-                  <button onClick={() => setAdminView("log")} className="flex items-center gap-1 hover:text-blue-600 transition px-1 py-0.5">
-                    <IconBook size={13} /> Staff Log
-                  </button>
-                  <span className="text-gray-300">/</span>
-                  <button onClick={() => setAdminView("labourlog")} className="flex items-center gap-1 hover:text-blue-600 transition px-1 py-0.5">
-                    <IconUsers size={13} /> Labour Log
-                  </button>
-                  <span className="text-gray-300">/</span>
-                  <button onClick={() => setAdminView("location")} className="flex items-center gap-1 hover:text-blue-600 transition px-1 py-0.5">
-                    <IconPin size={13} /> Manage Locations
-                  </button>
-                </>
-              )}
-            </div>
-          )}
-
           <div className="rounded-2xl p-8 sm:p-12 shadow-xl shadow-gray-300/50 ring-1 ring-black/5 transition duration-200 hover:shadow-2xl hover:shadow-gray-400/40 hover:-translate-y-0.5"
             style={{ background: "linear-gradient(135deg, #EAF2FF 0%, #F4F8FF 55%, #FFFFFF 100%)" }}>
             <div className="text-center max-w-md mx-auto">
@@ -438,7 +402,7 @@ export default function AttendanceTab({ authUser, settings, setSettings, users }
           {adminView === "labourlog" && <LabourAdminLog />}
           {adminView === "location" && <AttendanceLocationsPanel settings={settings} setSettings={setSettings} />}
           {adminView === "labour" && (
-            <LabourPunchPanel authUser={authUser} users={users} settings={settings} myAccess={myLabourAccess} onAccessChanged={loadMyLabourAccess} />
+            <LabourPunchPanel authUser={authUser} users={users} settings={settings} myAccess={myLabourAccess} onAccessChanged={reloadLabourAccess} />
           )}
         </div>
       )}
