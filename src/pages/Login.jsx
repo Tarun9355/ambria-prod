@@ -35,9 +35,10 @@ export default function Login() {
         className="w-full max-w-sm bg-white rounded-2xl shadow-xl p-8 space-y-6"
       >
         <div className="text-center space-y-3">
-          <div className="w-14 h-14 bg-indigo-600 rounded-2xl flex items-center justify-center mx-auto shadow-lg">
-            <span className="text-2xl font-bold text-white">A</span>
-          </div>
+          {/* The app's favicon mark (same as IMS's header). 180px touch icon, since 56px is already
+              bigger than the 48px favicon itself. public/ assets need the BASE_URL prefix. */}
+          <img src={`${import.meta.env.BASE_URL}apple-touch-icon.png`} alt="Ambria" width="56" height="56" decoding="async"
+            className="w-14 h-14 rounded-2xl object-cover mx-auto shadow-lg block" />
           <h1 className="text-2xl font-bold text-gray-900">Ambria</h1>
           <p className="text-sm text-gray-500">Sign in to continue</p>
         </div>

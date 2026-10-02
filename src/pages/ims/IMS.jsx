@@ -1416,7 +1416,12 @@ export default function IMS() {
             {/* Logo and wordmark are one unit — gap-2.5, not the row's gap, so the switcher
                 cannot look like it belongs to the name. */}
             <div className="flex items-center gap-2.5 min-w-0">
-              <div className="shrink-0 w-9 h-9 rounded-xl bg-gradient-to-br from-violet-600 to-indigo-600 flex items-center justify-center text-white font-bold text-lg shadow-[0_1px_2px_rgba(79,70,229,0.3),0_6px_16px_-8px_rgba(79,70,229,0.6)]">A</div>
+              {/* The app's own favicon mark, not a lettered placeholder. 48px favicon at 1x, the 180px
+                  touch icon on retina phones so the mark stays sharp at 36px. Both live in public/,
+                  so BASE_URL (/ambria-prod/) has to prefix them. */}
+              <img src={`${import.meta.env.BASE_URL}favicon.png`} srcSet={`${import.meta.env.BASE_URL}favicon.png 1x, ${import.meta.env.BASE_URL}apple-touch-icon.png 2x`}
+                alt="Ambria" width="36" height="36" decoding="async"
+                className="shrink-0 w-9 h-9 rounded-xl object-cover shadow-[0_1px_2px_rgba(79,70,229,0.3),0_6px_16px_-8px_rgba(79,70,229,0.6)]" />
               <div className="min-w-0">
                 {/* Smaller on a phone. At 18px it crowded the switcher off the row; the wordmark
                     does not need to be the largest thing on a 390px screen to be found. */}
