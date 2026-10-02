@@ -8,6 +8,7 @@ import { paletteSearch, paletteMatches } from "../../../components/studio/filter
 import { makeS } from "../../../lib/studio/styles";
 import { WASH_BANDS, GRAIN_URL } from "../../../lib/studio/pageWash";
 import { prefetchImages } from "../../../lib/studio/prefetchImages.js";
+import CopyBuildModal from "../../../components/studio/CopyBuildModal.jsx";
 
 // The panel's right edge. Event Info's gesture, but a FLATTER waist — 0.90 rather than 0.80.
 // Event Info's panel holds a logo and nothing else, so it can afford to lose a fifth of its width
@@ -111,9 +112,11 @@ function StudioBrowse({ ctx }) {
     ytVideoTags, saveYtTags, outdoorVenueList, browseVideos, browseVideosAll, allVideos, activeClient,
     subVenuesOfParent, allInhouseVenueOrParentNames, leafInhouseVenues,
     pickAndLoadFromVideo, resumeSavedSession, allInhouseVenues, taxOr, FUNCTIONS, CATEGORIES,
-    clientLedger, saveClientLedger, askConfirm,
+    clientLedger, saveClientLedger, askConfirm, copyBuildsFromClient,
     favVideos, saveFavVideos,
   } = ctx;
+
+  const [copyBuildModalOpen, setCopyBuildModalOpen] = useState(false);
 
   // ── A PRICE ONLY ONCE IT HAS SETTLED ──
   // pricingReady only says the rate tables are in. Stock availability for each date, inventory and
@@ -1355,6 +1358,19 @@ function StudioBrowse({ ctx }) {
                 {fnDate && row(<IconCalendar size={14}/>, (()=>{ try { return new Date(fnDate+"T00:00:00").toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"}); } catch { return fnDate; } })())}
               </div>;
             })()}
+            {/* Speeds up rebuilding the same package for a new client — copies another deal's
+                zones/elements for one or more of ITS functions straight into this one as brand-new
+                functions, re-dated/re-venued on the way in. Same entry point as Build's own (see
+                CopyBuildModal.jsx) — here too, since this is the first screen a new deal lands on,
+                before there's anything to browse for yet. */}
+            <button type="button" onClick={()=>setCopyBuildModalOpen(true)}
+              title="Copy a function's build from another client's deal"
+              style={{display:"inline-flex",alignItems:"center",gap:6,marginTop:12,padding:"6px 12px",borderRadius:8,
+                cursor:"pointer",whiteSpace:"nowrap",border:`1px solid ${pBorder}`,
+                background:"rgba(0,0,0,0.34)",backdropFilter:"blur(4px)",WebkitBackdropFilter:"blur(4px)",
+                color:pTextS,fontSize:11,fontWeight:600,letterSpacing:0.2}}>
+              📋 Copy build from client
+            </button>
           </div>
           {/* No logo in the panel. It was put back when the header stopped being transparent here,
               on the reasoning that the header's own mark would be hidden behind the bar — but the
@@ -1897,6 +1913,15 @@ function StudioBrowse({ ctx }) {
               or via Resume/Continue on the session banner above. */}
         </div>
         </div>
+
+        {copyBuildModalOpen && (
+          <CopyBuildModal
+            clientLedger={clientLedger} activeClientId={activeClient?.id} currentVenue={venue}
+            isDark={isDark} border={border} textP={textP} textS={textS} cardBg={cardBg} accent={accent}
+            onCopy={copyBuildsFromClient}
+            onClose={() => setCopyBuildModalOpen(false)}
+          />
+        )}
 
         {/* ═══ FIX TAXONOMY — lightweight salesperson-facing correction modal ═══
             Edits write straight to ytVideoTags (same store Manage's editor and every
