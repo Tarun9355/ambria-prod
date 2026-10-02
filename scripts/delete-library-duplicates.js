@@ -3,7 +3,7 @@
  * Ambria Studio Library — Delete Duplicate Rows
  *
  * Consumes the plan produced by dedupe-library-dry-run.js
- * (src/scripts/dedupe-library-plan.json) and deletes ONLY the rows listed in
+ * (scripts/dedupe-library-plan.json) and deletes ONLY the rows listed in
  * its `toDelete` array — the untagged twin of each exact-URL duplicate pair.
  * Rows in `needsReview` are never touched by this script.
  *
@@ -15,7 +15,7 @@
  *     re-verifies the plan against live data and reports what it WOULD delete —
  *     it makes no writes.
  *   - Writes an audit log of every row actually deleted (id, url, keptId) to
- *     src/scripts/dedupe-library-deleted-log.json.
+ *     scripts/dedupe-library-deleted-log.json.
  *
  * Required env vars — set in .env or .env.local, OR export before running:
  *   VITE_SUPABASE_URL
@@ -24,10 +24,10 @@
  *                                       blocks the anon key from DELETE)
  *
  * Run (dry — re-verifies plan against live data, deletes nothing):
- *   node src/scripts/delete-library-duplicates.js
+ *   node scripts/delete-library-duplicates.js
  *
  * Run for real (actually deletes):
- *   CONFIRM=DELETE node src/scripts/delete-library-duplicates.js
+ *   CONFIRM=DELETE node scripts/delete-library-duplicates.js
  */
 
 import { readFileSync, existsSync, writeFileSync } from "fs";
@@ -56,8 +56,8 @@ const SB_URL = env.VITE_SUPABASE_URL;
 const SB_ANON = env.VITE_SUPABASE_ANON_KEY;
 const SB_SERVICE = env.SUPABASE_SERVICE_ROLE_KEY;
 const CONFIRM = env.CONFIRM === "DELETE";
-const PLAN_PATH = "src/scripts/dedupe-library-plan.json";
-const LOG_PATH = "src/scripts/dedupe-library-deleted-log.json";
+const PLAN_PATH = "scripts/dedupe-library-plan.json";
+const LOG_PATH = "scripts/dedupe-library-deleted-log.json";
 
 if (!SB_URL) { console.error("❌  VITE_SUPABASE_URL is required"); process.exit(1); }
 if (!SB_ANON && !SB_SERVICE) { console.error("❌  VITE_SUPABASE_ANON_KEY or SUPABASE_SERVICE_ROLE_KEY is required"); process.exit(1); }

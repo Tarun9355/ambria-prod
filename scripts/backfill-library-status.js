@@ -12,7 +12,7 @@
  *   VITE_SUPABASE_ANON_KEY
  *
  * Run:
- *   node src/scripts/backfill-library-status.js
+ *   node scripts/backfill-library-status.js
  */
 
 import { readFileSync, existsSync } from "fs";

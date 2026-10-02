@@ -67,7 +67,7 @@ IMS → Planning → Truss for that date, and promotes to hard when the EO is ma
 - `src/pages/studio/views/` — deal-builder views (EventInfo/Browse/Build/Summary)
 - `src/pages/studio/dealcheck/` — Deal Check overlay + `tabs/`
 - `src/pages/studio/manage/` — ManageLibrary, ManageSettings
-- `src/components/studio/` — leaf modals (ColourPicker/AllocationPicker/CustomItemModal/LazyYT)
+- `src/components/studio/` — leaf modals (AllocationPicker/CustomItemModal/LazyYT)
 - `src/lib/studio/` — pricing, taxonomy, venues, styles, keys, constants
 - `src/lib/ims/` — constants, helpers, flowerHelpers, kv, lms, pdf, trussEngine
 - `supabase/functions/` — anthropic, lms, season (+ youtube/cloudinary to add)

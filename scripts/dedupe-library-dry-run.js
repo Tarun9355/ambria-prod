@@ -20,7 +20,7 @@
  *   VITE_SUPABASE_ANON_KEY
  *
  * Run:
- *   node src/scripts/dedupe-library-dry-run.js
+ *   node scripts/dedupe-library-dry-run.js
  */
 
 import { readFileSync, existsSync, writeFileSync } from "fs";
@@ -152,7 +152,7 @@ async function main() {
   });
   if (toDelete.length > 20) console.log(`    ... and ${toDelete.length - 20} more (see saved JSON)`);
 
-  const outPath = "src/scripts/dedupe-library-plan.json";
+  const outPath = "scripts/dedupe-library-plan.json";
   writeFileSync(
     outPath,
     JSON.stringify({ generatedAt: "dry-run", toDelete, needsReview }, null, 2)

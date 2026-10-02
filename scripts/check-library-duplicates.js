@@ -15,7 +15,7 @@
  *   VITE_SUPABASE_ANON_KEY
  *
  * Run:
- *   node src/scripts/check-library-duplicates.js
+ *   node scripts/check-library-duplicates.js
  */
 
 import { readFileSync, existsSync } from "fs";

@@ -17,10 +17,10 @@
  *   CLOUDINARY_API_KEY      (defaults to 592743487577154)
  *
  * Run:
- *   node src/scripts/rebuild-library.js
+ *   node scripts/rebuild-library.js
  *
  * Dry run (shows counts, makes no writes):
- *   DRY_RUN=1 node src/scripts/rebuild-library.js
+ *   DRY_RUN=1 node scripts/rebuild-library.js
  */
 
 import { readFileSync, existsSync } from "fs";

@@ -18,7 +18,7 @@
  *   - Requires CONFIRM=DELETE to actually delete. Without it, dry-run only —
  *     reports what WOULD be deleted, makes no writes.
  *   - Writes an audit log of every row actually deleted to
- *     src/scripts/delete-library-broken-urls-log.json.
+ *     scripts/delete-library-broken-urls-log.json.
  *
  * Required env vars — set in .env or .env.local, OR export before running:
  *   VITE_SUPABASE_URL
@@ -27,10 +27,10 @@
  *                                       blocks the anon key from DELETE)
  *
  * Run (dry — checks live URLs, deletes nothing):
- *   node src/scripts/delete-library-broken-urls.js
+ *   node scripts/delete-library-broken-urls.js
  *
  * Run for real (actually deletes):
- *   CONFIRM=DELETE node src/scripts/delete-library-broken-urls.js
+ *   CONFIRM=DELETE node scripts/delete-library-broken-urls.js
  */
 
 import { readFileSync, existsSync, writeFileSync } from "fs";
@@ -59,7 +59,7 @@ const SB_URL = env.VITE_SUPABASE_URL;
 const SB_ANON = env.VITE_SUPABASE_ANON_KEY;
 const SB_SERVICE = env.SUPABASE_SERVICE_ROLE_KEY;
 const CONFIRM = env.CONFIRM === "DELETE";
-const LOG_PATH = "src/scripts/delete-library-broken-urls-log.json";
+const LOG_PATH = "scripts/delete-library-broken-urls-log.json";
 const NAME_PATTERN = "img *"; // "*" is PostgREST's ILIKE wildcard char, translated to "%"
 const HEAD_CONCURRENCY = 20;
 

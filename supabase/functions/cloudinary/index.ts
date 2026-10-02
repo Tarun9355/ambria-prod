@@ -2,8 +2,8 @@
 //
 // Faithful port of the reference Vercel `/api/cloudinary.js`. Holds the Cloudinary API
 // secret server-side and signs Admin API calls (Basic auth). Used to BROWSE existing
-// assets (folders / image list / video list) and delete. Image UPLOADS are unsigned
-// client-side (src/lib/cloudinary.js) and do NOT go through here.
+// assets (folders / image list / video list) and delete. Uploads now go to Supabase Storage
+// (src/lib/storage.js) and do NOT go through here. No app code calls this proxy any more.
 //
 // Deploy:
 //   supabase functions deploy cloudinary
