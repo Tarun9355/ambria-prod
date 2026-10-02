@@ -991,13 +991,11 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const unroutedQty = (it) => { const k = "inv:" + it.id; return Math.max(0, it.qty - (movedQty(k, "return") + movedQty(k, "transfer") + movedQty(k, "damage") + movedQty(k, "repair"))); };
   const routeRemaining = (it, type, extra = {}) => { const q = unroutedQty(it); if (q > 0) addMovement(it, type, q, extra); };
   const routeAllToWarehouse = () => { const rest = blockedItems.filter(it => unroutedQty(it) > 0); if (!rest.length) return; saveDept({ movements: [...movements, ...rest.map(it => ({ id: "mv_" + Date.now() + "_" + Math.floor(Math.random() * 100000), itemKey: "inv:" + it.id, invId: it.invId || null, name: it.name, type: "return", qty: unroutedQty(it), at: Date.now(), by: authUser?.name || "—" }))] }); };
-  // ── THE DISMANTLE PLAN IS AN ON-SITE JOB ──
-  // It used to open in Planning as well, which put the same decision in two places: here against
-  // the booked quantities, and in On-site → "Dismantle & routing" against what is actually
-  // standing at the venue. Only the second one can be right, because it is made at teardown.
-  // The block below is left intact and simply not rendered in Planning — flip this to true to
-  // bring it back, rather than rebuilding two hundred lines of matrix.
-  const SHOW_DISMANTLE_IN_PLANNING = false;
+  // ── DISMANTLE PLAN IN PLANNING ──
+  // Back on (owner ask, 2026-10-02) as its own tile: the department head pre-sets where each item
+  // goes after the event, and On-site → "Dismantle & routing" confirms or changes it against what is
+  // actually standing at the venue at teardown. Set false to hide the Planning copy again.
+  const SHOW_DISMANTLE_IN_PLANNING = true;
   // Dept-head dismantle PLAN (set in Planning; ops confirms on-site). Per item = an ARRAY of splits
   // so one item can go to several places: { [itemKey]: [{qty, type, toEventId, toEventName}, …] }.
   const dismantlePlan = (deptData.dismantlePlan && typeof deptData.dismantlePlan === "object") ? deptData.dismantlePlan : {};
@@ -3291,10 +3289,8 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                 { k: "inv", icon: "📦", title: "Inventory blocked", sub: n(blockedItemsGrouped.length, "item") + " held", value: fmt(rentalIncome) },
                 { k: "mp", icon: "👷", title: "Manpower plan", sub: mpRows.length ? n(mpRows.length, "crew line") : "no crew assigned", value: fmt(mpCost) },
                 { k: "actuals", icon: "🧾", title: "Actuals", sub: hasActuals ? "real spend logged" : "nothing logged yet", value: hasActuals ? fmt(actualCost) : null },
-                /* Was two tiles — Loading & dispatch and Dismantle plan. The dismantle plan has
-                   since moved to On-site entirely (it is a teardown decision, not a planning one),
-                   so what is left is the one thing Planning owns: what goes out, on which truck. */
                 { k: "truck", icon: "🚚", title: "Truck planning", sub: trucks.length ? n(trucks.length, "truck") : "no trucks yet" },
+                SHOW_DISMANTLE_IN_PLANNING && blockedItems.length > 0 && { k: "dism", icon: "🔁", title: "Dismantle plan", sub: "where each item goes after" },
               ].filter(Boolean);
               return (
                 <div className={GRID}>
@@ -3862,7 +3858,7 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
             </div>
 
             {/* Loading / dispatch — cross-check inventory + essentials while loading the truck.
-                Opens under the Truck planning tile, with the dismantle plan directly below it. */}
+                Opens under the Truck planning tile; the dismantle plan has its own tile. */}
             <div className={"bg-white rounded-xl shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] overflow-hidden" + modalCls("truck")}>
               {/* Same header shape as the other blocks: icon tile, title, primary action at the
                   right end, a one-line caption under it with the secondary action beside it. */}
@@ -4028,11 +4024,10 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
               </div>
             </div>
 
-            {/* Dismantle plan — kept, but not shown here: it belongs to On-site, where
-                "Dismantle & routing" makes the same call against live at-site quantities.
-                See SHOW_DISMANTLE_IN_PLANNING above. */}
+            {/* Dismantle plan — the department head's pre-set; opens under its own tile. On-site's
+                "Dismantle & routing" confirms it at teardown. See SHOW_DISMANTLE_IN_PLANNING. */}
             {SHOW_DISMANTLE_IN_PLANNING && blockedItems.length > 0 && (
-              <div className={"bg-white rounded-xl shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] overflow-hidden" + modalCls("truck")}>
+              <div className={"bg-white rounded-xl shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] overflow-hidden" + modalCls("dism")}>
                 {/* Reset rides on the title row instead of wrapping onto a line of its own under
                     the description — on a phone that orphaned it at the left, a full row of height
                     spent on one small button. The description gets the full width under both. */}
@@ -4126,108 +4121,47 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                     </div>
                   )}
                 </div>
-                {/* ── PHONE: ONE CARD PER ITEM ──
-                    A column per site cannot fit a 350px screen: with one site added the names
-                    were cut to a word and the site header ran off the edge. So on a phone each
-                    item is its own card — the name at full width, then one line per
-                    destination with its number at the right. With no sites the production-house
-                    figure simply rides the item's own line. The table below is sm-and-up. */}
-                <div className="sm:hidden">
+                {/* ── ONE CARD PER ITEM, FOUR TO A ROW ──
+                    Was a phone card list plus a desktop table (a column per site). One card grid
+                    for every width instead — 1 / 2 / 4 across — with the photo big enough to tell
+                    two "vedi chair" lines apart, zooming in place on hover (tap/click still opens
+                    it full size). Under it: Production house (auto — whatever the sites leave) and
+                    one number per transfer site. A fully routed item (nothing left for production
+                    house) recedes so the ones still needing a number stand out. */}
+                <div className="p-3 sm:p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                   {blockedItems.map(it => {
                     const prod = planProdQty(it);
                     const done = prod === 0;
-                    const prodPill = (
-                      <span className={"shrink-0 inline-flex items-center justify-center w-14 h-8 rounded-lg text-sm font-semibold tabular-nums " + (done ? "bg-gray-50 text-gray-300" : "bg-blue-50 text-blue-700")}
-                        title="Auto — whatever is left after the sites">{prod}</span>
-                    );
                     return (
-                      <div key={it.id} className="px-3 py-3 border-t border-gray-100">
-                        <div className="flex items-center gap-2.5">
-                          {it.photo ? <img src={it.photo} alt="" onClick={() => setZoomImg(it.photo)} className="w-10 h-10 rounded-lg object-cover cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-xs shrink-0">📦</div>}
-                          <div className="min-w-0 flex-1">
-                            <div className="text-[13px] font-medium text-gray-900 leading-snug line-clamp-2" title={it.name}>{it.name}</div>
-                            <div className="mt-0.5 text-[11px] text-gray-500 tabular-nums">{it.qty} pc{it.qty === 1 ? "" : "s"}</div>
-                          </div>
-                          {dismantleSites.length === 0 && prodPill}
+                      <div key={it.id} className={"rounded-xl bg-white ring-1 ring-gray-200 overflow-hidden flex flex-col transition hover:shadow-lg hover:ring-gray-300 " + (done ? "opacity-70" : "")}>
+                        <div className="group relative h-40 bg-gray-100 overflow-hidden">
+                          {it.photo
+                            ? <img src={it.photo} alt="" loading="lazy" onClick={() => setZoomImg(it.photo)} title="Click to open full size"
+                                className="w-full h-full object-cover cursor-zoom-in transition-transform duration-300 ease-out group-hover:scale-150"
+                                onError={e => { e.target.style.display = "none"; }} />
+                            : <div className="w-full h-full flex items-center justify-center text-3xl text-gray-300">📦</div>}
+                          <span className="absolute top-2 right-2 rounded-md bg-black/60 text-white text-[11px] font-semibold px-1.5 py-0.5 tabular-nums">×{it.qty}</span>
                         </div>
-                        {dismantleSites.length > 0 && (
-                          <div className="mt-2.5 rounded-lg bg-gray-50 divide-y divide-gray-100">
-                            <div className="flex items-center gap-3 px-3 py-1.5">
-                              <span className="min-w-0 flex-1 text-xs text-gray-600">Production house <span className="text-gray-400">· auto</span></span>
-                              {prodPill}
+                        <div className="p-3 flex-1 flex flex-col gap-2">
+                          <div className="text-[13px] font-semibold text-gray-900 leading-snug line-clamp-2" title={it.name}>{it.name}</div>
+                          <div className="mt-auto rounded-lg bg-gray-50 divide-y divide-gray-100">
+                            <div className="flex items-center gap-2 px-2.5 py-1.5">
+                              <span className="min-w-0 flex-1 text-xs text-gray-600 truncate">🏭 Production house <span className="text-gray-400">· auto</span></span>
+                              <span className={"shrink-0 inline-flex items-center justify-center w-12 h-7 rounded-lg text-sm font-bold tabular-nums " + (done ? "bg-gray-100 text-gray-300" : "bg-blue-50 text-blue-700")}
+                                title="Auto — whatever is left after the sites">{prod}</span>
                             </div>
                             {dismantleSites.map(s => (
-                              <label key={s.id} className="flex items-center gap-3 px-3 py-1.5">
-                                <span className="min-w-0 flex-1 text-xs text-gray-600 truncate" title={s.date}>{s.name}</span>
+                              <label key={s.id} className="flex items-center gap-2 px-2.5 py-1.5">
+                                <span className="min-w-0 flex-1 text-xs text-gray-600 truncate" title={s.date ? `${s.name} · ${s.date}` : s.name}>↪ {s.name}</span>
                                 <input type="number" min="0" max={it.qty} value={planSiteQty(it, s.id) || ""} onChange={e => setSiteQty(it, s.id, e.target.value)} placeholder="0"
-                                  className="shrink-0 w-14 h-8 rounded-lg bg-white ring-1 ring-gray-200 px-2 text-sm text-center tabular-nums font-semibold text-gray-800 placeholder:font-normal placeholder:text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-400 transition" />
+                                  className="shrink-0 w-12 h-7 rounded-lg bg-white ring-1 ring-gray-200 px-1.5 text-sm text-center tabular-nums font-semibold text-gray-800 placeholder:font-normal placeholder:text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-400 transition" />
                               </label>
                             ))}
                           </div>
-                        )}
+                        </div>
                       </div>
                     );
                   })}
-                </div>
-                {/* Matrix — one row per item, a column for production house (auto) + each site */}
-                <div className="hidden sm:block overflow-x-auto">
-                  {/* ── NO RULES BETWEEN ROWS ──
-                      Every row carried a full-width divider, so a dozen items read as a dozen
-                      stripes before it read as a list. Rows are separated by their own height and
-                      a hover tint instead — and since the eye tracks a row across to type a
-                      number into it, the hover is what actually helps here, which a static line
-                      never did. The one rule left is under the header, where it marks the change
-                      from labels to data. */}
-                  {/* No fixed minimum width on a phone. The old min-w-[520px] on a ~350px screen
-                      pushed the Production House column off the edge with nothing to say it was
-                      there. Now the table fits: names wrap to two lines and the header wraps.
-                      Once sites are added and it does have to scroll, the item column is pinned,
-                      so every number you type stays next to the item it belongs to. */}
-                  <table className="w-full sm:min-w-[520px] text-sm border-separate border-spacing-0">
-                    <thead>
-                      <tr>
-                        <th className="sticky left-0 z-10 bg-white text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-gray-500 px-3 sm:px-4 py-3">Item</th>
-                        <th className="text-center text-[11px] font-semibold uppercase tracking-[0.06em] text-gray-500 px-2 sm:px-3 py-3 sm:whitespace-nowrap">🏭 Production House</th>
-                        {dismantleSites.map(s => <th key={s.id} className="text-center text-[11px] font-semibold uppercase tracking-[0.06em] text-gray-500 px-2 sm:px-3 py-3 whitespace-nowrap" title={s.date}>↪️ {s.name}</th>)}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {blockedItems.map(it => {
-                        const prod = planProdQty(it);
-                        // Everything routed to a site — the row is done, so it recedes rather
-                        // than sitting at the same weight as the ones still needing a number.
-                        const done = prod === 0;
-                        return (
-                          <tr key={it.id} className="group hover:bg-blue-50/40 transition-colors">
-                            <td className="sticky left-0 z-10 bg-white group-hover:bg-[#f7f9ff] transition-colors px-3 sm:px-4 py-2">
-                              <div className="flex items-center gap-2.5 min-w-0 max-w-[11rem] sm:max-w-none">
-                                {it.photo ? <img src={it.photo} alt="" onClick={() => setZoomImg(it.photo)} className="w-9 h-9 rounded-lg object-cover cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-9 h-9 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-xs shrink-0">📦</div>}
-                                {/* Quantity under the name on a phone. Beside it, a wrapped
-                                    two-line name left the ×qty floating in the gap before the
-                                    next column, reading as neither the item's nor the column's. */}
-                                <div className="min-w-0 flex flex-col sm:flex-row sm:items-center sm:gap-2.5">
-                                  <span className="min-w-0 line-clamp-2 sm:truncate text-sm font-medium text-gray-800 leading-snug" title={it.name}>{it.name}</span>
-                                  <span className="shrink-0 text-[11px] font-semibold text-gray-400 tabular-nums">×{it.qty}</span>
-                                </div>
-                              </div>
-                            </td>
-                            <td className="px-2 sm:px-3 py-2 text-center">
-                              <span className={"inline-block min-w-[2.75rem] px-2.5 py-1.5 rounded-lg text-sm font-bold tabular-nums " + (done ? "bg-gray-50 text-gray-300" : "bg-blue-50 text-blue-700")}
-                                title="Auto — whatever is left after the sites below">{prod}</span>
-                            </td>
-                            {dismantleSites.map(s => (
-                              <td key={s.id} className="px-2 sm:px-3 py-2 text-center">
-                                {/* Borderless until you touch it: a grid of outlined boxes was
-                                    the heaviest thing on the table, and most of them hold 0. */}
-                                <input type="number" min="0" max={it.qty} value={planSiteQty(it, s.id) || ""} onChange={e => setSiteQty(it, s.id, e.target.value)} placeholder="0"
-                                  className="w-16 rounded-lg bg-gray-100 px-2 py-1.5 text-sm text-center tabular-nums font-semibold text-gray-800 placeholder:font-normal placeholder:text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:bg-white transition" />
-                              </td>
-                            ))}
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
                 </div>
               </div>
             )}

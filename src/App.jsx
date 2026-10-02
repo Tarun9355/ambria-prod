@@ -84,12 +84,15 @@ function UpdateBanner() {
     }
   };
   return (
-    <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[9999] flex items-center gap-3 rounded-full bg-gray-900 text-white text-sm px-4 py-2 shadow-xl">
-      <span>A new version of Ambria is available.</span>
+    // Phone: a full-width bar with a 16px gutter (clear of the iPhone home indicator), so the line
+    // has room and doesn't wrap into a four-line stack beside a two-line button. sm+: the centred
+    // pill, sized to its content as before.
+    <div className="fixed inset-x-4 bottom-[max(1rem,env(safe-area-inset-bottom))] sm:inset-x-auto sm:bottom-4 sm:left-1/2 sm:-translate-x-1/2 sm:w-max z-[9999] flex items-center justify-between gap-3 rounded-2xl sm:rounded-full bg-gray-900 text-white text-sm px-4 py-2.5 sm:py-2 shadow-xl">
+      <span className="min-w-0 leading-snug">A new version of Ambria is available.</span>
       <button
         onClick={onUpdate}
         disabled={updating}
-        className="rounded-full bg-indigo-500 hover:bg-indigo-400 disabled:opacity-70 px-3 py-1 font-semibold transition"
+        className="shrink-0 whitespace-nowrap rounded-full bg-indigo-500 hover:bg-indigo-400 disabled:opacity-70 px-3 py-1.5 sm:py-1 font-semibold transition"
       >
         {updating ? "Saving…" : "Update now"}
       </button>
