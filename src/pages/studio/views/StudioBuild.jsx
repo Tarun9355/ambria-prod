@@ -43,6 +43,7 @@ import LazyYT from "../../../components/studio/LazyYT.jsx";
 import KitComponentsEditor from "../../../components/shared/KitComponentsEditor";
 import ItemHoverThumb from "../../../components/shared/ItemHoverThumb";
 import InventoryItemPickerModal from "../../../components/shared/InventoryItemPickerModal";
+import CopyBuildModal from "../../../components/studio/CopyBuildModal.jsx";
 
 // Temporary crowd-sourced library cleanup (Phase 1b). While true, anyone on the build screen
 // can push a corrected element list back to the master library photo ("Save correction to
@@ -618,7 +619,7 @@ export default function StudioBuild({ ctx }) {
     events, libItems, sourceEvent, sourceVideo, ytVideoTags, allVideos,
     getFullCost, findTemplate, templates,
     // client / function meta
-    clientName, clientDate, activeFnMeta, venue, fn, extraFunctions, setExtraFunctions,
+    clientName, clientDate, activeFnMeta, venue, fn, extraFunctions, setExtraFunctions, copyBuildsFromClient,
     clientPalette, setClientPalette, clientFlowerPalette, setClientFlowerPalette,
     studioFloralData, sharedFloralSettings, venueParents, loadAvailability, getStudioAvailable, activeBlocksForDate, openAvailModal,
     activeFnIdx, collectAllFunctionData, rcSubcatFactors, rcFactorByKey, rcFloralModeByKey,
@@ -686,6 +687,7 @@ export default function StudioBuild({ ctx }) {
   // Details & pricing are always shown now (the old global toggle is gone). Each zone is instead
   // independently collapsable via zoneCollapsed — collapsed = header + total only; expanded = full body.
   const showCosts = true;
+  const [copyBuildModalOpen, setCopyBuildModalOpen] = useState(false);
   const [zoneCollapsed, setZoneCollapsed] = useState({});
   // Full-screen photo preview — { items: [{src, name}], idx }. Carries the zone's whole matched
   // set, not just the one photo, so you can step through them without closing and reopening.
@@ -2511,6 +2513,14 @@ undefined
         isDark={isDark} border={border} textP={textP} textS={textS} cardBg={cardBg}
       />
     )}
+    {copyBuildModalOpen && (
+      <CopyBuildModal
+        clientLedger={clientLedger} activeClientId={activeClientId} currentVenue={venue}
+        isDark={isDark} border={border} textP={textP} textS={textS} cardBg={cardBg} accent={accent}
+        onCopy={copyBuildsFromClient}
+        onClose={() => setCopyBuildModalOpen(false)}
+      />
+    )}
     {/* The event block that used to live here — greeting, venue, date, demand — has moved INTO the
         panel (see YOUR_EVENT, rendered at the top of the rail). It is what the panel is for: whose
         event this is. Out here it was a page heading pushing the zone list down, and it had to be
@@ -2599,6 +2609,17 @@ undefined
                   {extraFunctions.length>0 && row(<IconSparkle size={14}/>, `Function ${activeFnIdx+1} of ${extraFunctions.length+1}`, accent)}
                 </div>;
               })()}
+              {/* Speeds up rebuilding the same package for a new client — copies another deal's
+                  zones/elements for one or more of ITS functions straight into this one as brand-new
+                  functions, re-dated/re-venued on the way in. See CopyBuildModal.jsx. */}
+              <button type="button" onClick={()=>setCopyBuildModalOpen(true)}
+                title="Copy a function's build from another client's deal"
+                style={{display:"inline-flex",alignItems:"center",gap:6,marginTop:12,padding:"6px 12px",borderRadius:8,
+                  cursor:"pointer",whiteSpace:"nowrap",border:`1px solid ${pBorder}`,
+                  background:"rgba(0,0,0,0.34)",backdropFilter:"blur(4px)",WebkitBackdropFilter:"blur(4px)",
+                  color:pTextM,fontSize:11,fontWeight:600,letterSpacing:0.2}}>
+                📋 Copy build from client
+              </button>
             </div>
             {ZP_PANEL}
           {/* Reference banner — moved out of the main column into the rail, under the filters, so

@@ -2536,6 +2536,25 @@ export default function StudioApp() {
   // setToast is a setState function and therefore stable, so [] is correct — nothing this closes
   // over can go stale.
   const showMsg = useCallback((msg, color) => { setToast({ msg, color }); setTimeout(() => setToast(null), 2000); }, []);
+  // "Copy a build from an existing client" (CopyBuildModal.jsx) — the modal resolves the picked
+  // functions' builds and metadata itself, since it already has clientLedger with every client's
+  // sessions loaded (the mount effect bulk-fetches studio_sessions once and attaches `.sessions` to
+  // every row — no extra fetch needed here or there). This just merges the result into live state
+  // exactly like adding a function by hand (StudioEventInfo.jsx's own "+ Add Function" does the same
+  // `setExtraFunctions(prev => [...prev, ...])`), so the normal autosave picks it up with no
+  // special-casing. `startIdx` is read from the render closure rather than a ref — a deliberate,
+  // infrequent click, not a stale-timer path, so this matches the existing Add-Function pattern.
+  const copyBuildsFromClient = useCallback((items) => {
+    if (!Array.isArray(items) || !items.length) return;
+    const startIdx = 1 + extraFunctions.length;
+    setExtraFunctions((prev) => [...prev, ...items.map((it) => it.meta)]);
+    setFnBuilds((prev) => {
+      const next = { ...prev };
+      items.forEach((it, i) => { next[startIdx + i] = it.build; });
+      return next;
+    });
+    showMsg(`Copied ${items.length} function${items.length === 1 ? "" : "s"} — switch to ${items.length === 1 ? "it" : "them"} from Browse or Event Info.`, "green");
+  }, [extraFunctions, showMsg]);
   // In-app confirm, so destructive actions ask in the app's own voice instead of a browser alert()
   // (which is unstyled, blocks the whole tab, and on some browsers offers "don't show again").
   // Deliberately does NOT auto-dismiss — an unanswered question must wait for an answer.
@@ -11114,6 +11133,7 @@ export default function StudioApp() {
     clientBrideGroom, setClientBrideGroom, clientShift, setClientShift, clientPax, setClientPax, clientVenueOther, setClientVenueOther,
     clientPalette, setClientPalette, clientFlowerPalette, setClientFlowerPalette, extraFunctions, setExtraFunctions, expandedFnIdx, setExpandedFnIdx,
     activeFnIdx, setActiveFnIdx, activeFnMeta, fnBuilds, setFnBuilds, isFnSwitching, ledgerReady,
+    copyBuildsFromClient,
     // The optimistic index — which function was CLICKED, before the switch commits. Build's own
     // pill nav has always read `fnPending ?? activeFnIdx`; Deal Check never received it, so it had
     // nothing to render from but the deferred value (BUG-11).
