@@ -20,6 +20,7 @@ import { useEventOrderAutoConfirm } from "../../lib/ims/eventAutoConfirm";
 import { AMEND_SK, canApprove } from "../../lib/ims/amend";
 import { fetchMyLabourAccess, labourPunchDepts } from "../../lib/ims/labourAttendance";
 import AppSwitcher from "../../components/AppSwitcher.jsx";
+import PullToRefresh from "../../components/shared/PullToRefresh.jsx";
 import { triggerLmsSync, fetchCachedContracts, fetchSeason, buildDateCategories } from "../../lib/ims/lms";
 import { allocateForDate, buildEventAllocation, eoToFnList, expireStaleSoftHolds, appendTrussAudit, TRUSS_P3_BACKFILLED_SK } from "../../lib/ims/trussEngine";
 import { ensureCdnLibs } from "../../lib/ims/pdf";
@@ -1467,6 +1468,8 @@ export default function IMS() {
        overflow-x-clip: on a phone, anything a few px too wide made the whole page pan sideways.
        clip, not hidden — hidden would make this a scroll container and unstick the sticky header. */
     <div className="min-h-screen bg-slate-100 font-sans overflow-x-clip">
+      {/* Drag down at the top of the page to refresh — on phones, where the browser's own gesture is often missing. */}
+      <PullToRefresh />
       {error && (
         <div style={{ position: "fixed", top: 8, right: 8, zIndex: 99999, background: "#dc2626", color: "#fff", padding: "12px 14px", borderRadius: 8, fontSize: 13, maxWidth: 380, boxShadow: "0 6px 20px rgba(0,0,0,0.25)", border: "1px solid #991b1b" }}>
           <div style={{ fontWeight: 700, marginBottom: 4 }}>❌ {error}</div>
