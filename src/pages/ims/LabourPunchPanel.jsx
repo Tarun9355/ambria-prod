@@ -274,6 +274,7 @@ function LabourAccessCard({ authUser, users, manageDepts, onChanged }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [q, setQ] = useState("");
+  const [qFocus, setQFocus] = useState(false);   // suggestions show only while the search box is in use
   const [pickDept, setPickDept] = useState(manageDepts[0]);
   const key = manageDepts.join("|");
 
@@ -325,12 +326,12 @@ function LabourAccessCard({ authUser, users, manageDepts, onChanged }) {
       )}
 
       <div className="relative mt-3 sm:max-w-xs">
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search user to give access…"
+        <input value={q} onChange={(e) => setQ(e.target.value)} onFocus={() => setQFocus(true)} onBlur={() => setQFocus(false)} placeholder="Search user to give access…"
           className="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-300" />
-        {matches.length > 0 && (
+        {qFocus && matches.length > 0 && (
           <div className="absolute z-20 left-0 right-0 mt-1 bg-white rounded-xl shadow-lg ring-1 ring-gray-200 overflow-hidden">
             {matches.map((u) => (
-              <button key={u.id} onClick={() => grant(u)} className="w-full text-left px-3 py-2 text-sm hover:bg-indigo-50 transition flex items-center justify-between gap-2">
+              <button key={u.id} onMouseDown={(e) => e.preventDefault()} onClick={() => grant(u)} className="w-full text-left px-3 py-2 text-sm hover:bg-indigo-50 transition flex items-center justify-between gap-2">
                 <span className="font-medium text-gray-800 truncate">{u.name || u.username}</span>
                 <span className="text-xs text-gray-400 shrink-0">{u.role}</span>
               </button>

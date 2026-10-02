@@ -118,7 +118,7 @@ export function SelectPopover({ value, options, onChange, align = "right", size 
         <span className={"text-gray-400 text-[10px] transition-transform " + (open ? "rotate-180" : "")}>▾</span>
       </button>
       {open && (
-        <div className={"absolute z-20 top-full mt-2 bg-white rounded-xl shadow-xl ring-1 ring-gray-200 p-1.5 max-h-72 overflow-y-auto " + (sm ? "w-40 " : "w-48 ") + (align === "left" ? "left-0" : "right-0")}>
+        <div className={"absolute z-30 top-full mt-2 bg-white rounded-xl shadow-xl ring-1 ring-gray-200 p-1.5 max-h-72 overflow-y-auto " + (sm ? "w-40 " : "w-48 ") + (align === "left" ? "left-0" : "right-0")}>
           {options.map((o) => (
             <button key={o.value} onClick={() => { onChange(o.value); setOpen(false); }}
               className={"w-full text-left rounded-lg transition " + (sm ? "px-2.5 py-1 text-xs " : "px-3 py-1.5 text-sm ")
