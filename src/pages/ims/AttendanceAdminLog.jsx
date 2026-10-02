@@ -10,7 +10,7 @@ const pad2 = (n) => String(n).padStart(2, "0");
 // A small dropdown calendar in the app's own blue theme, standing in for the browser's native
 // <input type="date"> popup — that one renders in the OS's own font/colours and looks like a
 // different application dropped onto the page next to everything this admin log already styles.
-function DatePickerPopover({ value, max, onChange }) {
+export function DatePickerPopover({ value, max, onChange }) {
   const [open, setOpen] = useState(false);
   const sel = new Date(value + "T00:00:00");
   const [viewYear, setViewYear] = useState(sel.getFullYear());

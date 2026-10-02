@@ -12,6 +12,7 @@ import AttendanceAdminLog from "./AttendanceAdminLog.jsx";
 import QuizSetupPanel from "./QuizSetupPanel.jsx";
 import AttendanceLocationsPanel from "./AttendanceLocationsPanel.jsx";
 import LabourPunchPanel from "./LabourPunchPanel.jsx";
+import LabourAdminLog from "./LabourAdminLog.jsx";
 import { fetchMyLabourAccess, labourPunchDepts } from "../../lib/ims/labourAttendance";
 import {
   IconUsers, IconClockAlert, IconHourglass, IconPlay, IconStop, IconClipboard, IconBook, IconPin,
@@ -338,6 +339,10 @@ export default function AttendanceTab({ authUser, settings, setSettings, users }
                     <IconBook size={13} /> Staff Log
                   </button>
                   <span className="text-gray-300">/</span>
+                  <button onClick={() => setAdminView("labourlog")} className="flex items-center gap-1 hover:text-blue-600 transition px-1 py-0.5">
+                    <IconUsers size={13} /> Labour Log
+                  </button>
+                  <span className="text-gray-300">/</span>
                   <button onClick={() => setAdminView("location")} className="flex items-center gap-1 hover:text-blue-600 transition px-1 py-0.5">
                     <IconPin size={13} /> Manage Locations
                   </button>
@@ -423,13 +428,14 @@ export default function AttendanceTab({ authUser, settings, setSettings, users }
       )}
 
       {adminView && (isAdmin || (adminView === "labour" && canLabourPunch)) && (
-        <div className={adminView === "log" || adminView === "labour" ? "max-w-3xl" : adminView === "quiz" ? "max-w-4xl" : "max-w-2xl"}>
+        <div className={adminView === "log" || adminView === "labour" ? "max-w-3xl" : adminView === "quiz" || adminView === "labourlog" ? "max-w-4xl" : "max-w-2xl"}>
           <button onClick={() => setAdminView(null)}
             className="flex items-center gap-1.5 text-sm font-semibold text-gray-500 bg-white ring-1 ring-gray-200 shadow-sm rounded-xl px-3 py-1.5 mb-3 hover:bg-gray-50 hover:text-gray-700 transition">
             ← Back to Attendance
           </button>
           {adminView === "quiz" && <QuizSetupPanel settings={settings} setSettings={setSettings} />}
           {adminView === "log" && <AttendanceAdminLog users={users} />}
+          {adminView === "labourlog" && <LabourAdminLog />}
           {adminView === "location" && <AttendanceLocationsPanel settings={settings} setSettings={setSettings} />}
           {adminView === "labour" && (
             <LabourPunchPanel authUser={authUser} users={users} settings={settings} myAccess={myLabourAccess} onAccessChanged={loadMyLabourAccess} />

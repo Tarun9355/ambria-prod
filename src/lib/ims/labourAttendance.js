@@ -56,6 +56,18 @@ export async function fetchDayLabourPunches(dateStr, depts) {
   if (error) throw error;
   return data || [];
 }
+/** Every department's labour punches between two dates (inclusive), oldest first — Admin's log. */
+export async function fetchLabourPunchesRange(fromDate, toDate) {
+  const { data, error } = await supabase.from("labour_attendance").select("*").gte("date", fromDate).lte("date", toDate).order("at", { ascending: true });
+  if (error) throw error;
+  return data || [];
+}
+/** The whole active roster, every department — Admin's log uses it to list who did NOT punch. */
+export async function fetchAllActiveLabours() {
+  const { data, error } = await supabase.from("labours").select("*").eq("active", true).order("name");
+  if (error) throw error;
+  return data || [];
+}
 export async function insertLabourPunch(row) {
   const { data, error } = await supabase.from("labour_attendance").insert(row).select().single();
   if (error) throw error;
