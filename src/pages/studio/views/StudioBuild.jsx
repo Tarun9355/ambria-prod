@@ -952,23 +952,21 @@ export default function StudioBuild({ ctx }) {
   // favourites (eventId || src). They lead the grid under a "Recently viewed" heading and fill the
   // strip's four tiles. Per user, per browser (localStorage), same convention as Browse's recent
   // videos — unavailable storage just means an empty list.
+  const RECENT_PHOTOS_MAX = 10;
   const RECENT_PHOTOS_KEY = `ambria-recent-photos:${authUser?.id || "anon"}`;
   const [recentPhotos, setRecentPhotos] = useState(() => {
-    try { const v = JSON.parse(localStorage.getItem(RECENT_PHOTOS_KEY) || "[]"); return Array.isArray(v) ? v : []; } catch { return []; }
+    try { const v = JSON.parse(localStorage.getItem(RECENT_PHOTOS_KEY) || "[]"); return Array.isArray(v) ? v.slice(0, RECENT_PHOTOS_MAX) : []; } catch { return []; }
   });
   const markPhotoViewed = (ph) => {
     const id = ph && (ph.eventId || ph.src);
     if (!id) return;
     setRecentPhotos(p => {
       if (p[0] === id) return p;
-      const next = [id, ...p.filter(x => x !== id)].slice(0, 40);
+      const next = [id, ...p.filter(x => x !== id)].slice(0, RECENT_PHOTOS_MAX);
       try { localStorage.setItem(RECENT_PHOTOS_KEY, JSON.stringify(next)); } catch { /* storage off — keep it in memory */ }
       return next;
     });
   };
-  // The grid orders by the recent list as it stood when the grid OPENED — a live order would yank
-  // the tile you just clicked to the front, out from under the cursor. Dropped when the grid closes.
-  const gridRecentSnapRef = useRef({});
   // Name for the "Other" entry in the Add Zone picker. Local, not in ctx: it is transient text that
   // only this panel reads, and it is cleared the moment the zone is added or the picker changes.
   const [newCzOtherName, setNewCzOtherName] = useState("");
@@ -2161,16 +2159,23 @@ export default function StudioBuild({ ctx }) {
    that leaves the bar with no background at all, and one thing going wrong drops the whole header
    onto the page. The var() fallback is the safety: if --sb-pw ever fails to resolve it reads 0px,
    both stops collapse to the left edge, and the bar paints solid across its full width.
-   The cut starts 3px early because the panel's edge is a CURVE and this cut is a straight line — by
+   The cut starts 16px early (3px was enough for a one-row bar; the function row makes it taller, and by its bottom the curve has drawn in ~5–9px) because the panel's edge is a CURVE and this cut is a straight line — by
    the bottom of the bar the curve has drawn in to ~99.4%, and a cut at exactly --sb-pw left a strip
    of page showing between them. The overlap lands on panel ink, which is dark either way.
    background-origin AFTER the shorthand, because the shorthand resets it — and it must be
    border-box, or the 24px of header padding shifts the whole gradient and reopens the gap. */
 :root[data-sb-rail="1"] .sa-sheen{left:var(--sb-pw,0px) !important}
 :root[data-sb-rail="1"] .sa-fnrow{margin-left:var(--sb-pw,0px);flex-basis:calc(100% - var(--sb-pw,0px)) !important}
+/* The row starts at --sb-pw PLUS the header's own left padding, so its gold hairline stopped short of
+   the panel edge and left a gap beside FUNCTION. Carry the line back across that padding (24 / 14 / 11px,
+   matching .sa-header's breakpoints in StudioApp) so it meets the panel. */
+:root[data-sb-rail="1"] .sa-fnrow{position:relative}
+:root[data-sb-rail="1"] .sa-fnrow::before{content:"";position:absolute;top:-1px;right:100%;width:24px;height:1px;background:rgba(201,169,110,0.12);pointer-events:none}
+@media (max-width:1180px){:root[data-sb-rail="1"] .sa-fnrow::before{width:14px}}
+@media (max-width:840px){:root[data-sb-rail="1"] .sa-fnrow::before{width:11px}}
 :root[data-sb-rail="1"] .sa-header{box-shadow:none !important;border-bottom-color:transparent !important;
-  background:linear-gradient(90deg,rgba(0,0,0,0) 0,rgba(0,0,0,0) calc(var(--sb-pw,0px) - 3px),
-    ${isDark?"#0A0A14":"#0A0619"} calc(var(--sb-pw,0px) - 3px),${isDark?"#07070D":"#130A2E"} 100%) !important;
+  background:linear-gradient(90deg,rgba(0,0,0,0) 0,rgba(0,0,0,0) calc(var(--sb-pw,0px) - 16px),
+    ${isDark?"#0A0A14":"#0A0619"} calc(var(--sb-pw,0px) - 16px),${isDark?"#07070D":"#130A2E"} 100%) !important;
   background-origin:border-box !important}
 /* ── THE TITLE ──
    Same display serif as Event Info's and Browse's, so the four steps are set in one voice.
@@ -3020,10 +3025,8 @@ undefined
       // tiles are the photos this salesperson was last looking at. The grid then runs your
       // favourites → others' favourites → has elements → the rest. Stable partitions over the order
       // built above, so the group / unticked placement still holds inside each tier.
-      if (gridZones[k]) { if (!gridRecentSnapRef.current[k]) gridRecentSnapRef.current[k] = recentPhotos; }
-      else delete gridRecentSnapRef.current[k];
-      const recentList = gridZones[k] ? gridRecentSnapRef.current[k] : recentPhotos;
-      const recentRank = new Map(recentList.map((id, i) => [id, i]));
+      // Live, not frozen at grid-open: a photo you click shows up under Recently viewed straight away.
+      const recentRank = new Map(recentPhotos.map((id, i) => [id, i]));
       const isRecentPhoto = (ph) => recentRank.has(favKey(ph));
       const phTier = (ph) => isRecentPhoto(ph) ? 0 : !gridZones[k] ? 1 : isMyFavPhoto(ph) ? 1 : isAnyFavPhoto(ph) ? 2 : (ph.elements || []).length > 0 ? 3 : 4;
       {

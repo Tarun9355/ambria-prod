@@ -1090,6 +1090,13 @@ function StudioBrowse({ ctx }) {
    and can put a horizontal scrollbar on the page. */
 :root[data-sb-rail="1"] .sa-fnrow{margin-left:var(--sb-pw,0px);
   flex-basis:calc(100% - var(--sb-pw,0px)) !important}
+/* The row starts at --sb-pw PLUS the header's own left padding, so its gold hairline stopped short of
+   the panel edge and left a gap beside FUNCTION. Carry the line back across that padding (24 / 14 / 11px,
+   matching .sa-header's breakpoints in StudioApp) so it meets the panel. */
+:root[data-sb-rail="1"] .sa-fnrow{position:relative}
+:root[data-sb-rail="1"] .sa-fnrow::before{content:"";position:absolute;top:-1px;right:100%;width:24px;height:1px;background:rgba(201,169,110,0.12);pointer-events:none}
+@media (max-width:1180px){:root[data-sb-rail="1"] .sa-fnrow::before{width:14px}}
+@media (max-width:840px){:root[data-sb-rail="1"] .sa-fnrow::before{width:11px}}
 /* The bar's drifting sheen has to stop where the bar's background stops. It is a full-width layer
    inside the header, so over the transparent window it was painting its violet straight onto the
    panel — which is exactly why the logo area came out purple while the panel below it was black.
@@ -1104,10 +1111,10 @@ function StudioBrowse({ ctx }) {
    distance to both the panel and the bar and the two edges meet exactly.
    Declared AFTER the shorthand on purpose: the background shorthand resets background-origin to
    padding-box, so putting it first would have it wiped by the very line it exists to correct.
-   The cut starts 3px EARLY, at --sb-pw minus 3. The panel's edge is a curve and this cut is a
+   The cut starts 16px EARLY, at --sb-pw minus 16. The panel's edge is a curve and this cut is a
    straight line: by the bottom of the bar the curve has drawn in to about 99.4% of the panel width,
    so a straight cut at exactly --sb-pw left a ~2px strip where neither the panel nor the navy
-   painted, and the cream page showed through it. Overlapping by 3px closes that for the whole band —
+   painted, and the cream page showed through it. Overlapping by 16px closes that for the whole band (3px did for a one-row bar, but the function row makes the bar taller and the curve has drawn in ~5–9px by its bottom) —
    the overlap lands on panel ink, which is dark either way, so it costs nothing to look at.
    BYTE-IDENTICAL TO BUILD'S RULE, and it has to stay that way: the two pages wear the same bar over
    the same panel, and the seam looking different on one of them is a drift bug, not a design choice.
@@ -1115,8 +1122,8 @@ function StudioBrowse({ ctx }) {
    opening lighter than Build's, so the bar had a lighter surface to sit against. Fixed there, at
    .sb-rail-veil, which is where the difference actually was. */
 :root[data-sb-rail="1"] .sa-header{box-shadow:none !important;border-bottom-color:transparent !important;
-  background:linear-gradient(90deg,rgba(0,0,0,0) 0,rgba(0,0,0,0) calc(var(--sb-pw,0px) - 3px),
-    ${isDark?"#0A0A14":"#0A0619"} calc(var(--sb-pw,0px) - 3px),${isDark?"#07070D":"#130A2E"} 100%) !important;
+  background:linear-gradient(90deg,rgba(0,0,0,0) 0,rgba(0,0,0,0) calc(var(--sb-pw,0px) - 16px),
+    ${isDark?"#0A0A14":"#0A0619"} calc(var(--sb-pw,0px) - 16px),${isDark?"#07070D":"#130A2E"} 100%) !important;
   background-origin:border-box !important}
 /* Hidden panel, no reserved gutter. The offset above is plain CSS keyed to --sb-pw, so folding the
    rail used to leave its 392px behind as empty page — the grid stayed exactly where it was and the
