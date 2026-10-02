@@ -3,6 +3,7 @@ import { Modal } from "../../components/ui";
 import { fetchRangePunches, todayStr, punchLabel, punchLocationLabel } from "../../lib/ims/attendance";
 import { DEPTS, userDepartments } from "../../lib/ims/deptClassify";
 import { IconPin, IconCalendar } from "../../components/icons.jsx";
+import AttendanceMonthLog from "./AttendanceMonthLog.jsx";
 
 const fmtTime = (iso) => { try { return new Date(iso).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }); } catch { return "—"; } };
 const pad2 = (n) => String(n).padStart(2, "0");
@@ -175,6 +176,14 @@ export default function AttendanceAdminLog({ users }) {
     return () => { active = false; };
   }, [date]);
 
+  // Daily (one day's punches) or Monthly (per-person totals + Excel export, AttendanceMonthLog).
+  const [view, setView] = useState("day");
+  const [ym, setYm] = useState(() => ({ y: new Date().getFullYear(), m: new Date().getMonth() + 1 }));
+  const isCurMonth = ym.y === new Date().getFullYear() && ym.m === new Date().getMonth() + 1;
+  function shiftMonth(delta) {
+    setYm(({ y, m }) => { let nm = m + delta, ny = y; if (nm < 1) { nm = 12; ny--; } else if (nm > 12) { nm = 1; ny++; } return { y: ny, m: nm }; });
+  }
+
   function shiftDay(delta) {
     const d = new Date(date + "T00:00:00");
     d.setDate(d.getDate() + delta);
@@ -238,19 +247,37 @@ export default function AttendanceAdminLog({ users }) {
     <div className="mt-3 bg-white rounded-2xl shadow-sm ring-1 ring-gray-100 p-5 sm:p-6">
       <div className="flex items-center justify-between flex-wrap gap-3 mb-1">
         <h3 className="text-lg font-bold text-gray-900">Staff Attendance Log</h3>
-        <div className="flex items-center gap-1 bg-gray-50 rounded-xl ring-1 ring-gray-100 p-1">
-          <button onClick={() => shiftDay(-1)} title="Previous day"
-            className="w-7 h-7 flex items-center justify-center rounded-lg text-gray-400 hover:text-gray-700 hover:bg-white transition text-lg leading-none">‹</button>
-          <DatePickerPopover value={date} max={today} onChange={setDate} />
-          <button onClick={() => shiftDay(1)} disabled={date >= today} title="Next day"
-            className="w-7 h-7 flex items-center justify-center rounded-lg text-gray-400 hover:text-gray-700 hover:bg-white transition text-lg leading-none disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent">›</button>
-          {date !== today && (
-            <button onClick={() => setDate(today)}
-              className="text-xs font-semibold text-blue-600 hover:text-blue-700 px-2">Today</button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex bg-gray-100 rounded-xl p-1">
+            {[["day", "Daily"], ["month", "Monthly"]].map(([v, l]) => (
+              <button key={v} onClick={() => setView(v)}
+                className={"px-3 py-1 rounded-lg text-xs font-semibold transition " + (view === v ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700")}>{l}</button>
+            ))}
+          </div>
+          {view === "day" ? (
+            <div className="flex items-center gap-1 bg-gray-50 rounded-xl ring-1 ring-gray-100 p-1">
+              <button onClick={() => shiftDay(-1)} title="Previous day"
+                className="w-7 h-7 flex items-center justify-center rounded-lg text-gray-400 hover:text-gray-700 hover:bg-white transition text-lg leading-none">‹</button>
+              <DatePickerPopover value={date} max={today} onChange={setDate} />
+              <button onClick={() => shiftDay(1)} disabled={date >= today} title="Next day"
+                className="w-7 h-7 flex items-center justify-center rounded-lg text-gray-400 hover:text-gray-700 hover:bg-white transition text-lg leading-none disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent">›</button>
+              {date !== today && (
+                <button onClick={() => setDate(today)}
+                  className="text-xs font-semibold text-blue-600 hover:text-blue-700 px-2">Today</button>
+              )}
+            </div>
+          ) : (
+            <div className="flex items-center gap-1 bg-gray-50 rounded-xl ring-1 ring-gray-100 p-1">
+              <button onClick={() => shiftMonth(-1)} title="Previous month"
+                className="w-7 h-7 flex items-center justify-center rounded-lg text-gray-400 hover:text-gray-700 hover:bg-white transition text-lg leading-none">‹</button>
+              <span className="text-sm font-semibold text-gray-700 px-2">{new Date(ym.y, ym.m - 1, 1).toLocaleDateString("en-IN", { month: "long", year: "numeric" })}</span>
+              <button onClick={() => shiftMonth(1)} disabled={isCurMonth} title="Next month"
+                className="w-7 h-7 flex items-center justify-center rounded-lg text-gray-400 hover:text-gray-700 hover:bg-white transition text-lg leading-none disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent">›</button>
+            </div>
           )}
         </div>
       </div>
-      <p className="text-xs text-gray-400 mb-4">{dateLabel}</p>
+      <p className="text-xs text-gray-400 mb-4">{view === "day" ? dateLabel : "Every active staff member — punched or not"}</p>
 
       <div className="flex gap-2 mb-4">
         <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by name…"
@@ -259,7 +286,9 @@ export default function AttendanceAdminLog({ users }) {
           options={[{ value: "all", label: "All departments" }, ...DEPTS.map((d) => ({ value: d, label: d })), { value: "Admin", label: "Admin" }]} />
       </div>
 
-      {loading ? (
+      {view === "month" ? (
+        <AttendanceMonthLog users={users} ym={ym} search={search} dept={dept} deptByUserId={deptByUserId} isAdminByUserId={isAdminByUserId} />
+      ) : loading ? (
         <p className="text-sm text-gray-400 text-center py-10">Loading…</p>
       ) : error ? (
         <p className="text-sm text-red-600 text-center py-10">{error}</p>
