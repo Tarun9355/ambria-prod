@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { fmt } from "../../lib/format";
-import { mpDayWise, mpBaseDay, mpEffDay, mpEffWindows, mpLineCost, mpDayCost, isLiveEventOrder } from "../../lib/ims/helpers";
+import { mpDayWise, mpBaseDay, mpEffDay, mpEffWindows, mpLineCost, mpDayCost, isLiveEventOrder, phone10 } from "../../lib/ims/helpers";
 import { uploadAudioToStorage } from "../../lib/storage";
 import { DEPTS as SHARED_DEPTS, catToDept as sharedCatToDept, userDepartments } from "../../lib/ims/deptClassify";
 import ManpowerFactorPills from "../../components/shared/ManpowerFactorPills.jsx";
@@ -3903,7 +3903,7 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                   <div className="grid grid-cols-2 sm:grid-cols-[1fr_1fr_1fr_auto] gap-2">
                     <input value={newVeh.vehicle} onChange={e => setNewVeh(v => ({ ...v, vehicle: e.target.value }))} placeholder="Vehicle no." className="h-9 rounded-lg bg-white ring-1 ring-gray-200 px-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400" />
                     <input value={newVeh.driver} onChange={e => setNewVeh(v => ({ ...v, driver: e.target.value }))} placeholder="Driver name" className="h-9 rounded-lg bg-white ring-1 ring-gray-200 px-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400" />
-                    <input value={newVeh.phone} onChange={e => setNewVeh(v => ({ ...v, phone: e.target.value }))} placeholder="Phone" className="h-9 rounded-lg bg-white ring-1 ring-gray-200 px-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                    <input value={newVeh.phone} onChange={e => setNewVeh(v => ({ ...v, phone: phone10(e.target.value) }))} inputMode="numeric" maxLength={10} placeholder="Phone (10 digits)" className="h-9 rounded-lg bg-white ring-1 ring-gray-200 px-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400" />
                     <button onClick={addFleet} className="h-9 bg-gray-900 hover:bg-black text-white px-3 rounded-lg text-xs font-semibold transition-colors">Add vehicle</button>
                   </div>
                 </div>
@@ -4362,7 +4362,7 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                           <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5">
                             <input value={truck.vehicle || ""} onChange={e => setTruckField(g.key, "vehicle", e.target.value)} placeholder="Vehicle no." className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs" />
                             <input value={truck.driver || ""} onChange={e => setTruckField(g.key, "driver", e.target.value)} placeholder="Driver" className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs" />
-                            <input value={truck.phone || ""} onChange={e => setTruckField(g.key, "phone", e.target.value)} placeholder="Phone" className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs" />
+                            <input value={truck.phone || ""} onChange={e => setTruckField(g.key, "phone", phone10(e.target.value))} inputMode="numeric" maxLength={10} placeholder="Phone (10 digits)" className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs" />
                           </div>
                           {g.items.length > 1 && <div className="text-[10px] text-gray-400">Tick only what fits on this truck — untick the rest and confirm them on a second truck.</div>}
                         </div>

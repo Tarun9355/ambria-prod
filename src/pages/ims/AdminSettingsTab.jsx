@@ -3,7 +3,7 @@ import { Tabs, AddInlineItem, FlowerPicker, Btn, useConfirm } from "../../compon
 import { canvaAuthUrl, canvaConnectionStatus, canvaClientId } from "../../lib/canva";
 import { uploadToStorage, compressImageForUpload, STORAGE_FOLDERS } from "../../lib/storage";
 import { resolveMandiFlower, computePatternSizeCost, effectiveMarkup, studioUnitLabel } from "../../lib/ims/flowerHelpers";
-import { priceForInvItem } from "../../lib/ims/helpers";
+import { priceForInvItem, phone10 } from "../../lib/ims/helpers";
 import { MANPOWER_TYPES, SIT_MULT_DEFAULTS, SIT_MULT_TYPES, DUMPING_LEVELS, EVENT_TIMINGS, eventTimingMultFor, hasIMSPerm } from "../../lib/ims/constants";
 import ImsTransportPanel from "./ImsTransportPanel.jsx";
 import { INV_CATS } from "../../lib/inventory/constants";
@@ -1984,7 +1984,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
           {supervisors.map((s) => (
             <div key={s.id} className="flex items-center gap-3 bg-white border rounded-xl px-4 py-3">
               <input value={s.name} onChange={(e) => updateSupervisor(s.id, "name", e.target.value)} className="flex-1 border rounded-lg px-3 py-1.5 text-sm font-medium" />
-              <input value={s.phone} onChange={(e) => updateSupervisor(s.id, "phone", e.target.value)} placeholder="Phone" className="w-40 border rounded-lg px-3 py-1.5 text-sm" />
+              <input value={s.phone} onChange={(e) => updateSupervisor(s.id, "phone", phone10(e.target.value))} inputMode="numeric" maxLength={10} placeholder="Phone (10 digits)" className="w-40 border rounded-lg px-3 py-1.5 text-sm" />
               <label className="flex items-center gap-1 text-xs">
                 <input type="checkbox" checked={s.active} onChange={(e) => updateSupervisor(s.id, "active", e.target.checked)} />
                 Active

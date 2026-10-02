@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { uploadToStorage, compressImageForUpload, STORAGE_FOLDERS } from "../../lib/storage";
+import { uploadToStorage, compressPunchPhoto, STORAGE_FOLDERS } from "../../lib/storage";
 import { checkFaceInPhoto, watchFaceInVideo } from "../../lib/faceCheck";
 import {
   todayStr, newPunchId, fetchDayPunches, insertPunch, currentState, gradeQuiz, attendanceQuizDept,
@@ -274,7 +274,7 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
           locationName = await reverseGeocode(liveFlow.lat, liveFlow.lng);
         }
 
-        const compressed = await compressImageForUpload(flow.photoFile);
+        const compressed = await compressPunchPhoto(flow.photoFile);
         const photo = await uploadToStorage(compressed, STORAGE_FOLDERS.ATTENDANCE);
         const saved = await insertPunch({
           id: newPunchId(),
@@ -392,7 +392,7 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
       )}
 
       {adminView && (isAdmin || (adminView === "labour" && canLabourPunch)) && (
-        <div className={adminView === "log" || adminView === "labour" ? "max-w-3xl" : adminView === "quiz" || adminView === "labourlog" ? "max-w-4xl" : "max-w-2xl"}>
+        <div className={adminView === "labour" ? (isAdmin ? "max-w-6xl" : "max-w-3xl") : adminView === "log" ? "max-w-3xl" : adminView === "quiz" || adminView === "labourlog" ? "max-w-4xl" : "max-w-2xl"}>
           <button onClick={() => setAdminView(null)}
             className="flex items-center gap-1.5 text-sm font-semibold text-gray-500 bg-white ring-1 ring-gray-200 shadow-sm rounded-xl px-3 py-1.5 mb-3 hover:bg-gray-50 hover:text-gray-700 transition">
             ← Back to Attendance

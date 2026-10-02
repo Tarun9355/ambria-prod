@@ -272,3 +272,12 @@ export function deptMpReconciled(detail, deptData) {
 // two drifted, a calendar entry could link through to an event Dept Ops refuses to show.
 export const DEAD_EVENT_STATUS = new Set(["pending", "cancelled", "review"]);
 export const isLiveEventOrder = (eo) => !!(eo?.status && !DEAD_EVENT_STATUS.has(eo.status));
+
+// Indian mobile number input: digits only, capped at 10. Tolerates a pasted "+91…" or a leading
+// "0" (the same normalisation Studio's client-phone field uses), so "+91 98765 43210" → "9876543210".
+export const phone10 = (v) => {
+  let d = String(v ?? "").replace(/\D/g, "");
+  if (d.length > 10 && d.startsWith("91")) d = d.slice(2);
+  else if (d.length > 10 && d.startsWith("0")) d = d.slice(1);
+  return d.slice(0, 10);
+};

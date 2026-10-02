@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase, subscribeTable } from "../../lib/supabase";
-import { uploadToStorage, compressImageForUpload, STORAGE_FOLDERS } from "../../lib/storage";
+import { uploadToStorage, compressPunchPhoto, STORAGE_FOLDERS } from "../../lib/storage";
 import { todayStr, getCurrentCoords, resolvePunchLocation, reverseGeocode, punchLocationLabel } from "../../lib/ims/attendance";
 import {
   labourPunchDepts, labourManageDepts, fetchLabours, insertLabour, deactivateLabour, newLabourId,
@@ -9,6 +9,7 @@ import {
 } from "../../lib/ims/labourAttendance";
 import LabourPunchCamera from "./LabourPunchCamera.jsx";
 import { SelectPopover } from "./AttendanceAdminLog.jsx";
+import { phone10 } from "../../lib/ims/helpers";
 import { IconUsers, IconSearch, IconPlusCircle, IconTrash, IconPin, IconLock, IconX } from "../../components/icons.jsx";
 
 // ═══ LABOUR PUNCH ═══ (Attendance → Labour Punch)
@@ -24,8 +25,17 @@ const COORDS_MAX_AGE_MS = 2 * 60 * 1000;
 export default function LabourPunchPanel({ authUser, users, settings, myAccess, onAccessChanged }) {
   const punchDepts = useMemo(() => labourPunchDepts(authUser, myAccess), [authUser, myAccess]);
   const manageDepts = useMemo(() => labourManageDepts(authUser), [authUser]);
-  const [dept, setDept] = useState(() => punchDepts[0] || "");
-  useEffect(() => { if (!punchDepts.includes(dept)) setDept(punchDepts[0] || ""); }, [punchDepts, dept]);
+  // With access to more than one department the default is "All departments": a guard at the gate
+  // punches whoever walks in, whichever department they work for, from one list.
+  const ALL_DEPTS = "__all";
+  const defaultDept = punchDepts.length > 1 ? ALL_DEPTS : punchDepts[0] || "";
+  const [dept, setDept] = useState(() => defaultDept);
+  useEffect(() => {
+    if (dept === ALL_DEPTS ? punchDepts.length < 2 : !punchDepts.includes(dept)) setDept(defaultDept);
+  }, [punchDepts, dept, defaultDept]);
+  const isAllDepts = dept === ALL_DEPTS;
+  const [addDept, setAddDept] = useState("");   // the new labour's department while viewing All
+  const targetDept = isAllDepts ? (punchDepts.includes(addDept) ? addDept : punchDepts[0] || "") : dept;
 
   const [labours, setLabours] = useState([]);
   const [punches, setPunches] = useState([]);
@@ -85,7 +95,7 @@ export default function LabourPunchPanel({ authUser, users, settings, myAccess, 
   useEffect(() => { getCoords(); }, []); // eslint-disable-line -- warm once on open
 
   const last = useMemo(() => lastPunchByLabour(punches), [punches]);
-  const deptLabours = labours.filter((l) => l.department === dept);
+  const deptLabours = isAllDepts ? labours : labours.filter((l) => l.department === dept);
   const shown = q.trim()
     ? deptLabours.filter((l) => `${l.name} ${l.phone || ""}`.toLowerCase().includes(q.trim().toLowerCase()))
     : deptLabours;
@@ -103,7 +113,7 @@ export default function LabourPunchPanel({ authUser, users, settings, myAccess, 
       const lat = coords?.lat ?? null, lng = coords?.lng ?? null;
       let locationName = resolvePunchLocation(settings?.attendanceLocations, lat, lng)?.name || null;
       if (!locationName && lat != null && lng != null) locationName = await reverseGeocode(lat, lng);
-      const photo = await uploadToStorage(await compressImageForUpload(file), STORAGE_FOLDERS.ATTENDANCE);
+      const photo = await uploadToStorage(await compressPunchPhoto(file), STORAGE_FOLDERS.ATTENDANCE);
       const saved = await insertLabourPunch({
         id: newLabourPunchId(),
         labour_id: labour.id,
@@ -136,9 +146,11 @@ export default function LabourPunchPanel({ authUser, users, settings, myAccess, 
   const [newPhone, setNewPhone] = useState("");
   async function addLabour() {
     const name = newName.trim();
-    if (!name || !dept) return;
+    if (!name || !targetDept) return;
+    // Optional, but if given it must be a full 10-digit mobile (input already strips to digits).
+    if (newPhone && newPhone.length !== 10) { setError("Phone number must be 10 digits"); return; }
     try {
-      const row = await insertLabour({ id: newLabourId(), name, phone: newPhone.trim() || null, department: dept, active: true, created_by: authUser.id });
+      const row = await insertLabour({ id: newLabourId(), name, phone: newPhone.trim() || null, department: targetDept, active: true, created_by: authUser.id });
       setLabours((prev) => [...prev.filter((l) => l.id !== row.id), row].sort((a, b) => a.name.localeCompare(b.name)));
       setNewName(""); setNewPhone(""); setAdding(false);
     } catch (e) { setError(e.message || "Couldn't add the labour"); }
@@ -161,7 +173,9 @@ export default function LabourPunchPanel({ authUser, users, settings, myAccess, 
   }
 
   return (
-    <div className="space-y-4">
+    // Side by side from lg up when the access card is shown (Admin), two equal columns; one
+    // column (stacked) on phones and for a guard, who only sees the list.
+    <div className={manageDepts.length > 0 ? "grid grid-cols-1 lg:grid-cols-2 gap-4 items-start" : "space-y-4"}>
       <div className="bg-white rounded-2xl shadow-sm ring-1 ring-gray-100 p-4 sm:p-5">
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div className="flex items-center gap-2 text-sm font-bold text-gray-800 uppercase tracking-wide">
@@ -175,7 +189,7 @@ export default function LabourPunchPanel({ authUser, users, settings, myAccess, 
         {punchDepts.length > 1 && (
           <div className="mt-4 flex items-center gap-2">
             <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Department</span>
-            <SelectPopover align="left" size="sm" value={dept} onChange={setDept} options={deptOptions(punchDepts)} />
+            <SelectPopover align="left" size="sm" value={dept} onChange={setDept} options={[{ value: ALL_DEPTS, label: "All departments" }, ...deptOptions(punchDepts)]} />
           </div>
         )}
 
@@ -197,12 +211,13 @@ export default function LabourPunchPanel({ authUser, users, settings, myAccess, 
         </div>
 
         {adding && (
-          <div className="mt-3 rounded-xl bg-gray-50 p-3 flex flex-col sm:flex-row gap-2">
+          <div className="mt-3 rounded-xl bg-gray-50 p-3 flex flex-col sm:flex-row sm:items-center gap-2">
+            {isAllDepts && <SelectPopover align="left" size="sm" value={targetDept} onChange={setAddDept} options={deptOptions(punchDepts)} />}
             <input autoFocus value={newName} onChange={(e) => setNewName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addLabour()}
-              placeholder={`Name (${dept})`} className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300" />
-            <input value={newPhone} onChange={(e) => setNewPhone(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addLabour()}
-              placeholder="Phone (optional)" inputMode="tel" className="sm:w-40 border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300" />
-            <button onClick={addLabour} disabled={!newName.trim()}
+              placeholder={`Name (${targetDept})`} className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300" />
+            <input value={newPhone} onChange={(e) => setNewPhone(phone10(e.target.value))} onKeyDown={(e) => e.key === "Enter" && addLabour()}
+              placeholder="Phone (10 digits)" inputMode="numeric" maxLength={10} className="sm:w-40 border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300" />
+            <button onClick={addLabour} disabled={!newName.trim() || (newPhone.length > 0 && newPhone.length !== 10)}
               className="px-4 py-2 rounded-lg text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 transition">Save</button>
           </div>
         )}
@@ -220,7 +235,7 @@ export default function LabourPunchPanel({ authUser, users, settings, myAccess, 
             <div className="text-center text-gray-400 py-8 text-sm">Loading labours…</div>
           ) : shown.length === 0 ? (
             <div className="text-center text-gray-400 py-8 text-sm">
-              {deptLabours.length ? "No labour matches that search." : `No labours in ${dept} yet — tap Add to put the first one in.`}
+              {deptLabours.length ? "No labour matches that search." : (isAllDepts ? "No labours yet — tap Add to put the first one in." : `No labours in ${dept} yet — tap Add to put the first one in.`)}
             </div>
           ) : shown.map((l) => {
             const p = last[l.id];
@@ -231,7 +246,7 @@ export default function LabourPunchPanel({ authUser, users, settings, myAccess, 
                   ? <img src={p.photo} alt="" className="w-10 h-10 rounded-full object-cover shrink-0 ring-1 ring-gray-200" />
                   : <div className="w-10 h-10 rounded-full bg-gray-100 text-gray-500 flex items-center justify-center font-bold shrink-0">{l.name.slice(0, 1).toUpperCase()}</div>}
                 <div className="min-w-0 flex-1">
-                  <div className="text-sm font-semibold text-gray-900 truncate">{l.name}{l.phone ? <span className="font-normal text-gray-400"> · {l.phone}</span> : null}</div>
+                  <div className="text-sm font-semibold text-gray-900 truncate">{l.name}{l.phone ? <span className="font-normal text-gray-400"> · {l.phone}</span> : null}{isAllDepts ? <span className="ml-1.5 align-middle text-[10px] font-semibold text-gray-500 bg-gray-100 rounded-full px-1.5 py-0.5">{DEPT_ICON[l.department] || ""} {l.department}</span> : null}</div>
                   <div className={"text-xs truncate flex items-center gap-1 " + (isIn ? "text-green-600" : p ? (p.auto_closed ? "text-amber-600" : "text-gray-500") : "text-gray-400")}>
                     {!p ? "Not punched in today"
                       : isIn ? <>In since {fmtTime(p.at)} <span className="text-gray-400 inline-flex items-center gap-0.5"><IconPin size={10} />{punchLocationLabel(p)}</span></>
@@ -270,12 +285,16 @@ export default function LabourPunchPanel({ authUser, users, settings, myAccess, 
 // Admin grants a user access to one or more departments; everyone else, department heads included,
 // punches only the departments granted to them here.
 function LabourAccessCard({ authUser, users, manageDepts, onChanged }) {
+  const ALL = "__all";
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [q, setQ] = useState("");
   const [qFocus, setQFocus] = useState(false);   // suggestions show only while the search box is in use
-  const [pickDept, setPickDept] = useState(manageDepts[0]);
+  // "All departments" by default: a guard at the gate usually punches every department's labours,
+  // whatever department they themselves belong to — one grant covers all of them.
+  const [pickDept, setPickDept] = useState(manageDepts.length > 1 ? ALL : manageDepts[0]);
+  const isAll = pickDept === ALL;
   const key = manageDepts.join("|");
 
   useEffect(() => {
@@ -290,7 +309,14 @@ function LabourAccessCard({ authUser, users, manageDepts, onChanged }) {
 
   const byId = useMemo(() => new Map((users || []).map((u) => [u.id, u])), [users]);
   const nameOf = (id) => byId.get(id)?.name || byId.get(id)?.username || id;
-  const already = new Set(rows.filter((r) => r.department === pickDept).map((r) => r.user_id));
+  // user_id → the departments they can punch (only the ones this card manages)
+  const deptsByUser = useMemo(() => {
+    const m = new Map();
+    rows.forEach((r) => { if (!m.has(r.user_id)) m.set(r.user_id, []); m.get(r.user_id).push(r); });
+    return m;
+  }, [rows]);
+  const hasAll = (uid) => (deptsByUser.get(uid) || []).length >= manageDepts.length;
+  const already = new Set(isAll ? [...deptsByUser.keys()].filter(hasAll) : rows.filter((r) => r.department === pickDept).map((r) => r.user_id));
   const matches = q.trim()
     ? (users || []).filter((u) => u.active !== false && u.id !== authUser.id && !already.has(u.id)
         && `${u.name || ""} ${u.username || ""} ${u.role || ""}`.toLowerCase().includes(q.trim().toLowerCase())).slice(0, 6)
@@ -298,19 +324,27 @@ function LabourAccessCard({ authUser, users, manageDepts, onChanged }) {
 
   async function grant(u) {
     try {
-      const row = await grantLabourAccess({ userId: u.id, department: pickDept, grantedBy: authUser.id });
-      setRows((prev) => [...prev.filter((r) => r.id !== row.id), row]);
+      const have = new Set((deptsByUser.get(u.id) || []).map((r) => r.department));
+      const targets = isAll ? manageDepts.filter((d) => !have.has(d)) : [pickDept];
+      const added = [];
+      for (const d of targets) added.push(await grantLabourAccess({ userId: u.id, department: d, grantedBy: authUser.id }));
+      const ids = new Set(added.map((r) => r.id));
+      setRows((prev) => [...prev.filter((r) => !ids.has(r.id)), ...added]);
       setQ("");
       onChanged?.();
     } catch (e) { setError(e.message || "Couldn't give access"); }
   }
-  async function revoke(r) {
+  async function revoke(list) {
     try {
-      await revokeLabourAccess(r.id);
-      setRows((prev) => prev.filter((x) => x.id !== r.id));
+      for (const r of list) await revokeLabourAccess(r.id);
+      const ids = new Set(list.map((r) => r.id));
+      setRows((prev) => prev.filter((x) => !ids.has(x.id)));
       onChanged?.();
     } catch (e) { setError(e.message || "Couldn't remove access"); }
   }
+
+  const deptRows = rows.filter((r) => r.department === pickDept);
+  const userGroups = [...deptsByUser.entries()].map(([uid, list]) => ({ uid, list })).sort((a, b) => nameOf(a.uid).localeCompare(nameOf(b.uid)));
 
   return (
     <div className="bg-white rounded-2xl shadow-sm ring-1 ring-gray-100 p-4 sm:p-5">
@@ -321,12 +355,14 @@ function LabourAccessCard({ authUser, users, manageDepts, onChanged }) {
       {manageDepts.length > 1 && (
         <div className="mt-3 flex items-center gap-2">
           <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Department</span>
-          <SelectPopover align="left" size="sm" value={pickDept} onChange={setPickDept} options={deptOptions(manageDepts)} />
+          <SelectPopover align="left" size="sm" value={pickDept} onChange={setPickDept}
+            options={[{ value: ALL, label: "All departments" }, ...deptOptions(manageDepts)]} />
         </div>
       )}
 
-      <div className="relative mt-3 sm:max-w-xs">
-        <input value={q} onChange={(e) => setQ(e.target.value)} onFocus={() => setQFocus(true)} onBlur={() => setQFocus(false)} placeholder="Search user to give access…"
+      <div className="relative mt-3">
+        <input value={q} onChange={(e) => setQ(e.target.value)} onFocus={() => setQFocus(true)} onBlur={() => setQFocus(false)}
+          placeholder={isAll ? "Search user to give access to all departments…" : "Search user to give access…"}
           className="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-300" />
         {qFocus && matches.length > 0 && (
           <div className="absolute z-20 left-0 right-0 mt-1 bg-white rounded-xl shadow-lg ring-1 ring-gray-200 overflow-hidden">
@@ -344,15 +380,32 @@ function LabourAccessCard({ authUser, users, manageDepts, onChanged }) {
 
       <div className="mt-3 divide-y divide-gray-100">
         {loading ? <div className="text-sm text-gray-400 py-3">Loading…</div>
-          : rows.filter((r) => r.department === pickDept).length === 0
+          : isAll ? (
+            userGroups.length === 0
+              ? <div className="text-sm text-gray-400 py-3">Nobody has labour punch access yet.</div>
+              : userGroups.map(({ uid, list }) => (
+                <div key={uid} className="flex items-start justify-between gap-2 py-2.5">
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold text-gray-800 truncate">{nameOf(uid)}</div>
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {list.length >= manageDepts.length
+                        ? <span className="text-[11px] font-semibold text-indigo-700 bg-indigo-50 rounded-full px-2 py-0.5">All departments</span>
+                        : list.map((r) => <span key={r.id} className="text-[11px] text-gray-600 bg-gray-100 rounded-full px-2 py-0.5">{DEPT_ICON[r.department] || ""} {r.department}</span>)}
+                    </div>
+                  </div>
+                  <button onClick={() => revoke(list)} title="Remove all of this user's labour punch access"
+                    className="shrink-0 text-xs font-semibold text-red-500 hover:text-red-700 hover:bg-red-50 px-2.5 py-1.5 rounded-lg transition">Remove</button>
+                </div>
+              ))
+          ) : deptRows.length === 0
             ? <div className="text-sm text-gray-400 py-3">Nobody has {pickDept} access yet.</div>
-            : rows.filter((r) => r.department === pickDept).map((r) => (
+            : deptRows.map((r) => (
               <div key={r.id} className="flex items-center justify-between gap-2 py-2.5">
                 <div className="min-w-0">
                   <div className="text-sm font-semibold text-gray-800 truncate">{nameOf(r.user_id)}</div>
                   <div className="text-xs text-gray-400 truncate">{r.department}{r.granted_by ? ` · given by ${nameOf(r.granted_by)}` : ""}</div>
                 </div>
-                <button onClick={() => revoke(r)} className="shrink-0 text-xs font-semibold text-red-500 hover:text-red-700 hover:bg-red-50 px-2.5 py-1.5 rounded-lg transition">Remove</button>
+                <button onClick={() => revoke([r])} className="shrink-0 text-xs font-semibold text-red-500 hover:text-red-700 hover:bg-red-50 px-2.5 py-1.5 rounded-lg transition">Remove</button>
               </div>
             ))}
       </div>

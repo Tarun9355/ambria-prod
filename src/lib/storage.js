@@ -140,6 +140,38 @@ export async function uploadAudioToStorage(blob) {
 
 // Downscale/compress large images before upload — pure client-side canvas work, unchanged from
 // the Cloudinary era beyond the name. Keeps payloads small and upload times short.
+/**
+ * Attendance punch photo (staff selfie or a labour's photo) → a small JPEG, typically 30–60 KB.
+ * Unlike compressImageForUpload it ALWAYS re-encodes (a 180 KB camera frame was going up as-is),
+ * caps the LONG side at 640px — plenty to recognise a face, and what the logs and thumbnails show —
+ * and steps quality/size down once more if the first pass is still over ~70 KB. These photos are
+ * loaded by the dozen in Staff Log / Labour Log, so their size is what makes those screens smooth.
+ * Never throws: any decode failure falls back to the original file so a punch is never blocked.
+ */
+export function compressPunchPhoto(file) {
+  return new Promise((resolve) => {
+    if (!file || !file.type?.startsWith("image/")) { resolve(file); return; }
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    const encode = (maxSide, q) => new Promise((done) => {
+      const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+      const c = document.createElement("canvas");
+      c.width = Math.max(1, Math.round(img.width * scale));
+      c.height = Math.max(1, Math.round(img.height * scale));
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      c.toBlob((b) => done(b), "image/jpeg", q);
+    });
+    img.onload = async () => {
+      URL.revokeObjectURL(url);
+      let blob = await encode(640, 0.6);
+      if (blob && blob.size > 70000) blob = (await encode(520, 0.5)) || blob;
+      resolve(blob && blob.size < file.size ? new File([blob], "punch.jpg", { type: "image/jpeg" }) : file);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
+    img.src = url;
+  });
+}
+
 export function compressImageForUpload(file, maxW = 2000, quality = 0.8) {
   return new Promise((resolve) => {
     if (!file || !file.type?.startsWith("image/") || file.size < 200000) { resolve(file); return; }
