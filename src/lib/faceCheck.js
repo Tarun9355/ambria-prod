@@ -8,7 +8,8 @@
 // runtime rather than bundled, the same tolerance for a runtime CDN fetch the setup-book PDF
 // export already relies on for its webfonts. CPU delegate, not GPU: GPU can silently fail to
 // initialise on some Android WebViews, which would wedge every punch.
-import { FaceDetector, FilesetResolver } from "@mediapipe/tasks-vision";
+// The library itself (~190KB) is imported lazily inside getDetector, so it lands in its own chunk
+// fetched on the first punch instead of riding along in IMS's main bundle for every ops user.
 
 // Pinned to the installed npm version so the CDN assets and the API this file calls never drift
 // apart from each other.
@@ -20,6 +21,7 @@ let detectorPromise = null;
 function getDetector() {
   if (!detectorPromise) {
     detectorPromise = (async () => {
+      const { FaceDetector, FilesetResolver } = await import("@mediapipe/tasks-vision");
       const vision = await FilesetResolver.forVisionTasks(WASM_BASE);
       return FaceDetector.createFromOptions(vision, {
         baseOptions: { modelAssetPath: MODEL_URL, delegate: "CPU" },

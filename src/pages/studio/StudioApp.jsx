@@ -10,18 +10,23 @@
 //
 // Persistence: the reference's Redis kvGet/reliableSave port verbatim through
 // the Supabase `settings`-table shim (src/lib/ims/kv).
-import { Fragment, useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef, useTransition } from "react";
+import { Fragment, useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef, useTransition, lazy, Suspense } from "react";
 import { useAuth } from "../../lib/AuthContext";
 import AppSwitcher from "../../components/AppSwitcher.jsx";
 import { IconPalette, IconSliders, IconBook, IconGear, IconClipboardCheck, IconLogout, IconCheck, IconLock } from "../../components/icons.jsx";
-import ManageLibrary from "./manage/ManageLibrary.jsx";
-import ManageSettings from "./manage/ManageSettings.jsx";
+// Manage (Library + Settings, ~420KB) and Deal Check (overlay + its tabs, ~740KB) are each their
+// own chunk, fetched only when that screen is opened — together they were ~40% of the Studio
+// bundle every salesperson downloaded on first load. Deal Check is also prefetched on idle (below),
+// so opening it normally finds the chunk already in cache.
+const loadDealCheck = () => import("./dealcheck/DealCheckOverlay.jsx");
+const ManageLibrary = lazy(() => import("./manage/ManageLibrary.jsx"));
+const ManageSettings = lazy(() => import("./manage/ManageSettings.jsx"));
+const DealCheckOverlay = lazy(loadDealCheck);
 import StudioModals from "./StudioModals.jsx";
 import StudioEventInfo from "./views/StudioEventInfo.jsx";
 import StudioBrowse from "./views/StudioBrowse.jsx";
 import StudioBuild from "./views/StudioBuild.jsx";
 import StudioSummary from "./views/StudioSummary.jsx";
-import DealCheckOverlay from "./dealcheck/DealCheckOverlay.jsx";
 import { kvGet, kvTryGet, kvSet, reliableSave } from "../../lib/ims/kv";
 import { makeAmendRequest } from "../../lib/ims/amend";
 import { catToDept } from "../../lib/ims/deptClassify";
@@ -1915,6 +1920,19 @@ export default function StudioApp() {
 
   // ═══ DEAL CHECK REBUILD — Deploy 1 state (§7.9) ═══
   const [dcFullPageOpen, setDcFullPageOpen] = useState(false);
+  // Warm the lazily-split Deal Check chunk once the browser is idle after sign-in, so the first
+  // open doesn't wait on a download. A failed prefetch is just ignored; opening Deal Check imports it again.
+  const hasAuthUser = !!authUser;
+  useEffect(() => {
+    if (!hasAuthUser) return undefined;
+    const run = () => { loadDealCheck().catch(() => {}); };
+    if (typeof window.requestIdleCallback === "function") {
+      const id = window.requestIdleCallback(run, { timeout: 8000 });
+      return () => window.cancelIdleCallback(id);
+    }
+    const t = setTimeout(run, 4000);
+    return () => clearTimeout(t);
+  }, [hasAuthUser]);
   // ── ACCOUNT MENU ──
   // Name, role and sign-out used to sit inline in the bar. They are the widest thing in
   // the header and answer a question nobody asks twice a day, so they now live behind the
@@ -11754,10 +11772,10 @@ export default function StudioApp() {
         // of empty ground down each side while the thumbnails stayed small. Widened for that tab only,
         // so nothing else moves.
         return <div style={effManageTab === "library" ? { ...S.main, maxWidth: 1640 } : S.main}>
-          {effManageTab === "library" ? (
-            <ManageLibrary ctx={ctx} />
-          ) : effManageTab === "settings" ? (
-            <ManageSettings ctx={ctx} />
+          {effManageTab === "library" || effManageTab === "settings" ? (
+            <Suspense fallback={<div style={{ textAlign: "center", padding: 60, color: textS, fontSize: 13 }}>Loading…</div>}>
+              {effManageTab === "library" ? <ManageLibrary ctx={ctx} /> : <ManageSettings ctx={ctx} />}
+            </Suspense>
           ) : (
             <div style={{ textAlign: "center", padding: 60, color: textS }}>
               <div style={{ display: "flex", justifyContent: "center", marginBottom: 12, opacity: 0.55 }}><IconLock size={34} /></div>
@@ -11787,7 +11805,14 @@ export default function StudioApp() {
       </>)}
 
       {/* DEAL CHECK FULL-PAGE OVERLAY */}
-      {authUser && dcFullPageOpen && <DealCheckOverlay ctx={ctx} />}
+      {/* Fallback only shows if the chunk is not cached yet (the idle prefetch normally beats the
+          click): the overlay's own cream ground under the header (z 45 < header's 50), so the page
+          behind is covered at once and the overlay's skeleton takes over when it mounts. */}
+      {authUser && dcFullPageOpen && (
+        <Suspense fallback={<div style={{ position: "fixed", inset: 0, zIndex: 45, background: "#FAF9F6" }} />}>
+          <DealCheckOverlay ctx={ctx} />
+        </Suspense>
+      )}
 
       {/* Top-level modals (paint/fabric pickers, custom item, video, zone-upload, lightbox) */}
       <StudioModals ctx={ctx} />
