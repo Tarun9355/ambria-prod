@@ -21,6 +21,7 @@ import { AMEND_SK, canApprove } from "../../lib/ims/amend";
 import { fetchMyLabourAccess, labourPunchDepts } from "../../lib/ims/labourAttendance";
 import AppSwitcher from "../../components/AppSwitcher.jsx";
 import PullToRefresh from "../../components/shared/PullToRefresh.jsx";
+import { useSwipeDrawer } from "../../lib/useSwipeDrawer";
 import { triggerLmsSync, fetchCachedContracts, fetchSeason, buildDateCategories } from "../../lib/ims/lms";
 import { allocateForDate, buildEventAllocation, eoToFnList, expireStaleSoftHolds, appendTrussAudit, TRUSS_P3_BACKFILLED_SK } from "../../lib/ims/trussEngine";
 import { ensureCdnLibs } from "../../lib/ims/pdf";
@@ -223,6 +224,8 @@ export default function IMS() {
   // Mobile nav drawer. Deliberately not persisted — a drawer that reopens itself on reload is
   // a drawer nobody asked for.
   const [navOpen, setNavOpen] = useState(false);
+  // Phones: swipe left→right to open the drawer, right→left to close it (lib/useSwipeDrawer.js).
+  useSwipeDrawer({ open: navOpen, onOpen: () => setNavOpen(true), onClose: () => setNavOpen(false) });
   // ── CALENDAR → PLANNING HAND-OFF ──
   // Clicking a Studio booking in the Calendar tab opens it in Planning → Dept Ops. Three things
   // have to line up: the top-level tab, Planning's own sub-tab, and the event Dept Ops selects.
