@@ -93,7 +93,8 @@ export function DatePickerPopover({ value, max, onChange }) {
 // DatePickerPopover stands in for <input type="date"> — the OS renders a select's own option
 // list outside any CSS this app controls, so a real dropdown built from divs is the only way to
 // keep it looking like the rest of this page rather than a bare system menu.
-function SelectPopover({ value, options, onChange }) {
+export function SelectPopover({ value, options, onChange, align = "right", size = "md" }) {
+  const sm = size === "sm";   // compact variant for inline filters (Labour Punch)
   const [open, setOpen] = useState(false);
   const boxRef = useRef(null);
   const current = options.find((o) => o.value === value);
@@ -110,15 +111,16 @@ function SelectPopover({ value, options, onChange }) {
   return (
     <div className="relative" ref={boxRef}>
       <button onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-2 border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-700 hover:border-gray-300 transition min-w-37.5 justify-between">
+        className={"flex items-center border border-gray-200 text-gray-700 hover:border-gray-300 transition justify-between "
+          + (sm ? "gap-1.5 rounded-lg px-2.5 py-1 text-xs min-w-28" : "gap-2 rounded-xl px-3 py-2 text-sm min-w-37.5")}>
         {current?.label || "All"}
         <span className={"text-gray-400 text-[10px] transition-transform " + (open ? "rotate-180" : "")}>▾</span>
       </button>
       {open && (
-        <div className="absolute z-20 top-full right-0 mt-2 w-48 bg-white rounded-xl shadow-xl ring-1 ring-gray-200 p-1.5 max-h-72 overflow-y-auto">
+        <div className={"absolute z-20 top-full mt-2 bg-white rounded-xl shadow-xl ring-1 ring-gray-200 p-1.5 max-h-72 overflow-y-auto " + (sm ? "w-40 " : "w-48 ") + (align === "left" ? "left-0" : "right-0")}>
           {options.map((o) => (
             <button key={o.value} onClick={() => { onChange(o.value); setOpen(false); }}
-              className={"w-full text-left px-3 py-1.5 rounded-lg text-sm transition "
+              className={"w-full text-left rounded-lg transition " + (sm ? "px-2.5 py-1 text-xs " : "px-3 py-1.5 text-sm ")
                 + (o.value === value ? "bg-blue-600 text-white font-semibold" : "text-gray-700 hover:bg-blue-50")}>
               {o.label}
             </button>

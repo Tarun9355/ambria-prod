@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Modal } from "../../components/ui";
 import { todayStr, dayHours, punchLocationLabel } from "../../lib/ims/attendance";
 import { LABOUR_DEPTS, DEPT_ICON, fetchLabourPunchesRange, fetchAllActiveLabours } from "../../lib/ims/labourAttendance";
-import { DatePickerPopover } from "./AttendanceAdminLog.jsx";
+import { DatePickerPopover, SelectPopover } from "./AttendanceAdminLog.jsx";
 import { IconPin, IconCalendar, IconUsers } from "../../components/icons.jsx";
 
 // ═══ ADMIN: LABOUR LOG ═══ (Attendance → Labour Log)
@@ -120,7 +120,7 @@ export default function LabourAdminLog() {
   );
 
   return (
-    <div className="mt-3 bg-white rounded-2xl shadow-sm ring-1 ring-gray-100 p-5 sm:p-6">
+    <div className="mt-3 bg-white rounded-2xl shadow-sm ring-1 ring-gray-100 p-4 sm:p-6">
       <div className="flex items-center justify-between flex-wrap gap-3 mb-1">
         <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2"><IconUsers size={18} /> Labour Log</h3>
         <div className="flex items-center gap-2 flex-wrap">
@@ -145,17 +145,13 @@ export default function LabourAdminLog() {
         {view === "day" ? new Date(date + "T00:00:00").toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" }) : "Days present and hours per labour this month"}
       </p>
 
-      <div className="flex flex-wrap gap-2 mb-3">
-        {["all", ...LABOUR_DEPTS].map((d) => (
-          <button key={d} onClick={() => setDept(d)}
-            className={"px-3 py-1 rounded-full text-xs font-semibold transition ring-1 "
-              + (d === dept ? "bg-blue-600 text-white ring-blue-600" : "bg-white text-gray-600 ring-gray-200 hover:bg-gray-50")}>
-            {d === "all" ? "All departments" : `${DEPT_ICON[d] || ""} ${d}`}
-          </button>
-        ))}
+      {/* Search + department side by side, the same pairing the Staff Log uses. */}
+      <div className="flex gap-2 mb-4">
+        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search labour…"
+          className="flex-1 min-w-0 border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400" />
+        <SelectPopover value={dept} onChange={setDept}
+          options={[{ value: "all", label: "All departments" }, ...LABOUR_DEPTS.map((d) => ({ value: d, label: `${DEPT_ICON[d] || ""} ${d}` }))]} />
       </div>
-      <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search labour by name…"
-        className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400" />
 
       {loading ? (
         <p className="text-sm text-gray-400 text-center py-10">Loading…</p>

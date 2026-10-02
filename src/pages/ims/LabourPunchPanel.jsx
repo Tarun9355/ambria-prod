@@ -8,6 +8,7 @@ import {
   fetchLabourAccessForDepts, grantLabourAccess, revokeLabourAccess, DEPT_ICON,
 } from "../../lib/ims/labourAttendance";
 import LabourPunchCamera from "./LabourPunchCamera.jsx";
+import { SelectPopover } from "./AttendanceAdminLog.jsx";
 import { IconUsers, IconSearch, IconPlusCircle, IconTrash, IconPin, IconLock, IconX } from "../../components/icons.jsx";
 
 // ═══ LABOUR PUNCH ═══ (Attendance → Labour Punch)
@@ -16,6 +17,7 @@ import { IconUsers, IconSearch, IconPlusCircle, IconTrash, IconPin, IconLock, Ic
 // the staff flow). Who may do this is decided per department by Admin only,
 // in the "Who can punch" card at the bottom. See lib/ims/labourAttendance.js for the rules.
 
+const deptOptions = (depts) => depts.map((d) => ({ value: d, label: `${DEPT_ICON[d] || ""} ${d}` }));
 const fmtTime = (iso) => { try { return new Date(iso).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }); } catch { return "—"; } };
 const COORDS_MAX_AGE_MS = 2 * 60 * 1000;
 
@@ -89,9 +91,9 @@ export default function LabourPunchPanel({ authUser, users, settings, myAccess, 
     : deptLabours;
   const counts = deptLabours.reduce((acc, l) => {
     const p = last[l.id];
-    if (!p) acc.none++; else if (p.type === "in") acc.in++; else acc.out++;
+    if (p?.type === "in") acc.in++; else if (p) acc.out++;
     return acc;
-  }, { in: 0, out: 0, none: 0 });
+  }, { in: 0, out: 0 });
 
   async function savePunch(file) {
     const { labour, type } = camera;
@@ -160,7 +162,7 @@ export default function LabourPunchPanel({ authUser, users, settings, myAccess, 
 
   return (
     <div className="space-y-4">
-      <div className="bg-white rounded-2xl shadow-sm ring-1 ring-gray-100 p-5">
+      <div className="bg-white rounded-2xl shadow-sm ring-1 ring-gray-100 p-4 sm:p-5">
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div className="flex items-center gap-2 text-sm font-bold text-gray-800 uppercase tracking-wide">
             <IconUsers size={15} /> Labour Punch
@@ -171,21 +173,15 @@ export default function LabourPunchPanel({ authUser, users, settings, myAccess, 
         </div>
 
         {punchDepts.length > 1 && (
-          <div className="flex flex-wrap gap-2 mt-4">
-            {punchDepts.map((d) => (
-              <button key={d} onClick={() => setDept(d)}
-                className={"px-3 py-1.5 rounded-full text-sm font-semibold transition ring-1 "
-                  + (d === dept ? "bg-indigo-600 text-white ring-indigo-600" : "bg-white text-gray-600 ring-gray-200 hover:ring-gray-300 hover:bg-gray-50")}>
-                {DEPT_ICON[d] || ""} {d}
-              </button>
-            ))}
+          <div className="mt-4 flex items-center gap-2">
+            <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Department</span>
+            <SelectPopover align="left" size="sm" value={dept} onChange={setDept} options={deptOptions(punchDepts)} />
           </div>
         )}
 
-        <div className="grid grid-cols-3 gap-2 mt-4">
+        <div className="grid grid-cols-2 gap-2 mt-4">
           <div className="rounded-xl bg-green-50 px-3 py-2"><div className="text-[10px] font-semibold text-green-700 uppercase tracking-wide">In now</div><div className="text-xl font-bold text-gray-900">{counts.in}</div></div>
           <div className="rounded-xl bg-gray-50 px-3 py-2"><div className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">Out</div><div className="text-xl font-bold text-gray-900">{counts.out}</div></div>
-          <div className="rounded-xl bg-amber-50 px-3 py-2"><div className="text-[10px] font-semibold text-amber-700 uppercase tracking-wide">Not yet</div><div className="text-xl font-bold text-gray-900">{counts.none}</div></div>
         </div>
 
         <div className="flex gap-2 mt-4">
@@ -230,7 +226,7 @@ export default function LabourPunchPanel({ authUser, users, settings, myAccess, 
             const p = last[l.id];
             const isIn = p?.type === "in";
             return (
-              <div key={l.id} className="flex items-center gap-3 py-3">
+              <div key={l.id} className="flex items-center gap-2.5 sm:gap-3 py-3">
                 {p?.photo
                   ? <img src={p.photo} alt="" className="w-10 h-10 rounded-full object-cover shrink-0 ring-1 ring-gray-200" />
                   : <div className="w-10 h-10 rounded-full bg-gray-100 text-gray-500 flex items-center justify-center font-bold shrink-0">{l.name.slice(0, 1).toUpperCase()}</div>}
@@ -243,7 +239,7 @@ export default function LabourPunchPanel({ authUser, users, settings, myAccess, 
                   </div>
                 </div>
                 <button onClick={() => setCamera({ labour: l, type: isIn ? "out" : "in" })}
-                  className={"shrink-0 px-4 py-2 rounded-xl text-sm font-semibold text-white transition " + (isIn ? "bg-gray-800 hover:bg-gray-900" : "bg-green-600 hover:bg-green-700")}>
+                  className={"shrink-0 px-3 sm:px-4 py-2 rounded-xl text-sm font-semibold text-white whitespace-nowrap transition " + (isIn ? "bg-gray-800 hover:bg-gray-900" : "bg-green-600 hover:bg-green-700")}>
                   {isIn ? "Punch Out" : "Punch In"}
                 </button>
                 {manageDepts.includes(l.department) && (
@@ -316,27 +312,21 @@ function LabourAccessCard({ authUser, users, manageDepts, onChanged }) {
   }
 
   return (
-    <div className="bg-white rounded-2xl shadow-sm ring-1 ring-gray-100 p-5">
+    <div className="bg-white rounded-2xl shadow-sm ring-1 ring-gray-100 p-4 sm:p-5">
       <div className="flex items-center gap-2 text-sm font-bold text-gray-800 uppercase tracking-wide">
         <IconLock size={14} /> Who can punch labours
       </div>
-      <p className="text-xs text-gray-400 mt-1">Give a guard or supervisor access to punch a department's labours from their phone.</p>
 
       {manageDepts.length > 1 && (
-        <div className="flex flex-wrap gap-2 mt-3">
-          {manageDepts.map((d) => (
-            <button key={d} onClick={() => setPickDept(d)}
-              className={"px-3 py-1 rounded-full text-xs font-semibold transition ring-1 "
-                + (d === pickDept ? "bg-indigo-600 text-white ring-indigo-600" : "bg-white text-gray-600 ring-gray-200 hover:bg-gray-50")}>
-              {DEPT_ICON[d] || ""} {d}
-            </button>
-          ))}
+        <div className="mt-3 flex items-center gap-2">
+          <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Department</span>
+          <SelectPopover align="left" size="sm" value={pickDept} onChange={setPickDept} options={deptOptions(manageDepts)} />
         </div>
       )}
 
-      <div className="relative mt-3">
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Search a user to give ${pickDept} access…`}
-          className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300" />
+      <div className="relative mt-3 sm:max-w-xs">
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search user to give access…"
+          className="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-300" />
         {matches.length > 0 && (
           <div className="absolute z-20 left-0 right-0 mt-1 bg-white rounded-xl shadow-lg ring-1 ring-gray-200 overflow-hidden">
             {matches.map((u) => (
