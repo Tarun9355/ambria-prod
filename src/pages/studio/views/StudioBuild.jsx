@@ -1249,6 +1249,20 @@ export default function StudioBuild({ ctx }) {
     const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     el.scrollTo({ top: 0, behavior: reduce ? "auto" : "smooth" });
   };
+  // Grid view: bring the grid's top into view (the page scrolls, not the grid), clear of the
+  // sticky header, once the page-1 render has landed. No-op if it is already on screen.
+  const phGridToTop = (k) => {
+    if (typeof window === "undefined") return;
+    requestAnimationFrame(() => {
+      const el = document.getElementById(`ph-grid-${k}`);
+      if (!el) return;
+      const header = document.querySelector(".sa-header")?.getBoundingClientRect().height || 0;
+      const top = el.getBoundingClientRect().top - header - 70;   // 70: room for the section heading above the tiles
+      if (top >= 0 && top < window.innerHeight * 0.25) return;
+      const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      window.scrollBy({ top, behavior: reduce ? "auto" : "smooth" });
+    });
+  };
   // A swipe that paged leaves a click behind on some browsers; tiles check this before opening.
   const phSwipedJustNow = () => { const was = phSwipe.current.swiped; phSwipe.current.swiped = false; return was; };
   // Custom Ceiling / Custom Masking — { k: zoneKey, kind: "ceiling" | "masking" } or null
@@ -3570,12 +3584,14 @@ undefined
                       flex:1 claims the leftover height and the padding widens the target. */}
                   <div className="ph-sel" data-sel={isSelected?"1":"0"} title={multiZone?(isSelected?"Selected — untick to remove this photo's elements from the build":"Tick to add this photo's elements to the build"):(isSelected?"Selected — this photo's pricing is applied to the zone":"Use this photo's pricing for the zone")} style={{flex:1,minHeight:52,padding:"11px 12px",cursor:"pointer",background:isSelected?(isDark?"#0D2818":"#ECFDF5"):"transparent"}} onClick={()=>{
                     if(phSwipedJustNow())return;
-                    // Grid view no longer pins the pick to the front (see matchedPhotos above), so
-                    // jumping to page 0 here would strand you on a page that doesn't even show the
-                    // photo you just clicked. Only the strip still pins-and-jumps; the grid leaves
-                    // you exactly where you were.
+                    // Picking a photo marks it recently viewed, which moves it to the front of page 1
+                    // (Recently viewed leads both views). So both views now follow it there: the
+                    // strip pages back and scrolls its row; the grid pages back and scrolls the page
+                    // up to the grid's top, where the picked photo now sits.
                     markPhotoViewed(ph);
-                    if(multiZone){toggleMultiElPhoto(k,ph);}else{selectElPhoto(k,ph);if(!gridZones[k]){phGoTo(k,0,phPage[k]||0);phScrollTop(k);}}
+                    if(multiZone){toggleMultiElPhoto(k,ph);}else{selectElPhoto(k,ph);}
+                    if(gridZones[k]){phGoTo(k,0,phPage[k]||0);phGridToTop(k);}
+                    else if(!multiZone){phGoTo(k,0,phPage[k]||0);phScrollTop(k);}
                     // Same rule as opening the grid: whatever you actually pick to build with belongs
                     // in the group already, not just whatever happened to be ticked before. Add-only —
                     // never un-ticks anything the checkbox itself didn't touch.
