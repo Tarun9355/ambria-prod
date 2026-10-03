@@ -1561,7 +1561,23 @@ export default function StudioEventInfo({ ctx }) {
                   }
                   // Map keeps insertion order and a replacement keeps the original slot, so the list
                   // stays in the order it was already in — only the extra copies drop out.
-                  const matches = Array.from(bestPerClient.values()).slice(0, 5);
+                  // Relevance BEFORE the slice(0, 5) cut, or a short/common query (a client literally
+                  // named "NA", found by typing "na") loses its spot to five unrelated clients whose
+                  // names merely CONTAIN "na" somewhere inside them (ABHINAV, Khanna, Nagpal, …) —
+                  // clientLedger's own order is by id, not relevance, so those substring hits can
+                  // easily sit earlier in the array and fill the cap before the real match is ever
+                  // reached. A phone match is the most deliberate kind of search, then an exact name,
+                  // then a name that STARTS with the query, then everything else (today's only tier).
+                  const relevanceRank = (c) => {
+                    if (qPhone.length >= 4 && (c.phone || "").includes(qPhone)) return 0;
+                    const name = (c.name || "").trim().toLowerCase();
+                    if (qName.length >= 2 && name === qName) return 1;
+                    if (qName.length >= 2 && name.startsWith(qName)) return 2;
+                    return 3;
+                  };
+                  const matches = Array.from(bestPerClient.values())
+                    .sort((a, b) => relevanceRank(a) - relevanceRank(b))
+                    .slice(0, 5);
                   if (!lmsBlock && matches.length === 0) {
                     // Everything found belongs to other salespeople — say so specifically (rather than
                     // "no matches", which would send someone covering a colleague's meeting hunting for a
