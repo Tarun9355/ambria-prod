@@ -7250,18 +7250,27 @@ export default function StudioApp() {
     // stopped the older save from destroying the newer one's studio_sessions rows; it never stopped
     // the older save from becoming sessions[0] (the build every screen treats as "current") in the
     // first place. buildSaveBaselineRef is what sessions[0] was when THIS tab last loaded or saved —
-    // if the live sessions[0] (prevSnapForTotals, read fresh above) has moved past that AND it was
-    // someone else's save, this tab's own copy is stale: skip the write entirely rather than let it
-    // silently regress the deal, and say so.
+    // if the live sessions[0] (prevSnapForTotals, read fresh above) has moved past that, this tab's
+    // own copy is stale: skip the write entirely rather than let it silently regress the deal, and
+    // say so.
+    // Deliberately NOT scoped to "someone else's save" — a second confirmed incident was the SAME
+    // person's own stale tab on a different device: Tarun saved a deal down to ~₹14.73L on one PC,
+    // and 62 seconds later his OWN other tab's autosave — still holding the ~₹16L state from before
+    // that edit — silently reverted it. A well-behaved tab's baseline tracks its own last write (see
+    // the advance below), so this never blocks a single tab working normally; it only ever fires
+    // when SOME OTHER tab, whoever is signed into it, has moved the deal forward since this one last
+    // checked in.
     const buildBaseline = buildSaveBaselineRef.current;
     const buildRemoteSavedAt = prevSnapForTotals?.savedAt || 0;
     const buildRemoteSavedBy = prevSnapForTotals?.savedBy || null;
     const buildMe = authUser?.name || "—";
-    const buildConflict = !!(buildBaseline && buildRemoteSavedAt > buildBaseline.savedAt && buildRemoteSavedBy && buildRemoteSavedBy !== buildMe);
+    const buildConflict = !!(buildBaseline && buildRemoteSavedAt > buildBaseline.savedAt && buildRemoteSavedBy);
     if (buildConflict) {
       if (buildConflictWarnedAtRef.current !== buildRemoteSavedAt) {
         buildConflictWarnedAtRef.current = buildRemoteSavedAt;
-        showMsg?.(`⚠ ${buildRemoteSavedBy} saved changes to this deal while you were editing — your changes were NOT auto-saved to avoid overwriting theirs. Reload to see the latest before continuing.`, "red");
+        const who = buildRemoteSavedBy === buildMe ? "You" : buildRemoteSavedBy;
+        const verb = buildRemoteSavedBy === buildMe ? "saved newer changes to this deal from another device or tab" : "saved changes to this deal while you were editing";
+        showMsg?.(`⚠ ${who} ${verb} — your changes here were NOT auto-saved to avoid overwriting them. Reload to see the latest before continuing.`, "red");
       }
       return; // nothing local is discarded — it just isn't persisted until this tab reloads
     }
@@ -8507,6 +8516,16 @@ export default function StudioApp() {
   // switches to Fn1 and loads it rather than wiping Fn2.
   const resumeSavedSession = useCallback((session, targetFnIdx) => {
     if (!session) return;
+    // Same baseline capture loadClientSession does (~line 8035) — this is the OTHER door into a
+    // build (Browse's "Resume"/"Continue build", used far more often than a fresh Load), and it was
+    // the one door that never set buildSaveBaselineRef at all. A tab that only ever arrives here
+    // keeps a null baseline for its whole life, and the staleness guard's very first check is
+    // `!!(baseline && ...)` — null reads as "nothing to compare against", so that tab's own autosave
+    // could silently overwrite ANY newer save, no matter how stale it got, with no warning ever
+    // shown. Confirmed as a real incident, not a theoretical one: a different salesperson's tab,
+    // resumed this way and never reloaded since, re-saved a ₹16L+ state over someone else's ₹14L+
+    // edit made minutes earlier.
+    buildSaveBaselineRef.current = { savedAt: Number(session.savedAt) || 0, savedBy: session.savedBy || null };
     const idx = Number.isInteger(targetFnIdx) ? targetFnIdx : activeFnIdx;
     if (session.fnSnapshots && typeof session.fnSnapshots === "object" && Object.keys(session.fnSnapshots).length > 0) {
       const activeSnap = session.fnSnapshots[idx] || session.fnSnapshots[String(idx)] || null;
