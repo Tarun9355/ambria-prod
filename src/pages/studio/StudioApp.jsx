@@ -11403,6 +11403,12 @@ export default function StudioApp() {
         /* Same corner-clip fix for the cards that scale their photo on hover (desktop hover). */
         .sb-card, .ph-tile { isolation: isolate }
 
+        /* Per-tile "Update master" pencil (Build's photo grid/strip) — hidden until the tile is
+           hovered, so a page of thumbnails doesn't carry a pencil on every single one at once. The
+           selected tile's own copy skips this class entirely and stays always-on (see StudioBuild.jsx). */
+        .ph-tile .ph-edit-master { opacity: 0; transition: opacity .12s ease }
+        .ph-tile:hover .ph-edit-master { opacity: 1 }
+
         /* ══ TOUCH DEVICES ONLY ══
            (hover:none) and (pointer:coarse) is a touch screen with no mouse: phones and tablets, not
            a touch laptop with a trackpad. */
@@ -11417,6 +11423,9 @@ export default function StudioApp() {
           .zone-row button:hover, .ei-btn:hover, .ei-row:hover, .sm-zcard:hover, .sh-sold:hover { transform: none !important }
           /* photo tiles fade in on mount; on a tablet re-render that read as a flash */
           .ph-img { animation: none !important }
+          /* hover is not a reliable way to reach the per-tile Update master pencil here — show it
+             unconditionally, same reasoning as the selected tile's own always-on copy. */
+          .ph-edit-master { opacity: 1 !important }
         }
         /* ── THE SHEEN MUST NOT START WITH AN EDGE ──
            On Browse and Build the bar is transparent across the panel so the panel shows through, and

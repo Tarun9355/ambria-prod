@@ -2879,22 +2879,25 @@ undefined
       // ── UPDATE MASTER — shared by the header button AND the per-tile one on the selected photo ──
       // Pulled out once so both call sites open the exact same panel on the exact same photo,
       // instead of two copies of "find the master, prefill correction" that could drift apart.
-      const masterForSel = (() => {
-        const selP = elSelectedPhoto[k];
-        return (selP?.isLibrary && selP.eventId) ? libItems.find(i => i.id === selP.eventId) : null;
-      })();
-      const masterVerified = !!masterForSel?._verified;
-      // masterForSel is a snapshot of THIS render's `libItems` — the lazy library cache can miss a
+      // findMasterFor — a snapshot of THIS render's `libItems` — the lazy library cache can miss a
       // photo that only ever surfaced through the zone-strip's own server-side match query
       // (getLibPhotosForZone → zoneMatchCache), which never merges into libItems. Falling straight
       // through to "not in the library yet" on that cache miss used to silently fork a brand-new
       // duplicate master (the save path's isNewMaster branch) while the REAL master — still the one
       // every other zone/deal references by this exact id — never received the correction at all.
       // Fetching by id here first turns a cache miss into a bridge instead of a false "new photo".
-      const openUpdateMaster = async () => {
-        const selP = elSelectedPhoto[k];
+      const findMasterFor = (p) => (p?.isLibrary && p.eventId) ? libItems.find(i => i.id === p.eventId) : null;
+      const masterForSel = findMasterFor(elSelectedPhoto[k]);
+      const masterVerified = !!masterForSel?._verified;
+      // Generalised so the hover-only per-tile pencil (any photo, not just the one currently selected
+      // for pricing) and the header/selected-tile buttons all open the exact same panel through the
+      // exact same lookup — one copy of "find the master, prefill correction", not two that could
+      // drift apart. `targetPh` defaults to the zone's selected photo, matching the original behaviour
+      // of the header's own Update master button.
+      const openUpdateMasterFor = async (targetPh) => {
+        const selP = targetPh || elSelectedPhoto[k];
         if (!selP?.src) return;
-        const m = selP.isLibrary && selP.eventId ? (masterForSel || (await ensureLibItems([selP.eventId]))[0]) : null;
+        const m = selP.isLibrary && selP.eventId ? (findMasterFor(selP) || (await ensureLibItems([selP.eventId]))[0]) : null;
         if (!m) {
           setCorrVenueGrp("");
           setCorrectPhoto({ libId: null, zoneKey: k, name: selP.eventName || "", tags: {} });
@@ -2904,6 +2907,7 @@ undefined
         setCorrVenueGrp(allInhouseVenues.includes(mv) ? "inhouse" : (mv ? "outside" : ""));
         setCorrectPhoto({ libId: selP.eventId, zoneKey: k, name: m.name || "", tags: JSON.parse(JSON.stringify(m.tags || {})) });
       };
+      const openUpdateMaster = () => openUpdateMasterFor();
       // BUG-7. The unfiltered pool is kept so the strip can say how many photos the filter is
       // hiding. The zero case was already handled — an empty zone shows "No X photos match your
       // filters" with a Clear button — but the PARTIAL case had nothing: filters seeded silently by
@@ -3444,6 +3448,11 @@ undefined
                 // condition the header button gates on) — the two only ever coincide for a normal,
                 // single-photo zone.
                 const isMasterSel = elSelectedPhoto[k]?.src === ph.src;
+                // This tile's OWN master, regardless of selection — powers the hover-only pencil
+                // below so any photo's tags/elements can be corrected without first selecting it for
+                // pricing (selecting is what adds a photo to Recently Viewed; editing shouldn't).
+                const tileMaster = findMasterFor(ph);
+                const tileMasterVerified = !!tileMaster?._verified;
                 // For the zone's ACTIVE picture, show the zone's real live total (zoneTotal — the
                 // same figure the header and "By zone" row use) instead of recomputing from the
                 // photo's own stored baseline. calcPhotoCost prices only photo.elements + a bare
@@ -3588,21 +3597,29 @@ undefined
                     <div style={{fontSize:12,fontWeight:isSelected?700:600,color:isSelected?"#059669":textP,marginTop:1}}>
                       {ph.isLibrary ? `${(ph.elements||[]).length} elements` : (ph.fn || "Event") + " · " + (ph.space || "")}
                     </div>
-                    {(isSelected||(CORRECTION_MODE&&isMasterSel))&&<div style={{marginTop:5,display:"flex",alignItems:"center",gap:6}}>
+                    {CORRECTION_MODE&&<div style={{marginTop:5,display:"flex",alignItems:"center",gap:6}}>
                       {isSelected&&<span style={{fontSize:10.5,fontWeight:700,color:"#047857",display:"flex",alignItems:"center",gap:4}}>✓ Selected</span>}
                       {/* Same action as the header's "Update master" — repeated right on the tile it
-                          acts on. The header one scrolls out of view the moment a long grid (hundreds
-                          of photos, paginated) puts any distance between you and the top of the card;
-                          this copy stays exactly where your eyes already are. Icon-only — the labelled
-                          button crowded the tile — and always-on rather than hover-only, so it still
-                          works on touch. */}
-                      {CORRECTION_MODE&&isMasterSel&&<button onClick={e=>{e.stopPropagation();openUpdateMaster();}}
-                        title={masterForSel
+                          acts on, for ANY tile, not only the one currently selected for pricing —
+                          clicking it must not select the photo (that's what adds it to Recently
+                          Viewed), so it stops propagation and calls openUpdateMasterFor(ph) directly
+                          rather than relying on elSelectedPhoto. The header one scrolls out of view
+                          the moment a long grid (hundreds of photos, paginated) puts any distance
+                          between you and the top of the card; this copy stays exactly where your
+                          eyes already are. Icon-only — the labelled button crowded the tile.
+                          Always-on for the selected tile (so it still works on touch there); for
+                          every other tile it's hover-only (.ph-edit-master, see the CSS) so the grid
+                          doesn't carry a pencil on every single thumbnail at once — touch devices get
+                          it unconditionally too, since hover isn't a reliable way to reach it there
+                          (see the touch media query). */}
+                      <button onClick={e=>{e.stopPropagation();openUpdateMasterFor(ph);}}
+                        className={isMasterSel?undefined:"ph-edit-master"}
+                        title={tileMasterVerified
                           ? "Update master — correct this photo's tags + elements and save back to the shared library photo (permanent, for everyone)"
                           : "Update master — this photo isn't in the shared library yet; tag it and it will be added (permanent, for everyone)"}
-                        style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:18,height:18,borderRadius:5,border:"none",background:masterVerified?"#059669":"#7C3AED",color:"#fff",cursor:"pointer",flexShrink:0}}>
+                        style={{marginLeft:isSelected?0:"auto",display:"inline-flex",alignItems:"center",justifyContent:"center",width:18,height:18,borderRadius:5,border:"none",background:tileMasterVerified?"#059669":"#7C3AED",color:"#fff",cursor:"pointer",flexShrink:0,opacity:isMasterSel?1:undefined}}>
                         <IconPencil size={9}/>
-                      </button>}
+                      </button>
                     </div>}
                   </div>
                 </div>);
