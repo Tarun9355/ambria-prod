@@ -3448,7 +3448,7 @@ undefined
                   <div key={`sec${ph.__head}`} style={{gridColumn:"1/-1",margin:ph.__first?"0 0 2px":"14px 0 2px",paddingTop:ph.__first?0:12,borderTop:ph.__first?"none":`1px solid ${border}`}}>
                     <button type="button" onClick={()=>setRecentOpenByZone(p=>({...p,[k]:!p[k]}))} aria-expanded={recentOpen}
                       style={{display:"flex",alignItems:"center",gap:7,border:"none",background:"transparent",cursor:"pointer",padding:0}}>
-                      <span style={{display:"inline-flex",transform:recentOpen?"rotate(90deg)":"none",transition:"transform .15s ease",color:textS}}><IconChevron size={9}/></span>
+                      <span style={{display:"inline-flex",transform:recentOpen?"none":"rotate(-90deg)",transition:"transform .15s ease",color:textS}}><IconChevron size={9}/></span>
                       <span style={{fontSize:9.5,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:textS}}>{SEC_META[ph.__head][0]}</span>
                       <span style={{fontSize:10,color:textS,fontWeight:400}}>{SEC_META[ph.__head][1](ph.__n)}</span>
                     </button>

@@ -1587,7 +1587,10 @@ function StudioBrowse({ ctx }) {
                 <div className="sb-hist" style={{borderRadius:10,border:`1px solid ${pBorder}`,overflow:"hidden",background:pCard}}>
                   <button type="button" onClick={()=>setBannerHistoryOpen(v=>!v)} aria-expanded={bannerHistoryOpen}
                     style={{width:"100%",display:"flex",alignItems:"center",gap:7,padding:"10px 12px",border:"none",background:"transparent",cursor:"pointer",textAlign:"left"}}>
-                    <span style={{display:"inline-flex",transform:bannerHistoryOpen?"rotate(90deg)":"none",transition:"transform 0.15s ease",color:textS}}><IconChevron size={10}/></span>
+                    {/* Base icon points down — standard disclosure convention wants the opposite of
+                        that at rest: closed points right (there's more this way), open points down
+                        (revealed below), so closed rotates and open doesn't. */}
+                    <span style={{display:"inline-flex",transform:bannerHistoryOpen?"none":"rotate(-90deg)",transition:"transform 0.15s ease",color:textS}}><IconChevron size={10}/></span>
                     <span style={{fontSize:10.5,fontWeight:600,color:textS}}>Past {bannerHistory.length} session{bannerHistory.length>1?"s":""}</span>
                   </button>
                   {bannerHistoryOpen && <div style={{padding:"0 8px 8px",display:"flex",flexDirection:"column",gap:3}}>
@@ -1896,7 +1899,7 @@ function StudioBrowse({ ctx }) {
             const pinnedBlock = pinned.length>0 && <>
               <button type="button" onClick={()=>setFavRecentOpen(v=>!v)} aria-expanded={favRecentOpen}
                 style={{display:"flex",alignItems:"center",gap:7,border:"none",background:"transparent",cursor:"pointer",padding:0,textAlign:"left"}}>
-                <span style={{display:"inline-flex",transform:favRecentOpen?"rotate(90deg)":"none",transition:"transform 0.15s ease",color:pageGold}}><IconChevron size={11}/></span>
+                <span style={{display:"inline-flex",transform:favRecentOpen?"none":"rotate(-90deg)",transition:"transform 0.15s ease",color:pageGold}}><IconChevron size={11}/></span>
                 {heading(favN&&recentN?"Favourites & recently viewed":favN?"Your favourites":"Recently viewed",
                   [favN?`${favN} favourite${favN===1?"":"s"}`:"", recentN?`${recentN} recently viewed`:""].filter(Boolean).join(" · "))}
               </button>
