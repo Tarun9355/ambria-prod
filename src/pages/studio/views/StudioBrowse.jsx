@@ -85,6 +85,11 @@ function StudioBrowse({ ctx }) {
   // doesn't compete with the filters/videos for space; per-client is enough (doesn't need to
   // persist across clients), so plain local state rather than anything ctx-level.
   const [bannerHistoryOpen, setBannerHistoryOpen] = useState(false);
+  // Favourites/recently-viewed block above the grid — collapsed by default (it's the same handful of
+  // videos on every visit, not something to scroll past each time) and NOT reset by page/filter
+  // changes, since it's a plain top-level flag rather than anything keyed to pageVideos — open it
+  // once and it stays open while paging through the rest of the grid.
+  const [favRecentOpen, setFavRecentOpen] = useState(false);
   const {
     // theme / chrome
     S, isDark, accent, border, textS, fmt,
@@ -1875,10 +1880,17 @@ function StudioBrowse({ ctx }) {
             // Invoking it returns the same plain <div> element type, so React updates in place.
             // Safe because VideoCard holds no hooks — it is a pure render helper.
             const favN = pinned.filter(v=>v._pin==="fav").length, recentN = pinned.length - favN;
+            // Collapsed by default behind a small chevron toggle — same "scroll past it once you've
+            // seen it" reasoning, and same pattern, as the saved-session banner's own "Past N
+            // sessions" history above (bannerHistoryOpen).
             const pinnedBlock = pinned.length>0 && <>
-              {heading(favN&&recentN?"Favourites & recently viewed":favN?"Your favourites":"Recently viewed",
-                [favN?`${favN} favourite${favN===1?"":"s"}`:"", recentN?`${recentN} recently viewed`:""].filter(Boolean).join(" · "))}
-              <div className="sb-grid" style={grid}>{pinned.map(v=><Fragment key={v.id}>{VideoCard({v})}</Fragment>)}</div>
+              <button type="button" onClick={()=>setFavRecentOpen(v=>!v)} aria-expanded={favRecentOpen}
+                style={{display:"flex",alignItems:"center",gap:7,border:"none",background:"transparent",cursor:"pointer",padding:0,textAlign:"left"}}>
+                <span style={{display:"inline-flex",transform:favRecentOpen?"rotate(90deg)":"none",transition:"transform 0.15s ease",color:pageGold}}><IconChevron size={11}/></span>
+                {heading(favN&&recentN?"Favourites & recently viewed":favN?"Your favourites":"Recently viewed",
+                  [favN?`${favN} favourite${favN===1?"":"s"}`:"", recentN?`${recentN} recently viewed`:""].filter(Boolean).join(" · "))}
+              </button>
+              {favRecentOpen && <div className="sb-grid" style={grid}>{pinned.map(v=><Fragment key={v.id}>{VideoCard({v})}</Fragment>)}</div>}
               {restPage.length>0&&rule}
             </>;
             if (!preferred.length || (!otherVenues.length && !noVenue.length)) return <>{pinnedBlock}{restPage.length>0&&<div className="sb-grid" style={grid}>{restPage.map(v=><Fragment key={v.id}>{VideoCard({v})}</Fragment>)}</div>}</>;

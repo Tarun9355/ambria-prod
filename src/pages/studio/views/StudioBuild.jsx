@@ -689,6 +689,11 @@ export default function StudioBuild({ ctx }) {
   const showCosts = true;
   const [copyBuildModalOpen, setCopyBuildModalOpen] = useState(false);
   const [zoneCollapsed, setZoneCollapsed] = useState({});
+  // Grid view's "Recently viewed" section, per zone — collapsed by default (it's the same handful of
+  // photos every time you open this zone, not worth scrolling past on every page) and keyed by zone
+  // so toggling one zone's section doesn't touch any other's. Not reset by phPage/matchedPhotos, so
+  // opening it once keeps it open while paging through the rest of this zone's grid.
+  const [recentOpenByZone, setRecentOpenByZone] = useState({});
   // Full-screen photo preview — { items: [{src, name}], idx }. Carries the zone's whole matched
   // set, not just the one photo, so you can step through them without closing and reopening.
   const [lightbox, setLightbox] = useState(null);
@@ -3409,13 +3414,17 @@ undefined
                 // one continuous grid, in that order, with no headings of its own (owner ask).
                 const sectioned = gridZones[k];
                 const recentShown = sectioned ? shown.filter(isRecentPhoto) : [];
+                const recentOpen = !!recentOpenByZone[k];
                 const SEC_META = [["Recently viewed", (n) => `${n} you opened recently`]];
                 // Headings ride in the same list as the photos, marked with __head, so one map
                 // renders both and the grid lays them out together. `i = start + pi` is only a
-                // React key now, so the extra entries shifting it is harmless.
+                // React key now, so the extra entries shifting it is harmless. The photos/break
+                // themselves only ride along when this zone's section is actually open — collapsed,
+                // only the heading row renders.
                 const renderList = recentShown.length
-                  ? [{ __head: 0, __n: recentShown.length, __first: true }, ...recentShown,
-                     ...(recentShown.length < shown.length ? [{ __break: true }] : []),
+                  ? [{ __head: 0, __n: recentShown.length, __first: true },
+                     ...(recentOpen ? recentShown : []),
+                     ...(recentOpen && recentShown.length < shown.length ? [{ __break: true }] : []),
                      ...shown.filter(ph => !isRecentPhoto(ph))]
                   : shown;
                 return (<>
@@ -3429,9 +3438,13 @@ undefined
                 // A section heading: a full-width row inside the same grid, so the tiles either
                 // side of it keep one consistent size.
                 if (ph.__head !== undefined) return (
-                  <div key={`sec${ph.__head}`} style={{gridColumn:"1/-1",margin:ph.__first?"0 0 2px":"14px 0 2px",paddingTop:ph.__first?0:12,borderTop:ph.__first?"none":`1px solid ${border}`,display:"flex",alignItems:"baseline",gap:8}}>
-                    <span style={{fontSize:9.5,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:textS}}>{SEC_META[ph.__head][0]}</span>
-                    <span style={{fontSize:10,color:textS,fontWeight:400}}>{SEC_META[ph.__head][1](ph.__n)}</span>
+                  <div key={`sec${ph.__head}`} style={{gridColumn:"1/-1",margin:ph.__first?"0 0 2px":"14px 0 2px",paddingTop:ph.__first?0:12,borderTop:ph.__first?"none":`1px solid ${border}`}}>
+                    <button type="button" onClick={()=>setRecentOpenByZone(p=>({...p,[k]:!p[k]}))} aria-expanded={recentOpen}
+                      style={{display:"flex",alignItems:"center",gap:7,border:"none",background:"transparent",cursor:"pointer",padding:0}}>
+                      <span style={{display:"inline-flex",transform:recentOpen?"rotate(90deg)":"none",transition:"transform .15s ease",color:textS}}><IconChevron size={9}/></span>
+                      <span style={{fontSize:9.5,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:textS}}>{SEC_META[ph.__head][0]}</span>
+                      <span style={{fontSize:10,color:textS,fontWeight:400}}>{SEC_META[ph.__head][1](ph.__n)}</span>
+                    </button>
                   </div>
                 );
                 // Unlabelled gap between Recently viewed and everything after it — a full-width row
