@@ -692,14 +692,22 @@ function StudioBrowse({ ctx }) {
     };
     const activeTotal = Object.values(sectionCounts).reduce((a, b) => a + b, 0);
 
-    // ═══ THE CURRENT PAGE ═══
+    // Favourites/recently-viewed (shownVideos' own _pin) are pulled out BEFORE pagination, not after
+    // — they're pinned to the very FRONT of shownVideos, so slicing by page first meant they only
+    // ever fell within page 1's slice; from page 2 on, pageVideos held none of them and the whole
+    // "Favourites & recently viewed" heading (and its toggle) simply didn't exist, with no way back
+    // to it short of paging all the way to 1. Kept as their own persistent list instead, shown on
+    // every page regardless of which page of the REST you're on.
+    const pinnedVideos = shownVideos.filter(v => v._pin);
+    const restVideos = shownVideos.filter(v => !v._pin);
+    // ═══ THE CURRENT PAGE ═══ (of restVideos — pinned videos are never paginated, see above)
     // Clamped, so a filter that shrinks the results below the page you were on lands you on the
     // last real page instead of an empty grid.
-    const totalPages = Math.max(1, Math.ceil(shownVideos.length / PER_PAGE));
+    const totalPages = Math.max(1, Math.ceil(restVideos.length / PER_PAGE));
     const safePage = Math.min(page, totalPages);
-    const pageVideos = shownVideos.slice((safePage - 1) * PER_PAGE, safePage * PER_PAGE);
-    const pageFrom = shownVideos.length ? (safePage - 1) * PER_PAGE + 1 : 0;
-    const pageTo = Math.min(safePage * PER_PAGE, shownVideos.length);
+    const pageVideos = restVideos.slice((safePage - 1) * PER_PAGE, safePage * PER_PAGE);
+    const pageFrom = restVideos.length ? (safePage - 1) * PER_PAGE + 1 : 0;
+    const pageTo = Math.min(safePage * PER_PAGE, restVideos.length);
     // Warm this page's thumbnails in parallel (the lazy <img>s below the fold would otherwise only
     // start downloading as they scroll in), then the next page's, so "Next" opens onto a grid that's
     // already in cache. Deferred out of render; repeats are free (prefetchImages dedupes).
@@ -1853,10 +1861,12 @@ function StudioBrowse({ ctx }) {
             // group separately would mean three sets of controls and pages of wildly different
             // lengths; this way every page is 40 and the headings still describe what is under them
             // — a page can simply run out of "tagged here" partway down and continue into the rest.
-            // Favourites + recently viewed (shownVideos' _pin) get their own block first, so the venue
-            // split below can't scatter them back into "tagged here" / "other venues".
-            const pinned = pageVideos.filter(v=>v._pin);
-            const restPage = pageVideos.filter(v=>!v._pin);
+            // Favourites + recently viewed (pinnedVideos) are already pulled out before pagination
+            // (see their own declaration) — pageVideos never contains them, so there's nothing left
+            // to filter out here, and the venue split below can't scatter them back into "tagged
+            // here" / "other venues" either way.
+            const pinned = pinnedVideos;
+            const restPage = pageVideos;
             const preferred = restPage.filter(v=>v._venueMatch);
             // Three groups, not two. The tail used to be labelled "from other venues", but ~191 of
             // the library has no venue tag at all, so that heading was describing them wrongly. They

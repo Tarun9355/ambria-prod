@@ -3403,29 +3403,36 @@ undefined
                 // once, which on a zone with 778 photos is 778 thumbnails in one scroll region —
                 // and a scroll INSIDE a page that also scrolls. It gets PH_GRID_PER_PAGE with the
                 // same pager the strip already uses.
-                const perPage = gridZones[k] ? PH_GRID_PER_PAGE : PH_PER_PAGE;
-                const pageCount = Math.max(1, Math.ceil(matchedPhotos.length / perPage));
-                const page = Math.min(phPage[k] || 0, pageCount - 1);   // clamp: filters can shrink the list
-                const start = page * perPage;
-                const shown = matchedPhotos.slice(start, start + perPage);
                 // ═══ SECTION HEADING ═══ Grid view only, and only one: "Recently viewed" over the
                 // photos this salesperson last opened/picked (tier 0 of FINAL TIERS above). Everything
                 // after it — your favourites, others' favourites, has elements, the rest — runs on as
                 // one continuous grid, in that order, with no headings of its own (owner ask).
                 const sectioned = gridZones[k];
-                const recentShown = sectioned ? shown.filter(isRecentPhoto) : [];
+                // Recently-viewed photos are pinned to the FRONT of matchedPhotos, so on an unfiltered
+                // "shown" (this page's slice only) they only ever landed on page 1 — the heading and
+                // its toggle simply didn't exist from page 2 onward, with no way back to them short of
+                // paging all the way back to 1. Computed from the FULL matched set instead, and kept
+                // out of what gets paginated below, so the heading (and, once opened, the photos
+                // themselves) are there on every page, and nothing shows twice.
+                const recentAll = sectioned ? matchedPhotos.filter(isRecentPhoto) : [];
                 const recentOpen = !!recentOpenByZone[k];
+                const nonRecentMatched = sectioned ? matchedPhotos.filter(ph => !isRecentPhoto(ph)) : matchedPhotos;
+                const perPage = gridZones[k] ? PH_GRID_PER_PAGE : PH_PER_PAGE;
+                const pageCount = Math.max(1, Math.ceil(nonRecentMatched.length / perPage));
+                const page = Math.min(phPage[k] || 0, pageCount - 1);   // clamp: filters can shrink the list
+                const start = page * perPage;
+                const shown = nonRecentMatched.slice(start, start + perPage);
                 const SEC_META = [["Recently viewed", (n) => `${n} you opened recently`]];
                 // Headings ride in the same list as the photos, marked with __head, so one map
                 // renders both and the grid lays them out together. `i = start + pi` is only a
                 // React key now, so the extra entries shifting it is harmless. The photos/break
                 // themselves only ride along when this zone's section is actually open — collapsed,
                 // only the heading row renders.
-                const renderList = recentShown.length
-                  ? [{ __head: 0, __n: recentShown.length, __first: true },
-                     ...(recentOpen ? recentShown : []),
-                     ...(recentOpen && recentShown.length < shown.length ? [{ __break: true }] : []),
-                     ...shown.filter(ph => !isRecentPhoto(ph))]
+                const renderList = recentAll.length
+                  ? [{ __head: 0, __n: recentAll.length, __first: true },
+                     ...(recentOpen ? recentAll : []),
+                     ...(recentOpen && shown.length > 0 ? [{ __break: true }] : []),
+                     ...shown]
                   : shown;
                 return (<>
               {/* No maxHeight/overflow on the grid any more: with a pager under it, an inner scroll
@@ -3650,7 +3657,7 @@ undefined
                   <button onClick={()=>phGoTo(k,Math.min(pageCount-1,page+1),page)} disabled={page===pageCount-1} title="More photos" className="ph-pg" style={phNav(page===pageCount-1)}>
                     <span style={{display:"inline-flex",transform:"rotate(-90deg)"}}><IconChevron size={13}/></span>
                   </button>
-                  <span style={{fontSize:10.5,color:textS,marginLeft:4}}>{start+1}–{Math.min(start+perPage,matchedPhotos.length)} of {matchedPhotos.length}</span>
+                  <span style={{fontSize:10.5,color:textS,marginLeft:4}}>{start+1}–{Math.min(start+perPage,nonRecentMatched.length)} of {nonRecentMatched.length}</span>
                 </div>}
                 {/* Sits OUTSIDE the pager block on purpose. A zone cut to three photos has one page,
                     so anything inside `pageCount>1` would be hidden in exactly the case where the
