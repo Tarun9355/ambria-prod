@@ -7243,6 +7243,10 @@ export default function StudioApp() {
     const prevSnapForTotals = (((clientLedgerRef.current || clientLedger)
       .find(c => c.id === activeClientId)?.sessions) || [])[0] || null;
     // ── STOP A STALE TAB FROM SILENTLY OVERWRITING A NEWER SAVE ──
+    // Read STALE_SAVE_GUARD_PITFALLS.md (repo root) before changing ANYTHING in this block or in
+    // resumeSavedSession/loadClientSession's own baseline-setting lines — this exact mechanism has
+    // already shipped two regressions (a baseline set from the wrong session, and a same-user
+    // exemption that defeated its own purpose). Both are documented there with what to check first.
     // Same fix as Deal Check's dcDraft autosave (dcSaveBaselineRef, ~line 9153) — this file already
     // has one confirmed incident of exactly this (see the "DELETION DISABLED" note further down):
     // a ₹4,50,865 build was saved, then a DIFFERENT tab's autosave — still working from an older
@@ -7270,7 +7274,12 @@ export default function StudioApp() {
         buildConflictWarnedAtRef.current = buildRemoteSavedAt;
         const who = buildRemoteSavedBy === buildMe ? "You" : buildRemoteSavedBy;
         const verb = buildRemoteSavedBy === buildMe ? "saved newer changes to this deal from another device or tab" : "saved changes to this deal while you were editing";
-        showMsg?.(`⚠ ${who} ${verb} — your changes here were NOT auto-saved to avoid overwriting them. Reload to see the latest before continuing.`, "red");
+        // The persistent "Save Failed" banner (setSaveError), not the 2-second showMsg toast — this
+        // is a "nothing you do right now is being saved" warning, not a fire-and-forget confirmation,
+        // and someone has to actually read and act on it (reload) before it's safe to keep working.
+        // A 2s auto-dismissing toast for a sentence this long was the exact complaint that led here —
+        // see STALE_SAVE_GUARD_PITFALLS.md.
+        setSaveError?.({ label: "This build", error: `${who} ${verb} — your changes here were NOT auto-saved to avoid overwriting them. Reload to see the latest before continuing.` });
       }
       return; // nothing local is discarded — it just isn't persisted until this tab reloads
     }
