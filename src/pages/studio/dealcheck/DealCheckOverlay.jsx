@@ -1519,7 +1519,7 @@ export default function DealCheckOverlay({ ctx }) {
           // dealAmount — what the guest is ACTUALLY billed. Un-negotiated: clientRevenue (pre-fee) +
           // agencyFee, same as eventGrandTotal's own formula. Negotiated: discountedRevenue itself —
           // it's already the final billed figure, agencyFee above is just its fee share for display.
-          const dealAmount = isNegotiated ? discountedRevenue : discountedRevenue + agencyFee;
+          let dealAmount = isNegotiated ? discountedRevenue : discountedRevenue + agencyFee;
           const effGrand = hasActuals ? grandActual : grand;
           // ═══ Commission — % of the deal amount set aside per venue (IMS → Admin → Master Data →
           // Venues, one row per in-house property or outdoor venue). A booking spanning more than one
@@ -1564,6 +1564,23 @@ export default function DealCheckOverlay({ ctx }) {
             commissionTotal += finalAmt;
             return { venue: vKey, revenueShare, pct, defaultAmt, overrideVal: hasOverride ? overrideVal : null, finalAmt };
           });
+          // ═══ OUTDOOR VENUE COMMISSION IS BILLED TO THE CLIENT ═══
+          // In-house (Fixed Venue) commission stays exactly what it always was: paid out of Ambria's
+          // own margin, never added to what the guest is billed. Outdoor-venue commission is now
+          // added to dealAmount itself instead — computed above against the PRE-addon dealAmount
+          // (to avoid the amount depending on itself), then folded in here so every consumer of
+          // dealAmount below (profitPct, commRate, the Commission/GYV tabs, the bottom strip) already
+          // sees the real, inflated client total with no separate line to add elsewhere. commissionTotal
+          // is NOT reduced by this — Ambria still actually pays the venue the same amount either way,
+          // so profit correctly rises by the outdoor share (it's no longer eaten from Ambria's own
+          // margin), while the deal amount rises by the exact same figure the client now covers it
+          // with — not a double-count, just revenue and its matching cost both properly accounted for.
+          // Skipped when negotiated: a negotiated amount is already the final, fixed figure a human
+          // typed — same reasoning the agency fee above already follows (backed OUT for display, never
+          // added on top). Profit still comes out net of the real commission cost either way (below);
+          // only the "what does the client actually owe" figure is left untouched here.
+          const commissionTotalOutdoor = commissionByVenue.reduce((s, r) => s + (fixedVenueFor(fvCfgForDiscount, r.venue) ? 0 : r.finalAmt), 0);
+          if (!isNegotiated) dealAmount += commissionTotalOutdoor;
           // Profit measured against dealAmount (fee included) — the fee is pure additional revenue
           // with no offsetting cost, so it flows straight through to profit, same as the owner asked.
           const profitPct = dealAmount > 0 ? Math.round(((dealAmount - effGrand - commissionTotal) / dealAmount) * 100) : 0;

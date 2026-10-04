@@ -239,6 +239,45 @@ export function fixedVenueDealDiscount(settings, fns, calcFnGrand, revenueTotal)
   return proratedVenueDiscount(items, revenueTotal);
 }
 
+// Venue commission billed to the CLIENT instead of silently absorbed by Ambria — outdoor venues
+// only. In-house (Fixed Venue) commission stays exactly what it always was: an internal payout that
+// comes out of Ambria's own margin, never shown to the guest. This only ever adds on for a venue
+// that is NOT a configured Fixed Venue — same proration as fixedVenueDealDiscount above (each
+// venue's own share of dealAmount, by its functions' combined grand), just added instead of
+// subtracted, and gated to "not fixed" instead of "is fixed". Deliberately invisible on every
+// client-facing screen (no line item, no label) — it just raises the total the guest sees, the same
+// way it used to silently lower what Ambria kept.
+// commissionOverrides: optional { [resolvedVenueKey]: amount } — a salesperson's own hand-set
+// commission AMOUNT for that venue (Deal Check's Commission tab), used as-is instead of the %
+// calculation when present, same as Deal Check's own commissionByVenue already does.
+export function outdoorVenueCommissionAddon(settings, fns, calcFnGrand, dealAmount, venueCommissionRates, venueParents, commissionOverrides) {
+  const rates = venueCommissionRates || {};
+  const parents = venueParents || {};
+  const overrides = commissionOverrides || {};
+  const resolve = (vn) => parents[vn] || vn;
+  const byVenue = {};
+  let total = 0;
+  (fns || []).forEach((fn) => {
+    const vKey = resolve(fn?.fnVenue || "");
+    if (!vKey) return;
+    let g = 0; try { g = calcFnGrand(fn) || 0; } catch { g = 0; }
+    byVenue[vKey] = (byVenue[vKey] || 0) + g;
+    total += g;
+  });
+  const venueKeys = Object.keys(byVenue);
+  let addon = 0;
+  venueKeys.forEach((vKey) => {
+    if (fixedVenueFor(settings, vKey)) return; // in-house — stays an internal cost, not billed to the client
+    const share = total > 0 ? byVenue[vKey] / total : (venueKeys.length === 1 ? 1 : 0);
+    const revenueShare = (Number(dealAmount) || 0) * share;
+    const pct = Number(rates[vKey]) || 0;
+    const overrideVal = overrides[vKey];
+    const hasOverride = typeof overrideVal === "number" && isFinite(overrideVal);
+    addon += hasOverride ? overrideVal : Math.round(revenueShare * pct / 100);
+  });
+  return addon;
+}
+
 // Heavy-element extra labour for a function, netting out standing inventory at fixed venues.
 // Returns { total, breakdown: string[] }.
 export function heavyElementExtraForFn(fn, settings, inventory) {
