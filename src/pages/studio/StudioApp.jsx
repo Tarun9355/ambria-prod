@@ -8525,7 +8525,16 @@ export default function StudioApp() {
     // shown. Confirmed as a real incident, not a theoretical one: a different salesperson's tab,
     // resumed this way and never reloaded since, re-saved a ₹16L+ state over someone else's ₹14L+
     // edit made minutes earlier.
-    buildSaveBaselineRef.current = { savedAt: Number(session.savedAt) || 0, savedBy: session.savedBy || null };
+    // The baseline MUST be the client's actual current sessions[0] — NOT `session` itself. A
+    // deliberate Resume routinely loads an OLDER session on purpose (rolling back to a past build),
+    // exactly like loadClientSession's own comment already warns about — sessions[0] on the server
+    // stays whatever it already was. Baselining on the (older) resumed session instead made the very
+    // next save look like a conflict against yourself every single time: the live remote (the actual
+    // newest session) always reads as "newer than my baseline", and whoever saved it was flagged as
+    // having "overwritten" you — even though resuming an old build and re-saving it IS the feature.
+    // That is exactly the red "not auto-saved" toast seen immediately after a legitimate rollback.
+    const curTop = (clientLedgerRef.current || clientLedger).find(c => c.id === activeClientIdRef.current)?.sessions?.[0] || null;
+    buildSaveBaselineRef.current = { savedAt: Number(curTop?.savedAt) || 0, savedBy: curTop?.savedBy || null };
     const idx = Number.isInteger(targetFnIdx) ? targetFnIdx : activeFnIdx;
     if (session.fnSnapshots && typeof session.fnSnapshots === "object" && Object.keys(session.fnSnapshots).length > 0) {
       const activeSnap = session.fnSnapshots[idx] || session.fnSnapshots[String(idx)] || null;
@@ -8569,7 +8578,7 @@ export default function StudioApp() {
     }
     setStep(2);
     showMsg("Resumed session from " + new Date(session.savedAt).toLocaleDateString("en-IN"), "green");
-  }, [events, allVideos, ytVideoTags, activeFnIdx, setActiveFnIdx]);
+  }, [events, allVideos, ytVideoTags, activeFnIdx, setActiveFnIdx, clientLedger]);
 
   // ── AI tag an image (Claude vision) — routes via callClaudeStreaming (Supabase Edge Fn) ──
   const aiTagImage = async (url) => {
