@@ -4671,67 +4671,82 @@ undefined
         }
         setCorrectPhoto(null);
       };
-      return <div onClick={()=>setCorrectPhoto(null)} style={{position:"fixed",inset:0,zIndex:9999,background:"rgba(0,0,0,0.6)",display:"flex",justifyContent:"center",alignItems:"flex-start",overflow:"auto",padding:20}}>
-        <div onClick={e=>e.stopPropagation()} style={{background:cardBg,borderRadius:16,width:"100%",maxWidth:620,maxHeight:"90vh",overflow:"auto",border:`1px solid ${border}`,padding:18}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-            <div style={{fontSize:15,fontWeight:700,color:textP}}>{isNewMaster?"✏️ Save photo to Library — tags, elements & zone details":"✏️ Correct photo — tags, elements & zone details"}</div>
-            <span onClick={()=>setCorrectPhoto(null)} style={{fontSize:18,cursor:"pointer",color:textS,fontWeight:700}}>✕</span>
+      // Photo shown large on its own side, not as a 120×84 thumbnail glued to the Name field — tags
+      // can't be fixed correctly from a photo too small to actually read, and opening the full
+      // lightbox to go look first is what pinned it into Recently Viewed just to tag it. Two columns
+      // (tags left, image right, per how this is used — reading down a tag list while glancing right
+      // at the photo), capped at a moderate width rather than Manage's own full-screen version: this
+      // is a quick in-the-moment fix from inside Build, not a dedicated tagging session.
+      const bigSrc = master?.url||correctPhoto.draftSrc;
+      return <div onClick={()=>setCorrectPhoto(null)} style={{position:"fixed",inset:0,zIndex:9999,background:"rgba(0,0,0,0.6)",display:"flex",justifyContent:"center",alignItems:"center",padding:20}}>
+        <div onClick={e=>e.stopPropagation()} style={{background:cardBg,borderRadius:16,width:"100%",maxWidth:1040,height:"min(88vh, 760px)",border:`1px solid ${border}`,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+          <div style={{padding:"16px 18px 0"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+              <div style={{fontSize:15,fontWeight:700,color:textP}}>{isNewMaster?"✏️ Save photo to Library — tags, elements & zone details":"✏️ Correct photo — tags, elements & zone details"}</div>
+              <span onClick={()=>setCorrectPhoto(null)} style={{fontSize:18,cursor:"pointer",color:textS,fontWeight:700}}>✕</span>
+            </div>
+            <div style={{fontSize:11,color:textS,marginBottom:12}}>{isNewMaster?"This photo isn't in the shared Library yet — add tags below and it'll become a reusable Library photo for everyone.":"Fix any tags below — they save to the shared library photo for everyone (future quotes)."} Your <b>element edits, zone dimensions and all structure details</b> (truss, masking, plinth, carpet, prints, materials) from the build card above are saved too. Quotes already given keep their own numbers.</div>
           </div>
-          <div style={{fontSize:11,color:textS,marginBottom:12}}>{isNewMaster?"This photo isn't in the shared Library yet — add tags below and it'll become a reusable Library photo for everyone.":"Fix any tags below — they save to the shared library photo for everyone (future quotes)."} Your <b>element edits, zone dimensions and all structure details</b> (truss, masking, plinth, carpet, prints, materials) from the build card above are saved too. Quotes already given keep their own numbers.</div>
-          <div style={{display:"flex",gap:12,marginBottom:12}}>
-            {(master?.url||correctPhoto.draftSrc)&&<img src={master?.url||correctPhoto.draftSrc} alt="" style={{width:120,height:84,objectFit:"cover",borderRadius:10,flexShrink:0}} onError={e=>{e.target.style.display="none"}}/>}
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{fontSize:9,color:textS,marginBottom:3}}>Name</div>
-              <input value={correctPhoto.name} onChange={e=>setCorrectPhoto(p=>({...p,name:e.target.value}))} style={{...S.input,fontSize:13,fontWeight:600}}/>
-              <div style={{fontSize:9,color:textS,marginTop:6}}>{(zoneElements[correctPhoto.zoneKey]||master?.elements||[]).length} elements{(()=>{const c=zoneConfig[correctPhoto.zoneKey];if(!c)return "";const d=c.dims||{};const hasDims=(d.L||d.W||d.H||d.S);const nPrints=(c.prints||[]).length;const bits=[];if(hasDims)bits.push(`dims ${d.L||0}×${d.W||0}${d.H?"×"+d.H:""}`);if(c.trT)bits.push(c.trT);if(nPrints)bits.push(`${nPrints} print${nPrints>1?"s":""}`);return bits.length?` · ${bits.join(" · ")}`:"";})()} <span style={{color:accent}}>(saved from your edits above)</span></div>
+          <div style={{display:"flex",gap:18,flex:1,minHeight:0,padding:"0 18px 18px"}}>
+            <div style={{flex:"1 1 48%",minWidth:0,overflowY:"auto",paddingRight:4}}>
+              <div style={{marginBottom:10}}>
+                <div style={{fontSize:9,color:textS,marginBottom:3}}>Name</div>
+                <input value={correctPhoto.name} onChange={e=>setCorrectPhoto(p=>({...p,name:e.target.value}))} style={{...S.input,fontSize:13,fontWeight:600}}/>
+                <div style={{fontSize:9,color:textS,marginTop:6}}>{(zoneElements[correctPhoto.zoneKey]||master?.elements||[]).length} elements{(()=>{const c=zoneConfig[correctPhoto.zoneKey];if(!c)return "";const d=c.dims||{};const hasDims=(d.L||d.W||d.H||d.S);const nPrints=(c.prints||[]).length;const bits=[];if(hasDims)bits.push(`dims ${d.L||0}×${d.W||0}${d.H?"×"+d.H:""}`);if(c.trT)bits.push(c.trT);if(nPrints)bits.push(`${nPrints} print${nPrints>1?"s":""}`);return bits.length?` · ${bits.join(" · ")}`:"";})()} <span style={{color:accent}}>(saved from your edits above)</span></div>
+              </div>
+              {/* Specific named venue (2-level: Inhouse / Outside) */}
+              {(()=>{
+                const curVenue=correctPhoto.tags?.venue||"";
+                const setV=(val)=>setCorrectPhoto(p=>({...p,tags:{...p.tags,venue:val||""}}));
+                const pill=(on)=>({padding:"3px 10px",borderRadius:8,fontSize:10,cursor:"pointer",fontWeight:on?700:500,border:`1px solid ${on?accent:border}`,background:on?`${accent}18`:"transparent",color:on?accent:textS});
+                return <div style={{marginBottom:10}}>
+                  <div style={{fontSize:10,color:textS,marginBottom:3,fontWeight:600}}>Venue (specific)</div>
+                  <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:4}}>
+                    <span onClick={()=>setCorrVenueGrp("inhouse")} style={pill(corrVenueGrp==="inhouse")}>Inhouse</span>
+                    <span onClick={()=>setCorrVenueGrp("outside")} style={pill(corrVenueGrp==="outside")}>Outside</span>
+                    {curVenue&&<span onClick={()=>setV("")} style={{padding:"3px 9px",borderRadius:8,fontSize:9,cursor:"pointer",color:"#E11D48",border:`1px dashed ${border}`}}>✕ {curVenue}</span>}
+                  </div>
+                  {corrVenueGrp==="inhouse"&&<div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                    {azSort(leafInhouseVenues).map(vn=>{const on=curVenue===vn;return <span key={vn} onClick={()=>setV(on?"":vn)} style={{...pill(on),fontSize:9,padding:"3px 8px"}}>{vn}</span>;})}
+                  </div>}
+                  {corrVenueGrp==="outside"&&<div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                    {[...customOutdoor].sort((a,b)=>String(a?.name).localeCompare(String(b?.name))).map(o=>{const on=curVenue===o.name;return <span key={o.name} onClick={()=>setV(on?"":o.name)} style={{...pill(on),fontSize:9,padding:"3px 8px"}}>{o.name}{o.empanelled?" ★":""}</span>;})}
+                  </div>}
+                </div>;
+              })()}
+              {Object.keys(taxonomy).filter(key=>Array.isArray(taxonomy[key])).map(key=>{
+                // "Areas / zones" used to read taxonomy.areasElements — its own, separately-persisted
+                // list that only ever gets best-effort synced with Manage → Zone Types on a rename, not
+                // a real source of truth. A zone added/renamed/removed any other way (customZones, direct
+                // zoneDefs.meta edits) silently drifted out of step with it. Mirror the colorPalette
+                // special-case just below: pull the live options straight from the same zoneKeys/
+                // customZones list Build's own zone pickers already use (StudioBuild.jsx:1473 etc.), so
+                // this panel can never show a stale zone list again.
+                const vals=key==="colorPalette"&&imsPaletteCatalogue.length>0?imsPaletteCatalogue.map(p=>p.name)
+                  :key==="areasElements"?[...new Set([...zoneKeys.map(zk=>zoneLabelsD[zk]?.label||zk),...customZones.map(cz=>cz.name)])]
+                  :taxonomy[key];
+                return <div key={key} style={{marginBottom:8}}>
+                  <div style={{fontSize:10,color:textS,marginBottom:3,fontWeight:600}}>{taxLabel(key)}</div>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
+                    {(key==="tier"?(vals||[]):azSort(vals||[])).map(v=>{const sel=(correctPhoto.tags?.[key]||[]).includes(v);return <span key={v} onClick={()=>toggle(key,v)} style={{padding:"3px 9px",fontSize:10,borderRadius:8,cursor:"pointer",border:`1px solid ${sel?accent:border}`,background:sel?`${accent}18`:"transparent",color:sel?accent:textS}}>{v}</span>;})}
+                    {key==="colorPalette"&&setImsPaletteCatalogue&&<PaletteQuickAdd accent={accent} border={border} textS={textS}
+                      onAdd={(name)=>{
+                        const added=addPaletteInline(name,imsPaletteCatalogue,setImsPaletteCatalogue,savePaletteData);
+                        if(!added)return;
+                        const cur=correctPhoto.tags?.colorPalette||[];
+                        if(!cur.includes(added))toggle("colorPalette",added);
+                      }} />}
+                  </div>
+                </div>;
+              })}
+            </div>
+            <div style={{flex:"1 1 52%",minWidth:0,display:"flex",alignItems:"center",justifyContent:"center",background:isDark?"#0A0A14":"#F4F2EC",borderRadius:12,overflow:"hidden"}}>
+              {bigSrc
+                ? <img src={bigSrc} alt="" style={{maxWidth:"100%",maxHeight:"100%",objectFit:"contain"}} onError={e=>{e.target.style.display="none"}}/>
+                : <div style={{fontSize:11,color:textS}}>No photo</div>}
             </div>
           </div>
-          {/* Specific named venue (2-level: Inhouse / Outside) */}
-          {(()=>{
-            const curVenue=correctPhoto.tags?.venue||"";
-            const setV=(val)=>setCorrectPhoto(p=>({...p,tags:{...p.tags,venue:val||""}}));
-            const pill=(on)=>({padding:"3px 10px",borderRadius:8,fontSize:10,cursor:"pointer",fontWeight:on?700:500,border:`1px solid ${on?accent:border}`,background:on?`${accent}18`:"transparent",color:on?accent:textS});
-            return <div style={{marginBottom:10}}>
-              <div style={{fontSize:10,color:textS,marginBottom:3,fontWeight:600}}>Venue (specific)</div>
-              <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:4}}>
-                <span onClick={()=>setCorrVenueGrp("inhouse")} style={pill(corrVenueGrp==="inhouse")}>Inhouse</span>
-                <span onClick={()=>setCorrVenueGrp("outside")} style={pill(corrVenueGrp==="outside")}>Outside</span>
-                {curVenue&&<span onClick={()=>setV("")} style={{padding:"3px 9px",borderRadius:8,fontSize:9,cursor:"pointer",color:"#E11D48",border:`1px dashed ${border}`}}>✕ {curVenue}</span>}
-              </div>
-              {corrVenueGrp==="inhouse"&&<div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-                {azSort(leafInhouseVenues).map(vn=>{const on=curVenue===vn;return <span key={vn} onClick={()=>setV(on?"":vn)} style={{...pill(on),fontSize:9,padding:"3px 8px"}}>{vn}</span>;})}
-              </div>}
-              {corrVenueGrp==="outside"&&<div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-                {[...customOutdoor].sort((a,b)=>String(a?.name).localeCompare(String(b?.name))).map(o=>{const on=curVenue===o.name;return <span key={o.name} onClick={()=>setV(on?"":o.name)} style={{...pill(on),fontSize:9,padding:"3px 8px"}}>{o.name}{o.empanelled?" ★":""}</span>;})}
-              </div>}
-            </div>;
-          })()}
-          {Object.keys(taxonomy).filter(key=>Array.isArray(taxonomy[key])).map(key=>{
-            // "Areas / zones" used to read taxonomy.areasElements — its own, separately-persisted
-            // list that only ever gets best-effort synced with Manage → Zone Types on a rename, not
-            // a real source of truth. A zone added/renamed/removed any other way (customZones, direct
-            // zoneDefs.meta edits) silently drifted out of step with it. Mirror the colorPalette
-            // special-case just below: pull the live options straight from the same zoneKeys/
-            // customZones list Build's own zone pickers already use (StudioBuild.jsx:1473 etc.), so
-            // this panel can never show a stale zone list again.
-            const vals=key==="colorPalette"&&imsPaletteCatalogue.length>0?imsPaletteCatalogue.map(p=>p.name)
-              :key==="areasElements"?[...new Set([...zoneKeys.map(zk=>zoneLabelsD[zk]?.label||zk),...customZones.map(cz=>cz.name)])]
-              :taxonomy[key];
-            return <div key={key} style={{marginBottom:8}}>
-              <div style={{fontSize:10,color:textS,marginBottom:3,fontWeight:600}}>{taxLabel(key)}</div>
-              <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
-                {(key==="tier"?(vals||[]):azSort(vals||[])).map(v=>{const sel=(correctPhoto.tags?.[key]||[]).includes(v);return <span key={v} onClick={()=>toggle(key,v)} style={{padding:"3px 9px",fontSize:10,borderRadius:8,cursor:"pointer",border:`1px solid ${sel?accent:border}`,background:sel?`${accent}18`:"transparent",color:sel?accent:textS}}>{v}</span>;})}
-                {key==="colorPalette"&&setImsPaletteCatalogue&&<PaletteQuickAdd accent={accent} border={border} textS={textS}
-                  onAdd={(name)=>{
-                    const added=addPaletteInline(name,imsPaletteCatalogue,setImsPaletteCatalogue,savePaletteData);
-                    if(!added)return;
-                    const cur=correctPhoto.tags?.colorPalette||[];
-                    if(!cur.includes(added))toggle("colorPalette",added);
-                  }} />}
-              </div>
-            </div>;
-          })}
-          <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:14}}>
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end",padding:"0 18px 18px"}}>
             <button onClick={()=>setCorrectPhoto(null)} style={{...S.btn(false),fontSize:12}}>Cancel</button>
             <button onClick={save} style={{...S.btn(true),fontSize:12,background:"#7C3AED"}}><IconSave size={12}/> Save to master</button>
           </div>
