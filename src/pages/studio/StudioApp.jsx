@@ -4207,17 +4207,7 @@ export default function StudioApp() {
   const structDiscountFor = (zc, venueName) => {
     if (hideDiscountFromClient) return false;
     const fv = !!fixedVenueFor(fvCfgForRepeat, venueName);
-    // A Fixed Venue sets the DEFAULT (every structural group starts discounted), but an explicit
-    // per-category chip must still be able to override it either way — including turning a Fixed
-    // Venue's own group back to Fresh/full-price. `fv || repeatCatFor(...)` couldn't do that: once
-    // fv was true the OR could only ever stay true, so the Fresh/Repeat chip visibly changed state
-    // but silently had zero effect on price for any Fixed Venue, which is exactly the bug reported
-    // (toggling Truss/Platform/Print between Fresh and Repeat left the price identical).
-    const catFlag = (cat) => {
-      const explicit = zc?.repeatCats?.[cat];
-      return typeof explicit === "boolean" ? explicit : (fv || !!zc?.repeat);
-    };
-    return { truss: catFlag("truss"), platform: catFlag("platform"), print: catFlag("print") };
+    return { truss: fv || repeatCatFor(zc, "truss"), platform: fv || repeatCatFor(zc, "platform"), print: fv || repeatCatFor(zc, "print") };
   };
   // Owner ask: a second discrete per-deal lever, alongside hideDiscountFromClient — the small dot on
   // each Photo Filters section (Build's left rail) doubles as a markup tier picker when clicked

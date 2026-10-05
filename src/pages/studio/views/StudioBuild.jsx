@@ -1326,15 +1326,7 @@ export default function StudioBuild({ ctx }) {
   // now override the zone's own default independently (repeatCatFor, lib/studio/pricing.js).
   const structDiscountFor = (zc) => {
     if (hideDiscountFromClient) return false;
-    // See StudioApp.jsx's own structDiscountFor for why this can't be a plain OR: a Fixed Venue
-    // has to be the DEFAULT, not an unconditional floor — an explicit per-category chip (set via
-    // the small icon on each tile) must be able to override it either way, or toggling Fresh/Repeat
-    // on a Fixed Venue's Truss/Platform/Print visibly changes the icon but never moves the price.
-    const catFlag = (cat) => {
-      const explicit = zc?.repeatCats?.[cat];
-      return typeof explicit === "boolean" ? explicit : (!!fixedVenueHere || !!zc?.repeat);
-    };
-    return { truss: catFlag("truss"), platform: catFlag("platform"), print: catFlag("print") };
+    return { truss: !!fixedVenueHere || repeatCatFor(zc, "truss"), platform: !!fixedVenueHere || repeatCatFor(zc, "platform"), print: !!fixedVenueHere || repeatCatFor(zc, "print") };
   };
   // Same scaleStruct StudioApp.jsx uses for its own guest-facing calcStructCost calls (getElPrice/
   // getElPriceForFn already fold guestPriceMultiplier in there) — Build's own local truss/masking/
