@@ -1387,7 +1387,14 @@ export default function StudioBuild({ ctx }) {
     // once it exists at all, unlike an element which can legitimately scale down to none.
     const rescaleQty = (curQty, curBase) => {
       const effQty = curQty != null ? Number(curQty) : 1; // UI default when unset — zc.trussQty||1 etc.
-      const base = (curBase != null && Number.isFinite(Number(curBase))) ? Number(curBase) : effQty / oldS;
+      // No stored base yet means this row has never been through Scale By's truss/platform/print
+      // bookkeeping — either it's brand new (oldS is trivially 1, so this is moot) or it's a zone
+      // that had `scale` set before this coverage shipped, in which case the qty on screen was
+      // NEVER actually multiplied and IS the true base, however large the stored scale already
+      // reads. Dividing by oldS here treated that on-screen number as if it had already been
+      // scaled — reconstructing the same unscaled figure every time, no matter what Scale was set
+      // to (the exact bug reported: Scale 3, Truss Qty stuck at 1).
+      const base = (curBase != null && Number.isFinite(Number(curBase))) ? Number(curBase) : effQty;
       return { base, qty: Math.max(1, Math.round(base * newS)) };
     };
     // One row (the zone's own truss/floor, or one of its extra rows) → its own rescaled trussQty/
