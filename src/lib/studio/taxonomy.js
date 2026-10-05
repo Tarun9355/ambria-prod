@@ -232,10 +232,14 @@ export const CARPET_OFF = "__off__";
 export function platformRowCost(row, rates) {
   const fd = row?.floorDims || {};
   const a = (fd.L || fd.S || 0) * (fd.W || (fd.S || 0));
+  // How many identical footprints this one row represents — defaults to 1 (every row created
+  // before this field existed, and every row where nobody has touched it). Mirrors Truss Qty's own
+  // `|| 1` convention so an untouched row prices exactly as it always did.
+  const qty = Math.max(1, Math.round(Number(row?.plQty) || 1));
   // platformRateFor, not a hard-coded rate — it is admin-editable, and this is the line that
   // actually charges for it.
-  const platform = row?.plH ? a * platformRateFor(row.plH, rates?.platformRates) : 0;
-  const carpet = row?.cpT === CARPET_OFF ? 0 : a * carpetPricingFor(row?.cpT, rates?.carpetMaterials).rate;
+  const platform = (row?.plH ? a * platformRateFor(row.plH, rates?.platformRates) : 0) * qty;
+  const carpet = (row?.cpT === CARPET_OFF ? 0 : a * carpetPricingFor(row?.cpT, rates?.carpetMaterials).rate) * qty;
   return { platform, carpet };
 }
 

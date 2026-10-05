@@ -111,7 +111,7 @@ const cloneTrussRow = (src = {}) => ({
 // titled "Truss N", carrying a remove control and no Add button of its own. Reusing the component
 // rather than writing a cut-down row is what keeps an added truss genuinely equal to the first —
 // front extension, the auto Box/Single-U line, custom ceiling and its own masking all included.
-export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, showCosts, isDark, border, textP, textS, accent, customMaskingField, maskOpts = [], trussRates, structRates, nested = false, title, onRemove, rowIdx, trussInv, venueTruss }) {
+export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, showCosts, isDark, border, textP, textS, accent, customMaskingField, maskOpts = [], trussRates, structRates, nested = false, title, onRemove, rowIdx, trussInv, venueTruss, scale = 1 }) {
   // What THIS truss structure costs. Same function the cost engine sums over every row, so the
   // figure on the card and the figure in the bill cannot drift.
   const rowCost = trussRowCost(zc, structRates || { trussRates });
@@ -198,8 +198,14 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
               <div style={{display:"flex",gap:8,marginBottom:6}}>
                 {[["W","Width"],["L","Depth"],["H","Height"]].map(([d,label])=><div key={d} style={{flex:1}}><div style={{fontSize:11.5,color:textS,marginBottom:3}}>Truss {label} (ft)</div>
                   <input type="number" value={zc.dims?.[d]||""} onChange={e=>sD(d,e.target.value)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}}/></div>)}
+                {/* Scale By (the zone header's "set of N" multiplier) rescales this the same way it
+                    rescales a Platform row's own Qty and a print row's own qty, keeping a per-set
+                    base across changes (see setZoneScale). */}
                 {zc.trT&&<div style={{flex:1}}><div style={{fontSize:11.5,color:textS,marginBottom:3}}>Truss Qty</div>
-                  <input type="number" min={1} value={zc.trussQty||1} onChange={e=>sZ({trussQty:Math.max(1,parseInt(e.target.value)||1)})} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}}/></div>}
+                  <input type="number" min={1} value={zc.trussQty||1} onChange={e=>{
+                    const nextQty=Math.max(1,parseInt(e.target.value)||1);
+                    sZ({trussQty:nextQty, trussQtyBase: scale>1?nextQty/scale:nextQty});
+                  }} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}}/></div>}
                 {zc.trT&&<div style={{flex:1}}><div style={{fontSize:11.5,color:textS,marginBottom:3}} title="Single-U extension on each front side, this many ft long. Priced as 2× Single U truss. Rare.">Front ext (ft/side)</div>
                   <input type="number" min={0} step="0.5" value={zc.trussFrontExt||""} onChange={e=>sZ({trussFrontExt:Math.max(0,parseFloat(e.target.value)||0)})} placeholder="0" style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}}/></div>}
                 {zc.trT&&(Number(zc.trussFrontExt)||0)>0&&<div style={{flex:1}}><div style={{fontSize:11.5,color:textS,marginBottom:3}} title="Height of the front extension (can differ from box height). Defaults to box height.">Ext height (ft)</div>
@@ -446,10 +452,10 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
 //
 // calcStructCost has always summed zc.extraTrussRows, and Deal Check, the truss engine and the
 // stock reservation all read them — Build was simply the one place with no way to create one.
-export function TrussStack({ S, customCeilingField, customMaskingField, k, zc, zm, st, sZ, sD, fmt, showCosts, isDark, border, textP, textS, accent, maskOpts, trussRates, structRates, trussInv, venueTruss }) {
+export function TrussStack({ S, customCeilingField, customMaskingField, k, zc, zm, st, sZ, sD, fmt, showCosts, isDark, border, textP, textS, accent, maskOpts, trussRates, structRates, trussInv, venueTruss, scale = 1 }) {
   const rows = zc.extraTrussRows || [];
   const write = (next) => sZ({ extraTrussRows: next });
-  const shared = { S, customCeilingField, customMaskingField, k, zm, st, fmt, showCosts, isDark, border, textP, textS, accent, maskOpts, trussRates, structRates, trussInv, venueTruss };
+  const shared = { S, customCeilingField, customMaskingField, k, zm, st, fmt, showCosts, isDark, border, textP, textS, accent, maskOpts, trussRates, structRates, trussInv, venueTruss, scale };
   return (<>
     <TrussCard {...shared} zc={zc} sZ={sZ} sD={sD} title={rows.length ? "Truss 1" : "Truss"} />
     {rows.map((row, ri) => {
@@ -479,7 +485,7 @@ export function TrussStack({ S, customCeilingField, customMaskingField, k, zc, z
 // `nested` marks one of a zone's EXTRA platform footprints: same card, same colours, titled
 // "Platform N" with a remove control in place of the cost, which the first card already totals
 // across every footprint.
-export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, nested = false, title, onRemove }) {
+export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, nested = false, title, onRemove, scale = 1 }) {
   // What THIS footprint costs, via the same function the cost engine sums over every row.
   //
   // Dims are read off zc, NOT off the `fd` prop — the prop is always `zc.floorDims || {}`, whether
@@ -490,7 +496,7 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
   // required. See calcStructCost's own comment (StudioApp.jsx) for the engine-side half of this.
   const rowDims = zc.floorDims || {};
   const rowCost = platformRowCost(
-    { plH: zc.plH, floorDims: rowDims, cpT: zc.cpT },
+    { plH: zc.plH, floorDims: rowDims, cpT: zc.cpT, plQty: zc.plQty },
     { platformRates: imsPlatformRates, carpetMaterials: imsCarpetMaterials },
   );
   return (
@@ -563,6 +569,14 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
                   <input type="number" value={fd.W||""} onChange={e=>sFD("W",e.target.value)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}} placeholder="—"/></div>
                 <div style={{flex:1,minWidth:96}}><div style={{fontSize:11.5,color:textS,marginBottom:3}}>Floor Depth (ft)</div>
                   <input type="number" value={fd.L||""} onChange={e=>sFD("L",e.target.value)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}} placeholder="—"/></div>
+                {/* How many identical footprints this one row is — Scale By (the zone header's "set
+                    of N" multiplier) rescales this the same way it rescales Truss Qty and a print
+                    row's own qty, keeping a per-set base across changes (see setZoneScale). */}
+                <div style={{flex:"0 0 64px"}}><div style={{fontSize:11.5,color:textS,marginBottom:3}}>Qty</div>
+                  <input type="number" min={1} value={zc.plQty||1} onChange={e=>{
+                    const nextQty=Math.max(1,parseInt(e.target.value)||1);
+                    sZ({plQty:nextQty, plQtyBase: scale>1?nextQty/scale:nextQty});
+                  }} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}}/></div>
                 <div style={{flex:1.5,minWidth:150}}>
                   <div style={{fontSize:11.5,color:textS,marginBottom:3,display:"inline-flex",alignItems:"center",gap:5}}><IconCarpet size={12}/>Carpet</div>
                   <select value={zc.cpT===CARPET_OFF?"":(zc.cpT||defaultCarpetMatId(imsCarpetMaterials)||"")} onChange={e=>sZ({cpT:e.target.value||CARPET_OFF})}
@@ -572,7 +586,7 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
                   </select></div>
                 {showCosts&&<div style={{fontSize:11.5,color:textS,paddingBottom:8,whiteSpace:"nowrap"}}>Carpet <span style={{fontWeight:600,color:textP}}>{fmt(rowCost.carpet)}</span></div>}
               </div>
-              <div style={{fontSize:11.5,color:textS,lineHeight:1.3,marginBottom:4}}>{(fd.L||fd.W)?`${fd.L||0}×${fd.W||0} = ${(fd.L||0)*(fd.W||0)} sqft`:"No floor size set — priced at 0 sqft until you enter one below"}</div>
+              <div style={{fontSize:11.5,color:textS,lineHeight:1.3,marginBottom:4}}>{(fd.L||fd.W)?`${fd.L||0}×${fd.W||0} = ${(fd.L||0)*(fd.W||0)} sqft${(zc.plQty||1)>1?` × ${zc.plQty}`:""}`:"No floor size set — priced at 0 sqft until you enter one below"}</div>
 
               </div>
   );
@@ -584,12 +598,12 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
 //
 // platformRowCost already runs per row over zc.extraPlatformRows and buildPlatformPlan draws one
 // ops entry each, so the cost and the plan were ready long before there was a way to add one.
-export function FloorStack({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates }) {
+export function FloorStack({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, scale = 1 }) {
   const rows = zc.extraPlatformRows || [];
   const write = (next) => sZ({ extraPlatformRows: next });
   // accent rides in `shared`, so both the first floor and every added row get it from one place —
   // FloorCard needs it for the platform-height control's selected fill.
-  const shared = { S, zm, st, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates };
+  const shared = { S, zm, st, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, scale };
   return (<>
     <FloorCard {...shared} zc={zc} sZ={sZ} sFD={sFD} fd={fd} title={rows.length ? "Floor 1" : "Floor"} />
     {rows.map((row, ri) => {
@@ -605,7 +619,7 @@ export function FloorStack({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark,
     <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 2, marginBottom: 9 }}>
       <button title="Adds a copy of the last platform — edit the copy as needed"
         onClick={() => { const src = rows.length ? rows[rows.length - 1] : zc;
-          write([...rows, { id: "PL" + Date.now(), plH: src.plH || "", floorDims: { ...(src.floorDims || {}) }, cpT: src.cpT || "" }]); }}
+          write([...rows, { id: "PL" + Date.now(), plH: src.plH || "", floorDims: { ...(src.floorDims || {}) }, cpT: src.cpT || "", plQty: src.plQty || 1 }]); }}
         style={{ fontSize: 10.5, fontWeight: 600, color: "#059669", background: "transparent", border: "1px dashed #05966980", borderRadius: 6, padding: "4px 10px", cursor: "pointer" }}>+ Add Platform</button>
     </div>
   </>);
@@ -1366,7 +1380,40 @@ export default function StudioBuild({ ctx }) {
         : (Number(e.qty) || 0) / oldS;
       return { ...e, baseQty: base, qty: Math.max(0, Math.round(base * newS)) };
     }) }));
-    setZoneConfig(p => ({ ...p, [k]: { ...(p[k] || {}), scale: newS } }));
+    // Truss Qty, Platform Qty and each print row's own qty rescale the same way elements do — a
+    // fixed per-set base kept across every change — so Scale By covers every tab a "set of N" could
+    // touch, not only the photo's own elements (owner ask). Same base/qty math as above, just with a
+    // floor of 1 (never 0): there is always at least one of whatever a truss/platform/print row is
+    // once it exists at all, unlike an element which can legitimately scale down to none.
+    const rescaleQty = (curQty, curBase) => {
+      const effQty = curQty != null ? Number(curQty) : 1; // UI default when unset — zc.trussQty||1 etc.
+      const base = (curBase != null && Number.isFinite(Number(curBase))) ? Number(curBase) : effQty / oldS;
+      return { base, qty: Math.max(1, Math.round(base * newS)) };
+    };
+    // One row (the zone's own truss/floor, or one of its extra rows) → its own rescaled trussQty/
+    // plQty, leaving every other field untouched.
+    const rescaleRow = (row) => {
+      if (!row) return row;
+      const next = { ...row };
+      const t = rescaleQty(row.trussQty, row.trussQtyBase);
+      next.trussQty = t.qty; next.trussQtyBase = t.base;
+      const p = rescaleQty(row.plQty, row.plQtyBase);
+      next.plQty = p.qty; next.plQtyBase = p.base;
+      return next;
+    };
+    setZoneConfig(p => {
+      const cur = p[k] || {};
+      const next = rescaleRow(cur);
+      if (Array.isArray(cur.extraTrussRows) && cur.extraTrussRows.length) next.extraTrussRows = cur.extraTrussRows.map(rescaleRow);
+      if (Array.isArray(cur.extraPlatformRows) && cur.extraPlatformRows.length) next.extraPlatformRows = cur.extraPlatformRows.map(rescaleRow);
+      if (Array.isArray(cur.prints) && cur.prints.length) {
+        next.prints = cur.prints.map(pr => {
+          const r = rescaleQty(pr.qty, pr.qtyBase);
+          return { ...pr, qty: r.qty, qtyBase: r.base };
+        });
+      }
+      return { ...p, [k]: { ...next, scale: newS } };
+    });
   };
 
   /**
@@ -4229,7 +4276,11 @@ undefined
                       <input type="number" min="0" step="0.1" value={p.areaD||""} onChange={e=>setPrint({areaD:parseFloat(e.target.value)||0})} placeholder="D ft" style={{...S.input,fontSize:11.5,padding:"3px 6px",width:56,marginBottom:0,textAlign:"center"}} />
                       <span style={{fontSize:11.5,color:textS}}>ft = {sqft?sqft.toFixed(1):0} sqft</span>
                       <span style={{fontSize:11.5,color:textS}}>×</span>
-                      <input type="number" min="1" step="1" value={p.qty??1} onChange={e=>setPrint({qty:Math.max(1,Math.round(parseFloat(e.target.value)||1))})} title="Qty — how many copies of this same print" style={{...S.input,fontSize:11.5,padding:"3px 6px",width:44,marginBottom:0,textAlign:"center"}} />
+                      <input type="number" min="1" step="1" value={p.qty??1} onChange={e=>{
+                        const nextQty=Math.max(1,Math.round(parseFloat(e.target.value)||1));
+                        const s=zoneScaleVal(k);
+                        setPrint({qty:nextQty, qtyBase: s>1?nextQty/s:nextQty});
+                      }} title="Qty — how many copies of this same print. Scale By rescales this the same way it rescales elements, Truss Qty and Platform Qty." style={{...S.input,fontSize:11.5,padding:"3px 6px",width:44,marginBottom:0,textAlign:"center"}} />
                       {showCosts&&<span style={{fontSize:12,fontWeight:700,color:"#0EA5E9",marginLeft:"auto"}}>{rate>0?fmt(cost):"— pick material"}</span>}
                       {!isPhantom&&<span onClick={removePrint} style={{cursor:"pointer",color:"#E11D48",fontWeight:700,fontSize:12.5}}>×</span>}
                     </div>
@@ -4328,10 +4379,10 @@ undefined
                   DCTrussTab still shows that detailed breakdown for its own purposes, unaffected. */}
               {zoneSection[k]==="truss"&&<TrussStack S={S} customCeilingField={customCeilingField} k={k} zc={zc} zm={zm} st={st} sZ={sZ} sD={sD} fmt={fmt} showCosts={showCosts}
                 isDark={isDark} border={border} textP={textP} textS={textS} accent={accent}
-                customMaskingField={customMaskingField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} />}
+                customMaskingField={customMaskingField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} scale={zoneScaleVal(k)} />}
               {/* ── PLATFORM + CARPET → then floor dims ── */}
               {zoneSection[k]==="platform"&&<FloorStack S={S} zc={zc} zm={zm} st={st} sZ={sZ} sFD={sFD} fd={fd} fmt={fmt} showCosts={showCosts}
-                isDark={isDark} border={border} accent={accent} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} />}
+                isDark={isDark} border={border} accent={accent} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} scale={zoneScaleVal(k)} />}
             </div>);
           })()}
           </Fragment>}
@@ -4559,6 +4610,17 @@ undefined
         let libDims=master?.dims;
         if(liveCfg){
           const {repeat,repeatCats,scale,...rest}=liveCfg;
+          // trussQtyBase/plQtyBase/each print's qtyBase are Scale By's own bookkeeping — same
+          // reasoning as baseQty above: saving them verbatim bakes a stray scale ratio into the
+          // master, which resurfaces on the next salesperson's very first Scale edit against a base
+          // that has nothing to do with their build. The actual qty (trussQty/plQty/qty) stays — it's
+          // the real number this master's truss/platform/print was built at.
+          const stripRowBase=(row)=>{const{trussQtyBase:_tb,plQtyBase:_pb,...r}=row;return r;};
+          if(rest.extraTrussRows)rest.extraTrussRows=rest.extraTrussRows.map(stripRowBase);
+          if(rest.extraPlatformRows)rest.extraPlatformRows=rest.extraPlatformRows.map(stripRowBase);
+          if(rest.prints)rest.prints=rest.prints.map(({qtyBase:_qb,...pr})=>pr);
+          delete rest.trussQtyBase;
+          delete rest.plQtyBase;
           zoneCfgMap[zk]=JSON.parse(JSON.stringify(rest));
           // Mirror the primary dims into the master's Library-shape dims too, so browse thumbnails,
           // the Library editor and buildZoneConfig's fallback all reflect the corrected measurements.

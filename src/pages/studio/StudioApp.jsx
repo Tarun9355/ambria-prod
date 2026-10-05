@@ -296,7 +296,7 @@ function calcStructCost(zk, zc, rates, applyDiscount) {
     ...(zc.extraTrussRows || []),
   ];
   trussRows.forEach((row) => { const { truss, masking } = trussRowCost(row, rates); r.truss += truss; r.masking += masking; });
-  const platformRows = [{ plH: zc.plH, floorDims: fd, cpT: zc.cpT }, ...(zc.extraPlatformRows || [])];
+  const platformRows = [{ plH: zc.plH, floorDims: fd, cpT: zc.cpT, plQty: zc.plQty }, ...(zc.extraPlatformRows || [])];
   platformRows.forEach((row) => { const { platform, carpet } = platformRowCost(row, rates); r.platform += platform; r.carpet += carpet; });
   if (zc.archOn && zc.archT) { const aq = zc.archQty || 0, aw = zc.archW || 0, ah = zc.archH || 0; r.arches = aq * aw * ah * (BASE_RATES.arch[zc.archT] || 60); }
   if (zc.pillarQty) { r.pillars = (zc.pillarQty || 0) * BASE_RATES.pillar; }
@@ -412,7 +412,7 @@ function computeFnSubQty(fnData, capBySub, imsInventory, flowerPatterns, trussIn
     if (!cfg || !fEnabledElsFresh[zk]) return;
     const d = cfg.dims || {}; const fd = cfg.floorDims || {}; // no truss-dims fallback — see calcStructCost's own comment
     if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * Math.max(1, cfg.trussQty || 1); if (tSqft > 0) add("Truss", tSqft); }
-    const sqft = (fd.L || 0) * (fd.W || 0);
+    const sqft = (fd.L || 0) * (fd.W || 0) * Math.max(1, cfg.plQty || 1);
     if (sqft > 0) { if (cfg.plH) add("Platform", sqft); if (cfg.cpT && cfg.cpT !== CARPET_OFF) add("Carpet", sqft); }
     // Fabric Allocation (masking/liza/curtains) is a physical rental setup that can plausibly still
     // be standing at the venue for the next same-day function, same reasoning as Truss/Platform/

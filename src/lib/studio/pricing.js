@@ -723,7 +723,7 @@ export function buildPlatformPlan(fns, dealCheckData) {
       const zc = fn.zoneConfig[zoneKey];
       if (!zc) return;
       // No truss-dims fallback — see calcStructCost's own comment (StudioApp.jsx).
-      const rows = [{ plH: zc.plH, floorDims: zc.floorDims || {} }, ...(zc.extraPlatformRows || [])];
+      const rows = [{ plH: zc.plH, floorDims: zc.floorDims || {}, plQty: zc.plQty }, ...(zc.extraPlatformRows || [])];
       rows.forEach((row, rowIdx) => {
         if (!row.plH) return;
         const fd = row.floorDims || {};
@@ -731,7 +731,12 @@ export function buildPlatformPlan(fns, dealCheckData) {
         if (L <= 0 || W <= 0) return;
         const comp = computePlatformComponents(L, W, row.plH);
         if (!comp) return;
-        zoneDraws.push({ fnIdx, zoneKey, rowIdx, plH: row.plH, L, W, fattas: comp.fattas, stands: comp.stands, fnDate: fn.fnDate || "", fnVenue: fn.fnVenue || "" });
+        // How many identical footprints this row represents (Build's own Platform Qty field) — the
+        // physical fatta/stand count production needs scales with it the same way the rupee cost
+        // already does (platformRowCost), or ops would be told to prepare material for only one of
+        // several identical platforms the deal actually calls for.
+        const qty = Math.max(1, Math.round(Number(row.plQty) || 1));
+        zoneDraws.push({ fnIdx, zoneKey, rowIdx, plH: row.plH, L, W, qty, fattas: comp.fattas * qty, stands: comp.stands * qty, fnDate: fn.fnDate || "", fnVenue: fn.fnVenue || "" });
       });
     });
   });
