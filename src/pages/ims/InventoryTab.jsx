@@ -2,7 +2,7 @@ import React, { useState, useRef, useMemo } from "react";
 import { Badge, TypeBadge, Modal } from "../../components/ui";
 import { fmt } from "../../lib/format";
 import { INV_CATS, INV_LOCATIONS, DEPTS, INV_TYPES, PRICING_CAT_STYLES, SUBCAT_OTHER, PAINT_TOKENS } from "../../lib/inventory/constants";
-import { findAlternatives, getEffectivePricing } from "../../lib/inventory/helpers";
+import { findAlternatives, getEffectivePricing, resolveDateCategory } from "../../lib/inventory/helpers";
 import { DATE_PRICING_LABELS, hasIMSPerm } from "../../lib/ims/constants";
 import { uploadToStorage, compressImageForUpload, STORAGE_FOLDERS } from "../../lib/storage";
 import { callClaudeStreaming } from "../../lib/ai";
@@ -106,6 +106,10 @@ export default function InventoryTab({ inventory, setInventory, functions, setFu
   const [filterNeedsReview, setFilterNeedsReview] = useState(false); // Tier 1.2 — show only items flagged for cat-migration review
   const [availDate, setAvailDate] = useState(""); // check availability AS OF a specific date (YYYY-MM-DD)
   const [availOnly, setAvailOnly] = useState("all"); // when a date is set: "all" | "blocked" | "free" on that date
+  // Which of the 3 date-pricing tiers is TODAY, per the live config — same resolver the Calendar
+  // and Block modal use (markedDates override > auto-synced LMS category > Filler), so the Price
+  // column's highlight can never drift from what Date Pricing Config actually says is active now.
+  const todayPricingCat = useMemo(() => resolveDateCategory(new Date().toISOString().slice(0, 10), settings), [settings]);
   const [invPage, setInvPage] = useState(0);
   const [justAddedId, setJustAddedId] = useState(null); // briefly highlight the row we just added so it's never "invisible"
   const INV_PAGE_SIZE = 30;
@@ -919,11 +923,15 @@ Rules:
                         const tiers = dp ? Object.entries(dp.categories || {}).map(([k, cat]) => ({ k, label: DATE_PRICING_LABELS[k] || cat.label, price: Math.round(i.price * cat.multiplier), mult: cat.multiplier })) : [];
                         return (<div className="flex flex-col gap-0.5 items-start">
                           <span className="text-[10px] text-gray-400 font-medium whitespace-nowrap">Base {fmt(i.price)}</span>
-                          {tiers.map((t) => (
-                            <span key={t.k} className={"text-[10px] px-1.5 py-0.5 rounded whitespace-nowrap " + PRICING_CAT_STYLES[t.k]}>
-                              {t.mult}× {fmt(t.price)}
-                            </span>
-                          ))}
+                          {tiers.map((t) => {
+                            const isToday = t.k === todayPricingCat;
+                            return (
+                              <span key={t.k} title={isToday ? "Today's active date-pricing tier" : undefined}
+                                className={"text-[10px] px-1.5 py-0.5 rounded whitespace-nowrap border " + PRICING_CAT_STYLES[t.k] + (isToday ? " ring-2 ring-offset-1 ring-current font-bold" : "")}>
+                                {isToday ? "● " : ""}{t.mult}× {fmt(t.price)}
+                              </span>
+                            );
+                          })}
                         </div>);
                       })()
                         : i.itemClass === "bulk" ? <span className="text-gray-600 text-sm">{i.usageChargePct || 5}% usage</span> : <span className="text-gray-400">-</span>}
