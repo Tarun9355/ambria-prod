@@ -22,7 +22,7 @@ import { applyAiTagResult } from "../../../lib/studio/tagging/applyResult.js";
 import { fetchLibraryPage, fetchLibraryCounts, checkExistingLibraryUrls, fetchAllLibraryRowsMinimal, LIB_STATUS, TAG_SOURCE, LIBRARY_PAGE_SIZE } from "../../../lib/studio/libraryQueries";
 import { isHiddenSubcat } from "../../../lib/rateCard";
 import { supabase, subscribeTable } from "../../../lib/supabase";
-import { deleteStorageObjects, listStorageTree, uploadToStorage, compressImageForUpload } from "../../../lib/storage";
+import { deleteStorageObjects, listStorageTree } from "../../../lib/storage";
 import { itemDimsText, priceForInvItem } from "../../../lib/ims/helpers";
 import { addPaletteInline } from "../../../lib/studio/colours";
 import PaletteQuickAdd from "../../../components/studio/PaletteQuickAdd.jsx";
@@ -431,45 +431,6 @@ export default function ManageLibrary({ ctx }) {
     } finally {
       setRebuildRunning(false);
     }
-  };
-
-  // Photos uploaded from the Add Video panel — into the folder being browsed there (the video's own
-  // event folder), and straight into the Library as Untagged, so no Rebuild Library pass is needed.
-  const [vidPhotoBusy, setVidPhotoBusy] = useState(false);
-  const vidPhotoRef = useRef(null);
-  const handleVideoPhotoUpload = async (files) => {
-    const folder = cldVideoPath.join("/");
-    if (!folder) { showMsg("Open the video's folder first, then add photos", "orange"); return; }
-    const imgs = Array.from(files || []).filter(f => /\.(jpe?g|png|webp|heic|heif|avif|gif|bmp|tiff?)$/i.test(f.name));
-    if (!imgs.length) { showMsg("No image files selected", "orange"); return; }
-    setVidPhotoBusy(true);
-    const rows = [];
-    let skipped = 0, failed = 0;
-    for (const file of imgs) {
-      try {
-        const res = await uploadToStorage(await compressImageForUpload(file), folder, { keepName: file.name, detail: true });
-        if (res.duplicate) { skipped++; continue; }
-        const path = res.path || storageKeyFromUrl(res.url) || `${folder}/${file.name}`;
-        rows.push({
-          id: path, name: file.name.replace(/\.[^.]+$/, "").replace(/[-_]/g, " "), url: res.url, folder,
-          tags: {}, elements: [], addedAt: Date.now(), width: null, height: null, source: "video-upload",
-        });
-      } catch { failed++; }
-    }
-    if (rows.length) {
-      const existing = await checkExistingLibraryUrls(rows.map(r => r.url)).catch(() => new Set());
-      const fresh = rows.filter(r => !existing.has(r.url));
-      if (fresh.length) {
-        await saveLib(fresh);
-        libPage.prependItems(fresh.filter(() => libStatus === LIB_STATUS.UNTAGGED));
-      }
-    }
-    setVidPhotoBusy(false);
-    const parts = [];
-    if (rows.length) parts.push(`✓ ${rows.length} photo${rows.length > 1 ? "s" : ""} uploaded to Library`);
-    if (skipped) parts.push(`⊘ ${skipped} skipped`);
-    if (failed) parts.push(`✗ ${failed} failed`);
-    showMsg(parts.join(", "), failed ? "orange" : "green");
   };
 
   // A public Storage URL → its object key. Lets the orphan check match a Library row whose stored
@@ -2814,12 +2775,6 @@ export default function ManageLibrary({ ctx }) {
               })}
             </div>}
             {!cldVideoLoading&&cldVideoFolders.length===0&&cldVideoList.length===0&&cldVideoPath.length>0&&<div style={{fontSize:11,color:textS,textAlign:"center",padding:16}}>No video files in this folder</div>}
-            {/* Photos for this video's folder — uploaded and added to the Library in the same step. */}
-            <div style={{display:"flex",alignItems:"center",gap:10,marginTop:10,paddingTop:10,borderTop:`1px dashed ${border}`,flexWrap:"wrap"}}>
-              <input ref={vidPhotoRef} type="file" accept="image/*" multiple style={{display:"none"}} onChange={e=>{if(e.target.files.length)handleVideoPhotoUpload(e.target.files);e.target.value="";}} />
-              <button onClick={()=>vidPhotoRef.current?.click()} disabled={vidPhotoBusy||cldVideoPath.length===0} style={{...S.btn(false),fontSize:11,padding:"6px 14px",opacity:(vidPhotoBusy||cldVideoPath.length===0)?0.5:1}}>{vidPhotoBusy?"⏳ Uploading photos…":"📷 Upload photos to this folder"}</button>
-              <span style={{fontSize:10,color:textS}}>{cldVideoPath.length===0?"Open the video's folder first. ":""}Photos go straight into the Library as Untagged.</span>
-            </div>
             <div style={{fontSize:9,color:textS,marginTop:8}}>Upload videos to any Storage folder first, then browse them here. Supports mp4, mov, webm.</div>
           </div>}
           {/* The seven <select>s that used to sit here are gone — they are now the same rail the
