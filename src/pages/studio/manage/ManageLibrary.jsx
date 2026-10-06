@@ -15,17 +15,14 @@ import { IconCamera, IconPlay, IconClipboardCheck, IconPalette, IconSliders, Ico
   IconFlower, IconBox, IconAlert, IconStar, IconNote } from "../../../components/icons.jsx";
 
 // ══ THE PAGE'S GROUND ══
-// The same artwork Deal Check uses, and the same glob-not-import reasoning as every other background
-// in this app: if the file is not there the glob resolves to {}, ML_BG is null, and the plain page
-// colour carries it. An import of a missing asset fails the whole build instead.
-const ML_BG = Object.values(
-  import.meta.glob("../../../assets/ambria-dealcheck-bg.{jpg,jpeg,png,webp}", { eager: true, query: "?url", import: "default" })
-)[0] || null;
+// The shared Studio ground (wash blobs + wave bands + chalk grain) — the same one Browse and Event
+// Info are drawn on, from the shared module so the pages cannot drift apart.
+import { WASH_BANDS, GRAIN_URL } from "../../../lib/studio/pageWash";
 import { applyAiTagResult } from "../../../lib/studio/tagging/applyResult.js";
 import { fetchLibraryPage, fetchLibraryCounts, checkExistingLibraryUrls, fetchAllLibraryRowsMinimal, LIB_STATUS, TAG_SOURCE, LIBRARY_PAGE_SIZE } from "../../../lib/studio/libraryQueries";
 import { isHiddenSubcat } from "../../../lib/rateCard";
 import { supabase, subscribeTable } from "../../../lib/supabase";
-import { deleteStorageObjects, listStorageTree } from "../../../lib/storage";
+import { deleteStorageObjects, listStorageTree, uploadToStorage, compressImageForUpload } from "../../../lib/storage";
 import { itemDimsText, priceForInvItem } from "../../../lib/ims/helpers";
 import { addPaletteInline } from "../../../lib/studio/colours";
 import PaletteQuickAdd from "../../../components/studio/PaletteQuickAdd.jsx";
@@ -434,6 +431,45 @@ export default function ManageLibrary({ ctx }) {
     } finally {
       setRebuildRunning(false);
     }
+  };
+
+  // Photos uploaded from the Add Video panel — into the folder being browsed there (the video's own
+  // event folder), and straight into the Library as Untagged, so no Rebuild Library pass is needed.
+  const [vidPhotoBusy, setVidPhotoBusy] = useState(false);
+  const vidPhotoRef = useRef(null);
+  const handleVideoPhotoUpload = async (files) => {
+    const folder = cldVideoPath.join("/");
+    if (!folder) { showMsg("Open the video's folder first, then add photos", "orange"); return; }
+    const imgs = Array.from(files || []).filter(f => /\.(jpe?g|png|webp|heic|heif|avif|gif|bmp|tiff?)$/i.test(f.name));
+    if (!imgs.length) { showMsg("No image files selected", "orange"); return; }
+    setVidPhotoBusy(true);
+    const rows = [];
+    let skipped = 0, failed = 0;
+    for (const file of imgs) {
+      try {
+        const res = await uploadToStorage(await compressImageForUpload(file), folder, { keepName: file.name, detail: true });
+        if (res.duplicate) { skipped++; continue; }
+        const path = res.path || storageKeyFromUrl(res.url) || `${folder}/${file.name}`;
+        rows.push({
+          id: path, name: file.name.replace(/\.[^.]+$/, "").replace(/[-_]/g, " "), url: res.url, folder,
+          tags: {}, elements: [], addedAt: Date.now(), width: null, height: null, source: "video-upload",
+        });
+      } catch { failed++; }
+    }
+    if (rows.length) {
+      const existing = await checkExistingLibraryUrls(rows.map(r => r.url)).catch(() => new Set());
+      const fresh = rows.filter(r => !existing.has(r.url));
+      if (fresh.length) {
+        await saveLib(fresh);
+        libPage.prependItems(fresh.filter(() => libStatus === LIB_STATUS.UNTAGGED));
+      }
+    }
+    setVidPhotoBusy(false);
+    const parts = [];
+    if (rows.length) parts.push(`✓ ${rows.length} photo${rows.length > 1 ? "s" : ""} uploaded to Library`);
+    if (skipped) parts.push(`⊘ ${skipped} skipped`);
+    if (failed) parts.push(`✗ ${failed} failed`);
+    showMsg(parts.join(", "), failed ? "orange" : "green");
   };
 
   // A public Storage URL → its object key. Lets the orphan check match a Library row whose stored
@@ -2076,8 +2112,43 @@ export default function ManageLibrary({ ctx }) {
    Children are lifted above it by the rule below rather than each carrying its own z-index: a static
    sibling paints BELOW a positioned layer however late it comes in the DOM, so without that rule the
    cards would sit under the artwork. */
-.ml-wash{position:fixed;inset:0;z-index:0;pointer-events:none;
-  background:#F7F5F1;background-size:cover;background-position:center;background-repeat:no-repeat}
+.ml-wash{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden;
+  transform:translateZ(0);backface-visibility:hidden;contain:paint;
+  background:${isDark ? "#0F0F1A" : "#FAF9F6"}}
+.ml-wash span{position:absolute;display:block;filter:blur(80px);
+  mix-blend-mode:${isDark ? "multiply" : "normal"}}
+.ml-wash-a{width:760px;height:700px;top:-190px;left:-150px;
+  border-radius:62% 38% 46% 54% / 54% 47% 53% 46%;
+  background:radial-gradient(circle,rgba(201,169,110,0.38) 0%,rgba(201,169,110,0) 70%)}
+.ml-wash-b{width:640px;height:700px;top:110px;right:-170px;
+  border-radius:41% 59% 66% 34% / 38% 62% 38% 62%;
+  background:radial-gradient(circle,rgba(214,158,140,0.32) 0%,rgba(214,158,140,0) 72%)}
+.ml-wash-c{width:740px;height:660px;top:540px;left:12%;
+  border-radius:55% 45% 33% 67% / 61% 39% 61% 39%;
+  background:radial-gradient(circle,rgba(124,92,214,0.20) 0%,rgba(124,92,214,0) 74%)}
+.ml-wash-top{position:absolute;top:0;left:0;right:0;height:330px;pointer-events:none;
+  mix-blend-mode:multiply;filter:blur(34px);
+  background:linear-gradient(100deg,
+    rgba(124,92,214,0) 0%,rgba(201,169,110,0.22) 22%,rgba(214,158,140,0.17) 50%,
+    rgba(124,92,214,0.19) 76%,rgba(124,92,214,0) 100%);
+  background-size:230% 100%;
+  animation:mlSheen 30s ease-in-out infinite alternate}
+@keyframes mlSheen{from{background-position:0% 50%}to{background-position:100% 50%}}
+.ml-bands{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;filter:blur(24px)}
+.ml-grain{position:absolute;inset:0;pointer-events:none;opacity:.5;mix-blend-mode:multiply;
+  background-image:${GRAIN_URL};background-size:220px 220px}
+.ml-band{transform-box:view-box;transform-origin:center;will-change:transform}
+.ml-band-0{animation:mlBand0 34s ease-in-out infinite alternate}
+.ml-band-1{animation:mlBand1 45s ease-in-out infinite alternate}
+.ml-band-2{animation:mlBand2 38s ease-in-out infinite alternate}
+.ml-band-3{animation:mlBand3 53s ease-in-out infinite alternate}
+.ml-band-4{animation:mlBand4 41s ease-in-out infinite alternate}
+@keyframes mlBand0{from{transform:translate(0,0) scaleY(1)}to{transform:translate(-72px,18px) scaleY(1.1)}}
+@keyframes mlBand1{from{transform:translate(0,0) scaleY(1.06)}to{transform:translate(86px,-24px) scaleY(0.94)}}
+@keyframes mlBand2{from{transform:translate(0,0) scaleY(0.96)}to{transform:translate(-94px,14px) scaleY(1.12)}}
+@keyframes mlBand3{from{transform:translate(0,0) scaleY(1.08)}to{transform:translate(64px,-30px) scaleY(0.95)}}
+@keyframes mlBand4{from{transform:translate(0,0) scaleY(1)}to{transform:translate(-78px,22px) scaleY(1.09)}}
+@media (prefers-reduced-motion: reduce){.ml-band,.ml-wash-top{animation:none}}
 /* ── VIGNETTE ──
    A soft darkening that stays out of the middle and gathers in the corners. Two things it earns:
    the pale artwork stops competing with the white glass panels sitting on it, and the grid reads as
@@ -2088,9 +2159,6 @@ export default function ManageLibrary({ ctx }) {
    set INLINE from the artwork URL and an inline background-image would win over anything layered
    into the shorthand here. Fixed parent, absolute child, so it costs one paint and does not
    re-composite while the page scrolls. */
-.ml-wash::after{content:"";position:absolute;inset:0;
-  background:radial-gradient(125% 95% at 50% 38%,
-    rgba(26,26,46,0) 40%, rgba(26,26,46,0.07) 72%, rgba(26,26,46,0.17) 100%)}
 /* position:relative and DELIBERATELY no z-index. The job here is only to lift the page's content off
    the wash, and being positioned is enough for that: the wash is a positioned z-index:0 element that
    comes FIRST in the DOM, and positioned siblings with z-index:auto paint in tree order, so they
@@ -2295,7 +2363,17 @@ export default function ManageLibrary({ ctx }) {
           not in the block above. Without this the sections render but the rows do not respond. */}
       <style>{filterCSS}</style>
       {/* Under everything, above nothing. See .ml-wash. */}
-      <div className="ml-wash" aria-hidden="true" style={ML_BG ? { backgroundImage: `url(${ML_BG})` } : undefined} />
+      <div className="ml-wash" aria-hidden="true">
+        <span className="ml-wash-a"/><span className="ml-wash-b"/><span className="ml-wash-c"/>
+        <div className="ml-wash-top"/>
+        <svg className="ml-bands" viewBox="0 0 1200 960" preserveAspectRatio="none" focusable="false">
+          {WASH_BANDS.map((b, i) => (
+            <path key={i} className={`ml-band ml-band-${i}`} d={b.d} fill="none" stroke={b.c}
+              strokeOpacity={b.o} strokeWidth={b.w} strokeLinecap="round"/>
+          ))}
+        </svg>
+        <i className="ml-grain"/>
+      </div>
       {/* Inline add bar */}
       <div className="ml-glass" style={{ display: "flex", gap: 8, alignItems: "center", padding: 12, borderRadius: 12, marginBottom: 14 }}>
         <button onClick={() => {if(!cldOpen){setCldOpen("library");setCldPath([]);setCldFolders([]);setCldImages([]);fetchCldFolders("");}else setCldOpen(null);}} style={{ ...S.btn(cldOpen==="library"), fontSize: 11 }}>🗂️ Storage</button>
@@ -2736,6 +2814,12 @@ export default function ManageLibrary({ ctx }) {
               })}
             </div>}
             {!cldVideoLoading&&cldVideoFolders.length===0&&cldVideoList.length===0&&cldVideoPath.length>0&&<div style={{fontSize:11,color:textS,textAlign:"center",padding:16}}>No video files in this folder</div>}
+            {/* Photos for this video's folder — uploaded and added to the Library in the same step. */}
+            <div style={{display:"flex",alignItems:"center",gap:10,marginTop:10,paddingTop:10,borderTop:`1px dashed ${border}`,flexWrap:"wrap"}}>
+              <input ref={vidPhotoRef} type="file" accept="image/*" multiple style={{display:"none"}} onChange={e=>{if(e.target.files.length)handleVideoPhotoUpload(e.target.files);e.target.value="";}} />
+              <button onClick={()=>vidPhotoRef.current?.click()} disabled={vidPhotoBusy||cldVideoPath.length===0} style={{...S.btn(false),fontSize:11,padding:"6px 14px",opacity:(vidPhotoBusy||cldVideoPath.length===0)?0.5:1}}>{vidPhotoBusy?"⏳ Uploading photos…":"📷 Upload photos to this folder"}</button>
+              <span style={{fontSize:10,color:textS}}>{cldVideoPath.length===0?"Open the video's folder first. ":""}Photos go straight into the Library as Untagged.</span>
+            </div>
             <div style={{fontSize:9,color:textS,marginTop:8}}>Upload videos to any Storage folder first, then browse them here. Supports mp4, mov, webm.</div>
           </div>}
           {/* The seven <select>s that used to sit here are gone — they are now the same rail the
