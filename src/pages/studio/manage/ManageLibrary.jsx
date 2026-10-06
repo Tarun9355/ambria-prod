@@ -22,7 +22,7 @@ import { applyAiTagResult } from "../../../lib/studio/tagging/applyResult.js";
 import { fetchLibraryPage, fetchLibraryCounts, checkExistingLibraryUrls, fetchAllLibraryRowsMinimal, LIB_STATUS, TAG_SOURCE, LIBRARY_PAGE_SIZE } from "../../../lib/studio/libraryQueries";
 import { isHiddenSubcat } from "../../../lib/rateCard";
 import { supabase, subscribeTable } from "../../../lib/supabase";
-import { deleteStorageObjects, listStorageTree } from "../../../lib/storage";
+import { deleteStorageObjects, listStorageTree, uploadToStorage, compressImageForUpload } from "../../../lib/storage";
 import { itemDimsText, priceForInvItem } from "../../../lib/ims/helpers";
 import { addPaletteInline } from "../../../lib/studio/colours";
 import PaletteQuickAdd from "../../../components/studio/PaletteQuickAdd.jsx";
@@ -431,6 +431,60 @@ export default function ManageLibrary({ ctx }) {
     } finally {
       setRebuildRunning(false);
     }
+  };
+
+  // Hover "Add photo" on a video card. Photos go into the video's own Storage folder, inherit the
+  // video's tags (venue, event type, …) and are linked to it, so they land in Needs review rather
+  // than Untagged — if the video itself has no tags yet there is nothing to inherit and they stay
+  // Untagged until it is tagged.
+  const [vidPhotoBusy, setVidPhotoBusy] = useState(null);
+  const vidPhotoRef = useRef(null);
+  const vidPhotoTarget = useRef(null);
+  const handleVideoPhotoUpload = async (files) => {
+    const v = vidPhotoTarget.current;
+    if (!v) return;
+    // A Storage-hosted video keeps its photos beside the file. A YouTube video has no folder, so it
+    // gets one of its own under "ambria" — a top-level folder the Library lists (see ALLOWED_SOURCE_FOLDERS).
+    const key = v.videoUrl && storageKeyFromUrl(v.videoUrl);
+    const folder = key && key.includes("/") ? key.slice(0, key.lastIndexOf("/")) : `ambria/video-photos/${v.id}`;
+    const imgs = Array.from(files || []).filter(f => /\.(jpe?g|png|webp|heic|heif|avif|gif|bmp|tiff?)$/i.test(f.name));
+    if (!imgs.length) { showMsg("No image files selected", "orange"); return; }
+    const vt = ytVideoTags[v.id] || {};
+    const arr = (x) => (Array.isArray(x) ? x : x ? [x] : []).filter(Boolean);
+    const tags = {};
+    if (vt.venue) tags.venue = vt.venue;
+    const map = { eventType: arr(vt.fn), venueType: arr(vt.io), colorPalette: arr(vt.colors).length ? arr(vt.colors) : arr(vt.palette),
+      designStyle: arr(vt.styles), tier: arr(vt.tier) };
+    Object.entries(map).forEach(([k, a]) => { if (a.length) tags[k] = a; });
+    setVidPhotoBusy(v.id);
+    const rows = [];
+    let skipped = 0, failed = 0;
+    for (const file of imgs) {
+      try {
+        const res = await uploadToStorage(await compressImageForUpload(file), folder, { keepName: file.name, detail: true });
+        if (res.duplicate) { skipped++; continue; }
+        rows.push({
+          id: res.path || storageKeyFromUrl(res.url) || `${folder}/${file.name}`,
+          name: file.name.replace(/\.[^.]+$/, "").replace(/[-_]/g, " "), url: res.url, folder,
+          tags: { ...tags }, elements: [], addedAt: Date.now(), width: null, height: null,
+          source: "video-upload", _linkedVideoId: v.id, _linkedVideoTitle: v.title,
+        });
+      } catch { failed++; }
+    }
+    if (rows.length) {
+      const existing = await checkExistingLibraryUrls(rows.map(r => r.url)).catch(() => new Set());
+      const fresh = rows.filter(r => !existing.has(r.url));
+      if (fresh.length) {
+        await saveLib(fresh);
+        libPage.prependItems(fresh.filter(r => libStatus === (libPhotoIsTagged(r) ? LIB_STATUS.REVIEW : LIB_STATUS.UNTAGGED)));
+      }
+    }
+    setVidPhotoBusy(null);
+    const parts = [];
+    if (rows.length) parts.push(`✓ ${rows.length} photo${rows.length > 1 ? "s" : ""} added with the video${Object.keys(tags).length ? " → Needs review" : " (video has no tags yet → Untagged)"}`);
+    if (skipped) parts.push(`⊘ ${skipped} skipped`);
+    if (failed) parts.push(`✗ ${failed} failed`);
+    showMsg(parts.join(", "), failed ? "orange" : "green");
   };
 
   // A public Storage URL → its object key. Lets the orphan check match a Library row whose stored
@@ -2177,6 +2231,10 @@ export default function ManageLibrary({ ctx }) {
    !important because each button spreads S.btn(false) inline, and an inline declaration beats a
    plain rule. Dark mode gets a light fill for the same reason in reverse — navy on near-navy is the
    invisibility this change exists to fix. */
+.ml-vaddphoto{opacity:0;transition:opacity .16s ease, background .16s ease}
+.ml-vthumb:hover .ml-vaddphoto,.ml-vaddphoto:focus-visible,.ml-vaddphoto:disabled{opacity:1}
+.ml-vaddphoto:hover{background:rgba(0,0,0,0.82) !important}
+@media (hover:none){.ml-vaddphoto{opacity:1}}
 .ml-page-btn:not(:disabled){transition:background .14s ease, transform .14s ease, box-shadow .16s ease;
   background:${isDark ? "rgba(255,255,255,0.14)" : "linear-gradient(135deg,#1a1a2e,#2d1b69)"} !important;
   color:${isDark ? "#fff" : "#fff"} !important;
@@ -2323,6 +2381,7 @@ export default function ManageLibrary({ ctx }) {
       {/* The kit's own CSS — the section-header hover fill (.sb-head) and its pill states live there,
           not in the block above. Without this the sections render but the rows do not respond. */}
       <style>{filterCSS}</style>
+      <input ref={vidPhotoRef} type="file" accept="image/*" multiple style={{display:"none"}} onChange={e=>{if(e.target.files.length)handleVideoPhotoUpload(e.target.files);e.target.value="";}} />
       {/* Under everything, above nothing. See .ml-wash. */}
       <div className="ml-wash" aria-hidden="true">
         <span className="ml-wash-a"/><span className="ml-wash-b"/><span className="ml-wash-c"/>
@@ -2871,7 +2930,7 @@ export default function ManageLibrary({ ctx }) {
               return(
               <div key={v.id} className={(isEditing||rank<1e9)?undefined:"ml-tile"} style={{...S.card,overflow:"hidden",border:(isEditing||rank===0)?`2px solid ${accent}`:rank<1e9?`1px solid ${accent}66`:"1px solid transparent",transition:"border 0.2s"}}>
                 {/* Thumbnail */}
-                <div style={{position:"relative",cursor:"pointer"}} onClick={()=>{
+                <div className="ml-vthumb" style={{position:"relative",cursor:"pointer"}} onClick={()=>{
                   if(ytPicker){
                     const idx=events.findIndex(e=>e.id===ytPicker);
                     if(idx>=0){
@@ -2895,6 +2954,11 @@ export default function ManageLibrary({ ctx }) {
                   {v.duration&&<div style={{position:"absolute",bottom:4,right:4,background:"rgba(0,0,0,0.8)",color:"#fff",fontSize:9,padding:"2px 5px",borderRadius:4,fontWeight:600}}>{v.duration}</div>}
                   {/* NEW badge */}
                   {(v.addedAt||0)>lastVisitTs&&lastVisitTs>0&&<div style={{position:"absolute",bottom:4,left:4,background:"rgba(239,68,68,0.95)",color:"#fff",fontSize:8,padding:"2px 6px",borderRadius:4,fontWeight:800,letterSpacing:0.5}}>NEW</div>}
+                  {/* Hover action — see handleVideoPhotoUpload for where the photos are filed. */}
+                  <button className="ml-vaddphoto" disabled={vidPhotoBusy===v.id}
+                    onClick={(e)=>{e.stopPropagation();vidPhotoTarget.current=v;vidPhotoRef.current?.click();}}
+                    title="Add photos for this video — they go to Needs review"
+                    style={{position:"absolute",top:8,left:8,zIndex:3,padding:"5px 11px",borderRadius:8,border:"1px solid rgba(255,255,255,0.45)",background:"rgba(0,0,0,0.6)",color:"#fff",fontSize:10.5,fontWeight:700,cursor:"pointer"}}>{vidPhotoBusy===v.id?"⏳ Uploading…":"📷 Add photo"}</button>
                   {/* Source badge */}
                   {v.source==="cloudinary"&&<div style={{position:"absolute",bottom:4,left:v.addedAt>lastVisitTs&&lastVisitTs>0?40:4,background:"rgba(99,102,241,0.9)",color:"#fff",fontSize:8,padding:"2px 6px",borderRadius:4,fontWeight:700}}>☁️ CLD</div>}
                   {/* Hidden overlay */}
