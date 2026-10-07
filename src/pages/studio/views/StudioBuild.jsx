@@ -1508,7 +1508,24 @@ export default function StudioBuild({ ctx }) {
       Object.entries(zoneLabelsD).filter(([k]) => k !== elKey).map(([, v]) => v?.label).filter(Boolean)
     );
     const kept = names.filter((n) => n === label || !otherZoneLabels.has(n));
-    return kept.length ? kept : names;   // never strip a zone down to nothing
+    const base = kept.length ? kept : names;   // never strip a zone down to nothing
+    // The zone's own label is also what the tag picker writes ("Vedi / Mandap", "Entry & Passage"),
+    // while ZONE_TYPE_TO_AREA still carries the older spelling ("Vedi"). Without the label here, a
+    // photo ticked "Vedi / Mandap" never matched the Vedi zone at all.
+    return label && !base.includes(label) ? [...base, label] : base;
+  };
+  // Legacy area spelling → the zone's current label, for showing a photo's tags in the picker. A photo
+  // can carry "Vedi" (old) with no chip lighting up, so the tag was live but invisible — and so
+  // impossible to untick. Names that are another zone's own label are left alone.
+  const canonicalAreaTags = (areas) => {
+    const labels = new Set(Object.values(zoneLabelsD).map(v => v?.label).filter(Boolean));
+    const toLabel = {};
+    for (const [zk, raw] of Object.entries(ZONE_TYPE_TO_AREA)) {
+      const lbl = zoneLabelsD[zk]?.label;
+      if (!lbl) continue;
+      for (const n of (Array.isArray(raw) ? raw : [raw])) if (!labels.has(n) || n === lbl) toLabel[n] = lbl;
+    }
+    return [...new Set((areas || []).map(a => toLabel[a] || a))];
   };
   const groupFn = activeFnMeta?.type || "";
   // The cached pool is function-agnostic on purpose. Keying it by function meant every switch
@@ -2905,7 +2922,9 @@ undefined
         }
         const mv = m.tags?.venue || "";
         setCorrVenueGrp(allInhouseVenues.includes(mv) ? "inhouse" : (mv ? "outside" : ""));
-        setCorrectPhoto({ libId: selP.eventId, zoneKey: k, name: m.name || "", tags: JSON.parse(JSON.stringify(m.tags || {})) });
+        const mt = JSON.parse(JSON.stringify(m.tags || {}));
+        if (mt.areasElements) mt.areasElements = canonicalAreaTags(mt.areasElements);
+        setCorrectPhoto({ libId: selP.eventId, zoneKey: k, name: m.name || "", tags: mt });
       };
       const openUpdateMaster = () => openUpdateMasterFor();
       // BUG-7. The unfiltered pool is kept so the strip can say how many photos the filter is
