@@ -1264,9 +1264,18 @@ export default function StudioBuild({ ctx }) {
   const phScrollTop = (k) => {
     if (typeof document === "undefined") return;
     const el = document.getElementById(`ph-grid-${k}`);
-    if (!el || el.scrollTop === 0) return;
+    if (!el) return;
     const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    el.scrollTo({ top: 0, behavior: reduce ? "auto" : "smooth" });
+    if (el.scrollTop !== 0) el.scrollTo({ top: 0, behavior: reduce ? "auto" : "smooth" });
+    // On a tablet the strip is two rows tall, so tapping a photo in the lower row leaves the strip's
+    // top — where the pick has just been moved — scrolled off above the header. Bring the strip back
+    // into view; a no-op whenever its top is already clear of the header (desktop's single row).
+    // Deferred a frame so the reorder has been laid out before it is measured.
+    requestAnimationFrame(() => {
+      const top = el.getBoundingClientRect().top;
+      const clear = hdrH + 12;
+      if (top < clear) window.scrollBy({ top: top - clear, behavior: reduce ? "auto" : "smooth" });
+    });
   };
   // A swipe that paged leaves a click behind on some browsers; tiles check this before opening.
   const phSwipedJustNow = () => { const was = phSwipe.current.swiped; phSwipe.current.swiped = false; return was; };
