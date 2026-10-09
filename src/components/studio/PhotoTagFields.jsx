@@ -20,6 +20,13 @@ export default function PhotoTagFields({
   tags, onChange,
   taxonomy, imsPaletteCatalogue, setImsPaletteCatalogue, savePaletteData,
   leafInhouseVenues = [], allInhouseVenues = [], allOutdoorDB = [],
+  // Areas & elements — taxonomy.areasElements is its own, separately-persisted list that only
+  // gets best-effort synced with Manage → Zone Types on a rename, not a real source of truth (same
+  // staleness already fixed in ManageLibrary.jsx's filter rail/tag editor and Build's photo
+  // correction modal — see their matching comments). Passing the live zone list here sources this
+  // screen the same way, instead of drifting out of step whenever a zone is added/renamed/removed
+  // any other way. Optional and backward-compatible: omit it and this falls back to taxonomy[k].
+  zoneKeys, zoneLabelsD, customZones,
   getTaxLabel,
   S, accent, accentText, border, textS, textP,
   dense = false,
@@ -82,7 +89,9 @@ export default function PhotoTagFields({
       {Object.keys(taxonomy || {}).filter((k) => Array.isArray(taxonomy[k])).map((k) => {
         const vals = (k === "colorPalette" && (imsPaletteCatalogue || []).length > 0)
           ? imsPaletteCatalogue.map((p) => p.name)
-          : taxonomy[k];
+          : (k === "areasElements" && zoneKeys)
+            ? [...new Set([...zoneKeys.map((zk) => zoneLabelsD?.[zk]?.label || zk), ...(customZones || []).map((cz) => cz.name)])]
+            : taxonomy[k];
         return (
           <div key={k} style={{ marginBottom: 6 }}>
             <div style={label}>{k === "colorPalette" ? "Palette" : (getTaxLabel ? getTaxLabel(k) : k)}</div>

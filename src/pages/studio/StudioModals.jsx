@@ -425,6 +425,7 @@ export default function StudioModals({ ctx }) {
                 onChange={(next)=>setZoneUploadReview(p=>({...p,tags:next}))}
                 taxonomy={taxonomy} imsPaletteCatalogue={imsPaletteCatalogue} setImsPaletteCatalogue={setImsPaletteCatalogue} savePaletteData={savePaletteData}
                 leafInhouseVenues={leafInhouseVenues} allInhouseVenues={allInhouseVenues} allOutdoorDB={allOutdoorDB}
+                zoneKeys={zoneKeys} zoneLabelsD={zoneLabelsD} customZones={customZones}
                 getTaxLabel={(k)=>(TAX_LABELS||{})[k]||k}
                 S={S} accent={accent} accentText={accentText} border={border} textS={textS} textP={textP} dense
               />
