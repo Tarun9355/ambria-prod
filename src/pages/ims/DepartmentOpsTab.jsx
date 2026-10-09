@@ -2910,6 +2910,7 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                                   <span className="mt-0.5 block text-xs text-gray-500 truncate">
                                     {eo.functionsDetail?.[0]?.venue || eo.venue || "—"}
                                     {eo.functionsDetail?.[0]?.shift ? ` · ${eo.functionsDetail[0].shift}` : ""}
+                                    {eo.salesperson ? ` · booked by ${eo.salesperson}` : ""}
                                   </span>
                                 </span>
                                 <span aria-hidden="true" className="shrink-0 text-gray-400">
@@ -2943,7 +2944,7 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                             {/* Each event is its own button — clicking a DAY would be ambiguous on
                                 a date carrying two events, and this page can only show one. */}
                             {evs.map(eo => (
-                              <button key={eo.id} onClick={() => setSelId(eo.id)} title={`Plan ${eo.clientName || "Event"}`}
+                              <button key={eo.id} onClick={() => setSelId(eo.id)} title={`Plan ${eo.clientName || "Event"}${eo.salesperson ? ` · booked by ${eo.salesperson}` : ""}`}
                                 className="w-full text-left text-[11px] font-medium leading-tight pl-2 pr-1.5 py-1 rounded-md truncate border-l-[3px] border-blue-500 bg-blue-50/80 text-blue-900 hover:bg-blue-100 transition-colors">
                                 {eo.clientName || "Event"}
                               </button>
@@ -3038,7 +3039,7 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                       reading it for. Capped at two lines so a long venue cannot push the card
                       taller than the tiles it sits above; from sm there is room for one line and
                       it truncates as before. */}
-                  <div className="text-[12px] sm:text-sm text-gray-500 leading-snug line-clamp-2 sm:truncate">{selDateStr || "no date"} · {sel.functionsDetail?.[0]?.venue || sel.venue || "—"}{deptData.updatedBy ? ` · last edited by ${deptData.updatedBy}` : ""}</div>
+                  <div className="text-[12px] sm:text-sm text-gray-500 leading-snug line-clamp-2 sm:truncate">{selDateStr || "no date"} · {sel.functionsDetail?.[0]?.venue || sel.venue || "—"}{sel.salesperson ? ` · booked by ${sel.salesperson}` : ""}{deptData.updatedBy ? ` · last edited by ${deptData.updatedBy}` : ""}</div>
                   {/* Deal value — read-only mirror of Studio's negotiated amount (client_ledger),
                       written whenever Deal Check syncs. It stays frozen once booked by owner decision;
                       "pending" is the live build's drift since booking, shown here so ops sees the same
