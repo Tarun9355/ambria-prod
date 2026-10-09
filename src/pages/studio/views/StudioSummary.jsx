@@ -3172,12 +3172,7 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
         const feePct=Number(d.agencyFeePct)||20;
         d.agencyFee=Math.round(discountedTotal*feePct/100);
         const negotiatedAmount=Number(d.negotiatedAmount)||0;
-        // Outdoor-venue commission — stamped in once as a single deal-wide figure by
-        // buildCombinedCostSheetData (see its own comment); carried forward as-is here rather than
-        // re-derived, same reasoning as agencyFeePct/discountPct being stamped in instead of re-looked-up.
-        // Skipped when negotiated, same as the system fee above.
-        const commissionTotalOutdoor=negotiatedAmount>0?0:(Number(d.commissionTotalOutdoor)||0);
-        d.eventGrandTotal=negotiatedAmount>0?negotiatedAmount:(discountedTotal+d.agencyFee+commissionTotalOutdoor);
+        d.eventGrandTotal=negotiatedAmount>0?negotiatedAmount:(discountedTotal+d.agencyFee);
         // Fold that discount/fee (or negotiated rescale) back into every function's own previewGrand
         // — same as buildCombinedCostSheetData's initial pass — so the on-screen cards keep summing
         // to eventGrandTotal after a live quantity edit, not just on first open. A blended average

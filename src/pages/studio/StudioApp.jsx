@@ -30,7 +30,7 @@ import StudioSummary from "./views/StudioSummary.jsx";
 import { kvGet, kvTryGet, kvSet, reliableSave } from "../../lib/ims/kv";
 import { makeAmendRequest } from "../../lib/ims/amend";
 import { catToDept } from "../../lib/ims/deptClassify";
-import { availableAtVenue, isStandingAt, rentalSplit, fixedVenueDealDiscount, fixedVenueDiscountPctFor, proratedVenueDiscount, fixedVenueFor, builtQty, venueSlackFor, outdoorVenueCommissionAddon } from "../../lib/ims/fixedVenues";
+import { availableAtVenue, isStandingAt, rentalSplit, fixedVenueDealDiscount, fixedVenueDiscountPctFor, proratedVenueDiscount, fixedVenueFor, builtQty, venueSlackFor } from "../../lib/ims/fixedVenues";
 import { searchLmsLeads, triggerLmsSync, fetchCachedContracts, fetchLmsLeadByEntry } from "../../lib/ims/lms";
 import { uploadToStorage, compressImageForUpload, STORAGE_FOLDERS, listStorage, deleteStorageObjects, deleteStorageFolder } from "../../lib/storage";
 import { ytApi, ytDuration } from "../../lib/youtube";
@@ -4096,7 +4096,6 @@ export default function StudioApp() {
     agencyFeePct: studioFloralData?.agencyFeePct ?? dealCheckData?.agencyFeePct,
     datePricing: studioFloralData?.datePricing ?? dealCheckData?.datePricing,
     trussInv: studioFloralData?.trussInv ?? dealCheckData?.trussInv,
-    venueCommission: (studioFloralData?.venueCommission && Object.keys(studioFloralData.venueCommission).length ? studioFloralData.venueCommission : dealCheckData?.venueCommission) || {},
     // Deal-Check-only concerns below — studioFloralData carries no equivalent, and neither ever fed
     // Build's own guest-facing pricing (only Deal Check's internal florals-sourcing cost does).
     mandiPriceMultipliers: dealCheckData?.mandiPriceMultipliers,
@@ -4606,11 +4605,6 @@ export default function StudioApp() {
     "flowerPatterns", "mandiCatalogue", "artificialFlowerRatePerKg", "artificialFlowerBunchesPerKg",
     "artificialGreenRatePerKg", "artificialGreenBunchesPerKg", "defaultStudioMarkup",
     "fixedVenues", "fixedVenueSubcatDiscount", "agencyFeePct", "datePricing",
-    // Venues (STORAGE_KEY + "-venues") — same row dealCheckData's own venueCommission reads
-    // (IMS → Admin → Master Data → Venues). Needed here too so the outdoor-venue commission
-    // pass-through (eventGrandTotal/grandTotal) is correct before Deal Check has ever been opened —
-    // same reasoning as fixedVenues/agencyFeePct above.
-    STORAGE_KEY + "-venues",
   ];
   const refreshStudioFloralData = useCallback(async () => {
     try {
@@ -4632,15 +4626,6 @@ export default function StudioApp() {
       let tv = trussMain?.data;
       for (let i = 0; i < 2; i++) { if (typeof tv === "string") { try { tv = JSON.parse(tv); } catch { break; } } }
       if (tv && typeof tv === "object" && tv.pillars) trussInv = tv;
-      // Venue commission % (IMS → Admin → Master Data → Venues) — one row per in-house PROPERTY
-      // (keyed by parent name) and one per outdoor venue (keyed by name directly). Same extraction
-      // dealCheckData's own build does; duplicated here (not read FROM dealCheckData) so the
-      // outdoor-venue commission pass-through works before Deal Check has ever been opened.
-      let venuesRaw = s[STORAGE_KEY + "-venues"];
-      if (typeof venuesRaw === "string") { try { venuesRaw = JSON.parse(venuesRaw); } catch { venuesRaw = null; } }
-      const venueCommission = {};
-      (Array.isArray(venuesRaw?.properties) ? venuesRaw.properties : []).forEach(p => { if (p?.name && typeof p.commissionPct === "number") venueCommission[p.name] = p.commissionPct; });
-      (Array.isArray(venuesRaw?.outdoor) ? venuesRaw.outdoor : []).forEach(v => { if (v?.name && typeof v.commissionPct === "number") venueCommission[v.name] = v.commissionPct; });
       setStudioFloralData({
         flowerPatterns: Array.isArray(s.flowerPatterns) ? s.flowerPatterns : [],
         mandiCatalogue: Array.isArray(s.mandiCatalogue) ? s.mandiCatalogue : [],
@@ -4663,7 +4648,6 @@ export default function StudioApp() {
         // been opened too, not just once dealCheckData's own copy has loaded.
         datePricing: (s.datePricing && typeof s.datePricing === "object") ? s.datePricing : SETTINGS_DEFAULTS.datePricing,
         trussInv,
-        venueCommission,
       });
     } catch { /* ignore — floral auto-derive falls back to flat rate */ }
   }, []);
@@ -5152,14 +5136,8 @@ export default function StudioApp() {
     // Agency fee (Admin → Settings, default 20%) — this is Build's own live "page total" for the
     // active function, the number a salesperson watches while building. It has to carry the fee too,
     // or it would visibly disagree with eventGrandTotal/Deal Check/the cost sheet, which all do.
-    const dealAmountActive = discounted + agencyFeeAmt;
-    // Outdoor-venue commission pass-through — same mechanism as eventGrandTotal's, just for this one
-    // active function/venue (a single venue always gets share=1 — see outdoorVenueCommissionAddon's
-    // own proration). Baked in silently, no line item.
-    const cli = clientLedger.find(c => c.id === activeClientId);
-    const commAddon = outdoorVenueCommissionAddon(fvCfg, [{ fnVenue: activeFnMeta?.venue || venue }], () => dealAmountActive, dealAmountActive, sharedFloralSettings.venueCommission, fvCfg.venueParents, cli?.commissionOverrides);
-    return dealAmountActive + commAddon;
-  }, [totalCost, transportCalc, dealCheckData, venue, activeFnMeta, studioFloralData, sharedFloralSettings, venueParents, agencyFeeAmt, clientLedger, activeClientId]);
+    return discounted + agencyFeeAmt;
+  }, [totalCost, transportCalc, dealCheckData, venue, activeFnMeta, studioFloralData, sharedFloralSettings, venueParents, agencyFeeAmt]);
 
   const collectAllFunctionData = useCallback(() => {
     const all = [];
@@ -5816,15 +5794,8 @@ export default function StudioApp() {
     // (Admin → Settings, default 20%). This is the number booking confirmation, Summary's hero,
     // and the negotiated-amount placeholder all read, so the fee has to sit inside it, not beside it.
     const feePct = Number(sharedFloralSettings.agencyFeePct) || 20;
-    const dealAmount = discounted + Math.round(discounted * feePct / 100);
-    // Outdoor-venue commission, billed to the client — baked silently into the total, no line item
-    // (see outdoorVenueCommissionAddon's own comment). In-house commission is unaffected: it stays an
-    // internal Ambria cost, not added here. `cli` read inline (not the separate `activeClient` memo,
-    // declared later in this file) to avoid referencing a not-yet-initialized const this render.
-    const cli = clientLedger.find(c => c.id === activeClientId);
-    const commAddon = outdoorVenueCommissionAddon(fvCfg, all, (fn) => calcFunctionCost(fn).grand, dealAmount, sharedFloralSettings.venueCommission, fvCfg.venueParents, cli?.commissionOverrides);
-    return dealAmount + commAddon;
-  }, [collectAllFunctionData, calcFunctionCost, dealCheckData, studioFloralData, sharedFloralSettings, venueParents, clientLedger, activeClientId]);
+    return discounted + Math.round(discounted * feePct / 100);
+  }, [collectAllFunctionData, calcFunctionCost, dealCheckData, studioFloralData, sharedFloralSettings, venueParents]);
 
   const calcFunctionBreakdown = useCallback((fnData) => {
     if (!fnData) return { zones: [], transport: null, decorTotal: 0, transportTotal: 0, transportTotalClient: 0, grand: 0, grandClient: 0 };
@@ -9722,31 +9693,7 @@ export default function StudioApp() {
     // sheet can print it as an explicit line rather than folding it silently into the total.
     const agencyFeePct = Number(sharedFloralSettings.agencyFeePct) || 20;
     const agencyFee = Math.round(discountedTotal * agencyFeePct / 100);
-    const dealAmountSystem = discountedTotal + agencyFee;
-    // Outdoor-venue commission pass-through — same mechanism as eventGrandTotal's, so the cost sheet
-    // (Excel/PPT/HTML/preview) agrees with Build's own Live Estimate and the booking total. Baked in
-    // silently, no line item — computed per VENUE here (not via the plain outdoorVenueCommissionAddon
-    // total-only helper) so each function's own previewGrand below can carry its own share: a hidden
-    // addon that only showed up in the deal-wide total would leave every function's own line
-    // under-counted, so they'd stop summing to eventGrandTotal — the exact "doesn't add up" bug this
-    // sheet has already been fixed for once (see venueDiscount/agencyFee's own comments).
-    const commVenueParents = fvCfg.venueParents;
-    const fnGrandByVenueForComm = {};
-    functions.forEach(f => { const vKey = commVenueParents[f.fnVenue] || f.fnVenue || ""; if (!vKey) return; fnGrandByVenueForComm[vKey] = (fnGrandByVenueForComm[vKey] || 0) + (f.grand || 0); });
-    const commVenueKeys = Object.keys(fnGrandByVenueForComm);
-    const commByVenueDollar = {};
-    const commissionOverrides = ac?.commissionOverrides || {};
-    const venueCommissionRates = sharedFloralSettings.venueCommission || {};
-    commVenueKeys.forEach(vKey => {
-      if (fixedVenueFor(fvCfg, vKey)) return; // in-house — stays an internal Ambria cost, not billed
-      const share = preFeeTotal > 0 ? fnGrandByVenueForComm[vKey] / preFeeTotal : (commVenueKeys.length === 1 ? 1 : 0);
-      const pct = Number(venueCommissionRates[vKey]) || 0;
-      const overrideVal = commissionOverrides[vKey];
-      const hasOverride = typeof overrideVal === "number" && isFinite(overrideVal);
-      commByVenueDollar[vKey] = hasOverride ? overrideVal : Math.round(dealAmountSystem * share * pct / 100);
-    });
-    const commAddon = Object.values(commByVenueDollar).reduce((s, v) => s + v, 0);
-    const systemGrandTotal = dealAmountSystem + commAddon;
+    const systemGrandTotal = discountedTotal + agencyFee;
     // A negotiated amount (Summary's own "Total Estimate" hero shows THIS instead of the system
     // estimate the moment one is set — see commitNegotiatedAmount/StudioSummary.jsx) is the deal's
     // real, agreed price. The cost sheet used to always show the pre-negotiation system total
@@ -9799,29 +9746,13 @@ export default function StudioApp() {
         // Exposed on its own (not just folded into previewGrand) so the Excel/PPT/PDF cost sheets
         // can print each function's own share of the fee as its own column/line.
         f.agencyFee = Math.round(fDiscounted * agencyFeePct / 100);
-        // This function's own share of ITS venue's outdoor commission — split by its own grand
-        // within that venue (a venue with two functions splits that venue's one commission figure
-        // between them by their own decor share, not a deal-wide average). Deliberately no separate
-        // field exposed for this one (unlike agencyFee above) — it stays invisible on every
-        // client-facing screen, folded straight into previewGrand so the total it sits inside still
-        // reconciles without a line anyone can see.
-        const fVKey = commVenueParents[f.fnVenue] || f.fnVenue || "";
-        const fVenueGrandTotal = fnGrandByVenueForComm[fVKey] || 0;
-        const fShareOfVenue = fVenueGrandTotal > 0 ? (f.grand || 0) / fVenueGrandTotal : 0;
-        const fCommission = Math.round((commByVenueDollar[fVKey] || 0) * fShareOfVenue);
-        f.previewGrand = fDiscounted + f.agencyFee + fCommission;
+        f.previewGrand = fDiscounted + f.agencyFee;
       });
     }
     return {
       functions,
       eventGrandTotal,
       venueDiscount, agencyFee, agencyFeePct, negotiatedAmount,
-      // Stamped as a single deal-wide figure (not re-prorated per function like discountPct/agencyFee
-      // are) — csUpdateQty's live quantity-edit recompute carries it forward as-is rather than
-      // re-deriving it from a settings lookup it doesn't have. Commission is a venue-share concern,
-      // not a per-item one, so one quantity tweak shifting it by a rounding amount is an acceptable
-      // simplification; it still always matches eventGrandTotal on first render.
-      commissionTotalOutdoor: commAddon,
       clientName, clientPhone, clientBrideGroom
     };
   }, [collectAllFunctionData, buildZonesForFn, calcFunctionBreakdown, clientName, clientPhone, clientBrideGroom, clientLedger, activeClientId, activeFnIdx, dealCheckData, studioFloralData, sharedFloralSettings, venueParents]);
