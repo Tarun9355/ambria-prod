@@ -2910,8 +2910,11 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                                   <span className="mt-0.5 block text-xs text-gray-500 truncate">
                                     {eo.functionsDetail?.[0]?.venue || eo.venue || "—"}
                                     {eo.functionsDetail?.[0]?.shift ? ` · ${eo.functionsDetail[0].shift}` : ""}
-                                    {eo.salesperson ? ` · booked by ${eo.salesperson}` : ""}
                                   </span>
+                                  {/* Own line, not tacked onto venue/shift above — that span already
+                                      truncates, and venue+shift alone was often long enough to push
+                                      "booked by {name}" past the ellipsis before it ever rendered. */}
+                                  {eo.salesperson && <span className="block text-xs text-gray-400 truncate">Booked by {eo.salesperson}</span>}
                                 </span>
                                 <span aria-hidden="true" className="shrink-0 text-gray-400">
                                   <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M5 3.5 L9 7 L5 10.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" /></svg>
