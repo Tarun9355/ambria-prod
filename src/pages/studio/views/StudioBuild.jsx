@@ -8,7 +8,7 @@ import { IconClipboard, IconPencil, IconRuler, IconBolt, IconWall, IconPlatform,
 import {
   ZONE_TYPE_TO_AREA, getCat, taxOr, FUNCTIONS, CATEGORIES, venueTypeLabel,
   maskingOptions, platformOptions, defaultCarpetMatId, CARPET_OFF, TRUSS_MATERIALS, trussBaseArea, trussRateFor,
-  platformRowCost,
+  platformRowCost, liveAreaElementOptions,
 } from "../../../lib/studio/taxonomy";
 import { paletteNames, addPaletteInline } from "../../../lib/studio/colours";
 import PaletteQuickAdd from "../../../components/studio/PaletteQuickAdd.jsx";
@@ -4820,7 +4820,7 @@ undefined
                 // customZones list Build's own zone pickers already use (StudioBuild.jsx:1473 etc.), so
                 // this panel can never show a stale zone list again.
                 const vals=key==="colorPalette"&&imsPaletteCatalogue.length>0?imsPaletteCatalogue.map(p=>p.name)
-                  :key==="areasElements"?[...new Set([...zoneKeys.map(zk=>zoneLabelsD[zk]?.label||zk),...customZones.map(cz=>cz.name)])]
+                  :key==="areasElements"?liveAreaElementOptions(zoneKeys,zoneLabelsD,customZones)
                   :taxonomy[key];
                 return <div key={key} style={{marginBottom:8}}>
                   <div style={{fontSize:10,color:textS,marginBottom:3,fontWeight:600}}>{taxLabel(key)}</div>

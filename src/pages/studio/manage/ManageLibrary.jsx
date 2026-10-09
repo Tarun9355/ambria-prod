@@ -4,7 +4,7 @@ import KitComponentsEditor from "../../../components/shared/KitComponentsEditor"
 import { logVideoOpen, logPhotoOpen, logBulk } from "../../../lib/studio/userActions";
 import ItemHoverThumb from "../../../components/shared/ItemHoverThumb";
 import InventoryItemPickerModal from "../../../components/shared/InventoryItemPickerModal";
-import { libPhotoIsTagged, carpetPricingFor, defaultCarpetMatId, CARPET_OFF, trussRateFor, maskingRateFor, maskingOptions, TRUSS_MATERIALS, venueTypeLabel } from "../../../lib/studio/taxonomy";
+import { libPhotoIsTagged, carpetPricingFor, defaultCarpetMatId, CARPET_OFF, trussRateFor, maskingRateFor, maskingOptions, TRUSS_MATERIALS, venueTypeLabel, liveAreaElementOptions } from "../../../lib/studio/taxonomy";
 import { logFieldCorrections } from "../../../lib/studio/tagFeedback";
 // The same filter kit Browse and Build use — collapsible sections with the bullet, the caps label, the
 // count badge and the rotating chevron. Imported rather than rebuilt here for the reason the kit exists
@@ -857,7 +857,7 @@ export default function ManageLibrary({ ctx }) {
           const vals = k === "colorPalette" && imsPaletteCatalogue.length > 0
             ? imsPaletteCatalogue.map(p => p.name)
             : k === "areasElements"
-              ? zoneKeys.map(zk => zoneLabelsD[zk]?.label || zk)
+              ? liveAreaElementOptions(zoneKeys, zoneLabelsD)
               : taxonomy[k];
           const secCount = (libFilters[k] || []).length;
           return (
@@ -1250,7 +1250,7 @@ export default function ManageLibrary({ ctx }) {
                   const vals = k === "colorPalette" && imsPaletteCatalogue.length > 0
                     ? imsPaletteCatalogue.map(p => p.name)
                     : k === "areasElements"
-                      ? zoneKeys.map(zk => zoneLabelsD[zk]?.label || zk)
+                      ? liveAreaElementOptions(zoneKeys, zoneLabelsD)
                       : taxonomy[k];
                   const picked = (libEditImg.tags?.[k] || []).length;
                   return mlTagCard(ki + 2, ML_TAX_ICON[k] || <IconPalette size={14} />, k === "colorPalette" ? "Palette" : getTaxLabel(k),

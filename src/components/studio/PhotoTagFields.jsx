@@ -15,6 +15,7 @@
 import { useState } from "react";
 import PaletteQuickAdd from "./PaletteQuickAdd.jsx";
 import { addPaletteInline } from "../../lib/studio/colours.js";
+import { liveAreaElementOptions } from "../../lib/studio/taxonomy.js";
 
 export default function PhotoTagFields({
   tags, onChange,
@@ -90,7 +91,7 @@ export default function PhotoTagFields({
         const vals = (k === "colorPalette" && (imsPaletteCatalogue || []).length > 0)
           ? imsPaletteCatalogue.map((p) => p.name)
           : (k === "areasElements" && zoneKeys)
-            ? [...new Set([...zoneKeys.map((zk) => zoneLabelsD?.[zk]?.label || zk), ...(customZones || []).map((cz) => cz.name)])]
+            ? liveAreaElementOptions(zoneKeys, zoneLabelsD, customZones)
             : taxonomy[k];
         return (
           <div key={k} style={{ marginBottom: 6 }}>

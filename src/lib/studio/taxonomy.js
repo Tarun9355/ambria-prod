@@ -303,6 +303,22 @@ export const DEFAULT_TAX={
 };
 export const TAX_LABELS={eventType:"Event type",venueType:"Venue type",areasElements:"Areas & elements",colorPalette:"Color palette",tier:"Tier",categoryTier:"Category tier (legacy)",designStyle:"Design style",timeSetting:"Time / setting"};
 
+// ONE shared source for the "Areas & elements" chip options, used by every tag editor/filter that
+// offers this category (ManageLibrary's filter rail, its tag editor, Build's photo-correction
+// modal, and PhotoTagFields — Build's "Review Upload -> zone" modal). taxonomy.areasElements is a
+// separately-persisted copy that only gets best-effort synced with Manage -> Zone Types on a
+// rename, so a zone added/renamed/removed any other way silently fell out of step with it — this
+// was reported live (an uploaded-photo tag editor still showing factory-default zone names after
+// the real zone list had moved on) and fixed by routing every one of those four call sites through
+// this single function instead of each keeping its own copy of the same expression. Do NOT read
+// taxonomy.areasElements directly in a new tag editor/filter — call this instead, so there is only
+// one place left to get wrong. Covered by taxonomy.test.js.
+export const liveAreaElementOptions = (zoneKeys, zoneLabelsD, customZones) =>
+  [...new Set([
+    ...(zoneKeys || []).map((zk) => zoneLabelsD?.[zk]?.label || zk),
+    ...(customZones || []).map((cz) => cz.name),
+  ])];
+
 // A library photo counts as tagged / "Needs review" (vs truly Untagged) ONLY when it actually
 // carries real tags or detected elements. We deliberately do NOT key off the `_aiTagged` stamp:
 // the bulk tagger stamps it on every image it *attempts*, including failures/empties (e.g. when
