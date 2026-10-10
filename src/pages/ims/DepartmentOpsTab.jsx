@@ -3742,23 +3742,27 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                       </div>
                       {fp.season && fp.season.mult && fp.season.mult !== 1 && <div className="px-3 py-1.5 rounded-lg text-[10px] text-emerald-700 bg-emerald-100/50 border border-emerald-100">📅 {fp.season.label} date — mandi flower prices ×{fp.season.mult} (e.g. a ₹1000 flower bills at ₹{Math.round(1000 * fp.season.mult)})</div>}
                       {/* Projected vs real mandi — side by side, editable real shopping list */}
-                      {/* Projected and Real are two fixed columns (w-28 + w-44) and Real holds
-                          qty × ₹/unit × total × delete — ~330px that cannot compress, which left
-                          the flower name about 30px on a phone. The comparison only works if the
-                          two columns stay aligned, so this scrolls sideways rather than reflows. */}
+                      {/* Projected and Real are two fixed columns (w-28 + w-60) and Real holds
+                          qty × ₹/unit × total × delete — ~210px of content that cannot compress
+                          (every child below is shrink-0), which left the flower name about 30px
+                          on a phone. The comparison only works if the two columns stay aligned,
+                          so this scrolls sideways rather than reflows. w-60 is NOT cosmetic — it's
+                          the actual sum of the children's widths; a narrower column here forces
+                          the (shrink-0) inputs to overflow past their own box, bleeding left into
+                          the Projected column, which is the overlap bug this was fixed for. */}
                       <div className="bg-white border border-emerald-100 rounded-lg overflow-x-auto">
-                        <div className="min-w-[430px]">
+                        <div className="min-w-[520px]">
                         <div className="grid grid-cols-[1fr_auto_auto] gap-2 px-3 py-2 bg-emerald-100/60 text-[10px] font-semibold text-emerald-900 uppercase tracking-wide items-center">
                           <span className="flex items-center gap-2">🌸 Flower
                             {seedMandi.length > 0 && <button onClick={resetMandi} title="Undo your edits — restore the system's original mandi plan from Deal Check" className="normal-case text-[10px] font-semibold text-emerald-700 border border-emerald-300 rounded px-1.5 py-0.5 hover:bg-emerald-200/60">↺ Reset to system plan</button>}
                           </span>
                           <span className="text-right w-28">Projected (plan)</span>
-                          <span className="text-right w-44">Real shopping</span>
+                          <span className="text-right w-60">Real shopping</span>
                         </div>
                         {/* Column labels for the two editable fields */}
                         <div className="grid grid-cols-[1fr_auto_auto] gap-2 px-3 pt-1 text-[10px] text-emerald-700/70 uppercase tracking-wide">
                           <span></span><span className="w-28"></span>
-                          <span className="flex items-center justify-end gap-1 w-44"><span className="w-12 text-center">qty</span><span className="text-transparent">×</span><span className="w-16 text-center">₹/unit</span><span className="w-14 text-right">total</span><span className="w-3"></span></span>
+                          <span className="flex items-center justify-end gap-1 w-60"><span className="shrink-0 w-12 text-center">qty</span><span className="shrink-0 text-transparent">×</span><span className="shrink-0 w-16 text-center">₹/unit</span><span className="shrink-0 w-16 text-right">total</span><span className="shrink-0 w-3"></span></span>
                         </div>
                         <div className="px-3 py-1 bg-emerald-50/40 text-[10px] text-emerald-700/80">Real shopping = <b>qty × ₹/unit</b>. Projected = planned units from the recipe × mandi price{fp.season && fp.season.mult && fp.season.mult !== 1 ? ` × ${fp.season.mult} season` : ""}.</div>
                         {mandiRows.length === 0 && fpFlowers.length === 0 ? (
@@ -3772,12 +3776,12 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                                 <div key={i} className="grid grid-cols-[1fr_auto_auto] gap-2 px-3 py-1.5 items-center">
                                   <div className="min-w-0"><div className="text-xs font-medium text-gray-800 truncate">{r.name}</div>{r.projQty > 0 && <div className="text-[10px] text-gray-400">{r.projQty} {r.unit} planned</div>}</div>
                                   <div className="text-right w-28 text-xs text-gray-400">{r.projCost > 0 ? fmt(r.projCost) : <span className="text-amber-500">extra</span>}</div>
-                                  <div className="flex items-center justify-end gap-1 w-44">
-                                    <input type="number" min="0" value={r.qty} onChange={e => setMandi(i, "qty", e.target.value)} className="w-12 border rounded px-1.5 py-1 text-xs text-center" title="qty" />
-                                    <span className="text-[10px] text-gray-300">×</span>
-                                    <input type="number" min="0" value={r.price} onChange={e => setMandi(i, "price", e.target.value)} className="w-16 border rounded px-1.5 py-1 text-xs text-center" title="₹/unit" />
-                                    <span className={"text-xs font-semibold w-14 text-right " + (lineVar > 0 ? "text-red-500" : lineVar < 0 ? "text-emerald-600" : "text-gray-700")}>{fmt(lineActual)}</span>
-                                    <button onClick={() => delMandi(i)} className="text-red-300 hover:text-red-500 text-xs">×</button>
+                                  <div className="flex items-center justify-end gap-1 w-60">
+                                    <input type="number" min="0" value={r.qty} onChange={e => setMandi(i, "qty", e.target.value)} className="shrink-0 w-12 border rounded px-1.5 py-1 text-xs text-center" title="qty" />
+                                    <span className="shrink-0 text-[10px] text-gray-300">×</span>
+                                    <input type="number" min="0" value={r.price} onChange={e => setMandi(i, "price", e.target.value)} className="shrink-0 w-16 border rounded px-1.5 py-1 text-xs text-center" title="₹/unit" />
+                                    <span className={"shrink-0 w-16 text-right text-xs font-semibold " + (lineVar > 0 ? "text-red-500" : lineVar < 0 ? "text-emerald-600" : "text-gray-700")}>{fmt(lineActual)}</span>
+                                    <button onClick={() => delMandi(i)} className="shrink-0 text-red-300 hover:text-red-500 text-xs">×</button>
                                   </div>
                                 </div>
                               );
@@ -3793,7 +3797,7 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                                       <span className="truncate">Artificial flowers / greens <span className="text-[10px] text-gray-400">(not mandi-shopped)</span></span>
                                     </div>
                                     <div className="text-right w-28 text-xs text-gray-400">{fmt(artTot)}</div>
-                                    <div className="text-right w-44 text-xs text-gray-500 pr-6">{fmt(artTot)}</div>
+                                    <div className="text-right w-60 text-xs text-gray-500 pr-6">{fmt(artTot)}</div>
                                   </div>
                                   {art && artHowOpen && (
                                     <div className="px-3 pb-2">
@@ -3814,7 +3818,7 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                         <div className="grid grid-cols-[1fr_auto_auto] gap-2 px-3 py-2 bg-emerald-50 items-center">
                           <span className="text-xs font-bold text-emerald-900">Total</span>
                           <span className="text-right w-28 text-xs font-semibold text-gray-500">{fmt(projectedTotal)}</span>
-                          <span className="text-right w-44 text-sm font-bold text-emerald-800 pr-6">{fmt(mandiActualTotal)}</span>
+                          <span className="text-right w-60 text-sm font-bold text-emerald-800 pr-6">{fmt(mandiActualTotal)}</span>
                         </div>
                         </div>
                       </div>
