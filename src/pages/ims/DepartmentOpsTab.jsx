@@ -816,6 +816,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const seedMandi = fpFlowers.filter(f => !f.artificial && (Number(f.qty) || 0) > 0)
     .map(f => ({ name: f.name, unit: f.unit || "", projQty: Number(f.qty) || 0, projCost: Number(f.cost) || 0, qty: Number(f.qty) || 0, price: f.qty ? Math.round(((Number(f.cost) || 0) / f.qty) * 100) / 100 : 0 }));
   const mandiRows = Array.isArray(deptData.mandiLines) ? deptData.mandiLines : seedMandi;
+  // Real shopping hasn't been logged until someone actually edits a row — until then, mandiRows is
+  // just seedMandi (the plan's own quantities/prices mirrored in as a starting point), so the "Real
+  // shopping" numbers can look fully filled in even though nobody has been to the mandi yet.
+  const mandiShopped = Array.isArray(deptData.mandiLines);
   const mandiActualReal = mandiRows.reduce((s, r) => s + (Number(r.qty) || 0) * (Number(r.price) || 0), 0);
   const mandiActualTotal = mandiActualReal + artificialProj; // artificial carried over (not re-shopped at mandi)
   const projMandiReal = mandiRows.reduce((s, r) => s + (Number(r.projCost) || 0), 0);
@@ -3702,7 +3706,7 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                 <span aria-hidden="true" className="shrink-0 w-9 h-9 rounded-lg bg-white shadow-[0_1px_3px_rgba(15,23,42,0.12),0_4px_10px_-4px_rgba(15,23,42,0.22)] flex items-center justify-center text-base leading-none">🧾</span>
                 <div className="min-w-0 flex-1">
                   <div className="text-[15px] font-semibold text-gray-900">Actuals</div>
-                  <div className="text-xs text-gray-500">Real spend for this event</div>
+                  <div className="text-xs text-gray-500">What was actually bought/spent — fill in after shopping, not while planning</div>
                 </div>
                 <div className="shrink-0 text-right">
                   <div className={"text-[15px] font-semibold tabular-nums " + (hasActuals ? "text-gray-900" : "text-gray-300")}>{hasActuals ? fmt(actualCost) : "—"}</div>
@@ -3718,6 +3722,11 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                       {/* Ops view — FLORAL COST (what ops spends to source flowers). Client billing is
                           intentionally NOT shown here — ops only needs the real mandi + artificial spend
                           and how each is derived. */}
+                      {!mandiShopped && (mandiRows.length > 0 || fpFlowers.length > 0) && (
+                        <div className="px-3 py-1.5 rounded-lg text-[10px] text-blue-700 bg-blue-50 border border-blue-100">
+                          ℹ️ Nobody's gone shopping yet — the numbers below are just the plan shown as a starting point. Edit a row once the real mandi purchase happens; until then there's nothing you need to fill in here.
+                        </div>
+                      )}
                       <div className="bg-white border border-emerald-100 rounded-lg overflow-hidden text-xs">
                         <div className="px-3 py-2 bg-emerald-50 font-semibold text-emerald-900 flex justify-between"><span>🌸 Floral cost to source</span><span>{fmt(mandiActualTotal)}</span></div>
                         <div className="">
