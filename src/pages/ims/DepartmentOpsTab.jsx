@@ -894,10 +894,12 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const addFleet = () => { const v = (newVeh.vehicle || "").trim(); if (!v) return; saveFleet([...fleet, { id: "veh_" + Date.now(), vehicle: v, driver: (newVeh.driver || "").trim(), phone: (newVeh.phone || "").trim() }]); setNewVeh({ vehicle: "", driver: "", phone: "" }); };
   const delFleet = (id) => saveFleet(fleet.filter(f => f.id !== id));
 
-  // Actual spend logged by the head → exact P&L (mandi list + on-site expenses + edited crew).
+  // Actual spend logged by the head → exact P&L (mandi list + on-site expenses). Manpower is
+  // tracked in its own Manpower plan card (mpCost, above) — folding it in here too double-counted
+  // the same crew cost under two headings, so it's deliberately left out of Actuals.
   const mandiSpend = dept === "Floral" ? mandiActualTotal : 0;
-  const actualCost = mandiSpend + expenseTotal + mpCost;
-  const hasActuals = mandiSpend > 0 || expenseTotal > 0 || mpEdited;
+  const actualCost = mandiSpend + expenseTotal;
+  const hasActuals = mandiSpend > 0 || expenseTotal > 0;
 
   // ── THE DEPARTMENT'S INCOME, BROKEN INTO HEADS ──
   // Read by the on-screen readout AND by the PDF export. It lives here rather than inside the
@@ -1430,7 +1432,6 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     const spendRows = [
       ...(dept === "Floral" && mandiSpend > 0 ? [`<tr><td>Mandi shopping (real flowers)</td><td class="n b">${money(mandiSpend)}</td></tr>`] : []),
       ...expenses.map(e => `<tr><td>${esc(e.label || e.note || "Expense")}</td><td class="n b">${money(e.amount)}</td></tr>`),
-      ...(mpCost > 0 ? [`<tr><td>Crew (per the plan above)</td><td class="n b">${money(mpCost)}</td></tr>`] : []),
     ];
     if (spendRows.length) spendRows.push(`<tr class="tot"><td>Total logged</td><td class="n b">${money(actualCost)}</td></tr>`);
 
