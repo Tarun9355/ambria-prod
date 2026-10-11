@@ -9,6 +9,7 @@ import { hasIMSPerm } from "../../lib/ims/constants";
 import { ZONE_META } from "../../lib/studio/taxonomy";
 import { ZONE_DEF_SK } from "../../lib/studio/keys";
 import { LOGO_ASSET, LOGO_BOX } from "../../lib/studio/brand.js";
+import { fitUrl } from "../../lib/studio/thumb.js";
 
 // ── THE OFFICIAL LOGO, READY FOR THE PDF ──
 // ambria-logo.png is a WHITE wordmark with a gold dot and gold "DESIGN & DECOR", on a transparent
@@ -501,6 +502,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   // Which manpower rows have their derivation expanded. Open by default (owner ask) — a row is only
   // collapsed once someone closes it, so a missing key reads as open.
   const [mpOpen, setMpOpen] = useState({});
+  // "Whole event" panel in the Manpower plan header — every department's crew for this booking.
+  const [mpEventOpen, setMpEventOpen] = useState(false);
   // Which kits have their components showing. Collapsed by default: a kit's own line already
   // carries the qty, the rate and the total that matter, and six components under each of four
   // kits buried the ordinary items between them.
@@ -761,6 +764,43 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   // ── Event-wide Labours total. Ops runs the whole event, so he sets the TOTAL labour headcount and the
   // system re-splits it across every department by their existing usage share (scale each dept's per-day
   // labour by newTotal/currentTotal). Writes each dept's mpDay → flows via the normal reconciliation. ──
+  // ── WHOLE-EVENT MANPOWER ── every department's crew on this booking, with each department's own
+  // edits applied (the same mpLineCost each dept's panel uses), so the totals here are the sum of
+  // what every dept head sees. Shared crew (Labours, Supervisors) carry ONE event-wide headcount per
+  // day in their schedule (day.count, before the per-dept share), so their headcount is read from
+  // there rather than added up across departments — adding it would count the same people 7 times.
+  const eventManpower = () => {
+    const md = (sel?.manpowerDetail && typeof sel.manpowerDetail === "object") ? sel.manpowerDetail : {};
+    const byType = new Map(); const byDept = []; const labDays = new Map();
+    let total = 0, totalDihari = 0;
+    Object.entries(md).forEach(([d, rows]) => {
+      if (!Array.isArray(rows) || !rows.length) return;
+      const dd = sel?.deptOps?.[d] || {};
+      const ovAll = (dd.mpOverrides && typeof dd.mpOverrides === "object") ? dd.mpOverrides : {};
+      let dCost = 0, dDihari = 0, dLab = 0;
+      rows.forEach(s => {
+        const ov = ovAll[s.type] || {};
+        const r = { type: s.type, count: ov.count != null ? ov.count : (s.count ?? ""), rate: ov.rate != null ? ov.rate : (s.rate || 0), shared: !!s.shared, sysCount: s.count, sysRate: s.rate || 0, sysCost: s.cost || 0, schedule: s.schedule || null, splitInfo: s.splitInfo || null, trace: s.trace || null };
+        const cost = Number(mpLineCost(r, dd.mpDay || {}, ovAll, dd.mpWin || {}, dd.mpWinCount || {})) || 0;
+        const rate = Number(r.rate) || 0;
+        const dih = rate > 0 ? cost / rate : 0;
+        dCost += cost; dDihari += dih; if (s.type === "Labours") dLab += dih;
+        const t = byType.get(s.type) || { type: s.type, cost: 0, dihari: 0, peak: 0, shared: !!s.shared };
+        t.cost += cost; t.dihari += dih;
+        if (s.shared && Array.isArray(s.schedule)) {
+          s.schedule.forEach(day => {
+            const c = Number(day.count) || 0;
+            t.peak = Math.max(t.peak, c);
+            if (s.type === "Labours") { const k = `${day.date}|${day.phase || ""}`; const prev = labDays.get(k); labDays.set(k, { label: day.phase === "minusOne" ? "−1 setup" : day.phase === "dismantle" ? "+1 dismantle" : day.phase === "gap" ? "gap" : (day.date || "event"), count: Math.max(c, prev ? prev.count : 0) }); }
+          });
+        } else t.peak += Number(r.count) || 0;
+        byType.set(s.type, t);
+      });
+      byDept.push({ dept: d, cost: dCost, dihari: dDihari, labDihari: dLab });
+      total += dCost; totalDihari += dDihari;
+    });
+    return { types: [...byType.values()].sort((a, b) => b.cost - a.cost), depts: byDept.sort((a, b) => b.cost - a.cost), labDays: [...labDays.values()], total, totalDihari };
+  };
   const labDetailFor = (d) => { const rows = sel?.manpowerDetail?.[d]; return Array.isArray(rows) ? rows.find(r => r.type === "Labours") : null; };
   const labEffPerDay = (d, day) => { const md = sel?.deptOps?.[d]?.mpDay?.Labours || {}; if (md[day.date] != null) return Number(md[day.date]) || 0; return day.share != null ? (Number(day.count) || 0) * Number(day.share) : (Number(day.count) || 0); };
   const labShiftsFor = (d, day) => { const mw = sel?.deptOps?.[d]?.mpWin?.Labours; const ids = mw && mw[day.date] != null ? mw[day.date] : (Array.isArray(day.windowIds) ? day.windowIds : null); return ids ? ids.length : (Number(day.windows) || 0); };
@@ -1514,7 +1554,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     const invPhoto = (inv, held) => (Array.isArray(inv?.photoUrls) && inv.photoUrls[0]) || inv?.img || held?.photo || "";
     // Admin-edited zone names first (Studio's zone settings, fetched at export time), then the
     // built-in defaults, then the key itself tidied up.
-    const zoneName = (zk) => zoneLabels[zk] || ZONE_META[zk]?.label || String(zk).replace(/[_-]+/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+    // A custom zone's key is a generated id ("cz_1789…") — its name only reaches IMS through
+    // fn.zoneNames (Studio's sync). Without it the title printed as "Cz 1789216840977".
+    const zoneName = (zk, fn) => (fn?.zoneNames?.[zk]) || zoneLabels[zk] || ZONE_META[zk]?.label || String(zk).replace(/[_-]+/g, " ").replace(/\b\w/g, c => c.toUpperCase());
     const zoneDimsText = (d) => {
       if (!d) return "";
       const parts = [["L", d.L], ["W", d.W], ["H", d.H]].filter(([, v]) => Number(v) > 0);
@@ -1524,13 +1566,49 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     // The image goes INSIDE the element's one style attribute. An element that already has a
     // style (the zone photo carries its position) must not get a second style="" — browsers keep
     // only the first, which is how the zone photo came out blank while the cards' photos showed.
-    const bgCss = (url) => url ? `background-image:url('${esc(url)}');` : "";
-    const bgData = (url) => url ? `data-bg="${esc(url)}"` : "";
+    // Photos go into the book at print size, not camera size. They are stored at full resolution
+    // (a zone photo ran 1.2 MB); Supabase resizes on the fly, and 1400px is still sharper than an A4
+    // page at 2x needs. Full-size images were most of what Safari ran out of memory on.
+    const pdfImg = (url) => fitUrl(url, 700, 82);
+    const bgCss = (url) => url ? `background-image:url('${esc(pdfImg(url))}');` : "";
+    const bgData = (url) => url ? `data-bg="${esc(pdfImg(url))}"` : "";
     const bg = (url) => url ? `style="${bgCss(url)}" ${bgData(url)}` : "";
 
     const zonePages = [];
     const placed = new Set();
     const fns = Array.isArray(sel?.functionsDetail) ? sel.functionsDetail : [];
+    // ── WHAT STANDS IN THE ZONE: truss, platform, carpet ──
+    // Shown on each zone's own page, in the Tenting and the Structure books (owner ask) — the
+    // classifier files truss/platform/carpet under Tenting, but the Structure crew builds on that
+    // frame and floor too. It used to be a separate table at the back of the book; the crew reads
+    // a zone page, so that is where it belongs.
+    const showStruct = dept === "Tenting" || dept === "Structure";
+    const carpetName = (id) => {
+      if (!id) return "";
+      const m = (Array.isArray(settings?.carpetMaterials) ? settings.carpetMaterials : []).find(x => x && x.id === id);
+      return m?.name || String(id);
+    };
+    const trussTypeLbl = (t) => t === "box" ? "Box" : t === "singleU" ? "Single U" : (t ? String(t) : "");
+    const platLbl = (h) => h === "4in" ? '4"' : h === "1ft" ? "Raised 1 ft" : (h ? String(h) : "");
+    const ftArea = (d) => [d?.L, d?.W].every(v => Number(v) > 0) ? `${d.L} x ${d.W} ft` : "";
+    const zoneStructOf = (z) => {
+      if (!showStruct || !z) return [];
+      const floor = ftArea(z.floorDims);
+      const extraTr = Array.isArray(z.extraTrussRows) ? z.extraTrussRows : [];
+      const extraPl = Array.isArray(z.extraPlatformRows) ? z.extraPlatformRows : [];
+      const out = [];
+      const truss = [trussTypeLbl(z.trT), Number(z.trussQty) > 1 ? `x${z.trussQty}` : "", z.trussMaterial ? String(z.trussMaterial) : ""].filter(Boolean).join(" ");
+      if (truss) out.push({ k: "Truss", v: truss + (extraTr.length ? ` +${extraTr.length} more` : "") });
+      const plats = [
+        z.plH ? [platLbl(z.plH), floor].filter(Boolean).join(" · ") : "",
+        ...extraPl.map(r => [platLbl(r?.plH), ftArea(r?.floorDims)].filter(Boolean).join(" · ")),
+      ].filter(Boolean);
+      if (plats.length) out.push({ k: "Platform", v: plats.join("; ") });
+      if (z.cpT) out.push({ k: "Carpet", v: [carpetName(z.cpT), floor].filter(Boolean).join(" · ") });
+      if (z.mkOn) out.push({ k: "Masking", v: "Yes" });
+      if (!z.plH && !z.cpT && floor) out.push({ k: "Floor", v: floor });
+      return out;
+    };
     fns.forEach((fn, fi) => {
       const els = fn?.elements || {};
       // ── EVERY ZONE OF THE EVENT, NOT ONLY THE ONES THIS DEPARTMENT FILLS ──
@@ -1576,7 +1654,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
             if (placed.has(p.id)) return; // one physical part, on the first zone that claims it
             placed.add(p.id);
             const pInv = (p.invId && invById.get(String(p.invId))) || invByName.get(String(p.name || "").trim().toLowerCase()) || null;
-            merged.set("p:" + p.id, { name: p.name, qty: Number(p.qty) || 0, photo: invPhoto(pInv, p), dims: invDims(pInv), source: "Inside " + kitLabel });
+            merged.set("p:" + p.id, { name: p.name, qty: Number(p.qty) || 0, unit: String(pInv?.unit || p?.unit || "").trim(), photo: invPhoto(pInv, p), dims: invDims(pInv), source: "Inside " + kitLabel });
           });
           // Only the parts are ours — the kit shell itself sits on another department's sheet.
           if (!held && kitParts.length) return;
@@ -1602,7 +1680,13 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           const prev = merged.get(key);
           const qty = Number(el?.qty) || 1;
           if (prev) { prev.qty += qty; return; }
-          merged.set(key, { name: inv?.name || el?.name || held?.name || "Item", qty, photo: invPhoto(inv, held), dims: invDims(inv), size: elSize, kit: (held?.isKit && Array.isArray(held.components)) ? held.components.length : 0 });
+          // The unit the qty is counted in (kg, ft, nos…). "75" alone does not say whether it is 75
+          // pieces or 75 kg of petals. The element's own unit first — it is what the quote priced —
+          // then the inventory item's, then the held row's.
+          // A flower recipe with no unit stored falls back to "pc" — the same default Studio gives a
+          // recipe element when it is added (recipeOnlyPatterns in StudioApp.jsx).
+          const unit = String(el?.unit || inv?.unit || held?.unit || (isPattern ? "pc" : "")).trim();
+          merged.set(key, { name: inv?.name || el?.name || held?.name || "Item", qty, unit, photo: invPhoto(inv, held), dims: invDims(inv), size: elSize, kit: (held?.isKit && Array.isArray(held.components)) ? held.components.length : 0 });
         });
         const items = [...merged.values()];
         const zPhoto = fn.elSelectedPhoto?.[zk]?.src || "";
@@ -1615,21 +1699,23 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         // the platform and then to the zone itself for a shape that has neither.
         // The short word is deliberate: this chip is nowrap and shares the header with a 38px
         // zone title, and "Single U Truss" there costs enough width to wrap the title onto a
-        // second line. The truss TYPE is already spelled out in the Tenting-by-zone table.
+        // second line. The truss TYPE is spelled out in the structure strip under the zone header.
         const zCfg = fn?.zones?.[zk] || {};
         const zDimsOf = (zCfg.trT || Number(zCfg.trussQty) > 0) ? "Truss"
           : Number(zCfg.plH) > 0 ? "Platform"
           : "Zone";
         // The only zone still worth skipping is one with nothing to put on the page at all: none
         // of our items, no reference photo and no dimensions. That page would be a heading.
-        if (!items.length && !zPhoto && !zDims) return;
+        const zStruct = zoneStructOf(zCfg);
+        if (!items.length && !zPhoto && !zDims && !zStruct.length) return;
         zonePages.push({
           zk,
-          title: zoneName(zk),
+          title: zoneName(zk, fn),
           fnLabel: [fn.type || (fns.length > 1 ? `Function ${fi + 1}` : ""), fn.date].filter(Boolean).join(" · "),
           photo: zPhoto,
           zoneDims: zDims,
           dimsOf: zDimsOf,
+          struct: zStruct,
           items,
         });
       });
@@ -1647,30 +1733,6 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
        each zone's span, truss type and material, extra rows, floor area and masking. So this
        table is built from the zones rather than from the items: what to build, zone by zone,
        with the item list left as the loading total it actually is. */
-    const tentRows = dept !== "Tenting" ? [] : (fns || []).flatMap((fn, fi) => {
-      const zs = fn?.zones || {};
-      return Object.entries(zs).map(([zk, z]) => {
-        const dims = zoneDimsText(fn?.dims?.[zk] || z?.dims);
-        const fd = z?.floorDims || {};
-        const floor = [fd.L, fd.W].every(v => Number(v) > 0) ? `${fd.L} x ${fd.W} ft` : "";
-        const extras = Array.isArray(z?.extraTrussRows) ? z.extraTrussRows.length : 0;
-        const plats = Array.isArray(z?.extraPlatformRows) ? z.extraPlatformRows.length : 0;
-        const truss = [z?.trT ? String(z.trT) : "", z?.trussQty ? `x${z.trussQty}` : "", z?.trussMaterial ? String(z.trussMaterial) : ""].filter(Boolean).join(" ");
-        const notes = [
-          extras ? `${extras} extra truss row${extras === 1 ? "" : "s"}` : "",
-          plats ? `${plats} extra platform row${plats === 1 ? "" : "s"}` : "",
-          z?.plH ? `platform ${z.plH} ft high` : "",
-          z?.mkOn ? "masking" : "",
-        ].filter(Boolean).join(" · ");
-        // A zone with no span, no truss and no floor has nothing for this department to build.
-        if (!dims && !truss && !floor && !notes) return null;
-        return { zk, fi, name: zoneName(zk), dims, truss, floor, notes };
-      }).filter(Boolean);
-    });
-    const tentTableRows = tentRows.map(r =>
-      `<tr><td><b>${esc(r.name)}</b>${(fns || []).length > 1 ? `<div class="sub">${esc(fns[r.fi]?.type || `Function ${r.fi + 1}`)}</div>` : ""}</td><td>${esc(r.dims || "—")}</td><td>${esc(r.truss || "—")}</td><td>${esc(r.floor || "—")}</td><td>${esc(r.notes || "—")}</td></tr>`);
-
-
     /* ── THE TRUCKS THIS DEPARTMENT FILLS ──
        Deal Check sizes a booking's transport by filling trucks sub-category by sub-category
        ("Chandelier: 40 pcs, 30 to a truck"), and its Transport tab groups those rows by
@@ -1736,7 +1798,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       ${it.size ? `<div class="zc-sz">${esc(it.size)}</div>` : ""}
       <div class="zc-b">
         <div class="zc-n">${esc(it.name)}</div>
-        <div class="zc-r"><span>Qty</span><b>${esc(it.qty)}</b></div>
+        <div class="zc-r"><span>Qty</span><b>${esc(it.qty)}${it.unit ? ` <span style="font-weight:500;font-size:.85em;opacity:.7">${esc(it.unit)}</span>` : ""}</b></div>
         <div class="zc-r"><span>Size</span><b>${esc(it.dims || "—")}</b></div>
         ${it.source ? `<div class="zc-r"><span>From</span><b>${esc(it.source)}</b></div>` : ""}
       </div>`;
@@ -1747,7 +1809,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       const bare = !chunk.length;
       const top = chunk.slice(0, 3), bot = chunk.slice(3, 6);
       const rows = bot.length ? 2 : 1;
-      const PHOTO_H = bare ? PAGE_PX - HEAD_PX : Math.max(260, PAGE_PX - HEAD_PX - rows * (ROW_H + ARROW));
+      // The structure strip under the header takes its height out of the photo, so the page still
+      // adds up to exactly one sheet.
+      const headPx = HEAD_PX + ((pg.struct || []).length ? 44 : 0);
+      const PHOTO_H = bare ? PAGE_PX - headPx : Math.max(260, PAGE_PX - headPx - rows * (ROW_H + ARROW));
       const photoTop = bare ? 0 : ROW_H + ARROW;
       const botTop = photoTop + PHOTO_H + ARROW;
       // No item numbers (removed by request) — each card's arrow alone ties it to the photo.
@@ -1765,6 +1830,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
             <div class="zm">${esc(pg.fnLabel || selDateStr || "")}</div></div>
           <div class="zt">${pg.zoneDims ? `<span><i class="zl">${esc(pg.dimsOf)}</i>${esc(pg.zoneDims)}</span>` : ""}<span>${pg.items.length ? `${pg.items.length} item${pg.items.length === 1 ? "" : "s"}` : `No ${esc(dept)} items`}</span></div>
         </div>
+        ${(pg.struct || []).length ? `<div class="zst">${pg.struct.map(c => `<span><i class="zl">${esc(c.k)}</i>${esc(c.v)}</span>`).join("")}</div>` : ""}
         <div class="zs" style="height:${stageH}px">
           <div class="zphoto" style="top:${photoTop}px;height:${PHOTO_H}px;${bgCss(pg.photo)}" ${bgData(pg.photo)}>${pg.photo ? "" : "<span>No zone photo</span>"}</div>
           ${cards}
@@ -1806,7 +1872,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         const n = String(el?.name || "").trim().toLowerCase();
         if (!n) return;
         if (!zonesByName.has(n)) zonesByName.set(n, new Set());
-        zonesByName.get(n).add(zoneName(zk));
+        zonesByName.get(n).add(zoneName(zk, fn));
         zoneQtyByName.set(n, (zoneQtyByName.get(n) || 0) + (Number(el?.qty) || 1));
       });
     }));
@@ -2106,6 +2172,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   .zt span{box-sizing:border-box;height:28px;line-height:28px;padding:0 14px;font-size:11.5px;font-weight:700;color:#1A1A1A;background:#E6E1D5;border-radius:20px;white-space:nowrap}
   /* Says WHAT is being measured. On its own "L 52 × W 14 × H 12 ft" could be the zone, the
      structure or a single prop; it is the zone's own span. */
+  .zst{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 12px}
+  .zst span{box-sizing:border-box;height:30px;line-height:30px;padding:0 12px;font-size:12px;font-weight:700;color:#1A1A1A;background:#EFE9DC;border:1px solid #DDD4C2;border-radius:8px;white-space:nowrap}
+  .zst .zl{font-style:normal;font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#7A7263;margin-right:7px}
   .zt .zl{font-style:normal;font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#7A7263;margin-right:7px}
   .zs{position:relative;width:706px}
   /* The zone photo is mounted like a print: a white mat and a gold hairline, lifted off the
@@ -2242,7 +2311,6 @@ ${(truckRows.length || loadRows.length) ? sect("Loading & dispatch",
     + table(["Item", "Qty"], loadRows, ["80%", "20%"]) : "")) : ""}
 ${trRows.length ? sect("Transport", table(["Load", "Quantity", "Fits per truck", "Trucks"], trRows, ["46%", "20%", "22%", "12%"]) + `<p class="note">${trNote}</p>`) : ""}
 ${moveRows.length ? sect("Dismantle routing", table(["Item", "Goes to", "Qty", "Logged by"], moveRows, ["38%", "32%", "12%", "18%"])) : ""}
-${tentTableRows.length ? sect("Tenting by zone", table(["Zone", "Span (L x W x H)", "Truss", "Floor / carpet", "Also"], tentTableRows, ["24%", "20%", "18%", "16%", "22%"])) : ""}
 ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour", "Required", "Available", "Status"], fabRows, ["40%", "20%", "20%", "20%"])) : ""}
 <footer data-block>
   ${logos.dark ? `<img class="ft-logo" src="${logos.dark}" alt="Ambria — Design &amp; Decor">` : `<div class="ft-mark">AMBRIA · DESIGN &amp; DECOR</div>`}
@@ -2404,27 +2472,38 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
         // those threw out of the loop and the entire export failed, which is what a user sees as
         // "could not generate the PDF" even though nineteen pages were fine. Skipped blocks are
         // counted and reported at the end instead.
-        let canvas;
-        try {
-          canvas = await html2canvas(el, { scale: 2, backgroundColor: "#F4F1EA", logging: false, useCORS: true, windowWidth: 794 });
-        } catch (blockErr) {
-          console.error("PDF: skipped a block that failed to render", el.className || el.tagName, blockErr);
-          skipped.push(el.className || el.tagName);
-          continue;
+        // ── SAFARI'S CANVAS MEMORY ──
+        // Safari caps the TOTAL memory all live canvases may hold, and every block here is a
+        // full-width canvas at 2x (a zone page is ~14 MB). Nothing released them, so on a book of
+        // twenty-odd pages Safari ran out partway and every block after that failed — "16 sections
+        // could not be drawn", with every photo perfectly loadable. Each canvas is now emptied the
+        // moment its JPEG is taken (width/height 0 is what makes Safari hand the memory back), and
+        // a block that still fails is retried at a lower scale before it is given up on.
+        const freeCanvas = (c) => { try { if (c) { c.width = 0; c.height = 0; } } catch { /* already gone */ } };
+        let img = null, canvas = null, lastErr = null;
+        for (const scale of [2, 1.25]) {
+          try {
+            canvas = await html2canvas(el, { scale, backgroundColor: "#F4F1EA", logging: false, useCORS: true, windowWidth: 794 });
+          } catch (blockErr) { lastErr = blockErr; canvas = null; await new Promise(r => setTimeout(r, 80)); continue; }
+          // Nothing drawn (an element with no height) must not cost a page either.
+          if (!canvas.width || canvas.height < 4) break;
+          try {
+            img = canvas.toDataURL("image/jpeg", 0.92);
+            break;
+          } catch (taintErr) {
+            // A tainted canvas: a photo served without CORS headers was drawn into it, and the
+            // browser refuses to let its pixels be read back. A lower scale will not change that.
+            lastErr = taintErr; freeCanvas(canvas); canvas = null; break;
+          }
         }
-        // Nothing drawn (an element with no height) must not cost a page either.
-        if (!canvas.width || canvas.height < 4) continue;
-        let img;
-        try {
-          img = canvas.toDataURL("image/jpeg", 0.92);
-        } catch (taintErr) {
-          // Almost always a tainted canvas: a photo served without CORS headers was drawn into
-          // it, and the browser then refuses to let anyone read the pixels back out.
-          console.error("PDF: block rendered but could not be read back (tainted canvas)", el.className || el.tagName, taintErr);
-          skipped.push(el.className || el.tagName);
+        if (!img) {
+          if (canvas) { freeCanvas(canvas); continue; }   // drew, but empty — not a failure
+          console.error("PDF: skipped a block that failed to render", el.className || el.tagName, lastErr);
+          skipped.push({ what: el.className || el.tagName, why: String(lastErr?.message || lastErr || "unknown") });
           continue;
         }
         const h = (canvas.height * usableW) / canvas.width;   // scaled to the content column
+        freeCanvas(canvas); canvas = null;                    // the JPEG is all we need from here
         if (el.hasAttribute("data-cover")) {
           // Full bleed: the cover is drawn across the whole page, no margin, and whatever follows
           // starts on page two.
@@ -2503,7 +2582,9 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
       // Said out loud, because a report quietly missing a page is worse than one that failed
       // outright — you would only find out when the crew on site needed the page that is gone.
       if (skipped.length) {
-        alert(`The PDF saved, but ${skipped.length} section${skipped.length === 1 ? "" : "s"} could not be drawn and ${skipped.length === 1 ? "is" : "are"} missing from it.\n\nThis is usually a photo that will not load. The browser console lists which.`);
+        // Name the actual error — "usually a photo" sent people chasing photos that were fine.
+        const why = [...new Set(skipped.map(s => s.why))].slice(0, 2).join(" · ");
+        alert(`The PDF saved, but ${skipped.length} section${skipped.length === 1 ? "" : "s"} could not be drawn and ${skipped.length === 1 ? "is" : "are"} missing from it.\n\nReason: ${why}\n\nTry again in Chrome if this keeps happening.`);
       }
     } catch (err) {
       // ── THE FALLBACK IS A FILE, NOT A POP-UP ──
@@ -3587,8 +3668,64 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                     <div className="text-[10px] text-gray-500 truncate">From Studio; edit any field, it saves. Sum matches the income card.</div>
                   </div>
                 </div>
-                <div className="shrink-0 rounded-lg bg-white px-2.5 py-1 text-[15px] font-bold text-gray-900 tabular-nums whitespace-nowrap shadow-[0_1px_2px_rgba(16,24,40,0.06)]">{fmt(mpCost)}</div>
+                <div className="shrink-0 flex items-center gap-2">
+                  {hasMpSnapshot && <button onClick={() => setMpEventOpen(o => !o)} aria-expanded={mpEventOpen}
+                    title="Every department's crew on this booking — labours, supervisors and the rest"
+                    className={"rounded-lg px-2.5 py-1 text-[12px] font-semibold whitespace-nowrap transition-colors " + (mpEventOpen ? "bg-blue-600 text-white" : "bg-white text-blue-700 ring-1 ring-blue-200 hover:bg-blue-100")}>👥 Whole event</button>}
+                  <div className="rounded-lg bg-white px-2.5 py-1 text-[15px] font-bold text-gray-900 tabular-nums whitespace-nowrap shadow-[0_1px_2px_rgba(16,24,40,0.06)]">{fmt(mpCost)}</div>
+                </div>
               </div>
+              {mpEventOpen && hasMpSnapshot && (() => {
+                const ev = eventManpower();
+                const lab = ev.types.find(t => t.type === "Labours");
+                const tile = (label, value, sub) => <div className="rounded-xl bg-white ring-1 ring-gray-200 px-3 py-2 min-w-0">
+                  <div className="text-[11px] uppercase tracking-wider text-gray-400 font-semibold">{label}</div>
+                  <div className="text-[18px] font-bold text-gray-900 tabular-nums leading-tight">{value}</div>
+                  {sub && <div className="text-[11.5px] text-gray-500 truncate">{sub}</div>}
+                </div>;
+                return (
+                  <div className="m-2.5 mb-0 rounded-xl bg-slate-50 ring-1 ring-slate-200 p-3 space-y-3 text-[13px] text-gray-700">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[13.5px] font-semibold text-gray-900">👥 Whole event manpower</span>
+                      <span className="text-[11.5px] text-gray-400">all departments · with each dept's edits</span>
+                      <button onClick={() => setMpEventOpen(false)} className="ml-auto text-gray-400 hover:text-gray-700 text-[16px] leading-none" title="Close">×</button>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2">
+                      {tile("Labours", lab ? `${lab.peak} peak` : "—", lab ? `${Math.round(lab.dihari)} dihari across the event` : "no labour on this booking")}
+                      {tile("Total dihari", Math.round(ev.totalDihari), "every crew type")}
+                      {tile("Manpower cost", fmt(ev.total), `${ev.depts.length} department${ev.depts.length === 1 ? "" : "s"}`)}
+                    </div>
+                    {ev.labDays.length > 0 && (
+                      <div>
+                        <div className="text-[11.5px] font-semibold text-gray-500 mb-1.5">Labours on site, by day</div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {ev.labDays.map((d, i) => <span key={i} className="inline-flex items-center gap-1.5 rounded-lg bg-white ring-1 ring-gray-200 px-2.5 py-1"><span className="text-gray-500">{d.label}</span><b className="text-gray-900 tabular-nums">{d.count}</b></span>)}
+                        </div>
+                      </div>
+                    )}
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <div className="rounded-xl bg-white ring-1 ring-gray-200 overflow-hidden">
+                        <div className="grid grid-cols-[1fr_auto_auto_auto] gap-3 px-3 py-1.5 bg-gray-50 text-[11px] uppercase tracking-wider text-gray-400 font-semibold"><span>Crew</span><span className="w-14 text-right">Peak</span><span className="w-14 text-right">Dihari</span><span className="w-20 text-right">Cost</span></div>
+                        {ev.types.map(t => <div key={t.type} className="grid grid-cols-[1fr_auto_auto_auto] gap-3 px-3 py-1.5 border-t border-gray-100 items-center">
+                          <span className="truncate font-medium text-gray-900">{crewIcon(t.type)} {t.type}{t.shared && <span className="ml-1.5 text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded font-bold align-middle">SHARED</span>}</span>
+                          <span className="w-14 text-right tabular-nums">{t.peak}</span>
+                          <span className="w-14 text-right tabular-nums">{Math.round(t.dihari)}</span>
+                          <span className="w-20 text-right tabular-nums font-semibold text-gray-900">{fmt(t.cost)}</span>
+                        </div>)}
+                      </div>
+                      <div className="rounded-xl bg-white ring-1 ring-gray-200 overflow-hidden">
+                        <div className="grid grid-cols-[1fr_auto_auto_auto] gap-3 px-3 py-1.5 bg-gray-50 text-[11px] uppercase tracking-wider text-gray-400 font-semibold"><span>Department</span><span className="w-16 text-right">Labour dih.</span><span className="w-14 text-right">Dihari</span><span className="w-20 text-right">Cost</span></div>
+                        {ev.depts.map(d => <div key={d.dept} className={"grid grid-cols-[1fr_auto_auto_auto] gap-3 px-3 py-1.5 border-t border-gray-100 items-center " + (d.dept === dept ? "bg-blue-50/60" : "")}>
+                          <span className="truncate font-medium text-gray-900">{d.dept}{d.dept === dept && <span className="ml-1.5 text-[10px] text-blue-600 font-bold">THIS</span>}</span>
+                          <span className="w-16 text-right tabular-nums">{d.labDihari ? (Math.round(d.labDihari * 10) / 10) : "—"}</span>
+                          <span className="w-14 text-right tabular-nums">{Math.round(d.dihari * 10) / 10}</span>
+                          <span className="w-20 text-right tabular-nums font-semibold text-gray-900">{fmt(d.cost)}</span>
+                        </div>)}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
               {/* The booking note as its own tinted card with a marker, not a grey 10px line
                   wedged under the header. It explains how every figure below is arrived at, so
                   it is the thing to read before the rows — at 10px grey on grey it read as a

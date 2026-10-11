@@ -3855,6 +3855,9 @@ export default function StudioApp() {
           enabledEls: { ...(fd.enabledEls || {}) },
           elSelectedPhoto: Object.fromEntries(Object.entries(fd.elSelectedPhoto || {}).map(([k, v]) => [k, { src: v?.src, eventName: v?.eventName, isLibrary: v?.isLibrary, eventId: v?.eventId }])),
           dims: Object.fromEntries(Object.entries(fd.zoneConfig || {}).map(([zk, zc]) => [zk, zc?.dims || {}])),
+          // A custom zone's key is a generated id ("cz_1789…"); IMS has no other way to learn its name,
+          // so the Dept Ops PDF printed the id as the zone title.
+          zoneNames: Object.fromEntries((fd.customZones || []).filter(cz => cz && cz.id).map(cz => [cz.id, cz.name || ""])),
         });
       });
     } catch { /* layout refresh is best-effort — the money snapshot still goes */ }
@@ -7976,6 +7979,7 @@ export default function StudioApp() {
           elTiers: { ...(fnData.elTiers || {}) },
           elSelectedPhoto: Object.fromEntries(Object.entries(fnData.elSelectedPhoto || {}).map(([k, v]) => [k, { src: v?.src, eventName: v?.eventName, isLibrary: v?.isLibrary, eventId: v?.eventId }])),
           dims: Object.fromEntries(Object.entries(fnData.zoneConfig || {}).map(([zk, zc]) => [zk, zc?.dims || {}])),
+          zoneNames: Object.fromEntries((fnData.customZones || []).filter(cz => cz && cz.id).map(cz => [cz.id, cz.name || ""])),
           decorCost: bd.decorTotal,
           transportCost: bd.transportTotal,
           customItemsCost: dcCustomItems.filter(c => c.fnIdx === fnData.fnIdx).reduce((s, c) => s + (c.manualPrice || c.refPrice || 0) * (Number(c.qty) || 1), 0),
