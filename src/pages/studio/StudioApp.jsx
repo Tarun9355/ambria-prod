@@ -8550,12 +8550,21 @@ export default function StudioApp() {
       const activeSnap = session.fnSnapshots[idx] || session.fnSnapshots[String(idx)] || null;
       if (idx !== activeFnIdx) setActiveFnIdx(idx);
       restoreBuildState(activeSnap);
-      const otherBuilds = {};
-      Object.entries(session.fnSnapshots).forEach(([k, v]) => {
-        const i = parseInt(k);
-        if (!isNaN(i) && i !== idx && v) otherBuilds[i] = v;
+      // MERGE onto the current fnBuilds, never replace it outright. This session's own fnSnapshots
+      // only cover the functions that existed AT THE TIME it was saved — a function added to the
+      // deal since then has no entry here at all, and replacing the whole map silently blanked it
+      // (its only copy of its build was the live one in fnBuilds, which this just threw away). Each
+      // OTHER function this session DOES carry a snapshot for is still restored to that past state,
+      // same as before — only a function this session never touched now survives untouched instead
+      // of vanishing.
+      setFnBuilds(prev => {
+        const next = { ...prev };
+        Object.entries(session.fnSnapshots).forEach(([k, v]) => {
+          const i = parseInt(k);
+          if (!isNaN(i) && i !== idx && v) next[i] = v;
+        });
+        return next;
       });
-      setFnBuilds(otherBuilds);
       setStep(2);
       showMsg("Resumed Fn" + (idx + 1) + " from " + new Date(session.savedAt).toLocaleDateString("en-IN"), "green");
       return;
