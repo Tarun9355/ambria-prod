@@ -1517,7 +1517,25 @@ function StudioBrowse({ ctx }) {
                         ) : (() => {
                           const live = isCurrent && settledTotal > 0 ? { total: settledTotal, tier: getCat(settledTotal).label } : null;
                           const show = live || (ownsTotal ? shownTotal : null);
-                          return show ? <span>· {fmt(show.total)}{show.tier ? ` ${show.tier}` : ""}</span> : null;
+                          if (!show) return null;
+                          // When the figure shown is the LIVE one (not the stored total), flag it if it
+                          // has actually moved from what was last saved. The build itself hasn't
+                          // changed when this fires — stock availability and the LMS date-pricing
+                          // auto-sync both move independently of anything typed here (confirmed
+                          // incident: an unedited build swung ~₹1.1L in a few hours from shared
+                          // inventory contention + a date-category re-sync), and silently swapping to
+                          // a different number with no explanation read as the price having been
+                          // altered behind the salesperson's back.
+                          const drifted = live && ownsTotal && Math.round(shownTotal.total) !== Math.round(live.total);
+                          return <>
+                            <span>· {fmt(show.total)}{show.tier ? ` ${show.tier}` : ""}</span>
+                            {drifted && (
+                              <span title={`Was ${fmt(shownTotal.total)}${shownTotal.tier ? " " + shownTotal.tier : ""} when last saved. The build hasn't changed — this reflects live stock availability and/or date-demand pricing, which can move on their own.`}
+                                style={{display:"inline-flex",alignItems:"center",fontSize:9,fontWeight:700,padding:"1px 6px",borderRadius:5,background:isDark?"rgba(234,179,8,0.18)":"rgba(217,119,6,0.12)",color:isDark?"#FBBF24":"#B45309",cursor:"help",whiteSpace:"nowrap"}}>
+                                ↕ was {fmt(shownTotal.total)}
+                              </span>
+                            )}
+                          </>;
                         })()}
                       </div>
                     </div>

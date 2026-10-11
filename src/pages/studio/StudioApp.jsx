@@ -5157,6 +5157,28 @@ export default function StudioApp() {
     return discounted + agencyFeeAmt;
   }, [totalCost, transportCalc, dealCheckData, venue, activeFnMeta, studioFloralData, sharedFloralSettings, venueParents, agencyFeeAmt]);
 
+  // What was actually saved for THIS function, last time — so Build's Live Estimate can flag when
+  // the live figure above has drifted from it. Same precedence Browse's own session-card price
+  // already uses (the row's own column > fnTotals > the session-level total, only if it's tagged
+  // as belonging to this function or isn't tagged at all) — one definition of "the last saved
+  // price for this function", not a second copy that could disagree with Browse's.
+  // Confirmed incident this was built for: an UNEDITED build swung ~₹1.1L in a few hours from
+  // shared-inventory contention plus the LMS date-category auto-sync (buildDateCategories,
+  // lib/ims/lms.js) re-firing — nothing a salesperson did, and nothing on screen said so.
+  const lastSavedFnTotal = useMemo(() => {
+    const cli = clientLedger.find((c) => c.id === activeClientId);
+    const top = cli?.sessions?.[0];
+    if (!top) return null;
+    const row = Array.isArray(top._fnRows) ? top._fnRows.find((r) => r && r.fn_idx === activeFnIdx) : null;
+    if (row && row.total != null && Number(row.total) > 0) return { total: Number(row.total), tier: row.tier || "" };
+    const own = top.fnTotals && (top.fnTotals[activeFnIdx] || top.fnTotals[String(activeFnIdx)]);
+    if (own && typeof own.total === "number" && own.total > 0) return own;
+    const tagged = typeof top.savedActiveFnIdx === "number";
+    if (tagged && top.savedActiveFnIdx !== activeFnIdx) return null;
+    if (typeof top.total === "number" && top.total > 0) return { total: top.total, tier: top.tier };
+    return null;
+  }, [clientLedger, activeClientId, activeFnIdx]);
+
   const collectAllFunctionData = useCallback(() => {
     const all = [];
     const totalFns = 1 + (extraFunctions || []).length;
@@ -11319,7 +11341,7 @@ export default function StudioApp() {
     dcSwapSearch, setDcSwapSearch, dcSwapPicked, setDcSwapPicked, dcSwapMode, setDcSwapMode, dcSwapSplitQty, setDcSwapSplitQty,
     // pricing helpers
     rcIsSMB, buildZoneConfig, getFloralMode, applyFloralRatio, getElPrice, getElPriceForFn, calcElsCost, calcElsCostForFn, rcCostPctForSub,
-    calcPhotoCost, calcStructCost, calcFullEventCost, getFullCost, totalCost, transportCalc, grandTotal, agencyFeeAmt, pricingReady,
+    calcPhotoCost, calcStructCost, calcFullEventCost, getFullCost, totalCost, transportCalc, grandTotal, lastSavedFnTotal, agencyFeeAmt, pricingReady,
     collectAllFunctionData, calcFunctionCost, calcFnFloralSourcingCost, eventGrandTotal, calcFunctionBreakdown, manpowerPlanForBooking, persistDeptSnapshot, syncDealValueNow, dcEoActuals, refreshDcEoActuals,
     // deal check orchestration + persistence (overlay)
     openDealCheck, runDealCheckGenerate, getStudioAvailable, loadAvailability, getActiveSoftHold, reliableSave, DC_CACHE_SK,
