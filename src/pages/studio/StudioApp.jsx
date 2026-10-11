@@ -8565,16 +8565,6 @@ export default function StudioApp() {
     const idx = Number.isInteger(targetFnIdx) ? targetFnIdx : activeFnIdx;
     if (session.fnSnapshots && typeof session.fnSnapshots === "object" && Object.keys(session.fnSnapshots).length > 0) {
       const activeSnap = session.fnSnapshots[idx] || session.fnSnapshots[String(idx)] || null;
-      // TEMP DIAGNOSTIC — remove once the "Resume doesn't change the total" bug is confirmed fixed.
-      // eslint-disable-next-line no-console
-      console.log("[resumeSavedSession]", {
-        sessionId: session.id, idx, activeFnIdx, targetFnIdx,
-        snapKeys: Object.keys(session.fnSnapshots),
-        activeSnapFound: !!activeSnap,
-        activeSnapZoneKeys: activeSnap ? Object.keys(activeSnap.zoneElements || {}) : null,
-        activeSnapElementCount: activeSnap ? Object.values(activeSnap.zoneElements || {}).reduce((s, a) => s + (Array.isArray(a) ? a.length : 0), 0) : null,
-        sessionSavedAt: session.savedAt, sessionTotal: session.total,
-      });
       if (idx !== activeFnIdx) setActiveFnIdx(idx);
       restoreBuildState(activeSnap);
       // MERGE onto the current fnBuilds, never replace it outright. This session's own fnSnapshots
