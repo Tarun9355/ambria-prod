@@ -3014,7 +3014,14 @@ undefined
         setCorrVenueGrp(allInhouseVenues.includes(mv) ? "inhouse" : (mv ? "outside" : ""));
         const mt = JSON.parse(JSON.stringify(m.tags || {}));
         if (mt.areasElements) mt.areasElements = canonicalAreaTags(mt.areasElements);
-        setCorrectPhoto({ libId: selP.eventId, zoneKey: k, name: m.name || "", tags: mt });
+        // Not the zone's selected photo → seed a private draft from this photo's OWN master, the
+        // same way selecting it would (saved full zone spec over the dims-derived one).
+        const isSel = elSelectedPhoto[k]?.isLibrary && elSelectedPhoto[k]?.eventId === selP.eventId;
+        const draft = isSel ? null : {
+          elements: JSON.parse(JSON.stringify(m.elements || [])).map(({ baseQty: _b, ...e }) => e),
+          cfg: { ...(ctx.buildZoneConfig?.(k, m.dims || {}) || {}), ...JSON.parse(JSON.stringify(m.zoneConfigByType?.[k] || {})) },
+        };
+        setCorrectPhoto({ libId: selP.eventId, zoneKey: k, name: m.name || "", tags: mt, draft });
       };
       const openUpdateMaster = () => openUpdateMasterFor();
       // BUG-7. The unfiltered pool is kept so the strip can say how many photos the filter is
@@ -4655,6 +4662,14 @@ undefined
       const taxLabel=(key)=>({eventType:"Event type",venueType:"Venue type",areasElements:"Areas / zones",colorPalette:"Palette",categoryTier:"Category tier",tier:"Tier",designStyle:"Design style",timeSetting:"Time / setting"}[key]||key);
       const toggle=(key,val)=>setCorrectPhoto(p=>{const cur=p.tags?.[key]||[];const next=cur.includes(val)?cur.filter(x=>x!==val):[...cur,val];return {...p,tags:{...p.tags,[key]:next}};});
       const isNewMaster=!correctPhoto.libId;
+      // The zone's live elements/structure (zoneElements / zoneConfig) belong to the zone's SELECTED
+      // photo. The per-tile pencil can open this panel on any other tile, and reading the live state
+      // there put the selected photo's elements and dims onto that other master on save. Only the
+      // selected photo (or a brand-new master being created from it) owns them.
+      const zk=correctPhoto.zoneKey;
+      const selForZone=elSelectedPhoto[zk];
+      const ownsLive=isNewMaster||(!!selForZone?.isLibrary&&selForZone.eventId===correctPhoto.libId);
+      const zcLive=zoneConfig[zk]||{};
       const save=async ()=>{
         if(!isNewMaster && !master){showMsg("Photo not found.","red");setCorrectPhoto(null);return;}
         const zk=correctPhoto.zoneKey;
@@ -4663,12 +4678,12 @@ undefined
         // verbatim baked a stray scale ratio into the master; the next salesperson to pick this photo
         // fresh (scale back at 1) would have it silently resurface on their very first Scale edit,
         // multiplying against a base that had nothing to do with their build. Strip it at the source.
-        const elems=JSON.parse(JSON.stringify(zoneElements[zk]||master?.elements||[])).map(({baseQty:_drop,...e})=>e);
+        const elems=JSON.parse(JSON.stringify((ownsLive?(zoneElements[zk]||master?.elements):(correctPhoto.draft?.elsDirty?correctPhoto.draft.elements:master?.elements))||[])).map(({baseQty:_drop,...e})=>e);
         // Save the FULL zone build spec — dimensions, truss, masking, plinth, carpet, prints,
         // materials, custom ceiling/masking items — everything the salesperson set on this zone, so
         // reselecting the photo restores it exactly. Deal-specific choices (repeat discount, quantity
         // scale) are dropped so the template doesn't force them onto future quotes.
-        const liveCfg=zoneConfig[zk];
+        const liveCfg=ownsLive?zoneConfig[zk]:(correctPhoto.draft?.cfgDirty?correctPhoto.draft.cfg:undefined);
         const zoneCfgMap={...(master?.zoneConfigByType||{})};
         let libDims=master?.dims;
         if(liveCfg){
@@ -4772,7 +4787,9 @@ undefined
                 return areas.length ? tagged.some(a => areas.includes(a)) : true;
               })();
           if (!stillInZone) {
-            setElSelectedPhoto(p => { const n = { ...p }; delete n[zk]; return n; });
+            // Only release the selection when the photo being corrected IS the selected one — a
+            // retag of some other tile must not empty this zone's pick.
+            if (ownsLive) setElSelectedPhoto(p => { const n = { ...p }; delete n[zk]; return n; });
             // ── AND UNPIN IT, OR IT COMES STRAIGHT BACK ──
             // Releasing the selection and refetching is not enough. A zone's hand-picked GROUP is a
             // separate channel from its tags, and a group member is resolved from libById and floated
@@ -4803,77 +4820,219 @@ undefined
       // at the photo), capped at a moderate width rather than Manage's own full-screen version: this
       // is a quick in-the-moment fix from inside Build, not a dedicated tagging session.
       const bigSrc = master?.url||correctPhoto.draftSrc;
-      return createPortal(<div onClick={()=>setCorrectPhoto(null)} style={{position:"fixed",inset:0,zIndex:9999,background:"rgba(0,0,0,0.6)",display:"flex",justifyContent:"center",alignItems:"center",padding:20}}>
-        <div onClick={e=>e.stopPropagation()} style={{background:cardBg,borderRadius:16,width:"100%",maxWidth:1040,height:"min(88vh, 760px)",border:`1px solid ${border}`,display:"flex",flexDirection:"column",overflow:"hidden"}}>
-          <div style={{padding:"16px 18px 0"}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-              <div style={{fontSize:15,fontWeight:700,color:textP}}>{isNewMaster?"✏️ Save photo to Library — tags, elements & zone details":"✏️ Correct photo — tags, elements & zone details"}</div>
-              <span onClick={()=>setCorrectPhoto(null)} style={{fontSize:18,cursor:"pointer",color:textS,fontWeight:700}}>✕</span>
-            </div>
-            <div style={{fontSize:11,color:textS,marginBottom:12}}>{isNewMaster?"This photo isn't in the shared Library yet — add tags below and it'll become a reusable Library photo for everyone.":"Fix any tags below — they save to the shared library photo for everyone (future quotes)."} Your <b>element edits, zone dimensions and all structure details</b> (truss, masking, plinth, carpet, prints, materials) from the build card above are saved too. Quotes already given keep their own numbers.</div>
+      // Same layout as Manage → Library's photo editor (big photo left, numbered tag cards in masonry
+      // columns right, actions in the header row) so the two editors read as one tool. Only the
+      // layout is shared — the save is still Build's own: it writes this zone's live elements and
+      // structure into the master, which the Library editor does not.
+      const chip=(label,on,onClick)=><span key={label} onClick={onClick} style={{padding:"6px 12px",borderRadius:9,fontSize:11.5,cursor:"pointer",fontWeight:on?700:500,background:on?accent:(isDark?"rgba(255,255,255,0.04)":"#fff"),color:on?"#fff":textS,border:`1px solid ${on?accent:border}`,transition:"background .13s ease, border-color .13s ease",whiteSpace:"nowrap"}}>{label}</span>;
+      const row={display:"flex",flexWrap:"wrap",gap:6};
+      const card=(n,icon,title,body,extra)=>(
+        <div key={title} style={{breakInside:"avoid",background:isDark?"rgba(255,255,255,0.03)":"#fff",border:`1px solid ${border}`,borderRadius:14,padding:"14px 16px 16px",marginBottom:14,boxShadow:isDark?"none":"0 1px 2px rgba(26,26,46,0.04)"}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
+            <span style={{display:"inline-flex",color:accent}}>{icon}</span>
+            <span style={{fontSize:12.5,fontWeight:700,color:textP}}>{n}. {title}</span>
+            {extra}
           </div>
-          <div style={{display:"flex",gap:18,flex:1,minHeight:0,padding:"0 18px 18px"}}>
-            <div style={{flex:"1 1 48%",minWidth:0,overflowY:"auto",paddingRight:4}}>
-              <div style={{marginBottom:10}}>
-                <div style={{fontSize:9,color:textS,marginBottom:3}}>Name</div>
-                <input value={correctPhoto.name} onChange={e=>setCorrectPhoto(p=>({...p,name:e.target.value}))} style={{...S.input,fontSize:13,fontWeight:600}}/>
-                <div style={{fontSize:9,color:textS,marginTop:6}}>{(zoneElements[correctPhoto.zoneKey]||master?.elements||[]).length} elements{(()=>{const c=zoneConfig[correctPhoto.zoneKey];if(!c)return "";const d=c.dims||{};const hasDims=(d.L||d.W||d.H||d.S);const nPrints=(c.prints||[]).length;const bits=[];if(hasDims)bits.push(`dims ${d.L||0}×${d.W||0}${d.H?"×"+d.H:""}`);if(c.trT)bits.push(c.trT);if(nPrints)bits.push(`${nPrints} print${nPrints>1?"s":""}`);return bits.length?` · ${bits.join(" · ")}`:"";})()} <span style={{color:accent}}>(saved from your edits above)</span></div>
+          {body}
+        </div>
+      );
+      const TAX_ICON={tier:<IconStar size={14}/>,eventType:<IconCalendar size={14}/>,venueType:<IconWall size={14}/>,designStyle:<IconSparkle size={14}/>,timeSetting:<IconBulb size={14}/>,categoryTier:<IconStar size={14}/>,colorPalette:<IconFlower size={14}/>,areasElements:<IconBox size={14}/>};
+      const cardLabel=(key)=>({eventType:"Event type",venueType:"Venue type",areasElements:"Areas & elements",colorPalette:"Palette",tier:"Tier",categoryTier:"Category tier (legacy)",designStyle:"Design style",timeSetting:"Time / setting"}[key]||key);
+      return createPortal(<div onClick={()=>setCorrectPhoto(null)} style={{position:"fixed",inset:0,zIndex:9999,background:"rgba(0,0,0,0.62)",display:"flex",justifyContent:"center",alignItems:"flex-start",overflow:"auto",padding:16}}>
+        <style>{`.bc-cols{column-count:3;column-gap:14px}.bc-cols > div{break-inside:avoid}@media (max-width:1250px){.bc-cols{column-count:2}}@media (max-width:760px){.bc-cols{column-count:1}}@media (max-width:900px){.bc-wrap{flex-direction:column !important;height:auto !important}.bc-photo{width:100% !important;border-right:none !important;max-height:40vh}}`}</style>
+        <div className="bc-wrap" onClick={e=>e.stopPropagation()} style={{width:"96vw",maxWidth:"96vw",margin:"0 auto",background:cardBg,borderRadius:14,border:`1px solid ${border}`,height:"96vh",boxShadow:"0 12px 48px rgba(0,0,0,0.45)",display:"flex",overflow:"hidden"}}>
+          {/* Left: the photo, fixed — the right side scrolls on its own. */}
+          <div className="bc-photo" style={{width:"38%",flexShrink:0,padding:16,borderRight:`1px solid ${border}`,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}>
+            {bigSrc
+              ? <img src={bigSrc} alt="" style={{width:"100%",maxHeight:"100%",objectFit:"contain",borderRadius:10}} onError={e=>{e.target.style.display="none"}}/>
+              : <div style={{fontSize:11,color:textS}}>No photo</div>}
+          </div>
+          <div style={{flex:1,minWidth:0,padding:16,overflowY:"auto"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,gap:8}}>
+              <input value={correctPhoto.name} onChange={e=>setCorrectPhoto(p=>({...p,name:e.target.value}))} style={{...S.input,fontSize:14,fontWeight:600,flex:1}}/>
+              <div style={{display:"flex",gap:6,flexShrink:0}}>
+                <button onClick={save} style={{...S.btn(true),fontSize:11,padding:"6px 12px",display:"inline-flex",alignItems:"center",gap:5}}><IconSave size={12}/> {isNewMaster?"Save to Library":"Save to master"}</button>
+                <button onClick={()=>setCorrectPhoto(null)} style={{...S.btn(false),fontSize:11,padding:"6px 12px"}}>Close</button>
               </div>
-              {/* Specific named venue (2-level: Inhouse / Outside) */}
-              {(()=>{
+            </div>
+            <div style={{fontSize:11,color:textS,margin:"2px 0 12px",lineHeight:1.5}}>{isNewMaster?"This photo isn't in the shared Library yet — add tags and it becomes a reusable Library photo for everyone.":"Tags save to the shared library photo for everyone (future quotes)."} Your <b>element edits, zone dimensions and structure details</b> from the build card are saved too. Quotes already given keep their own numbers.</div>
+            <div className="bc-cols">
+              {card(1,<IconFactory size={14}/>,"Venue",(()=>{
                 const curVenue=correctPhoto.tags?.venue||"";
                 const setV=(val)=>setCorrectPhoto(p=>({...p,tags:{...p.tags,venue:val||""}}));
-                const pill=(on)=>({padding:"3px 10px",borderRadius:8,fontSize:10,cursor:"pointer",fontWeight:on?700:500,border:`1px solid ${on?accent:border}`,background:on?`${accent}18`:"transparent",color:on?accent:textS});
-                return <div style={{marginBottom:10}}>
-                  <div style={{fontSize:10,color:textS,marginBottom:3,fontWeight:600}}>Venue (specific)</div>
-                  <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:4}}>
-                    <span onClick={()=>setCorrVenueGrp("inhouse")} style={pill(corrVenueGrp==="inhouse")}>Inhouse</span>
-                    <span onClick={()=>setCorrVenueGrp("outside")} style={pill(corrVenueGrp==="outside")}>Outside</span>
-                    {curVenue&&<span onClick={()=>setV("")} style={{padding:"3px 9px",borderRadius:8,fontSize:9,cursor:"pointer",color:"#E11D48",border:`1px dashed ${border}`}}>✕ {curVenue}</span>}
+                return <>
+                  <div style={row}>
+                    {chip("Inhouse",corrVenueGrp==="inhouse",()=>setCorrVenueGrp("inhouse"))}
+                    {chip("Outside",corrVenueGrp==="outside",()=>setCorrVenueGrp("outside"))}
+                    {curVenue&&<span onClick={()=>setV("")} style={{padding:"6px 12px",borderRadius:9,fontSize:11.5,cursor:"pointer",color:textS,border:`1px dashed ${border}`}}>✕ {curVenue}</span>}
                   </div>
-                  {corrVenueGrp==="inhouse"&&<div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-                    {azSort(leafInhouseVenues).map(vn=>{const on=curVenue===vn;return <span key={vn} onClick={()=>setV(on?"":vn)} style={{...pill(on),fontSize:9,padding:"3px 8px"}}>{vn}</span>;})}
+                  {corrVenueGrp==="inhouse"&&<div style={{...row,marginTop:6}}>
+                    {azSort(leafInhouseVenues).map(vn=>chip(vn,curVenue===vn,()=>setV(curVenue===vn?"":vn)))}
                   </div>}
-                  {corrVenueGrp==="outside"&&<div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-                    {[...customOutdoor].sort((a,b)=>String(a?.name).localeCompare(String(b?.name))).map(o=>{const on=curVenue===o.name;return <span key={o.name} onClick={()=>setV(on?"":o.name)} style={{...pill(on),fontSize:9,padding:"3px 8px"}}>{o.name}{o.empanelled?" ★":""}</span>;})}
+                  {corrVenueGrp==="outside"&&<div style={{...row,marginTop:6}}>
+                    {[...customOutdoor].sort((a,b)=>String(a?.name).localeCompare(String(b?.name))).map(o=>chip(o.name+(o.empanelled?" ★":""),curVenue===o.name,()=>setV(curVenue===o.name?"":o.name)))}
                   </div>}
-                </div>;
-              })()}
-              {Object.keys(taxonomy).filter(key=>Array.isArray(taxonomy[key])).map(key=>{
-                // "Areas / zones" used to read taxonomy.areasElements — its own, separately-persisted
-                // list that only ever gets best-effort synced with Manage → Zone Types on a rename, not
-                // a real source of truth. A zone added/renamed/removed any other way (customZones, direct
-                // zoneDefs.meta edits) silently drifted out of step with it. Mirror the colorPalette
-                // special-case just below: pull the live options straight from the same zoneKeys/
-                // customZones list Build's own zone pickers already use (StudioBuild.jsx:1473 etc.), so
-                // this panel can never show a stale zone list again.
+                </>;
+              })())}
+              {Object.keys(taxonomy).filter(key=>Array.isArray(taxonomy[key])).map((key,ki)=>{
+                // "Areas & elements" reads the live zone list (liveAreaElementOptions), never the
+                // separately-persisted taxonomy.areasElements copy — see taxonomy.test.js.
                 const vals=key==="colorPalette"&&imsPaletteCatalogue.length>0?imsPaletteCatalogue.map(p=>p.name)
                   :key==="areasElements"?liveAreaElementOptions(zoneKeys,zoneLabelsD,customZones)
                   :taxonomy[key];
-                return <div key={key} style={{marginBottom:8}}>
-                  <div style={{fontSize:10,color:textS,marginBottom:3,fontWeight:600}}>{taxLabel(key)}</div>
-                  <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
-                    {(key==="tier"?(vals||[]):azSort(vals||[])).map(v=>{const sel=(correctPhoto.tags?.[key]||[]).includes(v);return <span key={v} onClick={()=>toggle(key,v)} style={{padding:"3px 9px",fontSize:10,borderRadius:8,cursor:"pointer",border:`1px solid ${sel?accent:border}`,background:sel?`${accent}18`:"transparent",color:sel?accent:textS}}>{v}</span>;})}
-                    {key==="colorPalette"&&setImsPaletteCatalogue&&<PaletteQuickAdd accent={accent} border={border} textS={textS}
+                const picked=(correctPhoto.tags?.[key]||[]).length;
+                return card(ki+2,TAX_ICON[key]||<IconPalette size={14}/>,cardLabel(key),
+                  <div style={row}>
+                    {(vals||[]).map(v=>chip(v,(correctPhoto.tags?.[key]||[]).includes(v),()=>toggle(key,v)))}
+                    {key==="colorPalette"&&setImsPaletteCatalogue&&<PaletteQuickAdd dense accent={accent} border={border} textS={textS}
                       onAdd={(name)=>{
                         const added=addPaletteInline(name,imsPaletteCatalogue,setImsPaletteCatalogue,savePaletteData);
                         if(!added)return;
                         const cur=correctPhoto.tags?.colorPalette||[];
                         if(!cur.includes(added))toggle("colorPalette",added);
                       }} />}
-                  </div>
-                </div>;
+                  </div>,
+                  picked>0?<span style={{marginLeft:"auto",fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:999,background:`${accent}1A`,color:accent}}>{picked}</span>:null);
               })}
             </div>
-            <div style={{flex:"1 1 52%",minWidth:0,display:"flex",alignItems:"center",justifyContent:"center",background:isDark?"#0A0A14":"#F4F2EC",borderRadius:12,overflow:"hidden"}}>
-              {bigSrc
-                ? <img src={bigSrc} alt="" style={{maxWidth:"100%",maxHeight:"100%",objectFit:"contain"}} onError={e=>{e.target.style.display="none"}}/>
-                : <div style={{fontSize:11,color:textS}}>No photo</div>}
-            </div>
-          </div>
-          <div style={{display:"flex",gap:8,justifyContent:"flex-end",padding:"0 18px 18px"}}>
-            <button onClick={()=>setCorrectPhoto(null)} style={{...S.btn(false),fontSize:12}}>Cancel</button>
-            <button onClick={save} style={{...S.btn(true),fontSize:12,background:"#7C3AED"}}><IconSave size={12}/> Save to master</button>
+            {/* ── Zone Dimensions · Element Breakdown · Print ──
+                For the zone's SELECTED photo these edit the live build state (zoneConfig / zoneElements)
+                — the same state the build card edits, through the same TrussStack / FloorStack and
+                applyQty — so card and panel never disagree. For any OTHER tile they edit a private
+                draft seeded from that photo's own saved master (correctPhoto.draft), so correcting it
+                can never touch the build or borrow the selected photo's elements. */}
+            {(()=>{
+              const cfgCur=ownsLive?zcLive:(correctPhoto.draft?.cfg||{});
+              const els=ownsLive?(zoneElements[zk]||[]):(correctPhoto.draft?.elements||[]);
+              // One write path per kind, pointed at the live zone or at the draft.
+              const writeCfg=(fn)=>{if(ownsLive){setActiveZones([]);setZoneConfig(p=>({...p,[zk]:fn(p[zk]||{})}));}
+                else setCorrectPhoto(p=>({...p,draft:{...p.draft,cfg:fn(p.draft?.cfg||{}),cfgDirty:true}}));};
+              const writeEls=(fn)=>{if(ownsLive)setZoneElements(p=>({...p,[zk]:fn(p[zk]||[])}));
+                else setCorrectPhoto(p=>({...p,draft:{...p.draft,elements:fn(p.draft?.elements||[]),elsDirty:true}}));};
+              const zm=zoneMeta[zk],st=scaleStruct(calcStructCost(zk,cfgCur,structRates,structDiscountFor(cfgCur,aVenue)));
+              const sZ=u=>writeCfg(cur=>({...cur,...u}));
+              const sD=(d,v)=>writeCfg(cur=>{const dims={...(cur.dims||{}),[d]:parseFloat(v)||0};
+                const n=[dims.W,dims.L,dims.H].filter(x=>(Number(x)||0)>0).length;const trT=n>=3?"box":n===2?"singleU":cur.trT;
+                return {...cur,dims,trT};});
+              const sFD=(d,v)=>writeCfg(cur=>({...cur,cpT:cur.cpT||defaultCarpetMatId(imsCarpetMaterials),floorDims:{...(cur.floorDims||{}),[d]:parseFloat(v)||0}}));
+              const fd=cfgCur.floorDims||{};
+              const scaleFor=ownsLive?zoneScaleVal(zk):1;
+              // Custom Ceiling / Masking pickers write straight to the LIVE zone (patchTrussRow), so a draft
+              // must not offer them — they are set on the build card, against the selected photo.
+              const noCustomField=()=>null;
+              const secHead=(icon,label,color,right)=><div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+                <span style={{display:"inline-flex",color}}>{icon}</span>
+                <span style={{fontSize:13,fontWeight:700,color}}>{label}</span>
+                {right&&<div style={{marginLeft:"auto",display:"flex",gap:6,alignItems:"center"}}>{right}</div>}
+              </div>;
+              const setQty=(idx,q)=>{
+                const el=els[idx];
+                const invItem=el.invId?(dealCheckData?.inventory||[]).find(i=>i.id===el.invId):(dealCheckData?.inventory||[]).find(i=>i.name===el.name);
+                const allocTotal=normalizePaintAllocation(el,invItem?.baseColour||"Ivory").reduce((s,a)=>s+a.qty,0);
+                if(allocTotal>0&&q<allocTotal){showMsg(`Cannot set qty below ${allocTotal} — paint allocation is set. Open the paint picker on the build card first.`,"red");return;}
+                // Live: applyQty keeps Scale By's baseQty in step. Draft: a master has no scale, so qty is the qty.
+                writeEls(list=>{const cur=[...list];if(!cur[idx])return list;cur[idx]=ownsLive?applyQty(zk,cur[idx],Math.max(0,q)):{...cur[idx],qty:Math.max(0,q)};return cur;});
+              };
+              const removeEl=(idx)=>writeEls(list=>list.filter((_,i)=>i!==idx));
+              const q=(zoneElSearch[zk]||"").toLowerCase().trim();
+              const addMatches=q?(()=>{
+                const kitCoveredIds=new Set(els.filter(el=>el.invId).flatMap(el=>{const it=(imsInventory||[]).find(i=>i.id===el.invId);const comps=Array.isArray(el.kitOverrides)?el.kitOverrides:(it?.subItems||[]);return comps.map(c=>c.itemId);}));
+                const inv=(imsInventory||[]).filter(it=>!els.find(el=>el.invId===it.id)&&!kitCoveredIds.has(it.id)&&!isHiddenSubcat(it,rcSubcatFactors)&&(it.name.toLowerCase().includes(q)||(it.cat||"").toLowerCase().includes(q)||(it.subCat||it.subcategory||"").toLowerCase().includes(q))).slice(0,40).map(it=>({key:"inv:"+it.id,label:it.name,sub:(it.subCat||it.subcategory)?(it.subCat||it.subcategory)+" › "+(it.cat||""):(it.cat||""),src:it.img||it.photoUrls?.[0],make:()=>({name:it.name,qty:1,unit:it.unit,size:"",invId:it.id})}));
+                const pat=(recipeOnlyPatterns||[]).filter(pt=>!els.find(el=>el.patternId===pt.id)&&pt.name.toLowerCase().includes(q)).map(pt=>({key:"pat:"+pt.id,label:pt.name,sub:"🌺 Flower recipe",make:()=>({name:pt.name,qty:1,unit:pt.unit,size:"",patternId:pt.id})}));
+                const mandi=((dealCheckData||studioFloralData)?.mandiCatalogue||[]).filter(m=>String(m.name||"").trim().toLowerCase()==="loose petals"&&!els.find(el=>el.mandiId===m.id)&&(m.name||"").toLowerCase().includes(q)).map(m=>{const v=Array.isArray(m.colorVariants)?m.colorVariants:[];return {key:"mandi:"+m.id,label:m.name,sub:`🌸 Mandi · ${m.unit||"kg"}`,src:m.photoUrl,make:()=>({name:m.name,qty:1,unit:m.unit||"kg",size:"",mandiId:m.id,mandiVariantId:v.length===1?v[0].variantId:""})};});
+                return [...inv,...pat,...mandi];
+              })():[];
+              const prints=cfgCur.prints||[];
+              const setPrint=(pi,patch)=>writeCfg(cur=>({...cur,prints:(cur.prints||[]).map((x,i)=>i===pi?{...x,...patch}:x)}));
+              const addPrint=()=>writeCfg(cur=>({...cur,prints:[...(cur.prints||[]),{id:"PR"+Date.now()+Math.floor(Math.random()*1000),material:(imsPrintMaterials||[])[0]?.id||"",areaW:0,areaD:0,qty:1,refImageUrl:"",invId:null}]}));
+              const removePrint=(pi)=>writeCfg(cur=>({...cur,prints:(cur.prints||[]).filter((_,i)=>i!==pi)}));
+              const sectionBox={marginTop:14,borderTop:`1px solid ${border}`,paddingTop:12};
+              return <>
+                {!ownsLive&&<div style={{marginTop:14,padding:"8px 12px",borderRadius:9,background:"rgba(201,169,110,0.12)",border:"1px solid rgba(201,169,110,0.45)",fontSize:11.5,color:textP,lineHeight:1.5}}>
+                  You're editing this photo's own saved details — not the zone's selected photo, so the build card stays as it is. Save to master writes these to this photo.
+                </div>}
+                <div style={sectionBox}>
+                  {secHead(<IconRuler size={14}/>,"Zone Dimensions","#C9A96E")}
+                  <TrussStack S={S} customCeilingField={ownsLive?customCeilingField:noCustomField} k={zk} zc={cfgCur} zm={zm} st={st} sZ={sZ} sD={sD} fmt={fmt} showCosts={showCosts}
+                    isDark={isDark} border={border} textP={textP} textS={textS} accent={accent}
+                    customMaskingField={ownsLive?customMaskingField:noCustomField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} scale={scaleFor} />
+                  <FloorStack S={S} zc={cfgCur} zm={zm} st={st} sZ={sZ} sFD={sFD} fd={fd} fmt={fmt} showCosts={showCosts}
+                    isDark={isDark} border={border} accent={accent} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} scale={scaleFor} />
+                </div>
+                <div style={sectionBox}>
+                  {secHead(<IconClipboard size={14}/>,"Element Breakdown","#7C3AED",
+                    <div style={{position:"relative"}}>
+                      <input value={zoneElSearch[zk]||""} onChange={e=>setZoneElSearch(p=>({...p,[zk]:e.target.value}))} placeholder="+ Add element..." style={{...S.input,fontSize:11.5,padding:"5px 9px",width:220,marginBottom:0}}/>
+                      {q&&<div style={{position:"absolute",top:"100%",right:0,zIndex:20,width:320,maxHeight:300,overflowY:"auto",marginTop:2,background:cardBg,border:`1px solid ${border}`,borderRadius:8,boxShadow:"0 4px 16px rgba(0,0,0,0.2)"}}>
+                        {addMatches.length===0&&<div style={{padding:"8px 10px",fontSize:11.5,color:textS}}>No matches</div>}
+                        {addMatches.map(m=><div key={m.key} onClick={()=>{writeEls(list=>[...list,m.make()]);setZoneElSearch(prev=>({...prev,[zk]:""}));}}
+                          style={{padding:"7px 10px",fontSize:12,cursor:"pointer",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",gap:10}}>
+                          <div style={{width:36,height:36,borderRadius:6,overflow:"hidden",flexShrink:0,background:isDark?"#1a1a2e":"#eee",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                            {m.src?<img src={thumbUrl(m.src,36)} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:<span style={{opacity:0.3,display:"flex"}}><IconBox size={14}/></span>}
+                          </div>
+                          <div style={{flex:1,minWidth:0}}>
+                            <div style={{fontWeight:500,color:textP,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.label}</div>
+                            <div style={{fontSize:11,color:textS,marginTop:1}}>{m.sub}</div>
+                          </div>
+                        </div>)}
+                      </div>}
+                    </div>)}
+                  {els.length===0
+                    ? <div style={{fontSize:12,color:textS,textAlign:"center",padding:"14px 0"}}>No elements added yet — search above to add one.</div>
+                    : <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                      {els.map((el,idx)=>{
+                        const it=el.invId?(imsInventory||[]).find(i=>i.id===el.invId):null;
+                        const src=it?.img||it?.photoUrls?.[0];
+                        return <div key={(el.invId||el.patternId||el.mandiId||el.name)+":"+idx} style={{display:"flex",alignItems:"center",gap:10,padding:"6px 8px",borderRadius:8,border:`1px solid ${border}`,background:isDark?"rgba(255,255,255,0.02)":"#fff"}}>
+                          <div style={{width:32,height:32,borderRadius:6,overflow:"hidden",flexShrink:0,background:isDark?"#1a1a2e":"#eee",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                            {src?<img src={thumbUrl(src,32)} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:<span style={{opacity:0.3,display:"flex"}}><IconBox size={13}/></span>}
+                          </div>
+                          <div style={{flex:1,minWidth:0}}>
+                            <div style={{fontSize:12.5,fontWeight:600,color:textP,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{el.name}{el.size?` · ${el.size}`:""}</div>
+                            {el.unit&&<div style={{fontSize:10.5,color:textS}}>{el.unit}</div>}
+                          </div>
+                          <button onClick={()=>setQty(idx,(el.qty||0)-1)} style={{width:26,height:26,borderRadius:6,border:`1px solid ${border}`,background:cardBg,cursor:"pointer",fontSize:14,fontWeight:600,color:textS}}>−</button>
+                          <input type="number" min="0" value={el.qty||0} onChange={e=>setQty(idx,parseInt(e.target.value)||0)} style={{...S.input,width:56,fontSize:12,padding:"4px 6px",textAlign:"center",marginBottom:0}}/>
+                          <button onClick={()=>setQty(idx,(el.qty||0)+1)} style={{width:26,height:26,borderRadius:6,border:`1px solid ${border}`,background:cardBg,cursor:"pointer",fontSize:14,fontWeight:600,color:textS}}>+</button>
+                          <span onClick={()=>removeEl(idx)} title="Remove" style={{cursor:"pointer",color:"#E11D48",fontWeight:700,fontSize:14,padding:"0 4px"}}>×</span>
+                        </div>;
+                      })}
+                      {showCosts&&<div style={{display:"flex",justifyContent:"flex-end",fontWeight:700,color:textP,fontSize:12.5}}>{fmt(calcElsCost(els,true,cfgCur,{checkAvailability:true,crossFnReusePool:crossFnPool(),zoneKey:zk},aVenue))}</div>}
+                    </div>}
+                  <div style={{fontSize:10.5,color:textS,marginTop:8}}>Kit components, sizes, paint allocation and floral options are edited on the build card's element list.</div>
+                </div>
+                <div style={sectionBox}>
+                  {secHead(<IconPrinter size={14}/>,"Print","#0369A1",
+                    <button onClick={addPrint} style={{padding:"4px 10px",borderRadius:8,border:"1px solid #0EA5E9",background:"rgba(14,165,233,0.14)",color:"#0EA5E9",fontSize:11.5,fontWeight:600,cursor:"pointer"}}>+ Add Print Row</button>)}
+                  {prints.length===0
+                    ? <div style={{fontSize:12,color:textS,textAlign:"center",padding:"8px 0"}}>No print rows.</div>
+                    : <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                      {prints.map((p,pi)=>{
+                        const mat=(imsPrintMaterials||[]).find(m=>m.id===p.material);
+                        const sqft=(Number(p.areaW)||0)*(Number(p.areaD)||0);
+                        const rate=mat?.ratePerSqft||0;
+                        const pq=Math.max(1,Math.round(Number(p.qty)||1));
+                        return <div key={p.id||pi} style={{padding:"8px 10px",borderRadius:8,background:isDark?"rgba(14,165,233,0.06)":"rgba(14,165,233,0.05)",border:"1px solid rgba(14,165,233,0.25)"}}>
+                          <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                            <select value={p.material||""} onChange={e=>setPrint(pi,{material:e.target.value})} style={{...S.select,fontSize:11.5,padding:"3px 6px",width:"auto"}}>
+                              <option value="">Material…</option>
+                              {(imsPrintMaterials||[]).map(m=><option key={m.id} value={m.id}>{m.name} (₹{m.ratePerSqft}/sqft)</option>)}
+                            </select>
+                            <input type="number" min="0" step="0.1" value={p.areaW||""} onChange={e=>setPrint(pi,{areaW:parseFloat(e.target.value)||0})} placeholder="W ft" style={{...S.input,fontSize:11.5,padding:"3px 6px",width:56,marginBottom:0,textAlign:"center"}}/>
+                            <span style={{fontSize:11.5,color:textS}}>×</span>
+                            <input type="number" min="0" step="0.1" value={p.areaD||""} onChange={e=>setPrint(pi,{areaD:parseFloat(e.target.value)||0})} placeholder="D ft" style={{...S.input,fontSize:11.5,padding:"3px 6px",width:56,marginBottom:0,textAlign:"center"}}/>
+                            <span style={{fontSize:11.5,color:textS}}>ft = {sqft?sqft.toFixed(1):0} sqft ×</span>
+                            <input type="number" min="1" step="1" value={p.qty??1} onChange={e=>{const nq=Math.max(1,Math.round(parseFloat(e.target.value)||1));const s=scaleFor;setPrint(pi,{qty:nq,qtyBase:s>1?nq/s:nq});}} style={{...S.input,fontSize:11.5,padding:"3px 6px",width:44,marginBottom:0,textAlign:"center"}}/>
+                            {showCosts&&<span style={{fontSize:12,fontWeight:700,color:"#0EA5E9",marginLeft:"auto"}}>{rate>0?fmt(sqft*rate*pq):"— pick material"}</span>}
+                            <span onClick={()=>removePrint(pi)} style={{cursor:"pointer",color:"#E11D48",fontWeight:700,fontSize:12.5,marginLeft:showCosts?0:"auto"}}>×</span>
+                          </div>
+                          <input value={p.refImageUrl||""} onChange={e=>setPrint(pi,{refImageUrl:e.target.value})} placeholder="Reference image URL (optional)" style={{...S.input,fontSize:11.5,padding:"3px 8px",marginTop:6,marginBottom:0,width:"100%"}}/>
+                        </div>;
+                      })}
+                    </div>}
+                </div>
+              </>;
+            })()}
           </div>
         </div>
       </div>, document.body);
