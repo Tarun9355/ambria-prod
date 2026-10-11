@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import { fnSnapHasData } from "../../lib/studio/sessionData";
+import { CLIENT_SHIFTS_DD } from "../../lib/studio/taxonomy";
 
 // "Copy a build from an existing client" — lets a salesperson search for any other deal, pick one
 // or more of ITS functions (each one individually, not the whole deal), and drop that function's
@@ -43,7 +44,7 @@ export default function CopyBuildModal({
   const togglePick = (idx) => {
     setPicks((p) => {
       if (p[idx]) { const n = { ...p }; delete n[idx]; return n; }
-      return { ...p, [idx]: { date: "", venue: currentVenue || "" } };
+      return { ...p, [idx]: { date: "", venue: currentVenue || "", shift: "" } };
     });
   };
   const setPickField = (idx, field, v) => setPicks((p) => ({ ...p, [idx]: { ...(p[idx] || {}), [field]: v } }));
@@ -64,7 +65,7 @@ export default function CopyBuildModal({
   // falls back to the normal "new function" path and needs its own date/venue.
   const sameTypePicked = pickedIdxs.filter(isSameType).sort((a, b) => a - b);
   const claimedIdx = sameTypePicked.length ? sameTypePicked[0] : null;
-  const allFilled = pickedIdxs.length > 0 && pickedIdxs.every((i) => i === claimedIdx || (picks[i].date && picks[i].venue));
+  const allFilled = pickedIdxs.length > 0 && pickedIdxs.every((i) => i === claimedIdx || (picks[i].date && picks[i].venue && picks[i].shift));
 
   const doCopy = () => {
     if (!session || !allFilled) return;
@@ -77,8 +78,10 @@ export default function CopyBuildModal({
       newItems.push({
         build: JSON.parse(JSON.stringify(build)),
         meta: {
-          type: meta.type || "", date: picks[idx].date, venue: picks[idx].venue,
-          shift: meta.shift || "", pax: meta.pax || "", palette: meta.palette || "Custom",
+          // date/venue/shift are THIS deal's own, as typed below — never the source deal's, which
+          // described a different client's event entirely.
+          type: meta.type || "", date: picks[idx].date, venue: picks[idx].venue, shift: picks[idx].shift,
+          pax: meta.pax || "", palette: meta.palette || "Custom",
           flowerPalette: meta.flowerPalette || "",
         },
       });
@@ -133,7 +136,7 @@ export default function CopyBuildModal({
         ) : (
           <>
             <div style={{ padding: "0 18px 16px", overflowY: "auto", flex: 1 }}>
-              <div style={{ fontSize: 10.5, color: textS, margin: "12px 0 8px" }}>Tick the function(s) to copy — only the zones/elements get copied, give each one its own date and venue for this deal.</div>
+              <div style={{ fontSize: 10.5, color: textS, margin: "12px 0 8px" }}>Tick the function(s) to copy — only the zones/elements get copied, give each one its own date, venue and shift for this deal.</div>
               {fns.map((f, idx) => {
                 const build = session?.fnSnapshots?.[idx];
                 const hasData = fnSnapHasData(build);
@@ -174,6 +177,11 @@ export default function CopyBuildModal({
                           style={{ flex: 1, padding: "6px 8px", borderRadius: 7, border: `1px solid ${picks[idx].date ? border : "#F87171"}`, background: isDark ? "#1A1A2E" : "#fff", color: textP, fontSize: 11.5 }} />
                         <input value={picks[idx].venue} onChange={(e) => setPickField(idx, "venue", e.target.value)} placeholder="Venue"
                           style={{ flex: 1, padding: "6px 8px", borderRadius: 7, border: `1px solid ${picks[idx].venue ? border : "#F87171"}`, background: isDark ? "#1A1A2E" : "#fff", color: textP, fontSize: 11.5 }} />
+                        <select value={picks[idx].shift || ""} onChange={(e) => setPickField(idx, "shift", e.target.value)}
+                          style={{ flex: 1, padding: "6px 8px", borderRadius: 7, border: `1px solid ${picks[idx].shift ? border : "#F87171"}`, background: isDark ? "#1A1A2E" : "#fff", color: textP, fontSize: 11.5 }}>
+                          <option value="">Shift</option>
+                          {CLIENT_SHIFTS_DD.map((s) => <option key={s} value={s}>{s}</option>)}
+                        </select>
                       </div>
                     )}
                   </div>
