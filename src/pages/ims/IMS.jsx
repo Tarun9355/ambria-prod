@@ -886,12 +886,18 @@ export default function IMS() {
   // is just the default. Split out from loadLmsFromCache and gated on `settingsLoaded` so it can
   // never race the real settings boot-load and persist SETTINGS_DEFAULTS on top of an admin's
   // actual saved categories/markedDates.
+  // Owner ask (2026-10-11): this was re-firing invisibly — any ops person opening IMS could silently
+  // flip a date's category (and so every live Studio quote on it) with zero visibility to sales.
+  // datePricing.autoSyncPaused freezes autoCategories at whatever they currently are until someone
+  // explicitly turns it back on (Admin → Settings → Date Pricing Config) — manual markedDates
+  // overrides are untouched either way.
   useEffect(() => {
     if (!settingsLoaded || !studioLmsCache?.dateCategories) return;
     const AUTO_CAT_MAP = { "Heavy Saya": "heavy_saya", "Saya": "competition", "Normal": "non_saya" };
     const autoCategories = {};
     Object.entries(studioLmsCache.dateCategories).forEach(([d, cat]) => { autoCategories[d] = AUTO_CAT_MAP[cat] || "non_saya"; });
     setSettings((s) => {
+      if (s.datePricing?.autoSyncPaused) return s; // paused — leave autoCategories exactly as-is
       if (JSON.stringify(s.datePricing?.autoCategories || {}) === JSON.stringify(autoCategories)) return s; // no-op, skip the write
       return { ...s, datePricing: { ...s.datePricing, autoCategories } };
     });

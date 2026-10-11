@@ -17,11 +17,30 @@ export default function DatePricingPanel({ settings, setSettings }) {
   function setLastMinDays(val) {
     setSettings((s) => ({ ...s, datePricing: { ...s.datePricing, lastMinuteDays: parseInt(val) || 10 } }));
   }
+  function toggleAutoSyncPaused() {
+    setSettings((s) => ({ ...s, datePricing: { ...s.datePricing, autoSyncPaused: !s.datePricing?.autoSyncPaused } }));
+  }
 
   const CAT_DOT = { heavy_saya: "bg-red-500", competition: "bg-yellow-400", non_saya: "bg-green-500" };
+  const autoSyncPaused = !!dp.autoSyncPaused;
 
   return (
     <div className="space-y-6">
+      <div className={"rounded-2xl p-4 flex items-start gap-4 border " + (autoSyncPaused ? "bg-red-50 border-red-200" : "bg-white")}>
+        <span className="text-3xl flex-shrink-0">{autoSyncPaused ? "⏸" : "🔄"}</span>
+        <div className="flex-1">
+          <p className={"font-bold " + (autoSyncPaused ? "text-red-800" : "text-gray-800")}>LMS Auto-Sync</p>
+          <p className="text-xs text-gray-500 mt-0.5 leading-relaxed">
+            A date's category is normally re-derived automatically from LMS/season booking counts every
+            time anyone opens IMS — silently, with no notice on any live Studio quote. Pausing freezes
+            every date's category exactly as it is right now; manual overrides below are unaffected either way.
+          </p>
+        </div>
+        <button onClick={toggleAutoSyncPaused}
+          className={"flex-shrink-0 text-sm font-semibold px-4 py-2 rounded-lg border " + (autoSyncPaused ? "bg-red-600 text-white border-red-600" : "bg-gray-100 text-gray-700 border-gray-300 hover:bg-gray-200")}>
+          {autoSyncPaused ? "Paused — click to resume" : "Pause auto-sync"}
+        </button>
+      </div>
       <div className="bg-white border rounded-2xl overflow-hidden">
         <div className="px-4 py-3 bg-gray-50 border-b">
           <h4 className="font-bold text-gray-800">📊 Category Multipliers</h4>
