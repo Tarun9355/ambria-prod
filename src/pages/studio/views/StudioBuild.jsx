@@ -4781,7 +4781,7 @@ undefined
       // at the photo), capped at a moderate width rather than Manage's own full-screen version: this
       // is a quick in-the-moment fix from inside Build, not a dedicated tagging session.
       const bigSrc = master?.url||correctPhoto.draftSrc;
-      return <div onClick={()=>setCorrectPhoto(null)} style={{position:"fixed",inset:0,zIndex:9999,background:"rgba(0,0,0,0.6)",display:"flex",justifyContent:"center",alignItems:"center",padding:20}}>
+      return createPortal(<div onClick={()=>setCorrectPhoto(null)} style={{position:"fixed",inset:0,zIndex:9999,background:"rgba(0,0,0,0.6)",display:"flex",justifyContent:"center",alignItems:"center",padding:20}}>
         <div onClick={e=>e.stopPropagation()} style={{background:cardBg,borderRadius:16,width:"100%",maxWidth:1040,height:"min(88vh, 760px)",border:`1px solid ${border}`,display:"flex",flexDirection:"column",overflow:"hidden"}}>
           <div style={{padding:"16px 18px 0"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
@@ -4854,7 +4854,7 @@ undefined
             <button onClick={save} style={{...S.btn(true),fontSize:12,background:"#7C3AED"}}><IconSave size={12}/> Save to master</button>
           </div>
         </div>
-      </div>;
+      </div>, document.body);
     })()}
 
     <div style={{display:"flex",justifyContent:"space-between",marginTop:32}}><button onClick={()=>setStep(1)} style={S.btn(false)}>← Browse</button><button onClick={()=>setStep(3)} style={S.btn(true)}>Summary →</button></div>
