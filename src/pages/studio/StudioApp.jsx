@@ -2056,12 +2056,15 @@ export default function StudioApp() {
     });
   }, []);
   const zpHasFilters = Object.values(zpFilters).some(a => a.length > 0);
-  // Which categories HIDE a photo. Event type and colour palette are the two the salesperson never
-  // wants a mismatch on — a Haldi build in Pink & Blue has no use for a Reception stage in Maroon &
-  // Gold, no matter how well it otherwise matches. Everything else (venue, venue type, design style,
-  // time/setting) ranks instead of hiding (see zpVenueMatch / zpVenueTypeMatch / zpDesignStyleMatch /
-  // zpTimeSettingMatch below): too little is tagged along those dimensions for an exact match to
-  // leave enough photos to build a zone from, so a partial match should still surface, just lower.
+  // Which categories HIDE a photo. All seven filter chips hide now — venue type, design style,
+  // time/setting and tier used to only "rank" a non-match lower instead of hiding it (the thinking
+  // being too little is tagged along those dimensions for an exact match to leave enough photos to
+  // build a zone from), but the grid view never even applied that ranking — a selected filter had
+  // ZERO visible effect there, which read as the filter panel being broken rather than lenient
+  // (confirmed: an Indoor-tagged photo kept showing with "Outdoor" selected, with no indication why).
+  // The empty-state fallback (BUG-7, "No X photos match your filters" + Clear) already exists for
+  // when a hard filter leaves too few results, so there's a graceful way out if tagging is sparse —
+  // the safety net this used to be demoted to avoid is already there.
   const zpFilterPhoto = useCallback((li) => {
     if (!li) return true;
     const tags = li.tags || {};
@@ -2072,6 +2075,20 @@ export default function StudioApp() {
     }
     const palVals = zpFilters.colorPalette || [];
     if (palVals.length && !palVals.some(v => paletteInList(tags.colorPalette || [], v))) return false;
+    const vtVals = zpFilters.venueType || [];
+    if (vtVals.length && !vtVals.some(v => (tags.venueType || []).includes(v))) return false;
+    const dsVals = zpFilters.designStyle || [];
+    if (dsVals.length && !dsVals.some(v => (tags.designStyle || []).includes(v))) return false;
+    const tsVals = zpFilters.timeSetting || [];
+    if (tsVals.length && !tsVals.some(v => (tags.timeSetting || []).includes(v))) return false;
+    const tierVals = zpFilters.tier || [];
+    if (tierVals.length && !tierVals.some(v => (tags.tier || []).includes(v))) return false;
+    const venueVals = zpFilters.venue || [];
+    if (venueVals.length) {
+      let url = ""; try { url = decodeURIComponent(String(li.url || "")); } catch { url = String(li.url || ""); }
+      const hay = (String(tags.venue || "") + " " + url).toLowerCase();
+      if (!venueVals.some(v => hay.includes(String(v).toLowerCase()))) return false;
+    }
     return true;
   }, [zpFilters]);
   // Palette is now enforced above (zpFilterPhoto) — every photo reaching the sort step already
