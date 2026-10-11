@@ -4,7 +4,6 @@ import { fmt } from "../../lib/format";
 import { mpDayWise, mpBaseDay, mpEffDay, mpEffWindows, mpLineCost, mpDayCost, isLiveEventOrder, phone10 } from "../../lib/ims/helpers";
 import { uploadAudioToStorage } from "../../lib/storage";
 import { DEPTS as SHARED_DEPTS, catToDept as sharedCatToDept, userDepartments } from "../../lib/ims/deptClassify";
-import ManpowerFactorPills from "../../components/shared/ManpowerFactorPills.jsx";
 import { TabsMenu, useConfirm } from "../../components/ui";
 import { hasIMSPerm } from "../../lib/ims/constants";
 import { ZONE_META } from "../../lib/studio/taxonomy";
@@ -499,7 +498,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   // Switching event or department while the log is open would leave the dialog showing another
   // context's entries — close it, since its contents are scoped to both.
   useEffect(() => { setLogOpen(false); }, [selId, dept]);
-  const [mpOpen, setMpOpen] = useState({}); // which manpower rows have their derivation expanded
+  // Which manpower rows have their derivation expanded. Open by default (owner ask) — a row is only
+  // collapsed once someone closes it, so a missing key reads as open.
+  const [mpOpen, setMpOpen] = useState({});
   // Which kits have their components showing. Collapsed by default: a kit's own line already
   // carries the qty, the rate and the total that matter, and six components under each of four
   // kits buried the ordinary items between them.
@@ -1229,28 +1230,32 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     if (!t) return null;
     if (t.kind === "tier2" && Array.isArray(t.rows) && t.rows.length > 0) return (
       <div className="mb-1.5 bg-white border rounded-lg overflow-hidden">
-        <div className="grid grid-cols-[1fr_auto_auto_auto] gap-2 px-2 py-1 bg-gray-100 text-[10px] uppercase tracking-wide text-gray-500 font-semibold"><span>{t.perRow ? "Recipe / item" : "Sub-category"}</span><span className="text-right w-12">{t.countLabel || "Count"}</span><span className="text-right w-12">Batch</span><span className="text-right w-12">Need</span></div>
-        {t.rows.map((tr, ti) => (<div key={ti} className="grid grid-cols-[1fr_auto_auto_auto] gap-2 px-2 py-0.5 text-[10px] text-gray-700"><span className="truncate" title={tr.sub}>{tr.sub}</span><span className="text-right w-12">{tr.count}</span><span className="text-right w-12 text-gray-400">÷{tr.batch}</span><span className="text-right w-12 font-semibold">{tr.need.toFixed(2)}</span></div>))}
-        <div className="px-2 py-1 bg-gray-50 text-[10px] text-right text-gray-600">{t.perRow ? <>Σ each ⌈need⌉ = <b className="text-gray-900">{t.result}</b></> : <>Σ {t.need.toFixed(2)} → ⌈ {Math.ceil(t.need)} ⌉ · max(min {t.min}) = <b className="text-gray-900">{t.result}</b></>}</div>
+        <div className="grid grid-cols-[1fr_auto_auto_auto] gap-2 px-2 py-1 bg-gray-100 text-[13px] uppercase tracking-wide text-gray-500 font-semibold"><span>{t.perRow ? "Recipe / item" : "Sub-category"}</span><span className="text-right w-12">{t.countLabel || "Count"}</span><span className="text-right w-12">Batch</span><span className="text-right w-12">Need</span></div>
+        {t.rows.map((tr, ti) => (<div key={ti} className="grid grid-cols-[1fr_auto_auto_auto] gap-2 px-2 py-0.5 text-[13px] text-gray-700"><span className="truncate" title={tr.sub}>{tr.sub}</span><span className="text-right w-12">{tr.count}</span><span className="text-right w-12 text-gray-400">÷{tr.batch}</span><span className="text-right w-12 font-semibold">{tr.need.toFixed(2)}</span></div>))}
+        <div className="px-2 py-1 bg-gray-50 text-[13px] text-right text-gray-600">{t.perRow ? <>Σ each ⌈need⌉ = <b className="text-gray-900">{t.result}</b></> : <>Σ {t.need.toFixed(2)} → ⌈ {Math.ceil(t.need)} ⌉ · max(min {t.min}) = <b className="text-gray-900">{t.result}</b></>}</div>
       </div>
     );
-    if (t.kind === "pillars") return <div className="mb-1.5 text-[10px] text-gray-600">🏗️ {t.total} pillar(s){t.zoneP ? ` — ${t.zoneP} from truss tool${t.recipeP ? `, ${t.recipeP} from build` : ""}` : ""} → range → <b>{t.result}</b></div>;
-    if (t.kind === "ratio") return <div className="mb-1.5 text-[10px] text-gray-600">📐 {t.num} {t.numLabel} ÷ {t.denomLabel} = <b>{t.result}</b></div>;
-    if (t.kind === "range") return <div className="mb-1.5 text-[10px] text-gray-600">📐 {t.value} {t.unit} → range → <b>{t.result}</b></div>;
+    if (t.kind === "pillars") return <div className="mb-1.5 text-[13px] text-gray-600">🏗️ {t.total} pillar(s){t.zoneP ? ` — ${t.zoneP} from truss tool${t.recipeP ? `, ${t.recipeP} from build` : ""}` : ""} → range → <b>{t.result}</b></div>;
+    if (t.kind === "ratio") return <div className="mb-1.5 text-[13px] text-gray-600">📐 {t.num} {t.numLabel} ÷ {t.denomLabel} = <b>{t.result}</b></div>;
+    if (t.kind === "range") return <div className="mb-1.5 text-[13px] text-gray-600">📐 {t.value} {t.unit} → range → <b>{t.result}</b></div>;
     // "labours" is a frozen snapshot captured at booking time (StudioApp.jsx) — it only stores the
     // COMBINED situational multiplier (season/timing maxed together), not the individual dumping/
     // saya/timing factors ManpowerTab.jsx's live Tier-3 breakdown exposes, so the pill display here
     // is necessarily a simpler "what we know" version rather than the full Setup-Access/Dumping-Space
     // breakdown — that granularity isn't in the stored data to show honestly.
+    // One compact line, not the full ManpowerFactorPills panel — the snapshot only ever holds a
+    // single combined multiplier, so a whole "Situational Multipliers" box for "×1" was mostly air.
     if (t.kind === "labours") return (
-      <div className="mb-1.5 space-y-1">
-        <ManpowerFactorPills mode="generic" label="Labours" baseQty={t.venueMin}
-          qty={t.result}
-          sitMult={{ factors: [{ label: "📐 Venue-min situational", mult: t.mult }], cappedMult: t.mult, rawMult: t.mult, capped: false }} />
-        {t.heavy > 0 && <div className="text-[10px] text-gray-500 px-1">+ {t.heavy} heavy-element add-on</div>}
+      <div className="mb-1.5 flex flex-wrap items-center gap-1.5 rounded-lg bg-amber-50/70 ring-1 ring-amber-200/70 px-2.5 py-1.5 text-[13.5px] text-gray-600">
+        <span aria-hidden="true" className="text-amber-500">⚡</span>
+        <span>Base <b className="text-gray-900">{t.venueMin}</b></span>
+        <span className="text-gray-400">×</span>
+        <span title="Venue-min situational multiplier">situational <b className="text-gray-900">{t.mult}</b></span>
+        {t.heavy > 0 && <><span className="text-gray-400">+</span><span><b className="text-gray-900">{t.heavy}</b> heavy-element add-on</span></>}
+        <span className="ml-auto font-bold text-amber-700">= {t.result} Labours</span>
       </div>
     );
-    if (t.kind === "fixed") return <div className="mb-1.5 text-[10px] text-gray-600">📐 {t.note} = <b>{t.result}</b>{" "}(before split)</div>;
+    if (t.kind === "fixed") return <div className="mb-1.5 text-[13px] text-gray-600">📐 {t.note} = <b>{t.result}</b>{" "}(before split)</div>;
     return null;
   };
   // Day-wise plan (which days × crew × which dihari shift windows) — mirrors Deal Check's day/timing
@@ -1262,10 +1267,22 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     const editable = dayWise(r);
     const winDefs = (dihari[r.type] && Array.isArray(dihari[r.type].windows)) ? dihari[r.type].windows : [];
     const totalDihari = sch.reduce((s, d) => s + effDay(r, d) * effWin(r, d), 0);
+    // ONE line per day: [how] [day] [per-shift crew …] ··· [crew × shifts]. It was two lines a day —
+    // the day and its crew on top, the shifts on their own row underneath — which doubled the height
+    // and left most of both rows empty. The long cumulative-max rule moved into the ⓘ tooltip.
+    const phaseCls = (d) => d.phase === "dismantle" ? "bg-violet-50 text-violet-700" : d.phase === "minusOne" ? "bg-amber-50 text-amber-700" : d.phase === "gap" ? "bg-gray-100 text-gray-500" : "bg-blue-50 text-blue-800";
     return (
-      <div className="mt-1.5 bg-white border rounded-lg p-2 text-[10px] text-gray-600">
-        <div className="font-semibold text-gray-500 mb-0.5">📅 Day-wise plan (crew × dihari shifts){editable ? (r.shared ? " — edit this dept's crew & timings per day" : " — edit crew & timings per day") : ""}</div>
-        <div className="text-[10px] text-gray-400 mb-1">🔼 Cumulative-max rule: crew only scales <b>up</b> across the booking — each day holds the max of its own need and any busier earlier day (it never drops mid-event). Open a day's <b>how</b> to see its own requirement; edit any day if you disagree.</div>
+      <div className="mt-2 bg-white rounded-xl ring-1 ring-gray-200 text-[13.5px] text-gray-600 overflow-hidden">
+        <div className="flex items-center gap-2 px-3 py-2 bg-gray-50/80 border-b border-gray-100">
+          <span className="text-[14px] font-semibold text-gray-900">📅 Day-wise plan</span>
+          <span className="text-[12.5px] text-gray-400 truncate">crew × dihari shifts{editable ? " · editable" : ""}</span>
+          <span className="shrink-0 cursor-help text-[12.5px] text-blue-500" title={"Cumulative-max rule: crew only scales UP across the booking — each day holds the max of its own need and any busier earlier day (it never drops mid-event). Open a day's \"how\" to see its own requirement; edit any day if you disagree."}>ⓘ rule</span>
+          <span className="ml-auto shrink-0 flex items-center gap-1.5">
+            <span className="rounded-md bg-white ring-1 ring-gray-200 px-2 py-0.5 font-semibold text-gray-800">{Math.round(totalDihari)} dihari</span>
+            <span className="rounded-md bg-gray-900 px-2 py-0.5 font-bold text-white tabular-nums">{fmt(lineCost(r))}</span>
+          </span>
+        </div>
+        <div className="divide-y divide-gray-100">
         {sch.map((d, i) => {
           const ov = editable && dayOv(r, d);
           const ids = effWinIds(r, d);
@@ -1273,62 +1290,59 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           const dayKey = `${r.type}|${d.date}`;
           const howOpen = !!mpDayHow[dayKey];
           const hasShare = r.shared && d.share != null;
-          // The crew figure above is rounded for display (you can't book "0.6 of a person"), but the
-          // day's TOTAL dihari below is summed from the unrounded fractional share so the line's cost
-          // stays reconciled to the rupee. That makes "1 crew × 2 shifts" on one day and "1 crew × 1
-          // shift" on another look like they should add to 3 dihari when the actual total is 2 — this
-          // hint surfaces the real fraction behind the rounded "1" so the two numbers stop disagreeing
-          // at a glance. Suppressed once the head has typed an explicit override (ov): effDay then
-          // returns that exact integer, so raw and rounded already match and there's nothing to show.
+          // The crew figure is rounded for display (you can't book "0.6 of a person"), but the day's
+          // TOTAL dihari is summed from the unrounded fractional share so the line's cost stays
+          // reconciled to the rupee. This hint surfaces that fraction so "1 crew × 2" and "1 crew × 1"
+          // don't look like they should add to 3 when the real total is 2. Suppressed once the head
+          // has typed an explicit override (ov) — then raw and rounded already match.
           const rawShare = hasShare ? effDay(r, d) : null;
           const shareHint = rawShare != null && Math.abs(rawShare - showDay(r, d)) >= 0.05 ? rawShare.toFixed(2) : null;
+          const hasWin = winDefs.length > 0 && (Array.isArray(d.windowIds) || (mpWin[r.type] && mpWin[r.type][d.date] != null));
           return (
-            <div key={i} className="py-1">
-              <div className="flex justify-between items-center">
-                <span className="flex items-center gap-1.5">
-                  <button onClick={() => setMpDayHow(o => ({ ...o, [dayKey]: !o[dayKey] }))} className="text-[10px] font-semibold text-blue-500 hover:text-blue-700 border border-blue-200 rounded px-1 leading-tight" title="How this day's crew was calculated">{howOpen ? "▾" : "▸"} how</button>
-                  <span className="font-medium text-gray-700">{phaseLbl(d)}</span>
-                </span>
-                <span className="flex items-center gap-1">
+            <div key={i} className="px-3 py-1.5">
+              <div className="flex items-center gap-2 flex-wrap">
+                <button onClick={() => setMpDayHow(o => ({ ...o, [dayKey]: !o[dayKey] }))} title="How this day's crew was calculated"
+                  className={"shrink-0 w-6 h-6 rounded text-[11.5px] leading-none flex items-center justify-center transition-colors " + (howOpen ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-500 hover:bg-blue-50 hover:text-blue-600")}>{howOpen ? "▾" : "▸"}</button>
+                <span className={"shrink-0 w-32 rounded-md px-2 py-0.5 text-[13px] font-semibold text-center " + phaseCls(d)}>{phaseLbl(d)}</span>
+                {/* Per-dihari (per-shift) crew — a head can hold different crew per shift (e.g. 6 day,
+                    3 evening). Same mpWinCount data + cost model as the on-site editor → synced. */}
+                {hasWin && editable && (
+                  <span className="flex flex-wrap items-center gap-1.5 min-w-0">
+                    {ids.map((id, si) => { const wd = winDefs.find(w => w.id === id); const lbl = wd ? wd.label : `dihari ${si + 1}`; return (
+                      <span key={id} className="inline-flex items-center gap-1 rounded-md bg-gray-50 ring-1 ring-gray-200 pl-1.5 pr-0.5 py-0.5">
+                        <span className="text-[12.5px] text-gray-500 whitespace-nowrap">{lbl}</span>
+                        <input type="number" min="0" value={effShift(r, d, id)} onChange={e => setShiftCount(r.type, d.date, id, e.target.value, ids)} className="w-11 rounded bg-white ring-1 ring-gray-200 px-1 py-0 text-[13.5px] font-semibold text-center text-gray-900" />
+                        {ids.length > 1 && <button onClick={() => removeDihari(r.type, d.date, id, ids)} className="w-4 h-4 rounded text-gray-300 hover:text-red-500 text-[13.5px] leading-none" title="remove this dihari">×</button>}
+                      </span>
+                    ); })}
+                    <button onClick={() => addDihari(r, d.date, ids)} className="text-[12.5px] font-semibold text-blue-600 hover:bg-blue-50 rounded-md px-1.5 py-0.5" title="Add another dihari (shift) this day">+ dihari</button>
+                  </span>
+                )}
+                {hasWin && !editable && (
+                  <span className="flex flex-wrap gap-1">
+                    {winDefs.map(w => { const on = ids.includes(w.id); return <span key={w.id} className={"px-1.5 py-0.5 rounded-full border text-[12.5px] " + (on ? "border-emerald-300 bg-emerald-50 text-emerald-600" : "border-gray-100 text-gray-300")}>{on ? "✓ " : ""}{w.label}{on ? ` ${effShift(r, d, w.id)}` : ""}</span>; })}
+                  </span>
+                )}
+                <span className="ml-auto shrink-0 flex items-center gap-1.5 text-[13px] text-gray-500">
+                  {shareHint && <span className="text-[12px] text-gray-400" title="This day's exact fractional crew share, before rounding for display — the total is summed from this, not from the rounded number.">{shareHint} share ·</span>}
                   {editable
                     ? <input type="number" min="0" value={showDay(r, d)} onChange={e => setMpDay(r.type, d.date, e.target.value)} disabled={!canManpower}
-                        title={canManpower ? undefined : "Requires \"Manage Manpower\""}
-                        className={"w-10 border rounded px-1 py-0.5 text-[10px] text-center " + (ov ? "border-amber-400 bg-amber-50 font-bold" : "") + (canManpower ? "" : " opacity-50 cursor-not-allowed")} />
-                    : <b>{d.count}</b>}
-                  crew × {shifts} shift{shifts === 1 ? "" : "s"}
-                  {shareHint && <span className="text-gray-400 font-normal" title="This day's exact fractional crew share, before rounding for display — the day-wise total below is summed from this, not from the rounded number above.">({shareHint} share)</span>}
+                        title={canManpower ? "Crew this day" : "Requires \"Manage Manpower\""}
+                        className={"w-12 rounded-md ring-1 px-1 py-0.5 text-[14px] font-semibold text-center text-gray-900 " + (ov ? "ring-amber-400 bg-amber-50" : "ring-gray-200 bg-white") + (canManpower ? "" : " opacity-50 cursor-not-allowed")} />
+                    : <b className="text-[14px] text-gray-900">{d.count}</b>}
+                  <span className="whitespace-nowrap">crew × <b className="text-gray-800">{shifts}</b></span>
                 </span>
               </div>
-              {/* Per-dihari (per-shift) crew — dept head can hold different crew per shift (e.g. 6 in the day
-                  shift, 3 in the evening). Same mpWinCount data + cost model as the on-site editor → synced. */}
-              {winDefs.length > 0 && editable && (Array.isArray(d.windowIds) || (mpWin[r.type] && mpWin[r.type][d.date] != null)) && (
-                <div className="flex flex-wrap items-center gap-1.5 mt-1">
-                  <span className="text-[10px] text-gray-400">per shift:</span>
-                  {ids.map((id, si) => { const wd = winDefs.find(w => w.id === id); const lbl = wd ? wd.label : `dihari ${si + 1}`; return (
-                    <span key={id} className="inline-flex items-center gap-1 border rounded px-1 py-0.5 bg-white">
-                      <span className="text-[10px] text-gray-400">{lbl}</span>
-                      <input type="number" min="0" value={effShift(r, d, id)} onChange={e => setShiftCount(r.type, d.date, id, e.target.value, ids)} className="w-9 border rounded px-1 py-0.5 text-[10px] text-center" />
-                      {ids.length > 1 && <button onClick={() => removeDihari(r.type, d.date, id, ids)} className="text-red-300 hover:text-red-500 text-[10px]" title="remove this dihari">×</button>}
-                    </span>
-                  ); })}
-                  <button onClick={() => addDihari(r, d.date, ids)} className="text-[10px] font-semibold text-blue-600 border border-blue-200 rounded-full px-1.5 py-0.5" title="Add another dihari (shift) this day">+ dihari</button>
-                </div>
-              )}
-              {winDefs.length > 0 && !editable && (Array.isArray(d.windowIds) || (mpWin[r.type] && mpWin[r.type][d.date] != null)) && (
-                <div className="flex flex-wrap gap-1 mt-1">
-                  {winDefs.map(w => { const on = ids.includes(w.id); return <span key={w.id} className={"px-1.5 py-0.5 rounded-full border text-[10px] " + (on ? "border-emerald-300 bg-emerald-50 text-emerald-600" : "border-gray-100 text-gray-300")}>{on ? "✓ " : ""}{w.label}{on ? ` ${effShift(r, d, w.id)}` : ""}</span>; })}
-                </div>
-              )}
               {howOpen && (
-                <div className="mt-1 bg-gray-50 border rounded-lg p-2">
+                <div className="mt-1.5 ml-7 bg-slate-50 ring-1 ring-slate-200 rounded-lg p-2">
                   {d.trace ? renderMpTrace(d.trace)
-                    : <div className="text-[10px] text-gray-500 mb-1">{d.phase === "minusOne" ? "⏮️ −1 setup — full crew staged early (peak of all functions)." : d.phase === "dismantle" ? "🧹 dismantle day — crew carried from the event." : "⏸️ gap day — crew carried from the previous day."}</div>}
+                    : <div className="text-[13px] text-gray-500">{d.phase === "minusOne" ? "⏮️ −1 setup — full crew staged early (peak of all functions)." : d.phase === "dismantle" ? "🧹 dismantle day — crew carried from the event." : "⏸️ gap day — crew carried from the previous day."}</div>}
                   {d.trace && Number(d.trace.result) > 0 && Number(d.trace.result) < Number(d.count) && (
-                    <div className="text-[10px] text-amber-600 mt-1">🔼 Cumulative-max: this day's own need is <b>{d.trace.result}</b>, but crew is held at <b>{d.count}</b> (carried from a busier day — crew only scales up).</div>
+                    <div className="text-[13px] text-amber-600 mt-1">🔼 Cumulative-max: this day's own need is <b>{d.trace.result}</b>, but crew is held at <b>{d.count}</b> (carried from a busier day — crew only scales up).</div>
                   )}
                   {hasShare && (
-                    <div className="text-[10px] text-gray-600 bg-white border rounded p-1.5">
-                      Bifurcation: <b>{d.count}</b> total {r.type} this day × <b>{Math.round((Number(d.share) || 0) * 100)}%</b> ({dept}'s usage this day) = <b className="text-gray-900">{(d.count * (Number(d.share) || 0)).toFixed(2)}</b> → {Math.round(effDay(r, d))} crew to {dept}
+                    <div className="mt-1 text-[13px] text-gray-600">
+                      Bifurcation: <b>{d.count}</b> total {r.type} × <b>{Math.round((Number(d.share) || 0) * 100)}%</b> ({dept}'s usage this day) = <b className="text-gray-900">{(d.count * (Number(d.share) || 0)).toFixed(2)}</b> → {Math.round(effDay(r, d))} crew to {dept}
                     </div>
                   )}
                 </div>
@@ -1336,7 +1350,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
             </div>
           );
         })}
-        <div className="mt-1 pt-1 text-right">= <b className="text-gray-800">{Math.round(totalDihari)} dihari</b> · line {fmt(lineCost(r))}</div>
+        </div>
       </div>
     );
   };
@@ -3591,7 +3605,7 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
               <div className="p-2.5 space-y-2">
                 {mpRows.map((r, i) => {
                   const overridden = r.sysCount != null && Number(r.count) !== Number(r.sysCount);
-                  const open = !!mpOpen[i];
+                  const open = mpOpen[i] !== false;
                   return (
                     /* ── ONE CARD PER CREW TYPE ──
                        These rows were a single wrapping flex line with the derivation toggle as
@@ -3603,7 +3617,7 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                        cost, below. The toggle becomes the chevron tile that opens the card. */
                     <div key={i} className="rounded-xl bg-white ring-1 ring-gray-100 shadow-[0_1px_2px_rgba(16,24,40,0.05)] p-2.5 space-y-2">
                       <div className="flex items-center gap-2">
-                        <button onClick={() => setMpOpen(o => ({ ...o, [i]: !o[i] }))}
+                        <button onClick={() => setMpOpen(o => ({ ...o, [i]: o[i] === false }))}
                           aria-expanded={open}
                           className="shrink-0 w-8 h-8 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-500 flex items-center justify-center transition-colors"
                           title={open ? "Hide how this crew number was calculated" : "How this crew number was calculated"}>
@@ -3637,33 +3651,57 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
                         </div>
                       )}
                       {open && (
-                        <div className="text-[10px] text-gray-500 leading-relaxed bg-gray-50 rounded-lg p-2">
+                        <div className="text-[13.5px] text-gray-600 leading-relaxed bg-slate-50 rounded-xl ring-1 ring-slate-100 p-2.5">
                           {r.shared ? (
                             <>
-                              <div className="text-[10px] uppercase tracking-wide text-blue-500 font-semibold mb-1">How {r.type} derived → then split</div>
+                              <div className="flex items-center gap-2 mb-2">
+                                <span className="h-4 w-1 rounded-full bg-blue-500" aria-hidden="true" />
+                                <span className="text-[13px] uppercase tracking-wider text-blue-700 font-bold">How {r.type} derived → then split</span>
+                              </div>
                               {renderMpTrace(r.trace)}
                               {renderMpSchedule(r)}
                               {r.splitInfo && r.splitInfo.byUsage && r.splitInfo.usageTotal > 0 ? (
-                                <div className="mt-1 bg-white border rounded-lg p-2 text-gray-600">
-                                  <b>{r.type}</b> split by <b>sub-category usage</b>{r.splitInfo.perDay ? ", computed per day" : ""} — each sub-category's labour goes to its department (1 labour per N units → charged to that sub's dept).<br />
-                                  {r.splitInfo.perDay && <span className="text-gray-500">Per-day bifurcation is in the schedule above (open each day's <b>how</b>). Booking average: </span>}
-                                  This dept's labour usage <b>{r.splitInfo.deptUsage}</b> ÷ all-dept usage <b>{r.splitInfo.usageTotal}</b> = <b>{Math.round((r.splitInfo.deptUsage / r.splitInfo.usageTotal) * 100)}%</b><br />
-                                  → total {r.type} {fmt(r.splitInfo.total)} → <b className="text-gray-900">{fmt(Number(r.sysCost) || 0)}</b> to {dept}
+                                <div className="mt-2 bg-white rounded-xl ring-1 ring-gray-200 px-3 py-2 text-[13.5px] text-gray-600">
+                                  <div className="flex flex-wrap items-center gap-1.5">
+                                    <span className="font-semibold text-gray-900 mr-1">⚖️ Split to {dept}</span>
+                                    <span className="text-gray-400 cursor-help" title={`Split by sub-category usage${r.splitInfo.perDay ? ", computed per day" : ""}: each sub-category's labour goes to its department (1 labour per N units → charged to that sub's dept).${r.splitInfo.perDay ? " Per-day bifurcation is in each day's \"how\" above; this is the booking average." : ""}`}>usage ⓘ</span>
+                                    <span className="rounded bg-gray-100 px-1.5 py-0.5">{r.splitInfo.deptUsage}</span>
+                                    <span className="text-gray-400">÷</span>
+                                    <span className="rounded bg-gray-100 px-1.5 py-0.5">{r.splitInfo.usageTotal}</span>
+                                    <span className="text-gray-400">=</span>
+                                    <span className="rounded bg-blue-50 text-blue-700 px-1.5 py-0.5 font-bold">{Math.round((r.splitInfo.deptUsage / r.splitInfo.usageTotal) * 100)}%</span>
+                                    <span className="ml-auto flex items-center gap-1.5">
+                                      <span className="text-gray-400">of {fmt(r.splitInfo.total)} →</span>
+                                      <span className="rounded-md bg-gray-900 text-white px-2 py-0.5 font-bold tabular-nums">{fmt(Number(r.sysCost) || 0)}</span>
+                                    </span>
+                                  </div>
                                 </div>
                               ) : r.splitInfo && r.splitInfo.directTotal > 0 ? (
-                                <div className="mt-1 bg-white border rounded-lg p-2 text-gray-600">
-                                  <b>{r.type}</b> are shared crew, split across all departments by income share:<br />
-                                  Total {r.type} on this event: <b>{fmt(r.splitInfo.total)}</b><br />
-                                  This dept's direct income {fmt(r.splitInfo.deptDirect)} ÷ all-dept income {fmt(r.splitInfo.directTotal)} = <b>{Math.round((r.splitInfo.deptDirect / r.splitInfo.directTotal) * 100)}%</b><br />
-                                  → {fmt(r.splitInfo.total)} × {Math.round((r.splitInfo.deptDirect / r.splitInfo.directTotal) * 100)}% = <b className="text-gray-900">{fmt(Number(r.sysCost) || 0)}</b> to {dept}
+                                <div className="mt-2 bg-white rounded-xl ring-1 ring-gray-200 px-3 py-2 text-[13.5px] text-gray-600">
+                                  <div className="flex flex-wrap items-center gap-1.5">
+                                    <span className="font-semibold text-gray-900 mr-1">⚖️ Split to {dept}</span>
+                                    <span className="text-gray-400 cursor-help" title="Shared crew, split across all departments by income share">income ⓘ</span>
+                                    <span className="rounded bg-gray-100 px-1.5 py-0.5">{fmt(r.splitInfo.deptDirect)}</span>
+                                    <span className="text-gray-400">÷</span>
+                                    <span className="rounded bg-gray-100 px-1.5 py-0.5">{fmt(r.splitInfo.directTotal)}</span>
+                                    <span className="text-gray-400">=</span>
+                                    <span className="rounded bg-blue-50 text-blue-700 px-1.5 py-0.5 font-bold">{Math.round((r.splitInfo.deptDirect / r.splitInfo.directTotal) * 100)}%</span>
+                                    <span className="ml-auto flex items-center gap-1.5">
+                                      <span className="text-gray-400">of {fmt(r.splitInfo.total)} →</span>
+                                      <span className="rounded-md bg-gray-900 text-white px-2 py-0.5 font-bold tabular-nums">{fmt(Number(r.sysCost) || 0)}</span>
+                                    </span>
+                                  </div>
                                 </div>
-                              ) : <div className="text-gray-500">Split across departments. This dept's allocation = <b>{fmt(Number(r.sysCost) || 0)}</b>.</div>}
+                              ) : <div className="mt-3 text-gray-600">Split across departments. This dept's allocation = <b className="text-gray-900">{fmt(Number(r.sysCost) || 0)}</b>.</div>}
                               {Number(lineCost(r)) !== (Number(r.sysCost) || 0) && (
-                                <div className="mt-1 text-amber-600 font-semibold">✏️ You tuned this dept's crew/rate per day → line now <b>{fmt(lineCost(r))}</b> (system split was {fmt(Number(r.sysCost) || 0)}).</div>
+                                <div className="mt-3 rounded-lg bg-amber-50 ring-1 ring-amber-200 px-3 py-2 text-[13.5px] text-amber-800">✏️ You tuned this dept's crew/rate per day → line now <b>{fmt(lineCost(r))}</b> (system split was {fmt(Number(r.sysCost) || 0)}).</div>
                               )}
                             </>
                           ) : (<>
-                            <div className="text-[10px] uppercase tracking-wide text-blue-500 font-semibold mb-1">How {r.sysCount != null && r.sysCount !== "" ? r.sysCount : (r.count || "")} {r.type} derived</div>
+                            <div className="flex items-center gap-2 mb-2">
+                              <span className="h-4 w-1 rounded-full bg-blue-500" aria-hidden="true" />
+                              <span className="text-[13px] uppercase tracking-wider text-blue-700 font-bold">How {r.sysCount != null && r.sysCount !== "" ? r.sysCount : (r.count || "")} {r.type} derived</span>
+                            </div>
                             {renderMpTrace(r.trace)}
                             {renderMpSchedule(r)}
                             {r.basis && !r.trace && <span className="text-gray-600">📐 {r.basis}<br /></span>}
