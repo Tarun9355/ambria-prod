@@ -9906,8 +9906,17 @@ export default function StudioApp() {
       const target = String(subcat).toLowerCase().trim();
       const pickerVenue = activeFnMeta?.venue || venue || "";
       // Where each inventory item is already placed for THIS guest — every function of the deal,
-      // every enabled zone — minus the element being swapped right now, so picking it here would
-      // be the same piece used twice for one client. Shown on the card as a swap warning.
+      // every enabled zone — minus the element being swapped right now, so the "free" count never
+      // over-counts stock this same client has already committed elsewhere in the deal.
+      // The orange "swap"/"in use" badge is a narrower claim than that: it means picking this item
+      // here could knowingly reuse the SAME physical piece already doing duty elsewhere — only true
+      // across two different FUNCTIONS of this deal (e.g. the same arch moved from Mehendi to
+      // Sangeet). Within the SAME function, a different zone needing it at the same moment is a
+      // straight stock conflict, not a reuse option — physically nothing to "swap", since both
+      // zones need it simultaneously. That's already reflected by the reduced free count below;
+      // flagging it with the same badge as cross-function reuse falsely suggested a choice that
+      // doesn't exist (owner-reported: showed on a single-function deal with no other function to
+      // reuse from at all).
       const usedElsewhere = {};
       const usedQty = {};
       (collectAllFunctionData() || []).forEach((f) => {
@@ -9916,8 +9925,10 @@ export default function StudioApp() {
           elems.forEach((e, ei) => {
             if (!e?.invId) return;
             if (f.fnIdx === activeFnIdx && zk === zoneKey && ei === idx) return;
-            (usedElsewhere[e.invId] ||= []).push(`${f.fnType || `Function ${f.fnIdx + 1}`} · ${zk}`);
             usedQty[e.invId] = (usedQty[e.invId] || 0) + (Number(e.qty) || 0);
+            if (f.fnIdx !== activeFnIdx) {
+              (usedElsewhere[e.invId] ||= []).push(`${f.fnType || `Function ${f.fnIdx + 1}`} · ${zk}`);
+            }
           });
         });
       });
