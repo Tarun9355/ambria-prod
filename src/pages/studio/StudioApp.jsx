@@ -7319,7 +7319,8 @@ export default function StudioApp() {
         // and someone has to actually read and act on it (reload) before it's safe to keep working.
         // A 2s auto-dismissing toast for a sentence this long was the exact complaint that led here —
         // see STALE_SAVE_GUARD_PITFALLS.md.
-        setSaveError?.({ label: "This build", error: `${who} ${verb} — your changes here were NOT auto-saved to avoid overwriting them. Reload to see the latest before continuing.` });
+        setSaveError?.({ label: "This build", kind: "conflict", who, own: buildRemoteSavedBy === buildMe, at: buildRemoteSavedAt,
+          error: `${who} ${verb} — your changes here were NOT auto-saved to avoid overwriting them. Reload to see the latest before continuing.` });
       }
       return; // nothing local is discarded — it just isn't persisted until this tab reloads
     }
@@ -11559,8 +11560,38 @@ export default function StudioApp() {
           .sa-nav-right > div, .sa-nav-mid > div { padding: 2px !important; }
         }`}</style>
 
+      {/* STALE-TAB CONFLICT — the save guard refused to overwrite a newer copy of this deal. Not an
+          error in the red-banner sense: nothing is lost and nothing is broken, but nothing here is
+          being saved either, so it has to be read and acted on. Centred over a dimmed backdrop. */}
+      {saveError?.kind === "conflict" && (
+        <div role="alertdialog" aria-modal="true" aria-label="This deal was updated elsewhere"
+          style={{ position: "fixed", inset: 0, zIndex: 100000, background: "rgba(15,15,26,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div style={{ width: "100%", maxWidth: 440, background: isDark ? "#1B1B2B" : "#FFFBF2", color: isDark ? "#F3F1EA" : "#1A1A2E", borderRadius: 16, border: "1px solid #C9A96E", borderTop: "4px solid #C9A96E", boxShadow: "0 18px 50px rgba(0,0,0,0.45)", padding: "20px 22px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+              <span style={{ width: 34, height: 34, borderRadius: 10, background: "rgba(201,169,110,0.2)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>⚠️</span>
+              <div style={{ fontSize: 16, fontWeight: 700 }}>This deal was updated elsewhere</div>
+            </div>
+            <div style={{ fontSize: 13, lineHeight: 1.55, marginBottom: 12 }}>
+              {saveError.own ? "You" : <b>{saveError.who}</b>} saved a newer version of this deal{saveError.own ? " from another tab or device" : " while you were editing"}
+              {saveError.at ? <> at <b>{new Date(saveError.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</b></> : null}.
+              To avoid overwriting it, <b>this tab has stopped saving</b>.
+            </div>
+            <div style={{ fontSize: 12, lineHeight: 1.6, padding: "10px 12px", borderRadius: 10, background: isDark ? "rgba(255,255,255,0.05)" : "rgba(201,169,110,0.14)", marginBottom: 16 }}>
+              <div style={{ fontWeight: 700, marginBottom: 2 }}>What to do</div>
+              <div>1. Note down any change you made in this tab — it is not saved.</div>
+              <div>2. Tap <b>Reload latest</b> to load the newest version.</div>
+              <div>3. Redo your change on top of it.</div>
+            </div>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
+              <button onClick={() => setSaveError(null)} style={{ background: "transparent", color: isDark ? "#CFCBBE" : "#6B6B80", border: "1px solid rgba(201,169,110,0.5)", padding: "9px 14px", borderRadius: 9, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Keep working (not saved)</button>
+              <button onClick={() => window.location.reload()} style={{ background: "#C9A96E", color: "#1A1A2E", border: "none", padding: "9px 16px", borderRadius: 9, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Reload latest</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* SAVE FAILURE BANNER */}
-      {saveError && (
+      {saveError && saveError.kind !== "conflict" && (
         <div style={{ position: "fixed", top: 8, right: 8, zIndex: 100000, background: "#dc2626", color: "#fff", padding: "12px 14px", borderRadius: 8, fontSize: 13, maxWidth: 380, boxShadow: "0 6px 20px rgba(0,0,0,0.4)", border: "1px solid #991b1b" }}>
           <div style={{ fontWeight: 700, marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}><span>❌</span> Save Failed: {saveError.label}</div>
           <div style={{ fontSize: 12, opacity: 0.95, marginBottom: 6, lineHeight: 1.4 }}>{saveError.error}</div>
