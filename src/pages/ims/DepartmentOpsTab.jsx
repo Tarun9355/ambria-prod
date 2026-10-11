@@ -1406,7 +1406,13 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   // with no server to render on, and a bundled generator would add hundreds of kilobytes to
   // every page load for a button used occasionally. "Save as PDF" is in the print dialog of every
   // browser the team uses, and the same approach already prints the loading challans above.
-  const buildReportHtml = (zoneLabels = {}, logos = {}) => {
+  // opts.combined: ONE book for the whole event — every zone page carries every department's
+  // items (each tagged with its department), instead of one book per department back to back.
+  // Department-only sections (loading, transport, dismantle, fabric, kits, production lists) are
+  // left out of it: they describe one department's stock and would mislead in a combined book.
+  const buildReportHtml = (zoneLabels = {}, logos = {}, opts = {}) => {
+    const combined = !!opts.combined;
+    const bookTitle = combined ? "All departments" : dept;
     // Anything that reaches the page goes through this first. The values are client names,
     // venues, crew types and item names typed by staff in Studio — an apostrophe or a stray
     // "<" in one of them would otherwise break the markup or inject into it.
@@ -1582,7 +1588,11 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     // classifier files truss/platform/carpet under Tenting, but the Structure crew builds on that
     // frame and floor too. It used to be a separate table at the back of the book; the crew reads
     // a zone page, so that is where it belongs.
-    const showStruct = dept === "Tenting" || dept === "Structure";
+    const showStruct = combined || dept === "Tenting" || dept === "Structure";
+    // Which department an item belongs to, for the combined book: Deal Check's per-department
+    // snapshot first (it is what each department actually holds), then the category classifier.
+    const deptByInvId = new Map();
+    if (combined) Object.entries(sel?.deptInventory || {}).forEach(([d, rows]) => (Array.isArray(rows) ? rows : []).forEach(r => { const id = r?.imsId || r?.invId; if (id && !deptByInvId.has(String(id))) deptByInvId.set(String(id), d); }));
     const carpetName = (id) => {
       if (!id) return "";
       const m = (Array.isArray(settings?.carpetMaterials) ? settings.carpetMaterials : []).find(x => x && x.id === id);
@@ -1642,8 +1652,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           // a zone" was worse than useless — it sent someone hunting for a loose item already on
           // the truck inside something else — but merely hiding them (what this did until now)
           // dropped them out of the book altogether, which is worse again.
-          const kitParts = nm ? (partsByKit.get(nm) || []) : [];
-          const mine = held ? true
+          // Combined book: a kit is shown as the kit itself, never broken into one department's parts.
+          const kitParts = (!combined && nm) ? (partsByKit.get(nm) || []) : [];
+          const mine = combined ? true
+            : held ? true
             : kitParts.length ? true
             : isPattern ? dept === "Floral"
             : hasDeptSnapshot ? false
@@ -1686,7 +1698,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           // A flower recipe with no unit stored falls back to "pc" — the same default Studio gives a
           // recipe element when it is added (recipeOnlyPatterns in StudioApp.jsx).
           const unit = String(el?.unit || inv?.unit || held?.unit || (isPattern ? "pc" : "")).trim();
-          merged.set(key, { name: inv?.name || el?.name || held?.name || "Item", qty, unit, photo: invPhoto(inv, held), dims: invDims(inv), size: elSize, kit: (held?.isKit && Array.isArray(held.components)) ? held.components.length : 0 });
+          const deptTag = !combined ? "" : isPattern ? "Floral" : inv ? (deptByInvId.get(String(inv.id)) || catToDept(inv.category || inv.cat)) : "";
+          merged.set(key, { name: inv?.name || el?.name || held?.name || "Item", qty, unit, deptTag, photo: invPhoto(inv, held), dims: invDims(inv), size: elSize, kit: (held?.isKit && Array.isArray(held.components)) ? held.components.length : 0 });
         });
         const items = [...merged.values()];
         const zPhoto = fn.elSelectedPhoto?.[zk]?.src || "";
@@ -1800,7 +1813,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         <div class="zc-n">${esc(it.name)}</div>
         <div class="zc-r"><span>Qty</span><b>${esc(it.qty)}${it.unit ? ` <span style="font-weight:500;font-size:.85em;opacity:.7">${esc(it.unit)}</span>` : ""}</b></div>
         <div class="zc-r"><span>Size</span><b>${esc(it.dims || "—")}</b></div>
-        ${it.source ? `<div class="zc-r"><span>From</span><b>${esc(it.source)}</b></div>` : ""}
+        ${it.source ? `<div class="zc-r"><span>From</span><b>${esc(it.source)}</b></div>` : it.deptTag ? `<div class="zc-r"><span>Dept</span><b>${esc(it.deptTag)}</b></div>` : ""}
       </div>`;
     const zoneSection = (pg, chunk, part, parts, zoneNo, offset) => {
       // A zone this department has nothing in still gets its page — the reference photo, run the
@@ -1828,7 +1841,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           <div><div class="zk"><b>Zone ${String(zoneNo).padStart(2, "0")}</b>${parts > 1 ? ` · Part ${part} of ${parts}` : ""}</div><h2>${esc(pg.title)}</h2>
             <div class="orn l"><i></i><b></b><i></i></div>
             <div class="zm">${esc(pg.fnLabel || selDateStr || "")}</div></div>
-          <div class="zt">${pg.zoneDims ? `<span><i class="zl">${esc(pg.dimsOf)}</i>${esc(pg.zoneDims)}</span>` : ""}<span>${pg.items.length ? `${pg.items.length} item${pg.items.length === 1 ? "" : "s"}` : `No ${esc(dept)} items`}</span></div>
+          <div class="zt">${pg.zoneDims ? `<span><i class="zl">${esc(pg.dimsOf)}</i>${esc(pg.zoneDims)}</span>` : ""}<span>${pg.items.length ? `${pg.items.length} item${pg.items.length === 1 ? "" : "s"}` : (combined ? "No items" : `No ${esc(dept)} items`)}</span></div>
         </div>
         ${(pg.struct || []).length ? `<div class="zst">${pg.struct.map(c => `<span><i class="zl">${esc(c.k)}</i>${esc(c.v)}</span>`).join("")}</div>` : ""}
         <div class="zs" style="height:${stageH}px">
@@ -1931,10 +1944,12 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
 
     const zoneHtml = [
       ...zonePages.flatMap((pg, zi) => { const cs = pg.items.length ? chunks(pg.items, 6) : [[]]; return cs.map((c, i) => zoneSection(pg, c, i + 1, cs.length, zi + 1, i * 6)); }),
+      ...(combined ? [] : [
       ...kitPages,
       ...listPages(prodItems, "Production", "From production", "Made by the production team for this event"),
       ...listPages(buyItems, "Buying", "To buy", "Bought in for this event — not from our own stock"),
       ...listPages(looseItems, "Not in a zone", "Also on site", looseNote),
+      ]),
     ].join("");
 
     // The cover's backdrop: this event's Stage photo when it has one (the setup the book is
@@ -1967,7 +1982,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     const ornament = `<div class="orn"><i></i><b></b><i></i></div>`;
 
     const html = `<!doctype html><html><head><meta charset="utf-8">
-<title>${esc(dept)} — ${esc(sel?.clientName || "Event")} — Ambria</title>
+<title>${esc(bookTitle)} — ${esc(sel?.clientName || "Event")} — Ambria</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700;800&family=Inter:wght@400;500;600;700&display=swap">
 <style>
@@ -2179,7 +2194,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   .zs{position:relative;width:706px}
   /* The zone photo is mounted like a print: a white mat and a gold hairline, lifted off the
      page by a soft shadow. */
-  .zphoto{position:absolute;left:0;width:700px;border-radius:16px;background:#E6E1D5 center/cover no-repeat;border:1.5px solid #1A1A1A;box-shadow:5px 6px 0 #1A1A1A;display:flex;align-items:center;justify-content:center}
+  /* contain, not cover (owner ask): the whole zone photo is shown, scaled down to fit, never cropped — a
+     landscape stage shot was losing its sides and a portrait one its top and bottom. */
+  .zphoto{position:absolute;left:0;width:700px;border-radius:16px;background:#EDE8DC center/contain no-repeat;border:1.5px solid #1A1A1A;box-shadow:5px 6px 0 #1A1A1A;display:flex;align-items:center;justify-content:center}
   .zphoto span,.zc-ph span{font-size:13px;line-height:1.7;color:#A39A89;font-family:"Inter",Arial,sans-serif}
   .zc{position:absolute;width:224px;height:300px;border:1.5px solid #1A1A1A;border-radius:16px;background:#FFFDF8;box-shadow:4px 4px 0 #1A1A1A}
   .zc.st{position:relative;height:auto;min-height:300px}
@@ -2279,7 +2296,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     <div class="cv-corner tl"></div><div class="cv-corner tr"></div><div class="cv-corner bl"></div><div class="cv-corner br"></div>
     ${logos.dark ? `<img class="cv-logo" src="${logos.dark}" alt="Ambria — Design &amp; Decor">` : `<div class="cv-mark">AMBRIA</div>`}
     <div class="cv-kind">Setup book</div>
-    <div class="cv-title">${esc(dept)}</div>
+    <div class="cv-title">${esc(bookTitle)}</div>
     <div class="cv-for">${esc(sel?.clientName || "Event")}</div>
     ${ornament}
     <div class="cv-facts">
@@ -2299,19 +2316,19 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       ${s.place ? `<div class="sm">${esc(s.place)}</div>` : ""}
     </div>`).join("")}</div>` : ""}
   </div>
-  <div class="cv-bottom"><span>${esc(dept)} / ${esc((selDateStr || "").slice(0, 4) || new Date().getFullYear())}</span>${logos.light ? `<img class="cv-logo-l" src="${logos.light}" alt="Ambria — Design &amp; Decor">` : `<span>Ambria · Design &amp; Decor</span>`}</div>
+  <div class="cv-bottom"><span>${esc(bookTitle)} / ${esc((selDateStr || "").slice(0, 4) || new Date().getFullYear())}</span>${logos.light ? `<img class="cv-logo-l" src="${logos.light}" alt="Ambria — Design &amp; Decor">` : `<span>Ambria · Design &amp; Decor</span>`}</div>
 </header>
 ${/* Money, the priced inventory table, the crew plan and logged spend are left out: this sheet
      goes to the people setting up the event, who need what goes where, not what it costs. The
      zone layout pages below carry every item, with photo, qty and size. */ ""}
 ${zoneHtml}
-${(truckRows.length || loadRows.length) ? sect("Loading & dispatch",
+${combined ? "" : (truckRows.length || loadRows.length) ? sect("Loading & dispatch",
   (truckRows.length ? table(["#", "Vehicle", "Driver", "Phone", "Status"], truckRows, ["12%", "26%", "24%", "20%", "18%"]) : "")
   + (loadRows.length ? `<p class="meta">Everything going to site — ${blockedItems.length} item${blockedItems.length === 1 ? "" : "s"}, ${loadUnits} piece${loadUnits === 1 ? "" : "s"} in total.</p>`
     + table(["Item", "Qty"], loadRows, ["80%", "20%"]) : "")) : ""}
-${trRows.length ? sect("Transport", table(["Load", "Quantity", "Fits per truck", "Trucks"], trRows, ["46%", "20%", "22%", "12%"]) + `<p class="note">${trNote}</p>`) : ""}
-${moveRows.length ? sect("Dismantle routing", table(["Item", "Goes to", "Qty", "Logged by"], moveRows, ["38%", "32%", "12%", "18%"])) : ""}
-${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour", "Required", "Available", "Status"], fabRows, ["40%", "20%", "20%", "20%"])) : ""}
+${!combined && trRows.length ? sect("Transport", table(["Load", "Quantity", "Fits per truck", "Trucks"], trRows, ["46%", "20%", "22%", "12%"]) + `<p class="note">${trNote}</p>`) : ""}
+${!combined && moveRows.length ? sect("Dismantle routing", table(["Item", "Goes to", "Qty", "Logged by"], moveRows, ["38%", "32%", "12%", "18%"])) : ""}
+${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour", "Required", "Available", "Status"], fabRows, ["40%", "20%", "20%", "20%"])) : ""}
 <footer data-block>
   ${logos.dark ? `<img class="ft-logo" src="${logos.dark}" alt="Ambria — Design &amp; Decor">` : `<div class="ft-mark">AMBRIA · DESIGN &amp; DECOR</div>`}
   <div class="ft-meta">Generated ${esc(new Date().toLocaleString("en-IN"))} · ${esc(authUser?.name || "—")}</div>
@@ -2388,10 +2405,12 @@ ${fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour
       // Each pass builds that department's book in its own iframe and appends its pages. A second
       // and later department starts on a fresh page, with `first` reset so its cover still draws
       // full bleed onto that page rather than adding another.
-      for (let di = 0; di < depts.length; di++) {
-        const d = depts[di];
-        if (multi) { setExportNote(`${d} — ${di + 1} of ${depts.length}`); await settleDept(d); }
-        const html = (buildReportRef.current || buildReportHtml)(zoneLabels, logos);
+      // "All departments" is ONE combined, zone-wise book (owner ask) — not seven books back to
+      // back — so it is a single pass with every department's items on each zone page.
+      const passes = multi ? ["__combined__"] : depts;
+      for (let di = 0; di < passes.length; di++) {
+        if (multi) setExportNote("All departments — combined");
+        const html = (buildReportRef.current || buildReportHtml)(zoneLabels, logos, { combined: multi });
         if (di > 0) { newPage(); }
         frame = document.createElement("iframe");
 
