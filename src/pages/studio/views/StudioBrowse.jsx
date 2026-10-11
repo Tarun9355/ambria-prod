@@ -1959,7 +1959,7 @@ function StudioBrowse({ ctx }) {
 
         {copyBuildModalOpen && (
           <CopyBuildModal
-            clientLedger={clientLedger} activeClientId={activeClient?.id} currentVenue={venue}
+            clientLedger={clientLedger} activeClientId={activeClient?.id} currentVenue={venue} currentFnType={activeFnMeta?.type}
             isDark={isDark} border={border} textP={textP} textS={textS} cardBg={cardBg} accent={accent}
             onCopy={copyBuildsFromClient}
             onClose={() => setCopyBuildModalOpen(false)}

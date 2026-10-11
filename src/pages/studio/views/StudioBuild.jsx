@@ -792,7 +792,17 @@ export default function StudioBuild({ ctx }) {
     // Expanding used to scroll the page to the zone. The zone header you just clicked is already
     // where you are looking, so the jump moved you away from it rather than towards it — it read
     // as the page navigating somewhere. Details now just opens in place.
-    setZoneCollapsed((p) => ({ ...p, [k]: p[k] === false ? true : false }));
+    // Owner ask: one click should open (or close) Details on every ACTIVE zone, not just this
+    // one — comparing costs across a dozen zones meant clicking "Details" a dozen times for the
+    // same thing every time. The clicked zone's own NEXT state (open vs closed) is what every
+    // other active zone adopts too; an OFF zone is left alone since it has no details to show.
+    const nextOpen = !isCollapsed(k);
+    const allKeys = [...zoneKeys, ...customZones.map((cz) => cz.id)];
+    setZoneCollapsed((p) => {
+      const next = { ...p };
+      allKeys.forEach((zk) => { if (enabledEls[zk]) next[zk] = nextOpen; });
+      return next;
+    });
   };
   // Which of the four zone sections is open, per zone. Undefined = none, so a zone body starts
   // as four tiles and nothing else. The element card's collapse reads this too, so the tile and
@@ -2612,7 +2622,7 @@ undefined
     )}
     {copyBuildModalOpen && (
       <CopyBuildModal
-        clientLedger={clientLedger} activeClientId={activeClientId} currentVenue={venue}
+        clientLedger={clientLedger} activeClientId={activeClientId} currentVenue={venue} currentFnType={activeFnMeta?.type}
         isDark={isDark} border={border} textP={textP} textS={textS} cardBg={cardBg} accent={accent}
         onCopy={copyBuildsFromClient}
         onClose={() => setCopyBuildModalOpen(false)}

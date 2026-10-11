@@ -2561,16 +2561,28 @@ export default function StudioApp() {
   // `setExtraFunctions(prev => [...prev, ...])`), so the normal autosave picks it up with no
   // special-casing. `startIdx` is read from the render closure rather than a ref — a deliberate,
   // infrequent click, not a stale-timer path, so this matches the existing Add-Function pattern.
-  const copyBuildsFromClient = useCallback((items) => {
-    if (!Array.isArray(items) || !items.length) return;
-    const startIdx = 1 + extraFunctions.length;
-    setExtraFunctions((prev) => [...prev, ...items.map((it) => it.meta)]);
-    setFnBuilds((prev) => {
-      const next = { ...prev };
-      items.forEach((it, i) => { next[startIdx + i] = it.build; });
-      return next;
-    });
-    showMsg(`Copied ${items.length} function${items.length === 1 ? "" : "s"} — switch to ${items.length === 1 ? "it" : "them"} from Browse or Event Info.`, "green");
+  // `intoCurrent` (same event type as the function already open here, per CopyBuildModal's own
+  // claim logic): loads straight into THIS session's live canvas — no new pill, and the date/
+  // venue/shift/pax/palette already set in Event Info are left exactly as they are, since this is
+  // the SAME function, just with a different deal's decor dropped in. `newItems` (a different
+  // type, or any extra same-type pick beyond the one slot): unchanged, appended as brand-new
+  // functions exactly like before.
+  const copyBuildsFromClient = useCallback(({ intoCurrent, newItems } = {}) => {
+    if (intoCurrent?.build) restoreBuildState(intoCurrent.build);
+    const items = Array.isArray(newItems) ? newItems : [];
+    if (items.length) {
+      const startIdx = 1 + extraFunctions.length;
+      setExtraFunctions((prev) => [...prev, ...items.map((it) => it.meta)]);
+      setFnBuilds((prev) => {
+        const next = { ...prev };
+        items.forEach((it, i) => { next[startIdx + i] = it.build; });
+        return next;
+      });
+    }
+    const parts = [];
+    if (intoCurrent?.build) parts.push("loaded into this session");
+    if (items.length) parts.push(`copied ${items.length} as new function${items.length === 1 ? "" : "s"} — switch to ${items.length === 1 ? "it" : "them"} from Browse or Event Info`);
+    if (parts.length) showMsg(parts.join(" · "), "green");
   }, [extraFunctions, showMsg]);
   // In-app confirm, so destructive actions ask in the app's own voice instead of a browser alert()
   // (which is unstyled, blocks the whole tab, and on some browsers offers "don't show again").

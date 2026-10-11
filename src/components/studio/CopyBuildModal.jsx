@@ -12,7 +12,7 @@ import { fnSnapHasData } from "../../lib/studio/sessionData";
 // restoreBuildState expects; its label/date/venue/shift/pax metadata lives in `client.functions[idx]`
 // (both arrays share the same index — fn 1 is index 0, "extra" functions are index 1+).
 export default function CopyBuildModal({
-  clientLedger, activeClientId, currentVenue,
+  clientLedger, activeClientId, currentVenue, currentFnType,
   isDark, border, textP, textS, cardBg, accent,
   onCopy, onClose,
 }) {
@@ -48,24 +48,42 @@ export default function CopyBuildModal({
   };
   const setPickField = (idx, field, v) => setPicks((p) => ({ ...p, [idx]: { ...(p[idx] || {}), [field]: v } }));
 
+  // Same event type as the function already open here (Event Info's own type, e.g. "Wedding")
+  // copies straight into THIS session's canvas — no new pill, no date/venue ask, since the date/
+  // venue/shift/pax this deal already has apply to it unchanged. A different type still becomes a
+  // brand-new function, dated and venued on the way in, exactly as before.
+  const sameTypeKey = currentFnType ? String(currentFnType).trim().toLowerCase() : "";
+  const isSameType = (idx) => {
+    const t = fns[idx]?.type;
+    return !!(sameTypeKey && t && String(t).trim().toLowerCase() === sameTypeKey);
+  };
+
   const pickedIdxs = Object.keys(picks).map(Number);
-  const allFilled = pickedIdxs.length > 0 && pickedIdxs.every((i) => picks[i].date && picks[i].venue);
+  // Only ONE ticked function can load into the current session — there is only one slot. The
+  // lowest-indexed same-type pick claims it; a second same-type pick (or any different-type pick)
+  // falls back to the normal "new function" path and needs its own date/venue.
+  const sameTypePicked = pickedIdxs.filter(isSameType).sort((a, b) => a - b);
+  const claimedIdx = sameTypePicked.length ? sameTypePicked[0] : null;
+  const allFilled = pickedIdxs.length > 0 && pickedIdxs.every((i) => i === claimedIdx || (picks[i].date && picks[i].venue));
 
   const doCopy = () => {
     if (!session || !allFilled) return;
-    const items = pickedIdxs.sort((a, b) => a - b).map((idx) => {
+    let intoCurrent = null;
+    const newItems = [];
+    pickedIdxs.sort((a, b) => a - b).forEach((idx) => {
       const build = session.fnSnapshots?.[idx];
+      if (idx === claimedIdx) { intoCurrent = { build: JSON.parse(JSON.stringify(build)) }; return; }
       const meta = fns[idx] || {};
-      return {
+      newItems.push({
         build: JSON.parse(JSON.stringify(build)),
         meta: {
           type: meta.type || "", date: picks[idx].date, venue: picks[idx].venue,
           shift: meta.shift || "", pax: meta.pax || "", palette: meta.palette || "Custom",
           flowerPalette: meta.flowerPalette || "",
         },
-      };
+      });
     });
-    onCopy(items);
+    onCopy({ intoCurrent, newItems });
     onClose();
   };
 
@@ -122,6 +140,8 @@ export default function CopyBuildModal({
                 const totalInfo = session?.fnTotals?.[idx];
                 const checked = !!picks[idx];
                 const label = (f.type && String(f.type).trim()) || `Function ${idx + 1}`;
+                const sameType = isSameType(idx);
+                const claimsCurrent = checked && idx === claimedIdx;
                 return (
                   <div key={idx} style={{ borderRadius: 9, border: `1px solid ${checked ? accent : border}`, marginBottom: 8, overflow: "hidden" }}>
                     <div onClick={() => hasData && togglePick(idx)}
@@ -129,7 +149,10 @@ export default function CopyBuildModal({
                       <div style={{ display: "flex", alignItems: "center", gap: 9, minWidth: 0 }}>
                         <span style={{ width: 16, height: 16, borderRadius: 4, flexShrink: 0, border: `1.5px solid ${checked ? accent : textS}`, background: checked ? accent : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: "#1a1a2e", fontWeight: 800 }}>{checked ? "✓" : ""}</span>
                         <div style={{ minWidth: 0 }}>
-                          <div style={{ fontSize: 12, fontWeight: 600, color: textP }}>{label}</div>
+                          <div style={{ fontSize: 12, fontWeight: 600, color: textP, display: "flex", alignItems: "center", gap: 6 }}>
+                            {label}
+                            {sameType && <span style={{ fontSize: 9, fontWeight: 700, padding: "1px 6px", borderRadius: 999, background: isDark ? "rgba(16,185,129,0.18)" : "rgba(5,150,105,0.1)", color: "#059669" }}>Same type as this session</span>}
+                          </div>
                           <div style={{ fontSize: 10, color: textS }}>{fmtDate(f.date)}{f.shift ? ` · ${f.shift}` : ""} · {f.venue || "—"}</div>
                         </div>
                       </div>
@@ -137,7 +160,15 @@ export default function CopyBuildModal({
                         {hasData ? (totalInfo ? `₹${Math.round(totalInfo.total).toLocaleString("en-IN")}${totalInfo.tier ? ` · ${totalInfo.tier}` : ""}` : "has a build") : "no build saved"}
                       </div>
                     </div>
-                    {checked && (
+                    {/* Claims the current session's slot: same event type, so the date/venue/shift
+                        already set in Event Info apply as-is — nothing to ask, no new pill. A second
+                        same-type pick (or any different-type one) still needs its own date/venue,
+                        since only one ticked function can land in the slot already open here. */}
+                    {claimsCurrent ? (
+                      <div style={{ padding: "0 11px 10px", fontSize: 10.5, color: "#059669" }}>
+                        ↳ Loads directly into this session — keeps its current date, venue and shift. No new function is created.
+                      </div>
+                    ) : checked && (
                       <div style={{ padding: "0 11px 10px", display: "flex", gap: 8 }}>
                         <input type="date" value={picks[idx].date} onChange={(e) => setPickField(idx, "date", e.target.value)}
                           style={{ flex: 1, padding: "6px 8px", borderRadius: 7, border: `1px solid ${picks[idx].date ? border : "#F87171"}`, background: isDark ? "#1A1A2E" : "#fff", color: textP, fontSize: 11.5 }} />
