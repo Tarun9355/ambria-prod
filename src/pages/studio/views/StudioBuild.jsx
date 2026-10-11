@@ -3618,7 +3618,7 @@ undefined
                         with the star already SHOWING the state the dot set, was the confusing bit. */}
                     {(()=>{
                       // ── ONE STAR, THREE STATES ──
-                      //   gold  · favourited for this zone (yours — favourites are per salesperson)
+                      //   gold  · favourited (by you OR any other salesperson)
                       //   green · has elements, so it carries pricing
                       //   white · no elements yet, nothing to price off it
                       // It used to appear ONLY on verified photos and be absent otherwise, which
@@ -3627,11 +3627,17 @@ undefined
                       // state — it is the one a salesperson put there deliberately.
                       const li = ph.isLibrary && ph.eventId ? libById.get(ph.eventId) : null;
                       const nEls = (ph.elements || []).length;
-                      // Exactly the key the favourite toggle below writes — any drift here and the
-                      // star would disagree with the dot the salesperson just clicked.
-                      const isFavS = !!favPhotos[ph.eventId || ph.src]?.[authUser?.id];
-                      const st = isFavS
-                        ? { bg:"#C9A96E", fg:"#1A1A2E", t:"Your favourite — click to remove. Favourites lead the strip." }
+                      // Gold means "someone favourited this", not just "I did" — a colleague's pick
+                      // is just as real a signal as your own, and the grid's own ranking above
+                      // (favOrder) already treats "mine" and "others'" as two separate gold-worthy
+                      // tiers. The star used to only light up for isMyFavPhoto, so a photo three
+                      // other salespeople had favourited still showed green/white to anyone who
+                      // hadn't clicked it themselves. isFavMine still decides what the CLICK does
+                      // (toggle your own mark) — only the badge's colour reads "any" now.
+                      const isFavMine = isMyFavPhoto(ph);
+                      const isFavAny = isAnyFavPhoto(ph);
+                      const st = isFavAny
+                        ? { bg:"#C9A96E", fg:"#1A1A2E", t: isFavMine ? "Your favourite — click to remove. Favourites lead the strip." : "A colleague's favourite — click to add your own." }
                         : nEls > 0
                           ? { bg:"#059669", fg:"#fff", t:`${nEls} element${nEls===1?"":"s"} — priced from this photo. Click to favourite it.` }
                           : { bg:"#FFFFFF", fg:"#6B7280", t:"No elements on this photo yet — nothing to price from it. Click to favourite it." };
@@ -3645,10 +3651,10 @@ undefined
                       // itself selects the photo for pricing — a different act entirely, and one
                       // that would otherwise fire on every favourite.
                       return <div title={st.t + vBy} className="ph-star"
-                        onClick={e=>{e.stopPropagation();saveFavPhotos({[ph.eventId||ph.src]:{[authUser?.id]:isFavS?null:true}});}}
+                        onClick={e=>{e.stopPropagation();saveFavPhotos({[ph.eventId||ph.src]:{[authUser?.id]:isFavMine?null:true}});}}
                         style={{position:"absolute",top:6,right:6,width:21,height:21,borderRadius:11,zIndex:3,cursor:"pointer",
-                        background:st.bg,border:`2px solid ${isFavS||nEls>0?"rgba(255,255,255,0.92)":"rgba(26,26,46,0.35)"}`,color:st.fg,display:"flex",alignItems:"center",justifyContent:"center",
-                        boxShadow:isFavS?"0 0 0 2px rgba(201,169,110,0.45), 0 2px 7px rgba(0,0,0,0.4)":"0 2px 7px rgba(0,0,0,0.4)"}}>
+                        background:st.bg,border:`2px solid ${isFavAny||nEls>0?"rgba(255,255,255,0.92)":"rgba(26,26,46,0.35)"}`,color:st.fg,display:"flex",alignItems:"center",justifyContent:"center",
+                        boxShadow:isFavAny?"0 0 0 2px rgba(201,169,110,0.45), 0 2px 7px rgba(0,0,0,0.4)":"0 2px 7px rgba(0,0,0,0.4)"}}>
                         <IconStar size={11} filled/>
                       </div>;
                     })()}
