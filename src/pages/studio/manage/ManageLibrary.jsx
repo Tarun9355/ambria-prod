@@ -436,19 +436,43 @@ export default function ManageLibrary({ ctx }) {
   // Hover "Add photo" on a video card. Photos go into the video's own Storage folder, inherit the
   // video's tags (venue, event type, …) and are linked to it, so they land in Needs review rather
   // than Untagged — if the video itself has no tags yet there is nothing to inherit and they stay
-  // Untagged until it is tagged.
+  // Untagged until it is tagged. The zone (Areas / zones) can't be inherited — a video covers many
+  // zones, and one batch of photos usually spans several — so every picked photo gets its own zone
+  // chips in a review step before anything is uploaded.
   const [vidPhotoBusy, setVidPhotoBusy] = useState(null);
+  // { v, items: [{ key, file, url, zones: [] }] } while the review step is open.
+  const [vidPhotoPick, setVidPhotoPick] = useState(null);
   const vidPhotoRef = useRef(null);
   const vidPhotoTarget = useRef(null);
-  const handleVideoPhotoUpload = async (files) => {
+  const isImageFile = (f) => /\.(jpe?g|png|webp|heic|heif|avif|gif|bmp|tiff?)$/i.test(f.name);
+  // Previews are object URLs — released whenever the review closes, uploaded or not.
+  const closeVidPhotoPick = () => setVidPhotoPick(p => { (p?.items || []).forEach(it => URL.revokeObjectURL(it.url)); return null; });
+  const vidPhotoSeq = useRef(0);   // unique card keys across repeated "Add more" picks
+  // Opens the review, or — when it is already open for this video — ADDS to it, so a batch can be
+  // built up over several picks instead of having to multi-select everything in one file dialog.
+  // The same file picked twice is skipped (matched on name + size + modified time).
+  const openVidPhotoPick = (files) => {
     const v = vidPhotoTarget.current;
+    const imgs = Array.from(files || []).filter(isImageFile);
     if (!v) return;
-    // A Storage-hosted video keeps its photos beside the file. A YouTube video has no folder, so it
-    // gets one of its own under "ambria" — a top-level folder the Library lists (see ALLOWED_SOURCE_FOLDERS).
-    const key = v.videoUrl && storageKeyFromUrl(v.videoUrl);
-    const folder = key && key.includes("/") ? key.slice(0, key.lastIndexOf("/")) : `ambria/video-photos/${v.id}`;
-    const imgs = Array.from(files || []).filter(f => /\.(jpe?g|png|webp|heic|heif|avif|gif|bmp|tiff?)$/i.test(f.name));
     if (!imgs.length) { showMsg("No image files selected", "orange"); return; }
+    const sig = (f) => `${f.name}|${f.size}|${f.lastModified}`;
+    setVidPhotoPick(p => {
+      const keep = p && p.v.id === v.id ? p.items : [];
+      if (p && p.v.id !== v.id) p.items.forEach(it => URL.revokeObjectURL(it.url));
+      const have = new Set(keep.map(it => sig(it.file)));
+      const add = imgs.filter(f => !have.has(sig(f))).map(file => ({ key: `p${vidPhotoSeq.current++}`, file, url: URL.createObjectURL(file), zones: [] }));
+      return { v, items: [...keep, ...add] };
+    });
+  };
+  const handleVideoPhotoUpload = async (v, items) => {
+    if (!v || !items?.length) return;
+    // A Storage-hosted video keeps its photos beside the file. A YouTube video has no folder, so it
+    // gets one of its own under "ambria-ref" — the one top-level folder that BOTH the upload function
+    // accepts (FOLDERS in supabase/functions/upload) and the Library lists (ALLOWED_SOURCE_FOLDERS).
+    // "ambria" passed the Library check but the upload function rejected it: "Folder not allowed".
+    const key = v.videoUrl && storageKeyFromUrl(v.videoUrl);
+    const folder = key && key.includes("/") ? key.slice(0, key.lastIndexOf("/")) : `ambria-ref/video-photos/${v.id}`;
     const vt = ytVideoTags[v.id] || {};
     const arr = (x) => (Array.isArray(x) ? x : x ? [x] : []).filter(Boolean);
     const tags = {};
@@ -458,33 +482,39 @@ export default function ManageLibrary({ ctx }) {
     Object.entries(map).forEach(([k, a]) => { if (a.length) tags[k] = a; });
     setVidPhotoBusy(v.id);
     const rows = [];
-    let skipped = 0, failed = 0;
-    for (const file of imgs) {
+    let skipped = 0, failed = 0, firstErr = "";
+    for (const { file, zones } of items) {
       try {
         const res = await uploadToStorage(await compressImageForUpload(file), folder, { keepName: file.name, detail: true });
         if (res.duplicate) { skipped++; continue; }
         rows.push({
           id: res.path || storageKeyFromUrl(res.url) || `${folder}/${file.name}`,
           name: file.name.replace(/\.[^.]+$/, "").replace(/[-_]/g, " "), url: res.url, folder,
-          tags: { ...tags }, elements: [], addedAt: Date.now(), width: null, height: null,
+          // Each photo carries its OWN zones from the review step; the rest is the video's.
+          tags: { ...tags, ...(zones.length ? { areasElements: [...zones] } : {}) },
+          elements: [], addedAt: Date.now(), width: null, height: null,
           source: "video-upload", _linkedVideoId: v.id, _linkedVideoTitle: v.title,
         });
-      } catch { failed++; }
+      } catch (e) { failed++; if (!firstErr) firstErr = e?.message || "unknown error"; }
     }
+    let saveFailed = false;
     if (rows.length) {
       const existing = await checkExistingLibraryUrls(rows.map(r => r.url)).catch(() => new Set());
       const fresh = rows.filter(r => !existing.has(r.url));
       if (fresh.length) {
-        await saveLib(fresh);
-        libPage.prependItems(fresh.filter(r => libStatus === (libPhotoIsTagged(r) ? LIB_STATUS.REVIEW : LIB_STATUS.UNTAGGED)));
+        const res = await saveLib(fresh);
+        // saveLib shows its own red toast on a failed write; don't follow it with a green "added".
+        if (res && res.ok === false) saveFailed = true;
+        else libPage.prependItems(fresh.filter(r => libStatus === (libPhotoIsTagged(r) ? LIB_STATUS.REVIEW : LIB_STATUS.UNTAGGED)));
       }
     }
     setVidPhotoBusy(null);
+    if (saveFailed) return;
     const parts = [];
     if (rows.length) parts.push(`✓ ${rows.length} photo${rows.length > 1 ? "s" : ""} added with the video${Object.keys(tags).length ? " → Needs review" : " (video has no tags yet → Untagged)"}`);
     if (skipped) parts.push(`⊘ ${skipped} skipped`);
-    if (failed) parts.push(`✗ ${failed} failed`);
-    showMsg(parts.join(", "), failed ? "orange" : "green");
+    if (failed) parts.push(`✗ ${failed} failed — ${firstErr}`);
+    showMsg(parts.join(", "), failed ? (rows.length ? "orange" : "red") : "green");
   };
 
   // A public Storage URL → its object key. Lets the orphan check match a Library row whose stored
@@ -2381,7 +2411,57 @@ export default function ManageLibrary({ ctx }) {
       {/* The kit's own CSS — the section-header hover fill (.sb-head) and its pill states live there,
           not in the block above. Without this the sections render but the rows do not respond. */}
       <style>{filterCSS}</style>
-      <input ref={vidPhotoRef} type="file" accept="image/*" multiple style={{display:"none"}} onChange={e=>{if(e.target.files.length)handleVideoPhotoUpload(e.target.files);e.target.value="";}} />
+      {/* ── ADD PHOTOS REVIEW ── one card per picked photo, each with its own zone chips. The top row
+          applies a zone to every photo at once (and takes it off all when it is already on all). */}
+      {vidPhotoPick && (() => {
+        const opts = liveAreaElementOptions(zoneKeys, zoneLabelsD);
+        const items = vidPhotoPick.items;
+        const setItems = (fn) => setVidPhotoPick(p => ({ ...p, items: fn(p.items) }));
+        const flip = (k, z) => setItems(list => list.map(it => it.key !== k ? it : { ...it, zones: it.zones.includes(z) ? it.zones.filter(x => x !== z) : [...it.zones, z] }));
+        const onAll = (z) => items.length > 0 && items.every(it => it.zones.includes(z));
+        const flipAll = (z) => { const all = onAll(z); setItems(list => list.map(it => ({ ...it, zones: all ? it.zones.filter(x => x !== z) : [...new Set([...it.zones, z])] }))); };
+        const drop = (k) => setItems(list => list.filter(it => { if (it.key === k) URL.revokeObjectURL(it.url); return it.key !== k; }));
+        const missing = items.filter(it => !it.zones.length).length;
+        const canUpload = items.length > 0 && missing === 0;
+        const chip = (on) => ({ padding: "3px 8px", borderRadius: 8, fontSize: 10.5, cursor: "pointer", fontWeight: on ? 700 : 500, border: `1px solid ${on ? accent : border}`, background: on ? `${accent}18` : "transparent", color: on ? accent : textS, whiteSpace: "nowrap" });
+        return <div onClick={closeVidPhotoPick} style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 1100, maxHeight: "92vh", display: "flex", flexDirection: "column", background: cardBg, borderRadius: 14, border: `1px solid ${border}`, boxShadow: "0 12px 48px rgba(0,0,0,0.45)" }}>
+            <div style={{ padding: "16px 18px 12px", borderBottom: `1px solid ${border}` }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ fontSize: 15, fontWeight: 700, color: textP }}>📷 Add {items.length} photo{items.length === 1 ? "" : "s"} — pick a zone for each</div>
+                <span onClick={closeVidPhotoPick} style={{ marginLeft: "auto", fontSize: 18, cursor: "pointer", color: textS, fontWeight: 700 }}>✕</span>
+              </div>
+              <div style={{ fontSize: 11, color: textS, margin: "2px 0 10px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{vidPhotoPick.v.title} · venue, event type and other tags come from the video</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 5, alignItems: "center" }}>
+                <span style={{ fontSize: 10.5, fontWeight: 700, color: textS, marginRight: 4 }}>Apply to all:</span>
+                {opts.map(z => <span key={z} onClick={() => flipAll(z)} style={chip(onAll(z))}>{z}</span>)}
+              </div>
+            </div>
+            <div style={{ overflowY: "auto", padding: 14, display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(240px,1fr))", gap: 12 }}>
+              {items.map(it => <div key={it.key} style={{ border: `1px solid ${it.zones.length ? border : "#E11D48"}`, borderRadius: 10, overflow: "hidden", background: isDark ? "rgba(255,255,255,0.03)" : "#fff" }}>
+                <div style={{ position: "relative" }}>
+                  <img src={it.url} alt={it.file.name} style={{ width: "100%", height: 150, objectFit: "cover", display: "block" }} />
+                  <span onClick={() => drop(it.key)} title="Remove from this upload" style={{ position: "absolute", top: 6, right: 6, width: 24, height: 24, borderRadius: 12, background: "rgba(0,0,0,0.65)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, cursor: "pointer" }}>✕</span>
+                </div>
+                <div style={{ padding: "8px 9px 10px" }}>
+                  <div style={{ fontSize: 10, color: textS, marginBottom: 6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.file.name}</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                    {opts.map(z => <span key={z} onClick={() => flip(it.key, z)} style={chip(it.zones.includes(z))}>{z}</span>)}
+                  </div>
+                </div>
+              </div>)}
+            </div>
+            <div style={{ padding: "12px 18px", borderTop: `1px solid ${border}`, display: "flex", alignItems: "center", gap: 8 }}>
+              <button onClick={() => vidPhotoRef.current?.click()} title="Pick more photos — they are added to this batch" style={{ ...S.btn(false), fontSize: 12, color: accent, border: `1px solid ${accent}` }}>+ Add more photos</button>
+              <span style={{ fontSize: 11, color: missing ? "#E11D48" : textS }}>{missing ? `${missing} photo${missing === 1 ? "" : "s"} still need${missing === 1 ? "s" : ""} a zone` : "Every photo has a zone"}</span>
+              <button onClick={closeVidPhotoPick} style={{ ...S.btn(false), fontSize: 12, marginLeft: "auto" }}>Cancel</button>
+              <button disabled={!canUpload} onClick={() => { const v = vidPhotoPick.v; const list = items.map(({ file, zones }) => ({ file, zones })); closeVidPhotoPick(); handleVideoPhotoUpload(v, list); }}
+                style={{ ...S.btn(true), fontSize: 12, opacity: canUpload ? 1 : 0.5, cursor: canUpload ? "pointer" : "default" }}>Upload {items.length} photo{items.length === 1 ? "" : "s"}</button>
+            </div>
+          </div>
+        </div>;
+      })()}
+      <input ref={vidPhotoRef} type="file" accept="image/*" multiple style={{display:"none"}} onChange={e=>{if(e.target.files.length)openVidPhotoPick(e.target.files);e.target.value="";}} />
       {/* Under everything, above nothing. See .ml-wash. */}
       <div className="ml-wash" aria-hidden="true">
         <span className="ml-wash-a"/><span className="ml-wash-b"/><span className="ml-wash-c"/>
