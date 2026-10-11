@@ -4533,7 +4533,9 @@ export default function StudioApp() {
       ownedQty += crossFnBonus;
       shortQty -= crossFnBonus;
       const ownedRate = priceForInvItem(item, rcFactorByKey, imsInventory, el.kitOverrides);
-      const shortRate = (Number(item.cost) || 0) * (oosCostPctFor(item, rcCostPctForSub) / 100);
+      // Floor: cost%-of-production must never undercut what the item would've sold for if it
+      // were simply in stock — a true shortfall is never cheaper for the client than owning it.
+      const shortRate = Math.max(ownedRate, (Number(item.cost) || 0) * (oosCostPctFor(item, rcCostPctForSub) / 100));
       const shortCost = shortQty * shortRate;
       const lineCost = repeatAdjustedLineCost(item, ownedQty, ownedRate, opts?.zc, opts?.venueName, crossFnTake, el.repeatOverride) + shortCost;
       const unitPrice = qty > 0 ? lineCost / qty : ownedRate;

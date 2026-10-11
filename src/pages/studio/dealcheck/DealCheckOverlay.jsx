@@ -710,7 +710,9 @@ export default function DealCheckOverlay({ ctx }) {
                 // flat production cost × sub-category cost% only — no date-category multiplier, no
                 // Repeat discount. Both of those are about market/zone-reuse status, neither of which
                 // changes what it actually costs Ambria to produce or buy a brand-new unit.
-                shortCost = shortQty * (Number(item.cost) || 0) * (oosCostPctFor(item, costPctFor) / 100);
+                // Floor: cost%-of-production must never undercut what the item would've sold for if
+                // it were simply in stock (StudioApp.jsx's getElPrice applies the same floor).
+                shortCost = shortQty * Math.max(baseR, (Number(item.cost) || 0) * (oosCostPctFor(item, costPctFor) / 100));
                 lineRental = ownedRental + shortCost;
               }
               rental += lineRental; byFn[fi].rental += lineRental;
@@ -2558,7 +2560,7 @@ export default function DealCheckOverlay({ ctx }) {
                           const _crossFnAvail = _crossFnTakePill(it.id, qty);
                           const ownedQty = Math.min(qty, available + _crossFnAvail);
                           const shortQty = Math.max(0, qty - ownedQty);
-                          const shortRate = (Number(it.cost) || 0) * (oosCostPctFor(it, _costPctFor) / 100);
+                          const shortRate = Math.max(baseR, (Number(it.cost) || 0) * (oosCostPctFor(it, _costPctFor) / 100));
                           zoneRentalTotal += repeatAdjustedRental(_rep, _fnVenueForRepeat, it, ownedQty, baseR, _fnDateForRepeat, _crossFnAvail) + shortQty * shortRate;
                         });
                         manualItemsInZone.forEach(mi => { const it = dcInventoryCache.find(x => x.id === mi.imsId); if (!it) return; const q = Number(mi.qty) || 1; const baseR = effKitRental(it, fnIdx, null); const _rep = mi.zoneKey ? repeatCatFor(fns[fnIdx]?.zoneConfig?.[mi.zoneKey], "elements") : false; zoneRentalTotal += repeatAdjustedRental(_rep, _fnVenueForRepeat, it, q, baseR, _fnDateForRepeat, _crossFnTakePill(it.id, q)); });
@@ -2969,7 +2971,7 @@ export default function DealCheckOverlay({ ctx }) {
                                     const _cardOwnedQty = Math.min(_cardQty, _cardAvail + _cardCrossFn);
                                     const _cardShortQty = Math.max(0, _cardQty - _cardOwnedQty);
                                     const _cardCostPctFor = (subcat) => { const key = String(subcat || "").trim().toLowerCase(); const row = (rcSubcatFactors || []).find(r => r?.id === key); const v = row ? Number(row.cost_percent) : undefined; return (typeof v === "number" && isFinite(v) && v >= 0) ? v : 100; };
-                                    const _cardShortRate = (Number(item.cost) || 0) * (oosCostPctFor(item, _cardCostPctFor) / 100);
+                                    const _cardShortRate = Math.max(rental, (Number(item.cost) || 0) * (oosCostPctFor(item, _cardCostPctFor) / 100));
                                     _lineTotal = repeatAdjustedRental(_rep, _venue, item, _cardOwnedQty, rental, _fnDateForRepeat, _cardCrossFn) + _cardShortQty * _cardShortRate;
                                   }
                                   // The per-unit rate shown next to "×" — the discounted equivalent, not

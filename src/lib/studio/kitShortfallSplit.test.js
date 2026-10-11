@@ -78,9 +78,10 @@ describe("kitShortfallSplit — kit with components", () => {
     expect(r.shortQty).toBe(3);
     expect(r.ownedCost).toBe(2 * 200); // 2 pre-built kits at full rate
     // kitBase share: 3 short kits x kitBase(100) x 50% = 150
-    // component A: needs 6, 4 owned @30 = 120; 2 short @ 50*50% = 50 -> componentCost = 170
-    // shortCost = 150 (kitBase) + 170 (component) = 320
-    expect(r.shortCost).toBe(320);
+    // component A: needs 6, 4 owned @30 = 120; 2 short @ max(rate 30, cost 50*50%=25) = 2*30 = 60
+    // -> componentCost = 180 (the floor lifts it above the plain 50*50% cost-basis figure)
+    // shortCost = 150 (kitBase) + 180 (component) = 330
+    expect(r.shortCost).toBe(330);
   });
 
   it("kit-inside-a-kit recurses two levels deep for the shortfall portion", () => {
