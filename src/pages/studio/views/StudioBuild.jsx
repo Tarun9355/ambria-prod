@@ -16,6 +16,7 @@ import { trussRowCost, zoneTrussStandingDiscountDetail, repeatCatFor } from "../
 import { paletteSearch, paletteMatches } from "../../../components/studio/filterUI.jsx";
 import { resolveTrussConfig } from "../../../lib/studio/pricing";
 import { qtyUsedElsewhereInBuild } from "../../../lib/studio/dealAvailability";
+import { logDiscountToClientToggle } from "../../../lib/studio/userActions";
 import { isHiddenSubcat } from "../../../lib/rateCard";
 import { groupIdsForZones } from "../../../lib/studio/zoneGroups";
 import { CUSTOM_ZONE_TAG_PREFIX } from "../../../lib/studio/keys.js";
@@ -2832,7 +2833,9 @@ undefined
         <input type="checkbox" checked={!hideDiscountFromClient} disabled={!activeClientId}
           onChange={e=>{
             const v=e.target.checked;
+            const client=clientLedger.find(c=>c.id===activeClientId);
             saveClientLedger(clientLedger.map(c=>c.id===activeClientId?{...c,applyDiscountToClient:v}:c));
+            logDiscountToClientToggle(authUser, client, v);
           }}
           style={{width:11,height:11,cursor:activeClientId?"pointer":"not-allowed",accentColor:accent}}/>
       </label>

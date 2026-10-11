@@ -4861,6 +4861,28 @@ export default function StudioApp() {
     }, 0);
   }, [getElPrice, applyFloralRatio]);
 
+  // Freezes every element's resolved rate at save time, for the active function only (the other
+  // functions are stored builds with no live pricing run against them — same scoping fnTotals
+  // above already accepts). Pricing has always been recomputed live against stock availability and
+  // the date-category multiplier, both of which can move under an UNCHANGED build — which is
+  // exactly what made the Naman Nagpal incident (2026-10-11, ₹8,63,725 → ₹6,98,714 with nothing
+  // edited) take hours of SQL archaeology to explain, because no save had ever recorded what each
+  // item's rate actually was. Read-only and additive: nothing here feeds back into live pricing.
+  const buildElementPriceSnapshot = useCallback(() => {
+    const out = {};
+    const allZoneKeys = [...zoneKeys, ...(customZones || []).map((cz) => cz.id)];
+    allZoneKeys.forEach((zk) => {
+      const els = zoneElements[zk];
+      if (!Array.isArray(els) || !els.length) return;
+      const zc = zoneConfig[zk];
+      out[zk] = els.map((el, i) => {
+        const r = getElPrice(el, zc, { checkAvailability: true, zoneKey: zk, elIdx: i }, venue);
+        return { unitPrice: r.unitPrice, lineCost: r.lineCost, fullUnitPrice: r.fullUnitPrice ?? null, warning: r.warning || null };
+      });
+    });
+    return out;
+  }, [zoneKeys, customZones, zoneElements, zoneConfig, getElPrice, venue]);
+
   // checkAvail (optional): mirrors getElPrice's opts.checkAvailability. blocksForDate (optional) is
   // the specific function's OWN date's blocks (from the blocksByDate map — see the warming effect
   // below) — pass it whenever checkAvail is true for a function that ISN'T necessarily the active
@@ -7363,6 +7385,13 @@ export default function StudioApp() {
         fnSnapshots[i] = snap;
       }
     }
+    // Same pricingReady gate as total/decorTotal/transportTotal below — a snapshot taken while
+    // rates are still settling would freeze seed-default garbage instead of a real historical rate.
+    // Skipping it here just means this save carries no priceSnapshot forward; it never blocks or
+    // delays the save itself.
+    if (pricingReady && fnSnapshots[liveIdx]) {
+      fnSnapshots[liveIdx] = { ...fnSnapshots[liveIdx], priceSnapshot: buildElementPriceSnapshot() };
+    }
     const snapshot = {
       id: "SES_" + Date.now().toString(36),
       savedAt: Date.now(),
@@ -7675,7 +7704,7 @@ export default function StudioApp() {
     // pricingReady for free — but "usually" is not a guarantee: a deal whose seed-default total
     // happens to equal its real one would leave this callback holding pricingReady=false forever,
     // and then no total would be written at all. That is a worse failure than the one being fixed.
-    pricingReady]);
+    pricingReady, buildElementPriceSnapshot]);
 
   // ── Build auto-save (robust) ──────────────────────────────────────────────
   // The build (zone photos, Silver/Gold tab, elements, dims, carpet) previously persisted ONLY on a

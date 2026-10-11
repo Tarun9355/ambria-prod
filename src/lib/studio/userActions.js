@@ -94,3 +94,8 @@ export const logVideoVerify = (u, v, verified, res) => logWrite(u, "video.verify
 export const logVideoHide   = (u, v, hidden, res)   => logWrite(u, "video.hide",   { targetType: "video", targetId: v?.id, targetName: v?.title, ok: !!res?.ok, error: res?.error, detail: { hidden } });
 /** Bulk actions: the single clicks with the biggest blast radius. Always record the count. */
 export const logBulk = (u, what, count, res, det) => logWrite(u, `bulk.${what}`, { ok: res?.ok !== false, error: res?.error, detail: { count, ...(det || {}) } });
+/** The Build-page "apply discount to guest" checkbox (StudioApp.jsx's hideDiscountFromClient) —
+ * unlabeled and easy to brush against, and flips a live client quote with no on-screen warning.
+ * Logged so a quote swing like this is a one-line lookup next time, not hours of SQL archaeology. */
+export const logDiscountToClientToggle = (u, client, on) =>
+  logWrite(u, "build.discountToClient", { targetType: "client", targetId: client?.id, targetName: client?.name, ok: true, detail: { on } });
