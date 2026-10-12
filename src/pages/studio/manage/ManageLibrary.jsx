@@ -2437,7 +2437,10 @@ export default function ManageLibrary({ ctx }) {
                 {opts.map(z => <span key={z} onClick={() => flipAll(z)} style={chip(onAll(z))}>{z}</span>)}
               </div>
             </div>
-            <div style={{ overflowY: "auto", padding: 14, display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(240px,1fr))", gap: 12 }}>
+            {/* gridAutoRows max-content: the cards are overflow:hidden, which lets a grid row shrink below its
+                content when the box is short — with 5+ photos the rows squeezed to the photo height and cut
+                every card's zone chips off. Rows now always take their full height and the grid scrolls. */}
+            <div style={{ flex: "1 1 auto", minHeight: 0, overflowY: "auto", padding: 14, display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(240px,1fr))", gridAutoRows: "max-content", alignContent: "start", gap: 12 }}>
               {items.map(it => <div key={it.key} style={{ border: `1px solid ${it.zones.length ? border : "#E11D48"}`, borderRadius: 10, overflow: "hidden", background: isDark ? "rgba(255,255,255,0.03)" : "#fff" }}>
                 <div style={{ position: "relative" }}>
                   <img src={it.url} alt={it.file.name} style={{ width: "100%", height: 150, objectFit: "cover", display: "block" }} />
