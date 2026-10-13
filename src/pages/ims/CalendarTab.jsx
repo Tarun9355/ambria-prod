@@ -38,6 +38,18 @@ export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, l
     "Normal": { bg: "#f0fdf4", border: "#86efac", text: "#16a34a", label: "○ Normal" },
   };
   const hasCats = Object.keys(dateCategories).length > 0;
+  // This grid's colour is always LIVE (today's real booking count) — resolveDateCategory below is
+  // whatever Studio actually prices a deal at, which can silently differ: auto-sync paused and
+  // frozen on a stale value, or a manual markedDates override. Same mapping IMS.jsx's own resync
+  // effect uses to translate studioLmsCache's labels into datePricing's category keys.
+  const LIVE_CAT_KEY = { "Heavy Saya": "heavy_saya", "Saya": "competition", "Normal": "non_saya" };
+  const getPricingDivergence = (ds, liveCat) => {
+    if (!liveCat) return null;
+    const liveKey = LIVE_CAT_KEY[liveCat] || "non_saya";
+    const pricingKey = resolveDateCategory(ds, settings);
+    if (pricingKey === liveKey) return null;
+    return { liveKey, pricingKey };
+  };
 
   // Manual pricing overrides live right here now — one calendar to view AND set dates on, instead
   // of a second click-to-mark grid duplicated in Date Pricing Config below.
@@ -202,6 +214,7 @@ export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, l
             const cat = getDateCategory(ds);
             const catStyle = cat && dateCatColors[cat] ? dateCatColors[cat] : null;
             const override = marked[ds];
+            const divergence = getPricingDivergence(ds, cat);
             return (
               <div key={d} onClick={() => setSelDate(isSel ? null : ds)}
                 role="button" tabIndex={0}
@@ -219,6 +232,12 @@ export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, l
                     {catStyle && (
                       <span className="text-[9px] font-bold leading-none px-1.5 py-0.5 rounded-full whitespace-nowrap"
                         style={{ color: catStyle.text, background: "rgba(255,255,255,0.75)" }}>{catStyle.label}</span>
+                    )}
+                    {divergence && (
+                      <span title={`Live demand right now is ${DATE_PRICING_LABELS[divergence.liveKey]}, but this date is actually PRICED at ${DATE_PRICING_LABELS[divergence.pricingKey]} (auto-sync paused on a stale value, or a manual override is set) — Studio quotes at the priced category, not the live one shown here.`}
+                        className="text-[9px] font-bold leading-none px-1 py-0.5 rounded-full whitespace-nowrap bg-red-600 text-white">
+                        ⚠ priced {DATE_PRICING_LABELS[divergence.pricingKey]}
+                      </span>
                     )}
                     {evts.length > 0 && (
                       <span className="text-[10px] font-bold text-gray-500 bg-gray-100 rounded-full min-w-[17px] h-[17px] px-1 flex items-center justify-center tabular-nums leading-none">{evts.length}</span>
