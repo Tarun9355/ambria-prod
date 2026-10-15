@@ -125,7 +125,7 @@ export const INIT_TRUSS_INV = {
     "2": { stock: 30, name: "Beam 2ft" },
   },
   rates: { pillarRftRate: 0, beamRftRate: 0, battaRftRate: 0, lizaKgRate: 0, maskingPieceRate: 0, curtainPieceRate: 0, lizaKgPurchase: 0, maskingPiecePurchase: 0, curtainPiecePurchase: 0 },
-  fabricFreshMarkup: { liza: 40, masking: 40, curtain: 40 },
+  fabricFreshMarkup: { liza: 7, masking: 7, curtain: 7 },
   fabricFactors: { kgPerRftWrap: 0.3, kgPerSqftDense: 0.08, kgPerSqftModerate: 0.05, kgPerSqftMinimum: 0.03 },
   batta: { stockRft: 3000, bufferPct: 10 },
   liza: { stockKg: 0 },

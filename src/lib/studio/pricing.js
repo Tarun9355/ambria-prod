@@ -507,8 +507,14 @@ export const calcZoneFabric = (zc, trussInv, drapeDensity) => {
 // Returns: {reusedQty, freshQty, reusedCost, freshCost, total, shortQty}
 // Two owned grades per colour, stored on the SAME row: OLD stock in `qtyField` (e.g. stockKg) and NEW
 // stock in `qtyField+"New"` (e.g. stockKgNew). Consumption order: owned OLD first (depreciating,
-// cheaper) → owned NEW (premium rate) → buy fresh (purchase × markup). Backward-compatible: a missing
-// New field counts as 0, and an absent rentalRateNew falls back to the OLD rental rate.
+// cheaper) → owned NEW (premium rate) → buy fresh. Backward-compatible: a missing New field counts
+// as 0, and an absent rentalRateNew falls back to the OLD rental rate.
+// Owner ask (2026-10-15): a true shortfall used to price at purchase price × fresh markup % (40%
+// default) and was never actually billed to the client — Deal Check tracked it purely as an internal
+// margin hit. That meant going short on fabric cost Ambria money with nobody told and the client never
+// charged for it. Now prices at the item's own OLD rental rate × (1 + fresh markup %) — default 7% —
+// and this IS billed to the guest build (see calcStructCost's fabric fold-in). purchasePrice is kept
+// as a parameter for backward compatibility but no longer feeds this formula.
 export const calcFabricAllocCost = (qty, colour, stockArray, qtyField, rentalRate, purchasePrice, freshMarkupPct, rentalRateNew) => {
   if (!qty || qty <= 0) return { reusedQty:0, reusedOldQty:0, reusedNewQty:0, freshQty:0, reusedCost:0, freshCost:0, total:0, shortQty:0 };
   const newField = qtyField + "New";
@@ -523,7 +529,7 @@ export const calcFabricAllocCost = (qty, colour, stockArray, qtyField, rentalRat
   rem -= reusedNewQty;
   const freshQty = Math.max(0, rem);
   const reusedCost = reusedOldQty * oldRate + reusedNewQty * newRate;
-  const freshCost  = freshQty  * (Number(purchasePrice)||0) * ((Number(freshMarkupPct)||0)/100);
+  const freshCost  = freshQty  * oldRate * (1 + (Number(freshMarkupPct)||0)/100);
   return {
     reusedQty: reusedOldQty + reusedNewQty,
     reusedOldQty,

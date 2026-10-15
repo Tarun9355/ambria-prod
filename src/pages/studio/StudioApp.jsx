@@ -281,21 +281,40 @@ const FLORAL_HARDPROP_DEFAULT = {
 // over that one; kept in lockstep by being the one other place this number is allowed to live.
 const GUEST_STRUCT_DISCOUNT_PCT = 25;
 function calcStructCost(zk, zc, rates, applyDiscount) {
-  if (!zc) return { truss: 0, masking: 0, platform: 0, carpet: 0, arches: 0, pillars: 0, glass: 0, print: 0, total: 0 };
+  if (!zc) return { truss: 0, masking: 0, platform: 0, carpet: 0, arches: 0, pillars: 0, glass: 0, print: 0, fabric: 0, fabricShort: false, total: 0 };
   // fd (Platform/Carpet's own floor size) no longer falls back to the truss's dims (d) — owner ask:
   // adding/sizing a truss must never silently size a Platform/Carpet at the same footprint. A zone
   // with plH/cpT set but no floorDims of its own now prices at 0 sqft until someone types a real
   // size, same as any other required field left blank. Deliberately no migration for a deal already
   // relying on the old fallback — owner call: let those prices drop to 0 rather than paper over it.
-  const d = zc.dims || {}, fd = zc.floorDims || {}, r = { truss: 0, masking: 0, platform: 0, carpet: 0, arches: 0, pillars: 0, glass: 0 };
+  const d = zc.dims || {}, fd = zc.floorDims || {}, r = { truss: 0, masking: 0, platform: 0, carpet: 0, arches: 0, pillars: 0, glass: 0, fabric: 0, fabricShort: false };
   // Material, drape density, and the ceiling-via-print toggle are all per-row — separate truss
   // structures in the same zone can be a different material, density, or handle their ceiling
   // differently, so each extra row carries its own (set via its own card in the zone editor).
   const trussRows = [
-    { dims: d, trT: zc.trT, trussType: zc.trussType, trussQty: zc.trussQty, trussFrontExt: zc.trussFrontExt, trussFrontExtH: zc.trussFrontExtH, trussBackDepth: zc.trussBackDepth, mkOn: zc.mkOn, mkT: zc.mkT, mkWalls: zc.mkWalls, mkWallMat: zc.mkWallMat, mkS: zc.mkS, trussMaterial: zc.trussMaterial, drapeDensity: zc.drapeDensity, customCeilingItemId: zc.customCeilingItemId, customMaskingItemId: zc.customMaskingItemId },
+    { dims: d, trT: zc.trT, trussType: zc.trussType, trussQty: zc.trussQty, trussFrontExt: zc.trussFrontExt, trussFrontExtH: zc.trussFrontExtH, trussBackDepth: zc.trussBackDepth, mkOn: zc.mkOn, mkT: zc.mkT, mkWalls: zc.mkWalls, mkWallMat: zc.mkWallMat, mkS: zc.mkS, trussMaterial: zc.trussMaterial, drapeDensity: zc.drapeDensity, customCeilingItemId: zc.customCeilingItemId, customMaskingItemId: zc.customMaskingItemId,
+      maskingAllocation: zc.maskingAllocation, lizaAllocation: zc.lizaAllocation, curtainAllocation: zc.curtainAllocation },
     ...(zc.extraTrussRows || []),
   ];
   trussRows.forEach((row) => { const { truss, masking } = trussRowCost(row, rates); r.truss += truss; r.masking += masking; });
+  // Liza/Wall-Masking/Velvet-Curtain DRAPE FABRIC — a separate, colour-keyed stock pool from the
+  // flat sqft masking rate above (trussRowCost's own `masking`), checked against real IMS fabric
+  // stock. Owner ask (2026-10-15): a true shortfall here used to price at purchase×40% and was never
+  // billed to the guest — Deal Check tracked it purely as an internal margin hit, invisible on the
+  // quote. Now folded into the guest build itself: calcZoneFabricCost already reads any colour this
+  // zone/row has picked (Deal Check's own allocation, carried above) and auto-fills the best-stocked
+  // colour otherwise, pricing owned stock at full rental and any real shortfall at that fabric's own
+  // rental rate + the admin-set fresh markup % (calcFabricAllocCost — default 7%, no longer 40%).
+  if (rates?.trussInv) {
+    const stockTotal = (arr, qf) => (arr || []).reduce((s, row2) => s + (Number(row2[qf]) || 0) + (Number(row2[qf + "New"]) || 0), 0);
+    trussRows.forEach((row) => {
+      r.fabric += calcZoneFabricCost(row, rates.trussInv, [], row.drapeDensity || "moderate");
+      const fab = calcZoneFabric(row, rates.trussInv, row.drapeDensity || "moderate");
+      if (fab.maskingPieces > stockTotal(rates.trussInv.maskingStock, "stockPieces")) r.fabricShort = true;
+      if (fab.lizaKg > stockTotal(rates.trussInv.lizaStock, "stockKg")) r.fabricShort = true;
+      if (fab.curtainPieces > stockTotal(rates.trussInv.curtainStock, "stockPieces")) r.fabricShort = true;
+    });
+  }
   const platformRows = [{ plH: zc.plH, floorDims: fd, cpT: zc.cpT, plQty: zc.plQty }, ...(zc.extraPlatformRows || [])];
   platformRows.forEach((row) => { const { platform, carpet } = platformRowCost(row, rates); r.platform += platform; r.carpet += carpet; });
   if (zc.archOn && zc.archT) { const aq = zc.archQty || 0, aw = zc.archW || 0, ah = zc.archH || 0; r.arches = aq * aw * ah * (BASE_RATES.arch[zc.archT] || 60); }
@@ -312,7 +331,7 @@ function calcStructCost(zk, zc, rates, applyDiscount) {
     const q = Math.max(1, Math.round(Number(p.qty) || 1));
     return sum + s * (m?.ratePerSqft || 0) * q;
   }, 0);
-  r.total = r.truss + r.masking + r.platform + r.carpet + r.arches + r.pillars + r.glass + r.print;
+  r.total = r.truss + r.masking + r.platform + r.carpet + r.arches + r.pillars + r.glass + r.print + r.fabric;
   // Flat 25% off each structural group — same guest-discount rule repeatAdjustedLineCost uses for
   // elements (see its own comment): Deal Check keeps its own separate, config-driven pillar/beam
   // discount (zoneTrussStandingDiscount, still called directly from DealCheckOverlay.jsx/
@@ -334,7 +353,10 @@ function calcStructCost(zk, zc, rates, applyDiscount) {
       if (!flags[grp]) return;
       keys.forEach((k) => { r[k] = Math.round(r[k] * (1 - pct / 100)); });
     });
-    r.total = r.truss + r.masking + r.platform + r.carpet + r.arches + r.pillars + r.glass + r.print;
+    // Fabric is NOT part of any discount group — a true shortfall's fresh-markup charge isn't the
+    // kind of standing/reuse discount this flat pct exists for, so it's always added back at full
+    // price, same as the truss discount itself never touches arches/pillars/glass that aren't flagged.
+    r.total = r.truss + r.masking + r.platform + r.carpet + r.arches + r.pillars + r.glass + r.print + r.fabric;
     r.trussDiscount = before - r.total;
   }
   return r;
@@ -4074,7 +4096,11 @@ export default function StudioApp() {
   // Bundled settings-driven rates passed to calcStructCost everywhere — imsInventory/rcFactorByKey
   // ride along so trussRowCost can price a "custom ceiling/masking" inventory item (rental × its
   // sub-category's scaling factor) the same way any other IMS-sourced element prices.
-  const structRates = useMemo(() => ({ printMaterials: imsPrintMaterials, carpetMaterials: imsCarpetMaterials, trussRates: imsTrussRates, maskingRates: imsMaskingRates, platformRates: imsPlatformRates, imsInventory, rcFactorByKey }), [imsPrintMaterials, imsCarpetMaterials, imsTrussRates, imsMaskingRates, imsPlatformRates, imsInventory, rcFactorByKey]);
+  // trussInv rides along too (same studioFloralData-first, dealCheckData-fallback source
+  // sharedFloralSettings itself reads — can't use sharedFloralSettings here, it's declared further
+  // down) so calcStructCost can price a true Liza/masking/curtain fabric shortfall into the guest
+  // build itself, not just Deal Check's internal cost tracking (see calcFabricAllocCost's own note).
+  const structRates = useMemo(() => ({ printMaterials: imsPrintMaterials, carpetMaterials: imsCarpetMaterials, trussRates: imsTrussRates, maskingRates: imsMaskingRates, platformRates: imsPlatformRates, imsInventory, rcFactorByKey, trussInv: studioFloralData?.trussInv ?? dealCheckData?.trussInv }), [imsPrintMaterials, imsCarpetMaterials, imsTrussRates, imsMaskingRates, imsPlatformRates, imsInventory, rcFactorByKey, studioFloralData, dealCheckData]);
 
   // Cost% for pricing an inventory-sourced element's shortfall (qty beyond what's free in stock
   // for the active date) — same rate_card_categories row as the scaling factor, same join key.
@@ -4285,7 +4311,7 @@ export default function StudioApp() {
   const scaleStruct = (r) => {
     if (guestPriceMultiplier === 1 || !r) return r;
     const s = { ...r };
-    ["truss", "masking", "platform", "carpet", "arches", "pillars", "glass", "print", "total", "trussDiscount"].forEach((k) => {
+    ["truss", "masking", "platform", "carpet", "arches", "pillars", "glass", "print", "fabric", "total", "trussDiscount"].forEach((k) => {
       if (typeof s[k] === "number") s[k] = s[k] * guestPriceMultiplier;
     });
     return s;

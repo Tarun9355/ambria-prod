@@ -860,7 +860,7 @@ export default function StudioBuild({ ctx }) {
     if (!showCosts) return 0;
     if (id === "elements") return calcElsCost(zoneElements[k], true, zoneConfig[k], {checkAvailability:true, crossFnReusePool: crossFnPool(), zoneKey: k}, aVenue);
     const sc = zoneConfig[k] ? scaleStruct(calcStructCost(k, zoneConfig[k], structRates, structDiscountFor(zoneConfig[k], aVenue))) : null;
-    if (id === "truss") return sc ? sc.truss + sc.masking + sc.arches + sc.pillars + sc.glass : 0;
+    if (id === "truss") return sc ? sc.truss + sc.masking + sc.arches + sc.pillars + sc.glass + sc.fabric : 0;
     if (id === "platform") return sc ? sc.platform + sc.carpet : 0;
     return sc ? sc.print : 0; // calcStructCost's own print total — same figure zoneTotal() now folds in below
   };
@@ -869,6 +869,14 @@ export default function StudioBuild({ ctx }) {
     const sub = zoneSectionSub(k, sec.id);
     const cost = sectionCost(k, sec.id);
     const catRepeat = isRepeatCat(k, sec.id);
+    // Liza/Masking/Curtain drape fabric is folded into this chip's own total above (sectionCost's
+    // sc.fabric) — this just flags WHY it might be higher than the truss sqft rate alone would
+    // suggest, same spirit as every other "heads up, this moved and here's why" indicator this app
+    // has needed (stock shortfall, date pricing, the discreet-discount toggle).
+    // No applyDiscount arg needed — fabricShort is set before calcStructCost's discount step runs,
+    // so it's unaffected either way, and omitting it here avoids referencing structDiscountFor
+    // (defined further down this component) before its own declaration.
+    const fabricShort = sec.id === "truss" && zoneConfig[k] ? calcStructCost(k, zoneConfig[k], structRates).fabricShort : false;
     return <div key={sec.id} className="sec-tile" data-on={on?"1":"0"} onClick={()=>openZoneSection(k,sec.id)}
       style={{display:"flex",alignItems:"center",gap:9,padding:"11px 12px",borderRadius:10,cursor:"pointer",
         border:`1px solid ${on?accent:border}`,background:on?`${accent}12`:cardBg}}>
@@ -886,6 +894,7 @@ export default function StudioBuild({ ctx }) {
         style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:22,height:22,borderRadius:7,flexShrink:0,color:catRepeat?"#059669":textS,background:catRepeat?"#05966918":"transparent"}}>
         {catRepeat?<IconRepeat size={12}/>:<IconSparkle size={12}/>}
       </span>
+      {fabricShort && <span title="This zone's drape fabric (Liza/masking/curtains) runs short of owned stock — the shortfall is billed at that fabric's rental rate plus the fresh-markup %, included in the amount shown." style={{fontSize:10,flexShrink:0}}>🧵⚠️</span>}
       {cost>0&&<div style={{fontSize:11.5,fontWeight:700,color:on?accent:textP,flexShrink:0}}>{fmt(cost)}</div>}
       <span style={{display:"flex",flexShrink:0,color:on?accent:textS,transform:on?"rotate(180deg)":"none",transition:"transform .18s ease"}}><IconChevron size={12}/></span>
     </div>;
