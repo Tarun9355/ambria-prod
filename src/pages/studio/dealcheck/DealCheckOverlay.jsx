@@ -894,6 +894,29 @@ export default function DealCheckOverlay({ ctx }) {
                     }
                     const fabCost = calcZoneFabricCost(row, tInv, anchors, density) * repeatFabMult;
                     truss += fabCost; byFn[fi].truss += fabCost; addD("Fabric", "fabric", fabCost); // truss/masking fabric → Fabric
+                    // Line items for the Fabric dept's own planning view (IMS Dept Ops) — this never
+                    // existed before (addD above only ever fed a dollar total, nothing a warehouse team
+                    // could actually shop/pull against). Old vs New in the name so whoever's pulling
+                    // stock knows which tier this zone was billed at, straight from the salesperson's
+                    // own Build toggle (row.useNewFabric) — not a guess.
+                    if (deptInv["Fabric"]) {
+                      const fab = calcZoneFabric(row, tInv, density);
+                      const tierLabel = row.useNewFabric ? "New" : "Old";
+                      const rateFor = (oldKey, newKey) => {
+                        const oldR = Number(tInv.rates?.[oldKey]) || 0;
+                        const newRaw = tInv.rates?.[newKey];
+                        const newR = (newRaw === undefined || newRaw === null || newRaw === "") ? oldR : (Number(newRaw) || 0);
+                        return row.useNewFabric ? newR : oldR;
+                      };
+                      const pushFab = (qty, unitLabel, name, oldKey, newKey) => {
+                        if (!(qty > 0)) return;
+                        const unit = rateFor(oldKey, newKey);
+                        deptInv["Fabric"].push({ name: `${name} (${tierLabel})`, photo: "", qty: Math.round(qty * 100) / 100, unit: Math.round(unit * repeatFabMult), total: Math.round(qty * unit * repeatFabMult), sub: `${unitLabel} · ${zk}` });
+                      };
+                      pushFab(fab.maskingPieces, "pc", "Wall Masking", "maskingPieceRate", "maskingPieceRateNew");
+                      pushFab(fab.lizaKg, "kg", "Liza Fabric", "lizaKgRate", "lizaKgRateNew");
+                      pushFab(fab.curtainPieces, "pc", "Velvet Curtains", "curtainPieceRate", "curtainPieceRateNew");
+                    }
                   });
                 });
               }
@@ -1669,12 +1692,18 @@ export default function DealCheckOverlay({ ctx }) {
                   // A zone can carry more than one truss row — each row's own allocation (or auto-fill).
                   [zc[zk], ...(zc[zk].extraTrussRows || [])].forEach(row => {
                     const fab = calcZoneFabric(row, tInv, density);
+                    // Owner ask (2026-10-15): the Fabric dept needs to know WHICH tier a requirement is
+                    // for, not just a colour+qty total — row.useNewFabric (the salesperson's own Build
+                    // toggle) says so directly, so every row/colour here is tagged old vs new instead of
+                    // being summed together blind to it.
+                    const tier = row.useNewFabric ? "new" : "old";
                     const add = (key, totalQty, stockArr, qtyField, allocField) => {
                       if (!totalQty || totalQty <= 0) return;
                       const existing = row[allocField];
                       const allocs = (Array.isArray(existing) && existing.length > 0) ? existing : autoFillFabricAllocation(Math.ceil(totalQty), anchors, stockArr, qtyField);
-                      if (allocs.length) allocs.forEach(a => { const c = a.colour || "(unassigned)"; agg[key][c] = (agg[key][c] || 0) + (Number(a.qty) || 0); });
-                      else agg[key]["(unassigned)"] = (agg[key]["(unassigned)"] || 0) + Math.ceil(totalQty);
+                      const bump = (c, qty) => { if (!agg[key][c]) agg[key][c] = { old: 0, new: 0 }; agg[key][c][tier] += qty; };
+                      if (allocs.length) allocs.forEach(a => bump(a.colour || "(unassigned)", Number(a.qty) || 0));
+                      else bump("(unassigned)", Math.ceil(totalQty));
                     };
                     add("masking", fab.maskingPieces, tInv.maskingStock, "stockPieces", "maskingAllocation");
                     add("liza", fab.lizaKg, tInv.lizaStock, "stockKg", "lizaAllocation");
@@ -1682,7 +1711,7 @@ export default function DealCheckOverlay({ ctx }) {
                   });
                 });
               });
-              const toRows = (o) => Object.entries(o).map(([colour, qty]) => ({ colour, qty: Math.ceil(qty) })).filter(r => r.qty > 0);
+              const toRows = (o) => Object.entries(o).map(([colour, t]) => ({ colour, qty: Math.ceil((t.old||0)+(t.new||0)), qtyOld: Math.ceil(t.old||0), qtyNew: Math.ceil(t.new||0) })).filter(r => r.qty > 0);
               fabricPlan = { liza: toRows(agg.liza), masking: toRows(agg.masking), curtain: toRows(agg.curtain) };
             }
           } catch {}

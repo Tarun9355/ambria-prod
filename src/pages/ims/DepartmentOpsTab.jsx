@@ -1236,14 +1236,21 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     return s;
   };
   // Requirement vs available for the SELECTED event (net of same-day commitments elsewhere).
+  // Owner ask (2026-10-15): required is now tier-tagged too (r.qtyOld/r.qtyNew, from the salesperson's
+  // own Build Old/New toggle) — compared tier-for-tier, not just combined. Plenty of New stock sitting
+  // idle doesn't help an Old-stock requirement, and vice versa; same-day contention is split by tier
+  // for the same reason (an Old reservation elsewhere can't eat into what THIS event needs in New).
   const fabricReqRows = (dept === "Fabric" && sel?.fabricPlan) ? FABRIC_TYPES.map(ft => {
     const req = Array.isArray(sel.fabricPlan[ft.key]) ? sel.fabricPlan[ft.key] : [];
     const rows = req.map(r => {
       const av = fabricAvail[ft.key]?.[r.colour] || { old: 0, new: 0 };
       const stock = av.old + av.new;
       const otherDay = sameDayReserved(selDateStr, sel.id, ft.key, r.colour);
+      const reqOld = Number(r.qtyOld) || 0, reqNew = Number(r.qtyNew) || 0;
       const avail = Math.max(0, stock - otherDay);
-      return { colour: r.colour, required: r.qty, old: av.old, new: av.new, stock, otherDay, avail, short: Math.max(0, r.qty - avail) };
+      const shortOld = Math.max(0, reqOld - av.old);
+      const shortNew = Math.max(0, reqNew - av.new);
+      return { colour: r.colour, required: r.qty, qtyOld: reqOld, qtyNew: reqNew, old: av.old, new: av.new, stock, otherDay, avail, short: Math.max(0, r.qty - avail), shortOld, shortNew };
     });
     return { ...ft, rows };
   }).filter(f => f.rows.length) : [];
@@ -1259,6 +1266,15 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           const otherDay = sameDayReserved(d, eo.id, ft.key, r.colour);
           const short = (Number(r.qty) || 0) - Math.max(0, (av.old + av.new) - otherDay);
           if (short > 0) out.push({ event: eo.clientName || "Event", date: d, fabric: ft.label, colour: r.colour, short, unit: ft.unit, contended: otherDay > 0 });
+          // Tier-specific: combined supply covers it, but the New-tier portion this event actually
+          // needs (picked explicitly in Build) can't be met from New stock alone — Old stock sitting
+          // idle doesn't help a New requirement, so this would otherwise look fine and quietly surprise
+          // whoever's pulling stock on the day.
+          else if (short <= 0) {
+            const reqNew = Number(r.qtyNew) || 0;
+            const shortNew = reqNew - Math.max(0, av.new - otherDay);
+            if (reqNew > 0 && shortNew > 0) out.push({ event: eo.clientName || "Event", date: d, fabric: ft.label, colour: r.colour, short: shortNew, unit: ft.unit, contended: otherDay > 0, newTierOnly: true });
+          }
         });
       });
     });
@@ -3499,7 +3515,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                       {upcomingFabricShort.map((s, i) => (
                         <div key={i} className="flex items-center justify-between px-4 py-1.5 text-xs">
                           <span className="text-red-800"><b>{s.fabric}</b> · {s.colour}</span>
-                          <span className="text-red-700">short <b>{s.short} {s.unit}</b> for {s.event} on <b>{s.date}</b>{s.contended ? " (shared with another same-day event)" : ""}</span>
+                          <span className="text-red-700">{s.newTierOnly ? <>short <b>{s.short} {s.unit}</b> of <b>New</b> stock specifically</> : <>short <b>{s.short} {s.unit}</b></>} for {s.event} on <b>{s.date}</b>{s.contended ? " (shared with another same-day event)" : ""}</span>
                         </div>
                       ))}
                     </div>
@@ -3524,9 +3540,12 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                              right-alignment only earns its keep when the rows line up. */
                           <div key={i} className="flex flex-wrap sm:grid sm:grid-cols-[1fr_auto_auto_auto] gap-x-3 gap-y-0.5 sm:gap-2 px-4 py-1.5 text-xs items-center">
                             <span className="w-full sm:w-auto text-gray-800">{r.colour}</span>
-                            <span className="text-gray-500 sm:w-24 sm:text-right">need <b>{r.required} {ft.unit}</b></span>
+                            <span className="text-gray-500 sm:w-32 sm:text-right">need <b>{r.required} {ft.unit}</b> {(r.qtyOld > 0 && r.qtyNew > 0) ? <span className="text-gray-400">({r.qtyOld} old + {r.qtyNew} new)</span> : r.qtyNew > 0 ? <span className="font-semibold text-violet-600">(New picked)</span> : null}</span>
                             <span className="text-gray-500 sm:w-40 sm:text-right">have {r.avail} <span className="text-gray-400">({r.old} old + {r.new} new{r.otherDay > 0 ? ` − ${r.otherDay} same-day` : ""})</span></span>
-                            <span className={"sm:w-24 sm:text-right font-bold " + (r.short > 0 ? "text-red-600" : "text-emerald-600")}>{r.short > 0 ? `short ${r.short} ${ft.unit}` : "✓ ok"}</span>
+                            <span className={"sm:w-28 sm:text-right font-bold " + (r.short > 0 ? "text-red-600" : "text-emerald-600")}>
+                              {r.short > 0 ? `short ${r.short} ${ft.unit}` : "✓ ok"}
+                              {(r.shortNew > 0 && r.short <= 0) && <span className="block font-normal text-amber-600">⚠ New short {r.shortNew} — Old stock can't cover a New pick</span>}
+                            </span>
                           </div>
                         ))}
                       </div>

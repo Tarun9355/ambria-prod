@@ -599,7 +599,6 @@ export default function DCTrussTab({ ctx }) {
                                       const fnPalette = fn.fnPalette || "Custom";
                                       const pObj = (imsPaletteCatalogue||[]).find(p => p.name === fnPalette);
                                       const anchors = pObj?.anchorColours || [];
-                                      const fmkup = trussInv.fabricFreshMarkup || { liza:40, masking:40, curtain:40 };
 
                                       // Resolve allocations from the row itself — auto-fill if absent
                                       const resolveAlloc = (allocField, totalQty, stockArr, qtyField) => {
@@ -611,14 +610,32 @@ export default function DCTrussTab({ ctx }) {
                                       const lizaAlloc    = showLiza    ? resolveAlloc("lizaAllocation",    Math.ceil(fab.lizaKg),  trussInv.lizaStock,    "stockKg")     : [];
                                       const curtainAlloc = showCurtain ? resolveAlloc("curtainAllocation", fab.curtainPieces, trussInv.curtainStock, "stockPieces") : [];
 
-                                      // Cost rollup (internal margin tracking — never shown to client).
-                                      // Same flat 30% repeat-zone discount (billed at 70%) as the truss
-                                      // steel above — costs?.isRepeat is this row's own flag, set above.
+                                      // Cost rollup. Same flat 30% repeat-zone discount (billed at 70%) as
+                                      // the truss steel above — costs?.isRepeat is this row's own flag, set
+                                      // above.
                                       const repeatFabMult = costs?.isRepeat ? 0.7 : 1;
                                       const applyRepeatFab = (t) => repeatFabMult === 1 ? t : { ...t, total: Math.round(t.total * repeatFabMult), reusedCost: Math.round(t.reusedCost * repeatFabMult), freshCost: Math.round(t.freshCost * repeatFabMult) };
-                                      const maskingTotals = applyRepeatFab(calcFabricAllocationTotal(maskingAlloc, trussInv.maskingStock, "stockPieces", trussInv.rates?.maskingPieceRate, trussInv.rates?.maskingPiecePurchase, fmkup.masking, trussInv.rates?.maskingPieceRateNew));
-                                      const lizaTotals    = applyRepeatFab(calcFabricAllocationTotal(lizaAlloc,    trussInv.lizaStock,    "stockKg",     trussInv.rates?.lizaKgRate,       trussInv.rates?.lizaKgPurchase,       fmkup.liza,    trussInv.rates?.lizaKgRateNew));
-                                      const curtainTotals = applyRepeatFab(calcFabricAllocationTotal(curtainAlloc, trussInv.curtainStock, "stockPieces", trussInv.rates?.curtainPieceRate, trussInv.rates?.curtainPiecePurchase, fmkup.curtain, trussInv.rates?.curtainPieceRateNew));
+                                      // Owner ask (2026-10-15): this must match what the salesperson's
+                                      // Build Fabric toggle actually billed the guest — Old or New, picked
+                                      // explicitly per truss, not auto-detected from stock. Passing the SAME
+                                      // resolved rate for both the "old" and "new" rate args to
+                                      // calcFabricAllocationTotal collapses its stock-aware old/new split
+                                      // into one flat rate (the colour/stock breakdown below still shows the
+                                      // real physical split, for ops planning — it just no longer drives
+                                      // the price).
+                                      const useNewFabric = !!row.useNewFabric;
+                                      const flatRateFor = (oldKey, newKey) => {
+                                        const oldR = Number(trussInv.rates?.[oldKey]) || 0;
+                                        const newRaw = trussInv.rates?.[newKey];
+                                        const newR = (newRaw === undefined || newRaw === null || newRaw === "") ? oldR : (Number(newRaw) || 0);
+                                        return useNewFabric ? newR : oldR;
+                                      };
+                                      const maskRate = flatRateFor("maskingPieceRate", "maskingPieceRateNew");
+                                      const lizaRate = flatRateFor("lizaKgRate", "lizaKgRateNew");
+                                      const curtainRate = flatRateFor("curtainPieceRate", "curtainPieceRateNew");
+                                      const maskingTotals = applyRepeatFab(calcFabricAllocationTotal(maskingAlloc, trussInv.maskingStock, "stockPieces", maskRate, undefined, undefined, maskRate));
+                                      const lizaTotals    = applyRepeatFab(calcFabricAllocationTotal(lizaAlloc,    trussInv.lizaStock,    "stockKg",     lizaRate, undefined, undefined, lizaRate));
+                                      const curtainTotals = applyRepeatFab(calcFabricAllocationTotal(curtainAlloc, trussInv.curtainStock, "stockPieces", curtainRate, undefined, undefined, curtainRate));
 
                                       // Write allocation to the correct row — row 0 sits directly on the zone,
                                       // extra rows sit on zoneConfig[zk].extraTrussRows[rowIdx-1].
@@ -665,10 +682,11 @@ export default function DCTrussTab({ ctx }) {
                                         </span>
                                       );
 
-                                      const FabricRow = ({ emoji, label, qty, unitLabel, allocs, totals, fabricType, allocField, breakdown, discounted }) => {
+                                      const FabricRow = ({ emoji, label, qty, unitLabel, allocs, totals, fabricType, allocField, breakdown, discounted, useNewFabric }) => {
                                         const shortQty = totals.totalShort || 0;
                                         const hasShort = shortQty > 0;
                                         const marginLoss = totals.freshCost || 0;
+                                        const tierNote = useNewFabric ? "New fabric picked in Build" : "Old fabric (default)";
                                         // Stripe repeats the status shown on the right, so the state
                                         // is readable once these sit side by side and the status text
                                         // is no longer in a single scannable column.
@@ -680,6 +698,7 @@ export default function DCTrussTab({ ctx }) {
                                                 <span>{emoji}</span>
                                                 <span style={{color:INK,fontWeight:700,letterSpacing:-0.1}}>{label}</span>
                                                 <span style={{...NUM,color:INK_2,fontSize:12}}>· {qty}{unitLabel} needed</span>
+                                                <span style={{fontSize:10,fontWeight:600,color:useNewFabric?"#7C3AED":INK_3,padding:"0 5px",borderRadius:4,background:useNewFabric?"rgba(124,58,237,0.1)":"transparent"}}>{tierNote}</span>
                                                 {breakdown && <span style={{color:INK_3,fontSize:11,fontStyle:"italic"}}>({breakdown})</span>}
                                               </div>
                                               <button
@@ -693,7 +712,7 @@ export default function DCTrussTab({ ctx }) {
                                               <AllocChips allocs={allocs} unitLabel={unitLabel} />
                                               {hasShort ? (
                                                 <span style={{...NUM,fontSize:12,color:"#B45309",whiteSpace:"nowrap",fontWeight:700}}>
-                                                  ⚠️ {shortQty}{unitLabel} beyond stock · <span title={discounted?"Repeat-zone discount applied":undefined} style={{color:discounted?"#10B981":undefined}}>{fmtRs(totals.total)}</span> <span style={{color:INK_2,fontWeight:400}}>(incl. {fmtRs(marginLoss)} at New rate)</span>
+                                                  ⚠️ {shortQty}{unitLabel} beyond physical stock · <span title={discounted?"Repeat-zone discount applied":undefined} style={{color:discounted?"#10B981":undefined}}>{fmtRs(totals.total)}</span> <span style={{color:INK_2,fontWeight:400}}>(whole line billed at the same {useNewFabric?"New":"Old"} rate — go source the rest)</span>
                                                 </span>
                                               ) : allocs.length > 0 ? (
                                                 <span style={{...NUM,fontSize:12,color:"#059669",whiteSpace:"nowrap",fontWeight:600}}>✓ in stock · <span title={discounted?"Repeat-zone discount applied":undefined} style={{color:discounted?"#10B981":INK,fontWeight:700}}>{fmtRs(totals.total)}</span> <span style={{color:INK_2,fontWeight:400}}>rental</span></span>
@@ -711,7 +730,7 @@ export default function DCTrussTab({ ctx }) {
                                           <div style={{fontSize:10.5,fontWeight:700,color:INK_2,letterSpacing:0.7,textTransform:"uppercase",marginBottom:7,display:"flex",alignItems:"center",justifyContent:"space-between",gap:6,flexWrap:"wrap"}}>
                                             <span style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
                                               <span>🧵 Fabric Allocation</span>
-                                              <span style={{fontSize:10,fontWeight:400,color:INK_3,textTransform:"none",letterSpacing:0,fontStyle:"italic"}}>(rental — charged under truss cost)</span>
+                                              <span style={{fontSize:10,fontWeight:400,color:INK_3,textTransform:"none",letterSpacing:0,fontStyle:"italic"}}>(Old/New rate per the Build toggle — billed under truss cost)</span>
                                             </span>
                                             {fabricSubtotal > 0 && <span style={{...NUM,fontSize:12,fontWeight:700,color:"#4338CA",textTransform:"none",letterSpacing:0}}>Fabric: {fmtRs(fabricSubtotal)}</span>}
                                           </div>
@@ -722,19 +741,19 @@ export default function DCTrussTab({ ctx }) {
                                             emoji="🧱" label="Wall Masking" qty={fab.maskingPieces} unitLabel="pc"
                                             allocs={maskingAlloc} totals={maskingTotals} fabricType="masking" allocField="maskingAllocation"
                                             breakdown={`RFT ${Math.round((fab.maskL || 0) + 2*(fab.maskW || 0))} ÷ 13`}
-                                            discounted={costs?.isRepeat}
+                                            discounted={costs?.isRepeat} useNewFabric={useNewFabric}
                                           />}
                                           {showLiza && <FabricRow
                                             emoji="🪡" label="Liza" qty={fab.lizaKg} unitLabel="kg"
                                             allocs={lizaAlloc} totals={lizaTotals} fabricType="liza" allocField="lizaAllocation"
                                             breakdown={fab.lizaModel === "wrap+ceiling" ? `wrap ${fab.lizaWrapKg}kg + ceiling ${fab.lizaCeilingKg}kg (${density})` : `wrap only`}
-                                            discounted={costs?.isRepeat}
+                                            discounted={costs?.isRepeat} useNewFabric={useNewFabric}
                                           />}
                                           {showCurtain && <FabricRow
                                             emoji="🎀" label="Velvet Curtains" qty={fab.curtainPieces} unitLabel="pc"
                                             allocs={curtainAlloc} totals={curtainTotals} fabricType="curtain" allocField="curtainAllocation"
                                             breakdown={`${fab.curtainPillarCount || fab.pillarCount} ${fab.curtainPillarCount && fab.curtainPillarCount < fab.pillarCount ? "front " : ""}pillars × ${(row.curtainsPerPillar || 4)} curtains/pillar`}
-                                            discounted={costs?.isRepeat}
+                                            discounted={costs?.isRepeat} useNewFabric={useNewFabric}
                                           />}
                                           </div>
                                         </div>
