@@ -3923,6 +3923,22 @@ export default function StudioApp() {
       if (row && row.data) await supabase.from("event_orders").update({ data: { ...row.data, dealValue } }).eq("id", eo.id);
     } catch (e) { /* best-effort */ }
   }, [eventOrders, activeClientId, clientName]);
+  // Puts this deal's Canva deck on its event order so IMS's Department Ops can open it ("View deck").
+  // Summary only ever remembered the deck in the salesperson's own localStorage, which no one in ops
+  // can reach. Same freshest-row-first merge as syncDealValueNow; skips the write when the row
+  // already points at this design, so calling it on every Summary open costs one read.
+  const syncDeckNow = useCallback(async ({ editUrl, designId, thumb } = {}) => {
+    if (!editUrl) return;
+    const eo = (eventOrders || []).find(e => e.clientId === activeClientId) || (eventOrders || []).find(e => (e.clientName || "") === (clientName || "").trim());
+    if (!eo) return;
+    try {
+      const { data: row } = await supabase.from("event_orders").select("data").eq("id", eo.id).maybeSingle();
+      if (!row || !row.data) return;
+      const cur = row.data.canvaDeck;
+      if (cur && cur.editUrl === editUrl && (cur.designId || "") === (designId || "")) return;
+      await supabase.from("event_orders").update({ data: { ...row.data, canvaDeck: { editUrl, designId: designId || "", thumb: thumb || "", savedAt: Date.now() } } }).eq("id", eo.id);
+    } catch (e) { /* best-effort */ }
+  }, [eventOrders, activeClientId, clientName]);
   const savePhotoImsMap = useCallback(async (nm) => { setPhotoImsMap(nm); await reliableSave(PIMAP_SK, JSON.stringify(nm), "Photo-IMS map"); }, []);
   // Read back the dept-head ACTUALS (real mandi + on-site expenses) that IMS wrote onto the event
   // order row, so Deal Check can show exact cost. The IMS deptOps live on the event_orders TABLE.
@@ -11410,7 +11426,7 @@ export default function StudioApp() {
     // pricing helpers
     rcIsSMB, buildZoneConfig, getFloralMode, applyFloralRatio, getElPrice, getElPriceForFn, calcElsCost, calcElsCostForFn, rcCostPctForSub,
     calcPhotoCost, calcStructCost, calcFullEventCost, getFullCost, totalCost, transportCalc, grandTotal, lastSavedFnTotal, agencyFeeAmt, pricingReady,
-    collectAllFunctionData, calcFunctionCost, calcFnFloralSourcingCost, eventGrandTotal, calcFunctionBreakdown, manpowerPlanForBooking, persistDeptSnapshot, syncDealValueNow, dcEoActuals, refreshDcEoActuals,
+    collectAllFunctionData, calcFunctionCost, calcFnFloralSourcingCost, eventGrandTotal, calcFunctionBreakdown, manpowerPlanForBooking, persistDeptSnapshot, syncDealValueNow, syncDeckNow, dcEoActuals, refreshDcEoActuals,
     // deal check orchestration + persistence (overlay)
     openDealCheck, runDealCheckGenerate, getStudioAvailable, loadAvailability, getActiveSoftHold, reliableSave, DC_CACHE_SK,
     flushDcAutosaveRef,

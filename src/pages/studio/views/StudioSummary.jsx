@@ -199,7 +199,7 @@ export default function StudioSummary({ ctx }) {
     isAdmin, clientLedger, saveClientLedger, eventOrders, activeClientId, askConfirm,
     // events / cost sheet
     eventGrandTotal, pricingReady, collectAllFunctionData, calcFunctionBreakdown,
-    buildCombinedCostSheetData, csData, setCsData, saveSession, showMsg, syncDealValueNow,
+    buildCombinedCostSheetData, csData, setCsData, saveSession, showMsg, syncDealValueNow, syncDeckNow,
     // summary accordion state
     expandedSummaryFnIdx, setExpandedSummaryFnIdx,
     // pricing helpers
@@ -322,6 +322,8 @@ export default function StudioSummary({ ctx }) {
     try {
       if (activeClientId && url) localStorage.setItem(canvaKey(activeClientId), JSON.stringify({ url, thumb: thumb || "", designId: designId || "" }));
     } catch { /* private mode */ }
+    // Also onto the event order, so IMS Department Ops can open the same deck.
+    syncDeckNow?.({ editUrl: url, designId, thumb });
   };
   const readDeck = (id) => {
     let raw = "";
@@ -423,7 +425,9 @@ export default function StudioSummary({ ctx }) {
     // Only ever fills IN a remembered link — it must not clear a deck being generated right now.
     if (canvaState !== "idle") return;
     const saved = readDeck(activeClientId);
-    if (saved.url) { setCanvaEditUrl(saved.url); setCanvaDeckId(saved.designId || ""); setCanvaState("ready"); }
+    // syncDeckNow backfills decks made before they were shared with IMS — a no-op once the event
+    // order already has this one.
+    if (saved.url) { setCanvaEditUrl(saved.url); setCanvaDeckId(saved.designId || ""); setCanvaState("ready"); syncDeckNow?.({ editUrl: saved.url, designId: saved.designId, thumb: saved.thumb }); }
   }, [activeClientId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Full reset back to a blank deal. The 40-setter body moved to StudioApp as startNewDeal, because
