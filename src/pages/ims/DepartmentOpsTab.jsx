@@ -518,6 +518,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const [kitOpen, setKitOpen] = useState({});
   // Set while the PDF is being built. The first export also downloads the jsPDF chunk, so there
   // is a real pause — without a busy state the button looks broken and gets pressed again.
+  // false | "download" | "view" — which button started it, so only THAT one spins. Viewing used to
+  // spin the download buttons too, which read as the PDF being downloaded again.
   const [exporting, setExporting] = useState(false);
   // "View deck": the very PDF the download button saves, shown on screen instead of saved. Built
   // fresh on every click from the event as it stands, so it is always the latest.
@@ -602,8 +604,11 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const sel = (eventOrders || []).find(e => e.id === selId);
   // A PDF open for one event must not carry over when the picker moves to another.
   useEffect(() => { setDeckView(null); }, [selId]);
-  // The blob: URL holds the whole PDF in memory until it is revoked.
-  useEffect(() => () => { if (deckView?.url) URL.revokeObjectURL(deckView.url); }, [deckView]);
+  // The last PDF View deck built, keyed by department + the event's full data. Opening it again
+  // with nothing changed reuses it instantly instead of rebuilding; any edit to the event changes
+  // the key, so what opens is still always the latest. Its blob: URL is freed when replaced.
+  const deckCacheRef = useRef(null); // {key, url, name}
+  useEffect(() => () => { if (deckCacheRef.current) URL.revokeObjectURL(deckCacheRef.current.url); }, []);
   // Which departments actually have something to report on this event — the same gate the
   // report itself uses (hasDeptSnapshot / blockedItemsGrouped both key off deptInventory[dept]).
   // A combined book skips an empty department rather than printing a cover with nothing behind it.
@@ -2398,11 +2403,11 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
   });
 
   // { view: true } shows the finished PDF in the viewer below instead of saving it.
-  const exportPdf = async (depts, { view = false } = {}) => {
+  const exportPdf = async (depts, { view = false, cacheKey = "" } = {}) => {
     if (exporting) return;
     const multi = depts.length > 1;
     const startedOn = dept;
-    setExporting(true);
+    setExporting(view ? "view" : "download");
     // Zone names as the admin set them in Studio (e.g. "Centre Lounge"), not the raw keys. A
     // failed read just falls back to the built-in names.
     const zoneLabels = {};
@@ -2630,14 +2635,19 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
       // carries all three identifiers. Slashes and colons are illegal in filenames on Windows.
       const safe = (s) => String(s || "").replace(/[\\/:*?"<>|]+/g, "-").trim();
       const fileName = `${safe(multi ? "All departments" : depts[0])} - ${safe(sel?.clientName || "Event")} - ${safe(selDateStr || "no date")}.pdf`;
-      if (view) setDeckView({ url: URL.createObjectURL(pdf.output("blob")), name: fileName });
+      if (view) {
+        const url = URL.createObjectURL(pdf.output("blob"));
+        if (deckCacheRef.current) URL.revokeObjectURL(deckCacheRef.current.url);
+        deckCacheRef.current = { key: cacheKey, url, name: fileName };
+        setDeckView({ url, name: fileName });
+      }
       else pdf.save(fileName);
       // Said out loud, because a report quietly missing a page is worse than one that failed
       // outright — you would only find out when the crew on site needed the page that is gone.
       if (skipped.length) {
         // Name the actual error — "usually a photo" sent people chasing photos that were fine.
         const why = [...new Set(skipped.map(s => s.why))].slice(0, 2).join(" · ");
-        alert(`The PDF saved, but ${skipped.length} section${skipped.length === 1 ? "" : "s"} could not be drawn and ${skipped.length === 1 ? "is" : "are"} missing from it.\n\nReason: ${why}\n\nTry again in Chrome if this keeps happening.`);
+        alert(`The PDF ${view ? "is ready" : "saved"}, but ${skipped.length} section${skipped.length === 1 ? "" : "s"} could not be drawn and ${skipped.length === 1 ? "is" : "are"} missing from it.\n\nReason: ${why}\n\nTry again in Chrome if this keeps happening.`);
       }
     } catch (err) {
       // ── THE FALLBACK IS A FILE, NOT A POP-UP ──
@@ -2685,7 +2695,13 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
   // Declared after exportPdf on purpose: a const referenced above its own declaration is a
   // TDZ error the build does not catch.
   const exportDeptPdf = (depts) => exportPdf(Array.isArray(depts) && depts.length ? depts : [dept]);
-  const viewDeptPdf = () => exportPdf([dept], { view: true });
+  const viewDeptPdf = () => {
+    let key = "";
+    try { key = dept + "|" + JSON.stringify(sel); } catch { /* unkeyable — just rebuild */ }
+    const c = deckCacheRef.current;
+    if (key && c && c.key === key) { setDeckView({ url: c.url, name: c.name }); return; }
+    exportPdf([dept], { view: true, cacheKey: key });
+  };
 
   // ── VIEW CONTROLS: nearby count, activity bell, Planning / On-site ──
   // ONE home: the right-hand end of the event header. They had been split across two — the
@@ -2732,24 +2748,24 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
         the header names is exactly what the PDF contains.
         Icon-only, like the bell: spelled out it was the widest thing in a row that already has
         two tags to fit on a 390px screen. The tooltip and the sr-only label carry the meaning. */}
-    <button onClick={() => exportDeptPdf()} disabled={exporting}
+    <button onClick={() => exportDeptPdf()} disabled={!!exporting}
       className="group relative shrink-0 w-7 h-7 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-500 hover:text-gray-900 disabled:opacity-60 flex items-center justify-center transition-colors">
-      {exporting
+      {exporting === "download"
         ? <span aria-hidden="true" className="w-3.5 h-3.5 rounded-full border-2 border-gray-300 border-t-blue-600 animate-spin" />
         : <IconDownload />}
-      <span className="sr-only">{exporting ? "Building the PDF…" : "Download this department as PDF"}</span>
+      <span className="sr-only">{exporting === "download" ? "Building the PDF…" : "Download this department as PDF"}</span>
       <span role="tooltip" className="pointer-events-none absolute top-full right-0 mt-2 z-20 whitespace-nowrap rounded-md bg-gray-900 px-2 py-1 text-[11px] font-medium text-white opacity-0 group-hover:opacity-100 transition-opacity duration-150">
-        {exporting ? "Building the PDF…" : `Download ${dept} as PDF`}
+        {exporting === "download" ? "Building the PDF…" : `Download ${dept} as PDF`}
       </span>
     </button>
     {/* ── VIEW DECK ──
         The same report the download button saves, opened on screen instead — on a tablet a
         downloaded file is hard to find again. Spelled out rather than icon-only like its
         neighbours: an eye alone does not say what it opens. Shares the download's busy state,
-        since both run the one export. */}
-    <button onClick={viewDeptPdf} disabled={exporting}
+        since both run the one export (only the one you pressed spins). */}
+    <button onClick={viewDeptPdf} disabled={!!exporting}
       className="shrink-0 h-7 px-2.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-600 hover:text-gray-900 text-[12px] font-semibold inline-flex items-center gap-1.5 cursor-pointer disabled:cursor-default disabled:opacity-60 transition-colors">
-      {exporting
+      {exporting === "view"
         ? <span aria-hidden="true" className="w-3.5 h-3.5 rounded-full border-2 border-gray-300 border-t-blue-600 animate-spin" />
         : <IconEye />}
       View deck
@@ -2898,13 +2914,13 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
               seven-book file where four books are empty is worse than four books.
               Hidden until an event is picked, since there is nothing to export before that. */}
           {sel && deptsWithWork.length > 1 && (
-            <button onClick={() => exportDeptPdf(deptsWithWork)} disabled={exporting}
-              title={exporting ? "Building the PDF…" : `One PDF with all ${deptsWithWork.length} departments on this event`}
+            <button onClick={() => exportDeptPdf(deptsWithWork)} disabled={!!exporting}
+              title={exporting === "download" ? "Building the PDF…" : `One PDF with all ${deptsWithWork.length} departments on this event`}
               className="hidden sm:inline-flex shrink-0 items-center gap-1.5 ml-1 px-3 py-1.5 rounded-lg text-sm font-semibold whitespace-nowrap border border-gray-200 bg-white text-gray-700 hover:text-gray-900 hover:bg-gray-50 hover:-translate-y-0.5 hover:shadow-[0_1px_2px_rgba(16,24,40,0.06),0_4px_10px_-6px_rgba(16,24,40,0.2)] disabled:opacity-60 disabled:hover:translate-y-0 transition-all duration-150">
-              {exporting
+              {exporting === "download"
                 ? <span aria-hidden="true" className="w-3.5 h-3.5 rounded-full border-2 border-gray-300 border-t-blue-600 animate-spin" />
                 : <IconDownload />}
-              <span>{exporting && exportNote ? exportNote : "Download PDF"}</span>
+              <span>{exporting === "download" && exportNote ? exportNote : "Download PDF"}</span>
             </button>
           )}
         </div>
