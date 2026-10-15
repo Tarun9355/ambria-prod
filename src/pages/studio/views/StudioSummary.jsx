@@ -367,6 +367,8 @@ export default function StudioSummary({ ctx }) {
     // click — the early return above means a click during a load is not an action, and the glow has
     // to survive that or it would be dismissed by an impatient second press.
     setDeckGlow(false);
+    // Viewing / downloading the deck re-asserts it on the event order(s), so IMS always has it.
+    syncDeckNow?.({ editUrl: canvaEditUrl, designId: canvaDeckId || readDeck(activeClientId).designId, thumb: readDeck(activeClientId).thumb });
     // A still-fresh export opens straight away. Without this, viewing the deck twice in a meeting
     // means waiting out Canva's export twice, which is what made this feel like an export button
     // rather than a viewer.
