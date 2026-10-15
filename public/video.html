@@ -2,13 +2,43 @@
 <html>
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Ambria — Video</title>
 <style>
   html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; overflow: hidden; }
   iframe { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; }
+  /* Back button — tablet only. On a tablet this page usually opens with no browser chrome (home-
+     screen app / full-screen tab), so there was no visible way out of a video. Desktop keeps the
+     browser's own tab close, so the button stays hidden there. Top-left so it never covers
+     YouTube's own controls in the top-right and bottom bar. */
+  #back { display: none; position: fixed; top: 16px; left: 16px; z-index: 10; align-items: center; gap: 6px;
+    padding: 10px 16px 10px 12px; border: 1px solid rgba(255,255,255,0.25); border-radius: 999px;
+    background: rgba(0,0,0,0.6); color: #fff; font: 600 15px/1 system-ui, -apple-system, sans-serif;
+    cursor: pointer; -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); -webkit-tap-highlight-color: transparent; }
+  #back:active { background: rgba(0,0,0,0.85); }
+  @media (pointer: coarse) and (min-width: 600px) { #back { display: inline-flex; } }
 </style>
 </head>
 <body>
+<button id="back" type="button" aria-label="Back to Browse">
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+  Back
+</button>
+<script>
+  // Back to Browse. Browse opened this page with window.open, so closing it lands the salesperson
+  // straight back on the Browse tab exactly as they left it (filters, page, client — nothing
+  // reloads). If the browser refuses the close (page reached some other way), fall back to history,
+  // and failing that, to Studio itself.
+  document.getElementById("back").addEventListener("click", function () {
+    try { if (window.opener && !window.opener.closed) window.opener.focus(); } catch (e) {}
+    window.close();
+    setTimeout(function () {
+      if (window.closed) return;
+      if (history.length > 1) history.back();
+      else location.href = location.pathname.replace(/video\.html$/, "") + "#/studio";
+    }, 250);
+  });
+</script>
 <script>
   // Served from our own real HTTPS origin (not a blob:/data: URL) on purpose — YouTube's iframe
   // embed rejects playback with "Error 153: Video player configuration error" when the embedding
