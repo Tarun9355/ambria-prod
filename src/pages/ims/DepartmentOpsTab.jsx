@@ -10,7 +10,6 @@ import { ZONE_META } from "../../lib/studio/taxonomy";
 import { ZONE_DEF_SK } from "../../lib/studio/keys";
 import { LOGO_ASSET, LOGO_BOX } from "../../lib/studio/brand.js";
 import { fitUrl } from "../../lib/studio/thumb.js";
-import { canvaExportPdfUrl } from "../../lib/canva";
 
 // ── THE OFFICIAL LOGO, READY FOR THE PDF ──
 // ambria-logo.png is a WHITE wordmark with a gold dot and gold "DESIGN & DECOR", on a transparent
@@ -176,7 +175,7 @@ const IconDownload = ({ s = 14 }) => (
   </svg>
 );
 
-/* An eye: look at the deck, not take it away — the download icon beside it is the take-away. */
+/* An eye: look at the report, not take it away — the download icon beside it is the take-away. */
 const IconEye = ({ s = 14 }) => (
   <svg width={s} height={s} viewBox="0 0 16 16" fill="none" aria-hidden="true">
     <path d="M1.6 8S4 3.6 8 3.6 14.4 8 14.4 8 12 12.4 8 12.4 1.6 8 1.6 8Z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
@@ -520,10 +519,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   // Set while the PDF is being built. The first export also downloads the jsPDF chunk, so there
   // is a real pause — without a busy state the button looks broken and gets pressed again.
   const [exporting, setExporting] = useState(false);
-  // The client's design deck, as Studio Summary made it in Canva (Studio saves the link onto the
-  // event order as data.canvaDeck — see syncDeckNow). Exported to PDF only when someone asks to see
-  // it: an export is a Canva render job, and this page is opened constantly for everything else.
-  const [deckView, setDeckView] = useState(null); // null | {state:"loading"|"ready"|"error", url, error}
+  // "View deck": the very PDF the download button saves, shown on screen instead of saved. Built
+  // fresh on every click from the event as it stands, so it is always the latest.
+  const [deckView, setDeckView] = useState(null); // null | {url, name} — url is a blob: URL
   const [mpDayHow, setMpDayHow] = useState({}); // which per-day rows have their "how" derivation expanded
   const [routeDraft, setRouteDraft] = useState({}); // dismantle routing draft per item: {qty, type, toEventId}
   const [manTruck, setManTruck] = useState({}); // confirm-time truck details per destination group: {[groupKey]:{vehicle,driver,phone}}
@@ -602,19 +600,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   }, [focusEventId, focusSearch, focusLeadEntry, eventOrders, onFocusHandled]);
 
   const sel = (eventOrders || []).find(e => e.id === selId);
-  // A deck open for one event must not carry over when the picker moves to another.
+  // A PDF open for one event must not carry over when the picker moves to another.
   useEffect(() => { setDeckView(null); }, [selId]);
-  const openDeck = async () => {
-    const deck = sel?.canvaDeck;
-    if (!deck?.editUrl || deckView?.state === "loading") return;
-    setDeckView({ state: "loading", url: "", error: "" });
-    try {
-      const url = await canvaExportPdfUrl(deck.editUrl, { designId: deck.designId });
-      setDeckView({ state: "ready", url, error: "" });
-    } catch (e) {
-      setDeckView({ state: "error", url: "", error: e.message || "Could not open the deck" });
-    }
-  };
+  // The blob: URL holds the whole PDF in memory until it is revoked.
+  useEffect(() => () => { if (deckView?.url) URL.revokeObjectURL(deckView.url); }, [deckView]);
   // Which departments actually have something to report on this event — the same gate the
   // report itself uses (hasDeptSnapshot / blockedItemsGrouped both key off deptInventory[dept]).
   // A combined book skips an empty department rather than printing a cover with nothing behind it.
@@ -2408,7 +2397,8 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
     requestAnimationFrame(tick);
   });
 
-  const exportPdf = async (depts) => {
+  // { view: true } shows the finished PDF in the viewer below instead of saving it.
+  const exportPdf = async (depts, { view = false } = {}) => {
     if (exporting) return;
     const multi = depts.length > 1;
     const startedOn = dept;
@@ -2639,7 +2629,9 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
       // Filename is what the file is called in someone's Downloads folder a month later, so it
       // carries all three identifiers. Slashes and colons are illegal in filenames on Windows.
       const safe = (s) => String(s || "").replace(/[\\/:*?"<>|]+/g, "-").trim();
-      pdf.save(`${safe(multi ? "All departments" : depts[0])} - ${safe(sel?.clientName || "Event")} - ${safe(selDateStr || "no date")}.pdf`);
+      const fileName = `${safe(multi ? "All departments" : depts[0])} - ${safe(sel?.clientName || "Event")} - ${safe(selDateStr || "no date")}.pdf`;
+      if (view) setDeckView({ url: URL.createObjectURL(pdf.output("blob")), name: fileName });
+      else pdf.save(fileName);
       // Said out loud, because a report quietly missing a page is worse than one that failed
       // outright — you would only find out when the crew on site needed the page that is gone.
       if (skipped.length) {
@@ -2693,6 +2685,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
   // Declared after exportPdf on purpose: a const referenced above its own declaration is a
   // TDZ error the build does not catch.
   const exportDeptPdf = (depts) => exportPdf(Array.isArray(depts) && depts.length ? depts : [dept]);
+  const viewDeptPdf = () => exportPdf([dept], { view: true });
 
   // ── VIEW CONTROLS: nearby count, activity bell, Planning / On-site ──
   // ONE home: the right-hand end of the event header. They had been split across two — the
@@ -2749,26 +2742,18 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
         {exporting ? "Building the PDF…" : `Download ${dept} as PDF`}
       </span>
     </button>
-    {/* ── VIEW THE CLIENT'S DECK ──
-        The design deck the salesperson presented, so ops builds what the client was shown. Spelled
-        out rather than icon-only like its neighbours: the eye alone read as "preview this PDF".
-        Disabled, not hidden, when Studio has not made a deck yet — hidden, people go looking for it. */}
-    {(() => {
-      const hasDeck = !!sel?.canvaDeck?.editUrl;
-      const loading = deckView?.state === "loading";
-      return (
-        <button onClick={openDeck} disabled={!hasDeck || loading}
-          className="group relative shrink-0 h-7 px-2.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-600 hover:text-gray-900 text-[12px] font-semibold inline-flex items-center gap-1.5 cursor-pointer disabled:cursor-default disabled:opacity-50 disabled:hover:bg-gray-100 disabled:hover:text-gray-600 transition-colors">
-          {loading
-            ? <span aria-hidden="true" className="w-3.5 h-3.5 rounded-full border-2 border-gray-300 border-t-blue-600 animate-spin" />
-            : <IconEye />}
-          {loading ? "Opening…" : "View deck"}
-          <span role="tooltip" className="pointer-events-none absolute top-full right-0 mt-2 z-20 whitespace-nowrap rounded-md bg-gray-900 px-2 py-1 text-[11px] font-medium text-white opacity-0 group-hover:opacity-100 transition-opacity duration-150">
-            {hasDeck ? "Open the client's design deck" : "No deck yet — it appears once Studio makes one"}
-          </span>
-        </button>
-      );
-    })()}
+    {/* ── VIEW DECK ──
+        The same report the download button saves, opened on screen instead — on a tablet a
+        downloaded file is hard to find again. Spelled out rather than icon-only like its
+        neighbours: an eye alone does not say what it opens. Shares the download's busy state,
+        since both run the one export. */}
+    <button onClick={viewDeptPdf} disabled={exporting}
+      className="shrink-0 h-7 px-2.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-600 hover:text-gray-900 text-[12px] font-semibold inline-flex items-center gap-1.5 cursor-pointer disabled:cursor-default disabled:opacity-60 transition-colors">
+      {exporting
+        ? <span aria-hidden="true" className="w-3.5 h-3.5 rounded-full border-2 border-gray-300 border-t-blue-600 animate-spin" />
+        : <IconEye />}
+      View deck
+    </button>
   </div>
   ) : null;
   const viewSwitch = sel ? (
@@ -4929,7 +4914,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
         )}
       </div>
       {/* Deck viewer — full screen, with a clear way back out (tablets have no browser chrome). */}
-      {deckView && deckView.state !== "loading" && createPortal(
+      {deckView && createPortal(
         <div className="fixed inset-0 z-[9999] bg-gray-950 flex flex-col">
           <div className="shrink-0 flex items-center gap-2 px-3 sm:px-4 py-2.5 bg-gray-900 text-white">
             <button onClick={() => setDeckView(null)}
@@ -4937,18 +4922,13 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6" /></svg>
               Back
             </button>
-            <div className="flex-1 min-w-0 truncate text-[14px] font-semibold">{(sel?.clientName || "Client") + " — Design deck"}</div>
-            {deckView.state === "ready" && (
-              <a href={deckView.url} target="_blank" rel="noreferrer"
-                className="h-9 px-3.5 rounded-full bg-white text-gray-900 hover:bg-gray-100 inline-flex items-center text-[13px] font-semibold">Open PDF</a>
-            )}
+            <div className="flex-1 min-w-0 truncate text-[14px] font-semibold">{deckView.name.replace(/\.pdf$/, "")}</div>
+            <a href={deckView.url} download={deckView.name}
+              className="h-9 px-3.5 rounded-full bg-white text-gray-900 hover:bg-gray-100 inline-flex items-center gap-1.5 text-[13px] font-semibold">
+              <IconDownload /> Download
+            </a>
           </div>
-          {deckView.state === "ready"
-            ? <iframe title="Design deck" src={deckView.url} className="flex-1 w-full border-0 bg-white" />
-            : <div className="flex-1 flex flex-col items-center justify-center gap-3 p-6 text-center">
-                <p className="text-sm text-red-300">{deckView.error}</p>
-                <button onClick={openDeck} className="h-9 px-4 rounded-full bg-white text-gray-900 text-[13px] font-semibold cursor-pointer">Try again</button>
-              </div>}
+          <iframe title="Deck" src={deckView.url} className="flex-1 w-full border-0 bg-white" />
         </div>,
         document.body
       )}

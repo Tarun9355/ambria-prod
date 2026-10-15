@@ -3923,28 +3923,6 @@ export default function StudioApp() {
       if (row && row.data) await supabase.from("event_orders").update({ data: { ...row.data, dealValue } }).eq("id", eo.id);
     } catch (e) { /* best-effort */ }
   }, [eventOrders, activeClientId, clientName]);
-  // Puts this deal's Canva deck on its event order so IMS's Department Ops can open it ("View deck").
-  // Summary only ever remembered the deck in the salesperson's own localStorage, which no one in ops
-  // can reach. Same freshest-row-first merge as syncDealValueNow; skips the write when the row
-  // already points at this design, so calling it on every Summary open costs one read.
-  // EVERY live order of the client, not the first match: a client can hold more than one (another
-  // date, an old cancelled one listed first), and the deck has to show on whichever one ops opens.
-  const syncDeckNow = useCallback(async ({ editUrl, designId, thumb } = {}) => {
-    if (!editUrl) return;
-    const all = eventOrders || [];
-    let eos = all.filter(e => e.clientId === activeClientId && activeClientId);
-    if (!eos.length) eos = all.filter(e => (e.clientName || "") === (clientName || "").trim() && (clientName || "").trim());
-    eos = eos.filter(e => e.status !== "cancelled");
-    for (const eo of eos) {
-      try {
-        const { data: row } = await supabase.from("event_orders").select("data").eq("id", eo.id).maybeSingle();
-        if (!row || !row.data) continue;
-        const cur = row.data.canvaDeck;
-        if (cur && cur.editUrl === editUrl && (cur.designId || "") === (designId || "")) continue;
-        await supabase.from("event_orders").update({ data: { ...row.data, canvaDeck: { editUrl, designId: designId || "", thumb: thumb || "", savedAt: Date.now() } } }).eq("id", eo.id);
-      } catch (e) { /* best-effort */ }
-    }
-  }, [eventOrders, activeClientId, clientName]);
   const savePhotoImsMap = useCallback(async (nm) => { setPhotoImsMap(nm); await reliableSave(PIMAP_SK, JSON.stringify(nm), "Photo-IMS map"); }, []);
   // Read back the dept-head ACTUALS (real mandi + on-site expenses) that IMS wrote onto the event
   // order row, so Deal Check can show exact cost. The IMS deptOps live on the event_orders TABLE.
@@ -8102,17 +8080,6 @@ export default function StudioApp() {
         lmsDept: client.lmsDept || null,
         lmsPriority: client.lmsPriority || null,
         lmsStatus: client.lmsStatus || null,
-        // The deck is usually made BEFORE the booking, so the new order would otherwise start with
-        // no deck and IMS's View deck stay greyed out until someone reopened Summary. Read from the
-        // same per-client record Summary keeps (ambria-canva-deck-<clientId>).
-        canvaDeck: (() => {
-          try {
-            const raw = localStorage.getItem(`ambria-canva-deck-${client.id}`) || "";
-            const o = raw[0] === "{" ? JSON.parse(raw) : (raw ? { url: raw } : null);
-            if (o && o.url) return { editUrl: o.url, designId: o.designId || "", thumb: o.thumb || "", savedAt: Date.now() };
-          } catch { /* private mode */ }
-          return existingActive?.canvaDeck || null;
-        })(),
         date: clientDate,
         venue,
         functions: allFns.map(f => f.fnType).filter(Boolean),
@@ -11443,7 +11410,7 @@ export default function StudioApp() {
     // pricing helpers
     rcIsSMB, buildZoneConfig, getFloralMode, applyFloralRatio, getElPrice, getElPriceForFn, calcElsCost, calcElsCostForFn, rcCostPctForSub,
     calcPhotoCost, calcStructCost, calcFullEventCost, getFullCost, totalCost, transportCalc, grandTotal, lastSavedFnTotal, agencyFeeAmt, pricingReady,
-    collectAllFunctionData, calcFunctionCost, calcFnFloralSourcingCost, eventGrandTotal, calcFunctionBreakdown, manpowerPlanForBooking, persistDeptSnapshot, syncDealValueNow, syncDeckNow, dcEoActuals, refreshDcEoActuals,
+    collectAllFunctionData, calcFunctionCost, calcFnFloralSourcingCost, eventGrandTotal, calcFunctionBreakdown, manpowerPlanForBooking, persistDeptSnapshot, syncDealValueNow, dcEoActuals, refreshDcEoActuals,
     // deal check orchestration + persistence (overlay)
     openDealCheck, runDealCheckGenerate, getStudioAvailable, loadAvailability, getActiveSoftHold, reliableSave, DC_CACHE_SK,
     flushDcAutosaveRef,

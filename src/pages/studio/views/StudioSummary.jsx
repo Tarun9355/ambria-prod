@@ -199,7 +199,7 @@ export default function StudioSummary({ ctx }) {
     isAdmin, clientLedger, saveClientLedger, eventOrders, activeClientId, askConfirm,
     // events / cost sheet
     eventGrandTotal, pricingReady, collectAllFunctionData, calcFunctionBreakdown,
-    buildCombinedCostSheetData, csData, setCsData, saveSession, showMsg, syncDealValueNow, syncDeckNow,
+    buildCombinedCostSheetData, csData, setCsData, saveSession, showMsg, syncDealValueNow,
     // summary accordion state
     expandedSummaryFnIdx, setExpandedSummaryFnIdx,
     // pricing helpers
@@ -322,8 +322,6 @@ export default function StudioSummary({ ctx }) {
     try {
       if (activeClientId && url) localStorage.setItem(canvaKey(activeClientId), JSON.stringify({ url, thumb: thumb || "", designId: designId || "" }));
     } catch { /* private mode */ }
-    // Also onto the event order, so IMS Department Ops can open the same deck.
-    syncDeckNow?.({ editUrl: url, designId, thumb });
   };
   const readDeck = (id) => {
     let raw = "";
@@ -367,8 +365,6 @@ export default function StudioSummary({ ctx }) {
     // click — the early return above means a click during a load is not an action, and the glow has
     // to survive that or it would be dismissed by an impatient second press.
     setDeckGlow(false);
-    // Viewing / downloading the deck re-asserts it on the event order(s), so IMS always has it.
-    syncDeckNow?.({ editUrl: canvaEditUrl, designId: canvaDeckId || readDeck(activeClientId).designId, thumb: readDeck(activeClientId).thumb });
     // A still-fresh export opens straight away. Without this, viewing the deck twice in a meeting
     // means waiting out Canva's export twice, which is what made this feel like an export button
     // rather than a viewer.
@@ -427,9 +423,7 @@ export default function StudioSummary({ ctx }) {
     // Only ever fills IN a remembered link — it must not clear a deck being generated right now.
     if (canvaState !== "idle") return;
     const saved = readDeck(activeClientId);
-    // syncDeckNow backfills decks made before they were shared with IMS — a no-op once the event
-    // order already has this one.
-    if (saved.url) { setCanvaEditUrl(saved.url); setCanvaDeckId(saved.designId || ""); setCanvaState("ready"); syncDeckNow?.({ editUrl: saved.url, designId: saved.designId, thumb: saved.thumb }); }
+    if (saved.url) { setCanvaEditUrl(saved.url); setCanvaDeckId(saved.designId || ""); setCanvaState("ready"); }
   }, [activeClientId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Full reset back to a blank deal. The 40-setter body moved to StudioApp as startNewDeal, because
