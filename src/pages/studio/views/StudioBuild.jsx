@@ -659,7 +659,7 @@ export default function StudioBuild({ ctx }) {
     // date demand
     dateTypes, clientLedger, activeClientId, saveClientLedger, hideDiscountFromClient, guestPriceMultiplier, activeCrossFnReuseQty, activeSiblingFnInvUse = {},
     // build canvas
-    setShowCosts, grandTotal, lastSavedFnTotal, agencyFeeAmt, totalCost, transportCalc, pricingReady,
+    setShowCosts, grandTotal, agencyFeeAmt, totalCost, transportCalc, pricingReady,
     savedInsps, setStep, setPreviewImg,
     floralRatio, setFloralRatio,
     zoneKeys, customZones, setCustomZones, zoneLabelsD, zoneMeta,
@@ -2033,18 +2033,6 @@ export default function StudioBuild({ ctx }) {
               ? <>
                   <div style={{fontSize:23,fontWeight:700,color:textP,letterSpacing:-0.6,fontVariantNumeric:"tabular-nums"}}>{fmt(grandTotal)}</div>
                   <span style={{fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:6,background:cat.bg,color:cat.color}}>{cat.label}</span>
-                  {/* Flags when the live figure above has moved from what was actually saved for
-                      this function last time — nothing here means the build itself changed; stock
-                      availability and the LMS date-pricing auto-sync both move on their own
-                      (confirmed incident: an untouched build swung ~₹1.1L in a few hours from
-                      exactly those two). Silently showing a different number with no explanation
-                      read as the price having changed behind the salesperson's back. */}
-                  {lastSavedFnTotal && Math.round(lastSavedFnTotal.total) !== Math.round(grandTotal) && (
-                    <span title={`Was ${fmt(lastSavedFnTotal.total)}${lastSavedFnTotal.tier ? " " + lastSavedFnTotal.tier : ""} at last save. Nothing here has changed — this reflects live stock availability and/or date-demand pricing, which can move on their own.`}
-                      style={{fontSize:9,fontWeight:700,padding:"2px 7px",borderRadius:6,background:isDark?"rgba(234,179,8,0.18)":"rgba(217,119,6,0.12)",color:isDark?"#FBBF24":"#B45309",cursor:"help",whiteSpace:"nowrap"}}>
-                      ↕ was {fmt(lastSavedFnTotal.total)}
-                    </span>
-                  )}
                 </>
               /* The tier chip is held back with the number. It is derived from the total, so on seed
                  defaults it can read Platinum on a deal that is actually Gold — a wrong word is
