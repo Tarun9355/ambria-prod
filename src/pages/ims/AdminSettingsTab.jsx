@@ -1884,25 +1884,25 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
       })()}
       {activePanel === "fabricstock" && trussInv && (() => {
         const colourCat = (settings.colourCatalogue || []).map((c) => c.name);
-        const fabricFreshMarkup = trussInv.fabricFreshMarkup || { liza: 40, masking: 40, curtain: 40 };
         const rates = trussInv.rates || {};
         const updateRates = (key, val) => setTrussInv((ti) => ({ ...ti, rates: { ...(ti.rates || {}), [key]: parseFloat(val) || 0 } }));
-        const updateMarkup = (key, val) => setTrussInv((ti) => ({ ...ti, fabricFreshMarkup: { ...(ti.fabricFreshMarkup || {}), [key]: parseFloat(val) || 0 } }));
         const updateStock = (which, idx, key, val) => setTrussInv((ti) => { const next = [...(ti[which] || [])]; next[idx] = { ...next[idx], [key]: (key === "colour" || key === "grade" || key === "hex") ? val : (parseFloat(val) || 0) }; return { ...ti, [which]: next }; });
         const addStockRow = (which, qtyField) => setTrussInv((ti) => ({ ...ti, [which]: [...(ti[which] || []), { colour: colourCat[0] || "White", [qtyField]: 0, [`${qtyField}New`]: 0 }] }));
         const removeStockRow = (which, idx) => setTrussInv((ti) => ({ ...ti, [which]: (ti[which] || []).filter((_, j) => j !== idx) }));
-        const renderFabric = (title, emoji, themeColor, which, qtyField, qtyLabel, rentalKey, purchaseKey, markupKey, rentalKeyNew) => {
+        // No more fresh-purchase-price / markup-% pair (2026-10-15): the salesperson now picks Old or
+        // New fabric explicitly per truss (StudioBuild.jsx's Fabric toggle) and it bills flat at that
+        // tier's own rental rate — New IS the "had to source this some other way" rate, so a separate
+        // third purchase/markup tier was redundant on top of it.
+        const renderFabric = (title, emoji, themeColor, which, qtyField, qtyLabel, rentalKey, rentalKeyNew) => {
           const stock = Array.isArray(trussInv[which]) ? trussInv[which] : [];
           return (
             <div className={`bg-${themeColor}-50 border border-${themeColor}-200 rounded-2xl p-5 space-y-3`}>
-              <div><p className={`font-bold text-${themeColor}-900`}>{emoji} {title}</p><p className={`text-xs text-${themeColor}-700 mt-0.5`}>Per-colour Old + New stock quantities + their two rental rates + fresh purchase price + markup %. Update the live quantities after each washing cycle.</p></div>
-              <div className={`bg-white border border-${themeColor}-100 rounded-lg p-3 grid grid-cols-4 gap-3`}>
-                <div><label className="text-xs text-gray-600">Old-stock rental (₹/{qtyLabel})</label><input type="number" min="0" step="1" value={rates[rentalKey] || 0} onChange={(e) => updateRates(rentalKey, e.target.value)} className="mt-1 w-full border border-gray-200 rounded px-2 py-1 text-sm font-bold" /><p className="text-[10px] text-gray-400 mt-0.5">Owned OLD fabric — full charge</p></div>
-                <div><label className={`text-xs text-${themeColor}-700 font-medium`}>New-stock rental (₹/{qtyLabel})</label><input type="number" min="0" step="1" value={rates[rentalKeyNew] || 0} onChange={(e) => updateRates(rentalKeyNew, e.target.value)} className={`mt-1 w-full border border-${themeColor}-300 rounded px-2 py-1 text-sm font-bold text-${themeColor}-800`} /><p className="text-[10px] text-gray-400 mt-0.5">Owned NEW fabric — premium rate</p></div>
-                <div><label className="text-xs text-gray-600">Fresh purchase price (₹/{qtyLabel})</label><input type="number" min="0" step="1" value={rates[purchaseKey] || 0} onChange={(e) => updateRates(purchaseKey, e.target.value)} className="mt-1 w-full border border-gray-200 rounded px-2 py-1 text-sm font-bold" /><p className="text-[10px] text-gray-400 mt-0.5">What Ambria pays to buy new</p></div>
-                <div><label className="text-xs text-gray-600">Fresh markup %</label><input type="number" min="0" max="500" step="1" value={fabricFreshMarkup[markupKey] || 0} onChange={(e) => updateMarkup(markupKey, e.target.value)} className={`mt-1 w-full border border-${themeColor}-300 rounded px-2 py-1 text-sm font-bold text-${themeColor}-800 text-center`} /><p className="text-[10px] text-gray-400 mt-0.5">Shortfall qty = OLD rental rate × (1 + this %) — billed to the guest</p></div>
+              <div><p className={`font-bold text-${themeColor}-900`}>{emoji} {title}</p><p className={`text-xs text-${themeColor}-700 mt-0.5`}>Per-colour Old + New stock quantities + their two rental rates. Update the live quantities after each washing cycle.</p></div>
+              <div className={`bg-white border border-${themeColor}-100 rounded-lg p-3 grid grid-cols-2 gap-3`}>
+                <div><label className="text-xs text-gray-600">Old-stock rental (₹/{qtyLabel})</label><input type="number" min="0" step="1" value={rates[rentalKey] || 0} onChange={(e) => updateRates(rentalKey, e.target.value)} className="mt-1 w-full border border-gray-200 rounded px-2 py-1 text-sm font-bold" /><p className="text-[10px] text-gray-400 mt-0.5">Default — what the guest build bills unless New is picked</p></div>
+                <div><label className={`text-xs text-${themeColor}-700 font-medium`}>New-stock rental (₹/{qtyLabel})</label><input type="number" min="0" step="1" value={rates[rentalKeyNew] || 0} onChange={(e) => updateRates(rentalKeyNew, e.target.value)} className={`mt-1 w-full border border-${themeColor}-300 rounded px-2 py-1 text-sm font-bold text-${themeColor}-800`} /><p className="text-[10px] text-gray-400 mt-0.5">Premium — billed when the salesperson picks New for this truss</p></div>
               </div>
-              <p className={`text-[10px] text-${themeColor}-600`}>Costing uses Old stock first, then New stock, then buys fresh.</p>
+              <p className={`text-[10px] text-${themeColor}-600`}>Deal Check's own per-colour view still consumes Old stock first, then New — anything beyond both also bills at the New rate. Build itself skips this and just bills whichever tier the salesperson picked, flat.</p>
               <div className={`bg-white border border-${themeColor}-100 rounded-lg overflow-hidden`}>
                 <div className={`flex items-center justify-between px-3 py-2 bg-${themeColor}-100`}>
                   <p className={`text-xs font-bold text-${themeColor}-800`}>Per-colour Stock</p>
@@ -1946,7 +1946,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
           <div className="space-y-4">
             <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-4">
               <p className="font-bold text-indigo-900">🧵 Fabric Stock & Pricing</p>
-              <p className="text-xs text-indigo-700 mt-1">Three fabrics with per-colour inventory: <strong>Liza fabric</strong> (kg), <strong>Wall masking panels</strong> (pieces), <strong>Velvet curtains</strong> (pieces). Stocked qty rents at the full rental price; a true shortfall is charged at that item's own rental rate plus the fresh markup % — and this now shows up in the guest's Build price too, not just Deal Check's internal cost tracking.</p>
+              <p className="text-xs text-indigo-700 mt-1">Three fabrics with per-colour inventory: <strong>Liza fabric</strong> (kg), <strong>Wall masking panels</strong> (pieces), <strong>Velvet curtains</strong> (pieces). The salesperson picks Old (default) or New fabric per truss in Build, billed flat at that tier's rental rate below — shows up directly in the guest's price, not just Deal Check's internal tracking.</p>
             </div>
             <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 space-y-3">
               <p className="font-bold text-rose-900">🧮 Liza kg Conversion Factors</p>
@@ -1967,9 +1967,9 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                 </div>
               </div>
             </div>
-            {renderFabric("Liza Fabric", "🪡", "rose", "lizaStock", "stockKg", "kg", "lizaKgRate", "lizaKgPurchase", "liza", "lizaKgRateNew")}
-            {renderFabric("Wall Masking Panels", "🧱", "orange", "maskingStock", "stockPieces", "pcs", "maskingPieceRate", "maskingPiecePurchase", "masking", "maskingPieceRateNew")}
-            {renderFabric("Velvet Curtains", "🎀", "purple", "curtainStock", "stockPieces", "pcs", "curtainPieceRate", "curtainPiecePurchase", "curtain", "curtainPieceRateNew")}
+            {renderFabric("Liza Fabric", "🪡", "rose", "lizaStock", "stockKg", "kg", "lizaKgRate", "lizaKgRateNew")}
+            {renderFabric("Wall Masking Panels", "🧱", "orange", "maskingStock", "stockPieces", "pcs", "maskingPieceRate", "maskingPieceRateNew")}
+            {renderFabric("Velvet Curtains", "🎀", "purple", "curtainStock", "stockPieces", "pcs", "curtainPieceRate", "curtainPieceRateNew")}
           </div>
         );
       })()}

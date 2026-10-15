@@ -281,38 +281,32 @@ const FLORAL_HARDPROP_DEFAULT = {
 // over that one; kept in lockstep by being the one other place this number is allowed to live.
 const GUEST_STRUCT_DISCOUNT_PCT = 25;
 function calcStructCost(zk, zc, rates, applyDiscount) {
-  if (!zc) return { truss: 0, masking: 0, platform: 0, carpet: 0, arches: 0, pillars: 0, glass: 0, print: 0, fabric: 0, fabricShort: false, total: 0 };
+  if (!zc) return { truss: 0, masking: 0, platform: 0, carpet: 0, arches: 0, pillars: 0, glass: 0, print: 0, fabric: 0, fabricNew: false, total: 0 };
   // fd (Platform/Carpet's own floor size) no longer falls back to the truss's dims (d) — owner ask:
   // adding/sizing a truss must never silently size a Platform/Carpet at the same footprint. A zone
   // with plH/cpT set but no floorDims of its own now prices at 0 sqft until someone types a real
   // size, same as any other required field left blank. Deliberately no migration for a deal already
   // relying on the old fallback — owner call: let those prices drop to 0 rather than paper over it.
-  const d = zc.dims || {}, fd = zc.floorDims || {}, r = { truss: 0, masking: 0, platform: 0, carpet: 0, arches: 0, pillars: 0, glass: 0, fabric: 0, fabricShort: false };
+  const d = zc.dims || {}, fd = zc.floorDims || {}, r = { truss: 0, masking: 0, platform: 0, carpet: 0, arches: 0, pillars: 0, glass: 0, fabric: 0, fabricNew: false };
   // Material, drape density, and the ceiling-via-print toggle are all per-row — separate truss
   // structures in the same zone can be a different material, density, or handle their ceiling
   // differently, so each extra row carries its own (set via its own card in the zone editor).
   const trussRows = [
     { dims: d, trT: zc.trT, trussType: zc.trussType, trussQty: zc.trussQty, trussFrontExt: zc.trussFrontExt, trussFrontExtH: zc.trussFrontExtH, trussBackDepth: zc.trussBackDepth, mkOn: zc.mkOn, mkT: zc.mkT, mkWalls: zc.mkWalls, mkWallMat: zc.mkWallMat, mkS: zc.mkS, trussMaterial: zc.trussMaterial, drapeDensity: zc.drapeDensity, customCeilingItemId: zc.customCeilingItemId, customMaskingItemId: zc.customMaskingItemId,
-      maskingAllocation: zc.maskingAllocation, lizaAllocation: zc.lizaAllocation, curtainAllocation: zc.curtainAllocation },
+      useNewFabric: zc.useNewFabric },
     ...(zc.extraTrussRows || []),
   ];
   trussRows.forEach((row) => { const { truss, masking } = trussRowCost(row, rates); r.truss += truss; r.masking += masking; });
   // Liza/Wall-Masking/Velvet-Curtain DRAPE FABRIC — a separate, colour-keyed stock pool from the
-  // flat sqft masking rate above (trussRowCost's own `masking`), checked against real IMS fabric
-  // stock. Owner ask (2026-10-15): a true shortfall here used to price at purchase×40% and was never
-  // billed to the guest — Deal Check tracked it purely as an internal margin hit, invisible on the
-  // quote. Now folded into the guest build itself: calcZoneFabricCost already reads any colour this
-  // zone/row has picked (Deal Check's own allocation, carried above) and auto-fills the best-stocked
-  // colour otherwise, pricing owned stock at full rental and any real shortfall at that fabric's own
-  // rental rate + the admin-set fresh markup % (calcFabricAllocCost — default 7%, no longer 40%).
+  // flat sqft masking rate above (trussRowCost's own `masking`). Owner ask (2026-10-15): no more
+  // auto-detected stock-availability guess — the salesperson picks Old (default, cheaper) or New
+  // (premium) fabric per truss row via an explicit toggle, billed at that flat rate for the full
+  // qty needed. Same formula Deal Check's own zone rollup reads (calcZoneFabricCost), so the two can
+  // never disagree.
   if (rates?.trussInv) {
-    const stockTotal = (arr, qf) => (arr || []).reduce((s, row2) => s + (Number(row2[qf]) || 0) + (Number(row2[qf + "New"]) || 0), 0);
     trussRows.forEach((row) => {
       r.fabric += calcZoneFabricCost(row, rates.trussInv, [], row.drapeDensity || "moderate");
-      const fab = calcZoneFabric(row, rates.trussInv, row.drapeDensity || "moderate");
-      if (fab.maskingPieces > stockTotal(rates.trussInv.maskingStock, "stockPieces")) r.fabricShort = true;
-      if (fab.lizaKg > stockTotal(rates.trussInv.lizaStock, "stockKg")) r.fabricShort = true;
-      if (fab.curtainPieces > stockTotal(rates.trussInv.curtainStock, "stockPieces")) r.fabricShort = true;
+      if (row.useNewFabric) r.fabricNew = true;
     });
   }
   const platformRows = [{ plH: zc.plH, floorDims: fd, cpT: zc.cpT, plQty: zc.plQty }, ...(zc.extraPlatformRows || [])];

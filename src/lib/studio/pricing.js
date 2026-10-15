@@ -507,14 +507,14 @@ export const calcZoneFabric = (zc, trussInv, drapeDensity) => {
 // Returns: {reusedQty, freshQty, reusedCost, freshCost, total, shortQty}
 // Two owned grades per colour, stored on the SAME row: OLD stock in `qtyField` (e.g. stockKg) and NEW
 // stock in `qtyField+"New"` (e.g. stockKgNew). Consumption order: owned OLD first (depreciating,
-// cheaper) → owned NEW (premium rate) → buy fresh. Backward-compatible: a missing New field counts
-// as 0, and an absent rentalRateNew falls back to the OLD rental rate.
-// Owner ask (2026-10-15): a true shortfall used to price at purchase price × fresh markup % (40%
-// default) and was never actually billed to the client — Deal Check tracked it purely as an internal
-// margin hit. That meant going short on fabric cost Ambria money with nobody told and the client never
-// charged for it. Now prices at the item's own OLD rental rate × (1 + fresh markup %) — default 7% —
-// and this IS billed to the guest build (see calcStructCost's fabric fold-in). purchasePrice is kept
-// as a parameter for backward compatibility but no longer feeds this formula.
+// cheaper) → owned NEW (premium rate) → anything beyond that.
+// Owner ask (2026-10-15): there is no third "fresh purchase" tier any more. A separate purchase-price
+// × markup% for going short was never actually billed to the client (Deal Check tracked it purely as
+// an internal margin hit) AND was redundant with the New-stock rate, which already IS what Ambria
+// charges for "had to source this some other way" — the same rate a salesperson now explicitly opts
+// into via the per-truss Old/New fabric toggle (see calcZoneFabricCost). So anything beyond owned
+// Old+New stock simply bills at the New rate too — one premium tier, not two. purchasePrice/
+// freshMarkupPct are kept as parameters for call-site compatibility but no longer used.
 export const calcFabricAllocCost = (qty, colour, stockArray, qtyField, rentalRate, purchasePrice, freshMarkupPct, rentalRateNew) => {
   if (!qty || qty <= 0) return { reusedQty:0, reusedOldQty:0, reusedNewQty:0, freshQty:0, reusedCost:0, freshCost:0, total:0, shortQty:0 };
   const newField = qtyField + "New";
@@ -529,7 +529,7 @@ export const calcFabricAllocCost = (qty, colour, stockArray, qtyField, rentalRat
   rem -= reusedNewQty;
   const freshQty = Math.max(0, rem);
   const reusedCost = reusedOldQty * oldRate + reusedNewQty * newRate;
-  const freshCost  = freshQty  * oldRate * (1 + (Number(freshMarkupPct)||0)/100);
+  const freshCost  = freshQty  * newRate;
   return {
     reusedQty: reusedOldQty + reusedNewQty,
     reusedOldQty,
@@ -604,29 +604,33 @@ export const autoFillFabricAllocation = (totalQty, paletteAnchors, stockArray, q
   return [];
 };
 
-// ═══ Fabric rental cost (Ops handoff 05 Jun 2026) ═══
-// Total fabric rental cost for a zone — Liza + Wall Masking + Velvet Curtains.
-// Each fabric: reused (full rental × qty) + fresh (purchase × markup% × qty). Batta is
-// separate (already in truss structure cost) — fabric is an additional, distinct cost.
-// Used by the Deal Check TRUSS chip rollup so fabric rental is charged to the deal.
+// ═══ Fabric rental cost (Ops handoff 05 Jun 2026; simplified 2026-10-15) ═══
+// Total fabric rental cost for a zone — Liza + Wall Masking + Velvet Curtains. Batta is separate
+// (already in truss structure cost) — fabric is an additional, distinct cost.
+// Owner ask (2026-10-15): no more auto-detected stock-availability shortfall for pricing purposes —
+// there was never a way for a salesperson to actually SEE or choose which fabric grade they were
+// being billed for, so it just silently picked whichever colour had the most stock. Now a flat,
+// explicit choice per truss row: zCfg.useNewFabric (default false = Old stock rate). Whichever the
+// salesperson ticks is what's billed, full qty, no stock-quantity check at all — the same formula
+// Build and Deal Check's zone rollup both read, so neither can disagree with the other.
+// paletteAnchors is kept as a parameter for call-site compatibility but no longer used (colour/stock
+// matching is now Deal Check's own per-colour allocation panel's concern, not pricing's).
 export const calcZoneFabricCost = (zCfg, trussInv, paletteAnchors, density) => {
   if (!zCfg || !trussInv) return 0;
   const fab = calcZoneFabric(zCfg, trussInv, density || "moderate");
-  const fmkup = trussInv.fabricFreshMarkup || { liza:40, masking:40, curtain:40 };
   const rates = trussInv.rates || {};
+  const useNew = !!zCfg.useNewFabric;
   let cost = 0;
-  const addFab = (totalQty, stockArr, qtyField, allocField, rentalKey, purchaseKey, markupKey, rentalKeyNew) => {
+  const addFab = (totalQty, rentalKey, rentalKeyNew) => {
     if (!totalQty || totalQty <= 0) return;
-    const existing = zCfg[allocField];
-    const allocs = (Array.isArray(existing) && existing.length > 0)
-      ? existing
-      : autoFillFabricAllocation(Math.ceil(totalQty), paletteAnchors || [], stockArr, qtyField);
-    const totals = calcFabricAllocationTotal(allocs, stockArr, qtyField, rates[rentalKey], rates[purchaseKey], fmkup[markupKey], rates[rentalKeyNew]);
-    cost += totals.total || 0;
+    const oldRate = Number(rates[rentalKey]) || 0;
+    const newRateRaw = rates[rentalKeyNew];
+    const newRate = (newRateRaw === undefined || newRateRaw === null || newRateRaw === "") ? oldRate : (Number(newRateRaw) || 0);
+    cost += totalQty * (useNew ? newRate : oldRate);
   };
-  addFab(fab.maskingPieces, trussInv.maskingStock, "stockPieces", "maskingAllocation", "maskingPieceRate", "maskingPiecePurchase", "masking", "maskingPieceRateNew");
-  addFab(fab.lizaKg,        trussInv.lizaStock,    "stockKg",     "lizaAllocation",    "lizaKgRate",       "lizaKgPurchase",       "liza",    "lizaKgRateNew");
-  addFab(fab.curtainPieces, trussInv.curtainStock, "stockPieces", "curtainAllocation", "curtainPieceRate", "curtainPiecePurchase", "curtain", "curtainPieceRateNew");
+  addFab(fab.maskingPieces, "maskingPieceRate", "maskingPieceRateNew");
+  addFab(fab.lizaKg,        "lizaKgRate",       "lizaKgRateNew");
+  addFab(fab.curtainPieces, "curtainPieceRate", "curtainPieceRateNew");
   return cost;
 };
 

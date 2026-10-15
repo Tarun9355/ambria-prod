@@ -313,6 +313,18 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                         (ceilingRatePerSqft), and it has nothing to do with the truss metal. */}
                     {zc.trT==="box" && <span style={{display:"inline-flex",marginLeft:6}}>{customCeilingField(k, zc, false, rowIdx)}</span>}
                   </div>}
+                  {/* Liza/Masking-panel/Curtain drape fabric grade — Old (cheaper, default) or New
+                      (premium) stock. Explicit salesperson choice, billed flat at that tier's rental
+                      rate for the whole qty needed — see calcZoneFabricCost (pricing.js). No stock-
+                      quantity check: ticking New is itself the signal to bill the New rate, nothing
+                      silently auto-detected from inventory levels. */}
+                  {zc.trT && <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}} title="Which drape fabric stock this truss's masking/Liza/curtains are billed from">
+                    <span style={rowCap}>Fabric</span>
+                    {[{v:false,l:"Old"},{v:true,l:"New"}].map(o=>{
+                      const sel=(!!zc.useNewFabric)===o.v;
+                      return <span key={String(o.v)} onClick={()=>sZ({useNewFabric:o.v})} style={optPill(sel)}>{sel&&<IconCheck size={9}/>}{o.l}</span>;
+                    })}
+                  </div>}
                   {/* Off is the common state, and it was costing a whole line for one switch. Only
                       the toggle comes up here; the wall and material options below need real width,
                       so they stay in the nested block and appear when masking is actually on. */}
@@ -870,13 +882,12 @@ export default function StudioBuild({ ctx }) {
     const cost = sectionCost(k, sec.id);
     const catRepeat = isRepeatCat(k, sec.id);
     // Liza/Masking/Curtain drape fabric is folded into this chip's own total above (sectionCost's
-    // sc.fabric) — this just flags WHY it might be higher than the truss sqft rate alone would
-    // suggest, same spirit as every other "heads up, this moved and here's why" indicator this app
-    // has needed (stock shortfall, date pricing, the discreet-discount toggle).
-    // No applyDiscount arg needed — fabricShort is set before calcStructCost's discount step runs,
-    // so it's unaffected either way, and omitting it here avoids referencing structDiscountFor
-    // (defined further down this component) before its own declaration.
-    const fabricShort = sec.id === "truss" && zoneConfig[k] ? calcStructCost(k, zoneConfig[k], structRates).fabricShort : false;
+    // sc.fabric) — this just flags when New (premium) fabric was picked for this truss, so the
+    // higher number has an obvious reason instead of looking like an unexplained jump.
+    // No applyDiscount arg needed — fabricNew is set before calcStructCost's discount step runs, so
+    // it's unaffected either way, and omitting it here avoids referencing structDiscountFor (defined
+    // further down this component) before its own declaration.
+    const fabricNew = sec.id === "truss" && zoneConfig[k] ? calcStructCost(k, zoneConfig[k], structRates).fabricNew : false;
     return <div key={sec.id} className="sec-tile" data-on={on?"1":"0"} onClick={()=>openZoneSection(k,sec.id)}
       style={{display:"flex",alignItems:"center",gap:9,padding:"11px 12px",borderRadius:10,cursor:"pointer",
         border:`1px solid ${on?accent:border}`,background:on?`${accent}12`:cardBg}}>
@@ -894,7 +905,7 @@ export default function StudioBuild({ ctx }) {
         style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:22,height:22,borderRadius:7,flexShrink:0,color:catRepeat?"#059669":textS,background:catRepeat?"#05966918":"transparent"}}>
         {catRepeat?<IconRepeat size={12}/>:<IconSparkle size={12}/>}
       </span>
-      {fabricShort && <span title="This zone's drape fabric (Liza/masking/curtains) runs short of owned stock — the shortfall is billed at that fabric's rental rate plus the fresh-markup %, included in the amount shown." style={{fontSize:10,flexShrink:0}}>🧵⚠️</span>}
+      {fabricNew && <span title="New (premium) drape fabric selected for this truss — billed at the New-stock rental rate, included in the amount shown." style={{fontSize:10,flexShrink:0}}>🧵✨</span>}
       {cost>0&&<div style={{fontSize:11.5,fontWeight:700,color:on?accent:textP,flexShrink:0}}>{fmt(cost)}</div>}
       <span style={{display:"flex",flexShrink:0,color:on?accent:textS,transform:on?"rotate(180deg)":"none",transition:"transform .18s ease"}}><IconChevron size={12}/></span>
     </div>;

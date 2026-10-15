@@ -124,8 +124,10 @@ export const INIT_TRUSS_INV = {
     "3": { stock: 40, name: "Beam 3ft" },
     "2": { stock: 30, name: "Beam 2ft" },
   },
-  rates: { pillarRftRate: 0, beamRftRate: 0, battaRftRate: 0, lizaKgRate: 0, maskingPieceRate: 0, curtainPieceRate: 0, lizaKgPurchase: 0, maskingPiecePurchase: 0, curtainPiecePurchase: 0 },
-  fabricFreshMarkup: { liza: 7, masking: 7, curtain: 7 },
+  // No fresh-purchase/markup rates (2026-10-15 simplification) — a true fabric shortfall bills at
+  // the New-stock rate too, which already IS "had to source this some other way." See
+  // calcZoneFabricCost/calcFabricAllocCost (lib/studio/pricing.js) for the current two-tier model.
+  rates: { pillarRftRate: 0, beamRftRate: 0, battaRftRate: 0, lizaKgRate: 0, maskingPieceRate: 0, curtainPieceRate: 0 },
   fabricFactors: { kgPerRftWrap: 0.3, kgPerSqftDense: 0.08, kgPerSqftModerate: 0.05, kgPerSqftMinimum: 0.03 },
   batta: { stockRft: 3000, bufferPct: 10 },
   liza: { stockKg: 0 },
