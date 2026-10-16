@@ -2662,6 +2662,10 @@ export default function StudioApp() {
   }, []);
   // Summary's Apply calls this. Nothing to do when Deal Check is already open — it pushes on its own.
   const syncDeptOpsHeadless = useCallback(() => { if (!dcFullPageOpen) setDcHeadless(true); }, [dcFullPageOpen]);
+  // For autoSaveBuild (a []-deps callback), which needs the current one; and the debounce timer it uses.
+  const syncDeptOpsHeadlessRef = useRef(null);
+  syncDeptOpsHeadlessRef.current = syncDeptOpsHeadless;
+  const deptOpsSyncTimerRef = useRef(null);
   const finishDcHeadless = useCallback(() => {
     if (flushDcAutosaveRef.current) { flushDcAutosaveRef.current(); flushDcAutosaveRef.current = null; }
     setDcHeadless(false);
@@ -7854,7 +7858,14 @@ export default function StudioApp() {
     if (opts.edited) {
       try {
         const cli = (clientLedgerRef.current || []).find((c) => c.id === activeClientIdRef.current);
-        if (cli?.status === "booked") runDealCheckGenerateRef.current?.(null, { skipAi: true, silent: true }).catch(() => {});
+        if (cli?.status === "booked") {
+          runDealCheckGenerateRef.current?.(null, { skipAi: true, silent: true }).catch(() => {});
+          // IMS Dept Ops follows the edit too. Apply alone was not enough: it only exists on a deal
+          // with a negotiated amount, and nobody presses it after every change. Debounced well past
+          // the save's own 1.5s — a run reloads IMS data, so it waits for a pause in editing.
+          clearTimeout(deptOpsSyncTimerRef.current);
+          deptOpsSyncTimerRef.current = setTimeout(() => syncDeptOpsHeadlessRef.current?.(), 8000);
+        }
       } catch { /* ignore */ }
     }
   }, []);
