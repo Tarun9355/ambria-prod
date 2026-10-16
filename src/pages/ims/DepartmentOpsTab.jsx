@@ -10,6 +10,7 @@ import { ZONE_META } from "../../lib/studio/taxonomy";
 import { ZONE_DEF_SK } from "../../lib/studio/keys";
 import { LOGO_ASSET, LOGO_BOX } from "../../lib/studio/brand.js";
 import { fitUrl } from "../../lib/studio/thumb.js";
+import { matchFlowerPattern, resolveSizeKey, sizeClassToPatternKey, resolveMandiFlower } from "../../lib/ims/flowerHelpers";
 
 // ── THE OFFICIAL LOGO, READY FOR THE PDF ──
 // ambria-logo.png is a WHITE wordmark with a gold dot and gold "DESIGN & DECOR", on a transparent
@@ -536,6 +537,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const [showFleet, setShowFleet] = useState(false); // toggle the own-fleet manager
   const [newVeh, setNewVeh] = useState({ vehicle: "", driver: "", phone: "" }); // new fleet entry
   const mandiCatalogue = useMemo(() => (Array.isArray(settings?.mandiCatalogue) ? settings.mandiCatalogue : []), [settings]);
+  const flowerPatterns = useMemo(() => (Array.isArray(settings?.flowerPatterns) ? settings.flowerPatterns : []), [settings]);
 
   const eventDate = (eo) => eo?.functionsDetail?.[0]?.date || eo?.date || eo?.eventDate || "";
   const today = new Date().toISOString().slice(0, 10);
@@ -1735,7 +1737,20 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           // recipe element when it is added (recipeOnlyPatterns in StudioApp.jsx).
           const unit = String(el?.unit || inv?.unit || held?.unit || (isPattern ? "pc" : "")).trim();
           const deptTag = !combined ? "" : isPattern ? "Floral" : inv ? (deptByInvId.get(String(inv.id)) || catToDept(inv.category || inv.cat)) : "";
-          merged.set(key, { name: inv?.name || el?.name || held?.name || "Item", qty, unit, deptTag, photo: invPhoto(inv, held), dims: invDims(inv), size: elSize, kit: (held?.isKit && Array.isArray(held.components)) ? held.components.length : 0 });
+          // ── WHAT GOES INTO A FLORAL ARRANGEMENT ──
+          // A "Flower Reet" is a recipe of several flowers; the crew needs those, not just the
+          // count. Recipe found the way Studio prices it — the element's own patternId, else the
+          // inventory item's sub-category (matchFlowerPattern) — at the same size, B when unset.
+          // Kept PER UNIT; the card multiplies by the zone's summed qty. The full recipe amount,
+          // not the real/artificial split: that is how much goes into the piece.
+          const pat = (el?.patternId && flowerPatterns.find(fp => fp?.id === el.patternId)) || (inv && matchFlowerPattern(inv, flowerPatterns)) || null;
+          const sizeData = pat?.sizes?.[resolveSizeKey(pat.sizes, sizeClassToPatternKey(rawSize || "B"))];
+          const recipe = (sizeData?.flowers || []).map(fl => {
+            if (fl?.invItemId) { const ing = invById.get(String(fl.invItemId)); return ing ? { name: ing.name, qty: Number(fl.qty) || 0, unit: ing.unit || "" } : null; }
+            const mf = resolveMandiFlower(fl?.flowerId, mandiCatalogue)?.parent;
+            return mf ? { name: mf.name, qty: Number(fl.qty) || 0, unit: mf.unit || "" } : null;
+          }).filter(f => f && f.qty > 0);
+          merged.set(key, { name: inv?.name || el?.name || held?.name || "Item", qty, unit, deptTag, photo: invPhoto(inv, held), dims: invDims(inv), size: elSize, kit: (held?.isKit && Array.isArray(held.components)) ? held.components.length : 0, recipe });
         });
         const items = [...merged.values()];
         const zPhoto = fn.elSelectedPhoto?.[zk]?.src || "";
@@ -1840,8 +1855,23 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     // date) and the gap under it — so header + card rows + photo add up to exactly one page.
     const CARD_W = 224, COL_GAP = 17, ROW_H = 300, ARROW = 40, PAGE_PX = 1020, HEAD_PX = 186;
     const colX = (i, n) => { const span = n * CARD_W + (n - 1) * COL_GAP; return (706 - span) / 2 + i * (CARD_W + COL_GAP); };
+    // No photo → no empty "No photo" box, just the details (owner ask). The card then sizes to its
+    // text (np); nb makes room at the top for the size/kit tags the photo used to sit under.
+    const npCls = (it) => it.photo ? "" : (it.size || it.kit ? " np nb" : " np");
+    // Flower lines on a card: at most five, so a photo card still fits its fixed 300px — the photo
+    // gives up 20px per line. Quantities are per-unit recipe × the card's qty.
+    const FL_MAX = 5;
+    const flowerRows = (it) => {
+      const r = it.recipe || [];
+      if (!r.length) return "";
+      const shown = r.length > FL_MAX ? r.slice(0, FL_MAX - 1) : r;
+      const amt = (n) => String(Math.round(n * 100) / 100);
+      return shown.map(f => `<div class="zc-r f"><span>${esc(f.name)}</span><b>${esc(amt(f.qty * (Number(it.qty) || 0)))}${f.unit ? ` <span style="font-weight:500;font-size:.85em;opacity:.7">${esc(f.unit)}</span>` : ""}</b></div>`).join("")
+        + (r.length > shown.length ? `<div class="zc-r f"><span>+${r.length - shown.length} more</span><b></b></div>` : "");
+    };
+    const flLines = (it) => Math.min((it.recipe || []).length, FL_MAX);
     const card = (it, zone, num) => `
-      <div class="zc-ph" ${bg(it.photo)}>${it.photo ? "" : "<span>No photo</span>"}</div>
+      ${it.photo ? `<div class="zc-ph" style="${bgCss(it.photo)}${flLines(it) ? `height:${168 - flLines(it) * 20}px` : ""}" ${bgData(it.photo)}></div>` : ""}
       ${num ? `<div class="zc-no">${num}</div>` : ""}
       ${it.kit ? `<div class="zc-kt">KIT · ${esc(it.kit)}</div>` : ""}
       ${it.size ? `<div class="zc-sz">${esc(it.size)}</div>` : ""}
@@ -1850,6 +1880,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         <div class="zc-r"><span>Qty</span><b>${esc(it.qty)}${it.unit ? ` <span style="font-weight:500;font-size:.85em;opacity:.7">${esc(it.unit)}</span>` : ""}</b></div>
         <div class="zc-r"><span>Size</span><b>${esc(it.dims || "—")}</b></div>
         ${it.source ? `<div class="zc-r"><span>From</span><b>${esc(it.source)}</b></div>` : it.deptTag ? `<div class="zc-r"><span>Dept</span><b>${esc(it.deptTag)}</b></div>` : ""}
+        ${flowerRows(it)}
       </div>`;
     const zoneSection = (pg, chunk, part, parts, zoneNo, offset) => {
       // A zone this department has nothing in still gets its page — the reference photo, run the
@@ -1864,14 +1895,15 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       const PHOTO_H = bare ? PAGE_PX - headPx : Math.max(260, PAGE_PX - headPx - rows * (ROW_H + ARROW));
       const photoTop = bare ? 0 : ROW_H + ARROW;
       const botTop = photoTop + PHOTO_H + ARROW;
+      const stageH = bare ? PHOTO_H : bot.length ? botTop + ROW_H : photoTop + PHOTO_H;
       // No item numbers (removed by request) — each card's arrow alone ties it to the photo.
+      // A top-row card without a photo is shorter, so it is pinned by its BOTTOM to keep sitting on its arrow.
       const cards = [
-        ...top.map((it, i) => { const x = colX(i, top.length); return `<div class="zc" style="left:${x}px;top:0">${card(it, pg.title)}</div>
+        ...top.map((it, i) => { const x = colX(i, top.length); return `<div class="zc${npCls(it)}" style="left:${x}px;${it.photo ? "top:0" : `bottom:${stageH - ROW_H}px`}">${card(it, pg.title)}</div>
           <div class="za down" style="left:${x + CARD_W / 2 - 1}px;top:${ROW_H}px;height:${ARROW}px"></div>`; }),
-        ...bot.map((it, i) => { const x = colX(i, bot.length); return `<div class="zc" style="left:${x}px;top:${botTop}px">${card(it, pg.title)}</div>
+        ...bot.map((it, i) => { const x = colX(i, bot.length); return `<div class="zc${npCls(it)}" style="left:${x}px;top:${botTop}px">${card(it, pg.title)}</div>
           <div class="za up" style="left:${x + CARD_W / 2 - 1}px;top:${photoTop + PHOTO_H}px;height:${ARROW}px"></div>`; }),
       ].join("");
-      const stageH = bare ? PHOTO_H : bot.length ? botTop + ROW_H : photoTop + PHOTO_H;
       return `<section data-block data-page class="zp"><div class="pc tl"></div><div class="pc tr"></div>
         <div class="zh">
           <div><div class="zk"><b>Zone ${String(zoneNo).padStart(2, "0")}</b>${parts > 1 ? ` · Part ${part} of ${parts}` : ""}</div><h2>${esc(pg.title)}</h2>
@@ -1894,7 +1926,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           <div class="orn l"><i></i><b></b><i></i></div>
           <div class="zm">${esc(note)}</div></div>
           <div class="zt"><span>${items.length} item${items.length === 1 ? "" : "s"}</span></div></div>
-        <div class="zg">${c.map(it => `<div class="zc st">${card(it, "")}</div>`).join("")}</div>
+        <div class="zg">${c.map(it => `<div class="zc st${npCls(it)}">${card(it, "")}</div>`).join("")}</div>
       </section>`) : [];
     /* ── WHAT IS INSIDE EVERY KIT ──
        A kit travels as ONE line everywhere else in this book: one card on its zone page, one row
@@ -2236,6 +2268,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   .zphoto span,.zc-ph span{font-size:13px;line-height:1.7;color:#A39A89;font-family:"Inter",Arial,sans-serif}
   .zc{position:absolute;width:224px;height:300px;border:1.5px solid #1A1A1A;border-radius:16px;background:#FFFDF8;box-shadow:4px 4px 0 #1A1A1A}
   .zc.st{position:relative;height:auto;min-height:300px}
+  .zc.np{height:auto;min-height:0}
+  .zc.nb{padding-top:34px}
   .zc-ph{height:168px;margin:7px 7px 0;border-radius:11px;background:#fff center/contain no-repeat;border:1px solid #E6E1D5;display:flex;align-items:center;justify-content:center}
   /* The item number: a gold disc on the card's photo corner, matched by the pin on the photo. */
   .zc-no{position:absolute;top:13px;left:13px;width:22px;height:22px;border-radius:50%;background:#1A1A1A;color:#F4F1EA;font-size:11px;font-weight:700;line-height:22px;text-align:center;box-shadow:0 0 0 2px #FFFDF8}
@@ -2244,6 +2278,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   .zc-r{display:flex;justify-content:space-between;align-items:baseline;gap:8px;line-height:1.8;border-top:1px solid #EDE8DC}
   .zc-r span{color:#6B6B6B;text-transform:uppercase;letter-spacing:.1em;font-size:9.5px;font-weight:700;flex-shrink:0}
   .zc-r b{color:#1A1A1A;font-size:11px;font-weight:700;text-align:right}
+  /* Flower lines: names read as names, not as the uppercase field labels above them. */
+  .zc-r.f span{text-transform:none;letter-spacing:0;font-size:10.5px;font-weight:600;flex-shrink:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   /* The arrow: a gold shaft with a drawn head at the photo end and a dot at the card end. */
   .za{position:absolute;width:1.5px;background:#1A1A1A}
   .za::after{content:"";position:absolute;left:-4px;border-left:4.75px solid transparent;border-right:4.75px solid transparent}
@@ -2635,6 +2671,8 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
       // carries all three identifiers. Slashes and colons are illegal in filenames on Windows.
       const safe = (s) => String(s || "").replace(/[\\/:*?"<>|]+/g, "-").trim();
       const fileName = `${safe(multi ? "All departments" : depts[0])} - ${safe(sel?.clientName || "Event")} - ${safe(selDateStr || "no date")}.pdf`;
+      // A download is the newest build, so the next View deck must not reopen an older one.
+      if (!view && deckCacheRef.current) { URL.revokeObjectURL(deckCacheRef.current.url); deckCacheRef.current = null; }
       if (view) {
         const url = URL.createObjectURL(pdf.output("blob"));
         if (deckCacheRef.current) URL.revokeObjectURL(deckCacheRef.current.url);
@@ -2697,7 +2735,9 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
   const exportDeptPdf = (depts) => exportPdf(Array.isArray(depts) && depts.length ? depts : [dept]);
   const viewDeptPdf = () => {
     let key = "";
-    try { key = dept + "|" + JSON.stringify(sel); } catch { /* unkeyable — just rebuild */ }
+    // The item photos come from inventory, not the event, so a photo added since must miss too.
+    // Floral cards also read the recipes and the mandi list, so an edit to either misses too.
+    try { key = dept + "|" + JSON.stringify(sel) + "|" + JSON.stringify(inventory) + "|" + JSON.stringify(flowerPatterns) + "|" + JSON.stringify(mandiCatalogue); } catch { /* unkeyable — just rebuild */ }
     const c = deckCacheRef.current;
     if (key && c && c.key === key) { setDeckView({ url: c.url, name: c.name }); return; }
     exportPdf([dept], { view: true, cacheKey: key });
