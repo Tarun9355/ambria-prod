@@ -556,6 +556,20 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
                         );
                       })}
                     </span>
+                    {/* The "1ft-3ft" tier is a flat rate band, not one fixed height — ops still needs
+                        to know exactly how tall to build the stand. Only shown once that tier is
+                        picked; the exact value is purely informational (doesn't change rowCost.platform,
+                        which stays priced off the whole-band rate), carried through to IMS Planning's
+                        own Platform display via zc.plHft (see DepartmentOpsTab.jsx/DCTrussTab.jsx). */}
+                    {zc.plH === "1ft" && <>
+                      <span style={{fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:textS,marginLeft:2}}>Exact ht</span>
+                      <select value={zc.plHft || ""} onChange={e=>sZ({plHft:parseFloat(e.target.value)||null})}
+                        title="Exact stand height within the 1ft–3ft band — for production, doesn't change the price"
+                        style={{padding:"3px 8px",borderRadius:999,border:`1px solid ${border}`,background:isDark?"rgba(255,255,255,0.03)":"#fff",color:zc.plHft?textP:textS,fontSize:11.5,fontWeight:600,outline:"none",fontFamily:"inherit",cursor:"pointer"}}>
+                        <option value="">—</option>
+                        {[1,1.5,2,2.5,3].map(v=><option key={v} value={v}>{v}ft</option>)}
+                      </select>
+                    </>}
                   {/* THIS footprint's own cost, not st.platform. st.platform is the zone's total
                       across every footprint, so it could only be shown on the first card — which
                       left every added platform with no price against it at all, and made the first
@@ -632,7 +646,7 @@ export function FloorStack({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark,
     <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 2, marginBottom: 9 }}>
       <button title="Adds a copy of the last platform — edit the copy as needed"
         onClick={() => { const src = rows.length ? rows[rows.length - 1] : zc;
-          write([...rows, { id: "PL" + Date.now(), plH: src.plH || "", floorDims: { ...(src.floorDims || {}) }, cpT: src.cpT || "", plQty: src.plQty || 1 }]); }}
+          write([...rows, { id: "PL" + Date.now(), plH: src.plH || "", plHft: src.plHft || null, floorDims: { ...(src.floorDims || {}) }, cpT: src.cpT || "", plQty: src.plQty || 1 }]); }}
         style={{ fontSize: 10.5, fontWeight: 600, color: "#059669", background: "transparent", border: "1px dashed #05966980", borderRadius: 6, padding: "4px 10px", cursor: "pointer" }}>+ Add Platform</button>
     </div>
   </>);
@@ -4757,10 +4771,10 @@ undefined
             mkOn:!!row.mkOn,mkT:row.mkT||"",mkWalls:row.mkWalls||{},
             trussMaterial:row.trussMaterial??null,drapeDensity:row.drapeDensity??null,
             customCeilingItemId:row.customCeilingItemId??null,customMaskingItemId:row.customMaskingItemId??null});
-          const rowToLibPlatform=(row)=>({id:row.id,plH:row.plH||"",floorL:row.floorDims?.L||0,floorW:row.floorDims?.W||0});
+          const rowToLibPlatform=(row)=>({id:row.id,plH:row.plH||"",plHft:row.plHft??null,floorL:row.floorDims?.L||0,floorW:row.floorDims?.W||0});
           libDims={...(master?.dims||{}),
             trussL:d.L||0,trussW:d.W||0,trussH:d.H||0,floorL:fd.L||0,floorW:fd.W||0,
-            plH:liveCfg.plH||master?.dims?.plH||"",cpT:liveCfg.cpT??master?.dims?.cpT??null,
+            plH:liveCfg.plH||master?.dims?.plH||"",plHft:liveCfg.plHft??master?.dims?.plHft??null,cpT:liveCfg.cpT??master?.dims?.cpT??null,
             mkT:liveCfg.mkT||master?.dims?.mkT||"",mkWalls:liveCfg.mkWalls||master?.dims?.mkWalls||{},
             trussFrontExt:liveCfg.trussFrontExt||0,trussFrontExtH:liveCfg.trussFrontExtH||0,
             trussMaterial:liveCfg.trussMaterial??master?.dims?.trussMaterial??null,

@@ -4616,7 +4616,7 @@ export default function StudioApp() {
       };
     };
     const mapPlatformRow = (row) => ({
-      id: row.id, plH: row.plH || null, cpT: row.cpT ?? null,
+      id: row.id, plH: row.plH || null, plHft: row.plHft ?? null, cpT: row.cpT ?? null,
       floorDims: (row.floorL || row.floorW) ? { L: row.floorL || 0, W: row.floorW || 0 } : {},
     });
     const dims = {};
@@ -4635,7 +4635,7 @@ export default function StudioApp() {
       dims: hasDims ? dims : Object.fromEntries(zm.dimFields.map(f => [f, 0])),
       floorDims: Object.keys(floorDims).length ? floorDims : (hasDims ? { ...dims } : {}),
       trT, mkOn: !!d.mkT, mkT: d.mkT || null, mkWalls: d.mkWalls || {},
-      plH: d.plH || null, cpT: d.cpT ?? null,
+      plH: d.plH || null, plHft: d.plHft ?? null, cpT: d.cpT ?? null,
       trussMaterial: d.trussMaterial ?? null, drapeDensity: d.drapeDensity ?? null,
       customCeilingItemId: d.customCeilingItemId ?? null, customMaskingItemId: d.customMaskingItemId ?? null,
       // Carry truss quantity + box front-extension tagged on the library photo through to Build.
