@@ -1416,20 +1416,34 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     if (!t) return null;
     if (t.kind === "tier2" && Array.isArray(t.rows) && t.rows.length > 0) return (
       <div className="mb-1.5 bg-white border rounded-lg overflow-hidden">
-        {/* w-12 (48px, fixed) used to clip nothing — overflow stayed visible, so a longer label than
-            the "Count"/"Batch"/"Need" defaults (e.g. countLabel: "arrangements") rendered past its
-            own column and on top of the next one. whitespace-nowrap + auto grid tracks let each
-            column size itself to its own longest cell (header or data) instead. */}
-        <div className="grid grid-cols-[1fr_auto_auto_auto] gap-2 px-2 py-1 bg-gray-100 text-[13px] uppercase tracking-wide text-gray-500 font-semibold"><span>{t.perRow ? "Recipe / item" : "Sub-category"}</span><span className="text-right whitespace-nowrap">{t.countLabel || "Count"}</span><span className="text-right whitespace-nowrap">Batch</span><span className="text-right whitespace-nowrap">Need</span></div>
-        {/* Dotted leader (like a table of contents) filling whatever's left of the name column, so
-            the eye has something to follow across to this row's numbers instead of a blank gap. */}
-        {t.rows.map((tr, ti) => (<div key={ti} className="grid grid-cols-[1fr_auto_auto_auto] gap-2 px-2 py-0.5 text-[13px] text-gray-700">
-          <div className="flex items-baseline gap-1.5 min-w-0 overflow-hidden">
-            <span className="truncate" title={tr.sub}>{tr.sub}</span>
-            <span aria-hidden="true" className="flex-1 min-w-2 border-b border-dotted border-gray-300 mb-[3px]" />
+        {/* ONE shared grid for the header AND every data row — a separate grid per row (the previous
+            shape) let each row size its own "auto" columns independently, so a wide header
+            ("arrangements") and a data row's short values ("5", "0.11") never agreed on where a
+            column actually sat; nothing lined up under its own header. display:contents makes each
+            row's wrapping div invisible to layout while its cells still join this ONE grid's column
+            tracks, so every row (header included) is forced to the same widths. gap-x only — a
+            gap-y here would space rows apart the way gap-2 used to only within a row. */}
+        <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-2">
+          <div className="contents">
+            <span className="px-2 py-1 bg-gray-100 text-[13px] uppercase tracking-wide text-gray-500 font-semibold">{t.perRow ? "Recipe / item" : "Sub-category"}</span>
+            <span className="px-2 py-1 bg-gray-100 text-[13px] uppercase tracking-wide text-gray-500 font-semibold text-right whitespace-nowrap">{t.countLabel || "Count"}</span>
+            <span className="px-2 py-1 bg-gray-100 text-[13px] uppercase tracking-wide text-gray-500 font-semibold text-right whitespace-nowrap">Batch</span>
+            <span className="px-2 py-1 bg-gray-100 text-[13px] uppercase tracking-wide text-gray-500 font-semibold text-right whitespace-nowrap">Need</span>
           </div>
-          <span className="text-right whitespace-nowrap">{tr.count}</span><span className="text-right whitespace-nowrap text-gray-400">÷{tr.batch}</span><span className="text-right whitespace-nowrap font-semibold">{tr.need.toFixed(2)}</span>
-        </div>))}
+          {/* Dotted leader (like a table of contents) filling whatever's left of the name column, so
+              the eye has something to follow across to this row's numbers instead of a blank gap. */}
+          {t.rows.map((tr, ti) => (
+            <div className="contents" key={ti}>
+              <div className="flex items-baseline gap-1.5 min-w-0 overflow-hidden px-2 py-0.5 text-[13px] text-gray-700">
+                <span className="truncate" title={tr.sub}>{tr.sub}</span>
+                <span aria-hidden="true" className="flex-1 min-w-2 border-b border-dotted border-gray-300 mb-[3px]" />
+              </div>
+              <span className="px-2 py-0.5 text-[13px] text-gray-700 text-right whitespace-nowrap">{tr.count}</span>
+              <span className="px-2 py-0.5 text-[13px] text-gray-400 text-right whitespace-nowrap">÷{tr.batch}</span>
+              <span className="px-2 py-0.5 text-[13px] text-gray-700 font-semibold text-right whitespace-nowrap">{tr.need.toFixed(2)}</span>
+            </div>
+          ))}
+        </div>
         <div className="px-2 py-1 bg-gray-50 text-[13px] text-right text-gray-600">{t.perRow ? <>Σ each ⌈need⌉ = <b className="text-gray-900">{t.result}</b></> : <>Σ {t.need.toFixed(2)} → ⌈ {Math.ceil(t.need)} ⌉ · max(min {t.min}) = <b className="text-gray-900">{t.result}</b></>}</div>
       </div>
     );
