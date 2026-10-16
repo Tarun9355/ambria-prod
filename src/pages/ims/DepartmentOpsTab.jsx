@@ -1421,7 +1421,15 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
             own column and on top of the next one. whitespace-nowrap + auto grid tracks let each
             column size itself to its own longest cell (header or data) instead. */}
         <div className="grid grid-cols-[1fr_auto_auto_auto] gap-2 px-2 py-1 bg-gray-100 text-[13px] uppercase tracking-wide text-gray-500 font-semibold"><span>{t.perRow ? "Recipe / item" : "Sub-category"}</span><span className="text-right whitespace-nowrap">{t.countLabel || "Count"}</span><span className="text-right whitespace-nowrap">Batch</span><span className="text-right whitespace-nowrap">Need</span></div>
-        {t.rows.map((tr, ti) => (<div key={ti} className="grid grid-cols-[1fr_auto_auto_auto] gap-2 px-2 py-0.5 text-[13px] text-gray-700"><span className="truncate" title={tr.sub}>{tr.sub}</span><span className="text-right whitespace-nowrap">{tr.count}</span><span className="text-right whitespace-nowrap text-gray-400">÷{tr.batch}</span><span className="text-right whitespace-nowrap font-semibold">{tr.need.toFixed(2)}</span></div>))}
+        {/* Dotted leader (like a table of contents) filling whatever's left of the name column, so
+            the eye has something to follow across to this row's numbers instead of a blank gap. */}
+        {t.rows.map((tr, ti) => (<div key={ti} className="grid grid-cols-[1fr_auto_auto_auto] gap-2 px-2 py-0.5 text-[13px] text-gray-700">
+          <div className="flex items-baseline gap-1.5 min-w-0 overflow-hidden">
+            <span className="truncate" title={tr.sub}>{tr.sub}</span>
+            <span aria-hidden="true" className="flex-1 min-w-2 border-b border-dotted border-gray-300 mb-[3px]" />
+          </div>
+          <span className="text-right whitespace-nowrap">{tr.count}</span><span className="text-right whitespace-nowrap text-gray-400">÷{tr.batch}</span><span className="text-right whitespace-nowrap font-semibold">{tr.need.toFixed(2)}</span>
+        </div>))}
         <div className="px-2 py-1 bg-gray-50 text-[13px] text-right text-gray-600">{t.perRow ? <>Σ each ⌈need⌉ = <b className="text-gray-900">{t.result}</b></> : <>Σ {t.need.toFixed(2)} → ⌈ {Math.ceil(t.need)} ⌉ · max(min {t.min}) = <b className="text-gray-900">{t.result}</b></>}</div>
       </div>
     );
