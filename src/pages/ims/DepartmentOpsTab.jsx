@@ -1665,7 +1665,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     // "1ft-3ft" is a flat rate band, not one fixed height — hft (zc.plHft, Build's own "Exact ht"
     // picker) is the salesperson's actual stand height within that band, shown in parens so ops
     // knows exactly what to build rather than just "somewhere between 1 and 3 feet".
-    const platLbl = (h, hft) => h === "4in" ? '4"' : h === "1ft" ? `Raised 1 ft${Number(hft) > 0 ? ` (${hft}ft)` : ""}` : (h ? String(h) : "");
+    const platLbl = (h, hft) => h === "4in" ? '4"' : h === "1ft" ? `Raised ${Number(hft) > 0 ? hft : 1}ft` : (h ? String(h) : "");
     const ftArea = (d) => [d?.L, d?.W].every(v => Number(v) > 0) ? `${d.L} x ${d.W} ft` : "";
     const zoneStructOf = (z) => {
       if (!showStruct || !z) return [];
