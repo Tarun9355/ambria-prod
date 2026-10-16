@@ -406,8 +406,7 @@ export default function DCTrussTab({ ctx }) {
                         // per-part figures now sit on the tiles they belong to, so a whole card
                         // just to repeat them was holding a band of empty space.
                         const fnPalette = fn.fnPalette || "Custom";
-                        const pObj = (imsPaletteCatalogue||[]).find(p => p.name === fnPalette);
-                        const anchors = pObj?.anchorColours || [];
+                        const anchors = anchorsForPalette(imsPaletteCatalogue, fnPalette);
                         let fnGrand = 0;
                         // Per-preview-row fabric cost, kept alongside so the collapsed zone card
                         // below can show the SAME truss+fabric total this header sums, instead of

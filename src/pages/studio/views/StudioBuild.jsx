@@ -2862,21 +2862,47 @@ undefined
         with no override) — this reintroduces a manual pick, per zone group's own function. */}
     {(()=>{
       const isPrimaryFn = activeFnIdx === 0;
-      const current = isPrimaryFn ? (clientPalette || "Custom") : (extraFunctions[activeFnIdx - 1]?.palette || "Custom");
-      const setPalette = (v) => {
+      const currentStr = isPrimaryFn ? (clientPalette || "Custom") : (extraFunctions[activeFnIdx - 1]?.palette || "Custom");
+      // Stored the same compound-string way "White & Gold" always was (StudioSummary.jsx already
+      // splits fn.palette on this exact regex for its own client-facing swatches) — so picking
+      // several colours here is just a longer list joined the same way, nothing new to migrate.
+      const currentList = /^custom$/i.test(currentStr.trim()) ? [] : currentStr.split(/[,&/]+/).map(s=>s.trim()).filter(Boolean);
+      const setPaletteList = (list) => {
+        const v = list.length ? list.join(", ") : "Custom";
         if (isPrimaryFn) setClientPalette(v);
         else setExtraFunctions(p => p.map((f, i) => i === activeFnIdx - 1 ? { ...f, palette: v } : f));
-        setFabricPaletteQ(""); setFabricPaletteOpen(false);
       };
-      const opts = azSort(paletteNames(imsPaletteCatalogue, taxonomy.colorPalette, ["White & Gold","Red & Gold","Pastels","Teal"]));
-      const anchorsOf = (name) => (imsPaletteCatalogue||[]).find(p=>p.name===name)?.anchorColours;
-      const matched = fabricPaletteQ.trim() ? paletteSearch(opts, fabricPaletteQ, anchorsOf) : opts;
-      const optRow = (v, isCustom) => (
-        <div key={v} className="fp-opt" data-on={current===v?"1":"0"} onClick={()=>setPalette(v)} style={{padding:"5px 9px",borderRadius:6,cursor:"pointer",fontSize:11,
-          fontWeight:current===v?700:isCustom?500:400,
-          background:current===v?`${accent}18`:"transparent",
-          color:current===v?accent:textP}}>{v}</div>
-      );
+      // Owner ask (2026-10-16): options come from the colours actually configured in IMS's
+      // Liza/Wall-Masking/Velvet-Curtain fabric stock (Admin → Settings → Fabric Stock & Pricing),
+      // not the general photo-filter colour taxonomy — picking a name here that no fabric colour
+      // actually matches used to silently fall back to whichever colour had the most stock, with no
+      // way to tell. Every option listed now is guaranteed to be a real, matchable fabric colour.
+      const fabricStockColours = (() => {
+        const tInv = structRates?.trussInv;
+        const names = new Set();
+        [tInv?.lizaStock, tInv?.maskingStock, tInv?.curtainStock].forEach(arr => {
+          (arr || []).forEach(s => { const n = String(s?.colour || "").trim(); if (n) names.add(n); });
+        });
+        return [...names];
+      })();
+      const opts = azSort(fabricStockColours);
+      const matched = fabricPaletteQ.trim() ? paletteSearch(opts, fabricPaletteQ) : opts;
+      // Multiple colours (owner ask): widen the acceptable set rather than pin one — Deal Check's
+      // auto-fill (autoFillFabricAllocation) already tries every anchor it's given and lands on
+      // whichever has the best stock, so picking several here just gives it more to choose from.
+      const toggleColour = (name) => setPaletteList(currentList.includes(name) ? currentList.filter(n => n !== name) : [...currentList, name]);
+      const optRow = (v) => {
+        const on = currentList.includes(v);
+        return (
+          <div key={v} className="fp-opt" data-on={on?"1":"0"} onClick={()=>toggleColour(v)} style={{display:"flex",alignItems:"center",gap:7,padding:"5px 9px",borderRadius:6,cursor:"pointer",fontSize:11,
+            fontWeight:on?700:400,
+            background:on?`${accent}18`:"transparent",
+            color:on?accent:textP}}>
+            <span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:13,height:13,borderRadius:4,flexShrink:0,border:`1px solid ${on?accent:border}`,background:on?accent:"transparent",color:"#fff"}}>{on&&<IconCheck size={9}/>}</span>
+            {v}
+          </div>
+        );
+      };
       // Not covered by the isFnSwitching veil below (that wrapper starts further down, around the
       // element cards only) — without this a click landing here mid-switch set the palette on
       // whichever function the switch settles onto, not the one the user was actually looking at
@@ -2890,18 +2916,23 @@ undefined
           <div onClick={()=>setFabricPaletteOpen(o=>!o)} title="Click to change"
             style={{display:"inline-flex",alignItems:"center",gap:6,padding:"4px 10px",borderRadius:8,
               border:`1px solid ${fabricPaletteOpen?accent:border}`,background:cardBg,cursor:"pointer",
-              fontSize:11,fontWeight:600,color:current==="Custom"?textS:textP}}>
-            {current}
-            <span style={{display:"inline-flex",transform:fabricPaletteOpen?"rotate(180deg)":"none",transition:"transform .15s ease",color:textS}}><IconChevron size={10}/></span>
+              fontSize:11,fontWeight:600,color:currentList.length===0?textS:textP,maxWidth:200}}>
+            <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+              {currentList.length===0?"Custom":currentList.length<=2?currentList.join(", "):`${currentList[0]} +${currentList.length-1} more`}
+            </span>
+            <span style={{display:"inline-flex",transform:fabricPaletteOpen?"rotate(180deg)":"none",transition:"transform .15s ease",color:textS,flexShrink:0}}><IconChevron size={10}/></span>
           </div>
           {fabricPaletteOpen&&<div style={{position:"absolute",top:"100%",left:0,zIndex:60,marginTop:4,width:230,
             background:cardBg,border:`1px solid ${border}`,borderRadius:9,boxShadow:"0 6px 20px rgba(0,0,0,0.22)",padding:8}}>
             <input autoFocus value={fabricPaletteQ} onChange={e=>setFabricPaletteQ(e.target.value)}
-              placeholder="Search palettes…" style={{...S.input,fontSize:11,padding:"5px 8px",marginBottom:6,width:"100%"}}/>
+              placeholder="Search fabric colours…" style={{...S.input,fontSize:11,padding:"5px 8px",marginBottom:6,width:"100%"}}/>
             <div style={{maxHeight:220,overflowY:"auto"}}>
-              {optRow("Custom", true)}
               {matched.map(v=>optRow(v))}
-              {fabricPaletteQ.trim()&&matched.length===0&&<div style={{padding:"5px 9px",fontSize:10.5,color:textS}}>No matches</div>}
+              {matched.length===0&&<div style={{padding:"5px 9px",fontSize:10.5,color:textS}}>{fabricPaletteQ.trim()?"No matches":"No fabric colours configured yet — add some in IMS Admin → Fabric Stock"}</div>}
+            </div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:6,marginTop:6,paddingTop:6,borderTop:`1px solid ${border}`}}>
+              <span onClick={()=>setPaletteList([])} style={{fontSize:10.5,color:textS,cursor:"pointer"}}>Clear</span>
+              <span onClick={()=>{setFabricPaletteQ("");setFabricPaletteOpen(false);}} style={{fontSize:10.5,fontWeight:700,color:accent,cursor:"pointer"}}>Done</span>
             </div>
           </div>}
         </div>
