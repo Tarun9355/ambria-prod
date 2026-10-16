@@ -4116,9 +4116,16 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                       {/* Second line: the rate that is editable, and the line total it produces.
                           The total sits in a filled pill rather than as loose text so the one
                           figure you cannot type into does not look like another input. */}
-                      {!(r.shared && !dayWise(r)) && (
+                      {/* Supervisors: ops IS the supervisor (see the "no separate line for him" branch
+                          elsewhere in this file) — a dept head tuning this rate never meant anything
+                          real, so the control is gone rather than shown and ignored. */}
+                      {!(r.shared && !dayWise(r)) && r.type !== "Supervisors" && (
                         <div className="flex items-center gap-2">
-                          <span className="shrink-0 text-[11px] text-gray-400">₹/day</span>
+                          {/* Day-wise rows have no total pill any more (see the comment below), so this
+                              pair is the only thing on the line — pushed to the right edge to match
+                              where the total pill used to sit. Non-day-wise rows keep their own pill's
+                              ml-auto doing that job instead, so this stays unset for them. */}
+                          <span className={"shrink-0 text-[11px] text-gray-400" + (dayWise(r) ? " ml-auto" : "")}>₹/day</span>
                           <input type="number" min="0" value={r.rate} onChange={e => setMp(i, "rate", e.target.value)} className="w-24 rounded-lg ring-1 ring-gray-200 bg-white px-2 py-1.5 text-sm text-center font-semibold" />
                           {/* Day-wise rows (e.g. Flowerists): this header total duplicated the exact same
                               figure the Day-wise plan panel + "Studio plan: …" caption already show once the
@@ -4136,45 +4143,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                         <div className="text-[13.5px] text-gray-600 leading-relaxed bg-slate-50 rounded-xl ring-1 ring-slate-100 p-2.5">
                           {r.shared ? (
                             <>
-                              <div className="flex items-center gap-2 mb-2">
-                                <span className="h-4 w-1 rounded-full bg-blue-500" aria-hidden="true" />
-                                <span className="text-[13px] uppercase tracking-wider text-blue-700 font-bold">How {r.type} derived → then split</span>
-                              </div>
-                              {renderMpTrace(r.trace)}
                               {renderMpSchedule(r)}
-                              {r.splitInfo && r.splitInfo.byUsage && r.splitInfo.usageTotal > 0 ? (
-                                <div className="mt-2 bg-white rounded-xl ring-1 ring-gray-200 px-3 py-2 text-[13.5px] text-gray-600">
-                                  <div className="flex flex-wrap items-center gap-1.5">
-                                    <span className="font-semibold text-gray-900 mr-1">⚖️ Split to {dept}</span>
-                                    <span className="text-gray-400 cursor-help" title={`Split by sub-category usage${r.splitInfo.perDay ? ", computed per day" : ""}: each sub-category's labour goes to its department (1 labour per N units → charged to that sub's dept).${r.splitInfo.perDay ? " Per-day bifurcation is in each day's \"how\" above; this is the booking average." : ""}`}>usage ⓘ</span>
-                                    <span className="rounded bg-gray-100 px-1.5 py-0.5">{r.splitInfo.deptUsage}</span>
-                                    <span className="text-gray-400">÷</span>
-                                    <span className="rounded bg-gray-100 px-1.5 py-0.5">{r.splitInfo.usageTotal}</span>
-                                    <span className="text-gray-400">=</span>
-                                    <span className="rounded bg-blue-50 text-blue-700 px-1.5 py-0.5 font-bold">{Math.round((r.splitInfo.deptUsage / r.splitInfo.usageTotal) * 100)}%</span>
-                                    <span className="ml-auto flex items-center gap-1.5">
-                                      <span className="text-gray-400">of {fmt(r.splitInfo.total)} →</span>
-                                      <span className="rounded-md bg-gray-900 text-white px-2 py-0.5 font-bold tabular-nums">{fmt(Number(r.sysCost) || 0)}</span>
-                                    </span>
-                                  </div>
-                                </div>
-                              ) : r.splitInfo && r.splitInfo.directTotal > 0 ? (
-                                <div className="mt-2 bg-white rounded-xl ring-1 ring-gray-200 px-3 py-2 text-[13.5px] text-gray-600">
-                                  <div className="flex flex-wrap items-center gap-1.5">
-                                    <span className="font-semibold text-gray-900 mr-1">⚖️ Split to {dept}</span>
-                                    <span className="text-gray-400 cursor-help" title="Shared crew, split across all departments by income share">income ⓘ</span>
-                                    <span className="rounded bg-gray-100 px-1.5 py-0.5">{fmt(r.splitInfo.deptDirect)}</span>
-                                    <span className="text-gray-400">÷</span>
-                                    <span className="rounded bg-gray-100 px-1.5 py-0.5">{fmt(r.splitInfo.directTotal)}</span>
-                                    <span className="text-gray-400">=</span>
-                                    <span className="rounded bg-blue-50 text-blue-700 px-1.5 py-0.5 font-bold">{Math.round((r.splitInfo.deptDirect / r.splitInfo.directTotal) * 100)}%</span>
-                                    <span className="ml-auto flex items-center gap-1.5">
-                                      <span className="text-gray-400">of {fmt(r.splitInfo.total)} →</span>
-                                      <span className="rounded-md bg-gray-900 text-white px-2 py-0.5 font-bold tabular-nums">{fmt(Number(r.sysCost) || 0)}</span>
-                                    </span>
-                                  </div>
-                                </div>
-                              ) : <div className="mt-3 text-gray-600">Split across departments. This dept's allocation = <b className="text-gray-900">{fmt(Number(r.sysCost) || 0)}</b>.</div>}
                               {Number(lineCost(r)) !== (Number(r.sysCost) || 0) && (
                                 <div className="mt-3 rounded-lg bg-amber-50 ring-1 ring-amber-200 px-3 py-2 text-[13.5px] text-amber-800">✏️ You tuned this dept's crew/rate per day → line now <b>{fmt(lineCost(r))}</b> (system split was {fmt(Number(r.sysCost) || 0)}).</div>
                               )}
