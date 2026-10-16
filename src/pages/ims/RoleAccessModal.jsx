@@ -34,6 +34,13 @@ const IMS_TABS = [
   { id: "finance", label: "💰 Finance" },
   { id: "admin", label: "⚙️ Admin" },
 ];
+// KEEP IN SYNC: every list below is a hand-maintained mirror of a real tab bar elsewhere in the
+// app (PlanningTab.jsx's allTabs, AdminSettingsTab.jsx's panels/MASTER_DATA, FlowersTab.jsx's
+// sub-tabs, FinanceTab.jsx's sub-tabs, ManageSettings.jsx's settingsView list, …) — there is no
+// shared source of truth, which is exactly how Planning lost "Dept Ops" and Flowers grew a
+// phantom "Function Planning" before (see the comment above IMS_TABS). Whenever a real tab or
+// sub-tab is added, removed, or renamed anywhere in Studio or IMS, update its matching entry here
+// too in the same change, not as a follow-up.
 const IMS_SUBTABS = {
   planning: [
     { id: "deptops", label: "🏦 Dept Ops" },
@@ -41,6 +48,7 @@ const IMS_SUBTABS = {
     { id: "paint", label: "🎨 Paint" },
     { id: "trussbatta", label: "🏗️ Truss & Batta Config" },
     { id: "fabricstock", label: "🧵 Fabric Stock" },
+    { id: "truck", label: "🚚 Truck" },
   ],
   supply: [
     { id: "purchase", label: "🛒 Purchase" },

@@ -17,6 +17,9 @@ function Placeholder({ name, note }) {
 }
 
 export default function PlanningTab({ projects, functions, setFunctions, inventory, setInventory, settings, setSettings, trussInv, setTrussInv, trussAlloc, setTrussAlloc, eventOrders, setEventOrders, blocks, studio, authUser, amendRequests, focusEventId, focusSearch, focusLeadEntry, onFocusHandled, onGoToCalendar, rateCardCategories, rcItems, rcCats }) {
+  // KEEP IN SYNC: RoleAccessModal.jsx's IMS_SUBTABS.planning mirrors this list by hand (role-based
+  // tab access has no shared source of truth with the real tab bars) — add/remove/rename a tab
+  // here and update that list in the same change.
   const allTabs = [
     { id: "deptops", label: "🏦 Dept Ops" },
     { id: "truss", label: "🏗️ Truss" },
