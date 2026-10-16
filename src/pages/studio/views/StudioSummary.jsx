@@ -293,6 +293,18 @@ export default function StudioSummary({ ctx }) {
   // Canva's own id for the design. Kept because the export endpoint wants it and the edit URL is
   // not a reliable place to find it — see canvaDesignId in lib/canva.js.
   const [canvaDeckId, setCanvaDeckId] = useState("");
+  // ── IS THE DECK STILL THIS DEAL? ──
+  // A fingerprint of the cost sheet a deck was made from: every function, zone and line with its qty
+  // and amount, and the grand total. Stored with the deck; when the open cost sheet no longer matches
+  // it, the deck is of an older version of the deal and the toolbar says so. "" for a deck made
+  // before fingerprints were kept — nothing to compare, so it is never flagged.
+  const deckSigOf = (d) => {
+    try {
+      return JSON.stringify([Math.round(d?.eventGrandTotal || 0), (d?.functions || []).map(f => [f.fnType, f.fnDate, f.fnVenue, Math.round(f.grand || 0),
+        (f.zones || []).map(z => [z.label, (z.items || []).map(it => [it.name, it.size || "", it.qty, Math.round(it.total || 0)])])])]);
+    } catch { return ""; }
+  };
+  const [canvaDeckSig, setCanvaDeckSig] = useState("");
   // ── "THE DECK IS MADE" HAS TO SURVIVE THE MOMENT IT HAPPENS ──
   // Making a deck takes long enough that nobody watches the button while it runs, so the toolbar
   // quietly gaining two new buttons is a change that lands while you are looking elsewhere. The glow
@@ -301,9 +313,9 @@ export default function StudioSummary({ ctx }) {
   // you already have does not need chasing, and glowing on every page load would train the eye to
   // ignore it. Cleared the moment View deck is pressed, which is the whole point of it.
   const [deckGlow, setDeckGlow] = useState(false);
-  const rememberDeck = (url, thumb, designId) => {
+  const rememberDeck = (url, thumb, designId, sig) => {
     try {
-      if (activeClientId && url) localStorage.setItem(canvaKey(activeClientId), JSON.stringify({ url, thumb: thumb || "", designId: designId || "" }));
+      if (activeClientId && url) localStorage.setItem(canvaKey(activeClientId), JSON.stringify({ url, thumb: thumb || "", designId: designId || "", sig: sig || "" }));
     } catch { /* private mode */ }
   };
   const readDeck = (id) => {
@@ -311,7 +323,7 @@ export default function StudioSummary({ ctx }) {
     try { raw = localStorage.getItem(canvaKey(id)) || ""; } catch { /* private mode */ }
     if (!raw) return { url: "", thumb: "", pdf: "", pdfAt: 0, designId: "" };
     if (raw[0] !== "{") return { url: raw, thumb: "", pdf: "", pdfAt: 0, designId: "" };
-    try { const o = JSON.parse(raw); return { url: o.url || "", thumb: o.thumb || "", pdf: o.pdf || "", pdfAt: o.pdfAt || 0, designId: o.designId || "" }; }
+    try { const o = JSON.parse(raw); return { url: o.url || "", thumb: o.thumb || "", pdf: o.pdf || "", pdfAt: o.pdfAt || 0, designId: o.designId || "", sig: o.sig || "" }; }
     catch { return { url: "", thumb: "", pdf: "", pdfAt: 0, designId: "" }; }
   };
   // The exported PDF, kept beside the deck link so opening the viewer a second time is instant.
@@ -350,7 +362,7 @@ export default function StudioSummary({ ctx }) {
     // The remembered Canva deck was made from the deal BEFORE these edits, and Summary would keep
     // reopening it (and its cached PDF) as if it were current. Drop it, so the next Canva press
     // builds the deck from the applied deal.
-    forgetDeck(); setCanvaState("idle"); setCanvaEditUrl(""); setCanvaDeckId(""); setDeckPdf({ state: "idle", url: "", error: "" });
+    forgetDeck(); setCanvaState("idle"); setCanvaEditUrl(""); setCanvaDeckId(""); setCanvaDeckSig(""); setDeckPdf({ state: "idle", url: "", error: "" });
     // And bring IMS Dept Ops up to the applied deal now, without anyone opening Deal Check.
     syncDeptOpsHeadless?.();
     showMsg?.("Deal value updated to " + fmt(newNegotiated) + " — updating IMS", "green");
@@ -430,7 +442,7 @@ export default function StudioSummary({ ctx }) {
     // Only ever fills IN a remembered link — it must not clear a deck being generated right now.
     if (canvaState !== "idle") return;
     const saved = readDeck(activeClientId);
-    if (saved.url) { setCanvaEditUrl(saved.url); setCanvaDeckId(saved.designId || ""); setCanvaState("ready"); }
+    if (saved.url) { setCanvaEditUrl(saved.url); setCanvaDeckId(saved.designId || ""); setCanvaDeckSig(saved.sig || ""); setCanvaState("ready"); }
   }, [activeClientId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Full reset back to a blank deal. The 40-setter body moved to StudioApp as startNewDeal, because
@@ -1115,7 +1127,12 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
       // Execution fee is already inside each function's Grand above, and shown as its own row on
       // every function tab. The grand total is therefore those Grand figures (plus the discount
       // line, when there is one) — see the wiring pass below.
-      const gtRow = sw.addRow(["EVENT GRAND TOTAL", "", "", "", combined.eventGrandTotal || 0]);
+      // The SYSTEM total, not combined.eventGrandTotal: with a negotiated amount that field IS the
+      // negotiated figure, while this row's formula (wired below) sums the function Grands — the
+      // cached value has to match what the formula gives, or a viewer that shows cached values
+      // (WhatsApp/phone previews) prints the negotiated amount here and a ₹0 discount under it.
+      const sysTotal = combined.systemGrandTotal ?? combined.eventGrandTotal ?? 0;
+      const gtRow = sw.addRow(["EVENT GRAND TOTAL", "", "", "", sysTotal]);
       sw.mergeCells(gtRow.number, 1, gtRow.number, 4);
       gtRow.getCell(1).font = { bold: true, size: 12, color: { argb: white } };
       gtRow.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: dark } };
@@ -1130,9 +1147,12 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
       // no explanation of where it came from.
       const negotiatedAmount = Number(activeClient?.negotiatedAmount) || 0;
       if (negotiatedAmount > 0) {
-        const systemTotal = combined.eventGrandTotal || 0;
-        const discount = systemTotal - negotiatedAmount;
-        const discRow = sw.addRow(["DISCOUNT", "", "", "", discount]);
+        // Measured from the system total. When the agreed amount is ABOVE it (the build grew after
+        // booking and was Applied), the row says so as a positive adjustment rather than printing a
+        // negative "discount" to the client.
+        const isAdd = negotiatedAmount > sysTotal;
+        const discount = isAdd ? negotiatedAmount - sysTotal : sysTotal - negotiatedAmount;
+        const discRow = sw.addRow([isAdd ? "ADJUSTMENT" : "DISCOUNT", "", "", "", discount]);
         sw.mergeCells(discRow.number, 1, discRow.number, 4);
         discRow.getCell(1).font = { bold: true, size: 11, color: { argb: "FFB91C1C" } };
         discRow.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFEE2E2" } };
@@ -1152,7 +1172,7 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
         // pass below fills in gtRow's real formula, editing any function's numbers flows all the way
         // through to here too. FINAL NEGOTIATED AMOUNT itself stays a flat number: it's the actual
         // manual override the salesperson entered, not something derived from other cells.
-        discRow.getCell(5).value = { formula: `E${gtRow.number}-E${negRow.number}`, result: discount };
+        discRow.getCell(5).value = { formula: isAdd ? `E${negRow.number}-E${gtRow.number}` : `E${gtRow.number}-E${negRow.number}`, result: discount };
       }
 
       // ═══ Per-function tabs — one worksheet per function, after the Event Summary tab above. ═══
@@ -1309,7 +1329,7 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
       // it's a per-venue proration (see proratedVenueDiscount), not a flat %.
       if (swFnRows.length) {
         const first = swFnRows[0].number, last = swFnRows[swFnRows.length - 1].number;
-        gtRow.getCell(5).value = { formula: `SUM(E${first}:E${last})${discountRow ? `+E${discountRow.number}` : ""}`, result: combined.eventGrandTotal || 0 };
+        gtRow.getCell(5).value = { formula: `SUM(E${first}:E${last})${discountRow ? `+E${discountRow.number}` : ""}`, result: sysTotal };
       }
 
       // File name: guest name + the earliest function's date + venue — functions are already
@@ -2208,6 +2228,7 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
   // The Canva import still polls client-side (each poll one fast GET through an edge function) rather
   // than blocking a single long edge-function call, which would hit the execution ceiling.
   const sendToCanva = async (combined) => {
+    const deckSig = deckSigOf(combined);
     setCanvaState("designing"); setCanvaEditUrl(""); setCanvaError("");
     try {
       const connected = await canvaConnectionStatus();
@@ -2252,7 +2273,7 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
       for (let i = 0; i < 24; i++) {
         await new Promise((r) => setTimeout(r, 2500));
         const res = await canvaPollImport(jobId);
-        if (res.status === "success") { setCanvaEditUrl(res.editUrl); setCanvaState("ready"); setCanvaDeckId(res.designId || ""); setDeckGlow(true); rememberDeck(res.editUrl, res.thumbnailUrl, res.designId); return; }
+        if (res.status === "success") { setCanvaEditUrl(res.editUrl); setCanvaState("ready"); setCanvaDeckId(res.designId || ""); setCanvaDeckSig(deckSig); setDeckGlow(true); rememberDeck(res.editUrl, res.thumbnailUrl, res.designId, deckSig); return; }
         if (res.status === "failed") { setCanvaState("error"); setCanvaError(res.error || "Canva import failed"); return; }
       }
       setCanvaState("error"); setCanvaError("Timed out waiting for Canva — try again");
@@ -3179,7 +3200,8 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
         const feePct=Number(d.agencyFeePct)||20;
         d.agencyFee=Math.round(discountedTotal*feePct/100);
         const negotiatedAmount=Number(d.negotiatedAmount)||0;
-        d.eventGrandTotal=negotiatedAmount>0?negotiatedAmount:(discountedTotal+d.agencyFee);
+        d.systemGrandTotal=discountedTotal+d.agencyFee;
+        d.eventGrandTotal=negotiatedAmount>0?negotiatedAmount:d.systemGrandTotal;
         // Fold that discount/fee (or negotiated rescale) back into every function's own previewGrand
         // — same as buildCombinedCostSheetData's initial pass — so the on-screen cards keep summing
         // to eventGrandTotal after a live quantity edit, not just on first open. A blended average
@@ -3296,8 +3318,15 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
               // reloading the page. Worse, that link outlived whatever changed since: a new theme,
               // an edited build, different photos. Both actions are offered now, and Make again is
               // deliberately plain so the link stays the obvious one.
+              // The deck was made from an older version of this deal (see deckSigOf).
+              const deckStale = !!(csData && canvaDeckSig && deckSigOf(csData) !== canvaDeckSig);
               if (canvaState === "ready") return (
                 <>
+                  {deckStale && (
+                    <button onClick={() => { forgetDeck(); setCanvaEditUrl(""); setCanvaDeckSig(""); setCanvaError(""); setDeckPdf({ state: "idle", url: "", error: "" }); sendToCanva(csData); }}
+                      className="cs-tb" title="The deal has changed since this deck was made — design a new one from the deal as it is now"
+                      style={{padding:"7px 15px",borderRadius:999,border:"1px solid #F59E0B",cursor:"pointer",fontSize:12,fontWeight:700,background:"#F59E0B",color:"#1A1A2E",display:"inline-flex",alignItems:"center",gap:7,lineHeight:1}}>⚠ <span className="cs-tb-l">Deal changed — new deck</span></button>
+                  )}
                   {/* ── ONE FILL IN THE ROW ──
                       Four buttons all shouting was the problem: Excel blue, View deck teal, Canva
                       violet, Make again ghosted. Four colours is no hierarchy at all — the eye has
@@ -3308,10 +3337,10 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
                       All four are pills now, so the row reads as one set. */}
                   <button onClick={showDeckPdf} disabled={deckPdf.state==="loading"}
                     className={"cs-tb cs-tb-ghost" + (deckGlow?" sh-deck-glow":"")}
-                    title={deckGlow?"Your design deck is ready — open it":"Show the design deck as it stands in Canva, and hand it over as a PDF"}
+                    title={deckStale?"This deck is of an older version of the deal":deckGlow?"Your design deck is ready — open it":"Show the design deck as it stands in Canva, and hand it over as a PDF"}
                     style={{padding:"7px 15px",borderRadius:999,border:"1px solid rgba(255,255,255,0.28)",cursor:deckPdf.state==="loading"?"default":"pointer",fontSize:12,fontWeight:600,background:"transparent",color:"#fff",opacity:deckPdf.state==="loading"?0.7:1,display:"inline-flex",alignItems:"center",gap:7,lineHeight:1}}>{deckPdf.state==="loading"?"⏳ Opening…":<><IconEye size={14}/><span className="cs-tb-l">View deck</span></>}</button>
                   <button onClick={() => window.open(canvaEditUrl, "_blank")} className="cs-tb cs-tb-canva" title="Open this deck in Canva to edit it" style={{padding:"7px 15px",borderRadius:999,border:"1px solid #7C3AED",cursor:"pointer",fontSize:12,fontWeight:600,background:"#7C3AED",color:"#fff",display:"inline-flex",alignItems:"center",gap:7,lineHeight:1}}><IconCanvaMark size={15}/><span className="cs-tb-l">Canva</span></button>
-                  <button onClick={() => { setCanvaState("idle"); setCanvaEditUrl(""); setCanvaError(""); forgetDeck(); }}
+                  <button onClick={() => { setCanvaState("idle"); setCanvaEditUrl(""); setCanvaDeckSig(""); setCanvaError(""); forgetDeck(); }}
                     title="Design a fresh deck — the current link stays open in Canva either way"
                     className="cs-tb cs-tb-ghost"
                     style={{padding:"7px 15px",borderRadius:999,border:"1px solid rgba(255,255,255,0.28)",background:"transparent",color:"#fff",cursor:"pointer",fontSize:12,fontWeight:600,display:"inline-flex",alignItems:"center",gap:7,lineHeight:1}}><IconRepeat size={14}/><span className="cs-tb-l">Make again</span></button>

@@ -531,6 +531,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const [mpEventOpen, setMpEventOpen] = useState(false);
   // Manpower plan scope: "all", or the index of one function in sel.functionsDetail.
   const [mpFn, setMpFn] = useState("all");
+  // Inventory blocked scope, the same way: "all", or one function's index.
+  const [invFn, setInvFn] = useState("all");
   // Whole-event crew row whose "how" modal is open (its crew type), or null.
   const [mpHowType, setMpHowType] = useState(null);
   // Fabric colour swatch shown large ({name, hex}), or null.
@@ -600,11 +602,16 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   // Events for the visible month, bucketed by date — the picker grid reads this.
   const pickByDate = useMemo(() => {
     const out = {};
+    // An event sits on EVERY one of its function dates, not just the first: a wedding with a
+    // mehendi a month earlier is work on both days, and filing it under the first date alone hid it
+    // from the month the other function falls in.
     events.forEach(({ eo, date }) => {
-      if (!date) return;
-      const [y, m] = date.split("-").map(Number);
-      if (y !== pickMonth.y || m !== pickMonth.m + 1) return;
-      (out[date] = out[date] || []).push(eo);
+      const dates = [...new Set([...(eo.functionsDetail || []).map(f => String(f?.date || "").slice(0, 10)), date].filter(Boolean))];
+      dates.forEach(d => {
+        const [y, m] = d.split("-").map(Number);
+        if (y !== pickMonth.y || m !== pickMonth.m + 1) return;
+        (out[d] = out[d] || []).push(eo);
+      });
     });
     return out;
   }, [events, pickMonth]);
@@ -633,7 +640,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const sel = (eventOrders || []).find(e => e.id === selId);
   // A PDF open for one event must not carry over when the picker moves to another.
   useEffect(() => { setDeckView(null); }, [selId]);
-  useEffect(() => { setMpFn("all"); setMpHowType(null); }, [selId]);
+  useEffect(() => { setMpFn("all"); setMpHowType(null); setInvFn("all"); }, [selId]);
   // The last PDF View deck built, keyed by department + the event's full data. Opening it again
   // with nothing changed reuses it instantly instead of rebuilding; any edit to the event changes
   // the key, so what opens is still always the latest. Its blob: URL is freed when replaced.
@@ -824,6 +831,49 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const mpFirstDate = mpFns.map(mpFnDate).filter(Boolean).sort()[0] || "";
   const mpNextDay = (iso) => { const d = new Date(iso + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + 1); return d.toISOString().slice(0, 10); };
   const mpScoped = mpFn !== "all" && !!mpFnDate(mpFns[mpFn]);
+  // All functions + one chip per function — one row shared by every panel that can be scoped to a
+  // function (Manpower plan, Inventory blocked). Only on a booking with more than one function.
+  const fnChipRow = (value, setValue) => mpFns.length > 1 && (
+    <div className="m-2.5 mb-0 flex flex-wrap gap-1.5">
+      {[["all", "All functions"], ...mpFns.map((f, fi) => [fi, [f?.type || `Function ${fi + 1}`, mpFnDate(f)].filter(Boolean).join(" · ")])].map(([k, label]) => (
+        <button key={k} onClick={() => setValue(k)} aria-pressed={value === k}
+          className={"rounded-lg px-2.5 py-1 text-[12px] font-semibold whitespace-nowrap cursor-pointer transition-colors " + (value === k ? "bg-blue-600 text-white" : "bg-white text-gray-600 ring-1 ring-gray-200 hover:bg-blue-50 hover:text-blue-700")}>{label}</button>
+      ))}
+    </div>
+  );
+  // ── ONE FUNCTION'S INVENTORY ──
+  // Deal Check sends the department's inventory summed across the whole booking, so the rows carry
+  // no function. Each function's own zone lists (functionsDetail[].elements) say how many of an
+  // item that function uses — by inventory id, else by name, the same match the PDF's zone pages
+  // make. Scoped, a row shows that function's qty and its share of the line total (a kit's total
+  // carries its components, so it is scaled rather than recomputed as rate × qty). Rows no
+  // function's zones name — production, fabric and the like — stay under All functions.
+  const invScoped = invFn !== "all" && !!mpFns[invFn];
+  const invFnQty = useMemo(() => {
+    const byId = new Map(), byName = new Map();
+    const fd = invScoped ? mpFns[invFn] : null;
+    Object.entries(fd?.elements || {}).forEach(([zk, els]) => {
+      if (fd.enabledEls && fd.enabledEls[zk] === false) return;
+      (Array.isArray(els) ? els : []).forEach(el => {
+        const q = Number(el?.qty) || 1;
+        const id = el?.invId || el?.imsId;
+        if (id) byId.set(String(id), (byId.get(String(id)) || 0) + q);
+        const nm = String(el?.name || "").trim().toLowerCase();
+        if (nm) byName.set(nm, (byName.get(nm) || 0) + q);
+      });
+    });
+    return { byId, byName };
+  }, [sel, invFn]);
+  const invShown = invScoped
+    ? blockedItemsGrouped.map(it => {
+        const q = (it.invId && invFnQty.byId.get(String(it.invId))) || invFnQty.byName.get(String(it.name || "").trim().toLowerCase()) || 0;
+        if (!q) return null;
+        const share = (Number(it.qty) || 0) > 0 ? q / Number(it.qty) : 1;
+        return { ...it, qty: q, total: Math.round((Number(it.total) || 0) * share), shortQty: Math.min(Number(it.shortQty) || 0, q) };
+      }).filter(Boolean)
+    : blockedItemsGrouped;
+  const invWholeOnly = invScoped ? blockedItemsGrouped.length - invShown.length : 0;
+  const invShownTotal = invShown.reduce((s, x) => s + (Number(x.total) || 0), 0);
   const inMpFn = (d) => {
     const fd = mpFnDate(mpFns[mpFn]);
     if (d.phase === "dismantle") return d.date === mpNextDay(fd);
@@ -3842,12 +3892,18 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                   <span aria-hidden="true" className="shrink-0 w-8 h-8 rounded-lg bg-white shadow-[0_1px_3px_rgba(15,23,42,0.12),0_4px_10px_-4px_rgba(15,23,42,0.22)] flex items-center justify-center text-sm leading-none">📦</span>
                   <div className="min-w-0">
                     <div className="text-[13px] font-semibold text-gray-900 truncate">Inventory blocked for {dept}</div>
-                    <div className="text-[10px] text-gray-500 truncate">{blockedItemsGrouped.length} item{blockedItemsGrouped.length === 1 ? "" : "s"} held for this event</div>
+                    <div className="text-[10px] text-gray-500 truncate">{invShown.length} item{invShown.length === 1 ? "" : "s"} held for {invScoped ? "this function" : "this event"}</div>
                   </div>
                 </div>
-                <div className="shrink-0 rounded-lg bg-white px-2.5 py-1 text-[15px] font-bold text-gray-900 tabular-nums whitespace-nowrap shadow-[0_1px_2px_rgba(16,24,40,0.06)]">{fmt(rentalIncome)}</div>
+                <div className="shrink-0 rounded-lg bg-white px-2.5 py-1 text-[15px] font-bold text-gray-900 tabular-nums whitespace-nowrap shadow-[0_1px_2px_rgba(16,24,40,0.06)]">{fmt(invScoped ? invShownTotal : rentalIncome)}</div>
               </div>
-              {blockedItemsGrouped.length === 0 ? (
+              {fnChipRow(invFn, setInvFn)}
+              {invWholeOnly > 0 && (
+                <div className="m-2.5 mb-0 px-2.5 py-2 rounded-xl bg-gray-50 text-[11px] text-gray-500">{invWholeOnly} item{invWholeOnly === 1 ? " is" : "s are"} not in any of this function's zones (production, fabric and the like) — see All functions.</div>
+              )}
+              {blockedItemsGrouped.length > 0 && invShown.length === 0 ? (
+                <div className="px-4 py-6 text-center text-xs text-gray-400">None of this department's inventory is in this function's zones.</div>
+              ) : blockedItemsGrouped.length === 0 ? (
                 <div className="px-4 py-6 text-center text-xs text-gray-400">No inventory blocked for this department on this event.</div>
               ) : (
                 /* ── ONE CARD PER ITEM, NOT A TABLE ──
@@ -3861,7 +3917,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                    shared header to sit above, so each figure carries its own label — which is
                    also the only form that survived the phone layout anyway. */
                 <div className="p-2.5 space-y-2">
-                  {blockedItemsGrouped.map(it => {
+                  {invShown.map(it => {
                     // ── WHY THE TOTAL IS NOT ALWAYS RATE × QTY ──
                     // On rows pushed from Deal Check, `unit` and `total` are independent fields:
                     // unit is the base rental, total is the line rental — and for a KIT that
@@ -3988,14 +4044,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
               </div>
               {/* All functions + one chip per function, as Deal Check's Manpower tab scopes it.
                   Only on a booking with more than one function — with one, the two are the same. */}
-              {mpFns.length > 1 && (
-                <div className="m-2.5 mb-0 flex flex-wrap gap-1.5">
-                  {[["all", "All functions"], ...mpFns.map((f, fi) => [fi, [f?.type || `Function ${fi + 1}`, mpFnDate(f)].filter(Boolean).join(" · ")])].map(([k, label]) => (
-                    <button key={k} onClick={() => setMpFn(k)} aria-pressed={mpFn === k}
-                      className={"rounded-lg px-2.5 py-1 text-[12px] font-semibold whitespace-nowrap cursor-pointer transition-colors " + (mpFn === k ? "bg-blue-600 text-white" : "bg-white text-gray-600 ring-1 ring-gray-200 hover:bg-blue-50 hover:text-blue-700")}>{label}</button>
-                  ))}
-                </div>
-              )}
+              {fnChipRow(mpFn, setMpFn)}
               {mpEventOpen && hasMpSnapshot && (() => {
                 const ev = eventManpower();
                 const lab = ev.types.find(t => t.type === "Labours");

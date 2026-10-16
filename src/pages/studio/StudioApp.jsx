@@ -3893,6 +3893,12 @@ export default function StudioApp() {
           // A custom zone's key is a generated id ("cz_1789…"); IMS has no other way to learn its name,
           // so the Dept Ops PDF printed the id as the zone title.
           zoneNames: Object.fromEntries((fd.customZones || []).filter(cz => cz && cz.id).map(cz => [cz.id, cz.name || ""])),
+          // Which function, when and where. Set once at booking and never refreshed, so a date moved
+          // in Studio after the deal was booked never reached IMS — the event stayed on its old date
+          // in the planning calendar and on every report. Only written when Studio has a value.
+          ...(fd.fnType ? { type: fd.fnType } : {}),
+          ...(fd.fnDate ? { date: fd.fnDate } : {}),
+          ...(fd.fnVenue ? { venue: fd.fnVenue } : {}),
         });
       });
     } catch { /* layout refresh is best-effort — the money snapshot still goes */ }
@@ -3906,7 +3912,9 @@ export default function StudioApp() {
     // discarded real-world facts (what was actually bought, which truck was used) that have nothing
     // to do with a pricing regenerate — so the dept head's edits looked like they silently reverted.
     const withLayout = (fns) => Array.isArray(fns) && layout.size ? fns.map(f => (f && layout.has(f.fnIdx)) ? { ...f, ...layout.get(f.fnIdx) } : f) : fns;
-    const applySnap = (base) => ({ ...base, functionsDetail: withLayout(base.functionsDetail), deptIncome: snap.income || {}, deptInventory: snap.inventory || {}, floralPlan: snap.floralPlan || base.floralPlan || null, fabricPlan: snap.fabricPlan || base.fabricPlan || null, manpowerPlan: snap.manpowerPlan || [], manpowerDetail: snap.manpowerDetail || {}, mpPhases: snap.mpPhases || null, deptSeason: snap.season || null, deptIncomeSig: sig, deptSyncedAt: Date.now(), dealValue: snap.dealValue || base.dealValue || null, transportPlan: snap.transportPlan ?? null });
+    // The order's own date follows its first function's (what IMS falls back to when it needs one date).
+    const firstDate = [...layout.values()].map(l => l.date).filter(Boolean).sort()[0];
+    const applySnap = (base) => ({ ...base, ...(firstDate ? { date: firstDate } : {}), functionsDetail: withLayout(base.functionsDetail), deptIncome: snap.income || {}, deptInventory: snap.inventory || {}, floralPlan: snap.floralPlan || base.floralPlan || null, fabricPlan: snap.fabricPlan || base.fabricPlan || null, manpowerPlan: snap.manpowerPlan || [], manpowerDetail: snap.manpowerDetail || {}, mpPhases: snap.mpPhases || null, deptSeason: snap.season || null, deptIncomeSig: sig, deptSyncedAt: Date.now(), dealValue: snap.dealValue || base.dealValue || null, transportPlan: snap.transportPlan ?? null });
     try {
       // Read the FRESHEST row so we never clobber IMS-owned fields with Studio's stale local copy.
       const { data: row } = await supabase.from("event_orders").select("data").eq("id", eo.id).maybeSingle();
@@ -9931,6 +9939,9 @@ export default function StudioApp() {
     return {
       functions,
       eventGrandTotal,
+      // The system's own total (after the venue discount, with the fee), kept even when a negotiated
+      // amount replaces it as eventGrandTotal — it is what the negotiated discount is measured from.
+      systemGrandTotal,
       venueDiscount, agencyFee, agencyFeePct, negotiatedAmount,
       clientName, clientPhone, clientBrideGroom
     };
