@@ -750,7 +750,15 @@ export default function DCTrussTab({ ctx }) {
                                           {showCurtain && <FabricRow
                                             emoji="🎀" label="Velvet Curtains" qty={fab.curtainPieces} unitLabel="pc"
                                             allocs={curtainAlloc} totals={curtainTotals} fabricType="curtain" allocField="curtainAllocation"
-                                            breakdown={`${fab.curtainPillarCount || fab.pillarCount} ${fab.curtainPillarCount && fab.curtainPillarCount < fab.pillarCount ? "front " : ""}pillars × ${(row.curtainsPerPillar || 4)} curtains/pillar`}
+                                            breakdown={(() => {
+                                              const pc = fab.curtainPillarCount || fab.pillarCount || 0;
+                                              // Read back from the actual totals (curtainPieces ÷ curtainPillarCount) rather than
+                                              // re-guessing row.curtainsPerPillar's default — a U truss bills 2/pillar, Half/Full
+                                              // Box bill 4/pillar (calcZoneFabric, lib/studio/pricing.js), and this label must
+                                              // always describe whichever one actually produced qty needed above it.
+                                              const perPillar = pc > 0 ? Math.round((fab.curtainPieces || 0) / pc) : (row.curtainsPerPillar || 4);
+                                              return `${pc} ${fab.curtainPillarCount && fab.curtainPillarCount < fab.pillarCount ? "front " : ""}pillars × ${perPillar} curtains/pillar`;
+                                            })()}
                                             discounted={costs?.isRepeat} useNewFabric={useNewFabric}
                                           />}
                                           </div>
