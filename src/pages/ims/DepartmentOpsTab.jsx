@@ -1416,8 +1416,12 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     if (!t) return null;
     if (t.kind === "tier2" && Array.isArray(t.rows) && t.rows.length > 0) return (
       <div className="mb-1.5 bg-white border rounded-lg overflow-hidden">
-        <div className="grid grid-cols-[1fr_auto_auto_auto] gap-2 px-2 py-1 bg-gray-100 text-[13px] uppercase tracking-wide text-gray-500 font-semibold"><span>{t.perRow ? "Recipe / item" : "Sub-category"}</span><span className="text-right w-12">{t.countLabel || "Count"}</span><span className="text-right w-12">Batch</span><span className="text-right w-12">Need</span></div>
-        {t.rows.map((tr, ti) => (<div key={ti} className="grid grid-cols-[1fr_auto_auto_auto] gap-2 px-2 py-0.5 text-[13px] text-gray-700"><span className="truncate" title={tr.sub}>{tr.sub}</span><span className="text-right w-12">{tr.count}</span><span className="text-right w-12 text-gray-400">÷{tr.batch}</span><span className="text-right w-12 font-semibold">{tr.need.toFixed(2)}</span></div>))}
+        {/* w-12 (48px, fixed) used to clip nothing — overflow stayed visible, so a longer label than
+            the "Count"/"Batch"/"Need" defaults (e.g. countLabel: "arrangements") rendered past its
+            own column and on top of the next one. whitespace-nowrap + auto grid tracks let each
+            column size itself to its own longest cell (header or data) instead. */}
+        <div className="grid grid-cols-[1fr_auto_auto_auto] gap-2 px-2 py-1 bg-gray-100 text-[13px] uppercase tracking-wide text-gray-500 font-semibold"><span>{t.perRow ? "Recipe / item" : "Sub-category"}</span><span className="text-right whitespace-nowrap">{t.countLabel || "Count"}</span><span className="text-right whitespace-nowrap">Batch</span><span className="text-right whitespace-nowrap">Need</span></div>
+        {t.rows.map((tr, ti) => (<div key={ti} className="grid grid-cols-[1fr_auto_auto_auto] gap-2 px-2 py-0.5 text-[13px] text-gray-700"><span className="truncate" title={tr.sub}>{tr.sub}</span><span className="text-right whitespace-nowrap">{tr.count}</span><span className="text-right whitespace-nowrap text-gray-400">÷{tr.batch}</span><span className="text-right whitespace-nowrap font-semibold">{tr.need.toFixed(2)}</span></div>))}
         <div className="px-2 py-1 bg-gray-50 text-[13px] text-right text-gray-600">{t.perRow ? <>Σ each ⌈need⌉ = <b className="text-gray-900">{t.result}</b></> : <>Σ {t.need.toFixed(2)} → ⌈ {Math.ceil(t.need)} ⌉ · max(min {t.min}) = <b className="text-gray-900">{t.result}</b></>}</div>
       </div>
     );
