@@ -215,7 +215,7 @@ export default function DealCheckOverlay({ ctx }) {
     // photoKnowledge / saveKnowledgeEntry / dcKnowledgeKey were destructured here for the
     // "Set as correct match for this photo" control. That control is gone, and nothing else in
     // this file read them — re-add all three if the teach action comes back.
-    dcDesiredMargin, setDcDesiredMargin, closeDealCheck,
+    dcDesiredMargin, setDcDesiredMargin, closeDealCheck, dcHeadless, finishDcHeadless,
     dcSaveBaselineRef, dcConflictWarnedAtRef, flushDcAutosaveRef, dcStateReadyForClientRef,
     dcZoneState, dcMpOverrides, dcMpWinCount, dcMpIncludeMinusOne, dcMpIncludeDismantle,
     setDcResolved, setDcCards, setDcZoneState, setDcPhotoOverrides, setDcSkipped, setDcProductionAccepted,
@@ -447,6 +447,7 @@ export default function DealCheckOverlay({ ctx }) {
   // overlay is mounted and restore exactly what was there before (not a hardcoded "visible", which
   // would clobber any lock another overlay had set).
   useEffect(() => {
+    if (dcHeadless) return; // the unseen run (Summary's Apply) must not freeze the page it runs under
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => { document.body.style.overflow = prev; };
@@ -526,6 +527,15 @@ export default function DealCheckOverlay({ ctx }) {
     s.timer = setTimeout(() => setDcSettledFor(clientId), 1500);
   });
   useEffect(() => () => clearTimeout(dcSettleRef.current.timer), []);
+  // ── THE UNSEEN RUN ENDS ITSELF ──
+  // Once prices have settled the department push below has gone out with the final figures (it fires
+  // 200ms after any change in the totals); the extra wait covers that push and its write. A run that
+  // never settles still ends after a minute rather than staying mounted.
+  useEffect(() => {
+    if (!dcHeadless) return;
+    const t = setTimeout(() => finishDcHeadless?.(), dcPriceSettled ? 2500 : 60000);
+    return () => clearTimeout(t);
+  }, [dcHeadless, dcPriceSettled]);
 
   if (!(authUser && true)) return null;
 

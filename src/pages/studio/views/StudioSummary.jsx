@@ -199,7 +199,7 @@ export default function StudioSummary({ ctx }) {
     isAdmin, clientLedger, saveClientLedger, eventOrders, activeClientId, askConfirm,
     // events / cost sheet
     eventGrandTotal, pricingReady, collectAllFunctionData, calcFunctionBreakdown,
-    buildCombinedCostSheetData, csData, setCsData, saveSession, showMsg, syncDealValueNow,
+    buildCombinedCostSheetData, csData, setCsData, saveSession, showMsg, syncDealValueNow, syncDeptOpsHeadless,
     // summary accordion state
     expandedSummaryFnIdx, setExpandedSummaryFnIdx,
     // pricing helpers
@@ -277,23 +277,6 @@ export default function StudioSummary({ ctx }) {
   }, [activeClientId, pricingReady, dvIsBooked, dvHasNegotiated, activeClient?.bookedSystemTotal]);
   const pendingDelta = (dvIsBooked && dvHasNegotiated && activeClient?.bookedSystemTotal != null)
     ? Math.round(eventGrandTotal - activeClient.bookedSystemTotal) : 0;
-  const applyPendingDealValue = () => {
-    const newNegotiated = Math.max(0, (Number(activeClient?.negotiatedAmount) || 0) + pendingDelta);
-    saveClientLedger(clientLedger.map(c => c.id === activeClientId ? { ...c, negotiatedAmount: newNegotiated, bookedSystemTotal: eventGrandTotal } : c));
-    syncDealValueNow?.({ amount: Math.round(newNegotiated), pending: 0 });
-    showMsg?.("Deal value updated to " + fmt(newNegotiated), "green");
-  };
-  // Escape hatch for when the pending figure itself is not trustworthy — most commonly a deal
-  // booked before this tracking existed, whose baseline got healed off whatever the build happened
-  // to total the first time Summary was opened post-rollout (not the true number at booking).
-  // Re-points the baseline at today's live total with ZERO effect on negotiatedAmount — unlike
-  // Apply, this never changes what the client owes, only where drift starts being measured from.
-  const resetDealValueTracking = () => {
-    saveClientLedger(clientLedger.map(c => c.id === activeClientId ? { ...c, bookedSystemTotal: eventGrandTotal } : c));
-    syncDealValueNow?.({ amount: Math.round(Number(activeClient?.negotiatedAmount) || 0), pending: 0 });
-    showMsg?.("Tracking reset to the current build — deal value unchanged", "green");
-  };
-
   // ═══ THE DECK THIS DEAL ALREADY HAS ═══
   // canvaEditUrl lived in component state alone, so the link died on a reload, on closing the
   // preview, or on switching deal and back — and the button dropped to "Canva", offering to build a
@@ -359,6 +342,30 @@ export default function StudioSummary({ ctx }) {
   // export then serves both the preview and the download.
   const [deckPdf, setDeckPdf] = useState({ state: "idle", url: "", error: "" });
   useEffect(() => { setDeckPdf({ state: "idle", url: "", error: "" }); }, [canvaEditUrl]);
+  // Declared below the deck state on purpose: Apply resets the remembered deck (see inside).
+  const applyPendingDealValue = () => {
+    const newNegotiated = Math.max(0, (Number(activeClient?.negotiatedAmount) || 0) + pendingDelta);
+    saveClientLedger(clientLedger.map(c => c.id === activeClientId ? { ...c, negotiatedAmount: newNegotiated, bookedSystemTotal: eventGrandTotal } : c));
+    syncDealValueNow?.({ amount: Math.round(newNegotiated), pending: 0 });
+    // The remembered Canva deck was made from the deal BEFORE these edits, and Summary would keep
+    // reopening it (and its cached PDF) as if it were current. Drop it, so the next Canva press
+    // builds the deck from the applied deal.
+    forgetDeck(); setCanvaState("idle"); setCanvaEditUrl(""); setCanvaDeckId(""); setDeckPdf({ state: "idle", url: "", error: "" });
+    // And bring IMS Dept Ops up to the applied deal now, without anyone opening Deal Check.
+    syncDeptOpsHeadless?.();
+    showMsg?.("Deal value updated to " + fmt(newNegotiated) + " — updating IMS", "green");
+  };
+  // Escape hatch for when the pending figure itself is not trustworthy — most commonly a deal
+  // booked before this tracking existed, whose baseline got healed off whatever the build happened
+  // to total the first time Summary was opened post-rollout (not the true number at booking).
+  // Re-points the baseline at today's live total with ZERO effect on negotiatedAmount — unlike
+  // Apply, this never changes what the client owes, only where drift starts being measured from.
+  const resetDealValueTracking = () => {
+    saveClientLedger(clientLedger.map(c => c.id === activeClientId ? { ...c, bookedSystemTotal: eventGrandTotal } : c));
+    syncDealValueNow?.({ amount: Math.round(Number(activeClient?.negotiatedAmount) || 0), pending: 0 });
+    showMsg?.("Tracking reset to the current build — deal value unchanged", "green");
+  };
+
   const showDeckPdf = async () => {
     if (deckPdf.state === "loading") return;
     // Cleared here rather than in the button's onClick, so it stops on the ACTION and not merely on a

@@ -1936,6 +1936,16 @@ export default function StudioApp() {
 
   // ═══ DEAL CHECK REBUILD — Deploy 1 state (§7.9) ═══
   const [dcFullPageOpen, setDcFullPageOpen] = useState(false);
+  // ── DEAL CHECK, RUN UNSEEN ──
+  // Everything IMS Dept Ops shows for a booked deal (department income, blocked inventory, manpower,
+  // floral, fabric, transport, layout) is computed inside Deal Check and pushed only while it is
+  // open — so after a booked deal was edited and Applied on Summary, IMS stayed on the old deal
+  // until someone opened Deal Check. Apply now runs Deal Check off-screen instead: the same load,
+  // the same re-match and the same push as opening it, with nothing shown, and it closes itself once
+  // its prices settle (see the dcHeadless effect in DealCheckOverlay.jsx). dcRun is "Deal Check is
+  // working", seen or not; the effects that only concern the visible overlay stay on dcFullPageOpen.
+  const [dcHeadless, setDcHeadless] = useState(false);
+  const dcRun = dcFullPageOpen || dcHeadless;
   // Warm the lazily-split Deal Check chunk once the browser is idle after sign-in, so the first
   // open doesn't wait on a download. A failed prefetch is just ignored; opening Deal Check imports it again.
   const hasAuthUser = !!authUser;
@@ -2649,6 +2659,12 @@ export default function StudioApp() {
   const closeDealCheck = useCallback(() => {
     if (flushDcAutosaveRef.current) { flushDcAutosaveRef.current(); flushDcAutosaveRef.current = null; }
     setDcFullPageOpen(false);
+  }, []);
+  // Summary's Apply calls this. Nothing to do when Deal Check is already open — it pushes on its own.
+  const syncDeptOpsHeadless = useCallback(() => { if (!dcFullPageOpen) setDcHeadless(true); }, [dcFullPageOpen]);
+  const finishDcHeadless = useCallback(() => {
+    if (flushDcAutosaveRef.current) { flushDcAutosaveRef.current(); flushDcAutosaveRef.current = null; }
+    setDcHeadless(false);
   }, []);
 
   // Same race as the Studio↔IMS switcher (AppSwitcher.jsx): logout() flips `user` to null, which
@@ -8071,7 +8087,7 @@ export default function StudioApp() {
       const eoCreatedAt = existingActive ? (existingActive.createdAt || Date.now()) : Date.now();
       // Keep an in-progress IMS status (blocked/final) on re-push; otherwise (re)start the auto-confirm.
       const eoStatus = (existingActive && (existingActive.status === "blocked" || existingActive.status === "final")) ? existingActive.status : "pending";
-      const eo = {
+      const eoPlan = {
         id: eoId,
         clientId: client.id,
         clientName: client.name,
@@ -8103,11 +8119,18 @@ export default function StudioApp() {
         createdAt: eoCreatedAt,
         status: eoStatus
       };
+      // Re-confirming an existing booking lays the new plan OVER the order, it does not replace it.
+      // Replacing it wiped everything IMS had added since — the department heads' own work (deptOps:
+      // manpower edits, mandi actuals, on-site expenses, trucks, dismantle) and the last department
+      // snapshot — which is the opposite of what persistDeptSnapshot goes out of its way to keep.
+      const eo = existingActive ? { ...existingActive, ...eoPlan } : eoPlan;
       saveEventOrders(existingActive ? eventOrders.map(e => e.id === eoId ? eo : e) : [...eventOrders, eo]);
       // Bridge to IMS: SOLD orders also go into the shared `event_orders` TABLE (Studio's own list
       // is a kv blob; IMS — Events, Planning, Dept Ops — reads the table + realtime).
       supabase.from("event_orders").upsert({ id: eo.id, client_name: eo.clientName ?? null, event_id: eo.eventId ?? null, fn_id: eo.fnId ?? null, status: eo.status ?? "pending", items: eo.items || [], manual_items: eo.manualItems || [], decisions: eo.decisions || {}, data: eo }, { onConflict: "id" }).then(({ error }) => { if (error) console.warn("[markSold] event_orders table sync failed:", error.message); }).catch(() => {});
       logActivity("booking", `🎉 ${client.name} — Booking confirmed by ${authUser?.name || "—"}`);
+      // Fill IMS Dept Ops for the booking now, rather than whenever someone next opens Deal Check.
+      syncDeptOpsHeadless();
       setShowSoldConfetti(true);
       setTimeout(() => setShowSoldConfetti(false), 4000);
       showMsg("🎉 Booking confirmed for " + client.name, "green");
@@ -8116,7 +8139,7 @@ export default function StudioApp() {
     // Listed because the ₹0 check above reads it. Without this the callback holds whatever
     // eventGrandTotal was when it was last rebuilt — which could warn "nothing has been built" on a
     // deal that has since been priced, or worse, stay silent on one that has been emptied.
-    eventGrandTotal, askConfirmAsync]);
+    eventGrandTotal, askConfirmAsync, syncDeptOpsHeadless]);
 
   // Reverses markSold — for when a booking was confirmed by mistake, or falls through afterward.
   // Reverts client_ledger's own status/booked* fields back to "ongoing". Deliberately touches
@@ -9922,7 +9945,7 @@ export default function StudioApp() {
   const dcSaveBaselineRef = useRef(null);
   const dcConflictWarnedAtRef = useRef(0);
   useEffect(() => {
-    if (!dcFullPageOpen) { dcRestoredRef.current = null; dcSaveBaselineRef.current = null; return; }
+    if (!dcRun) { dcRestoredRef.current = null; dcSaveBaselineRef.current = null; return; }
     const cli = clientLedger.find(c => c.id === activeClientId);
     if (!cli) return;
     if (dcRestoredRef.current === activeClientId) return; // already restored this open — keep live edits
@@ -9955,7 +9978,7 @@ export default function StudioApp() {
     if (cli.dcMpWinCount && typeof cli.dcMpWinCount === "object") setDcMpWinCount(cli.dcMpWinCount);
     if (typeof cli.dcMpIncludeMinusOne === "boolean") setDcMpIncludeMinusOne(cli.dcMpIncludeMinusOne);
     if (typeof cli.dcMpIncludeDismantle === "boolean") setDcMpIncludeDismantle(cli.dcMpIncludeDismantle);
-  }, [dcFullPageOpen, activeClientId, clientLedger]);
+  }, [dcRun, activeClientId, clientLedger]);
 
   // ═══ Part 3 — write Studio truss soft-holds into the truss_allocations TABLE ═══
   // Merges Studio's soft event into each date's existing events[], dropping any prior
@@ -10451,10 +10474,10 @@ export default function StudioApp() {
 
   // ═══ DEAL CHECK — fire openDealCheck on full-page open — VERBATIM ═══
   useEffect(() => {
-    if (!dcFullPageOpen) return;
+    if (!dcRun) return;
     openDealCheck();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dcFullPageOpen]);
+  }, [dcRun]);
 
   // Layout-effect mirror of Deal Check's own draft state, read by doSave below instead of its
   // closure. flushDcAutosaveRef.current can be called from a setTimeout(0) fired the instant a swap
@@ -10475,7 +10498,7 @@ export default function StudioApp() {
 
   // ═══ Tier 2.2 — Deal Check cache writer (debounced, per-client) — VERBATIM ═══
   useEffect(() => {
-    if (!activeClientId || !dcFullPageOpen) return;
+    if (!activeClientId || !dcRun) return;
     const allEmpty =
       Object.keys(dcResolved).length === 0 &&
       Object.keys(dcCards).length === 0 &&
@@ -10572,7 +10595,7 @@ export default function StudioApp() {
       window.removeEventListener("pagehide", onHideOrUnload);
       window.removeEventListener("beforeunload", onHideOrUnload);
     };
-  }, [activeClientId, dcFullPageOpen, dcGenerating, dcResolved, dcCards, dcZoneState, dcPhotoOverrides, dcSkipped, dcManualItems, dcDedupOverrides, dcProductionAccepted, dcArtFlowerAlloc, dcFloralColorPrefs, dcCustomItems, dcKitEdits, dcCarpetPick, dcCarpetSplit, dcMpOverrides, dcMpWinCount, dcMpIncludeMinusOne, dcMpIncludeDismantle, authUser, saveClientLedger]);
+  }, [activeClientId, dcRun, dcGenerating, dcResolved, dcCards, dcZoneState, dcPhotoOverrides, dcSkipped, dcManualItems, dcDedupOverrides, dcProductionAccepted, dcArtFlowerAlloc, dcFloralColorPrefs, dcCustomItems, dcKitEdits, dcCarpetPick, dcCarpetSplit, dcMpOverrides, dcMpWinCount, dcMpIncludeMinusOne, dcMpIncludeDismantle, authUser, saveClientLedger]);
 
   // ═══ SOLD-DEAL INCREMENTAL INVENTORY RESERVATION ═══
   // Owner decision: a change to a SOLD deal's matched inventory reserves immediately — no
@@ -11138,12 +11161,14 @@ export default function StudioApp() {
   // says. Runs after openDealCheck has loaded IMS, and only once per open.
   const dcAutoFilledRef = useRef(false);
   useEffect(() => {
-    if (!dcFullPageOpen) { dcAutoFilledRef.current = false; return; }
+    if (!dcRun) { dcAutoFilledRef.current = false; return; }
     if (dcAutoFilledRef.current || dealCheckLoading || !activeClientId) return;
     dcAutoFilledRef.current = true;
     runDealCheckGenerate(null, { skipAi: true }).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dcFullPageOpen, dealCheckLoading, activeClientId]);
+  }, [dcRun, dealCheckLoading, activeClientId]);
+  // An unseen run belongs to the deal it was started for — never let it carry on into another one.
+  useEffect(() => { setDcHeadless(false); }, [activeClientId]);
 
   // ═══════════════════════════════════════════════════════════════
   // STYLES + THEME
@@ -11423,7 +11448,7 @@ export default function StudioApp() {
     dcPhotoOverrides, setDcPhotoOverrides, dcSkipped, setDcSkipped, dcProductionAccepted, setDcProductionAccepted, dcManualItems, setDcManualItems,
     dcManualSearch, setDcManualSearch, dcDedupOverrides, setDcDedupOverrides, dcBlockedFnOpen, setDcBlockedFnOpen, dcBlockedSubOpen, setDcBlockedSubOpen,
     dcFloralExpanded, setDcFloralExpanded, dcFloralUnmatchedExpanded, setDcFloralUnmatchedExpanded, dcResolved, setDcResolved, dcResolving, setDcResolving, dcAbortRef, setDcAbortRef,
-    dcFullPageOpen, setDcFullPageOpen, closeDealCheck, dcCards, setDcCards, dcZoneState, setDcZoneState, dcKitEdits, setDcKitEdits, dcCarpetPick, setDcCarpetPick, dcCarpetSplit, setDcCarpetSplit,
+    dcFullPageOpen, setDcFullPageOpen, closeDealCheck, syncDeptOpsHeadless, finishDcHeadless, dcCards, setDcCards, dcZoneState, setDcZoneState, dcKitEdits, setDcKitEdits, dcCarpetPick, setDcCarpetPick, dcCarpetSplit, setDcCarpetSplit,
     dcCarpetSearch, setDcCarpetSearch, dcDesiredMargin, setDcDesiredMargin, dcRunCounter, setDcRunCounter, dcCache, setDcCache, dcGenerating, setDcGenerating,
     dcSaveBaselineRef, dcConflictWarnedAtRef, dcStateReadyForClientRef,
     dcGenStatus, setDcGenStatus, dcActiveTab, setDcActiveTab, dcShowAllFns, setDcShowAllFns, dcCollapsedFnBlocks, setDcCollapsedFnBlocks, dcMpOverrides, setDcMpOverrides, dcMpWinCount, setDcMpWinCount, dcMpIncludeMinusOne, setDcMpIncludeMinusOne,
@@ -12062,6 +12087,17 @@ export default function StudioApp() {
         <Suspense fallback={<div style={{ position: "fixed", inset: 0, zIndex: 45, background: "#FAF9F6" }} />}>
           <DealCheckOverlay ctx={ctx} />
         </Suspense>
+      )}
+      {/* The unseen run (dcHeadless). translate makes this box the containing block for the overlay's
+          own position:fixed, so it lays out at a normal width off-screen instead of over the page;
+          invisible + pointer-events-none keep it out of sight and out of reach. */}
+      {authUser && dcHeadless && !dcFullPageOpen && (
+        <div aria-hidden="true" className="fixed top-0 -left-[20000px] w-[1400px] h-[900px] overflow-hidden translate-x-0 invisible pointer-events-none">
+          <Suspense fallback={null}>
+            {/* dcHeadless reaches only this instance, never the visible overlay. */}
+            <DealCheckOverlay ctx={{ ...ctx, dcHeadless: true }} />
+          </Suspense>
+        </div>
       )}
 
       {/* Top-level modals (paint/fabric pickers, custom item, video, zone-upload, lightbox) */}
