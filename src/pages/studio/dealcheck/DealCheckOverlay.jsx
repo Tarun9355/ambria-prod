@@ -94,7 +94,7 @@ const NUM = { fontVariantNumeric: "tabular-nums" };
 import { heavyExtraLabour, eventTimingMultFor, SIT_MULT_DEFAULTS } from "../../../lib/ims/constants";
 import { deptMpReconciled, itemImsSubcat, lookupBySubcat, itemDimsText, walkKitUnits } from "../../../lib/ims/helpers";
 import { rentalSplit, availableAtVenue, isStandingAt, fixedVenueFor, standingReductionBySubcat, fixedVenueDealDiscount, reservedByVenueToday, venueSlackFor } from "../../../lib/ims/fixedVenues";
-import { calcZoneFabric, autoFillFabricAllocation, resolveTrussConfig, zoneTrussStandingDiscount, repeatCatFor } from "../../../lib/studio/pricing";
+import { calcZoneFabric, autoFillFabricAllocation, anchorsForPalette, resolveTrussConfig, zoneTrussStandingDiscount, repeatCatFor } from "../../../lib/studio/pricing";
 import { carpetPricingFor, CARPET_OFF } from "../../../lib/studio/taxonomy";
 import { qtyUsedElsewhereInDealCheck, netOwnReservedBlocks } from "../../../lib/studio/dealAvailability";
 import { isHiddenSubcat, oosCostPctFor } from "../../../lib/rateCard";
@@ -827,8 +827,7 @@ export default function DealCheckOverlay({ ctx }) {
                 const zc = fn.zoneConfig || {};
                 const en = fn.enabledEls || {};
                 const fnPalette = fn.fnPalette || "Custom";
-                const pObj = (imsPaletteCatalogue||[]).find(p => p.name === fnPalette);
-                const anchors = pObj?.anchorColours || [];
+                const anchors = anchorsForPalette(imsPaletteCatalogue, fnPalette);
                 Object.keys(zc).forEach(zk => {
                   if (!en[zk] || !zc[zk]) return;
                   // ♻️ Repeat zone: the structure and its fabric are already standing from a prior
@@ -1678,8 +1677,7 @@ export default function DealCheckOverlay({ ctx }) {
               const agg = { liza: {}, masking: {}, curtain: {} };
               (dcCostRollup.fns || []).forEach(fn => {
                 const zc = fn.zoneConfig || {}, en = fn.enabledEls || {};
-                const pObj = (imsPaletteCatalogue || []).find(p => p.name === (fn.fnPalette || "Custom"));
-                const anchors = pObj?.anchorColours || [];
+                const anchors = anchorsForPalette(imsPaletteCatalogue, fn.fnPalette || "Custom");
                 Object.keys(zc).forEach(zk => {
                   // ♻️ Repeat zones reuse standing fabric — nothing new to stock/reorder for them.
                   // Truss & Masking's own category flag — same one dcCostRollup's fabric ×0.7 above

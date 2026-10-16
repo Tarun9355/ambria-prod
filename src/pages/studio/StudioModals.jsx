@@ -15,7 +15,7 @@ import ItemHoverThumb from "../../components/shared/ItemHoverThumb.jsx";
 import InventoryItemPickerModal from "../../components/shared/InventoryItemPickerModal.jsx";
 import PhotoTagFields from "../../components/studio/PhotoTagFields.jsx";
 import { getCat, carpetPricingFor, defaultCarpetMatId, CARPET_OFF, trussRateFor, maskingRateFor, maskingOptions, TRUSS_MATERIALS } from "../../lib/studio/taxonomy";
-import { calcZoneFabric, autoFillFabricAllocation } from "../../lib/studio/pricing";
+import { calcZoneFabric, autoFillFabricAllocation, anchorsForPalette } from "../../lib/studio/pricing";
 import { qtyUsedElsewhereInBuild } from "../../lib/studio/dealAvailability";
 import { isHiddenSubcat } from "../../lib/rateCard";
 import { itemDimsText, priceForInvItem } from "../../lib/ims/helpers";
@@ -1264,8 +1264,7 @@ export default function StudioModals({ ctx }) {
           totalQty: fab.curtainPieces, unitLabel:"pc", elName:"Velvet Curtains",
           stockArr: trussInvLocal.curtainStock, qtyField:"stockPieces", allocField:"curtainAllocation"
         };
-        const pObj = (imsPaletteCatalogue||[]).find(p => p.name === fnPalette);
-        const anchors = pObj?.anchorColours || [];
+        const anchors = anchorsForPalette(imsPaletteCatalogue, fnPalette);
         const existingAlloc = row[cfg.allocField];
         const initial = (Array.isArray(existingAlloc) && existingAlloc.length > 0)
           ? existingAlloc

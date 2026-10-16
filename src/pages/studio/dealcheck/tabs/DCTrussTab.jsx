@@ -1,5 +1,5 @@
 import { Fragment } from "react";
-import { calcZoneFabric, autoFillFabricAllocation, calcFabricAllocationTotal, zoneTrussStandingDiscountDetail, repeatCatFor } from "../../../../lib/studio/pricing";
+import { calcZoneFabric, autoFillFabricAllocation, anchorsForPalette, calcFabricAllocationTotal, zoneTrussStandingDiscountDetail, repeatCatFor } from "../../../../lib/studio/pricing";
 import { fixedVenueFor } from "../../../../lib/ims/fixedVenues";
 import { findCrossFnReuseSource } from "../../../../lib/studio/crossFnReuse";
 import { TRUSS_ALLOC_SK } from "../../../../lib/studio/keys.js";
@@ -597,8 +597,7 @@ export default function DCTrussTab({ ctx }) {
                                       if (!showMasking && !showLiza && !showCurtain) return null;
 
                                       const fnPalette = fn.fnPalette || "Custom";
-                                      const pObj = (imsPaletteCatalogue||[]).find(p => p.name === fnPalette);
-                                      const anchors = pObj?.anchorColours || [];
+                                      const anchors = anchorsForPalette(imsPaletteCatalogue, fnPalette);
 
                                       // Resolve allocations from the row itself — auto-fill if absent
                                       const resolveAlloc = (allocField, totalQty, stockArr, qtyField) => {

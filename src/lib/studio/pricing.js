@@ -573,6 +573,22 @@ export const fuzzyColourMatch = (anchorName, stockColourName) => {
   if (a.includes(b) || b.includes(a)) return true;
   return false;
 };
+// Resolve the anchor colours to fuzzy-match against for a given Fabric Palette. Build's own Fabric
+// Palette control (StudioBuild.jsx) lists every name from BOTH the real Palette Catalogue (which has
+// its own curated anchorColours) AND the plain colour taxonomy used for photo filtering (which has
+// none) — so a perfectly valid pick like "Rose Gold" could resolve to an empty anchor list just
+// because nobody ever built out a full Palette Catalogue entry for it. An empty list made
+// autoFillFabricAllocation fall straight to its "highest stock overall" fallback (almost always
+// Ivory) no matter which palette was chosen — the picker looked like it did nothing. Falling back to
+// the palette's OWN NAME as a one-item anchor list fixes the common case for free: a palette named
+// after an actual stock colour (Rose Gold, Maroon, Black, ...) now matches that colour directly. A
+// palette whose name genuinely has no matching fabric colour configured (e.g. "Baby Pink" with no
+// pink Liza/Masking/Curtain stock at all) still correctly falls through to the real fallback — this
+// doesn't invent a match that isn't there, it just stops throwing away the one match that's free.
+export const anchorsForPalette = (paletteCatalogue, paletteName) => {
+  const pObj = (Array.isArray(paletteCatalogue) ? paletteCatalogue : []).find((p) => p.name === paletteName);
+  return (pObj?.anchorColours?.length) ? pObj.anchorColours : [paletteName].filter(Boolean);
+};
 export const autoFillFabricAllocation = (totalQty, paletteAnchors, stockArray, qtyField) => {
   if (!totalQty || totalQty <= 0) return [];
   const stocks = Array.isArray(stockArray) ? stockArray.filter(s => s && s.colour) : [];
