@@ -49,6 +49,19 @@ const loadPdfLogos = () => new Promise((resolve) => {
 let pdfLogosOnce = null;
 const loadPdfLogosOnce = () => (pdfLogosOnce ||= loadPdfLogos());
 
+// ── jsPDF + html2canvas, FETCHED ONCE AND KEPT ──
+// They are split into their own chunk, fetched on first use. A deploy replaces every hashed file on
+// GitHub Pages, so a tab opened before it asks for a chunk name that no longer exists — "Failed to
+// fetch dynamically imported module", and the export fell through to the HTML download. The tab
+// warms this on mount (see the effect in the component), and a module once loaded is held by the
+// browser for the life of the page, so a later deploy can no longer break the buttons. A failed
+// fetch is not cached, so the next press tries again.
+let pdfLibsOnce = null;
+const loadPdfLibs = () => (pdfLibsOnce ||= Promise.all([import("jspdf"), import("html2canvas")]).catch((e) => { pdfLibsOnce = null; throw e; }));
+// Chrome / Firefox / Safari each word the missing-chunk failure differently.
+const isStaleChunk = (e) => /dynamically imported module|Importing a module script failed/i.test(String(e?.message || e));
+const reloadForUpdate = () => { alert("Ambria was just updated. The page will reload — press the button again once it has."); window.location.reload(); };
+
 // ── WHY EXPORTED TEXT SAT LOW, AND THE FIX ──
 // html2canvas 1.4.1 draws each run of text at `bounds.top + baseline`, where the baseline comes
 // from its FontMetrics — measured in the GLOBAL `document` (this app page), not in the report's
@@ -528,6 +541,11 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   // false | "download" | "view" — which button started it, so only THAT one spins. Viewing used to
   // spin the download buttons too, which read as the PDF being downloaded again.
   const [exporting, setExporting] = useState(false);
+  // Set while the Actuals PDF is being written (the first one also loads the jsPDF chunk).
+  const [actualsPdfBusy, setActualsPdfBusy] = useState(false);
+  // Fetch the PDF libraries a few seconds after the tab opens, while the page's own files are
+  // still the deployed ones — see loadPdfLibs.
+  useEffect(() => { const t = setTimeout(() => { loadPdfLibs().catch(() => {}); }, 3000); return () => clearTimeout(t); }, []);
   // "View deck": the very PDF the download button saves, shown on screen instead of saved. Built
   // fresh on every click from the event as it stands, so it is always the latest.
   const [deckView, setDeckView] = useState(null); // null | {url, name} — url is a blob: URL
@@ -1006,6 +1024,70 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const mandiSpend = dept === "Floral" ? mandiActualTotal : 0;
   const actualCost = mandiSpend + expenseTotal;
   const hasActuals = mandiSpend > 0 || expenseTotal > 0;
+
+  // ── ACTUALS AS A PDF ──
+  // The shopping list and on-site expenses exactly as this card shows them, for the accounts file.
+  // Plain jsPDF text, not the html2canvas route the department book takes: this is a table of
+  // figures, so it writes instantly and stays selectable. jsPDF's built-in font has no ₹ glyph,
+  // so amounts are written "Rs".
+  const downloadActualsPdf = async () => {
+    if (!sel || actualsPdfBusy) return;
+    setActualsPdfBusy(true);
+    try {
+      const [{ jsPDF }] = await loadPdfLibs();
+      const pdf = new jsPDF({ unit: "pt", format: "a4" });
+      const W = pdf.internal.pageSize.getWidth(), H = pdf.internal.pageSize.getHeight(), M = 40;
+      const rs = (n) => "Rs " + (Math.round((Number(n) || 0) * 100) / 100).toLocaleString("en-IN");
+      let y = M;
+      const room = (h) => { if (y + h > H - M) { pdf.addPage(); y = M; } };
+      // One table row: cells are [text, x, align]; bold for headers and totals.
+      const row = (cells, { bold = false, fill = null, h = 18 } = {}) => {
+        room(h);
+        if (fill) { pdf.setFillColor(...fill); pdf.rect(M, y - 12, W - M * 2, h, "F"); }
+        pdf.setFont("helvetica", bold ? "bold" : "normal");
+        cells.forEach(([t, x, align]) => pdf.text(String(t ?? ""), x, y, { align: align || "left", maxWidth: align === "right" ? undefined : 200 }));
+        y += h;
+      };
+      pdf.setFont("helvetica", "bold"); pdf.setFontSize(16);
+      pdf.text(`Actuals - ${dept}`, M, y); y += 20;
+      pdf.setFont("helvetica", "normal"); pdf.setFontSize(10);
+      pdf.text([sel.clientName || "Event", selDateStr || "", sel.functionsDetail?.[0]?.venue || sel.venue || ""].filter(Boolean).join("  |  "), M, y); y += 24;
+      pdf.setFontSize(9.5);
+      if (dept === "Floral") {
+        const artTot = fp.artificial ? fp.artificial.total : artificialProj;
+        row([["Floral cost to source", M + 6], [rs(mandiActualTotal), W - M - 6, "right"]], { bold: true, fill: [236, 253, 245] });
+        row([["Real flowers (mandi)", M + 6], [rs(mandiActualReal), W - M - 6, "right"]]);
+        row([["Artificial flowers", M + 6], [rs(artTot), W - M - 6, "right"]]);
+        if (fp.season && fp.season.mult && fp.season.mult !== 1) row([[`${fp.season.label} date - mandi flower prices x${fp.season.mult}`, M + 6]]);
+        y += 10;
+        const cx = { name: M + 6, plan: M + 230, proj: M + 320, qty: M + 375, rate: M + 440, tot: W - M - 6 };
+        row([["Flower", cx.name], ["Planned", cx.plan, "right"], ["Projected", cx.proj, "right"], ["Qty", cx.qty, "right"], ["Rs/unit", cx.rate, "right"], ["Total", cx.tot, "right"]], { bold: true, fill: [209, 250, 229] });
+        mandiRows.forEach(r => {
+          const line = (Number(r.qty) || 0) * (Number(r.price) || 0);
+          row([[r.name, cx.name], [r.projQty > 0 ? `${r.projQty} ${r.unit || ""}`.trim() : "", cx.plan, "right"], [r.projCost > 0 ? rs(r.projCost) : "extra", cx.proj, "right"], [Number(r.qty) || 0, cx.qty, "right"], [Number(r.price) || 0, cx.rate, "right"], [rs(line), cx.tot, "right"]]);
+        });
+        if (fp.artificial || artificialProj > 0) row([["Artificial flowers / greens (not mandi-shopped)", cx.name], [rs(artTot), cx.proj, "right"], [rs(artTot), cx.tot, "right"]]);
+        row([["Total", cx.name], [rs(Number(fp.projected) || 0), cx.proj, "right"], [rs(mandiActualTotal), cx.tot, "right"]], { bold: true, fill: [236, 253, 245] });
+        y += 14;
+      }
+      if (expenses.length) {
+        row([["On-site expenses", M + 6], ["Amount", W - M - 6, "right"]], { bold: true, fill: [243, 244, 246] });
+        expenses.forEach(ex => row([[ex.label || "-", M + 6], [rs(ex.amount), W - M - 6, "right"]]));
+        row([["Expenses total", M + 6], [rs(expenseTotal), W - M - 6, "right"]], { bold: true });
+        y += 14;
+      }
+      row([["Actual spend logged", M + 6], [rs(actualCost), W - M - 6, "right"]], { bold: true, fill: [229, 231, 235], h: 22 });
+      pdf.setFont("helvetica", "normal"); pdf.setFontSize(8); pdf.setTextColor(120);
+      pdf.text(`Generated ${new Date().toLocaleString("en-IN")} - ${authUser?.name || "-"}`, M, H - 20);
+      const safe = (t) => String(t || "").replace(/[\\/:*?"<>|]+/g, "-").trim();
+      pdf.save(`Actuals - ${safe(dept)} - ${safe(sel.clientName || "Event")} - ${safe(selDateStr || "no date")}.pdf`);
+    } catch (err) {
+      if (isStaleChunk(err)) { reloadForUpdate(); return; }
+      alert(`Could not make the Actuals PDF.\n\n${err?.message || err}`);
+    } finally {
+      setActualsPdfBusy(false);
+    }
+  };
 
   // ── THE DEPARTMENT'S INCOME, BROKEN INTO HEADS ──
   // Read by the on-screen readout AND by the PDF export. It lives here rather than inside the
@@ -2484,7 +2566,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
     let frame = null;
     let restoreFillText = null;
     try {
-      const [{ jsPDF }, h2c] = await Promise.all([import("jspdf"), import("html2canvas")]);
+      const [{ jsPDF }, h2c] = await loadPdfLibs();
       const html2canvas = h2c.default;
 
       const pdf = new jsPDF({ unit: "pt", format: "a4", compress: true });
@@ -2725,6 +2807,8 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
         alert(`The PDF ${view ? "is ready" : "saved"}, but ${skipped.length} section${skipped.length === 1 ? "" : "s"} could not be drawn and ${skipped.length === 1 ? "is" : "are"} missing from it.\n\nReason: ${why}\n\nTry again in Chrome if this keeps happening.`);
       }
     } catch (err) {
+      // The app was redeployed under this tab: a reload fixes it, the HTML fallback would not.
+      if (isStaleChunk(err)) { reloadForUpdate(); return; }
       // ── THE FALLBACK IS A FILE, NOT A POP-UP ──
       // This used to call window.open here. It could never work: by the time we reach this
       // catch we are many awaits past the click, so the browser no longer counts it as
@@ -4139,6 +4223,14 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                   <div className="text-[15px] font-semibold text-gray-900">Actuals</div>
                   <div className="text-xs text-gray-500">What was actually bought/spent — fill in after shopping, not while planning</div>
                 </div>
+                {/* Same icon tile as the department book's download, so it reads as the same action. */}
+                <button onClick={downloadActualsPdf} disabled={actualsPdfBusy} title="Download Actuals as PDF"
+                  className="shrink-0 w-7 h-7 rounded-lg bg-white hover:bg-gray-200 text-gray-500 hover:text-gray-900 ring-1 ring-gray-200 disabled:opacity-60 flex items-center justify-center cursor-pointer transition-colors">
+                  {actualsPdfBusy
+                    ? <span aria-hidden="true" className="w-3.5 h-3.5 rounded-full border-2 border-gray-300 border-t-blue-600 animate-spin" />
+                    : <IconDownload />}
+                  <span className="sr-only">Download Actuals as PDF</span>
+                </button>
                 <div className="shrink-0 text-right">
                   <div className={"text-[15px] font-semibold tabular-nums " + (hasActuals ? "text-gray-900" : "text-gray-300")}>{hasActuals ? fmt(actualCost) : "—"}</div>
                   <div className="text-[10px] text-gray-400">{hasActuals ? "logged" : "nothing yet"}</div>
