@@ -517,6 +517,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const [mpOpen, setMpOpen] = useState({});
   // "Whole event" panel in the Manpower plan header — every department's crew for this booking.
   const [mpEventOpen, setMpEventOpen] = useState(false);
+  // Manpower plan scope: "all", or the index of one function in sel.functionsDetail.
+  const [mpFn, setMpFn] = useState("all");
   // Which kits have their components showing. Collapsed by default: a kit's own line already
   // carries the qty, the rate and the total that matter, and six components under each of four
   // kits buried the ordinary items between them.
@@ -610,6 +612,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const sel = (eventOrders || []).find(e => e.id === selId);
   // A PDF open for one event must not carry over when the picker moves to another.
   useEffect(() => { setDeckView(null); }, [selId]);
+  useEffect(() => { setMpFn("all"); }, [selId]);
   // The last PDF View deck built, keyed by department + the event's full data. Opening it again
   // with nothing changed reuses it instantly instead of rebuilding; any edit to the event changes
   // the key, so what opens is still always the latest. Its blob: URL is freed when replaced.
@@ -784,8 +787,34 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   // can split a single day into e.g. 2 crew in the day shift + 1 in the evening (each shift billed).
   const addDihari = (r, date, curIds) => { const wins = (dihari[r.type] && Array.isArray(dihari[r.type].windows)) ? dihari[r.type].windows : []; const unused = wins.find(w => !curIds.includes(w.id)); const id = unused ? unused.id : ("x" + Date.now()); const t = { ...(mpWinCount[r.type] || {}) }; t[date] = { ...(t[date] || {}), [id]: 1 }; saveDept({ mpWin: { ...mpWin, [r.type]: { ...(mpWin[r.type] || {}), [date]: [...curIds, id] } }, mpWinCount: { ...mpWinCount, [r.type]: t } }); };
   const removeDihari = (type, date, slotId, curIds) => { const t = { ...(mpWinCount[type] || {}) }; if (t[date]) { const dd = { ...t[date] }; delete dd[slotId]; t[date] = dd; } saveDept({ mpWin: { ...mpWin, [type]: { ...(mpWin[type] || {}), [date]: curIds.filter(x => x !== slotId) } }, mpWinCount: { ...mpWinCount, [type]: t } }); };
-  const lineCost = (r) => mpLineCost(r, mpDay, mpOverrides, mpWin, mpWinCount);
+  // A row scoped to one function (_scoped) costs only the days it kept — the split-allocation
+  // shortcut in mpLineCost would hand back the whole booking's figure.
+  const lineCost = (r) => r._scoped
+    ? Math.round(r.schedule.reduce((s, d) => s + mpDayCost(r, d, mpDay, mpWin, mpWinCount, Number(r.rate) || 0), 0))
+    : mpLineCost(r, mpDay, mpOverrides, mpWin, mpWinCount);
   const mpCost = mpRows.reduce((s, r) => s + lineCost(r), 0);
+  // ── ONE FUNCTION'S CREW ──
+  // The same day rule as Deal Check's Manpower tab: a function owns its own event day, the
+  // dismantle day right after it, and — if it is the first function — the −1 setup day. Gap days
+  // belong to no single function, so they show under All functions only. Crew lines with no
+  // day-wise schedule cannot be split by day, so they stay under All functions too.
+  const mpFns = Array.isArray(sel?.functionsDetail) ? sel.functionsDetail : [];
+  const mpFnDate = (f) => String(f?.date || "").slice(0, 10);
+  const mpFirstDate = mpFns.map(mpFnDate).filter(Boolean).sort()[0] || "";
+  const mpNextDay = (iso) => { const d = new Date(iso + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + 1); return d.toISOString().slice(0, 10); };
+  const mpScoped = mpFn !== "all" && !!mpFnDate(mpFns[mpFn]);
+  const inMpFn = (d) => {
+    const fd = mpFnDate(mpFns[mpFn]);
+    if (d.phase === "dismantle") return d.date === mpNextDay(fd);
+    if (d.phase === "minusOne") return fd === mpFirstDate;
+    return (d.phase || "event") === "event" && d.date === fd;
+  };
+  // _i is the row's place in mpRows — the index setMp and the open/closed state are keyed by.
+  const mpShown = mpScoped
+    ? mpRows.map((r, i) => ({ ...r, _i: i })).filter(r => dayWise(r)).map(r => ({ ...r, schedule: r.schedule.filter(inMpFn), _scoped: true })).filter(r => r.schedule.length)
+    : mpRows.map((r, i) => ({ ...r, _i: i }));
+  const mpWholeOnly = mpScoped ? mpRows.filter(r => !dayWise(r)).length : 0;
+  const mpShownCost = mpScoped ? mpShown.reduce((s, r) => s + lineCost(r), 0) : mpCost;
   const mpPlannedCost = mpRows.reduce((s, r) => s + (Number(r.sysCost) || 0), 0); // system baseline (before edits)
   // ── Event-wide Labours total. Ops runs the whole event, so he sets the TOTAL labour headcount and the
   // system re-splits it across every department by their existing usage share (scale each dept's per-day
@@ -3810,9 +3839,19 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                   {hasMpSnapshot && <button onClick={() => setMpEventOpen(o => !o)} aria-expanded={mpEventOpen}
                     title="Every department's crew on this booking — labours, supervisors and the rest"
                     className={"rounded-lg px-2.5 py-1 text-[12px] font-semibold whitespace-nowrap transition-colors " + (mpEventOpen ? "bg-blue-600 text-white" : "bg-white text-blue-700 ring-1 ring-blue-200 hover:bg-blue-100")}>👥 Whole event</button>}
-                  <div className="rounded-lg bg-white px-2.5 py-1 text-[15px] font-bold text-gray-900 tabular-nums whitespace-nowrap shadow-[0_1px_2px_rgba(16,24,40,0.06)]">{fmt(mpCost)}</div>
+                  <div className="rounded-lg bg-white px-2.5 py-1 text-[15px] font-bold text-gray-900 tabular-nums whitespace-nowrap shadow-[0_1px_2px_rgba(16,24,40,0.06)]">{fmt(mpShownCost)}</div>
                 </div>
               </div>
+              {/* All functions + one chip per function, as Deal Check's Manpower tab scopes it.
+                  Only on a booking with more than one function — with one, the two are the same. */}
+              {mpFns.length > 1 && (
+                <div className="m-2.5 mb-0 flex flex-wrap gap-1.5">
+                  {[["all", "All functions"], ...mpFns.map((f, fi) => [fi, [f?.type || `Function ${fi + 1}`, mpFnDate(f)].filter(Boolean).join(" · ")])].map(([k, label]) => (
+                    <button key={k} onClick={() => setMpFn(k)} aria-pressed={mpFn === k}
+                      className={"rounded-lg px-2.5 py-1 text-[12px] font-semibold whitespace-nowrap cursor-pointer transition-colors " + (mpFn === k ? "bg-blue-600 text-white" : "bg-white text-gray-600 ring-1 ring-gray-200 hover:bg-blue-50 hover:text-blue-700")}>{label}</button>
+                  ))}
+                </div>
+              )}
               {mpEventOpen && hasMpSnapshot && (() => {
                 const ev = eventManpower();
                 const lab = ev.types.find(t => t.type === "Labours");
@@ -3877,8 +3916,23 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
               {mpRows.length === 0 && (
                 <div className="px-4 py-5 text-center text-xs text-gray-400">No crew assigned to {dept} for this event — matches the ₹0 income card. Add a crew type below if you need one.</div>
               )}
+              {/* Usually a stale plan: the function's date was changed after Studio last synced Deal
+                  Check, so the schedule has no day on it. Say which dates the plan does cover. */}
+              {mpScoped && mpRows.length > 0 && mpShown.length === 0 && (() => {
+                const planned = [...new Set(mpRows.flatMap(r => Array.isArray(r.schedule) ? r.schedule.filter(d => (d.phase || "event") === "event").map(d => d.date) : []))].filter(Boolean).sort();
+                return (
+                  <div className="px-4 py-5 text-center text-xs text-gray-400">
+                    No crew on {mpFnDate(mpFns[mpFn])} for {dept}.
+                    {planned.length > 0 && !planned.includes(mpFnDate(mpFns[mpFn])) && <> Studio's manpower plan was made for {planned.join(", ")} — re-sync Deal Check in Studio to bring it up to date.</>}
+                  </div>
+                );
+              })()}
+              {mpWholeOnly > 0 && (
+                <div className="m-2.5 mb-0 px-2.5 py-2 rounded-xl bg-gray-50 text-[11px] text-gray-500">{mpWholeOnly} crew line{mpWholeOnly === 1 ? " is" : "s are"} booked for the whole event, not by day — see All functions.</div>
+              )}
               <div className="p-2.5 space-y-2">
-                {mpRows.map((r, i) => {
+                {mpShown.map((r) => {
+                  const i = r._i;
                   const overridden = r.sysCount != null && Number(r.count) !== Number(r.sysCount);
                   const open = mpOpen[i] !== false;
                   return (
