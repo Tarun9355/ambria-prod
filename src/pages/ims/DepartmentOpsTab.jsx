@@ -1775,8 +1775,22 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     // knows exactly what to build rather than just "somewhere between 1 and 3 feet".
     const platLbl = (h, hft) => h === "4in" ? '4"' : h === "1ft" ? `Raised ${Number(hft) > 0 ? hft : 1}ft` : (h ? String(h) : "");
     const ftArea = (d) => [d?.L, d?.W].every(v => Number(v) > 0) ? `${d.L} x ${d.W} ft` : "";
+    const printName = (id) => {
+      if (!id) return "";
+      const m = (Array.isArray(settings?.printMaterials) ? settings.printMaterials : []).find(x => x && x.id === id);
+      return m?.name || String(id);
+    };
+    // Print jobs (Flex, Vinyl, Sunboard…) — Build's zoneConfig[zk].prints. Unlike truss and floor
+    // these go in EVERY department's book: a printed backdrop is hung on whatever that department
+    // builds, so each crew needs to know it is coming. A row with no size is an untouched blank.
+    const zonePrintsOf = (z) => {
+      const rows = (Array.isArray(z?.prints) ? z.prints : []).filter(p => p && Number(p.areaW) > 0 && Number(p.areaD) > 0);
+      if (!rows.length) return [];
+      return [{ k: "Print", v: rows.map(p => [printName(p.material), `${p.areaW} x ${p.areaD} ft`, Math.round(Number(p.qty) || 1) > 1 ? `x${Math.round(Number(p.qty))}` : ""].filter(Boolean).join(" ")).join("; ") }];
+    };
     const zoneStructOf = (z) => {
-      if (!showStruct || !z) return [];
+      if (!z) return [];
+      if (!showStruct) return zonePrintsOf(z);
       const floor = ftArea(z.floorDims);
       const extraTr = Array.isArray(z.extraTrussRows) ? z.extraTrussRows : [];
       const extraPl = Array.isArray(z.extraPlatformRows) ? z.extraPlatformRows : [];
@@ -1791,6 +1805,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       if (z.cpT) out.push({ k: "Carpet", v: [carpetName(z.cpT), floor].filter(Boolean).join(" · ") });
       if (z.mkOn) out.push({ k: "Masking", v: "Yes" });
       if (!z.plH && !z.cpT && floor) out.push({ k: "Floor", v: floor });
+      out.push(...zonePrintsOf(z));
       return out;
     };
     fns.forEach((fn, fi) => {
