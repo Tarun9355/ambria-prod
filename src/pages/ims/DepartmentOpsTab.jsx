@@ -2908,11 +2908,23 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
   // Declared after exportPdf on purpose: a const referenced above its own declaration is a
   // TDZ error the build does not catch.
   const exportDeptPdf = (depts) => exportPdf(Array.isArray(depts) && depts.length ? depts : [dept]);
+  // What the department PDF is built from. The item photos come from inventory, not the event, so a
+  // photo added since must count too; floral cards also read the recipes and the mandi list.
+  const deckKeyNow = () => {
+    try { return dept + "|" + JSON.stringify(sel) + "|" + JSON.stringify(inventory) + "|" + JSON.stringify(flowerPatterns) + "|" + JSON.stringify(mandiCatalogue); } catch { return ""; /* unkeyable — just rebuild */ }
+  };
+  // ── AN OPEN PDF FOLLOWS THE EVENT ──
+  // Studio now pushes a booked deal's edits to this event on its own, and the row arrives here over
+  // realtime. With the viewer open on the old PDF, it is rebuilt from the new data and swapped in,
+  // a moment after the changes stop arriving so a burst of updates is one rebuild.
+  const deckKey = deckView ? deckKeyNow() : "";
+  useEffect(() => {
+    if (!deckView || !deckKey || exporting || deckCacheRef.current?.key === deckKey) return;
+    const t = setTimeout(() => exportPdf([dept], { view: true, cacheKey: deckKey }), 1500);
+    return () => clearTimeout(t);
+  }, [deckKey, !!deckView, exporting]);
   const viewDeptPdf = () => {
-    let key = "";
-    // The item photos come from inventory, not the event, so a photo added since must miss too.
-    // Floral cards also read the recipes and the mandi list, so an edit to either misses too.
-    try { key = dept + "|" + JSON.stringify(sel) + "|" + JSON.stringify(inventory) + "|" + JSON.stringify(flowerPatterns) + "|" + JSON.stringify(mandiCatalogue); } catch { /* unkeyable — just rebuild */ }
+    const key = deckKeyNow();
     const c = deckCacheRef.current;
     if (key && c && c.key === key) { setDeckView({ url: c.url, name: c.name }); return; }
     exportPdf([dept], { view: true, cacheKey: key });
@@ -5218,6 +5230,8 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
               Back
             </button>
             <div className="flex-1 min-w-0 truncate text-[14px] font-semibold">{deckView.name.replace(/\.pdf$/, "")}</div>
+            {/* The rebuild above, while it runs — the PDF below is the previous one until it lands. */}
+            {exporting === "view" && <span className="shrink-0 inline-flex items-center gap-1.5 text-[12px] text-white/70"><span aria-hidden="true" className="w-3.5 h-3.5 rounded-full border-2 border-white/30 border-t-white animate-spin" />Updating…</span>}
             <a href={deckView.url} download={deckView.name}
               className="h-9 px-3.5 rounded-full bg-white text-gray-900 hover:bg-gray-100 inline-flex items-center gap-1.5 text-[13px] font-semibold">
               <IconDownload /> Download
