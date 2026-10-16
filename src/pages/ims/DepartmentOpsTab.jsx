@@ -44,6 +44,10 @@ const loadPdfLogos = () => new Promise((resolve) => {
   img.onerror = () => resolve({ light: null, dark: null });
   img.src = LOGO_ASSET;
 });
+// The logo never changes between exports, so it is cropped and recoloured once per session —
+// it used to be redone on every Download / View deck press.
+let pdfLogosOnce = null;
+const loadPdfLogosOnce = () => (pdfLogosOnce ||= loadPdfLogos());
 
 // ── WHY EXPORTED TEXT SAT LOW, AND THE FIX ──
 // html2canvas 1.4.1 draws each run of text at `bounds.top + baseline`, where the baseline comes
@@ -2452,7 +2456,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
       for (let i = 0; i < 2 && typeof v === "string"; i++) { try { v = JSON.parse(v); } catch { break; } }
       Object.entries(v?.meta || {}).forEach(([k, m]) => { if (m?.label) zoneLabels[k] = m.label; });
     } catch { /* built-in names it is */ }
-    const logos = await loadPdfLogos();
+    const logos = await loadPdfLogosOnce();
     let frame = null;
     let restoreFillText = null;
     try {
@@ -2542,6 +2546,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
       restoreFillText = fixH2cTextBaseline(doc);
 
       const blocks = [...sheet.querySelectorAll("[data-block], section")];
+      const blockSet = new Set(blocks);
       blocksSeen += blocks.length;
       let y = MARGIN;
       let first = true;
@@ -2573,9 +2578,17 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
         // a block that still fails is retried at a lower scale before it is given up on.
         const freeCanvas = (c) => { try { if (c) { c.width = 0; c.height = 0; } } catch { /* already gone */ } };
         let img = null, canvas = null, lastErr = null;
-        for (const scale of [2, 1.25]) {
+        // ── SPEED ──
+        // html2canvas clones the WHOLE document for every call, photos and all, so a 19-page
+        // book was cloned 19 times over. ignoreElements leaves the blocks AFTER this one out of
+        // the clone. Only the ones after: html2canvas crops at this block's position in the real
+        // page, so dropping a block above it would shift it up and capture the wrong strip.
+        // Scale 1.5, not 2: ~160 dpi on A4, sharp on screen and in print, and just over half the
+        // pixels to draw and encode per page.
+        const ignoreElements = (n) => blockSet.has(n) && !n.contains(el) && !el.contains(n) && !!(el.compareDocumentPosition(n) & Node.DOCUMENT_POSITION_FOLLOWING);
+        for (const scale of [1.5, 1.25]) {
           try {
-            canvas = await html2canvas(el, { scale, backgroundColor: "#F4F1EA", logging: false, useCORS: true, windowWidth: 794 });
+            canvas = await html2canvas(el, { scale, backgroundColor: "#F4F1EA", logging: false, useCORS: true, windowWidth: 794, ignoreElements });
           } catch (blockErr) { lastErr = blockErr; canvas = null; await new Promise(r => setTimeout(r, 80)); continue; }
           // Nothing drawn (an element with no height) must not cost a page either.
           if (!canvas.width || canvas.height < 4) break;
