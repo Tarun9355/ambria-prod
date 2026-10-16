@@ -4,7 +4,7 @@ import { fmt } from "../../lib/format";
 import { mpDayWise, mpBaseDay, mpEffDay, mpEffWindows, mpLineCost, mpDayCost, isLiveEventOrder, phone10 } from "../../lib/ims/helpers";
 import { uploadAudioToStorage } from "../../lib/storage";
 import { DEPTS as SHARED_DEPTS, catToDept as sharedCatToDept, userDepartments } from "../../lib/ims/deptClassify";
-import { TabsMenu, useConfirm } from "../../components/ui";
+import { TabsMenu } from "../../components/ui";
 import { hasIMSPerm } from "../../lib/ims/constants";
 import { ZONE_META } from "../../lib/studio/taxonomy";
 import { ZONE_DEF_SK } from "../../lib/studio/keys";
@@ -424,8 +424,6 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   // line of plain text per row. position:fixed with measured coordinates because this card sets
   // overflow-hidden, which would clip an absolutely-positioned menu. Same approach FlowerPicker
   // in components/ui already uses for the same reason.
-  // In-app confirmation instead of window.confirm — see useConfirm in components/ui.
-  const [confirm, confirmDialog] = useConfirm();
   const [siteMenu, setSiteMenu] = useState(false);
   const siteBtnRef = useRef(null);
   const [siteMenuPos, setSiteMenuPos] = useState({ top: 0, left: 0, width: 0 });
@@ -519,6 +517,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const [mpEventOpen, setMpEventOpen] = useState(false);
   // Manpower plan scope: "all", or the index of one function in sel.functionsDetail.
   const [mpFn, setMpFn] = useState("all");
+  // Whole-event crew row whose "how" modal is open (its crew type), or null.
+  const [mpHowType, setMpHowType] = useState(null);
   // Which kits have their components showing. Collapsed by default: a kit's own line already
   // carries the qty, the rate and the total that matter, and six components under each of four
   // kits buried the ordinary items between them.
@@ -612,7 +612,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const sel = (eventOrders || []).find(e => e.id === selId);
   // A PDF open for one event must not carry over when the picker moves to another.
   useEffect(() => { setDeckView(null); }, [selId]);
-  useEffect(() => { setMpFn("all"); }, [selId]);
+  useEffect(() => { setMpFn("all"); setMpHowType(null); }, [selId]);
   // The last PDF View deck built, keyed by department + the event's full data. Opening it again
   // with nothing changed reuses it instantly instead of rebuilding; any edit to the event changes
   // the key, so what opens is still always the latest. Its blob: URL is freed when replaced.
@@ -824,6 +824,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   // what every dept head sees. Shared crew (Labours, Supervisors) carry ONE event-wide headcount per
   // day in their schedule (day.count, before the per-dept share), so their headcount is read from
   // there rather than added up across departments — adding it would count the same people 7 times.
+  // A schedule day's short name: the date, or the setup / dismantle / gap day it stands for.
+  const phaseLbl = (d) => d.phase === "minusOne" ? "−1 setup" : d.phase === "dismantle" ? "+1 dismantle" : d.phase === "gap" ? "gap" : (d.date || "event");
   const eventManpower = () => {
     const md = (sel?.manpowerDetail && typeof sel.manpowerDetail === "object") ? sel.manpowerDetail : {};
     const byType = new Map(); const byDept = []; const labDays = new Map();
@@ -840,8 +842,12 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         const rate = Number(r.rate) || 0;
         const dih = rate > 0 ? cost / rate : 0;
         dCost += cost; dDihari += dih; if (s.type === "Labours") dLab += dih;
-        const t = byType.get(s.type) || { type: s.type, cost: 0, dihari: 0, peak: 0, shared: !!s.shared };
+        const t = byType.get(s.type) || { type: s.type, cost: 0, dihari: 0, peak: 0, shared: !!s.shared, rows: [] };
         t.cost += cost; t.dihari += dih;
+        // Kept per department for the row's "how" modal: what each department's share came to,
+        // and its days with that department's own edits applied (crew × shifts).
+        t.rows.push({ dept: d, rate, dihari: dih, cost, trace: s.trace || null, schedule: s.schedule || null,
+          days: Array.isArray(s.schedule) ? s.schedule.map(day => ({ label: phaseLbl(day), crew: Math.round(mpEffDay(r, day, dd.mpDay || {}) * 10) / 10, shifts: mpEffWindows(r, day, dd.mpWin || {}) })) : [] });
         if (s.shared && Array.isArray(s.schedule)) {
           s.schedule.forEach(day => {
             const c = Number(day.count) || 0;
@@ -1139,19 +1145,6 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const logMovements = (rows) => { if (!rows.length) return; saveDept({ movements: [...movements, ...rows] }); rows.filter(m => m.type === "damage").forEach(m => adjustInventory(m.invId, -m.qty)); };
   const confirmItemPlanned = (it) => logMovements(buildPlannedMovements([it]));
   const confirmAllPlanned = () => logMovements(buildPlannedMovements(blockedItems));
-  // TESTING: wipe the dept-head plan + all on-site movements for this dept/event so the split flow can
-  // be re-tried without making a new client. Restores stock for any "broken" write-offs first.
-  const resetDismantle = async () => {
-    if (!sel) return;
-    if (!(await confirm({
-      title: "Reset dismantle plan?",
-      body: "Clears the plan, sites and on-site movements.",
-      confirmLabel: "Reset",
-    }))) return;
-    movements.filter(m => m.type === "damage").forEach(m => adjustInventory(m.invId, +(Number(m.qty) || 0)));
-    saveDept({ dismantlePlan: {}, movements: [], dismantleSites: [] });
-    setManTruck({}); setManSel({}); setManCond({}); setManIssue({}); setRouteDraft({});
-  };
   // Destination-grouped manifest: everything going to each place (warehouse / repair / broken / each
   // transfer site) as its own list with item qtys — so ops loads per destination, not per item.
   const destGroups = useMemo(() => {
@@ -1371,7 +1364,6 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   };
   // Day-wise plan (which days × crew × which dihari shift windows) — mirrors Deal Check's day/timing
   // breakdown, but editable here: the dept head can change crew per day AND toggle each day's shifts.
-  const phaseLbl = (d) => d.phase === "minusOne" ? "−1 setup" : d.phase === "dismantle" ? "+1 dismantle" : d.phase === "gap" ? "gap" : (d.date || "event");
   const renderMpSchedule = (r) => {
     const sch = r && r.schedule;
     if (!Array.isArray(sch) || !sch.length) return null;
@@ -2912,7 +2904,6 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
     /* font-body on the whole tab, not just the event header card: with it on one card only,
        everything else fell back to the system font, so the page mixed two sans faces. */
     <div className="font-body antialiased space-y-4 xl:max-w-[1600px]">
-      {confirmDialog}
       {/* ── DEPARTMENT PICKER ──
           Was a <select> buried at the top of the left rail. A dropdown hides its options until
           you open it, so the one thing that scopes this entire page — every figure, every tile,
@@ -3882,12 +3873,14 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                     )}
                     <div className="grid gap-3 md:grid-cols-2">
                       <div className="rounded-xl bg-white ring-1 ring-gray-200 overflow-hidden">
-                        <div className="grid grid-cols-[1fr_auto_auto_auto] gap-3 px-3 py-1.5 bg-gray-50 text-[11px] uppercase tracking-wider text-gray-400 font-semibold"><span>Crew</span><span className="w-14 text-right">Peak</span><span className="w-14 text-right">Dihari</span><span className="w-20 text-right">Cost</span></div>
-                        {ev.types.map(t => <div key={t.type} className="grid grid-cols-[1fr_auto_auto_auto] gap-3 px-3 py-1.5 border-t border-gray-100 items-center">
+                        <div className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-3 px-3 py-1.5 bg-gray-50 text-[11px] uppercase tracking-wider text-gray-400 font-semibold"><span>Crew</span><span className="w-14 text-right">Peak</span><span className="w-14 text-right">Dihari</span><span className="w-20 text-right">Cost</span><span className="w-10" /></div>
+                        {ev.types.map(t => <div key={t.type} className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-3 px-3 py-1.5 border-t border-gray-100 items-center">
                           <span className="truncate font-medium text-gray-900">{crewIcon(t.type)} {t.type}{t.shared && <span className="ml-1.5 text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded font-bold align-middle">SHARED</span>}</span>
                           <span className="w-14 text-right tabular-nums">{t.peak}</span>
                           <span className="w-14 text-right tabular-nums">{Math.round(t.dihari)}</span>
                           <span className="w-20 text-right tabular-nums font-semibold text-gray-900">{fmt(t.cost)}</span>
+                          <button onClick={() => setMpHowType(t.type)} title={`How ${t.type} adds up`}
+                            className="w-10 rounded-md bg-blue-50 text-blue-700 hover:bg-blue-100 px-1.5 py-0.5 text-[11px] font-semibold cursor-pointer">how</button>
                         </div>)}
                       </div>
                       <div className="rounded-xl bg-white ring-1 ring-gray-200 overflow-hidden">
@@ -3900,6 +3893,77 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                         </div>)}
                       </div>
                     </div>
+                    {/* ── HOW A CREW ROW ADDS UP ──
+                        Every department's share of this crew type, with each department's own edits,
+                        plus how the count was derived and the days it works. Read-only: edits stay in
+                        each department's own Manpower plan. */}
+                    {(() => {
+                      const t = mpHowType && ev.types.find(x => x.type === mpHowType);
+                      if (!t) return null;
+                      const src = t.rows.find(x => x.trace) || t.rows[0];
+                      // Shared crew is ONE event-wide team: its days come from the schedule's own
+                      // headcount, not from any one department's share of it.
+                      const days = t.shared
+                        ? (Array.isArray(src?.schedule) ? src.schedule.map(day => ({ label: phaseLbl(day), crew: Number(day.count) || 0, shifts: Array.isArray(day.windowIds) ? day.windowIds.length : (Number(day.windows) || 0) })) : [])
+                        : null;
+                      return createPortal(
+                        <div onClick={() => setMpHowType(null)} className="fixed inset-0 z-[9999] bg-black/40 flex items-center justify-center p-4">
+                          <div onClick={e => e.stopPropagation()} className="w-full max-w-xl max-h-[85vh] overflow-y-auto rounded-2xl bg-white shadow-2xl p-4 space-y-3 text-[13px] text-gray-700">
+                            <div className="flex items-center gap-2">
+                              <span aria-hidden="true" className="shrink-0 w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center text-sm leading-none">{crewIcon(t.type)}</span>
+                              <span className="text-[15px] font-semibold text-gray-900">How {t.type} adds up</span>
+                              {t.shared && <span className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded font-bold">SHARED</span>}
+                              <button onClick={() => setMpHowType(null)} className="ml-auto text-gray-400 hover:text-gray-700 text-[18px] leading-none cursor-pointer" title="Close">×</button>
+                            </div>
+                            <div className="grid grid-cols-3 gap-2">
+                              {tile("Peak", t.peak, t.shared ? "one team, whole event" : "summed across departments")}
+                              {tile("Dihari", Math.round(t.dihari), "crew × shifts, all days")}
+                              {tile("Cost", fmt(t.cost), `${t.rows.length} department${t.rows.length === 1 ? "" : "s"}`)}
+                            </div>
+                            {t.shared && <div className="rounded-lg bg-slate-50 ring-1 ring-slate-200 px-2.5 py-2 text-[12px] text-gray-600">One event-wide team, split across departments by their usage or income share. Each department's figure below is its share, with its own edits.</div>}
+                            {src?.trace && (
+                              <div>
+                                <div className="text-[11.5px] font-semibold text-gray-500 mb-1.5">How the count was worked out</div>
+                                {renderMpTrace(src.trace)}
+                              </div>
+                            )}
+                            {days && days.length > 0 && (
+                              <div>
+                                <div className="text-[11.5px] font-semibold text-gray-500 mb-1.5">On site, by day</div>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {days.map((d, i) => <span key={i} className="inline-flex items-center gap-1.5 rounded-lg bg-white ring-1 ring-gray-200 px-2.5 py-1"><span className="text-gray-500">{d.label}</span><b className="text-gray-900 tabular-nums">{d.crew}</b><span className="text-gray-400">× {d.shifts} shift{d.shifts === 1 ? "" : "s"}</span></span>)}
+                                </div>
+                              </div>
+                            )}
+                            <div className="rounded-xl ring-1 ring-gray-200 overflow-hidden">
+                              <div className="grid grid-cols-[1fr_auto_auto_auto] gap-3 px-3 py-1.5 bg-gray-50 text-[11px] uppercase tracking-wider text-gray-400 font-semibold"><span>Department</span><span className="w-14 text-right">Dihari</span><span className="w-16 text-right">₹/day</span><span className="w-20 text-right">Cost</span></div>
+                              {t.rows.map(x => (
+                                <div key={x.dept} className={"px-3 py-1.5 border-t border-gray-100 " + (x.dept === dept ? "bg-blue-50/60" : "")}>
+                                  <div className="grid grid-cols-[1fr_auto_auto_auto] gap-3 items-center">
+                                    <span className="truncate font-medium text-gray-900">{x.dept}{x.dept === dept && <span className="ml-1.5 text-[10px] text-blue-600 font-bold">THIS</span>}</span>
+                                    <span className="w-14 text-right tabular-nums">{Math.round(x.dihari * 10) / 10}</span>
+                                    <span className="w-16 text-right tabular-nums">{fmt(x.rate)}</span>
+                                    <span className="w-20 text-right tabular-nums font-semibold text-gray-900">{fmt(x.cost)}</span>
+                                  </div>
+                                  {!t.shared && x.days.length > 0 && (
+                                    <div className="mt-1 flex flex-wrap gap-1 text-[11.5px] text-gray-500">
+                                      {x.days.map((d, i) => <span key={i} className="rounded bg-gray-100 px-1.5 py-0.5">{d.label} · {d.crew} × {d.shifts}</span>)}
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                              <div className="grid grid-cols-[1fr_auto_auto_auto] gap-3 px-3 py-1.5 border-t border-gray-200 bg-gray-50 font-semibold text-gray-900">
+                                <span>Total</span>
+                                <span className="w-14 text-right tabular-nums">{Math.round(t.dihari)}</span>
+                                <span className="w-16" />
+                                <span className="w-20 text-right tabular-nums">{fmt(t.cost)}</span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>,
+                        document.body
+                      );
+                    })()}
                   </div>
                 );
               })()}
@@ -4410,14 +4474,10 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                 "Dismantle & routing" confirms it at teardown. See SHOW_DISMANTLE_IN_PLANNING. */}
             {SHOW_DISMANTLE_IN_PLANNING && blockedItems.length > 0 && (
               <div className={"bg-white rounded-xl shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] overflow-hidden" + modalCls("dism")}>
-                {/* Reset rides on the title row instead of wrapping onto a line of its own under
-                    the description — on a phone that orphaned it at the left, a full row of height
-                    spent on one small button. The description gets the full width under both. */}
                 <div className="px-3 sm:px-4 py-3 bg-gray-50">
                   <div className="flex items-center gap-3">
                     <span aria-hidden="true" className="shrink-0 w-9 h-9 rounded-lg bg-white shadow-[0_1px_3px_rgba(15,23,42,0.12),0_4px_10px_-4px_rgba(15,23,42,0.22)] flex items-center justify-center text-base leading-none">🔁</span>
                     <div className="min-w-0 flex-1 text-[15px] font-semibold text-gray-900">Dismantle plan</div>
-                    <button onClick={resetDismantle} className="shrink-0 text-xs font-semibold text-red-600 border border-red-200 bg-red-50 hover:bg-red-100 px-2.5 py-1 rounded-lg whitespace-nowrap" title="Testing: clear this plan + all on-site movements so you can re-test splits">↺ Reset<span className="hidden sm:inline"> (testing)</span></button>
                   </div>
                   <div className="mt-1.5 text-xs text-gray-500 leading-relaxed">Split items across sites; the rest go to production house.</div>
                 </div>
@@ -4673,7 +4733,6 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                 <div className="flex items-center gap-3">
                   <span aria-hidden="true" className="shrink-0 w-9 h-9 rounded-lg bg-white shadow-[0_1px_3px_rgba(15,23,42,0.12),0_4px_10px_-4px_rgba(15,23,42,0.22)] flex items-center justify-center text-base leading-none">🔁</span>
                   <div className="min-w-0 flex-1 text-[15px] font-semibold text-gray-900">Dismantle &amp; return routing</div>
-                  <button onClick={resetDismantle} className="shrink-0 text-xs font-semibold text-red-600 border border-red-200 bg-red-50 hover:bg-red-100 px-2.5 py-1 rounded-lg whitespace-nowrap" title="Testing: clear the plan + all movements so you can re-test">↺ Reset<span className="hidden sm:inline"> (testing)</span></button>
                 </div>
                 <div className="text-xs text-gray-500 leading-relaxed">Confirm the dept head&apos;s plan, or send everything left to the warehouse.</div>
                 {blockedItems.some(it => unroutedQty(it) > 0) && (
