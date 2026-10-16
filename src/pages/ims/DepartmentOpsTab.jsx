@@ -11,6 +11,7 @@ import { ZONE_DEF_SK } from "../../lib/studio/keys";
 import { LOGO_ASSET, LOGO_BOX } from "../../lib/studio/brand.js";
 import { fitUrl } from "../../lib/studio/thumb.js";
 import { matchFlowerPattern, resolveSizeKey, sizeClassToPatternKey, resolveMandiFlower } from "../../lib/ims/flowerHelpers";
+import { swatchHexFor } from "../../lib/studio/colours";
 
 // ── THE OFFICIAL LOGO, READY FOR THE PDF ──
 // ambria-logo.png is a WHITE wordmark with a gold dot and gold "DESIGN & DECOR", on a transparent
@@ -532,6 +533,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const [mpFn, setMpFn] = useState("all");
   // Whole-event crew row whose "how" modal is open (its crew type), or null.
   const [mpHowType, setMpHowType] = useState(null);
+  // Fabric colour swatch shown large ({name, hex}), or null.
+  const [swatchView, setSwatchView] = useState(null);
   // Which kits have their components showing. Collapsed by default: a kit's own line already
   // carries the qty, the rate and the total that matter, and six components under each of four
   // kits buried the ordinary items between them.
@@ -1353,6 +1356,16 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     });
     return out;
   }, [trussInv]);
+  // The colour a fabric's name stands for — the same lookup Planning → Fabric Stock draws its
+  // swatches with: the stock row's own hex if set, else the colour catalogue, else a known name.
+  const fabricHex = (stockKey, colour) => swatchHexFor(colour, settings?.colourCatalogue, (Array.isArray(trussInv?.[stockKey]) ? trussInv[stockKey] : []).find(r => r.colour === colour)?.hex);
+  // A small colour square that opens the colour large. Its fill is the fabric's own colour, which
+  // only exists at runtime, so it is an inline style rather than a class. "(unassigned)" has none.
+  const Swatch = ({ name, hex }) => (!name || name === "(unassigned)") ? null : (
+    <button type="button" onClick={() => setSwatchView({ name, hex })} title={`${name} — tap to see it larger`}
+      className="shrink-0 inline-block w-3.5 h-3.5 rounded ring-1 ring-black/15 align-middle cursor-pointer hover:scale-125 transition-transform"
+      style={{ background: hex }} />
+  );
   // Same-day contention: fabric the SAME stock is committed to on OTHER events on the same date —
   // so each event is checked against the remainder after the others (the same Liza can't be in two
   // places on the same day).
@@ -1380,7 +1393,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       const avail = Math.max(0, stock - otherDay);
       const shortOld = Math.max(0, reqOld - av.old);
       const shortNew = Math.max(0, reqNew - av.new);
-      return { colour: r.colour, required: r.qty, qtyOld: reqOld, qtyNew: reqNew, old: av.old, new: av.new, stock, otherDay, avail, short: Math.max(0, r.qty - avail), shortOld, shortNew };
+      return { colour: r.colour, hex: fabricHex(ft.stockKey, r.colour), required: r.qty, qtyOld: reqOld, qtyNew: reqNew, old: av.old, new: av.new, stock, otherDay, avail, short: Math.max(0, r.qty - avail), shortOld, shortNew };
     });
     return { ...ft, rows };
   }).filter(f => f.rows.length) : [];
@@ -1395,7 +1408,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           const av = fabricAvail[ft.key]?.[r.colour] || { old: 0, new: 0 };
           const otherDay = sameDayReserved(d, eo.id, ft.key, r.colour);
           const short = (Number(r.qty) || 0) - Math.max(0, (av.old + av.new) - otherDay);
-          if (short > 0) out.push({ event: eo.clientName || "Event", date: d, fabric: ft.label, colour: r.colour, short, unit: ft.unit, contended: otherDay > 0 });
+          if (short > 0) out.push({ event: eo.clientName || "Event", date: d, fabric: ft.label, colour: r.colour, hex: fabricHex(ft.stockKey, r.colour), short, unit: ft.unit, contended: otherDay > 0 });
           // Tier-specific: combined supply covers it, but the New-tier portion this event actually
           // needs (picked explicitly in Build) can't be met from New stock alone — Old stock sitting
           // idle doesn't help a New requirement, so this would otherwise look fine and quietly surprise
@@ -1403,13 +1416,13 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           else if (short <= 0) {
             const reqNew = Number(r.qtyNew) || 0;
             const shortNew = reqNew - Math.max(0, av.new - otherDay);
-            if (reqNew > 0 && shortNew > 0) out.push({ event: eo.clientName || "Event", date: d, fabric: ft.label, colour: r.colour, short: shortNew, unit: ft.unit, contended: otherDay > 0, newTierOnly: true });
+            if (reqNew > 0 && shortNew > 0) out.push({ event: eo.clientName || "Event", date: d, fabric: ft.label, colour: r.colour, hex: fabricHex(ft.stockKey, r.colour), short: shortNew, unit: ft.unit, contended: otherDay > 0, newTierOnly: true });
           }
         });
       });
     });
     return out.sort((a, b) => (a.date || "").localeCompare(b.date || ""));
-  }, [dept, eventOrders, fabricAvail, today]);
+  }, [dept, eventOrders, fabricAvail, today, settings, trussInv]);
 
   // Derivation box for a crew type — same pattern as Deal Check's "HOW … DERIVED".
   const renderMpTrace = (t) => {
@@ -1690,7 +1703,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       `<tr><td>${esc(m.name)}</td><td>${esc(m.type === "transfer" ? `Transfer → ${m.toEventName || "site"}` : m.type === "damage" ? "Damaged" : "Back to production house")}</td><td class="n">${esc(m.qty)}</td><td>${esc(m.by || "—")}</td></tr>`);
 
     const fabRows = dept === "Fabric" ? fabricReqRows.flatMap(ft => ft.rows.map(r =>
-      `<tr><td>${esc(ft.label)} · ${esc(r.colour)}</td><td class="n">${esc(r.required)} ${esc(ft.unit)}</td><td class="n">${esc(r.avail)} ${esc(ft.unit)}</td><td class="n ${r.short > 0 ? "bad" : "ok"}">${r.short > 0 ? `short ${esc(r.short)} ${esc(ft.unit)}` : "ok"}</td></tr>`)) : [];
+      `<tr><td>${esc(ft.label)} · ${r.colour && r.colour !== "(unassigned)" ? `<span style="display:inline-block;width:9px;height:9px;border-radius:2px;border:1px solid rgba(0,0,0,.18);background:${esc(r.hex)};margin-right:5px;vertical-align:middle"></span>` : ""}${esc(r.colour)}</td><td class="n">${esc(r.required)} ${esc(ft.unit)}</td><td class="n">${esc(r.avail)} ${esc(ft.unit)}</td><td class="n ${r.short > 0 ? "bad" : "ok"}">${r.short > 0 ? `short ${esc(r.short)} ${esc(ft.unit)}` : "ok"}</td></tr>`)) : [];
 
     /* ── ZONE LAYOUT PAGES ──
        One page per zone of the event: the zone's reference photo in the middle band, and this
@@ -3762,7 +3775,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                     <div className="">
                       {upcomingFabricShort.map((s, i) => (
                         <div key={i} className="flex items-center justify-between px-4 py-1.5 text-xs">
-                          <span className="text-red-800"><b>{s.fabric}</b> · {s.colour}</span>
+                          <span className="text-red-800 inline-flex items-center gap-1.5"><b>{s.fabric}</b> · <Swatch name={s.colour} hex={s.hex} />{s.colour}</span>
                           <span className="text-red-700">{s.newTierOnly ? <>short <b>{s.short} {s.unit}</b> of <b>New</b> stock specifically</> : <>short <b>{s.short} {s.unit}</b></>} for {s.event} on <b>{s.date}</b>{s.contended ? " (shared with another same-day event)" : ""}</span>
                         </div>
                       ))}
@@ -3787,7 +3800,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                              line and need / have / short wrap under it left-aligned — the
                              right-alignment only earns its keep when the rows line up. */
                           <div key={i} className="flex flex-wrap sm:grid sm:grid-cols-[1fr_auto_auto_auto] gap-x-3 gap-y-0.5 sm:gap-2 px-4 py-1.5 text-xs items-center">
-                            <span className="w-full sm:w-auto text-gray-800">{r.colour}</span>
+                            <span className="w-full sm:w-auto text-gray-800 inline-flex items-center gap-1.5"><Swatch name={r.colour} hex={r.hex} />{r.colour}</span>
                             <span className="text-gray-500 sm:w-32 sm:text-right">need <b>{r.required} {ft.unit}</b> {(r.qtyOld > 0 && r.qtyNew > 0) ? <span className="text-gray-400">({r.qtyOld} old + {r.qtyNew} new)</span> : r.qtyNew > 0 ? <span className="font-semibold text-violet-600">(New picked)</span> : null}</span>
                             <span className="text-gray-500 sm:w-40 sm:text-right">have {r.avail} <span className="text-gray-400">({r.old} old + {r.new} new{r.otherDay > 0 ? ` − ${r.otherDay} same-day` : ""})</span></span>
                             <span className={"sm:w-28 sm:text-right font-bold " + (r.short > 0 ? "text-red-600" : "text-emerald-600")}>
@@ -5211,6 +5224,22 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
             </a>
           </div>
           <iframe title="Deck" src={deckView.url} className="flex-1 w-full border-0 bg-white" />
+        </div>,
+        document.body
+      )}
+      {/* A fabric colour, large — a 14px square is enough to tell colours apart, not to match a bolt against. */}
+      {swatchView && createPortal(
+        <div onClick={() => setSwatchView(null)} className="fixed inset-0 z-[9999] bg-black/50 flex items-center justify-center p-6 cursor-zoom-out">
+          <div onClick={e => e.stopPropagation()} className="rounded-2xl bg-white shadow-2xl p-4 w-72 space-y-3">
+            <div className="w-full h-56 rounded-xl ring-1 ring-black/10" style={{ background: swatchView.hex }} />
+            <div className="flex items-center gap-2">
+              <div className="min-w-0 flex-1">
+                <div className="text-[15px] font-semibold text-gray-900 truncate">{swatchView.name}</div>
+                <div className="text-xs text-gray-400 uppercase tabular-nums">{swatchView.hex}</div>
+              </div>
+              <button onClick={() => setSwatchView(null)} className="shrink-0 text-gray-400 hover:text-gray-700 text-[18px] leading-none cursor-pointer" title="Close">×</button>
+            </div>
+          </div>
         </div>,
         document.body
       )}
