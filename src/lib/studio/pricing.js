@@ -460,9 +460,11 @@ export const calcZoneFabric = (zc, trussInv, drapeDensity) => {
   }
   lizaKg = Math.round((lizaWrapKg + lizaCeilingKg) * 100) / 100;
 
-  // Velvet curtains — one set per pillar (default 4 curtains per pillar; configurable later)
+  // Velvet curtains — one set per pillar. Tarun lock (2026-10-16): a U truss gets 2 curtains per
+  // pillar (it has no back/side walls to help frame the opening, so fewer panels already read as
+  // "dressed"); Half Box and Full Box both get 4 per pillar, same as before.
   // Half Box: curtains only on front pillars (back pillars are against wall)
-  const curtainsPerPillar = zc.curtainsPerPillar || 4;
+  const curtainsPerPillar = zc.curtainsPerPillar || (config === "u_only" ? 2 : 4);
   const pillarCount = topo.pillarCount || (topo.pillars||[]).length || 0;
   const curtainPillarCount = topo.frontPillarCount || pillarCount;
   const curtainPieces = curtainPillarCount * curtainsPerPillar;
