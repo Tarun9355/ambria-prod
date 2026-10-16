@@ -3958,9 +3958,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                         <span className="flex-1 min-w-0 text-sm font-semibold text-gray-900 truncate">{r.type}{r.shared && <span className="ml-1.5 text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded font-bold align-middle">SHARED</span>}</span>
                         {r.shared && !dayWise(r) ? (
                           <span className="shrink-0 text-[10px] text-gray-400">split allocation</span>
-                        ) : dayWise(r) ? (
-                          <div className="shrink-0 flex items-center gap-1.5"><span className="text-[11px] text-gray-400" title="Total dihari (crew × shifts, summed across all days). Auto-calculated — edit the crew on any day in the plan below and this updates.">dihari</span><span className="w-16 rounded-lg px-2 py-1.5 text-sm text-center font-bold bg-gray-100 text-gray-700" title="Auto-calculated from the day-wise plan below">{Number(r.rate) > 0 ? Math.round(Number(lineCost(r)) / Number(r.rate)) : 0}</span></div>
-                        ) : (
+                        ) : dayWise(r) ? null : (
                           <div className="shrink-0 flex items-center gap-1.5"><span className="text-[11px] text-gray-400">qty</span><input type="number" min="0" value={r.count} onChange={e => setMp(i, "count", e.target.value)} className={"w-16 rounded-lg px-2 py-1.5 text-sm text-center font-semibold ring-1 " + (overridden ? "ring-amber-400 bg-amber-50 font-bold" : "ring-gray-200 bg-white")} /></div>
                         )}
                       </div>
@@ -3971,7 +3969,11 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                         <div className="flex items-center gap-2">
                           <span className="shrink-0 text-[11px] text-gray-400">₹/day</span>
                           <input type="number" min="0" value={r.rate} onChange={e => setMp(i, "rate", e.target.value)} className="w-24 rounded-lg ring-1 ring-gray-200 bg-white px-2 py-1.5 text-sm text-center font-semibold" />
-                          <div className="ml-auto shrink-0 rounded-lg bg-gray-100 px-3 py-1.5 text-sm font-bold text-gray-900 tabular-nums">{fmt(lineCost(r))}</div>
+                          {/* Day-wise rows (e.g. Flowerists): this header total duplicated the exact same
+                              figure the Day-wise plan panel + "Studio plan: …" caption already show once the
+                              card is opened — dropped here so the collapsed header reads cleaner. Non-day-wise
+                              rows have no such fallback, so their total pill stays. */}
+                          {!dayWise(r) && <div className="ml-auto shrink-0 rounded-lg bg-gray-100 px-3 py-1.5 text-sm font-bold text-gray-900 tabular-nums">{fmt(lineCost(r))}</div>}
                         </div>
                       )}
                       {r.shared && !dayWise(r) && (
@@ -4027,11 +4029,6 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                               )}
                             </>
                           ) : (<>
-                            <div className="flex items-center gap-2 mb-2">
-                              <span className="h-4 w-1 rounded-full bg-blue-500" aria-hidden="true" />
-                              <span className="text-[13px] uppercase tracking-wider text-blue-700 font-bold">How {r.sysCount != null && r.sysCount !== "" ? r.sysCount : (r.count || "")} {r.type} derived</span>
-                            </div>
-                            {renderMpTrace(r.trace)}
                             {renderMpSchedule(r)}
                             {r.basis && !r.trace && <span className="text-gray-600">📐 {r.basis}<br /></span>}
                             {r.sysCount != null && r.sysCount !== "" && (() => {
