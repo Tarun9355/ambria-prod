@@ -1,16 +1,18 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 
 // AllocationPicker — replaces ColourPicker for paintable elements.
 // User allocates units of an element across colours. Base colour = "no override" (the unallocated remainder).
 export default function AllocationPicker({ open, onClose, elName, totalQty, baseColour, paintCost, initialAllocation,
                             colourCatalogue, paletteCatalogue, palette, onSave }) {
-  const [draft, setDraft] = useState([]);
-  // Initialize draft when modal opens (use initialAllocation)
-  useEffect(() => {
-    if (!open) return;
-    const init = Array.isArray(initialAllocation) ? initialAllocation.map(a => ({...a})) : [];
-    setDraft(init);
-  }, [open, initialAllocation]);
+  // Lazy initializer — runs once, at mount, not on every re-render. Both callers (StudioModals.jsx)
+  // only ever render this component at all while its own target state (paintPickerTarget/
+  // fabricPickerTarget) is set, and unmount it on close — so a fresh mount is exactly "the modal
+  // just opened" and a stale `draft` here can't happen by construction. This used to instead be a
+  // useEffect keyed on [open, initialAllocation] — but `initialAllocation` is recomputed as a brand
+  // new array on every parent render (open is a hardcoded `true` literal, never actually toggling),
+  // so that effect re-ran on every single render while the modal was open and clobbered whatever
+  // colour the user had just clicked back to the last-saved allocation a moment later.
+  const [draft, setDraft] = useState(() => (Array.isArray(initialAllocation) ? initialAllocation.map(a => ({...a})) : []));
   if (!open) return null;
   const catalogue = Array.isArray(colourCatalogue) ? colourCatalogue : [];
   const palettes = Array.isArray(paletteCatalogue) ? paletteCatalogue : [];

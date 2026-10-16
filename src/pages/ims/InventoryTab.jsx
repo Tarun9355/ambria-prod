@@ -324,6 +324,23 @@ Rules:
     const matchDept = canSeeDept(authUser, catToDept(i.cat, settings?.categoryDepartments));
     return matchSearch && matchCat && matchType && matchSubCat && matchReview && matchAvail && matchDept;
   });
+  // Rank matches so a name that actually says what was typed surfaces first, instead of filtered
+  // results sitting in whatever order `inventory` happened to already be in — an item literally
+  // named "Artificial White" used to show BELOW items that only matched via their category/sub-cat/
+  // notes containing those words. Array.prototype.sort is stable (spec-guaranteed), so items tied on
+  // rank keep their original relative order rather than reshuffling on every keystroke.
+  const searchPhrase = search.trim().toLowerCase();
+  if (searchPhrase) {
+    const rankOf = (i) => {
+      const name = String(i.name ?? "").toLowerCase();
+      if (name === searchPhrase) return 0;
+      if (name.startsWith(searchPhrase)) return 1;
+      if (name.includes(searchPhrase)) return 2;
+      if (searchTokens.every((t) => name.includes(t))) return 3;
+      return 4; // matched only via cat/sub-cat/code/location/notes/unit/type
+    };
+    filtered.sort((a, b) => rankOf(a) - rankOf(b));
+  }
   const totalPages = Math.ceil(filtered.length / INV_PAGE_SIZE);
   const safePage = Math.min(invPage, Math.max(0, totalPages - 1));
   const paged = filtered.slice(safePage * INV_PAGE_SIZE, (safePage + 1) * INV_PAGE_SIZE);
