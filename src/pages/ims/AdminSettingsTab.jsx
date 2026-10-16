@@ -2507,6 +2507,9 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
       {/* Studio's own Transport & Power editor, mounted here via a data/theme adapter rather than
           rebuilt — one editor, so the two apps can never disagree about a rate. */}
       {activePanel === "transport" && <ImsTransportPanel rcItems={rcItems} rcCats={rcCats} rateCardCategories={rateCardCategories} inventory={inventory} />}
+      {/* Truck Capacity Rules + Buffer Trucks by Budget — moved off this screen onto their own
+          Planning → 🚚 Truck tab (owner ask, 2026-10-16), still the same ctx adapter/editor pair. */}
+      {activePanel === "truck" && <ImsTransportPanel variant="truck" rcItems={rcItems} rcCats={rcCats} rateCardCategories={rateCardCategories} inventory={inventory} />}
 
       {/* Moved here from Studio → Manage → Settings, which no longer carries a Departments tab. */}
       {activePanel === "departments" && (() => {

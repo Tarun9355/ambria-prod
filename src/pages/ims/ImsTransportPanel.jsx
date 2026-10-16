@@ -1,7 +1,9 @@
-// IMS → Admin → Settings → 🗂️ Master Data → 🚛 Transport & Power
+// IMS → Admin → Settings → 🗂️ Master Data → 🚛 Transport & Power, AND (variant="truck")
+// IMS → Planning → 🚚 Truck.
 //
-// Mounts Studio's TransportEditor rather than reimplementing it. The panel is a data + theme
-// adapter, nothing more — one editor, one behaviour, no second copy to keep in step.
+// Mounts Studio's TransportEditor/TruckCapacityEditor rather than reimplementing either. The panel
+// is a data + theme adapter, nothing more — one ctx builder, no second copy of the fetch/save path
+// to keep in step, even though the two editors it can mount now live on separate screens.
 //
 // Two things make an adapter necessary rather than a plain import:
 //
@@ -18,6 +20,7 @@ import { supabase } from "../../lib/supabase";
 import { makeS } from "../../lib/studio/styles";
 import { RC_SK_TR, VENUES_SK, TR_TIERS, TC_UNITS } from "../../lib/studio/keys";
 import TransportEditor from "../studio/TransportEditor.jsx";
+import TruckCapacityEditor from "../studio/TruckCapacityEditor.jsx";
 
 const parseRow = (v, fallback) => {
   if (v == null) return fallback;
@@ -25,7 +28,7 @@ const parseRow = (v, fallback) => {
   try { return JSON.parse(v); } catch { return fallback; }
 };
 
-export default function ImsTransportPanel({ rcItems = [], rcCats = [], rateCardCategories = [], inventory = [], showMsg }) {
+export default function ImsTransportPanel({ rcItems = [], rcCats = [], rateCardCategories = [], inventory = [], showMsg, variant }) {
   const [tr, setTr] = useState(null);                  // the transport blob
   const [venues, setVenues] = useState({ inhouse: [], outdoor: [] });
   const [loading, setLoading] = useState(true);
@@ -108,7 +111,7 @@ export default function ImsTransportPanel({ rcItems = [], rcCats = [], rateCardC
   return (
     <div>
       {err && <p className="text-xs text-red-600 mb-2">{err}</p>}
-      <TransportEditor ctx={ctx} />
+      {variant === "truck" ? <TruckCapacityEditor ctx={ctx} /> : <TransportEditor ctx={ctx} />}
     </div>
   );
 }

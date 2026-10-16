@@ -1655,6 +1655,7 @@ export default function IMS() {
             studio={studio} authUser={user} amendRequests={amendRequests}
             focusEventId={focusEventId} focusSearch={focusSearch} focusLeadEntry={focusLeadEntry} onFocusHandled={clearFocusEvent}
             onGoToCalendar={canSeeCalendar ? goToCalendar : undefined}
+            rateCardCategories={rateCardCategories} rcItems={studioRcItems} rcCats={studioRcCats}
           />
         ) : activeTab === "finance" ? (
           <FinanceTab

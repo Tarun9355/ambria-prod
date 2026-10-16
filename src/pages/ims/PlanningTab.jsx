@@ -16,13 +16,14 @@ function Placeholder({ name, note }) {
   );
 }
 
-export default function PlanningTab({ projects, functions, setFunctions, inventory, setInventory, settings, setSettings, trussInv, setTrussInv, trussAlloc, setTrussAlloc, eventOrders, setEventOrders, blocks, studio, authUser, amendRequests, focusEventId, focusSearch, focusLeadEntry, onFocusHandled, onGoToCalendar }) {
+export default function PlanningTab({ projects, functions, setFunctions, inventory, setInventory, settings, setSettings, trussInv, setTrussInv, trussAlloc, setTrussAlloc, eventOrders, setEventOrders, blocks, studio, authUser, amendRequests, focusEventId, focusSearch, focusLeadEntry, onFocusHandled, onGoToCalendar, rateCardCategories, rcItems, rcCats }) {
   const allTabs = [
     { id: "deptops", label: "🏦 Dept Ops" },
     { id: "truss", label: "🏗️ Truss" },
     { id: "paint", label: "🎨 Paint" },
     { id: "trussbatta", label: "🏗️ Truss & Batta Config" },
     { id: "fabricstock", label: "🧵 Fabric Stock" },
+    { id: "truck", label: "🚚 Truck" },
   ];
   const roleConfig = (settings?.roleTabs || {})[authUser?.role];
   const isAdmin = authUser?.role === "Admin" || authUser?.id === "u_admin";
@@ -60,6 +61,7 @@ export default function PlanningTab({ projects, functions, setFunctions, invento
       {sub === "paint" && <PaintPlanningTab projects={projects} functions={functions} inventory={inventory} settings={settings} />}
       {sub === "trussbatta" && <AdminSettingsTab mode="trussbatta" settings={settings} setSettings={setSettings} studio={studio} trussInv={trussInv} setTrussInv={setTrussInv} />}
       {sub === "fabricstock" && <AdminSettingsTab mode="fabricstock" settings={settings} setSettings={setSettings} studio={studio} trussInv={trussInv} setTrussInv={setTrussInv} />}
+      {sub === "truck" && <AdminSettingsTab mode="truck" settings={settings} setSettings={setSettings} studio={studio} trussInv={trussInv} setTrussInv={setTrussInv} rateCardCategories={rateCardCategories} rcItems={rcItems} rcCats={rcCats} inventory={inventory} />}
     </div>
   );
 }
