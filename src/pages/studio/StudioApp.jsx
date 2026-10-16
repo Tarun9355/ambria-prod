@@ -9669,6 +9669,35 @@ export default function StudioApp() {
           total: zl.truss,
         });
       }
+      // Drape Fabric (Liza wrap+ceiling, velvet curtains, Liza wall-masking pieces) — calcStructCost
+      // already folds this into zl.total (see its own comment), but never got a structItems row of
+      // its own, so every cost sheet/Excel export silently had real money (often ₹thousands) with no
+      // line explaining it — the zone/function total was always right, just not itemized. Mirrors
+      // calcStructCost's own trussRows loop (primary row + extraTrussRows) so the qty breakdown shown
+      // here can never drift from what was actually billed.
+      if (zl.fabric > 0) {
+        const _fabTrussInv = structRates.trussInv;
+        const _fabRates = _fabTrussInv?.rates || {};
+        const _fabRows = [zc, ...(zc.extraTrussRows || [])];
+        let _lizaKg = 0, _curtainPc = 0, _maskPc = 0, _anyNew = false, _anyOld = false;
+        _fabRows.forEach((row) => {
+          const fab = calcZoneFabric(row, _fabTrussInv, row.drapeDensity || "moderate");
+          _lizaKg += fab.lizaKg || 0;
+          _curtainPc += fab.curtainPieces || 0;
+          _maskPc += fab.maskingPieces || 0;
+          if (row.useNewFabric) _anyNew = true; else _anyOld = true;
+        });
+        const _fabTier = _anyNew && _anyOld ? "Old+New" : _anyNew ? "New" : "Old";
+        const _lizaRate = (_anyNew && !_anyOld) ? (_fabRates.lizaKgRateNew || 0) : (_fabRates.lizaKgRate || 0);
+        const _fabParts = [];
+        if (_lizaKg > 0) _fabParts.push(`${Math.round(_lizaKg * 100) / 100}kg Liza`);
+        if (_curtainPc > 0) _fabParts.push(`${_curtainPc} curtains`);
+        if (_maskPc > 0) _fabParts.push(`${_maskPc} masking pc`);
+        structItems.push({
+          name: "Drape Fabric (" + (_fabParts.length ? _fabParts.join(" + ") : "wrap/ceiling") + " · " + _fabTier + (_lizaKg > 0 ? ` · Liza ₹${_lizaRate}/kg` : "") + ")",
+          total: zl.fabric,
+        });
+      }
       if (zl.masking > 0) {
         // Back/Left/Right can each carry their OWN material now (zc.mkWallMat) instead of sharing
         // one truss-wide pick — the single "Wall Masking — {material}" line can no longer describe
