@@ -4107,31 +4107,29 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                         </button>
                         <span aria-hidden="true" className="shrink-0 w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center text-sm leading-none">{crewIcon(r.type)}</span>
                         <span className="flex-1 min-w-0 text-sm font-semibold text-gray-900 truncate">{r.type}{r.shared && <span className="ml-1.5 text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded font-bold align-middle">SHARED</span>}</span>
+                        {/* Day-wise rows (Labours/Flowerists/...): the rate sits right here, on the
+                            same line as the crew type, instead of a second row dangling below with
+                            nothing to its left — it reads as "this type, at this rate" in one glance.
+                            Supervisors drop it entirely (ops IS the supervisor — see the "no separate
+                            line for him" branch elsewhere in this file — a dept head tuning this rate
+                            never meant anything real). */}
                         {r.shared && !dayWise(r) ? (
                           <span className="shrink-0 text-[10px] text-gray-400">split allocation</span>
-                        ) : dayWise(r) ? null : (
+                        ) : dayWise(r) ? (r.type !== "Supervisors" && (
+                          <div className="shrink-0 flex items-center gap-1.5"><span className="text-[11px] text-gray-400">₹/day</span><input type="number" min="0" value={r.rate} onChange={e => setMp(i, "rate", e.target.value)} className="w-20 rounded-lg px-2 py-1.5 text-sm text-center font-semibold ring-1 ring-gray-200 bg-white" /></div>
+                        )) : (
                           <div className="shrink-0 flex items-center gap-1.5"><span className="text-[11px] text-gray-400">qty</span><input type="number" min="0" value={r.count} onChange={e => setMp(i, "count", e.target.value)} className={"w-16 rounded-lg px-2 py-1.5 text-sm text-center font-semibold ring-1 " + (overridden ? "ring-amber-400 bg-amber-50 font-bold" : "ring-gray-200 bg-white")} /></div>
                         )}
                       </div>
                       {/* Second line: the rate that is editable, and the line total it produces.
                           The total sits in a filled pill rather than as loose text so the one
-                          figure you cannot type into does not look like another input. */}
-                      {/* Supervisors: ops IS the supervisor (see the "no separate line for him" branch
-                          elsewhere in this file) — a dept head tuning this rate never meant anything
-                          real, so the control is gone rather than shown and ignored. */}
-                      {!(r.shared && !dayWise(r)) && r.type !== "Supervisors" && (
+                          figure you cannot type into does not look like another input. Day-wise rows
+                          no longer land here — their rate moved up next to the crew type name above. */}
+                      {!dayWise(r) && !(r.shared && !dayWise(r)) && r.type !== "Supervisors" && (
                         <div className="flex items-center gap-2">
-                          {/* Day-wise rows have no total pill any more (see the comment below), so this
-                              pair is the only thing on the line — pushed to the right edge to match
-                              where the total pill used to sit. Non-day-wise rows keep their own pill's
-                              ml-auto doing that job instead, so this stays unset for them. */}
-                          <span className={"shrink-0 text-[11px] text-gray-400" + (dayWise(r) ? " ml-auto" : "")}>₹/day</span>
+                          <span className="shrink-0 text-[11px] text-gray-400">₹/day</span>
                           <input type="number" min="0" value={r.rate} onChange={e => setMp(i, "rate", e.target.value)} className="w-24 rounded-lg ring-1 ring-gray-200 bg-white px-2 py-1.5 text-sm text-center font-semibold" />
-                          {/* Day-wise rows (e.g. Flowerists): this header total duplicated the exact same
-                              figure the Day-wise plan panel + "Studio plan: …" caption already show once the
-                              card is opened — dropped here so the collapsed header reads cleaner. Non-day-wise
-                              rows have no such fallback, so their total pill stays. */}
-                          {!dayWise(r) && <div className="ml-auto shrink-0 rounded-lg bg-gray-100 px-3 py-1.5 text-sm font-bold text-gray-900 tabular-nums">{fmt(lineCost(r))}</div>}
+                          <div className="ml-auto shrink-0 rounded-lg bg-gray-100 px-3 py-1.5 text-sm font-bold text-gray-900 tabular-nums">{fmt(lineCost(r))}</div>
                         </div>
                       )}
                       {r.shared && !dayWise(r) && (
