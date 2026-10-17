@@ -2228,6 +2228,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         if (!items.length && !zPhoto && !zDims && !zStruct.length) return;
         zonePages.push({
           zk,
+          fi,
+          fnType: fn.type || `Function ${fi + 1}`,
+          fnDate: fn.date || "",
           title: zoneName(zk, fn),
           fnLabel: [fn.type || (fns.length > 1 ? `Function ${fi + 1}` : ""), fn.date].filter(Boolean).join(" · "),
           photo: zPhoto,
@@ -2315,19 +2318,17 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     // No photo → no empty "No photo" box, just the details (owner ask). The card then sizes to its
     // text (np); nb makes room at the top for the size/kit tags the photo used to sit under.
     const npCls = (it) => it.photo ? "" : (it.size || it.kit ? " np nb" : " np");
-    // Flower lines on a card: at most five, so a photo card still fits its fixed 300px — the photo
-    // gives up 20px per line. Quantities are per-unit recipe × the card's qty.
-    const FL_MAX = 5;
+    // A recipe card used to list its own flowers inline, up to 5 lines — "Flower Trail" (7+
+    // flowers) always ran out of room and showed a bare "+3 more" with nowhere to actually see
+    // them. Every recipe's FULL ingredient list now lives on its own dedicated page (recipePages
+    // below); the card just points there, one line, regardless of how many flowers are in it.
     const flowerRows = (it) => {
       const r = it.recipe || [];
       if (!r.length) return "";
-      const shown = r.length > FL_MAX ? r.slice(0, FL_MAX - 1) : r;
-      const amt = (n) => String(Math.round(n * 100) / 100);
-      return shown.map(f => `<div class="zc-r f"><span>${esc(f.name)}</span><b>${esc(amt(f.qty * (Number(it.qty) || 0)))}${f.unit ? ` <span style="font-weight:500;font-size:.85em;opacity:.7">${esc(f.unit)}</span>` : ""}</b></div>`).join("")
-        + (r.length > shown.length ? `<div class="zc-r f"><span>+${r.length - shown.length} more</span><b></b></div>` : "");
+      return `<div class="zc-r f"><span>📖 Check Recipe Page for Mandi</span><b></b></div>`;
     };
     // The paint line takes its 20px out of the photo the same way a flower line does.
-    const flLines = (it) => Math.min((it.recipe || []).length, FL_MAX) + (it.paint?.size ? 1 : 0) + (it.extra || []).length;
+    const flLines = (it) => ((it.recipe || []).length ? 1 : 0) + (it.paint?.size ? 1 : 0) + (it.extra || []).length;
     const card = (it, zone, num) => `
       ${it.photo ? `<div class="zc-ph" style="${bgCss(it.photo)}${flLines(it) ? `height:${168 - flLines(it) * 20}px` : ""}" ${bgData(it.photo)}></div>` : ""}
       ${num ? `<div class="zc-no">${num}</div>` : ""}
@@ -2470,10 +2471,74 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         </div>`; }).join("")}
       </section>`);
 
+    /* ── WHAT IS INSIDE EVERY FLOWER RECIPE ──
+       A zone card only ever had room for ~4 ingredient lines before the photo/stage budget ran
+       out — "Flower Trail" (7+ flowers) always showed "+3 more" with no page a crew could turn to
+       for the rest. Mirrors the Kits page above: one block per recipe actually used in this book,
+       its full ingredient list, no truncation. The card itself just says "Check Recipe Page". */
+    const recipeBlocks = [];
+    zonePages.forEach(pg => {
+      (pg.items || []).forEach(it => {
+        if (!Array.isArray(it.recipe) || !it.recipe.length) return;
+        recipeBlocks.push({
+          name: it.name, zone: pg.title, fnLabel: pg.fnLabel, qty: it.qty, unit: it.unit,
+          parts: it.recipe.map(f => ({ name: f.name, qty: Math.round((Number(f.qty) || 0) * (Number(it.qty) || 0) * 100) / 100, unit: f.unit })),
+        });
+      });
+    });
+    const recipeCols = (k) => (k.parts.length >= 4 ? 2 : 1);
+    const recipeLongNames = (k) => { const per = recipeCols(k) === 2 ? 44 : 100; return k.parts.filter(p => String(p.name || "").trim().length > per).length; };
+    const recipeH = (k) => 86 + (Math.ceil(k.parts.length / recipeCols(k)) + Math.ceil(recipeLongNames(k) / recipeCols(k))) * 24 + 21 + 14;
+    const recipeChunks = [];
+    recipeBlocks.forEach(k => {
+      const last = recipeChunks[recipeChunks.length - 1], h = recipeH(k);
+      if (!last || last.h + h > PAGE_PX - HEAD_PX) recipeChunks.push({ h, list: [k] });
+      else { last.h += h; last.list.push(k); }
+    });
+    let recipeNo = 0;
+    const recipePages = recipeChunks.map((pgk, i, all) => `<section data-block data-page class="zp"><div class="pc tl"></div><div class="pc tr"></div>
+        <div class="zh"><div><div class="zk"><b>Mandi</b>${all.length > 1 ? ` · Part ${i + 1} of ${all.length}` : ""}</div><h2>What is inside each recipe</h2>
+          <div class="orn l"><i></i><b></b><i></i></div>
+          <div class="zm">Full flower list for every recipe in this book, already scaled to the zone's own qty</div></div>
+          <div class="zt"><span>${recipeBlocks.length} recipe${recipeBlocks.length === 1 ? "" : "s"}</span></div></div>
+        ${pgk.list.map(k => { recipeNo++; return `<div class="kb">
+          <div class="kb-h">
+            <div class="kb-t"><div class="kb-no">Recipe ${String(recipeNo).padStart(2, "0")} · ${esc(k.zone)}${k.fnLabel ? " · " + esc(k.fnLabel) : ""}</div><div class="kb-nm">${esc(k.name)}</div></div>
+            ${k.qty ? `<div class="kb-z kb-q"><div class="kb-zk">Qty</div><div class="kb-zv">${esc(k.qty)}${k.unit ? " " + esc(k.unit) : ""}</div></div>` : ""}
+          </div>
+          <ul class="kb-l${recipeCols(k) === 1 ? " one" : ""}">${k.parts.map(p => `<li><i class="kb-x"></i><span>${esc(p.name)}</span><i class="kb-d"></i><b>${esc(p.qty)}${p.unit ? ` ${esc(p.unit)}` : ""}</b></li>`).join("")}</ul>
+        </div>`; }).join("")}
+      </section>`);
+
+    // ── A BREAK PAGE BETWEEN FUNCTIONS ──
+    // On a multi-function event this book used to run straight from one function's last zone into
+    // the next function's first with nothing marking the seam — easy to miss where "Haldi" ends and
+    // "Wedding" begins. One plain divider page per function, inserted the first time its zones
+    // start, names which function the pages after it belong to.
+    const fnDivider = (no, type, date) => `<section data-block data-page class="zp"><div class="pc tl"></div><div class="pc tr"></div>
+        <div class="zh" style="text-align:center;padding:${Math.max(40, Math.round((PAGE_PX - 170) / 2))}px 14px 10px">
+          <div class="zk">Function ${no}</div>
+          <h2 style="font-size:52px">${esc(type || `Function ${no}`)}</h2>
+          <div class="orn l" style="justify-content:center"><i></i><b></b><i></i></div>
+          ${date ? `<div class="zm">${esc(date)}</div>` : ""}
+        </div>
+      </section>`;
+    const multiFn = (fns || []).length > 1;
+    const zonePageHtml = [];
+    let lastFi = null;
+    zonePages.forEach((pg, zi) => {
+      if (multiFn && pg.fi !== lastFi) {
+        lastFi = pg.fi;
+        zonePageHtml.push(fnDivider(pg.fi + 1, pg.fnType, pg.fnDate));
+      }
+      const cs = pg.items.length ? chunks(pg.items, 6) : [[]];
+      cs.forEach((c, i) => zonePageHtml.push(zoneSection(pg, c, i + 1, cs.length, zi + 1, i * 6)));
+    });
     const zoneHtml = [
-      ...zonePages.flatMap((pg, zi) => { const cs = pg.items.length ? chunks(pg.items, 6) : [[]]; return cs.map((c, i) => zoneSection(pg, c, i + 1, cs.length, zi + 1, i * 6)); }),
+      ...zonePageHtml,
       ...(combined ? [] : [
       ...kitPages,
+      ...recipePages,
       ...listPages(prodItems, "Production", "From production", "Made by the production team for this event"),
       ...listPages(buyItems, "Buying", "To buy", "Bought in for this event — not from our own stock"),
       ...listPages(looseItems, "Not in a zone", "Also on site", looseNote),
