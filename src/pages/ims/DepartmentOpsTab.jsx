@@ -1030,9 +1030,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       // (StudioApp.jsx) so the purchase manager sees WHICH colour to actually buy, not just a
       // bare flower name. Never present on a swapped-in flower (a colour picked for the original
       // says nothing about its replacement).
-      const row = { name: f.name, unit: f.unit || "", projQty: Number(f.qty) || 0, projCost: Number(f.cost) || 0, qty: Number(f.qty) || 0, price: f.qty ? Math.round(((Number(f.cost) || 0) / f.qty) * 100) / 100 : 0, colorVariant: f.colorVariant || null };
+      const row = { name: f.name, unit: f.unit || "", projQty: Number(f.qty) || 0, projCost: Number(f.cost) || 0, qty: Number(f.qty) || 0, price: f.qty ? Math.round(((Number(f.cost) || 0) / f.qty) * 100) / 100 : 0, colorVariant: f.colorVariant || null, colorPrefs: f.colorPrefs || null };
       const sw = mandiSwapOf(swapByName.get(String(f.name || "").trim().toLowerCase()), mandiCatalogue);
-      return sw ? { ...row, projUnit: row.unit, name: sw.to.name, unit: sw.to.unit || row.unit, qty: Math.round(row.qty * sw.ratio * 100) / 100, price: Number(sw.to.currentPrice) || 0, swappedFrom: f.name, colorVariant: null } : row;
+      return sw ? { ...row, projUnit: row.unit, name: sw.to.name, unit: sw.to.unit || row.unit, qty: Math.round(row.qty * sw.ratio * 100) / 100, price: Number(sw.to.currentPrice) || 0, swappedFrom: f.name, colorVariant: null, colorPrefs: null } : row;
     });
   const mandiRows = Array.isArray(deptData.mandiLines) ? deptData.mandiLines : seedMandi;
   // Real shopping hasn't been logged until someone actually edits a row — until then, mandiRows is
@@ -4464,8 +4464,13 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
               </div>
               <div className="px-3 sm:px-4 py-3 space-y-2">
                 {dept === "Floral" && (() => {
-                  const projectedTotal = Number(fp.projected) || 0;
-                  const variance = mandiActualTotal - projectedTotal;
+                  // Real-only — the table below lists real mandi flowers alone (artificial is its own
+                  // line in the "Floral cost to source" card above), so its own Total row must sum to
+                  // what's actually shown in it, not silently fold the artificial amount back in
+                  // (owner-reported: the real-shopping Total read ₹47,997 — the combined floral cost —
+                  // when every row on screen summed to the real-only ₹36,308).
+                  const projectedTotal = mandiRows.reduce((s, r) => s + (Number(r.projCost) || 0), 0);
+                  const variance = mandiActualReal - projectedTotal;
                   return (
                     <div className="space-y-2">
                       {/* Ops view — FLORAL COST (what ops spends to source flowers). Client billing is
@@ -4536,6 +4541,9 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                                     {r.colorVariant?.photoUrl && <img src={r.colorVariant.photoUrl} alt={r.colorVariant.label || ""} onClick={() => setZoomImg(r.colorVariant.photoUrl)} className="w-7 h-7 rounded object-cover border border-gray-200 shrink-0 cursor-zoom-in" title={r.colorVariant.label || ""} />}
                                     <div className="min-w-0">
                                       <div className="text-xs font-medium text-gray-800 truncate">{r.name}{r.colorVariant?.label && <span className="ml-1.5 font-normal text-[10px] text-purple-600">🎨 {r.colorVariant.label}</span>}</div>
+                                      {Array.isArray(r.colorPrefs) && r.colorPrefs.length > 1 && (
+                                        <div className="text-[10px] text-gray-400">if not at the mandi: {r.colorPrefs.slice(1).map(p => p.label).join(", ")}</div>
+                                      )}
                                       {r.swappedFrom && <div className="text-[10px] font-semibold text-amber-700">🔁 swapped for {r.swappedFrom} (not in mandi)</div>}
                                       {r.projQty > 0 && <div className="text-[10px] text-gray-400">{r.projQty} {r.swappedFrom ? "" : r.unit} {r.swappedFrom ? `of ${r.swappedFrom} ` : ""}planned</div>}
                                     </div>
@@ -4555,13 +4563,13 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                         )}
                         {/* Artificial flowers/greens is NOT shown again here — it's already its own
                             line in the "Floral cost to source" summary card above. This real-shopping
-                            list is scoped to real mandi purchases only; the Total row below still adds
-                            artificialProj/fp.artificial into mandiActualTotal regardless. */}
+                            list is scoped to real mandi purchases only, and so is its own Total row
+                            (mandiActualReal) — it must match the sum of the rows actually on screen. */}
                         {/* Totals row */}
                         <div className="grid grid-cols-[1fr_auto_auto] gap-2 px-3 py-2 bg-emerald-50 items-center">
                           <span className="text-xs font-bold text-emerald-900">Total</span>
                           <span className="text-right w-28 text-xs font-semibold text-gray-500">{fmt(projectedTotal)}</span>
-                          <span className="text-right w-60 text-sm font-bold text-emerald-800 pr-6">{fmt(mandiActualTotal)}</span>
+                          <span className="text-right w-60 text-sm font-bold text-emerald-800 pr-6">{fmt(mandiActualReal)}</span>
                         </div>
                         </div>
                       </div>
@@ -4580,7 +4588,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                         )}
                         {mandiQuery.trim() && mandiSuggest.length === 0 && <div className="absolute z-20 left-0 right-0 mt-1 bg-white border rounded-lg shadow-lg px-3 py-2 text-xs text-gray-400">No match in Mandi Prices. <button onClick={() => addMandi({ name: mandiQuery.trim(), unit: "bundle", currentPrice: 0 })} className="text-emerald-600 font-medium">Add "{mandiQuery.trim()}" anyway</button></div>}
                       </div>
-                      {mandiActualTotal > 0 && projectedTotal > 0 && (
+                      {mandiActualReal > 0 && projectedTotal > 0 && (
                         <div className={"text-xs font-semibold " + (variance > 0 ? "text-red-600" : "text-emerald-700")}>
                           {variance > 0 ? "▲ Over" : variance < 0 ? "▼ Under" : "On"} plan by {fmt(Math.abs(variance))} — salesperson's P&L uses the real {fmt(mandiActualTotal)}.
                         </div>

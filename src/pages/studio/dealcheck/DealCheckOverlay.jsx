@@ -1698,7 +1698,7 @@ export default function DealCheckOverlay({ ctx }) {
               artTotal += r.totalArtificial || 0;
               afBunches += r.artFlowerBunches || 0; agBunches += r.artGreenBunches || 0;
               incReal += r.income?.real || 0; incArt += r.income?.art || 0;
-              (r.breakdown || []).forEach(f => { if (!agg[f.name]) agg[f.name] = { name: f.name, qty: 0, cost: 0, unit: f.unit, colorVariant: f.colorVariant || null }; agg[f.name].qty += f.qty; agg[f.name].cost += f.cost; });
+              (r.breakdown || []).forEach(f => { if (!agg[f.name]) agg[f.name] = { name: f.name, qty: 0, cost: 0, unit: f.unit, colorVariant: f.colorVariant || null, colorPrefs: f.colorPrefs || null }; agg[f.name].qty += f.qty; agg[f.name].cost += f.cost; });
             });
             const flowers = Object.values(agg).sort((a, b) => b.cost - a.cost);
             if (artTotal >= 1) flowers.push({ name: "Artificial flowers / greens", qty: 0, cost: Math.round(artTotal), unit: "per kg", artificial: true });
@@ -1821,7 +1821,7 @@ export default function DealCheckOverlay({ ctx }) {
           const _deptSnap = buildDeptSnapshot();
           const _sig = JSON.stringify([
             (dcCostRollup.DEPTS || []).map(d => Math.round(dcCostRollup.dept?.[d]?.total || 0)),
-            (_deptSnap.floralPlan?.flowers || []).map(f => `${f.name}:${Math.round((f.qty || 0) * 100)}:${f.colorVariant?.label || ""}`),
+            (_deptSnap.floralPlan?.flowers || []).map(f => `${f.name}:${Math.round((f.qty || 0) * 100)}:${f.colorVariant?.label || ""}:${(f.colorPrefs || []).map(p => p.label).join("/")}`),
           ]);
           if (deptSyncRef.current !== _sig) { deptSyncRef.current = _sig; setTimeout(() => { try { persistDeptSnapshot(_deptSnap); } catch {} }, 200); }
         }
