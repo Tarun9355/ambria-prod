@@ -4,7 +4,7 @@ import { fmt } from "../../lib/format";
 import { mpDayWise, mpBaseDay, mpEffDay, mpEffWindows, mpLineCost, mpDayCost, mpDayDihari, aggregateEventManpower, isLiveEventOrder, phone10 } from "../../lib/ims/helpers";
 import { uploadAudioToStorage } from "../../lib/storage";
 import { DEPTS as SHARED_DEPTS, catToDept as sharedCatToDept, userDepartments } from "../../lib/ims/deptClassify";
-import { TabsMenu } from "../../components/ui";
+import { TabsMenu, useConfirm } from "../../components/ui";
 import { hasIMSPerm } from "../../lib/ims/constants";
 import { ZONE_META } from "../../lib/studio/taxonomy";
 import { ZONE_DEF_SK } from "../../lib/studio/keys";
@@ -437,6 +437,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const catDeptCfg = (settings && settings.categoryDepartments && typeof settings.categoryDepartments === "object") ? settings.categoryDepartments : {};
   const catToDept = (cat) => sharedCatToDept(cat, catDeptCfg);
   const dihari = settings?.dihariSchemes || {};
+  const [confirm, confirmDialog] = useConfirm();
   const isAdmin = authUser?.role === "Admin" || authUser?.id === "u_admin";
   const canManpower = hasIMSPerm(authUser, "events_manpower");
   // This user's allowed departments — an explicit grant (user.departments, set in Admin -> Users &
@@ -827,7 +828,11 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const mpRows = hasMpSnapshot
     ? [
         ...(mpDetail || []).map(s => { const ov = mpOverrides[s.type] || {}; return { type: s.type, count: ov.count != null ? ov.count : (s.count ?? ""), rate: ov.rate != null ? ov.rate : (s.rate || 0), basis: s.basis || "", shared: !!s.shared, sysCount: s.count, sysRate: s.rate || 0, sysCost: s.cost || 0, days: dayCount(Number(s.count) || 0, Number(s.rate) || 0, Number(s.cost) || 0), trace: s.trace || null, splitInfo: s.splitInfo || null, schedule: s.schedule || null }; }),
-        ...mpExtra.filter(r => !snapTypes.has(r.type)).map(r => ({ type: r.type, count: r.count ?? "", rate: r.rate || 0, basis: "added crew", shared: false, sysCount: null, sysRate: 0, sysCost: 0, days: 1, _extra: true })),
+        // _extraIdx — this row's own position in deptData.mpExtra, carried through so removeMp can
+        // delete exactly this one even when two added rows share the same type (e.g. "+ Add crew
+        // type" clicked twice by accident both default to "Labours" — matching by type alone would
+        // have deleted both at once instead of just the one the head actually meant to remove).
+        ...mpExtra.map((r, ei) => ({ r, ei })).filter(({ r }) => !snapTypes.has(r.type)).map(({ r, ei }) => ({ type: r.type, count: r.count ?? "", rate: r.rate || 0, basis: "added crew", shared: false, sysCount: null, sysRate: 0, sysCost: 0, days: 1, _extra: true, _addedExtra: true, _extraIdx: ei })),
       ]
     : (sysPlan.length ? sysPlan.map(p => ({ type: p.type, count: p.count, rate: p.rate || Number(dihari[p.type]?.rate) || 0, basis: p.basis || "", sysCount: p.count, sysRate: p.rate || 0, sysCost: (p.count || 0) * (p.rate || 0), days: 1, _extra: true }))
       : deptTypes.map(t => ({ type: t, count: "", rate: Number(dihari[t]?.rate) || 0, basis: "", sysCount: null, sysRate: 0, sysCost: 0, days: 1, _extra: true })));
@@ -948,9 +953,13 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     return (d.phase || "event") === "event" && d.date === fd;
   };
   // _i is the row's place in mpRows — the index setMp and the open/closed state are keyed by.
-  const mpShown = mpScoped
+  // Supervisors sorts last — ops IS the supervisor, so its card is just a name + the amount
+  // charged (no per-day explanation makes sense for it); it reads better at the bottom of the
+  // list than mixed in among crew types that actually have a day-wise plan to show.
+  const mpShown = (mpScoped
     ? mpRows.map((r, i) => ({ ...r, _i: i })).filter(r => dayWise(r)).map(r => ({ ...r, schedule: r.schedule.filter(inMpFn), _scoped: true })).filter(r => r.schedule.length)
-    : mpRows.map((r, i) => ({ ...r, _i: i }));
+    : mpRows.map((r, i) => ({ ...r, _i: i }))
+  ).sort((a, b) => (a.type === "Supervisors" ? 1 : 0) - (b.type === "Supervisors" ? 1 : 0));
   const mpWholeOnly = mpScoped ? mpRows.filter(r => !dayWise(r)).length : 0;
   const mpShownCost = mpScoped ? mpShown.reduce((s, r) => s + lineCost(r), 0) : mpCost;
   const mpPlannedCost = mpRows.reduce((s, r) => s + (Number(r.sysCost) || 0), 0); // system baseline (before edits)
@@ -999,15 +1008,26 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     const row = mpRows[i]; if (!row) return;
     if (row._extra) {
       const base = Array.isArray(deptData.mpExtra) ? deptData.mpExtra : mpExtra;
-      const idx = base.findIndex(r => r.type === row.type);
+      // Added-crew rows (removeMp's own kind) are matched by their own stored index — two rows of
+      // the same type (e.g. "Labours" added twice by accident) are otherwise indistinguishable by
+      // type alone, and editing one would silently land on whichever came first in the array.
+      const idx = row._addedExtra ? row._extraIdx : base.findIndex(r => r.type === row.type);
       const next = base.slice();
-      if (idx >= 0) next[idx] = { ...next[idx], [key]: val }; else next.push({ type: row.type, count: row.count, rate: row.rate, [key]: val });
+      if (idx >= 0 && idx < next.length) next[idx] = { ...next[idx], [key]: val }; else next.push({ type: row.type, count: row.count, rate: row.rate, [key]: val });
       saveDept({ mpExtra: next });
     } else {
       saveDept({ mpOverrides: { ...mpOverrides, [row.type]: { ...(mpOverrides[row.type] || {}), [key]: val } } });
     }
   };
   const addMp = () => saveDept({ mpExtra: [...(Array.isArray(deptData.mpExtra) ? deptData.mpExtra : mpExtra), { type: "Labours", count: "", rate: Number(dihari["Labours"]?.rate) || 0 }] });
+  // Undo a "+ Add crew type" click (e.g. an accidental double-click that left two identical rows) —
+  // by the row's own index in mpExtra, not its type, so one of several same-type extras can be
+  // removed without taking the others with it.
+  const removeMp = (row) => {
+    if (!row._addedExtra) return;
+    const base = Array.isArray(deptData.mpExtra) ? deptData.mpExtra : mpExtra;
+    saveDept({ mpExtra: base.filter((_, i) => i !== row._extraIdx) });
+  };
   // On-site actual crew: set the real head-count held (applies to every scheduled day for day-wise crew,
   // else a straight count override) → flows to the P&L + Studio via the same mpDay/mpOverrides fields.
   const setActualCrew = (r, i, val) => { const n = Math.max(0, Number(val) || 0); if (mpDayWise(r) && Array.isArray(r.schedule) && r.schedule.length) { const m = { ...(mpDay[r.type] || {}) }; r.schedule.forEach(d => { m[d.date] = n; }); const wc = { ...mpWinCount }; delete wc[r.type]; saveDept({ mpDay: { ...mpDay, [r.type]: m }, mpWinCount: wc }); } else setMp(i, "count", n); };
@@ -1042,9 +1062,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const setMandi = (i, key, val) => saveMandi(mandiRows.map((r, j) => j === i ? { ...r, [key]: val } : r));
   // Deleting a swap's replacement row undoes the swap on its original too, so the original is not
   // left at qty 0 still claiming it was swapped.
-  const delMandi = (i) => {
-    const gone = mandiRows[i];
-    saveMandi(mandiRows.filter((_, j) => j !== i).map(r => (gone?.swapFor && r.name === gone.swapFor && r.swappedTo) ? { ...r, swappedTo: undefined, swapNote: undefined, qty: Number(r.projQty) || 0 } : r));
+  const delMandi = async (i) => {
+    const row = mandiRows[i]; if (!row) return;
+    if (!(await confirm({ title: `Remove "${row.name}" from this shopping list?`, body: "This only removes it from this event's real-shopping list — the Mandi Prices catalogue itself is untouched." }))) return;
+    saveMandi(mandiRows.filter((_, j) => j !== i).map(r => (row.swapFor && r.name === row.swapFor && r.swappedTo) ? { ...r, swappedTo: undefined, swapNote: undefined, qty: Number(r.projQty) || 0 } : r));
   };
   // ── 🔁 SWAP: NOT IN THE MANDI TODAY ──
   // The shopper puts 0 against a flower (or taps 🔁) and records what was bought instead. The
@@ -4432,27 +4453,38 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                        cost, below. The toggle becomes the chevron tile that opens the card. */
                     <div key={i} className="rounded-xl bg-white ring-1 ring-gray-100 shadow-[0_1px_2px_rgba(16,24,40,0.05)] p-2.5 space-y-2">
                       <div className="flex items-center gap-2">
-                        <button onClick={() => setMpOpen(o => ({ ...o, [i]: o[i] === false }))}
-                          aria-expanded={open}
-                          className="shrink-0 w-8 h-8 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-500 flex items-center justify-center transition-colors"
-                          title={open ? "Hide how this crew number was calculated" : "How this crew number was calculated"}>
-                          <span aria-hidden="true" className={"transition-transform duration-150 " + (open ? "rotate-180" : "")}>
-                            <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M3.5 5 L7 8.5 L10.5 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                          </span>
-                        </button>
+                        {/* Supervisors has nothing to expand into — ops IS the supervisor, so there's
+                            no per-day plan behind the number, just the name and what it costs. */}
+                        {r.type !== "Supervisors" && (
+                          <button onClick={() => setMpOpen(o => ({ ...o, [i]: o[i] === false }))}
+                            aria-expanded={open}
+                            className="shrink-0 w-8 h-8 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-500 flex items-center justify-center transition-colors"
+                            title={open ? "Hide how this crew number was calculated" : "How this crew number was calculated"}>
+                            <span aria-hidden="true" className={"transition-transform duration-150 " + (open ? "rotate-180" : "")}>
+                              <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M3.5 5 L7 8.5 L10.5 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                            </span>
+                          </button>
+                        )}
                         <span aria-hidden="true" className="shrink-0 w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center text-sm leading-none">{crewIcon(r.type)}</span>
                         <span className="flex-1 min-w-0 text-sm font-semibold text-gray-900 truncate">{r.type}{r.shared && <span className="ml-1.5 text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded font-bold align-middle">SHARED</span>}</span>
+                        {/* Only a row added via "+ Add crew type" can be removed — Studio's own
+                            planned crew types aren't something a dept head can delete, only tune. */}
+                        {r._addedExtra && (
+                          <button onClick={() => removeMp(r)} title="Remove this crew type" className="shrink-0 text-gray-300 hover:text-red-500 text-base leading-none px-1">×</button>
+                        )}
                         {/* Day-wise rows (Labours/Flowerists/...): the rate sits right here, on the
                             same line as the crew type, instead of a second row dangling below with
                             nothing to its left — it reads as "this type, at this rate" in one glance.
                             Supervisors drop it entirely (ops IS the supervisor — see the "no separate
                             line for him" branch elsewhere in this file — a dept head tuning this rate
                             never meant anything real). */}
-                        {r.shared && !dayWise(r) ? (
+                        {r.type === "Supervisors" ? (
+                          <div className="shrink-0 rounded-lg bg-gray-100 px-3 py-1.5 text-sm font-bold text-gray-900 tabular-nums">{fmt(lineCost(r))}</div>
+                        ) : r.shared && !dayWise(r) ? (
                           <span className="shrink-0 text-[10px] text-gray-400">split allocation</span>
-                        ) : dayWise(r) ? (r.type !== "Supervisors" && (
+                        ) : dayWise(r) ? (
                           <div className="shrink-0 flex items-center gap-1.5"><span className="text-[11px] text-gray-400">₹/day</span><input type="number" min="0" value={r.rate} onChange={e => setMp(i, "rate", e.target.value)} className="w-20 rounded-lg px-2 py-1.5 text-sm text-center font-semibold ring-1 ring-gray-200 bg-white" /></div>
-                        )) : (
+                        ) : (
                           <div className="shrink-0 flex items-center gap-1.5"><span className="text-[11px] text-gray-400">qty</span><input type="number" min="0" value={r.count} onChange={e => setMp(i, "count", e.target.value)} className={"w-16 rounded-lg px-2 py-1.5 text-sm text-center font-semibold ring-1 " + (overridden ? "ring-amber-400 bg-amber-50 font-bold" : "ring-gray-200 bg-white")} /></div>
                         )}
                       </div>
@@ -4472,7 +4504,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                           <div className="ml-auto shrink-0 rounded-lg bg-gray-100 px-3 py-1.5 text-sm font-bold text-gray-900 tabular-nums">{fmt(lineCost(r))}</div>
                         </div>
                       )}
-                      {open && (
+                      {open && r.type !== "Supervisors" && (
                         <div className="text-[13.5px] text-gray-600 leading-relaxed bg-slate-50 rounded-xl ring-1 ring-slate-100 p-2.5">
                           {r.shared ? (
                             <>
@@ -5603,6 +5635,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
           <img src={zoomImg} alt="" className="max-w-[90vw] max-h-[90vh] rounded-lg object-contain shadow-2xl" onClick={e => e.stopPropagation()} />
         </div>
       )}
+      {confirmDialog}
     </div>
   );
 }

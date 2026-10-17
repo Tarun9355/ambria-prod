@@ -5835,9 +5835,18 @@ export default function StudioApp() {
           // isn't at the mandi today, here's the 2nd/3rd choice" instead of only ever naming one.
           const colorPrefs = Array.isArray(prefArr) && prefArr.length > 1 ? prefArr : null;
           if (realUnits > 0 && parent) {
-            const agg = flowerAgg.get(parentId) || { totalQty: 0, unitPrice: bp, name: parent.name || "Flower", unit: parent.unit || "", colorVariant, colorPrefs };
+            // totalCost accumulates each contribution at ITS OWN rate — owner-reported: the same
+            // flower bought in 2+ zones of the SAME single-day function (so no season-multiplier
+            // excuse) at different rates (e.g. one zone's own colour preference overriding price,
+            // another using the plain mandi rate) priced the whole aggregate at whichever zone's
+            // rate happened to be processed last, instead of each zone's own units at its own rate —
+            // both the shown "rate" and the row's total (qty × that wrong rate) came out wrong.
+            // unitPrice is now a derived weighted average for display only; totalCost is what
+            // actually feeds tReal below.
+            const agg = flowerAgg.get(parentId) || { totalQty: 0, totalCost: 0, unitPrice: bp, name: parent.name || "Flower", unit: parent.unit || "", colorVariant, colorPrefs };
             agg.totalQty += realUnits;
-            agg.unitPrice = bp; // refresh — mirrors the Florals tab's own aggregation
+            agg.totalCost += realUnits * bp;
+            agg.unitPrice = agg.totalQty > 0 ? agg.totalCost / agg.totalQty : bp;
             if (colorVariant && !agg.colorVariant) agg.colorVariant = colorVariant;
             if (colorPrefs && !agg.colorPrefs) agg.colorPrefs = colorPrefs;
             flowerAgg.set(parentId, agg);
@@ -5868,8 +5877,10 @@ export default function StudioApp() {
       const swapQty = Number(override.swapTo.qty) || 0;
       const isSplit = !!override.swapTo.isSplit;
       if (swapQty <= 0) return;
+      const fromRate = fromAgg.totalQty > 0 ? (fromAgg.totalCost || 0) / fromAgg.totalQty : fromAgg.unitPrice;
       if (isSplit) {
         fromAgg.totalQty = Math.max(0, fromAgg.totalQty - swapQty);
+        fromAgg.totalCost = Math.max(0, (fromAgg.totalCost || 0) - swapQty * fromRate);
         if (fromAgg.totalQty <= 0.0001) flowerAgg.delete(override.swapTo.fromParentId);
       } else {
         flowerAgg.delete(override.swapTo.fromParentId);
@@ -5879,8 +5890,13 @@ export default function StudioApp() {
       const targetId = targetParent.id;
       const targetRate = (override.swapTo.toRate || targetParent.currentPrice || 0);
       const existing = flowerAgg.get(targetId);
-      if (existing) existing.totalQty += swapQty;
-      else flowerAgg.set(targetId, { totalQty: swapQty, unitPrice: targetRate, name: targetParent.name || "Flower", unit: targetParent.unit || "" });
+      if (existing) {
+        existing.totalQty += swapQty;
+        existing.totalCost = (existing.totalCost || 0) + swapQty * targetRate;
+        existing.unitPrice = existing.totalQty > 0 ? existing.totalCost / existing.totalQty : targetRate;
+      } else {
+        flowerAgg.set(targetId, { totalQty: swapQty, totalCost: swapQty * targetRate, unitPrice: targetRate, name: targetParent.name || "Flower", unit: targetParent.unit || "" });
+      }
     });
     let tReal = fixedExtras;
     // flowerName → { name, qty, cost } — the mandi shopping breakdown. v.totalQty already carries
@@ -5889,7 +5905,7 @@ export default function StudioApp() {
     const fbreak = {};
     flowerAgg.forEach(v => {
       if (!(v.totalQty > 0)) return;
-      const cost = v.totalQty * v.unitPrice;
+      const cost = v.totalCost != null ? v.totalCost : v.totalQty * v.unitPrice;
       tReal += cost;
       if (!fbreak[v.name]) fbreak[v.name] = { name: v.name, qty: 0, cost: 0, unit: v.unit, colorVariant: v.colorVariant || null, colorPrefs: v.colorPrefs || null };
       fbreak[v.name].qty += v.totalQty; fbreak[v.name].cost += cost;

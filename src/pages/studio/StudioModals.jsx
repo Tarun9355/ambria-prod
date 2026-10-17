@@ -226,6 +226,13 @@ export default function StudioModals({ ctx }) {
                     ? `Splitting ${origQty} × ${availModal.elName} — pick 2 or more items below`
                     : <>{availModal.subcat||"—"} · free on {availModal.date||"event date"} · tap to pick</>}
                 </div>
+                {/* Owner-reported confusion: this card's own current qty is excluded from every
+                    "free" count below (you aren't competing with yourself), which read as the
+                    numbers ignoring what's already committed here. Spelled out so it's clear the
+                    card's own qty IS accounted for, just not subtracted from its own candidates. */}
+                {!inSplit && origQty > 0 && (
+                  <div style={{fontSize:10.5,color:textS,marginTop:3,opacity:0.8}}>This card already holds {origQty} — the counts below exclude that (you're not competing with your own pick), so the current item can show its full pool.</div>
+                )}
                 {/* Caller-supplied context (e.g. Deal Check's carpet card: "1200 sqft needed") — the
                     modal covers whatever showed this figure behind it, so it's restated here rather
                     than making the caller remember it. Opt-in (opts.neededLabel); most callers (a
