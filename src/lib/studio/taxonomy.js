@@ -229,6 +229,18 @@ export const CARPET_OFF = "__off__";
  * what THAT footprint costs, and the cost engine sums the same function over every row. Two copies
  * of a pricing formula is how a card ends up disagreeing with the bill.
  */
+// Carpet New is purchased outright in fixed 1500 sqft rolls — Ambria pays for the WHOLE roll the
+// guest's actual need falls into (150 sqft needed still bills a full 1500; 1600 needed bills
+// 3000), and can only ever order in multiples of 1500. Carpet Old/Flex/any other material is
+// existing reusable stock with no such purchase step, so this only applies to a material whose
+// name literally contains "new" (as resolved by carpetPricingFor's own label, not the cpT id —
+// a zone can hold a legacy "new" enum OR a carpetMaterials row id, carpetPricingFor already
+// reconciles both into one label). Owner ask, 2026-10-17.
+const CARPET_NEW_ROLL_SQFT = 1500;
+export function billedCarpetSqft(rawSqft, carpetLabel) {
+  if (!(rawSqft > 0)) return rawSqft;
+  return /new/i.test(carpetLabel || "") ? Math.ceil(rawSqft / CARPET_NEW_ROLL_SQFT) * CARPET_NEW_ROLL_SQFT : rawSqft;
+}
 export function platformRowCost(row, rates) {
   const fd = row?.floorDims || {};
   const a = (fd.L || fd.S || 0) * (fd.W || (fd.S || 0));
@@ -239,7 +251,11 @@ export function platformRowCost(row, rates) {
   // platformRateFor, not a hard-coded rate — it is admin-editable, and this is the line that
   // actually charges for it.
   const platform = (row?.plH ? a * platformRateFor(row.plH, rates?.platformRates) : 0) * qty;
-  const carpet = (row?.cpT === CARPET_OFF ? 0 : a * carpetPricingFor(row?.cpT, rates?.carpetMaterials).rate) * qty;
+  let carpet = 0;
+  if (row?.cpT !== CARPET_OFF) {
+    const cp = carpetPricingFor(row?.cpT, rates?.carpetMaterials);
+    carpet = billedCarpetSqft(a * qty, cp.label) * cp.rate;
+  }
   return { platform, carpet };
 }
 

@@ -2033,6 +2033,12 @@ export default function StudioApp() {
   const [dcSwapModal, setDcSwapModal] = useState(null);
   const [dcColorModal, setDcColorModal] = useState(null);
   const [dcArtFlowerAlloc, setDcArtFlowerAlloc] = useState({});
+  // The Build Flower Palette string (clientFlowerPalette/extraFunctions[i].flowerPalette) that
+  // dcArtFlowerAlloc[fnIdx] was last auto-computed FROM — lets DCFloralsTab tell "still matches
+  // Build's current ratio, leave it (whether auto or manually fine-tuned)" apart from "Build's
+  // palette moved on, re-derive" without needing to guess from the allocation's own shape. See
+  // DCFloralsTab.jsx §27 for the actual comparison.
+  const [dcArtFlowerAllocSrc, setDcArtFlowerAllocSrc] = useState({});
   const [dcArtFlowerModal, setDcArtFlowerModal] = useState(null);
   const [dcFloralColorPrefs, setDcFloralColorPrefs] = useState({});
   const [dcPrefModal, setDcPrefModal] = useState(null);
@@ -10417,6 +10423,7 @@ export default function StudioApp() {
       setDcDedupOverrides({});
       setDcProductionAccepted({});
       setDcArtFlowerAlloc({});
+      setDcArtFlowerAllocSrc({});
       setDcFloralColorPrefs({});
       setDcCustomItems([]);
     }
@@ -10431,6 +10438,7 @@ export default function StudioApp() {
       setDcDedupOverrides(cachedForThisClient.dedupOverrides || {});
       setDcProductionAccepted(cachedForThisClient.productionAccepted || {});
       setDcArtFlowerAlloc(cachedForThisClient.artFlowerAlloc || {});
+      setDcArtFlowerAllocSrc(cachedForThisClient.artFlowerAllocSrc || {});
       setDcFloralColorPrefs(cachedForThisClient.floralColorPrefs || {});
       if ((isClientSwitch || dcCustomItems.length === 0) && Array.isArray(cachedForThisClient.customItems) && cachedForThisClient.customItems.length > 0) {
         setDcCustomItems(cachedForThisClient.customItems);
@@ -10627,7 +10635,7 @@ export default function StudioApp() {
   useLayoutEffect(() => {
     dcStateRef.current = {
       dcResolved, dcCards, dcZoneState, dcPhotoOverrides, dcSkipped, dcManualItems,
-      dcDedupOverrides, dcProductionAccepted, dcArtFlowerAlloc, dcFloralColorPrefs, dcCustomItems,
+      dcDedupOverrides, dcProductionAccepted, dcArtFlowerAlloc, dcArtFlowerAllocSrc, dcFloralColorPrefs, dcCustomItems,
       dcKitEdits, dcCarpetPick, dcCarpetSplit, dcMpOverrides, dcMpWinCount, dcMpIncludeMinusOne, dcMpIncludeDismantle,
     };
   });
@@ -10668,6 +10676,7 @@ export default function StudioApp() {
         dedupOverrides: dcs.dcDedupOverrides,
         productionAccepted: dcs.dcProductionAccepted,
         artFlowerAlloc: dcs.dcArtFlowerAlloc,
+        artFlowerAllocSrc: dcs.dcArtFlowerAllocSrc,
         floralColorPrefs: dcs.dcFloralColorPrefs,
         customItems: dcs.dcCustomItems,
         cachedAt: new Date().toISOString()
@@ -10731,7 +10740,7 @@ export default function StudioApp() {
       window.removeEventListener("pagehide", onHideOrUnload);
       window.removeEventListener("beforeunload", onHideOrUnload);
     };
-  }, [activeClientId, dcRun, dcGenerating, dcResolved, dcCards, dcZoneState, dcPhotoOverrides, dcSkipped, dcManualItems, dcDedupOverrides, dcProductionAccepted, dcArtFlowerAlloc, dcFloralColorPrefs, dcCustomItems, dcKitEdits, dcCarpetPick, dcCarpetSplit, dcMpOverrides, dcMpWinCount, dcMpIncludeMinusOne, dcMpIncludeDismantle, authUser, saveClientLedger]);
+  }, [activeClientId, dcRun, dcGenerating, dcResolved, dcCards, dcZoneState, dcPhotoOverrides, dcSkipped, dcManualItems, dcDedupOverrides, dcProductionAccepted, dcArtFlowerAlloc, dcArtFlowerAllocSrc, dcFloralColorPrefs, dcCustomItems, dcKitEdits, dcCarpetPick, dcCarpetSplit, dcMpOverrides, dcMpWinCount, dcMpIncludeMinusOne, dcMpIncludeDismantle, authUser, saveClientLedger]);
 
   // ═══ SOLD-DEAL INCREMENTAL INVENTORY RESERVATION ═══
   // Owner decision: a change to a SOLD deal's matched inventory reserves immediately — no
@@ -11593,7 +11602,7 @@ export default function StudioApp() {
     amendRequests, submitAmendRequest,
     dcInventoryCache, setDcInventoryCache, dcBrowseAllOpen, setDcBrowseAllOpen, dcSwapModal, setDcSwapModal, dcColorModal, setDcColorModal,
     photoKnowledge, saveKnowledgeEntry, dcKnowledgeKey,
-    dcArtFlowerAlloc, setDcArtFlowerAlloc, dcArtFlowerModal, setDcArtFlowerModal, dcFloralColorPrefs, setDcFloralColorPrefs, dcPrefModal, setDcPrefModal,
+    dcArtFlowerAlloc, setDcArtFlowerAlloc, dcArtFlowerAllocSrc, setDcArtFlowerAllocSrc, dcArtFlowerModal, setDcArtFlowerModal, dcFloralColorPrefs, setDcFloralColorPrefs, dcPrefModal, setDcPrefModal,
     dcCustomItems, setDcCustomItems: setDcCustomItemsAndFlush, dcCustomModal, setDcCustomModal,
     availModal, setAvailModal, openAvailModal, saveAvailPick, saveAvailSplit,
     dcSwapSearch, setDcSwapSearch, dcSwapPicked, setDcSwapPicked, dcSwapMode, setDcSwapMode, dcSwapSplitQty, setDcSwapSplitQty,

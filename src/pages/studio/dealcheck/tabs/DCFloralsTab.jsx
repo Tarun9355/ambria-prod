@@ -37,7 +37,7 @@ export default function DCFloralsTab({ ctx }) {
     dealCheckData, floralRatio, resolveMandiFlower, imsField, imsInventory, dcInventoryCache, rcFloralModeByKey,
     // floral state
     dcFloralCalcOpen, setDcFloralCalcOpen,
-    dcArtFlowerAlloc, setDcArtFlowerAlloc, dcArtFlowerModal, setDcArtFlowerModal,
+    dcArtFlowerAlloc, setDcArtFlowerAlloc, dcArtFlowerAllocSrc, setDcArtFlowerAllocSrc, dcArtFlowerModal, setDcArtFlowerModal,
     dcFloralColorPrefs, setDcFloralColorPrefs,
     dcColorModal, setDcColorModal, dcPrefModal, setDcPrefModal,
     setFloralOverrides,
@@ -579,26 +579,39 @@ export default function DCFloralsTab({ ctx }) {
                   const _artBunchesF = elementBreakdown.reduce((s,e)=>s+(e.artBunchesFlower||0),0);
                   const _artBunchesG = elementBreakdown.reduce((s,e)=>s+(e.artBunchesGreen||0),0);
                   const totalArtKg = Math.round(((_artBunchesF / _bpkF) + (_artBunchesG / _bpkG)) * 100) / 100;
+                  // The Color Split only ever covers FLOWER bunches, never greens — "Artificial Flower
+                  // Bunch" inventory items are flower colours (Maroon/White/Yellow/Pastel), greens have
+                  // no colour variants to split between. Everything below that drives the split (the
+                  // auto-default, the "unassigned" warning, the modal's own total) targets this, not
+                  // totalArtKg (which still correctly includes greens for the ₹ cost rollup above).
+                  const flowerOnlyKg = Math.round((_artBunchesF / _bpkF) * 100) / 100;
                   // §27 — Default the artificial Color Split to this function's own Flower Palette
                   // (Build's multi-select + ratio control), matching each palette colour against the
                   // actual "Artificial Flower Bunch" inventory items by name (same fuzzy matcher
-                  // Fabric Palette's own auto-fill uses) and dividing totalArtKg between them in the
+                  // Fabric Palette's own auto-fill uses) and dividing flowerOnlyKg between them in the
                   // palette's own ratio — picking "Maroon 60 / White 40" in Build splits the bunches
                   // that way automatically instead of redoing the same split by hand every time.
-                  // Guarded on dcArtFlowerAlloc[fnIdx] === undefined so this only ever runs the FIRST
-                  // time this function's split is seen (a deliberate "Clear all" leaves [], never
-                  // overwritten) and on dcInventoryCache already holding items, so a render that
-                  // catches it still mid-fetch doesn't lock in an empty split before the real
-                  // inventory arrives. Skips entirely (stays undefined) rather than committing []
-                  // when nothing matched yet, so it can still pick up a match once one exists.
-                  if (dcArtFlowerAlloc[fnIdx] === undefined && totalArtKg > 0 && (dcInventoryCache || []).length > 0) {
-                    const fnPaletteColors = parseFlowerPalette(activeFn.fnFlowerPalette);
+                  //
+                  // Re-derives whenever Build's OWN palette string has moved on since the split was
+                  // last computed (dcArtFlowerAllocSrc[fnIdx] tracks exactly that), not just the first
+                  // time ever — a salesperson changing the ratio (or the colours) in Build used to
+                  // leave Deal Check silently stuck on whatever was computed/edited under the OLD
+                  // palette, surviving every later reload. No palette at all (paletteSig "") never
+                  // touches an existing manual pick — there's nothing to sync it to. Guarded on
+                  // dcInventoryCache already holding items so a render that catches it still mid-fetch
+                  // doesn't lock in a split computed against an empty item list.
+                  const paletteSig = activeFn.fnFlowerPalette || "";
+                  if (paletteSig && dcArtFlowerAllocSrc[fnIdx] !== paletteSig && flowerOnlyKg > 0 && (dcInventoryCache || []).length > 0) {
+                    const fnPaletteColors = parseFlowerPalette(paletteSig);
                     if (fnPaletteColors.length > 0) {
                       const artItemsForSplit = dcInventoryCache
                         .filter(it => (imsField.subcategory(it) || "").toLowerCase().trim() === "artificial flower bunch")
                         .map(it => ({ id: it.id, name: it.name, _photo: imsField.photos(it)[0] || "" }));
-                      const auto = autoSplitArtificialByPalette(totalArtKg, fnPaletteColors, artItemsForSplit);
-                      if (auto.length > 0) setDcArtFlowerAlloc(prev => (prev[fnIdx] !== undefined ? prev : { ...prev, [fnIdx]: auto }));
+                      const auto = autoSplitArtificialByPalette(flowerOnlyKg, fnPaletteColors, artItemsForSplit);
+                      if (auto.length > 0) {
+                        setDcArtFlowerAlloc(prev => ({ ...prev, [fnIdx]: auto }));
+                        setDcArtFlowerAllocSrc(prev => ({ ...prev, [fnIdx]: paletteSig }));
+                      }
                     }
                   }
                   const fnArtAlloc = dcArtFlowerAlloc[fnIdx] || [];
@@ -1051,9 +1064,9 @@ export default function DCFloralsTab({ ctx }) {
                               <span style={{fontSize:12,color:"#EC4899",fontWeight:700}}>🎨 Color Split</span>
                               {fnArtAlloc.length > 0 ? <>
                                 {fnArtAlloc.map((a, ai) => <span key={ai} style={{fontSize:11,padding:"3px 8px",borderRadius:6,background:"rgba(236,72,153,0.15)",color:"#EC4899",fontWeight:600,display:"flex",alignItems:"center",gap:4}}>{a.photo&&<img src={a.photo} alt="" style={{width:14,height:14,borderRadius:3,objectFit:"cover"}}/>}{a.colour} {a.qty}kg</span>)}
-                                {fnArtAllocTotal < totalArtKg && <span style={{fontSize:11,color:"#F59E0B",fontWeight:600}}>{Math.round((totalArtKg - fnArtAllocTotal) * 10) / 10}kg unassigned</span>}
+                                {fnArtAllocTotal < flowerOnlyKg && <span style={{fontSize:11,color:"#F59E0B",fontWeight:600}}>{Math.round((flowerOnlyKg - fnArtAllocTotal) * 10) / 10}kg unassigned</span>}
                               </> : <span style={{fontSize:11,color:"#1A1A2E"}}>No split — any color</span>}
-                              <button className="dcf-btn" onClick={() => setDcArtFlowerModal({ fnIdx, totalKg: totalArtKg })} style={{fontSize:11,padding:"4px 12px",borderRadius:6,border:`1px solid rgba(236,72,153,0.3)`,background:"rgba(236,72,153,0.10)",color:"#EC4899",fontWeight:700,cursor:"pointer",marginLeft:"auto"}}>🌸 Split Colors</button>
+                              <button className="dcf-btn" onClick={() => setDcArtFlowerModal({ fnIdx, totalKg: flowerOnlyKg })} style={{fontSize:11,padding:"4px 12px",borderRadius:6,border:`1px solid rgba(236,72,153,0.3)`,background:"rgba(236,72,153,0.10)",color:"#EC4899",fontWeight:700,cursor:"pointer",marginLeft:"auto"}}>🌸 Split Colors</button>
                             </div>
                             {missingRatios.size > 0 && (
                               <div style={{fontSize:11,color:"#F59E0B",marginTop:6,fontStyle:"italic"}}>⚠ Missing Art Bunches/Unit (or mapped item cost) on: {Array.from(missingRatios).join(", ")} — set in IMS Mandi tab</div>
