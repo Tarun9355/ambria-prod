@@ -26,6 +26,37 @@ export function repeatCatFor(zc, cat) {
   return typeof v === "boolean" ? v : !!zc?.repeat;
 }
 
+// ── REPEAT REACHES CREW AND TRUCKS, CATEGORY BY CATEGORY (RC-30) ──
+// A repeated category is already standing / already on site, so it needs no build labour and no
+// truck — not only a lower rent. These used to read zc.repeat alone, so flipping just the Truss &
+// Masking chip cut the truss rent but still crewed and trucked the truss. Both go through
+// repeatCatFor now, so the zone toggle still means "everything" and each chip can override it.
+// Print has no crew type and is not trucked, so it has nothing to drop here.
+export const REPEAT_CAT_LABELS = { elements: "Elements", truss: "Truss & Masking", platform: "Platform" };
+// The categories of this zone that are on Repeat, in chip order — [] when none.
+export function repeatCatsOn(zc) {
+  return Object.keys(REPEAT_CAT_LABELS).filter((c) => repeatCatFor(zc, c));
+}
+// The function as the manpower engines should see it. Crew comes from two places: a zone's elements
+// (Flowerists, Electricians, Labours, the tier-2 sub-category types) and its truss config (Truss
+// Labour, Fabric Bangali). A zone with both on Repeat is switched off whole, as before; otherwise a
+// repeated Elements chip empties that zone's element list and a repeated Truss & Masking chip drops
+// its config, so only the repeated part stops being crewed. Platform has no crew type of its own.
+// Shared by Deal Check's bottom bar and its Manpower tab, which must agree to the person.
+export function freshFnForManpower(fn) {
+  const zc = fn?.zoneConfig || {}, en = fn?.enabledEls || {}, ze = fn?.zoneElements || {};
+  let nen = null, nze = null, nzc = null;
+  Object.keys(en).forEach((zk) => {
+    if (!en[zk]) return;
+    const els = repeatCatFor(zc[zk], "elements"), truss = repeatCatFor(zc[zk], "truss");
+    if (els && truss) { (nen = nen || { ...en })[zk] = false; return; }
+    if (els) (nze = nze || { ...ze })[zk] = [];
+    if (truss && zc[zk]) { nzc = nzc || { ...zc }; delete nzc[zk]; }
+  });
+  if (!nen && !nze && !nzc) return fn;
+  return { ...fn, ...(nen ? { enabledEls: nen } : {}), ...(nze ? { zoneElements: nze } : {}), ...(nzc ? { zoneConfig: nzc } : {}) };
+}
+
 // ═══ AREAS ↔ ZONES SYNC HELPERS ═══
 export const AZ_SYNC_SK = "ambria-areas-zones-synced-v1";
 // Normalize a label/name for fuzzy matching. "Entry Passage" ≈ "Entry & Passage" both → "entrypassage".

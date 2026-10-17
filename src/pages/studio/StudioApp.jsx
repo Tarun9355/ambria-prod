@@ -78,7 +78,7 @@ import {
   resolveTrussConfig, findZoneForArea, findAreaForZone, makeZoneId,
   defaultZoneFromArea, resolveMandiFlower, calcZoneTrussPreview,
   calcZoneFabric, calcZoneFabricCost, calcZoneCarpet, buildPlatformPlan, getStudioAvailable,
-  buildTopology, PLATFORM_FATTA_CODE, PLATFORM_STAND_CODE, trussRowCost, repeatCatFor,
+  buildTopology, PLATFORM_FATTA_CODE, PLATFORM_STAND_CODE, trussRowCost, repeatCatFor, repeatCatsOn, REPEAT_CAT_LABELS,
 } from "../../lib/studio/pricing";
 import { allocateRowAvailability, netOwnReservedBlocksLive } from "../../lib/studio/dealAvailability";
 import { callClaudeStreaming } from "../../lib/ai";
@@ -382,10 +382,11 @@ function computeFnSubQty(fnData, capBySub, imsInventory, flowerPatterns, trussIn
   const fZoneElements = fnData?.zoneElements || {};
   const fZoneConfig = fnData?.zoneConfig || {};
   const fEnabledEls = fnData?.enabledEls || {};
-  const repeatZones = Object.keys(fZoneConfig).filter(zk => fEnabledEls[zk] && fZoneConfig[zk]?.repeat);
-  const fEnabledElsFresh = repeatZones.length
-    ? { ...fEnabledEls, ...Object.fromEntries(repeatZones.map((zk) => [zk, false])) }
-    : fEnabledEls;
+  // What this function brings FRESH — a repeated part was already there, so it is not counted.
+  // Per chip (RC-30): Elements for the element lists (an element's own repeatOverride first),
+  // Truss & Masking for truss/masking/liza/curtains, Platform for platform/carpet.
+  const fEnabledElsFresh = fEnabledEls;
+  const elRepeat = (zk, el) => (typeof el?.repeatOverride === "boolean" ? el.repeatOverride : repeatCatFor(fZoneConfig[zk], "elements"));
   const qty = {};
   const add = (sub, q) => {
     const k = String(sub || "").toLowerCase().trim();
@@ -395,6 +396,7 @@ function computeFnSubQty(fnData, capBySub, imsInventory, flowerPatterns, trussIn
   Object.entries(fZoneElements).forEach(([zk, elems]) => {
     if (!fEnabledElsFresh[zk] || !elems) return;
     elems.forEach((el) => {
+      if (elRepeat(zk, el)) return;
       const invItem = el.invId ? imsInventory.find((i) => i.id === el.invId) : null;
       if (invItem) {
         const kitSub = invItem.subCat || invItem.subcategory || "";
@@ -426,17 +428,18 @@ function computeFnSubQty(fnData, capBySub, imsInventory, flowerPatterns, trussIn
   });
   Object.entries(fZoneConfig).forEach(([zk, cfg]) => {
     if (!cfg || !fEnabledElsFresh[zk]) return;
+    const trussRep = repeatCatFor(cfg, "truss"), platRep = repeatCatFor(cfg, "platform");
     const d = cfg.dims || {}; const fd = cfg.floorDims || {}; // no truss-dims fallback — see calcStructCost's own comment
-    if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * (cfg.trussQty === 0 ? 0 : Math.max(1, cfg.trussQty || 1)); if (tSqft > 0) add("Truss", tSqft); }
+    if (!trussRep && cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * (cfg.trussQty === 0 ? 0 : Math.max(1, cfg.trussQty || 1)); if (tSqft > 0) add("Truss", tSqft); }
     const sqft = (fd.L || 0) * (fd.W || 0) * Math.max(1, cfg.plQty || 1);
-    if (sqft > 0) { if (cfg.plH) add("Platform", sqft); if (cfg.cpT && cfg.cpT !== CARPET_OFF) add("Carpet", sqft); }
+    if (!platRep && sqft > 0) { if (cfg.plH) add("Platform", sqft); if (cfg.cpT && cfg.cpT !== CARPET_OFF) add("Carpet", sqft); }
     // Fabric Allocation (masking/liza/curtains) is a physical rental setup that can plausibly still
     // be standing at the venue for the next same-day function, same reasoning as Truss/Platform/
     // Carpet above — so it participates in carryover netting too. Base truss row only (matches
     // Truss/Platform/Carpet's own scope here — extraTrussRows aren't counted for trucking).
     // Density defaults to "moderate": precise photo-derived density only matters for rental PRICING
     // (calcZoneFabricCost), not truck capacity, which is already an approximation.
-    if (trussInv) {
+    if (!trussRep && trussInv) {
       const fab = calcZoneFabric(cfg, trussInv, "moderate");
       if (fab.maskingPieces > 0) add("Masking", fab.maskingPieces);
       if (fab.lizaKg > 0) add("Liza", fab.lizaKg);
@@ -1109,9 +1112,11 @@ function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckC
   };
   Object.entries(zoneElements || {}).forEach(([zk, elems]) => {
     if (!enabledEls[zk] || !elems) return;
-    // A repeat zone's whole setup is reused — nothing of it needs trucking for the guest.
-    if (guestDiscountOn && zoneConfig?.[zk]?.repeat) return;
+    // A repeated setup is reused — nothing of it needs trucking for the guest. Per category (RC-30):
+    // the Elements chip decides for elements, an element's own repeatOverride first.
+    const zoneElRepeat = repeatCatFor(zoneConfig?.[zk], "elements");
     elems.forEach(el => {
+      if (guestDiscountOn && (typeof el.repeatOverride === "boolean" ? el.repeatOverride : zoneElRepeat)) return;
       // An element's sub-category for truck-capacity purposes comes ONLY from live IMS identity —
       // el.invId (Inventory, the normal path for anything added via "+ Add element" today) or
       // el.patternId (a pure flower-recipe element). No Rate-Card name-match fallback: Rate Card's
@@ -1158,20 +1163,23 @@ function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckC
   });
   Object.entries(zoneConfig || {}).forEach(([zk, cfg]) => {
     if (!enabledEls[zk] || !cfg) return;
-    if (guestDiscountOn && cfg.repeat) return; // same repeat waiver as the elements loop above
+    // Same repeat waiver as the elements loop above, per chip (RC-30): truss, masking, liza and
+    // curtains follow Truss & Masking; platform and carpet follow Platform.
+    const skipTruss = guestDiscountOn && repeatCatFor(cfg, "truss");
+    const skipPlat = guestDiscountOn && repeatCatFor(cfg, "platform");
     // Zone dims use uppercase L/W/H (see buildZoneConfig) — this used to read lowercase dims.w/
     // dims.d, which never exist, so sqft was always 0 and every truss/platform/carpet truck-load
     // silently dropped out of Build's transport total (only element-based items ever counted).
     const d = cfg.dims || {}; const fd = cfg.floorDims || {}; // no truss-dims fallback — see calcStructCost's own comment
-    if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * (cfg.trussQty === 0 ? 0 : Math.max(1, cfg.trussQty || 1)); if (tSqft > 0) addSub("Truss", tSqft); }
+    if (!skipTruss && cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * (cfg.trussQty === 0 ? 0 : Math.max(1, cfg.trussQty || 1)); if (tSqft > 0) addSub("Truss", tSqft); }
     const sqft = (fd.L || 0) * (fd.W || 0);
     // cpT truthy AND not the explicit OFF sentinel — an untouched floor (cpT unset) gets no carpet
     // truck-load either, same as it gets no carpet cost (see CARPET_OFF in taxonomy.js).
-    if (sqft > 0) { if (cfg.plH) addSub("Platform", sqft); if (cfg.cpT && cfg.cpT !== CARPET_OFF) addSub("Carpet", sqft); }
+    if (!skipPlat && sqft > 0) { if (cfg.plH) addSub("Platform", sqft); if (cfg.cpT && cfg.cpT !== CARPET_OFF) addSub("Carpet", sqft); }
     // Fabric Allocation (masking/liza/curtains) — never trucked before: it's computed from the truss
     // config, not a zoneElement, so it fell through the element loop above entirely. Same base-row-
     // only scope as Truss/Platform/Carpet; density defaults to "moderate" (see computeFnSubQty).
-    if (trussInv) {
+    if (!skipTruss && trussInv) {
       const fab = calcZoneFabric(cfg, trussInv, "moderate");
       if (fab.maskingPieces > 0) addSub("Masking", fab.maskingPieces);
       if (fab.lizaKg > 0) addSub("Liza", fab.lizaKg);
@@ -6225,15 +6233,25 @@ export default function StudioApp() {
       // The guest's own reuse pool for trucks — same source and same per-element draw-down order as
       // calcFunctionCost's transportPool, so the two count the guest's trucks identically.
       const clientTruckPool = crossFnPrevFn ? new Map(Object.entries(computeFnInvQty(crossFnPrevFn))) : null;
-      const repeatZonesExcluded = Object.keys(fZoneConfig).filter(zk => fEnabledEls[zk] && fZoneConfig[zk]?.repeat)
-        .map(zk => { const cz = fCustomZones.find(c => c.id === zk); return { zk, label: zoneLabelsD[zk]?.label || cz?.name || zk }; });
+      // Per category (RC-30): a zone whose only the Truss & Masking chip is Repeat drops its truss
+      // loads and keeps its elements, and so on. `cats` names what was dropped; `whole` is every
+      // category, which the Transport tab says as the zone alone.
+      const repeatZonesExcluded = Object.keys(fZoneConfig).filter(zk => fEnabledEls[zk] && repeatCatsOn(fZoneConfig[zk]).length)
+        .map(zk => {
+          const cz = fCustomZones.find(c => c.id === zk);
+          const on = repeatCatsOn(fZoneConfig[zk]);
+          return { zk, label: zoneLabelsD[zk]?.label || cz?.name || zk, cats: on.map(c => REPEAT_CAT_LABELS[c]), whole: on.length === Object.keys(REPEAT_CAT_LABELS).length };
+        });
       Object.entries(fZoneElements).forEach(([zk, elems]) => {
         if (!fEnabledEls[zk] || !elems) return;
         // A repeat zone's own setup is reused — nothing of it needs trucking (Ambria's own cost
         // side, `qty` below). qtyFull always gets the raw, un-netted number regardless, so the
         // guest-facing truckFracClient can still charge full unless the discount toggle is on.
-        const zoneRepeat = !!fZoneConfig[zk]?.repeat;
+        // The Elements chip decides for elements (an element's own repeatOverride first, the same
+        // precedence its rent uses), not the zone toggle alone.
+        const zoneElRepeat = repeatCatFor(fZoneConfig[zk], "elements");
         elems.forEach(el => {
+          const zoneRepeat = typeof el.repeatOverride === "boolean" ? el.repeatOverride : zoneElRepeat;
           const invItem = el.invId ? imsInventory.find(i => i.id === el.invId) : null;
           if (invItem) {
             const kitSub = invItem.subCat || invItem.subcategory || "";
@@ -6279,20 +6297,22 @@ export default function StudioApp() {
       const bdTrussInv = sharedFloralSettings.trussInv;
       Object.entries(fZoneConfig).forEach(([zk, cfg]) => {
         if (!cfg || !fEnabledEls[zk]) return;
-        const zoneRepeat = !!cfg.repeat;
+        // Truss, masking, liza and curtains follow the Truss & Masking chip; platform and carpet
+        // follow the Platform chip (RC-30) — each defaulting to the zone toggle via repeatCatFor.
+        const trussRepeat = repeatCatFor(cfg, "truss"), platRepeat = repeatCatFor(cfg, "platform");
         const d = cfg.dims || {}; const fd = cfg.floorDims || {}; // no truss-dims fallback — see calcStructCost's own comment
-        if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * (cfg.trussQty === 0 ? 0 : Math.max(1, cfg.trussQty || 1)); if (tSqft > 0) addSub("Truss", zoneRepeat ? 0 : tSqft, tSqft, zk, "Truss structure"); }
+        if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * (cfg.trussQty === 0 ? 0 : Math.max(1, cfg.trussQty || 1)); if (tSqft > 0) addSub("Truss", trussRepeat ? 0 : tSqft, tSqft, zk, "Truss structure"); }
         const sqft = (fd.L || 0) * (fd.W || 0);
         if (sqft > 0) {
-          if (cfg.plH) addSub("Platform", zoneRepeat ? 0 : sqft, sqft, zk, "Platform");
-          if (cfg.cpT && cfg.cpT !== CARPET_OFF) addSub("Carpet", zoneRepeat ? 0 : sqft, sqft, zk, "Carpet");
+          if (cfg.plH) addSub("Platform", platRepeat ? 0 : sqft, sqft, zk, "Platform");
+          if (cfg.cpT && cfg.cpT !== CARPET_OFF) addSub("Carpet", platRepeat ? 0 : sqft, sqft, zk, "Carpet");
         }
         // Fabric Allocation (masking/liza/curtains) — see computeTruckItems' matching comment.
         if (bdTrussInv) {
           const fab = calcZoneFabric(cfg, bdTrussInv, "moderate");
-          if (fab.maskingPieces > 0) addSub("Masking", zoneRepeat ? 0 : fab.maskingPieces, fab.maskingPieces, zk, "Wall masking");
-          if (fab.lizaKg > 0) addSub("Liza", zoneRepeat ? 0 : fab.lizaKg, fab.lizaKg, zk, "Liza drape");
-          if (fab.curtainPieces > 0) addSub("Curtains", zoneRepeat ? 0 : fab.curtainPieces, fab.curtainPieces, zk, "Velvet curtains");
+          if (fab.maskingPieces > 0) addSub("Masking", trussRepeat ? 0 : fab.maskingPieces, fab.maskingPieces, zk, "Wall masking");
+          if (fab.lizaKg > 0) addSub("Liza", trussRepeat ? 0 : fab.lizaKg, fab.lizaKg, zk, "Liza drape");
+          if (fab.curtainPieces > 0) addSub("Curtains", trussRepeat ? 0 : fab.curtainPieces, fab.curtainPieces, zk, "Velvet curtains");
         }
       });
       // Floral material (real mandi + artificial) — see computeTruckItems' matching comment.
