@@ -3937,6 +3937,45 @@ export default function StudioApp() {
       }
     } catch (e) { /* best-effort */ }
   }, [eventOrders, activeClientId, clientName]);
+  // Refreshes ONLY the zone-layout fields on the SOLD event_order row (zones/elements/enabledEls/
+  // elSelectedPhoto/dims/zoneNames) straight from the live Build, from saveSession itself — NOT
+  // gated on Deal Check. Owner ask (2026-10-17): IMS's own planning views (Dept Ops' zone-structure
+  // summary, the View Deck PDF — both read event_orders.functionsDetail[].zones, never live Build)
+  // only ever got this refreshed when persistDeptSnapshot ran, which only fires from inside Deal
+  // Check (its own auto-sync, gated on the deal already being SOLD, or its manual "push to IMS"
+  // button) — so a truss removed in Build stayed showing on the IMS side until someone happened to
+  // reopen Deal Check for that exact deal. That's the Build/IMS drift the owner doesn't want. This
+  // runs on every real saveSession instead, so IMS's copy of the layout tracks Build directly.
+  // Deliberately touches ONLY the layout fields, via the same shape persistDeptSnapshot's own
+  // `layout` map already builds — deptIncome/deptInventory/manpowerPlan/fabricPlan/etc. stay
+  // exactly persistDeptSnapshot's job; this function never writes them, so it can't race it.
+  const persistBuildLayoutSnapshot = useCallback(async () => {
+    const eo = (eventOrders || []).find(e => e.clientId === activeClientId) || (eventOrders || []).find(e => (e.clientName || "") === (clientName || "").trim());
+    if (!eo) return; // not sold yet — nothing in IMS to keep in sync
+    const layout = new Map();
+    try {
+      (collectAllFunctionDataRef.current?.() || []).forEach(fd => {
+        layout.set(fd.fnIdx, {
+          zones: JSON.parse(JSON.stringify(fd.zoneConfig || {})),
+          elements: JSON.parse(JSON.stringify(fd.zoneElements || {})),
+          enabledEls: { ...(fd.enabledEls || {}) },
+          elSelectedPhoto: Object.fromEntries(Object.entries(fd.elSelectedPhoto || {}).map(([k, v]) => [k, { src: v?.src, eventName: v?.eventName, isLibrary: v?.isLibrary, eventId: v?.eventId }])),
+          dims: Object.fromEntries(Object.entries(fd.zoneConfig || {}).map(([zk, zc]) => [zk, zc?.dims || {}])),
+          zoneNames: Object.fromEntries((fd.customZones || []).filter(cz => cz && cz.id).map(cz => [cz.id, cz.name || ""])),
+        });
+      });
+    } catch { return; }
+    if (!layout.size) return;
+    const laySig = JSON.stringify([...layout.entries()]);
+    try {
+      const { data: row } = await supabase.from("event_orders").select("data").eq("id", eo.id).maybeSingle();
+      if (!row || !row.data) return;
+      const cur = row.data;
+      if (cur.layoutSig === laySig) return; // already in sync — no write
+      const withLayout = (fns) => Array.isArray(fns) ? fns.map(f => (f && layout.has(f.fnIdx)) ? { ...f, ...layout.get(f.fnIdx) } : f) : fns;
+      await supabase.from("event_orders").update({ data: { ...cur, functionsDetail: withLayout(cur.functionsDetail), layoutSig: laySig } }).eq("id", eo.id);
+    } catch (e) { /* best-effort, same as persistDeptSnapshot/syncDealValueNow */ }
+  }, [eventOrders, activeClientId, clientName]);
   // Pushes the just-applied deal value straight onto the mirrored event_orders row, immediately —
   // not waiting for the next Deal Check regenerate. Without this, clicking "Apply to deal value" on
   // the Summary hero updates Studio's own number at once but IMS's Dept Ops badge would keep showing
@@ -7725,6 +7764,10 @@ export default function StudioApp() {
           })();
         }
       }
+      // Fire-and-forget, same as the studio_sessions upsert just above — never blocks or delays the
+      // actual save. No-ops instantly for a client with no SOLD event_order yet, and self-skips via
+      // its own layoutSig check when nothing in the layout actually moved.
+      persistBuildLayoutSnapshot();
     }
     setActiveClientId(client.id);
     // NOT capped. This used to be `updated.slice(0, 200)` — a brand-new client (no phone/activeClientId
@@ -7751,7 +7794,7 @@ export default function StudioApp() {
     // pricingReady for free — but "usually" is not a guarantee: a deal whose seed-default total
     // happens to equal its real one would leave this callback holding pricingReady=false forever,
     // and then no total would be written at all. That is a worse failure than the one being fixed.
-    pricingReady, buildElementPriceSnapshot]);
+    pricingReady, buildElementPriceSnapshot, persistBuildLayoutSnapshot]);
 
   // ── Build auto-save (robust) ──────────────────────────────────────────────
   // The build (zone photos, Silver/Gold tab, elements, dims, carpet) previously persisted ONLY on a
