@@ -9,7 +9,7 @@ import { CARD_SHADOW, CARD_BG, CARD_BORDER, HAIRLINE, TILE_BG, TILE_BORDER, CHIP
 import { resolveTrussConfig, freshFnForManpower } from "../../../../lib/studio/pricing";
 import { heavyExtraLabour, eventTimingMultFor, EVENT_TIMINGS, SIT_MULT_DEFAULTS } from "../../../../lib/ims/constants";
 import { standingReductionBySubcat, fixedVenueFor } from "../../../../lib/ims/fixedVenues";
-import { itemImsSubcat, lookupBySubcat, walkKitUnits } from "../../../../lib/ims/helpers";
+import { itemImsSubcat, lookupBySubcat, walkKitUnits, aggregateEventManpower, hasAnyMpEdits } from "../../../../lib/ims/helpers";
 import { matchFlowerPattern } from "../../../../lib/ims/flowerHelpers";
 import ManpowerFactorPills from "../../../../components/shared/ManpowerFactorPills.jsx";
 
@@ -171,6 +171,12 @@ export default function DCManpowerTab({ ctx }) {
     // auth — manpower planning now lives in IMS Dept Ops; salespeople get a read-only view here,
     // Admin can still edit (e.g. for a special case or troubleshooting)
     isAdmin,
+    // Ops' own live edits, once this deal is sold (event_orders.data.deptOps) + the Studio system
+    // plan they're reconciled against (dcCostRollup.manpowerDetail, merged into ctx at the call
+    // site in DealCheckOverlay.jsx — not part of the app-wide ctx StudioApp.jsx builds). Lets this
+    // "read-only" tab actually show what ops is planning, not just repeat the system estimate above
+    // a label that says the real plan lives elsewhere.
+    dcEoActuals, manpowerDetail,
   } = ctx;
 
   return (() => {
@@ -182,6 +188,14 @@ export default function DCManpowerTab({ ctx }) {
                   // - Day-wise window checkbox overrides stored in dcMpOverrides
                   const fns = collectAllFunctionData ? collectAllFunctionData() : [];
                   if (fns.length === 0) return <div style={{padding:"50px 30px",textAlign:"center",color:"#1A1A2E",fontSize:13}}>No functions configured yet.</div>;
+
+                  // Ops' own live plan (IMS Dept Ops), once sold — dcEoActuals only exists at all once
+                  // an event_orders row does (i.e. the deal is Sold), and hasAnyMpEdits further checks
+                  // a head has actually touched manpower rather than leaving the untouched system plan
+                  // standing (which would just repeat the numbers already on screen above).
+                  const opsDeptOps = dcEoActuals?.deptOps || null;
+                  const opsMpEdited = !!(opsDeptOps && hasAnyMpEdits(opsDeptOps));
+                  const opsManpower = opsMpEdited ? aggregateEventManpower(manpowerDetail, opsDeptOps) : null;
 
                   // ── Settings (IMS Redis) ──────────────────────────────────
                   const dihariSchemes = dealCheckData?.dihariSchemes || {};
@@ -1599,6 +1613,36 @@ export default function DCManpowerTab({ ctx }) {
                           </div>
                         );
                       })()}
+
+                      {/* ── OPS IS ACTUALLY PLANNING ──
+                          The system estimate above is what Studio's own formulas compute — this is
+                          what the dept heads have actually typed into IMS → Dept Ops (count/rate
+                          overrides, day-wise crew, per-shift counts), reconciled the exact same way
+                          IMS's own "Whole event manpower" panel is (aggregateEventManpower, shared
+                          with DepartmentOpsTab.jsx) — so a salesperson sees the real plan this "read-
+                          only" tab already says lives elsewhere, instead of a stale system number with
+                          no visible link to it. Only shown once ops has actually touched something;
+                          an untouched plan is identical to the estimate already on screen. */}
+                      {opsManpower && (
+                        <div className="dcm-card" style={{background:CARD_BG,border:`1px solid ${CARD_BORDER}`,borderRadius:14,boxShadow:CARD_SHADOW,padding:"14px 16px"}}>
+                          <div style={{fontSize:10,fontWeight:700,color:INK_2,letterSpacing:1,textTransform:"uppercase",marginBottom:5}}>🏭 Ops is actually planning</div>
+                          <div style={{fontSize:12,lineHeight:1.5,color:INK_2,marginBottom:12,maxWidth:"68ch"}}>Live from IMS → Dept Ops — this is what the crew/rate/day edits made there actually cost, which may now differ from the system estimate above.</div>
+                          <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:10}}>
+                            {opsManpower.types.map(t => (
+                              <div key={t.type} className="dcm-row" style={{display:"flex",alignItems:"center",gap:10,padding:"7px 10px",borderRadius:9,background:TILE_BG,border:`1px solid ${CARD_BORDER}`}}>
+                                <span aria-hidden="true" style={{fontSize:13,flexShrink:0}}>{typeEmoji(t.type)}</span>
+                                <span style={{flex:"1 1 auto",minWidth:0,fontSize:12.5,color:INK,fontWeight:650,letterSpacing:-0.1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.type}</span>
+                                <span style={{flexShrink:0,fontSize:11.5,color:INK_2,...NUM}}>{Math.round(t.dihari)} dihari</span>
+                                <span style={{flexShrink:0,fontSize:12.5,fontWeight:700,color:GOLD,...NUM}}>₹{Math.round(t.cost).toLocaleString("en-IN")}</span>
+                              </div>
+                            ))}
+                          </div>
+                          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingTop:10,borderTop:`1px dashed ${CARD_BORDER}`}}>
+                            <span style={{fontSize:11.5,color:INK_2}}>{Math.round(opsManpower.totalDihari)} dihari, ops total</span>
+                            <span style={{fontSize:14.5,fontWeight:700,color:GOLD,...NUM}}>₹{Math.round(opsManpower.total).toLocaleString("en-IN")}</span>
+                          </div>
+                        </div>
+                      )}
 
                       {/* Hire trajectory footer */}
                       <div className="dcm-card" style={{background:CARD_BG,border:`1px solid ${CARD_BORDER}`,borderRadius:14,boxShadow:CARD_SHADOW,padding:"14px 16px"}}>

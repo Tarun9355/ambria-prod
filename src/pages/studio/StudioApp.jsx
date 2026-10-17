@@ -3928,7 +3928,13 @@ export default function StudioApp() {
         });
       });
     } catch { /* layout refresh is best-effort — the money snapshot still goes */ }
-    const sig = JSON.stringify({ inc: snap.income || {}, mp: snap.manpowerDetail || {}, inv: snap.inventory || {}, fab: snap.fabricPlan || {}, dv: snap.dealValue || null, lay: [...layout.entries()] });
+    // flo: floralPlan's own flower names/qty/colour — income/manpower/inventory/fabric/dealValue can
+    // all stay identical across a flower SWAP (two similarly-priced flowers), which used to let this
+    // signature match the row's last-written one and skip the write entirely — the real-time
+    // subscription in IMS.jsx had nothing to even receive, so the mandi list stayed on the pre-swap
+    // flower indefinitely regardless of how many times Deal Check tried to push it.
+    const sig = JSON.stringify({ inc: snap.income || {}, mp: snap.manpowerDetail || {}, inv: snap.inventory || {}, fab: snap.fabricPlan || {}, dv: snap.dealValue || null, lay: [...layout.entries()],
+      flo: (snap.floralPlan?.flowers || []).map(f => `${f.name}:${Math.round((f.qty || 0) * 100)}:${f.colorVariant?.label || ""}:${(f.colorPrefs || []).map(p => p.label).join("/")}`) });
     // Merge ONLY the Studio-owned projected fields. deptOps (the dept head's edits / actuals — IMS-owned)
     // is preserved verbatim, so re-syncing never wipes their work — including across a regenerate on
     // an already-sold deal, which used to wipe deptOps entirely (manpower overrides, logged mandi
@@ -4299,7 +4305,12 @@ export default function StudioApp() {
     const parent = (floralSrc.mandiCatalogue || []).find((m) => m.id === el.mandiId);
     if (!parent) return { rc: null, unitPrice: 0, lineCost: 0, area: 0, warning: null, isFloralBlend: false, realPct: null };
     const variant = el.mandiVariantId ? (parent.colorVariants || []).find((v) => v.variantId === el.mandiVariantId) : null;
-    const unitPrice = Number((variant || parent).currentPrice) || 0;
+    const baseRate = Number((variant || parent).currentPrice) || 0;
+    // Markup is the flower's own selling margin over bare mandi cost (IMS Mandi Prices "Markup %")
+    // — Loose Petals has none by default and keeps billing at pure cost; any other mandi item made
+    // directly addable via a markup bills at cost × (1 + markup%).
+    const markupPct = Number(parent.markup) || 0;
+    const unitPrice = Math.round(baseRate * (1 + markupPct / 100));
     const qty = el.qty || 0;
     return { rc: null, unitPrice, lineCost: qty * unitPrice, area: 0, warning: null, isFloralBlend: false, realPct: null };
   }, [dealCheckData, studioFloralData]);
@@ -5819,10 +5830,24 @@ export default function StudioApp() {
           const realUnits = (fl.qty || 0) * q * effR * (zoneRepeat ? REPEAT_REAL_QTY_MULT : 1) * (sw ? sw.ratio : 1);
           const buyParent = sw ? sw.to : parent;
           const buyId = sw ? sw.to.id : parentId;
+          // Which colour the salesperson actually picked (ranked preference 1st choice, else the
+          // legacy single colorVariant override) — mirrors DCFloralsTab.jsx's own variantPicked,
+          // so IMS Dept Ops' mandi list (fed from this function's breakdown, not the tab) can show
+          // the same colour + reference photo instead of a bare flower name. Never carries over on
+          // a catalogue swap (sw) — a colour picked for the original flower says nothing about what
+          // is actually being bought instead.
+          const colorVariant = sw ? null : (Array.isArray(prefArr) && prefArr.length > 0 ? prefArr[0] : (override?.colorVariant || null));
+          // Full ranked list (owner-reported: picked 2 preferences in Deal Check, IMS only showed
+          // the 1st) — carried alongside colorVariant (still the 1st choice, which is what prices
+          // and what the primary tag shows) so IMS's mandi list can also tell ops "if 1st choice
+          // isn't at the mandi today, here's the 2nd/3rd choice" instead of only ever naming one.
+          const colorPrefs = sw ? null : (Array.isArray(prefArr) && prefArr.length > 1 ? prefArr : null);
           if (realUnits > 0 && buyParent) {
-            const agg = flowerAgg.get(buyId) || { totalQty: 0, unitPrice: bp, name: buyParent.name || "Flower", unit: buyParent.unit || "" };
+            const agg = flowerAgg.get(buyId) || { totalQty: 0, unitPrice: bp, name: buyParent.name || "Flower", unit: buyParent.unit || "", colorVariant, colorPrefs };
             agg.totalQty += realUnits;
             agg.unitPrice = bp; // refresh — mirrors the Florals tab's own aggregation
+            if (colorVariant && !agg.colorVariant) agg.colorVariant = colorVariant;
+            if (colorPrefs && !agg.colorPrefs) agg.colorPrefs = colorPrefs;
             flowerAgg.set(buyId, agg);
           }
           const effAQty = effA * (zoneRepeat ? REPEAT_ART_QTY_MULT : 1);
@@ -5874,7 +5899,7 @@ export default function StudioApp() {
       if (!(v.totalQty > 0)) return;
       const cost = v.totalQty * v.unitPrice;
       tReal += cost;
-      if (!fbreak[v.name]) fbreak[v.name] = { name: v.name, qty: 0, cost: 0, unit: v.unit };
+      if (!fbreak[v.name]) fbreak[v.name] = { name: v.name, qty: 0, cost: 0, unit: v.unit, colorVariant: v.colorVariant || null, colorPrefs: v.colorPrefs || null };
       fbreak[v.name].qty += v.totalQty; fbreak[v.name].cost += cost;
     });
     return { totalReal: tReal, totalArtificial: tArt, grandTotal: tReal + tArt, breakdown: Object.values(fbreak).map(f => ({ ...f, qty: Math.ceil(f.qty), cost: Math.round(f.cost) })).sort((a, b) => b.cost - a.cost), artFlowerBunches, artGreenBunches, income: { real: realIncome, art: artIncome } };
@@ -10265,9 +10290,17 @@ export default function StudioApp() {
     // declared rather than inferred — the same correction made for priceMode above.
     setAvailModal({ zoneKey, idx, elName: el?.name || "", subcat, date, loading: true, items: [], selectedId: el?.imsId || el?.invId || null, onPick: onPick || null, splitQty: Number(opts?.splitQty) || 0, onSplit: opts?.onSplit || null, pickHint: opts?.pickHint || "", neededLabel: opts?.neededLabel || "", unitLabel: opts?.unitLabel || "" });
     try {
-      const { inventory, blocksForDate } = await loadAvailability(date);
+      const { inventory, blocksForDate, blocksDetailForDate } = await loadAvailability(date);
       const target = String(subcat).toLowerCase().trim();
       const pickerVenue = activeFnMeta?.venue || venue || "";
+      // Net THIS deal's own already-reserved stock out of blocksForDate, same as
+      // getElPriceFromInventory's inline shortfall check — without it, a booked deal's own
+      // real-blocks reservation reads as competing demand from someone else, so "free" sits
+      // permanently low at whatever it was the last time the blocks table was reconciled
+      // (e.g. 18 total − 12 reserved at Sold = "6 free" forever), and never moves when the live
+      // Build qty is edited afterward, since that edit doesn't touch the blocks table until the
+      // next reconcile. Owner-reported: bumping a booked deal's qty from 12 to 13 still showed 6.
+      const eo = (eventOrders || []).find((e) => e.clientId === activeClientId) || (eventOrders || []).find((e) => (e.clientName || "") === (clientName || "").trim());
       // Where each inventory item is already placed for THIS guest — every function of the deal,
       // every enabled zone — minus the element being swapped right now, so the "free" count never
       // over-counts stock this same client has already committed elsewhere in the deal.
@@ -10338,7 +10371,8 @@ export default function StudioApp() {
           // capped by what's blocked on the date. Other venues' stock is still listed on the card
           // ("30 at AP") so it's visible, it just isn't offered as pickable.
           const _slack = venueSlackFor(fvCfgForRepeat, pickerVenue, it);
-          const free = Math.max(0, Math.min(getStudioAvailable(it, blocksForDate), availableAtVenue(fvCfgForRepeat, pickerVenue, it)) - (usedQty[it.id] || 0));
+          const netBlocksForDate = netOwnReservedBlocksLive(blocksForDate, it.id, blocksDetailForDate, eo?.id);
+          const free = Math.max(0, Math.min(getStudioAvailable(it, netBlocksForDate), availableAtVenue(fvCfgForRepeat, pickerVenue, it)) - (usedQty[it.id] || 0));
           return { id: it.id, name: it.name, photo: (Array.isArray(it.photoUrls) && it.photoUrls[0]) || it.img || "", free, total: Number(it.qty) || 0, usedIn: usedElsewhere[it.id] || [], venueSlack: _slack, unit: it.unit || "",
             // Out of stock AND can't be made in production (IMS Inventory's "Can be made" checkbox) —
             // genuinely unpickable here, not just a cost%-priced shortfall. StudioModals.jsx's picker
@@ -10360,7 +10394,7 @@ export default function StudioApp() {
       prefetchImages(items.map(i => i.photo && thumbUrl(i.photo, AVAIL_THUMB)), { concurrency: 8 });
       setAvailModal(m => (m && m.zoneKey === zoneKey && m.idx === idx) ? { ...m, loading: false, items } : m);
     } catch { setAvailModal(m => m ? { ...m, loading: false } : m); }
-  }, [imsInventory, activeFnMeta, clientDate, loadAvailability, getStudioAvailable, rcFactorByKey, zoneConfig, venue, guestPriceMultiplier, hideDiscountFromClient, fvCfgForRepeat, dealCheckData, studioFloralData, collectAllFunctionData, activeFnIdx]);
+  }, [imsInventory, activeFnMeta, clientDate, loadAvailability, getStudioAvailable, rcFactorByKey, zoneConfig, venue, guestPriceMultiplier, hideDiscountFromClient, fvCfgForRepeat, dealCheckData, studioFloralData, collectAllFunctionData, activeFnIdx, eventOrders, activeClientId, clientName]);
   const saveAvailPick = useCallback(() => {
     if (!availModal) return;
     const { zoneKey, idx, selectedId, items, onPick } = availModal;

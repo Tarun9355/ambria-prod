@@ -609,7 +609,9 @@ export const calcFabricAllocationTotal = (allocation, stockArray, qtyField, rent
 // §23 Phase 2.9f (26 May 2026) — Auto-fill fabric allocation from function palette + IMS stock.
 // Strategy: fuzzy-match palette anchor colour names against IMS stock-array colours.
 // If matches found → pick the highest-stock matched colour, allocate full qty to it.
-// If no fuzzy match → fall back to highest-stock colour overall (largest pool).
+// If an anchor was picked but none fuzzy-matches stock → allocate to the anchor's own name (shows
+// as a real shortfall, e.g. "Ivory — 0 in stock", not a silent substitution).
+// If no anchor at all → fall back to highest-stock colour overall (largest pool).
 // Returns: [{qty, colour}] allocation array, or [] if no stock at all.
 export const fuzzyColourMatch = (anchorName, stockColourName) => {
   if (!anchorName || !stockColourName) return false;
@@ -701,7 +703,15 @@ export const autoFillFabricAllocation = (totalQty, paletteAnchors, stockArray, q
   if (bestAnchorMatch) {
     return [{ qty: totalQty, colour: bestAnchorMatch.colour }];
   }
-  // 2. Fallback: pick the colour with highest stock overall (largest pool, minimizes shortfall risk)
+  // 2. An explicit colour WAS picked (anchors non-empty) but nothing in stock matches it — surface
+  // the shortfall against the colour actually wanted (e.g. "Ivory") rather than silently
+  // substituting a completely different colour that happens to have stock (e.g. "Black") and
+  // reporting it as fine. The old behaviour here made Ivory requirements quietly disappear into
+  // whatever colour had the most stock, with no sign anywhere that a substitution had happened.
+  if (anchors.length > 0) {
+    return [{ qty: totalQty, colour: anchors[0] }];
+  }
+  // 3. No colour preference at all — fall back to whatever has the most stock.
   const bestOverall = stocks.reduce((best, s) => {
     const v = Number(s[qtyField]) || 0;
     return (!best || v > best.stockVal) ? { colour: s.colour, stockVal: v } : best;
@@ -710,6 +720,18 @@ export const autoFillFabricAllocation = (totalQty, paletteAnchors, stockArray, q
     return [{ qty: totalQty, colour: bestOverall.colour }];
   }
   return [];
+};
+
+// ═══ Direct-add mandi elements (owner ask, 2026-10-17) ═══ A raw mandi commodity is normally only
+// ever priced through a recipe/blend — never added to a build as its own element. "Loose Petals"
+// was the one named exception (by the kg, variant picked afterward on the card). Generalized here:
+// any mandi item the Mandi Prices admin has given a markup (its selling price over cost when
+// billed directly, e.g. straight sale of a raw flower) becomes directly addable the same way,
+// instead of staying a single hardcoded name forever. Loose Petals keeps working unconditionally
+// even if it's never given a markup (billed at bare mandi cost, same as always).
+export const isDirectMandiElement = (m) => {
+  const name = String(m?.name || "").trim().toLowerCase();
+  return name === "loose petals" || Number(m?.markup) > 0;
 };
 
 // ═══ Flower Palette colour-ratio (owner ask, 2026-10-17) ═══

@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { fmt } from "../../lib/format";
-import { mpDayWise, mpBaseDay, mpEffDay, mpEffWindows, mpLineCost, mpDayCost, isLiveEventOrder, phone10 } from "../../lib/ims/helpers";
+import { mpDayWise, mpBaseDay, mpEffDay, mpEffWindows, mpLineCost, mpDayCost, mpDayDihari, aggregateEventManpower, isLiveEventOrder, phone10 } from "../../lib/ims/helpers";
 import { uploadAudioToStorage } from "../../lib/storage";
 import { DEPTS as SHARED_DEPTS, catToDept as sharedCatToDept, userDepartments } from "../../lib/ims/deptClassify";
 import { TabsMenu } from "../../components/ui";
@@ -758,7 +758,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       // departments by each part's own category, so a row can be a component of a kit owned by
       // another department. It is the only record of that parent, and the PDF needs it to avoid
       // reporting a bolted-on part as a loose item.
-      const rows = deptInvSnap.map((x, i) => ({ id: x.name + i, invId: x.imsId || null, name: x.name, photo: x.photo || "", qty: x.qty || 0, unit: x.unit || 0, total: x.total || 0, sub: x.sub || "", isKit: !!x.isKit, fromKit: x.fromKit || null, components: Array.isArray(x.components) ? x.components : null, shortQty: x.shortQty || 0, shortCost: x.shortCost || 0, prodOrBuy: x.prodOrBuy || null, isSwapped: swapInfo.has(x.name), swappedFrom: swapInfo.get(x.name)?.swappedFrom || null }));
+      const rows = deptInvSnap.map((x, i) => ({ id: x.name + i, invId: x.imsId || null, name: x.name, photo: x.photo || "", qty: x.qty || 0, unit: x.unit || 0, total: x.total || 0, sub: x.sub || "", isKit: !!x.isKit, fromKit: x.fromKit || null, components: Array.isArray(x.components) ? x.components : null, shortQty: x.shortQty || 0, shortCost: x.shortCost || 0, outOfStock: !!x.outOfStock, prodOrBuy: x.prodOrBuy || null, isSwapped: swapInfo.has(x.name), swappedFrom: swapInfo.get(x.name)?.swappedFrom || null }));
       // Short items first (need chasing/ordering), then Production/Buying (not real stock — worth
       // knowing apart from what's actually reserved), then everything else — the order requested
       // for this list. Stable within each group: Array.prototype.sort is stable, so ties keep the
@@ -962,42 +962,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   // there rather than added up across departments — adding it would count the same people 7 times.
   // A schedule day's short name: the date, or the setup / dismantle / gap day it stands for.
   const phaseLbl = (d) => d.phase === "minusOne" ? "−1 setup" : d.phase === "dismantle" ? "+1 dismantle" : d.phase === "gap" ? "gap" : (d.date || "event");
-  const eventManpower = () => {
-    const md = (sel?.manpowerDetail && typeof sel.manpowerDetail === "object") ? sel.manpowerDetail : {};
-    const byType = new Map(); const byDept = []; const labDays = new Map();
-    let total = 0, totalDihari = 0;
-    Object.entries(md).forEach(([d, rows]) => {
-      if (!Array.isArray(rows) || !rows.length) return;
-      const dd = sel?.deptOps?.[d] || {};
-      const ovAll = (dd.mpOverrides && typeof dd.mpOverrides === "object") ? dd.mpOverrides : {};
-      let dCost = 0, dDihari = 0, dLab = 0;
-      rows.forEach(s => {
-        const ov = ovAll[s.type] || {};
-        const r = { type: s.type, count: ov.count != null ? ov.count : (s.count ?? ""), rate: ov.rate != null ? ov.rate : (s.rate || 0), shared: !!s.shared, sysCount: s.count, sysRate: s.rate || 0, sysCost: s.cost || 0, schedule: s.schedule || null, splitInfo: s.splitInfo || null, trace: s.trace || null };
-        const cost = Number(mpLineCost(r, dd.mpDay || {}, ovAll, dd.mpWin || {}, dd.mpWinCount || {})) || 0;
-        const rate = Number(r.rate) || 0;
-        const dih = rate > 0 ? cost / rate : 0;
-        dCost += cost; dDihari += dih; if (s.type === "Labours") dLab += dih;
-        const t = byType.get(s.type) || { type: s.type, cost: 0, dihari: 0, peak: 0, shared: !!s.shared, rows: [] };
-        t.cost += cost; t.dihari += dih;
-        // Kept per department for the row's "how" modal: what each department's share came to,
-        // and its days with that department's own edits applied (crew × shifts).
-        t.rows.push({ dept: d, rate, dihari: dih, cost, trace: s.trace || null, schedule: s.schedule || null,
-          days: Array.isArray(s.schedule) ? s.schedule.map(day => ({ label: phaseLbl(day), crew: Math.round(mpEffDay(r, day, dd.mpDay || {}) * 10) / 10, shifts: mpEffWindows(r, day, dd.mpWin || {}) })) : [] });
-        if (s.shared && Array.isArray(s.schedule)) {
-          s.schedule.forEach(day => {
-            const c = Number(day.count) || 0;
-            t.peak = Math.max(t.peak, c);
-            if (s.type === "Labours") { const k = `${day.date}|${day.phase || ""}`; const prev = labDays.get(k); labDays.set(k, { label: day.phase === "minusOne" ? "−1 setup" : day.phase === "dismantle" ? "+1 dismantle" : day.phase === "gap" ? "gap" : (day.date || "event"), count: Math.max(c, prev ? prev.count : 0) }); }
-          });
-        } else t.peak += Number(r.count) || 0;
-        byType.set(s.type, t);
-      });
-      byDept.push({ dept: d, cost: dCost, dihari: dDihari, labDihari: dLab });
-      total += dCost; totalDihari += dDihari;
-    });
-    return { types: [...byType.values()].sort((a, b) => b.cost - a.cost), depts: byDept.sort((a, b) => b.cost - a.cost), labDays: [...labDays.values()], total, totalDihari };
-  };
+  // Moved to lib/ims/helpers.js (aggregateEventManpower) so Deal Check's Manpower tab can show the
+  // same ops-reconciled numbers — see its own comment for why.
+  const eventManpower = () => aggregateEventManpower(sel?.manpowerDetail, sel?.deptOps);
   const labDetailFor = (d) => { const rows = sel?.manpowerDetail?.[d]; return Array.isArray(rows) ? rows.find(r => r.type === "Labours") : null; };
   const labEffPerDay = (d, day) => { const md = sel?.deptOps?.[d]?.mpDay?.Labours || {}; if (md[day.date] != null) return Number(md[day.date]) || 0; return day.share != null ? (Number(day.count) || 0) * Number(day.share) : (Number(day.count) || 0); };
   const labShiftsFor = (d, day) => { const mw = sel?.deptOps?.[d]?.mpWin?.Labours; const ids = mw && mw[day.date] != null ? mw[day.date] : (Array.isArray(day.windowIds) ? day.windowIds : null); return ids ? ids.length : (Number(day.windows) || 0); };
@@ -1058,9 +1025,14 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const swapByName = new Map(mandiCatalogue.filter(c => c?.swap?.toId).map(c => [String(c.name || "").trim().toLowerCase(), c]));
   const seedMandi = fpFlowers.filter(f => !f.artificial && (Number(f.qty) || 0) > 0)
     .map(f => {
-      const row = { name: f.name, unit: f.unit || "", projQty: Number(f.qty) || 0, projCost: Number(f.cost) || 0, qty: Number(f.qty) || 0, price: f.qty ? Math.round(((Number(f.cost) || 0) / f.qty) * 100) / 100 : 0 };
+      // colorVariant — the salesperson's colour pick in Deal Check (ranked preference or the
+      // legacy single pick), carried through calcFnFloralSourcingCost's own breakdown
+      // (StudioApp.jsx) so the purchase manager sees WHICH colour to actually buy, not just a
+      // bare flower name. Never present on a swapped-in flower (a colour picked for the original
+      // says nothing about its replacement).
+      const row = { name: f.name, unit: f.unit || "", projQty: Number(f.qty) || 0, projCost: Number(f.cost) || 0, qty: Number(f.qty) || 0, price: f.qty ? Math.round(((Number(f.cost) || 0) / f.qty) * 100) / 100 : 0, colorVariant: f.colorVariant || null, colorPrefs: f.colorPrefs || null };
       const sw = mandiSwapOf(swapByName.get(String(f.name || "").trim().toLowerCase()), mandiCatalogue);
-      return sw ? { ...row, projUnit: row.unit, name: sw.to.name, unit: sw.to.unit || row.unit, qty: Math.round(row.qty * sw.ratio * 100) / 100, price: Number(sw.to.currentPrice) || 0, swappedFrom: f.name } : row;
+      return sw ? { ...row, projUnit: row.unit, name: sw.to.name, unit: sw.to.unit || row.unit, qty: Math.round(row.qty * sw.ratio * 100) / 100, price: Number(sw.to.currentPrice) || 0, swappedFrom: f.name, colorVariant: null, colorPrefs: null } : row;
     });
   const mandiRows = Array.isArray(deptData.mandiLines) ? deptData.mandiLines : seedMandi;
   // Real shopping hasn't been logged until someone actually edits a row — until then, mandiRows is
@@ -1641,7 +1613,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     if (!Array.isArray(sch) || !sch.length) return null;
     const editable = dayWise(r);
     const winDefs = (dihari[r.type] && Array.isArray(dihari[r.type].windows)) ? dihari[r.type].windows : [];
-    const totalDihari = sch.reduce((s, d) => s + effDay(r, d) * effWin(r, d), 0);
+    const totalDihari = sch.reduce((s, d) => s + mpDayDihari(r, d, mpDay, mpWin, mpWinCount), 0);
     // ONE line per day: [how] [day] [per-shift crew …] ··· [crew × shifts]. It was two lines a day —
     // the day and its crew on top, the shifts on their own row underneath — which doubled the height
     // and left most of both rows empty. The long cumulative-max rule moved into the ⓘ tooltip.
@@ -1665,12 +1637,20 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           const dayKey = `${r.type}|${d.date}`;
           const howOpen = !!mpDayHow[dayKey];
           const hasShare = r.shared && d.share != null;
+          // A head setting different crew PER SHIFT (mpWinCount, the "+ dihari" inputs above) means
+          // there is no longer one single day-level crew count the "crew × shifts" caption below can
+          // multiply out to — each shift already carries its own number. winOverridden gates both
+          // that caption and the share hint, which are otherwise still accurate for the common case
+          // (uniform crew across every shift that day).
+          const winOverridden = !!(mpWinCount[r.type] && mpWinCount[r.type][d.date] && Object.keys(mpWinCount[r.type][d.date]).length);
+          const dayDihariReal = mpDayDihari(r, d, mpDay, mpWin, mpWinCount);
           // The crew figure is rounded for display (you can't book "0.6 of a person"), but the day's
           // TOTAL dihari is summed from the unrounded fractional share so the line's cost stays
           // reconciled to the rupee. This hint surfaces that fraction so "1 crew × 2" and "1 crew × 1"
           // don't look like they should add to 3 when the real total is 2. Suppressed once the head
-          // has typed an explicit override (ov) — then raw and rounded already match.
-          const rawShare = hasShare ? effDay(r, d) : null;
+          // has typed an explicit override (ov), or set per-shift crew directly (winOverridden) —
+          // either way raw and shown already match, or the day-level share no longer applies at all.
+          const rawShare = (hasShare && !winOverridden) ? effDay(r, d) : null;
           const shareHint = rawShare != null && Math.abs(rawShare - showDay(r, d)) >= 0.05 ? rawShare.toFixed(2) : null;
           const hasWin = winDefs.length > 0 && (Array.isArray(d.windowIds) || (mpWin[r.type] && mpWin[r.type][d.date] != null));
           return (
@@ -1705,7 +1685,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
                         title={canManpower ? "Crew this day" : "Requires \"Manage Manpower\""}
                         className={"w-12 rounded-md ring-1 px-1 py-0.5 text-[14px] font-semibold text-center text-gray-900 " + (ov ? "ring-amber-400 bg-amber-50" : "ring-gray-200 bg-white") + (canManpower ? "" : " opacity-50 cursor-not-allowed")} />
                     : <b className="text-[14px] text-gray-900">{d.count}</b>}
-                  <span className="whitespace-nowrap">crew × <b className="text-gray-800">{shifts}</b></span>
+                  {winOverridden
+                    ? <span className="whitespace-nowrap" title="Per-shift crew counts differ this day, so the total is the sum of each shift's own count, not crew × shifts.">= <b className="text-gray-800">{Math.round(dayDihariReal)}</b> dihari</span>
+                    : <span className="whitespace-nowrap">crew × <b className="text-gray-800">{shifts}</b></span>}
                 </span>
               </div>
               {howOpen && (
@@ -1814,7 +1796,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     const finish = buildFinish(sel?.functionsDetail, inventory, settings?.printMaterials);
     const invRows = [];
     blockedItemsGrouped.forEach(it => {
-      const flags = [it.isKit ? "KIT" : "", it.shortQty > 0 ? `SHORT x${it.shortQty}` : "", it.prodOrBuy ? it.prodOrBuy.toUpperCase() : "", it.isSwapped ? "SWAPPED" : ""].filter(Boolean).join(" · ");
+      const flags = [it.isKit ? "KIT" : "", it.shortQty > 0 ? (it.outOfStock ? "OUT OF STOCK" : `SHORT x${it.shortQty}`) : "", it.prodOrBuy ? it.prodOrBuy.toUpperCase() : "", it.isSwapped ? "SWAPPED" : ""].filter(Boolean).join(" · ");
       const paint = finish.paintFor(it);
       const extra = paint ? `<div class="sub">Paint: ${esc(paint)}</div>` : "";
       invRows.push(`<tr><td>${esc(it.name)}${flags ? ` <span class="tag">${esc(flags)}</span>` : ""}<div class="sub">${esc(it.sub || "—")}</div>${extra}</td><td class="n">${esc(it.qty)}</td><td class="n">${money(it.unit)}</td><td class="n b">${money(it.total)}</td></tr>`);
@@ -4121,7 +4103,9 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                                 ) : (
                                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 font-bold">KIT</span>
                                 ))}
-                                {it.shortQty > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-bold">SHORT ×{it.shortQty}</span>}
+                                {it.shortQty > 0 && (it.outOfStock
+                                  ? <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-700 font-bold">OUT OF STOCK</span>
+                                  : <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-bold">SHORT ×{it.shortQty}</span>)}
                                 {it.prodOrBuy && <span className={"text-[10px] px-1.5 py-0.5 rounded font-bold " + (it.prodOrBuy === "buying" ? "bg-orange-100 text-orange-700" : "bg-purple-100 text-purple-700")}>{it.prodOrBuy === "buying" ? "🛒 BUYING" : "🏭 PRODUCTION"}</span>}
                                 {it.isSwapped && <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-100 text-sky-700 font-bold">🔁 SWAPPED</span>}
                               </div>
@@ -4130,7 +4114,9 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                                   name they describe. */}
                               <div className="text-xs text-gray-500 mt-0.5">
                                 <div className="truncate" title={it.sub || ""}>{it.sub || "—"}</div>
-                                {it.shortQty > 0 && <div className="text-amber-600 mt-0.5">{it.shortQty} short of stock — priced at cost, chase or produce</div>}
+                                {it.shortQty > 0 && (it.outOfStock
+                                  ? <div className="text-red-600 mt-0.5">{it.shortQty} out of stock — can't be made in production, pick an alternative in Build</div>
+                                  : <div className="text-amber-600 mt-0.5">{it.shortQty} short of stock — priced at cost, chase or produce</div>)}
                                 {it.isSwapped && <div className="text-sky-600 mt-0.5">swapped in for {it.swappedFrom}</div>}
                                 {invFinish.paintFor(it) && <div className="text-pink-700 mt-0.5">🎨 Paint: {invFinish.paintFor(it)}</div>}
                               </div>
@@ -4291,7 +4277,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                               <div>
                                 <div className="text-[11.5px] font-semibold text-gray-500 mb-1.5">On site, by day</div>
                                 <div className="flex flex-wrap gap-1.5">
-                                  {days.map((d, i) => <span key={i} className="inline-flex items-center gap-1.5 rounded-lg bg-white ring-1 ring-gray-200 px-2.5 py-1"><span className="text-gray-500">{d.label}</span><b className="text-gray-900 tabular-nums">{d.crew}</b><span className="text-gray-400">× {d.shifts} shift{d.shifts === 1 ? "" : "s"}</span></span>)}
+                                  {days.map((d, i) => <span key={i} className="inline-flex items-center gap-1.5 rounded-lg bg-white ring-1 ring-gray-200 px-2.5 py-1" title="Crew × shift count is a rough guide — when a day's shifts carry different crew, the dihari figure is the real total."><span className="text-gray-500">{d.label}</span><b className="text-gray-900 tabular-nums">{d.crew}</b><span className="text-gray-400">× {d.shifts} shift{d.shifts === 1 ? "" : "s"} = {d.dihari} dihari</span></span>)}
                                 </div>
                               </div>
                             )}
@@ -4478,8 +4464,13 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
               </div>
               <div className="px-3 sm:px-4 py-3 space-y-2">
                 {dept === "Floral" && (() => {
-                  const projectedTotal = Number(fp.projected) || 0;
-                  const variance = mandiActualTotal - projectedTotal;
+                  // Real-only — the table below lists real mandi flowers alone (artificial is its own
+                  // line in the "Floral cost to source" card above), so its own Total row must sum to
+                  // what's actually shown in it, not silently fold the artificial amount back in
+                  // (owner-reported: the real-shopping Total read ₹47,997 — the combined floral cost —
+                  // when every row on screen summed to the real-only ₹36,308).
+                  const projectedTotal = mandiRows.reduce((s, r) => s + (Number(r.projCost) || 0), 0);
+                  const variance = mandiActualReal - projectedTotal;
                   return (
                     <div className="space-y-2">
                       {/* Ops view — FLORAL COST (what ops spends to source flowers). Client billing is
@@ -4546,7 +4537,17 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                               const lineVar = lineActual - (Number(r.projCost) || 0);
                               return (
                                 <div key={i} className="grid grid-cols-[1fr_auto_auto] gap-2 px-3 py-1.5 items-center">
-                                  <div className="min-w-0"><div className="text-xs font-medium text-gray-800 truncate">{r.name}</div>{r.swappedFrom && <div className="text-[10px] font-semibold text-amber-700">🔁 swapped for {r.swappedFrom} (not in mandi)</div>}{r.projQty > 0 && <div className="text-[10px] text-gray-400">{r.projQty} {r.swappedFrom ? "" : r.unit} {r.swappedFrom ? `of ${r.swappedFrom} ` : ""}planned</div>}</div>
+                                  <div className="min-w-0 flex items-center gap-2">
+                                    {r.colorVariant?.photoUrl && <img src={r.colorVariant.photoUrl} alt={r.colorVariant.label || ""} onClick={() => setZoomImg(r.colorVariant.photoUrl)} className="w-7 h-7 rounded object-cover border border-gray-200 shrink-0 cursor-zoom-in" title={r.colorVariant.label || ""} />}
+                                    <div className="min-w-0">
+                                      <div className="text-xs font-medium text-gray-800 truncate">{r.name}{r.colorVariant?.label && <span className="ml-1.5 font-normal text-[10px] text-purple-600">🎨 {r.colorVariant.label}</span>}</div>
+                                      {Array.isArray(r.colorPrefs) && r.colorPrefs.length > 1 && (
+                                        <div className="text-[10px] text-gray-400">if not at the mandi: {r.colorPrefs.slice(1).map(p => p.label).join(", ")}</div>
+                                      )}
+                                      {r.swappedFrom && <div className="text-[10px] font-semibold text-amber-700">🔁 swapped for {r.swappedFrom} (not in mandi)</div>}
+                                      {r.projQty > 0 && <div className="text-[10px] text-gray-400">{r.projQty} {r.swappedFrom ? "" : r.unit} {r.swappedFrom ? `of ${r.swappedFrom} ` : ""}planned</div>}
+                                    </div>
+                                  </div>
                                   <div className="text-right w-28 text-xs text-gray-400">{r.projCost > 0 ? fmt(r.projCost) : <span className="text-amber-500">extra</span>}</div>
                                   <div className="flex items-center justify-end gap-1 w-60">
                                     <input type="number" min="0" value={r.qty} onChange={e => setMandi(i, "qty", e.target.value)} className="shrink-0 w-12 border rounded px-1.5 py-1 text-xs text-center" title="qty" />
@@ -4562,13 +4563,13 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                         )}
                         {/* Artificial flowers/greens is NOT shown again here — it's already its own
                             line in the "Floral cost to source" summary card above. This real-shopping
-                            list is scoped to real mandi purchases only; the Total row below still adds
-                            artificialProj/fp.artificial into mandiActualTotal regardless. */}
+                            list is scoped to real mandi purchases only, and so is its own Total row
+                            (mandiActualReal) — it must match the sum of the rows actually on screen. */}
                         {/* Totals row */}
                         <div className="grid grid-cols-[1fr_auto_auto] gap-2 px-3 py-2 bg-emerald-50 items-center">
                           <span className="text-xs font-bold text-emerald-900">Total</span>
                           <span className="text-right w-28 text-xs font-semibold text-gray-500">{fmt(projectedTotal)}</span>
-                          <span className="text-right w-60 text-sm font-bold text-emerald-800 pr-6">{fmt(mandiActualTotal)}</span>
+                          <span className="text-right w-60 text-sm font-bold text-emerald-800 pr-6">{fmt(mandiActualReal)}</span>
                         </div>
                         </div>
                       </div>
@@ -4587,7 +4588,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                         )}
                         {mandiQuery.trim() && mandiSuggest.length === 0 && <div className="absolute z-20 left-0 right-0 mt-1 bg-white border rounded-lg shadow-lg px-3 py-2 text-xs text-gray-400">No match in Mandi Prices. <button onClick={() => addMandi({ name: mandiQuery.trim(), unit: "bundle", currentPrice: 0 })} className="text-emerald-600 font-medium">Add "{mandiQuery.trim()}" anyway</button></div>}
                       </div>
-                      {mandiActualTotal > 0 && projectedTotal > 0 && (
+                      {mandiActualReal > 0 && projectedTotal > 0 && (
                         <div className={"text-xs font-semibold " + (variance > 0 ? "text-red-600" : "text-emerald-700")}>
                           {variance > 0 ? "▲ Over" : variance < 0 ? "▼ Under" : "On"} plan by {fmt(Math.abs(variance))} — salesperson's P&L uses the real {fmt(mandiActualTotal)}.
                         </div>

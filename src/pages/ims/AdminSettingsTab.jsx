@@ -1088,7 +1088,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
             </div>
             {/* Column header strip */}
             <div className="px-4 py-2 bg-gray-50 border-t border-b border-gray-200 text-[10px] uppercase tracking-wide font-semibold text-gray-500 select-none"
-              style={{ display: "grid", gridTemplateColumns: "16px 56px 140px 110px 80px 70px 110px 70px 84px 70px 110px 40px 48px", gap: "8px", alignItems: "center" }}>
+              style={{ display: "grid", gridTemplateColumns: "16px 56px 140px 110px 80px 70px 110px 70px 84px 70px 110px 64px 40px 48px", gap: "8px", alignItems: "center" }}>
               <span>&nbsp;</span>
               <span className="text-center" title="Parent photo. With variants: shows cheapest variant's photo. Without variants: upload directly.">Photo</span>
               <span>Flower Name</span>
@@ -1100,6 +1100,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
               <span className="text-center" title={`What 1 unit of this flower costs as artificial = bunches/unit × ₹/bunch (🌹 ₹${artFlowerPerBunch.toFixed(2)} · 🌿 ₹${artGreenPerBunch.toFixed(2)}). Mapping flowers use their mapped inventory item's cost instead. Studio charges this × ${artStudioMarkup} markup.`}>Art ₹/Unit</span>
               <span className="text-center" title="Previous price for trend comparison">Prev Price</span>
               <span className="text-center" title="Current price. Auto = lowest variant when variants exist; editable when no variants.">Current Price ₹</span>
+              <span className="text-center" title="Selling markup % over mandi price. Give this a value to make the flower directly addable in Build (same as Loose Petals) — billed at mandi price × (1 + markup%). Leave blank for recipe-only flowers.">Markup %</span>
               <span className="text-center" title="Price trend vs previous">Trend</span>
               <span>&nbsp;</span>
             </div>
@@ -1129,7 +1130,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                 return (
                   <div key={p.id} className="bg-white">
                     <div className="px-4 py-3 hover:bg-gray-50 cursor-pointer"
-                      style={{ display: "grid", gridTemplateColumns: "16px 56px 140px 110px 80px 70px 110px 70px 84px 70px 110px 40px 48px", gap: "8px", alignItems: "center" }}
+                      style={{ display: "grid", gridTemplateColumns: "16px 56px 140px 110px 80px 70px 110px 70px 84px 70px 110px 64px 40px 48px", gap: "8px", alignItems: "center" }}
                       onClick={() => setSMandiExpanded((prev) => { const s = new Set(prev); if (s.has(p.id)) s.delete(p.id); else s.add(p.id); return s; })}>
                       <span className="text-xs text-gray-400 select-none">{expanded ? "▼" : "▶"}</span>
                       {/* Photo */}
@@ -1265,6 +1266,13 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                                 // through 0 and must not pop a dialog mid-typing.
                                 onBlur={(e) => { if (!hasVariants && (parseFloat(e.target.value) || 0) === 0 && !p.swap?.toId) openMandiSwap(p); }}
                                 className={"border rounded px-2 py-1 text-xs text-center w-20 font-semibold " + (hasVariants ? "bg-gray-100 text-gray-500 cursor-not-allowed" : "bg-white")} />
+                            </div>
+                            <div className="flex items-center justify-center gap-0.5" onClick={(e) => e.stopPropagation()}
+                              title="Selling markup % over mandi price. Give this a value to make the flower directly addable in Build (same as Loose Petals) — billed at mandi price × (1 + markup%). Leave blank for recipe-only flowers.">
+                              <input type="number" min="0" step="1" value={p.markup ?? ""} placeholder="0"
+                                onChange={(e) => { const v = parseFloat(e.target.value); setSettings((s) => ({ ...s, mandiCatalogue: s.mandiCatalogue.map((x) => x.id === p.id ? { ...x, markup: isNaN(v) ? null : v } : x) })); }}
+                                className="border rounded px-1.5 py-1 text-xs text-center w-12" />
+                              <span className="text-gray-400 text-[10px]">%</span>
                             </div>
                             <span className={"text-center text-base " + (hasVariants ? "text-gray-300" : parentTrendCls)} title={hasVariants ? "Trend shown per variant on expand" : "Price trend vs previous"}>
                               {hasVariants ? "—" : parentTrend}
