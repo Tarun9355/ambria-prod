@@ -4546,34 +4546,40 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                                 </div>
                               );
                             })}
-                            {(fp.artificial || artificialProj > 0) && (() => {
-                              const art = fp.artificial;
-                              const artTot = art ? art.total : artificialProj;
-                              return (
-                                <div className="bg-gray-50/60">
-                                  <div className="grid grid-cols-[1fr_auto_auto] gap-2 px-3 py-1.5 items-center">
-                                    <div className="text-xs text-gray-500 flex items-center gap-1.5 min-w-0">
-                                      {art && <button onClick={() => setArtHowOpen(o => !o)} className="shrink-0 text-[10px] font-semibold text-blue-500 hover:text-blue-700 border border-blue-200 rounded px-1 leading-tight" title="How the artificial cost was calculated">{artHowOpen ? "▾" : "▸"} how</button>}
-                                      <span className="truncate">Artificial flowers / greens <span className="text-[10px] text-gray-400">(not mandi-shopped)</span></span>
-                                    </div>
-                                    <div className="text-right w-28 text-xs text-gray-400">{fmt(artTot)}</div>
-                                    <div className="text-right w-60 text-xs text-gray-500 pr-6">{fmt(artTot)}</div>
-                                  </div>
-                                  {art && artHowOpen && (
-                                    <div className="px-3 pb-2">
-                                      <div className="bg-white border rounded-lg p-2 text-[10px] text-gray-600 space-y-1">
-                                        {art.flowerBunches > 0 && <div>🌸 Flowers: <b>{art.flowerBunches}</b> bunches ÷ {art.flowerBPK}/kg = <b>{art.flowerKg} kg</b> × {fmt(art.flowerRate)}/kg = <b className="text-gray-900">{fmt(art.flowerCost)}</b></div>}
-                                        {art.greenBunches > 0 && <div>🌿 Greens: <b>{art.greenBunches}</b> bunches ÷ {art.greenBPK}/kg = <b>{art.greenKg} kg</b> × {fmt(art.greenRate)}/kg = <b className="text-gray-900">{fmt(art.greenCost)}</b></div>}
-                                        {art.flowerBunches <= 0 && art.greenBunches <= 0 && <div className="text-gray-400 italic">No artificial bunches captured — set "Art Bunches/Unit" on flowers in the Mandi tab.</div>}
-                                        <div className="pt-1 text-right">Total artificial = <b className="text-gray-900">{fmt(art.total)}</b></div>
-                                      </div>
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })()}
                           </div>
                         )}
+                        {/* Artificial flowers/greens — a flat system estimate (bunches × a fixed ₹/kg
+                            rate), not a real mandi purchase an ops person shops and reconciles line by
+                            line like the real flowers above. It used to render as the LAST row inside
+                            that same real-shopping list, reading as just another flower to go buy —
+                            moved out to its own clearly separate line (no qty/price inputs, because
+                            there's nothing to shop), still counted into the Total just below. */}
+                        {(fp.artificial || artificialProj > 0) && (() => {
+                          const art = fp.artificial;
+                          const artTot = art ? art.total : artificialProj;
+                          return (
+                            <div className="bg-gray-50/60 border-t border-gray-200">
+                              <div className="grid grid-cols-[1fr_auto_auto] gap-2 px-3 py-1.5 items-center">
+                                <div className="text-xs text-gray-500 flex items-center gap-1.5 min-w-0">
+                                  {art && <button onClick={() => setArtHowOpen(o => !o)} className="shrink-0 text-[10px] font-semibold text-blue-500 hover:text-blue-700 border border-blue-200 rounded px-1 leading-tight" title="How the artificial cost was calculated">{artHowOpen ? "▾" : "▸"} how</button>}
+                                  <span className="truncate">Artificial flowers / greens <span className="text-[10px] text-gray-400">(not mandi-shopped)</span></span>
+                                </div>
+                                <div className="text-right w-28 text-xs text-gray-400">{fmt(artTot)}</div>
+                                <div className="text-right w-60 text-xs text-gray-500 pr-6">{fmt(artTot)}</div>
+                              </div>
+                              {art && artHowOpen && (
+                                <div className="px-3 pb-2">
+                                  <div className="bg-white border rounded-lg p-2 text-[10px] text-gray-600 space-y-1">
+                                    {art.flowerBunches > 0 && <div>🌸 Flowers: <b>{art.flowerBunches}</b> bunches ÷ {art.flowerBPK}/kg = <b>{art.flowerKg} kg</b> × {fmt(art.flowerRate)}/kg = <b className="text-gray-900">{fmt(art.flowerCost)}</b></div>}
+                                    {art.greenBunches > 0 && <div>🌿 Greens: <b>{art.greenBunches}</b> bunches ÷ {art.greenBPK}/kg = <b>{art.greenKg} kg</b> × {fmt(art.greenRate)}/kg = <b className="text-gray-900">{fmt(art.greenCost)}</b></div>}
+                                    {art.flowerBunches <= 0 && art.greenBunches <= 0 && <div className="text-gray-400 italic">No artificial bunches captured — set "Art Bunches/Unit" on flowers in the Mandi tab.</div>}
+                                    <div className="pt-1 text-right">Total artificial = <b className="text-gray-900">{fmt(art.total)}</b></div>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
                         {/* Totals row */}
                         <div className="grid grid-cols-[1fr_auto_auto] gap-2 px-3 py-2 bg-emerald-50 items-center">
                           <span className="text-xs font-bold text-emerald-900">Total</span>
