@@ -84,7 +84,7 @@ import { allocateRowAvailability, netOwnReservedBlocksLive } from "../../lib/stu
 import { callClaudeStreaming } from "../../lib/ai";
 import { heavyExtraLabour, eventTimingMultFor, SETTINGS_DEFAULTS, SIT_MULT_DEFAULTS } from "../../lib/ims/constants";
 import { resolveDateCategory, getEffectivePricing } from "../../lib/inventory/helpers";
-import { itemImsSubcat, lookupBySubcat, priceForInvItem, itemDimsText, walkKitUnits } from "../../lib/ims/helpers";
+import { itemImsSubcat, lookupBySubcat, priceForInvItem, itemDimsText, walkKitUnits, kitDescendantIds } from "../../lib/ims/helpers";
 import { matchFlowerPattern, floralPatternUnitRates, sizeClassToPatternKey, normalizeSizeClass, kitFloralCompDelta } from "../../lib/ims/flowerHelpers";
 import { rowToRcItem, rcItemToRow, rcIsSMB, getFloralMode, oosCostPctFor, canFulfillShortfall } from "../../lib/rateCard";
 import { supabase, fetchAll, upsertRow, deleteRow, subscribeTable, keepaliveUpsert } from "../../lib/supabase";
@@ -9002,7 +9002,9 @@ export default function StudioApp() {
     // itself doesn't ALSO get its individual sub-items tagged as separate elements (double-counts
     // cost and double-blocks inventory for the same physical objects).
     const kitOf = {};
-    taggableInv.forEach(i => { if (Array.isArray(i.subItems) && i.subItems.length) kitOf[i.id] = i.subItems.map(s => s.itemId); });
+    // kitDescendantIds recurses the whole kit tree (not just i.subItems' own direct ids) — a
+    // kit-of-a-kit's grandchild component used to still be tag-able as its own separate element.
+    taggableInv.forEach(i => { if (Array.isArray(i.subItems) && i.subItems.length) kitOf[i.id] = [...kitDescendantIds(i, imsInventory)]; });
     // Pure flower-recipe patterns with no inventory backing (e.g. "Flower Garden") join the same
     // vocabulary so they can be tagged/matched exactly like an inventory item.
     const elemList = [...taggableInv.map(i => `"${i.name}" (${i.unit})`), ...taggableRecipePatterns.map(p => `"${p.name}" (${p.unit})`)].join(", ");

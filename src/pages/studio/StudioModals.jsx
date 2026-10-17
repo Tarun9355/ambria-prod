@@ -18,7 +18,7 @@ import { getCat, carpetPricingFor, defaultCarpetMatId, CARPET_OFF, trussRateFor,
 import { calcZoneFabric, autoFillFabricAllocation, anchorsForPaletteByMaterial } from "../../lib/studio/pricing";
 import { qtyUsedElsewhereInBuild } from "../../lib/studio/dealAvailability";
 import { isHiddenSubcat } from "../../lib/rateCard";
-import { itemDimsText, priceForInvItem } from "../../lib/ims/helpers";
+import { itemDimsText, priceForInvItem, kitDescendantIds } from "../../lib/ims/helpers";
 import { thumbUrl, fitUrl } from "../../lib/studio/thumb.js";
 import { AVAIL_THUMB } from "../../lib/studio/prefetchImages.js";
 
@@ -811,8 +811,7 @@ export default function StudioModals({ ctx }) {
                       const matchesTokens = (haystack) => tokens.every(t => haystack.includes(t));
                       const kitCoveredIds = new Set((zoneUploadReview.elements || []).filter(el => el.invId).flatMap(el => {
                         const it = (imsInventory || []).find(i => i.id === el.invId);
-                        const comps = Array.isArray(el.kitOverrides) ? el.kitOverrides : (it?.subItems || []);
-                        return comps.map(c => c.itemId);
+                        return it ? [...kitDescendantIds(it, imsInventory, el.kitOverrides)] : [];
                       }));
                       const invMatches = (imsInventory || []).filter(it => !(zoneUploadReview.elements || []).find(el => el.invId === it.id) && !kitCoveredIds.has(it.id) && !isHiddenSubcat(it, rcSubcatFactors) && matchesTokens([it.name, it.cat, it.subCat || it.subcategory].filter(Boolean).join(" ").toLowerCase()));
                       const patMatches = (recipeOnlyPatterns || []).filter(pt => !(zoneUploadReview.elements || []).find(el => el.patternId === pt.id) && matchesTokens(pt.name.toLowerCase()));

@@ -2267,9 +2267,17 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
        until Deal Check pushes the department breakdown again. */
     const trPlan = sel?.transportPlan || null;
     const trMine = trPlan?.byDept?.[dept] || null;
-    const trRows = (trMine?.rows || []).map(r =>
-      `<tr><td><b>${esc(r.label)}</b>${(fns || []).length > 1 && r.fn ? `<div class="sub">${esc(r.fn)}</div>` : ""}</td><td class="n">${esc(r.qty)}${r.unit ? " " + esc(r.unit) : ""}</td><td class="n">${Number(r.perTruck) > 0 ? esc(r.perTruck) + (r.unit ? " " + esc(r.unit) : "") + " per truck" : "—"}</td><td class="n b">${esc(r.trucks)}</td></tr>`);
-    const trNote = !trMine ? "" : `${esc(dept)} fills ${trMine.trucks} of the ${trPlan.totalTrucks} truck${trPlan.totalTrucks === 1 ? "" : "s"} this event needs${trPlan.tierLabel ? ` · ${esc(trPlan.tierLabel)}` : ""}. A truck is counted by capacity, so a part-truck share is normal — the loads travel together.`;
+    // Combined book: every department's own share, pooled into one table with its own Dept line —
+    // reading just whichever single department happened to be selected (trMine) silently dropped
+    // every OTHER department's trucks from what is supposed to be the whole-event reference.
+    const trRows = combined
+      ? Object.entries(trPlan?.byDept || {}).flatMap(([d, slot]) => (slot?.rows || []).map(r =>
+          `<tr><td><b>${esc(r.label)}</b><div class="sub">${esc(d)}${(fns || []).length > 1 && r.fn ? ` · ${esc(r.fn)}` : ""}</div></td><td class="n">${esc(r.qty)}${r.unit ? " " + esc(r.unit) : ""}</td><td class="n">${Number(r.perTruck) > 0 ? esc(r.perTruck) + (r.unit ? " " + esc(r.unit) : "") + " per truck" : "—"}</td><td class="n b">${esc(r.trucks)}</td></tr>`))
+      : (trMine?.rows || []).map(r =>
+          `<tr><td><b>${esc(r.label)}</b>${(fns || []).length > 1 && r.fn ? `<div class="sub">${esc(r.fn)}</div>` : ""}</td><td class="n">${esc(r.qty)}${r.unit ? " " + esc(r.unit) : ""}</td><td class="n">${Number(r.perTruck) > 0 ? esc(r.perTruck) + (r.unit ? " " + esc(r.unit) : "") + " per truck" : "—"}</td><td class="n b">${esc(r.trucks)}</td></tr>`);
+    const trNote = combined
+      ? (trPlan ? `This event needs ${trPlan.totalTrucks} truck${trPlan.totalTrucks === 1 ? "" : "s"} in total${trPlan.tierLabel ? ` · ${esc(trPlan.tierLabel)}` : ""}. A truck is counted by capacity, so a part-truck share is normal — the loads travel together.` : "")
+      : (!trMine ? "" : `${esc(dept)} fills ${trMine.trucks} of the ${trPlan.totalTrucks} truck${trPlan.totalTrucks === 1 ? "" : "s"} this event needs${trPlan.tierLabel ? ` · ${esc(trPlan.tierLabel)}` : ""}. A truck is counted by capacity, so a part-truck share is normal — the loads travel together.`);
 
     // Deal Check's one "🖨 Print / signage" row says only how many jobs there are; it is replaced
     // below by one card per job, read from the build.
@@ -2560,9 +2568,13 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     });
     const zoneHtml = [
       ...zonePageHtml,
+      // Recipe pages are every department's reference regardless of who is looking — the combined,
+      // all-departments book gets them too (owner-reported: "why doesn't the all-departments PDF
+      // have the recipe list"). Kit/production/buying/loose-item pages stay a per-department-only
+      // deep-dive, as they were before.
+      ...recipePages,
       ...(combined ? [] : [
       ...kitPages,
-      ...recipePages,
       ...listPages(prodItems, "Production", "From production", "Made by the production team for this event"),
       ...listPages(buyItems, "Buying", "To buy", "Bought in for this event — not from our own stock"),
       ...listPages(looseItems, "Not in a zone", "Also on site", looseNote),
@@ -2947,7 +2959,7 @@ ${combined ? "" : (truckRows.length || loadRows.length) ? sect("Loading & dispat
   (truckRows.length ? table(["#", "Vehicle", "Driver", "Phone", "Status"], truckRows, ["12%", "26%", "24%", "20%", "18%"]) : "")
   + (loadRows.length ? `<p class="meta">Everything going to site — ${blockedItems.length} item${blockedItems.length === 1 ? "" : "s"}, ${loadUnits} piece${loadUnits === 1 ? "" : "s"} in total.</p>`
     + table(["Item", "Qty"], loadRows, ["80%", "20%"]) : "")) : ""}
-${!combined && trRows.length ? sect("Transport", table(["Load", "Quantity", "Fits per truck", "Trucks"], trRows, ["46%", "20%", "22%", "12%"]) + `<p class="note">${trNote}</p>`) : ""}
+${trRows.length ? sect("Transport", table(["Load", "Quantity", "Fits per truck", "Trucks"], trRows, ["46%", "20%", "22%", "12%"]) + `<p class="note">${trNote}</p>`) : ""}
 ${!combined && moveRows.length ? sect("Dismantle routing", table(["Item", "Goes to", "Qty", "Logged by"], moveRows, ["38%", "32%", "12%", "18%"])) : ""}
 ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour", "Required", "Available", "Status"], fabRows, ["40%", "20%", "20%", "20%"])) : ""}
 <footer data-block>

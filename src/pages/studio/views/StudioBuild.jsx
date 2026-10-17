@@ -74,7 +74,7 @@ function NumField({ value, onCommit, min = 0, allowDecimal = true, onFocus, onBl
 }
 import { sizeClassToPatternKey, resolveSizeKey } from "../../../lib/ims/flowerHelpers";
 import { fixedVenueFor } from "../../../lib/ims/fixedVenues";
-import { itemDimsText } from "../../../lib/ims/helpers";
+import { itemDimsText, kitDescendantIds } from "../../../lib/ims/helpers";
 import LazyYT from "../../../components/studio/LazyYT.jsx";
 import KitComponentsEditor from "../../../components/shared/KitComponentsEditor";
 import ItemHoverThumb from "../../../components/shared/ItemHoverThumb";
@@ -4050,12 +4050,13 @@ undefined
                       }} />
                     {(zoneElSearch[k]||"").length>=1&&(()=>{
                       const q=(zoneElSearch[k]||"").toLowerCase();
-                      // A kit's own components are already covered by that kit — don't offer adding
-                      // one separately (would double the item and double its cost).
+                      // A kit's own components (and a kit-inside-a-kit's grandchild components —
+                      // kitDescendantIds recurses the whole tree via walkKitUnits, not just one
+                      // level) are already covered by that kit — don't offer adding one separately
+                      // (would double the item and double its cost).
                       const kitCoveredIds=new Set((zoneElements[k]||[]).filter(el=>el.invId).flatMap(el=>{
                         const it=(imsInventory||[]).find(i=>i.id===el.invId);
-                        const comps=Array.isArray(el.kitOverrides)?el.kitOverrides:(it?.subItems||[]);
-                        return comps.map(c=>c.itemId);
+                        return it?[...kitDescendantIds(it,imsInventory,el.kitOverrides)]:[];
                       }));
                       // Searches IMS inventory + pure flower-recipe patterns with no inventory backing
                       // (Rate Card is not consulted here — see getElPriceFromInventory /
@@ -5151,7 +5152,7 @@ undefined
               const removeEl=(idx)=>writeEls(list=>list.filter((_,i)=>i!==idx));
               const q=(zoneElSearch[zk]||"").toLowerCase().trim();
               const addMatches=q?(()=>{
-                const kitCoveredIds=new Set(els.filter(el=>el.invId).flatMap(el=>{const it=(imsInventory||[]).find(i=>i.id===el.invId);const comps=Array.isArray(el.kitOverrides)?el.kitOverrides:(it?.subItems||[]);return comps.map(c=>c.itemId);}));
+                const kitCoveredIds=new Set(els.filter(el=>el.invId).flatMap(el=>{const it=(imsInventory||[]).find(i=>i.id===el.invId);return it?[...kitDescendantIds(it,imsInventory,el.kitOverrides)]:[];}));
                 const inv=(imsInventory||[]).filter(it=>!els.find(el=>el.invId===it.id)&&!kitCoveredIds.has(it.id)&&!isHiddenSubcat(it,rcSubcatFactors)&&(it.name.toLowerCase().includes(q)||(it.cat||"").toLowerCase().includes(q)||(it.subCat||it.subcategory||"").toLowerCase().includes(q))).slice(0,40).map(it=>({key:"inv:"+it.id,label:it.name,sub:(it.subCat||it.subcategory)?(it.subCat||it.subcategory)+" › "+(it.cat||""):(it.cat||""),src:it.img||it.photoUrls?.[0],make:()=>({name:it.name,qty:1,unit:it.unit,size:"",invId:it.id})}));
                 const pat=(recipeOnlyPatterns||[]).filter(pt=>!els.find(el=>el.patternId===pt.id)&&pt.name.toLowerCase().includes(q)).map(pt=>({key:"pat:"+pt.id,label:pt.name,sub:"🌺 Flower recipe",make:()=>({name:pt.name,qty:1,unit:pt.unit,size:"",patternId:pt.id})}));
                 const mandi=((dealCheckData||studioFloralData)?.mandiCatalogue||[]).filter(m=>isDirectMandiElement(m)&&!els.find(el=>el.mandiId===m.id)&&(m.name||"").toLowerCase().includes(q)).map(m=>{const v=Array.isArray(m.colorVariants)?m.colorVariants:[];return {key:"mandi:"+m.id,label:m.name,sub:`🌸 Mandi · ${m.unit||"kg"}`,src:m.photoUrl,make:()=>({name:m.name,qty:1,unit:m.unit||"kg",size:"",mandiId:m.id,mandiVariantId:v.length===1?v[0].variantId:""})};});

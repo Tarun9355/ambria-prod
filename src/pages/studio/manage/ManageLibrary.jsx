@@ -23,7 +23,7 @@ import { fetchLibraryPage, fetchLibraryCounts, checkExistingLibraryUrls, fetchAl
 import { isHiddenSubcat } from "../../../lib/rateCard";
 import { supabase, subscribeTable } from "../../../lib/supabase";
 import { deleteStorageObjects, listStorageTree, uploadToStorage, compressImageForUpload } from "../../../lib/storage";
-import { itemDimsText, priceForInvItem } from "../../../lib/ims/helpers";
+import { itemDimsText, priceForInvItem, kitDescendantIds } from "../../../lib/ims/helpers";
 import { addPaletteInline } from "../../../lib/studio/colours";
 import PaletteQuickAdd from "../../../components/studio/PaletteQuickAdd.jsx";
 import { thumbUrl, fitUrl } from "../../../lib/studio/thumb.js";
@@ -1642,8 +1642,7 @@ export default function ManageLibrary({ ctx }) {
                       // and double its cost).
                       const kitCoveredIds = new Set((libEditImg.elements || []).filter(el => el.invId).flatMap(el => {
                         const it = (imsInventory || []).find(i => i.id === el.invId);
-                        const comps = Array.isArray(el.kitOverrides) ? el.kitOverrides : (it?.subItems || []);
-                        return comps.map(c => c.itemId);
+                        return it ? [...kitDescendantIds(it, imsInventory, el.kitOverrides)] : [];
                       }));
                       // Searches IMS inventory + pure flower-recipe patterns with no inventory backing
                       // (Rate Card is not consulted here — see getElPriceFromInventory /
