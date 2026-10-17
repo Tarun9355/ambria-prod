@@ -1656,6 +1656,21 @@ export default function DCFloralsTab({ ctx }) {
           if (!dcSwapPicked || swapQty <= 0) return;
           setFloralOverrides(prev => {
             const rows = Array.isArray(prev?.rows) ? [...prev.rows] : [];
+            // Swapping back to the flower an earlier FULL swap diverted away from undoes that row
+            // instead of stacking a second counter-swap on top of it. Without this, a plain A→B
+            // then B→A round trip left two swap rows in place — the swap-application loop above
+            // processes them in order, so by the time the B→A row runs, B is already sitting in
+            // flowerAgg as THIS SAME loop's own swap target; re-swapping it back to A still goes
+            // through the identical "add swap target" branch, which always tags whatever it
+            // creates _isSwapTarget — so even fully restoring the original flower kept showing the
+            // 🔄 swap badge forever. Removing the original row instead means A ends up exactly
+            // where it started: never diverted away from at all.
+            const reversalIdx = dcSwapMode === "full"
+              ? rows.findIndex(r => r?.swapTo && !r.swapTo.isSplit && r.swapTo.fromParentId === dcSwapPicked.id && r.swapTo.toParentId === fromParent.id)
+              : -1;
+            if (reversalIdx !== -1) {
+              return { note: prev?.note || "", rows: rows.filter((_, i) => i !== reversalIdx) };
+            }
             // Append a swap row — applied during aggregation
             rows.push({
               flowerId: dcSwapPicked.id,

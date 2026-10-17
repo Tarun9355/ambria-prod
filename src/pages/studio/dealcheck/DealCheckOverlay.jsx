@@ -1810,8 +1810,20 @@ export default function DealCheckOverlay({ ctx }) {
           return { income: incomeRounded, inventory: dcCostRollup.deptInv, floralPlan, manpowerPlan, manpowerDetail, season: dcSeasonInfo, fabricPlan, mpPhases: dcCostRollup.mpPhases || null, dealValue, transportPlan };
         };
         if (isSold && persistDeptSnapshot) {
-          const _sig = JSON.stringify((dcCostRollup.DEPTS || []).map(d => Math.round(dcCostRollup.dept?.[d]?.total || 0)));
-          if (deptSyncRef.current !== _sig) { deptSyncRef.current = _sig; setTimeout(() => { try { persistDeptSnapshot(buildDeptSnapshot()); } catch {} }, 200); }
+          // Department $ totals alone miss a flower SWAP that happens to leave a department's
+          // rounded total unchanged (two similarly-priced flowers) — the mandi list's actual
+          // composition (which flower ops should shop for) genuinely changed, but nothing here
+          // would have noticed it, so IMS kept showing the pre-swap flower indefinitely. Folding
+          // the floral plan's own flower names/qty into the signature catches that too. Computed
+          // once here (rather than only inside the setTimeout below, which used to build it a
+          // second time either way) so the signature and the persisted snapshot can never disagree
+          // about what floralPlan actually looked like at this render.
+          const _deptSnap = buildDeptSnapshot();
+          const _sig = JSON.stringify([
+            (dcCostRollup.DEPTS || []).map(d => Math.round(dcCostRollup.dept?.[d]?.total || 0)),
+            (_deptSnap.floralPlan?.flowers || []).map(f => `${f.name}:${Math.round((f.qty || 0) * 100)}`),
+          ]);
+          if (deptSyncRef.current !== _sig) { deptSyncRef.current = _sig; setTimeout(() => { try { persistDeptSnapshot(_deptSnap); } catch {} }, 200); }
         }
 
         return (
