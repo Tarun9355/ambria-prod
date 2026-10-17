@@ -202,6 +202,10 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
   // "lizaStock:2") — same shape as sMandiUploading above, just a separate map since the two panels
   // never share a row.
   const [fabricPhotoUploading, setFabricPhotoUploading] = useState({});
+  // Which stock row's Camera/Gallery picker is currently open (a "<which>:<rowIdx>" key, or null) —
+  // mobile has no single file input that reliably offers both, so the "+" button opens this tiny
+  // 2-option menu instead of a bare <input type=file>.
+  const [fabricPhotoMenuOpen, setFabricPhotoMenuOpen] = useState(null);
   const [sMandiMapPicker, setSMandiMapPicker] = useState(null); // { flowerId } — inventory picker for a "Mapping" flower
   const [sMandiMapSearch, setSMandiMapSearch] = useState("");
   // 🔁 Mandi swap modal — { flowerId, toId, ratio, note, q }. Opens from the row's 🔁 icon, or by
@@ -2081,9 +2085,15 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                 {stock.length === 0 ? (
                   <div className="px-3 py-4 text-xs text-gray-400 italic text-center">No colours added yet. Tap + Add Colour to start.</div>
                 ) : (
-                  <table className="w-full text-xs">
+                  // Fixed-width columns (Photo/Old/New/Total/delete) plus a flexible Colour name
+                  // input used to all get crushed toward 0 on a phone-width `w-full` table — the
+                  // Colour text input in particular shrank to showing a single letter, with no way
+                  // to actually type a name. Scrolling sideways on a min-width table (same fix as
+                  // the Floral mandi shopping list) keeps every column a real, usable size instead.
+                  <div className="overflow-x-auto">
+                  <table className="w-full text-xs min-w-[560px]">
                     <datalist id={`${which}-colours`}>{colourCat.map((cn) => <option key={cn} value={cn} />)}</datalist>
-                    <thead className="text-gray-500"><tr><th className="px-2 py-1.5 text-left w-14">Photo</th><th className="px-2 py-1.5 text-left">Colour</th><th className="px-2 py-1.5 text-center">Old ({qtyLabel})</th><th className={`px-2 py-1.5 text-center text-${themeColor}-700`}>New ({qtyLabel})</th><th className="px-2 py-1.5 text-center">Total</th><th className="px-2 py-1.5 w-10"></th></tr></thead>
+                    <thead className="text-gray-500"><tr><th className="px-2 py-1.5 text-left w-14">Photo</th><th className="px-2 py-1.5 text-left">Colour</th><th className="px-2 py-1.5 text-center w-20">Old ({qtyLabel})</th><th className={`px-2 py-1.5 text-center text-${themeColor}-700 w-20`}>New ({qtyLabel})</th><th className="px-2 py-1.5 text-center w-16">Total</th><th className="px-2 py-1.5 w-10"></th></tr></thead>
                     <tbody>
                       {stock.map((row, i) => {
                         const oldQ = Number(row[qtyField]) || 0;
@@ -2094,22 +2104,46 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                           <tr key={`${which}-${i}`} className={`border-t border-${themeColor}-50`}>
                             {/* A reference photo of the actual material — Build's own Fabric Palette
                                 picker shows this next to the colour name, so a salesperson picks off
-                                what the fabric really looks like instead of a generic colour swatch. */}
-                            <td className="px-2 py-1.5">
-                              <label className="block cursor-pointer">
-                                {row.photo ? <img src={row.photo} alt={row.colour} className="w-9 h-9 rounded object-cover border border-gray-300" title="Click to replace" />
-                                  : <div className={`w-9 h-9 rounded border-2 border-dashed border-gray-300 flex items-center justify-center text-gray-400 text-base hover:border-${themeColor}-400 hover:text-${themeColor}-500`} title="Upload a reference photo">{photoUploading ? "…" : "+"}</div>}
-                                <input type="file" accept="image/*" className="hidden" onChange={async (e) => {
-                                  const file = e.target.files?.[0]; if (!file) return;
+                                what the fabric really looks like instead of a generic colour swatch.
+                                "+" opens a tiny Camera/Gallery menu rather than a bare file input —
+                                on mobile, a plain <input type=file> with no `capture` attribute isn't
+                                a reliable way to offer BOTH; `capture="environment"` forces the camera
+                                straight open, so Camera and Gallery need their own separate inputs
+                                (same two-option pattern InventoryTab's photo-scan already uses). */}
+                            <td className="px-2 py-1.5 relative">
+                              {(() => {
+                                const onPick = async (file) => {
+                                  if (!file) return;
+                                  setFabricPhotoMenuOpen(null);
                                   setFabricPhotoUploading((prev) => ({ ...prev, [photoKey]: true }));
                                   try {
                                     const compressed = await compressImageForUpload(file);
                                     const url = await uploadToStorage(compressed, STORAGE_FOLDERS.INVENTORY);
                                     updateStock(which, i, "photo", url);
                                   } catch (err) { alert("Photo upload failed: " + (err?.message || err)); }
-                                  finally { setFabricPhotoUploading((prev) => { const np = { ...prev }; delete np[photoKey]; return np; }); e.target.value = ""; }
-                                }} />
-                              </label>
+                                  finally { setFabricPhotoUploading((prev) => { const np = { ...prev }; delete np[photoKey]; return np; }); }
+                                };
+                                return (
+                                  <>
+                                    <button type="button" onClick={() => setFabricPhotoMenuOpen((k) => k === photoKey ? null : photoKey)} className="block cursor-pointer">
+                                      {row.photo ? <img src={row.photo} alt={row.colour} className="w-9 h-9 rounded object-cover border border-gray-300" title="Click to replace" />
+                                        : <div className={`w-9 h-9 rounded border-2 border-dashed border-gray-300 flex items-center justify-center text-gray-400 text-base hover:border-${themeColor}-400 hover:text-${themeColor}-500`} title="Upload a reference photo">{photoUploading ? "…" : "+"}</div>}
+                                    </button>
+                                    {fabricPhotoMenuOpen === photoKey && (
+                                      <div className="absolute z-20 top-full left-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg py-1 w-32">
+                                        <label className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-gray-700 hover:bg-gray-50 cursor-pointer whitespace-nowrap">
+                                          📷 Camera
+                                          <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => { onPick(e.target.files?.[0]); e.target.value = ""; }} />
+                                        </label>
+                                        <label className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-gray-700 hover:bg-gray-50 cursor-pointer whitespace-nowrap">
+                                          🖼️ Gallery
+                                          <input type="file" accept="image/*" className="hidden" onChange={(e) => { onPick(e.target.files?.[0]); e.target.value = ""; }} />
+                                        </label>
+                                      </div>
+                                    )}
+                                  </>
+                                );
+                              })()}
                             </td>
                             <td className="px-2 py-1.5">
                               <input type="text" value={row.colour || ""} list={`${which}-colours`} placeholder="Type or pick a colour…" onChange={(e) => updateStock(which, i, "colour", e.target.value)} className={`w-full border border-${themeColor}-200 rounded px-2 py-1 text-xs`} />
@@ -2123,6 +2157,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                       })}
                     </tbody>
                   </table>
+                  </div>
                 )}
               </div>
             </div>
