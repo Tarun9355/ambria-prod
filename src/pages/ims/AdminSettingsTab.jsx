@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Tabs, AddInlineItem, FlowerPicker, Btn, useConfirm } from "../../components/ui";
 import { canvaAuthUrl, canvaConnectionStatus, canvaClientId } from "../../lib/canva";
 import { uploadToStorage, compressImageForUpload, STORAGE_FOLDERS } from "../../lib/storage";
-import { resolveMandiFlower, computePatternSizeCost, effectiveMarkup, studioUnitLabel } from "../../lib/ims/flowerHelpers";
+import { resolveMandiFlower, resolveMandiBuy, mandiSwapOf, computePatternSizeCost, effectiveMarkup, studioUnitLabel } from "../../lib/ims/flowerHelpers";
 import { priceForInvItem, phone10 } from "../../lib/ims/helpers";
 import { MANPOWER_TYPES, SIT_MULT_DEFAULTS, SIT_MULT_TYPES, DUMPING_LEVELS, EVENT_TIMINGS, eventTimingMultFor, hasIMSPerm } from "../../lib/ims/constants";
 import ImsTransportPanel from "./ImsTransportPanel.jsx";
@@ -201,6 +201,47 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
   const [sMandiUploading, setSMandiUploading] = useState({});
   const [sMandiMapPicker, setSMandiMapPicker] = useState(null); // { flowerId } — inventory picker for a "Mapping" flower
   const [sMandiMapSearch, setSMandiMapSearch] = useState("");
+  // 🔁 Mandi swap modal — { flowerId, toId, ratio, note, q }. Opens from the row's 🔁 icon, or by
+  // itself when the price is set to ₹0 (the shopper's "not in the mandi today").
+  const [sMandiSwap, setSMandiSwap] = useState(null);
+  const openMandiSwap = (p) => setSMandiSwap({ flowerId: p.id, toId: p.swap?.toId || "", ratio: String(p.swap?.ratio ?? 1), note: p.swap?.note || "", q: "" });
+  // 🖨️ Mandi sheet — printed the way Dept Ops prints a truck challan: a plain page in a new tab
+  // with its own Print button. It is the shopper's sheet for the mandi run: the flowers on screen
+  // (search + category filter apply), grouped by category, with the last and current price and
+  // blank columns to write today's price and tick whether it was available.
+  const printMandiSheet = (flowers) => {
+    const w = window.open("", "_blank");
+    if (!w) return;
+    const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    const cat = settings.mandiCatalogue || [];
+    const groups = new Map();
+    flowers.forEach((f) => { const k = f.flowerCat || "Other"; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(f); });
+    let n = 0;
+    const body = [...groups.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([g, list]) => {
+      const rows = list.map((f) => {
+        n += 1;
+        const prev = f.priceHistory?.length ? f.priceHistory[f.priceHistory.length - 1].price : null;
+        const photo = f.photoUrl || (f.colorVariants || []).find((v) => v.photoUrl)?.photoUrl || "";
+        const sw = mandiSwapOf(f, cat);
+        const variants = (f.colorVariants || []).filter((v) => v.name && v.name !== "New Variant").map((v) => `${esc(v.name)}${Number(v.currentPrice) ? ` ₹${esc(v.currentPrice)}` : ""}`).join(", ");
+        return `<tr><td class="c">${n}</td><td class="c">${photo ? `<img src="${esc(photo)}">` : ""}</td>`
+          + `<td><b>${esc(f.name)}</b>${variants && (f.colorVariants || []).length > 1 ? `<div class="s">${variants}</div>` : ""}${sw ? `<div class="sw">🔁 Swapped with ${esc(sw.to.name)} (1 ${esc(f.unit)} = ${esc(sw.ratio)} ${esc(sw.to.unit)})${sw.note ? " · " + esc(sw.note) : ""}</div>` : ""}</td>`
+          + `<td>${esc(f.unit)}${f.unit !== "piece" && f.gattharSize ? `<div class="s">${esc(f.gattharSize)} pcs</div>` : ""}</td>`
+          + `<td class="r">${prev != null ? "₹" + esc(prev) : "—"}</td><td class="r"><b>₹${esc(Number(f.currentPrice) || 0)}</b></td>`
+          + `<td class="blank"></td><td class="c">☐</td><td class="blank"></td></tr>`;
+      }).join("");
+      return `<tr class="g"><td colspan="9">${esc(g)} · ${list.length}</td></tr>${rows}`;
+    }).join("");
+    const today = new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+    w.document.write(`<html><head><title>Mandi Sheet — ${today}</title><style>body{font-family:Arial;padding:24px;color:#111}table{width:100%;border-collapse:collapse;margin-top:8px}th,td{border:1px solid #ddd;padding:6px 8px;font-size:12px;vertical-align:middle}th{background:#f5f5f5;text-align:left}td.c{text-align:center}td.r,th.r{text-align:right}td.blank{min-width:70px}tr.g td{background:#FEF3C7;font-weight:bold;font-size:12px}img{width:36px;height:36px;object-fit:cover;border-radius:4px;display:block;margin:auto}.s{color:#777;font-size:10.5px;margin-top:2px}.sw{color:#B45309;font-size:10.5px;margin-top:2px;font-weight:bold}tr{break-inside:avoid}@media print{button{display:none}body{padding:0}@page{size:A4;margin:10mm}}</style></head><body>
+      <h2>🌸 Ambria — Mandi Sheet</h2>
+      <p>Date: ${today} &nbsp;|&nbsp; ${flowers.length} flower${flowers.length === 1 ? "" : "s"}${sMandiCat !== "All" ? ` &nbsp;|&nbsp; Category: ${esc(sMandiCat)}` : ""}${sMandiSearch.trim() ? ` &nbsp;|&nbsp; Search: "${esc(sMandiSearch.trim())}"` : ""}</p>
+      <table><tr><th class="c">#</th><th class="c">Photo</th><th>Flower</th><th>Unit</th><th class="r">Prev ₹</th><th class="r">Current ₹</th><th>Today ₹</th><th>Available</th><th>Notes</th></tr>${body || '<tr><td colspan="9" style="text-align:center;color:#999">No flowers</td></tr>'}</table>
+      <br><p>Checked by: _______________ &nbsp;&nbsp; Prices entered in IMS by: _______________</p>
+      <p>Date: ____________ &nbsp;&nbsp; Time: ____________</p>
+      <button onclick="window.print()">🖨️ Print</button></body></html>`);
+    w.document.close();
+  };
 
   // Recipes panel (patterns) — add/rename/delete state for the underlying Rate Card Florals item
   // a recipe card is attached to. Recipe (flower-line) CRUD itself lives inline in each card
@@ -837,6 +878,96 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
             );
           })()}
 
+          {/* 🔁 Mandi swap — the flower was not in the mandi; record what was bought instead. Saved
+              on the flower as `swap` and read by resolveMandiBuy / mandiSwapOf (flowerHelpers.js):
+              Studio's floral pricing and Deal Check's mandi list, the Dept Ops shopping list and
+              the Floral setup book all buy the replacement from then on, until it is removed. */}
+          {sMandiSwap && (() => {
+            const cat = settings.mandiCatalogue || [];
+            const from = cat.find((f) => f.id === sMandiSwap.flowerId);
+            if (!from) return null;
+            const typeOf = (f) => f.flowerType || (f.isGreen ? "green" : "flower");
+            const fromType = typeOf(from);
+            const q = sMandiSwap.q.trim().toLowerCase();
+            // Greens for a green, flowers for a flower (Real Only and Mapping are flowers too) — a
+            // green standing in for a flower changes the arrangement, not just the shopping. A
+            // flower that is itself swapped out is not offered: it is not in the mandi either.
+            const family = (f) => (typeOf(f) === "green" ? "green" : "flower");
+            const candidates = cat.filter((f) => f.id !== from.id && !f.swap?.toId && family(f) === family(from)
+              && (!q || String(f.name || "").toLowerCase().includes(q) || String(f.flowerCat || "").toLowerCase().includes(q)));
+            const to = cat.find((f) => f.id === sMandiSwap.toId) || null;
+            const ratio = Number(sMandiSwap.ratio) > 0 ? Number(sMandiSwap.ratio) : 0;
+            const toPrice = Number(to?.currentPrice) || 0;
+            const save = () => {
+              if (!to || !ratio) return;
+              const swap = { toId: to.id, ratio, note: sMandiSwap.note.trim(), since: new Date().toISOString().split("T")[0] };
+              setSettings((s) => ({ ...s, mandiCatalogue: s.mandiCatalogue.map((x) => x.id === from.id ? { ...x, swap } : x) }));
+              setSMandiSwap(null);
+            };
+            const remove = () => {
+              setSettings((s) => ({ ...s, mandiCatalogue: s.mandiCatalogue.map((x) => { if (x.id !== from.id) return x; const { swap: _s, ...rest } = x; return rest; }) }));
+              setSMandiSwap(null);
+            };
+            return (
+              <div onClick={() => setSMandiSwap(null)} className="fixed inset-0 z-[9200] bg-black/60 flex items-center justify-center p-5">
+                <div onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl w-[min(720px,100%)] max-h-[86vh] flex flex-col overflow-hidden shadow-2xl">
+                  <div className="px-5 py-4 border-b flex items-center justify-between">
+                    <div>
+                      <p className="font-bold text-gray-800">🔁 Swap "{from.name}" — not available in the mandi</p>
+                      <p className="text-xs text-gray-500 mt-0.5">Which flower was bought instead? Studio pricing, Deal Check, the Dept Ops shopping list and the Floral PDF all use it until the swap is removed.</p>
+                    </div>
+                    <button onClick={() => setSMandiSwap(null)} className="text-gray-400 hover:text-gray-700 text-xl leading-none">✕</button>
+                  </div>
+                  <div className="p-4 border-b space-y-3">
+                    <input autoFocus value={sMandiSwap.q} onChange={(e) => setSMandiSwap((m) => ({ ...m, q: e.target.value }))} placeholder={`Search ${fromType === "green" ? "greens" : "flowers"}…`} className="w-full border rounded-lg px-3 py-2 text-sm" />
+                    <div className="grid grid-cols-1 sm:grid-cols-[auto_1fr] gap-x-3 gap-y-2 items-center text-sm">
+                      <label className="text-xs font-semibold text-gray-600">Ratio</label>
+                      <div className="flex items-center gap-2 flex-wrap text-xs text-gray-600">
+                        <span>1 {from.unit} {from.name} =</span>
+                        <input type="number" min="0" step="0.1" value={sMandiSwap.ratio} onChange={(e) => setSMandiSwap((m) => ({ ...m, ratio: e.target.value }))} className="w-20 border rounded px-2 py-1 text-sm text-center" />
+                        <span>{to ? `${to.unit} ${to.name}` : "unit of the replacement"}</span>
+                      </div>
+                      <label className="text-xs font-semibold text-gray-600">Note</label>
+                      <input value={sMandiSwap.note} onChange={(e) => setSMandiSwap((m) => ({ ...m, note: e.target.value }))} placeholder="Reason / details (optional) — e.g. out of season, price too high" className="w-full border rounded-lg px-3 py-1.5 text-sm" />
+                    </div>
+                    {to && ratio > 0 && (
+                      <div className="text-xs bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-amber-900">
+                        From now on, instead of 1 {from.unit} {from.name}: <b>{ratio} {to.unit} {to.name}</b> @ ₹{toPrice} = <b>₹{Math.round(ratio * toPrice * 100) / 100}</b> per {from.unit}
+                        {!toPrice && <span className="block text-red-600 font-semibold mt-0.5">⚠ {to.name} has a current price of ₹0 — set its price first.</span>}
+                      </div>
+                    )}
+                  </div>
+                  {/* min-h-0 + content-start: without them this flex child squeezed the grid rows
+                      to fit the dialog and the cards' overflow-hidden cut the names off. */}
+                  <div className="p-4 overflow-y-auto min-h-0 grid grid-cols-2 md:grid-cols-3 gap-3 content-start auto-rows-max">
+                    {candidates.length === 0 ? <div className="col-span-full text-center text-gray-400 text-sm py-8 italic">No matching {fromType === "green" ? "greens" : "flowers"}.</div>
+                      : candidates.map((f) => {
+                        const photo = f.photoUrl || (f.colorVariants || []).find((v) => v.photoUrl)?.photoUrl || "";
+                        const isCur = f.id === sMandiSwap.toId;
+                        return (
+                          <div key={f.id} onClick={() => setSMandiSwap((m) => ({ ...m, toId: f.id }))} className={"cursor-pointer rounded-xl overflow-hidden border-2 " + (isCur ? "border-amber-500" : "border-gray-200 hover:border-amber-300")}>
+                            {/* 4:3 rather than a fixed 80px band — the band cropped a full-width photo to a sliver. */}
+                            {photo ? <img src={photo} alt="" className="w-full aspect-[4/3] object-cover bg-gray-50" /> : <div className="w-full aspect-[4/3] bg-gray-100 flex items-center justify-center text-2xl text-gray-300">🌸</div>}
+                            <div className="px-2 py-1.5">
+                              <div className="text-xs font-semibold text-gray-800 truncate">{f.name}</div>
+                              <div className="text-[10px] text-gray-400 truncate">{f.flowerCat || ""} · ₹{Number(f.currentPrice) || 0}/{f.unit}</div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                  </div>
+                  <div className="px-5 py-3 border-t flex items-center justify-between gap-2">
+                    {from.swap?.toId ? <button onClick={remove} className="text-xs text-red-500 hover:text-red-700">✕ Remove swap ({from.name} is available again)</button> : <span />}
+                    <div className="flex gap-2">
+                      <button onClick={() => setSMandiSwap(null)} className="px-3 py-1.5 rounded-lg border text-sm text-gray-600">Cancel</button>
+                      <button onClick={save} disabled={!to || !ratio} className={"px-4 py-1.5 rounded-lg text-sm font-semibold text-white " + (to && ratio ? "bg-amber-600 hover:bg-amber-700" : "bg-gray-300 cursor-not-allowed")}>🔁 Save swap</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
           {/* Mandi catalogue */}
           <div className="bg-white border rounded-xl overflow-hidden">
             <div className="px-4 py-3 bg-gray-50 border-b space-y-2">
@@ -854,6 +985,14 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                     </p>;
                   })()}
                 </div>
+                <div className="flex items-center gap-2">
+                <button onClick={() => printMandiSheet((settings.mandiCatalogue || []).filter((p) => {
+                  // The same filter the list below uses, so the sheet is what is on screen.
+                  const q = sMandiSearch.toLowerCase();
+                  const matchParent = !q || (p.name || "").toLowerCase().includes(q) || (p.flowerCat || "").toLowerCase().includes(q);
+                  const matchVariant = !q || (p.colorVariants || []).some((v) => (v.name || "").toLowerCase().includes(q));
+                  return (matchParent || matchVariant) && (sMandiCat === "All" || (p.flowerCat || "Other") === sMandiCat);
+                }))} title="Print the mandi sheet — the flowers shown below, with blank columns for today's price" className="border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 px-3 py-1.5 rounded-lg text-sm">🖨️ Print</button>
                 <button onClick={() => {
                   const newId = "F" + Date.now();
                   const newVId = "V" + Date.now();
@@ -865,6 +1004,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                   }] }));
                   setSMandiExpanded((prev) => { const s = new Set(prev); s.add(newId); return s; });
                 }} className="bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-sm">+ Add Flower</button>
+                </div>
               </div>
               <div className="flex flex-wrap gap-2 items-center">
                 <input value={sMandiSearch} onChange={(e) => setSMandiSearch(e.target.value)} placeholder="🔍 Search flowers..." className="border rounded-lg px-3 py-1.5 text-sm w-44" />
@@ -909,8 +1049,8 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                           <span className="text-gray-800">{c}</span>
                           <span className="text-[9px] text-gray-400">({inUse})</span>
                           {!isOther && (
-                            <button onClick={() => {
-                              if (inUse > 0 && !window.confirm(`"${c}" is used by ${inUse} flower(s). They will be reassigned to "Other". Proceed?`)) return;
+                            <button onClick={async () => {
+                              if (inUse > 0 && !(await confirm({ title: `Delete category "${c}"?`, body: `${inUse} flower${inUse === 1 ? " uses" : "s use"} it — they will move to "Other".` }))) return;
                               setSettings((s) => ({ ...s, flowerCategories: (s.flowerCategories || []).filter((x) => x !== c), mandiCatalogue: (s.mandiCatalogue || []).map((f) => (f.flowerCat || "Other") === c ? { ...f, flowerCat: "Other" } : f) }));
                               if (sMandiCat === c) setSMandiCat("All");
                             }} className="text-red-400 hover:text-red-600 leading-none ml-0.5">×</button>
@@ -941,7 +1081,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
             </div>
             {/* Column header strip */}
             <div className="px-4 py-2 bg-gray-50 border-t border-b border-gray-200 text-[10px] uppercase tracking-wide font-semibold text-gray-500 select-none"
-              style={{ display: "grid", gridTemplateColumns: "16px 56px 140px 110px 80px 70px 110px 70px 84px 70px 110px 40px 20px", gap: "8px", alignItems: "center" }}>
+              style={{ display: "grid", gridTemplateColumns: "16px 56px 140px 110px 80px 70px 110px 70px 84px 70px 110px 40px 48px", gap: "8px", alignItems: "center" }}>
               <span>&nbsp;</span>
               <span className="text-center" title="Parent photo. With variants: shows cheapest variant's photo. Without variants: upload directly.">Photo</span>
               <span>Flower Name</span>
@@ -982,7 +1122,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                 return (
                   <div key={p.id} className="bg-white">
                     <div className="px-4 py-3 hover:bg-gray-50 cursor-pointer"
-                      style={{ display: "grid", gridTemplateColumns: "16px 56px 140px 110px 80px 70px 110px 70px 84px 70px 110px 40px 20px", gap: "8px", alignItems: "center" }}
+                      style={{ display: "grid", gridTemplateColumns: "16px 56px 140px 110px 80px 70px 110px 70px 84px 70px 110px 40px 48px", gap: "8px", alignItems: "center" }}
                       onClick={() => setSMandiExpanded((prev) => { const s = new Set(prev); if (s.has(p.id)) s.delete(p.id); else s.add(p.id); return s; })}>
                       <span className="text-xs text-gray-400 select-none">{expanded ? "▼" : "▶"}</span>
                       {/* Photo */}
@@ -1113,6 +1253,10 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                                     return { ...x, priceHistory: [...(x.priceHistory || []), { price: x.currentPrice || 0, date: new Date().toISOString().split("T")[0] }], currentPrice: nv };
                                   }) }));
                                 }}
+                                // ₹0 means "not in the mandi today" — ask what was bought instead. On
+                                // blur, not on change: clearing the box to type a new price passes
+                                // through 0 and must not pop a dialog mid-typing.
+                                onBlur={(e) => { if (!hasVariants && (parseFloat(e.target.value) || 0) === 0 && !p.swap?.toId) openMandiSwap(p); }}
                                 className={"border rounded px-2 py-1 text-xs text-center w-20 font-semibold " + (hasVariants ? "bg-gray-100 text-gray-500 cursor-not-allowed" : "bg-white")} />
                             </div>
                             <span className={"text-center text-base " + (hasVariants ? "text-gray-300" : parentTrendCls)} title={hasVariants ? "Trend shown per variant on expand" : "Price trend vs previous"}>
@@ -1121,12 +1265,32 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                           </>
                         );
                       })()}
-                      {/* Delete */}
-                      <button onClick={(e) => { e.stopPropagation();
-                        if (window.confirm(`Delete "${p.name}" and its ${variantCount} variant(s)? Recipes referencing this flower will become uncosted.`))
+                      {/* Swap + Delete */}
+                      <div className="flex items-center gap-1.5">
+                        <button onClick={(e) => { e.stopPropagation(); openMandiSwap(p); }}
+                          title={p.swap?.toId ? "Swapped — click to change or remove" : "Not available in the mandi? Swap it with another flower"}
+                          className={"text-sm leading-none rounded px-1 py-0.5 " + (p.swap?.toId ? "bg-amber-100 text-amber-700 ring-1 ring-amber-300" : "text-gray-400 hover:text-amber-600 hover:bg-amber-50")}>🔁</button>
+                        <button onClick={async (e) => { e.stopPropagation();
+                          if (!(await confirm({ title: `Delete "${p.name}"?`, body: `Removes it and its ${variantCount} variant${variantCount === 1 ? "" : "s"} from the mandi catalogue. Recipes that use this flower will no longer be costed.` }))) return;
                           setSettings((s) => ({ ...s, mandiCatalogue: s.mandiCatalogue.filter((x) => x.id !== p.id) }));
-                      }} className="text-red-400 hover:text-red-600 text-base">×</button>
+                        }} className="text-red-400 hover:text-red-600 text-base">×</button>
+                      </div>
                     </div>
+                    {/* The swap, said in full under the row — what is bought instead, at what ratio, why
+                        and since when. */}
+                    {(() => {
+                      const sw = mandiSwapOf(p, settings.mandiCatalogue);
+                      if (!sw) return null;
+                      return (
+                        <div className="mx-4 mb-2 -mt-1 px-3 py-1.5 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-900 flex flex-wrap items-center gap-x-3 gap-y-1">
+                          <span className="font-semibold">🔁 Not in the mandi — swapped with {sw.to.name}</span>
+                          <span>1 {p.unit} = {sw.ratio} {sw.to.unit} @ ₹{Number(sw.to.currentPrice) || 0}</span>
+                          {sw.note && <span className="text-amber-800/80">· {sw.note}</span>}
+                          {sw.since && <span className="text-amber-700/70">· since {sw.since}</span>}
+                          <button onClick={() => openMandiSwap(p)} className="ml-auto text-amber-700 underline">Edit</button>
+                        </div>
+                      );
+                    })()}
                     {/* Expanded variants */}
                     {expanded && (
                       <div className="px-6 pb-4 bg-gray-50/40">
@@ -1188,9 +1352,9 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                                   </td>
                                   <td className={"px-2 py-1.5 text-center text-base " + trendCls}>{trend}</td>
                                   <td className="px-2 py-1.5">
-                                    <button onClick={() => {
+                                    <button onClick={async () => {
                                       if (variantCount === 1) { alert(`Cannot delete the last variant of "${p.name}". Delete the whole flower instead.`); return; }
-                                      if (window.confirm(`Delete variant "${v.name}"?`)) {
+                                      if (await confirm({ title: `Delete variant "${v.name}"?`, body: `Removes this colour variant from "${p.name}". The flower's price becomes its cheapest remaining variant.` })) {
                                         setSettings((s) => ({ ...s, mandiCatalogue: s.mandiCatalogue.map((x) => {
                                           if (x.id !== p.id) return x;
                                           const newVariants = (x.colorVariants || []).filter((cv) => cv.variantId !== v.variantId);
@@ -1477,10 +1641,13 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                     return { key: `i${bi}`, name: item?.name || "Inventory item", qty: Number(fl.qty) || 0,
                       price: item ? (Number(item.price ?? item.rentalCost) || 0) : 0, unit: item?.unit || "", variants: [] };
                   }
+                  // Priced the way computePatternSizeCost prices it — through the mandi swap — so
+                  // the breakdown adds up to the cost above; the original's unit and colours stay.
                   const res = resolveMandiFlower(fl?.flowerId, settings.mandiCatalogue);
+                  const buy = resolveMandiBuy(fl?.flowerId, settings.mandiCatalogue);
                   const p = res?.parent;
-                  return { key: `f${bi}`, name: p?.name || "— not in mandi —", qty: Number(fl.qty) || 0,
-                    price: res ? res.price : 0, unit: p?.unit || "",
+                  return { key: `f${bi}`, name: p ? (buy?.swappedFrom ? `${p.name} → 🔁 ${buy.parent.name}` : p.name) : "— not in mandi —", qty: Number(fl.qty) || 0,
+                    price: buy ? buy.price : 0, unit: p?.unit || "",
                     variants: (p?.colorVariants || []).filter((v) => (Number(v.currentPrice) || 0) > 0) };
                 });
                 const anyMultiVariant = basis.some((b) => b.variants.length > 1);

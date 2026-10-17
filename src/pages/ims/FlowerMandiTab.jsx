@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Badge, Modal, Tabs, Field, Input, Sel, Btn } from "../../components/ui";
-import { resolveMandiFlower, resolveSizeKey, studioUnitLabel } from "../../lib/ims/flowerHelpers";
+import { resolveMandiBuy, resolveSizeKey, studioUnitLabel } from "../../lib/ims/flowerHelpers";
 import { resolveDateCategory } from "../../lib/inventory/helpers";
 
 function fmt(n){ return "₹"+(Number(n)||0).toLocaleString("en-IN"); }
@@ -95,9 +95,10 @@ export default function FlowerMandiTab({ settings, setSettings, functions, setFu
         if (qty > 0) {
           // Tier 2.1: normalize old variant IDs (legacy recipe refs) to parent ID for aggregation.
           // Recipes are colour-agnostic post-migration; mandi block aggregates by parent flower.
-          const resolved = resolveMandiFlower(fl.flowerId, catalogue);
+          // Through the catalogue's swap: a flower not in the mandi is shopped as its replacement.
+          const resolved = resolveMandiBuy(fl.flowerId, catalogue);
           const parentId = resolved?.parent?.id || fl.flowerId;
-          realFlowers[parentId]=(realFlowers[parentId]||0)+qty;
+          realFlowers[parentId]=(realFlowers[parentId]||0)+qty*(resolved?.ratio||1);
         }
       });
       // Artificial portion → pieces × kg conversion

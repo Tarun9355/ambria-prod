@@ -10,7 +10,7 @@ import { ZONE_META } from "../../lib/studio/taxonomy";
 import { ZONE_DEF_SK } from "../../lib/studio/keys";
 import { LOGO_ASSET, LOGO_BOX } from "../../lib/studio/brand.js";
 import { fitUrl } from "../../lib/studio/thumb.js";
-import { matchFlowerPattern, resolveSizeKey, sizeClassToPatternKey, resolveMandiFlower } from "../../lib/ims/flowerHelpers";
+import { matchFlowerPattern, resolveSizeKey, sizeClassToPatternKey, resolveMandiBuy, mandiSwapOf } from "../../lib/ims/flowerHelpers";
 import { swatchHexFor } from "../../lib/studio/colours";
 
 // ── THE OFFICIAL LOGO, READY FOR THE PDF ──
@@ -1051,8 +1051,17 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const fp = sel?.floralPlan || {};
   const fpFlowers = Array.isArray(fp.flowers) ? fp.flowers : [];
   const artificialProj = fpFlowers.filter(f => f.artificial).reduce((s, f) => s + (Number(f.cost) || 0), 0);
+  // A planned flower the catalogue now marks as not in the mandi (🔁 swap) starts its real-shopping
+  // row as the replacement — its name, its units (× ratio) and its rate — with the plan columns
+  // left as they were, so the row reads "planned X, bought Y instead". Matched by name: the plan
+  // is a Deal Check snapshot that carries names, not catalogue ids.
+  const swapByName = new Map(mandiCatalogue.filter(c => c?.swap?.toId).map(c => [String(c.name || "").trim().toLowerCase(), c]));
   const seedMandi = fpFlowers.filter(f => !f.artificial && (Number(f.qty) || 0) > 0)
-    .map(f => ({ name: f.name, unit: f.unit || "", projQty: Number(f.qty) || 0, projCost: Number(f.cost) || 0, qty: Number(f.qty) || 0, price: f.qty ? Math.round(((Number(f.cost) || 0) / f.qty) * 100) / 100 : 0 }));
+    .map(f => {
+      const row = { name: f.name, unit: f.unit || "", projQty: Number(f.qty) || 0, projCost: Number(f.cost) || 0, qty: Number(f.qty) || 0, price: f.qty ? Math.round(((Number(f.cost) || 0) / f.qty) * 100) / 100 : 0 };
+      const sw = mandiSwapOf(swapByName.get(String(f.name || "").trim().toLowerCase()), mandiCatalogue);
+      return sw ? { ...row, projUnit: row.unit, name: sw.to.name, unit: sw.to.unit || row.unit, qty: Math.round(row.qty * sw.ratio * 100) / 100, price: Number(sw.to.currentPrice) || 0, swappedFrom: f.name } : row;
+    });
   const mandiRows = Array.isArray(deptData.mandiLines) ? deptData.mandiLines : seedMandi;
   // Real shopping hasn't been logged until someone actually edits a row — until then, mandiRows is
   // just seedMandi (the plan's own quantities/prices mirrored in as a starting point), so the "Real
@@ -1182,7 +1191,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         row([["Flower", cx.name], ["Planned", cx.plan, "right"], ["Projected", cx.proj, "right"], ["Qty", cx.qty, "right"], ["Rs/unit", cx.rate, "right"], ["Total", cx.tot, "right"]], { bold: true, fill: [209, 250, 229] });
         mandiRows.forEach(r => {
           const line = (Number(r.qty) || 0) * (Number(r.price) || 0);
-          row([[r.name, cx.name], [r.projQty > 0 ? `${r.projQty} ${r.unit || ""}`.trim() : "", cx.plan, "right"], [r.projCost > 0 ? rs(r.projCost) : "extra", cx.proj, "right"], [Number(r.qty) || 0, cx.qty, "right"], [Number(r.price) || 0, cx.rate, "right"], [rs(line), cx.tot, "right"]]);
+          row([[r.swappedFrom ? `${r.name} (for ${r.swappedFrom})` : r.name, cx.name], [r.projQty > 0 ? `${r.projQty} ${r.projUnit || r.unit || ""}`.trim() : "", cx.plan, "right"], [r.projCost > 0 ? rs(r.projCost) : "extra", cx.proj, "right"], [Number(r.qty) || 0, cx.qty, "right"], [Number(r.price) || 0, cx.rate, "right"], [rs(line), cx.tot, "right"]]);
         });
         if (fp.artificial || artificialProj > 0) row([["Artificial flowers / greens (not mandi-shopped)", cx.name], [rs(artTot), cx.proj, "right"], [rs(artTot), cx.tot, "right"]]);
         row([["Total", cx.name], [rs(Number(fp.projected) || 0), cx.proj, "right"], [rs(mandiActualTotal), cx.tot, "right"]], { bold: true, fill: [236, 253, 245] });
@@ -2084,8 +2093,11 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           const sizeData = pat?.sizes?.[resolveSizeKey(pat.sizes, sizeClassToPatternKey(rawSize || "B"))];
           const recipe = (sizeData?.flowers || []).map(fl => {
             if (fl?.invItemId) { const ing = invById.get(String(fl.invItemId)); return ing ? { name: ing.name, qty: Number(fl.qty) || 0, unit: ing.unit || "" } : null; }
-            const mf = resolveMandiFlower(fl?.flowerId, mandiCatalogue)?.parent;
-            return mf ? { name: mf.name, qty: Number(fl.qty) || 0, unit: mf.unit || "" } : null;
+            // Through the catalogue's swap: a flower not in the mandi goes into the piece as its
+            // replacement, in the replacement's units, and the line says what it stands in for.
+            const buy = resolveMandiBuy(fl?.flowerId, mandiCatalogue);
+            const mf = buy?.parent;
+            return mf ? { name: buy.swappedFrom ? `🔁 ${mf.name} (for ${buy.swappedFrom.name})` : mf.name, qty: (Number(fl.qty) || 0) * (buy.ratio || 1), unit: mf.unit || "" } : null;
           }).filter(f => f && f.qty > 0);
           merged.set(key, { name: inv?.name || el?.name || held?.name || "Item", qty, unit, deptTag, photo: invPhoto(inv, held), dims: invDims(inv), size: elSize, kit: (held?.isKit && Array.isArray(held.components)) ? held.components.length : 0, recipe, paint: addPaint(new Map(), paint) });
         });
@@ -4534,7 +4546,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                               const lineVar = lineActual - (Number(r.projCost) || 0);
                               return (
                                 <div key={i} className="grid grid-cols-[1fr_auto_auto] gap-2 px-3 py-1.5 items-center">
-                                  <div className="min-w-0"><div className="text-xs font-medium text-gray-800 truncate">{r.name}</div>{r.projQty > 0 && <div className="text-[10px] text-gray-400">{r.projQty} {r.unit} planned</div>}</div>
+                                  <div className="min-w-0"><div className="text-xs font-medium text-gray-800 truncate">{r.name}</div>{r.swappedFrom && <div className="text-[10px] font-semibold text-amber-700">🔁 swapped for {r.swappedFrom} (not in mandi)</div>}{r.projQty > 0 && <div className="text-[10px] text-gray-400">{r.projQty} {r.swappedFrom ? "" : r.unit} {r.swappedFrom ? `of ${r.swappedFrom} ` : ""}planned</div>}</div>
                                   <div className="text-right w-28 text-xs text-gray-400">{r.projCost > 0 ? fmt(r.projCost) : <span className="text-amber-500">extra</span>}</div>
                                   <div className="flex items-center justify-end gap-1 w-60">
                                     <input type="number" min="0" value={r.qty} onChange={e => setMandi(i, "qty", e.target.value)} className="shrink-0 w-12 border rounded px-1.5 py-1 text-xs text-center" title="qty" />
