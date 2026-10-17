@@ -85,7 +85,7 @@ import { callClaudeStreaming } from "../../lib/ai";
 import { heavyExtraLabour, eventTimingMultFor, SETTINGS_DEFAULTS, SIT_MULT_DEFAULTS } from "../../lib/ims/constants";
 import { resolveDateCategory, getEffectivePricing } from "../../lib/inventory/helpers";
 import { itemImsSubcat, lookupBySubcat, priceForInvItem, itemDimsText, walkKitUnits } from "../../lib/ims/helpers";
-import { matchFlowerPattern, floralPatternUnitRates, sizeClassToPatternKey, normalizeSizeClass, kitFloralCompDelta } from "../../lib/ims/flowerHelpers";
+import { matchFlowerPattern, floralPatternUnitRates, sizeClassToPatternKey, normalizeSizeClass, kitFloralCompDelta, resolveMandiBuy, mandiSwapOf } from "../../lib/ims/flowerHelpers";
 import { rowToRcItem, rcItemToRow, rcIsSMB, getFloralMode, oosCostPctFor } from "../../lib/rateCard";
 import { supabase, fetchAll, upsertRow, deleteRow, subscribeTable, keepaliveUpsert } from "../../lib/supabase";
 import {
@@ -4822,7 +4822,7 @@ export default function StudioApp() {
         // blend (mirrors flowerHelpers.js's floralPatternUnitRates) instead of vanishing to ₹0 as
         // real% drops. Marked up by the SAME `markup` the real side uses, tracked separately from
         // `cost` so it isn't also run through the bunches-per-kg artificial rate.
-        realOnlyCost += (Number(fl.qty) || 0) * (res?.price || 0);
+        realOnlyCost += (Number(fl.qty) || 0) * (resolveMandiBuy(fl.flowerId, mc)?.price || 0);
         return;
       }
       if (ft === "mapping") {
@@ -5731,14 +5731,20 @@ export default function StudioApp() {
           const prefArr = colorPrefsForFn?.[parentId];
           const prefRate = Array.isArray(prefArr) && prefArr.length > 0 ? Number(prefArr[0].rate) : 0;
           const variantRate = Number(override?.colorVariant?.rate) || 0;
-          const basePrice = prefRate > 0 ? prefRate : variantRate > 0 ? variantRate : (Number(parent?.currentPrice) || 0);
-          const bp = (prefRate > 0 || variantRate > 0) ? basePrice : basePrice * sMult;
-          const realUnits = (fl.qty || 0) * q * effR * (zoneRepeat ? REPEAT_REAL_QTY_MULT : 1);
-          if (realUnits > 0 && parent) {
-            const agg = flowerAgg.get(parentId) || { totalQty: 0, unitPrice: bp, name: parent.name || "Flower", unit: parent.unit || "" };
+          // Not in the mandi → the catalogue's swap says what is bought instead (mandiSwapOf). The
+          // real flowers are then the replacement, in its own units (× ratio) at its own rate; a
+          // colour pick made for the original no longer applies to what is actually bought.
+          const sw = mandiSwapOf(parent, mc);
+          const basePrice = sw ? (Number(sw.to.currentPrice) || 0) : prefRate > 0 ? prefRate : variantRate > 0 ? variantRate : (Number(parent?.currentPrice) || 0);
+          const bp = (!sw && (prefRate > 0 || variantRate > 0)) ? basePrice : basePrice * sMult;
+          const realUnits = (fl.qty || 0) * q * effR * (zoneRepeat ? REPEAT_REAL_QTY_MULT : 1) * (sw ? sw.ratio : 1);
+          const buyParent = sw ? sw.to : parent;
+          const buyId = sw ? sw.to.id : parentId;
+          if (realUnits > 0 && buyParent) {
+            const agg = flowerAgg.get(buyId) || { totalQty: 0, unitPrice: bp, name: buyParent.name || "Flower", unit: buyParent.unit || "" };
             agg.totalQty += realUnits;
             agg.unitPrice = bp; // refresh — mirrors the Florals tab's own aggregation
-            flowerAgg.set(parentId, agg);
+            flowerAgg.set(buyId, agg);
           }
           const effAQty = effA * (zoneRepeat ? REPEAT_ART_QTY_MULT : 1);
           if (effAQty > 0) {

@@ -8,7 +8,7 @@
 // inline styles preserved.
 // ═══════════════════════════════════════════════════════════════
 import { Fragment, useState } from "react";
-import { matchFlowerPattern, sizeClassToPatternKey, normalizeSizeClass } from "../../../../lib/ims/flowerHelpers";
+import { matchFlowerPattern, sizeClassToPatternKey, normalizeSizeClass, mandiSwapOf } from "../../../../lib/ims/flowerHelpers";
 import { findCrossFnReuseSource } from "../../../../lib/studio/crossFnReuse";
 import { thumbUrl, fitUrl } from "../../../../lib/studio/thumb.js";
 
@@ -342,13 +342,23 @@ export default function DCFloralsTab({ ctx }) {
                             // Legacy: old 🎨 single-pick colorVariant (backward compat)
                             const variantRate = Number(override?.colorVariant?.rate) || 0;
                             if (prefRate > 0) console.log("[pref-price]", parentId, "prefRate=", prefRate, "variantRate=", variantRate, "parent=", parent?.currentPrice);
-                            const basePrice = prefRate > 0
+                            // Not in the mandi → the catalogue's swap (IMS Flower Mandi Catalogue 🔁)
+                            // names what is bought instead: the replacement, in its own units
+                            // (× ratio) at its own rate. A colour pick made for the original does
+                            // not carry over to a different flower.
+                            const sw = mandiSwapOf(parent, mandiCatalogue);
+                            const buyParent = sw ? sw.to : parent;
+                            const buyId = sw ? sw.to.id : parentId;
+                            const swRatio = sw ? sw.ratio : 1;
+                            const basePrice = sw
+                              ? (Number(sw.to.currentPrice) || 0)
+                              : prefRate > 0
                               ? prefRate
                               : variantRate > 0
                               ? variantRate
                               : (Number(parent?.currentPrice) || 0);
                             // Season multiplier applies only to default parent price, NOT to explicit color picks
-                            const unitPrice = (prefRate > 0 || variantRate > 0) ? basePrice : basePrice * seasonMult;
+                            const unitPrice = (!sw && (prefRate > 0 || variantRate > 0)) ? basePrice : basePrice * seasonMult;
                             // Tier 1.9b — real_only flowers always 100% real, ignore element's blend
                             const flowerType = parent?.flowerType || (parent?.isGreen ? "green" : "flower");
                             const effectiveRealFrac = flowerType === "real_only" ? 1 : realFrac;
@@ -360,25 +370,27 @@ export default function DCFloralsTab({ ctx }) {
                             // carried on the aggregate purely so the mandi list can show a shoppers'
                             // guide of "was X, now Y" next to the discounted figure. It plays no part
                             // in any cost math (that's totalFlowerQty, used everywhere above).
-                            const totalFlowerQtyFull = (fl.qty || 0) * elQty * effectiveRealFrac;
+                            const totalFlowerQtyFull = (fl.qty || 0) * elQty * effectiveRealFrac * swRatio;
                             const totalFlowerQty = totalFlowerQtyFull * realQtyFrac;
                             const lineCost = totalFlowerQty * unitPrice;
-                            realCostPerUnit += (fl.qty || 0) * unitPrice;
-                            const displayName = parent?.name || fl.flowerId;
-                            realLines.push({ flowerId: parentId, name: displayName, perPattern: fl.qty || 0, qty: totalFlowerQty, unit: parent?.unit || "kg", unitPrice, lineCost, realOnly: flowerType === "real_only", variantPicked: override?.colorVariant?.label || null });
+                            realCostPerUnit += (fl.qty || 0) * swRatio * unitPrice;
+                            const displayName = buyParent?.name || fl.flowerId;
+                            const swappedFrom = sw ? (parent?.name || "") : null;
+                            realLines.push({ flowerId: buyId, name: displayName, perPattern: (fl.qty || 0) * swRatio, qty: totalFlowerQty, unit: buyParent?.unit || "kg", unitPrice, lineCost, realOnly: flowerType === "real_only", variantPicked: sw ? null : (override?.colorVariant?.label || null), swappedFrom });
                             // Aggregate — KEYED BY PARENT ID (collapses old per-colour rows into one parent row)
                             if (totalFlowerQty > 0) {
-                              const prev = flowerAgg.get(parentId) || { flowerId: parentId, name: displayName, totalQty: 0, totalQtyFull: 0, unit: parent?.unit || "kg", unitPrice, contributors: [], realOnly: flowerType === "real_only", flowerType, variantPicked: override?.colorVariant || null };
+                              const prev = flowerAgg.get(buyId) || { flowerId: buyId, name: displayName, totalQty: 0, totalQtyFull: 0, unit: buyParent?.unit || "kg", unitPrice, contributors: [], realOnly: flowerType === "real_only", flowerType, variantPicked: sw ? null : (override?.colorVariant || null), swappedFrom };
                               prev.totalQty += totalFlowerQty;
                               prev.totalQtyFull += totalFlowerQtyFull;
                               prev.unitPrice = unitPrice; // refresh in case variant override applies
-                              prev.variantPicked = override?.colorVariant || prev.variantPicked;
+                              if (!sw) prev.variantPicked = override?.colorVariant || prev.variantPicked;
+                              if (swappedFrom && !prev.swappedFrom) prev.swappedFrom = swappedFrom;
                               prev.contributors.push({
                                 elName: el.name, zoneKey: zk, elQty,
-                                perPattern: fl.qty || 0, realFrac: effectiveRealFrac, contribution: totalFlowerQty,
+                                perPattern: (fl.qty || 0) * swRatio, realFrac: effectiveRealFrac, contribution: totalFlowerQty,
                                 size: sizeKey, realOnly: flowerType === "real_only"
                               });
-                              flowerAgg.set(parentId, prev);
+                              flowerAgg.set(buyId, prev);
                             }
                           });
                         }
@@ -800,6 +812,11 @@ export default function DCFloralsTab({ ctx }) {
                                     {f._isSwapTarget && (
                                       <span title="Swapped in from another flower" style={{marginLeft:6,fontSize:11,padding:"1px 6px",borderRadius:8,background:"rgba(251,191,36,0.18)",color:"#B45309",fontWeight:600}}>
                                         🔄 swap
+                                      </span>
+                                    )}
+                                    {f.swappedFrom && (
+                                      <span title={`${f.swappedFrom} is not in the mandi — swapped in the IMS Flower Mandi Catalogue`} style={{marginLeft:6,fontSize:11,padding:"1px 6px",borderRadius:8,background:"rgba(251,191,36,0.18)",color:"#B45309",fontWeight:600}}>
+                                        🔁 for {f.swappedFrom}
                                       </span>
                                     )}
                                     {(dcFloralColorPrefs[fnIdx]?.[f.flowerId]||[]).length > 0 && (
