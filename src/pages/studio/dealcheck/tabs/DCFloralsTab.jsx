@@ -595,7 +595,7 @@ export default function DCFloralsTab({ ctx }) {
                     const fnPaletteColors = parseFlowerPalette(activeFn.fnFlowerPalette);
                     if (fnPaletteColors.length > 0) {
                       const artItemsForSplit = dcInventoryCache
-                        .filter(it => (imsField.subcategory(it) || "").toLowerCase().trim().startsWith("artificial flower"))
+                        .filter(it => (imsField.subcategory(it) || "").toLowerCase().trim() === "artificial flower bunch")
                         .map(it => ({ id: it.id, name: it.name, _photo: imsField.photos(it)[0] || "" }));
                       const auto = autoSplitArtificialByPalette(totalArtKg, fnPaletteColors, artItemsForSplit);
                       if (auto.length > 0) setDcArtFlowerAlloc(prev => (prev[fnIdx] !== undefined ? prev : { ...prev, [fnIdx]: auto }));
@@ -1508,9 +1508,13 @@ export default function DCFloralsTab({ ctx }) {
       {/* Salesperson splits total artificial Kg across colors from IMS inventory */}
       {dcArtFlowerModal && (() => {
         const { fnIdx, totalKg } = dcArtFlowerModal;
+        // Exact sub-category match, not startsWith — "Artificial Flower" (44 generic props: pots,
+        // Wisteria, Rajni chain…) is a DIFFERENT sub-cat from "Artificial Flower Bunch" (the 4
+        // actual colour-bunch items this split is meant to allocate against) and used to leak in
+        // here just because its name happens to start with the same words.
         const artItems = (dcInventoryCache || []).filter(it => {
           const sub = (imsField.subcategory(it) || "").toLowerCase().trim();
-          return sub.startsWith("artificial flower");
+          return sub === "artificial flower bunch";
         }).map(it => ({ ...it, _photo: imsField.photos(it)[0] || "", _stock: Math.max(0, (Number(it.qty)||0) - (Number(it.blocked)||0)) }));
         const stockOf = (itemId) => { const it = artItems.find(x => x.id === itemId); return it ? it._stock : Infinity; };
         const draft = dcArtFlowerAlloc[fnIdx] || [];
@@ -1573,7 +1577,7 @@ export default function DCFloralsTab({ ctx }) {
                     style={{width:"100%",padding:"7px 10px",borderRadius:8,border:`1px solid ${border}`,background:"transparent",color:"#1A1A2E",fontSize:13.5,marginBottom:10}} />
                 )}
                 {artItems.length === 0 ? (
-                  <div style={{padding:"30px 20px",textAlign:"center",color:"#1A1A2E",fontSize:13,borderRadius:10,border:`1px dashed ${border}`}}>No artificial flower items in IMS inventory yet. Add items with subcategory "Artificial Flowers" in IMS to see them here.</div>
+                  <div style={{padding:"30px 20px",textAlign:"center",color:"#1A1A2E",fontSize:13,borderRadius:10,border:`1px dashed ${border}`}}>No artificial flower items in IMS inventory yet. Add items with subcategory "Artificial Flower Bunch" in IMS to see them here.</div>
                 ) : available.length === 0 ? (
                   <div style={{padding:"16px 20px",textAlign:"center",color:"#1A1A2E",fontSize:13}}>{artFlowerSearch.trim() ? `No colours match "${artFlowerSearch}".` : "All available colors are already added above."}</div>
                 ) : (
