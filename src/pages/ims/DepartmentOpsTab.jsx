@@ -5,6 +5,7 @@ import { mpDayWise, mpBaseDay, mpEffDay, mpEffWindows, mpLineCost, mpDayCost, mp
 import { uploadAudioToStorage } from "../../lib/storage";
 import { DEPTS as SHARED_DEPTS, catToDept as sharedCatToDept, userDepartments } from "../../lib/ims/deptClassify";
 import { TabsMenu, useConfirm } from "../../components/ui";
+import { IconPrinter } from "../../components/icons";
 import { hasIMSPerm } from "../../lib/ims/constants";
 import { ZONE_META } from "../../lib/studio/taxonomy";
 import { ZONE_DEF_SK } from "../../lib/studio/keys";
@@ -1103,6 +1104,13 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     if (!w) return;
     const esc = (v) => String(v ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
     const num = (v) => { const n = Number(v) || 0; return String(Math.round(n * 100) / 100); };
+    // Each flower with its photo, so the shopper can match it at the stall: the colour picked in
+    // Deal Check first, else the catalogue's own photo (or its first variant's).
+    const photoOf = (r) => {
+      if (r.colorVariant?.photoUrl) return r.colorVariant.photoUrl;
+      const c = mandiCatalogue.find(x => String(x.name || "").trim().toLowerCase() === String(r.name || "").trim().toLowerCase());
+      return c?.photoUrl || (c?.colorVariants || []).find(v => v.photoUrl)?.photoUrl || "";
+    };
     const rows = mandiRows.map((r, i) => {
       const sub = [
         r.colorVariant?.label ? `🎨 ${esc(r.colorVariant.label)}` : "",
@@ -1111,16 +1119,17 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         r.swapFor ? `🔁 Bought instead of ${esc(r.swapFor)}${r.swapNote ? " · " + esc(r.swapNote) : ""}` : "",
       ].filter(Boolean).map(s => `<div class="s${s.startsWith("🔁") ? " sw" : ""}">${s}</div>`).join("");
       const line = (Number(r.qty) || 0) * (Number(r.price) || 0);
-      return `<tr${r.swappedTo ? ' class="off"' : ""}><td class="c">${i + 1}</td><td><b>${esc(r.name)}</b>${sub}</td>`
+      const ph = photoOf(r);
+      return `<tr${r.swappedTo ? ' class="off"' : ""}><td class="c">${i + 1}</td><td class="c">${ph ? `<img src="${esc(ph)}">` : ""}</td><td><b>${esc(r.name)}</b>${sub}</td>`
         + `<td class="r">${Number(r.projQty) > 0 ? `${num(r.projQty)} ${esc(r.unit)}` : "extra"}</td>`
         + `<td class="r"><b>${num(r.qty)}</b> ${esc(r.unit)}</td><td class="r">₹${num(r.price)}</td><td class="r">₹${num(line)}</td>`
         + `<td class="blank"></td><td class="blank"></td></tr>`;
     }).join("");
-    w.document.write(`<html><head><title>Mandi List — ${esc(sel?.clientName || "Event")}</title><style>body{font-family:Arial;padding:24px;color:#111}table{width:100%;border-collapse:collapse;margin-top:8px}th,td{border:1px solid #ddd;padding:6px 8px;font-size:12px;vertical-align:top}th{background:#f5f5f5;text-align:left}td.c{text-align:center}td.r,th.r{text-align:right;white-space:nowrap}td.blank{min-width:70px}.s{color:#777;font-size:10.5px;margin-top:2px}.sw{color:#B45309;font-weight:bold}tr.off td{color:#999}tr.off b{text-decoration:line-through}tr{break-inside:avoid}tfoot td{font-weight:bold;background:#ECFDF5}@media print{button{display:none}body{padding:0}@page{size:A4;margin:10mm}}</style></head><body>
+    w.document.write(`<html><head><title>Mandi List — ${esc(sel?.clientName || "Event")}</title><style>body{font-family:Arial;padding:24px;color:#111}table{width:100%;border-collapse:collapse;margin-top:8px}th,td{border:1px solid #ddd;padding:6px 8px;font-size:12px;vertical-align:top}th{background:#f5f5f5;text-align:left}td.c{text-align:center}td.r,th.r{text-align:right;white-space:nowrap}td.blank{min-width:70px}img{width:44px;height:44px;object-fit:cover;border-radius:5px;display:block;margin:auto}tr.off img{opacity:.45}.s{color:#777;font-size:10.5px;margin-top:2px}.sw{color:#B45309;font-weight:bold}tr.off td{color:#999}tr.off b{text-decoration:line-through}tr{break-inside:avoid}tfoot td{font-weight:bold;background:#ECFDF5}@media print{button{display:none}body{padding:0}@page{size:A4;margin:10mm}}</style></head><body>
       <h2>🌸 Ambria — Mandi Shopping List</h2>
       <p>Event: ${esc(sel?.clientName || "-")} &nbsp;|&nbsp; ${esc(selDateStr || "-")} &nbsp;|&nbsp; ${esc(sel?.functionsDetail?.[0]?.venue || sel?.venue || "-")}</p>
-      <table><tr><th class="c">#</th><th>Flower</th><th class="r">Planned</th><th class="r">To buy</th><th class="r">₹/unit</th><th class="r">Total</th><th>Bought qty</th><th>Paid ₹/unit</th></tr>${rows || '<tr><td colspan="8" style="text-align:center;color:#999">No flowers on the list</td></tr>'}
-      <tfoot><tr><td colspan="5">Total (real flowers)</td><td class="r">₹${num(mandiActualReal)}</td><td></td><td></td></tr></tfoot></table>
+      <table><tr><th class="c">#</th><th class="c">Photo</th><th>Flower</th><th class="r">Planned</th><th class="r">To buy</th><th class="r">₹/unit</th><th class="r">Total</th><th>Bought qty</th><th>Paid ₹/unit</th></tr>${rows || '<tr><td colspan="9" style="text-align:center;color:#999">No flowers on the list</td></tr>'}
+      <tfoot><tr><td colspan="6">Total (real flowers)</td><td class="r">₹${num(mandiActualReal)}</td><td></td><td></td></tr></tfoot></table>
       <br><p>Bought by: _______________ &nbsp;&nbsp; Checked by: _______________</p>
       <p>Date: ____________ &nbsp;&nbsp; Time: ____________</p>
       <button onclick="window.print()">🖨️ Print</button></body></html>`);
@@ -4557,6 +4566,15 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                   <div className="text-[15px] font-semibold text-gray-900">Actuals</div>
                   <div className="text-xs text-gray-500">What was actually bought/spent — fill in after shopping, not while planning</div>
                 </div>
+                {/* 🖨️ The Floral mandi shopping list, printed with each flower's photo — the sheet the
+                    shopper takes to the mandi (printMandiList). Same tile as the download beside it. */}
+                {dept === "Floral" && mandiRows.length > 0 && (
+                  <button onClick={printMandiList} title="Print the mandi shopping list (with photos)"
+                    className="shrink-0 w-7 h-7 rounded-lg bg-white hover:bg-gray-200 text-gray-500 hover:text-gray-900 ring-1 ring-gray-200 flex items-center justify-center cursor-pointer transition-colors">
+                    <IconPrinter size={14} />
+                    <span className="sr-only">Print the mandi shopping list</span>
+                  </button>
+                )}
                 {/* Same icon tile as the department book's download, so it reads as the same action. */}
                 <button onClick={downloadActualsPdf} disabled={actualsPdfBusy} title="Download Actuals as PDF"
                   className="shrink-0 w-7 h-7 rounded-lg bg-white hover:bg-gray-200 text-gray-500 hover:text-gray-900 ring-1 ring-gray-200 disabled:opacity-60 flex items-center justify-center cursor-pointer transition-colors">
@@ -4626,7 +4644,6 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                         <div className="grid grid-cols-[1fr_auto_auto] gap-2 px-3 py-2 bg-emerald-100/60 text-[10px] font-semibold text-emerald-900 uppercase tracking-wide items-center">
                           <span className="flex items-center gap-2">🌸 Flower
                             {seedMandi.length > 0 && <button onClick={resetMandi} title="Undo your edits — restore the system's original mandi plan from Deal Check" className="normal-case text-[10px] font-semibold text-emerald-700 border border-emerald-300 rounded px-1.5 py-0.5 hover:bg-emerald-200/60">↺ Reset to system plan</button>}
-                            {mandiRows.length > 0 && <button onClick={printMandiList} title="Print this event's mandi shopping list, with blank columns for what was bought and paid" className="normal-case text-[10px] font-semibold text-emerald-700 border border-emerald-300 rounded px-1.5 py-0.5 hover:bg-emerald-200/60">🖨️ Print</button>}
                           </span>
                           <span className="text-right w-28">Projected (plan)</span>
                           <span className="text-right w-[264px]">Real shopping</span>

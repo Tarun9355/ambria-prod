@@ -10,7 +10,7 @@
 import { Fragment, useState } from "react";
 import { matchFlowerPattern, sizeClassToPatternKey, normalizeSizeClass } from "../../../../lib/ims/flowerHelpers";
 import { findCrossFnReuseSource } from "../../../../lib/studio/crossFnReuse";
-import { parseFlowerPalette, autoSplitArtificialByPalette } from "../../../../lib/studio/pricing";
+import { parseFlowerPalette, autoSplitArtificialByPalette, repeatCatFor } from "../../../../lib/studio/pricing";
 import { thumbUrl, fitUrl } from "../../../../lib/studio/thumb.js";
 
 // ═══ THE FLORAL GROUND ═══
@@ -155,7 +155,8 @@ export default function DCFloralsTab({ ctx }) {
                   const crossFnPrevFnFloral = findCrossFnReuseSource(activeFn, fns);
                   Object.entries(activeFn.zoneElements || {}).forEach(([zk, elems]) => {
                     if (!activeFn.enabledEls?.[zk]) return;
-                    const zoneRepeat = !!activeFn.zoneConfig?.[zk]?.repeat || !!(crossFnPrevFnFloral?.enabledEls?.[zk] && crossFnPrevFnFloral?.zoneConfig?.[zk]);
+                    // The Elements chip, not the zone toggle alone (RC-30) — must match calcFnFloralSourcingCost.
+                    const zoneRepeat = repeatCatFor(activeFn.zoneConfig?.[zk], "elements") || !!(crossFnPrevFnFloral?.enabledEls?.[zk] && crossFnPrevFnFloral?.zoneConfig?.[zk]);
                     const realQtyFrac = zoneRepeat ? REPEAT_REAL_QTY_MULT : 1;
                     const artQtyFrac = zoneRepeat ? REPEAT_ART_QTY_MULT : 1;
                     // A kit's own subItems can carry floral content of their own — a flower-recipe
