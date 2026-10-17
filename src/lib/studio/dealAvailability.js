@@ -91,17 +91,25 @@ export function allocateRowAvailability(invId, fns, imsInventory, target, target
 }
 
 // Deal Check + Build share one root cause here: once a SOLD deal's own reservation is written into
-// the real `blocks` table (reconcileSoldInventoryBlocks, StudioApp.jsx), that same per-date block
-// total feeds every OTHER availability check for this item/date too — so a booked deal's own held
-// stock reads as competing demand from someone else, and previously-free stock starts showing
-// "short" (and billing its shortfall at cost%, not the rental rate) the moment the deal itself gets
-// booked. Nets this deal's own last-synced reservation (dcReservedInventory, kept in sync by
-// reconcileSoldInventoryBlocks after every real write) out of the raw per-date block map before any
-// getStudioAvailable() call. Mirrors StudioApp.jsx's getElPriceFromInventory, which already applies
-// this fix for Build's own live availability check — DealCheckOverlay never had its own copy, so
-// every getStudioAvailable() call there double-counted a sold deal's own stock against itself.
-export function netOwnReservedBlocks(fnBlocks, itemId, dcReservedInventory, fnIdx) {
-  const ownReserved = dcReservedInventory?.[fnIdx]?.[itemId] || 0;
+// the real `blocks` table (reconcileSoldInventoryBlocks, StudioApp.jsx, or IMS's own auto-confirm
+// engine — eventAutoConfirm.js — which reserves a deal's very FIRST stock the moment it's sold), that
+// same per-date block total feeds every OTHER availability check for this item/date too — so a
+// booked deal's own held stock reads as competing demand from someone else, and previously-free
+// stock starts showing "short" (and billing its shortfall at cost%, not the rental rate) the moment
+// the deal itself gets booked. Nets this deal's own reservation out of the raw per-date block map
+// before any getStudioAvailable() call, by reading the REAL per-event blocks detail
+// ({ itemId: [{eventId, qty}, …] }, from fetchIMSData's blocksDetailForDate/blocksDetailByDate) and
+// summing whatever belongs to THIS deal's own event_order id. An earlier version of this read a
+// dcReservedInventory cache instead (a snapshot only reconcileSoldInventoryBlocks ever wrote) — that
+// cache never got a first write at all for a deal whose only reservation came from IMS's auto-confirm
+// and had never been edited in Build since booking, so it stayed permanently uncredited for its own
+// stock. Reading the live blocks detail has no such dependency: correct the instant the reservation
+// exists, regardless of which of the app's two reservation paths wrote it.
+export function netOwnReservedBlocksLive(fnBlocks, itemId, blocksDetailForDate, eventOrderId) {
+  if (!eventOrderId) return fnBlocks || {};
+  const entries = blocksDetailForDate?.[itemId];
+  if (!Array.isArray(entries) || !entries.length) return fnBlocks || {};
+  const ownReserved = entries.filter((b) => b && b.eventId === eventOrderId).reduce((s, b) => s + (Number(b.qty) || 0), 0);
   if (ownReserved <= 0) return fnBlocks || {};
   return { ...(fnBlocks || {}), [itemId]: Math.max(0, ((fnBlocks || {})[itemId] || 0) - ownReserved) };
 }
