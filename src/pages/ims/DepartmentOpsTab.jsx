@@ -1967,13 +1967,39 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     const invByName = new Map((inventory || []).map(i => [String(i.name || "").trim().toLowerCase(), i]));
     const heldByInv = new Map(blockedItemsGrouped.filter(b => b.invId).map(b => [String(b.invId), b]));
     const heldByName = new Map(blockedItemsGrouped.map(b => [String(b.name || "").trim().toLowerCase(), b]));
+    // blockedItemsGrouped is scoped to whichever single `dept` happened to be selected before
+    // Export was clicked — exportPdf's combined pass never changes it. Fine for everything else
+    // here (the zone-card loop below is already gated !combined wherever it reads this dept-scoped
+    // data), but the Kits reference page needs an item list that actually spans every department —
+    // owner-reported: kits were still missing from the all-departments book after Recipe/Transport
+    // were fixed to span every department.
+    const allDeptItems = () => {
+      const out = [];
+      DEPTS.forEach(d => {
+        const snap = Array.isArray(sel?.deptInventory?.[d]) ? sel.deptInventory[d] : null;
+        if (snap && snap.length) {
+          snap.forEach((x, i) => out.push({ id: `${d}:${x.name}:${i}`, invId: x.imsId || null, name: x.name, photo: x.photo || "", qty: x.qty || 0, unit: x.unit || 0, total: x.total || 0, sub: x.sub || "", isKit: !!x.isKit, fromKit: x.fromKit || null, components: Array.isArray(x.components) ? x.components : null }));
+          return;
+        }
+        Object.entries(blocks || {}).forEach(([itemId, arr]) => {
+          const qty = (arr || []).filter(b => b.eventId === sel.id).reduce((s, b) => s + (Number(b.qty) || 0), 0);
+          if (qty <= 0) return;
+          const item = (inventory || []).find(i => String(i.id) === String(itemId));
+          if (!item || catToDept(item.cat || item.category) !== d) return;
+          const unit = Number(item.price ?? item.rentalCost) || 0;
+          out.push({ id: `${itemId}:${d}`, invId: itemId, name: item.name, photo: item.img || (Array.isArray(item.photoUrls) && item.photoUrls[0]) || "", qty, unit, total: unit * qty, sub: item.subCat || item.subcategory || "" });
+        });
+      });
+      return out;
+    };
+    const kitSourceItems = combined ? allDeptItems() : blockedItemsGrouped;
     // ── WHERE A KIT'S PARTS HIDE ──
     // Deal Check splits a kit across departments by each PART's own category, so Floral ends up
     // holding a terracotta element bolted to a coffee table that Furniture owns. The zone lists
     // only ever name the kit and carry no components at all, so such a part is unreachable by
     // name — `fromKit` is the only record of the parent, and this index the only way back to it.
     const partsByKit = new Map();
-    blockedItemsGrouped.forEach(b => {
+    kitSourceItems.forEach(b => {
       const p = String(b.fromKit || "").trim().toLowerCase();
       if (!p) return;
       if (!partsByKit.has(p)) partsByKit.set(p, []);
@@ -2430,7 +2456,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     const zoneQtyFor = (nm) => zoneQtyByName.get(String(nm || "").trim().toLowerCase()) || 0;
 
     const kitBlocks = [];
-    blockedItemsGrouped.forEach(it => {
+    kitSourceItems.forEach(it => {
       if (it.isKit && Array.isArray(it.components) && it.components.length) {
         const kInv = (it.invId && invById.get(String(it.invId))) || invByName.get(String(it.name || "").trim().toLowerCase()) || null;
         // The held quantity is the kit's own count; the parts under it are already totals for all of them.
@@ -2474,7 +2500,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
             ${k.qty ? `<div class="kb-z kb-q"><div class="kb-zk">Qty</div><div class="kb-zv">${esc(k.qty)}</div></div>` : ""}
             <div class="kb-z"><div class="kb-zk">${k.zones.length > 1 ? "Zones" : "Zone"}</div><div class="kb-zv${k.zones.length ? "" : " none"}">${k.zones.length ? esc(k.zones.join(" · ")) : "Not in a zone"}</div></div>
           </div>
-          ${k.ours ? "" : `<div class="kb-w">The kit is on another department's sheet — ${esc(dept)} carries only the parts below</div>`}
+          ${k.ours ? "" : `<div class="kb-w">The kit is on another department's sheet — ${combined ? "this one" : esc(dept)} carries only the parts below</div>`}
           <ul class="kb-l${kitCols(k) === 1 ? " one" : ""}">${k.parts.map(p => `<li><i class="kb-x"></i><span>${esc(p.name)}</span><i class="kb-d"></i><b>${esc(p.qty)}</b></li>`).join("")}</ul>
         </div>`; }).join("")}
       </section>`);
@@ -2568,13 +2594,13 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     });
     const zoneHtml = [
       ...zonePageHtml,
-      // Recipe pages are every department's reference regardless of who is looking — the combined,
-      // all-departments book gets them too (owner-reported: "why doesn't the all-departments PDF
-      // have the recipe list"). Kit/production/buying/loose-item pages stay a per-department-only
+      // Recipe and Kit reference pages are every department's business regardless of who is
+      // looking — the combined, all-departments book gets them too (owner-reported: both were
+      // still missing from it). Production/buying/loose-item pages stay a per-department-only
       // deep-dive, as they were before.
       ...recipePages,
-      ...(combined ? [] : [
       ...kitPages,
+      ...(combined ? [] : [
       ...listPages(prodItems, "Production", "From production", "Made by the production team for this event"),
       ...listPages(buyItems, "Buying", "To buy", "Bought in for this event — not from our own stock"),
       ...listPages(looseItems, "Not in a zone", "Also on site", looseNote),
