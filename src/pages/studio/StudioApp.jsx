@@ -10335,9 +10335,25 @@ export default function StudioApp() {
           elems.forEach((e, ei) => {
             if (!e?.invId) return;
             if (f.fnIdx === activeFnIdx && zk === zoneKey && ei === idx) return;
-            usedQty[e.invId] = (usedQty[e.invId] || 0) + (Number(e.qty) || 0);
-            if (f.fnIdx !== activeFnIdx) {
-              (usedElsewhere[e.invId] ||= []).push(`${f.fnType || `Function ${f.fnIdx + 1}`} · ${zk}`);
+            // Walk into kit components too — a plain item (e.g. a side table) tied up as a
+            // COMPONENT of a kit elsewhere in the deal was invisible here before, so this picker
+            // could show it as fully free (overcounting availability) and never flag it with the
+            // orange "already used elsewhere" badge, even though picking it would double-book a
+            // physical piece a kit already has claimed.
+            const topItem = (imsInventory || []).find(i => i.id === e.invId);
+            const elQty = Number(e.qty) || 0;
+            if (topItem && elQty > 0) {
+              walkKitUnits(topItem, elQty, imsInventory, e.kitOverrides, (node, nodeQty) => {
+                usedQty[node.id] = (usedQty[node.id] || 0) + nodeQty;
+                if (f.fnIdx !== activeFnIdx) {
+                  (usedElsewhere[node.id] ||= []).push(`${f.fnType || `Function ${f.fnIdx + 1}`} · ${zk}`);
+                }
+              });
+            } else {
+              usedQty[e.invId] = (usedQty[e.invId] || 0) + elQty;
+              if (f.fnIdx !== activeFnIdx) {
+                (usedElsewhere[e.invId] ||= []).push(`${f.fnType || `Function ${f.fnIdx + 1}`} · ${zk}`);
+              }
             }
           });
         });

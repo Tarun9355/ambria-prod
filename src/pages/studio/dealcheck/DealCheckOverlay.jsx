@@ -2362,9 +2362,22 @@ export default function DealCheckOverlay({ ctx }) {
                   const platformPlan = buildPlatformPlan(fns, dealCheckData);
                   const platformFattaR = platformPlan?.fattaItem ? imsField.rentalCost(platformPlan.fattaItem) : 0;
                   const platformStandR = platformPlan?.standItem ? imsField.rentalCost(platformPlan.standItem) : 0;
-                  // §7.9.19 — Precompute reuse count per imsId for ♻ chip on cards
+                  // §7.9.19 — Precompute reuse count per imsId for ♻ chip on cards. Walks into kit
+                  // components too (walkKitUnits) — a kit card used to only ever register its OWN
+                  // id, so a component used directly (not as part of a kit) in a sibling function
+                  // never showed as reused/shared stock between the two.
                   const reuseFnCount = {};
-                  fns.forEach((_, fi) => { const cs = dcCards[fi] || {}; Object.values(cs).forEach(c => { if (c.imsId) { if (!reuseFnCount[c.imsId]) reuseFnCount[c.imsId] = new Set(); reuseFnCount[c.imsId].add(fi); } }); });
+                  fns.forEach((_, fi) => {
+                    const cs = dcCards[fi] || {};
+                    Object.entries(cs).forEach(([ck, c]) => {
+                      if (!c.imsId) return;
+                      const item = dealCheckInventory.find(x => x.id === c.imsId);
+                      const qty = Number(c.qty) || 1;
+                      const mark = (id) => { if (!reuseFnCount[id]) reuseFnCount[id] = new Set(); reuseFnCount[id].add(fi); };
+                      if (item) walkKitUnits(item, qty, dealCheckInventory, dcKitEdits?.[fi]?.[ck], (node) => mark(node.id));
+                      else mark(c.imsId);
+                    });
+                  });
                   const fnBlocksForChip = (dealCheckData?.blocksByDate || {})[(fns[fnIdx]||{}).fnDate || clientDate] || {};
                   // Group by zoneKey
                   const byZone = {};
@@ -4393,44 +4406,60 @@ export default function DealCheckOverlay({ ctx }) {
                       const item = dcInventoryCache.find(x => x.id === card.imsId);
                       if (!item) return;
                       const cardQty = Number(card.qty) || 1;
-                      // Same fixed-venue standing-stock ceiling as the main rollup — otherwise an
-                      // outdoor deal could bill at cost% for a real shortfall while this conflict
-                      // scan stayed silent about it.
-                      const available = Math.min(dcAvailable(item, fnBlocks, fi), availableAtVenue({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, fn.fnVenue, item));
-                      const hold = getActiveSoftHold(softHolds, card.imsId, authUser?.name, nowMs);
-                      const isShort = cardQty > available;
-                      const isHeld = !!hold;
-                      if (!isShort && !isHeld) return;
-                      const dedup = `${card.imsId}::${fnDate}`;
-                      if (conflictSeen.has(dedup)) return;
-                      conflictSeen.add(dedup);
-                      const photo = imsField.photos(item)[0];
-                      // fi is carried so a row can be matched against the sidebar selection —
-                      // this tab is booking-wide, and without the index there was no way to say
-                      // which conflicts belong to the function you are actually looking at.
-                      conflicts.push({ imsId: card.imsId, name: item.name || card.imsName, photo, needed: cardQty, available, isShort, outOfStock: isShort && !canFulfillShortfall(item), hold, isHeld, fnDate, fi, fnLabel: fn.fnType || `Function ${fi+1}`, item });
+                      // walkKitUnits visits the item itself (a plain item just once, same as before)
+                      // AND every kit component — a kit's own shortfall used to hide a COMPONENT
+                      // that's independently oversubscribed (e.g. also used as its own direct card
+                      // in another function), since only the kit's own imsId was ever checked here.
+                      walkKitUnits(item, cardQty, dcInventoryCache, dcKitEdits?.[fi]?.[ck], (node, nodeQty) => {
+                        // Same fixed-venue standing-stock ceiling as the main rollup — otherwise an
+                        // outdoor deal could bill at cost% for a real shortfall while this conflict
+                        // scan stayed silent about it.
+                        const available = Math.min(dcAvailable(node, fnBlocks, fi), availableAtVenue({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, fn.fnVenue, node));
+                        const hold = getActiveSoftHold(softHolds, node.id, authUser?.name, nowMs);
+                        const isShort = nodeQty > available;
+                        const isHeld = !!hold;
+                        if (!isShort && !isHeld) return;
+                        const dedup = `${node.id}::${fnDate}`;
+                        if (conflictSeen.has(dedup)) return;
+                        conflictSeen.add(dedup);
+                        const photo = imsField.photos(node)[0];
+                        // fi is carried so a row can be matched against the sidebar selection —
+                        // this tab is booking-wide, and without the index there was no way to say
+                        // which conflicts belong to the function you are actually looking at.
+                        conflicts.push({ imsId: node.id, name: node.name || card.imsName, photo, needed: nodeQty, available, isShort, outOfStock: isShort && !canFulfillShortfall(node), hold, isHeld, fnDate, fi, fnLabel: fn.fnType || `Function ${fi+1}`, item: node });
+                      });
                     });
                   });
 
                   // ── §7.9.19 Cross-Function Reuse ──
-                  // Find items appearing in 2+ functions (by imsId)
+                  // Find items appearing in 2+ functions (by imsId). Walks into kit components too
+                  // (walkKitUnits) — a component only ever registered under the OUTER kit's own
+                  // imsId before, so the same chandelier used directly as its own card in one
+                  // function and inside a console kit in another never showed as shared/reused
+                  // stock between the two.
                   const itemFnMap = {};  // { imsId: { name, photo, rental, fns: Set<fnIdx>, totalQty } }
+                  const markReuse = (fi, id, name, photo, rental, qty) => {
+                    if (!itemFnMap[id]) itemFnMap[id] = { name: name || "?", photo, rental, fns: new Set(), totalQty: 0, fnLabels: {} };
+                    const m = itemFnMap[id];
+                    m.fns.add(fi);
+                    m.totalQty += qty;
+                    m.fnLabels[fi] = fns[fi]?.fnType || `Fn ${fi+1}`;
+                  };
                   fns.forEach((fn, fi) => {
                     const cards = dcCards[fi] || {};
-                    Object.values(cards).forEach(card => {
+                    Object.entries(cards).forEach(([ck, card]) => {
                       if (!card.imsId) return;
-                      if (!itemFnMap[card.imsId]) {
-                        const item = dcInventoryCache.find(x => x.id === card.imsId);
+                      const item = dcInventoryCache.find(x => x.id === card.imsId);
+                      const qty = Number(card.qty) || 1;
+                      if (item) {
                         // Aggregated across functions, so the master component list is the right
-                        // basis here — no single function's kit edits apply.
-                        const rental = item ? effKitRental(item, null, null) : 0;
-                        const photo = item ? imsField.photos(item)[0] : null;
-                        itemFnMap[card.imsId] = { name: item?.name || card.imsName || "?", photo, rental, fns: new Set(), totalQty: 0, fnLabels: {} };
+                        // basis here — no single function's kit edits apply to rental/photo.
+                        walkKitUnits(item, qty, dcInventoryCache, dcKitEdits?.[fi]?.[ck], (node, nodeQty) => {
+                          markReuse(fi, node.id, node.name, imsField.photos(node)[0], effKitRental(node, null, null), nodeQty);
+                        });
+                      } else {
+                        markReuse(fi, card.imsId, card.imsName, null, 0, qty);
                       }
-                      const m = itemFnMap[card.imsId];
-                      m.fns.add(fi);
-                      m.totalQty += (Number(card.qty) || 1);
-                      m.fnLabels[fi] = fns[fi]?.fnType || `Fn ${fi+1}`;
                     });
                   });
                   const reuseItems = Object.entries(itemFnMap)

@@ -2488,26 +2488,50 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     });
     const recipeCols = (k) => (k.parts.length >= 4 ? 2 : 1);
     const recipeLongNames = (k) => { const per = recipeCols(k) === 2 ? 44 : 100; return k.parts.filter(p => String(p.name || "").trim().length > per).length; };
-    const recipeH = (k) => 86 + (Math.ceil(k.parts.length / recipeCols(k)) + Math.ceil(recipeLongNames(k) / recipeCols(k))) * 24 + 21 + 14;
-    const recipeChunks = [];
+    const recipeH = (k) => 68 + (Math.ceil(k.parts.length / recipeCols(k)) + Math.ceil(recipeLongNames(k) / recipeCols(k))) * 24 + 14;
+    // A flat list with only a small eyebrow naming the zone reads as one long undifferentiated
+    // list — the SAME recipe used in two zones looked like a confusing duplicate. recipeBlocks is
+    // already in zone order (built by walking zonePages zone by zone), so grouping here just needs
+    // to notice a boundary, not re-sort — into { zone, fnLabel, items } runs.
+    const ZONE_HEAD_H = 72;
+    const recipeGroups = [];
     recipeBlocks.forEach(k => {
-      const last = recipeChunks[recipeChunks.length - 1], h = recipeH(k);
-      if (!last || last.h + h > PAGE_PX - HEAD_PX) recipeChunks.push({ h, list: [k] });
-      else { last.h += h; last.list.push(k); }
+      const last = recipeGroups[recipeGroups.length - 1];
+      if (!last || last.zone !== k.zone || last.fnLabel !== k.fnLabel) recipeGroups.push({ zone: k.zone, fnLabel: k.fnLabel, items: [k] });
+      else last.items.push(k);
     });
-    let recipeNo = 0;
+    // A zone heading travels as ONE packed unit with the first recipe under it — never stranded
+    // alone at the bottom of a page with its own recipes pushed onto the next.
+    const flatBlocks = [];
+    recipeGroups.forEach(g => {
+      g.items.forEach((k, i) => {
+        flatBlocks.push({ k, h: recipeH(k) + (i === 0 ? ZONE_HEAD_H : 0), zone: i === 0 ? g.zone : null, fnLabel: i === 0 ? g.fnLabel : null });
+      });
+    });
+    const recipeChunks = [];
+    flatBlocks.forEach(b => {
+      const last = recipeChunks[recipeChunks.length - 1];
+      if (!last || last.h + b.h > PAGE_PX - HEAD_PX) recipeChunks.push({ h: b.h, list: [b] });
+      else { last.h += b.h; last.list.push(b); }
+    });
+    const recipeCard = (k) => `<div class="kb">
+      <div class="kb-h">
+        <div class="kb-t"><div class="kb-nm">${esc(k.name)}</div></div>
+        ${k.qty ? `<div class="kb-z kb-q"><div class="kb-zk">Qty</div><div class="kb-zv">${esc(k.qty)}${k.unit ? " " + esc(k.unit) : ""}</div></div>` : ""}
+      </div>
+      <ul class="kb-l${recipeCols(k) === 1 ? " one" : ""}">${k.parts.map(p => `<li><i class="kb-x"></i><span>${esc(p.name)}</span><i class="kb-d"></i><b>${esc(p.qty)}${p.unit ? ` ${esc(p.unit)}` : ""}</b></li>`).join("")}</ul>
+    </div>`;
+    const recipeZoneHead = (zone, fnLabel) => `<div style="padding:16px 2px 6px">
+      <div style="font-family:'Playfair Display',Georgia,serif;font-size:22px;font-weight:700;color:#1A1A1A;line-height:1.3">${esc(zone)}</div>
+      ${fnLabel ? `<div style="font-size:11px;color:#8A7F68;margin-top:2px;font-family:Inter,Arial,sans-serif;letter-spacing:.04em">${esc(fnLabel)}</div>` : ""}
+      <div style="height:1.5px;background:#B8935A;opacity:.5;margin-top:8px"></div>
+    </div>`;
     const recipePages = recipeChunks.map((pgk, i, all) => `<section data-block data-page class="zp"><div class="pc tl"></div><div class="pc tr"></div>
         <div class="zh"><div><div class="zk"><b>Mandi</b>${all.length > 1 ? ` · Part ${i + 1} of ${all.length}` : ""}</div><h2>What is inside each recipe</h2>
           <div class="orn l"><i></i><b></b><i></i></div>
-          <div class="zm">Full flower list for every recipe in this book, already scaled to the zone's own qty</div></div>
+          <div class="zm">Full flower list for every recipe in this book, grouped by zone and already scaled to the zone's own qty</div></div>
           <div class="zt"><span>${recipeBlocks.length} recipe${recipeBlocks.length === 1 ? "" : "s"}</span></div></div>
-        ${pgk.list.map(k => { recipeNo++; return `<div class="kb">
-          <div class="kb-h">
-            <div class="kb-t"><div class="kb-no">Recipe ${String(recipeNo).padStart(2, "0")} · ${esc(k.zone)}${k.fnLabel ? " · " + esc(k.fnLabel) : ""}</div><div class="kb-nm">${esc(k.name)}</div></div>
-            ${k.qty ? `<div class="kb-z kb-q"><div class="kb-zk">Qty</div><div class="kb-zv">${esc(k.qty)}${k.unit ? " " + esc(k.unit) : ""}</div></div>` : ""}
-          </div>
-          <ul class="kb-l${recipeCols(k) === 1 ? " one" : ""}">${k.parts.map(p => `<li><i class="kb-x"></i><span>${esc(p.name)}</span><i class="kb-d"></i><b>${esc(p.qty)}${p.unit ? ` ${esc(p.unit)}` : ""}</b></li>`).join("")}</ul>
-        </div>`; }).join("")}
+        ${pgk.list.map(b => `${b.zone ? recipeZoneHead(b.zone, b.fnLabel) : ""}${recipeCard(b.k)}`).join("")}
       </section>`);
 
     // ── A BREAK PAGE BETWEEN FUNCTIONS ──
