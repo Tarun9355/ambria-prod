@@ -336,13 +336,21 @@ export const calcZoneTrussPreview = (zc, trussInv) => {
 
   const totalActual = actualTrussOnly + battaCost;
 
+  // Explicit 0 Truss Qty — a dims-only placeholder (trussRowCost, the OTHER truss pricing model,
+  // already returns ₹0 for it — see its own comment). Deal Check's Truss tab and dcCostRollup both
+  // price truss/pillar/beam/batta off THIS function's `costs` instead (a separate, RFT-based model —
+  // see zoneTrussStandingDiscountDetail's "two genuinely different pricing models" comment), so
+  // without this a 0-qty row billed ₹0 on Build but kept charging real pillar/beam/batta money in
+  // Deal Check. `pillarRft`/`beamRft` (and `topology`, above) stay real — calcZoneFabric still needs
+  // them for the Liza wrap-kg calculation, which must keep computing off the dims either way.
+  const qtyIsZero = zc?.trussQty === 0;
   out.costs = {
     uEquivalent: Math.round(uEquivalent),
     boxEquivalent: Math.round(boxEquivalent),
-    actual: Math.round(totalActual),
-    pillarCost: Math.round(actualPillarCost),
-    beamCost: Math.round(actualBeamCost),
-    battaCost: Math.round(battaCost),
+    actual: qtyIsZero ? 0 : Math.round(totalActual),
+    pillarCost: qtyIsZero ? 0 : Math.round(actualPillarCost),
+    beamCost: qtyIsZero ? 0 : Math.round(actualBeamCost),
+    battaCost: qtyIsZero ? 0 : Math.round(battaCost),
     pillarRft: actualPillarRft,
     beamRft: actualBeamRft,
   };

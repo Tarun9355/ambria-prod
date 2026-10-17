@@ -878,8 +878,11 @@ export default function DealCheckOverlay({ ctx }) {
                     // Truss requirement → loadable line items grouped BY SIZE (e.g. "Truss pillar 15ft").
                     // Pushed per-zone here; the size-keyed names merge across all zones below. Still
                     // skipped for a repeat zone — nothing NEW needs sourcing/hauling for a rig that
-                    // isn't moving, independent of what it costs to reuse it (handled above/below).
-                    if (!isRepeat && pv?.topology && deptInv["Tenting"]) {
+                    // isn't moving, independent of what it costs to reuse it (handled above/below) —
+                    // and skipped for an explicit 0 Truss Qty the same way: no physical truss is being
+                    // built, so there is nothing for Tenting to load/haul even though the dims still
+                    // drive the Liza/Curtain fabric lines pushed further below.
+                    if (!isRepeat && row.trussQty !== 0 && pv?.topology && deptInv["Tenting"]) {
                       const pmap = {}, bmap = {};
                       (pv.topology.pillars || []).forEach(p => { const ft = Math.round(Number(p.H) || 0); if (ft > 0) pmap[ft] = (pmap[ft] || 0) + 1; });
                       (pv.topology.beams || []).forEach(b => { const ft = Math.round(Number(b.lengthFt) || 0); if (ft > 0) bmap[ft] = (bmap[ft] || 0) + 1; });
@@ -937,7 +940,19 @@ export default function DealCheckOverlay({ ctx }) {
             if (pp) {
               const fattaR = pp.fattaItem ? imsField.rentalCost(pp.fattaItem) : 0;
               const standR = pp.standItem ? imsField.rentalCost(pp.standItem) : 0;
-              Object.entries(pp.perZone || {}).forEach(([k, z]) => { const pc = (z.fattas || 0) * fattaR + (z.stands || 0) * standR; rental += pc; const pfi = Number(k.split("|")[0]); if (byFn[pfi]) byFn[pfi].rental += pc; addD("Tenting", "rental", pc); if (pc > 0 && deptInv["Tenting"]) deptInv["Tenting"].push({ name: "Platform (fatta + stand)", photo: "", qty: (z.fattas || 0) + (z.stands || 0), unit: 0, total: Math.round(pc), sub: `${z.fattas || 0} fatta · ${z.stands || 0} stand` }); }); // platform → Tenting
+              // Fatta and Stand are two different IMS items (TEN-00008/TEN-00009 — see pricing.js's own
+              // comment) at two different rental rates, so a single combined "Platform (fatta+stand)"
+              // row — one qty that added pieces of each together, one rate that could only ever read
+              // ₹0 for a mix of two rates — told ops a total ₹ with no usable piece count for either.
+              // Two rows, same names Deal Check's own Inventory tab already uses for these items
+              // (Platform Fatta / Platform Stand), each with its real qty and rate.
+              Object.entries(pp.perZone || {}).forEach(([k, z]) => {
+                const pc = (z.fattas || 0) * fattaR + (z.stands || 0) * standR;
+                rental += pc; const pfi = Number(k.split("|")[0]); if (byFn[pfi]) byFn[pfi].rental += pc; addD("Tenting", "rental", pc);
+                if (!deptInv["Tenting"]) return;
+                if ((z.fattas || 0) > 0) deptInv["Tenting"].push({ name: "Platform Fatta", photo: "", qty: z.fattas, unit: fattaR, total: Math.round((z.fattas || 0) * fattaR), sub: "platform structure" });
+                if ((z.stands || 0) > 0) deptInv["Tenting"].push({ name: "Platform Stand", photo: "", qty: z.stands, unit: standR, total: Math.round((z.stands || 0) * standR), sub: "platform structure" });
+              }); // platform → Tenting
             }
           } catch {}
           try {
