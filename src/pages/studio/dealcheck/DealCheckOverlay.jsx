@@ -97,7 +97,7 @@ import { rentalSplit, availableAtVenue, isStandingAt, fixedVenueFor, standingRed
 import { calcZoneFabric, autoFillFabricAllocation, anchorsForPalette, anchorsForPaletteByMaterial, resolveTrussConfig, zoneTrussStandingDiscount, repeatCatFor } from "../../../lib/studio/pricing";
 import { carpetPricingFor, CARPET_OFF } from "../../../lib/studio/taxonomy";
 import { qtyUsedElsewhereInDealCheck, netOwnReservedBlocksLive } from "../../../lib/studio/dealAvailability";
-import { isHiddenSubcat, oosCostPctFor } from "../../../lib/rateCard";
+import { isHiddenSubcat, oosCostPctFor, canFulfillShortfall } from "../../../lib/rateCard";
 import { findCrossFnReuseSource, computeFnInvQty } from "../../../lib/studio/crossFnReuse";
 import { kitShortfallSplit } from "../../../lib/studio/kitShortfallSplit";
 
@@ -783,8 +783,13 @@ export default function DealCheckOverlay({ ctx }) {
               if (lineRental > 0 && deptInv[dD]) {
                 // shortQty > 0 means part (or all) of this line is priced at cost% because stock ran
                 // out for this event's date — Dept Ops badges it so a head knows to flag/chase it
-                // rather than assuming the full qty is sitting reserved and ready.
-                deptInv[dD].push({ name: item.name || c.name || "Item", photo: imsField.photos(item)[0] || "", qty, unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "", imsId: c.imsId, ...(components && components.length ? { isKit: true, components: components.map(({ci, ...rest}) => ({ ...rest, total: Math.round(rest.total) })) } : {}), ...(shortQty > 0 ? { shortQty, shortCost: Math.round(shortCost) } : {}) });
+                // rather than assuming the full qty is sitting reserved and ready. outOfStock (item's
+                // own "Can be made" checkbox, canFulfillShortfall/lib/rateCard.js) — false means this
+                // was never actually priced at cost% at all (oosCostPctFor floors to the plain rate
+                // for it), so Dept Ops needs a different badge: nothing to chase/produce, pick an
+                // alternative in Build instead. Approximated at the kit's OWN flag for a kit line —
+                // kitShortfallSplit doesn't currently say which specific component was short.
+                deptInv[dD].push({ name: item.name || c.name || "Item", photo: imsField.photos(item)[0] || "", qty, unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "", imsId: c.imsId, ...(components && components.length ? { isKit: true, components: components.map(({ci, ...rest}) => ({ ...rest, total: Math.round(rest.total) })) } : {}), ...(shortQty > 0 ? { shortQty, shortCost: Math.round(shortCost), outOfStock: !canFulfillShortfall(item) } : {}) });
               }
             });
             // Manually-added inventory blocks (dcManualItems) — the salesperson added these directly in
@@ -3091,7 +3096,7 @@ export default function DealCheckOverlay({ ctx }) {
                                             </span>
                                           )}
                                           {hold && <span title={`Held by ${hold.salesperson} for ${hold.eventName}`} style={{fontSize:11,padding:"2px 6px",borderRadius:4,background:"rgba(245,158,11,0.20)",color:"#F59E0B",fontWeight:700,letterSpacing:0.4}}>⏳ {hold.salesperson}</span>}
-                                          {item && (()=>{ const cq=Number(card.qty)||1; const av=Math.min(dcAvailable(item, fnBlocksForChip, fnIdx), availableAtVenue({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, fns[fnIdx]?.fnVenue, item)); return cq>av ?<span style={{fontSize:11,padding:"2px 6px",borderRadius:4,background:"rgba(239,68,68,0.18)",color:"#EF4444",fontWeight:700,letterSpacing:0.4}}>⚠ {av}</span> : null; })()}
+                                          {item && (()=>{ const cq=Number(card.qty)||1; const av=Math.min(dcAvailable(item, fnBlocksForChip, fnIdx), availableAtVenue({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, fns[fnIdx]?.fnVenue, item)); if (cq<=av) return null; const canMake = canFulfillShortfall(item); return <span title={canMake?undefined:"Out of stock and can't be made in production"} style={{fontSize:11,padding:"2px 6px",borderRadius:4,background:"rgba(239,68,68,0.18)",color:"#EF4444",fontWeight:700,letterSpacing:0.4}}>{canMake?`⚠ ${av}`:"⚠ out of stock"}</span>; })()}
                                           {card.imsId && reuseFnCount[card.imsId]?.size >= 2 && <span style={{fontSize:11,padding:"2px 6px",borderRadius:4,background:"rgba(16,185,129,0.18)",color:"#10B981",fontWeight:700,letterSpacing:0.4}}>♻ {reuseFnCount[card.imsId].size} fns</span>}
                                           <span onClick={()=>setDcCards(prev=>{const fn={...(prev[fnIdx]||{})}; delete fn[card._cardKey]; return {...prev,[fnIdx]:fn};})} title="Remove from Deal Check" style={{marginLeft:"auto",cursor:"pointer",color:"#EF4444",fontSize:15.5,fontWeight:700,padding:"0 4px",lineHeight:1,flexShrink:0,opacity:0.6,transition:"opacity 0.15s"}} onMouseEnter={e=>e.currentTarget.style.opacity=1} onMouseLeave={e=>e.currentTarget.style.opacity=0.6}>×</span>
                                         </div>
@@ -3443,7 +3448,7 @@ export default function DealCheckOverlay({ ctx }) {
                                                       </span>
                                                       {cItem && (()=>{ const cr=imsField.rentalCost(cItem); return <span style={{...NUM,flex:"1 1 auto",minWidth:108,color:IV.ink3,whiteSpace:"nowrap"}}>₹{cr.toLocaleString("en-IN")} × {needed} = <b style={{color:"#4338CA"}}>₹{(cr*needed).toLocaleString("en-IN")}</b></span>; })()}
                                                       {cItem && (short
-                                                        ? <span style={{color:"#EF4444",fontWeight:700,whiteSpace:"nowrap",textAlign:"right",...NUM}}>⚠ need {needed}, only {owned}</span>
+                                                        ? <span style={{color:"#EF4444",fontWeight:700,whiteSpace:"nowrap",textAlign:"right",...NUM}}>{canFulfillShortfall(cItem) ? `⚠ need ${needed}, only ${owned}` : `⚠ out of stock (need ${needed}, only ${owned})`}</span>
                                                         : <span style={{color:"#10B981",whiteSpace:"nowrap",textAlign:"right",...NUM}}>✓ {owned} avail</span>)}
                                                     </div>
                                                     {unavailable && (
@@ -4380,7 +4385,7 @@ export default function DealCheckOverlay({ ctx }) {
                       // fi is carried so a row can be matched against the sidebar selection —
                       // this tab is booking-wide, and without the index there was no way to say
                       // which conflicts belong to the function you are actually looking at.
-                      conflicts.push({ imsId: card.imsId, name: item.name || card.imsName, photo, needed: cardQty, available, isShort, hold, isHeld, fnDate, fi, fnLabel: fn.fnType || `Function ${fi+1}`, item });
+                      conflicts.push({ imsId: card.imsId, name: item.name || card.imsName, photo, needed: cardQty, available, isShort, outOfStock: isShort && !canFulfillShortfall(item), hold, isHeld, fnDate, fi, fnLabel: fn.fnType || `Function ${fi+1}`, item });
                     });
                   });
 
@@ -4520,7 +4525,7 @@ export default function DealCheckOverlay({ ctx }) {
                                         {/* SHORT and HELD are different problems with different
                                             owners, so they keep different colours rather than being
                                             flattened into one "conflict" badge. */}
-                                        <span style={{flexShrink:0,fontSize:9,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase",padding:"3px 7px",borderRadius:999,whiteSpace:"nowrap",background:c.isShort?BAD_SOFT:GOLD_SOFT,color:c.isShort?BAD:GOLD}}>{c.isShort?"short":"held"}</span>
+                                        <span style={{flexShrink:0,fontSize:9,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase",padding:"3px 7px",borderRadius:999,whiteSpace:"nowrap",background:c.isShort?BAD_SOFT:GOLD_SOFT,color:c.isShort?BAD:GOLD}}>{c.isShort?(c.outOfStock?"out of stock":"short"):"held"}</span>
                                       </div>
                                       {/* The function name is the field that tells you whether a
                                           row is the one you selected, so on a match it takes full
@@ -4534,6 +4539,7 @@ export default function DealCheckOverlay({ ctx }) {
                                       {c.isShort && (
                                         <div style={{marginTop:6,fontSize:11.5,color:INK_2,...NUM}}>
                                           need <strong style={{color:BAD,fontWeight:700}}>{c.needed}</strong>, only <strong style={{color:INK,fontWeight:700}}>{c.available}</strong> free
+                                          {c.outOfStock && <span style={{color:BAD,fontWeight:600}}> — can't be made in production, pick an alternative</span>}
                                         </div>
                                       )}
                                       {c.isHeld && (

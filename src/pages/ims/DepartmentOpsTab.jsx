@@ -758,7 +758,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       // departments by each part's own category, so a row can be a component of a kit owned by
       // another department. It is the only record of that parent, and the PDF needs it to avoid
       // reporting a bolted-on part as a loose item.
-      const rows = deptInvSnap.map((x, i) => ({ id: x.name + i, invId: x.imsId || null, name: x.name, photo: x.photo || "", qty: x.qty || 0, unit: x.unit || 0, total: x.total || 0, sub: x.sub || "", isKit: !!x.isKit, fromKit: x.fromKit || null, components: Array.isArray(x.components) ? x.components : null, shortQty: x.shortQty || 0, shortCost: x.shortCost || 0, prodOrBuy: x.prodOrBuy || null, isSwapped: swapInfo.has(x.name), swappedFrom: swapInfo.get(x.name)?.swappedFrom || null }));
+      const rows = deptInvSnap.map((x, i) => ({ id: x.name + i, invId: x.imsId || null, name: x.name, photo: x.photo || "", qty: x.qty || 0, unit: x.unit || 0, total: x.total || 0, sub: x.sub || "", isKit: !!x.isKit, fromKit: x.fromKit || null, components: Array.isArray(x.components) ? x.components : null, shortQty: x.shortQty || 0, shortCost: x.shortCost || 0, outOfStock: !!x.outOfStock, prodOrBuy: x.prodOrBuy || null, isSwapped: swapInfo.has(x.name), swappedFrom: swapInfo.get(x.name)?.swappedFrom || null }));
       // Short items first (need chasing/ordering), then Production/Buying (not real stock — worth
       // knowing apart from what's actually reserved), then everything else — the order requested
       // for this list. Stable within each group: Array.prototype.sort is stable, so ties keep the
@@ -1814,7 +1814,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     const finish = buildFinish(sel?.functionsDetail, inventory, settings?.printMaterials);
     const invRows = [];
     blockedItemsGrouped.forEach(it => {
-      const flags = [it.isKit ? "KIT" : "", it.shortQty > 0 ? `SHORT x${it.shortQty}` : "", it.prodOrBuy ? it.prodOrBuy.toUpperCase() : "", it.isSwapped ? "SWAPPED" : ""].filter(Boolean).join(" · ");
+      const flags = [it.isKit ? "KIT" : "", it.shortQty > 0 ? (it.outOfStock ? "OUT OF STOCK" : `SHORT x${it.shortQty}`) : "", it.prodOrBuy ? it.prodOrBuy.toUpperCase() : "", it.isSwapped ? "SWAPPED" : ""].filter(Boolean).join(" · ");
       const paint = finish.paintFor(it);
       const extra = paint ? `<div class="sub">Paint: ${esc(paint)}</div>` : "";
       invRows.push(`<tr><td>${esc(it.name)}${flags ? ` <span class="tag">${esc(flags)}</span>` : ""}<div class="sub">${esc(it.sub || "—")}</div>${extra}</td><td class="n">${esc(it.qty)}</td><td class="n">${money(it.unit)}</td><td class="n b">${money(it.total)}</td></tr>`);
@@ -4121,7 +4121,9 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                                 ) : (
                                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 font-bold">KIT</span>
                                 ))}
-                                {it.shortQty > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-bold">SHORT ×{it.shortQty}</span>}
+                                {it.shortQty > 0 && (it.outOfStock
+                                  ? <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-700 font-bold">OUT OF STOCK</span>
+                                  : <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-bold">SHORT ×{it.shortQty}</span>)}
                                 {it.prodOrBuy && <span className={"text-[10px] px-1.5 py-0.5 rounded font-bold " + (it.prodOrBuy === "buying" ? "bg-orange-100 text-orange-700" : "bg-purple-100 text-purple-700")}>{it.prodOrBuy === "buying" ? "🛒 BUYING" : "🏭 PRODUCTION"}</span>}
                                 {it.isSwapped && <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-100 text-sky-700 font-bold">🔁 SWAPPED</span>}
                               </div>
@@ -4130,7 +4132,9 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                                   name they describe. */}
                               <div className="text-xs text-gray-500 mt-0.5">
                                 <div className="truncate" title={it.sub || ""}>{it.sub || "—"}</div>
-                                {it.shortQty > 0 && <div className="text-amber-600 mt-0.5">{it.shortQty} short of stock — priced at cost, chase or produce</div>}
+                                {it.shortQty > 0 && (it.outOfStock
+                                  ? <div className="text-red-600 mt-0.5">{it.shortQty} out of stock — can't be made in production, pick an alternative in Build</div>
+                                  : <div className="text-amber-600 mt-0.5">{it.shortQty} short of stock — priced at cost, chase or produce</div>)}
                                 {it.isSwapped && <div className="text-sky-600 mt-0.5">swapped in for {it.swappedFrom}</div>}
                                 {invFinish.paintFor(it) && <div className="text-pink-700 mt-0.5">🎨 Paint: {invFinish.paintFor(it)}</div>}
                               </div>
