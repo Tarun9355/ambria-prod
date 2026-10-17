@@ -5534,9 +5534,11 @@ export default function StudioApp() {
       const transportPool = crossFnPrevFn ? new Map(Object.entries(computeFnInvQty(crossFnPrevFn))) : null;
       Object.entries(fZoneElements).forEach(([zk, elems]) => {
         if (!fEnabledEls[zk] || !elems) return;
-        // Same guest-discount-gated repeat/fixed-venue transport waiver as computeTruckItems.
-        if (!hideDiscountFromClient && fZoneConfig[zk]?.repeat) return;
+        // Same guest-discount-gated repeat/fixed-venue transport waiver as computeTruckItems — per
+        // chip (RC-30): the Elements chip decides for elements, an element's own repeatOverride first.
+        const zoneElRepeat = repeatCatFor(fZoneConfig[zk], "elements");
         elems.forEach(el => {
+          if (!hideDiscountFromClient && (typeof el.repeatOverride === "boolean" ? el.repeatOverride : zoneElRepeat)) return;
           const invItem = el.invId ? imsInventory.find(i => i.id === el.invId) : null;
           if (invItem) {
             const kitSub = invItem.subCat || invItem.subcategory || "";
@@ -5570,15 +5572,18 @@ export default function StudioApp() {
       });
       Object.entries(fZoneConfig).forEach(([zk, cfg]) => {
         if (!cfg || !fEnabledEls[zk]) return;
-        if (!hideDiscountFromClient && cfg.repeat) return;
+        // Per chip (RC-30), same as computeTruckItems: Truss & Masking for truss/masking/liza/
+        // curtains, Platform for platform/carpet.
+        const skipTruss = !hideDiscountFromClient && repeatCatFor(cfg, "truss");
+        const skipPlat = !hideDiscountFromClient && repeatCatFor(cfg, "platform");
         const d = cfg.dims || {};
         const fd = cfg.floorDims || {}; // no truss-dims fallback — see calcStructCost's own comment
-        if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * (cfg.trussQty === 0 ? 0 : Math.max(1, cfg.trussQty || 1)); if (tSqft > 0) addSub("Truss", tSqft); }
+        if (!skipTruss && cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * (cfg.trussQty === 0 ? 0 : Math.max(1, cfg.trussQty || 1)); if (tSqft > 0) addSub("Truss", tSqft); }
         const sqft = (fd.L || 0) * (fd.W || 0);
-        if (sqft > 0) { if (cfg.plH) addSub("Platform", sqft); if (cfg.cpT && cfg.cpT !== CARPET_OFF) addSub("Carpet", sqft); }
+        if (!skipPlat && sqft > 0) { if (cfg.plH) addSub("Platform", sqft); if (cfg.cpT && cfg.cpT !== CARPET_OFF) addSub("Carpet", sqft); }
         // Fabric Allocation (masking/liza/curtains) — see computeTruckItems' matching comment.
         const fcTrussInv = sharedFloralSettings.trussInv;
-        if (fcTrussInv) {
+        if (!skipTruss && fcTrussInv) {
           const fab = calcZoneFabric(cfg, fcTrussInv, "moderate");
           if (fab.maskingPieces > 0) addSub("Masking", fab.maskingPieces);
           if (fab.lizaKg > 0) addSub("Liza", fab.lizaKg);
@@ -5683,7 +5688,8 @@ export default function StudioApp() {
     const crossFnPrevFnFloral = findCrossFnReuseSource(fn, collectAllFunctionData());
     Object.entries(fn?.zoneElements || {}).forEach(([zk, elems]) => {
       if (!fn.enabledEls?.[zk]) return;
-      const zoneRepeat = !!fn.zoneConfig?.[zk]?.repeat || !!(crossFnPrevFnFloral?.enabledEls?.[zk] && crossFnPrevFnFloral?.zoneConfig?.[zk]);
+      // The Elements chip, not the zone toggle alone (RC-30) — the flowers are elements.
+      const zoneRepeat = repeatCatFor(fn.zoneConfig?.[zk], "elements") || !!(crossFnPrevFnFloral?.enabledEls?.[zk] && crossFnPrevFnFloral?.zoneConfig?.[zk]);
       // A kit's own subItems can carry floral content of their own (a flower-recipe add-on via
       // si.patternId, or a component item itself categorized as florals, e.g. "Round Fibre Pot"
       // nested inside a stage kit) — mirrors DCFloralsTab.jsx's own expandedElems fix exactly.
