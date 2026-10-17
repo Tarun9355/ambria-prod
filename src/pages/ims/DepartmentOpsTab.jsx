@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { fmt } from "../../lib/format";
-import { mpDayWise, mpBaseDay, mpEffDay, mpEffWindows, mpLineCost, mpDayCost, mpDayDihari, aggregateEventManpower, isLiveEventOrder, phone10 } from "../../lib/ims/helpers";
+import { mpDayWise, mpBaseDay, mpEffDay, mpEffWindows, mpLineCost, mpDayCost, mpDayDihari, aggregateEventManpower, isLiveEventOrder, phone10, walkKitUnits } from "../../lib/ims/helpers";
 import { uploadAudioToStorage } from "../../lib/storage";
 import { DEPTS as SHARED_DEPTS, catToDept as sharedCatToDept, userDepartments } from "../../lib/ims/deptClassify";
 import { TabsMenu, useConfirm } from "../../components/ui";
@@ -926,13 +926,27 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       (Array.isArray(els) ? els : []).forEach(el => {
         const q = Number(el?.qty) || 1;
         const id = el?.invId || el?.imsId;
-        if (id) byId.set(String(id), (byId.get(String(id)) || 0) + q);
-        const nm = String(el?.name || "").trim().toLowerCase();
-        if (nm) byName.set(nm, (byName.get(nm) || 0) + q);
+        const topItem = id ? (inventory || []).find(i => String(i.id) === String(id)) : null;
+        if (topItem) {
+          // Walk kit components too — a kit component (e.g. a side table bundled into a couch-set
+          // kit) is its own line in blockedItemsGrouped, filed under its own department, but was
+          // only ever indexed here by the OUTER kit element's own id/name. A component-only item
+          // never matched any individual function this way and silently only ever showed under
+          // "All functions" — looking like it came from nowhere.
+          walkKitUnits(topItem, q, inventory, el.kitOverrides, (node, nodeQty) => {
+            byId.set(String(node.id), (byId.get(String(node.id)) || 0) + nodeQty);
+            const nnm = String(node.name || "").trim().toLowerCase();
+            if (nnm) byName.set(nnm, (byName.get(nnm) || 0) + nodeQty);
+          });
+        } else {
+          if (id) byId.set(String(id), (byId.get(String(id)) || 0) + q);
+          const nm = String(el?.name || "").trim().toLowerCase();
+          if (nm) byName.set(nm, (byName.get(nm) || 0) + q);
+        }
       });
     });
     return { byId, byName };
-  }, [sel, invFn]);
+  }, [sel, invFn, inventory]);
   const invShown = invScoped
     ? blockedItemsGrouped.map(it => {
         const q = (it.invId && invFnQty.byId.get(String(it.invId))) || invFnQty.byName.get(String(it.name || "").trim().toLowerCase()) || 0;
