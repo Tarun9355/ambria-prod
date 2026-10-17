@@ -37,7 +37,7 @@ import { ytApi, ytDuration } from "../../lib/youtube";
 import { extractLabeledValue, bestTaxMatch } from "../../lib/studio/videoDescriptionTags";
 import { paletteNames, paletteInList } from "../../lib/studio/colours";
 import { makeS } from "../../lib/studio/styles";
-import { findCrossFnReuseSource, computeFnInvQty, findSiblingFnInvUse } from "../../lib/studio/crossFnReuse";
+import { findCrossFnReuseSource, computeFnInvQty, findSiblingFnInvUse, findSiblingFnSubcatOpportunity } from "../../lib/studio/crossFnReuse";
 
 // ═══ HEADER TYPE + CHIP SCALE ═══
 // The header used to mix 8/9/10/11/12/13px in a single row. It now has exactly two tiers:
@@ -5394,6 +5394,13 @@ export default function StudioApp() {
     const all = collectAllFunctionData();
     return all[activeFnIdx] ? findSiblingFnInvUse(all[activeFnIdx], all) : {};
   }, [collectAllFunctionData, activeFnIdx]);
+  // sub-category → sibling-function items NOT yet matched exactly — drives the orange 📦 stock icon
+  // (as opposed to activeSiblingFnInvUse's orange RATE, shown only once an exact match is picked).
+  // Heads-up only, same as activeSiblingFnInvUse — not gated by hideDiscountFromClient/Filler date.
+  const activeSiblingFnSubcatOpportunity = useMemo(() => {
+    const all = collectAllFunctionData();
+    return all[activeFnIdx] ? findSiblingFnSubcatOpportunity(all[activeFnIdx], all, imsInventory) : {};
+  }, [collectAllFunctionData, activeFnIdx, imsInventory]);
 
   const calcFunctionCost = useCallback((fnData) => {
     if (!fnData) return { decor: 0, transport: 0, grand: 0 };
@@ -11464,7 +11471,7 @@ export default function StudioApp() {
     showLedgerRestoreWarning: ledgerLoadError && !activeClientId && !!restoreRef.current?.id,
     retryLedgerLoad,
     deleteSessionRows,
-    showClientForm, setShowClientForm, clientLedger, setClientLedger, saveClientLedger, activeClientId, setActiveClientId, clientSearch, setClientSearch, hideDiscountFromClient, guestPriceMultiplier, dateCategoryMultiplierFor, activeCrossFnReuseQty, activeSiblingFnInvUse,
+    showClientForm, setShowClientForm, clientLedger, setClientLedger, saveClientLedger, activeClientId, setActiveClientId, clientSearch, setClientSearch, hideDiscountFromClient, guestPriceMultiplier, dateCategoryMultiplierFor, activeCrossFnReuseQty, activeSiblingFnInvUse, activeSiblingFnSubcatOpportunity,
     snapshotBuildState, restoreBuildState, switchActiveFn, fnSnapHasData, fnSnapHasBuild,
     sessionHistoryExpanded, setSessionHistoryExpanded,
     // LMS
