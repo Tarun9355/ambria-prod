@@ -372,6 +372,67 @@ const DEFAULT_TOOLS = {
   Furniture: ["Trolley", "Covers", "Cleaning cloth", "Cushion spares"],
 };
 
+// ── PAINT AND PRINT, AS THE BUILD ASKED FOR THEM ──
+// Neither survives Deal Check's department snapshot: a held row is only "Wooden Arch x6", and the
+// print row only "🖨 Print / signage" with a count of jobs. The build itself (functionsDetail) still
+// carries both — each element's paintAllocation (or the legacy single paintOverride) and each
+// zone's prints — so the inventory list and the PDF read them from there.
+// Paint is the same rule Studio's normalizePaintAllocation uses: a colour equal to the item's own
+// base colour (Ivory when unset) is no repaint. It is keyed by inventory id and by name, matched
+// to a held row the same way invFnQty matches quantities.
+const paintText = (m) => (m ? [...m].map(([c, q]) => `${c} ×${q}`).join(", ") : "");
+const elPaint = (el, inv) => {
+  const base = String(inv?.baseColour || "Ivory");
+  const allocs = Array.isArray(el?.paintAllocation) && el.paintAllocation.length
+    ? el.paintAllocation.map(a => ({ qty: Number(a?.qty) || 0, colour: String(a?.colour || "") }))
+    : el?.paintOverride ? [{ qty: Number(el?.qty) || 0, colour: String(el.paintOverride) }] : [];
+  return allocs.filter(a => a.qty > 0 && a.colour && a.colour !== base);
+};
+const addPaint = (m, allocs) => { allocs.forEach(a => m.set(a.colour, (m.get(a.colour) || 0) + a.qty)); return m; };
+function buildFinish(fnList, inventory, printMaterials) {
+  const invMap = new Map((inventory || []).map(i => [String(i.id), i]));
+  const paintById = new Map(), paintByName = new Map(), prints = [];
+  const add = (m, k, allocs) => { if (k && allocs.length) m.set(k, addPaint(m.get(k) || new Map(), allocs)); };
+  const fns = (fnList || []).filter(Boolean);
+  fns.forEach((fd, fi) => {
+    const on = (zk) => !(fd.enabledEls && fd.enabledEls[zk] === false);
+    Object.entries(fd.elements || {}).forEach(([zk, els]) => {
+      if (!on(zk)) return;
+      (Array.isArray(els) ? els : []).forEach(el => {
+        const id = el?.invId || el?.imsId;
+        const inv = id ? invMap.get(String(id)) : null;
+        const allocs = elPaint(el, inv);
+        if (id) add(paintById, String(id), allocs);
+        add(paintByName, String(el?.name || inv?.name || "").trim().toLowerCase(), allocs);
+      });
+    });
+    Object.entries(fd.zones || {}).forEach(([zk, z]) => {
+      if (!on(zk)) return;
+      (Array.isArray(z?.prints) ? z.prints : []).forEach(p => {
+        const w = Number(p?.areaW) || 0, d = Number(p?.areaD) || 0;
+        if (!(w > 0 && d > 0)) return; // an untouched blank row
+        const m = (Array.isArray(printMaterials) ? printMaterials : []).find(x => x && x.id === p.material);
+        // Build's print row can name the inventory item it goes on and carry a reference image of
+        // the artwork — the "which" and the "what" of the job.
+        const onInv = p.invId ? invMap.get(String(p.invId)) : null;
+        const ref = String(p.refImageUrl || "").trim();
+        prints.push({
+          on: onInv?.name || "",
+          ref: /^https?:\/\//i.test(ref) ? ref : "",
+          material: m?.name || String(p.material || "Print"),
+          size: `${w} x ${d} ft`,
+          qty: Math.max(1, Math.round(Number(p.qty) || 1)),
+          zone: fd.zoneNames?.[zk] || ZONE_META[zk]?.label || String(zk).replace(/[_-]+/g, " ").replace(/\b\w/g, c => c.toUpperCase()),
+          fn: fns.length > 1 ? [fd.type || `Function ${fi + 1}`, fd.date].filter(Boolean).join(" · ") : "",
+        });
+      });
+    });
+  });
+  const paintFor = (row) => paintText((row?.invId && paintById.get(String(row.invId))) || paintByName.get(String(row?.name || "").trim().toLowerCase()));
+  const printLine = (p) => `${p.material} · ${p.size}${p.qty > 1 ? ` ×${p.qty}` : ""}${p.on ? ` on ${p.on}` : ""} — ${p.zone}${p.fn ? ` (${p.fn})` : ""}`;
+  return { paintFor, prints, printLine };
+}
+
 export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEventOrders, inventory, setInventory, blocks, settings, setSettings, trussInv, setTrussInv, authUser, amendRequests, focusEventId, focusSearch, focusLeadEntry, onFocusHandled, onGoToCalendar }) {
   const catDeptCfg = (settings && settings.categoryDepartments && typeof settings.categoryDepartments === "object") ? settings.categoryDepartments : {};
   const catToDept = (cat) => sharedCatToDept(cat, catDeptCfg);
@@ -873,6 +934,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       }).filter(Boolean)
     : blockedItemsGrouped;
   const invWholeOnly = invScoped ? blockedItemsGrouped.length - invShown.length : 0;
+  // Paint colours and print jobs for the rows on screen — scoped to one function when the list is.
+  const invFinish = useMemo(
+    () => buildFinish(invScoped ? [sel?.functionsDetail?.[invFn]] : sel?.functionsDetail, inventory, settings?.printMaterials),
+    [sel, invScoped, invFn, inventory, settings?.printMaterials]);
   const invShownTotal = invShown.reduce((s, x) => s + (Number(x.total) || 0), 0);
   const inMpFn = (d) => {
     const fd = mpFnDate(mpFns[mpFn]);
@@ -1710,10 +1775,13 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
 
     /* Inventory, with each kit's components indented beneath it — the components sum to the kit
        line, which is the one comparison this section exists to support. */
+    const finish = buildFinish(sel?.functionsDetail, inventory, settings?.printMaterials);
     const invRows = [];
     blockedItemsGrouped.forEach(it => {
       const flags = [it.isKit ? "KIT" : "", it.shortQty > 0 ? `SHORT x${it.shortQty}` : "", it.prodOrBuy ? it.prodOrBuy.toUpperCase() : "", it.isSwapped ? "SWAPPED" : ""].filter(Boolean).join(" · ");
-      invRows.push(`<tr><td>${esc(it.name)}${flags ? ` <span class="tag">${esc(flags)}</span>` : ""}<div class="sub">${esc(it.sub || "—")}</div></td><td class="n">${esc(it.qty)}</td><td class="n">${money(it.unit)}</td><td class="n b">${money(it.total)}</td></tr>`);
+      const paint = finish.paintFor(it);
+      const extra = paint ? `<div class="sub">Paint: ${esc(paint)}</div>` : "";
+      invRows.push(`<tr><td>${esc(it.name)}${flags ? ` <span class="tag">${esc(flags)}</span>` : ""}<div class="sub">${esc(it.sub || "—")}</div>${extra}</td><td class="n">${esc(it.qty)}</td><td class="n">${money(it.unit)}</td><td class="n b">${money(it.total)}</td></tr>`);
       (it.isKit && Array.isArray(it.components) ? it.components : []).forEach(cp => {
         invRows.push(`<tr class="kit"><td>&#8627; ${esc(cp.name)}</td><td class="n">${esc(cp.qty)}</td><td class="n">${money(cp.unit)}</td><td class="n">${money(cp.total)}</td></tr>`);
       });
@@ -1746,8 +1814,15 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
        Ordering is left alone: it is the loading screen's own order, and two lists that disagree
        about sequence are worse than one that is not sorted the way you would choose. */
     const loadUnits = blockedItems.reduce((a, it) => a + (Number(it.qty) || 0), 0);
-    const loadRows = blockedItems.map(it =>
-      `<tr><td>${esc(it.name)}${it.kitOf ? `<div class="sub">part of ${esc(it.kitOf)}</div>` : ""}</td><td class="n b">${esc(it.qty)}</td></tr>`);
+    // Deal Check's print row is only a count of jobs — each job is spelt out under it, and a
+    // painted item carries its colours, so neither is loaded blind.
+    const loadRows = blockedItems.map(it => {
+      const paint = finish.paintFor(it);
+      const sub = (it.kitOf ? `<div class="sub">part of ${esc(it.kitOf)}</div>` : "")
+        + (paint ? `<div class="sub">Paint: ${esc(paint)}</div>` : "")
+        + (it.sub === "print" ? finish.prints.map(p => `<div class="sub">${esc(finish.printLine(p))}</div>`).join("") : "");
+      return `<tr><td>${esc(it.name)}${sub}</td><td class="n b">${esc(it.qty)}</td></tr>`;
+    });
 
     const moveRows = movements.map(m =>
       `<tr><td>${esc(m.name)}</td><td>${esc(m.type === "transfer" ? `Transfer → ${m.toEventName || "site"}` : m.type === "damage" ? "Damaged" : "Back to production house")}</td><td class="n">${esc(m.qty)}</td><td>${esc(m.by || "—")}</td></tr>`);
@@ -1843,17 +1918,36 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       const m = (Array.isArray(settings?.printMaterials) ? settings.printMaterials : []).find(x => x && x.id === id);
       return m?.name || String(id);
     };
-    // Print jobs (Flex, Vinyl, Sunboard…) — Build's zoneConfig[zk].prints. Unlike truss and floor
-    // these go in EVERY department's book: a printed backdrop is hung on whatever that department
-    // builds, so each crew needs to know it is coming. A row with no size is an untouched blank.
-    const zonePrintsOf = (z) => {
-      const rows = (Array.isArray(z?.prints) ? z.prints : []).filter(p => p && Number(p.areaW) > 0 && Number(p.areaD) > 0);
-      if (!rows.length) return [];
-      return [{ k: "Print", v: rows.map(p => [printName(p.material), `${p.areaW} x ${p.areaD} ft`, Math.round(Number(p.qty) || 1) > 1 ? `x${Math.round(Number(p.qty))}` : ""].filter(Boolean).join(" ")).join("; ") }];
+    // Print jobs (Flex, Vinyl, Sunboard…) — Build's zoneConfig[zk].prints. They belong to the
+    // Structure department (owner ask): Deal Check already files every print's cost and its held
+    // row under Structure, and that crew gets them printed and put up. Printing them in every other
+    // department's book as well told each crew a job was theirs that was not. The combined book
+    // still shows them. A row with no size is an untouched blank.
+    const printsHere = combined || dept === "Structure";
+    // ── A PRINT JOB IS A CARD ON ITS OWN ZONE'S PAGE ──
+    // It used to be a one-line chip in the structure strip ("Print Vinyl 9 x 3 ft"), which left
+    // out what the crew needs to get it made and put up. Now each job is a card beside the zone's
+    // items, pointing at the photo like they do: material, size, total area, how many, the item it
+    // goes on (Build's "Link to an inventory item") and the artwork (its reference image, when the
+    // row carries a real URL).
+    const printCardsOf = (z) => {
+      if (!printsHere) return [];
+      return (Array.isArray(z?.prints) ? z.prints : []).filter(p => p && Number(p.areaW) > 0 && Number(p.areaD) > 0).map(p => {
+        const w = Number(p.areaW), d = Number(p.areaD), q = Math.max(1, Math.round(Number(p.qty) || 1));
+        const on = p.invId ? invById.get(String(p.invId)) : null;
+        const ref = String(p.refImageUrl || "").trim();
+        const area = Math.round(w * d * q * 100) / 100;
+        return {
+          name: "🖨 Print · " + (printName(p.material) || "—"), qty: q, unit: "pc",
+          photo: /^https?:\/\//i.test(ref) ? ref : "", dims: `${w} x ${d} ft`, kit: 0, recipe: [],
+          deptTag: combined ? "Structure" : "",
+          extra: [["Area", `${area} sqft${q > 1 ? " total" : ""}`], ...(on ? [["On", on.name]] : [])],
+        };
+      });
     };
     const zoneStructOf = (z) => {
       if (!z) return [];
-      if (!showStruct) return zonePrintsOf(z);
+      if (!showStruct) return [];
       const floor = ftArea(z.floorDims);
       const extraTr = Array.isArray(z.extraTrussRows) ? z.extraTrussRows : [];
       const extraPl = Array.isArray(z.extraPlatformRows) ? z.extraPlatformRows : [];
@@ -1868,7 +1962,6 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       if (z.cpT) out.push({ k: "Carpet", v: [carpetName(z.cpT), floor].filter(Boolean).join(" · ") });
       if (z.mkOn) out.push({ k: "Masking", v: "Yes" });
       if (!z.plH && !z.cpT && floor) out.push({ k: "Floor", v: floor });
-      out.push(...zonePrintsOf(z));
       return out;
     };
     fns.forEach((fn, fi) => {
@@ -1943,7 +2036,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           const key = (inv ? "i:" + inv.id : "n:" + nm) + (elSize ? "|" + elSize : "");
           const prev = merged.get(key);
           const qty = Number(el?.qty) || 1;
-          if (prev) { prev.qty += qty; return; }
+          // Paint the build asked for on this item, carried on its own card so the item's
+          // department paints it — summed across the zone's rows of the same item.
+          const paint = elPaint(el, inv);
+          if (prev) { prev.qty += qty; addPaint(prev.paint, paint); return; }
           // The unit the qty is counted in (kg, ft, nos…). "75" alone does not say whether it is 75
           // pieces or 75 kg of petals. The element's own unit first — it is what the quote priced —
           // then the inventory item's, then the held row's.
@@ -1964,7 +2060,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
             const mf = resolveMandiFlower(fl?.flowerId, mandiCatalogue)?.parent;
             return mf ? { name: mf.name, qty: Number(fl.qty) || 0, unit: mf.unit || "" } : null;
           }).filter(f => f && f.qty > 0);
-          merged.set(key, { name: inv?.name || el?.name || held?.name || "Item", qty, unit, deptTag, photo: invPhoto(inv, held), dims: invDims(inv), size: elSize, kit: (held?.isKit && Array.isArray(held.components)) ? held.components.length : 0, recipe });
+          merged.set(key, { name: inv?.name || el?.name || held?.name || "Item", qty, unit, deptTag, photo: invPhoto(inv, held), dims: invDims(inv), size: elSize, kit: (held?.isKit && Array.isArray(held.components)) ? held.components.length : 0, recipe, paint: addPaint(new Map(), paint) });
         });
         const items = [...merged.values()];
         const zPhoto = fn.elSelectedPhoto?.[zk]?.src || "";
@@ -1985,6 +2081,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         // The only zone still worth skipping is one with nothing to put on the page at all: none
         // of our items, no reference photo and no dimensions. That page would be a heading.
         const zStruct = zoneStructOf(zCfg);
+        // First, not last: a zone with more than six items splits across pages, and a print
+        // appended at the end landed on the zone's second page, away from the one the crew opens.
+        items.unshift(...printCardsOf(zCfg));
         if (!items.length && !zPhoto && !zDims && !zStruct.length) return;
         zonePages.push({
           zk,
@@ -2028,7 +2127,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       `<tr><td><b>${esc(r.label)}</b>${(fns || []).length > 1 && r.fn ? `<div class="sub">${esc(r.fn)}</div>` : ""}</td><td class="n">${esc(r.qty)}${r.unit ? " " + esc(r.unit) : ""}</td><td class="n">${Number(r.perTruck) > 0 ? esc(r.perTruck) + (r.unit ? " " + esc(r.unit) : "") + " per truck" : "—"}</td><td class="n b">${esc(r.trucks)}</td></tr>`);
     const trNote = !trMine ? "" : `${esc(dept)} fills ${trMine.trucks} of the ${trPlan.totalTrucks} truck${trPlan.totalTrucks === 1 ? "" : "s"} this event needs${trPlan.tierLabel ? ` · ${esc(trPlan.tierLabel)}` : ""}. A truck is counted by capacity, so a part-truck share is normal — the loads travel together.`;
 
-    const unplaced = blockedItemsGrouped.filter(b => !placed.has(b.id)).map(b => {
+    // Deal Check's one "🖨 Print / signage" row says only how many jobs there are; it is replaced
+    // below by one card per job, read from the build.
+    const unplaced = blockedItemsGrouped.filter(b => !placed.has(b.id) && b.sub !== "print").map(b => {
       const inv = (b.invId && invById.get(String(b.invId))) || invByName.get(String(b.name || "").trim().toLowerCase()) || null;
       const kitOf = String(b.fromKit || "").trim();
       return { name: b.name, qty: Number(b.qty) || 0, photo: invPhoto(inv, b), dims: invDims(inv), prodOrBuy: b.prodOrBuy || null, kit: (b.isKit && Array.isArray(b.components)) ? b.components.length : 0, source: b.prodOrBuy === "buying" ? "Buying" : b.prodOrBuy === "production" ? "Production" : kitOf ? "Inside " + kitOf : "" };
@@ -2044,6 +2145,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     // after the last Deal Check sync, so the right response is to go look at the build — which is
     // what the page now says, instead of the silent "Other items" that started all this.
     const prodItems = unplaced.filter(it => it.prodOrBuy === "production");
+    // Print jobs are not here: each is a card on its own zone's page (printCardsOf).
     const buyItems = unplaced.filter(it => it.prodOrBuy === "buying");
     const looseItems = unplaced.filter(it => it.prodOrBuy !== "production" && it.prodOrBuy !== "buying");
     // ── DATE THE ZONE PLAN, DO NOT JUST ASSERT THE ITEM IS LOOSE ──
@@ -2083,7 +2185,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       return shown.map(f => `<div class="zc-r f"><span>${esc(f.name)}</span><b>${esc(amt(f.qty * (Number(it.qty) || 0)))}${f.unit ? ` <span style="font-weight:500;font-size:.85em;opacity:.7">${esc(f.unit)}</span>` : ""}</b></div>`).join("")
         + (r.length > shown.length ? `<div class="zc-r f"><span>+${r.length - shown.length} more</span><b></b></div>` : "");
     };
-    const flLines = (it) => Math.min((it.recipe || []).length, FL_MAX);
+    // The paint line takes its 20px out of the photo the same way a flower line does.
+    const flLines = (it) => Math.min((it.recipe || []).length, FL_MAX) + (it.paint?.size ? 1 : 0) + (it.extra || []).length;
     const card = (it, zone, num) => `
       ${it.photo ? `<div class="zc-ph" style="${bgCss(it.photo)}${flLines(it) ? `height:${168 - flLines(it) * 20}px` : ""}" ${bgData(it.photo)}></div>` : ""}
       ${num ? `<div class="zc-no">${num}</div>` : ""}
@@ -2094,6 +2197,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         <div class="zc-r"><span>Qty</span><b>${esc(it.qty)}${it.unit ? ` <span style="font-weight:500;font-size:.85em;opacity:.7">${esc(it.unit)}</span>` : ""}</b></div>
         <div class="zc-r"><span>Size</span><b>${esc(it.dims || "—")}</b></div>
         ${it.source ? `<div class="zc-r"><span>From</span><b>${esc(it.source)}</b></div>` : it.deptTag ? `<div class="zc-r"><span>Dept</span><b>${esc(it.deptTag)}</b></div>` : ""}
+        ${it.paint?.size ? `<div class="zc-r"><span>Paint</span><b>${esc(paintText(it.paint))}</b></div>` : ""}
+        ${(it.extra || []).map(([k, v]) => `<div class="zc-r"><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join("")}
         ${flowerRows(it)}
       </div>`;
     const zoneSection = (pg, chunk, part, parts, zoneNo, offset) => {
@@ -3901,6 +4006,19 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
               {invWholeOnly > 0 && (
                 <div className="m-2.5 mb-0 px-2.5 py-2 rounded-xl bg-gray-50 text-[11px] text-gray-500">{invWholeOnly} item{invWholeOnly === 1 ? " is" : "s are"} not in any of this function's zones (production, fabric and the like) — see All functions.</div>
               )}
+              {/* Print jobs, read from the build's zone layout (pushed to IMS on every Build save),
+                  so they show without Deal Check — which only ever sends a count of them. */}
+              {dept === "Structure" && invFinish.prints.length > 0 && (
+                <div className="m-2.5 mb-0 px-2.5 py-2 rounded-xl bg-sky-50 ring-1 ring-sky-100">
+                  <div className="text-[12px] font-semibold text-sky-900">🖨 Print jobs · {invFinish.prints.length}</div>
+                  {invFinish.prints.map((p, pi) => (
+                    <div key={pi} className="text-xs text-sky-800 mt-1 flex items-center gap-2">
+                      {p.ref && <img src={p.ref} alt="" onClick={() => setZoomImg(p.ref)} className="w-8 h-8 rounded object-cover border cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} />}
+                      <span>{invFinish.printLine(p)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
               {blockedItemsGrouped.length > 0 && invShown.length === 0 ? (
                 <div className="px-4 py-6 text-center text-xs text-gray-400">None of this department's inventory is in this function's zones.</div>
               ) : blockedItemsGrouped.length === 0 ? (
@@ -3975,6 +4093,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                                 <div className="truncate" title={it.sub || ""}>{it.sub || "—"}</div>
                                 {it.shortQty > 0 && <div className="text-amber-600 mt-0.5">{it.shortQty} short of stock — priced at cost, chase or produce</div>}
                                 {it.isSwapped && <div className="text-sky-600 mt-0.5">swapped in for {it.swappedFrom}</div>}
+                                {invFinish.paintFor(it) && <div className="text-pink-700 mt-0.5">🎨 Paint: {invFinish.paintFor(it)}</div>}
                               </div>
                             </div>
                           </div>
