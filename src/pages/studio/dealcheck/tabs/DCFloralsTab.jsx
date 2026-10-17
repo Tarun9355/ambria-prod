@@ -10,6 +10,7 @@
 import { Fragment, useState } from "react";
 import { matchFlowerPattern, sizeClassToPatternKey, normalizeSizeClass, mandiSwapOf } from "../../../../lib/ims/flowerHelpers";
 import { findCrossFnReuseSource } from "../../../../lib/studio/crossFnReuse";
+import { parseFlowerPalette, autoSplitArtificialByPalette } from "../../../../lib/studio/pricing";
 import { thumbUrl, fitUrl } from "../../../../lib/studio/thumb.js";
 
 // ═══ THE FLORAL GROUND ═══
@@ -578,6 +579,28 @@ export default function DCFloralsTab({ ctx }) {
                   const _artBunchesF = elementBreakdown.reduce((s,e)=>s+(e.artBunchesFlower||0),0);
                   const _artBunchesG = elementBreakdown.reduce((s,e)=>s+(e.artBunchesGreen||0),0);
                   const totalArtKg = Math.round(((_artBunchesF / _bpkF) + (_artBunchesG / _bpkG)) * 100) / 100;
+                  // §27 — Default the artificial Color Split to this function's own Flower Palette
+                  // (Build's multi-select + ratio control), matching each palette colour against the
+                  // actual "Artificial Flower Bunch" inventory items by name (same fuzzy matcher
+                  // Fabric Palette's own auto-fill uses) and dividing totalArtKg between them in the
+                  // palette's own ratio — picking "Maroon 60 / White 40" in Build splits the bunches
+                  // that way automatically instead of redoing the same split by hand every time.
+                  // Guarded on dcArtFlowerAlloc[fnIdx] === undefined so this only ever runs the FIRST
+                  // time this function's split is seen (a deliberate "Clear all" leaves [], never
+                  // overwritten) and on dcInventoryCache already holding items, so a render that
+                  // catches it still mid-fetch doesn't lock in an empty split before the real
+                  // inventory arrives. Skips entirely (stays undefined) rather than committing []
+                  // when nothing matched yet, so it can still pick up a match once one exists.
+                  if (dcArtFlowerAlloc[fnIdx] === undefined && totalArtKg > 0 && (dcInventoryCache || []).length > 0) {
+                    const fnPaletteColors = parseFlowerPalette(activeFn.fnFlowerPalette);
+                    if (fnPaletteColors.length > 0) {
+                      const artItemsForSplit = dcInventoryCache
+                        .filter(it => (imsField.subcategory(it) || "").toLowerCase().trim().startsWith("artificial flower"))
+                        .map(it => ({ id: it.id, name: it.name, _photo: imsField.photos(it)[0] || "" }));
+                      const auto = autoSplitArtificialByPalette(totalArtKg, fnPaletteColors, artItemsForSplit);
+                      if (auto.length > 0) setDcArtFlowerAlloc(prev => (prev[fnIdx] !== undefined ? prev : { ...prev, [fnIdx]: auto }));
+                    }
+                  }
                   const fnArtAlloc = dcArtFlowerAlloc[fnIdx] || [];
                   const fnArtAllocTotal = fnArtAlloc.reduce((s, a) => s + (Number(a.qty) || 0), 0);
                   // ── WHEN THE TWO COLLAPSIBLE BARS LINE UP ──

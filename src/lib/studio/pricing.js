@@ -636,6 +636,65 @@ export const autoFillFabricAllocation = (totalQty, paletteAnchors, stockArray, q
   return [];
 };
 
+// ═══ Flower Palette colour-ratio (owner ask, 2026-10-17) ═══
+// Build's Flower Palette control now allows picking MORE than one colour, with a ratio between
+// them — unlike Fabric Palette (which just widens the set of anchors autoFillFabricAllocation can
+// match, no split), the artificial-bunch cost genuinely needs to be DIVIDED between colours, so a
+// ratio has to travel with the selection. Stored the same "compound string" way Fabric Palette
+// already established (StudioSummary.jsx's own client-facing swatches split "White & Gold" on
+// this exact regex) — extended with an optional ":pct" per colour. A single colour is still
+// stored bare ("Maroon"), so every existing saved deal keeps reading exactly as before.
+//
+// parseFlowerPalette: "Maroon:60, White:40" → [{name:"Maroon",pct:60},{name:"White",pct:40}].
+// A bare name (no colon) or a plain legacy string both come back as a single 100% entry. Ratios
+// are always normalized to sum to 100 — a partial/garbled or all-missing ratio falls back to an
+// even split across however many colours are named, rather than silently dropping one.
+export const parseFlowerPalette = (raw) => {
+  const parts = String(raw || "").split(",").map((p) => p.trim()).filter(Boolean);
+  const parsed = parts.map((p) => {
+    const [name, pctStr] = p.split(":").map((x) => x.trim());
+    return { name, pct: pctStr !== undefined && pctStr !== "" ? Number(pctStr) || 0 : null };
+  }).filter((p) => p.name);
+  if (parsed.length === 0) return [];
+  const allGiven = parsed.every((p) => p.pct !== null);
+  const totalGiven = parsed.reduce((s, p) => s + (p.pct || 0), 0);
+  if (allGiven && totalGiven > 0) {
+    return parsed.map((p) => ({ name: p.name, pct: Math.round((p.pct / totalGiven) * 1000) / 10 }));
+  }
+  const evenPct = Math.round((100 / parsed.length) * 10) / 10;
+  return parsed.map((p, i) => ({ name: p.name, pct: i === parsed.length - 1 ? Math.round((100 - evenPct * (parsed.length - 1)) * 10) / 10 : evenPct }));
+};
+// Serializes back to the compound string Build's control stores in clientFlowerPalette /
+// extraFunctions[i].flowerPalette — the inverse of parseFlowerPalette above.
+export const stringifyFlowerPalette = (colors) => {
+  const list = (colors || []).filter((c) => c && c.name);
+  if (list.length === 0) return "";
+  if (list.length === 1) return list[0].name;
+  return list.map((c) => `${c.name}:${c.pct}`).join(", ");
+};
+// Deal Check's artificial-bunch "Color Split" default. Fuzzy-matches each Flower Palette colour
+// (reusing fuzzyColourMatch above, the same matcher Fabric Palette's own auto-fill relies on)
+// against the names of IMS inventory items in the "Artificial Flower Bunch" sub-category, and
+// divides totalKg between whichever item matched each colour, in the palette's own ratio. A
+// colour with no matching inventory item (e.g. "Pastel" with no such item stocked) just gets no
+// row — never guesses a substitute, same "don't invent a match that isn't there" rule
+// anchorsForPalette documents for fabric. artItems = [{id, name}, …]; returns the same
+// {itemId, name, colour, qty, photo} shape the manual "Split Colors" picker already builds.
+export const autoSplitArtificialByPalette = (totalKg, paletteColors, artItems) => {
+  const items = Array.isArray(artItems) ? artItems : [];
+  const colors = Array.isArray(paletteColors) ? paletteColors : [];
+  if (!(totalKg > 0) || colors.length === 0 || items.length === 0) return [];
+  const rows = [];
+  colors.forEach((c) => {
+    const match = items.find((it) => fuzzyColourMatch(c.name, it.name));
+    if (!match) return;
+    const qty = Math.round(totalKg * (c.pct / 100) * 100) / 100;
+    if (qty <= 0) return;
+    rows.push({ itemId: match.id, name: match.name, colour: match.name, qty, photo: match._photo || "" });
+  });
+  return rows;
+};
+
 // ═══ Fabric rental cost (Ops handoff 05 Jun 2026; simplified 2026-10-15) ═══
 // Total fabric rental cost for a zone — Liza + Wall Masking + Velvet Curtains. Batta is separate
 // (already in truss structure cost) — fabric is an additional, distinct cost.

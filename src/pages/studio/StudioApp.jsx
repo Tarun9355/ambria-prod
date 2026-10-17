@@ -5334,6 +5334,7 @@ export default function StudioApp() {
         fnShift: meta.shift,
         fnPax: meta.pax,
         fnPalette: meta.palette,
+        fnFlowerPalette: meta.flowerPalette,
         zoneElements: snap.zoneElements || {},
         zoneConfig: snap.zoneConfig || {},
         enabledEls: snap.enabledEls || {},

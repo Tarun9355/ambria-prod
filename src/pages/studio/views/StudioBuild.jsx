@@ -12,7 +12,7 @@ import {
 } from "../../../lib/studio/taxonomy";
 import { paletteNames, addPaletteInline } from "../../../lib/studio/colours";
 import PaletteQuickAdd from "../../../components/studio/PaletteQuickAdd.jsx";
-import { trussRowCost, zoneTrussStandingDiscountDetail, repeatCatFor } from "../../../lib/studio/pricing";
+import { trussRowCost, zoneTrussStandingDiscountDetail, repeatCatFor, parseFlowerPalette, stringifyFlowerPalette } from "../../../lib/studio/pricing";
 import { paletteSearch, paletteMatches } from "../../../components/studio/filterUI.jsx";
 import { resolveTrussConfig } from "../../../lib/studio/pricing";
 import { qtyUsedElsewhereInBuild } from "../../../lib/studio/dealAvailability";
@@ -3012,35 +3012,67 @@ undefined
             other one as extraFunctions[i].flowerPalette. A fixed short list, so no search box. */}
         {(()=>{
           const FLOWER_PALETTES = [["White","#F5F3EE"],["Pastel","#F4C6D7"],["Maroon","#7A1F2B"],["Yellow","#F2C230"],["Green","#5E8C4A"]];
-          const curF = isPrimaryFn ? (clientFlowerPalette || "") : (extraFunctions[activeFnIdx - 1]?.flowerPalette || "");
-          const setFlower = (v) => {
+          const curFRaw = isPrimaryFn ? (clientFlowerPalette || "") : (extraFunctions[activeFnIdx - 1]?.flowerPalette || "");
+          const curColors = parseFlowerPalette(curFRaw); // [{name,pct}] — empty when nothing chosen
+          const setFlowerColors = (colors) => {
+            const v = stringifyFlowerPalette(colors);
             if (isPrimaryFn) setClientFlowerPalette(v);
             else setExtraFunctions(p => p.map((f, i) => i === activeFnIdx - 1 ? { ...f, flowerPalette: v } : f));
-            setFlowerPaletteOpen(false);
           };
+          // Toggling keeps a ratio only once 2+ colours are picked — Deal Check's artificial-bunch
+          // auto-split (autoSplitArtificialByPalette, lib/studio/pricing.js) divides the total kg
+          // between whichever colours are named here, in this ratio, matched against actual
+          // "Artificial Flower Bunch" inventory items by name.
+          const toggleFlowerColour = (name) => {
+            const names = curColors.map(c => c.name);
+            const nextNames = names.includes(name) ? names.filter(n => n !== name) : [...names, name];
+            if (nextNames.length <= 1) { setFlowerColors(nextNames.map(n => ({ name: n, pct: 100 }))); return; }
+            const even = Math.round((100 / nextNames.length) * 10) / 10;
+            setFlowerColors(nextNames.map((n, i) => ({ name: n, pct: i === nextNames.length - 1 ? Math.round((100 - even * (nextNames.length - 1)) * 10) / 10 : even })));
+          };
+          const setRatio = (name, pct) => setFlowerColors(curColors.map(c => c.name === name ? { ...c, pct: Math.max(0, Number(pct) || 0) } : c));
+          const ratioSum = curColors.reduce((s, c) => s + (Number(c.pct) || 0), 0);
           const dot = (hex) => <span style={{width:10,height:10,borderRadius:"50%",background:hex,border:"1px solid rgba(0,0,0,0.18)",flexShrink:0}}/>;
-          const curHex = FLOWER_PALETTES.find(([n])=>n===curF)?.[1];
+          const curHex = curColors.length === 1 ? FLOWER_PALETTES.find(([n])=>n===curColors[0].name)?.[1] : null;
+          const label = curColors.length === 0 ? "Choose" : curColors.length === 1 ? curColors[0].name : curColors.map(c=>c.name).join(", ");
           return <>
             <span style={{display:"flex",color:accent,marginLeft:10}}><IconFlower size={13}/></span>
             <span style={{fontSize:11.5,fontWeight:600,color:textP}}>Flower Palette</span>
             <div style={{position:"relative"}}>
               <div onClick={()=>setFlowerPaletteOpen(o=>!o)} title="Click to change"
-                style={{display:"inline-flex",alignItems:"center",gap:6,padding:"4px 10px",borderRadius:8,
+                style={{display:"inline-flex",alignItems:"center",gap:6,padding:"4px 10px",borderRadius:8,maxWidth:200,
                   border:`1px solid ${flowerPaletteOpen?accent:border}`,background:cardBg,cursor:"pointer",
-                  fontSize:11,fontWeight:600,color:curF?textP:textS}}>
+                  fontSize:11,fontWeight:600,color:curColors.length?textP:textS}}>
                 {curHex&&dot(curHex)}
-                {curF || "Choose"}
-                <span style={{display:"inline-flex",transform:flowerPaletteOpen?"rotate(180deg)":"none",transition:"transform .15s ease",color:textS}}><IconChevron size={10}/></span>
+                <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{label}</span>
+                <span style={{display:"inline-flex",transform:flowerPaletteOpen?"rotate(180deg)":"none",transition:"transform .15s ease",color:textS,flexShrink:0}}><IconChevron size={10}/></span>
               </div>
-              {flowerPaletteOpen&&<div style={{position:"absolute",top:"100%",left:0,zIndex:60,marginTop:4,width:170,
+              {flowerPaletteOpen&&<div style={{position:"absolute",top:"100%",left:0,zIndex:60,marginTop:4,width:190,
                 background:cardBg,border:`1px solid ${border}`,borderRadius:9,boxShadow:"0 6px 20px rgba(0,0,0,0.22)",padding:6}}>
-                {FLOWER_PALETTES.map(([name,hex])=>(
-                  <div key={name} className="fp-opt" data-on={curF===name?"1":"0"} onClick={()=>setFlower(name)} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 9px",borderRadius:6,cursor:"pointer",fontSize:11,
-                    fontWeight:curF===name?700:400,background:curF===name?`${accent}18`:"transparent",color:curF===name?accent:textP}}>
-                    {dot(hex)}{name}
-                  </div>
-                ))}
-                {curF&&<div className="fp-clear" onClick={()=>setFlower("")} style={{padding:"5px 9px",borderRadius:6,cursor:"pointer",fontSize:10.5,color:textS,borderTop:`1px solid ${border}`,marginTop:4}}>Clear</div>}
+                {FLOWER_PALETTES.map(([name,hex])=>{
+                  const on = curColors.some(c=>c.name===name);
+                  return (
+                    <div key={name} className="fp-opt" data-on={on?"1":"0"} onClick={()=>toggleFlowerColour(name)} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 9px",borderRadius:6,cursor:"pointer",fontSize:11,
+                      fontWeight:on?700:400,background:on?`${accent}18`:"transparent",color:on?accent:textP}}>
+                      <span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:13,height:13,borderRadius:4,flexShrink:0,border:`1px solid ${on?accent:border}`,background:on?accent:"transparent",color:"#fff"}}>{on&&<IconCheck size={9}/>}</span>
+                      {dot(hex)}{name}
+                    </div>
+                  );
+                })}
+                {curColors.length>1&&<div style={{padding:"6px 9px 2px",borderTop:`1px solid ${border}`,marginTop:4}}>
+                  <div style={{fontSize:9.5,fontWeight:700,color:textS,textTransform:"uppercase",letterSpacing:0.4,marginBottom:4}}>Ratio</div>
+                  {curColors.map(c=>(
+                    <div key={c.name} style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
+                      <span style={{fontSize:10.5,color:textP,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.name}</span>
+                      <input type="number" min={0} value={c.pct} onChange={e=>setRatio(c.name,e.target.value)} onClick={e=>e.stopPropagation()}
+                        style={{width:44,padding:"2px 5px",borderRadius:5,border:`1px solid ${border}`,background:cardBg,color:textP,fontSize:10.5,textAlign:"center"}}/>
+                      <span style={{fontSize:10,color:textS}}>%</span>
+                    </div>
+                  ))}
+                  <div style={{fontSize:9.5,color:ratioSum===100?textS:"#F59E0B",marginBottom:2}}>{ratioSum===100?"100% total":`${ratioSum}% — auto-scaled to 100%`}</div>
+                </div>}
+                {curColors.length>0&&<div className="fp-clear" onClick={()=>setFlowerColors([])} style={{padding:"5px 9px",borderRadius:6,cursor:"pointer",fontSize:10.5,color:textS,borderTop:`1px solid ${border}`,marginTop:4}}>Clear</div>}
+                <div onClick={()=>setFlowerPaletteOpen(false)} style={{textAlign:"right",padding:"4px 9px 2px",fontSize:10.5,fontWeight:700,color:accent,cursor:"pointer"}}>Done</div>
               </div>}
             </div>
           </>;
