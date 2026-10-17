@@ -1597,6 +1597,24 @@ export default function StudioBuild({ ctx }) {
   // session, but the clipping is a plain CSS fact, not browser-specific — it would happen anywhere
   // a zone card is short enough for the dropdown to overrun it, e.g. the last zone on the page).
   const [addElPos, setAddElPos] = useState(null); // { key, top, bottom, left, openUp }
+  // Nothing used to close "+ Add element…" except picking a result or clearing the text by hand.
+  // Scroll past it (the portal version's position is computed once, at open time, off
+  // getBoundingClientRect — see addElPos's own comment above — and never re-tracked, so it reads as
+  // "stuck"/detached from the input once the page moves) or click anywhere else on the page, and the
+  // results panel just sat there. Close it on either instead — both views' input+dropdown markup
+  // carry the shared "ael-widget" class so this can tell a scroll/click INSIDE the widget itself
+  // (including inside the portaled dropdown, which lives outside the input's own DOM subtree, and
+  // including the dropdown's own internal result-list scrolling) from one genuinely outside it.
+  useEffect(() => {
+    const anyOpen = Object.values(zoneElSearch || {}).some(v => (v || "").length >= 1);
+    if (!anyOpen) return;
+    const closeAll = () => { setZoneElSearch({}); setAddElPos(null); };
+    const onScroll = (e) => { if (e.target?.closest?.(".ael-widget")) return; closeAll(); };
+    const onMouseDown = (e) => { if (e.target?.closest?.(".ael-widget")) return; closeAll(); };
+    window.addEventListener("scroll", onScroll, true);
+    document.addEventListener("mousedown", onMouseDown);
+    return () => { window.removeEventListener("scroll", onScroll, true); document.removeEventListener("mousedown", onMouseDown); };
+  }, [zoneElSearch, setZoneElSearch]);
 
   // The currently-selected photo per zone can be restored from a saved session and its id may not
   // be in the lazy library cache yet (used below for the "correct & save to master" lookup) —
@@ -3930,7 +3948,7 @@ undefined
                 })()}
                 {/* Adding an element belongs beside the element list, not up on the photo pager.
                     Gated on the panel: adding to a collapsed list would look like nothing happened. */}
-                {isElCardOpen(k)&&<div style={{position:"relative"}}>
+                {isElCardOpen(k)&&<div className="ael-widget" style={{position:"relative"}}>
                     <input value={zoneElSearch[k]||""}
                       onChange={e=>{
                         setZoneElSearch(p=>({...p,[k]:e.target.value}));
@@ -3969,7 +3987,7 @@ undefined
                       const mandiMatches=mandiCatalogue.filter(m=>ALLOWED_MANDI_ELEMENT_NAMES.includes(String(m.name||"").trim().toLowerCase())&&!(zoneElements[k]||[]).find(el=>el.mandiId===m.id)&&(m.name||"").toLowerCase().includes(q));
                       const matches=[...invMatches.map(it=>({kind:"inv",it})),...patMatches.map(pt=>({kind:"pat",pt})),...mandiMatches.map(m=>({kind:"mandi",m}))];
                       if(!addElPos||addElPos.key!==k) return null;
-                      return matches.length>0?createPortal(<div style={{position:"fixed",top:addElPos.top,bottom:addElPos.bottom,left:addElPos.left,zIndex:10000,background:cardBg,border:`1px solid ${border}`,borderRadius:8,boxShadow:"0 4px 16px rgba(0,0,0,0.2)",maxHeight:340,overflowY:"auto",width:320}}>
+                      return matches.length>0?createPortal(<div className="ael-widget" style={{position:"fixed",top:addElPos.top,bottom:addElPos.bottom,left:addElPos.left,zIndex:10000,background:cardBg,border:`1px solid ${border}`,borderRadius:8,boxShadow:"0 4px 16px rgba(0,0,0,0.2)",maxHeight:340,overflowY:"auto",width:320}}>
                         {matches.map(m=>{
                           if(m.kind==="pat"){ const pt=m.pt; return <div key={"pat:"+pt.id}
                             onClick={()=>{
@@ -4044,7 +4062,7 @@ undefined
                             </div>
                           </div>;
                         })}
-                      </div>,document.body):createPortal(<div style={{position:"fixed",top:addElPos.top,bottom:addElPos.bottom,left:addElPos.left,zIndex:10000,background:cardBg,border:`1px solid ${border}`,borderRadius:8,padding:"8px 10px",fontSize:11.5,color:textS,width:320}}>No matches</div>,document.body);
+                      </div>,document.body):createPortal(<div className="ael-widget" style={{position:"fixed",top:addElPos.top,bottom:addElPos.bottom,left:addElPos.left,zIndex:10000,background:cardBg,border:`1px solid ${border}`,borderRadius:8,padding:"8px 10px",fontSize:11.5,color:textS,width:320}}>No matches</div>,document.body);
                     })()}
                 </div>}
               </div>
@@ -5055,9 +5073,9 @@ undefined
                 </div>
                 <div style={sectionBox}>
                   {secHead(<IconClipboard size={14}/>,"Element Breakdown","#7C3AED",
-                    <div style={{position:"relative"}}>
+                    <div className="ael-widget" style={{position:"relative"}}>
                       <input value={zoneElSearch[zk]||""} onChange={e=>setZoneElSearch(p=>({...p,[zk]:e.target.value}))} placeholder="+ Add element..." style={{...S.input,fontSize:11.5,padding:"5px 9px",width:220,marginBottom:0}}/>
-                      {q&&<div style={{position:"absolute",top:"100%",right:0,zIndex:20,width:320,maxHeight:300,overflowY:"auto",marginTop:2,background:cardBg,border:`1px solid ${border}`,borderRadius:8,boxShadow:"0 4px 16px rgba(0,0,0,0.2)"}}>
+                      {q&&<div className="ael-widget" style={{position:"absolute",top:"100%",right:0,zIndex:20,width:320,maxHeight:300,overflowY:"auto",marginTop:2,background:cardBg,border:`1px solid ${border}`,borderRadius:8,boxShadow:"0 4px 16px rgba(0,0,0,0.2)"}}>
                         {addMatches.length===0&&<div style={{padding:"8px 10px",fontSize:11.5,color:textS}}>No matches</div>}
                         {addMatches.map(m=><div key={m.key} onClick={()=>{writeEls(list=>[...list,m.make()]);setZoneElSearch(prev=>({...prev,[zk]:""}));}}
                           style={{padding:"7px 10px",fontSize:12,cursor:"pointer",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",gap:10}}>
