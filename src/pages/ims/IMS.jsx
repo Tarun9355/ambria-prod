@@ -855,7 +855,25 @@ export default function IMS() {
     liveTable("settings", (rows) => applySettingsRows(rows));
     liveTable("rate_card", (rows) => setStudioRcItems(rows.map(rowToRcItem).filter(Boolean)));
     liveTable("rate_card_categories", (rows) => setRateCardCategories(rows));
-    liveTable("blocks", (rows) => { const bm = blocksRowsToMap(rows); blocksRef.current = bm; setBlocksState(bm); });
+    // blocks gets its own channel too, same reason as event_orders below: Build reconciles this
+    // table's reservation rows on every qty-affecting edit to a sold deal (reconcileSoldInventoryBlocks
+    // in StudioApp.jsx), so it changes constantly, and the table holds one row per inventory item
+    // (600+ in this project) — re-fetching every row on every single-item change was adding real,
+    // avoidable latency on top of the same problem event_orders had. Merge the one changed row from
+    // the payload directly.
+    const blocksChannel = supabase
+      .channel("realtime:blocks")
+      .on("postgres_changes", { event: "*", schema: "public", table: "blocks" }, (payload) => {
+        const key = (payload.eventType === "DELETE" ? payload.old : payload.new)?.item_id ?? (payload.eventType === "DELETE" ? payload.old : payload.new)?.id;
+        if (key == null) return;
+        const next = { ...blocksRef.current };
+        if (payload.eventType === "DELETE") delete next[key];
+        else next[key] = Array.isArray(payload.new.data) ? payload.new.data : [];
+        blocksRef.current = next;
+        setBlocksState(next);
+      })
+      .subscribe();
+    extraChannels.push(blocksChannel);
     // event_orders gets its own channel instead of liveTable's generic re-fetch-the-whole-table
     // handler: Build now pushes a fresh zone-layout snapshot into this table on every save
     // (persistBuildLayoutSnapshot), so this table changes far more often than the others liveTable

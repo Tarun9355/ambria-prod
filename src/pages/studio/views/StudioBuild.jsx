@@ -37,6 +37,41 @@ const PANEL_BG =
   Object.values(import.meta.glob("../../../assets/ambria-panel.{jpg,jpeg,png,webp}", { eager: true, query: "?url", import: "default" }))[0] ||
   null;
 const PANEL_INK = "#F5F1E7";
+
+// ═══ NUMERIC INPUT THAT ACTUALLY LETS YOU RETYPE IT ═══
+// A plain controlled <input type="number"> re-renders its DOM value from whatever the last commit
+// was on every keystroke. Two things break as a result: (1) clearing the field and typing a fresh
+// number — onChange's own `parseInt(v)||0` fallback commits 0 the instant it's blank, the field
+// re-renders showing "0" (or snaps back to a min), and the next keystroke lands after a digit that
+// was never actually cleared; (2) typing a decimal at all — "2." parses to 2, which re-renders the
+// DOM value back to "2" and erases the "." the user just typed, so "2.5" can never be finished.
+// This keeps whatever the user is actively typing on screen (including "", "-", a trailing ".")
+// until it blurs, and only resyncs to the real committed value then — exactly how every plain text
+// field already behaves. onCommit still fires on every keystroke that parses to a real number, so
+// existing guards (paint allocation, etc.) run exactly where they used to.
+function NumField({ value, onCommit, min = 0, allowDecimal = true, onFocus, onBlur, ...rest }) {
+  const [text, setText] = useState(() => (value === null || value === undefined ? "" : String(value)));
+  const editingRef = useRef(false);
+  useEffect(() => { if (!editingRef.current) setText(value === null || value === undefined ? "" : String(value)); }, [value]);
+  const re = allowDecimal ? /^-?\d*\.?\d*$/ : /^-?\d*$/;
+  return (
+    <input
+      type="text"
+      inputMode={allowDecimal ? "decimal" : "numeric"}
+      value={text}
+      onFocus={(e) => { editingRef.current = true; onFocus?.(e); }}
+      onChange={(e) => {
+        const raw = e.target.value;
+        if (raw !== "" && raw !== "-" && !re.test(raw)) return; // reject a keystroke that isn't a valid numeric prefix
+        setText(raw);
+        const n = parseFloat(raw);
+        if (!Number.isNaN(n)) onCommit(Math.max(min, n));
+      }}
+      onBlur={(e) => { editingRef.current = false; setText(value === null || value === undefined ? "" : String(value)); onBlur?.(e); }}
+      {...rest}
+    />
+  );
+}
 import { sizeClassToPatternKey, resolveSizeKey } from "../../../lib/ims/flowerHelpers";
 import { fixedVenueFor } from "../../../lib/ims/fixedVenues";
 import { itemDimsText } from "../../../lib/ims/helpers";
@@ -93,7 +128,7 @@ const cloneTrussRow = (src = {}) => ({
   dims: { ...(src.dims || {}) },
   trT: src.trT,
   trussType: src.trussType,
-  trussQty: src.trussQty || 1,
+  trussQty: src.trussQty ?? 1,
   trussFrontExt: src.trussFrontExt,
   trussFrontExtH: src.trussFrontExtH,
   trussBackDepth: src.trussBackDepth,
@@ -174,6 +209,9 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                       const base=trussBaseArea(zc);
                       if(!base.area) return null;
                       const r=trussRateFor(base.mode==="box"?"box":"singleU",zc.trussMaterial,zc.drapeDensity,trussRates);
+                      // Explicit 0 — a placeholder truss: no physical structure billed, dims kept only
+                      // to drive Liza/Masking/Curtain fabric demand (trussRowCost returns ₹0 for it).
+                      if (zc.trussQty === 0) return <span style={{fontSize:10.5,color:textS,fontWeight:400}}>{base.a}×{base.b} = {base.area} sqft — <b style={{color:accent}}>dims only, no truss billed</b> (still used for fabric/liza/curtain)</span>;
                       const qty=Math.max(1,zc.trussQty||1);
                       return <span style={{fontSize:10.5,color:textS,fontWeight:400}}>
                         {base.a}×{base.b} = {base.area} sqft × {fmt(r.rate)}/sqft{qty>1?` × ${qty}`:""}
@@ -198,19 +236,18 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                 </div>
               <div style={{display:"flex",gap:8,marginBottom:6}}>
                 {[["W","Width"],["L","Depth"],["H","Height"]].map(([d,label])=><div key={d} style={{flex:1}}><div style={{fontSize:11.5,color:textS,marginBottom:3}}>Truss {label} (ft)</div>
-                  <input type="number" value={zc.dims?.[d]||""} onChange={e=>sD(d,e.target.value)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}}/></div>)}
+                  <NumField value={zc.dims?.[d]||""} onCommit={n=>sD(d,n)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}}/></div>)}
                 {/* Scale By (the zone header's "set of N" multiplier) rescales this the same way it
                     rescales a Platform row's own Qty and a print row's own qty, keeping a per-set
                     base across changes (see setZoneScale). */}
-                {zc.trT&&<div style={{flex:1}}><div style={{fontSize:11.5,color:textS,marginBottom:3}}>Truss Qty</div>
-                  <input type="number" min={1} value={zc.trussQty||1} onChange={e=>{
-                    const nextQty=Math.max(1,parseInt(e.target.value)||1);
+                {zc.trT&&<div style={{flex:1}}><div style={{fontSize:11.5,color:textS,marginBottom:3}} title="0 = no truss structure billed — keep the dims above to drive Liza/Masking/Curtain fabric only (e.g. a client-owned or pre-existing frame).">Truss Qty</div>
+                  <NumField min={0} allowDecimal={false} value={zc.trussQty??1} onCommit={nextQty=>{
                     sZ({trussQty:nextQty, trussQtyBase: scale>1?nextQty/scale:nextQty});
                   }} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}}/></div>}
                 {zc.trT&&<div style={{flex:1}}><div style={{fontSize:11.5,color:textS,marginBottom:3}} title="Single-U extension on each front side, this many ft long. Priced as 2× Single U truss. Rare.">Front ext (ft/side)</div>
-                  <input type="number" min={0} step="0.5" value={zc.trussFrontExt||""} onChange={e=>sZ({trussFrontExt:Math.max(0,parseFloat(e.target.value)||0)})} placeholder="0" style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}}/></div>}
+                  <NumField min={0} value={zc.trussFrontExt||""} onCommit={n=>sZ({trussFrontExt:n})} placeholder="0" style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}}/></div>}
                 {zc.trT&&(Number(zc.trussFrontExt)||0)>0&&<div style={{flex:1}}><div style={{fontSize:11.5,color:textS,marginBottom:3}} title="Height of the front extension (can differ from box height). Defaults to box height.">Ext height (ft)</div>
-                  <input type="number" min={0} step="0.5" value={zc.trussFrontExtH||""} onChange={e=>sZ({trussFrontExtH:Math.max(0,parseFloat(e.target.value)||0)})} placeholder={String(zc.dims?.H||0)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}}/></div>}
+                  <NumField min={0} value={zc.trussFrontExtH||""} onCommit={n=>sZ({trussFrontExtH:n})} placeholder={String(zc.dims?.H||0)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}}/></div>}
               </div>
               {/* §23 Phase 5 (28 May 2026) — Smart truss tip: add 1ft per pillar to physical span */}
               {(() => {
@@ -593,15 +630,14 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
                   {/* Placeholder no longer previews the truss's own dims — owner ask: a Platform/
                       Carpet floor size must never silently follow the truss's footprint, so nothing
                       here should suggest it still does. A blank field really does mean 0 sqft now. */}
-                  <input type="number" value={fd.W||""} onChange={e=>sFD("W",e.target.value)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}} placeholder="—"/></div>
+                  <NumField value={fd.W||""} onCommit={n=>sFD("W",n)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}} placeholder="—"/></div>
                 <div style={{flex:1,minWidth:96}}><div style={{fontSize:11.5,color:textS,marginBottom:3}}>Floor Depth (ft)</div>
-                  <input type="number" value={fd.L||""} onChange={e=>sFD("L",e.target.value)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}} placeholder="—"/></div>
+                  <NumField value={fd.L||""} onCommit={n=>sFD("L",n)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}} placeholder="—"/></div>
                 {/* How many identical footprints this one row is — Scale By (the zone header's "set
                     of N" multiplier) rescales this the same way it rescales Truss Qty and a print
                     row's own qty, keeping a per-set base across changes (see setZoneScale). */}
                 <div style={{flex:"0 0 64px"}}><div style={{fontSize:11.5,color:textS,marginBottom:3}}>Qty</div>
-                  <input type="number" min={1} value={zc.plQty||1} onChange={e=>{
-                    const nextQty=Math.max(1,parseInt(e.target.value)||1);
+                  <NumField min={1} allowDecimal={false} value={zc.plQty||1} onCommit={nextQty=>{
                     sZ({plQty:nextQty, plQtyBase: scale>1?nextQty/scale:nextQty});
                   }} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}}/></div>
                 <div style={{flex:1.5,minWidth:150}}>
@@ -1449,7 +1485,10 @@ export default function StudioBuild({ ctx }) {
       // scaled — reconstructing the same unscaled figure every time, no matter what Scale was set
       // to (the exact bug reported: Scale 3, Truss Qty stuck at 1).
       const base = (curBase != null && Number.isFinite(Number(curBase))) ? Number(curBase) : effQty;
-      return { base, qty: Math.max(1, Math.round(base * newS)) };
+      // A base of exactly 0 is the explicit "no truss billed, dims only" placeholder (see Truss Qty's
+      // own field) — Scale By must leave it at 0, not resurrect a billed truss nobody asked for the
+      // moment the zone's multiplier changes. Every other base keeps the floor of 1.
+      return { base, qty: base === 0 ? 0 : Math.max(1, Math.round(base * newS)) };
     };
     // One row (the zone's own truss/floor, or one of its extra rows) → its own rescaled trussQty/
     // plQty, leaving every other field untouched.
@@ -1558,6 +1597,24 @@ export default function StudioBuild({ ctx }) {
   // session, but the clipping is a plain CSS fact, not browser-specific — it would happen anywhere
   // a zone card is short enough for the dropdown to overrun it, e.g. the last zone on the page).
   const [addElPos, setAddElPos] = useState(null); // { key, top, bottom, left, openUp }
+  // Nothing used to close "+ Add element…" except picking a result or clearing the text by hand.
+  // Scroll past it (the portal version's position is computed once, at open time, off
+  // getBoundingClientRect — see addElPos's own comment above — and never re-tracked, so it reads as
+  // "stuck"/detached from the input once the page moves) or click anywhere else on the page, and the
+  // results panel just sat there. Close it on either instead — both views' input+dropdown markup
+  // carry the shared "ael-widget" class so this can tell a scroll/click INSIDE the widget itself
+  // (including inside the portaled dropdown, which lives outside the input's own DOM subtree, and
+  // including the dropdown's own internal result-list scrolling) from one genuinely outside it.
+  useEffect(() => {
+    const anyOpen = Object.values(zoneElSearch || {}).some(v => (v || "").length >= 1);
+    if (!anyOpen) return;
+    const closeAll = () => { setZoneElSearch({}); setAddElPos(null); };
+    const onScroll = (e) => { if (e.target?.closest?.(".ael-widget")) return; closeAll(); };
+    const onMouseDown = (e) => { if (e.target?.closest?.(".ael-widget")) return; closeAll(); };
+    window.addEventListener("scroll", onScroll, true);
+    document.addEventListener("mousedown", onMouseDown);
+    return () => { window.removeEventListener("scroll", onScroll, true); document.removeEventListener("mousedown", onMouseDown); };
+  }, [zoneElSearch, setZoneElSearch]);
 
   // The currently-selected photo per zone can be restored from a saved session and its id may not
   // be in the lazy library cache yet (used below for the "correct & save to master" lookup) —
@@ -3891,7 +3948,7 @@ undefined
                 })()}
                 {/* Adding an element belongs beside the element list, not up on the photo pager.
                     Gated on the panel: adding to a collapsed list would look like nothing happened. */}
-                {isElCardOpen(k)&&<div style={{position:"relative"}}>
+                {isElCardOpen(k)&&<div className="ael-widget" style={{position:"relative"}}>
                     <input value={zoneElSearch[k]||""}
                       onChange={e=>{
                         setZoneElSearch(p=>({...p,[k]:e.target.value}));
@@ -3930,7 +3987,7 @@ undefined
                       const mandiMatches=mandiCatalogue.filter(m=>ALLOWED_MANDI_ELEMENT_NAMES.includes(String(m.name||"").trim().toLowerCase())&&!(zoneElements[k]||[]).find(el=>el.mandiId===m.id)&&(m.name||"").toLowerCase().includes(q));
                       const matches=[...invMatches.map(it=>({kind:"inv",it})),...patMatches.map(pt=>({kind:"pat",pt})),...mandiMatches.map(m=>({kind:"mandi",m}))];
                       if(!addElPos||addElPos.key!==k) return null;
-                      return matches.length>0?createPortal(<div style={{position:"fixed",top:addElPos.top,bottom:addElPos.bottom,left:addElPos.left,zIndex:10000,background:cardBg,border:`1px solid ${border}`,borderRadius:8,boxShadow:"0 4px 16px rgba(0,0,0,0.2)",maxHeight:340,overflowY:"auto",width:320}}>
+                      return matches.length>0?createPortal(<div className="ael-widget" style={{position:"fixed",top:addElPos.top,bottom:addElPos.bottom,left:addElPos.left,zIndex:10000,background:cardBg,border:`1px solid ${border}`,borderRadius:8,boxShadow:"0 4px 16px rgba(0,0,0,0.2)",maxHeight:340,overflowY:"auto",width:320}}>
                         {matches.map(m=>{
                           if(m.kind==="pat"){ const pt=m.pt; return <div key={"pat:"+pt.id}
                             onClick={()=>{
@@ -4005,7 +4062,7 @@ undefined
                             </div>
                           </div>;
                         })}
-                      </div>,document.body):createPortal(<div style={{position:"fixed",top:addElPos.top,bottom:addElPos.bottom,left:addElPos.left,zIndex:10000,background:cardBg,border:`1px solid ${border}`,borderRadius:8,padding:"8px 10px",fontSize:11.5,color:textS,width:320}}>No matches</div>,document.body);
+                      </div>,document.body):createPortal(<div className="ael-widget" style={{position:"fixed",top:addElPos.top,bottom:addElPos.bottom,left:addElPos.left,zIndex:10000,background:cardBg,border:`1px solid ${border}`,borderRadius:8,padding:"8px 10px",fontSize:11.5,color:textS,width:320}}>No matches</div>,document.body);
                     })()}
                 </div>}
               </div>
@@ -4282,8 +4339,7 @@ undefined
                               return {...p,[k]:cur};
                             });
                           }} style={{width:26,height:26,borderRadius:6,border:`1px solid ${border}`,background:cardBg,cursor:"pointer",fontSize:14,fontWeight:600,color:textS,display:"flex",alignItems:"center",justifyContent:"center"}}>{"−"}</button>
-                          <input type="number" min="0" value={el.qty||0} onChange={e=>{
-                            const nextQty = Math.max(0,parseInt(e.target.value)||0);
+                          <NumField min={0} value={el.qty||0} onCommit={nextQty=>{
                             // §23 Phase 2.9d — same guard for direct typing
                             const invItem = el.invId ? (dealCheckData?.inventory || []).find(i => i.id === el.invId) : (dealCheckData?.inventory || []).find(i => i.name === el.name);
                             const baseColour = invItem?.baseColour || "Ivory";
@@ -4405,13 +4461,13 @@ undefined
                         <option value="">Material…</option>
                         {(imsPrintMaterials||[]).map(m=><option key={m.id} value={m.id}>{m.name} (₹{m.ratePerSqft}/sqft)</option>)}
                       </select>
-                      <input type="number" min="0" step="0.1" value={p.areaW||""} onChange={e=>setPrint({areaW:parseFloat(e.target.value)||0})} placeholder="W ft" style={{...S.input,fontSize:11.5,padding:"3px 6px",width:56,marginBottom:0,textAlign:"center"}} />
+                      <NumField min={0} value={p.areaW||""} onCommit={n=>setPrint({areaW:n})} placeholder="W ft" style={{...S.input,fontSize:11.5,padding:"3px 6px",width:56,marginBottom:0,textAlign:"center"}} />
                       <span style={{fontSize:11.5,color:textS}}>×</span>
-                      <input type="number" min="0" step="0.1" value={p.areaD||""} onChange={e=>setPrint({areaD:parseFloat(e.target.value)||0})} placeholder="D ft" style={{...S.input,fontSize:11.5,padding:"3px 6px",width:56,marginBottom:0,textAlign:"center"}} />
+                      <NumField min={0} value={p.areaD||""} onCommit={n=>setPrint({areaD:n})} placeholder="D ft" style={{...S.input,fontSize:11.5,padding:"3px 6px",width:56,marginBottom:0,textAlign:"center"}} />
                       <span style={{fontSize:11.5,color:textS}}>ft = {sqft?sqft.toFixed(1):0} sqft</span>
                       <span style={{fontSize:11.5,color:textS}}>×</span>
-                      <input type="number" min="1" step="1" value={p.qty??1} onChange={e=>{
-                        const nextQty=Math.max(1,Math.round(parseFloat(e.target.value)||1));
+                      <NumField min={1} allowDecimal={false} value={p.qty??1} onCommit={rawQty=>{
+                        const nextQty=Math.max(1,Math.round(rawQty||1));
                         const s=zoneScaleVal(k);
                         setPrint({qty:nextQty, qtyBase: s>1?nextQty/s:nextQty});
                       }} title="Qty — how many copies of this same print. Scale By rescales this the same way it rescales elements, Truss Qty and Platform Qty." style={{...S.input,fontSize:11.5,padding:"3px 6px",width:44,marginBottom:0,textAlign:"center"}} />
@@ -4775,7 +4831,7 @@ undefined
           // truss added in Build saved correctly to zoneConfigByType (Build itself shows it fine on
           // reselect) but was invisible from the Library editor: it simply had nowhere to land here.
           const rowToLibTruss=(row)=>({id:row.id,trussL:row.dims?.L||0,trussW:row.dims?.W||0,trussH:row.dims?.H||0,
-            trussQty:row.trussQty||1,trussFrontExt:row.trussFrontExt||0,trussFrontExtH:row.trussFrontExtH||0,
+            trussQty:row.trussQty??1,trussFrontExt:row.trussFrontExt||0,trussFrontExtH:row.trussFrontExtH||0,
             mkOn:!!row.mkOn,mkT:row.mkT||"",mkWalls:row.mkWalls||{},
             trussMaterial:row.trussMaterial??null,drapeDensity:row.drapeDensity??null,
             customCeilingItemId:row.customCeilingItemId??null,customMaskingItemId:row.customMaskingItemId??null});
@@ -5025,9 +5081,9 @@ undefined
                 </div>
                 <div style={sectionBox}>
                   {secHead(<IconClipboard size={14}/>,"Element Breakdown","#7C3AED",
-                    <div style={{position:"relative"}}>
+                    <div className="ael-widget" style={{position:"relative"}}>
                       <input value={zoneElSearch[zk]||""} onChange={e=>setZoneElSearch(p=>({...p,[zk]:e.target.value}))} placeholder="+ Add element..." style={{...S.input,fontSize:11.5,padding:"5px 9px",width:220,marginBottom:0}}/>
-                      {q&&<div style={{position:"absolute",top:"100%",right:0,zIndex:20,width:320,maxHeight:300,overflowY:"auto",marginTop:2,background:cardBg,border:`1px solid ${border}`,borderRadius:8,boxShadow:"0 4px 16px rgba(0,0,0,0.2)"}}>
+                      {q&&<div className="ael-widget" style={{position:"absolute",top:"100%",right:0,zIndex:20,width:320,maxHeight:300,overflowY:"auto",marginTop:2,background:cardBg,border:`1px solid ${border}`,borderRadius:8,boxShadow:"0 4px 16px rgba(0,0,0,0.2)"}}>
                         {addMatches.length===0&&<div style={{padding:"8px 10px",fontSize:11.5,color:textS}}>No matches</div>}
                         {addMatches.map(m=><div key={m.key} onClick={()=>{writeEls(list=>[...list,m.make()]);setZoneElSearch(prev=>({...prev,[zk]:""}));}}
                           style={{padding:"7px 10px",fontSize:12,cursor:"pointer",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",gap:10}}>
@@ -5056,7 +5112,7 @@ undefined
                             {el.unit&&<div style={{fontSize:10.5,color:textS}}>{el.unit}</div>}
                           </div>
                           <button onClick={()=>setQty(idx,(el.qty||0)-1)} style={{width:26,height:26,borderRadius:6,border:`1px solid ${border}`,background:cardBg,cursor:"pointer",fontSize:14,fontWeight:600,color:textS}}>−</button>
-                          <input type="number" min="0" value={el.qty||0} onChange={e=>setQty(idx,parseInt(e.target.value)||0)} style={{...S.input,width:56,fontSize:12,padding:"4px 6px",textAlign:"center",marginBottom:0}}/>
+                          <NumField min={0} value={el.qty||0} onCommit={n=>setQty(idx,n)} style={{...S.input,width:56,fontSize:12,padding:"4px 6px",textAlign:"center",marginBottom:0}}/>
                           <button onClick={()=>setQty(idx,(el.qty||0)+1)} style={{width:26,height:26,borderRadius:6,border:`1px solid ${border}`,background:cardBg,cursor:"pointer",fontSize:14,fontWeight:600,color:textS}}>+</button>
                           <span onClick={()=>removeEl(idx)} title="Remove" style={{cursor:"pointer",color:"#E11D48",fontWeight:700,fontSize:14,padding:"0 4px"}}>×</span>
                         </div>;
@@ -5082,11 +5138,11 @@ undefined
                               <option value="">Material…</option>
                               {(imsPrintMaterials||[]).map(m=><option key={m.id} value={m.id}>{m.name} (₹{m.ratePerSqft}/sqft)</option>)}
                             </select>
-                            <input type="number" min="0" step="0.1" value={p.areaW||""} onChange={e=>setPrint(pi,{areaW:parseFloat(e.target.value)||0})} placeholder="W ft" style={{...S.input,fontSize:11.5,padding:"3px 6px",width:56,marginBottom:0,textAlign:"center"}}/>
+                            <NumField min={0} value={p.areaW||""} onCommit={n=>setPrint(pi,{areaW:n})} placeholder="W ft" style={{...S.input,fontSize:11.5,padding:"3px 6px",width:56,marginBottom:0,textAlign:"center"}}/>
                             <span style={{fontSize:11.5,color:textS}}>×</span>
-                            <input type="number" min="0" step="0.1" value={p.areaD||""} onChange={e=>setPrint(pi,{areaD:parseFloat(e.target.value)||0})} placeholder="D ft" style={{...S.input,fontSize:11.5,padding:"3px 6px",width:56,marginBottom:0,textAlign:"center"}}/>
+                            <NumField min={0} value={p.areaD||""} onCommit={n=>setPrint(pi,{areaD:n})} placeholder="D ft" style={{...S.input,fontSize:11.5,padding:"3px 6px",width:56,marginBottom:0,textAlign:"center"}}/>
                             <span style={{fontSize:11.5,color:textS}}>ft = {sqft?sqft.toFixed(1):0} sqft ×</span>
-                            <input type="number" min="1" step="1" value={p.qty??1} onChange={e=>{const nq=Math.max(1,Math.round(parseFloat(e.target.value)||1));const s=scaleFor;setPrint(pi,{qty:nq,qtyBase:s>1?nq/s:nq});}} style={{...S.input,fontSize:11.5,padding:"3px 6px",width:44,marginBottom:0,textAlign:"center"}}/>
+                            <NumField min={1} allowDecimal={false} value={p.qty??1} onCommit={rawQty=>{const nq=Math.max(1,Math.round(rawQty||1));const s=scaleFor;setPrint(pi,{qty:nq,qtyBase:s>1?nq/s:nq});}} style={{...S.input,fontSize:11.5,padding:"3px 6px",width:44,marginBottom:0,textAlign:"center"}}/>
                             {showCosts&&<span style={{fontSize:12,fontWeight:700,color:"#0EA5E9",marginLeft:"auto"}}>{rate>0?fmt(sqft*rate*pq):"— pick material"}</span>}
                             <span onClick={()=>removePrint(pi)} style={{cursor:"pointer",color:"#E11D48",fontWeight:700,fontSize:12.5,marginLeft:showCosts?0:"auto"}}>×</span>
                           </div>

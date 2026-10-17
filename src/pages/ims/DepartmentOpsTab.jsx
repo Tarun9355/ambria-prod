@@ -1572,7 +1572,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
             </div>
           ))}
         </div>
-        <div className="px-2 py-1 bg-gray-50 text-[13px] text-right text-gray-600">{t.perRow ? <>Σ each ⌈need⌉ = <b className="text-gray-900">{t.result}</b></> : <>Σ {t.need.toFixed(2)} → ⌈ {Math.ceil(t.need)} ⌉ · max(min {t.min}) = <b className="text-gray-900">{t.result}</b></>}</div>
+        <div className="px-2 py-1 bg-gray-50 text-[13px] text-right text-gray-600">{t.perRow ? <>Σ each ⌈need⌉ = <b className="text-gray-900">{t.result}</b></> : <>Σ {t.need.toFixed(2)} → ⌈ {Math.ceil(t.need)} ⌉{t.min > 0 ? <> · max(min {t.min})</> : null} = <b className="text-gray-900">{t.result}</b></>}</div>
       </div>
     );
     if (t.kind === "pillars") return <div className="mb-1.5 text-[13px] text-gray-600">🏗️ {t.total} pillar(s){t.zoneP ? ` — ${t.zoneP} from truss tool${t.recipeP ? `, ${t.recipeP} from build` : ""}` : ""} → range → <b>{t.result}</b></div>;
@@ -1586,13 +1586,40 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     // One compact line, not the full ManpowerFactorPills panel — the snapshot only ever holds a
     // single combined multiplier, so a whole "Situational Multipliers" box for "×1" was mostly air.
     if (t.kind === "labours") return (
-      <div className="mb-1.5 flex flex-wrap items-center gap-1.5 rounded-lg bg-amber-50/70 ring-1 ring-amber-200/70 px-2.5 py-1.5 text-[13.5px] text-gray-600">
-        <span aria-hidden="true" className="text-amber-500">⚡</span>
-        <span>Base <b className="text-gray-900">{t.venueMin}</b></span>
-        <span className="text-gray-400">×</span>
-        <span title="Venue-min situational multiplier">situational <b className="text-gray-900">{t.mult}</b></span>
-        {t.heavy > 0 && <><span className="text-gray-400">+</span><span><b className="text-gray-900">{t.heavy}</b> heavy-element add-on</span></>}
-        <span className="ml-auto font-bold text-amber-700">= {t.result} Labours</span>
+      <div className="mb-1.5">
+        <div className="flex flex-wrap items-center gap-1.5 rounded-lg bg-amber-50/70 ring-1 ring-amber-200/70 px-2.5 py-1.5 text-[13.5px] text-gray-600">
+          <span aria-hidden="true" className="text-amber-500">⚡</span>
+          <span>Base <b className="text-gray-900">{t.venueMin}</b></span>
+          <span className="text-gray-400">×</span>
+          <span title="Venue-min situational multiplier">situational <b className="text-gray-900">{t.mult}</b></span>
+          {t.heavy > 0 && <><span className="text-gray-400">+</span><span><b className="text-gray-900">{t.heavy}</b> heavy-element add-on</span></>}
+          <span className="ml-auto font-bold text-amber-700">= {t.result} Labours</span>
+        </div>
+        {/* The base figure above is a flat venue minimum — nothing item-level to break down there,
+            same as Supervisors' flat "1 per booking". The heavy-element ADD-ON on top of it IS
+            item-driven (each configured sub-category range contributes its own extra labour), so
+            that slice gets the same per-item table Flowerists/Electricians/Carpenters get. */}
+        {Array.isArray(t.heavyRows) && t.heavyRows.length > 0 && (
+          <div className="mt-1 bg-white border rounded-lg overflow-hidden">
+            <div className="grid grid-cols-[1fr_auto_auto] gap-x-2">
+              <div className="contents">
+                <span className="px-2 py-1 bg-gray-100 text-[12px] uppercase tracking-wide text-gray-500 font-semibold">Heavy-element item</span>
+                <span className="px-2 py-1 bg-gray-100 text-[12px] uppercase tracking-wide text-gray-500 font-semibold text-right whitespace-nowrap">Qty</span>
+                <span className="px-2 py-1 bg-gray-100 text-[12px] uppercase tracking-wide text-gray-500 font-semibold text-right whitespace-nowrap">Extra labour</span>
+              </div>
+              {t.heavyRows.map((hr, hi) => (
+                <div className="contents" key={hi}>
+                  <div className="flex items-baseline gap-1.5 min-w-0 overflow-hidden px-2 py-0.5 text-[13px] text-gray-700">
+                    <span className="truncate" title={hr.sub}>{hr.sub}</span>
+                    <span aria-hidden="true" className="flex-1 min-w-2 border-b border-dotted border-gray-300 mb-[3px]" />
+                  </div>
+                  <span className="px-2 py-0.5 text-[13px] text-gray-700 text-right whitespace-nowrap">{hr.count}</span>
+                  <span className="px-2 py-0.5 text-[13px] text-gray-700 font-semibold text-right whitespace-nowrap">+{hr.extra}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     );
     if (t.kind === "fixed") return <div className="mb-1.5 text-[13px] text-gray-600">📐 {t.note} = <b>{t.result}</b>{" "}(before split)</div>;

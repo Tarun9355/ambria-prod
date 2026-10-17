@@ -427,7 +427,7 @@ function computeFnSubQty(fnData, capBySub, imsInventory, flowerPatterns, trussIn
   Object.entries(fZoneConfig).forEach(([zk, cfg]) => {
     if (!cfg || !fEnabledElsFresh[zk]) return;
     const d = cfg.dims || {}; const fd = cfg.floorDims || {}; // no truss-dims fallback — see calcStructCost's own comment
-    if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * Math.max(1, cfg.trussQty || 1); if (tSqft > 0) add("Truss", tSqft); }
+    if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * (cfg.trussQty === 0 ? 0 : Math.max(1, cfg.trussQty || 1)); if (tSqft > 0) add("Truss", tSqft); }
     const sqft = (fd.L || 0) * (fd.W || 0) * Math.max(1, cfg.plQty || 1);
     if (sqft > 0) { if (cfg.plH) add("Platform", sqft); if (cfg.cpT && cfg.cpT !== CARPET_OFF) add("Carpet", sqft); }
     // Fabric Allocation (masking/liza/curtains) is a physical rental setup that can plausibly still
@@ -1163,7 +1163,7 @@ function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckC
     // dims.d, which never exist, so sqft was always 0 and every truss/platform/carpet truck-load
     // silently dropped out of Build's transport total (only element-based items ever counted).
     const d = cfg.dims || {}; const fd = cfg.floorDims || {}; // no truss-dims fallback — see calcStructCost's own comment
-    if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * Math.max(1, cfg.trussQty || 1); if (tSqft > 0) addSub("Truss", tSqft); }
+    if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * (cfg.trussQty === 0 ? 0 : Math.max(1, cfg.trussQty || 1)); if (tSqft > 0) addSub("Truss", tSqft); }
     const sqft = (fd.L || 0) * (fd.W || 0);
     // cpT truthy AND not the explicit OFF sentinel — an untouched floor (cpT unset) gets no carpet
     // truck-load either, same as it gets no carpet cost (see CARPET_OFF in taxonomy.js).
@@ -4673,7 +4673,7 @@ export default function StudioApp() {
       const numRDims = [rDims.L, rDims.W, rDims.H].filter(v => (v || 0) > 0).length;
       return {
         id: row.id, dims: rDims, trT: numRDims >= 3 ? "box" : (zm.defaultTruss || "singleU"),
-        trussQty: Math.max(1, Number(row.trussQty) || 1),
+        trussQty: Number(row.trussQty) === 0 ? 0 : Math.max(1, Number(row.trussQty) || 1),
         trussFrontExt: Number(row.trussFrontExt) || 0,
         trussFrontExtH: Number(row.trussFrontExtH) || 0,
         mkOn: !!row.mkT, mkT: row.mkT || null, mkWalls: row.mkWalls || {},
@@ -4705,7 +4705,7 @@ export default function StudioApp() {
       trussMaterial: d.trussMaterial ?? null, drapeDensity: d.drapeDensity ?? null,
       customCeilingItemId: d.customCeilingItemId ?? null, customMaskingItemId: d.customMaskingItemId ?? null,
       // Carry truss quantity + box front-extension tagged on the library photo through to Build.
-      trussQty: Math.max(1, Number(d.trussQty) || 1),
+      trussQty: Number(d.trussQty) === 0 ? 0 : Math.max(1, Number(d.trussQty) || 1),
       trussFrontExt: Number(d.trussFrontExt) || 0,
       trussFrontExtH: Number(d.trussFrontExtH) || 0,
       extraTrussRows: (d.trussRows || []).map(mapTrussRow),
@@ -5483,7 +5483,7 @@ export default function StudioApp() {
         if (!hideDiscountFromClient && cfg.repeat) return;
         const d = cfg.dims || {};
         const fd = cfg.floorDims || {}; // no truss-dims fallback — see calcStructCost's own comment
-        if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * Math.max(1, cfg.trussQty || 1); if (tSqft > 0) addSub("Truss", tSqft); }
+        if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * (cfg.trussQty === 0 ? 0 : Math.max(1, cfg.trussQty || 1)); if (tSqft > 0) addSub("Truss", tSqft); }
         const sqft = (fd.L || 0) * (fd.W || 0);
         if (sqft > 0) { if (cfg.plH) addSub("Platform", sqft); if (cfg.cpT && cfg.cpT !== CARPET_OFF) addSub("Carpet", sqft); }
         // Fabric Allocation (masking/liza/curtains) — see computeTruckItems' matching comment.
@@ -5890,16 +5890,44 @@ export default function StudioApp() {
         return { count: t, basis: rows.length ? "arrangements ÷ units-per-flowerist (per recipe)" : "no recipe-driven florals", trace: rows.length ? { kind: "tier2", perRow: true, rows, need: rows.reduce((s, r) => s + r.need, 0), min: 0, result: t, countLabel: "arrangements", batchLabel: "÷per flowerist" } : null };
       }
       if (type === "Electricians") {
-        let t = 0, n = 0; walk(fn, ({ rc, el, qty }) => { if (String(rc.cat || "").toLowerCase() !== "lighting") return; const pr = elecProd[rc.sub || ""]; if (!pr) return; const sk = sizeFromMode(rc.inhouseMode, el.size); const upe = Number(pr.sizes?.[sk]) || Number(pr.sizes?.medium) || 0; if (upe > 0) { t += Math.ceil(qty / upe); n += qty; } });
-        return { count: t, basis: t > 0 ? `${n} lighting unit(s) ÷ productivity` : "no lighting", trace: t > 0 ? { kind: "ratio", num: n, numLabel: "lighting units", denomLabel: "productivity per electrician", result: t } : null };
+        // Grouped by sub-category (+ its productivity rate) so Dept Ops can show the same per-item
+        // breakdown table Flowerists already gets, instead of one opaque "N lighting units ÷
+        // productivity" line. Ceiling the GROUPED total once (not each walk() occurrence separately)
+        // also matches Deal Check's own Electricians formula (DCManpowerTab/DealCheckOverlay — see
+        // their "per-element ceiling over-counted vs the tab" comments): summing several same-
+        // sub-category elements before the single ceil can only lower the count, never raise it, so
+        // this also quietly fixes the same over-count bug there instead of introducing a new mismatch.
+        const agg = {};
+        walk(fn, ({ rc, el, qty }) => {
+          if (String(rc.cat || "").toLowerCase() !== "lighting") return;
+          const pr = elecProd[rc.sub || ""]; if (!pr) return;
+          const sk = sizeFromMode(rc.inhouseMode, el.size);
+          const upe = Number(pr.sizes?.[sk]) || Number(pr.sizes?.medium) || 0;
+          if (upe > 0) { const k = (rc.sub || "lighting") + "|" + upe; if (!agg[k]) agg[k] = { sub: rc.sub || "lighting", batch: upe, count: 0 }; agg[k].count += qty; }
+        });
+        const rows = Object.values(agg).map(r => ({ ...r, need: r.count / r.batch }));
+        const need = rows.reduce((s, r) => s + r.need, 0);
+        const t = Math.ceil(need);
+        return { count: t, basis: rows.length ? `${rows.reduce((s, r) => s + r.count, 0)} lighting unit(s) ÷ productivity` : "no lighting", trace: rows.length ? { kind: "tier2", rows, need, min: 0, result: t, countLabel: "lighting units" } : null };
       }
       if (type === "Labours") {
         const vc = venueMinLabour[fn.fnVenue || ""]; const vm = (vc && typeof vc === "object" ? vc.min : (typeof vc === "number" ? vc : null)) || defaultMinLabour;
         const em = eventTypeMultipliers["outdoor_budgeted"] || 1; const base = Math.ceil(vm * em);
         const cand = [1.0, heavySayaMultFor(fn, "Labours"), eventTimingMultFor(eventTimingMultipliers, shiftToTiming(fn.fnShift), "Labours", 1.0)]; const sm = Math.min(situMultCap, Math.max(...cand));
         const adj = Math.ceil(base * sm); const sc = {}; walk(fn, ({ rc, qty }) => { sc[rc.sub || ""] = (sc[rc.sub || ""] || 0) + qty; });
-        let he = 0; heavyElementRanges.forEach(her => { he += heavyExtraLabour(her, lookupBySubcat(sc, her.subCat) || 0); });
-        return { count: adj + he, basis: `venue min ${vm}${sm > 1 ? ` ×${sm.toFixed(2)} season/timing` : ""}${he ? ` + ${he} heavy-element` : ""}`, trace: { kind: "labours", venueMin: vm, mult: sm, heavy: he, result: adj + he } };
+        // Labours' BASE count (venue minimum × situational multiplier) isn't item-driven — there's no
+        // per-element recipe to break down, same as Supervisors' flat "1 per booking". The heavy-
+        // element ADD-ON on top of that base is item-driven though (each configured sub-category
+        // range contributes its own extra labour), so that part gets its own breakdown rows for
+        // Dept Ops to show underneath the existing base/multiplier summary.
+        const heavyRows = []; let he = 0;
+        heavyElementRanges.forEach(her => {
+          const cnt = lookupBySubcat(sc, her.subCat) || 0;
+          const extra = heavyExtraLabour(her, cnt);
+          if (extra > 0) heavyRows.push({ sub: her.subCat, count: cnt, extra });
+          he += extra;
+        });
+        return { count: adj + he, basis: `venue min ${vm}${sm > 1 ? ` ×${sm.toFixed(2)} season/timing` : ""}${he ? ` + ${he} heavy-element` : ""}`, trace: { kind: "labours", venueMin: vm, mult: sm, heavy: he, heavyRows, result: adj + he } };
       }
       if (type === "Fabric Bangali") {
         let sq = 0; walk(fn, ({ rc, el }) => { const s = String(rc.sub || "").toLowerCase(); if (s.includes("wall masking") || s.includes("fabric") || s.includes("draping")) { const L = Number(el.L || el.l || 0); const W = Number(el.W || el.w || el.H || el.h || 0); if (L > 0 && W > 0) sq += L * W; } });
@@ -6176,7 +6204,7 @@ export default function StudioApp() {
         if (!cfg || !fEnabledEls[zk]) return;
         const zoneRepeat = !!cfg.repeat;
         const d = cfg.dims || {}; const fd = cfg.floorDims || {}; // no truss-dims fallback — see calcStructCost's own comment
-        if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * Math.max(1, cfg.trussQty || 1); if (tSqft > 0) addSub("Truss", zoneRepeat ? 0 : tSqft, tSqft, zk, "Truss structure"); }
+        if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * (cfg.trussQty === 0 ? 0 : Math.max(1, cfg.trussQty || 1)); if (tSqft > 0) addSub("Truss", zoneRepeat ? 0 : tSqft, tSqft, zk, "Truss structure"); }
         const sqft = (fd.L || 0) * (fd.W || 0);
         if (sqft > 0) {
           if (cfg.plH) addSub("Platform", zoneRepeat ? 0 : sqft, sqft, zk, "Platform");
