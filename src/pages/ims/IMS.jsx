@@ -856,7 +856,30 @@ export default function IMS() {
     liveTable("rate_card", (rows) => setStudioRcItems(rows.map(rowToRcItem).filter(Boolean)));
     liveTable("rate_card_categories", (rows) => setRateCardCategories(rows));
     liveTable("blocks", (rows) => { const bm = blocksRowsToMap(rows); blocksRef.current = bm; setBlocksState(bm); });
-    liveTable("event_orders", (rows) => setEventOrdersState(rows.map(rowToEO)));
+    // event_orders gets its own channel instead of liveTable's generic re-fetch-the-whole-table
+    // handler: Build now pushes a fresh zone-layout snapshot into this table on every save
+    // (persistBuildLayoutSnapshot), so this table changes far more often than the others liveTable
+    // covers, and each row's `data` JSONB (full functionsDetail — zones/elements/manpower/etc. for
+    // every function) is heavy. Re-fetching every row of the table on every single-row change was
+    // the dominant source of the Build→IMS lag reported after that change. Merge the row straight
+    // out of the realtime payload instead (same pattern as the `inventory` channel above) — no
+    // extra round trip, independent of table size.
+    const eoChannel = supabase
+      .channel("realtime:event_orders")
+      .on("postgres_changes", { event: "*", schema: "public", table: "event_orders" }, (payload) => {
+        const prev = eventOrdersRef.current;
+        let next;
+        if (payload.eventType === "DELETE") {
+          next = prev.filter((r) => r.id !== payload.old.id);
+        } else {
+          const eo = rowToEO(payload.new);
+          next = prev.some((r) => r.id === eo.id) ? prev.map((r) => (r.id === eo.id ? eo : r)) : [...prev, eo];
+        }
+        eventOrdersRef.current = next;
+        setEventOrdersState(next);
+      })
+      .subscribe();
+    extraChannels.push(eoChannel);
     liveTable("functions", (rows) => setFns(rows.map(rowToFn)));
     liveTable("projects", (rows) => setProjectsState(rows.map(rowToProject)));
     liveTable("truss_allocations", (rows) => setTrussAllocState(Object.fromEntries(rows.map((r) => [r.date, rowToAlloc(r)]))));
