@@ -327,61 +327,68 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                   </div>
                 </div>;
               })()}
-              {/* Material and Drape share a row: three short pills each left a long empty tail on
-                  its own line, and stacking them pushed Masking and the truss dims further down.
-                  Each group keeps its own wrap, so on a narrow card Drape drops below Material
-                  intact rather than the pills interleaving. */}
-              <div style={{display:"flex",alignItems:"center",gap:26,marginBottom:10,flexWrap:"wrap",rowGap:8}}>
-                  {zc.trT && <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                    <span style={rowCap}>Material</span>
-                    {TRUSS_MATERIALS.map(m=>{
-                      const sel=(zc.trussMaterial|| "iron")===m.key;
-                      return <span key={m.key} onClick={()=>sZ({trussMaterial:m.key})} style={optPill(sel)}>{sel&&<IconCheck size={9}/>}{m.label}</span>;
-                    })}
+              {/* Material/Drape/Fabric/Masking each get their own card — four control groups side by
+                  side in one line (even wrapped) read as visually noisy; a grid of cards gives each
+                  one room to breathe and groups its own controls visually, not just by gap spacing. */}
+              {(() => {
+                const groupCard = { padding:"8px 10px", borderRadius:8, border:`1px solid ${border}`, background:isDark?"rgba(255,255,255,0.03)":"#FFFEF8" };
+                const toggle = (on, onClick) => <div onClick={onClick} style={{width:30,height:16,borderRadius:8,background:on?"#444":"#D1D5DB",position:"relative",cursor:"pointer",flexShrink:0}}><div style={{width:12,height:12,borderRadius:6,background:"#fff",position:"absolute",top:2,left:on?16:2,transition:"left 0.2s"}}/></div>;
+                return <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit, minmax(150px, 1fr))",gap:8,marginBottom:10}}>
+                  {zc.trT && <div style={groupCard}>
+                    <div style={{...rowCap,marginBottom:6}}>Material</div>
+                    <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                      {TRUSS_MATERIALS.map(m=>{
+                        const sel=(zc.trussMaterial|| "iron")===m.key;
+                        return <span key={m.key} onClick={()=>sZ({trussMaterial:m.key})} style={optPill(sel)}>{sel&&<IconCheck size={9}/>}{m.label}</span>;
+                      })}
+                    </div>
                   </div>}
-                  {zc.trT && <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                    <span style={rowCap}>Drape</span>
-                    {[{v:"minimum",l:"Minimum"},{v:"moderate",l:"Moderate"},{v:"dense",l:"Dense"}].map(o=>{
-                      const sel=(zc.drapeDensity||"moderate")===o.v;
-                      return <span key={o.v} onClick={()=>sZ({drapeDensity:o.v})} style={optPill(sel)}>{sel&&<IconCheck size={9}/>}{o.l}</span>;
-                    })}
-                    {/* Sits with Drape, not Material: it swaps the fabric ceiling drape for an
-                        inventory item, so its cost comes out of the drape portion of the rate
-                        (ceilingRatePerSqft), and it has nothing to do with the truss metal. */}
-                    {zc.trT==="box" && <span style={{display:"inline-flex",marginLeft:6}}>{customCeilingField(k, zc, false, rowIdx)}</span>}
+                  {zc.trT && <div style={groupCard}>
+                    <div style={{...rowCap,marginBottom:6}}>Drape</div>
+                    <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+                      {[{v:"minimum",l:"Minimum"},{v:"moderate",l:"Moderate"},{v:"dense",l:"Dense"}].map(o=>{
+                        const sel=(zc.drapeDensity||"moderate")===o.v;
+                        return <span key={o.v} onClick={()=>sZ({drapeDensity:o.v})} style={optPill(sel)}>{sel&&<IconCheck size={9}/>}{o.l}</span>;
+                      })}
+                      {/* Sits with Drape, not Material: it swaps the fabric ceiling drape for an
+                          inventory item, so its cost comes out of the drape portion of the rate
+                          (ceilingRatePerSqft), and it has nothing to do with the truss metal. */}
+                      {zc.trT==="box" && <span style={{display:"inline-flex"}}>{customCeilingField(k, zc, false, rowIdx)}</span>}
+                    </div>
                   </div>}
-                  {/* Liza/Masking-panel/Curtain drape fabric grade — Old (cheaper, default) or New
-                      (premium) stock. Explicit salesperson choice, billed flat at that tier's rental
-                      rate for the whole qty needed — see calcZoneFabricCost (pricing.js). No stock-
-                      quantity check: ticking New is itself the signal to bill the New rate, nothing
-                      silently auto-detected from inventory levels. */}
-                  {zc.trT && <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}} title="Which drape fabric stock this truss's masking/Liza/curtains are billed from">
-                    <span style={rowCap}>Fabric</span>
-                    {[{v:false,l:"Old"},{v:true,l:"New"}].map(o=>{
-                      const sel=(!!zc.useNewFabric)===o.v;
-                      return <span key={String(o.v)} onClick={()=>sZ({useNewFabric:o.v})} style={optPill(sel)}>{sel&&<IconCheck size={9}/>}{o.l}</span>;
-                    })}
+                  {/* Liza/Masking-panel/Curtain drape fabric grade. Old is the default, billed
+                      unless New is explicitly switched on — a 2-pill "Old/New" selector gave Old
+                      equal visual weight to a real decision when it is really just the starting
+                      state, same reasoning Masking's own on/off toggle already follows below.
+                      Flat choice for the whole qty needed either way, no stock-quantity check — see
+                      calcZoneFabricCost (pricing.js). */}
+                  {zc.trT && <div style={groupCard} title="Which drape fabric stock this truss's masking/Liza/curtains are billed from">
+                    <div style={{...rowCap,marginBottom:6}}>Fabric</div>
+                    <div style={{display:"flex",alignItems:"center",gap:8}}>
+                      {toggle(!!zc.useNewFabric, ()=>sZ({useNewFabric:!zc.useNewFabric}))}
+                      <span style={{fontSize:11,fontWeight:600,color:zc.useNewFabric?textP:textS}}>{zc.useNewFabric?"New":"Old"}</span>
+                    </div>
                   </div>}
-                  {/* Off is the common state, and it was costing a whole line for one switch. Only
-                      the toggle comes up here; the wall and material options below need real width,
-                      so they stay in the nested block and appear when masking is actually on. */}
-                  <div style={{display:"flex",alignItems:"center",gap:8}} title="Masking panels attach to this truss">
-                    <span style={rowCap}>Masking</span>
-                    <span style={{display:"inline-flex",alignItems:"center",color:textS}}><IconWall size={12}/></span>
-                    <div onClick={()=>{
-                      const turningOn=!zc.mkOn;
-                      sZ({
-                        mkOn:turningOn,
-                        mkWalls:zc.mkOn?{}:(zc.mkWalls||{}),
-                        // Default the masking material to the first pick (Fabric) when switching on
-                        // with nothing already chosen — otherwise the toggle reads "on" but prices
-                        // ₹0 until the salesperson also picks a material, which read as a bug.
-                        ...(turningOn&&!zc.mkT&&!zc.customMaskingItemId?{mkT:maskOpts[0]?.id||"fabric"}:{}),
-                      });
-                    }} style={{width:30,height:16,borderRadius:8,background:zc.mkOn?"#444":"#D1D5DB",position:"relative",cursor:"pointer",flexShrink:0}}><div style={{width:12,height:12,borderRadius:6,background:"#fff",position:"absolute",top:2,left:zc.mkOn?16:2,transition:"left 0.2s"}}/></div>
-                    {showCosts&&zc.mkOn&&<span style={{fontWeight:600,color:textP,fontSize:11}}>{fmt(rowCost.masking)}</span>}
+                  <div style={groupCard} title="Masking panels attach to this truss">
+                    <div style={{...rowCap,marginBottom:6}}>Masking</div>
+                    <div style={{display:"flex",alignItems:"center",gap:8}}>
+                      <span style={{display:"inline-flex",alignItems:"center",color:textS}}><IconWall size={12}/></span>
+                      {toggle(!!zc.mkOn, ()=>{
+                        const turningOn=!zc.mkOn;
+                        sZ({
+                          mkOn:turningOn,
+                          mkWalls:zc.mkOn?{}:(zc.mkWalls||{}),
+                          // Default the masking material to the first pick (Fabric) when switching on
+                          // with nothing already chosen — otherwise the toggle reads "on" but prices
+                          // ₹0 until the salesperson also picks a material, which read as a bug.
+                          ...(turningOn&&!zc.mkT&&!zc.customMaskingItemId?{mkT:maskOpts[0]?.id||"fabric"}:{}),
+                        });
+                      })}
+                      {showCosts&&zc.mkOn&&<span style={{fontWeight:600,color:textP,fontSize:11}}>{fmt(rowCost.masking)}</span>}
+                    </div>
                   </div>
-              </div>
+              </div>;
+              })()}
                 {/* ═══ MASKING ═══ Nested inside Truss: masking panels attach to the truss, which is why
                     the original code grouped them. Sits after the truss's own controls so the card reads
                     "configure the truss → then what's masked onto it". Full width of the row beneath it
