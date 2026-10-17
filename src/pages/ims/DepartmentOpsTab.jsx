@@ -946,9 +946,13 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     return (d.phase || "event") === "event" && d.date === fd;
   };
   // _i is the row's place in mpRows — the index setMp and the open/closed state are keyed by.
-  const mpShown = mpScoped
+  // Supervisors sorts last — ops IS the supervisor, so its card is just a name + the amount
+  // charged (no per-day explanation makes sense for it); it reads better at the bottom of the
+  // list than mixed in among crew types that actually have a day-wise plan to show.
+  const mpShown = (mpScoped
     ? mpRows.map((r, i) => ({ ...r, _i: i })).filter(r => dayWise(r)).map(r => ({ ...r, schedule: r.schedule.filter(inMpFn), _scoped: true })).filter(r => r.schedule.length)
-    : mpRows.map((r, i) => ({ ...r, _i: i }));
+    : mpRows.map((r, i) => ({ ...r, _i: i }))
+  ).sort((a, b) => (a.type === "Supervisors" ? 1 : 0) - (b.type === "Supervisors" ? 1 : 0));
   const mpWholeOnly = mpScoped ? mpRows.filter(r => !dayWise(r)).length : 0;
   const mpShownCost = mpScoped ? mpShown.reduce((s, r) => s + lineCost(r), 0) : mpCost;
   const mpPlannedCost = mpRows.reduce((s, r) => s + (Number(r.sysCost) || 0), 0); // system baseline (before edits)
@@ -4356,14 +4360,18 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                        cost, below. The toggle becomes the chevron tile that opens the card. */
                     <div key={i} className="rounded-xl bg-white ring-1 ring-gray-100 shadow-[0_1px_2px_rgba(16,24,40,0.05)] p-2.5 space-y-2">
                       <div className="flex items-center gap-2">
-                        <button onClick={() => setMpOpen(o => ({ ...o, [i]: o[i] === false }))}
-                          aria-expanded={open}
-                          className="shrink-0 w-8 h-8 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-500 flex items-center justify-center transition-colors"
-                          title={open ? "Hide how this crew number was calculated" : "How this crew number was calculated"}>
-                          <span aria-hidden="true" className={"transition-transform duration-150 " + (open ? "rotate-180" : "")}>
-                            <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M3.5 5 L7 8.5 L10.5 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                          </span>
-                        </button>
+                        {/* Supervisors has nothing to expand into — ops IS the supervisor, so there's
+                            no per-day plan behind the number, just the name and what it costs. */}
+                        {r.type !== "Supervisors" && (
+                          <button onClick={() => setMpOpen(o => ({ ...o, [i]: o[i] === false }))}
+                            aria-expanded={open}
+                            className="shrink-0 w-8 h-8 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-500 flex items-center justify-center transition-colors"
+                            title={open ? "Hide how this crew number was calculated" : "How this crew number was calculated"}>
+                            <span aria-hidden="true" className={"transition-transform duration-150 " + (open ? "rotate-180" : "")}>
+                              <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M3.5 5 L7 8.5 L10.5 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                            </span>
+                          </button>
+                        )}
                         <span aria-hidden="true" className="shrink-0 w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center text-sm leading-none">{crewIcon(r.type)}</span>
                         <span className="flex-1 min-w-0 text-sm font-semibold text-gray-900 truncate">{r.type}{r.shared && <span className="ml-1.5 text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded font-bold align-middle">SHARED</span>}</span>
                         {/* Day-wise rows (Labours/Flowerists/...): the rate sits right here, on the
@@ -4372,11 +4380,13 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                             Supervisors drop it entirely (ops IS the supervisor — see the "no separate
                             line for him" branch elsewhere in this file — a dept head tuning this rate
                             never meant anything real). */}
-                        {r.shared && !dayWise(r) ? (
+                        {r.type === "Supervisors" ? (
+                          <div className="shrink-0 rounded-lg bg-gray-100 px-3 py-1.5 text-sm font-bold text-gray-900 tabular-nums">{fmt(lineCost(r))}</div>
+                        ) : r.shared && !dayWise(r) ? (
                           <span className="shrink-0 text-[10px] text-gray-400">split allocation</span>
-                        ) : dayWise(r) ? (r.type !== "Supervisors" && (
+                        ) : dayWise(r) ? (
                           <div className="shrink-0 flex items-center gap-1.5"><span className="text-[11px] text-gray-400">₹/day</span><input type="number" min="0" value={r.rate} onChange={e => setMp(i, "rate", e.target.value)} className="w-20 rounded-lg px-2 py-1.5 text-sm text-center font-semibold ring-1 ring-gray-200 bg-white" /></div>
-                        )) : (
+                        ) : (
                           <div className="shrink-0 flex items-center gap-1.5"><span className="text-[11px] text-gray-400">qty</span><input type="number" min="0" value={r.count} onChange={e => setMp(i, "count", e.target.value)} className={"w-16 rounded-lg px-2 py-1.5 text-sm text-center font-semibold ring-1 " + (overridden ? "ring-amber-400 bg-amber-50 font-bold" : "ring-gray-200 bg-white")} /></div>
                         )}
                       </div>
@@ -4396,7 +4406,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                           <div className="ml-auto shrink-0 rounded-lg bg-gray-100 px-3 py-1.5 text-sm font-bold text-gray-900 tabular-nums">{fmt(lineCost(r))}</div>
                         </div>
                       )}
-                      {open && (
+                      {open && r.type !== "Supervisors" && (
                         <div className="text-[13.5px] text-gray-600 leading-relaxed bg-slate-50 rounded-xl ring-1 ring-slate-100 p-2.5">
                           {r.shared ? (
                             <>
