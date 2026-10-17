@@ -4,7 +4,7 @@ import { fmt } from "../../lib/format";
 import { mpDayWise, mpBaseDay, mpEffDay, mpEffWindows, mpLineCost, mpDayCost, mpDayDihari, aggregateEventManpower, isLiveEventOrder, phone10 } from "../../lib/ims/helpers";
 import { uploadAudioToStorage } from "../../lib/storage";
 import { DEPTS as SHARED_DEPTS, catToDept as sharedCatToDept, userDepartments } from "../../lib/ims/deptClassify";
-import { TabsMenu } from "../../components/ui";
+import { TabsMenu, useConfirm } from "../../components/ui";
 import { hasIMSPerm } from "../../lib/ims/constants";
 import { ZONE_META } from "../../lib/studio/taxonomy";
 import { ZONE_DEF_SK } from "../../lib/studio/keys";
@@ -437,6 +437,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const catDeptCfg = (settings && settings.categoryDepartments && typeof settings.categoryDepartments === "object") ? settings.categoryDepartments : {};
   const catToDept = (cat) => sharedCatToDept(cat, catDeptCfg);
   const dihari = settings?.dihariSchemes || {};
+  const [confirm, confirmDialog] = useConfirm();
   const isAdmin = authUser?.role === "Admin" || authUser?.id === "u_admin";
   const canManpower = hasIMSPerm(authUser, "events_manpower");
   // This user's allowed departments — an explicit grant (user.departments, set in Admin -> Users &
@@ -1064,7 +1065,11 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   // Persist the list AND the headline actual (realMandi) so Studio's P&L reflection picks it up.
   const saveMandi = (next) => saveDept({ mandiLines: next, realMandi: next.reduce((s, r) => s + (Number(r.qty) || 0) * (Number(r.price) || 0), 0) + artificialProj });
   const setMandi = (i, key, val) => saveMandi(mandiRows.map((r, j) => j === i ? { ...r, [key]: val } : r));
-  const delMandi = (i) => saveMandi(mandiRows.filter((_, j) => j !== i));
+  const delMandi = async (i) => {
+    const row = mandiRows[i]; if (!row) return;
+    if (!(await confirm({ title: `Remove "${row.name}" from this shopping list?`, body: "This only removes it from this event's real-shopping list — the Mandi Prices catalogue itself is untouched." }))) return;
+    saveMandi(mandiRows.filter((_, j) => j !== i));
+  };
   const addMandi = (cat) => { saveMandi([...mandiRows, { name: cat.name, unit: cat.unit || "", projQty: 0, projCost: 0, qty: 1, price: Number(cat.currentPrice) || 0 }]); setMandiQuery(""); };
   // Reset the real shopping list back to the system's original mandi plan (from Deal Check).
   const resetMandi = () => saveMandi(seedMandi.map(r => ({ ...r })));
@@ -5479,6 +5484,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
           <img src={zoomImg} alt="" className="max-w-[90vw] max-h-[90vh] rounded-lg object-contain shadow-2xl" onClick={e => e.stopPropagation()} />
         </div>
       )}
+      {confirmDialog}
     </div>
   );
 }

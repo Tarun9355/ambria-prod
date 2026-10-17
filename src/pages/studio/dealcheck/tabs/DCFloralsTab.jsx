@@ -343,7 +343,6 @@ export default function DCFloralsTab({ ctx }) {
                             const prefRate = Array.isArray(_prefArr) && _prefArr.length > 0 ? Number(_prefArr[0].rate) : 0;
                             // Legacy: old 🎨 single-pick colorVariant (backward compat)
                             const variantRate = Number(override?.colorVariant?.rate) || 0;
-                            if (prefRate > 0) console.log("[pref-price]", parentId, "prefRate=", prefRate, "variantRate=", variantRate, "parent=", parent?.currentPrice);
                             // Not in the mandi → the catalogue's swap (IMS Flower Mandi Catalogue 🔁)
                             // names what is bought instead: the replacement, in its own units
                             // (× ratio) at its own rate. A colour pick made for the original does
@@ -381,10 +380,16 @@ export default function DCFloralsTab({ ctx }) {
                             realLines.push({ flowerId: buyId, name: displayName, perPattern: (fl.qty || 0) * swRatio, qty: totalFlowerQty, unit: buyParent?.unit || "kg", unitPrice, lineCost, realOnly: flowerType === "real_only", variantPicked: sw ? null : (override?.colorVariant?.label || null), swappedFrom });
                             // Aggregate — KEYED BY PARENT ID (collapses old per-colour rows into one parent row)
                             if (totalFlowerQty > 0) {
-                              const prev = flowerAgg.get(buyId) || { flowerId: buyId, name: displayName, totalQty: 0, totalQtyFull: 0, unit: buyParent?.unit || "kg", unitPrice, contributors: [], realOnly: flowerType === "real_only", flowerType, variantPicked: sw ? null : (override?.colorVariant || null), swappedFrom };
+                              const prev = flowerAgg.get(buyId) || { flowerId: buyId, name: displayName, totalQty: 0, totalQtyFull: 0, totalCost: 0, unit: buyParent?.unit || "kg", unitPrice, contributors: [], realOnly: flowerType === "real_only", flowerType, variantPicked: sw ? null : (override?.colorVariant || null), swappedFrom };
                               prev.totalQty += totalFlowerQty;
                               prev.totalQtyFull += totalFlowerQtyFull;
-                              prev.unitPrice = unitPrice; // refresh in case variant override applies
+                              // Owner-reported: the same flower bought in 2+ zones of one single-day
+                              // function (no season-multiplier excuse) at different rates (e.g. one
+                              // zone's own colour preference overriding price) showed whichever zone's
+                              // rate was processed LAST for the whole aggregate, instead of a true
+                              // weighted average — both the shown rate and qty×rate total were wrong.
+                              prev.totalCost += totalFlowerQty * unitPrice;
+                              prev.unitPrice = prev.totalQty > 0 ? prev.totalCost / prev.totalQty : unitPrice;
                               if (!sw) prev.variantPicked = override?.colorVariant || prev.variantPicked;
                               if (swappedFrom && !prev.swappedFrom) prev.swappedFrom = swappedFrom;
                               prev.contributors.push({
@@ -524,6 +529,7 @@ export default function DCFloralsTab({ ctx }) {
                       // own repeat-discount, it just relocates already-discounted qty to another row.
                       fromAgg.totalQtyFull = Math.max(0, (fromAgg.totalQtyFull ?? fromAgg.totalQty) - swapQty);
                       fromAgg.totalQty = Math.max(0, fromAgg.totalQty - swapQty);
+                      fromAgg.totalCost = Math.max(0, (fromAgg.totalCost ?? (fromAgg.totalQty + swapQty) * effectiveFromRate) - swapQty * effectiveFromRate);
                       // Drop the row entirely if qty fell to 0
                       if (fromAgg.totalQty <= 0.0001) flowerAgg.delete(override.swapTo.fromParentId);
                     } else {
@@ -538,7 +544,9 @@ export default function DCFloralsTab({ ctx }) {
                     const newQty = swapQty; // swap qty goes to target regardless of full/split
                     const existing = flowerAgg.get(targetId);
                     if (existing) {
+                      existing.totalCost = (existing.totalCost ?? existing.totalQty * existing.unitPrice) + newQty * targetRate;
                       existing.totalQty += newQty;
+                      existing.unitPrice = existing.totalQty > 0 ? existing.totalCost / existing.totalQty : targetRate;
                       existing.totalQtyFull = (existing.totalQtyFull ?? existing.totalQty - newQty) + newQty;
                       existing.contributors.push({
                         elName: "↪ swapped from " + (override.swapTo.fromName || ""), zoneKey: "—",
@@ -551,6 +559,7 @@ export default function DCFloralsTab({ ctx }) {
                         name: targetParent.name,
                         totalQty: newQty,
                         totalQtyFull: newQty,
+                        totalCost: newQty * targetRate,
                         unit: targetParent.unit || "kg",
                         unitPrice: targetRate,
                         contributors: [{
