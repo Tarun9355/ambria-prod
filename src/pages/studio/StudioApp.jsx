@@ -85,7 +85,7 @@ import { callClaudeStreaming } from "../../lib/ai";
 import { heavyExtraLabour, eventTimingMultFor, SETTINGS_DEFAULTS, SIT_MULT_DEFAULTS } from "../../lib/ims/constants";
 import { resolveDateCategory, getEffectivePricing } from "../../lib/inventory/helpers";
 import { itemImsSubcat, lookupBySubcat, priceForInvItem, itemDimsText, walkKitUnits } from "../../lib/ims/helpers";
-import { matchFlowerPattern, floralPatternUnitRates, sizeClassToPatternKey, normalizeSizeClass, kitFloralCompDelta, resolveMandiBuy, mandiSwapOf } from "../../lib/ims/flowerHelpers";
+import { matchFlowerPattern, floralPatternUnitRates, sizeClassToPatternKey, normalizeSizeClass, kitFloralCompDelta } from "../../lib/ims/flowerHelpers";
 import { rowToRcItem, rcItemToRow, rcIsSMB, getFloralMode, oosCostPctFor, canFulfillShortfall } from "../../lib/rateCard";
 import { supabase, fetchAll, upsertRow, deleteRow, subscribeTable, keepaliveUpsert } from "../../lib/supabase";
 import {
@@ -4871,7 +4871,7 @@ export default function StudioApp() {
         // blend (mirrors flowerHelpers.js's floralPatternUnitRates) instead of vanishing to ₹0 as
         // real% drops. Marked up by the SAME `markup` the real side uses, tracked separately from
         // `cost` so it isn't also run through the bunches-per-kg artificial rate.
-        realOnlyCost += (Number(fl.qty) || 0) * (resolveMandiBuy(fl.flowerId, mc)?.price || 0);
+        realOnlyCost += (Number(fl.qty) || 0) * (res?.price || 0);
         return;
       }
       if (ft === "mapping") {
@@ -5821,28 +5821,20 @@ export default function StudioApp() {
           const prefArr = colorPrefsForFn?.[parentId];
           const prefRate = Array.isArray(prefArr) && prefArr.length > 0 ? Number(prefArr[0].rate) : 0;
           const variantRate = Number(override?.colorVariant?.rate) || 0;
-          // Not in the mandi → the catalogue's swap says what is bought instead (mandiSwapOf). The
-          // real flowers are then the replacement, in its own units (× ratio) at its own rate; a
-          // colour pick made for the original no longer applies to what is actually bought.
-          const sw = mandiSwapOf(parent, mc);
-          const basePrice = sw ? (Number(sw.to.currentPrice) || 0) : prefRate > 0 ? prefRate : variantRate > 0 ? variantRate : (Number(parent?.currentPrice) || 0);
-          const bp = (!sw && (prefRate > 0 || variantRate > 0)) ? basePrice : basePrice * sMult;
-          const realUnits = (fl.qty || 0) * q * effR * (zoneRepeat ? REPEAT_REAL_QTY_MULT : 1) * (sw ? sw.ratio : 1);
-          const buyParent = sw ? sw.to : parent;
-          const buyId = sw ? sw.to.id : parentId;
+          const basePrice = prefRate > 0 ? prefRate : variantRate > 0 ? variantRate : (Number(parent?.currentPrice) || 0);
+          const bp = (prefRate > 0 || variantRate > 0) ? basePrice : basePrice * sMult;
+          const realUnits = (fl.qty || 0) * q * effR * (zoneRepeat ? REPEAT_REAL_QTY_MULT : 1);
           // Which colour the salesperson actually picked (ranked preference 1st choice, else the
           // legacy single colorVariant override) — mirrors DCFloralsTab.jsx's own variantPicked,
           // so IMS Dept Ops' mandi list (fed from this function's breakdown, not the tab) can show
-          // the same colour + reference photo instead of a bare flower name. Never carries over on
-          // a catalogue swap (sw) — a colour picked for the original flower says nothing about what
-          // is actually being bought instead.
-          const colorVariant = sw ? null : (Array.isArray(prefArr) && prefArr.length > 0 ? prefArr[0] : (override?.colorVariant || null));
+          // the same colour + reference photo instead of a bare flower name.
+          const colorVariant = Array.isArray(prefArr) && prefArr.length > 0 ? prefArr[0] : (override?.colorVariant || null);
           // Full ranked list (owner-reported: picked 2 preferences in Deal Check, IMS only showed
           // the 1st) — carried alongside colorVariant (still the 1st choice, which is what prices
           // and what the primary tag shows) so IMS's mandi list can also tell ops "if 1st choice
           // isn't at the mandi today, here's the 2nd/3rd choice" instead of only ever naming one.
-          const colorPrefs = sw ? null : (Array.isArray(prefArr) && prefArr.length > 1 ? prefArr : null);
-          if (realUnits > 0 && buyParent) {
+          const colorPrefs = Array.isArray(prefArr) && prefArr.length > 1 ? prefArr : null;
+          if (realUnits > 0 && parent) {
             // totalCost accumulates each contribution at ITS OWN rate — owner-reported: the same
             // flower bought in 2+ zones of the SAME single-day function (so no season-multiplier
             // excuse) at different rates (e.g. one zone's own colour preference overriding price,
@@ -5851,13 +5843,13 @@ export default function StudioApp() {
             // both the shown "rate" and the row's total (qty × that wrong rate) came out wrong.
             // unitPrice is now a derived weighted average for display only; totalCost is what
             // actually feeds tReal below.
-            const agg = flowerAgg.get(buyId) || { totalQty: 0, totalCost: 0, unitPrice: bp, name: buyParent.name || "Flower", unit: buyParent.unit || "", colorVariant, colorPrefs };
+            const agg = flowerAgg.get(parentId) || { totalQty: 0, totalCost: 0, unitPrice: bp, name: parent.name || "Flower", unit: parent.unit || "", colorVariant, colorPrefs };
             agg.totalQty += realUnits;
             agg.totalCost += realUnits * bp;
             agg.unitPrice = agg.totalQty > 0 ? agg.totalCost / agg.totalQty : bp;
             if (colorVariant && !agg.colorVariant) agg.colorVariant = colorVariant;
             if (colorPrefs && !agg.colorPrefs) agg.colorPrefs = colorPrefs;
-            flowerAgg.set(buyId, agg);
+            flowerAgg.set(parentId, agg);
           }
           const effAQty = effA * (zoneRepeat ? REPEAT_ART_QTY_MULT : 1);
           if (effAQty > 0) {

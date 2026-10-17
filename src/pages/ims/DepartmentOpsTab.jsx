@@ -10,7 +10,7 @@ import { ZONE_META } from "../../lib/studio/taxonomy";
 import { ZONE_DEF_SK } from "../../lib/studio/keys";
 import { LOGO_ASSET, LOGO_BOX } from "../../lib/studio/brand.js";
 import { fitUrl } from "../../lib/studio/thumb.js";
-import { matchFlowerPattern, resolveSizeKey, sizeClassToPatternKey, resolveMandiBuy, mandiSwapOf } from "../../lib/ims/flowerHelpers";
+import { matchFlowerPattern, resolveSizeKey, sizeClassToPatternKey, resolveMandiFlower } from "../../lib/ims/flowerHelpers";
 import { swatchHexFor } from "../../lib/studio/colours";
 
 // ── THE OFFICIAL LOGO, READY FOR THE PDF ──
@@ -599,6 +599,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const [mpHowType, setMpHowType] = useState(null);
   // Fabric colour swatch shown large ({name, hex}), or null.
   const [swatchView, setSwatchView] = useState(null);
+  // 🔁 Mandi swap on the Floral real-shopping list — { i, q, toName, qty, price, note } while open.
+  const [mandiSwap, setMandiSwap] = useState(null);
   // Which kits have their components showing. Collapsed by default: a kit's own line already
   // carries the qty, the rate and the total that matter, and six components under each of four
   // kits buried the ordinary items between them.
@@ -1038,21 +1040,14 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const fp = sel?.floralPlan || {};
   const fpFlowers = Array.isArray(fp.flowers) ? fp.flowers : [];
   const artificialProj = fpFlowers.filter(f => f.artificial).reduce((s, f) => s + (Number(f.cost) || 0), 0);
-  // A planned flower the catalogue now marks as not in the mandi (🔁 swap) starts its real-shopping
-  // row as the replacement — its name, its units (× ratio) and its rate — with the plan columns
-  // left as they were, so the row reads "planned X, bought Y instead". Matched by name: the plan
-  // is a Deal Check snapshot that carries names, not catalogue ids.
-  const swapByName = new Map(mandiCatalogue.filter(c => c?.swap?.toId).map(c => [String(c.name || "").trim().toLowerCase(), c]));
   const seedMandi = fpFlowers.filter(f => !f.artificial && (Number(f.qty) || 0) > 0)
     .map(f => {
       // colorVariant — the salesperson's colour pick in Deal Check (ranked preference or the
       // legacy single pick), carried through calcFnFloralSourcingCost's own breakdown
       // (StudioApp.jsx) so the purchase manager sees WHICH colour to actually buy, not just a
-      // bare flower name. Never present on a swapped-in flower (a colour picked for the original
-      // says nothing about its replacement).
+      // bare flower name.
       const row = { name: f.name, unit: f.unit || "", projQty: Number(f.qty) || 0, projCost: Number(f.cost) || 0, qty: Number(f.qty) || 0, price: f.qty ? Math.round(((Number(f.cost) || 0) / f.qty) * 100) / 100 : 0, colorVariant: f.colorVariant || null, colorPrefs: f.colorPrefs || null };
-      const sw = mandiSwapOf(swapByName.get(String(f.name || "").trim().toLowerCase()), mandiCatalogue);
-      return sw ? { ...row, projUnit: row.unit, name: sw.to.name, unit: sw.to.unit || row.unit, qty: Math.round(row.qty * sw.ratio * 100) / 100, price: Number(sw.to.currentPrice) || 0, swappedFrom: f.name, colorVariant: null, colorPrefs: null } : row;
+      return row;
     });
   const mandiRows = Array.isArray(deptData.mandiLines) ? deptData.mandiLines : seedMandi;
   // Real shopping hasn't been logged until someone actually edits a row — until then, mandiRows is
@@ -1065,10 +1060,71 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   // Persist the list AND the headline actual (realMandi) so Studio's P&L reflection picks it up.
   const saveMandi = (next) => saveDept({ mandiLines: next, realMandi: next.reduce((s, r) => s + (Number(r.qty) || 0) * (Number(r.price) || 0), 0) + artificialProj });
   const setMandi = (i, key, val) => saveMandi(mandiRows.map((r, j) => j === i ? { ...r, [key]: val } : r));
+  // Deleting a swap's replacement row undoes the swap on its original too, so the original is not
+  // left at qty 0 still claiming it was swapped.
   const delMandi = async (i) => {
     const row = mandiRows[i]; if (!row) return;
     if (!(await confirm({ title: `Remove "${row.name}" from this shopping list?`, body: "This only removes it from this event's real-shopping list — the Mandi Prices catalogue itself is untouched." }))) return;
-    saveMandi(mandiRows.filter((_, j) => j !== i));
+    saveMandi(mandiRows.filter((_, j) => j !== i).map(r => (row.swapFor && r.name === row.swapFor && r.swappedTo) ? { ...r, swappedTo: undefined, swapNote: undefined, qty: Number(r.projQty) || 0 } : r));
+  };
+  // ── 🔁 SWAP: NOT IN THE MANDI TODAY ──
+  // The shopper puts 0 against a flower (or taps 🔁) and records what was bought instead. The
+  // original row stays, at qty 0, marked swappedTo; the replacement is its own row right under it,
+  // marked swapFor — so the total, realMandi and Studio's P&L carry the money with no extra rule,
+  // and the Floral setup book for this event shows the replacement in each arrangement.
+  const openMandiSwap = (i) => {
+    const r = mandiRows[i];
+    if (!r || r.swapFor) return;
+    const cur = mandiRows.find(x => x.swapFor === r.name);
+    setMandiSwap({ i, q: "", toName: cur?.name || "", qty: String(cur ? cur.qty : (Number(r.projQty) || "")), price: String(cur ? cur.price : ""), note: r.swapNote || "" });
+  };
+  const saveMandiSwap = ({ i, toName, qty, price, note }) => {
+    const orig = mandiRows[i];
+    const to = mandiCatalogue.find(c => c.name === toName);
+    if (!orig || !to) return;
+    const rest = mandiRows.filter(x => x.swapFor !== orig.name);
+    const at = rest.indexOf(orig);
+    const next = rest.map((x, j) => j === at ? { ...x, qty: 0, swappedTo: to.name, swapNote: note.trim() } : x);
+    next.splice(at + 1, 0, { name: to.name, unit: to.unit || "", projQty: 0, projCost: 0, qty: Number(qty) || 0, price: Number(price) || 0, swapFor: orig.name, swapNote: note.trim() });
+    saveMandi(next);
+    setMandiSwap(null);
+  };
+  const removeMandiSwap = (i) => {
+    const orig = mandiRows[i];
+    if (!orig) return;
+    saveMandi(mandiRows.filter(x => x.swapFor !== orig.name).map(x => x === orig ? { ...x, swappedTo: undefined, swapNote: undefined, qty: Number(x.projQty) || 0 } : x));
+    setMandiSwap(null);
+  };
+  // 🖨️ This event's mandi shopping sheet — the same new-tab print the truck challan uses. What to
+  // buy (the real-shopping list as it stands, swaps included) with blank columns for what was
+  // actually bought and paid, so the sheet comes back from the mandi filled in.
+  const printMandiList = () => {
+    const w = window.open("", "_blank");
+    if (!w) return;
+    const esc = (v) => String(v ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    const num = (v) => { const n = Number(v) || 0; return String(Math.round(n * 100) / 100); };
+    const rows = mandiRows.map((r, i) => {
+      const sub = [
+        r.colorVariant?.label ? `🎨 ${esc(r.colorVariant.label)}` : "",
+        Array.isArray(r.colorPrefs) && r.colorPrefs.length > 1 ? `if not at the mandi: ${esc(r.colorPrefs.slice(1).map(p => p.label).join(", "))}` : "",
+        r.swappedTo ? `🔁 Not in the mandi — swapped with ${esc(r.swappedTo)}${r.swapNote ? " · " + esc(r.swapNote) : ""}` : "",
+        r.swapFor ? `🔁 Bought instead of ${esc(r.swapFor)}${r.swapNote ? " · " + esc(r.swapNote) : ""}` : "",
+      ].filter(Boolean).map(s => `<div class="s${s.startsWith("🔁") ? " sw" : ""}">${s}</div>`).join("");
+      const line = (Number(r.qty) || 0) * (Number(r.price) || 0);
+      return `<tr${r.swappedTo ? ' class="off"' : ""}><td class="c">${i + 1}</td><td><b>${esc(r.name)}</b>${sub}</td>`
+        + `<td class="r">${Number(r.projQty) > 0 ? `${num(r.projQty)} ${esc(r.unit)}` : "extra"}</td>`
+        + `<td class="r"><b>${num(r.qty)}</b> ${esc(r.unit)}</td><td class="r">₹${num(r.price)}</td><td class="r">₹${num(line)}</td>`
+        + `<td class="blank"></td><td class="blank"></td></tr>`;
+    }).join("");
+    w.document.write(`<html><head><title>Mandi List — ${esc(sel?.clientName || "Event")}</title><style>body{font-family:Arial;padding:24px;color:#111}table{width:100%;border-collapse:collapse;margin-top:8px}th,td{border:1px solid #ddd;padding:6px 8px;font-size:12px;vertical-align:top}th{background:#f5f5f5;text-align:left}td.c{text-align:center}td.r,th.r{text-align:right;white-space:nowrap}td.blank{min-width:70px}.s{color:#777;font-size:10.5px;margin-top:2px}.sw{color:#B45309;font-weight:bold}tr.off td{color:#999}tr.off b{text-decoration:line-through}tr{break-inside:avoid}tfoot td{font-weight:bold;background:#ECFDF5}@media print{button{display:none}body{padding:0}@page{size:A4;margin:10mm}}</style></head><body>
+      <h2>🌸 Ambria — Mandi Shopping List</h2>
+      <p>Event: ${esc(sel?.clientName || "-")} &nbsp;|&nbsp; ${esc(selDateStr || "-")} &nbsp;|&nbsp; ${esc(sel?.functionsDetail?.[0]?.venue || sel?.venue || "-")}</p>
+      <table><tr><th class="c">#</th><th>Flower</th><th class="r">Planned</th><th class="r">To buy</th><th class="r">₹/unit</th><th class="r">Total</th><th>Bought qty</th><th>Paid ₹/unit</th></tr>${rows || '<tr><td colspan="8" style="text-align:center;color:#999">No flowers on the list</td></tr>'}
+      <tfoot><tr><td colspan="5">Total (real flowers)</td><td class="r">₹${num(mandiActualReal)}</td><td></td><td></td></tr></tfoot></table>
+      <br><p>Bought by: _______________ &nbsp;&nbsp; Checked by: _______________</p>
+      <p>Date: ____________ &nbsp;&nbsp; Time: ____________</p>
+      <button onclick="window.print()">🖨️ Print</button></body></html>`);
+    w.document.close();
   };
   const addMandi = (cat) => { saveMandi([...mandiRows, { name: cat.name, unit: cat.unit || "", projQty: 0, projCost: 0, qty: 1, price: Number(cat.currentPrice) || 0 }]); setMandiQuery(""); };
   // Reset the real shopping list back to the system's original mandi plan (from Deal Check).
@@ -1187,7 +1243,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         row([["Flower", cx.name], ["Planned", cx.plan, "right"], ["Projected", cx.proj, "right"], ["Qty", cx.qty, "right"], ["Rs/unit", cx.rate, "right"], ["Total", cx.tot, "right"]], { bold: true, fill: [209, 250, 229] });
         mandiRows.forEach(r => {
           const line = (Number(r.qty) || 0) * (Number(r.price) || 0);
-          row([[r.swappedFrom ? `${r.name} (for ${r.swappedFrom})` : r.name, cx.name], [r.projQty > 0 ? `${r.projQty} ${r.projUnit || r.unit || ""}`.trim() : "", cx.plan, "right"], [r.projCost > 0 ? rs(r.projCost) : "extra", cx.proj, "right"], [Number(r.qty) || 0, cx.qty, "right"], [Number(r.price) || 0, cx.rate, "right"], [rs(line), cx.tot, "right"]]);
+          row([[r.swapFor ? `${r.name} (bought for ${r.swapFor})` : r.swappedTo ? `${r.name} (not in mandi -> ${r.swappedTo})` : r.name, cx.name], [r.projQty > 0 ? `${r.projQty} ${r.unit || ""}`.trim() : "", cx.plan, "right"], [r.projCost > 0 ? rs(r.projCost) : "extra", cx.proj, "right"], [Number(r.qty) || 0, cx.qty, "right"], [Number(r.price) || 0, cx.rate, "right"], [rs(line), cx.tot, "right"]]);
         });
         if (fp.artificial || artificialProj > 0) row([["Artificial flowers / greens (not mandi-shopped)", cx.name], [rs(artTot), cx.proj, "right"], [rs(artTot), cx.tot, "right"]]);
         row([["Total", cx.name], [rs(Number(fp.projected) || 0), cx.proj, "right"], [rs(mandiActualTotal), cx.tot, "right"]], { bold: true, fill: [236, 253, 245] });
@@ -1932,6 +1988,20 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     const bg = (url) => url ? `style="${bgCss(url)}" ${bgData(url)}` : "";
 
     const zonePages = [];
+    // ── THIS EVENT'S MANDI SWAPS ──
+    // The Floral real-shopping list records a flower the mandi did not have (swappedTo) and its
+    // replacement row (swapFor, the qty actually bought). Every arrangement using that flower is
+    // made with the replacement instead, scaled by bought ÷ planned so the piece gets its share.
+    // Keyed by the shopping-list name — the mandi flower name the recipe resolves to.
+    const floralLines = Array.isArray(sel?.deptOps?.Floral?.mandiLines) ? sel.deptOps.Floral.mandiLines : [];
+    const eventSwap = new Map();
+    floralLines.forEach(r => {
+      if (!r?.swapFor) return;
+      const o = floralLines.find(x => x.name === r.swapFor && x.swappedTo);
+      if (!o) return;
+      const ratio = Number(o.projQty) > 0 ? (Number(r.qty) || 0) / Number(o.projQty) : 1;
+      eventSwap.set(String(r.swapFor).trim().toLowerCase(), { name: r.name, unit: r.unit || "", ratio });
+    });
     const placed = new Set();
     const fns = Array.isArray(sel?.functionsDetail) ? sel.functionsDetail : [];
     // ── WHAT STANDS IN THE ZONE: truss, platform, carpet ──
@@ -2099,11 +2169,14 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           const sizeData = pat?.sizes?.[resolveSizeKey(pat.sizes, sizeClassToPatternKey(rawSize || "B"))];
           const recipe = (sizeData?.flowers || []).map(fl => {
             if (fl?.invItemId) { const ing = invById.get(String(fl.invItemId)); return ing ? { name: ing.name, qty: Number(fl.qty) || 0, unit: ing.unit || "" } : null; }
-            // Through the catalogue's swap: a flower not in the mandi goes into the piece as its
-            // replacement, in the replacement's units, and the line says what it stands in for.
-            const buy = resolveMandiBuy(fl?.flowerId, mandiCatalogue);
-            const mf = buy?.parent;
-            return mf ? { name: buy.swappedFrom ? `🔁 ${mf.name} (for ${buy.swappedFrom.name})` : mf.name, qty: (Number(fl.qty) || 0) * (buy.ratio || 1), unit: mf.unit || "" } : null;
+            const mf = resolveMandiFlower(fl?.flowerId, mandiCatalogue)?.parent;
+            if (!mf) return null;
+            const baseQty = Number(fl.qty) || 0;
+            // This event's own mandi swap, made on the Floral shopping list (eventSwap above): the
+            // piece is made with the replacement, in its units, and the line says what it stands in for.
+            const es = eventSwap.get(String(mf.name || "").trim().toLowerCase());
+            if (es) return { name: `🔁 ${es.name} (for ${mf.name})`, qty: Math.round(baseQty * es.ratio * 100) / 100, unit: es.unit };
+            return { name: mf.name, qty: baseQty, unit: mf.unit || "" };
           }).filter(f => f && f.qty > 0);
           merged.set(key, { name: inv?.name || el?.name || held?.name || "Item", qty, unit, deptTag, photo: invPhoto(inv, held), dims: invDims(inv), size: elSize, kit: (held?.isKit && Array.isArray(held.components)) ? held.components.length : 0, recipe, paint: addPaint(new Map(), paint) });
         });
@@ -4540,27 +4613,28 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                       </div>
                       {fp.season && fp.season.mult && fp.season.mult !== 1 && <div className="px-3 py-1.5 rounded-lg text-[10px] text-emerald-700 bg-emerald-100/50 border border-emerald-100">📅 {fp.season.label} date — mandi flower prices ×{fp.season.mult} (e.g. a ₹1000 flower bills at ₹{Math.round(1000 * fp.season.mult)})</div>}
                       {/* Projected vs real mandi — side by side, editable real shopping list */}
-                      {/* Projected and Real are two fixed columns (w-28 + w-60) and Real holds
+                      {/* Projected and Real are two fixed columns (w-28 + w-[264px]) and Real holds
                           qty × ₹/unit × total × delete — ~210px of content that cannot compress
                           (every child below is shrink-0), which left the flower name about 30px
                           on a phone. The comparison only works if the two columns stay aligned,
-                          so this scrolls sideways rather than reflows. w-60 is NOT cosmetic — it's
+                          so this scrolls sideways rather than reflows. w-[264px] (240 + the 🔁 swap button) is NOT cosmetic — it's
                           the actual sum of the children's widths; a narrower column here forces
                           the (shrink-0) inputs to overflow past their own box, bleeding left into
                           the Projected column, which is the overlap bug this was fixed for. */}
                       <div className="bg-white border border-emerald-100 rounded-lg overflow-x-auto">
-                        <div className="min-w-[520px]">
+                        <div className="min-w-[544px]">
                         <div className="grid grid-cols-[1fr_auto_auto] gap-2 px-3 py-2 bg-emerald-100/60 text-[10px] font-semibold text-emerald-900 uppercase tracking-wide items-center">
                           <span className="flex items-center gap-2">🌸 Flower
                             {seedMandi.length > 0 && <button onClick={resetMandi} title="Undo your edits — restore the system's original mandi plan from Deal Check" className="normal-case text-[10px] font-semibold text-emerald-700 border border-emerald-300 rounded px-1.5 py-0.5 hover:bg-emerald-200/60">↺ Reset to system plan</button>}
+                            {mandiRows.length > 0 && <button onClick={printMandiList} title="Print this event's mandi shopping list, with blank columns for what was bought and paid" className="normal-case text-[10px] font-semibold text-emerald-700 border border-emerald-300 rounded px-1.5 py-0.5 hover:bg-emerald-200/60">🖨️ Print</button>}
                           </span>
                           <span className="text-right w-28">Projected (plan)</span>
-                          <span className="text-right w-60">Real shopping</span>
+                          <span className="text-right w-[264px]">Real shopping</span>
                         </div>
                         {/* Column labels for the two editable fields */}
                         <div className="grid grid-cols-[1fr_auto_auto] gap-2 px-3 pt-1 text-[10px] text-emerald-700/70 uppercase tracking-wide">
                           <span></span><span className="w-28"></span>
-                          <span className="flex items-center justify-end gap-1 w-60"><span className="shrink-0 w-12 text-center">qty</span><span className="shrink-0 text-transparent">×</span><span className="shrink-0 w-16 text-center">₹/unit</span><span className="shrink-0 w-16 text-right">total</span><span className="shrink-0 w-3"></span></span>
+                          <span className="flex items-center justify-end gap-1 w-[264px]"><span className="shrink-0 w-12 text-center">qty</span><span className="shrink-0 text-transparent">×</span><span className="shrink-0 w-16 text-center">₹/unit</span><span className="shrink-0 w-16 text-right">total</span><span className="shrink-0 w-5"></span><span className="shrink-0 w-3"></span></span>
                         </div>
                         <div className="px-3 py-1 bg-emerald-50/40 text-[10px] text-emerald-700/80">Real shopping = <b>qty × ₹/unit</b>. Projected = planned units from the recipe × mandi price{fp.season && fp.season.mult && fp.season.mult !== 1 ? ` × ${fp.season.mult} season` : ""}.</div>
                         {mandiRows.length === 0 && fpFlowers.length === 0 ? (
@@ -4579,16 +4653,26 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                                       {Array.isArray(r.colorPrefs) && r.colorPrefs.length > 1 && (
                                         <div className="text-[10px] text-gray-400">if not at the mandi: {r.colorPrefs.slice(1).map(p => p.label).join(", ")}</div>
                                       )}
-                                      {r.swappedFrom && <div className="text-[10px] font-semibold text-amber-700">🔁 swapped for {r.swappedFrom} (not in mandi)</div>}
-                                      {r.projQty > 0 && <div className="text-[10px] text-gray-400">{r.projQty} {r.swappedFrom ? "" : r.unit} {r.swappedFrom ? `of ${r.swappedFrom} ` : ""}planned</div>}
+                                      {r.swappedTo && <div className="text-[10px] font-semibold text-amber-700">🔁 Not in the mandi — swapped with {r.swappedTo}{r.swapNote ? ` · ${r.swapNote}` : ""}</div>}
+                                      {r.swapFor && <div className="text-[10px] font-semibold text-amber-700">🔁 Bought instead of {r.swapFor}{r.swapNote ? ` · ${r.swapNote}` : ""}</div>}
+                                      {r.projQty > 0 && <div className="text-[10px] text-gray-400">{r.projQty} {r.unit} planned</div>}
                                     </div>
                                   </div>
                                   <div className="text-right w-28 text-xs text-gray-400">{r.projCost > 0 ? fmt(r.projCost) : <span className="text-amber-500">extra</span>}</div>
-                                  <div className="flex items-center justify-end gap-1 w-60">
-                                    <input type="number" min="0" value={r.qty} onChange={e => setMandi(i, "qty", e.target.value)} className="shrink-0 w-12 border rounded px-1.5 py-1 text-xs text-center" title="qty" />
+                                  <div className="flex items-center justify-end gap-1 w-[264px]">
+                                    {/* 0 against a planned flower = not in the mandi → ask what was bought
+                                        instead. On blur, not on change: clearing the box to type a new
+                                        number passes through empty and must not pop a dialog. */}
+                                    <input type="number" min="0" value={r.qty} onChange={e => setMandi(i, "qty", e.target.value)}
+                                      onBlur={e => { if ((Number(e.target.value) || 0) === 0 && Number(r.projQty) > 0 && !r.swappedTo && !r.swapFor) openMandiSwap(i); }}
+                                      className="shrink-0 w-12 border rounded px-1.5 py-1 text-xs text-center" title="qty" />
                                     <span className="shrink-0 text-[10px] text-gray-300">×</span>
                                     <input type="number" min="0" value={r.price} onChange={e => setMandi(i, "price", e.target.value)} className="shrink-0 w-16 border rounded px-1.5 py-1 text-xs text-center" title="₹/unit" />
                                     <span className={"shrink-0 w-16 text-right text-xs font-semibold " + (lineVar > 0 ? "text-red-500" : lineVar < 0 ? "text-emerald-600" : "text-gray-700")}>{fmt(lineActual)}</span>
+                                    {r.swapFor ? <span className="shrink-0 w-5" /> : (
+                                      <button onClick={() => openMandiSwap(i)} title={r.swappedTo ? `Swapped with ${r.swappedTo} — click to change or remove` : "Not available in the mandi? Swap it with another flower"}
+                                        className={"shrink-0 w-5 text-xs rounded " + (r.swappedTo ? "bg-amber-100 text-amber-700" : "text-gray-300 hover:text-amber-600")}>🔁</button>
+                                    )}
                                     <button onClick={() => delMandi(i)} className="shrink-0 text-red-300 hover:text-red-500 text-xs">×</button>
                                   </div>
                                 </div>
@@ -4604,7 +4688,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                         <div className="grid grid-cols-[1fr_auto_auto] gap-2 px-3 py-2 bg-emerald-50 items-center">
                           <span className="text-xs font-bold text-emerald-900">Total</span>
                           <span className="text-right w-28 text-xs font-semibold text-gray-500">{fmt(projectedTotal)}</span>
-                          <span className="text-right w-60 text-sm font-bold text-emerald-800 pr-6">{fmt(mandiActualReal)}</span>
+                          <span className="text-right w-[264px] text-sm font-bold text-emerald-800 pr-6">{fmt(mandiActualReal)}</span>
                         </div>
                         </div>
                       </div>
@@ -5463,6 +5547,73 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
         document.body
       )}
       {/* A fabric colour, large — a 14px square is enough to tell colours apart, not to match a bolt against. */}
+      {/* 🔁 Mandi swap — what was bought instead of a flower the mandi did not have (saveMandiSwap). */}
+      {mandiSwap && mandiRows[mandiSwap.i] && createPortal((() => {
+        const orig = mandiRows[mandiSwap.i];
+        const origCat = mandiCatalogue.find(c => c.name === orig.name);
+        const family = (f) => ((f?.flowerType || (f?.isGreen ? "green" : "flower")) === "green" ? "green" : "flower");
+        const q = mandiSwap.q.trim().toLowerCase();
+        // Greens for a green, flowers for a flower — the rule Deal Check's own swap uses.
+        const cands = mandiCatalogue.filter(c => c.name !== orig.name && (!origCat || family(c) === family(origCat))
+          && (!q || String(c.name || "").toLowerCase().includes(q) || String(c.flowerCat || "").toLowerCase().includes(q)));
+        const to = mandiCatalogue.find(c => c.name === mandiSwap.toName) || null;
+        const ok = !!to && Number(mandiSwap.qty) > 0;
+        const total = (Number(mandiSwap.qty) || 0) * (Number(mandiSwap.price) || 0);
+        const set = (patch) => setMandiSwap(m => ({ ...m, ...patch }));
+        return (
+          <div onClick={() => setMandiSwap(null)} className="fixed inset-0 z-[9999] bg-black/50 flex items-center justify-center p-4">
+            <div onClick={e => e.stopPropagation()} className="bg-white rounded-2xl w-[min(720px,100%)] max-h-[88vh] flex flex-col overflow-hidden shadow-2xl">
+              <div className="px-5 py-4 border-b flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="font-bold text-gray-900">🔁 Swap "{orig.name}" — not available in the mandi</p>
+                  <p className="text-xs text-gray-500 mt-0.5">Which flower was bought instead? It goes on this event's shopping list and into its Floral setup book.{Number(orig.projQty) > 0 ? ` Planned: ${orig.projQty} ${orig.unit}.` : ""}</p>
+                </div>
+                <button onClick={() => setMandiSwap(null)} className="text-gray-400 hover:text-gray-700 text-xl leading-none">✕</button>
+              </div>
+              <div className="p-4 border-b space-y-3">
+                <input autoFocus value={mandiSwap.q} onChange={e => set({ q: e.target.value })} placeholder={`Search ${origCat && family(origCat) === "green" ? "greens" : "flowers"}…`} className="w-full border rounded-lg px-3 py-2 text-sm" />
+                <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 items-center text-sm">
+                  <label className="text-xs font-semibold text-gray-600">Bought</label>
+                  <div className="flex items-center gap-2 flex-wrap text-xs text-gray-600">
+                    <input type="number" min="0" step="0.1" value={mandiSwap.qty} onChange={e => set({ qty: e.target.value })} className="w-20 border rounded px-2 py-1 text-sm text-center" />
+                    <span>{to?.unit || "units"} ×</span>
+                    <span>₹</span>
+                    <input type="number" min="0" value={mandiSwap.price} onChange={e => set({ price: e.target.value })} className="w-24 border rounded px-2 py-1 text-sm text-center" />
+                    <span>/{to?.unit || "unit"}</span>
+                    {total > 0 && <span className="font-semibold text-gray-900">= {fmt(total)}</span>}
+                  </div>
+                  <label className="text-xs font-semibold text-gray-600">Note</label>
+                  <input value={mandiSwap.note} onChange={e => set({ note: e.target.value })} placeholder="Reason / details (optional) — e.g. out of season, price too high" className="w-full border rounded-lg px-3 py-1.5 text-sm" />
+                </div>
+              </div>
+              <div className="p-4 overflow-y-auto min-h-0 grid grid-cols-2 md:grid-cols-3 gap-3 content-start auto-rows-max">
+                {cands.length === 0 ? <div className="col-span-full text-center text-gray-400 text-sm py-8 italic">No matching flowers in the mandi catalogue.</div>
+                  : cands.map(c => {
+                    const photo = c.photoUrl || (c.colorVariants || []).find(v => v.photoUrl)?.photoUrl || "";
+                    const isCur = c.name === mandiSwap.toName;
+                    return (
+                      <div key={c.id || c.name} onClick={() => set({ toName: c.name, price: isCur ? mandiSwap.price : String(Number(c.currentPrice) || "") })}
+                        className={"cursor-pointer rounded-xl overflow-hidden border-2 " + (isCur ? "border-amber-500" : "border-gray-200 hover:border-amber-300")}>
+                        {photo ? <img src={photo} alt="" className="w-full aspect-[4/3] object-cover bg-gray-50" /> : <div className="w-full aspect-[4/3] bg-gray-100 flex items-center justify-center text-2xl text-gray-300">🌸</div>}
+                        <div className="px-2 py-1.5">
+                          <div className="text-xs font-semibold text-gray-800 truncate">{c.name}</div>
+                          <div className="text-[10px] text-gray-400 truncate">{c.flowerCat || ""} · ₹{Number(c.currentPrice) || 0}/{c.unit}</div>
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+              <div className="px-5 py-3 border-t flex items-center justify-between gap-2">
+                {orig.swappedTo ? <button onClick={() => removeMandiSwap(mandiSwap.i)} className="text-xs text-red-500 hover:text-red-700">✕ Remove swap ({orig.name} was available)</button> : <span />}
+                <div className="flex gap-2">
+                  <button onClick={() => setMandiSwap(null)} className="px-3 py-1.5 rounded-lg border text-sm text-gray-600">Cancel</button>
+                  <button onClick={() => saveMandiSwap(mandiSwap)} disabled={!ok} className={"px-4 py-1.5 rounded-lg text-sm font-semibold text-white " + (ok ? "bg-amber-600 hover:bg-amber-700" : "bg-gray-300 cursor-not-allowed")}>🔁 Save swap</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })(), document.body)}
       {swatchView && createPortal(
         <div onClick={() => setSwatchView(null)} className="fixed inset-0 z-[9999] bg-black/50 flex items-center justify-center p-6 cursor-zoom-out">
           <div onClick={e => e.stopPropagation()} className="rounded-2xl bg-white shadow-2xl p-4 w-72 space-y-3">
