@@ -10284,13 +10284,32 @@ export default function StudioApp() {
       // repeat swaps — had nothing free, so this is a like-for-like swap within the same
       // sub-category (the picker only ever lists that sub-category). Build shows its price in
       // orange. Picking the original back, or picking while the original is still free, drops it.
-      const origId = elems[idx].swappedFrom || elems[idx].invId;
-      const orig = (items || []).find(i => i.id === origId);
-      const isSwap = !!(selectedId && pick && origId && selectedId !== origId && orig && orig.free <= 0);
+      //
+      // baseInvId (not just swappedFrom||invId) tracks the TRUE original stably across a VOLUNTARY
+      // swap too — one made while the original still had stock (e.g. swapping on purpose to claim a
+      // cross-function reuse discount), which never sets swappedFrom on its own. Without this, the
+      // old `swappedFrom || invId` fallback silently promoted whatever the CURRENT item happened to
+      // be into "the original" for the NEXT swap's own check — so swapping back from that voluntary
+      // pick (which can legitimately show 0 free, since its one unit is dedicated to the sibling
+      // function it's being reused from/to) read as "the original had nothing free" and wrongly
+      // marked swappedFrom on the item you'd just picked BACK, i.e. the real original itself.
+      // baseInvId is captured once (on the first-ever pick through this picker) and carried forward
+      // untouched on every later pick, so later swaps always check the REAL original's own
+      // availability, not an intermediate stand-in's.
+      const baseInvId = elems[idx].baseInvId || elems[idx].invId;
+      const orig = (items || []).find(i => i.id === baseInvId);
+      const backToOriginal = !!selectedId && selectedId === baseInvId;
+      const isSwap = !!(selectedId && pick && baseInvId && !backToOriginal && orig && orig.free <= 0);
       elems[idx] = (selectedId && pick)
-        ? { ...elems[idx], invId: selectedId, name: pick.name || elems[idx].name, imsId: selectedId, imsName: pick.name || "", imsPhoto: pick.photo || "", swappedFrom: isSwap ? origId : undefined }
-        : (() => { const e = { ...elems[idx] }; delete e.imsId; delete e.imsName; delete e.imsPhoto; delete e.swappedFrom; return e; })();
+        ? {
+            ...elems[idx], invId: selectedId, name: pick.name || elems[idx].name, imsId: selectedId, imsName: pick.name || "", imsPhoto: pick.photo || "",
+            ...(backToOriginal
+              ? { swappedFrom: undefined, baseInvId: undefined }
+              : { baseInvId, swappedFrom: isSwap ? baseInvId : elems[idx].swappedFrom }),
+          }
+        : (() => { const e = { ...elems[idx] }; delete e.imsId; delete e.imsName; delete e.imsPhoto; delete e.swappedFrom; delete e.baseInvId; return e; })();
       if (!elems[idx].swappedFrom) delete elems[idx].swappedFrom;
+      if (!elems[idx].baseInvId) delete elems[idx].baseInvId;
       return { ...p, [zoneKey]: elems };
     });
     setAvailModal(null);
