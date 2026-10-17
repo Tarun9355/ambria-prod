@@ -4242,20 +4242,28 @@ undefined
                         {(()=>{
                           // New rule: paintable iff sub-category has ≥1 IMS item with paintCost > 0
                           // Falls back to PAINT_TOKENS keyword match when IMS inventory not loaded
-                          const imsInv = dealCheckData?.inventory || [];
-                          const subcatCheck = rc ? isSubcatPaintable(rc.sub, imsInv) : false;
+                          const imsInv = dealCheckData?.inventory?.length ? dealCheckData.inventory : (imsInventory || []);
+                          // Look up baseColour from IMS inventory (via dealCheckData if available)
+                          const invItem = el.invId ? imsInv.find(i => i.id === el.invId) : imsInv.find(i => i.name === el.name);
+                          // An element added from Inventory (el.invId — the normal path today) prices
+                          // with no rate-card row, so rc is null and keying this on rc.sub hid the pill
+                          // for every such item, paint cost or not. Its own Inventory sub-category is
+                          // the one to test; rc's is only for an element still priced off the rate card.
+                          const pSub = rc?.sub || invItem?.subCat || invItem?.subcategory || "";
+                          const pCat = rc?.cat || invItem?.cat || invItem?.category || "";
+                          const subcatCheck = pSub ? isSubcatPaintable(pSub, imsInv) : (imsInv.length ? false : null);
                           let isPaintable;
                           if (subcatCheck === null) {
                             // IMS not loaded — fall back to keyword match
-                            const _cat = String(rc?.cat||"").toLowerCase();
-                            const _sub = String(rc?.sub||"").toLowerCase();
-                            isPaintable = rc && PAINT_TOKENS_FALLBACK.some(tok => _cat.includes(tok) || _sub.includes(tok));
+                            const _cat = String(pCat).toLowerCase();
+                            const _sub = String(pSub).toLowerCase();
+                            isPaintable = (_cat || _sub) && PAINT_TOKENS_FALLBACK.some(tok => _cat.includes(tok) || _sub.includes(tok));
                           } else {
-                            isPaintable = subcatCheck;
+                            // The item itself marked paintable with a repaint cost counts even when
+                            // nothing else in its sub-category is.
+                            isPaintable = subcatCheck || Number(invItem?.paintCost || 0) > 0;
                           }
                           if (!isPaintable) return null;
-                          // Look up baseColour from IMS inventory (via dealCheckData if available)
-                          const invItem = el.invId ? (dealCheckData?.inventory || []).find(i => i.id === el.invId) : (dealCheckData?.inventory || []).find(i => i.name === el.name);
                           const baseColour = invItem?.baseColour || "Ivory";
                           // §23 Phase 2.9d — multi-colour allocation aware
                           const allocs = normalizePaintAllocation(el, baseColour);
