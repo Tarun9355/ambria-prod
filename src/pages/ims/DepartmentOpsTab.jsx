@@ -825,7 +825,11 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const mpRows = hasMpSnapshot
     ? [
         ...(mpDetail || []).map(s => { const ov = mpOverrides[s.type] || {}; return { type: s.type, count: ov.count != null ? ov.count : (s.count ?? ""), rate: ov.rate != null ? ov.rate : (s.rate || 0), basis: s.basis || "", shared: !!s.shared, sysCount: s.count, sysRate: s.rate || 0, sysCost: s.cost || 0, days: dayCount(Number(s.count) || 0, Number(s.rate) || 0, Number(s.cost) || 0), trace: s.trace || null, splitInfo: s.splitInfo || null, schedule: s.schedule || null }; }),
-        ...mpExtra.filter(r => !snapTypes.has(r.type)).map(r => ({ type: r.type, count: r.count ?? "", rate: r.rate || 0, basis: "added crew", shared: false, sysCount: null, sysRate: 0, sysCost: 0, days: 1, _extra: true })),
+        // _extraIdx — this row's own position in deptData.mpExtra, carried through so removeMp can
+        // delete exactly this one even when two added rows share the same type (e.g. "+ Add crew
+        // type" clicked twice by accident both default to "Labours" — matching by type alone would
+        // have deleted both at once instead of just the one the head actually meant to remove).
+        ...mpExtra.map((r, ei) => ({ r, ei })).filter(({ r }) => !snapTypes.has(r.type)).map(({ r, ei }) => ({ type: r.type, count: r.count ?? "", rate: r.rate || 0, basis: "added crew", shared: false, sysCount: null, sysRate: 0, sysCost: 0, days: 1, _extra: true, _addedExtra: true, _extraIdx: ei })),
       ]
     : (sysPlan.length ? sysPlan.map(p => ({ type: p.type, count: p.count, rate: p.rate || Number(dihari[p.type]?.rate) || 0, basis: p.basis || "", sysCount: p.count, sysRate: p.rate || 0, sysCost: (p.count || 0) * (p.rate || 0), days: 1, _extra: true }))
       : deptTypes.map(t => ({ type: t, count: "", rate: Number(dihari[t]?.rate) || 0, basis: "", sysCount: null, sysRate: 0, sysCost: 0, days: 1, _extra: true })));
@@ -1001,15 +1005,26 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     const row = mpRows[i]; if (!row) return;
     if (row._extra) {
       const base = Array.isArray(deptData.mpExtra) ? deptData.mpExtra : mpExtra;
-      const idx = base.findIndex(r => r.type === row.type);
+      // Added-crew rows (removeMp's own kind) are matched by their own stored index — two rows of
+      // the same type (e.g. "Labours" added twice by accident) are otherwise indistinguishable by
+      // type alone, and editing one would silently land on whichever came first in the array.
+      const idx = row._addedExtra ? row._extraIdx : base.findIndex(r => r.type === row.type);
       const next = base.slice();
-      if (idx >= 0) next[idx] = { ...next[idx], [key]: val }; else next.push({ type: row.type, count: row.count, rate: row.rate, [key]: val });
+      if (idx >= 0 && idx < next.length) next[idx] = { ...next[idx], [key]: val }; else next.push({ type: row.type, count: row.count, rate: row.rate, [key]: val });
       saveDept({ mpExtra: next });
     } else {
       saveDept({ mpOverrides: { ...mpOverrides, [row.type]: { ...(mpOverrides[row.type] || {}), [key]: val } } });
     }
   };
   const addMp = () => saveDept({ mpExtra: [...(Array.isArray(deptData.mpExtra) ? deptData.mpExtra : mpExtra), { type: "Labours", count: "", rate: Number(dihari["Labours"]?.rate) || 0 }] });
+  // Undo a "+ Add crew type" click (e.g. an accidental double-click that left two identical rows) —
+  // by the row's own index in mpExtra, not its type, so one of several same-type extras can be
+  // removed without taking the others with it.
+  const removeMp = (row) => {
+    if (!row._addedExtra) return;
+    const base = Array.isArray(deptData.mpExtra) ? deptData.mpExtra : mpExtra;
+    saveDept({ mpExtra: base.filter((_, i) => i !== row._extraIdx) });
+  };
   // On-site actual crew: set the real head-count held (applies to every scheduled day for day-wise crew,
   // else a straight count override) → flows to the P&L + Studio via the same mpDay/mpOverrides fields.
   const setActualCrew = (r, i, val) => { const n = Math.max(0, Number(val) || 0); if (mpDayWise(r) && Array.isArray(r.schedule) && r.schedule.length) { const m = { ...(mpDay[r.type] || {}) }; r.schedule.forEach(d => { m[d.date] = n; }); const wc = { ...mpWinCount }; delete wc[r.type]; saveDept({ mpDay: { ...mpDay, [r.type]: m }, mpWinCount: wc }); } else setMp(i, "count", n); };
@@ -4374,6 +4389,11 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                         )}
                         <span aria-hidden="true" className="shrink-0 w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center text-sm leading-none">{crewIcon(r.type)}</span>
                         <span className="flex-1 min-w-0 text-sm font-semibold text-gray-900 truncate">{r.type}{r.shared && <span className="ml-1.5 text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded font-bold align-middle">SHARED</span>}</span>
+                        {/* Only a row added via "+ Add crew type" can be removed — Studio's own
+                            planned crew types aren't something a dept head can delete, only tune. */}
+                        {r._addedExtra && (
+                          <button onClick={() => removeMp(r)} title="Remove this crew type" className="shrink-0 text-gray-300 hover:text-red-500 text-base leading-none px-1">×</button>
+                        )}
                         {/* Day-wise rows (Labours/Flowerists/...): the rate sits right here, on the
                             same line as the crew type, instead of a second row dangling below with
                             nothing to its left — it reads as "this type, at this rate" in one glance.
