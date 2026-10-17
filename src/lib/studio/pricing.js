@@ -391,6 +391,12 @@ export const calcZoneTrussPreview = (zc, trussInv) => {
 // the lines still sum to the discounted total sitting next to them.
 export function zoneTrussStandingDiscountDetail(zc, trussInv, venueTruss) {
   if (!venueTruss) return { pillar: 0, beam: 0, total: 0 };
+  // Explicit 0 qty — dims-only placeholder, no truss actually billed (trussRowCost returns ₹0 for
+  // it) — so there is nothing standing-pillar-reuse could discount off of. calcZoneTrussPreview's
+  // own topology is qty-independent (it describes ONE truss unit regardless of trussQty), so without
+  // this guard a 0-qty row would still report real pillars/beams here and get a discount against a
+  // cost that was never charged.
+  if (zc?.trussQty === 0) return { pillar: 0, beam: 0, total: 0 };
   const preview = calcZoneTrussPreview(zc, trussInv);
   if (!preview?.costs) return { pillar: 0, beam: 0, total: 0 };
   const pillarRftRate = trussInv?.rates?.pillarRftRate || 0;
@@ -807,6 +813,13 @@ export function buildPlatformPlan(fns, dealCheckData) {
 // one entry of zc.extraTrussRows (same shape).
 // `rates` bundles the live IMS Admin → Settings rates: { printMaterials, trussRates, maskingRates }.
 export function trussRowCost(row, rates) {
+  // Explicit 0 (not just unset/falsy, which still means the normal single-truss default via the
+  // Math.max(1, …) floors below) — a placeholder row: dims kept only to drive the Liza/Masking/
+  // Curtain FABRIC demand (calcZoneFabric/calcZoneFabricCost, a separate calc untouched by this —
+  // it still floors qty to 1), for a backdrop that uses no actual rental truss/masking structure
+  // (e.g. a client-owned or pre-existing frame). No structure, no masking panel, no custom ceiling
+  // item — zero billed cost for this row.
+  if (row.trussQty === 0) return { truss: 0, masking: 0 };
   const d = row.dims || {};
   let truss = 0, masking = 0;
   // A Box truss needs all 3 dims. With only 2 dims filled it's physically a Single U, so price it at

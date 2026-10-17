@@ -128,7 +128,7 @@ const cloneTrussRow = (src = {}) => ({
   dims: { ...(src.dims || {}) },
   trT: src.trT,
   trussType: src.trussType,
-  trussQty: src.trussQty || 1,
+  trussQty: src.trussQty ?? 1,
   trussFrontExt: src.trussFrontExt,
   trussFrontExtH: src.trussFrontExtH,
   trussBackDepth: src.trussBackDepth,
@@ -209,6 +209,9 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                       const base=trussBaseArea(zc);
                       if(!base.area) return null;
                       const r=trussRateFor(base.mode==="box"?"box":"singleU",zc.trussMaterial,zc.drapeDensity,trussRates);
+                      // Explicit 0 — a placeholder truss: no physical structure billed, dims kept only
+                      // to drive Liza/Masking/Curtain fabric demand (trussRowCost returns ₹0 for it).
+                      if (zc.trussQty === 0) return <span style={{fontSize:10.5,color:textS,fontWeight:400}}>{base.a}×{base.b} = {base.area} sqft — <b style={{color:accent}}>dims only, no truss billed</b> (still used for fabric/liza/curtain)</span>;
                       const qty=Math.max(1,zc.trussQty||1);
                       return <span style={{fontSize:10.5,color:textS,fontWeight:400}}>
                         {base.a}×{base.b} = {base.area} sqft × {fmt(r.rate)}/sqft{qty>1?` × ${qty}`:""}
@@ -237,8 +240,8 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                 {/* Scale By (the zone header's "set of N" multiplier) rescales this the same way it
                     rescales a Platform row's own Qty and a print row's own qty, keeping a per-set
                     base across changes (see setZoneScale). */}
-                {zc.trT&&<div style={{flex:1}}><div style={{fontSize:11.5,color:textS,marginBottom:3}}>Truss Qty</div>
-                  <NumField min={1} allowDecimal={false} value={zc.trussQty||1} onCommit={nextQty=>{
+                {zc.trT&&<div style={{flex:1}}><div style={{fontSize:11.5,color:textS,marginBottom:3}} title="0 = no truss structure billed — keep the dims above to drive Liza/Masking/Curtain fabric only (e.g. a client-owned or pre-existing frame).">Truss Qty</div>
+                  <NumField min={0} allowDecimal={false} value={zc.trussQty??1} onCommit={nextQty=>{
                     sZ({trussQty:nextQty, trussQtyBase: scale>1?nextQty/scale:nextQty});
                   }} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}}/></div>}
                 {zc.trT&&<div style={{flex:1}}><div style={{fontSize:11.5,color:textS,marginBottom:3}} title="Single-U extension on each front side, this many ft long. Priced as 2× Single U truss. Rare.">Front ext (ft/side)</div>
@@ -1482,7 +1485,10 @@ export default function StudioBuild({ ctx }) {
       // scaled — reconstructing the same unscaled figure every time, no matter what Scale was set
       // to (the exact bug reported: Scale 3, Truss Qty stuck at 1).
       const base = (curBase != null && Number.isFinite(Number(curBase))) ? Number(curBase) : effQty;
-      return { base, qty: Math.max(1, Math.round(base * newS)) };
+      // A base of exactly 0 is the explicit "no truss billed, dims only" placeholder (see Truss Qty's
+      // own field) — Scale By must leave it at 0, not resurrect a billed truss nobody asked for the
+      // moment the zone's multiplier changes. Every other base keeps the floor of 1.
+      return { base, qty: base === 0 ? 0 : Math.max(1, Math.round(base * newS)) };
     };
     // One row (the zone's own truss/floor, or one of its extra rows) → its own rescaled trussQty/
     // plQty, leaving every other field untouched.
@@ -4799,7 +4805,7 @@ undefined
           // truss added in Build saved correctly to zoneConfigByType (Build itself shows it fine on
           // reselect) but was invisible from the Library editor: it simply had nowhere to land here.
           const rowToLibTruss=(row)=>({id:row.id,trussL:row.dims?.L||0,trussW:row.dims?.W||0,trussH:row.dims?.H||0,
-            trussQty:row.trussQty||1,trussFrontExt:row.trussFrontExt||0,trussFrontExtH:row.trussFrontExtH||0,
+            trussQty:row.trussQty??1,trussFrontExt:row.trussFrontExt||0,trussFrontExtH:row.trussFrontExtH||0,
             mkOn:!!row.mkOn,mkT:row.mkT||"",mkWalls:row.mkWalls||{},
             trussMaterial:row.trussMaterial??null,drapeDensity:row.drapeDensity??null,
             customCeilingItemId:row.customCeilingItemId??null,customMaskingItemId:row.customMaskingItemId??null});

@@ -427,7 +427,7 @@ function computeFnSubQty(fnData, capBySub, imsInventory, flowerPatterns, trussIn
   Object.entries(fZoneConfig).forEach(([zk, cfg]) => {
     if (!cfg || !fEnabledElsFresh[zk]) return;
     const d = cfg.dims || {}; const fd = cfg.floorDims || {}; // no truss-dims fallback — see calcStructCost's own comment
-    if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * Math.max(1, cfg.trussQty || 1); if (tSqft > 0) add("Truss", tSqft); }
+    if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * (cfg.trussQty === 0 ? 0 : Math.max(1, cfg.trussQty || 1)); if (tSqft > 0) add("Truss", tSqft); }
     const sqft = (fd.L || 0) * (fd.W || 0) * Math.max(1, cfg.plQty || 1);
     if (sqft > 0) { if (cfg.plH) add("Platform", sqft); if (cfg.cpT && cfg.cpT !== CARPET_OFF) add("Carpet", sqft); }
     // Fabric Allocation (masking/liza/curtains) is a physical rental setup that can plausibly still
@@ -1163,7 +1163,7 @@ function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckC
     // dims.d, which never exist, so sqft was always 0 and every truss/platform/carpet truck-load
     // silently dropped out of Build's transport total (only element-based items ever counted).
     const d = cfg.dims || {}; const fd = cfg.floorDims || {}; // no truss-dims fallback — see calcStructCost's own comment
-    if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * Math.max(1, cfg.trussQty || 1); if (tSqft > 0) addSub("Truss", tSqft); }
+    if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * (cfg.trussQty === 0 ? 0 : Math.max(1, cfg.trussQty || 1)); if (tSqft > 0) addSub("Truss", tSqft); }
     const sqft = (fd.L || 0) * (fd.W || 0);
     // cpT truthy AND not the explicit OFF sentinel — an untouched floor (cpT unset) gets no carpet
     // truck-load either, same as it gets no carpet cost (see CARPET_OFF in taxonomy.js).
@@ -4673,7 +4673,7 @@ export default function StudioApp() {
       const numRDims = [rDims.L, rDims.W, rDims.H].filter(v => (v || 0) > 0).length;
       return {
         id: row.id, dims: rDims, trT: numRDims >= 3 ? "box" : (zm.defaultTruss || "singleU"),
-        trussQty: Math.max(1, Number(row.trussQty) || 1),
+        trussQty: Number(row.trussQty) === 0 ? 0 : Math.max(1, Number(row.trussQty) || 1),
         trussFrontExt: Number(row.trussFrontExt) || 0,
         trussFrontExtH: Number(row.trussFrontExtH) || 0,
         mkOn: !!row.mkT, mkT: row.mkT || null, mkWalls: row.mkWalls || {},
@@ -4705,7 +4705,7 @@ export default function StudioApp() {
       trussMaterial: d.trussMaterial ?? null, drapeDensity: d.drapeDensity ?? null,
       customCeilingItemId: d.customCeilingItemId ?? null, customMaskingItemId: d.customMaskingItemId ?? null,
       // Carry truss quantity + box front-extension tagged on the library photo through to Build.
-      trussQty: Math.max(1, Number(d.trussQty) || 1),
+      trussQty: Number(d.trussQty) === 0 ? 0 : Math.max(1, Number(d.trussQty) || 1),
       trussFrontExt: Number(d.trussFrontExt) || 0,
       trussFrontExtH: Number(d.trussFrontExtH) || 0,
       extraTrussRows: (d.trussRows || []).map(mapTrussRow),
@@ -5483,7 +5483,7 @@ export default function StudioApp() {
         if (!hideDiscountFromClient && cfg.repeat) return;
         const d = cfg.dims || {};
         const fd = cfg.floorDims || {}; // no truss-dims fallback — see calcStructCost's own comment
-        if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * Math.max(1, cfg.trussQty || 1); if (tSqft > 0) addSub("Truss", tSqft); }
+        if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * (cfg.trussQty === 0 ? 0 : Math.max(1, cfg.trussQty || 1)); if (tSqft > 0) addSub("Truss", tSqft); }
         const sqft = (fd.L || 0) * (fd.W || 0);
         if (sqft > 0) { if (cfg.plH) addSub("Platform", sqft); if (cfg.cpT && cfg.cpT !== CARPET_OFF) addSub("Carpet", sqft); }
         // Fabric Allocation (masking/liza/curtains) — see computeTruckItems' matching comment.
@@ -6204,7 +6204,7 @@ export default function StudioApp() {
         if (!cfg || !fEnabledEls[zk]) return;
         const zoneRepeat = !!cfg.repeat;
         const d = cfg.dims || {}; const fd = cfg.floorDims || {}; // no truss-dims fallback — see calcStructCost's own comment
-        if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * Math.max(1, cfg.trussQty || 1); if (tSqft > 0) addSub("Truss", zoneRepeat ? 0 : tSqft, tSqft, zk, "Truss structure"); }
+        if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * (cfg.trussQty === 0 ? 0 : Math.max(1, cfg.trussQty || 1)); if (tSqft > 0) addSub("Truss", zoneRepeat ? 0 : tSqft, tSqft, zk, "Truss structure"); }
         const sqft = (fd.L || 0) * (fd.W || 0);
         if (sqft > 0) {
           if (cfg.plH) addSub("Platform", zoneRepeat ? 0 : sqft, sqft, zk, "Platform");
