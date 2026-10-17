@@ -202,7 +202,16 @@ export function walkKitUnits(item, qty, allInventory, overrideSubItems, visit, _
   });
 }
 
-export function mpDayCost(r, d, mpDay, mpWin, mpWinCount, rate) {
+// Total dihari (crew-slots) worked on ONE day — honoring PER-SHIFT crew counts (mpWinCount —
+// set by a head so a single day can be e.g. 3 in the day, 1 in the evening) over the plain
+// day-level crew count. Split out from mpDayCost (which just multiplies this by rate) so a
+// dihari BADGE/COUNT can use the exact same arithmetic the COST does — they used to drift the
+// moment a head set different crew per shift: the cost correctly summed each shift's own count,
+// but every on-screen "N dihari" / "crew × shifts" display still multiplied the plain day count
+// by the number of shifts, silently ignoring the per-shift override entirely (confirmed: a day
+// overridden to 3/3/3 across three shifts correctly billed 9 dihari's worth of cost, while the
+// dihari count next to it kept showing day-count(1) × shifts(3) = 3).
+export function mpDayDihari(r, d, mpDay, mpWin, mpWinCount) {
   const dayCount = mpEffDay(r, d, mpDay);
   const ids = mpEffWinIds(d, mpWin, r.type);
   if (ids) {
@@ -210,9 +219,12 @@ export function mpDayCost(r, d, mpDay, mpWin, mpWinCount, rate) {
     // day .winCount) so all three views stay in sync; else the plain day crew count.
     const wc = mpWinCount && mpWinCount[r.type] && mpWinCount[r.type][d.date];
     const sc = d && d.winCount;
-    return ids.reduce((s, id) => s + ((wc && wc[id] != null) ? (Number(wc[id]) || 0) : ((sc && sc[id] != null) ? (Number(sc[id]) || 0) : dayCount)), 0) * rate;
+    return ids.reduce((s, id) => s + ((wc && wc[id] != null) ? (Number(wc[id]) || 0) : ((sc && sc[id] != null) ? (Number(sc[id]) || 0) : dayCount)), 0);
   }
-  return dayCount * (Number(d.windows) || 0) * rate;
+  return dayCount * (Number(d.windows) || 0);
+}
+export function mpDayCost(r, d, mpDay, mpWin, mpWinCount, rate) {
+  return mpDayDihari(r, d, mpDay, mpWin, mpWinCount) * rate;
 }
 
 // Reconciled cost for one crew row. SHARED rows stay the fixed split allocation UNTIL the head tunes a

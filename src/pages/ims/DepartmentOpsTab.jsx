@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { fmt } from "../../lib/format";
-import { mpDayWise, mpBaseDay, mpEffDay, mpEffWindows, mpLineCost, mpDayCost, isLiveEventOrder, phone10 } from "../../lib/ims/helpers";
+import { mpDayWise, mpBaseDay, mpEffDay, mpEffWindows, mpLineCost, mpDayCost, mpDayDihari, isLiveEventOrder, phone10 } from "../../lib/ims/helpers";
 import { uploadAudioToStorage } from "../../lib/storage";
 import { DEPTS as SHARED_DEPTS, catToDept as sharedCatToDept, userDepartments } from "../../lib/ims/deptClassify";
 import { TabsMenu } from "../../components/ui";
@@ -981,9 +981,11 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         const t = byType.get(s.type) || { type: s.type, cost: 0, dihari: 0, peak: 0, shared: !!s.shared, rows: [] };
         t.cost += cost; t.dihari += dih;
         // Kept per department for the row's "how" modal: what each department's share came to,
-        // and its days with that department's own edits applied (crew × shifts).
+        // and its days with that department's own edits applied. dihari is the real per-shift sum
+        // (mpDayDihari) — crew × shifts alone silently ignores a per-shift crew override (mpWinCount),
+        // same staleness this tab's own day-wise plan badge had (see mpDayDihari's own comment).
         t.rows.push({ dept: d, rate, dihari: dih, cost, trace: s.trace || null, schedule: s.schedule || null,
-          days: Array.isArray(s.schedule) ? s.schedule.map(day => ({ label: phaseLbl(day), crew: Math.round(mpEffDay(r, day, dd.mpDay || {}) * 10) / 10, shifts: mpEffWindows(r, day, dd.mpWin || {}) })) : [] });
+          days: Array.isArray(s.schedule) ? s.schedule.map(day => ({ label: phaseLbl(day), crew: Math.round(mpEffDay(r, day, dd.mpDay || {}) * 10) / 10, shifts: mpEffWindows(r, day, dd.mpWin || {}), dihari: Math.round(mpDayDihari(r, day, dd.mpDay || {}, dd.mpWin || {}, dd.mpWinCount || {}) * 10) / 10 })) : [] });
         if (s.shared && Array.isArray(s.schedule)) {
           s.schedule.forEach(day => {
             const c = Number(day.count) || 0;
@@ -1641,7 +1643,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     if (!Array.isArray(sch) || !sch.length) return null;
     const editable = dayWise(r);
     const winDefs = (dihari[r.type] && Array.isArray(dihari[r.type].windows)) ? dihari[r.type].windows : [];
-    const totalDihari = sch.reduce((s, d) => s + effDay(r, d) * effWin(r, d), 0);
+    const totalDihari = sch.reduce((s, d) => s + mpDayDihari(r, d, mpDay, mpWin, mpWinCount), 0);
     // ONE line per day: [how] [day] [per-shift crew …] ··· [crew × shifts]. It was two lines a day —
     // the day and its crew on top, the shifts on their own row underneath — which doubled the height
     // and left most of both rows empty. The long cumulative-max rule moved into the ⓘ tooltip.
@@ -1665,12 +1667,20 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           const dayKey = `${r.type}|${d.date}`;
           const howOpen = !!mpDayHow[dayKey];
           const hasShare = r.shared && d.share != null;
+          // A head setting different crew PER SHIFT (mpWinCount, the "+ dihari" inputs above) means
+          // there is no longer one single day-level crew count the "crew × shifts" caption below can
+          // multiply out to — each shift already carries its own number. winOverridden gates both
+          // that caption and the share hint, which are otherwise still accurate for the common case
+          // (uniform crew across every shift that day).
+          const winOverridden = !!(mpWinCount[r.type] && mpWinCount[r.type][d.date] && Object.keys(mpWinCount[r.type][d.date]).length);
+          const dayDihariReal = mpDayDihari(r, d, mpDay, mpWin, mpWinCount);
           // The crew figure is rounded for display (you can't book "0.6 of a person"), but the day's
           // TOTAL dihari is summed from the unrounded fractional share so the line's cost stays
           // reconciled to the rupee. This hint surfaces that fraction so "1 crew × 2" and "1 crew × 1"
           // don't look like they should add to 3 when the real total is 2. Suppressed once the head
-          // has typed an explicit override (ov) — then raw and rounded already match.
-          const rawShare = hasShare ? effDay(r, d) : null;
+          // has typed an explicit override (ov), or set per-shift crew directly (winOverridden) —
+          // either way raw and shown already match, or the day-level share no longer applies at all.
+          const rawShare = (hasShare && !winOverridden) ? effDay(r, d) : null;
           const shareHint = rawShare != null && Math.abs(rawShare - showDay(r, d)) >= 0.05 ? rawShare.toFixed(2) : null;
           const hasWin = winDefs.length > 0 && (Array.isArray(d.windowIds) || (mpWin[r.type] && mpWin[r.type][d.date] != null));
           return (
@@ -1705,7 +1715,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
                         title={canManpower ? "Crew this day" : "Requires \"Manage Manpower\""}
                         className={"w-12 rounded-md ring-1 px-1 py-0.5 text-[14px] font-semibold text-center text-gray-900 " + (ov ? "ring-amber-400 bg-amber-50" : "ring-gray-200 bg-white") + (canManpower ? "" : " opacity-50 cursor-not-allowed")} />
                     : <b className="text-[14px] text-gray-900">{d.count}</b>}
-                  <span className="whitespace-nowrap">crew × <b className="text-gray-800">{shifts}</b></span>
+                  {winOverridden
+                    ? <span className="whitespace-nowrap" title="Per-shift crew counts differ this day, so the total is the sum of each shift's own count, not crew × shifts.">= <b className="text-gray-800">{Math.round(dayDihariReal)}</b> dihari</span>
+                    : <span className="whitespace-nowrap">crew × <b className="text-gray-800">{shifts}</b></span>}
                 </span>
               </div>
               {howOpen && (
@@ -4295,7 +4307,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                               <div>
                                 <div className="text-[11.5px] font-semibold text-gray-500 mb-1.5">On site, by day</div>
                                 <div className="flex flex-wrap gap-1.5">
-                                  {days.map((d, i) => <span key={i} className="inline-flex items-center gap-1.5 rounded-lg bg-white ring-1 ring-gray-200 px-2.5 py-1"><span className="text-gray-500">{d.label}</span><b className="text-gray-900 tabular-nums">{d.crew}</b><span className="text-gray-400">× {d.shifts} shift{d.shifts === 1 ? "" : "s"}</span></span>)}
+                                  {days.map((d, i) => <span key={i} className="inline-flex items-center gap-1.5 rounded-lg bg-white ring-1 ring-gray-200 px-2.5 py-1" title="Crew × shift count is a rough guide — when a day's shifts carry different crew, the dihari figure is the real total."><span className="text-gray-500">{d.label}</span><b className="text-gray-900 tabular-nums">{d.crew}</b><span className="text-gray-400">× {d.shifts} shift{d.shifts === 1 ? "" : "s"} = {d.dihari} dihari</span></span>)}
                                 </div>
                               </div>
                             )}
