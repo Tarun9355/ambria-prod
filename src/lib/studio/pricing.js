@@ -605,6 +605,51 @@ export const anchorsForPalette = (paletteCatalogue, paletteName) => {
   if (pObj?.anchorColours?.length) return pObj.anchorColours;
   return String(paletteName || "").split(/[,&/]+/).map((s) => s.trim()).filter(Boolean);
 };
+// ═══ Fabric Palette per-material tagging (owner ask, 2026-10-17) ═══
+// Picking "White, Maroon" in Build used to mean "try both against EVERY fabric (Liza/Masking/
+// Curtain) and let each one's own stock decide" — fine until a salesperson actually wants Maroon
+// reserved for Curtains specifically while Liza stays White, even though both colours happen to
+// exist in both stocks. A colour can now carry an optional material tag, encoded the same
+// compound-string way as the plain colour list — "White:LM, Maroon:C" — so parsing an untagged
+// legacy string (or a bare name within a new one) still means "every material", unchanged.
+export const FABRIC_MATERIAL_CODES = { liza: "L", masking: "M", curtain: "C" };
+const FABRIC_MATERIALS = ["liza", "masking", "curtain"];
+// "White:LM, Maroon:C" → [{name:"White",materials:["liza","masking"]},{name:"Maroon",materials:["curtain"]}].
+// A bare name (no colon) comes back with materials: null, meaning "every material" — today's
+// behaviour, and what every pre-existing saved deal's plain comma/"&"/"/" list still parses to.
+export const parseFabricPalette = (raw) => {
+  const s = String(raw || "").trim();
+  if (!s || /^custom$/i.test(s)) return [];
+  return s.split(/[,&/]+/).map((p) => p.trim()).filter(Boolean).map((p) => {
+    const [name, codes] = p.split(":").map((x) => x.trim());
+    if (!name) return null;
+    if (!codes) return { name, materials: null };
+    const up = codes.toUpperCase();
+    const materials = FABRIC_MATERIALS.filter((m) => up.includes(FABRIC_MATERIAL_CODES[m]));
+    return { name, materials: materials.length ? materials : null };
+  }).filter(Boolean);
+};
+// Inverse of parseFabricPalette — all 3 materials (or untagged/null) serializes back to a bare
+// name, so a colour nobody has narrowed down keeps reading exactly as it always did.
+export const stringifyFabricPalette = (colors) => {
+  const list = (colors || []).filter((c) => c && c.name);
+  if (list.length === 0) return "Custom";
+  return list.map((c) => {
+    if (!c.materials || c.materials.length === 0 || c.materials.length >= FABRIC_MATERIALS.length) return c.name;
+    const codes = c.materials.map((m) => FABRIC_MATERIAL_CODES[m]).filter(Boolean).join("");
+    return codes ? `${c.name}:${codes}` : c.name;
+  }).join(", ");
+};
+// Material-aware anchorsForPalette — only the colours tagged for THIS material (or untagged,
+// meaning "every material") become anchors for it, so autoFillFabricAllocation for Masking never
+// gets handed a colour the salesperson explicitly reserved for Curtains only. A named Palette
+// Catalogue preset (pObj.anchorColours) has no per-material concept and keeps applying everywhere,
+// same as anchorsForPalette.
+export const anchorsForPaletteByMaterial = (paletteCatalogue, paletteName, material) => {
+  const pObj = (Array.isArray(paletteCatalogue) ? paletteCatalogue : []).find((p) => p.name === paletteName);
+  if (pObj?.anchorColours?.length) return pObj.anchorColours;
+  return parseFabricPalette(paletteName).filter((c) => !c.materials || c.materials.includes(material)).map((c) => c.name);
+};
 export const autoFillFabricAllocation = (totalQty, paletteAnchors, stockArray, qtyField) => {
   if (!totalQty || totalQty <= 0) return [];
   const stocks = Array.isArray(stockArray) ? stockArray.filter(s => s && s.colour) : [];

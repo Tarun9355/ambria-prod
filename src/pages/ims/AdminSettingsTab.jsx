@@ -13,7 +13,6 @@ import VenuesEditor from "./VenuesEditor.jsx";
 import { getFloralMode } from "../../lib/rateCard";
 import { RC_UNITS } from "../../lib/studio/constants";
 import { DEFAULT_TRUSS_RATES, DEFAULT_MASKING_RATES, DEFAULT_PLATFORM_RATES, TRUSS_SHAPES, TRUSS_MATERIALS, DRAPE_DENSITIES } from "../../lib/studio/taxonomy";
-import { swatchHexFor } from "../../lib/studio/colours";
 
 // Same canonical unit list as the Mandi Prices panel's own flower-unit dropdown (below), plus two
 // descriptive fallbacks ("pcs"/"made") that recipe ingredient rows have always defaulted their
@@ -199,6 +198,10 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
   const [sMandiCatNew, setSMandiCatNew] = useState("");
   const [sMandiExpanded, setSMandiExpanded] = useState(() => new Set());
   const [sMandiUploading, setSMandiUploading] = useState({});
+  // Fabric Stock & Pricing's per-colour reference photo, keyed "<which>:<rowIdx>" (e.g.
+  // "lizaStock:2") — same shape as sMandiUploading above, just a separate map since the two panels
+  // never share a row.
+  const [fabricPhotoUploading, setFabricPhotoUploading] = useState({});
   const [sMandiMapPicker, setSMandiMapPicker] = useState(null); // { flowerId } — inventory picker for a "Mapping" flower
   const [sMandiMapSearch, setSMandiMapSearch] = useState("");
   // 🔁 Mandi swap modal — { flowerId, toId, ratio, note, q }. Opens from the row's 🔁 icon, or by
@@ -2053,7 +2056,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
         const colourCat = (settings.colourCatalogue || []).map((c) => c.name);
         const rates = trussInv.rates || {};
         const updateRates = (key, val) => setTrussInv((ti) => ({ ...ti, rates: { ...(ti.rates || {}), [key]: parseFloat(val) || 0 } }));
-        const updateStock = (which, idx, key, val) => setTrussInv((ti) => { const next = [...(ti[which] || [])]; next[idx] = { ...next[idx], [key]: (key === "colour" || key === "grade" || key === "hex") ? val : (parseFloat(val) || 0) }; return { ...ti, [which]: next }; });
+        const updateStock = (which, idx, key, val) => setTrussInv((ti) => { const next = [...(ti[which] || [])]; next[idx] = { ...next[idx], [key]: (key === "colour" || key === "grade" || key === "hex" || key === "photo") ? val : (parseFloat(val) || 0) }; return { ...ti, [which]: next }; });
         const addStockRow = (which, qtyField) => setTrussInv((ti) => ({ ...ti, [which]: [...(ti[which] || []), { colour: colourCat[0] || "White", [qtyField]: 0, [`${qtyField}New`]: 0 }] }));
         const removeStockRow = (which, idx) => setTrussInv((ti) => ({ ...ti, [which]: (ti[which] || []).filter((_, j) => j !== idx) }));
         // No more fresh-purchase-price / markup-% pair (2026-10-15): the salesperson now picks Old or
@@ -2080,18 +2083,34 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                 ) : (
                   <table className="w-full text-xs">
                     <datalist id={`${which}-colours`}>{colourCat.map((cn) => <option key={cn} value={cn} />)}</datalist>
-                    <thead className="text-gray-500"><tr><th className="px-2 py-1.5 text-left w-12">Swatch</th><th className="px-2 py-1.5 text-left">Colour</th><th className="px-2 py-1.5 text-center">Old ({qtyLabel})</th><th className={`px-2 py-1.5 text-center text-${themeColor}-700`}>New ({qtyLabel})</th><th className="px-2 py-1.5 text-center">Total</th><th className="px-2 py-1.5 w-10"></th></tr></thead>
+                    <thead className="text-gray-500"><tr><th className="px-2 py-1.5 text-left w-14">Photo</th><th className="px-2 py-1.5 text-left">Colour</th><th className="px-2 py-1.5 text-center">Old ({qtyLabel})</th><th className={`px-2 py-1.5 text-center text-${themeColor}-700`}>New ({qtyLabel})</th><th className="px-2 py-1.5 text-center">Total</th><th className="px-2 py-1.5 w-10"></th></tr></thead>
                     <tbody>
                       {stock.map((row, i) => {
-                        const cObj = (settings.colourCatalogue || []).find((c) => c.name === row.colour);
                         const oldQ = Number(row[qtyField]) || 0;
                         const newQ = Number(row[`${qtyField}New`]) || 0;
+                        const photoKey = `${which}:${i}`;
+                        const photoUploading = !!fabricPhotoUploading[photoKey];
                         return (
                           <tr key={`${which}-${i}`} className={`border-t border-${themeColor}-50`}>
-                            <td className="px-2 py-1.5">{(() => {
-                              const auto = swatchHexFor(row.colour, settings.colourCatalogue, row.hex);
-                              return <input type="color" value={auto} onChange={(e) => updateStock(which, i, "hex", e.target.value)} title={row.hex ? "Custom swatch — click to change" : `Auto-detected from "${row.colour || "colour"}" — click to override`} className="w-6 h-6 rounded border border-gray-300 cursor-pointer p-0 bg-transparent" style={{ appearance: "none" }} />;
-                            })()}</td>
+                            {/* A reference photo of the actual material — Build's own Fabric Palette
+                                picker shows this next to the colour name, so a salesperson picks off
+                                what the fabric really looks like instead of a generic colour swatch. */}
+                            <td className="px-2 py-1.5">
+                              <label className="block cursor-pointer">
+                                {row.photo ? <img src={row.photo} alt={row.colour} className="w-9 h-9 rounded object-cover border border-gray-300" title="Click to replace" />
+                                  : <div className={`w-9 h-9 rounded border-2 border-dashed border-gray-300 flex items-center justify-center text-gray-400 text-base hover:border-${themeColor}-400 hover:text-${themeColor}-500`} title="Upload a reference photo">{photoUploading ? "…" : "+"}</div>}
+                                <input type="file" accept="image/*" className="hidden" onChange={async (e) => {
+                                  const file = e.target.files?.[0]; if (!file) return;
+                                  setFabricPhotoUploading((prev) => ({ ...prev, [photoKey]: true }));
+                                  try {
+                                    const compressed = await compressImageForUpload(file);
+                                    const url = await uploadToStorage(compressed, STORAGE_FOLDERS.INVENTORY);
+                                    updateStock(which, i, "photo", url);
+                                  } catch (err) { alert("Photo upload failed: " + (err?.message || err)); }
+                                  finally { setFabricPhotoUploading((prev) => { const np = { ...prev }; delete np[photoKey]; return np; }); e.target.value = ""; }
+                                }} />
+                              </label>
+                            </td>
                             <td className="px-2 py-1.5">
                               <input type="text" value={row.colour || ""} list={`${which}-colours`} placeholder="Type or pick a colour…" onChange={(e) => updateStock(which, i, "colour", e.target.value)} className={`w-full border border-${themeColor}-200 rounded px-2 py-1 text-xs`} />
                             </td>

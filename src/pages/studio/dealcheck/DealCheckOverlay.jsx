@@ -94,7 +94,7 @@ const NUM = { fontVariantNumeric: "tabular-nums" };
 import { heavyExtraLabour, eventTimingMultFor, SIT_MULT_DEFAULTS } from "../../../lib/ims/constants";
 import { deptMpReconciled, itemImsSubcat, lookupBySubcat, itemDimsText, walkKitUnits } from "../../../lib/ims/helpers";
 import { rentalSplit, availableAtVenue, isStandingAt, fixedVenueFor, standingReductionBySubcat, fixedVenueDealDiscount, reservedByVenueToday, venueSlackFor } from "../../../lib/ims/fixedVenues";
-import { calcZoneFabric, autoFillFabricAllocation, anchorsForPalette, resolveTrussConfig, zoneTrussStandingDiscount, repeatCatFor } from "../../../lib/studio/pricing";
+import { calcZoneFabric, autoFillFabricAllocation, anchorsForPalette, anchorsForPaletteByMaterial, resolveTrussConfig, zoneTrussStandingDiscount, repeatCatFor } from "../../../lib/studio/pricing";
 import { carpetPricingFor, CARPET_OFF } from "../../../lib/studio/taxonomy";
 import { qtyUsedElsewhereInDealCheck, netOwnReservedBlocksLive } from "../../../lib/studio/dealAvailability";
 import { isHiddenSubcat, oosCostPctFor } from "../../../lib/rateCard";
@@ -1717,7 +1717,7 @@ export default function DealCheckOverlay({ ctx }) {
               const agg = { liza: {}, masking: {}, curtain: {} };
               (dcCostRollup.fns || []).forEach(fn => {
                 const zc = fn.zoneConfig || {}, en = fn.enabledEls || {};
-                const anchors = anchorsForPalette(imsPaletteCatalogue, fn.fnPalette || "Custom");
+                const fnPaletteForAnchors = fn.fnPalette || "Custom";
                 Object.keys(zc).forEach(zk => {
                   // ♻️ Repeat zones reuse standing fabric — nothing new to stock/reorder for them.
                   // Truss & Masking's own category flag — same one dcCostRollup's fabric ×0.7 above
@@ -1738,7 +1738,11 @@ export default function DealCheckOverlay({ ctx }) {
                     const add = (key, totalQty, stockArr, qtyField, allocField) => {
                       if (!totalQty || totalQty <= 0) return;
                       const existing = row[allocField];
-                      const allocs = (Array.isArray(existing) && existing.length > 0) ? existing : autoFillFabricAllocation(Math.ceil(totalQty), anchors, stockArr, qtyField);
+                      // key is "liza"/"masking"/"curtain" — the exact material-keys a Fabric Palette
+                      // colour can now be tagged with (StudioBuild.jsx), so each material only ever
+                      // auto-fills from colours actually meant for it, not every colour the
+                      // salesperson picked regardless of which fabric they meant it for.
+                      const allocs = (Array.isArray(existing) && existing.length > 0) ? existing : autoFillFabricAllocation(Math.ceil(totalQty), anchorsForPaletteByMaterial(imsPaletteCatalogue, fnPaletteForAnchors, key), stockArr, qtyField);
                       const bump = (c, qty) => { if (!agg[key][c]) agg[key][c] = { old: 0, new: 0 }; agg[key][c][tier] += qty; };
                       if (allocs.length) allocs.forEach(a => bump(a.colour || "(unassigned)", Number(a.qty) || 0));
                       else bump("(unassigned)", Math.ceil(totalQty));

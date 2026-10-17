@@ -12,7 +12,7 @@ import {
 } from "../../../lib/studio/taxonomy";
 import { paletteNames, addPaletteInline } from "../../../lib/studio/colours";
 import PaletteQuickAdd from "../../../components/studio/PaletteQuickAdd.jsx";
-import { trussRowCost, zoneTrussStandingDiscountDetail, repeatCatFor, parseFlowerPalette, stringifyFlowerPalette } from "../../../lib/studio/pricing";
+import { trussRowCost, zoneTrussStandingDiscountDetail, repeatCatFor, parseFlowerPalette, stringifyFlowerPalette, parseFabricPalette, stringifyFabricPalette } from "../../../lib/studio/pricing";
 import { paletteSearch, paletteMatches } from "../../../components/studio/filterUI.jsx";
 import { resolveTrussConfig } from "../../../lib/studio/pricing";
 import { qtyUsedElsewhereInBuild } from "../../../lib/studio/dealAvailability";
@@ -2934,12 +2934,14 @@ undefined
     {(()=>{
       const isPrimaryFn = activeFnIdx === 0;
       const currentStr = isPrimaryFn ? (clientPalette || "Custom") : (extraFunctions[activeFnIdx - 1]?.palette || "Custom");
-      // Stored the same compound-string way "White & Gold" always was (StudioSummary.jsx already
-      // splits fn.palette on this exact regex for its own client-facing swatches) — so picking
-      // several colours here is just a longer list joined the same way, nothing new to migrate.
-      const currentList = /^custom$/i.test(currentStr.trim()) ? [] : currentStr.split(/[,&/]+/).map(s=>s.trim()).filter(Boolean);
-      const setPaletteList = (list) => {
-        const v = list.length ? list.join(", ") : "Custom";
+      // Each picked colour can now be tagged with WHICH fabric(s) it's meant for (owner ask,
+      // 2026-10-17) — a bare name still means "every material" exactly like before, so every
+      // pre-existing saved deal reads identically; parseFabricPalette/stringifyFabricPalette
+      // (lib/studio/pricing.js) are the one shared place that format is written and read, same
+      // helpers Deal Check's own auto-fill (anchorsForPaletteByMaterial) consumes.
+      const curColors = parseFabricPalette(currentStr);
+      const setFabricColors = (colors) => {
+        const v = stringifyFabricPalette(colors);
         if (isPrimaryFn) setClientPalette(v);
         else setExtraFunctions(p => p.map((f, i) => i === activeFnIdx - 1 ? { ...f, palette: v } : f));
       };
@@ -2948,29 +2950,53 @@ undefined
       // not the general photo-filter colour taxonomy — picking a name here that no fabric colour
       // actually matches used to silently fall back to whichever colour had the most stock, with no
       // way to tell. Every option listed now is guaranteed to be a real, matchable fabric colour.
-      const fabricStockColours = (() => {
+      // Also carries each colour's own reference photo (if the admin uploaded one) and which of the
+      // 3 stocks it actually appears in, so toggling a material icon for a colour that was never
+      // even in Curtain stock can't silently claim it is.
+      const fabricColourInfo = (() => {
         const tInv = structRates?.trussInv;
-        const names = new Set();
-        [tInv?.lizaStock, tInv?.maskingStock, tInv?.curtainStock].forEach(arr => {
-          (arr || []).forEach(s => { const n = String(s?.colour || "").trim(); if (n) names.add(n); });
+        const map = new Map();
+        const scan = (arr, material) => (arr || []).forEach(s => {
+          const n = String(s?.colour || "").trim(); if (!n) return;
+          if (!map.has(n)) map.set(n, { name: n, photo: "", in: new Set() });
+          const e = map.get(n);
+          e.in.add(material);
+          if (!e.photo && s.photo) e.photo = s.photo;
         });
-        return [...names];
+        scan(tInv?.lizaStock, "liza"); scan(tInv?.maskingStock, "masking"); scan(tInv?.curtainStock, "curtain");
+        return map;
       })();
-      const opts = azSort(fabricStockColours);
+      const opts = azSort([...fabricColourInfo.keys()]);
       const matched = fabricPaletteQ.trim() ? paletteSearch(opts, fabricPaletteQ) : opts;
       // Multiple colours (owner ask): widen the acceptable set rather than pin one — Deal Check's
       // auto-fill (autoFillFabricAllocation) already tries every anchor it's given and lands on
       // whichever has the best stock, so picking several here just gives it more to choose from.
-      const toggleColour = (name) => setPaletteList(currentList.includes(name) ? currentList.filter(n => n !== name) : [...currentList, name]);
+      // A newly-picked colour defaults to materials: null ("every material") — unchanged behaviour
+      // until the salesperson actually narrows it down with the icons below.
+      const toggleColour = (name) => {
+        const on = curColors.some(c => c.name === name);
+        setFabricColors(on ? curColors.filter(c => c.name !== name) : [...curColors, { name, materials: null }]);
+      };
+      const FABRIC_MATERIAL_ICONS = [["liza","🪡"],["masking","🧱"],["curtain","🎀"]];
+      const toggleMaterial = (name, material) => {
+        setFabricColors(curColors.map(c => {
+          if (c.name !== name) return c;
+          const cur = c.materials || FABRIC_MATERIAL_ICONS.map(([m]) => m);
+          const next = cur.includes(material) ? cur.filter(m => m !== material) : [...cur, material];
+          return { ...c, materials: next };
+        }));
+      };
       const optRow = (v) => {
-        const on = currentList.includes(v);
+        const on = curColors.some(c => c.name === v);
+        const info = fabricColourInfo.get(v);
         return (
           <div key={v} className="fp-opt" data-on={on?"1":"0"} onClick={()=>toggleColour(v)} style={{display:"flex",alignItems:"center",gap:7,padding:"5px 9px",borderRadius:6,cursor:"pointer",fontSize:11,
             fontWeight:on?700:400,
             background:on?`${accent}18`:"transparent",
             color:on?accent:textP}}>
             <span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:13,height:13,borderRadius:4,flexShrink:0,border:`1px solid ${on?accent:border}`,background:on?accent:"transparent",color:"#fff"}}>{on&&<IconCheck size={9}/>}</span>
-            {v}
+            {info?.photo ? <img src={info.photo} alt="" style={{width:16,height:16,borderRadius:3,objectFit:"cover",flexShrink:0}}/> : null}
+            <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{v}</span>
           </div>
         );
       };
@@ -2987,13 +3013,13 @@ undefined
           <div onClick={()=>setFabricPaletteOpen(o=>!o)} title="Click to change"
             style={{display:"inline-flex",alignItems:"center",gap:6,padding:"4px 10px",borderRadius:8,
               border:`1px solid ${fabricPaletteOpen?accent:border}`,background:cardBg,cursor:"pointer",
-              fontSize:11,fontWeight:600,color:currentList.length===0?textS:textP,maxWidth:200}}>
+              fontSize:11,fontWeight:600,color:curColors.length===0?textS:textP,maxWidth:200}}>
             <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-              {currentList.length===0?"Custom":currentList.length<=2?currentList.join(", "):`${currentList[0]} +${currentList.length-1} more`}
+              {curColors.length===0?"Custom":curColors.length<=2?curColors.map(c=>c.name).join(", "):`${curColors[0].name} +${curColors.length-1} more`}
             </span>
             <span style={{display:"inline-flex",transform:fabricPaletteOpen?"rotate(180deg)":"none",transition:"transform .15s ease",color:textS,flexShrink:0}}><IconChevron size={10}/></span>
           </div>
-          {fabricPaletteOpen&&<div style={{position:"absolute",top:"100%",left:0,zIndex:60,marginTop:4,width:230,
+          {fabricPaletteOpen&&<div style={{position:"absolute",top:"100%",left:0,zIndex:60,marginTop:4,width:240,
             background:cardBg,border:`1px solid ${border}`,borderRadius:9,boxShadow:"0 6px 20px rgba(0,0,0,0.22)",padding:8}}>
             <input autoFocus value={fabricPaletteQ} onChange={e=>setFabricPaletteQ(e.target.value)}
               placeholder="Search fabric colours…" style={{...S.input,fontSize:11,padding:"5px 8px",marginBottom:6,width:"100%"}}/>
@@ -3001,8 +3027,24 @@ undefined
               {matched.map(v=>optRow(v))}
               {matched.length===0&&<div style={{padding:"5px 9px",fontSize:10.5,color:textS}}>{fabricPaletteQ.trim()?"No matches":"No fabric colours configured yet — add some in IMS Admin → Fabric Stock"}</div>}
             </div>
+            {curColors.length>0&&<div style={{padding:"6px 9px 2px",borderTop:`1px solid ${border}`,marginTop:4}}>
+              <div style={{fontSize:9.5,fontWeight:700,color:textS,textTransform:"uppercase",letterSpacing:0.4,marginBottom:4}}>Use for</div>
+              {curColors.map(c => {
+                const mats = c.materials || FABRIC_MATERIAL_ICONS.map(([m]) => m);
+                return (
+                  <div key={c.name} style={{display:"flex",alignItems:"center",gap:4,marginBottom:4}}>
+                    <span style={{fontSize:10.5,color:textP,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.name}</span>
+                    {FABRIC_MATERIAL_ICONS.map(([m, icon]) => {
+                      const on = mats.includes(m);
+                      return <span key={m} onClick={(e)=>{e.stopPropagation();toggleMaterial(c.name,m);}} title={`${m[0].toUpperCase()}${m.slice(1)} — ${on?"used":"not used"} for ${c.name}`}
+                        style={{fontSize:11,width:18,height:18,display:"flex",alignItems:"center",justifyContent:"center",borderRadius:4,cursor:"pointer",opacity:on?1:0.25,background:on?`${accent}18`:"transparent"}}>{icon}</span>;
+                    })}
+                  </div>
+                );
+              })}
+            </div>}
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:6,marginTop:6,paddingTop:6,borderTop:`1px solid ${border}`}}>
-              <span onClick={()=>setPaletteList([])} style={{fontSize:10.5,color:textS,cursor:"pointer"}}>Clear</span>
+              <span onClick={()=>setFabricColors([])} style={{fontSize:10.5,color:textS,cursor:"pointer"}}>Clear</span>
               <span onClick={()=>{setFabricPaletteQ("");setFabricPaletteOpen(false);}} style={{fontSize:10.5,fontWeight:700,color:accent,cursor:"pointer"}}>Done</span>
             </div>
           </div>}

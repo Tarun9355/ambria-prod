@@ -1,5 +1,5 @@
 import { Fragment } from "react";
-import { calcZoneFabric, autoFillFabricAllocation, anchorsForPalette, calcFabricAllocationTotal, zoneTrussStandingDiscountDetail, repeatCatFor } from "../../../../lib/studio/pricing";
+import { calcZoneFabric, autoFillFabricAllocation, anchorsForPalette, anchorsForPaletteByMaterial, calcFabricAllocationTotal, zoneTrussStandingDiscountDetail, repeatCatFor } from "../../../../lib/studio/pricing";
 import { fixedVenueFor } from "../../../../lib/ims/fixedVenues";
 import { findCrossFnReuseSource } from "../../../../lib/studio/crossFnReuse";
 import { TRUSS_ALLOC_SK } from "../../../../lib/studio/keys.js";
@@ -598,15 +598,18 @@ export default function DCTrussTab({ ctx }) {
                                       const fnPalette = fn.fnPalette || "Custom";
                                       const anchors = anchorsForPalette(imsPaletteCatalogue, fnPalette);
 
-                                      // Resolve allocations from the row itself — auto-fill if absent
-                                      const resolveAlloc = (allocField, totalQty, stockArr, qtyField) => {
+                                      // Resolve allocations from the row itself — auto-fill if absent.
+                                      // material is "liza"/"masking"/"curtain", the exact keys a Fabric
+                                      // Palette colour can be tagged with (StudioBuild.jsx) — only
+                                      // colours actually meant for THIS material become its anchors.
+                                      const resolveAlloc = (material, allocField, totalQty, stockArr, qtyField) => {
                                         const existing = row[allocField];
                                         if (Array.isArray(existing) && existing.length > 0) return existing;
-                                        return autoFillFabricAllocation(totalQty, anchors, stockArr, qtyField);
+                                        return autoFillFabricAllocation(totalQty, anchorsForPaletteByMaterial(imsPaletteCatalogue, fnPalette, material), stockArr, qtyField);
                                       };
-                                      const maskingAlloc = showMasking ? resolveAlloc("maskingAllocation", fab.maskingPieces, trussInv.maskingStock, "stockPieces") : [];
-                                      const lizaAlloc    = showLiza    ? resolveAlloc("lizaAllocation",    Math.ceil(fab.lizaKg),  trussInv.lizaStock,    "stockKg")     : [];
-                                      const curtainAlloc = showCurtain ? resolveAlloc("curtainAllocation", fab.curtainPieces, trussInv.curtainStock, "stockPieces") : [];
+                                      const maskingAlloc = showMasking ? resolveAlloc("masking", "maskingAllocation", fab.maskingPieces, trussInv.maskingStock, "stockPieces") : [];
+                                      const lizaAlloc    = showLiza    ? resolveAlloc("liza", "lizaAllocation",    Math.ceil(fab.lizaKg),  trussInv.lizaStock,    "stockKg")     : [];
+                                      const curtainAlloc = showCurtain ? resolveAlloc("curtain", "curtainAllocation", fab.curtainPieces, trussInv.curtainStock, "stockPieces") : [];
 
                                       // Cost rollup. Same flat 30% repeat-zone discount (billed at 70%) as
                                       // the truss steel above — costs?.isRepeat is this row's own flag, set
