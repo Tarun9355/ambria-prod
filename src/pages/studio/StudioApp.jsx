@@ -3920,7 +3920,13 @@ export default function StudioApp() {
         });
       });
     } catch { /* layout refresh is best-effort — the money snapshot still goes */ }
-    const sig = JSON.stringify({ inc: snap.income || {}, mp: snap.manpowerDetail || {}, inv: snap.inventory || {}, fab: snap.fabricPlan || {}, dv: snap.dealValue || null, lay: [...layout.entries()] });
+    // flo: floralPlan's own flower names/qty/colour — income/manpower/inventory/fabric/dealValue can
+    // all stay identical across a flower SWAP (two similarly-priced flowers), which used to let this
+    // signature match the row's last-written one and skip the write entirely — the real-time
+    // subscription in IMS.jsx had nothing to even receive, so the mandi list stayed on the pre-swap
+    // flower indefinitely regardless of how many times Deal Check tried to push it.
+    const sig = JSON.stringify({ inc: snap.income || {}, mp: snap.manpowerDetail || {}, inv: snap.inventory || {}, fab: snap.fabricPlan || {}, dv: snap.dealValue || null, lay: [...layout.entries()],
+      flo: (snap.floralPlan?.flowers || []).map(f => `${f.name}:${Math.round((f.qty || 0) * 100)}:${f.colorVariant?.label || ""}`) });
     // Merge ONLY the Studio-owned projected fields. deptOps (the dept head's edits / actuals — IMS-owned)
     // is preserved verbatim, so re-syncing never wipes their work — including across a regenerate on
     // an already-sold deal, which used to wipe deptOps entirely (manpower overrides, logged mandi
@@ -5811,10 +5817,18 @@ export default function StudioApp() {
           const realUnits = (fl.qty || 0) * q * effR * (zoneRepeat ? REPEAT_REAL_QTY_MULT : 1) * (sw ? sw.ratio : 1);
           const buyParent = sw ? sw.to : parent;
           const buyId = sw ? sw.to.id : parentId;
+          // Which colour the salesperson actually picked (ranked preference 1st choice, else the
+          // legacy single colorVariant override) — mirrors DCFloralsTab.jsx's own variantPicked,
+          // so IMS Dept Ops' mandi list (fed from this function's breakdown, not the tab) can show
+          // the same colour + reference photo instead of a bare flower name. Never carries over on
+          // a catalogue swap (sw) — a colour picked for the original flower says nothing about what
+          // is actually being bought instead.
+          const colorVariant = sw ? null : (Array.isArray(prefArr) && prefArr.length > 0 ? prefArr[0] : (override?.colorVariant || null));
           if (realUnits > 0 && buyParent) {
-            const agg = flowerAgg.get(buyId) || { totalQty: 0, unitPrice: bp, name: buyParent.name || "Flower", unit: buyParent.unit || "" };
+            const agg = flowerAgg.get(buyId) || { totalQty: 0, unitPrice: bp, name: buyParent.name || "Flower", unit: buyParent.unit || "", colorVariant };
             agg.totalQty += realUnits;
             agg.unitPrice = bp; // refresh — mirrors the Florals tab's own aggregation
+            if (colorVariant && !agg.colorVariant) agg.colorVariant = colorVariant;
             flowerAgg.set(buyId, agg);
           }
           const effAQty = effA * (zoneRepeat ? REPEAT_ART_QTY_MULT : 1);
@@ -5866,7 +5880,7 @@ export default function StudioApp() {
       if (!(v.totalQty > 0)) return;
       const cost = v.totalQty * v.unitPrice;
       tReal += cost;
-      if (!fbreak[v.name]) fbreak[v.name] = { name: v.name, qty: 0, cost: 0, unit: v.unit };
+      if (!fbreak[v.name]) fbreak[v.name] = { name: v.name, qty: 0, cost: 0, unit: v.unit, colorVariant: v.colorVariant || null };
       fbreak[v.name].qty += v.totalQty; fbreak[v.name].cost += cost;
     });
     return { totalReal: tReal, totalArtificial: tArt, grandTotal: tReal + tArt, breakdown: Object.values(fbreak).map(f => ({ ...f, qty: Math.ceil(f.qty), cost: Math.round(f.cost) })).sort((a, b) => b.cost - a.cost), artFlowerBunches, artGreenBunches, income: { real: realIncome, art: artIncome } };

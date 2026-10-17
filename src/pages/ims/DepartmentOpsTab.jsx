@@ -1025,9 +1025,14 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const swapByName = new Map(mandiCatalogue.filter(c => c?.swap?.toId).map(c => [String(c.name || "").trim().toLowerCase(), c]));
   const seedMandi = fpFlowers.filter(f => !f.artificial && (Number(f.qty) || 0) > 0)
     .map(f => {
-      const row = { name: f.name, unit: f.unit || "", projQty: Number(f.qty) || 0, projCost: Number(f.cost) || 0, qty: Number(f.qty) || 0, price: f.qty ? Math.round(((Number(f.cost) || 0) / f.qty) * 100) / 100 : 0 };
+      // colorVariant — the salesperson's colour pick in Deal Check (ranked preference or the
+      // legacy single pick), carried through calcFnFloralSourcingCost's own breakdown
+      // (StudioApp.jsx) so the purchase manager sees WHICH colour to actually buy, not just a
+      // bare flower name. Never present on a swapped-in flower (a colour picked for the original
+      // says nothing about its replacement).
+      const row = { name: f.name, unit: f.unit || "", projQty: Number(f.qty) || 0, projCost: Number(f.cost) || 0, qty: Number(f.qty) || 0, price: f.qty ? Math.round(((Number(f.cost) || 0) / f.qty) * 100) / 100 : 0, colorVariant: f.colorVariant || null };
       const sw = mandiSwapOf(swapByName.get(String(f.name || "").trim().toLowerCase()), mandiCatalogue);
-      return sw ? { ...row, projUnit: row.unit, name: sw.to.name, unit: sw.to.unit || row.unit, qty: Math.round(row.qty * sw.ratio * 100) / 100, price: Number(sw.to.currentPrice) || 0, swappedFrom: f.name } : row;
+      return sw ? { ...row, projUnit: row.unit, name: sw.to.name, unit: sw.to.unit || row.unit, qty: Math.round(row.qty * sw.ratio * 100) / 100, price: Number(sw.to.currentPrice) || 0, swappedFrom: f.name, colorVariant: null } : row;
     });
   const mandiRows = Array.isArray(deptData.mandiLines) ? deptData.mandiLines : seedMandi;
   // Real shopping hasn't been logged until someone actually edits a row — until then, mandiRows is
@@ -4527,7 +4532,14 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                               const lineVar = lineActual - (Number(r.projCost) || 0);
                               return (
                                 <div key={i} className="grid grid-cols-[1fr_auto_auto] gap-2 px-3 py-1.5 items-center">
-                                  <div className="min-w-0"><div className="text-xs font-medium text-gray-800 truncate">{r.name}</div>{r.swappedFrom && <div className="text-[10px] font-semibold text-amber-700">🔁 swapped for {r.swappedFrom} (not in mandi)</div>}{r.projQty > 0 && <div className="text-[10px] text-gray-400">{r.projQty} {r.swappedFrom ? "" : r.unit} {r.swappedFrom ? `of ${r.swappedFrom} ` : ""}planned</div>}</div>
+                                  <div className="min-w-0 flex items-center gap-2">
+                                    {r.colorVariant?.photoUrl && <img src={r.colorVariant.photoUrl} alt={r.colorVariant.label || ""} className="w-7 h-7 rounded object-cover border border-gray-200 shrink-0" title={r.colorVariant.label || ""} />}
+                                    <div className="min-w-0">
+                                      <div className="text-xs font-medium text-gray-800 truncate">{r.name}{r.colorVariant?.label && <span className="ml-1.5 font-normal text-[10px] text-purple-600">🎨 {r.colorVariant.label}</span>}</div>
+                                      {r.swappedFrom && <div className="text-[10px] font-semibold text-amber-700">🔁 swapped for {r.swappedFrom} (not in mandi)</div>}
+                                      {r.projQty > 0 && <div className="text-[10px] text-gray-400">{r.projQty} {r.swappedFrom ? "" : r.unit} {r.swappedFrom ? `of ${r.swappedFrom} ` : ""}planned</div>}
+                                    </div>
+                                  </div>
                                   <div className="text-right w-28 text-xs text-gray-400">{r.projCost > 0 ? fmt(r.projCost) : <span className="text-amber-500">extra</span>}</div>
                                   <div className="flex items-center justify-end gap-1 w-60">
                                     <input type="number" min="0" value={r.qty} onChange={e => setMandi(i, "qty", e.target.value)} className="shrink-0 w-12 border rounded px-1.5 py-1 text-xs text-center" title="qty" />
