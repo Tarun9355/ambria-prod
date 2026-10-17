@@ -28,6 +28,7 @@ const FLORAL_BG = Object.values(
 
 export default function DCFloralsTab({ ctx }) {
   const [artFlowerSearch, setArtFlowerSearch] = useState(""); // search-by-name for the artificial flower colour picker (long list)
+  const [zoomImg, setZoomImg] = useState(null); // tap a colour-variant photo to view it full size
   const {
     // chrome / theme
     border, textS, textP, isDark,
@@ -1468,7 +1469,7 @@ export default function DCFloralsTab({ ctx }) {
                   {prefs.map((p, i) => (
                     <div key={p.variantId} style={{display:"flex",alignItems:"center",gap:6,padding:"5px 10px",borderRadius:8,border:`1.5px solid ${rankColors[i]}`,background:`${rankColors[i]}15`}}>
                       <span style={{fontSize:13,fontWeight:700,color:rankColors[i]}}>{i+1}</span>
-                      {p.photoUrl && <img src={thumbUrl(p.photoUrl, 20)} decoding="async" alt="" style={{width:20,height:20,borderRadius:4,objectFit:"cover"}}/>}
+                      {p.photoUrl && <img src={thumbUrl(p.photoUrl, 20)} decoding="async" alt="" onClick={e=>{e.stopPropagation();setZoomImg(p.photoUrl);}} style={{width:20,height:20,borderRadius:4,objectFit:"cover",cursor:"zoom-in"}}/>}
                       <span style={{fontSize:13,fontWeight:600,color:"#1A1A2E"}}>{p.label}</span>
                       <span style={{fontSize:11,color:"#1A1A2E"}}>₹{Math.round(p.rate)}</span>
                       <button className="dcf-btn" onClick={()=>togglePref({variantId:p.variantId})} style={{fontSize:12,color:"#EF4444",background:"none",border:"none",cursor:"pointer",padding:0,lineHeight:1}}>✕</button>
@@ -1497,7 +1498,7 @@ export default function DCFloralsTab({ ctx }) {
                             <div style={{position:"absolute",top:-6,right:-6,width:22,height:22,borderRadius:"50%",background:rankColors[rank],color:"#1A1A2E",fontSize:13,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 2px 6px rgba(0,0,0,0.3)"}}>{rank+1}</div>
                           )}
                           {v.photoUrl ? (
-                            <img src={fitUrl(v.photoUrl, 160)} decoding="async" alt={v.name||""} style={{width:"100%",height:50,objectFit:"cover",borderRadius:6,background:isDark?"#1A1A2E":"#eee"}} />
+                            <img src={fitUrl(v.photoUrl, 160)} decoding="async" alt={v.name||""} onClick={e=>{e.stopPropagation();setZoomImg(v.photoUrl);}} style={{width:"100%",height:50,objectFit:"cover",borderRadius:6,background:isDark?"#1A1A2E":"#eee",cursor:"zoom-in"}} />
                           ) : (
                             <div style={{width:"100%",height:50,borderRadius:6,background:isDark?"rgba(26, 26, 46,0.05)":"#eee",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,color:"#1A1A2E"}}>🌸</div>
                           )}
@@ -1517,6 +1518,12 @@ export default function DCFloralsTab({ ctx }) {
           </div>
         );
       })()}
+      {/* Click-to-enlarge — tap any colour-variant photo above to view it full size */}
+      {zoomImg && (
+        <div onClick={()=>setZoomImg(null)} style={{position:"fixed",inset:0,zIndex:9400,background:"rgba(0,0,0,0.85)",display:"flex",alignItems:"center",justifyContent:"center",padding:24,cursor:"zoom-out"}}>
+          <img src={zoomImg} alt="" onClick={e=>e.stopPropagation()} style={{maxWidth:"90vw",maxHeight:"90vh",borderRadius:8,objectFit:"contain",boxShadow:"0 20px 60px rgba(0,0,0,0.6)"}}/>
+        </div>
+      )}
       {/* ═══ §26 — 🌸 Artificial Flower Color Picker Modal (30 May 2026) ═══ */}
       {/* Salesperson splits total artificial Kg across colors from IMS inventory */}
       {dcArtFlowerModal && (() => {

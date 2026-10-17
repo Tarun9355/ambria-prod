@@ -3006,7 +3006,7 @@ undefined
             background:on?`${accent}18`:"transparent",
             color:on?accent:textP}}>
             <span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:13,height:13,borderRadius:4,flexShrink:0,border:`1px solid ${on?accent:border}`,background:on?accent:"transparent",color:"#fff"}}>{on&&<IconCheck size={9}/>}</span>
-            {info?.photo ? <img src={info.photo} alt="" style={{width:16,height:16,borderRadius:3,objectFit:"cover",flexShrink:0}}/> : null}
+            {info?.photo ? <img src={info.photo} alt="" onClick={e=>{e.stopPropagation();setLightbox({idx:0,items:[{src:info.photo,name:v}]});}} style={{width:16,height:16,borderRadius:3,objectFit:"cover",flexShrink:0,cursor:"zoom-in"}}/> : null}
             <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{v}</span>
           </div>
         );
