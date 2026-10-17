@@ -671,11 +671,16 @@ export default function DealCheckOverlay({ ctx }) {
                 splitArr.forEach(s => {
                   const it = dcInventoryCache.find(x => x.id === s.imsId); if (!it) return;
                   const q = Number(s.qty) || 0; const br = imsField.rentalCost(it);
-                  const line = repeatAdjustedRental(_rep, fn.fnVenue, it, q, br, fn.fnDate, crossFnTake(it.id, q));
+                  // Same physical units this deal's own preceding function already has installed need
+                  // no second block for THIS function — reused is subtracted from the shown qty below,
+                  // same as the non-split branch, so Dept Ops' "inventory blocked" shows the true
+                  // incremental need (e.g. 50 total across 2 back-to-back functions, not 65).
+                  const reused = crossFnTake(it.id, q);
+                  const line = repeatAdjustedRental(_rep, fn.fnVenue, it, q, br, fn.fnDate, reused);
                   rental += line; byFn[fi].rental += line;
                   const dd = catToDept(imsField.category(it));
                   addD(dd, "rental", line);
-                  if (line > 0 && deptInv[dd]) deptInv[dd].push({ name: it.name, photo: imsField.photos(it)[0] || "", qty: q, unit: br, total: Math.round(line), sub: imsField.subcategory(it) || "", imsId: it.id });
+                  if (line > 0 && deptInv[dd]) deptInv[dd].push({ name: it.name, photo: imsField.photos(it)[0] || "", qty: Math.max(0, q - reused), unit: br, total: Math.round(line), sub: imsField.subcategory(it) || "", imsId: it.id });
                 });
                 return;
               }
@@ -697,7 +702,7 @@ export default function DealCheckOverlay({ ctx }) {
               // at its normal rate (all discounts intact) and each node's true-shortfall share flat at
               // its own cost%, same rule a plain item gets.
               const isKit = Array.isArray(item.subItems) && item.subItems.length > 0;
-              let lineRental, shortQty = 0, shortCost = 0;
+              let lineRental, shortQty = 0, shortCost = 0, reusedQty = 0;
               if (isKit) {
                 const _fvCfg = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
                 const split = kitShortfallSplit(item, qty, ck, {
@@ -728,6 +733,7 @@ export default function DealCheckOverlay({ ctx }) {
                 // normally via repeatAdjustedRental below), NOT at flat production cost. Drawn
                 // against the full originally-needed qty so no eligible credit is wasted.
                 const crossFnAvail = crossFnTake(item.id, qty);
+                reusedQty = crossFnAvail;
                 const ownedQty = Math.min(qty, available + crossFnAvail);
                 shortQty = Math.max(0, qty - ownedQty); // TRUE shortfall — genuinely nothing left to reuse; new units must be produced/bought
                 const ownedRental = repeatAdjustedRental(_rep, fn.fnVenue, item, ownedQty, baseR, fn.fnDate, crossFnAvail);
@@ -789,7 +795,12 @@ export default function DealCheckOverlay({ ctx }) {
                 // for it), so Dept Ops needs a different badge: nothing to chase/produce, pick an
                 // alternative in Build instead. Approximated at the kit's OWN flag for a kit line —
                 // kitShortfallSplit doesn't currently say which specific component was short.
-                deptInv[dD].push({ name: item.name || c.name || "Item", photo: imsField.photos(item)[0] || "", qty, unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "", imsId: c.imsId, ...(components && components.length ? { isKit: true, components: components.map(({ci, ...rest}) => ({ ...rest, total: Math.round(rest.total) })) } : {}), ...(shortQty > 0 ? { shortQty, shortCost: Math.round(shortCost), outOfStock: !canFulfillShortfall(item) } : {}) });
+                // qty shown is net of cross-function reuse (owner-reported: a 15-then-50 Warm LED
+                // pair of back-to-back functions at the same venue was showing 65 blocked, not the
+                // true 50 — the same physical units carried from function 1 into function 2 were
+                // being counted twice). Not applied to a kit's own top-level qty — reuse there is
+                // scoped inside kitShortfallSplit's own component-level accounting, not this field.
+                deptInv[dD].push({ name: item.name || c.name || "Item", photo: imsField.photos(item)[0] || "", qty: isKit ? qty : Math.max(0, qty - reusedQty), unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "", imsId: c.imsId, ...(components && components.length ? { isKit: true, components: components.map(({ci, ...rest}) => ({ ...rest, total: Math.round(rest.total) })) } : {}), ...(shortQty > 0 ? { shortQty, shortCost: Math.round(shortCost), outOfStock: !canFulfillShortfall(item) } : {}) });
               }
             });
             // Manually-added inventory blocks (dcManualItems) — the salesperson added these directly in
@@ -802,13 +813,16 @@ export default function DealCheckOverlay({ ctx }) {
               // A manually added item can be a kit too — price it the same way as a matched card.
               const baseR = effKitRental(item, fi, null);
               const _rep = mi.zoneKey ? repeatCatFor(fn.zoneConfig?.[mi.zoneKey], "elements") : false;
-              const lineRental = repeatAdjustedRental(_rep, fn.fnVenue, item, q, baseR, fn.fnDate, crossFnTake(item.id, q));
-              rental += lineRental; byFn[fi].rental += lineRental;
-              const dD = catToDept(imsField.category(item));
               // Same per-component department split as matched cards above — a manually-added kit
               // used to have no components list AT ALL (not even for display), so its parts' cost and
               // Dept Ops visibility went entirely to the kit's own department.
               const miIsKit = Array.isArray(item.subItems) && item.subItems.length > 0;
+              // Reuse pool is top-level-item-only (computeFnInvQty doesn't walk kit components) —
+              // matches the matched-card branch above.
+              const miReused = miIsKit ? 0 : crossFnTake(item.id, q);
+              const lineRental = repeatAdjustedRental(_rep, fn.fnVenue, item, q, baseR, fn.fnDate, miReused);
+              rental += lineRental; byFn[fi].rental += lineRental;
+              const dD = catToDept(imsField.category(item));
               let miComponents;
               if (miIsKit) {
                 miComponents = item.subItems.map(s => {
@@ -835,7 +849,7 @@ export default function DealCheckOverlay({ ctx }) {
               } else {
                 addD(dD, "rental", lineRental);
               }
-              if (deptInv[dD]) deptInv[dD].push({ name: item.name || "Item", photo: imsField.photos(item)[0] || "", qty: q, unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "", imsId: mi.imsId, ...(miComponents && miComponents.length ? { isKit: true, components: miComponents.map(({ci, ...rest}) => ({ ...rest, total: Math.round(rest.total) })) } : {}) });
+              if (deptInv[dD]) deptInv[dD].push({ name: item.name || "Item", photo: imsField.photos(item)[0] || "", qty: Math.max(0, q - miReused), unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "", imsId: mi.imsId, ...(miComponents && miComponents.length ? { isKit: true, components: miComponents.map(({ci, ...rest}) => ({ ...rest, total: Math.round(rest.total) })) } : {}) });
             });
             try { const fl = calcFnFloralSourcingCost(fn).grandTotal; florals += fl; byFn[fi].florals += fl; addD("Floral", "florals", fl); } catch {}
             // `genset` (used only for the Power tab's own nav-pill amount) reads gensetCostOurs —
