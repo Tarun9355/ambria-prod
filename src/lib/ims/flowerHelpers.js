@@ -38,34 +38,6 @@ export const resolveMandiFlower = (id, mandi) => {
   return null;
 };
 
-// ── MANDI SWAP ──
-// When a flower is not in the mandi, the shopper sets its price to ₹0 and records what was bought
-// instead (IMS → Admin → Flower Mandi Catalogue → 🔁). It sits on the flower as
-// `swap: { toId, ratio, note, since }`: ratio = units of the replacement bought per 1 unit of the
-// original. The swap is for what is BOUGHT — real flowers. A recipe still names the original, and
-// the artificial side (bunches/unit, mapping) still reads the original, so resolveMandiFlower is
-// unchanged and only the buying/pricing paths go through resolveMandiBuy. One hop only: the
-// replacement's own swap is not followed, so two flowers swapped onto each other cannot loop.
-export const mandiSwapOf = (parent, mandi) => {
-  const s = parent?.swap;
-  if (!s?.toId) return null;
-  const to = (mandi || []).find((f) => f?.id === s.toId);
-  if (!to || to.id === parent.id) return null;
-  const ratio = Number(s.ratio) > 0 ? Number(s.ratio) : 1;
-  return { to, ratio, note: String(s.note || ""), since: String(s.since || "") };
-};
-// Like resolveMandiFlower, but through the swap: `parent` is the flower actually bought, `ratio`
-// converts the recipe's quantity into its units, and `price` is per unit of the ORIGINAL (the
-// replacement's rate × ratio) so a qty × price written for the original stays right.
-// `swappedFrom` is the original flower when a swap applied, else null.
-export const resolveMandiBuy = (id, mandi) => {
-  const r = resolveMandiFlower(id, mandi);
-  if (!r) return null;
-  const sw = mandiSwapOf(r.parent, mandi);
-  if (!sw) return { ...r, ratio: 1, swappedFrom: null, note: "" };
-  return { parent: sw.to, variant: null, price: (Number(sw.to.currentPrice) || 0) * sw.ratio, ratio: sw.ratio, swappedFrom: r.parent, note: sw.note };
-};
-
 // Σ(qty × mandi price) for one recipe size, plus Σ(qty × RAW IMS rental — no sub-category scaling
 // factor) for any inventory-sourced ingredient rows ({invItemId, qty} — added via the "Artificial
 // included?" toggle, or picked directly as the recipe's own ingredient with no mandi-flower
@@ -87,7 +59,7 @@ export const computePatternSizeCost = (sizeData, mandiCatalogue, inventory) => {
       total += (Number(fl?.qty) || 0) * price;
       continue;
     }
-    const res = resolveMandiBuy(fl?.flowerId, mandiCatalogue);
+    const res = resolveMandiFlower(fl?.flowerId, mandiCatalogue);
     const price = res ? res.price : 0;
     total += (Number(fl?.qty) || 0) * price;
   }
@@ -176,8 +148,7 @@ export const floralPatternUnitRates = (pattern, sizeKey, mandiCatalogue, setting
       // up by this SAME pattern markup, not artMarkup) lands it identically on both sides of the
       // blend — invariant to the slider — instead of scaling down to ₹0 as real% drops, which is
       // what returning here with no contribution used to do.
-      // Bought at mandi, so through the swap — the same price computePatternSizeCost used.
-      invItemCost += (Number(fl?.qty) || 0) * (resolveMandiBuy(fl?.flowerId, mandiCatalogue)?.price || 0);
+      invItemCost += (Number(fl?.qty) || 0) * (res?.price || 0);
       return;
     }
     if (ft === "mapping") {
