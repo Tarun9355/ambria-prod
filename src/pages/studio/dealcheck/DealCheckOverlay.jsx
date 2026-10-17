@@ -3723,7 +3723,7 @@ export default function DealCheckOverlay({ ctx }) {
                 })() : dcActiveTab === "florals" ? (
                   <DCFloralsTab ctx={ctx} />
                 ) : dcActiveTab === "manpower" ? (
-                  <DCManpowerTab ctx={ctx} />
+                  <DCManpowerTab ctx={{ ...ctx, manpowerDetail: dcCostRollup.manpowerDetail }} />
                 ) : dcActiveTab === "truss" ? (
                   <DCTrussTab ctx={ctx} />
                 ) : dcActiveTab === "transport" ? (() => {

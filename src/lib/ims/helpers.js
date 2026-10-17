@@ -277,6 +277,70 @@ export function deptMpReconciled(detail, deptData) {
   return rows.reduce((s, r) => s + mpLineCost(r, mpDay, mpOverrides, mpWin, mpWinCount), 0);
 }
 
+// Whole-booking manpower, every department's crew with that department's own IMS Dept Ops edits
+// applied (the same mpLineCost deptMpReconciled uses) — every type (Labours, Flowerists, …) summed
+// across every department that drew on it, plus each department's own share for its own "how" view.
+// Originally IMS Dept Ops' own local eventManpower() (its "Whole event manpower" panel); shared here
+// so Deal Check's Manpower tab (DCManpowerTab.jsx) can show the SAME ops-reconciled numbers a
+// salesperson would otherwise never see — a dept head's edits in IMS used to only reach Deal Check
+// as an invisible correction to the one margin total (dcCostRollup's effManpower/grandActual), never
+// as something the Manpower tab's own day-by-day view displayed.
+// manpowerDetail = the Studio-side system plan, keyed by department (dcCostRollup.manpowerDetail in
+// Deal Check, sel.manpowerDetail in IMS — same shape, built once at markSold/Apply and read by both).
+// deptOpsByDept = { [dept]: deptOps row } — each department's own saved mpDay/mpWin/mpWinCount/
+// mpOverrides/mpExtra edits (event_orders.data.deptOps in Deal Check's dcEoActuals, sel.deptOps in IMS).
+export function aggregateEventManpower(manpowerDetail, deptOpsByDept) {
+  const md = (manpowerDetail && typeof manpowerDetail === "object") ? manpowerDetail : {};
+  const dod = (deptOpsByDept && typeof deptOpsByDept === "object") ? deptOpsByDept : {};
+  const phaseLbl = (d) => d.phase === "minusOne" ? "−1 setup" : d.phase === "dismantle" ? "+1 dismantle" : d.phase === "gap" ? "gap" : (d.date || "event");
+  const byType = new Map(); const byDept = []; const labDays = new Map();
+  let total = 0, totalDihari = 0;
+  Object.entries(md).forEach(([d, rows]) => {
+    if (!Array.isArray(rows) || !rows.length) return;
+    const dd = dod[d] || {};
+    const ovAll = (dd.mpOverrides && typeof dd.mpOverrides === "object") ? dd.mpOverrides : {};
+    let dCost = 0, dDihari = 0, dLab = 0;
+    rows.forEach(s => {
+      const ov = ovAll[s.type] || {};
+      const r = { type: s.type, count: ov.count != null ? ov.count : (s.count ?? ""), rate: ov.rate != null ? ov.rate : (s.rate || 0), shared: !!s.shared, sysCount: s.count, sysRate: s.rate || 0, sysCost: s.cost || 0, schedule: s.schedule || null, splitInfo: s.splitInfo || null, trace: s.trace || null };
+      const cost = Number(mpLineCost(r, dd.mpDay || {}, ovAll, dd.mpWin || {}, dd.mpWinCount || {})) || 0;
+      const rate = Number(r.rate) || 0;
+      const dih = rate > 0 ? cost / rate : 0;
+      dCost += cost; dDihari += dih; if (s.type === "Labours") dLab += dih;
+      const t = byType.get(s.type) || { type: s.type, cost: 0, dihari: 0, peak: 0, shared: !!s.shared, rows: [] };
+      t.cost += cost; t.dihari += dih;
+      t.rows.push({ dept: d, rate, dihari: dih, cost, trace: s.trace || null, schedule: s.schedule || null,
+        days: Array.isArray(s.schedule) ? s.schedule.map(day => ({ label: phaseLbl(day), crew: Math.round(mpEffDay(r, day, dd.mpDay || {}) * 10) / 10, shifts: mpEffWindows(r, day, dd.mpWin || {}), dihari: Math.round(mpDayDihari(r, day, dd.mpDay || {}, dd.mpWin || {}, dd.mpWinCount || {}) * 10) / 10 })) : [] });
+      if (s.shared && Array.isArray(s.schedule)) {
+        s.schedule.forEach(day => {
+          const c = Number(day.count) || 0;
+          t.peak = Math.max(t.peak, c);
+          if (s.type === "Labours") { const k = `${day.date}|${day.phase || ""}`; const prev = labDays.get(k); labDays.set(k, { label: phaseLbl(day), count: Math.max(c, prev ? prev.count : 0) }); }
+        });
+      } else t.peak += Number(r.count) || 0;
+      byType.set(s.type, t);
+    });
+    byDept.push({ dept: d, cost: dCost, dihari: dDihari, labDihari: dLab });
+    total += dCost; totalDihari += dDihari;
+  });
+  return { types: [...byType.values()].sort((a, b) => b.cost - a.cost), depts: byDept.sort((a, b) => b.cost - a.cost), labDays: [...labDays.values()], total, totalDihari };
+}
+
+// Does this deptOps-by-department map carry ANY actual head edit at all? Same "edited" test
+// deptMpReconciled/aggregateEventManpower implicitly honor — used to decide whether there is
+// anything ops-side worth showing a salesperson at all (an un-edited plan is identical to the
+// Studio system estimate already on screen, so showing it again would just be noise).
+export function hasAnyMpEdits(deptOpsByDept) {
+  return Object.values(deptOpsByDept || {}).some((dd) => dd && (
+    (dd.mpOverrides && Object.keys(dd.mpOverrides).length) ||
+    (Array.isArray(dd.mpExtra) && dd.mpExtra.length) ||
+    (dd.mpDay && Object.keys(dd.mpDay).length) ||
+    (dd.mpWin && Object.keys(dd.mpWin).length) ||
+    (dd.mpWinCount && Object.keys(dd.mpWinCount).length) ||
+    (Array.isArray(dd.mp) && dd.mp.length)
+  ));
+}
+
 // ── WHICH EVENT ORDERS OPS PLANS FOR ──
 // Dept Ops lists only sold/finalised deals: a pending or cancelled one has nothing to plan, and
 // a deal in review has numbers that are still moving. Shared rather than redeclared because the

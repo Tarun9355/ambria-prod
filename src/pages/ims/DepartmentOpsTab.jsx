@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { fmt } from "../../lib/format";
-import { mpDayWise, mpBaseDay, mpEffDay, mpEffWindows, mpLineCost, mpDayCost, mpDayDihari, isLiveEventOrder, phone10 } from "../../lib/ims/helpers";
+import { mpDayWise, mpBaseDay, mpEffDay, mpEffWindows, mpLineCost, mpDayCost, mpDayDihari, aggregateEventManpower, isLiveEventOrder, phone10 } from "../../lib/ims/helpers";
 import { uploadAudioToStorage } from "../../lib/storage";
 import { DEPTS as SHARED_DEPTS, catToDept as sharedCatToDept, userDepartments } from "../../lib/ims/deptClassify";
 import { TabsMenu } from "../../components/ui";
@@ -962,44 +962,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   // there rather than added up across departments — adding it would count the same people 7 times.
   // A schedule day's short name: the date, or the setup / dismantle / gap day it stands for.
   const phaseLbl = (d) => d.phase === "minusOne" ? "−1 setup" : d.phase === "dismantle" ? "+1 dismantle" : d.phase === "gap" ? "gap" : (d.date || "event");
-  const eventManpower = () => {
-    const md = (sel?.manpowerDetail && typeof sel.manpowerDetail === "object") ? sel.manpowerDetail : {};
-    const byType = new Map(); const byDept = []; const labDays = new Map();
-    let total = 0, totalDihari = 0;
-    Object.entries(md).forEach(([d, rows]) => {
-      if (!Array.isArray(rows) || !rows.length) return;
-      const dd = sel?.deptOps?.[d] || {};
-      const ovAll = (dd.mpOverrides && typeof dd.mpOverrides === "object") ? dd.mpOverrides : {};
-      let dCost = 0, dDihari = 0, dLab = 0;
-      rows.forEach(s => {
-        const ov = ovAll[s.type] || {};
-        const r = { type: s.type, count: ov.count != null ? ov.count : (s.count ?? ""), rate: ov.rate != null ? ov.rate : (s.rate || 0), shared: !!s.shared, sysCount: s.count, sysRate: s.rate || 0, sysCost: s.cost || 0, schedule: s.schedule || null, splitInfo: s.splitInfo || null, trace: s.trace || null };
-        const cost = Number(mpLineCost(r, dd.mpDay || {}, ovAll, dd.mpWin || {}, dd.mpWinCount || {})) || 0;
-        const rate = Number(r.rate) || 0;
-        const dih = rate > 0 ? cost / rate : 0;
-        dCost += cost; dDihari += dih; if (s.type === "Labours") dLab += dih;
-        const t = byType.get(s.type) || { type: s.type, cost: 0, dihari: 0, peak: 0, shared: !!s.shared, rows: [] };
-        t.cost += cost; t.dihari += dih;
-        // Kept per department for the row's "how" modal: what each department's share came to,
-        // and its days with that department's own edits applied. dihari is the real per-shift sum
-        // (mpDayDihari) — crew × shifts alone silently ignores a per-shift crew override (mpWinCount),
-        // same staleness this tab's own day-wise plan badge had (see mpDayDihari's own comment).
-        t.rows.push({ dept: d, rate, dihari: dih, cost, trace: s.trace || null, schedule: s.schedule || null,
-          days: Array.isArray(s.schedule) ? s.schedule.map(day => ({ label: phaseLbl(day), crew: Math.round(mpEffDay(r, day, dd.mpDay || {}) * 10) / 10, shifts: mpEffWindows(r, day, dd.mpWin || {}), dihari: Math.round(mpDayDihari(r, day, dd.mpDay || {}, dd.mpWin || {}, dd.mpWinCount || {}) * 10) / 10 })) : [] });
-        if (s.shared && Array.isArray(s.schedule)) {
-          s.schedule.forEach(day => {
-            const c = Number(day.count) || 0;
-            t.peak = Math.max(t.peak, c);
-            if (s.type === "Labours") { const k = `${day.date}|${day.phase || ""}`; const prev = labDays.get(k); labDays.set(k, { label: day.phase === "minusOne" ? "−1 setup" : day.phase === "dismantle" ? "+1 dismantle" : day.phase === "gap" ? "gap" : (day.date || "event"), count: Math.max(c, prev ? prev.count : 0) }); }
-          });
-        } else t.peak += Number(r.count) || 0;
-        byType.set(s.type, t);
-      });
-      byDept.push({ dept: d, cost: dCost, dihari: dDihari, labDihari: dLab });
-      total += dCost; totalDihari += dDihari;
-    });
-    return { types: [...byType.values()].sort((a, b) => b.cost - a.cost), depts: byDept.sort((a, b) => b.cost - a.cost), labDays: [...labDays.values()], total, totalDihari };
-  };
+  // Moved to lib/ims/helpers.js (aggregateEventManpower) so Deal Check's Manpower tab can show the
+  // same ops-reconciled numbers — see its own comment for why.
+  const eventManpower = () => aggregateEventManpower(sel?.manpowerDetail, sel?.deptOps);
   const labDetailFor = (d) => { const rows = sel?.manpowerDetail?.[d]; return Array.isArray(rows) ? rows.find(r => r.type === "Labours") : null; };
   const labEffPerDay = (d, day) => { const md = sel?.deptOps?.[d]?.mpDay?.Labours || {}; if (md[day.date] != null) return Number(md[day.date]) || 0; return day.share != null ? (Number(day.count) || 0) * Number(day.share) : (Number(day.count) || 0); };
   const labShiftsFor = (d, day) => { const mw = sel?.deptOps?.[d]?.mpWin?.Labours; const ids = mw && mw[day.date] != null ? mw[day.date] : (Array.isArray(day.windowIds) ? day.windowIds : null); return ids ? ids.length : (Number(day.windows) || 0); };
