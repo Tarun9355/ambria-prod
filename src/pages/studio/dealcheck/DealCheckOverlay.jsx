@@ -94,7 +94,7 @@ const NUM = { fontVariantNumeric: "tabular-nums" };
 import { heavyExtraLabour, eventTimingMultFor, SIT_MULT_DEFAULTS } from "../../../lib/ims/constants";
 import { deptMpReconciled, itemImsSubcat, lookupBySubcat, itemDimsText, walkKitUnits } from "../../../lib/ims/helpers";
 import { rentalSplit, availableAtVenue, isStandingAt, fixedVenueFor, standingReductionBySubcat, fixedVenueDealDiscount, reservedByVenueToday, venueSlackFor } from "../../../lib/ims/fixedVenues";
-import { calcZoneFabric, autoFillFabricAllocation, anchorsForPalette, anchorsForPaletteByMaterial, resolveTrussConfig, zoneTrussStandingDiscount, repeatCatFor } from "../../../lib/studio/pricing";
+import { calcZoneFabric, autoFillFabricAllocation, anchorsForPalette, anchorsForPaletteByMaterial, resolveTrussConfig, zoneTrussStandingDiscount, repeatCatFor, freshFnForManpower } from "../../../lib/studio/pricing";
 import { carpetPricingFor, CARPET_OFF } from "../../../lib/studio/taxonomy";
 import { qtyUsedElsewhereInDealCheck, netOwnReservedBlocksLive } from "../../../lib/studio/dealAvailability";
 import { isHiddenSubcat, oosCostPctFor, canFulfillShortfall } from "../../../lib/rateCard";
@@ -1179,13 +1179,9 @@ export default function DealCheckOverlay({ ctx }) {
               // type at the venue's fixed crew (max(fixedCrew[type], computed-over-fresh-zones)). Non-fixed
               // venues have no configured floor → just the computed crew over the fresh (non-repeat) zones.
               const fvCfgMP = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
-              const freshFnMP = (fn) => {
-                const zc = fn.zoneConfig || {}, en = fn.enabledEls || {};
-                const repeatZk = Object.keys(zc).filter(zk => en[zk] && zc[zk]?.repeat);
-                if (!repeatZk.length) return fn;
-                const nen = { ...en }; repeatZk.forEach(zk => { nen[zk] = false; });
-                return { ...fn, enabledEls: nen };
-              };
+              // Per category, not only the zone toggle: a repeated Elements or Truss & Masking chip drops
+              // just that part's crew (freshFnForManpower, lib/studio/pricing.js — shared with the tab).
+              const freshFnMP = freshFnForManpower;
               const fixedCrewFloor = (fv, type) => { const c = fv.fixedCrew || {}; if (c[type] != null && c[type] !== "") return Number(c[type]) || 0; if (type === "Labours") return Number(fv.minLabour) || 0; return 0; };
               const calcPplRaw = (fn, type) => {
                 if (type === "Flowerists") {
@@ -3850,7 +3846,8 @@ export default function DealCheckOverlay({ ctx }) {
                               {tr?.repeatZonesExcluded?.length > 0 && (
                                 <div style={{padding:"9px 15px",fontSize:11.5,color:"#059669",background:"#0596690D",borderBottom:`1px solid ${HAIRLINE}`,display:"flex",alignItems:"center",gap:6}}>
                                   <span aria-hidden="true">♻️</span>
-                                  <span><b>{tr.repeatZonesExcluded.map(z => z.label).join(", ")}</b> {tr.repeatZonesExcluded.length===1?"is":"are"} marked Repeat — excluded from this trip's truck count.</span>
+                                  {/* A zone repeated only in part names the parts (RC-30): "BTR (Truss & Masking)". */}
+                                  <span><b>{tr.repeatZonesExcluded.map(z => z.whole === false && z.cats?.length ? `${z.label} (${z.cats.join(", ")})` : z.label).join(", ")}</b> {tr.repeatZonesExcluded.length===1?"is":"are"} marked Repeat — excluded from this trip's truck count.</span>
                                 </div>
                               )}
                               {/* Same-venue carryover — an item this function needs that's already sitting at the

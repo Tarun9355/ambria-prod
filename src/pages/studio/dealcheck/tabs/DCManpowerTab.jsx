@@ -6,7 +6,7 @@
 // ═══════════════════════════════════════════════════════════════
 import { useEffect } from "react";
 import { CARD_SHADOW, CARD_BG, CARD_BORDER, HAIRLINE, TILE_BG, TILE_BORDER, CHIP_BG, INK, INK_2, INK_3, GOLD, GOLD_SOFT, NUM } from "../../../../lib/studio/dcTokens";
-import { resolveTrussConfig } from "../../../../lib/studio/pricing";
+import { resolveTrussConfig, freshFnForManpower } from "../../../../lib/studio/pricing";
 import { heavyExtraLabour, eventTimingMultFor, EVENT_TIMINGS, SIT_MULT_DEFAULTS } from "../../../../lib/ims/constants";
 import { standingReductionBySubcat, fixedVenueFor } from "../../../../lib/ims/fixedVenues";
 import { itemImsSubcat, lookupBySubcat, walkKitUnits, aggregateEventManpower, hasAnyMpEdits } from "../../../../lib/ims/helpers";
@@ -308,13 +308,9 @@ export default function DCManpowerTab({ ctx }) {
                   const _fvCfgAll = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
                   // Repeat zones (ANY venue) drop out of the build-labour computation. The fixed-crew FLOOR
                   // below still only applies at configured fixed venues (fv truthy); non-fixed → computed only.
-                  const freshFnMP = (fn) => {
-                    const zc = fn.zoneConfig || {}, en = fn.enabledEls || {};
-                    const repeatZk = Object.keys(zc).filter(zk => en[zk] && zc[zk]?.repeat);
-                    if (!repeatZk.length) return fn;
-                    const nen = { ...en }; repeatZk.forEach(zk => { nen[zk] = false; });
-                    return { ...fn, enabledEls: nen };
-                  };
+                  // Per category too — a repeated Elements or Truss & Masking chip drops just that part's
+                  // crew. The same function DealCheckOverlay uses, so the two cannot drift apart.
+                  const freshFnMP = freshFnForManpower;
                   const fixedCrewFloor = (fv, type) => { const c = fv.fixedCrew || {}; if (c[type] != null && c[type] !== "") return Number(c[type]) || 0; if (type === "Labours") return Number(fv.minLabour) || 0; return 0; };
                   // Usage-based labour floor: Labours = ceil(Σ sub-cat units ÷ per-unit), per ceremony.
                   // Confirmed live bug (now fixed at calcPeopleTier3Labours' own call site below): this
