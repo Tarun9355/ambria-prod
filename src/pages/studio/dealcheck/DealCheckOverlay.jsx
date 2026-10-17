@@ -96,7 +96,7 @@ import { deptMpReconciled, itemImsSubcat, lookupBySubcat, itemDimsText, walkKitU
 import { rentalSplit, availableAtVenue, isStandingAt, fixedVenueFor, standingReductionBySubcat, fixedVenueDealDiscount, reservedByVenueToday, venueSlackFor } from "../../../lib/ims/fixedVenues";
 import { calcZoneFabric, autoFillFabricAllocation, anchorsForPalette, resolveTrussConfig, zoneTrussStandingDiscount, repeatCatFor } from "../../../lib/studio/pricing";
 import { carpetPricingFor, CARPET_OFF } from "../../../lib/studio/taxonomy";
-import { qtyUsedElsewhereInDealCheck, netOwnReservedBlocks } from "../../../lib/studio/dealAvailability";
+import { qtyUsedElsewhereInDealCheck, netOwnReservedBlocksLive } from "../../../lib/studio/dealAvailability";
 import { isHiddenSubcat, oosCostPctFor } from "../../../lib/rateCard";
 import { findCrossFnReuseSource, computeFnInvQty } from "../../../lib/studio/crossFnReuse";
 import { kitShortfallSplit } from "../../../lib/studio/kitShortfallSplit";
@@ -434,9 +434,11 @@ export default function DealCheckOverlay({ ctx }) {
     const usedElsewhere = qtyUsedElsewhereInDealCheck(imsId, fns, dcCards, dcManualItems, dcKitEdits, dcInventoryCache, { fnIdx, ...exclude }, targetDate);
     if (usedElsewhere <= 0) return null;
     const fnBlocks = (dealCheckData?.blocksByDate || {})[targetDate] || {};
-    // Net this SAME deal's own already-recorded reservation out first — see netOwnReservedBlocks.
+    // Net this SAME deal's own already-recorded reservation out first — see netOwnReservedBlocksLive.
     const cliForAvail = clientLedger.find(c => c.id === activeClientId);
-    const otherEventsAvail = getStudioAvailable(it, netOwnReservedBlocks(fnBlocks, it.id, cliForAvail?.dcReservedInventory, fnIdx));
+    const eoForAvail = (eventOrders || []).find(e => e.clientId === activeClientId) || (eventOrders || []).find(e => (e.clientName || "") === (cliForAvail?.name || "").trim());
+    const blocksDetail = (dealCheckData?.blocksDetailByDate || {})[targetDate] || {};
+    const otherEventsAvail = getStudioAvailable(it, netOwnReservedBlocksLive(fnBlocks, it.id, blocksDetail, eoForAvail?.id));
     return Math.max(0, otherEventsAvail - usedElsewhere);
   };
 
@@ -542,13 +544,26 @@ export default function DealCheckOverlay({ ctx }) {
   return (() => {
         const cli = clientLedger.find(c => c.id === activeClientId);
         const isSold = cli?.status === "booked";
+        // This deal's own event_order — resolved once, same lookup used everywhere else a caller
+        // needs "the sold event_order this client maps to" (StudioApp.jsx's persistDeptSnapshot etc).
+        const eoForAvail = (eventOrders || []).find(e => e.clientId === activeClientId) || (eventOrders || []).find(e => (e.clientName || "") === (cli?.name || "").trim());
         // Every availability check below must net out THIS deal's own already-recorded reservation
-        // first (netOwnReservedBlocks) — otherwise a SOLD deal's own held stock counts as someone
-        // else's demand against itself the moment reconcileSoldInventoryBlocks writes its real
-        // `blocks` table rows, and previously-free stock reads "short" (billed at cost%, not the
-        // rental rate) purely because the deal got booked. Single choke point for every
-        // getStudioAvailable() call in this component from here down.
-        const dcAvailable = (item, fnBlocks, fnIdx) => item ? getStudioAvailable(item, netOwnReservedBlocks(fnBlocks, item.id, cli?.dcReservedInventory, fnIdx)) : 0;
+        // first (netOwnReservedBlocksLive) — otherwise a SOLD deal's own held stock counts as someone
+        // else's demand against itself the moment reconcileSoldInventoryBlocks (or IMS's own auto-
+        // confirm engine, which reserves a deal's very FIRST stock the moment it's sold) writes its
+        // real `blocks` table rows, and previously-free stock reads "short" (billed at cost%, not the
+        // rental rate) purely because the deal got booked. Reads the live per-event blocks detail
+        // instead of the dcReservedInventory cache (which only this component's own reconcile keeps
+        // in sync, and never gets a first write at all until it runs once) — correct the instant a
+        // reservation exists, whichever of the app's two reservation paths wrote it. Single choke
+        // point for every getStudioAvailable() call in this component from here down.
+        const dcAvailable = (item, fnBlocks, fnIdx) => {
+          if (!item) return 0;
+          const fns = collectAllFunctionData ? collectAllFunctionData() : [];
+          const fnDate = fns[fnIdx]?.fnDate;
+          const blocksDetail = fnDate ? (dealCheckData?.blocksDetailByDate || {})[fnDate] || {} : {};
+          return getStudioAvailable(item, netOwnReservedBlocksLive(fnBlocks, item.id, blocksDetail, eoForAvail?.id));
+        };
         // The 2-run counter came out with the Generate button — nothing starts a run from this
         // screen any more, so there is no allowance left to display. dcRunCounter is still written
         // by runDealCheckGenerate in StudioApp; only this read of it is gone.

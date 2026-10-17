@@ -37,7 +37,7 @@ import { ytApi, ytDuration } from "../../lib/youtube";
 import { extractLabeledValue, bestTaxMatch } from "../../lib/studio/videoDescriptionTags";
 import { paletteNames, paletteInList } from "../../lib/studio/colours";
 import { makeS } from "../../lib/studio/styles";
-import { findCrossFnReuseSource, computeFnInvQty, findSiblingFnInvUse } from "../../lib/studio/crossFnReuse";
+import { findCrossFnReuseSource, computeFnInvQty, findSiblingFnInvUse, findSiblingFnSubcatOpportunity } from "../../lib/studio/crossFnReuse";
 
 // ═══ HEADER TYPE + CHIP SCALE ═══
 // The header used to mix 8/9/10/11/12/13px in a single row. It now has exactly two tiers:
@@ -80,7 +80,7 @@ import {
   calcZoneFabric, calcZoneFabricCost, calcZoneCarpet, buildPlatformPlan, getStudioAvailable,
   buildTopology, PLATFORM_FATTA_CODE, PLATFORM_STAND_CODE, trussRowCost, repeatCatFor,
 } from "../../lib/studio/pricing";
-import { allocateRowAvailability } from "../../lib/studio/dealAvailability";
+import { allocateRowAvailability, netOwnReservedBlocksLive } from "../../lib/studio/dealAvailability";
 import { callClaudeStreaming } from "../../lib/ai";
 import { heavyExtraLabour, eventTimingMultFor, SETTINGS_DEFAULTS, SIT_MULT_DEFAULTS } from "../../lib/ims/constants";
 import { resolveDateCategory, getEffectivePricing } from "../../lib/inventory/helpers";
@@ -2242,6 +2242,12 @@ export default function StudioApp() {
   // Blocks for just the active function's date — warms once loadAvailability/activeFnMeta exist
   // below. Powers Build view's availability-aware pricing for invId-sourced elements only.
   const [activeBlocksForDate, setActiveBlocksForDate] = useState({});
+  // Per-event breakdown of the SAME date's blocks ({ itemId: [{eventId, qty}, …] }) — fetchIMSData
+  // already computes this (blocksDetailForDate), it just used to get thrown away the moment this
+  // effect destructured only blocksForDate out of loadAvailability's result. getElPriceFromInventory
+  // needs it to net THIS deal's own reservation out live, instead of off the dcReservedInventory
+  // cache (see netOwnReservedBlocksLive's own comment for why that cache alone isn't reliable).
+  const [activeBlocksDetailForDate, setActiveBlocksDetailForDate] = useState({});
   // Same thing, but for EVERY function's own date, not just whichever one is the open Build tab —
   // { [date]: blocksForDate }. eventGrandTotal/calcFunctionBreakdown need each function's shortfall
   // priced against ITS OWN date, not the active function's; without this, checking availability at
@@ -4564,17 +4570,22 @@ export default function StudioApp() {
       const rawBlocksForDate = opts?.blocksForDate ?? activeBlocksForDate;
       // rawBlocksForDate's total for this item includes THIS SAME sold deal's own current real
       // reservation (reconcileSoldInventoryBlocks writes it into the same `blocks` table every
-      // other event's hold lives in) — without netting that back out, a sold deal fights itself:
-      // typing a LOWER qty still shows short, because "available" was computed as if some other
-      // deal already took the very units this deal itself is holding. dcReservedInventory (kept in
-      // sync by reconcileSoldInventoryBlocks after every real write) is this deal's own last-synced
-      // reservation per function — subtract it so only OTHER deals' usage counts against "available".
-      const cli = clientLedger.find((c) => c.id === activeClientId);
-      // opts.fnIdx is the function being priced (event-level callers pass it); without it this netted
-      // out the ACTIVE function's own reservation from every other function's date — see fnFloralRatio.
+      // other event's hold lives in — or IMS's own auto-confirm engine, which reserves a deal's very
+      // FIRST stock the moment it's sold) — without netting that back out, a sold deal fights itself:
+      // typing a LOWER qty still shows short, because "available" was computed as if some other deal
+      // already took the very units this deal itself is holding. Reads the live per-event blocks
+      // detail (blocksDetailForDate — same fetchIMSData payload rawBlocksForDate's total comes from,
+      // just the un-summed {eventId,qty} list) and sums whatever belongs to THIS deal's own
+      // event_order, rather than a dcReservedInventory cache that only this file's own reconcile ever
+      // writes — a deal whose only reservation came from IMS's auto-confirm (never edited in Build
+      // since booking) had no write to that cache at all, and read permanently short on its own stock.
+      const eo = (eventOrders || []).find((e) => e.clientId === activeClientId) || (eventOrders || []).find((e) => (e.clientName || "") === (clientName || "").trim());
+      const blocksDetailForDate = opts?.blocksDetailForDate ?? activeBlocksDetailForDate;
+      const blocksForDate = netOwnReservedBlocksLive(rawBlocksForDate, item.id, blocksDetailForDate, eo?.id);
+      // opts.fnIdx is the function being priced (event-level callers pass it); without it this
+      // scoped allocateRowAvailability's sibling-row check to the ACTIVE function only — unchanged
+      // from before, still needed below, just no longer feeding the dcReservedInventory lookup.
       const fnIdx = opts?.fnIdx ?? activeFnIdx;
-      const ownReserved = cli?.dcReservedInventory?.[fnIdx]?.[item.id] || 0;
-      const blocksForDate = ownReserved > 0 ? { ...rawBlocksForDate, [item.id]: Math.max(0, (rawBlocksForDate[item.id] || 0) - ownReserved) } : rawBlocksForDate;
       // Owner ask: fixed venues (our own properties) keep a permanent standing allocation of
       // certain items — WARM LED, etc. That stock exists to furnish THOSE venues, not to be sold
       // out from under them by an outdoor (non-fixed-venue) deal. availableAtVenue already computes
@@ -4641,7 +4652,7 @@ export default function StudioApp() {
     }
     const unitPrice = priceForInvItem(item, rcFactorByKey, imsInventory, el.kitOverrides);
     return { rc: null, unitPrice, fullUnitPrice: unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName, crossFnTake, el.repeatOverride), area: 0, warning: null, isFloralBlend: false, realPct: null };
-  }, [imsInventory, rcFactorByKey, rcCostPctForSub, activeBlocksForDate, dealCheckData, studioFloralData, rcFloralModeByKey, floralRatio, fvCfgForRepeat, clientLedger, activeClientId, activeFnIdx, activeFnMeta, clientDate]);
+  }, [imsInventory, rcFactorByKey, rcCostPctForSub, activeBlocksForDate, activeBlocksDetailForDate, dealCheckData, studioFloralData, rcFloralModeByKey, floralRatio, fvCfgForRepeat, eventOrders, activeClientId, clientName, activeFnIdx, activeFnMeta, clientDate]);
   // Shared SMB/flat rate resolution — the one place `getElPrice`, `getElPriceForFn`, and
   // `calcFullEventCost` all resolve a rate-card item's base rate for an element's size, now with
   // the sub-category scaling factor applied. Previously duplicated verbatim in all three
@@ -5383,6 +5394,13 @@ export default function StudioApp() {
     const all = collectAllFunctionData();
     return all[activeFnIdx] ? findSiblingFnInvUse(all[activeFnIdx], all) : {};
   }, [collectAllFunctionData, activeFnIdx]);
+  // sub-category → sibling-function items NOT yet matched exactly — drives the orange 📦 stock icon
+  // (as opposed to activeSiblingFnInvUse's orange RATE, shown only once an exact match is picked).
+  // Heads-up only, same as activeSiblingFnInvUse — not gated by hideDiscountFromClient/Filler date.
+  const activeSiblingFnSubcatOpportunity = useMemo(() => {
+    const all = collectAllFunctionData();
+    return all[activeFnIdx] ? findSiblingFnSubcatOpportunity(all[activeFnIdx], all, imsInventory) : {};
+  }, [collectAllFunctionData, activeFnIdx, imsInventory]);
 
   const calcFunctionCost = useCallback((fnData) => {
     if (!fnData) return { decor: 0, transport: 0, grand: 0 };
@@ -10135,9 +10153,9 @@ export default function StudioApp() {
   // (getElPrice/calcElsCost are called inline during render — no per-element async fetch).
   useEffect(() => {
     const date = activeFnMeta?.date || clientDate || "";
-    if (!date) { setActiveBlocksForDate({}); return; }
+    if (!date) { setActiveBlocksForDate({}); setActiveBlocksDetailForDate({}); return; }
     let cancelled = false;
-    loadAvailability(date).then(({ blocksForDate }) => { if (!cancelled) setActiveBlocksForDate(blocksForDate || {}); }).catch(() => { if (!cancelled) setActiveBlocksForDate({}); });
+    loadAvailability(date).then(({ blocksForDate, blocksDetailForDate }) => { if (!cancelled) { setActiveBlocksForDate(blocksForDate || {}); setActiveBlocksDetailForDate(blocksDetailForDate || {}); } }).catch(() => { if (!cancelled) { setActiveBlocksForDate({}); setActiveBlocksDetailForDate({}); } });
     return () => { cancelled = true; };
   }, [activeFnMeta?.date, clientDate, loadAvailability, blocksVersion]);
 
@@ -11459,7 +11477,7 @@ export default function StudioApp() {
     showLedgerRestoreWarning: ledgerLoadError && !activeClientId && !!restoreRef.current?.id,
     retryLedgerLoad,
     deleteSessionRows,
-    showClientForm, setShowClientForm, clientLedger, setClientLedger, saveClientLedger, activeClientId, setActiveClientId, clientSearch, setClientSearch, hideDiscountFromClient, guestPriceMultiplier, dateCategoryMultiplierFor, activeCrossFnReuseQty, activeSiblingFnInvUse,
+    showClientForm, setShowClientForm, clientLedger, setClientLedger, saveClientLedger, activeClientId, setActiveClientId, clientSearch, setClientSearch, hideDiscountFromClient, guestPriceMultiplier, dateCategoryMultiplierFor, activeCrossFnReuseQty, activeSiblingFnInvUse, activeSiblingFnSubcatOpportunity,
     snapshotBuildState, restoreBuildState, switchActiveFn, fnSnapHasData, fnSnapHasBuild,
     sessionHistoryExpanded, setSessionHistoryExpanded,
     // LMS

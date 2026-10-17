@@ -72,3 +72,37 @@ export function findSiblingFnInvUse(fnData, allFns) {
   });
   return out;
 }
+
+// Build's orange "📦 could reuse a sibling function's item" marker — a step EARLIER than
+// findSiblingFnInvUse above. That one flags an item already matching exactly; this one flags a
+// DIFFERENT item that could be SWAPPED to the one a sibling function (same venue, same/next calendar
+// day — identical adjacency rule) is using from the SAME sub-category, so the salesperson sees the
+// discount opportunity before taking it, not just confirmation after. Once the swap happens, the
+// element's invId matches exactly and findSiblingFnInvUse's own orange rate takes over — this map
+// naturally stops flagging it (the opportunity is gone, already taken), so the two markers never
+// fight: at most one is ever shown for the same element at a time.
+// Returns { [subcatKey]: [{invId, name, label}, …] } — deduped by invId within each sub-category.
+export function findSiblingFnSubcatOpportunity(fnData, allFns, imsInventory) {
+  const out = {};
+  if (!fnData?.fnVenue || !fnData?.fnDate) return out;
+  const venue = fnData.fnVenue.toLowerCase().trim();
+  const t = Date.parse(fnData.fnDate);
+  if (!Number.isFinite(t)) return out;
+  const invById = new Map((imsInventory || []).map(i => [i.id, i]));
+  (allFns || []).forEach(f => {
+    if (f.fnIdx === fnData.fnIdx || !f.fnVenue || !f.fnDate) return;
+    if (f.fnVenue.toLowerCase().trim() !== venue) return;
+    const t2 = Date.parse(f.fnDate);
+    if (!Number.isFinite(t2) || Math.abs(Math.round((t2 - t) / (24 * 60 * 60 * 1000))) > 1) return;
+    const label = f.fnType || `Function ${f.fnIdx + 1}`;
+    Object.entries(computeFnInvQty(f)).forEach(([invId, q]) => {
+      if (!(q > 0)) return;
+      const item = invById.get(invId);
+      const subcat = String(item?.subCat || item?.subcategory || "").trim().toLowerCase();
+      if (!subcat) return;
+      const bucket = (out[subcat] ||= []);
+      if (!bucket.some(e => e.invId === invId)) bucket.push({ invId, name: item?.name || invId, label });
+    });
+  });
+  return out;
+}

@@ -707,7 +707,7 @@ export default function StudioBuild({ ctx }) {
     // zone photo groups (hand-picked leading photos, keyed by zone + function)
     zoneGroups = {}, writeZoneGroup,
     // date demand
-    dateTypes, clientLedger, activeClientId, saveClientLedger, hideDiscountFromClient, guestPriceMultiplier, activeCrossFnReuseQty, activeSiblingFnInvUse = {},
+    dateTypes, clientLedger, activeClientId, saveClientLedger, hideDiscountFromClient, guestPriceMultiplier, activeCrossFnReuseQty, activeSiblingFnInvUse = {}, activeSiblingFnSubcatOpportunity = {},
     // build canvas
     setShowCosts, grandTotal, agencyFeeAmt, totalCost, transportCalc, pricingReady,
     savedInsps, setStep, setPreviewImg,
@@ -4107,6 +4107,12 @@ undefined
                   // same or next day (findSiblingFnInvUse) — so the salesperson knows it is being reused.
                   const _siblingFns = el.invId ? activeSiblingFnInvUse[el.invId] : null;
                   const invItem = el.invId ? (imsInventory||[]).find(i=>i.id===el.invId) : null;
+                  // Orange 📦 = NOT this same item, but a DIFFERENT item from the same sub-category is
+                  // used in a sibling function (same venue, same/next day) — swapping to it would earn
+                  // the same reuse discount _siblingFns already flags for an exact match. Once that
+                  // swap happens this naturally stops firing (el.invId now matches exactly, so
+                  // _siblingFns takes over instead) — the two never show at once for the same element.
+                  const _subcatOpportunity = (!_siblingFns && invItem) ? (activeSiblingFnSubcatOpportunity[String(invItem.subCat||invItem.subcategory||"").trim().toLowerCase()] || null) : null;
                   const thumbItem = invItem || (imsInventory||[]).find(i=>i.name===el.name);
                   // A pure flower-recipe element (patternId, no invId) has no IMS inventory row at
                   // all, so thumbItem is always empty for it — it fell back to the generic box icon
@@ -4163,7 +4169,7 @@ undefined
                         {isKit&&<span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(99,102,241,0.15)",color:"#6366F1",fontWeight:700}}>KIT</span>}
                         {!rc&&!el.invId&&!el.patternId&&!el.mandiId&&<span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700}}>NEW</span>}
                         {el.invId&&priceInfo.warning&&<span title={priceInfo.warning} style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700}}>⚠ short</span>}
-                        {(rc||el.invId)&&<span onClick={()=>openAvailModal(k, idx, el, rc)} title="Check stock availability & pick an item" style={{cursor:"pointer",fontSize:12,opacity:0.5,padding:"0 1px",lineHeight:1}}><IconBox size={12}/></span>}
+                        {(rc||el.invId)&&<span onClick={()=>openAvailModal(k, idx, el, rc)} title={_subcatOpportunity?`Also used in ${[...new Set(_subcatOpportunity.map(o=>o.label))].join(", ")} (${_subcatOpportunity.map(o=>o.name).join(", ")}) — swap to it for the repeat discount`:"Check stock availability & pick an item"} style={{cursor:"pointer",fontSize:12,opacity:_subcatOpportunity?1:0.5,padding:"0 1px",lineHeight:1,color:_subcatOpportunity?"#F97316":undefined}}><IconBox size={12}/></span>}
                         {/* Only when the manually-pinned stock item's name actually differs from
                             what's already shown above (invItem?.name || el.name) — the box icon
                             right before this already opens the same "tap to change" picker, so a
