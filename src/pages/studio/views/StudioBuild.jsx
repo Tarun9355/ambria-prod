@@ -17,7 +17,7 @@ import { paletteSearch, paletteMatches } from "../../../components/studio/filter
 import { resolveTrussConfig } from "../../../lib/studio/pricing";
 import { qtyUsedElsewhereInBuild } from "../../../lib/studio/dealAvailability";
 import { logDiscountToClientToggle } from "../../../lib/studio/userActions";
-import { isHiddenSubcat } from "../../../lib/rateCard";
+import { isHiddenSubcat, canFulfillShortfall } from "../../../lib/rateCard";
 import { groupIdsForZones } from "../../../lib/studio/zoneGroups";
 import { CUSTOM_ZONE_TAG_PREFIX } from "../../../lib/studio/keys.js";
 import { thumbUrl, fitUrl } from "../../../lib/studio/thumb.js";
@@ -4112,6 +4112,7 @@ undefined
                           // % of the item's production cost, per sub-category). The badge stays as a
                           // heads-up, not a lock.
                           const remaining=remainingForItem(it.id,k); const isFullyUsed=remaining!=null&&remaining<=0;
+                          const canMake=canFulfillShortfall(it);
                           // Real stock for THIS EVENT DATE, not just "used elsewhere in this same
                           // deal" — remainingForItem above only warns once a sibling zone/function
                           // has already drawn on the item, so an item every OTHER event already has
@@ -4134,9 +4135,9 @@ undefined
                                 <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.name}</span>
                                 {isKit&&<span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(99,102,241,0.15)",color:"#6366F1",fontWeight:700,flexShrink:0}}>KIT</span>}
                                 {isDateUnavail
-                                  ? <span title="0 free for this event date — will price at cost% instead of rental" style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700,flexShrink:0}}>0 free — not available</span>
+                                  ? <span title={canMake?"0 free for this event date — will price at cost% instead of rental":"0 free for this event date and can't be made in production — will show Out of stock"} style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700,flexShrink:0}}>{canMake?"0 free — not available":"0 free — out of stock"}</span>
                                   : (isFullyUsed
-                                    ? <span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700,flexShrink:0}}>fully used — priced at cost%</span>
+                                    ? <span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700,flexShrink:0}}>{canMake?"fully used — priced at cost%":"fully used — out of stock"}</span>
                                     : (remaining!=null&&<span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700,flexShrink:0}}>{remaining} left for this event</span>))}
                               </div>
                               <div style={{fontSize:11,color:textS,marginTop:2}}>{(it.subCat||it.subcategory)?(it.subCat||it.subcategory)+" › ":""}{it.cat}{itemDimsText(it)?` · ${itemDimsText(it)}`:""}</div>
@@ -4249,7 +4250,7 @@ undefined
                         {showCosts&&<span title={el.swappedFrom?`Swapped within the same category — the original item had none free on this date`:_siblingFns?`Also used in ${_siblingFns.join(", ")} — same venue, same/next day`+(_rateDiscounted?" (Repeat discount applied)":""):_rateDiscounted?"Rate per unit — Repeat/standing-venue discount applied":"Rate per unit"} style={{flexShrink:0,fontSize:11,fontWeight:600,color:(el.swappedFrom||_siblingFns)?"#F97316":_rateDiscounted?"#10B981":textS,whiteSpace:"nowrap"}}>{_effUp>0?`₹${Math.round(_effUp).toLocaleString("en-IN")}/${isTrussSqft?"truss sqft":(invItem?.unit||rc?.unit||el.unit)}`:"₹0"}</span>}
                         {isKit&&<span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(99,102,241,0.15)",color:"#6366F1",fontWeight:700}}>KIT</span>}
                         {!rc&&!el.invId&&!el.patternId&&!el.mandiId&&<span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700}}>NEW</span>}
-                        {el.invId&&priceInfo.warning&&<span title={priceInfo.warning} style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700}}>⚠ short</span>}
+                        {el.invId&&priceInfo.warning&&<span title={priceInfo.warning} style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700}}>{priceInfo.outOfStock?"⚠ out of stock":"⚠ short"}</span>}
                         {(rc||el.invId)&&<span onClick={()=>openAvailModal(k, idx, el, rc)} title={_subcatOpportunity?`Also used in ${[...new Set(_subcatOpportunity.map(o=>o.label))].join(", ")} (${_subcatOpportunity.map(o=>o.name).join(", ")}) — swap to it for the repeat discount`:"Check stock availability & pick an item"} style={{cursor:"pointer",fontSize:12,opacity:_subcatOpportunity?1:0.5,padding:"0 1px",lineHeight:1,color:_subcatOpportunity?"#F97316":undefined}}><IconBox size={12}/></span>}
                         {/* Only when the manually-pinned stock item's name actually differs from
                             what's already shown above (invItem?.name || el.name) — the box icon

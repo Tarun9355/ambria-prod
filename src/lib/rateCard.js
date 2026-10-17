@@ -51,10 +51,29 @@ export function getFloralMode(rc, subFloralModeByKey) {
 // Sub-Categories — several independent copies of that exact lookup exist across the app, this just
 // adds the per-item override on top of whichever one the caller already has in scope).
 export function oosCostPctFor(item, subCatCostPctFn) {
+  // "Can be made" (IMS Inventory's checkbox, item.canBeMade) gates whether a shortfall on this
+  // item gets priced at cost% AT ALL. An item nobody can actually produce more of has no "cost to
+  // produce a fresh unit" to charge — returning 0% here, not skipping the caller, means every
+  // existing `Math.max(floor, cost * pct/100)` shortfall formula across the app (Build, Deal
+  // Check's rollup/pills, kitShortfallSplit) automatically floors to the plain owned/rental rate
+  // with no code change at each call site — see canFulfillShortfall below, the one place that
+  // reads item.canBeMade, so every consumer (this pricing floor, Build/Deal Check's "out of stock"
+  // flag, the availability picker) agrees on what it means.
+  if (!canFulfillShortfall(item)) return 0;
   const raw = item?.oosCostPct;
   const v = Number(raw);
   if (raw !== null && raw !== undefined && raw !== "" && isFinite(v) && v >= 0) return v;
   return subCatCostPctFn(item?.subCat || item?.subcategory);
+}
+// Can this item's shortfall be fulfilled by production/purchase at all? IMS Inventory's "Can be
+// made" checkbox (item.canBeMade) — missing/undefined (every item before this field existed, and
+// any item not yet reviewed) defaults to true so nothing's behavior changes until someone
+// explicitly unticks it. Only an explicit `false` means "no, this is genuinely unavailable" —
+// at which point a shortfall is never priced as production (oosCostPctFor above returns 0%,
+// flooring to the plain rate) and callers should show "Out of stock" instead of a cost% badge,
+// and the availability picker should refuse to let it be picked while it's short.
+export function canFulfillShortfall(item) {
+  return item?.canBeMade !== false;
 }
 
 // Is this inventory item's sub-category flagged tag_hidden (rate_card_categories.tag_hidden, set in

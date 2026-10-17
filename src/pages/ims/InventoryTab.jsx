@@ -414,6 +414,7 @@ Rules:
         cost: costNum,
         breakagePct: breakNum,
         oosCostPct: oosNum,
+        canBeMade: form.canBeMade !== false,
         baseColour: form.baseColour || "",
         paintCost: paintNum,
         paintable: paintableFlag,
@@ -424,7 +425,7 @@ Rules:
         photoUrls: img ? [img] : [],
       }];
     });
-    setForm({ name: "", cat: "Florals", subCat: "", type: "Budgeted", itemClass: "discrete", qty: "", unit: "Piece", loc: "Production House", price: "", cost: "", breakagePct: 0, oosCostPct: "", dimL: "", dimW: "", dimH: "", dimUnit: "Feet", printL: "", printW: "", printUnit: "Feet", baseColour: "", paintCost: "", notes: "", img: "" });
+    setForm({ name: "", cat: "Florals", subCat: "", type: "Budgeted", itemClass: "discrete", qty: "", unit: "Piece", loc: "Production House", price: "", cost: "", breakagePct: 0, oosCostPct: "", canBeMade: true, dimL: "", dimW: "", dimH: "", dimUnit: "Feet", printL: "", printW: "", printUnit: "Feet", baseColour: "", paintCost: "", notes: "", img: "" });
     setAddModal(false);
     // Reveal the new row: the item is appended at the END, so with active filters or while on
     // page 1 of 20+ it would be off-screen — making a successful save look like "added but not
@@ -466,6 +467,7 @@ Rules:
       cost: String(it.cost ?? ""),
       breakagePct: it.breakagePct ?? 0,
       oosCostPct: it.oosCostPct ?? "",
+      canBeMade: it.canBeMade !== false,
       notes: it.notes || "",
       img: it.img || (Array.isArray(it.photoUrls) && it.photoUrls[0]) || "",
       dimL: it.dims_LxWxH?.l ?? "",
@@ -569,6 +571,7 @@ Rules:
         cost: costNum,
         breakagePct: breakNum,
         oosCostPct: oosNum,
+        canBeMade: f.canBeMade !== false,
         notes: f.notes,
         img: f.img,
         photoUrls: f.img ? [f.img] : [],
@@ -1248,6 +1251,18 @@ Rules:
                   className="mt-1 w-full border rounded-lg px-3 py-2 text-sm" />
               </div>
             ))}
+            {/* Can be made — gates whether a shortfall on THIS item bills at the Out of Stock Cost %
+                above at all. Unticked, a short unit never gets a production-cost price: Build/Deal
+                Check instead flag it "Out of stock" and the availability picker won't let it be
+                picked while it's short — see canFulfillShortfall (lib/rateCard.js). Defaults ON so
+                nothing changes for items nobody has reviewed yet. */}
+            <div className="col-span-2">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={form.canBeMade !== false} onChange={(e) => setForm({ ...form, canBeMade: e.target.checked })} className="w-4 h-4 accent-indigo-600" />
+                <span className="text-xs font-medium text-gray-700">🛠️ Can be made in production</span>
+                <span className="text-xs text-gray-400">— unticked, a shortfall shows "Out of stock" instead of pricing at cost%</span>
+              </label>
+            </div>
             {/* Location dropdown */}
             <div>
               <label className="text-xs text-gray-500">Location</label>
@@ -1578,6 +1593,17 @@ Rules:
                   <input type="number" min="0" max="100" value={editForm.oosCostPct ?? ""} onChange={(e) => setEditForm((f) => ({ ...f, oosCostPct: e.target.value }))}
                     placeholder={"Sub-category default"} className="mt-1 w-full border rounded-lg px-3 py-2 text-sm" />
                   <div className="text-[10px] text-gray-400 mt-0.5">When this item is short for a booking, Studio bills the shortfall at Cost × this % — leave blank to use the sub-category's own default (Admin → Settings → Sub-Categories).</div>
+                </div>
+                {/* Can be made — gates whether a shortfall on THIS item bills at the Out of Stock
+                    Cost % above at all. Unticked, Build/Deal Check flag a short unit "Out of stock"
+                    instead of a cost% price, and the availability picker won't offer it while
+                    short — see canFulfillShortfall (lib/rateCard.js). Defaults ON. */}
+                <div className="col-span-2">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" checked={editForm.canBeMade !== false} onChange={(e) => setEditForm((f) => ({ ...f, canBeMade: e.target.checked }))} className="w-4 h-4 accent-indigo-600" />
+                    <span className="text-xs font-medium text-gray-700">🛠️ Can be made in production</span>
+                    <span className="text-xs text-gray-400">— unticked, a shortfall shows "Out of stock" instead of pricing at cost%</span>
+                  </label>
                 </div>
               </div>
 

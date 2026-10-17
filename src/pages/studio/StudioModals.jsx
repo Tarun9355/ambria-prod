@@ -73,6 +73,9 @@ export default function StudioModals({ ctx }) {
     // per-element / per-reference stock availability picker — shared by Build's own 📦 icon and
     // the Add Production/Buying Item modal above
     availModal, setAvailModal, openAvailModal, saveAvailPick, saveAvailSplit,
+    // Pre-Sold gate (markSold's scanOutOfStockElements, StudioApp.jsx) — a hard block, not a
+    // warning, so closing it just cancels the Sold confirm rather than letting it proceed.
+    oosGateModal, setOosGateModal, setActiveFnIdx,
     // fabricPickerTarget
     fabricPickerTarget, setFabricPickerTarget, fnBuilds, setFnBuilds,
     zoneConfig, setZoneConfig, libItems,
@@ -283,20 +286,26 @@ export default function StudioModals({ ctx }) {
                   {availModal.items.map(it=>{
                     const sel = inSplit ? splitIds.includes(it.id) : availModal.selectedId===it.id;
                     const out = it.free<=0;
+                    // Out of stock AND can't be made in production (IMS Inventory's "Can be made"
+                    // checkbox, default on) — genuinely unpickable, not a shortfall Build can price
+                    // at cost%. Greyed out and inert rather than selectable only to price wrong or
+                    // get caught later by the pre-Sold gate (markDealSold, StudioApp.jsx).
+                    const unpickable = out && it.canMake === false;
                     // Already placed somewhere else for this same guest (another zone/function of
                     // the deal) — picking it here would be a swap of that piece, so flag it orange.
                     const usedIn = it.usedIn || [];
                     const swap = usedIn.length > 0;
                     const SWAP = "#F97316";
                     return (
-                      <div key={it.id} onClick={()=>inSplit ? toggleSplitId(it.id) : setAvailModal(m=>({...m,selectedId: sel?null:it.id}))}
-                        title={swap ? `Already used for this guest: ${usedIn.join(" · ")}` : it.venueSlack?.length ? `Allocated to other Fixed Venues (not counted as free): ${it.venueSlack.map(s=>`${s.slack} ${s.name}`).join(" · ")}` : undefined}
-                        style={{cursor:"pointer",borderRadius:12,overflow:"hidden",border:`2px solid ${sel?"#059669":swap?SWAP:border}`,background:isDark?"#0F0F1A":"#FAFAFA",position:"relative"}}>
+                      <div key={it.id} onClick={()=>{ if (unpickable) return; inSplit ? toggleSplitId(it.id) : setAvailModal(m=>({...m,selectedId: sel?null:it.id})); }}
+                        title={unpickable ? "Out of stock and can't be made in production — pick a different item" : swap ? `Already used for this guest: ${usedIn.join(" · ")}` : it.venueSlack?.length ? `Allocated to other Fixed Venues (not counted as free): ${it.venueSlack.map(s=>`${s.slack} ${s.name}`).join(" · ")}` : undefined}
+                        style={{cursor:unpickable?"not-allowed":"pointer",borderRadius:12,overflow:"hidden",border:`2px solid ${sel?"#059669":swap?SWAP:border}`,background:isDark?"#0F0F1A":"#FAFAFA",position:"relative",opacity:unpickable?0.55:1}}>
                         {sel&&<span style={{position:"absolute",top:6,left:6,zIndex:2,fontSize:9,fontWeight:700,padding:"2px 7px",borderRadius:6,background:"#059669",color:"#fff"}}>✓</span>}
                         <div title="Free on the event date" style={{position:"absolute",top:6,right:6,zIndex:2,fontSize:12,fontWeight:800,minWidth:22,textAlign:"center",padding:"2px 7px",borderRadius:8,background:out?"rgba(239,68,68,0.92)":"rgba(16,185,129,0.92)",color:"#fff"}}>{it.free}</div>
                         {it.photo ? <img src={thumbUrl(it.photo, AVAIL_THUMB)} alt="" decoding="async" style={{width:"100%",height:120,objectFit:"cover",display:"block",opacity:out?0.5:1}}/> : <div style={{width:"100%",height:120,display:"flex",alignItems:"center",justifyContent:"center",fontSize:30,background:isDark?"#1a1a2e":"#eee"}}><IconBox size={22}/></div>}
                         <div style={{padding:"8px 10px"}}>
                           <div style={{fontSize:11,fontWeight:600,color:textP,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.name}</div>
+                          {unpickable && <div style={{fontSize:8.5,marginTop:1,color:"#EF4444",fontWeight:700}}>Out of stock — can't be made</div>}
                           {/* The corner badge is deliberately a bare number (no room for a unit in a
                               22px-wide tag) — this line spells it out. availModal.unitLabel is a
                               caller override (Deal Check's carpet picker passes "sqft") for when the
@@ -342,6 +351,37 @@ export default function StudioModals({ ctx }) {
         </div>
         );
       })()}
+
+      {/* Pre-Sold gate — markSold (StudioApp.jsx) scans the whole build and opens this instead of
+          its usual confirm dialog when anything is both short and can't be made in production
+          (canFulfillShortfall, lib/rateCard.js). Deliberately has no "Sold anyway" — closing it
+          just cancels the confirm, same as a missing name/date/venue does above it. "Go fix"
+          switches to the flagged element's own function/tab so the salesperson lands right next to
+          its 📦 availability icon rather than hunting for it across a multi-function deal. */}
+      {oosGateModal && oosGateModal.length > 0 && (
+        <div onClick={() => setOosGateModal(null)} style={{position:"fixed",inset:0,zIndex:9400,background:"rgba(10,10,20,0.85)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+          <div onClick={e => e.stopPropagation()} style={{width:"min(520px, 100%)",maxHeight:"80vh",background:isDark?"#0F0F1A":"#fff",borderRadius:14,border:`1px solid ${border}`,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+            <div style={{padding:"18px 20px",borderBottom:`1px solid ${border}`}}>
+              <div style={{fontSize:16,fontWeight:700,color:"#EF4444",display:"flex",alignItems:"center",gap:8}}><IconBox size={16}/> Can't confirm — items out of stock</div>
+              <div style={{fontSize:12.5,color:textS,marginTop:6,lineHeight:1.5}}>These items are out of stock for this date and can't be made in production. Pick an alternative with the 📦 availability icon on each one before this deal can be marked Sold.</div>
+            </div>
+            <div style={{padding:"4px 20px",overflowY:"auto",flex:1}}>
+              {oosGateModal.map((f, i) => (
+                <div key={i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"10px 0",borderBottom:i<oosGateModal.length-1?`1px solid ${border}`:"none"}}>
+                  <div style={{minWidth:0}}>
+                    <div style={{fontSize:13,fontWeight:600,color:textP,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{f.name}</div>
+                    <div style={{fontSize:11,color:textS,marginTop:2}}>{f.fnLabel} · {f.zoneKey}</div>
+                  </div>
+                  <button onClick={() => { setActiveFnIdx(f.fnIdx); setOosGateModal(null); }} style={{padding:"6px 12px",borderRadius:7,border:"none",background:"#EF4444",color:"#fff",fontSize:11.5,fontWeight:700,cursor:"pointer",flexShrink:0}}>Go fix</button>
+                </div>
+              ))}
+            </div>
+            <div style={{padding:"12px 20px",borderTop:`1px solid ${border}`,textAlign:"right"}}>
+              <button onClick={() => setOosGateModal(null)} style={{padding:"8px 16px",borderRadius:8,border:`1px solid ${border}`,background:"transparent",color:textS,fontSize:12,fontWeight:600,cursor:"pointer"}}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Extracted to its own memoized component — see VideoPlayerModal.jsx's header comment for
           why (reported YouTube playback lag: this file re-renders on every realtime/autosave tick,

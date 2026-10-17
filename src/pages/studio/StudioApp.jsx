@@ -86,7 +86,7 @@ import { heavyExtraLabour, eventTimingMultFor, SETTINGS_DEFAULTS, SIT_MULT_DEFAU
 import { resolveDateCategory, getEffectivePricing } from "../../lib/inventory/helpers";
 import { itemImsSubcat, lookupBySubcat, priceForInvItem, itemDimsText, walkKitUnits } from "../../lib/ims/helpers";
 import { matchFlowerPattern, floralPatternUnitRates, sizeClassToPatternKey, normalizeSizeClass, kitFloralCompDelta, resolveMandiBuy, mandiSwapOf } from "../../lib/ims/flowerHelpers";
-import { rowToRcItem, rcItemToRow, rcIsSMB, getFloralMode, oosCostPctFor } from "../../lib/rateCard";
+import { rowToRcItem, rcItemToRow, rcIsSMB, getFloralMode, oosCostPctFor, canFulfillShortfall } from "../../lib/rateCard";
 import { supabase, fetchAll, upsertRow, deleteRow, subscribeTable, keepaliveUpsert } from "../../lib/supabase";
 import {
   rowToLibItem, libItemToRow, fetchLibraryItemsByIds, fetchLibraryItemsByUrls,
@@ -2049,6 +2049,12 @@ export default function StudioApp() {
   // so both Build's own 📦 icon AND the Add Production/Buying Item modal (StudioModals.jsx) can
   // trigger the exact same picker instead of each growing its own copy.
   const [availModal, setAvailModal] = useState(null);
+  // Pre-Sold gate (owner ask, 2026-10-17): markSold scans the whole build for elements that are
+  // short AND can't be made in production (canFulfillShortfall false) right before it ever asks
+  // "Confirm booking?" — null when nothing's flagged, else the array scanOutOfStockElements
+  // returned. Blocking, not a warning: closing it just cancels markSold, same as a failed
+  // name/date/venue check above it. See scanOutOfStockElements's own comment for why.
+  const [oosGateModal, setOosGateModal] = useState(null);
   // Swap modal local state — lifted to App scope to avoid hook-reset on parent re-render.
   const [dcSwapSearch, setDcSwapSearch] = useState("");
   const [dcSwapPicked, setDcSwapPicked] = useState(null);
@@ -4638,11 +4644,18 @@ export default function StudioApp() {
       const ownedRate = priceForInvItem(item, rcFactorByKey, imsInventory, el.kitOverrides);
       // Floor: cost%-of-production must never undercut what the item would've sold for if it
       // were simply in stock — a true shortfall is never cheaper for the client than owning it.
+      // When the item can't be made (canFulfillShortfall false), oosCostPctFor itself returns 0%,
+      // so this floors to ownedRate — no production premium for something that can't be produced.
       const shortRate = Math.max(ownedRate, (Number(item.cost) || 0) * (oosCostPctFor(item, rcCostPctForSub) / 100));
       const shortCost = shortQty * shortRate;
       const lineCost = repeatAdjustedLineCost(item, ownedQty, ownedRate, opts?.zc, opts?.venueName, crossFnTake, el.repeatOverride) + shortCost;
       const unitPrice = qty > 0 ? lineCost / qty : ownedRate;
-      const warning = shortQty > 0 ? `⚠ ${shortQty} of ${qty} not free in stock for this date — priced at cost%` : null;
+      // outOfStock: genuinely nothing can be done about this shortfall (no stock, can't be made
+      // either) — StudioBuild.jsx's badge reads this to show "Out of stock" instead of "priced at
+      // cost%", openAvailModal (StudioApp.jsx) refuses to let this item be picked while it's short,
+      // and the pre-Sold gate (markDealSold) scans every element for it.
+      const outOfStock = shortQty > 0 && !canFulfillShortfall(item);
+      const warning = shortQty > 0 ? (outOfStock ? `⚠ ${shortQty} of ${qty} out of stock for this date — pick an alternative` : `⚠ ${shortQty} of ${qty} not free in stock for this date — priced at cost%`) : null;
       // `available` here is "how much of THIS row's own qty is real stock" (= ownedQty) — the sole
       // consumer (StudioBuild.jsx's isUnavail badge) only ever checks <= 0, which ownedQty matches
       // exactly: 0 iff nothing was left for this row's turn in the allocation above.
@@ -4654,7 +4667,7 @@ export default function StudioApp() {
       // item that ever took this availability-checked path — which is every element card in Build.
       // shortCost (raw, pre-date-multiplier) — getElPrice's own wrapper reads this to keep the
       // date-category multiplier off a true shortfall's cost-basis price (see its own comment).
-      return { rc: null, unitPrice, fullUnitPrice: ownedRate, lineCost, area: 0, warning, isFloralBlend: false, realPct: null, available: ownedQty, shortCost };
+      return { rc: null, unitPrice, fullUnitPrice: ownedRate, lineCost, area: 0, warning, isFloralBlend: false, realPct: null, available: ownedQty, shortCost, outOfStock };
     }
     const unitPrice = priceForInvItem(item, rcFactorByKey, imsInventory, el.kitOverrides);
     return { rc: null, unitPrice, fullUnitPrice: unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName, crossFnTake, el.repeatOverride), area: 0, warning: null, isFloralBlend: false, realPct: null };
@@ -5365,6 +5378,39 @@ export default function StudioApp() {
   }, [fn, clientDate, venue, clientShift, clientPax, clientPalette, clientFlowerPalette, zoneElements, zoneConfig, enabledEls, elSelectedPhoto, itemQty, itemGrades, activeZones, zoneOrder, customZones, elTiers, floralRatio, customGensets, customTripRate, elNotes, floralOverrides, extraFunctions, fnBuilds, activeFnIdx]);
   // Layout, same reasoning as snapshotFnRef / saveSessionRef — read from synchronous paths.
   useLayoutEffect(() => { collectAllFunctionDataRef.current = collectAllFunctionData; });
+
+  // Pre-Sold gate (owner ask, 2026-10-17): "ensure we have no deals that go out with out-of-stock
+  // stuff" — walks every function/zone/element of the WHOLE build (not just the active tab) the
+  // exact same way calcFunctionCost already does for its own total (same fBlocksForDate-per-fnDate,
+  // same cross-function reuse pool), but keeps every element's own getElPriceForFn result instead of
+  // summing it, so it can report which ones came back outOfStock (StudioApp.jsx's
+  // getElPriceFromInventory — short AND canFulfillShortfall false, lib/rateCard.js). Only plain
+  // invId elements are checked — a kit/pattern/mandi element never sets outOfStock at all.
+  const scanOutOfStockElements = useCallback(() => {
+    const allFns = collectAllFunctionData();
+    const flagged = [];
+    allFns.forEach((fnData) => {
+      const fZoneElements = fnData.zoneElements || {};
+      const fEnabledEls = fnData.enabledEls || {};
+      const fZoneConfig = fnData.zoneConfig || {};
+      const fFloralRatio = typeof fnData.floralRatio === "number" ? fnData.floralRatio : 70;
+      const fBlocksForDate = blocksByDate[fnData.fnDate];
+      const crossFnPrevFn = (!hideDiscountFromClient && !isFillerDateFor(fnData.fnDate)) ? findCrossFnReuseSource(fnData, allFns) : null;
+      const pricingPool = crossFnPrevFn ? new Map(Object.entries(computeFnInvQty(crossFnPrevFn))) : null;
+      Object.entries(fZoneElements).forEach(([zk, elems]) => {
+        if (!fEnabledEls[zk] || !Array.isArray(elems)) return;
+        elems.forEach((el, i) => {
+          if (!el?.invId || !(Number(el.qty) || 0) > 0) return;
+          const r = getElPriceForFn(el, fZoneConfig[zk], fFloralRatio, true, fnData.fnVenue, fBlocksForDate, fnData.fnDate, pricingPool, fnData.fnIdx, zk, i);
+          if (r.outOfStock) {
+            const item = (imsInventory || []).find((x) => x.id === el.invId);
+            flagged.push({ fnIdx: fnData.fnIdx, fnLabel: fnData.fnType || `Function ${fnData.fnIdx + 1}`, zoneKey: zk, name: item?.name || el.name || "Item" });
+          }
+        });
+      });
+    });
+    return flagged;
+  }, [collectAllFunctionData, blocksByDate, hideDiscountFromClient, getElPriceForFn, imsInventory]);
 
   // The SAME cross-function reuse quantities calcFunctionCost/calcFunctionBreakdown already build
   // and fold into the Live Estimate/Summary/Deal Check totals for the active function — but Build's
@@ -8117,6 +8163,12 @@ export default function StudioApp() {
       if (!clientName.trim()) { showMsg("Client name is required", "red"); return; }
       if (!clientDate) { showMsg("Event date is required", "red"); return; }
       if (!venue) { showMsg("Venue is required", "red"); return; }
+      // Pre-Sold gate — see scanOutOfStockElements's own comment. A hard block, not a warning like
+      // the saya/competition/₹0 checks below: those are judgement calls a salesperson can knowingly
+      // proceed past, this isn't — a deal physically can't be delivered with an item that's both out
+      // of stock and can't be produced, so it never reaches the confirm dialog at all.
+      const oosFlagged = scanOutOfStockElements();
+      if (oosFlagged.length > 0) { setOosGateModal(oosFlagged); return; }
       const dt = dateTypes[clientDate];
       const bookedCount = clientLedger.filter(c => c.eventDate === clientDate && c.status === "booked").length;
       let warns = [];
@@ -8255,7 +8307,7 @@ export default function StudioApp() {
       setTimeout(() => setShowSoldConfetti(false), 4000);
       showMsg("🎉 Booking confirmed for " + client.name, "green");
     } catch (e) { showMsg("Error: " + (e.message || "unknown"), "red"); }
-  }, [saveSession, authUser, saveClientLedger, logActivity, clientName, clientDate, venue, fn, clientPhone, clientShift, clientBrideGroom, clientPax, dateTypes, clientLedger, zoneConfig, zoneElements, enabledEls, elTiers, grandTotal, totalCost, transportCalc, floralRatio, eventOrders, saveEventOrders, collectAllFunctionData, calcFunctionBreakdown, dcPhotoOverrides, dcSkipped, dcProductionAccepted, dcManualItems, dcDedupOverrides, dcCustomItems, dcFloralColorPrefs,
+  }, [scanOutOfStockElements, saveSession, authUser, saveClientLedger, logActivity, clientName, clientDate, venue, fn, clientPhone, clientShift, clientBrideGroom, clientPax, dateTypes, clientLedger, zoneConfig, zoneElements, enabledEls, elTiers, grandTotal, totalCost, transportCalc, floralRatio, eventOrders, saveEventOrders, collectAllFunctionData, calcFunctionBreakdown, dcPhotoOverrides, dcSkipped, dcProductionAccepted, dcManualItems, dcDedupOverrides, dcCustomItems, dcFloralColorPrefs,
     // Listed because the ₹0 check above reads it. Without this the callback holds whatever
     // eventGrandTotal was when it was last rebuilt — which could warn "nothing has been built" on a
     // deal that has since been priced, or worse, stay silent on one that has been emptied.
@@ -10268,6 +10320,10 @@ export default function StudioApp() {
           const _slack = venueSlackFor(fvCfgForRepeat, pickerVenue, it);
           const free = Math.max(0, Math.min(getStudioAvailable(it, blocksForDate), availableAtVenue(fvCfgForRepeat, pickerVenue, it)) - (usedQty[it.id] || 0));
           return { id: it.id, name: it.name, photo: (Array.isArray(it.photoUrls) && it.photoUrls[0]) || it.img || "", free, total: Number(it.qty) || 0, usedIn: usedElsewhere[it.id] || [], venueSlack: _slack, unit: it.unit || "",
+            // Out of stock AND can't be made in production (IMS Inventory's "Can be made" checkbox) —
+            // genuinely unpickable here, not just a cost%-priced shortfall. StudioModals.jsx's picker
+            // disables the card instead of letting it be selected only to price wrong later.
+            canMake: canFulfillShortfall(it),
             price: opts?.rateFn ? opts.rateFn(it)
               : opts?.priceMode === "cost" ? (Number(it.cost) || 0)
               : opts?.priceMode === "rental" ? imsField.rentalCost(it)
@@ -11605,6 +11661,7 @@ export default function StudioApp() {
     dcArtFlowerAlloc, setDcArtFlowerAlloc, dcArtFlowerAllocSrc, setDcArtFlowerAllocSrc, dcArtFlowerModal, setDcArtFlowerModal, dcFloralColorPrefs, setDcFloralColorPrefs, dcPrefModal, setDcPrefModal,
     dcCustomItems, setDcCustomItems: setDcCustomItemsAndFlush, dcCustomModal, setDcCustomModal,
     availModal, setAvailModal, openAvailModal, saveAvailPick, saveAvailSplit,
+    oosGateModal, setOosGateModal,
     dcSwapSearch, setDcSwapSearch, dcSwapPicked, setDcSwapPicked, dcSwapMode, setDcSwapMode, dcSwapSplitQty, setDcSwapSplitQty,
     // pricing helpers
     rcIsSMB, buildZoneConfig, getFloralMode, applyFloralRatio, getElPrice, getElPriceForFn, calcElsCost, calcElsCostForFn, rcCostPctForSub,
