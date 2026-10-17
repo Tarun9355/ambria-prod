@@ -4533,7 +4533,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                               return (
                                 <div key={i} className="grid grid-cols-[1fr_auto_auto] gap-2 px-3 py-1.5 items-center">
                                   <div className="min-w-0 flex items-center gap-2">
-                                    {r.colorVariant?.photoUrl && <img src={r.colorVariant.photoUrl} alt={r.colorVariant.label || ""} className="w-7 h-7 rounded object-cover border border-gray-200 shrink-0" title={r.colorVariant.label || ""} />}
+                                    {r.colorVariant?.photoUrl && <img src={r.colorVariant.photoUrl} alt={r.colorVariant.label || ""} onClick={() => setZoomImg(r.colorVariant.photoUrl)} className="w-7 h-7 rounded object-cover border border-gray-200 shrink-0 cursor-zoom-in" title={r.colorVariant.label || ""} />}
                                     <div className="min-w-0">
                                       <div className="text-xs font-medium text-gray-800 truncate">{r.name}{r.colorVariant?.label && <span className="ml-1.5 font-normal text-[10px] text-purple-600">🎨 {r.colorVariant.label}</span>}</div>
                                       {r.swappedFrom && <div className="text-[10px] font-semibold text-amber-700">🔁 swapped for {r.swappedFrom} (not in mandi)</div>}

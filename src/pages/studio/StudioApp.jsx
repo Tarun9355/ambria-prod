@@ -4297,7 +4297,12 @@ export default function StudioApp() {
     const parent = (floralSrc.mandiCatalogue || []).find((m) => m.id === el.mandiId);
     if (!parent) return { rc: null, unitPrice: 0, lineCost: 0, area: 0, warning: null, isFloralBlend: false, realPct: null };
     const variant = el.mandiVariantId ? (parent.colorVariants || []).find((v) => v.variantId === el.mandiVariantId) : null;
-    const unitPrice = Number((variant || parent).currentPrice) || 0;
+    const baseRate = Number((variant || parent).currentPrice) || 0;
+    // Markup is the flower's own selling margin over bare mandi cost (IMS Mandi Prices "Markup %")
+    // — Loose Petals has none by default and keeps billing at pure cost; any other mandi item made
+    // directly addable via a markup bills at cost × (1 + markup%).
+    const markupPct = Number(parent.markup) || 0;
+    const unitPrice = Math.round(baseRate * (1 + markupPct / 100));
     const qty = el.qty || 0;
     return { rc: null, unitPrice, lineCost: qty * unitPrice, area: 0, warning: null, isFloralBlend: false, realPct: null };
   }, [dealCheckData, studioFloralData]);
@@ -10259,9 +10264,17 @@ export default function StudioApp() {
     // declared rather than inferred — the same correction made for priceMode above.
     setAvailModal({ zoneKey, idx, elName: el?.name || "", subcat, date, loading: true, items: [], selectedId: el?.imsId || el?.invId || null, onPick: onPick || null, splitQty: Number(opts?.splitQty) || 0, onSplit: opts?.onSplit || null, pickHint: opts?.pickHint || "", neededLabel: opts?.neededLabel || "", unitLabel: opts?.unitLabel || "" });
     try {
-      const { inventory, blocksForDate } = await loadAvailability(date);
+      const { inventory, blocksForDate, blocksDetailForDate } = await loadAvailability(date);
       const target = String(subcat).toLowerCase().trim();
       const pickerVenue = activeFnMeta?.venue || venue || "";
+      // Net THIS deal's own already-reserved stock out of blocksForDate, same as
+      // getElPriceFromInventory's inline shortfall check — without it, a booked deal's own
+      // real-blocks reservation reads as competing demand from someone else, so "free" sits
+      // permanently low at whatever it was the last time the blocks table was reconciled
+      // (e.g. 18 total − 12 reserved at Sold = "6 free" forever), and never moves when the live
+      // Build qty is edited afterward, since that edit doesn't touch the blocks table until the
+      // next reconcile. Owner-reported: bumping a booked deal's qty from 12 to 13 still showed 6.
+      const eo = (eventOrders || []).find((e) => e.clientId === activeClientId) || (eventOrders || []).find((e) => (e.clientName || "") === (clientName || "").trim());
       // Where each inventory item is already placed for THIS guest — every function of the deal,
       // every enabled zone — minus the element being swapped right now, so the "free" count never
       // over-counts stock this same client has already committed elsewhere in the deal.
@@ -10332,7 +10345,8 @@ export default function StudioApp() {
           // capped by what's blocked on the date. Other venues' stock is still listed on the card
           // ("30 at AP") so it's visible, it just isn't offered as pickable.
           const _slack = venueSlackFor(fvCfgForRepeat, pickerVenue, it);
-          const free = Math.max(0, Math.min(getStudioAvailable(it, blocksForDate), availableAtVenue(fvCfgForRepeat, pickerVenue, it)) - (usedQty[it.id] || 0));
+          const netBlocksForDate = netOwnReservedBlocksLive(blocksForDate, it.id, blocksDetailForDate, eo?.id);
+          const free = Math.max(0, Math.min(getStudioAvailable(it, netBlocksForDate), availableAtVenue(fvCfgForRepeat, pickerVenue, it)) - (usedQty[it.id] || 0));
           return { id: it.id, name: it.name, photo: (Array.isArray(it.photoUrls) && it.photoUrls[0]) || it.img || "", free, total: Number(it.qty) || 0, usedIn: usedElsewhere[it.id] || [], venueSlack: _slack, unit: it.unit || "",
             // Out of stock AND can't be made in production (IMS Inventory's "Can be made" checkbox) —
             // genuinely unpickable here, not just a cost%-priced shortfall. StudioModals.jsx's picker
@@ -10354,7 +10368,7 @@ export default function StudioApp() {
       prefetchImages(items.map(i => i.photo && thumbUrl(i.photo, AVAIL_THUMB)), { concurrency: 8 });
       setAvailModal(m => (m && m.zoneKey === zoneKey && m.idx === idx) ? { ...m, loading: false, items } : m);
     } catch { setAvailModal(m => m ? { ...m, loading: false } : m); }
-  }, [imsInventory, activeFnMeta, clientDate, loadAvailability, getStudioAvailable, rcFactorByKey, zoneConfig, venue, guestPriceMultiplier, hideDiscountFromClient, fvCfgForRepeat, dealCheckData, studioFloralData, collectAllFunctionData, activeFnIdx]);
+  }, [imsInventory, activeFnMeta, clientDate, loadAvailability, getStudioAvailable, rcFactorByKey, zoneConfig, venue, guestPriceMultiplier, hideDiscountFromClient, fvCfgForRepeat, dealCheckData, studioFloralData, collectAllFunctionData, activeFnIdx, eventOrders, activeClientId, clientName]);
   const saveAvailPick = useCallback(() => {
     if (!availModal) return;
     const { zoneKey, idx, selectedId, items, onPick } = availModal;
