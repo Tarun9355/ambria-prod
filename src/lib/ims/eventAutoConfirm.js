@@ -19,6 +19,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { normalizeSizeClass, sizeClassToPatternKey } from "./flowerHelpers";
 import { lookupBySubcat } from "./helpers";
+import { supabase } from "../supabase";
 
 export const resolveRealPct = (el, rcItem, fnFloralRatio) => {
   if (typeof el?.realPct === "number") return Math.max(0, Math.min(100, el.realPct));
@@ -937,9 +938,35 @@ export function useEventOrderAutoConfirm({ eventOrders, setEventOrders, inventor
     toAutoConfirm.forEach(async (eo) => {
       // Mark "in progress" to prevent duplicate concurrent runs in the same render cycle
       autoConfirmedRef.current.add(eo.id);
+      // ── CLAIM THIS EO SERVER-SIDE BEFORE DOING ANY WORK ──
+      // autoConfirmedRef only protects THIS tab from re-running its own render — it does nothing
+      // against a second IMS tab/user (this app runs ~40 concurrent ops users) whose own copy of this
+      // same watcher sees the identical "pending" row at the same time. Status only flips to
+      // "blocked" at the very end of the pipeline (executeConfirmBlocks, below), so every concurrent
+      // tab kept seeing "pending" for the whole multi-step async run (AI matching, inventory blocks,
+      // project/function creation) and each one ran the full pipeline. Confirmed by direct DB
+      // inspection: one real booking ended up with 2-3 duplicate `projects`+`functions` row pairs,
+      // one per tab that raced to confirm it, each showing the same item as blocked multiple times
+      // in Inventory even though only one real reservation existed in `blocks` (which does dedupe).
+      // This conditional update only succeeds for whichever tab's write actually lands first — every
+      // other tab gets 0 rows back and skips, instead of quietly duplicating the whole pipeline.
+      const { data: claimed, error: claimErr } = await supabase
+        .from("event_orders")
+        .update({ status: "confirming" })
+        .eq("id", eo.id)
+        .or("status.is.null,status.eq.pending,status.eq.review")
+        .select("id");
+      if (claimErr || !claimed || claimed.length === 0) {
+        // Couldn't confirm we own this one (error, or another tab's write already landed first) —
+        // skip rather than risk a duplicate run. Not a failure: no UI flag, no retry-prevention.
+        autoConfirmedRef.current.delete(eo.id);
+        return;
+      }
       const ok = await autoConfirmEO(eo);
       if (!ok) {
-        // Failure — un-mark so the watcher retries on next render, and surface in UI
+        // Failure — release the claim (back to "pending") so a watcher retries on the next pass,
+        // and un-mark so THIS tab's own retry isn't blocked by its own ref.
+        try { await supabase.from("event_orders").update({ status: "pending" }).eq("id", eo.id); } catch { /* best-effort */ }
         autoConfirmedRef.current.delete(eo.id);
         setAutoConfirmFailures(prev => {
           const next = new Set(prev);
