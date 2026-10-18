@@ -1275,27 +1275,58 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   // This department's view of the shared trucks, in the shape the rest of the tab already reads —
   // items keyed "inv:"+listId — so the challans, the PDF and Receiving carry on unchanged.
   const keyByListId = new Map(blockedItems.map(it => ["inv:" + it.id, truckKey(it)]));
+  // `extras` is the overload: pieces put on a truck BEYOND what the item needs (spares), kept apart
+  // from the normal load (truck.extra[dept], same keys) so "10 of 10" stays true and the extra shows
+  // as its own "+2 extra". It still takes room, so it counts toward how full the truck is; the
+  // truck's capacity itself is never changed by it.
   const trucks = eventTruckList.map(t => {
-    const mine = t.loads?.[dept] || {}, items = {};
-    blockedItems.forEach(it => { const q = mine[truckKey(it)]; if (Number(q) > 0) items["inv:" + it.id] = q; });
-    return { ...t, items };
+    const mine = t.loads?.[dept] || {}, mineX = t.extra?.[dept] || {}, items = {}, extras = {};
+    blockedItems.forEach(it => {
+      const q = mine[truckKey(it)]; if (Number(q) > 0) items["inv:" + it.id] = q;
+      const x = mineX[truckKey(it)]; if (Number(x) > 0) extras["inv:" + it.id] = x;
+    });
+    return { ...t, items, extras };
   });
-  const addTruck = () => saveEventTrucks(list => [...list, { id: "trk_" + Date.now(), vehicle: "", driver: "", phone: "", status: "loading", loads: {} }]);
+  // One truck open at a time: opening another closes the last, so the next truck's header is on
+  // screen at once instead of below a screen of the previous truck's items.
+  const [openTruck, setOpenTruck] = useState(null);
+  const truckRefs = useRef({});
+  const toggleTruck = (id) => {
+    const next = openTruck === id ? null : id;
+    setOpenTruck(next);
+    if (next) setTimeout(() => truckRefs.current[next]?.scrollIntoView({ behavior: "smooth", block: "nearest" }), 0);
+  };
+  const addTruck = () => {
+    const id = "trk_" + Date.now();
+    saveEventTrucks(list => [...list, { id, vehicle: "", driver: "", phone: "", status: "loading", loads: {} }]);
+    setOpenTruck(id);
+  };
   const setTruck = (id, patch) => saveEventTrucks(list => list.map(t => t.id === id ? { ...t, ...patch } : t));
   const setTruckItem = (id, key, qty) => {
     const k = keyByListId.get(key);
     if (!k) return;
     saveEventTrucks(list => list.map(t => t.id === id ? { ...t, loads: { ...(t.loads || {}), [dept]: { ...((t.loads || {})[dept] || {}), [k]: qty } } } : t));
   };
+  const setTruckExtra = (id, key, qty) => {
+    const k = keyByListId.get(key);
+    if (!k) return;
+    saveEventTrucks(list => list.map(t => t.id === id ? { ...t, extra: { ...(t.extra || {}), [dept]: { ...((t.extra || {})[dept] || {}), [k]: qty } } } : t));
+  };
   const delTruck = (id) => saveEventTrucks(list => list.filter(t => t.id !== id));
   const truckLoadedQty = (key) => trucks.reduce((s, t) => s + (Number(t.items?.[key]) || 0), 0); // total loaded across all trucks
+  const truckExtraQty = (key) => trucks.reduce((s, t) => s + (Number(t.extras?.[key]) || 0), 0); // overload across all trucks
+  const TRUCK_STATUS_LABEL = { loading: "Loading", dispatched: "Dispatched", "at-site": "At site", returned: "Returned" };
+  const TRUCK_STATUS_CLS = { loading: "bg-blue-50 text-blue-700 ring-blue-200", dispatched: "bg-amber-50 text-amber-700 ring-amber-200", "at-site": "bg-emerald-50 text-emerald-700 ring-emerald-200", returned: "bg-gray-100 text-gray-600 ring-gray-200" };
   // How full each truck is: every department's loads, each piece counted at its share of a truck.
   const truckOcc = (t) => {
     let used = 0, unknown = 0;
     const byDept = [];
-    Object.entries(t.loads || {}).forEach(([d, ld]) => {
+    const depts = [...new Set([...Object.keys(t.loads || {}), ...Object.keys(t.extra || {})])];
+    depts.forEach(d => {
+      const ld = {};
+      [t.loads?.[d] || {}, t.extra?.[d] || {}].forEach(src => Object.entries(src).forEach(([k, q]) => { ld[k] = (ld[k] || 0) + (Number(q) || 0); }));
       let du = 0;
-      Object.entries(ld || {}).forEach(([k, q]) => {
+      Object.entries(ld).forEach(([k, q]) => {
         const qn = Number(q) || 0;
         if (qn <= 0) return;
         const sh = truckShares[d]?.get(k);
@@ -1312,8 +1343,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const printTruckChallan = (truck, n) => {
     const w = window.open("", "_blank");
     if (!w) return;
-    const rows = blockedItems.filter(it => (Number(truck.items?.["inv:" + it.id]) || 0) > 0)
-      .map(it => `<tr><td>${it.name}</td><td>${it.sub || "—"}</td><td style="text-align:center">${Number(truck.items["inv:" + it.id]) || 0} of ${it.qty}</td></tr>`).join("");
+    const rows = blockedItems.filter(it => (Number(truck.items?.["inv:" + it.id]) || 0) > 0 || (Number(truck.extras?.["inv:" + it.id]) || 0) > 0)
+      .map(it => { const x = Number(truck.extras?.["inv:" + it.id]) || 0; return `<tr><td>${it.name}</td><td>${it.sub || "—"}</td><td style="text-align:center">${Number(truck.items?.["inv:" + it.id]) || 0} of ${it.qty}${x ? ` + ${x} extra` : ""}</td></tr>`; }).join("");
     const toolRows = deptTools.map(t => `<tr><td>🛠️ ${t.name}</td><td>essential / tool</td><td style="text-align:center">${t.qty || 1}</td></tr>`).join("");
     w.document.write(`<html><head><title>Challan — ${dept} — Truck ${n}</title><style>body{font-family:Arial;padding:24px;color:#111}table{width:100%;border-collapse:collapse;margin-top:8px}th,td{border:1px solid #ddd;padding:8px;font-size:13px}th{background:#f3f4f6;text-align:left}h2{color:#4f46e5;margin-bottom:2px}h4{margin:14px 0 0}@media print{button{display:none}}</style></head><body>
       <h2>${DEPT_ICON[dept]} Ambria — ${dept} Challan · Truck ${n}</h2>
@@ -1349,6 +1380,15 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         y += h;
       };
       const header = () => row([["Item", cx.name], ["Type", cx.type], ["Qty", cx.qty, "right"]], { bold: true, fill: [243, 244, 246] });
+      // The Ambria Design & Decor mark at the head of the challan — the dark version (black wordmark,
+      // gold "DESIGN & DECOR"), since the page is white. Sized off the crop's own proportions; a
+      // logo that fails to load just leaves the title where it was.
+      const logos = await loadPdfLogosOnce();
+      if (logos.dark) {
+        const lh = 34, lw = lh * LOGO_BOX.cw / LOGO_BOX.ch;
+        pdf.addImage(logos.dark, "PNG", M, y - 6, lw, lh);
+        y += lh + 18;
+      }
       pdf.setFont("helvetica", "bold"); pdf.setFontSize(16); pdf.setTextColor(79, 70, 229);
       pdf.text(`Ambria - ${dept} Challan - Truck ${n}`, M, y); y += 22;
       pdf.setTextColor(17); pdf.setFont("helvetica", "normal"); pdf.setFontSize(10);
@@ -1357,8 +1397,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       pdf.setFontSize(9.5);
       pdf.setFont("helvetica", "bold"); pdf.text("Inventory on this truck", M, y); y += 16;
       header();
-      const items = blockedItems.filter(it => (Number(truck.items?.["inv:" + it.id]) || 0) > 0);
-      if (items.length) items.forEach(it => row([[it.name, cx.name], [it.sub || "-", cx.type], [`${Number(truck.items["inv:" + it.id]) || 0} of ${it.qty}`, cx.qty, "right"]]));
+      const items = blockedItems.filter(it => (Number(truck.items?.["inv:" + it.id]) || 0) > 0 || (Number(truck.extras?.["inv:" + it.id]) || 0) > 0);
+      if (items.length) items.forEach(it => { const x = Number(truck.extras?.["inv:" + it.id]) || 0; row([[it.name, cx.name], [it.sub || "-", cx.type], [`${Number(truck.items?.["inv:" + it.id]) || 0} of ${it.qty}${x ? ` + ${x} extra` : ""}`, cx.qty, "right"]]); });
       else row([["No items assigned to this truck", cx.name]]);
       if (deptTools.length) {
         y += 12; room(36);
@@ -5152,9 +5192,36 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                   {trucks.map((t, ti) => (
                     /* Each truck is its own card. Stacked in bare padding they ran into each
                        other, and nothing marked where one truck's items stopped. */
-                    <div key={t.id} className="rounded-xl ring-1 ring-gray-200 p-3 space-y-2.5">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="min-w-0 truncate text-sm font-semibold text-gray-900">Truck {ti + 1}{t.driver ? <span className="font-normal text-gray-500"> · {t.driver}</span> : null}</span>
+                    <div key={t.id} ref={el => { truckRefs.current[t.id] = el; }} className={"rounded-xl ring-1 p-3 space-y-2.5 scroll-mt-4 " + (openTruck === t.id ? "ring-blue-200" : "ring-gray-200")}>
+                      {/* ── THE HEADER IS THE TRUCK, OPEN OR SHUT ──
+                          Everything needed to tell trucks apart without opening one: number, plate,
+                          driver, phone, status and how full it is. Tapping it opens this truck and
+                          closes whichever was open. */}
+                      <div className="flex items-start justify-between gap-2">
+                        {(() => {
+                          const oc = truckOccs[t.id] || { used: 0 };
+                          const pct = Math.round(oc.used * 100), over = oc.used > 1.005, full = oc.used >= 0.999;
+                          const st = t.status || "loading";
+                          return (
+                            <button type="button" onClick={() => toggleTruck(t.id)} aria-expanded={openTruck === t.id} className="min-w-0 flex-1 text-left cursor-pointer">
+                              <div className="flex items-center gap-2 min-w-0">
+                                <span aria-hidden="true" className={"shrink-0 text-gray-400 transition-transform duration-150 " + (openTruck === t.id ? "rotate-90" : "")}>
+                                  <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M5 3.5 L8.5 7 L5 10.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                                </span>
+                                <span className="text-sm font-semibold text-gray-900 shrink-0">Truck {ti + 1}</span>
+                                <span className="min-w-0 truncate text-[12px] text-gray-500">{[t.vehicle, t.driver].filter(Boolean).join(" · ") || "no vehicle yet"}</span>
+                                <span className={"shrink-0 ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded ring-1 " + (TRUCK_STATUS_CLS[st] || TRUCK_STATUS_CLS.loading)}>{TRUCK_STATUS_LABEL[st] || st}</span>
+                              </div>
+                              <div className="mt-1.5 pl-5 flex items-center gap-2">
+                                {t.phone ? <span className="shrink-0 text-[11px] text-gray-500 tabular-nums">📞 {t.phone}</span> : null}
+                                <div className={"min-w-0 flex-1 h-1.5 rounded-full overflow-hidden flex " + (over ? "bg-red-100" : "bg-gray-100")}>
+                                  {(oc.byDept || []).map(b => <div key={b.dept} className={DEPT_BAR[b.dept] || "bg-gray-400"} style={{ width: `${Math.min(100, b.used * 100)}%` }} />)}
+                                </div>
+                                <span className={"shrink-0 text-[11px] font-bold tabular-nums " + (over || full ? "text-red-600" : pct >= 80 ? "text-amber-600" : "text-gray-700")}>{over ? `Over ${pct}%` : full ? "Full" : `${pct}% full`}</span>
+                              </div>
+                            </button>
+                          );
+                        })()}
                         {/* Removing a truck removes it for every department, so it is held back while
                             another department still has items on it. */}
                         <button onClick={() => delTruck(t.id)} disabled={Object.entries(t.loads || {}).some(([d, ld]) => d !== dept && Object.values(ld || {}).some(q => Number(q) > 0))}
@@ -5163,23 +5230,19 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                           <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M3.5 3.5 L10.5 10.5 M10.5 3.5 L3.5 10.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" /></svg>
                         </button>
                       </div>
-                      {/* ── HOW FULL ── every department's load, stacked in its own colour. Widths are a
-                          share of the truck, known only at runtime, hence inline styles. */}
+                      {openTruck === t.id && (<>
+                      {/* ── WHO FILLS IT ── the bar itself is in the header above; opened, the truck adds
+                          each department's share of it and what to do when it is full. */}
                       {(() => {
                         const oc = truckOccs[t.id] || { used: 0, byDept: [], unknown: 0 };
                         const pct = Math.round(oc.used * 100);
                         const over = oc.used > 1.005, full = oc.used >= 0.999;
+                        if (!oc.byDept.length && !oc.unknown) return null;
                         return (
                           <div>
-                            <div className="flex items-center justify-between gap-2 text-[11px]">
-                              <span className="font-semibold text-gray-600">Truck space</span>
-                              <span className={"font-bold tabular-nums " + (over || full ? "text-red-600" : pct >= 80 ? "text-amber-600" : "text-gray-900")}>{over ? `Over by ${pct - 100}% — move items to another truck` : full ? "Full — no space left" : `${pct}% full`}</span>
-                            </div>
-                            <div className={"mt-1 h-2.5 rounded-full overflow-hidden flex " + (over ? "bg-red-100 ring-1 ring-red-300" : "bg-gray-100")}>
-                              {oc.byDept.map(b => <div key={b.dept} className={DEPT_BAR[b.dept] || "bg-gray-400"} style={{ width: `${Math.min(100, b.used * 100)}%` }} title={`${b.dept}: ${Math.round(b.used * 100)}%`} />)}
-                            </div>
+                            {(over || full) && <div className="text-[11px] font-bold text-red-600">{over ? `Over by ${pct - 100}% — move items to another truck` : "Full — no space left"}</div>}
                             {oc.byDept.length > 0 && (
-                              <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-gray-500">
+                              <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-gray-500">
                                 {oc.byDept.map(b => <span key={b.dept} className={"inline-flex items-center gap-1 " + (b.dept === dept ? "font-semibold text-gray-800" : "")}><span className={"w-2 h-2 rounded-sm " + (DEPT_BAR[b.dept] || "bg-gray-400")} />{b.dept} {Math.round(b.used * 100)}%</span>)}
                               </div>
                             )}
@@ -5222,12 +5285,12 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                            at the right. As a flex-wrap row the status and the box broke onto
                            lines of their own at any width under ~500px. */
                         <div className="rounded-lg bg-gray-50 divide-y divide-gray-100">
-                          {blockedItems.map(it => { const k = "inv:" + it.id; const onThis = Number(t.items?.[k]) || 0; const totalLoaded = truckLoadedQty(k); const matchCls = totalLoaded === it.qty ? "text-emerald-600" : totalLoaded > it.qty ? "text-red-600" : totalLoaded > 0 ? "text-amber-600" : "text-gray-400"; return (
+                          {blockedItems.map(it => { const k = "inv:" + it.id; const onThis = Number(t.items?.[k]) || 0; const totalLoaded = truckLoadedQty(k); const extraHere = Number(t.extras?.[k]) || 0; const extraAll = truckExtraQty(k); const maxHere = Math.max(onThis, (Number(it.qty) || 0) - (totalLoaded - onThis)); const matchCls = totalLoaded === it.qty ? "text-emerald-600" : totalLoaded > it.qty ? "text-red-600" : totalLoaded > 0 ? "text-amber-600" : "text-gray-400"; return (
                             <div key={k} className="flex items-center gap-2.5 px-2.5 py-2">
                               {it.photo ? <img src={it.photo} alt="" onClick={() => setZoomImg(it.photo)} className="w-8 h-8 rounded-lg object-cover cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-xs shrink-0">📦</div>}
                               <div className="min-w-0 flex-1">
                                 <div className="text-xs font-medium text-gray-800 leading-snug line-clamp-2" title={it.name}>{it.name}</div>
-                                <div className={"mt-0.5 text-[11px] font-semibold tabular-nums " + matchCls}>{totalLoaded} of {it.qty} loaded{totalLoaded > it.qty ? " · too many" : totalLoaded === it.qty ? " ✓" : ""}</div>
+                                <div className={"mt-0.5 text-[11px] font-semibold tabular-nums " + matchCls}>{totalLoaded} of {it.qty} loaded{totalLoaded > it.qty ? " · too many" : totalLoaded === it.qty ? " ✓" : ""}{extraAll > 0 && <span className="text-amber-600"> · +{extraAll} extra</span>}</div>
                                 {/* This item's share of the truck, and how many more of it the space left takes. */}
                                 {(() => {
                                   const sh = truckShares[dept]?.get(truckKey(it));
@@ -5236,12 +5299,22 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                                   return <div className="text-[10px] text-gray-500 tabular-nums">{onThis > 0 ? `${Math.round(onThis * sh.perUnit * 100)}% of this truck · ` : ""}{left > 0 ? `fits ~${Math.floor(left / sh.perUnit + 1e-9)} more` : "no space left"} · ~{Math.round(sh.perTruck)} per truck</div>;
                                 })()}
                               </div>
-                              <input type="number" min="0" value={onThis || ""} onChange={e => setTruckItem(t.id, k, e.target.value)} placeholder="0" aria-label={`${it.name} on this truck`} title="On this truck"
+                              {/* Normal load, capped at what the item still needs across all trucks. Once it is
+                                  fully loaded, the amber box takes any extra (overload) on this truck. */}
+                              <input type="number" min="0" max={maxHere} value={onThis || ""} onChange={e => setTruckItem(t.id, k, e.target.value === "" ? "" : Math.min(maxHere, Math.max(0, Number(e.target.value) || 0)))} placeholder="0" aria-label={`${it.name} on this truck`} title={`On this truck (up to ${maxHere})`}
                                 className="shrink-0 w-14 h-8 rounded-lg bg-white ring-1 ring-gray-200 px-2 text-sm text-center font-semibold tabular-nums placeholder:font-normal placeholder:text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                              {(totalLoaded >= (Number(it.qty) || 0) || extraHere > 0) && (
+                                <label className="shrink-0 inline-flex items-center gap-0.5 text-[11px] font-bold text-amber-700" title="Extra pieces on this truck beyond what the item needs (overload)">
+                                  +
+                                  <input type="number" min="0" value={extraHere || ""} onChange={e => setTruckExtra(t.id, k, e.target.value === "" ? "" : Math.max(0, Number(e.target.value) || 0))} placeholder="extra" aria-label={`${it.name} extra on this truck`}
+                                    className="w-14 h-8 rounded-lg bg-amber-50 ring-1 ring-amber-300 px-1.5 text-sm text-center font-semibold tabular-nums text-amber-800 placeholder:font-normal placeholder:text-[10px] placeholder:text-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-400" />
+                                </label>
+                              )}
                             </div>
                           ); })}
                         </div>
                       ) : <div className="text-xs text-gray-400">No inventory blocked for this department.</div>}
+                      </>)}
                     </div>
                   ))}
                 </div>
