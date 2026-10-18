@@ -2293,17 +2293,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
        until Deal Check pushes the department breakdown again. */
     const trPlan = sel?.transportPlan || null;
     const trMine = trPlan?.byDept?.[dept] || null;
-    // Combined book: every department's own share, pooled into one table with its own Dept line —
-    // reading just whichever single department happened to be selected (trMine) silently dropped
-    // every OTHER department's trucks from what is supposed to be the whole-event reference.
-    const trRows = combined
-      ? Object.entries(trPlan?.byDept || {}).flatMap(([d, slot]) => (slot?.rows || []).map(r =>
-          `<tr><td><b>${esc(r.label)}</b><div class="sub">${esc(d)}${(fns || []).length > 1 && r.fn ? ` · ${esc(r.fn)}` : ""}</div></td><td class="n">${esc(r.qty)}${r.unit ? " " + esc(r.unit) : ""}</td><td class="n">${Number(r.perTruck) > 0 ? esc(r.perTruck) + (r.unit ? " " + esc(r.unit) : "") + " per truck" : "—"}</td><td class="n b">${esc(r.trucks)}</td></tr>`))
-      : (trMine?.rows || []).map(r =>
-          `<tr><td><b>${esc(r.label)}</b>${(fns || []).length > 1 && r.fn ? `<div class="sub">${esc(r.fn)}</div>` : ""}</td><td class="n">${esc(r.qty)}${r.unit ? " " + esc(r.unit) : ""}</td><td class="n">${Number(r.perTruck) > 0 ? esc(r.perTruck) + (r.unit ? " " + esc(r.unit) : "") + " per truck" : "—"}</td><td class="n b">${esc(r.trucks)}</td></tr>`);
-    const trNote = combined
-      ? (trPlan ? `This event needs ${trPlan.totalTrucks} truck${trPlan.totalTrucks === 1 ? "" : "s"} in total${trPlan.tierLabel ? ` · ${esc(trPlan.tierLabel)}` : ""}. A truck is counted by capacity, so a part-truck share is normal — the loads travel together.` : "")
-      : (!trMine ? "" : `${esc(dept)} fills ${trMine.trucks} of the ${trPlan.totalTrucks} truck${trPlan.totalTrucks === 1 ? "" : "s"} this event needs${trPlan.tierLabel ? ` · ${esc(trPlan.tierLabel)}` : ""}. A truck is counted by capacity, so a part-truck share is normal — the loads travel together.`);
+    // Transport stays a per-department-only section — not in the combined book (owner call).
+    const trRows = (trMine?.rows || []).map(r =>
+      `<tr><td><b>${esc(r.label)}</b>${(fns || []).length > 1 && r.fn ? `<div class="sub">${esc(r.fn)}</div>` : ""}</td><td class="n">${esc(r.qty)}${r.unit ? " " + esc(r.unit) : ""}</td><td class="n">${Number(r.perTruck) > 0 ? esc(r.perTruck) + (r.unit ? " " + esc(r.unit) : "") + " per truck" : "—"}</td><td class="n b">${esc(r.trucks)}</td></tr>`);
+    const trNote = !trMine ? "" : `${esc(dept)} fills ${trMine.trucks} of the ${trPlan.totalTrucks} truck${trPlan.totalTrucks === 1 ? "" : "s"} this event needs${trPlan.tierLabel ? ` · ${esc(trPlan.tierLabel)}` : ""}. A truck is counted by capacity, so a part-truck share is normal — the loads travel together.`;
 
     // Deal Check's one "🖨 Print / signage" row says only how many jobs there are; it is replaced
     // below by one card per job, read from the build.
@@ -2468,105 +2461,55 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       if (!label || kitBlocks.some(k => String(k.name).trim().toLowerCase() === label.toLowerCase())) return;
       kitBlocks.push({ name: label, ours: false, qty: zoneQtyFor(label), photo: invPhoto(invByName.get(label.toLowerCase()) || null, null), zones: zonesFor(label), parts: parts.map(p => ({ name: p.name, qty: p.qty })) });
     });
-    // ── PACK BY HEIGHT, NOT BY COUNT ──
-    // Four blocks to a page suited a floor of seven-part consoles and nothing else: three kits
-    // of one part each left three quarters of the sheet blank. Each block's height is known
-    // before it is rendered — header band, one row per pair of parts, padding — so fill the page
-    // to the same 1020px budget every other page in this book is built against.
-    // Under four parts a kit drops to a single column: two columns of one item printed a name
-    // and a quantity stranded in the left half of the sheet.
-    const kitCols = (k) => (k.parts.length >= 4 ? 2 : 1);
-    // Names wrap rather than being cut, so a long one costs a second line. Roughly 44 characters
-    // fit a two-column row and about 100 a full-width one; anything past that is counted twice so
-    // a page of long names still stops at the same budget instead of running off the sheet.
-    const kitLongNames = (k) => { const per = kitCols(k) === 2 ? 44 : 100; return k.parts.filter(p => String(p.name || "").trim().length > per).length; };
-    const kitH = (k) => 86 + (Math.ceil(k.parts.length / kitCols(k)) + Math.ceil(kitLongNames(k) / kitCols(k))) * 24 + 21 + 14 + (k.ours ? 0 : 15);
-    const kitChunks = [];
-    kitBlocks.forEach(k => {
-      const last = kitChunks[kitChunks.length - 1], h = kitH(k);
-      if (!last || last.h + h > PAGE_PX - HEAD_PX) kitChunks.push({ h, list: [k] });
-      else { last.h += h; last.list.push(k); }
-    });
-    let kitNo = 0;
-    const kitPages = kitChunks.map((pgk, i, all) => `<section data-block data-page class="zp"><div class="pc tl"></div><div class="pc tr"></div>
-        <div class="zh"><div><div class="zk"><b>Kits</b>${all.length > 1 ? ` · Part ${i + 1} of ${all.length}` : ""}</div><h2>What is inside each kit</h2>
-          <div class="orn l"><i></i><b></b><i></i></div>
-          <div class="zm">Tick every part off before the kit leaves the godown</div></div>
-          <div class="zt"><span>${kitBlocks.length} kit${kitBlocks.length === 1 ? "" : "s"}</span></div></div>
-        ${pgk.list.map(k => { kitNo++; return `<div class="kb">
-          <div class="kb-h">
-            ${k.photo ? `<div class="kb-ph" ${bg(k.photo)}></div>` : ""}
-            <div class="kb-t"><div class="kb-no">Kit ${String(kitNo).padStart(2, "0")}</div><div class="kb-nm">${esc(k.name)}</div></div>
-            ${k.qty ? `<div class="kb-z kb-q"><div class="kb-zk">Qty</div><div class="kb-zv">${esc(k.qty)}</div></div>` : ""}
-            <div class="kb-z"><div class="kb-zk">${k.zones.length > 1 ? "Zones" : "Zone"}</div><div class="kb-zv${k.zones.length ? "" : " none"}">${k.zones.length ? esc(k.zones.join(" · ")) : "Not in a zone"}</div></div>
-          </div>
-          ${k.ours ? "" : `<div class="kb-w">The kit is on another department's sheet — ${combined ? "this one" : esc(dept)} carries only the parts below</div>`}
-          <ul class="kb-l${kitCols(k) === 1 ? " one" : ""}">${k.parts.map(p => `<li><i class="kb-x"></i><span>${esc(p.name)}</span><i class="kb-d"></i><b>${esc(p.qty)}</b></li>`).join("")}</ul>
-        </div>`; }).join("")}
-      </section>`);
+    // kitBlocks (name → full parts list, "ours"/zones) now only feeds zoneDetailPages' lookup
+    // below (kitBlocksByName) — it no longer builds a standalone "What is inside each kit" page of
+    // its own; that content now prints on each kit's own zone's page instead.
 
-    /* ── WHAT IS INSIDE EVERY FLOWER RECIPE ──
-       A zone card only ever had room for ~4 ingredient lines before the photo/stage budget ran
-       out — "Flower Trail" (7+ flowers) always showed "+3 more" with no page a crew could turn to
-       for the rest. Mirrors the Kits page above: one block per recipe actually used in this book,
-       its full ingredient list, no truncation. The card itself just says "Check Recipe Page". */
-    const recipeBlocks = [];
-    zonePages.forEach(pg => {
-      (pg.items || []).forEach(it => {
-        if (!Array.isArray(it.recipe) || !it.recipe.length) return;
-        recipeBlocks.push({
-          name: it.name, zone: pg.title, fnLabel: pg.fnLabel, qty: it.qty, unit: it.unit,
-          parts: it.recipe.map(f => ({ name: f.name, qty: Math.round((Number(f.qty) || 0) * (Number(it.qty) || 0) * 100) / 100, unit: f.unit })),
-        });
-      });
-    });
-    const recipeCols = (k) => (k.parts.length >= 4 ? 2 : 1);
-    const recipeLongNames = (k) => { const per = recipeCols(k) === 2 ? 44 : 100; return k.parts.filter(p => String(p.name || "").trim().length > per).length; };
-    const recipeH = (k) => 68 + (Math.ceil(k.parts.length / recipeCols(k)) + Math.ceil(recipeLongNames(k) / recipeCols(k))) * 24 + 14;
-    // A flat list with only a small eyebrow naming the zone reads as one long undifferentiated
-    // list — the SAME recipe used in two zones looked like a confusing duplicate. recipeBlocks is
-    // already in zone order (built by walking zonePages zone by zone), so grouping here just needs
-    // to notice a boundary, not re-sort — into { zone, fnLabel, items } runs.
-    const ZONE_HEAD_H = 72;
-    const recipeGroups = [];
-    recipeBlocks.forEach(k => {
-      const last = recipeGroups[recipeGroups.length - 1];
-      if (!last || last.zone !== k.zone || last.fnLabel !== k.fnLabel) recipeGroups.push({ zone: k.zone, fnLabel: k.fnLabel, items: [k] });
-      else last.items.push(k);
-    });
-    // A zone heading travels as ONE packed unit with the first recipe under it — never stranded
-    // alone at the bottom of a page with its own recipes pushed onto the next.
-    const flatBlocks = [];
-    recipeGroups.forEach(g => {
-      g.items.forEach((k, i) => {
-        flatBlocks.push({ k, h: recipeH(k) + (i === 0 ? ZONE_HEAD_H : 0), zone: i === 0 ? g.zone : null, fnLabel: i === 0 ? g.fnLabel : null });
-      });
-    });
-    const recipeChunks = [];
-    flatBlocks.forEach(b => {
-      const last = recipeChunks[recipeChunks.length - 1];
-      if (!last || last.h + b.h > PAGE_PX - HEAD_PX) recipeChunks.push({ h: b.h, list: [b] });
-      else { last.h += b.h; last.list.push(b); }
-    });
-    const recipeCard = (k) => `<div class="kb">
+    // ── RECIPE AND KIT DETAILS, ON THEIR OWN ZONE'S PAGES ──
+    // Both used to live on one global reference page at the end of the book — easier to build, but
+    // it separated a zone's own recipe/kit detail from the zone itself (owner ask: keep them
+    // together, one details page right after that zone's own cards, not a single combined page for
+    // the whole book). kitBlocksByName still needs the full parts list kitBlocks already computed
+    // (by name — a zone-card item only ever carries a component COUNT, not the parts themselves).
+    const kitBlocksByName = new Map(kitBlocks.map(k => [String(k.name || "").trim().toLowerCase(), k]));
+    const detailCols = (parts) => (parts.length >= 4 ? 2 : 1);
+    const detailLongNames = (parts, cols) => { const per = cols === 2 ? 44 : 100; return parts.filter(p => String(p.name || "").trim().length > per).length; };
+    const detailH = (parts) => { const cols = detailCols(parts); return 68 + (Math.ceil(parts.length / cols) + Math.ceil(detailLongNames(parts, cols) / cols)) * 24 + 14; };
+    const detailCard = (icon, name, qty, unit, parts) => { const cols = detailCols(parts); return `<div class="kb">
       <div class="kb-h">
-        <div class="kb-t"><div class="kb-nm">${esc(k.name)}</div></div>
-        ${k.qty ? `<div class="kb-z kb-q"><div class="kb-zk">Qty</div><div class="kb-zv">${esc(k.qty)}${k.unit ? " " + esc(k.unit) : ""}</div></div>` : ""}
+        <div class="kb-t"><div class="kb-nm">${icon} ${esc(name)}</div></div>
+        ${qty ? `<div class="kb-z kb-q"><div class="kb-zk">Qty</div><div class="kb-zv">${esc(qty)}${unit ? " " + esc(unit) : ""}</div></div>` : ""}
       </div>
-      <ul class="kb-l${recipeCols(k) === 1 ? " one" : ""}">${k.parts.map(p => `<li><i class="kb-x"></i><span>${esc(p.name)}</span><i class="kb-d"></i><b>${esc(p.qty)}${p.unit ? ` ${esc(p.unit)}` : ""}</b></li>`).join("")}</ul>
-    </div>`;
-    const recipeZoneHead = (zone, fnLabel) => `<div style="padding:16px 2px 6px">
-      <div style="font-family:'Playfair Display',Georgia,serif;font-size:22px;font-weight:700;color:#1A1A1A;line-height:1.3">${esc(zone)}</div>
-      ${fnLabel ? `<div style="font-size:11px;color:#8A7F68;margin-top:2px;font-family:Inter,Arial,sans-serif;letter-spacing:.04em">${esc(fnLabel)}</div>` : ""}
-      <div style="height:1.5px;background:#B8935A;opacity:.5;margin-top:8px"></div>
-    </div>`;
-    const recipePages = recipeChunks.map((pgk, i, all) => `<section data-block data-page class="zp"><div class="pc tl"></div><div class="pc tr"></div>
-        <div class="zh"><div><div class="zk"><b>Mandi</b>${all.length > 1 ? ` · Part ${i + 1} of ${all.length}` : ""}</div><h2>What is inside each recipe</h2>
-          <div class="orn l"><i></i><b></b><i></i></div>
-          <div class="zm">Full flower list for every recipe in this book, grouped by zone and already scaled to the zone's own qty</div></div>
-          <div class="zt"><span>${recipeBlocks.length} recipe${recipeBlocks.length === 1 ? "" : "s"}</span></div></div>
-        ${pgk.list.map(b => `${b.zone ? recipeZoneHead(b.zone, b.fnLabel) : ""}${recipeCard(b.k)}`).join("")}
-      </section>`);
+      <ul class="kb-l${cols === 1 ? " one" : ""}">${parts.map(p => `<li><i class="kb-x"></i><span>${esc(p.name)}</span><i class="kb-d"></i><b>${esc(p.qty)}${p.unit ? ` ${esc(p.unit)}` : ""}</b></li>`).join("")}</ul>
+    </div>`; };
+    // One page (or more, if a zone's own recipes+kits don't fit one sheet) per zone, built right
+    // after that zone's card pages in the loop below — never bundled with any OTHER zone's.
+    const zoneDetailPages = (pg) => {
+      const blocks = [];
+      (pg.items || []).forEach(it => {
+        if (Array.isArray(it.recipe) && it.recipe.length) {
+          const parts = it.recipe.map(f => ({ name: f.name, qty: Math.round((Number(f.qty) || 0) * (Number(it.qty) || 0) * 100) / 100, unit: f.unit }));
+          blocks.push({ h: detailH(parts), html: detailCard("🌸", it.name, it.qty, it.unit, parts) });
+        }
+        if (it.kit > 0) {
+          const kb = kitBlocksByName.get(String(it.name || "").trim().toLowerCase());
+          if (kb) blocks.push({ h: detailH(kb.parts), html: detailCard("📦", it.name, kb.qty, "", kb.parts) });
+        }
+      });
+      if (!blocks.length) return [];
+      const dChunks = [];
+      blocks.forEach(b => {
+        const last = dChunks[dChunks.length - 1];
+        if (!last || last.h + b.h > PAGE_PX - HEAD_PX) dChunks.push({ h: b.h, list: [b] });
+        else { last.h += b.h; last.list.push(b); }
+      });
+      return dChunks.map((pgk, i, all) => `<section data-block data-page class="zp"><div class="pc tl"></div><div class="pc tr"></div>
+          <div class="zh"><div><div class="zk"><b>Mandi &amp; Kits</b>${all.length > 1 ? ` · Part ${i + 1} of ${all.length}` : ""}</div><h2>${esc(pg.title)}</h2>
+            <div class="orn l"><i></i><b></b><i></i></div>
+            <div class="zm">${pg.fnLabel ? esc(pg.fnLabel) + " — " : ""}Full flower list for each recipe and full parts list for each kit in this zone</div></div></div>
+          ${pgk.list.map(b => b.html).join("")}
+        </section>`);
+    };
 
     // ── A BREAK PAGE BETWEEN FUNCTIONS ──
     // On a multi-function event this book used to run straight from one function's last zone into
@@ -2591,15 +2534,12 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       }
       const cs = pg.items.length ? chunks(pg.items, 6) : [[]];
       cs.forEach((c, i) => zonePageHtml.push(zoneSection(pg, c, i + 1, cs.length, zi + 1, i * 6)));
+      // Right after THIS zone's own card page(s) — a zone's recipe/kit detail never shares a page
+      // with another zone's, and never lands in a single combined reference page at the book's end.
+      zonePageHtml.push(...zoneDetailPages(pg));
     });
     const zoneHtml = [
       ...zonePageHtml,
-      // Recipe and Kit reference pages are every department's business regardless of who is
-      // looking — the combined, all-departments book gets them too (owner-reported: both were
-      // still missing from it). Production/buying/loose-item pages stay a per-department-only
-      // deep-dive, as they were before.
-      ...recipePages,
-      ...kitPages,
       ...(combined ? [] : [
       ...listPages(prodItems, "Production", "From production", "Made by the production team for this event"),
       ...listPages(buyItems, "Buying", "To buy", "Bought in for this event — not from our own stock"),
@@ -2985,7 +2925,7 @@ ${combined ? "" : (truckRows.length || loadRows.length) ? sect("Loading & dispat
   (truckRows.length ? table(["#", "Vehicle", "Driver", "Phone", "Status"], truckRows, ["12%", "26%", "24%", "20%", "18%"]) : "")
   + (loadRows.length ? `<p class="meta">Everything going to site — ${blockedItems.length} item${blockedItems.length === 1 ? "" : "s"}, ${loadUnits} piece${loadUnits === 1 ? "" : "s"} in total.</p>`
     + table(["Item", "Qty"], loadRows, ["80%", "20%"]) : "")) : ""}
-${trRows.length ? sect("Transport", table(["Load", "Quantity", "Fits per truck", "Trucks"], trRows, ["46%", "20%", "22%", "12%"]) + `<p class="note">${trNote}</p>`) : ""}
+${!combined && trRows.length ? sect("Transport", table(["Load", "Quantity", "Fits per truck", "Trucks"], trRows, ["46%", "20%", "22%", "12%"]) + `<p class="note">${trNote}</p>`) : ""}
 ${!combined && moveRows.length ? sect("Dismantle routing", table(["Item", "Goes to", "Qty", "Logged by"], moveRows, ["38%", "32%", "12%", "18%"])) : ""}
 ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour", "Required", "Available", "Status"], fabRows, ["40%", "20%", "20%", "20%"])) : ""}
 <footer data-block>
