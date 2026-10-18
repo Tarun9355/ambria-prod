@@ -2291,10 +2291,23 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     // Photos go into the book at print size, not camera size. They are stored at full resolution
     // (a zone photo ran 1.2 MB); Supabase resizes on the fly, and 1400px is still sharper than an A4
     // page at 2x needs. Full-size images were most of what Safari ran out of memory on.
-    const pdfImg = (url) => fitUrl(url, 700, 82);
-    const bgCss = (url) => url ? `background-image:url('${esc(pdfImg(url))}');` : "";
-    const bgData = (url) => url ? `data-bg="${esc(pdfImg(url))}"` : "";
-    const bg = (url) => url ? `style="${bgCss(url)}" ${bgData(url)}` : "";
+    // Photos fetched at the size they are drawn, not one size for all. fitUrl doubles the size it is
+    // given, so the old flat 700 meant every photo arrived 1400px — a 224px card included — and on
+    // a low-end phone decoding and scaling those dozens of large photos was most of the wait.
+    // Cards: 180 → 360px (a card is 224px, drawn at ≤1.5x). Zone photo and cover: 560 → 1120px.
+    // ── A FRESH URL FOR EVERY EXPORT (Safari) ── "The operation is insecure": Safari hands the report
+    // the copy of a photo it already cached for the page, fetched WITHOUT CORS, even though the
+    // report asks for it with CORS — the canvas the photo is drawn into is then "tainted" and its
+    // pixels cannot be read, so the section drops out of the PDF. A query mark unique to this
+    // export makes the URL one Safari has never seen, so it fetches it fresh, with CORS.
+    const pdfBust = "pdfx=" + Date.now().toString(36);
+    const pdfImg = (url, size = 560) => {
+      const u = fitUrl(url, size, 82);
+      return (typeof u === "string" && u && !u.startsWith("data:")) ? u + (u.includes("?") ? "&" : "?") + pdfBust : u;
+    };
+    const bgCss = (url, size) => url ? `background-image:url('${esc(pdfImg(url, size))}');` : "";
+    const bgData = (url, size) => url ? `data-bg="${esc(pdfImg(url, size))}"` : "";
+    const bg = (url, size) => url ? `style="${bgCss(url, size)}" ${bgData(url, size)}` : "";
 
     const zonePages = [];
     // ── THIS EVENT'S MANDI SWAPS ──
@@ -2617,7 +2630,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     // The paint line takes its 20px out of the photo the same way a flower line does.
     const flLines = (it) => ((it.recipe || []).length ? 1 : 0) + (it.paint?.size ? 1 : 0) + (it.extra || []).length;
     const card = (it, zone, num) => `
-      ${it.photo ? `<div class="zc-ph" style="${bgCss(it.photo)}${flLines(it) ? `height:${168 - flLines(it) * 20}px` : ""}" ${bgData(it.photo)}></div>` : ""}
+      ${it.photo ? `<div class="zc-ph" style="${bgCss(it.photo, 180)}${flLines(it) ? `height:${168 - flLines(it) * 20}px` : ""}" ${bgData(it.photo, 180)}></div>` : ""}
       ${num ? `<div class="zc-no">${num}</div>` : ""}
       ${it.kit ? `<div class="zc-kt">KIT · ${esc(it.kit)}</div>` : ""}
       ${it.size ? `<div class="zc-sz">${esc(it.size)}</div>` : ""}
@@ -3266,6 +3279,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
       const usableW = pageW - MARGIN * 2;
       const usableH = pageH - MARGIN * 2;
       const skipped = [];
+      let photoless = 0; // sections drawn without their photos because the browser refused them
       let blocksSeen = 0;
       const coverPages = new Set(); // physical page numbers a cover was drawn on — see below
 
@@ -3346,7 +3360,20 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
       // page — forcing it over is what left a page holding nothing but the footer line.
       let afterOwnPage = false;
       let hasCover = false;
+      // ── LOW-END DEVICES ── a phone with ≤4 cores or ≤4 GB reports itself through these, and gets a
+      // smaller capture (~120 dpi on A4, still clear to read) — the per-page draw and JPEG encode
+      // shrink with the square of the scale. Browsers that report neither are treated as capable.
+      const lowEnd = (Number(navigator.hardwareConcurrency) || 8) <= 4 || (Number(navigator.deviceMemory) || 8) <= 4;
+      const SCALES = lowEnd ? [1.15, 1] : [1.5, 1.25];
+      let prevEl = null;
       for (const el of blocks) {
+        // ── EACH CAPTURE COPIES ONE PAGE ── html2canvas clones the document for every block; the
+        // blocks after this one were already left out (ignoreElements below), but every page
+        // already drawn was still copied each time — page 19 dragged the 18 before it along. A
+        // drawn block is now hidden: it has no layout, so this block's position is still read
+        // correctly, and the hidden ones are left out of the clone as well.
+        if (prevEl && !prevEl.contains(el)) prevEl.style.display = "none";
+        prevEl = el;
         // A zone layout is a page of its own: always start it on a fresh page, and send the next
         // table to the next one, so a table never shares a sheet with a layout.
         const ownPage = el.hasAttribute("data-page");
@@ -3376,20 +3403,32 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
         // page, so dropping a block above it would shift it up and capture the wrong strip.
         // Scale 1.5, not 2: ~160 dpi on A4, sharp on screen and in print, and just over half the
         // pixels to draw and encode per page.
-        const ignoreElements = (n) => blockSet.has(n) && !n.contains(el) && !el.contains(n) && !!(el.compareDocumentPosition(n) & Node.DOCUMENT_POSITION_FOLLOWING);
-        for (const scale of [1.5, 1.25]) {
+        const ignoreElements = (n) => blockSet.has(n) && !n.contains(el) && !el.contains(n) && (n.style.display === "none" || !!(el.compareDocumentPosition(n) & Node.DOCUMENT_POSITION_FOLLOWING));
+        // Each scale in turn, then — as a last resort — the section again WITHOUT its photos: a
+        // section missing its photo is still the crew's list of what goes where; a section missing
+        // altogether is not. Photos are stripped in html2canvas's own copy (onclone), never here.
+        const tries = [...SCALES.map(sc => ({ scale: sc, strip: false })), { scale: SCALES[SCALES.length - 1], strip: true }];
+        for (let ti = 0; ti < tries.length; ti++) {
+          const { scale, strip } = tries[ti];
+          const onclone = strip ? (cdoc) => {
+            cdoc.querySelectorAll("[data-bg]").forEach(n => { n.style.backgroundImage = "none"; });
+            cdoc.querySelectorAll("img").forEach(im => { if (!String(im.getAttribute("src") || "").startsWith("data:")) im.style.visibility = "hidden"; });
+          } : undefined;
           try {
-            canvas = await html2canvas(el, { scale, backgroundColor: "#F4F1EA", logging: false, useCORS: true, windowWidth: 794, ignoreElements });
+            canvas = await html2canvas(el, { scale, backgroundColor: "#F4F1EA", logging: false, useCORS: true, windowWidth: 794, ignoreElements, onclone });
           } catch (blockErr) { lastErr = blockErr; canvas = null; await new Promise(r => setTimeout(r, 80)); continue; }
           // Nothing drawn (an element with no height) must not cost a page either.
           if (!canvas.width || canvas.height < 4) break;
           try {
-            img = canvas.toDataURL("image/jpeg", 0.92);
+            img = canvas.toDataURL("image/jpeg", 0.85);
+            if (strip) photoless += 1;
             break;
           } catch (taintErr) {
             // A tainted canvas: a photo served without CORS headers was drawn into it, and the
-            // browser refuses to let its pixels be read back. A lower scale will not change that.
-            lastErr = taintErr; freeCanvas(canvas); canvas = null; break;
+            // browser refuses to let its pixels be read back. A lower scale will not change that,
+            // so it goes straight to the photo-less try.
+            lastErr = taintErr; freeCanvas(canvas); canvas = null;
+            if (!strip) ti = tries.length - 2;
           }
         }
         if (!img) {
@@ -3503,7 +3542,9 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
       if (skipped.length) {
         // Name the actual error — "usually a photo" sent people chasing photos that were fine.
         const why = [...new Set(skipped.map(s => s.why))].slice(0, 2).join(" · ");
-        alert(`The PDF ${view ? "is ready" : "saved"}, but ${skipped.length} section${skipped.length === 1 ? "" : "s"} could not be drawn and ${skipped.length === 1 ? "is" : "are"} missing from it.\n\nReason: ${why}\n\nTry again in Chrome if this keeps happening.`);
+        alert(`The PDF ${view ? "is ready" : "saved"}, but ${skipped.length} section${skipped.length === 1 ? "" : "s"} could not be drawn and ${skipped.length === 1 ? "is" : "are"} missing from it.${photoless ? `\n\n${photoless} other section${photoless === 1 ? " is" : "s are"} in it without ${photoless === 1 ? "its" : "their"} photos.` : ""}\n\nReason: ${why}\n\nTry again in Chrome if this keeps happening.`);
+      } else if (photoless) {
+        alert(`The PDF ${view ? "is ready" : "saved"}. ${photoless} section${photoless === 1 ? " is" : "s are"} in it without ${photoless === 1 ? "its photo" : "their photos"} — this browser would not let them be drawn. Every item and quantity is there.\n\nFor the photos too, download it in Chrome.`);
       }
     } catch (err) {
       // The app was redeployed under this tab: a reload fixes it, the HTML fallback would not.
