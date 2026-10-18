@@ -1503,16 +1503,36 @@ export default function DealCheckOverlay({ ctx }) {
                   return { kind: "labours", venueMin: vm, mult: sm, heavy: he, heavyRows, result, ...(usageFloor > adj + he ? { usageFloor, usageTotal: Math.round(fnUsageTotal * 100) / 100 } : {}) };
                 }
                 if (type === "Fabric Bangali") {
-                  // Grouped by element — same per-contributor rows as manpowerPlanForBooking's own
-                  // Fabric Bangali calc (StudioApp.jsx). sq is a straight sum; the range lookup below
-                  // is still the one threshold step, not a per-row division.
-                  const agg = {};
-                  walkFn(fn, ({ rc, el }) => { const s = String(rc.sub || "").toLowerCase(); if (!(s.includes("wall masking") || s.includes("fabric") || s.includes("draping"))) return; const L = Number(el.L || el.l || rc.defaultDims?.L || 0); const W = Number(el.W || el.w || el.H || el.h || rc.defaultDims?.W || 0); if (L > 0 && W > 0) { const k = rc.name || rc.sub || "item"; agg[k] = (agg[k] || 0) + L * W; } });
-                  const rows = Object.entries(agg).map(([name, sqft]) => ({ sub: name, sqft: Math.round(sqft * 100) / 100 }));
-                  const sq = rows.reduce((s, r) => s + r.sqft, 0);
-                  if (sq <= 0 || !fabricBangaliRanges.length) return null;
-                  let lab = fabricBangaliRanges[fabricBangaliRanges.length - 1]?.labour || 0; for (const r of fabricBangaliRanges) { if (sq <= r.upTo) { lab = r.labour || 0; break; } }
-                  return { kind: "range", value: Math.round(sq), unit: "sqft", result: lab, rows };
+                  // Was grouped by individual FABRIC ELEMENTS (anything whose sub-category name says
+                  // "wall masking"/"fabric"/"draping" and carries its own L×W) — but Fabric Bangali crew
+                  // is actually driven by the ZONE's own truss/tenting structure (its shape, dimensions,
+                  // which masking walls are switched on, the batta wrap around every pillar+beam), not
+                  // by picking individual decor items with dimensions of their own. Real bookings rarely
+                  // have any such "element" at all, so this almost always returned sq<=0 → null — the
+                  // trace explained nothing while calcPplRaw (the real headcount engine, same file,
+                  // "Fabric Bangali" case above) was already computing a real number from the zones.
+                  // Rewritten to mirror that exact per-zone formula instead.
+                  const zc = fn.zoneConfig || {}, en = fn.enabledEls || {};
+                  const engBackDepth = Number(dealCheckData?.trussInv?.settings?.defaultBackDepthFt) || 4;
+                  const fabricRftPerWorker = Number(dealCheckData?.fabricRftPerWorker) || 100;
+                  const tInv = dealCheckData?.trussInv;
+                  let topTotal = 0, rftTotal = 0; const zones = [];
+                  Object.keys(zc).forEach(zk => {
+                    if (!en[zk] || !zc[zk]) return; const z = zc[zk];
+                    const cfg = resolveTrussConfig(z); if (!cfg || !cfg.config) return; const config = cfg.config;
+                    const dL = Number(z.dims?.L) || Number(z.dims?.S) || 0; const dW = Number(z.dims?.W) || Number(z.dims?.S) || 0;
+                    const mw = z.mkWalls || {}; const sideDepth = Number(z.trussBackDepth) || engBackDepth;
+                    let zoneTop = 0, zoneRft = 0;
+                    if (config === "full_box") { const topSqft = dL * dW; if (topSqft > 0 && fabricBangaliRanges.length > 0) { for (const r of fabricBangaliRanges) { if (topSqft <= r.upTo) { zoneTop = r.labour || 0; break; } } } if (z.mkOn) { if (mw.back && dW > 0) zoneRft += dW; if (mw.left && dL > 0) zoneRft += dL; if (mw.right && dL > 0) zoneRft += dL; } }
+                    else if (config === "half_box") { const spanL = cfg.spanFt || dL || dW; if (z.mkOn) { if (mw.back && spanL > 0) zoneRft += spanL; if (mw.left && sideDepth > 0) zoneRft += sideDepth; if (mw.right && sideDepth > 0) zoneRft += sideDepth; } }
+                    else if (config === "u_only") { const spanL = cfg.spanFt || dL || dW; if (z.mkOn && mw.back && spanL > 0) zoneRft += spanL; }
+                    if (tInv) { try { const pv = calcZoneTrussPreview(z, tInv); if (pv?.batta?.rftWithBuffer) zoneRft += pv.batta.rftWithBuffer; } catch {} }
+                    if (zoneTop > 0 || zoneRft > 0) { const zLabel = zoneLabelsD[zk]?.label || (fn.customZones || []).find(cz2 => cz2.id === zk)?.name || zk; zones.push({ zone: zLabel, topSqft: Math.round(dL * dW), topLabour: zoneTop, rft: Math.round(zoneRft) }); }
+                    topTotal += zoneTop; rftTotal += zoneRft;
+                  });
+                  if (topTotal <= 0 && rftTotal <= 0) return null;
+                  const rftLabour = rftTotal > 0 ? Math.ceil(rftTotal / fabricRftPerWorker) : 0;
+                  return { kind: "fabricBangali", topTotal, rftTotal: Math.round(rftTotal), rftPerWorker: fabricRftPerWorker, rftLabour, zones, result: topTotal + rftLabour };
                 }
                 if (type === "Truss Labour") {
                   // Same per-contributor rows as manpowerPlanForBooking's own Truss Labour calc

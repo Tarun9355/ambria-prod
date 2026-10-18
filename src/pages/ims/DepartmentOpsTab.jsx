@@ -1914,6 +1914,16 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         <div className="px-2 py-1 bg-gray-50 text-[13px] text-right text-gray-600">{t.perRow ? <>Σ each ⌈need⌉ = <b className="text-gray-900">{t.result}</b></> : <>Σ {t.need.toFixed(2)} → ⌈ {Math.ceil(t.need)} ⌉{t.min > 0 ? <> · max(min {t.min})</> : null} = <b className="text-gray-900">{t.result}</b></>}</div>
       </div>
     );
+    // A tier2 type (Carpenters, Painters, etc.) with NO matching items today still often shows crew
+    // assigned — a configured minimum (e.g. "always keep at least 1 on-site whenever this booking has
+    // this role at all") floors it above zero even with nothing to point to. Previously this whole box
+    // just didn't render at all when rows was empty, so the crew count above sat there with no
+    // explanation — looked like the system had assigned staff for no reason.
+    if (t.kind === "tier2" && (!Array.isArray(t.rows) || t.rows.length === 0)) return (
+      <div className="mb-1.5 text-[13px] text-gray-500">
+        No matching items today{t.min > 0 ? <> — but at least <b className="text-gray-900">{t.min}</b> kept on-site whenever this role is needed anywhere in the booking.</> : "."}
+      </div>
+    );
     if (t.kind === "pillars") return (
       <div className="mb-1.5">
         <div className="text-[13px] text-gray-600">🏗️ {t.total} pillar(s){t.zoneP ? ` — ${t.zoneP} from truss tool${t.recipeP ? `, ${t.recipeP} from build` : ""}` : ""} → range → <b>{t.result}</b></div>
@@ -1927,54 +1937,67 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         {Array.isArray(t.rows) && t.rows.length > 0 && renderMpNameValueRows(t.rows.map(r => ({ sub: r.sub, value: r.sqft })), t.unit || "Qty", 2)}
       </div>
     );
-    // "labours" is a frozen snapshot captured at booking time (StudioApp.jsx) — it only stores the
-    // COMBINED situational multiplier (season/timing maxed together), not the individual dumping/
-    // saya/timing factors ManpowerTab.jsx's live Tier-3 breakdown exposes, so the pill display here
-    // is necessarily a simpler "what we know" version rather than the full Setup-Access/Dumping-Space
-    // breakdown — that granularity isn't in the stored data to show honestly.
-    // One compact line, not the full ManpowerFactorPills panel — the snapshot only ever holds a
-    // single combined multiplier, so a whole "Situational Multipliers" box for "×1" was mostly air.
-    if (t.kind === "labours") return (
+    // Fabric Bangali crew is driven by each zone's own tent/truss structure — a big canopy top needs
+    // its own crew, and every wall-masking + the fabric wrap around every pillar/beam (batta) adds
+    // running feet that a team of workers covers together. Plain zone-by-zone list instead of the
+    // config-type jargon ("full_box"/"half_box"/"u_only") the underlying calc uses — a head just
+    // needs "this zone needs a canopy team" and "this many feet of wrap", not which truss shape.
+    if (t.kind === "fabricBangali") return (
       <div className="mb-1.5">
-        <div className="flex flex-wrap items-center gap-1.5 rounded-lg bg-amber-50/70 ring-1 ring-amber-200/70 px-2.5 py-1.5 text-[13.5px] text-gray-600">
-          <span aria-hidden="true" className="text-amber-500">⚡</span>
-          <span>Base <b className="text-gray-900">{t.venueMin}</b></span>
-          <span className="text-gray-400">×</span>
-          <span title="Venue-min situational multiplier">situational <b className="text-gray-900">{t.mult}</b></span>
-          {t.heavy > 0 && <><span className="text-gray-400">+</span><span><b className="text-gray-900">{t.heavy}</b> heavy-element add-on</span></>}
-          <span className="ml-auto font-bold text-amber-700">= {t.result} Labours</span>
-        </div>
-        {/* usageFloor only appears when IMS's usage-based split (Heavy Element Add-ons' "1 labour
-            per N units" ratios) computed a BIGGER number for this function than the venue-min +
-            heavy-element math above — the count shown is this floor, not the smaller figure the
-            line above would otherwise suggest, so say so rather than leaving the jump unexplained. */}
-        {t.usageFloor != null && (
-          <div className="mt-1 text-[12px] text-amber-700">↳ raised to {t.usageFloor} — this function's own usage-based need (qty ÷ per-unit across its heavy sub-categories ≈ {t.usageTotal}) ran higher than the venue-min + heavy-element total above.</div>
-        )}
-        {/* The base figure above is a flat venue minimum — nothing item-level to break down there,
-            same as Supervisors' flat "1 per booking". The heavy-element ADD-ON on top of it IS
-            item-driven (each configured sub-category range contributes its own extra labour), so
-            that slice gets the same per-item table Flowerists/Electricians/Carpenters get. */}
-        {Array.isArray(t.heavyRows) && t.heavyRows.length > 0 && (
+        <div className="text-[13px] text-gray-600">🧵 <b className="text-gray-900">{t.result}</b> Fabric Bangali worker{t.result === 1 ? "" : "s"} needed this day</div>
+        {Array.isArray(t.zones) && t.zones.length > 0 && (
           <div className="mt-1 bg-white border rounded-lg overflow-hidden">
             <div className="grid grid-cols-[1fr_auto_auto] gap-x-2">
               <div className="contents">
-                <span className="px-2 py-1 bg-gray-100 text-[12px] uppercase tracking-wide text-gray-500 font-semibold">Heavy-element item</span>
-                <span className="px-2 py-1 bg-gray-100 text-[12px] uppercase tracking-wide text-gray-500 font-semibold text-right whitespace-nowrap">Qty</span>
-                <span className="px-2 py-1 bg-gray-100 text-[12px] uppercase tracking-wide text-gray-500 font-semibold text-right whitespace-nowrap">Extra labour</span>
+                <span className="px-2 py-1 bg-gray-100 text-[12px] uppercase tracking-wide text-gray-500 font-semibold">Zone</span>
+                <span className="px-2 py-1 bg-gray-100 text-[12px] uppercase tracking-wide text-gray-500 font-semibold text-right whitespace-nowrap">Canopy team</span>
+                <span className="px-2 py-1 bg-gray-100 text-[12px] uppercase tracking-wide text-gray-500 font-semibold text-right whitespace-nowrap">Wrap</span>
               </div>
-              {t.heavyRows.map((hr, hi) => (
-                <div className="contents" key={hi}>
+              {t.zones.map((z, zi) => (
+                <div className="contents" key={zi}>
                   <div className="flex items-baseline gap-1.5 min-w-0 overflow-hidden px-2 py-0.5 text-[13px] text-gray-700">
-                    <span className="truncate" title={hr.sub}>{hr.sub}</span>
+                    <span className="truncate" title={z.zone}>{z.zone}</span>
                     <span aria-hidden="true" className="flex-1 min-w-2 border-b border-dotted border-gray-300 mb-[3px]" />
                   </div>
-                  <span className="px-2 py-0.5 text-[13px] text-gray-700 text-right whitespace-nowrap">{hr.count}</span>
-                  <span className="px-2 py-0.5 text-[13px] text-gray-700 font-semibold text-right whitespace-nowrap">+{hr.extra}</span>
+                  <span className="px-2 py-0.5 text-[13px] text-gray-700 text-right whitespace-nowrap">{z.topLabour > 0 ? `${z.topLabour}` : "—"}</span>
+                  <span className="px-2 py-0.5 text-[13px] text-gray-700 text-right whitespace-nowrap">{z.rft > 0 ? `${z.rft} ft` : "—"}</span>
                 </div>
               ))}
             </div>
           </div>
+        )}
+        {t.rftTotal > 0 && <div className="mt-1 text-[12.5px] text-gray-500">{t.rftTotal} ft of wrap, {t.rftPerWorker} ft per worker → {t.rftLabour} worker{t.rftLabour === 1 ? "" : "s"}</div>}
+      </div>
+    );
+    // Plain-language, dept-head-facing version — no formulas (base/situational multiplier/floor
+    // comparisons). Those numbers are real but meaningless to someone who isn't reading the code;
+    // all a head needs is "this many people, because of these items".
+    if (t.kind === "labours") return (
+      <div className="mb-1.5">
+        <div className="rounded-lg bg-amber-50/70 ring-1 ring-amber-200/70 px-2.5 py-1.5 text-[13.5px] text-gray-700">
+          <span aria-hidden="true" className="text-amber-500 mr-1">⚡</span>
+          <b className="text-amber-700">{t.result} labourer{t.result === 1 ? "" : "s"}</b> needed this day
+        </div>
+        {Array.isArray(t.heavyRows) && t.heavyRows.length > 0 && (
+          <div className="mt-1">
+            <div className="text-[12.5px] text-gray-500">Extra hands needed for:</div>
+            <div className="mt-0.5 bg-white border rounded-lg overflow-hidden divide-y divide-gray-100">
+              {t.heavyRows.map((hr, hi) => (
+                <div key={hi} className="flex items-center justify-between px-2 py-1 text-[13px] text-gray-700">
+                  <span className="truncate">{hr.sub} <span className="text-gray-400">× {hr.count}</span></span>
+                  <span className="font-semibold shrink-0">+{hr.extra}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        {t.venueMin > 0 && <div className="mt-1 text-[12.5px] text-gray-500">+ {t.venueMin} minimum crew this venue always requires</div>}
+        {/* usageFloor: IMS's usage-based split found MORE crew needed overall today than the item
+            list above alone accounts for — stated plainly, no ÷/× shown, since the exact mechanics
+            (qty ÷ per-unit across every heavy sub-category) aren't something a head needs to verify
+            by hand, just to know the number above already includes it. */}
+        {t.usageFloor != null && (
+          <div className="mt-1 text-[12.5px] text-gray-500">Rounded up to cover today's overall décor workload.</div>
         )}
       </div>
     );
@@ -2070,11 +2093,11 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
                   {d.trace ? renderMpTrace(d.trace)
                     : <div className="text-[13px] text-gray-500">{d.phase === "minusOne" ? "⏮️ −1 setup — full crew staged early (peak of all functions)." : d.phase === "dismantle" ? "🧹 dismantle day — crew carried from the event." : "⏸️ gap day — crew carried from the previous day."}</div>}
                   {d.trace && Number(d.trace.result) > 0 && Number(d.trace.result) < Number(d.count) && (
-                    <div className="text-[13px] text-amber-600 mt-1">🔼 Cumulative-max: this day's own need is <b>{d.trace.result}</b>, but crew is held at <b>{d.count}</b> (carried from a busier day — crew only scales up).</div>
+                    <div className="text-[13px] text-amber-600 mt-1">🔼 Today only needs {d.trace.result}, but crew is kept at {d.count} — carried over from a busier earlier day (crew never drops mid-event, only grows).</div>
                   )}
                   {hasShare && (
                     <div className="mt-1 text-[13px] text-gray-600">
-                      Bifurcation: <b>{d.count}</b> total {r.type} × <b>{Math.round((Number(d.share) || 0) * 100)}%</b> ({dept}'s usage this day) = <b className="text-gray-900">{(d.count * (Number(d.share) || 0)).toFixed(2)}</b> → {Math.round(effDay(r, d))} crew to {dept}
+                      <b>{dept}</b>'s share today: <b className="text-gray-900">{Math.round(effDay(r, d))}</b> of the {d.count} {r.type.toLowerCase()} ({Math.round((Number(d.share) || 0) * 100)}% of today's heavy décor belongs to {dept})
                     </div>
                   )}
                 </div>
