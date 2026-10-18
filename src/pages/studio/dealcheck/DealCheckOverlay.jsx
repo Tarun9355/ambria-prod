@@ -242,7 +242,7 @@ export default function DealCheckOverlay({ ctx }) {
     // deal check inventory-tab module helpers
     isZoneDirty, parseCardKey, PLATFORM_FATTA_CODE, PLATFORM_STAND_CODE,
     // Settings → Zones' own drag-ordered priority (Object.keys(zoneMeta), same list Build sorts by)
-    zoneKeys,
+    zoneKeys, zoneLabelsD,
     // orchestration + persistence
     getStudioAvailable, getActiveSoftHold,
     // misc
@@ -1350,8 +1350,14 @@ export default function DealCheckOverlay({ ctx }) {
                   return rows.length ? { kind: "tier2", perRow: true, rows, need: rows.reduce((s, r) => s + r.need, 0), min: 0, result: t, countLabel: "arrangements", batchLabel: "÷per flowerist" } : null;
                 }
                 if (type === "Electricians") {
-                  let frac = 0, n = 0; walkFn(fn, ({ rc, el, qty }) => { if (String(rc.cat || "").toLowerCase() !== "lighting") return; const pr = electricianProdMP[rc.sub || ""]; if (!pr) return; const sk = sizeFromMode(rc.inhouseMode, el.size); const upe = Number(pr.sizes?.[sk]) || Number(pr.sizes?.medium) || 0; if (upe > 0) { frac += qty / upe; n += qty; } }); const t = Math.ceil(frac); // ceil ONCE (matches calcPpl + the tab)
-                  return t > 0 ? { kind: "ratio", num: n, numLabel: "lighting units", denomLabel: "productivity per electrician", result: t } : null;
+                  // Grouped by sub-category, same as manpowerPlanForBooking's own Electricians calc
+                  // (StudioApp.jsx) — this per-day trace used to ceil a bare fraction with no rows at
+                  // all, the one crew type that never got the per-item breakdown Flowerists has here.
+                  const agg = {};
+                  walkFn(fn, ({ rc, el, qty }) => { if (String(rc.cat || "").toLowerCase() !== "lighting") return; const pr = electricianProdMP[rc.sub || ""]; if (!pr) return; const sk = sizeFromMode(rc.inhouseMode, el.size); const upe = Number(pr.sizes?.[sk]) || Number(pr.sizes?.medium) || 0; if (upe > 0) { const k = (rc.sub || "lighting") + "|" + upe; if (!agg[k]) agg[k] = { sub: rc.sub || "lighting", batch: upe, count: 0 }; agg[k].count += qty; } });
+                  const rows = Object.values(agg).map(r => ({ ...r, need: r.count / r.batch }));
+                  const need = rows.reduce((s, r) => s + r.need, 0); const t = Math.ceil(need); // ceil ONCE (matches calcPpl + the tab)
+                  return rows.length ? { kind: "tier2", rows, need, min: 0, result: t, countLabel: "lighting units" } : null;
                 }
                 if (type === "Labours") {
                   const venueName = fn.fnVenue || "";
@@ -1363,21 +1369,38 @@ export default function DealCheckOverlay({ ctx }) {
                   if (!dcMpIncludeMinusOne) { const c = [({ nearby: 1.0, medium: 1.1, far: 1.2 })[(dealCheckData?.venueDumping || {})[venueName] || "nearby"] || 1.0, heavySayaMultFor(fn, "Labours")]; c.push(eventTimingMultFor(eventTimingMultipliers, shiftToTiming(fn.fnShift), "Labours", 1.0)); sm = Math.min(situMultCap, Math.max(...c, 1.0)); }
                   const adj = Math.ceil(base * sm); const sc = {}; walkFn(fn, ({ rc, qty }) => { const _s = itemImsSubcat(rc); sc[_s] = (sc[_s] || 0) + qty; });
                   const reduction = standingReductionBySubcat(fvCfg, venueName, (dcCards || {})[fns.indexOf(fn)], dealCheckData?.inventory || []);
-                  let he = 0; heavyElementRanges.forEach(her => { const count = Math.max(0, (lookupBySubcat(sc, her.subCat) || 0) - (lookupBySubcat(reduction, her.subCat) || 0)); he += heavyExtraLabour(her, count); });
-                  return { kind: "labours", venueMin: vm, mult: sm, heavy: he, result: adj + he };
+                  // Per-sub-category rows for the heavy-element add-on, same as manpowerPlanForBooking's
+                  // heavyRows — the base figure above stays a flat venue-min line (nothing item-level to
+                  // break down there), only the add-on is item-driven.
+                  const heavyRows = []; let he = 0;
+                  heavyElementRanges.forEach(her => { const count = Math.max(0, (lookupBySubcat(sc, her.subCat) || 0) - (lookupBySubcat(reduction, her.subCat) || 0)); const extra = heavyExtraLabour(her, count); if (extra > 0) heavyRows.push({ sub: her.subCat, count, extra }); he += extra; });
+                  return { kind: "labours", venueMin: vm, mult: sm, heavy: he, heavyRows, result: adj + he };
                 }
                 if (type === "Fabric Bangali") {
-                  let sq = 0; walkFn(fn, ({ rc, el }) => { const s = String(rc.sub || "").toLowerCase(); if (s.includes("wall masking") || s.includes("fabric") || s.includes("draping")) { const L = Number(el.L || el.l || rc.defaultDims?.L || 0); const W = Number(el.W || el.w || el.H || el.h || rc.defaultDims?.W || 0); if (L > 0 && W > 0) sq += L * W; } });
+                  // Grouped by element — same per-contributor rows as manpowerPlanForBooking's own
+                  // Fabric Bangali calc (StudioApp.jsx). sq is a straight sum; the range lookup below
+                  // is still the one threshold step, not a per-row division.
+                  const agg = {};
+                  walkFn(fn, ({ rc, el }) => { const s = String(rc.sub || "").toLowerCase(); if (!(s.includes("wall masking") || s.includes("fabric") || s.includes("draping"))) return; const L = Number(el.L || el.l || rc.defaultDims?.L || 0); const W = Number(el.W || el.w || el.H || el.h || rc.defaultDims?.W || 0); if (L > 0 && W > 0) { const k = rc.name || rc.sub || "item"; agg[k] = (agg[k] || 0) + L * W; } });
+                  const rows = Object.entries(agg).map(([name, sqft]) => ({ sub: name, sqft: Math.round(sqft * 100) / 100 }));
+                  const sq = rows.reduce((s, r) => s + r.sqft, 0);
                   if (sq <= 0 || !fabricBangaliRanges.length) return null;
                   let lab = fabricBangaliRanges[fabricBangaliRanges.length - 1]?.labour || 0; for (const r of fabricBangaliRanges) { if (sq <= r.upTo) { lab = r.labour || 0; break; } }
-                  return { kind: "range", value: Math.round(sq), unit: "sqft", result: lab };
+                  return { kind: "range", value: Math.round(sq), unit: "sqft", result: lab, rows };
                 }
                 if (type === "Truss Labour") {
-                  let recipeP = 0; walkFn(fn, ({ rc, qty }) => { const s = String(rc.sub || "").toLowerCase(); if (s.includes("pillar") || s.includes("column") || s.includes("truss")) recipeP += qty; });
-                  let zoneP = 0; try { const tInv = dealCheckData?.trussInv; if (tInv) { const zc = fn.zoneConfig || {}, en = fn.enabledEls || {}; Object.keys(zc).forEach(zk => { if (!en[zk] || !zc[zk]) return; const pv = calcZoneTrussPreview(zc[zk], tInv); zoneP += (pv?.topology?.pillars || []).length; }); } } catch {}
+                  // Same per-contributor rows as manpowerPlanForBooking's own Truss Labour calc
+                  // (StudioApp.jsx) — which build elements and which zones (via the truss tool) each
+                  // added how many pillars, summing to the total the range lookup runs against.
+                  const recipeAgg = {};
+                  walkFn(fn, ({ rc, qty }) => { const s = String(rc.sub || "").toLowerCase(); if (s.includes("pillar") || s.includes("column") || s.includes("truss")) { const k = rc.name || rc.sub || "item"; recipeAgg[k] = (recipeAgg[k] || 0) + qty; } });
+                  let recipeP = 0; Object.values(recipeAgg).forEach(v => { recipeP += v; });
+                  const zoneRows = []; let zoneP = 0;
+                  try { const tInv = dealCheckData?.trussInv; if (tInv) { const zc = fn.zoneConfig || {}, en = fn.enabledEls || {}; Object.keys(zc).forEach(zk => { if (!en[zk] || !zc[zk]) return; const pv = calcZoneTrussPreview(zc[zk], tInv); const n = (pv?.topology?.pillars || []).length; if (n > 0) { const zLabel = zoneLabelsD[zk]?.label || (fn.customZones || []).find(cz => cz.id === zk)?.name || zk; zoneRows.push({ sub: `${zLabel} (truss tool)`, count: n }); zoneP += n; } }); } } catch {}
                   const p = recipeP + zoneP; if (p <= 0 || !trussLabourRanges.length) return null;
                   let lab = trussLabourRanges[trussLabourRanges.length - 1]?.labour || 0; for (const r of trussLabourRanges) { if (p <= r.upTo) { lab = r.labour || 0; break; } }
-                  return { kind: "pillars", recipeP, zoneP, total: p, result: lab };
+                  const rows = [...Object.entries(recipeAgg).map(([name, count]) => ({ sub: name, count })), ...zoneRows];
+                  return { kind: "pillars", recipeP, zoneP, total: p, result: lab, rows };
                 }
                 const cfg = labourTiers[type];
                 if (cfg && cfg.tier === 2) {

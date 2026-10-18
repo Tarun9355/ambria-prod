@@ -6059,18 +6059,37 @@ export default function StudioApp() {
         return { count: adj + he, basis: `venue min ${vm}${sm > 1 ? ` ×${sm.toFixed(2)} season/timing` : ""}${he ? ` + ${he} heavy-element` : ""}`, trace: { kind: "labours", venueMin: vm, mult: sm, heavy: he, heavyRows, result: adj + he } };
       }
       if (type === "Fabric Bangali") {
-        let sq = 0; walk(fn, ({ rc, el }) => { const s = String(rc.sub || "").toLowerCase(); if (s.includes("wall masking") || s.includes("fabric") || s.includes("draping")) { const L = Number(el.L || el.l || 0); const W = Number(el.W || el.w || el.H || el.h || 0); if (L > 0 && W > 0) sq += L * W; } });
+        // Grouped by element (same reasoning as Electricians' per-sub-category rows above) — Dept
+        // Ops used to get one opaque "N sqft fabric" line with no way to tell which wall/drape
+        // actually drove the figure. sq is a straight sum of these rows, not a batch-divided need —
+        // the range lookup below is still the one and only threshold step.
+        const agg = {};
+        walk(fn, ({ rc, el }) => {
+          const s = String(rc.sub || "").toLowerCase();
+          if (!(s.includes("wall masking") || s.includes("fabric") || s.includes("draping"))) return;
+          const L = Number(el.L || el.l || 0); const W = Number(el.W || el.w || el.H || el.h || 0);
+          if (L > 0 && W > 0) { const k = rc.name || rc.sub || "item"; agg[k] = (agg[k] || 0) + L * W; }
+        });
+        const rows = Object.entries(agg).map(([name, sqft]) => ({ sub: name, sqft: Math.round(sqft * 100) / 100 }));
+        const sq = rows.reduce((s, r) => s + r.sqft, 0);
         if (sq <= 0 || !fabricBangaliRanges.length) return { count: 0, basis: "no fabric sqft" };
         let lab = fabricBangaliRanges[fabricBangaliRanges.length - 1]?.labour || 0; for (const r of fabricBangaliRanges) { if (sq <= r.upTo) { lab = r.labour || 0; break; } }
-        return { count: lab, basis: `${Math.round(sq)} sqft fabric → range`, trace: { kind: "range", value: Math.round(sq), unit: "sqft", result: lab } };
+        return { count: lab, basis: `${Math.round(sq)} sqft fabric → range`, trace: { kind: "range", value: Math.round(sq), unit: "sqft", result: lab, rows } };
       }
       if (type === "Truss Labour") {
-        let recipeP = 0; walk(fn, ({ rc, qty }) => { const s = String(rc.sub || "").toLowerCase(); if (s.includes("pillar") || s.includes("column") || s.includes("truss")) recipeP += qty; });
-        let zoneP = 0; try { const tInv = d.trussInv; if (tInv) { const zc = fn.zoneConfig || {}, en = fn.enabledEls || {}; Object.keys(zc).forEach(zk => { if (!en[zk] || !zc[zk]) return; const pv = calcZoneTrussPreview(zc[zk], tInv); zoneP += (pv?.topology?.pillars || []).length; }); } } catch {}
+        // Same per-contributor breakdown as Fabric Bangali above: which build elements and which
+        // zones (via the truss tool) each added how many pillars, summing to the total `p` the range
+        // lookup below runs against — one threshold step, not a per-row division.
+        const recipeAgg = {};
+        walk(fn, ({ rc, qty }) => { const s = String(rc.sub || "").toLowerCase(); if (s.includes("pillar") || s.includes("column") || s.includes("truss")) { const k = rc.name || rc.sub || "item"; recipeAgg[k] = (recipeAgg[k] || 0) + qty; } });
+        let recipeP = 0; Object.values(recipeAgg).forEach(v => { recipeP += v; });
+        const zoneRows = []; let zoneP = 0;
+        try { const tInv = d.trussInv; if (tInv) { const zc = fn.zoneConfig || {}, en = fn.enabledEls || {}; Object.keys(zc).forEach(zk => { if (!en[zk] || !zc[zk]) return; const pv = calcZoneTrussPreview(zc[zk], tInv); const n = (pv?.topology?.pillars || []).length; if (n > 0) { const zLabel = zoneLabelsD[zk]?.label || (fn.customZones || []).find(cz => cz.id === zk)?.name || zk; zoneRows.push({ sub: `${zLabel} (truss tool)`, count: n }); zoneP += n; } }); } } catch {}
         const p = recipeP + zoneP;
         if (p <= 0 || !trussLabourRanges.length) return { count: 0, basis: "no truss/pillars" };
         let lab = trussLabourRanges[trussLabourRanges.length - 1]?.labour || 0; for (const r of trussLabourRanges) { if (p <= r.upTo) { lab = r.labour || 0; break; } }
-        return { count: lab, basis: `${p} pillar(s)${zoneP ? ` (${zoneP} from truss tool${recipeP ? ` + ${recipeP} build` : ""})` : ""} → range`, trace: { kind: "pillars", recipeP, zoneP, total: p, result: lab } };
+        const rows = [...Object.entries(recipeAgg).map(([name, count]) => ({ sub: name, count })), ...zoneRows];
+        return { count: lab, basis: `${p} pillar(s)${zoneP ? ` (${zoneP} from truss tool${recipeP ? ` + ${recipeP} build` : ""})` : ""} → range`, trace: { kind: "pillars", recipeP, zoneP, total: p, result: lab, rows } };
       }
       const cfg = labourTiers[type];
       if (cfg && cfg.tier === 2) {
@@ -6100,7 +6119,7 @@ export default function StudioApp() {
       });
       return { type, count: best.count, basis: best.basis, rate: Number(dihari[type]?.rate) || 0, trace: best.trace || null };
     }).filter(r => r.count > 0);
-  }, [dealCheckData, rcItems, imsInventory]);
+  }, [dealCheckData, rcItems, imsInventory, zoneLabelsD]);
 
   const eventGrandTotal = useMemo(() => {
     const all = collectAllFunctionData();

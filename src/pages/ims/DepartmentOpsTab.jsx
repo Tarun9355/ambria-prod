@@ -1623,6 +1623,28 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     return out.sort((a, b) => (a.date || "").localeCompare(b.date || ""));
   }, [dept, eventOrders, fabricAvail, today, settings, trussInv]);
 
+  // A plain name→value breakdown table — Truss Labour's pillar count and Fabric Bangali's sqft are
+  // each a straight SUM per contributing element/zone (no per-row batch/need division the way
+  // Flowerists/Electricians get), so this is the tier2 table's layout without those two columns.
+  const renderMpNameValueRows = (rows, valueLabel, decimals) => (
+    <div className="mt-1 bg-white border rounded-lg overflow-hidden">
+      <div className="grid grid-cols-[1fr_auto] gap-x-2">
+        <div className="contents">
+          <span className="px-2 py-1 bg-gray-100 text-[12px] uppercase tracking-wide text-gray-500 font-semibold">Item / Zone</span>
+          <span className="px-2 py-1 bg-gray-100 text-[12px] uppercase tracking-wide text-gray-500 font-semibold text-right whitespace-nowrap">{valueLabel}</span>
+        </div>
+        {rows.map((rr, ri) => (
+          <div className="contents" key={ri}>
+            <div className="flex items-baseline gap-1.5 min-w-0 overflow-hidden px-2 py-0.5 text-[13px] text-gray-700">
+              <span className="truncate" title={rr.sub}>{rr.sub}</span>
+              <span aria-hidden="true" className="flex-1 min-w-2 border-b border-dotted border-gray-300 mb-[3px]" />
+            </div>
+            <span className="px-2 py-0.5 text-[13px] text-gray-700 font-semibold text-right whitespace-nowrap">{decimals ? Number(rr.value).toFixed(decimals) : rr.value}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
   // Derivation box for a crew type — same pattern as Deal Check's "HOW … DERIVED".
   const renderMpTrace = (t) => {
     if (!t) return null;
@@ -1659,9 +1681,19 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         <div className="px-2 py-1 bg-gray-50 text-[13px] text-right text-gray-600">{t.perRow ? <>Σ each ⌈need⌉ = <b className="text-gray-900">{t.result}</b></> : <>Σ {t.need.toFixed(2)} → ⌈ {Math.ceil(t.need)} ⌉{t.min > 0 ? <> · max(min {t.min})</> : null} = <b className="text-gray-900">{t.result}</b></>}</div>
       </div>
     );
-    if (t.kind === "pillars") return <div className="mb-1.5 text-[13px] text-gray-600">🏗️ {t.total} pillar(s){t.zoneP ? ` — ${t.zoneP} from truss tool${t.recipeP ? `, ${t.recipeP} from build` : ""}` : ""} → range → <b>{t.result}</b></div>;
+    if (t.kind === "pillars") return (
+      <div className="mb-1.5">
+        <div className="text-[13px] text-gray-600">🏗️ {t.total} pillar(s){t.zoneP ? ` — ${t.zoneP} from truss tool${t.recipeP ? `, ${t.recipeP} from build` : ""}` : ""} → range → <b>{t.result}</b></div>
+        {Array.isArray(t.rows) && t.rows.length > 0 && renderMpNameValueRows(t.rows.map(r => ({ sub: r.sub, value: r.count })), "Pillars")}
+      </div>
+    );
     if (t.kind === "ratio") return <div className="mb-1.5 text-[13px] text-gray-600">📐 {t.num} {t.numLabel} ÷ {t.denomLabel} = <b>{t.result}</b></div>;
-    if (t.kind === "range") return <div className="mb-1.5 text-[13px] text-gray-600">📐 {t.value} {t.unit} → range → <b>{t.result}</b></div>;
+    if (t.kind === "range") return (
+      <div className="mb-1.5">
+        <div className="text-[13px] text-gray-600">📐 {t.value} {t.unit} → range → <b>{t.result}</b></div>
+        {Array.isArray(t.rows) && t.rows.length > 0 && renderMpNameValueRows(t.rows.map(r => ({ sub: r.sub, value: r.sqft })), t.unit || "Qty", 2)}
+      </div>
+    );
     // "labours" is a frozen snapshot captured at booking time (StudioApp.jsx) — it only stores the
     // COMBINED situational multiplier (season/timing maxed together), not the individual dumping/
     // saya/timing factors ManpowerTab.jsx's live Tier-3 breakdown exposes, so the pill display here
