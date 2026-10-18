@@ -658,7 +658,7 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
                         explicitly turned off — nothing to pick for a floor with none. */}
                     {openAvailModal && zc.cpT!==CARPET_OFF && <span onClick={()=>openAvailModal(zoneKey, 0,
                         {invId:zc.cpInvId||null, imsId:zc.cpInvId||null, name:zc.cpInvName||""},
-                        {sub:"carpets"},
+                        {sub:"carpet"},
                         (pick)=>sZ({cpInvId:pick?.id||null, cpInvName:pick?.name||""}),
                         {pickHint:"Pick which physical carpet to use for this floor — a stock pick only, it doesn't change the price.", priceMode:"rental"})}
                       title={zc.cpInvName?`Stock pick: ${zc.cpInvName} — tap to check availability & change`:"Check carpet stock availability & pick an item"}
