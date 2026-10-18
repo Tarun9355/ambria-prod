@@ -4705,6 +4705,18 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                                   {fp.artificial.flowerBunches <= 0 && fp.artificial.greenBunches <= 0 && <div className="text-gray-400 italic">No artificial bunches captured — set "Art Bunches/Unit" on flowers in the Mandi tab.</div>}
                                   <div className="pt-1 text-right">Total artificial = <b className="text-gray-900">{fmt(fp.artificial.total)}</b></div>
                                 </div>
+                                {/* The salesperson's own Color Split (Deal Check's Florals tab) — WHICH
+                                    specific artificial-bunch colour(s) to pull, not just a bare bunch
+                                    count. Without this, the figures above said "47 bunches" with no
+                                    way to tell Maroon from White; now it's the exact IMS items to pick. */}
+                                {Array.isArray(fp.artificial.colorSplit) && fp.artificial.colorSplit.length > 0 && (
+                                  <div className="mt-1.5 bg-gray-50 border rounded-lg p-2 text-[10px] text-gray-600">
+                                    <div className="font-semibold text-gray-700 mb-1">🎨 Pull these specific bunches</div>
+                                    {fp.artificial.colorSplit.map(c => (
+                                      <div key={c.imsId} className="flex justify-between py-0.5"><span>{c.name || "Artificial bunch"}</span><b className="text-gray-900">{c.qty}</b></div>
+                                    ))}
+                                  </div>
+                                )}
                               </div>
                             )}
                           </div>

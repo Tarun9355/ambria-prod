@@ -793,6 +793,11 @@ function getCardSpecsForZone(zoneElems, zoneKey, photoUrl, hardPropMap, rcItems,
         propType: null,
         photoUrl,
         pinnedImsId: el.invId,
+        // Carried through so Deal Check can seed its own per-card kit edit the first time this
+        // card is generated — see runDealCheckGenerate's runSpec — instead of IMS always showing
+        // a kit's generic default parts list when a Build-side override was never separately
+        // re-entered inside Deal Check's own kit editor.
+        kitOverrides: Array.isArray(el.kitOverrides) ? el.kitOverrides : null,
       });
       return;
     }
@@ -11168,6 +11173,11 @@ export default function StudioApp() {
     const fnsToProcess = fnIdxFilter == null ? allFns : allFns.filter((_, i) => i === fnIdxFilter);
     const newCards = { ...dcCards };
     const newZoneState = { ...dcZoneState };
+    // Seeded (not overwritten) from Build's own el.kitOverrides inside runSpec below, per card,
+    // only when this card has no kit edit of its own yet — see the kitOverrides comment on the
+    // spec object in getCardSpecsForZone.
+    const newKitEdits = { ...dcKitEdits };
+    let kitEditsSeeded = false;
     const matchedItemIds = new Set();
     // Every fnIdx actually processed this run gets its current valid cardKey set recorded here —
     // read by the final merge below to stop it resurrecting a manual-swap card whose underlying
@@ -11182,6 +11192,7 @@ export default function StudioApp() {
       const fnIdx = fnIdxFilter == null ? fi : fnIdxFilter;
       if (!fn || !fn.enabledEls) continue;
       newCards[fnIdx] = { ...(newCards[fnIdx] || {}) };
+      newKitEdits[fnIdx] = { ...(newKitEdits[fnIdx] || {}) };
       newZoneState[fnIdx] = { ...(newZoneState[fnIdx] || {}) };
       const enabledZoneKeys = Object.keys(fn.enabledEls).filter(k => fn.enabledEls[k]);
       // Card specs come straight from the CURRENT build (getCardSpecsForZone(zoneElements)). Build the
@@ -11310,7 +11321,16 @@ export default function StudioApp() {
             const pItem = inventory.find(i => i.id === primary.imsId);
             if (pItem && Array.isArray(pItem.subItems) && pItem.subItems.length) {
               const edited = dcKitEdits[fnIdx]?.[spec.cardKey];
-              const comps = Array.isArray(edited) ? edited : pItem.subItems;
+              // No Deal-Check-side edit yet — seed one straight from Build's own el.kitOverrides
+              // (carried on spec.kitOverrides), so this card's parts list — and everything that
+              // reads dcKitEdits downstream, including the deptInv/Dept-Ops Kit detail page — already
+              // matches what was actually configured in Build instead of the kit's generic default.
+              // A real Deal-Check edit (`edited`) always wins and is never touched here.
+              if (!edited && Array.isArray(spec.kitOverrides) && spec.kitOverrides.length) {
+                newKitEdits[fnIdx][spec.cardKey] = spec.kitOverrides;
+                kitEditsSeeded = true;
+              }
+              const comps = edited || (Array.isArray(spec.kitOverrides) ? spec.kitOverrides : pItem.subItems);
               comps.forEach(cp => { if (cp?.itemId) matchedItemIds.add(cp.itemId); });
             }
           }
@@ -11358,6 +11378,7 @@ export default function StudioApp() {
       return merged;
     });
     setDcZoneState(newZoneState);
+    if (kitEditsSeeded) setDcKitEdits(newKitEdits);
     // §26 — Add artificial flower allocated item IDs to soft-holds
     Object.values(dcArtFlowerAlloc).forEach(allocs => {
       (allocs || []).forEach(a => { if (a.itemId) matchedItemIds.add(a.itemId); });
@@ -11439,7 +11460,7 @@ export default function StudioApp() {
       ? `Deal Check ready · ${cardsUnmatched} item${cardsUnmatched === 1 ? "" : "s"} couldn't be matched to IMS — please check`
       : "Deal Check ready", "green");
     return { ok: true, summary: { zonesProcessed, cardsResolved, cardsAi, cardsNameMatch, cardsUnmatched } };
-  }, [activeClientId, clientLedger, dcRunCounter, dcCards, dcZoneState, floralHardPropMap, softHolds, collectAllFunctionData, clientDate, authUser, showMsg, rcItems, trussAlloc, dealCheckData, writeStudioTrussSoftHolds, reconcileSoldInventoryBlocks]);
+  }, [activeClientId, clientLedger, dcRunCounter, dcCards, dcZoneState, dcKitEdits, floralHardPropMap, softHolds, collectAllFunctionData, clientDate, authUser, showMsg, rcItems, trussAlloc, dealCheckData, writeStudioTrussSoftHolds, reconcileSoldInventoryBlocks]);
   useEffect(() => { runDealCheckGenerateRef.current = runDealCheckGenerate; });
 
   // Fill Deal Check from the build as soon as it opens, deterministically. The Generate button that

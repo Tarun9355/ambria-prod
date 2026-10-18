@@ -212,6 +212,7 @@ export default function DealCheckOverlay({ ctx }) {
     dcKitEdits, setDcKitEdits, dcManualItems, setDcManualItems, dcManualSearch, setDcManualSearch,
     dcCollapsedZones, setDcCollapsedZones, setDcBrowseAllOpen, dcBrowseAllOpen, setDcCustomModal,
     dcCustomItems, setDcCustomItems, elSelectedPhoto, dcDedupOverrides, setDcDedupOverrides,
+    dcArtFlowerAlloc,
     // photoKnowledge / saveKnowledgeEntry / dcKnowledgeKey were destructured here for the
     // "Set as correct match for this photo" control. That control is gone, and nothing else in
     // this file read them — re-add all three if the teach action comes back.
@@ -1706,18 +1707,29 @@ export default function DealCheckOverlay({ ctx }) {
             const afRate = Number(dealCheckData?.artificialFlowerRatePerKg ?? 50);
             const agRate = Number(dealCheckData?.artificialGreenRatePerKg ?? 40);
             const agg = {}; let artTotal = 0, afBunches = 0, agBunches = 0, incReal = 0, incArt = 0;
-            (dcCostRollup.fns || []).forEach(fn => {
+            // Which SPECIFIC artificial-bunch colour(s) to actually pull — the salesperson's own
+            // manual Color Split (dcArtFlowerAlloc, Deal Check's Florals tab), keyed by imsId so it's
+            // a real, pickable inventory item. Without this, IMS only ever saw one lump "artificial
+            // flowers" ₹ total with no colour breakdown — the Color Split itself never left Studio.
+            const colorSplitAgg = {};
+            (dcCostRollup.fns || []).forEach((fn, fi) => {
               const r = calcFnFloralSourcingCost(fn);
               artTotal += r.totalArtificial || 0;
               afBunches += r.artFlowerBunches || 0; agBunches += r.artGreenBunches || 0;
               incReal += r.income?.real || 0; incArt += r.income?.art || 0;
               (r.breakdown || []).forEach(f => { if (!agg[f.name]) agg[f.name] = { name: f.name, qty: 0, cost: 0, unit: f.unit, colorVariant: f.colorVariant || null, colorPrefs: f.colorPrefs || null }; agg[f.name].qty += f.qty; agg[f.name].cost += f.cost; });
+              (dcArtFlowerAlloc?.[fi] || []).forEach(a => {
+                if (!a?.id || !(Number(a.qty) > 0)) return;
+                if (!colorSplitAgg[a.id]) colorSplitAgg[a.id] = { imsId: a.id, name: a.name || "", qty: 0 };
+                colorSplitAgg[a.id].qty += Number(a.qty) || 0;
+              });
             });
             const flowers = Object.values(agg).sort((a, b) => b.cost - a.cost);
             if (artTotal >= 1) flowers.push({ name: "Artificial flowers / greens", qty: 0, cost: Math.round(artTotal), unit: "per kg", artificial: true });
             const flowerKg = afBunches / afBPK, greenKg = agBunches / agBPK;
+            const colorSplit = Object.values(colorSplitAgg).map(c => ({ ...c, qty: Math.round(c.qty * 100) / 100 }));
             // Full artificial derivation (bunches ÷ bunches-per-kg = kg × ₹/kg = cost), flowers + greens.
-            const artificial = (afBunches + agBunches) > 0 ? { flowerBunches: Math.round(afBunches), greenBunches: Math.round(agBunches), flowerBPK: afBPK, greenBPK: agBPK, flowerRate: afRate, greenRate: agRate, flowerKg: Math.round(flowerKg * 100) / 100, greenKg: Math.round(greenKg * 100) / 100, flowerCost: Math.round(flowerKg * afRate), greenCost: Math.round(greenKg * agRate), total: Math.round(artTotal) } : null;
+            const artificial = (afBunches + agBunches) > 0 ? { flowerBunches: Math.round(afBunches), greenBunches: Math.round(agBunches), flowerBPK: afBPK, greenBPK: agBPK, flowerRate: afRate, greenRate: agRate, flowerKg: Math.round(flowerKg * 100) / 100, greenKg: Math.round(greenKg * 100) / 100, flowerCost: Math.round(flowerKg * afRate), greenCost: Math.round(greenKg * agRate), total: Math.round(artTotal), ...(colorSplit.length ? { colorSplit } : {}) } : null;
             // Billed floral income split (what the client pays at real vs artificial rates).
             const income = { real: Math.round(incReal), artificial: Math.round(incArt), total: Math.round(incReal + incArt) };
             floralPlan = { projected: Math.round(flowers.reduce((s, f) => s + f.cost, 0)), flowers, artificial, income, season: dcSeasonInfo, capturedAt: Date.now() };
@@ -1835,6 +1847,9 @@ export default function DealCheckOverlay({ ctx }) {
           const _sig = JSON.stringify([
             (dcCostRollup.DEPTS || []).map(d => Math.round(dcCostRollup.dept?.[d]?.total || 0)),
             (_deptSnap.floralPlan?.flowers || []).map(f => `${f.name}:${Math.round((f.qty || 0) * 100)}:${f.colorVariant?.label || ""}:${(f.colorPrefs || []).map(p => p.label).join("/")}`),
+            // Catches a Color Split edit on its own — same dept totals and flower names/qty, just a
+            // different artificial-bunch colour mix — which the two lines above wouldn't notice.
+            (_deptSnap.floralPlan?.artificial?.colorSplit || []).map(c => `${c.imsId}:${c.qty}`),
           ]);
           if (deptSyncRef.current !== _sig) { deptSyncRef.current = _sig; setTimeout(() => { try { persistDeptSnapshot(_deptSnap); } catch {} }, 200); }
         }
