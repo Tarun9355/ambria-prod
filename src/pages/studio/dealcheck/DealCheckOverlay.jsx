@@ -99,6 +99,7 @@ import { carpetPricingFor, CARPET_OFF } from "../../../lib/studio/taxonomy";
 import { qtyUsedElsewhereInDealCheck, netOwnReservedBlocksLive } from "../../../lib/studio/dealAvailability";
 import { isHiddenSubcat, oosCostPctFor, canFulfillShortfall } from "../../../lib/rateCard";
 import { findCrossFnReuseSource, computeFnInvQty, groupConsecutiveFns } from "../../../lib/studio/crossFnReuse";
+import { computePeopleRaw, computePeople } from "../../../lib/studio/manpowerCount";
 import { kitShortfallSplit } from "../../../lib/studio/kitShortfallSplit";
 
 // Commission override box (one per venue, Commission tab below) — its OWN local draft state, not
@@ -1306,150 +1307,31 @@ export default function DealCheckOverlay({ ctx }) {
               // just that part's crew (freshFnForManpower, lib/studio/pricing.js — shared with the tab).
               const freshFnMP = freshFnForManpower;
               const fixedCrewFloor = (fv, type) => { const c = fv.fixedCrew || {}; if (c[type] != null && c[type] !== "") return Number(c[type]) || 0; if (type === "Labours") return Number(fv.minLabour) || 0; return 0; };
-              const calcPplRaw = (fn, type) => {
-                if (type === "Flowerists") {
-                  // Flowerists are fungible across ALL arrangements → sum every element's fractional need
-                  // (qty ÷ units-per-flowerist) and ceil ONCE. MUST match DCManpowerTab.calcPeopleFlowerists
-                  // (and its "how" trace). Ceiling per-recipe (or per-element) over-counted vs the tab — each
-                  // distinct recipe with a <1 need rounded up to a whole flowerist → bottom bar ≠ tab.
-                  let total = 0;
-                  walkFn(fn, ({rc, el, qty}) => {
-                    if (String(rc.cat||"").toLowerCase() !== "florals") return;
-                    // The element's own recipe first — what Build actually priced it with. Beyond
-                    // that, matchFlowerPattern (flowerHelpers.js) is the SAME sub-category-first
-                    // matcher Build's own pricing already uses — a recipe is created PER SUB-CATEGORY
-                    // and applies to every differently-named product filed under it, not to one
-                    // product whose name happens to match. This used to be a hand-rolled
-                    // exact-name-then-substring lookup against the item's OWN name, which could only
-                    // ever find a pattern coincidentally named identically to the physical prop —
-                    // every sub-category-linked recipe (the normal case) silently dropped out of this
-                    // count. Matches DCManpowerTab.calcPeopleFlowerists.
-                    let pattern = el.patternId ? flowerPatternsMP.find(p => p.id === el.patternId) : null;
-                    if (!pattern) pattern = matchFlowerPattern({ subcategory: rc.sub, name: rc.name }, flowerPatternsMP);
-                    if (!pattern) return;
-                    const sz = pattern.sizes || {};
-                    const sk = sizeFromMode(rc.inhouseMode, el.size);
-                    let c = sz[sk] || sz.medium; if (!c && sk === "big" && sz.large) c = sz.large;
-                    const upf = Number(c?.unitsPerFlowerist || 0); if (upf > 0) total += qty/upf;
-                  });
-                  return Math.ceil(total);
-                }
-                if (type === "Electricians") {
-                  // Sum fractional need across ALL lighting elements, ceil ONCE (fungible) — matches
-                  // DCManpowerTab.calcPeopleElectricians; per-element ceiling over-counted vs the tab.
-                  let total = 0; walkFn(fn, ({rc, el, qty}) => {
-                    if (String(rc.cat||"").toLowerCase() !== "lighting") return;
-                    const pr = electricianProdMP[rc.sub||""]; if (!pr) return;
-                    const sk = sizeFromMode(rc.inhouseMode, el.size);
-                    const upe = Number(pr.sizes?.[sk]) || Number(pr.sizes?.medium) || 0;
-                    if (upe > 0) total += qty / upe;
-                  }); return Math.ceil(total);
-                }
-                // MUST match DCManpowerTab.calcPeopleTier3Labours exactly (else bar ≠ tab). Tab calls
-                // this for "Labours" unconditionally AND for any other type an admin has configured
-                // as tier:3 in IMS Settings (labourTiers[type].tier === 3) — see the fallback below,
-                // which this copy was missing entirely (a non-Labours tier-3 type counted in the tab
-                // and read 0 here).
-                const calcTier3 = (fn) => {
-                  const venueName = fn.fnVenue || "";
-                  const fvCfg = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
-                  // No internal venue floor — the fixed-venue floor is applied uniformly for ALL types in
-                  // peopleByFn (max(fixedCrew, computed)). Here we only compute the usage/heavy build need.
-                  const vm = 0;
-                  const dl = (dealCheckData?.venueDumping || {})[venueName] || "nearby";
-                  const dm = ({nearby:1.0, medium:1.1, far:1.2})[dl] || 1.0;
-                  const em = eventTypeMultipliers["outdoor_budgeted"] || 1;
-                  const base = Math.ceil(vm * em);
-                  let sm = 1.0;
-                  // heavySayaMultFor(fn,"Labours") replaces the old flat sayaMultiplier — MUST match
-                  // DCManpowerTab.calcPeopleTier3Labours's own candidate list and cap exactly (the old
-                  // flat multiplier was also never capped by situMultCap here, unlike the tab).
-                  if (!dcMpIncludeMinusOne) { const c = [dm, heavySayaMultFor(fn, "Labours")]; c.push(eventTimingMultFor(eventTimingMultipliers, shiftToTiming(fn.fnShift), "Labours", 1.0)); sm = Math.min(situMultCap, Math.max(...c, 1.0)); }
-                  const adj = Math.ceil(base * sm);
-                  const sc = {}; walkFn(fn, ({rc, qty}) => { const _s = itemImsSubcat(rc); sc[_s] = (sc[_s]||0) + qty; });
-                  // Net fixed-venue standing stock before heavy-element labour (fixed venues have installed pieces).
-                  const reduction = standingReductionBySubcat(fvCfg, venueName, (dcCards || {})[fns.indexOf(fn)], dealCheckData?.inventory || []);
-                  let he = 0; heavyElementRanges.forEach(her => { const count = Math.max(0, (lookupBySubcat(sc, her.subCat)||0) - (lookupBySubcat(reduction, her.subCat)||0)); he += heavyExtraLabour(her, count); });
-                  // Usage-based labour (Σ qty÷per-unit) as a floor — but THIS FUNCTION's own usage total
-                  // (labourUsageByFn[fns.indexOf(fn)]), not labourUsageTotal (the WHOLE BOOKING's combined
-                  // total, every function's usage summed together). That mix-up has been here since this
-                  // floor was introduced (09dfbd7): because labourUsageTotal is one shared number for the
-                  // entire multi-day event, EVERY function — even a 20-minute Mata Ki Chowki puja with one
-                  // sofa — got floored up to the crew count the WHOLE wedding needs combined. The day-wise
-                  // rollup then takes the busiest function each day as that day's headcount, so with every
-                  // function floored to the same inflated number, every day showed that same number too —
-                  // confirmed live: a booking whose own simple "whole event" estimate was 10 Labours was
-                  // actually billing 17 per day, for every single day, because the floor had nothing
-                  // function-specific left to compare against. labourUsageByFn (below) already computes
-                  // the matching per-function figure for the department-split math — this just reads the
-                  // same number instead of its booking-wide sum.
-                  const fnUsageTotal = (labourUsageByFn[fns.indexOf(fn)] || {}).total || 0;
-                  return labourUsageMode ? Math.max(adj + he, Math.ceil(fnUsageTotal)) : (adj + he);
-                };
-                if (type === "Labours") return calcTier3(fn);
-                if (type === "Fabric Bangali") {
-                  // MUST match DCManpowerTab.calcPeopleFabricBangali — per-zone top (range table) +
-                  // optional masking-wall RFT (mkOn-gated) + batta RFT (wraps every pillar+beam,
-                  // ALWAYS — not gated on mkOn, since a truss gets wrapped in fabric whether or not its
-                  // separate, optional side-wall masking is switched on). Side RFT (walls + batta) is
-                  // pooled across every zone and ceiled ONCE, not per zone (per-zone ceiling throws away
-                  // real leftover capacity — see DCManpowerTab §23 Phase 2.9).
-                  let topTotal = 0, rftTotal = 0; const zc = fn.zoneConfig || {}, en = fn.enabledEls || {};
-                  const engBackDepth = Number(dealCheckData?.trussInv?.settings?.defaultBackDepthFt) || 4;
-                  const fabricRftPerWorker = Number(dealCheckData?.fabricRftPerWorker) || 100;
-                  const tInv = dealCheckData?.trussInv;
-                  Object.keys(zc).forEach(zk => {
-                    if (!en[zk] || !zc[zk]) return; const z = zc[zk];
-                    const cfg = resolveTrussConfig(z); if (!cfg || !cfg.config) return; const config = cfg.config;
-                    const dL = Number(z.dims?.L) || Number(z.dims?.S) || 0; const dW = Number(z.dims?.W) || Number(z.dims?.S) || 0;
-                    const mw = z.mkWalls || {}; const sideDepth = Number(z.trussBackDepth) || engBackDepth;
-                    let zoneTop = 0, zoneRft = 0;
-                    if (config === "full_box") { const topSqft = dL * dW; if (topSqft > 0 && fabricBangaliRanges.length > 0) { for (const r of fabricBangaliRanges) { if (topSqft <= r.upTo) { zoneTop = r.labour || 0; break; } } } if (z.mkOn) { if (mw.back && dW > 0) zoneRft += dW; if (mw.left && dL > 0) zoneRft += dL; if (mw.right && dL > 0) zoneRft += dL; } }
-                    else if (config === "half_box") { const spanL = cfg.spanFt || dL || dW; if (z.mkOn) { if (mw.back && spanL > 0) zoneRft += spanL; if (mw.left && sideDepth > 0) zoneRft += sideDepth; if (mw.right && sideDepth > 0) zoneRft += sideDepth; } }
-                    else if (config === "u_only") { const spanL = cfg.spanFt || dL || dW; if (z.mkOn && mw.back && spanL > 0) zoneRft += spanL; }
-                    if (tInv) { try { const pv = calcZoneTrussPreview(z, tInv); if (pv?.batta?.rftWithBuffer) zoneRft += pv.batta.rftWithBuffer; } catch {} }
-                    topTotal += zoneTop; rftTotal += zoneRft;
-                  });
-                  return topTotal + (rftTotal > 0 ? Math.ceil(rftTotal / fabricRftPerWorker) : 0);
-                }
-                if (type === "Truss Labour") {
-                  // MUST match DCManpowerTab.calcPeopleTrussLabour — zone-topology pillarCount.
-                  // A Fixed Venue's standing pillar count (Admin → Settings → Fixed Venues) used to be
-                  // netted out here on the theory that "already-standing pillars need no erection
-                  // labour" — wrong: standing just means those pillars/beams live in the venue's own
-                  // godown, not that they're already up in position. Labour still has to move and erect
-                  // every pillar this event needs, whether it's trucked in fresh or drawn from what the
-                  // venue has in storage. Full zone-derived pillar count, no reduction.
-                  let pillars = 0; const tInv = dealCheckData?.trussInv;
-                  if (tInv) { const zc = fn.zoneConfig||{}, en = fn.enabledEls||{}; Object.keys(zc).forEach(zk => { if (!en[zk]||!zc[zk]) return; try { const pv = calcZoneTrussPreview(zc[zk], tInv); if (pv?.topology?.pillarCount) pillars += pv.topology.pillarCount; } catch {} }); }
-                  if (pillars <= 0 || trussLabourRanges.length === 0) return 0;
-                  for (const r of trussLabourRanges) { if (pillars <= r.upTo) return r.labour || 0; }
-                  return trussLabourRanges[trussLabourRanges.length-1]?.labour || 0;
-                }
-                const cfg = labourTiers[type];
-                if (cfg && cfg.tier === 2) {
-                  const batches = cfg.subCatBatches || {}; const sc = {};
-                  walkFn(fn, ({rc, qty}) => { const _s = itemImsSubcat(rc); if (lookupBySubcat(batches, _s) != null) sc[_s] = (sc[_s]||0) + qty; });
-                  let need = 0; Object.entries(sc).forEach(([k,v]) => { need += v / (lookupBySubcat(batches, k) || 3); }); // ⌈Σ(count÷batch)⌉ — matches the Deal Check derivation
-                  return Math.max(cfg.minimum || 1, Math.ceil(need));
-                }
-                if (cfg && cfg.tier === 3) return calcTier3(fn);
-                if (type === "Supervisors") return 1;
-                return 0;
-              };
-              // Heavy Saya wrap — MUST match DCManpowerTab.calcPeopleForType's dispatcher exactly.
-              // Labours/tier-3 already folds heavySaya in internally (calcTier3, above) — skip the
-              // wrap for those so it isn't applied twice. Supervisors/Drivers have no pressure-factor
-              // config entry (SIT_MULT_DEFAULTS.heavySaya has no such key either), so heavySayaMultFor
-              // would just return 1.0 for them anyway, but skipping matches the tab's own explicit guard.
-              const calcPpl = (fn, type) => {
-                const raw = calcPplRaw(fn, type);
-                const cfg = labourTiers[type];
-                const isTier3Labours = type === "Labours" || (cfg && cfg.tier === 3);
-                if (isTier3Labours || type === "Supervisors" || type === "Drivers" || !(raw > 0)) return raw;
-                const m = Math.min(situMultCap, heavySayaMultFor(fn, type));
-                return m > 1 ? Math.ceil(raw * m) : raw;
-              };
+              // ═══ Shared manpower count engine (src/lib/studio/manpowerCount.js) ═══
+              // Used to be a hand-rolled copy here, a near-identical one in DCManpowerTab.jsx
+              // (calcPeopleXxx/calcPeopleForType), and a THIRD, already-stale one in StudioApp.jsx's
+              // manpowerPlanForBooking — three implementations of "how many of this crew type does
+              // this function need" that drifted apart repeatedly (every comment above this used to
+              // read "MUST match DCManpowerTab.calcPeopleXxx exactly"). The exact bug that forced this
+              // extraction: the usage-mode Labours floor compared a function's own need against the
+              // WHOLE BOOKING's combined usage instead of its own share, confirmed live inflating
+              // every function (even a 20-minute puja) to the busiest day's entire crew count. All
+              // three sites now call the one engine, so the number can't drift again — only the
+              // "how" trace stays per-file, since DCManpowerTab's technical breakdown and IMS Dept
+              // Ops' plain-language one are deliberately different presentations for different
+              // readers, not duplicate computation.
+              const mpCtxFor = (fn) => ({
+                dcInventoryCache, flowerPatterns: flowerPatternsMP, electricianProd: electricianProdMP,
+                labourTiers, eventTypeMultipliers, eventTimingMultipliers, dcMpIncludeMinusOne,
+                seasonMap: seasonMapMP, sitMults: sitMultsMP, situMultCap,
+                venueDumping: dealCheckData?.venueDumping || {}, fixedVenues: dealCheckData?.fixedVenues || [],
+                venueParents: dealCheckData?.venueParents || {}, heavyElementRanges,
+                cardsForFn: (dcCards || {})[fns.indexOf(fn)], inventory: dealCheckData?.inventory || [],
+                trussInv: dealCheckData?.trussInv, fabricBangaliRanges,
+                fabricRftPerWorker: Number(dealCheckData?.fabricRftPerWorker) || 100, trussLabourRanges,
+              });
+              const calcPplRaw = (fn, type) => computePeopleRaw(fn, type, mpCtxFor(fn));
+              const calcPpl = (fn, type) => computePeople(fn, type, mpCtxFor(fn));
               // Per-function calculation trace (the "how" for each day) — mirrors manpowerPlanForBooking's
               // trace shapes so Dept Ops' renderMpTrace can show each day's own bifurcation table.
               // Shared by the Truss Labour and Fabric Bangali traces below — both derive crew from
