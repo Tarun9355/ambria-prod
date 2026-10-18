@@ -5921,7 +5921,22 @@ export default function StudioApp() {
       if (!fbreak[v.name]) fbreak[v.name] = { name: v.name, qty: 0, cost: 0, unit: v.unit, colorVariant: v.colorVariant || null, colorPrefs: v.colorPrefs || null };
       fbreak[v.name].qty += v.totalQty; fbreak[v.name].cost += cost;
     });
-    return { totalReal: tReal, totalArtificial: tArt, grandTotal: tReal + tArt, breakdown: Object.values(fbreak).map(f => ({ ...f, qty: Math.ceil(f.qty), cost: Math.round(f.cost) })).sort((a, b) => b.cost - a.cost), artFlowerBunches, artGreenBunches, income: { real: realIncome, art: artIncome } };
+    // Owner ask: a purchaser buys WHOLE bundles at the real mandi rate — not a fractional-bundle
+    // cost computed exactly and then divided back out. `rate` is the true per-unit price this
+    // flower actually costed at (mandi price × season multiplier, or a picked colour preference's
+    // own rate, weighted across every zone/element that contributed — whatever `bp` was above,
+    // before rounding). `cost` is now qty(whole units) × rate, so the two numbers IMS shows next
+    // to each other always agree — previously `cost` stayed independently rounded off the
+    // fractional need, and IMS's own "price" column back-derived cost÷qty into a THIRD number that
+    // matched neither the real mandi rate nor anything anyone would actually pay.
+    const breakdown = Object.values(fbreak).map(f => {
+      // rate rounds FIRST, cost derives from that rounded rate — so `cost` and `qty × rate` always
+      // match exactly, to the rupee, with nothing left for a displayed price and total to disagree on.
+      const rate = f.qty > 0 ? Math.round((f.cost / f.qty) * 100) / 100 : 0;
+      const qty = Math.ceil(f.qty);
+      return { ...f, qty, rate, cost: Math.round(qty * rate) };
+    }).sort((a, b) => b.cost - a.cost);
+    return { totalReal: tReal, totalArtificial: tArt, grandTotal: tReal + tArt, breakdown, artFlowerBunches, artGreenBunches, income: { real: realIncome, art: artIncome } };
   }, [dealCheckData, studioFloralData, sharedFloralSettings, rcItems, floralRatio, resolveRcRate, rcFloralModeByKey, dcFloralColorPrefs, imsInventory, dcInventoryCache, collectAllFunctionData]);
   // Sync for calcFnFloralSourcingCostRef — see its declaration (near collectAllFunctionDataRef) for
   // why transportCalc/calcFunctionCost need to reach this function through a ref instead of calling
@@ -8327,7 +8342,10 @@ export default function StudioApp() {
       try {
         const fbAgg = {};
         allFns.forEach(fnData => { const r = calcFnFloralSourcingCost(fnData); (r.breakdown || []).forEach(f => { if (!fbAgg[f.name]) fbAgg[f.name] = { name: f.name, qty: 0, cost: 0, unit: f.unit }; fbAgg[f.name].qty += f.qty; fbAgg[f.name].cost += f.cost; }); });
-        const flowers = Object.values(fbAgg).sort((a, b) => b.cost - a.cost);
+        // rate: the true per-unit price (qty is already whole-unit-respecting from the breakdown
+        // above) — so IMS's mandi list can seed its own ₹/unit field with the real rate instead of
+        // back-deriving one from cost÷qty.
+        const flowers = Object.values(fbAgg).map(f => ({ ...f, rate: f.qty > 0 ? Math.round((f.cost / f.qty) * 100) / 100 : 0 })).sort((a, b) => b.cost - a.cost);
         floralPlan = { projected: Math.round(flowers.reduce((s, f) => s + f.cost, 0)), flowers, capturedAt: Date.now() };
       } catch {}
       // Snapshot the system manpower plan (counts + how each was derived) so dept heads see it.

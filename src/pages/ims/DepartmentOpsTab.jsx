@@ -1061,7 +1061,12 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       // legacy single pick), carried through calcFnFloralSourcingCost's own breakdown
       // (StudioApp.jsx) so the purchase manager sees WHICH colour to actually buy, not just a
       // bare flower name.
-      const row = { name: f.name, unit: f.unit || "", projQty: Number(f.qty) || 0, projCost: Number(f.cost) || 0, qty: Number(f.qty) || 0, price: f.qty ? Math.round(((Number(f.cost) || 0) / f.qty) * 100) / 100 : 0, colorVariant: f.colorVariant || null, colorPrefs: f.colorPrefs || null };
+      // price: f.rate IS the real mandi rate this flower costed at (qty already whole-unit —
+      // f.cost = qty × rate at the source). Older snapshots captured before `rate` existed have
+      // no such field, so those fall back to the previous cost÷qty approximation rather than
+      // showing no price at all — only ever a stand-in for a snapshot nobody has regenerated since.
+      const price = (typeof f.rate === "number" && f.rate > 0) ? f.rate : (f.qty ? Math.round(((Number(f.cost) || 0) / f.qty) * 100) / 100 : 0);
+      const row = { name: f.name, unit: f.unit || "", projQty: Number(f.qty) || 0, projCost: Number(f.cost) || 0, qty: Number(f.qty) || 0, price, colorVariant: f.colorVariant || null, colorPrefs: f.colorPrefs || null };
       return row;
     });
   const mandiRows = Array.isArray(deptData.mandiLines) ? deptData.mandiLines : seedMandi;

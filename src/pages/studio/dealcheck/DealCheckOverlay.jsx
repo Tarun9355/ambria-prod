@@ -1741,13 +1741,16 @@ export default function DealCheckOverlay({ ctx }) {
               afBunches += r.artFlowerBunches || 0; agBunches += r.artGreenBunches || 0;
               incReal += r.income?.real || 0; incArt += r.income?.art || 0;
               (r.breakdown || []).forEach(f => { if (!agg[f.name]) agg[f.name] = { name: f.name, qty: 0, cost: 0, unit: f.unit, colorVariant: f.colorVariant || null, colorPrefs: f.colorPrefs || null }; agg[f.name].qty += f.qty; agg[f.name].cost += f.cost; });
+              // rate: the true per-unit price (qty is already whole-unit-respecting, from
+              // calcFnFloralSourcingCost's own breakdown) — IMS's mandi list seeds its ₹/unit field
+              // from this directly now, instead of back-deriving one from cost÷qty.
               (dcArtFlowerAlloc?.[fi] || []).forEach(a => {
                 if (!a?.id || !(Number(a.qty) > 0)) return;
                 if (!colorSplitAgg[a.id]) colorSplitAgg[a.id] = { imsId: a.id, name: a.name || "", qty: 0 };
                 colorSplitAgg[a.id].qty += Number(a.qty) || 0;
               });
             });
-            const flowers = Object.values(agg).sort((a, b) => b.cost - a.cost);
+            const flowers = Object.values(agg).map(f => ({ ...f, rate: f.qty > 0 ? Math.round((f.cost / f.qty) * 100) / 100 : 0 })).sort((a, b) => b.cost - a.cost);
             if (artTotal >= 1) flowers.push({ name: "Artificial flowers / greens", qty: 0, cost: Math.round(artTotal), unit: "per kg", artificial: true });
             const flowerKg = afBunches / afBPK, greenKg = agBunches / agBPK;
             const colorSplit = Object.values(colorSplitAgg).map(c => ({ ...c, qty: Math.round(c.qty * 100) / 100 }));
