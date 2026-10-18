@@ -4637,7 +4637,15 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                   const anyRentalQty = !invScoped && invShown.some(it => Number(it.rentalQty ?? it.qty) !== (Number(it.qty) || 0));
                   const qtyHeaderLabel = anyRentalQty ? "To load" : "Qty";
                   return (
-                <div className="p-2.5 space-y-2">
+                /* The card this list sits in has overflow-hidden (so its own rounded corners clip
+                   anything that touches an edge) — but overflow-hidden ALSO makes an element its own
+                   scroll container for sticky-positioning purposes, so a `sticky top-0` INSIDE it
+                   never attaches to the page's real scroll; it just rides along with the card,
+                   appearing to not stick at all. Giving the list its own bounded, scrollable region
+                   (the standard "sticky thead over a scrollable tbody" pattern) sidesteps that
+                   entirely — the header sticks to the top of THIS region as it scrolls, regardless of
+                   what overflow the card around it sets. */
+                <div className="p-2.5 max-h-[70vh] overflow-y-auto space-y-2">
                   <div className="hidden sm:flex items-center gap-x-3 px-2.5 sticky top-0 z-10 bg-gray-50/95 backdrop-blur-sm rounded-lg ring-1 ring-gray-100 py-1.5 -mt-0.5 mb-1">
                     <span className="flex-1 min-w-0" />
                     <div className="flex items-start gap-0 sm:pl-1">
