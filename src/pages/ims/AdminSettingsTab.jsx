@@ -12,7 +12,8 @@ import FixedVenuesEditor from "./FixedVenuesEditor.jsx";
 import VenuesEditor from "./VenuesEditor.jsx";
 import { getFloralMode } from "../../lib/rateCard";
 import { RC_UNITS } from "../../lib/studio/constants";
-import { DEFAULT_TRUSS_RATES, DEFAULT_MASKING_RATES, DEFAULT_PLATFORM_RATES, TRUSS_SHAPES, TRUSS_MATERIALS, DRAPE_DENSITIES } from "../../lib/studio/taxonomy";
+import { DEFAULT_TRUSS_RATES, DEFAULT_MASKING_RATES, DEFAULT_PLATFORM_RATES, TRUSS_SHAPES, TRUSS_MATERIALS, DRAPE_DENSITIES, maskingMultiplierOf } from "../../lib/studio/taxonomy";
+import { GUEST_FABRIC_MULTIPLIER, guestFabricMultiplier } from "../../lib/studio/pricing";
 
 // Same canonical unit list as the Mandi Prices panel's own flower-unit dropdown (below), plus two
 // descriptive fallbacks ("pcs"/"made") that recipe ingredient rows have always defaulted their
@@ -153,6 +154,11 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
   const updateMaskingRate = (key, ratePerSqft) => {
     const current = (settings.maskingRates && settings.maskingRates.length) ? settings.maskingRates : DEFAULT_MASKING_RATES;
     setSettings((s) => ({ ...s, maskingRates: current.map((r) => (r.key === key ? { ...r, ratePerSqft } : r)) }));
+  };
+  // null (blank input) = 1×, see maskingMultiplierOf.
+  const updateMaskingMultiplier = (key, multiplier) => {
+    const current = (settings.maskingRates && settings.maskingRates.length) ? settings.maskingRates : DEFAULT_MASKING_RATES;
+    setSettings((s) => ({ ...s, maskingRates: current.map((r) => (r.key === key ? { ...r, multiplier } : r)) }));
   };
   const updateMaskingName = (key, name) => {
     const current = (settings.maskingRates && settings.maskingRates.length) ? settings.maskingRates : DEFAULT_MASKING_RATES;
@@ -2684,6 +2690,23 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
               ))}
               <p className="text-xs text-gray-500 italic">"Ceiling portion" is the slice of the rate that's specifically the fabric ceiling drape — when a zone does its ceiling via a printed panel instead ("Ceiling via print" on that truss), this portion is subtracted from the rate instead of charging for both.</p>
             </div>
+            {/* Drape fabric (Liza, velvet curtains, wall fabric panels) is billed from the fabric
+                stock's rental rates, then × this for the guest. Studio reads it live
+                (settings.fabricMultiplier → guestFabricMultiplier); blank = the 3× default. */}
+            <div>
+              <p className="text-sm font-semibold text-gray-700 mb-2">Liza / Velvet</p>
+              <div className="flex items-center gap-3 bg-white border rounded-lg px-3 py-2">
+                <span className="flex-1 text-sm font-medium">Liza / Velvet drape fabric</span>
+                <div className="flex items-center gap-1">
+                  <span className="text-xs text-gray-400">×</span>
+                  <input type="number" min="0" step="0.1" value={settings.fabricMultiplier ?? ""} placeholder={String(GUEST_FABRIC_MULTIPLIER)}
+                    onChange={(e) => setSettings((s) => ({ ...s, fabricMultiplier: e.target.value === "" ? null : (parseFloat(e.target.value) || 0) }))}
+                    aria-label="Liza / Velvet guest multiplier"
+                    className="w-20 border rounded-lg px-2 py-1 text-sm text-center font-semibold" />
+                </div>
+              </div>
+              <p className="text-xs text-gray-500 italic mt-2">The guest pays {guestFabricMultiplier(settings)}× the fabric's rental cost for Liza, velvet curtains and wall fabric panels. Deal Check still shows Ambria's own cost (1×).</p>
+            </div>
             <div>
               <p className="text-sm font-semibold text-gray-700 mb-2">Masking</p>
               <p className="text-xs text-gray-500 mb-2">Unlike truss, this is a real list — add or remove types and the Studio pickers (Build, tagging, Library) follow. Removing one takes it out of circulation for new zones; deals already priced against it are not re-priced.</p>
@@ -2698,6 +2721,15 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                       <input type="number" min="0" value={r.ratePerSqft ?? 0} onChange={(e) => updateMaskingRate(r.key, parseFloat(e.target.value) || 0)}
                         className="w-20 border rounded-lg px-2 py-1 text-sm text-center font-semibold" />
                       <span className="text-xs text-gray-400">/sqft</span>
+                    </div>
+                    {/* Blank = 1×. Studio prices this type at rate × multiplier (maskingRateFor). */}
+                    <div className="flex items-center gap-1" title={`Studio bills ₹${(Number(r.ratePerSqft) || 0) * maskingMultiplierOf(r)}/sqft`}>
+                      <span className="text-xs text-gray-400">×</span>
+                      <input type="number" min="0" step="0.1" value={r.multiplier ?? ""} placeholder="1"
+                        onChange={(e) => updateMaskingMultiplier(r.key, e.target.value === "" ? null : (parseFloat(e.target.value) || 0))}
+                        aria-label={`${r.name} multiplier`}
+                        className="w-16 border rounded-lg px-2 py-1 text-sm text-center font-semibold" />
+                      <span className="text-xs text-gray-400 w-24">= ₹{(Number(r.ratePerSqft) || 0) * maskingMultiplierOf(r)}/sqft</span>
                     </div>
                     <button type="button" onClick={() => deleteMaskingRate(r.key)}
                       title={`Remove ${r.name}`} aria-label={`Remove ${r.name}`}

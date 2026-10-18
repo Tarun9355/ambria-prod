@@ -12,7 +12,7 @@ import {
 } from "../../../lib/studio/taxonomy";
 import { paletteNames, addPaletteInline } from "../../../lib/studio/colours";
 import PaletteQuickAdd from "../../../components/studio/PaletteQuickAdd.jsx";
-import { trussRowCost, calcZoneFabricCost, GUEST_FABRIC_MULTIPLIER, zoneTrussStandingDiscountDetail, repeatCatFor, parseFlowerPalette, stringifyFlowerPalette, parseFabricPalette, stringifyFabricPalette, isDirectMandiElement } from "../../../lib/studio/pricing";
+import { trussRowCost, calcZoneFabricCost, guestFabricMultiplier, zoneTrussStandingDiscountDetail, repeatCatFor, parseFlowerPalette, stringifyFlowerPalette, parseFabricPalette, stringifyFabricPalette, isDirectMandiElement } from "../../../lib/studio/pricing";
 import { paletteSearch, paletteMatches } from "../../../components/studio/filterUI.jsx";
 import { resolveTrussConfig } from "../../../lib/studio/pricing";
 import { qtyUsedElsewhereInBuild } from "../../../lib/studio/dealAvailability";
@@ -167,13 +167,14 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
   // calcStructCost adds into the Truss & Masking total. It had no figure on the card, so the chip
   // above showed truss + fabric while the card showed the truss alone, and the two looked unrelated.
   const fabricInv = trussInv || structRates?.trussInv;
-  // Guest price — same GUEST_FABRIC_MULTIPLIER calcStructCost folds into the Truss & Masking tile.
+  // Guest price — same multiplier calcStructCost folds into the Truss & Masking tile (IMS-set).
+  const fabMult = guestFabricMultiplier(structRates);
   // The Fabric card shows Liza + velvet curtains only. The wall masking panels in the same fabric
   // bill belong with the walls, so they are shown on the Masking card instead (added to its own
   // figure below) — same total, each part under the control that causes it. Without-walls is the
   // same calculation with no walls masked.
-  const fabricAll = fabricInv ? calcZoneFabricCost(zc, fabricInv, [], zc.drapeDensity || "moderate") * GUEST_FABRIC_MULTIPLIER : 0;
-  const fabricCost = fabricInv ? calcZoneFabricCost({ ...zc, mkOn: false, mkWalls: {} }, fabricInv, [], zc.drapeDensity || "moderate") * GUEST_FABRIC_MULTIPLIER : 0;
+  const fabricAll = fabricInv ? calcZoneFabricCost(zc, fabricInv, [], zc.drapeDensity || "moderate") * fabMult : 0;
+  const fabricCost = fabricInv ? calcZoneFabricCost({ ...zc, mkOn: false, mkWalls: {} }, fabricInv, [], zc.drapeDensity || "moderate") * fabMult : 0;
   const wallPanelCost = Math.max(0, fabricAll - fabricCost);
   // The Custom Ceiling panel bills inside rowCost.truss (and takes the Repeat discount with it), but
   // it replaces the ceiling drape, so the card shows it on Fabric instead — same total, moved.

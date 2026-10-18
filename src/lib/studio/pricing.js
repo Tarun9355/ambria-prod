@@ -809,10 +809,18 @@ export const autoSplitArtificialByPalette = (totalKg, paletteColors, artItems) =
 // Build and Deal Check's zone rollup both read, so neither can disagree with the other.
 // paletteAnchors is kept as a parameter for call-site compatibility but no longer used (colour/stock
 // matching is now Deal Check's own per-colour allocation panel's concern, not pricing's).
-// What the GUEST pays for drape fabric, as a multiple of its rental cost above. Owner ask
-// (2026-10-18, "for now"): 3×. Applied only on the guest-price side (calcStructCost and Build's
-// Fabric card) — Deal Check reads calcZoneFabricCost directly as Ambria's own cost, unscaled.
+// What the GUEST pays for drape fabric (Liza / velvet / wall panels), as a multiple of its rental
+// cost above. Set live in IMS Admin → Truss & Masking Rates → Liza / Velvet (settings key
+// `fabricMultiplier`, carried in structRates); 3× until an admin sets it. Applied only on the
+// guest-price side (calcStructCost and Build's Fabric card) — Deal Check reads calcZoneFabricCost
+// directly as Ambria's own cost, unscaled.
 export const GUEST_FABRIC_MULTIPLIER = 3;
+export const guestFabricMultiplier = (rates) => {
+  const v = rates?.fabricMultiplier;
+  if (v === undefined || v === null || v === "") return GUEST_FABRIC_MULTIPLIER;
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 ? n : GUEST_FABRIC_MULTIPLIER;
+};
 export const calcZoneFabricCost = (zCfg, trussInv, paletteAnchors, density) => {
   if (!zCfg || !trussInv) return 0;
   const fab = calcZoneFabric(zCfg, trussInv, density || "moderate");

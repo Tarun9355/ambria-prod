@@ -200,7 +200,15 @@ export function trussBaseArea(row = {}) {
 export function maskingRateFor(key, maskingRates) {
   const list = (Array.isArray(maskingRates) && maskingRates.length) ? maskingRates : DEFAULT_MASKING_RATES;
   const row = list.find((r) => r.key === key) || DEFAULT_MASKING_RATES.find((r) => r.key === key);
-  return Number(row?.ratePerSqft) || 0;
+  return (Number(row?.ratePerSqft) || 0) * maskingMultiplierOf(row);
+}
+// Per-type multiplier on the masking rate (IMS Admin → Truss & Masking Rates → Masking). Blank or
+// missing = 1×, so a type nobody has touched prices exactly as before.
+export function maskingMultiplierOf(row) {
+  const m = row?.multiplier;
+  if (m === undefined || m === null || m === "") return 1;
+  const n = Number(m);
+  return Number.isFinite(n) && n >= 0 ? n : 1;
 }
 // The masking types a salesperson can PICK, in `MASK_OPTS` shape ({id, l, r}) so every existing
 // call site reads the same. Derived from the admin's saved list rather than a hardcoded array —
@@ -213,7 +221,7 @@ export function maskingRateFor(key, maskingRates) {
 // to ₹0. Deleting removes a type from the menu going forward; it does not rewrite priced history.
 export function maskingOptions(maskingRates) {
   const list = (Array.isArray(maskingRates) && maskingRates.length) ? maskingRates : DEFAULT_MASKING_RATES;
-  return list.map((r) => ({ id: r.key, l: r.name, r: Number(r.ratePerSqft) || 0 }));
+  return list.map((r) => ({ id: r.key, l: r.name, r: (Number(r.ratePerSqft) || 0) * maskingMultiplierOf(r) }));
 }
 
 // Sentinel `cpT` value meaning "salesperson explicitly turned carpet off". Any OTHER falsy value
