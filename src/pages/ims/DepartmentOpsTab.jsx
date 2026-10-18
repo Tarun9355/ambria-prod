@@ -613,6 +613,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const [exporting, setExporting] = useState(false);
   // Set while the Actuals PDF is being written (the first one also loads the jsPDF chunk).
   const [actualsPdfBusy, setActualsPdfBusy] = useState(false);
+  const [challanPdfBusy, setChallanPdfBusy] = useState(null); // id of the truck whose challan PDF is being made
   // Fetch the PDF libraries a few seconds after the tab opens, while the page's own files are
   // still the deployed ones — see loadPdfLibs.
   useEffect(() => { const t = setTimeout(() => { loadPdfLibs().catch(() => {}); }, 3000); return () => clearTimeout(t); }, []);
@@ -1184,6 +1185,60 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       <p>Date: ____________ &nbsp;&nbsp; Time: ____________</p>
       <button onclick="window.print()">🖨️ Print</button></body></html>`);
     w.document.close();
+  };
+  // The same challan as a downloaded PDF, for when no printer is at hand — it can be shared on
+  // WhatsApp or printed later. Plain jsPDF text like the Actuals PDF; its built-in font has no
+  // emoji, so the icons from the printed version are left out.
+  const downloadTruckChallanPdf = async (truck, n) => {
+    if (!sel || challanPdfBusy) return;
+    setChallanPdfBusy(truck.id);
+    try {
+      const [{ jsPDF }] = await loadPdfLibs();
+      const pdf = new jsPDF({ unit: "pt", format: "a4" });
+      const W = pdf.internal.pageSize.getWidth(), H = pdf.internal.pageSize.getHeight(), M = 40;
+      const cx = { name: M + 6, type: M + 300, qty: W - M - 6 };
+      let y = M;
+      const room = (h) => { if (y + h > H - M) { pdf.addPage(); y = M; } };
+      const row = (cells, { bold = false, fill = null, h = 20 } = {}) => {
+        room(h);
+        if (fill) { pdf.setFillColor(...fill); pdf.rect(M, y - 13, W - M * 2, h, "F"); }
+        pdf.setDrawColor(221); pdf.line(M, y - 13 + h, W - M, y - 13 + h);
+        pdf.setFont("helvetica", bold ? "bold" : "normal");
+        cells.forEach(([t, x, align]) => pdf.text(String(t ?? ""), x, y, { align: align || "left", maxWidth: align === "right" ? undefined : 280 }));
+        y += h;
+      };
+      const header = () => row([["Item", cx.name], ["Type", cx.type], ["Qty", cx.qty, "right"]], { bold: true, fill: [243, 244, 246] });
+      pdf.setFont("helvetica", "bold"); pdf.setFontSize(16); pdf.setTextColor(79, 70, 229);
+      pdf.text(`Ambria - ${dept} Challan - Truck ${n}`, M, y); y += 22;
+      pdf.setTextColor(17); pdf.setFont("helvetica", "normal"); pdf.setFontSize(10);
+      pdf.text(`Event: ${sel.clientName || "-"}  |  ${selDateStr || "-"}  |  ${sel.functionsDetail?.[0]?.venue || sel.venue || "-"}`, M, y); y += 16;
+      pdf.text(`Vehicle: ${truck.vehicle || "______"}  |  Driver: ${truck.driver || "______"}  |  Phone: ${truck.phone || "______"}`, M, y); y += 26;
+      pdf.setFontSize(9.5);
+      pdf.setFont("helvetica", "bold"); pdf.text("Inventory on this truck", M, y); y += 16;
+      header();
+      const items = blockedItems.filter(it => (Number(truck.items?.["inv:" + it.id]) || 0) > 0);
+      if (items.length) items.forEach(it => row([[it.name, cx.name], [it.sub || "-", cx.type], [`${Number(truck.items["inv:" + it.id]) || 0} of ${it.qty}`, cx.qty, "right"]]));
+      else row([["No items assigned to this truck", cx.name]]);
+      if (deptTools.length) {
+        y += 12; room(36);
+        pdf.setFont("helvetica", "bold"); pdf.text("Essentials / tools", M, y); y += 16;
+        header();
+        deptTools.forEach(t => row([[t.name, cx.name], ["essential / tool", cx.type], [t.qty || 1, cx.qty, "right"]]));
+      }
+      y += 30; room(40);
+      pdf.setFont("helvetica", "normal"); pdf.setFontSize(10);
+      pdf.text("Dispatched by: _______________      Received by: _______________", M, y); y += 20;
+      pdf.text("Date: ____________      Time: ____________", M, y);
+      pdf.setFontSize(8); pdf.setTextColor(120);
+      pdf.text(`Generated ${new Date().toLocaleString("en-IN")} - ${authUser?.name || "-"}`, M, H - 20);
+      const safe = (t) => String(t || "").replace(/[\\/:*?"<>|]+/g, "-").trim();
+      pdf.save(`Challan - ${safe(dept)} - Truck ${n} - ${safe(sel.clientName || "Event")} - ${safe(selDateStr || "no date")}.pdf`);
+    } catch (err) {
+      if (isStaleChunk(err)) { reloadForUpdate(); return; }
+      alert(`Could not make the challan PDF.\n\n${err?.message || err}`);
+    } finally {
+      setChallanPdfBusy(null);
+    }
   };
   // Own fleet — vehicle + regular driver + phone, saved once in settings; one tap fills all three.
   const fleet = Array.isArray(settings?.fleet) ? settings.fleet : [];
@@ -2328,6 +2383,14 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         ${(it.extra || []).map(([k, v]) => `<div class="zc-r"><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join("")}
         ${flowerRows(it)}
       </div>`;
+    // The header's count. The truss / platform / carpet / masking in the strip are Tenting's own
+    // work (the classifier files them there), so in the Tenting and combined books they count —
+    // a zone with only those printed "No Tenting items" right above four of them. In the
+    // Structure book the strip is reference (Tenting's frame they build on), so it isn't counted.
+    const zoneCountText = (pg) => {
+      const n = pg.items.length + (combined || dept === "Tenting" ? (pg.struct || []).length : 0);
+      return n ? `${n} item${n === 1 ? "" : "s"}` : (combined ? "No items" : `No ${esc(dept)} items`);
+    };
     const zoneSection = (pg, chunk, part, parts, zoneNo, offset) => {
       // A zone this department has nothing in still gets its page — the reference photo, run the
       // full height of the sheet, so the crew can see the setup they are working alongside.
@@ -2355,7 +2418,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           <div><div class="zk"><b>Zone ${String(zoneNo).padStart(2, "0")}</b>${parts > 1 ? ` · Part ${part} of ${parts}` : ""}</div><h2>${esc(pg.title)}</h2>
             <div class="orn l"><i></i><b></b><i></i></div>
             <div class="zm">${esc(pg.fnLabel || selDateStr || "")}</div></div>
-          <div class="zt">${pg.zoneDims ? `<span><i class="zl">${esc(pg.dimsOf)}</i>${esc(pg.zoneDims)}</span>` : ""}<span>${pg.items.length ? `${pg.items.length} item${pg.items.length === 1 ? "" : "s"}` : (combined ? "No items" : `No ${esc(dept)} items`)}</span></div>
+          <div class="zt">${pg.zoneDims ? `<span><i class="zl">${esc(pg.dimsOf)}</i>${esc(pg.zoneDims)}</span>` : ""}<span>${zoneCountText(pg)}</span></div>
         </div>
         ${(pg.struct || []).length ? `<div class="zst">${pg.struct.map(c => `<span><i class="zl">${esc(c.k)}</i>${esc(c.v)}</span>`).join("")}</div>` : ""}
         <div class="zs" style="height:${stageH}px">
@@ -3084,16 +3147,30 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
           y += h + 10;
         } else {
           // Taller than a whole page — the only case we cut. Walk it down page by page.
+          // ── CUT BETWEEN ROWS, NOT THROUGH THEM ──
+          // Each page used to take exactly one page-height of the image, wherever that fell, so a
+          // table row straddling the line was sliced in half — its top on one page, the rest on
+          // the next with the letters' tops shaved off. The bottom of every row, paragraph and
+          // heading is measured in the laid-out block (scaled to PDF units) and each page ends
+          // at the last of those that fits.
+          const box = el.getBoundingClientRect();
+          const k = usableW / (box.width || 1);
+          const breaks = [...el.querySelectorAll("tr, p, .sh")]
+            .map(n => (n.getBoundingClientRect().bottom - box.top) * k)
+            .sort((a, b) => a - b);
           if (!first && y > MARGIN) { newPage(); }
           let drawn = 0;
           while (drawn < h - 1) {
             if (drawn > 0) newPage();
+            let end = drawn + usableH;
+            // A cut leaving less than a fifth of the page used means one giant row — slice that instead.
+            if (end < h - 1) { const cut = breaks.filter(b => b > drawn + usableH * 0.2 && b <= end).pop(); if (cut) end = cut; }
             pdf.addImage(img, "JPEG", MARGIN, MARGIN - drawn, usableW, h);
-            // Mask whatever of the image spills past this page's bottom margin.
+            // Mask whatever of the image spills past this page's cut and into the top margin.
             pdf.setFillColor(244, 241, 234);
-            pdf.rect(0, pageH - MARGIN, pageW, MARGIN, "F");
+            pdf.rect(0, MARGIN + (end - drawn), pageW, pageH, "F");
             pdf.rect(0, 0, pageW, MARGIN, "F");
-            drawn += usableH;
+            drawn = end;
           }
           y = pageH;   // force the next block onto a fresh page
         }
@@ -4828,7 +4905,8 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                       <div className="flex items-center gap-2 flex-wrap">
                         <select value={t.status || "loading"} onChange={e => setTruck(t.id, { status: e.target.value })} className="h-8 rounded-lg bg-white ring-1 ring-gray-200 px-2 text-xs font-medium capitalize focus:outline-none focus:ring-2 focus:ring-blue-400">{TRUCK_STATUS.map(s => <option key={s} value={s}>{s}</option>)}</select>
                         {t.phone && <a href={"tel:" + t.phone} className="h-8 inline-flex items-center text-xs font-semibold text-emerald-700 bg-emerald-50 ring-1 ring-emerald-200 rounded-lg px-2.5 hover:bg-emerald-100" title={"Call " + (t.driver || "driver") + " · " + t.phone}>Call {t.phone}</a>}
-                        <button onClick={() => printTruckChallan(t, ti + 1)} className="h-8 ml-auto text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white px-3 rounded-lg transition-colors">Print challan</button>
+                        <button onClick={() => downloadTruckChallanPdf(t, ti + 1)} disabled={!!challanPdfBusy} className="h-8 ml-auto text-xs font-semibold bg-white ring-1 ring-blue-200 text-blue-700 hover:bg-blue-50 disabled:opacity-60 px-3 rounded-lg transition-colors">{challanPdfBusy === t.id ? "Making PDF…" : "Download PDF"}</button>
+                        <button onClick={() => printTruckChallan(t, ti + 1)} className="h-8 text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white px-3 rounded-lg transition-colors">Print challan</button>
                       </div>
                       {/* Labelled, so the chips read as "pick one of these" rather than as tags
                           already applied to the truck. Vehicle and driver stacked in the chip,
