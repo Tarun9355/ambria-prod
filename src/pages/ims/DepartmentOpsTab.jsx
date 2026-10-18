@@ -5166,24 +5166,25 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                               const lineVar = lineActual - (Number(r.projCost) || 0);
                               return (
                                 <div key={i} className="grid grid-cols-[1fr_auto_auto] gap-2 px-3 py-1.5 items-center">
-                                  <div className="min-w-0 flex items-center gap-2">
-                                    {r.colorVariant?.photoUrl && <img src={r.colorVariant.photoUrl} alt={r.colorVariant.label || ""} onClick={() => setZoomImg(r.colorVariant.photoUrl)} className="w-7 h-7 rounded object-cover border border-gray-200 shrink-0 cursor-zoom-in" title={r.colorVariant.label || ""} />}
-                                    <div className="min-w-0 flex-1">
-                                      {/* Dotted leader (same pattern as the manpower "how" tables)
-                                          filling whatever's left of the name to the numbers, so the
-                                          eye has a line to follow across a wide row instead of a
-                                          blank gap. */}
-                                      <div className="flex items-baseline gap-1.5 min-w-0">
-                                        <span className="text-xs font-medium text-gray-800 truncate">{r.name}{r.colorVariant?.label && <span className="ml-1.5 font-normal text-[10px] text-purple-600">🎨 {r.colorVariant.label}</span>}</span>
-                                        <span aria-hidden="true" className="flex-1 min-w-2 border-b border-dotted border-gray-300 mb-[3px]" />
-                                      </div>
-                                      {Array.isArray(r.colorPrefs) && r.colorPrefs.length > 1 && (
-                                        <div className="text-[10px] text-gray-400">if not at the mandi: {r.colorPrefs.slice(1).map(p => p.label).join(", ")}</div>
-                                      )}
-                                      {r.swappedTo && <div className="text-[10px] font-semibold text-amber-700">🔁 Not in the mandi — swapped with {r.swappedTo}{r.swapNote ? ` · ${r.swapNote}` : ""}</div>}
-                                      {r.swapFor && <div className="text-[10px] font-semibold text-amber-700">🔁 Bought instead of {r.swapFor}{r.swapNote ? ` · ${r.swapNote}` : ""}</div>}
-                                      {r.projQty > 0 && <div className="text-[10px] text-gray-400">{r.projQty} {r.unit} planned</div>}
+                                  <div className="min-w-0">
+                                    {/* Dotted leader (same pattern as the manpower "how" tables) filling
+                                        whatever's left of the name to the numbers. ONE flex row holding
+                                        the photo, name and the dotted span directly — the previous
+                                        version nested the dotted span inside an extra flex-1 wrapper div,
+                                        which left it filling only THAT wrapper's shrink-to-fit width
+                                        instead of the full row, so the line stopped well short of the
+                                        numbers instead of reaching them. */}
+                                    <div className="flex items-center gap-2 min-w-0">
+                                      {r.colorVariant?.photoUrl && <img src={r.colorVariant.photoUrl} alt={r.colorVariant.label || ""} onClick={() => setZoomImg(r.colorVariant.photoUrl)} className="w-7 h-7 rounded object-cover border border-gray-200 shrink-0 cursor-zoom-in" title={r.colorVariant.label || ""} />}
+                                      <span className="text-xs font-medium text-gray-800 truncate">{r.name}{r.colorVariant?.label && <span className="ml-1.5 font-normal text-[10px] text-purple-600">🎨 {r.colorVariant.label}</span>}</span>
+                                      <span aria-hidden="true" className="flex-1 min-w-2 border-b border-dotted border-gray-300 mb-[3px]" />
                                     </div>
+                                    {Array.isArray(r.colorPrefs) && r.colorPrefs.length > 1 && (
+                                      <div className="text-[10px] text-gray-400">if not at the mandi: {r.colorPrefs.slice(1).map(p => p.label).join(", ")}</div>
+                                    )}
+                                    {r.swappedTo && <div className="text-[10px] font-semibold text-amber-700">🔁 Not in the mandi — swapped with {r.swappedTo}{r.swapNote ? ` · ${r.swapNote}` : ""}</div>}
+                                    {r.swapFor && <div className="text-[10px] font-semibold text-amber-700">🔁 Bought instead of {r.swapFor}{r.swapNote ? ` · ${r.swapNote}` : ""}</div>}
+                                    {r.projQty > 0 && <div className="text-[10px] text-gray-400">{r.projQty} {r.unit} planned</div>}
                                   </div>
                                   <div className="text-right w-28 text-xs text-gray-400">{r.projCost > 0 ? fmt(r.projCost) : <span className="text-amber-500">extra</span>}</div>
                                   <div className="flex items-center justify-end gap-1 w-[264px]">
