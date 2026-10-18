@@ -10559,12 +10559,22 @@ export default function StudioApp() {
   }, [activeFnIdx, oosFixPending, openAvailModal]);
   // Brings the gate list back once its own inline pick finishes (saved or cancelled either way),
   // so the salesperson can keep working through the rest of the flagged rows in one sitting.
+  //
+  // Re-SCANS rather than restoring the stashed list verbatim — that list is a snapshot of what was
+  // flagged BEFORE this fix, so putting it straight back always showed the just-fixed row again,
+  // with no visible change: the pick itself landed fine (saveAvailPick writes it directly into
+  // zoneElements, in the same tick as closing availModal, so the state is already settled by the
+  // time this effect runs), only the gate's own displayed list never re-checked against it. An empty
+  // re-scan means every flagged row is now resolved — close the gate outright instead of showing an
+  // empty dialog, so "Sold" is one more click away rather than a dead end.
   useEffect(() => {
     if (!availModal && oosGateStashRef.current) {
-      setOosGateModal(oosGateStashRef.current);
       oosGateStashRef.current = null;
+      const fresh = scanOutOfStockElements();
+      if (fresh.length > 0) setOosGateModal(fresh);
+      else showMsg?.("✅ All out-of-stock items fixed — click Mark Sold again to confirm.", "green");
     }
-  }, [availModal]);
+  }, [availModal, scanOutOfStockElements, showMsg]);
   const saveAvailPick = useCallback(() => {
     if (!availModal) return;
     const { zoneKey, idx, selectedId, items, onPick } = availModal;

@@ -197,10 +197,14 @@ function crewIcon(type) {
    kit's components line up under the kit's own qty / rate / total — the components sum to the kit
    line, and that comparison is most of the reason the contents can be opened at all. Below sm the
    three share the row equally instead, because fixed columns plus a name do not fit 390px. */
+// The label repeats on every single card below sm (phone width, where cards stack and there's no
+// shared row for a header to sit above) but is hidden from sm up, where the inventory-blocked list
+// now has ONE sticky header row instead — repeating it on every card there was the exact "confusing"
+// the header replaces.
 const StatCell = ({ label, w, children }) => (
   <div className={"flex-1 sm:flex-none text-right " + w}>
-    <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400 leading-none">{label}</div>
-    <div className="mt-1">{children}</div>
+    <div className="sm:hidden text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400 leading-none">{label}</div>
+    <div className="mt-1 sm:mt-0">{children}</div>
   </div>
 );
 const STAT_W = { qty: "sm:w-16", rentalQty: "sm:w-20", rate: "sm:w-20", total: "sm:w-24" };
@@ -584,7 +588,13 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   // backdrop-filter of its own on purpose: a backdrop-filter makes an element the containing
   // block for position:fixed descendants, and the "Add a site" menu inside it is fixed-positioned
   // from viewport coordinates — it would open offset by the sheet's own position.
-  const PANEL_CARD = "relative w-full max-h-[85vh] flex flex-col rounded-t-2xl bg-white/85 ring-1 ring-white/70 sm:bg-gray-50 sm:ring-gray-200 sm:max-h-none sm:block sm:rounded-2xl sm:overflow-hidden";
+  // No sm:overflow-hidden. It used to clip to the rounded corners there, but PANEL_BODY's own
+  // sm:p-4 padding already keeps every child inset from this edge — nothing was actually bleeding
+  // past the corners for it to clip. Keeping it was the reason the inventory list's own sticky
+  // column header (further down, its own overflow-hidden already dropped for the same reason)
+  // still never stuck to the page scroll: this ancestor became its own scroll container for
+  // sticky-positioning purposes, trapping the header inside a box that never itself scrolls.
+  const PANEL_CARD = "relative w-full max-h-[85vh] flex flex-col rounded-t-2xl bg-white/85 ring-1 ring-white/70 sm:bg-gray-50 sm:ring-gray-200 sm:max-h-none sm:block sm:rounded-2xl";
   const PANEL_BODY = "flex-1 min-h-0 overflow-y-auto overscroll-contain rounded-t-2xl p-3 space-y-3 sm:rounded-none sm:flex-none sm:overflow-visible sm:p-4";
   // Tapping the dimmed area closes, the way every sheet on the platform does. Guarded on the
   // phone breakpoint: from sm up this same element is the plain inline wrapper, and a click that
@@ -4600,7 +4610,14 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
             )}
 
             {/* Blocked inventory */}
-            <div className={"bg-white rounded-xl shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] overflow-hidden" + modalCls("inv")}>
+            {/* No overflow-hidden here (unlike its sibling cards) — every child below is inset with
+                its own margin/padding and never touches this card's edges, so the rounded corners
+                were never actually at risk of a square-cornered child bleeding past them. Dropping it
+                is what lets the column header's `sticky` below attach to the PAGE's real scroll
+                instead of being trapped inside this card's own box (overflow-hidden makes an element
+                its own scroll container for sticky-positioning purposes, which is exactly what broke
+                the first attempt at pinning it). */}
+            <div className={"bg-white rounded-xl shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)]" + modalCls("inv")}>
               {/* Summary strip. Tinted blue rather than grey and the figure set in a white pill:
                   with the rows below now white cards on a light ground, a grey header read as
                   one more row instead of as the thing they add up to. */}
@@ -4647,10 +4664,35 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                    breakpoint. One card per row is a single layout that works at every width, and
                    it drops the 640px minimum that used to put a money table in a horizontal
                    scroller on a phone.
-                   The header row goes with it: with one row per card there is nothing for a
-                   shared header to sit above, so each figure carries its own label — which is
-                   also the only form that survived the phone layout anyway. */
+                   Below sm, cards still stack with nothing to align a shared header against, so
+                   each one keeps its own per-figure label (StatCell's own, sm:hidden). From sm up
+                   the figures now line up as real columns, so repeating QTY/RATE/TOTAL on every
+                   single card was exactly the clutter a shared header exists to avoid — one sticky
+                   header row instead, labeling the column once no matter how far down the list
+                   you've scrolled. */
+                (() => {
+                  const anyRentalQty = !invScoped && invShown.some(it => Number(it.rentalQty ?? it.qty) !== (Number(it.qty) || 0));
+                  const qtyHeaderLabel = anyRentalQty ? "To load" : "Qty";
+                  return (
+                /* Two earlier attempts at pinning this: a plain `sticky` while the card still had
+                   overflow-hidden (never attached to the real scroll — overflow-hidden makes an
+                   element its own scroll container for sticky purposes, so it just rode along with
+                   the card), then a bounded independently-scrollable region with its own sticky header
+                   (fought the surrounding layout — overlapping row content, clipped numbers). The
+                   card's own overflow-hidden is gone now (see its own comment, above), so a plain
+                   `sticky top-0` here finally has the real page scroll to attach to. Solid background
+                   (not translucent) this time — a see-through header over scrolling rows was part of
+                   what made the previous attempt look broken. */
                 <div className="p-2.5 space-y-2">
+                  <div className="hidden sm:flex items-center gap-x-3 px-2.5 sticky top-0 z-10 bg-white rounded-lg ring-1 ring-gray-100 py-1.5 -mt-0.5 mb-1">
+                    <span className="flex-1 min-w-0" />
+                    <div className="w-full sm:w-auto flex items-start gap-0 sm:pl-1">
+                      <div className={"text-right text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400 " + STAT_W.qty}>{qtyHeaderLabel}</div>
+                      {anyRentalQty && <div className={"text-right text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400 " + STAT_W.rentalQty}>Rental qty</div>}
+                      <div className={"text-right text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400 " + STAT_W.rate}>Rate</div>
+                      <div className={"text-right text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400 " + STAT_W.total}>Total</div>
+                    </div>
+                  </div>
                   {invShown.map(it => {
                     // ── TWO DIFFERENT QUANTITIES, ON PURPOSE ──
                     // `qty` ("To load") is the true physical peak: the most this item is ever
@@ -4744,9 +4786,15 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                             <StatCell label={showRentalQty ? "To load" : "Qty"} w={STAT_W.qty}>
                               <span className="text-sm font-semibold text-gray-700 tabular-nums">×{it.qty}</span>
                             </StatCell>
-                            {showRentalQty && (
+                            {/* Reserved whenever ANY row in this list needs it (anyRentalQty), not just
+                                this one (showRentalQty) — so every row's Rate/Total lands under the
+                                same header column instead of shifting left on rows with nothing to
+                                net, which is what a per-row-only column would do under a shared header. */}
+                            {anyRentalQty && (
                               <StatCell label="Rental qty" w={STAT_W.rentalQty}>
-                                <span className="text-sm text-gray-600 tabular-nums" title="Raw qty billed per function, summed with no cross-function reuse credit — this is the billing basis the averaged rate is derived from.">×{rentalQty}</span>
+                                {showRentalQty
+                                  ? <span className="text-sm text-gray-600 tabular-nums" title="Raw qty billed per function, summed with no cross-function reuse credit — this is the billing basis the averaged rate is derived from.">×{rentalQty}</span>
+                                  : <span className="text-sm text-gray-300 tabular-nums" title="Same as qty — nothing to net for this item.">—</span>}
                               </StatCell>
                             )}
                             <StatCell label="Rate" w={STAT_W.rate}>
@@ -4782,6 +4830,8 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                     );
                   })}
                 </div>
+                  );
+                })()
               )}
             </div>
 
@@ -5190,17 +5240,25 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                               const lineVar = lineActual - (Number(r.projCost) || 0);
                               return (
                                 <div key={i} className="grid grid-cols-[1fr_auto_auto] gap-2 px-3 py-1.5 items-center">
-                                  <div className="min-w-0 flex items-center gap-2">
-                                    {r.colorVariant?.photoUrl && <img src={r.colorVariant.photoUrl} alt={r.colorVariant.label || ""} onClick={() => setZoomImg(r.colorVariant.photoUrl)} className="w-7 h-7 rounded object-cover border border-gray-200 shrink-0 cursor-zoom-in" title={r.colorVariant.label || ""} />}
-                                    <div className="min-w-0">
-                                      <div className="text-xs font-medium text-gray-800 truncate">{r.name}{r.colorVariant?.label && <span className="ml-1.5 font-normal text-[10px] text-purple-600">🎨 {r.colorVariant.label}</span>}</div>
-                                      {Array.isArray(r.colorPrefs) && r.colorPrefs.length > 1 && (
-                                        <div className="text-[10px] text-gray-400">if not at the mandi: {r.colorPrefs.slice(1).map(p => p.label).join(", ")}</div>
-                                      )}
-                                      {r.swappedTo && <div className="text-[10px] font-semibold text-amber-700">🔁 Not in the mandi — swapped with {r.swappedTo}{r.swapNote ? ` · ${r.swapNote}` : ""}</div>}
-                                      {r.swapFor && <div className="text-[10px] font-semibold text-amber-700">🔁 Bought instead of {r.swapFor}{r.swapNote ? ` · ${r.swapNote}` : ""}</div>}
-                                      {r.projQty > 0 && <div className="text-[10px] text-gray-400">{r.projQty} {r.unit} planned</div>}
+                                  <div className="min-w-0">
+                                    {/* Dotted leader (same pattern as the manpower "how" tables) filling
+                                        whatever's left of the name to the numbers. ONE flex row holding
+                                        the photo, name and the dotted span directly — the previous
+                                        version nested the dotted span inside an extra flex-1 wrapper div,
+                                        which left it filling only THAT wrapper's shrink-to-fit width
+                                        instead of the full row, so the line stopped well short of the
+                                        numbers instead of reaching them. */}
+                                    <div className="flex items-center gap-2 min-w-0">
+                                      {r.colorVariant?.photoUrl && <img src={r.colorVariant.photoUrl} alt={r.colorVariant.label || ""} onClick={() => setZoomImg(r.colorVariant.photoUrl)} className="w-7 h-7 rounded object-cover border border-gray-200 shrink-0 cursor-zoom-in" title={r.colorVariant.label || ""} />}
+                                      <span className="text-xs font-medium text-gray-800 truncate">{r.name}{r.colorVariant?.label && <span className="ml-1.5 font-normal text-[10px] text-purple-600">🎨 {r.colorVariant.label}</span>}</span>
+                                      <span aria-hidden="true" className="flex-1 min-w-2 border-b border-dotted border-gray-300 mb-[3px]" />
                                     </div>
+                                    {Array.isArray(r.colorPrefs) && r.colorPrefs.length > 1 && (
+                                      <div className="text-[10px] text-gray-400">if not at the mandi: {r.colorPrefs.slice(1).map(p => p.label).join(", ")}</div>
+                                    )}
+                                    {r.swappedTo && <div className="text-[10px] font-semibold text-amber-700">🔁 Not in the mandi — swapped with {r.swappedTo}{r.swapNote ? ` · ${r.swapNote}` : ""}</div>}
+                                    {r.swapFor && <div className="text-[10px] font-semibold text-amber-700">🔁 Bought instead of {r.swapFor}{r.swapNote ? ` · ${r.swapNote}` : ""}</div>}
+                                    {r.projQty > 0 && <div className="text-[10px] text-gray-400">{r.projQty} {r.unit} planned</div>}
                                   </div>
                                   <div className="text-right w-28 text-xs text-gray-400">{r.projCost > 0 ? fmt(r.projCost) : <span className="text-amber-500">extra</span>}</div>
                                   <div className="flex items-center justify-end gap-1 w-[264px]">
