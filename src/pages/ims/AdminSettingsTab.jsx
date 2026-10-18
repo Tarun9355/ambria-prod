@@ -2638,8 +2638,9 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
               <p className="font-bold text-gray-900 mb-1">🏗️ Truss & Masking Rates</p>
               <p className="text-xs text-gray-500">₹/sqft rates used to price truss structures and wall masking everywhere in Studio (Tagging, Build, Library). Truss rows are a fixed grid tied to the pricing formulas — one per shape × material × density, so only the rates are editable (↺ puts a row back to its default). Masking types can be added and removed.</p>
             </div>
+            <div>
+            <p className="text-sm font-semibold text-gray-700 mb-2">Truss</p>
             <div className="space-y-5">
-              <p className="text-sm font-semibold text-gray-700 -mb-3">Truss</p>
               {TRUSS_SHAPES.map((shape) => (
                 <div key={shape.key} className="border rounded-lg overflow-hidden">
                   <div className="bg-gray-50 px-3 py-2 border-b">
@@ -2689,6 +2690,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                 </div>
               ))}
               <p className="text-xs text-gray-500 italic">"Ceiling portion" is the slice of the rate that's specifically the fabric ceiling drape — when a zone does its ceiling via a printed panel instead ("Ceiling via print" on that truss), this portion is subtracted from the rate instead of charging for both.</p>
+            </div>
             </div>
             {/* Drape fabric (Liza, velvet curtains, wall fabric panels) is billed from the fabric
                 stock's rental rates, then × this for the guest. Studio reads it live
