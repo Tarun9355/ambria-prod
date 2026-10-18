@@ -5909,7 +5909,6 @@ export default function StudioApp() {
         flowerAgg.set(targetId, { totalQty: swapQty, totalCost: swapQty * targetRate, unitPrice: targetRate, name: targetParent.name || "Flower", unit: targetParent.unit || "" });
       }
     });
-    let tReal = fixedExtras;
     // flowerName → { name, qty, cost } — the mandi shopping breakdown. v.totalQty already carries
     // the repeat-zone 80% cut where it applies (real flowers only), so this list and the cost below
     // both reflect the reduced quantity actually needed — no separate discount step here.
@@ -5917,7 +5916,6 @@ export default function StudioApp() {
     flowerAgg.forEach(v => {
       if (!(v.totalQty > 0)) return;
       const cost = v.totalCost != null ? v.totalCost : v.totalQty * v.unitPrice;
-      tReal += cost;
       if (!fbreak[v.name]) fbreak[v.name] = { name: v.name, qty: 0, cost: 0, unit: v.unit, colorVariant: v.colorVariant || null, colorPrefs: v.colorPrefs || null };
       fbreak[v.name].qty += v.totalQty; fbreak[v.name].cost += cost;
     });
@@ -5936,6 +5934,11 @@ export default function StudioApp() {
       const qty = Math.ceil(f.qty);
       return { ...f, qty, rate, cost: Math.round(qty * rate) };
     }).sort((a, b) => b.cost - a.cost);
+    // Owner ask: P&L has to cost what will actually be PAID at the mandi — whole bundles at the
+    // real rate — not the fractional-need estimate. tReal (feeds Deal Check's own Floral cost
+    // rollup, DealCheckOverlay.jsx's dcCostRollup.florals / margin) now sums the breakdown's own
+    // already-whole-unit, already-real-rate cost, instead of the pre-ceiling fractional total.
+    const tReal = fixedExtras + breakdown.reduce((s, f) => s + (f.cost || 0), 0);
     return { totalReal: tReal, totalArtificial: tArt, grandTotal: tReal + tArt, breakdown, artFlowerBunches, artGreenBunches, income: { real: realIncome, art: artIncome } };
   }, [dealCheckData, studioFloralData, sharedFloralSettings, rcItems, floralRatio, resolveRcRate, rcFloralModeByKey, dcFloralColorPrefs, imsInventory, dcInventoryCache, collectAllFunctionData]);
   // Sync for calcFnFloralSourcingCostRef — see its declaration (near collectAllFunctionDataRef) for
