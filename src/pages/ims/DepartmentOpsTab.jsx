@@ -177,10 +177,14 @@ function crewIcon(type) {
    kit's components line up under the kit's own qty / rate / total — the components sum to the kit
    line, and that comparison is most of the reason the contents can be opened at all. Below sm the
    three share the row equally instead, because fixed columns plus a name do not fit 390px. */
+// The label repeats on every single card below sm (phone width, where cards stack and there's no
+// shared row for a header to sit above) but is hidden from sm up, where the inventory-blocked list
+// now has ONE sticky header row instead — repeating it on every card there was the exact "confusing"
+// the header replaces.
 const StatCell = ({ label, w, children }) => (
   <div className={"flex-1 sm:flex-none text-right " + w}>
-    <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400 leading-none">{label}</div>
-    <div className="mt-1">{children}</div>
+    <div className="sm:hidden text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400 leading-none">{label}</div>
+    <div className="mt-1 sm:mt-0">{children}</div>
   </div>
 );
 const STAT_W = { qty: "sm:w-16", rentalQty: "sm:w-20", rate: "sm:w-20", total: "sm:w-24" };
@@ -4623,10 +4627,26 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                    breakpoint. One card per row is a single layout that works at every width, and
                    it drops the 640px minimum that used to put a money table in a horizontal
                    scroller on a phone.
-                   The header row goes with it: with one row per card there is nothing for a
-                   shared header to sit above, so each figure carries its own label — which is
-                   also the only form that survived the phone layout anyway. */
+                   Below sm, cards still stack with nothing to align a shared header against, so
+                   each one keeps its own per-figure label (StatCell's own, sm:hidden). From sm up
+                   the figures now line up as real columns, so repeating QTY/RATE/TOTAL on every
+                   single card was exactly the clutter a shared header exists to avoid — one sticky
+                   header row instead, labeling the column once no matter how far down the list
+                   you've scrolled. */
+                (() => {
+                  const anyRentalQty = !invScoped && invShown.some(it => Number(it.rentalQty ?? it.qty) !== (Number(it.qty) || 0));
+                  const qtyHeaderLabel = anyRentalQty ? "To load" : "Qty";
+                  return (
                 <div className="p-2.5 space-y-2">
+                  <div className="hidden sm:flex items-center gap-x-3 px-2.5 sticky top-0 z-10 bg-gray-50/95 backdrop-blur-sm rounded-lg ring-1 ring-gray-100 py-1.5 -mt-0.5 mb-1">
+                    <span className="flex-1 min-w-0" />
+                    <div className="flex items-start gap-0 sm:pl-1">
+                      <div className={"text-right text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400 " + STAT_W.qty}>{qtyHeaderLabel}</div>
+                      {anyRentalQty && <div className={"text-right text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400 " + STAT_W.rentalQty}>Rental qty</div>}
+                      <div className={"text-right text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400 " + STAT_W.rate}>Rate</div>
+                      <div className={"text-right text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400 " + STAT_W.total}>Total</div>
+                    </div>
+                  </div>
                   {invShown.map(it => {
                     // ── TWO DIFFERENT QUANTITIES, ON PURPOSE ──
                     // `qty` ("To load") is the true physical peak: the most this item is ever
@@ -4720,9 +4740,15 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                             <StatCell label={showRentalQty ? "To load" : "Qty"} w={STAT_W.qty}>
                               <span className="text-sm font-semibold text-gray-700 tabular-nums">×{it.qty}</span>
                             </StatCell>
-                            {showRentalQty && (
+                            {/* Reserved whenever ANY row in this list needs it (anyRentalQty), not just
+                                this one (showRentalQty) — so every row's Rate/Total lands under the
+                                same header column instead of shifting left on rows with nothing to
+                                net, which is what a per-row-only column would do under a shared header. */}
+                            {anyRentalQty && (
                               <StatCell label="Rental qty" w={STAT_W.rentalQty}>
-                                <span className="text-sm text-gray-600 tabular-nums" title="Raw qty billed per function, summed with no cross-function reuse credit — this is the billing basis the averaged rate is derived from.">×{rentalQty}</span>
+                                {showRentalQty
+                                  ? <span className="text-sm text-gray-600 tabular-nums" title="Raw qty billed per function, summed with no cross-function reuse credit — this is the billing basis the averaged rate is derived from.">×{rentalQty}</span>
+                                  : <span className="text-sm text-gray-300 tabular-nums" title="Same as qty — nothing to net for this item.">—</span>}
                               </StatCell>
                             )}
                             <StatCell label="Rate" w={STAT_W.rate}>
@@ -4758,6 +4784,8 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                     );
                   })}
                 </div>
+                  );
+                })()
               )}
             </div>
 
