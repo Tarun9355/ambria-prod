@@ -46,6 +46,26 @@ const loadPdfLogos = () => new Promise((resolve) => {
   img.onerror = () => resolve({ light: null, dark: null });
   img.src = LOGO_ASSET;
 });
+// ── THE ZONE PAGE'S DOT TILE, AS A PNG ──
+// The faint gold dot grid behind each zone page was an SVG data URL. Older WebKit (iOS 14 and
+// below, still on the crew's older phones) taints a canvas the moment an SVG image is drawn into
+// it, so html2canvas could draw the page but toDataURL then threw "The operation is insecure" —
+// for every zone page, photos or not, since the dots are on all of them. A PNG tile drawn here
+// looks the same and never taints. Drawn at 2x and shown at 18px so it stays crisp at the export's
+// 1.5x scale. Falls back to the SVG if a canvas is unavailable.
+const DOT_TILE_SVG = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18'%3E%3Ccircle cx='3' cy='3' r='1.1' fill='%23B8935A' fill-opacity='.32'/%3E%3C/svg%3E";
+let dotTileOnce = null;
+const dotTileUrl = () => {
+  if (dotTileOnce) return dotTileOnce;
+  try {
+    const c = document.createElement("canvas"); c.width = 36; c.height = 36;
+    const ctx = c.getContext("2d");
+    ctx.fillStyle = "rgba(184,147,90,0.32)";
+    ctx.beginPath(); ctx.arc(6, 6, 2.2, 0, Math.PI * 2); ctx.fill();
+    dotTileOnce = c.toDataURL("image/png");
+  } catch { dotTileOnce = DOT_TILE_SVG; }
+  return dotTileOnce;
+};
 // The logo never changes between exports, so it is cropped and recoloured once per session —
 // it used to be redone on every Download / View deck press.
 let pdfLogosOnce = null;
@@ -3205,7 +3225,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
      The dots are an SVG tile rather than a CSS radial-gradient: html2canvas draws gradients once,
      stretched, but repeats an image tile faithfully. Photos and cards sit over it opaque, so it
      only shows in the margins and gaps. */
-  .zp{position:relative;padding:14px 0 6px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18'%3E%3Ccircle cx='3' cy='3' r='1.1' fill='%23B8935A' fill-opacity='.32'/%3E%3C/svg%3E");background-repeat:repeat}
+  .zp{position:relative;padding:14px 0 6px;background-image:url("${dotTileUrl()}");background-size:18px 18px;background-repeat:repeat}
   .zp .pc{position:absolute;width:26px;height:26px;border-color:#B8935A;border-style:solid;border-width:0}
   .zp .pc.tl{top:0;left:0;border-top-width:1.5px;border-left-width:1.5px;border-top-left-radius:9px}
   .zp .pc.tr{top:0;right:0;border-top-width:1.5px;border-right-width:1.5px;border-top-right-radius:9px}
@@ -3473,6 +3493,10 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
           const { scale, strip } = tries[ti];
           const onclone = strip ? (cdoc) => {
             cdoc.querySelectorAll("[data-bg]").forEach(n => { n.style.backgroundImage = "none"; });
+            // Every other CSS background image too (the page pattern, anything added later): any
+            // image the browser refuses to read back must not survive into the last-resort try.
+            const st = cdoc.createElement("style"); st.textContent = "*{background-image:none!important}";
+            (cdoc.head || cdoc.documentElement).appendChild(st);
             cdoc.querySelectorAll("img").forEach(im => { if (!String(im.getAttribute("src") || "").startsWith("data:")) im.style.visibility = "hidden"; });
           } : undefined;
           try {
