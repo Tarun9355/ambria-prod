@@ -876,6 +876,27 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     const rows = Object.values(agg).map(r => ({ ...r, need: r.count / r.batch }));
     return { fn: fn?.type || "Function", shift: fn?.shift || "", rows, result: Math.ceil(rows.reduce((s, r) => s + r.need, 0)) };
   };
+  // ── DIHARI SLOTS IN THE ORDER THE CREW WORKS THEM ──
+  // A day's shift slots are shown starting from the slot just before that day's first function
+  // and then round the clock: a 9 AM Mata Ki Chowki puts 2 AM–8 AM first, then 9 AM–6 PM, then
+  // 6 PM–2 AM. Slots carry only a label ("9 AM – 6 PM"), so their hours are read from it; the
+  // function's start comes from its shift. Display order only — the saved ids are untouched.
+  const firstFnHour = (date) => {
+    const hrs = mpFns.filter(f => String(f?.date || "").slice(0, 10) === date)
+      .map(f => SHIFT_START_HOUR[String(f?.shift || "").trim().toLowerCase()]).filter(h => h != null);
+    return hrs.length ? Math.min(...hrs) : 9;
+  };
+  const orderWinIds = (ids, winDefs, date) => {
+    if (!Array.isArray(ids) || ids.length < 2) return ids;
+    const hrsOf = (id) => slotHours((winDefs || []).find(w => w.id === id)?.label);
+    const fnHour = firstFnHour(date);
+    // The anchor: the slot that ends latest at or before the function starts (a slot running past
+    // midnight never ends "before" a same-day start). No such slot → plain clock order from midnight.
+    let anchor = 0, best = -1;
+    ids.forEach(id => { const h = hrsOf(id); if (h && h.end != null && h.end > h.start && h.end <= fnHour && h.end > best) { best = h.end; anchor = h.start; } });
+    const key = (id) => { const h = hrsOf(id); return h ? (h.start - anchor + 24) % 24 : 99; };
+    return [...ids].sort((a, b) => key(a) - key(b));
+  };
   // ── EACH DIHARI SLOT'S DEFAULT CREW, FROM THE FUNCTIONS IT SERVES ──
   // On an event day the crew of every function up to lunch is summed into the early slot
   // (2 AM – 8 AM, set up before a morning/lunch start); every function after lunch — or with no
@@ -896,10 +917,12 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   };
   const fnCrewForDay = (s, d) => {
     const t = d?.trace;
-    if (!t || t.kind !== "tier2" || d.phase !== "event") return null;
+    // Shared crew (Labours, Supervisors) is one event-wide team split across departments by share,
+    // not a per-function headcount, so its slots keep the day's crew.
+    if (!t || s.shared || d.phase !== "event") return null;
     const fnsToday = mpFns.filter(f => String(f?.date || "").slice(0, 10) === d.date);
     if (Array.isArray(t.byFn) && t.byFn.length) return t.byFn.map(c => ({ shift: c.shift || fnsToday.find(f => f?.type === c.fn)?.shift || "", crew: Number(c.result) || 0 }));
-    if (t.perRow && fnsToday.length) return fnsToday.map(f => ({ shift: f?.shift || "", crew: flowerTraceForFn(f).result }));
+    if (t.kind === "tier2" && t.perRow && fnsToday.length) return fnsToday.map(f => ({ shift: f?.shift || "", crew: flowerTraceForFn(f).result }));
     return null;
   };
   const slotDefaults = (s, d) => {
@@ -909,12 +932,15 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     const ids = ov && ov[d.date] != null ? ov[d.date] : d.windowIds;
     if (!Array.isArray(ids) || !ids.length) return null;
     const { pre, day, night } = slotRoleIds(ids, winDefs);
+    // A slot with no hours in its label ("Full day") — or a day with just one slot — takes every
+    // function: it falls back to the first slot in working order.
+    const first = ids.length === 1 ? ids[0] : (orderWinIds(ids, winDefs, d.date) || ids)[0];
     const out = {};
     const addTo = (id, n) => { if (id) out[id] = (out[id] || 0) + n; };
     fnc.forEach(({ shift, crew }) => {
       const h = SHIFT_START_HOUR[String(shift || "").trim().toLowerCase()];
-      if (h != null && h <= 12) addTo(pre || day, crew); else addTo(day || pre, crew);
-      if (h != null && h >= 18) addTo(night, crew);
+      if (h != null && h <= 12) addTo(pre || day || first, crew); else addTo(day || pre || first, crew);
+      if (h != null && h >= 18 && night && night !== (day || pre || first)) addTo(night, crew);
     });
     return Object.keys(out).length ? out : null;
   };
@@ -1002,27 +1028,6 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const showDay = (r, d) => Math.round(effDay(r, d));
   const dayOv = (r, d) => { const ov = mpDay[r.type]; return !!(ov && ov[d.date] != null && Number(ov[d.date]) !== Math.round(mpBaseDay(r, d))); };
   const effWinIds = (r, d) => { const ov = mpWin[r.type]; return ov && ov[d.date] != null ? ov[d.date] : (Array.isArray(d.windowIds) ? d.windowIds : []); };
-  // ── DIHARI SLOTS IN THE ORDER THE CREW WORKS THEM ──
-  // A day's shift slots are shown starting from the slot just before that day's first function
-  // and then round the clock: a 9 AM Mata Ki Chowki puts 2 AM–8 AM first, then 9 AM–6 PM, then
-  // 6 PM–2 AM. Slots carry only a label ("9 AM – 6 PM"), so their hours are read from it; the
-  // function's start comes from its shift. Display order only — the saved ids are untouched.
-  const firstFnHour = (date) => {
-    const hrs = mpFns.filter(f => String(f?.date || "").slice(0, 10) === date)
-      .map(f => SHIFT_START_HOUR[String(f?.shift || "").trim().toLowerCase()]).filter(h => h != null);
-    return hrs.length ? Math.min(...hrs) : 9;
-  };
-  const orderWinIds = (ids, winDefs, date) => {
-    if (!Array.isArray(ids) || ids.length < 2) return ids;
-    const hrsOf = (id) => slotHours((winDefs || []).find(w => w.id === id)?.label);
-    const fnHour = firstFnHour(date);
-    // The anchor: the slot that ends latest at or before the function starts (a slot running past
-    // midnight never ends "before" a same-day start). No such slot → plain clock order from midnight.
-    let anchor = 0, best = -1;
-    ids.forEach(id => { const h = hrsOf(id); if (h && h.end != null && h.end > h.start && h.end <= fnHour && h.end > best) { best = h.end; anchor = h.start; } });
-    const key = (id) => { const h = hrsOf(id); return h ? (h.start - anchor + 24) % 24 : 99; };
-    return [...ids].sort((a, b) => key(a) - key(b));
-  };
   const effWin = (r, d) => mpEffWindows(r, d, mpWin);
   const setMpDay = (type, date, val) => { if (!canManpower) return; saveDept({ mpDay: { ...mpDay, [type]: { ...(mpDay[type] || {}), [date]: val } } }); };
   const setMpAllDays = (type, schedule, val) => { const m = { ...(mpDay[type] || {}) }; (schedule || []).forEach(d => { m[d.date] = val; }); saveDept({ mpDay: { ...mpDay, [type]: m } }); };
@@ -2045,8 +2050,69 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     5: "grid-cols-[minmax(160px,max-content)_repeat(5,minmax(120px,1fr))]",
     6: "grid-cols-[minmax(160px,max-content)_repeat(6,minmax(120px,1fr))]",
   };
+  // Function columns in the order they happen, each header carrying its time. Only the shift is
+  // stored (Morning / Lunch / …), so the time shown is that shift's usual start. A function with no
+  // shift stays right after the function before it in the booking's own order.
+  const orderFnCols = (rawCols, day) => {
+    const dayFns = !day ? [] : day.phase === "event" ? mpFns.filter(f => String(f?.date || "").slice(0, 10) === day.date) : day.phase === "minusOne" ? mpFns : [];
+    const fnRec = (c) => (day ? dayFns : mpFns).find(f => (f?.type || "") === c.fn) || null;
+    const shiftOf = (c) => String(c.shift || fnRec(c)?.shift || "").trim();
+    const hourOf = (c) => SHIFT_START_HOUR[shiftOf(c).toLowerCase()];
+    let lastHour = -1;
+    const cols = rawCols
+      .map((c, i) => { const h = hourOf(c); const at = h != null ? h : lastHour + 0.01 * (i + 1); if (h != null) lastHour = h; return { ...c, _at: at }; })
+      .sort((a, b) => a._at - b._at);
+    const timeLabel = (c) => { const sh = shiftOf(c); const h = hourOf(c); if (!sh) return "time not set"; if (h == null) return sh; const hr = Math.floor(h), mm = Math.round((h - hr) * 60); return `${sh} · ${hr % 12 || 12}${mm ? ":" + String(mm).padStart(2, "0") : ""} ${hr < 12 ? "AM" : "PM"}`; };
+    return { cols, timeLabel, shiftOf };
+  };
+  // A non-tier2 trace (pillars, sqft range, Fabric Bangali zones, Labours, fixed) as label → value
+  // rows, so every crew type can sit in the same one-column-per-function table.
+  const traceRowsOf = (tr) => {
+    if (!tr) return [];
+    if (tr.kind === "pillars") return (tr.rows || []).map(r => ({ label: r.sub, value: `${r.count} pillar${r.count === 1 ? "" : "s"}` }));
+    if (tr.kind === "range") return (tr.rows || []).map(r => ({ label: r.sub, value: `${Number(r.sqft || 0).toFixed(0)} ${tr.unit || ""}`.trim() }));
+    if (tr.kind === "fabricBangali") return (tr.zones || []).map(z => ({ label: z.zone, value: [z.topLabour > 0 ? `canopy ${z.topLabour}` : "", z.rft > 0 ? `wrap ${z.rft} ft` : ""].filter(Boolean).join(" · ") || "—" }));
+    if (tr.kind === "labours") return [
+      ...(tr.venueMin > 0 ? [{ label: "Venue minimum", value: `${tr.venueMin}` }] : []),
+      ...(tr.heavyRows || []).map(hr => ({ label: `${hr.sub}`, value: `×${hr.count} → +${hr.extra}` })),
+    ];
+    if (tr.kind === "ratio") return [{ label: tr.numLabel || "Count", value: `${tr.num}` }];
+    if (tr.kind === "fixed") return [{ label: tr.note || "Fixed", value: `${tr.result}` }];
+    return [];
+  };
   const renderMpTrace = (t, drivenBy, day) => {
     if (!t) return null;
+    // Any other crew type with per-function traces from Deal Check: same table, its own rows.
+    if (t.kind !== "tier2" && Array.isArray(t.byFn) && t.byFn.length) {
+      const { cols, timeLabel, shiftOf } = orderFnCols(t.byFn, day);
+      const labels = [];
+      cols.forEach(c => traceRowsOf(c.trace).forEach(r => { if (!labels.includes(r.label)) labels.push(r.label); }));
+      return (
+        <div className="mb-1.5 bg-white border rounded-lg overflow-x-auto">
+          <div className={"grid " + (FN_GRID[cols.length] || FN_GRID[6])}>
+            <div className="contents">
+              <span className="px-2 pr-6 py-1 bg-gray-100 text-[13px] uppercase tracking-wide text-gray-500 font-semibold whitespace-nowrap">Item / Zone</span>
+              {cols.map((c, ci) => <span key={ci} className="px-2 py-1 bg-gray-100 text-center border-l border-gray-200 whitespace-nowrap"><span className="block text-[13px] uppercase tracking-wide text-gray-500 font-semibold">{c.fn}</span><span className={"block text-[12px] font-semibold normal-case " + (shiftOf(c) ? "text-blue-700" : "text-amber-600")}>{timeLabel(c)}</span></span>)}
+            </div>
+            {labels.map((lb, ri) => (
+              <div className="contents" key={ri}>
+                <div className="flex items-baseline gap-1.5 min-w-0 overflow-hidden px-2 py-0.5 text-[13px] text-gray-700">
+                  <span className="truncate" title={lb}>{lb}</span>
+                  <span aria-hidden="true" className="flex-1 min-w-2 border-b border-dotted border-gray-300 mb-[3px]" />
+                </div>
+                {cols.map((c, ci) => { const r = traceRowsOf(c.trace).find(x => x.label === lb); return (
+                  <span key={ci} className="px-2 py-0.5 text-[13px] text-center border-l border-gray-100 whitespace-nowrap">{r ? <b className="text-gray-800">{r.value}</b> : <span className="text-gray-300">—</span>}</span>
+                ); })}
+              </div>
+            ))}
+            <div className="contents">
+              <span className="px-2 py-1 bg-gray-50 text-[13px] text-gray-600">Crew per function</span>
+              {cols.map((c, ci) => <span key={ci} className="px-2 py-1 bg-gray-50 text-[13px] text-center border-l border-gray-100 text-gray-900 font-semibold whitespace-nowrap">{c.result}</span>)}
+            </div>
+          </div>
+        </div>
+      );
+    }
     // One column per function behind this day (Deal Check's trace.byFn), each cell that function's
     // own count ÷ batch = need for the row. A trace synced before byFn existed carries only the
     // busiest function's rows, shown as that one function's column.
@@ -2055,17 +2121,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       const dayFns = !day ? [] : day.phase === "event" ? mpFns.filter(f => String(f?.date || "").slice(0, 10) === day.date) : day.phase === "minusOne" ? mpFns : [];
       const localByFn = (!Array.isArray(t.byFn) && t.perRow && dayFns.length > 1) ? dayFns.map(flowerTraceForFn) : null;
       const rawCols = Array.isArray(t.byFn) && t.byFn.length ? t.byFn : localByFn || [{ fn: drivenBy || "Function", rows: t.rows, result: t.result }];
-      // Columns in the order the functions happen, each header carrying its time. Only the shift is
-      // stored (Morning / Lunch / …), so the time shown is that shift's usual start. A function with
-      // no shift stays right after the function before it in the booking's own order.
-      const fnRec = (c) => (day ? dayFns : mpFns).find(f => (f?.type || "") === c.fn) || null;
-      const shiftOf = (c) => String(c.shift || fnRec(c)?.shift || "").trim();
-      const hourOf = (c) => SHIFT_START_HOUR[shiftOf(c).toLowerCase()];
-      let lastHour = -1;
-      const cols = rawCols
-        .map((c, i) => { const h = hourOf(c); const at = h != null ? h : lastHour + 0.01 * (i + 1); if (h != null) lastHour = h; return { ...c, _at: at }; })
-        .sort((a, b) => a._at - b._at);
-      const timeLabel = (c) => { const sh = shiftOf(c); const h = hourOf(c); if (!sh) return "time not set"; if (h == null) return sh; const hr = Math.floor(h), mm = Math.round((h - hr) * 60); return `${sh} · ${hr % 12 || 12}${mm ? ":" + String(mm).padStart(2, "0") : ""} ${hr < 12 ? "AM" : "PM"}`; };
+      const { cols, timeLabel, shiftOf } = orderFnCols(rawCols, day);
       const names = [];
       cols.forEach(c => (c.rows || []).forEach(r => { if (!names.includes(r.sub)) names.push(r.sub); }));
       const cellOf = (c, sub) => (c.rows || []).filter(r => r.sub === sub);

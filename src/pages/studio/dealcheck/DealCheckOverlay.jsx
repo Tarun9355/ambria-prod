@@ -1668,11 +1668,17 @@ export default function DealCheckOverlay({ ctx }) {
                       // side by side (one column per function), not just the busiest one's.
                       // Display-only extra, so its own try: a failure here must never take down the
                       // enclosing manpower rollup (whose catch would zero every department's crew).
-                      if (trace && trace.kind === "tier2") {
+                      // Every crew type, not just the per-item (tier2) ones: tier2 columns carry their
+                      // rows directly, any other kind carries that function's whole trace.
+                      if (trace) {
                         try {
                           const dayFns = d.phase === "event" ? (d.fns || []) : d.phase === "minusOne" ? (fns || []) : [];
                           // A function with nothing for this crew type still gets its (empty) column.
-                          const byFn = dayFns.map(fn => { const tr = traceOf(fn, t); return tr && tr.kind === "tier2" ? { fn: fn.fnType || "Function", shift: fn.fnShift || "", rows: tr.rows, result: tr.result } : { fn: fn.fnType || "Function", shift: fn.fnShift || "", rows: [], result: 0 }; });
+                          const byFn = dayFns.map(fn => {
+                            const tr = traceOf(fn, t);
+                            const base = { fn: fn.fnType || "Function", shift: fn.fnShift || "", result: Number(tr?.result) || 0 };
+                            return trace.kind === "tier2" ? { ...base, rows: tr && tr.kind === "tier2" ? tr.rows : [] } : { ...base, trace: tr || null };
+                          });
                           if (byFn.length) trace = { ...trace, byFn };
                         } catch (e) { console.warn("[mpSchedule] per-function trace failed", e); }
                       }
