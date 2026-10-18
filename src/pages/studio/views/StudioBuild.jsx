@@ -17,6 +17,7 @@ import { paletteSearch, paletteMatches } from "../../../components/studio/filter
 import { resolveTrussConfig } from "../../../lib/studio/pricing";
 import { qtyUsedElsewhereInBuild } from "../../../lib/studio/dealAvailability";
 import { logDiscountToClientToggle } from "../../../lib/studio/userActions";
+import { todayStr } from "../../../lib/ims/attendance";
 import { isHiddenSubcat, canFulfillShortfall } from "../../../lib/rateCard";
 import { groupIdsForZones } from "../../../lib/studio/zoneGroups";
 import { CUSTOM_ZONE_TAG_PREFIX } from "../../../lib/studio/keys.js";
@@ -74,7 +75,7 @@ function NumField({ value, onCommit, min = 0, allowDecimal = true, onFocus, onBl
 }
 import { sizeClassToPatternKey, resolveSizeKey } from "../../../lib/ims/flowerHelpers";
 import { fixedVenueFor } from "../../../lib/ims/fixedVenues";
-import { itemDimsText } from "../../../lib/ims/helpers";
+import { itemDimsText, kitDescendantIds } from "../../../lib/ims/helpers";
 import LazyYT from "../../../components/studio/LazyYT.jsx";
 import KitComponentsEditor from "../../../components/shared/KitComponentsEditor";
 import ItemHoverThumb from "../../../components/shared/ItemHoverThumb";
@@ -542,7 +543,7 @@ export function TrussStack({ S, customCeilingField, customMaskingField, k, zc, z
 // `nested` marks one of a zone's EXTRA platform footprints: same card, same colours, titled
 // "Platform N" with a remove control in place of the cost, which the first card already totals
 // across every footprint.
-export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, nested = false, title, onRemove, scale = 1 }) {
+export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, nested = false, title, onRemove, scale = 1, openAvailModal, zoneKey }) {
   // What THIS footprint costs, via the same function the cost engine sums over every row.
   //
   // Dims are read off zc, NOT off the `fd` prop — the prop is always `zc.floorDims || {}`, whether
@@ -648,12 +649,29 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
                     sZ({plQty:nextQty, plQtyBase: scale>1?nextQty/scale:nextQty});
                   }} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}}/></div>
                 <div style={{flex:1.5,minWidth:150}}>
-                  <div style={{fontSize:11.5,color:textS,marginBottom:3,display:"inline-flex",alignItems:"center",gap:5}}><IconCarpet size={12}/>Carpet</div>
+                  <div style={{fontSize:11.5,color:textS,marginBottom:3,display:"inline-flex",alignItems:"center",gap:5}}>
+                    <IconCarpet size={12}/>Carpet
+                    {/* Which PHYSICAL carpet to pull — purely a stock pick, separate from the material
+                        dropdown's rate. It never changes rowCost.carpet (still area × the material's
+                        ₹/sqft below); it only tells ops which item to use, read by Deal Check's own
+                        carpet card (falls back to this pick when it has no pick of its own yet) and
+                        carried from there into IMS when the deal is sent. Hidden once carpet is
+                        explicitly turned off — nothing to pick for a floor with none. */}
+                    {openAvailModal && zc.cpT!==CARPET_OFF && <span onClick={()=>openAvailModal(zoneKey, 0,
+                        {invId:zc.cpInvId||null, imsId:zc.cpInvId||null, name:zc.cpInvName||""},
+                        {sub:"carpet"},
+                        (pick)=>sZ({cpInvId:pick?.id||null, cpInvName:pick?.name||""}),
+                        {pickHint:"Pick which physical carpet to use for this floor — a stock pick only, it doesn't change the price.", priceMode:"rental"})}
+                      title={zc.cpInvName?`Stock pick: ${zc.cpInvName} — tap to check availability & change`:"Check carpet stock availability & pick an item"}
+                      style={{cursor:"pointer",display:"inline-flex",opacity:zc.cpInvName?1:0.5}}><IconBox size={11}/></span>}
+                  </div>
                   <select value={zc.cpT===CARPET_OFF?"":(zc.cpT||defaultCarpetMatId(imsCarpetMaterials)||"")} onChange={e=>sZ({cpT:e.target.value||CARPET_OFF})}
                     style={{width:"100%",boxSizing:"border-box",fontSize:11.5,padding:"7px 8px",borderRadius:8,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
                     <option value="" style={{color:"#111827",background:"#fff"}}>— None —</option>
                     {(imsCarpetMaterials||[]).map(m=><option key={m.id} value={m.id} style={{color:"#111827",background:"#fff"}}>{m.name}{showCosts?` · ₹${m.ratePerSqft}/sqft`:""}</option>)}
-                  </select></div>
+                  </select>
+                  {zc.cpT!==CARPET_OFF && zc.cpInvName && <div style={{fontSize:10,color:"#059669",fontWeight:600,marginTop:3}}>📦 {zc.cpInvName}</div>}
+                </div>
                 {showCosts&&<div style={{fontSize:11.5,color:textS,paddingBottom:8,whiteSpace:"nowrap"}}>Carpet <span style={{fontWeight:600,color:textP}}>{fmt(rowCost.carpet)}</span></div>}
               </div>
               <div style={{fontSize:11.5,color:textS,lineHeight:1.3,marginBottom:4}}>{(fd.L||fd.W)?`${fd.L||0}×${fd.W||0} = ${(fd.L||0)*(fd.W||0)} sqft${(zc.plQty||1)>1?` × ${zc.plQty}`:""}`:"No floor size set — priced at 0 sqft until you enter one below"}</div>
@@ -668,12 +686,12 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
 //
 // platformRowCost already runs per row over zc.extraPlatformRows and buildPlatformPlan draws one
 // ops entry each, so the cost and the plan were ready long before there was a way to add one.
-export function FloorStack({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, scale = 1 }) {
+export function FloorStack({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, scale = 1, openAvailModal, zoneKey }) {
   const rows = zc.extraPlatformRows || [];
   const write = (next) => sZ({ extraPlatformRows: next });
   // accent rides in `shared`, so both the first floor and every added row get it from one place —
   // FloorCard needs it for the platform-height control's selected fill.
-  const shared = { S, zm, st, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, scale };
+  const shared = { S, zm, st, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, scale, openAvailModal, zoneKey };
   return (<>
     <FloorCard {...shared} zc={zc} sZ={sZ} sFD={sFD} fd={fd} title={rows.length ? "Floor 1" : "Floor"} />
     {rows.map((row, ri) => {
@@ -4050,12 +4068,13 @@ undefined
                       }} />
                     {(zoneElSearch[k]||"").length>=1&&(()=>{
                       const q=(zoneElSearch[k]||"").toLowerCase();
-                      // A kit's own components are already covered by that kit — don't offer adding
-                      // one separately (would double the item and double its cost).
+                      // A kit's own components (and a kit-inside-a-kit's grandchild components —
+                      // kitDescendantIds recurses the whole tree via walkKitUnits, not just one
+                      // level) are already covered by that kit — don't offer adding one separately
+                      // (would double the item and double its cost).
                       const kitCoveredIds=new Set((zoneElements[k]||[]).filter(el=>el.invId).flatMap(el=>{
                         const it=(imsInventory||[]).find(i=>i.id===el.invId);
-                        const comps=Array.isArray(el.kitOverrides)?el.kitOverrides:(it?.subItems||[]);
-                        return comps.map(c=>c.itemId);
+                        return it?[...kitDescendantIds(it,imsInventory,el.kitOverrides)]:[];
                       }));
                       // Searches IMS inventory + pure flower-recipe patterns with no inventory backing
                       // (Rate Card is not consulted here — see getElPriceFromInventory /
@@ -4115,7 +4134,10 @@ undefined
                           // % of the item's production cost, per sub-category). The badge stays as a
                           // heads-up, not a lock.
                           const remaining=remainingForItem(it.id,k); const isFullyUsed=remaining!=null&&remaining<=0;
-                          const canMake=canFulfillShortfall(it);
+                          // No asOfDate — adding this item here is a brand-new commitment happening
+                          // right now, judged against the live "today" countdown to the active
+                          // function's own date, same as openAvailModal's own candidate list.
+                          const canMake=canFulfillShortfall(it,activeFnMeta?.date||clientDate);
                           // Real stock for THIS EVENT DATE, not just "used elsewhere in this same
                           // deal" — remainingForItem above only warns once a sibling zone/function
                           // has already drawn on the item, so an item every OTHER event already has
@@ -4128,7 +4150,12 @@ undefined
                           const isDateUnavail=dateFree<=0;
                           return <div key={"inv:"+it.id}
                             onClick={()=>{
-                              if(!(zoneElements[k]||[]).find(el=>el.invId===it.id)){setZoneElements(prev=>({...prev,[k]:[...(prev[k]||[]),{name:it.name,qty:1,unit:it.unit,size:"",invId:it.id}]}));}
+                              // addedAt: the production lead-time gate (canFulfillShortfall,
+                              // lib/rateCard.js) needs to know WHEN this specific commitment was
+                              // made, not just today's live date — markSold bulk-freezes every
+                              // element present at sale time to the sold date, so this stamp only
+                              // ever matters for an item added to a deal that's already Sold.
+                              if(!(zoneElements[k]||[]).find(el=>el.invId===it.id)){setZoneElements(prev=>({...prev,[k]:[...(prev[k]||[]),{name:it.name,qty:1,unit:it.unit,size:"",invId:it.id,addedAt:todayStr()}]}));}
                               setZoneElSearch(prev=>({...prev,[k]:""}));
                             }}
                             style={{padding:"8px 10px",fontSize:12,cursor:"pointer",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",gap:10}}>
@@ -4667,7 +4694,7 @@ undefined
                 customMaskingField={customMaskingField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} scale={zoneScaleVal(k)} />}
               {/* ── PLATFORM + CARPET → then floor dims ── */}
               {zoneSection[k]==="platform"&&<FloorStack S={S} zc={zc} zm={zm} st={st} sZ={sZ} sFD={sFD} fd={fd} fmt={fmt} showCosts={showCosts}
-                isDark={isDark} border={border} accent={accent} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} scale={zoneScaleVal(k)} />}
+                isDark={isDark} border={border} accent={accent} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} scale={zoneScaleVal(k)} openAvailModal={openAvailModal} zoneKey={k} />}
             </div>);
           })()}
           </Fragment>}
@@ -5151,8 +5178,8 @@ undefined
               const removeEl=(idx)=>writeEls(list=>list.filter((_,i)=>i!==idx));
               const q=(zoneElSearch[zk]||"").toLowerCase().trim();
               const addMatches=q?(()=>{
-                const kitCoveredIds=new Set(els.filter(el=>el.invId).flatMap(el=>{const it=(imsInventory||[]).find(i=>i.id===el.invId);const comps=Array.isArray(el.kitOverrides)?el.kitOverrides:(it?.subItems||[]);return comps.map(c=>c.itemId);}));
-                const inv=(imsInventory||[]).filter(it=>!els.find(el=>el.invId===it.id)&&!kitCoveredIds.has(it.id)&&!isHiddenSubcat(it,rcSubcatFactors)&&(it.name.toLowerCase().includes(q)||(it.cat||"").toLowerCase().includes(q)||(it.subCat||it.subcategory||"").toLowerCase().includes(q))).slice(0,40).map(it=>({key:"inv:"+it.id,label:it.name,sub:(it.subCat||it.subcategory)?(it.subCat||it.subcategory)+" › "+(it.cat||""):(it.cat||""),src:it.img||it.photoUrls?.[0],make:()=>({name:it.name,qty:1,unit:it.unit,size:"",invId:it.id})}));
+                const kitCoveredIds=new Set(els.filter(el=>el.invId).flatMap(el=>{const it=(imsInventory||[]).find(i=>i.id===el.invId);return it?[...kitDescendantIds(it,imsInventory,el.kitOverrides)]:[];}));
+                const inv=(imsInventory||[]).filter(it=>!els.find(el=>el.invId===it.id)&&!kitCoveredIds.has(it.id)&&!isHiddenSubcat(it,rcSubcatFactors)&&(it.name.toLowerCase().includes(q)||(it.cat||"").toLowerCase().includes(q)||(it.subCat||it.subcategory||"").toLowerCase().includes(q))).slice(0,40).map(it=>({key:"inv:"+it.id,label:it.name,sub:(it.subCat||it.subcategory)?(it.subCat||it.subcategory)+" › "+(it.cat||""):(it.cat||""),src:it.img||it.photoUrls?.[0],make:()=>({name:it.name,qty:1,unit:it.unit,size:"",invId:it.id,addedAt:todayStr()})}));
                 const pat=(recipeOnlyPatterns||[]).filter(pt=>!els.find(el=>el.patternId===pt.id)&&pt.name.toLowerCase().includes(q)).map(pt=>({key:"pat:"+pt.id,label:pt.name,sub:"🌺 Flower recipe",make:()=>({name:pt.name,qty:1,unit:pt.unit,size:"",patternId:pt.id})}));
                 const mandi=((dealCheckData||studioFloralData)?.mandiCatalogue||[]).filter(m=>isDirectMandiElement(m)&&!els.find(el=>el.mandiId===m.id)&&(m.name||"").toLowerCase().includes(q)).map(m=>{const v=Array.isArray(m.colorVariants)?m.colorVariants:[];return {key:"mandi:"+m.id,label:m.name,sub:`🌸 Mandi · ${m.unit||"kg"}`,src:m.photoUrl,make:()=>({name:m.name,qty:1,unit:m.unit||"kg",size:"",mandiId:m.id,mandiVariantId:v.length===1?v[0].variantId:""})};});
                 return [...inv,...pat,...mandi];
@@ -5172,7 +5199,7 @@ undefined
                     isDark={isDark} border={border} textP={textP} textS={textS} accent={accent}
                     customMaskingField={ownsLive?customMaskingField:noCustomField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} scale={scaleFor} />
                   <FloorStack S={S} zc={cfgCur} zm={zm} st={st} sZ={sZ} sFD={sFD} fd={fd} fmt={fmt} showCosts={showCosts}
-                    isDark={isDark} border={border} accent={accent} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} scale={scaleFor} />
+                    isDark={isDark} border={border} accent={accent} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} scale={scaleFor} openAvailModal={ownsLive?openAvailModal:undefined} zoneKey={zk} />
                 </div>
                 <div style={sectionBox}>
                   {secHead(<IconClipboard size={14}/>,"Element Breakdown","#7C3AED",

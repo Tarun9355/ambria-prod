@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { fmt } from "../../lib/format";
-import { mpDayWise, mpBaseDay, mpEffDay, mpEffWindows, mpLineCost, mpDayCost, mpDayDihari, aggregateEventManpower, isLiveEventOrder, phone10 } from "../../lib/ims/helpers";
+import { mpDayWise, mpBaseDay, mpEffDay, mpEffWindows, mpLineCost, mpDayCost, mpDayDihari, aggregateEventManpower, isLiveEventOrder, phone10, walkKitUnits } from "../../lib/ims/helpers";
 import { uploadAudioToStorage } from "../../lib/storage";
 import { DEPTS as SHARED_DEPTS, catToDept as sharedCatToDept, userDepartments } from "../../lib/ims/deptClassify";
 import { TabsMenu, useConfirm } from "../../components/ui";
@@ -927,13 +927,27 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       (Array.isArray(els) ? els : []).forEach(el => {
         const q = Number(el?.qty) || 1;
         const id = el?.invId || el?.imsId;
-        if (id) byId.set(String(id), (byId.get(String(id)) || 0) + q);
-        const nm = String(el?.name || "").trim().toLowerCase();
-        if (nm) byName.set(nm, (byName.get(nm) || 0) + q);
+        const topItem = id ? (inventory || []).find(i => String(i.id) === String(id)) : null;
+        if (topItem) {
+          // Walk kit components too — a kit component (e.g. a side table bundled into a couch-set
+          // kit) is its own line in blockedItemsGrouped, filed under its own department, but was
+          // only ever indexed here by the OUTER kit element's own id/name. A component-only item
+          // never matched any individual function this way and silently only ever showed under
+          // "All functions" — looking like it came from nowhere.
+          walkKitUnits(topItem, q, inventory, el.kitOverrides, (node, nodeQty) => {
+            byId.set(String(node.id), (byId.get(String(node.id)) || 0) + nodeQty);
+            const nnm = String(node.name || "").trim().toLowerCase();
+            if (nnm) byName.set(nnm, (byName.get(nnm) || 0) + nodeQty);
+          });
+        } else {
+          if (id) byId.set(String(id), (byId.get(String(id)) || 0) + q);
+          const nm = String(el?.name || "").trim().toLowerCase();
+          if (nm) byName.set(nm, (byName.get(nm) || 0) + q);
+        }
       });
     });
     return { byId, byName };
-  }, [sel, invFn]);
+  }, [sel, invFn, inventory]);
   const invShown = invScoped
     ? blockedItemsGrouped.map(it => {
         const q = (it.invId && invFnQty.byId.get(String(it.invId))) || invFnQty.byName.get(String(it.name || "").trim().toLowerCase()) || 0;
@@ -1048,7 +1062,12 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       // legacy single pick), carried through calcFnFloralSourcingCost's own breakdown
       // (StudioApp.jsx) so the purchase manager sees WHICH colour to actually buy, not just a
       // bare flower name.
-      const row = { name: f.name, unit: f.unit || "", projQty: Number(f.qty) || 0, projCost: Number(f.cost) || 0, qty: Number(f.qty) || 0, price: f.qty ? Math.round(((Number(f.cost) || 0) / f.qty) * 100) / 100 : 0, colorVariant: f.colorVariant || null, colorPrefs: f.colorPrefs || null };
+      // price: f.rate IS the real mandi rate this flower costed at (qty already whole-unit —
+      // f.cost = qty × rate at the source). Older snapshots captured before `rate` existed have
+      // no such field, so those fall back to the previous cost÷qty approximation rather than
+      // showing no price at all — only ever a stand-in for a snapshot nobody has regenerated since.
+      const price = (typeof f.rate === "number" && f.rate > 0) ? f.rate : (f.qty ? Math.round(((Number(f.cost) || 0) / f.qty) * 100) / 100 : 0);
+      const row = { name: f.name, unit: f.unit || "", projQty: Number(f.qty) || 0, projCost: Number(f.cost) || 0, qty: Number(f.qty) || 0, price, colorVariant: f.colorVariant || null, colorPrefs: f.colorPrefs || null };
       return row;
     });
   const mandiRows = Array.isArray(deptData.mandiLines) ? deptData.mandiLines : seedMandi;
@@ -1664,6 +1683,28 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     return out.sort((a, b) => (a.date || "").localeCompare(b.date || ""));
   }, [dept, eventOrders, fabricAvail, today, settings, trussInv]);
 
+  // A plain name→value breakdown table — Truss Labour's pillar count and Fabric Bangali's sqft are
+  // each a straight SUM per contributing element/zone (no per-row batch/need division the way
+  // Flowerists/Electricians get), so this is the tier2 table's layout without those two columns.
+  const renderMpNameValueRows = (rows, valueLabel, decimals) => (
+    <div className="mt-1 bg-white border rounded-lg overflow-hidden">
+      <div className="grid grid-cols-[1fr_auto] gap-x-2">
+        <div className="contents">
+          <span className="px-2 py-1 bg-gray-100 text-[12px] uppercase tracking-wide text-gray-500 font-semibold">Item / Zone</span>
+          <span className="px-2 py-1 bg-gray-100 text-[12px] uppercase tracking-wide text-gray-500 font-semibold text-right whitespace-nowrap">{valueLabel}</span>
+        </div>
+        {rows.map((rr, ri) => (
+          <div className="contents" key={ri}>
+            <div className="flex items-baseline gap-1.5 min-w-0 overflow-hidden px-2 py-0.5 text-[13px] text-gray-700">
+              <span className="truncate" title={rr.sub}>{rr.sub}</span>
+              <span aria-hidden="true" className="flex-1 min-w-2 border-b border-dotted border-gray-300 mb-[3px]" />
+            </div>
+            <span className="px-2 py-0.5 text-[13px] text-gray-700 font-semibold text-right whitespace-nowrap">{decimals ? Number(rr.value).toFixed(decimals) : rr.value}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
   // Derivation box for a crew type — same pattern as Deal Check's "HOW … DERIVED".
   const renderMpTrace = (t) => {
     if (!t) return null;
@@ -1700,9 +1741,19 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         <div className="px-2 py-1 bg-gray-50 text-[13px] text-right text-gray-600">{t.perRow ? <>Σ each ⌈need⌉ = <b className="text-gray-900">{t.result}</b></> : <>Σ {t.need.toFixed(2)} → ⌈ {Math.ceil(t.need)} ⌉{t.min > 0 ? <> · max(min {t.min})</> : null} = <b className="text-gray-900">{t.result}</b></>}</div>
       </div>
     );
-    if (t.kind === "pillars") return <div className="mb-1.5 text-[13px] text-gray-600">🏗️ {t.total} pillar(s){t.zoneP ? ` — ${t.zoneP} from truss tool${t.recipeP ? `, ${t.recipeP} from build` : ""}` : ""} → range → <b>{t.result}</b></div>;
+    if (t.kind === "pillars") return (
+      <div className="mb-1.5">
+        <div className="text-[13px] text-gray-600">🏗️ {t.total} pillar(s){t.zoneP ? ` — ${t.zoneP} from truss tool${t.recipeP ? `, ${t.recipeP} from build` : ""}` : ""} → range → <b>{t.result}</b></div>
+        {Array.isArray(t.rows) && t.rows.length > 0 && renderMpNameValueRows(t.rows.map(r => ({ sub: r.sub, value: r.count })), "Pillars")}
+      </div>
+    );
     if (t.kind === "ratio") return <div className="mb-1.5 text-[13px] text-gray-600">📐 {t.num} {t.numLabel} ÷ {t.denomLabel} = <b>{t.result}</b></div>;
-    if (t.kind === "range") return <div className="mb-1.5 text-[13px] text-gray-600">📐 {t.value} {t.unit} → range → <b>{t.result}</b></div>;
+    if (t.kind === "range") return (
+      <div className="mb-1.5">
+        <div className="text-[13px] text-gray-600">📐 {t.value} {t.unit} → range → <b>{t.result}</b></div>
+        {Array.isArray(t.rows) && t.rows.length > 0 && renderMpNameValueRows(t.rows.map(r => ({ sub: r.sub, value: r.sqft })), t.unit || "Qty", 2)}
+      </div>
+    );
     // "labours" is a frozen snapshot captured at booking time (StudioApp.jsx) — it only stores the
     // COMBINED situational multiplier (season/timing maxed together), not the individual dumping/
     // saya/timing factors ManpowerTab.jsx's live Tier-3 breakdown exposes, so the pill display here
@@ -2006,15 +2057,46 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
        photo an item stands. */
     const invById = new Map((inventory || []).map(i => [String(i.id), i]));
     const invByName = new Map((inventory || []).map(i => [String(i.name || "").trim().toLowerCase(), i]));
-    const heldByInv = new Map(blockedItemsGrouped.filter(b => b.invId).map(b => [String(b.invId), b]));
-    const heldByName = new Map(blockedItemsGrouped.map(b => [String(b.name || "").trim().toLowerCase(), b]));
+    // Every department's items — not just whichever single `dept` happened to be selected before
+    // Export was clicked (exportPdf's combined pass never changes it). Needed for the combined book
+    // so a kit whose OWN shell line lives on a DIFFERENT department's sheet than the zone it sits
+    // in (e.g. a "Floral" zone item whose kit-shell is filed under Furniture) is still found —
+    // owner-reported: kits were still missing from the all-departments book after Recipe/Transport
+    // were fixed to span every department.
+    const allDeptItems = () => {
+      const out = [];
+      DEPTS.forEach(d => {
+        const snap = Array.isArray(sel?.deptInventory?.[d]) ? sel.deptInventory[d] : null;
+        if (snap && snap.length) {
+          snap.forEach((x, i) => out.push({ id: `${d}:${x.name}:${i}`, invId: x.imsId || null, name: x.name, photo: x.photo || "", qty: x.qty || 0, unit: x.unit || 0, total: x.total || 0, sub: x.sub || "", isKit: !!x.isKit, fromKit: x.fromKit || null, components: Array.isArray(x.components) ? x.components : null }));
+          return;
+        }
+        Object.entries(blocks || {}).forEach(([itemId, arr]) => {
+          const qty = (arr || []).filter(b => b.eventId === sel.id).reduce((s, b) => s + (Number(b.qty) || 0), 0);
+          if (qty <= 0) return;
+          const item = (inventory || []).find(i => String(i.id) === String(itemId));
+          if (!item || catToDept(item.cat || item.category) !== d) return;
+          const unit = Number(item.price ?? item.rentalCost) || 0;
+          out.push({ id: `${itemId}:${d}`, invId: itemId, name: item.name, photo: item.img || (Array.isArray(item.photoUrls) && item.photoUrls[0]) || "", qty, unit, total: unit * qty, sub: item.subCat || item.subcategory || "" });
+        });
+      });
+      return out;
+    };
+    const kitSourceItems = combined ? allDeptItems() : blockedItemsGrouped;
+    // heldByInv/heldByName used to always read blockedItemsGrouped (single-dept-scoped) even in
+    // combined mode — the zone-card merge loop below does gate "mine" on `combined`, but it still
+    // reads `held` unconditionally for the item's kit/photo/dims/recipe fields, so a kit filed on
+    // another department's sheet silently looked un-kitted (held undefined -> kit: 0) instead of
+    // missing just its own card. Rebased on kitSourceItems, which is already all-departments-aware.
+    const heldByInv = new Map(kitSourceItems.filter(b => b.invId).map(b => [String(b.invId), b]));
+    const heldByName = new Map(kitSourceItems.map(b => [String(b.name || "").trim().toLowerCase(), b]));
     // ── WHERE A KIT'S PARTS HIDE ──
     // Deal Check splits a kit across departments by each PART's own category, so Floral ends up
     // holding a terracotta element bolted to a coffee table that Furniture owns. The zone lists
     // only ever name the kit and carry no components at all, so such a part is unreachable by
     // name — `fromKit` is the only record of the parent, and this index the only way back to it.
     const partsByKit = new Map();
-    blockedItemsGrouped.forEach(b => {
+    kitSourceItems.forEach(b => {
       const p = String(b.fromKit || "").trim().toLowerCase();
       if (!p) return;
       if (!partsByKit.has(p)) partsByKit.set(p, []);
@@ -2269,6 +2351,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         if (!items.length && !zPhoto && !zDims && !zStruct.length) return;
         zonePages.push({
           zk,
+          fi,
+          fnType: fn.type || `Function ${fi + 1}`,
+          fnDate: fn.date || "",
           title: zoneName(zk, fn),
           fnLabel: [fn.type || (fns.length > 1 ? `Function ${fi + 1}` : ""), fn.date].filter(Boolean).join(" · "),
           photo: zPhoto,
@@ -2305,6 +2390,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
        until Deal Check pushes the department breakdown again. */
     const trPlan = sel?.transportPlan || null;
     const trMine = trPlan?.byDept?.[dept] || null;
+    // Transport stays a per-department-only section — not in the combined book (owner call).
     const trRows = (trMine?.rows || []).map(r =>
       `<tr><td><b>${esc(r.label)}</b>${(fns || []).length > 1 && r.fn ? `<div class="sub">${esc(r.fn)}</div>` : ""}</td><td class="n">${esc(r.qty)}${r.unit ? " " + esc(r.unit) : ""}</td><td class="n">${Number(r.perTruck) > 0 ? esc(r.perTruck) + (r.unit ? " " + esc(r.unit) : "") + " per truck" : "—"}</td><td class="n b">${esc(r.trucks)}</td></tr>`);
     const trNote = !trMine ? "" : `${esc(dept)} fills ${trMine.trucks} of the ${trPlan.totalTrucks} truck${trPlan.totalTrucks === 1 ? "" : "s"} this event needs${trPlan.tierLabel ? ` · ${esc(trPlan.tierLabel)}` : ""}. A truck is counted by capacity, so a part-truck share is normal — the loads travel together.`;
@@ -2356,19 +2442,17 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     // No photo → no empty "No photo" box, just the details (owner ask). The card then sizes to its
     // text (np); nb makes room at the top for the size/kit tags the photo used to sit under.
     const npCls = (it) => it.photo ? "" : (it.size || it.kit ? " np nb" : " np");
-    // Flower lines on a card: at most five, so a photo card still fits its fixed 300px — the photo
-    // gives up 20px per line. Quantities are per-unit recipe × the card's qty.
-    const FL_MAX = 5;
+    // A recipe card used to list its own flowers inline, up to 5 lines — "Flower Trail" (7+
+    // flowers) always ran out of room and showed a bare "+3 more" with nowhere to actually see
+    // them. Every recipe's FULL ingredient list now lives on its own dedicated page (recipePages
+    // below); the card just points there, one line, regardless of how many flowers are in it.
     const flowerRows = (it) => {
       const r = it.recipe || [];
       if (!r.length) return "";
-      const shown = r.length > FL_MAX ? r.slice(0, FL_MAX - 1) : r;
-      const amt = (n) => String(Math.round(n * 100) / 100);
-      return shown.map(f => `<div class="zc-r f"><span>${esc(f.name)}</span><b>${esc(amt(f.qty * (Number(it.qty) || 0)))}${f.unit ? ` <span style="font-weight:500;font-size:.85em;opacity:.7">${esc(f.unit)}</span>` : ""}</b></div>`).join("")
-        + (r.length > shown.length ? `<div class="zc-r f"><span>+${r.length - shown.length} more</span><b></b></div>` : "");
+      return `<div class="zc-r f"><span>📖 Check Recipe Page for Mandi</span><b></b></div>`;
     };
     // The paint line takes its 20px out of the photo the same way a flower line does.
-    const flLines = (it) => Math.min((it.recipe || []).length, FL_MAX) + (it.paint?.size ? 1 : 0) + (it.extra || []).length;
+    const flLines = (it) => ((it.recipe || []).length ? 1 : 0) + (it.paint?.size ? 1 : 0) + (it.extra || []).length;
     const card = (it, zone, num) => `
       ${it.photo ? `<div class="zc-ph" style="${bgCss(it.photo)}${flLines(it) ? `height:${168 - flLines(it) * 20}px` : ""}" ${bgData(it.photo)}></div>` : ""}
       ${num ? `<div class="zc-no">${num}</div>` : ""}
@@ -2470,7 +2554,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     const zoneQtyFor = (nm) => zoneQtyByName.get(String(nm || "").trim().toLowerCase()) || 0;
 
     const kitBlocks = [];
-    blockedItemsGrouped.forEach(it => {
+    kitSourceItems.forEach(it => {
       if (it.isKit && Array.isArray(it.components) && it.components.length) {
         const kInv = (it.invId && invById.get(String(it.invId))) || invByName.get(String(it.name || "").trim().toLowerCase()) || null;
         // The held quantity is the kit's own count; the parts under it are already totals for all of them.
@@ -2482,47 +2566,86 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       if (!label || kitBlocks.some(k => String(k.name).trim().toLowerCase() === label.toLowerCase())) return;
       kitBlocks.push({ name: label, ours: false, qty: zoneQtyFor(label), photo: invPhoto(invByName.get(label.toLowerCase()) || null, null), zones: zonesFor(label), parts: parts.map(p => ({ name: p.name, qty: p.qty })) });
     });
-    // ── PACK BY HEIGHT, NOT BY COUNT ──
-    // Four blocks to a page suited a floor of seven-part consoles and nothing else: three kits
-    // of one part each left three quarters of the sheet blank. Each block's height is known
-    // before it is rendered — header band, one row per pair of parts, padding — so fill the page
-    // to the same 1020px budget every other page in this book is built against.
-    // Under four parts a kit drops to a single column: two columns of one item printed a name
-    // and a quantity stranded in the left half of the sheet.
-    const kitCols = (k) => (k.parts.length >= 4 ? 2 : 1);
-    // Names wrap rather than being cut, so a long one costs a second line. Roughly 44 characters
-    // fit a two-column row and about 100 a full-width one; anything past that is counted twice so
-    // a page of long names still stops at the same budget instead of running off the sheet.
-    const kitLongNames = (k) => { const per = kitCols(k) === 2 ? 44 : 100; return k.parts.filter(p => String(p.name || "").trim().length > per).length; };
-    const kitH = (k) => 86 + (Math.ceil(k.parts.length / kitCols(k)) + Math.ceil(kitLongNames(k) / kitCols(k))) * 24 + 21 + 14 + (k.ours ? 0 : 15);
-    const kitChunks = [];
-    kitBlocks.forEach(k => {
-      const last = kitChunks[kitChunks.length - 1], h = kitH(k);
-      if (!last || last.h + h > PAGE_PX - HEAD_PX) kitChunks.push({ h, list: [k] });
-      else { last.h += h; last.list.push(k); }
-    });
-    let kitNo = 0;
-    const kitPages = kitChunks.map((pgk, i, all) => `<section data-block data-page class="zp"><div class="pc tl"></div><div class="pc tr"></div>
-        <div class="zh"><div><div class="zk"><b>Kits</b>${all.length > 1 ? ` · Part ${i + 1} of ${all.length}` : ""}</div><h2>What is inside each kit</h2>
-          <div class="orn l"><i></i><b></b><i></i></div>
-          <div class="zm">Tick every part off before the kit leaves the godown</div></div>
-          <div class="zt"><span>${kitBlocks.length} kit${kitBlocks.length === 1 ? "" : "s"}</span></div></div>
-        ${pgk.list.map(k => { kitNo++; return `<div class="kb">
-          <div class="kb-h">
-            ${k.photo ? `<div class="kb-ph" ${bg(k.photo)}></div>` : ""}
-            <div class="kb-t"><div class="kb-no">Kit ${String(kitNo).padStart(2, "0")}</div><div class="kb-nm">${esc(k.name)}</div></div>
-            ${k.qty ? `<div class="kb-z kb-q"><div class="kb-zk">Qty</div><div class="kb-zv">${esc(k.qty)}</div></div>` : ""}
-            <div class="kb-z"><div class="kb-zk">${k.zones.length > 1 ? "Zones" : "Zone"}</div><div class="kb-zv${k.zones.length ? "" : " none"}">${k.zones.length ? esc(k.zones.join(" · ")) : "Not in a zone"}</div></div>
-          </div>
-          ${k.ours ? "" : `<div class="kb-w">The kit is on another department's sheet — ${esc(dept)} carries only the parts below</div>`}
-          <ul class="kb-l${kitCols(k) === 1 ? " one" : ""}">${k.parts.map(p => `<li><i class="kb-x"></i><span>${esc(p.name)}</span><i class="kb-d"></i><b>${esc(p.qty)}</b></li>`).join("")}</ul>
-        </div>`; }).join("")}
-      </section>`);
+    // kitBlocks (name → full parts list, "ours"/zones) now only feeds zoneDetailPages' lookup
+    // below (kitBlocksByName) — it no longer builds a standalone "What is inside each kit" page of
+    // its own; that content now prints on each kit's own zone's page instead.
 
+    // ── RECIPE AND KIT DETAILS, ON THEIR OWN ZONE'S PAGES ──
+    // Both used to live on one global reference page at the end of the book — easier to build, but
+    // it separated a zone's own recipe/kit detail from the zone itself (owner ask: keep them
+    // together, one details page right after that zone's own cards, not a single combined page for
+    // the whole book). kitBlocksByName still needs the full parts list kitBlocks already computed
+    // (by name — a zone-card item only ever carries a component COUNT, not the parts themselves).
+    const kitBlocksByName = new Map(kitBlocks.map(k => [String(k.name || "").trim().toLowerCase(), k]));
+    const detailCols = (parts) => (parts.length >= 4 ? 2 : 1);
+    const detailLongNames = (parts, cols) => { const per = cols === 2 ? 44 : 100; return parts.filter(p => String(p.name || "").trim().length > per).length; };
+    const detailH = (parts) => { const cols = detailCols(parts); return 68 + (Math.ceil(parts.length / cols) + Math.ceil(detailLongNames(parts, cols) / cols)) * 24 + 14; };
+    const detailCard = (icon, name, qty, unit, parts) => { const cols = detailCols(parts); return `<div class="kb">
+      <div class="kb-h">
+        <div class="kb-t"><div class="kb-nm">${icon} ${esc(name)}</div></div>
+        ${qty ? `<div class="kb-z kb-q"><div class="kb-zk">Qty</div><div class="kb-zv">${esc(qty)}${unit ? " " + esc(unit) : ""}</div></div>` : ""}
+      </div>
+      <ul class="kb-l${cols === 1 ? " one" : ""}">${parts.map(p => `<li><i class="kb-x"></i><span>${esc(p.name)}</span><i class="kb-d"></i><b>${esc(p.qty)}${p.unit ? ` ${esc(p.unit)}` : ""}</b></li>`).join("")}</ul>
+    </div>`; };
+    // One page (or more, if a zone's own recipes+kits don't fit one sheet) per zone, built right
+    // after that zone's card pages in the loop below — never bundled with any OTHER zone's.
+    const zoneDetailPages = (pg) => {
+      const blocks = [];
+      (pg.items || []).forEach(it => {
+        if (Array.isArray(it.recipe) && it.recipe.length) {
+          const parts = it.recipe.map(f => ({ name: f.name, qty: Math.round((Number(f.qty) || 0) * (Number(it.qty) || 0) * 100) / 100, unit: f.unit }));
+          blocks.push({ h: detailH(parts), html: detailCard("🌸", it.name, it.qty, it.unit, parts) });
+        }
+        if (it.kit > 0) {
+          const kb = kitBlocksByName.get(String(it.name || "").trim().toLowerCase());
+          if (kb) blocks.push({ h: detailH(kb.parts), html: detailCard("📦", it.name, kb.qty, "", kb.parts) });
+        }
+      });
+      if (!blocks.length) return [];
+      const dChunks = [];
+      blocks.forEach(b => {
+        const last = dChunks[dChunks.length - 1];
+        if (!last || last.h + b.h > PAGE_PX - HEAD_PX) dChunks.push({ h: b.h, list: [b] });
+        else { last.h += b.h; last.list.push(b); }
+      });
+      return dChunks.map((pgk, i, all) => `<section data-block data-page class="zp"><div class="pc tl"></div><div class="pc tr"></div>
+          <div class="zh"><div><div class="zk"><b>Mandi &amp; Kits</b>${all.length > 1 ? ` · Part ${i + 1} of ${all.length}` : ""}</div><h2>${esc(pg.title)}</h2>
+            <div class="orn l"><i></i><b></b><i></i></div>
+            <div class="zm">${pg.fnLabel ? esc(pg.fnLabel) + " — " : ""}Full flower list for each recipe and full parts list for each kit in this zone</div></div></div>
+          ${pgk.list.map(b => b.html).join("")}
+        </section>`);
+    };
+
+    // ── A BREAK PAGE BETWEEN FUNCTIONS ──
+    // On a multi-function event this book used to run straight from one function's last zone into
+    // the next function's first with nothing marking the seam — easy to miss where "Haldi" ends and
+    // "Wedding" begins. One plain divider page per function, inserted the first time its zones
+    // start, names which function the pages after it belong to.
+    const fnDivider = (no, type, date) => `<section data-block data-page class="zp"><div class="pc tl"></div><div class="pc tr"></div>
+        <div class="zh" style="text-align:center;padding:${Math.max(40, Math.round((PAGE_PX - 170) / 2))}px 14px 10px">
+          <div class="zk">Function ${no}</div>
+          <h2 style="font-size:52px">${esc(type || `Function ${no}`)}</h2>
+          <div class="orn l" style="justify-content:center"><i></i><b></b><i></i></div>
+          ${date ? `<div class="zm">${esc(date)}</div>` : ""}
+        </div>
+      </section>`;
+    const multiFn = (fns || []).length > 1;
+    const zonePageHtml = [];
+    let lastFi = null;
+    zonePages.forEach((pg, zi) => {
+      if (multiFn && pg.fi !== lastFi) {
+        lastFi = pg.fi;
+        zonePageHtml.push(fnDivider(pg.fi + 1, pg.fnType, pg.fnDate));
+      }
+      const cs = pg.items.length ? chunks(pg.items, 6) : [[]];
+      cs.forEach((c, i) => zonePageHtml.push(zoneSection(pg, c, i + 1, cs.length, zi + 1, i * 6)));
+      // Right after THIS zone's own card page(s) — a zone's recipe/kit detail never shares a page
+      // with another zone's, and never lands in a single combined reference page at the book's end.
+      zonePageHtml.push(...zoneDetailPages(pg));
+    });
     const zoneHtml = [
-      ...zonePages.flatMap((pg, zi) => { const cs = pg.items.length ? chunks(pg.items, 6) : [[]]; return cs.map((c, i) => zoneSection(pg, c, i + 1, cs.length, zi + 1, i * 6)); }),
+      ...zonePageHtml,
       ...(combined ? [] : [
-      ...kitPages,
       ...listPages(prodItems, "Production", "From production", "Made by the production team for this event"),
       ...listPages(buyItems, "Buying", "To buy", "Bought in for this event — not from our own stock"),
       ...listPages(looseItems, "Not in a zone", "Also on site", looseNote),
@@ -4701,6 +4824,18 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                                   {fp.artificial.flowerBunches <= 0 && fp.artificial.greenBunches <= 0 && <div className="text-gray-400 italic">No artificial bunches captured — set "Art Bunches/Unit" on flowers in the Mandi tab.</div>}
                                   <div className="pt-1 text-right">Total artificial = <b className="text-gray-900">{fmt(fp.artificial.total)}</b></div>
                                 </div>
+                                {/* The salesperson's own Color Split (Deal Check's Florals tab) — WHICH
+                                    specific artificial-bunch colour(s) to pull, not just a bare bunch
+                                    count. Without this, the figures above said "47 bunches" with no
+                                    way to tell Maroon from White; now it's the exact IMS items to pick. */}
+                                {Array.isArray(fp.artificial.colorSplit) && fp.artificial.colorSplit.length > 0 && (
+                                  <div className="mt-1.5 bg-gray-50 border rounded-lg p-2 text-[10px] text-gray-600">
+                                    <div className="font-semibold text-gray-700 mb-1">🎨 Pull these specific bunches</div>
+                                    {fp.artificial.colorSplit.map(c => (
+                                      <div key={c.imsId} className="flex justify-between py-0.5"><span>{c.name || "Artificial bunch"}</span><b className="text-gray-900">{c.qty}</b></div>
+                                    ))}
+                                  </div>
+                                )}
                               </div>
                             )}
                           </div>

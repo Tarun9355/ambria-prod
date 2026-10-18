@@ -3,6 +3,7 @@
 // Reused standing items generate NO build labour and bill at a discount; anything
 // built beyond the standing qty, a swapped design, or any other venue → full.
 import { heavyExtraLabour } from "./constants";
+import { walkKitUnits } from "./helpers";
 
 // Normalize a venue name for matching: lowercase, drop a leading "Ambria ", trim, and drop
 // trailing punctuation. The trailing-punctuation strip closes a real, confusing bug: a deal's own
@@ -188,10 +189,21 @@ export function standingReductionBySubcat(settings, venueName, cards, inventory)
   Object.values(cards || {}).forEach((c) => {
     if (!c?.imsId) return;
     const inv = (inventory || []).find((i) => i.id === c.imsId);
-    const sub = inv?.subCat ?? inv?.subcategory;
-    if (!sub) return;
-    const red = Math.min(Number(c.qty) || 0, standingQty(settings, venueName, c.imsId));
-    if (red > 0) out[sub] = (out[sub] || 0) + red;
+    if (!inv) return;
+    const qty = Number(c.qty) || 0;
+    if (qty <= 0) return;
+    // Walk into kit components (master component list — this call site has no per-card kit-edit
+    // override to thread through, same approximation effKitRental(item, null, null) already makes
+    // for cross-function aggregates). A kit's own standing-stock credit used to apply only under
+    // the KIT's own sub-category, so a sub-category reached only via a kit's inner part — every
+    // component carries its own category, same as everywhere else kits are costed — never got any
+    // manpower-tier reduction for being a reused standing design.
+    walkKitUnits(inv, qty, inventory, undefined, (node, nodeQty) => {
+      const sub = node?.subCat ?? node?.subcategory;
+      if (!sub) return;
+      const red = Math.min(nodeQty, standingQty(settings, venueName, node.id));
+      if (red > 0) out[sub] = (out[sub] || 0) + red;
+    });
   });
   return out;
 }

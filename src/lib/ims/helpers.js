@@ -202,6 +202,19 @@ export function walkKitUnits(item, qty, allInventory, overrideSubItems, visit, _
   });
 }
 
+// Every component and sub-component id beneath `item` (NOT including the item's own id) —
+// built on walkKitUnits so it recurses as deep as a kit actually goes. Several "+Add element"
+// search boxes used to read item.subItems directly, one level only, to exclude ids already
+// covered by a kit already in the zone — a kit-inside-a-kit's grandchild component stayed
+// addable as its own separate element (double-billing/double-blocking it) because the walk
+// never went past the first level.
+export function kitDescendantIds(item, allInventory, overrideSubItems) {
+  const ids = new Set();
+  if (!item) return ids;
+  walkKitUnits(item, 1, allInventory, overrideSubItems, (node) => { if (node.id !== item.id) ids.add(node.id); });
+  return ids;
+}
+
 // Total dihari (crew-slots) worked on ONE day — honoring PER-SHIFT crew counts (mpWinCount —
 // set by a head so a single day can be e.g. 3 in the day, 1 in the evening) over the plain
 // day-level crew count. Split out from mpDayCost (which just multiplies this by rate) so a

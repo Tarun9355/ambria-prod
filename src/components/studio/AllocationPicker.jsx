@@ -25,7 +25,11 @@ export default function AllocationPicker({ open, onClose, elName, totalQty, base
   const addColour = (cname) => {
     if (draft.some(a => a.colour === cname)) return; // already added
     if (remaining <= 0) return; // no qty left
-    setDraft(prev => [...prev, { qty: 1, colour: cname }]);
+    // Owner ask: picking a colour moves the WHOLE remaining base-colour qty to it, not just 1 —
+    // the common case is repainting the entire item one colour, and starting at 1 made that a
+    // tedious click-up-to-N every time. Still fully adjustable afterward via the qty stepper, so a
+    // genuine split across colours just means turning this one back down.
+    setDraft(prev => [...prev, { qty: remaining, colour: cname }]);
   };
   const updateQty = (idx, nextQty) => {
     setDraft(prev => {

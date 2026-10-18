@@ -18,7 +18,7 @@ import { getCat, carpetPricingFor, defaultCarpetMatId, CARPET_OFF, trussRateFor,
 import { calcZoneFabric, autoFillFabricAllocation, anchorsForPaletteByMaterial } from "../../lib/studio/pricing";
 import { qtyUsedElsewhereInBuild } from "../../lib/studio/dealAvailability";
 import { isHiddenSubcat } from "../../lib/rateCard";
-import { itemDimsText, priceForInvItem } from "../../lib/ims/helpers";
+import { itemDimsText, priceForInvItem, kitDescendantIds } from "../../lib/ims/helpers";
 import { thumbUrl, fitUrl } from "../../lib/studio/thumb.js";
 import { AVAIL_THUMB } from "../../lib/studio/prefetchImages.js";
 
@@ -75,7 +75,7 @@ export default function StudioModals({ ctx }) {
     availModal, setAvailModal, openAvailModal, saveAvailPick, saveAvailSplit,
     // Pre-Sold gate (markSold's scanOutOfStockElements, StudioApp.jsx) — a hard block, not a
     // warning, so closing it just cancels the Sold confirm rather than letting it proceed.
-    oosGateModal, setOosGateModal, setActiveFnIdx,
+    oosGateModal, setOosGateModal, openOosFix,
     // fabricPickerTarget
     fabricPickerTarget, setFabricPickerTarget, fnBuilds, setFnBuilds,
     zoneConfig, setZoneConfig, libItems,
@@ -362,15 +362,16 @@ export default function StudioModals({ ctx }) {
       {/* Pre-Sold gate — markSold (StudioApp.jsx) scans the whole build and opens this instead of
           its usual confirm dialog when anything is both short and can't be made in production
           (canFulfillShortfall, lib/rateCard.js). Deliberately has no "Sold anyway" — closing it
-          just cancels the confirm, same as a missing name/date/venue does above it. "Go fix"
-          switches to the flagged element's own function/tab so the salesperson lands right next to
-          its 📦 availability icon rather than hunting for it across a multi-function deal. */}
+          just cancels the confirm, same as a missing name/date/venue does above it. The 📦 button
+          opens the availability picker right here (openOosFix, StudioApp.jsx) — switching to the
+          flagged element's own function tab first if it isn't the active one — instead of the old
+          "Go fix" that only switched tabs and left the salesperson to hunt the element down by hand. */}
       {oosGateModal && oosGateModal.length > 0 && (
         <div onClick={() => setOosGateModal(null)} style={{position:"fixed",inset:0,zIndex:9400,background:"rgba(10,10,20,0.85)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
           <div onClick={e => e.stopPropagation()} style={{width:"min(520px, 100%)",maxHeight:"80vh",background:isDark?"#0F0F1A":"#fff",borderRadius:14,border:`1px solid ${border}`,display:"flex",flexDirection:"column",overflow:"hidden"}}>
             <div style={{padding:"18px 20px",borderBottom:`1px solid ${border}`}}>
               <div style={{fontSize:16,fontWeight:700,color:"#EF4444",display:"flex",alignItems:"center",gap:8}}><IconBox size={16}/> Can't confirm — items out of stock</div>
-              <div style={{fontSize:12.5,color:textS,marginTop:6,lineHeight:1.5}}>These items are out of stock for this date and can't be made in production. Pick an alternative with the 📦 availability icon on each one before this deal can be marked Sold.</div>
+              <div style={{fontSize:12.5,color:textS,marginTop:6,lineHeight:1.5}}>These items are out of stock for this date and can't be made in production. Pick an alternative below for each one before this deal can be marked Sold.</div>
             </div>
             <div style={{padding:"4px 20px",overflowY:"auto",flex:1}}>
               {oosGateModal.map((f, i) => (
@@ -379,7 +380,7 @@ export default function StudioModals({ ctx }) {
                     <div style={{fontSize:13,fontWeight:600,color:textP,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{f.name}</div>
                     <div style={{fontSize:11,color:textS,marginTop:2}}>{f.fnLabel} · {f.zoneKey}</div>
                   </div>
-                  <button onClick={() => { setActiveFnIdx(f.fnIdx); setOosGateModal(null); }} style={{padding:"6px 12px",borderRadius:7,border:"none",background:"#EF4444",color:"#fff",fontSize:11.5,fontWeight:700,cursor:"pointer",flexShrink:0}}>Go fix</button>
+                  <button onClick={() => openOosFix(f)} title="Pick an alternative item" style={{padding:"6px 12px",borderRadius:7,border:"none",background:"#EF4444",color:"#fff",fontSize:11.5,fontWeight:700,cursor:"pointer",flexShrink:0,display:"inline-flex",alignItems:"center",gap:5}}><IconBox size={12}/> Fix</button>
                 </div>
               ))}
             </div>
@@ -811,8 +812,7 @@ export default function StudioModals({ ctx }) {
                       const matchesTokens = (haystack) => tokens.every(t => haystack.includes(t));
                       const kitCoveredIds = new Set((zoneUploadReview.elements || []).filter(el => el.invId).flatMap(el => {
                         const it = (imsInventory || []).find(i => i.id === el.invId);
-                        const comps = Array.isArray(el.kitOverrides) ? el.kitOverrides : (it?.subItems || []);
-                        return comps.map(c => c.itemId);
+                        return it ? [...kitDescendantIds(it, imsInventory, el.kitOverrides)] : [];
                       }));
                       const invMatches = (imsInventory || []).filter(it => !(zoneUploadReview.elements || []).find(el => el.invId === it.id) && !kitCoveredIds.has(it.id) && !isHiddenSubcat(it, rcSubcatFactors) && matchesTokens([it.name, it.cat, it.subCat || it.subcategory].filter(Boolean).join(" ").toLowerCase()));
                       const patMatches = (recipeOnlyPatterns || []).filter(pt => !(zoneUploadReview.elements || []).find(el => el.patternId === pt.id) && matchesTokens(pt.name.toLowerCase()));

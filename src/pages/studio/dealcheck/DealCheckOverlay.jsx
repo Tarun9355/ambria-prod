@@ -212,6 +212,7 @@ export default function DealCheckOverlay({ ctx }) {
     dcKitEdits, setDcKitEdits, dcManualItems, setDcManualItems, dcManualSearch, setDcManualSearch,
     dcCollapsedZones, setDcCollapsedZones, setDcBrowseAllOpen, dcBrowseAllOpen, setDcCustomModal,
     dcCustomItems, setDcCustomItems, elSelectedPhoto, dcDedupOverrides, setDcDedupOverrides,
+    dcArtFlowerAlloc,
     // photoKnowledge / saveKnowledgeEntry / dcKnowledgeKey were destructured here for the
     // "Set as correct match for this photo" control. That control is gone, and nothing else in
     // this file read them — re-add all three if the teach action comes back.
@@ -241,7 +242,7 @@ export default function DealCheckOverlay({ ctx }) {
     // deal check inventory-tab module helpers
     isZoneDirty, parseCardKey, PLATFORM_FATTA_CODE, PLATFORM_STAND_CODE,
     // Settings → Zones' own drag-ordered priority (Object.keys(zoneMeta), same list Build sorts by)
-    zoneKeys,
+    zoneKeys, zoneLabelsD,
     // orchestration + persistence
     getStudioAvailable, getActiveSoftHold,
     // misc
@@ -713,6 +714,7 @@ export default function DealCheckOverlay({ ctx }) {
                   costPctFor,
                   repeatAdjustedRentalFn: (it, q, br, cf) => repeatAdjustedRental(_rep, fn.fnVenue, it, q, br, fn.fnDate, cf),
                   rentalRateFor: (it, ck2) => effKitRental(it, fi, ck2),
+                  fnDate: fn.fnDate,
                 });
                 lineRental = split.ownedCost + split.shortCost;
                 shortCost = split.shortCost;
@@ -743,7 +745,12 @@ export default function DealCheckOverlay({ ctx }) {
                 // changes what it actually costs Ambria to produce or buy a brand-new unit.
                 // Floor: cost%-of-production must never undercut what the item would've sold for if
                 // it were simply in stock (StudioApp.jsx's getElPrice applies the same floor).
-                shortCost = shortQty * Math.max(baseR, (Number(item.cost) || 0) * (oosCostPctFor(item, costPctFor) / 100));
+                // fn.fnDate gates the production lead-time check inside oosCostPctFor/canFulfillShortfall
+                // (lib/rateCard.js) — no asOfDate here (defaults to the live "today" countdown); the
+                // frozen-at-commitment version (el.addedAt) is applied in Build's own getElPriceFromInventory,
+                // which has direct access to the originating element — this rollup only has the
+                // already-matched Deal Check card, not that element, to read a stamp off.
+                shortCost = shortQty * Math.max(baseR, (Number(item.cost) || 0) * (oosCostPctFor(item, costPctFor, fn.fnDate) / 100));
                 lineRental = ownedRental + shortCost;
               }
               rental += lineRental; byFn[fi].rental += lineRental;
@@ -800,7 +807,7 @@ export default function DealCheckOverlay({ ctx }) {
                 // true 50 — the same physical units carried from function 1 into function 2 were
                 // being counted twice). Not applied to a kit's own top-level qty — reuse there is
                 // scoped inside kitShortfallSplit's own component-level accounting, not this field.
-                deptInv[dD].push({ name: item.name || c.name || "Item", photo: imsField.photos(item)[0] || "", qty: isKit ? qty : Math.max(0, qty - reusedQty), unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "", imsId: c.imsId, ...(components && components.length ? { isKit: true, components: components.map(({ci, ...rest}) => ({ ...rest, total: Math.round(rest.total) })) } : {}), ...(shortQty > 0 ? { shortQty, shortCost: Math.round(shortCost), outOfStock: !canFulfillShortfall(item) } : {}) });
+                deptInv[dD].push({ name: item.name || c.name || "Item", photo: imsField.photos(item)[0] || "", qty: isKit ? qty : Math.max(0, qty - reusedQty), unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "", imsId: c.imsId, ...(components && components.length ? { isKit: true, components: components.map(({ci, ...rest}) => ({ ...rest, total: Math.round(rest.total) })) } : {}), ...(shortQty > 0 ? { shortQty, shortCost: Math.round(shortCost), outOfStock: !canFulfillShortfall(item, fn.fnDate) } : {}) });
               }
             });
             // Manually-added inventory blocks (dcManualItems) — the salesperson added these directly in
@@ -1012,7 +1019,10 @@ export default function DealCheckOverlay({ ctx }) {
                 const area = (Number(fd.L) || Number(fd.S) || 0) * (Number(fd.W) || Number(fd.S) || 0);
                 const cRate = carpetPricingFor(zcz.cpT, imsCarpetMaterials).rate || 0;
                 const cc = area > 0 ? area * cRate : 0;
-                const pickedId = picks[zk];
+                // Deal Check's own override (picks[zk]) wins if set; otherwise fall back to whichever
+                // physical carpet was already picked in Build (zcz.cpInvId) — so IMS gets told which
+                // carpet to pull even for a deal whose Deal Check carpet card was never touched.
+                const pickedId = picks[zk] ?? zcz.cpInvId ?? null;
                 const carpetItem = pickedId ? dcInventoryCache.find(x => x.id === pickedId) : null;
                 if (cc > 0) {
                   rental += cc; byFn[fi].rental += cc;
@@ -1346,8 +1356,14 @@ export default function DealCheckOverlay({ ctx }) {
                   return rows.length ? { kind: "tier2", perRow: true, rows, need: rows.reduce((s, r) => s + r.need, 0), min: 0, result: t, countLabel: "arrangements", batchLabel: "÷per flowerist" } : null;
                 }
                 if (type === "Electricians") {
-                  let frac = 0, n = 0; walkFn(fn, ({ rc, el, qty }) => { if (String(rc.cat || "").toLowerCase() !== "lighting") return; const pr = electricianProdMP[rc.sub || ""]; if (!pr) return; const sk = sizeFromMode(rc.inhouseMode, el.size); const upe = Number(pr.sizes?.[sk]) || Number(pr.sizes?.medium) || 0; if (upe > 0) { frac += qty / upe; n += qty; } }); const t = Math.ceil(frac); // ceil ONCE (matches calcPpl + the tab)
-                  return t > 0 ? { kind: "ratio", num: n, numLabel: "lighting units", denomLabel: "productivity per electrician", result: t } : null;
+                  // Grouped by sub-category, same as manpowerPlanForBooking's own Electricians calc
+                  // (StudioApp.jsx) — this per-day trace used to ceil a bare fraction with no rows at
+                  // all, the one crew type that never got the per-item breakdown Flowerists has here.
+                  const agg = {};
+                  walkFn(fn, ({ rc, el, qty }) => { if (String(rc.cat || "").toLowerCase() !== "lighting") return; const pr = electricianProdMP[rc.sub || ""]; if (!pr) return; const sk = sizeFromMode(rc.inhouseMode, el.size); const upe = Number(pr.sizes?.[sk]) || Number(pr.sizes?.medium) || 0; if (upe > 0) { const k = (rc.sub || "lighting") + "|" + upe; if (!agg[k]) agg[k] = { sub: rc.sub || "lighting", batch: upe, count: 0 }; agg[k].count += qty; } });
+                  const rows = Object.values(agg).map(r => ({ ...r, need: r.count / r.batch }));
+                  const need = rows.reduce((s, r) => s + r.need, 0); const t = Math.ceil(need); // ceil ONCE (matches calcPpl + the tab)
+                  return rows.length ? { kind: "tier2", rows, need, min: 0, result: t, countLabel: "lighting units" } : null;
                 }
                 if (type === "Labours") {
                   const venueName = fn.fnVenue || "";
@@ -1359,21 +1375,38 @@ export default function DealCheckOverlay({ ctx }) {
                   if (!dcMpIncludeMinusOne) { const c = [({ nearby: 1.0, medium: 1.1, far: 1.2 })[(dealCheckData?.venueDumping || {})[venueName] || "nearby"] || 1.0, heavySayaMultFor(fn, "Labours")]; c.push(eventTimingMultFor(eventTimingMultipliers, shiftToTiming(fn.fnShift), "Labours", 1.0)); sm = Math.min(situMultCap, Math.max(...c, 1.0)); }
                   const adj = Math.ceil(base * sm); const sc = {}; walkFn(fn, ({ rc, qty }) => { const _s = itemImsSubcat(rc); sc[_s] = (sc[_s] || 0) + qty; });
                   const reduction = standingReductionBySubcat(fvCfg, venueName, (dcCards || {})[fns.indexOf(fn)], dealCheckData?.inventory || []);
-                  let he = 0; heavyElementRanges.forEach(her => { const count = Math.max(0, (lookupBySubcat(sc, her.subCat) || 0) - (lookupBySubcat(reduction, her.subCat) || 0)); he += heavyExtraLabour(her, count); });
-                  return { kind: "labours", venueMin: vm, mult: sm, heavy: he, result: adj + he };
+                  // Per-sub-category rows for the heavy-element add-on, same as manpowerPlanForBooking's
+                  // heavyRows — the base figure above stays a flat venue-min line (nothing item-level to
+                  // break down there), only the add-on is item-driven.
+                  const heavyRows = []; let he = 0;
+                  heavyElementRanges.forEach(her => { const count = Math.max(0, (lookupBySubcat(sc, her.subCat) || 0) - (lookupBySubcat(reduction, her.subCat) || 0)); const extra = heavyExtraLabour(her, count); if (extra > 0) heavyRows.push({ sub: her.subCat, count, extra }); he += extra; });
+                  return { kind: "labours", venueMin: vm, mult: sm, heavy: he, heavyRows, result: adj + he };
                 }
                 if (type === "Fabric Bangali") {
-                  let sq = 0; walkFn(fn, ({ rc, el }) => { const s = String(rc.sub || "").toLowerCase(); if (s.includes("wall masking") || s.includes("fabric") || s.includes("draping")) { const L = Number(el.L || el.l || rc.defaultDims?.L || 0); const W = Number(el.W || el.w || el.H || el.h || rc.defaultDims?.W || 0); if (L > 0 && W > 0) sq += L * W; } });
+                  // Grouped by element — same per-contributor rows as manpowerPlanForBooking's own
+                  // Fabric Bangali calc (StudioApp.jsx). sq is a straight sum; the range lookup below
+                  // is still the one threshold step, not a per-row division.
+                  const agg = {};
+                  walkFn(fn, ({ rc, el }) => { const s = String(rc.sub || "").toLowerCase(); if (!(s.includes("wall masking") || s.includes("fabric") || s.includes("draping"))) return; const L = Number(el.L || el.l || rc.defaultDims?.L || 0); const W = Number(el.W || el.w || el.H || el.h || rc.defaultDims?.W || 0); if (L > 0 && W > 0) { const k = rc.name || rc.sub || "item"; agg[k] = (agg[k] || 0) + L * W; } });
+                  const rows = Object.entries(agg).map(([name, sqft]) => ({ sub: name, sqft: Math.round(sqft * 100) / 100 }));
+                  const sq = rows.reduce((s, r) => s + r.sqft, 0);
                   if (sq <= 0 || !fabricBangaliRanges.length) return null;
                   let lab = fabricBangaliRanges[fabricBangaliRanges.length - 1]?.labour || 0; for (const r of fabricBangaliRanges) { if (sq <= r.upTo) { lab = r.labour || 0; break; } }
-                  return { kind: "range", value: Math.round(sq), unit: "sqft", result: lab };
+                  return { kind: "range", value: Math.round(sq), unit: "sqft", result: lab, rows };
                 }
                 if (type === "Truss Labour") {
-                  let recipeP = 0; walkFn(fn, ({ rc, qty }) => { const s = String(rc.sub || "").toLowerCase(); if (s.includes("pillar") || s.includes("column") || s.includes("truss")) recipeP += qty; });
-                  let zoneP = 0; try { const tInv = dealCheckData?.trussInv; if (tInv) { const zc = fn.zoneConfig || {}, en = fn.enabledEls || {}; Object.keys(zc).forEach(zk => { if (!en[zk] || !zc[zk]) return; const pv = calcZoneTrussPreview(zc[zk], tInv); zoneP += (pv?.topology?.pillars || []).length; }); } } catch {}
+                  // Same per-contributor rows as manpowerPlanForBooking's own Truss Labour calc
+                  // (StudioApp.jsx) — which build elements and which zones (via the truss tool) each
+                  // added how many pillars, summing to the total the range lookup runs against.
+                  const recipeAgg = {};
+                  walkFn(fn, ({ rc, qty }) => { const s = String(rc.sub || "").toLowerCase(); if (s.includes("pillar") || s.includes("column") || s.includes("truss")) { const k = rc.name || rc.sub || "item"; recipeAgg[k] = (recipeAgg[k] || 0) + qty; } });
+                  let recipeP = 0; Object.values(recipeAgg).forEach(v => { recipeP += v; });
+                  const zoneRows = []; let zoneP = 0;
+                  try { const tInv = dealCheckData?.trussInv; if (tInv) { const zc = fn.zoneConfig || {}, en = fn.enabledEls || {}; Object.keys(zc).forEach(zk => { if (!en[zk] || !zc[zk]) return; const pv = calcZoneTrussPreview(zc[zk], tInv); const n = (pv?.topology?.pillars || []).length; if (n > 0) { const zLabel = zoneLabelsD[zk]?.label || (fn.customZones || []).find(cz => cz.id === zk)?.name || zk; zoneRows.push({ sub: `${zLabel} (truss tool)`, count: n }); zoneP += n; } }); } } catch {}
                   const p = recipeP + zoneP; if (p <= 0 || !trussLabourRanges.length) return null;
                   let lab = trussLabourRanges[trussLabourRanges.length - 1]?.labour || 0; for (const r of trussLabourRanges) { if (p <= r.upTo) { lab = r.labour || 0; break; } }
-                  return { kind: "pillars", recipeP, zoneP, total: p, result: lab };
+                  const rows = [...Object.entries(recipeAgg).map(([name, count]) => ({ sub: name, count })), ...zoneRows];
+                  return { kind: "pillars", recipeP, zoneP, total: p, result: lab, rows };
                 }
                 const cfg = labourTiers[type];
                 if (cfg && cfg.tier === 2) {
@@ -1703,18 +1736,32 @@ export default function DealCheckOverlay({ ctx }) {
             const afRate = Number(dealCheckData?.artificialFlowerRatePerKg ?? 50);
             const agRate = Number(dealCheckData?.artificialGreenRatePerKg ?? 40);
             const agg = {}; let artTotal = 0, afBunches = 0, agBunches = 0, incReal = 0, incArt = 0;
-            (dcCostRollup.fns || []).forEach(fn => {
+            // Which SPECIFIC artificial-bunch colour(s) to actually pull — the salesperson's own
+            // manual Color Split (dcArtFlowerAlloc, Deal Check's Florals tab), keyed by imsId so it's
+            // a real, pickable inventory item. Without this, IMS only ever saw one lump "artificial
+            // flowers" ₹ total with no colour breakdown — the Color Split itself never left Studio.
+            const colorSplitAgg = {};
+            (dcCostRollup.fns || []).forEach((fn, fi) => {
               const r = calcFnFloralSourcingCost(fn);
               artTotal += r.totalArtificial || 0;
               afBunches += r.artFlowerBunches || 0; agBunches += r.artGreenBunches || 0;
               incReal += r.income?.real || 0; incArt += r.income?.art || 0;
               (r.breakdown || []).forEach(f => { if (!agg[f.name]) agg[f.name] = { name: f.name, qty: 0, cost: 0, unit: f.unit, colorVariant: f.colorVariant || null, colorPrefs: f.colorPrefs || null }; agg[f.name].qty += f.qty; agg[f.name].cost += f.cost; });
+              // rate: the true per-unit price (qty is already whole-unit-respecting, from
+              // calcFnFloralSourcingCost's own breakdown) — IMS's mandi list seeds its ₹/unit field
+              // from this directly now, instead of back-deriving one from cost÷qty.
+              (dcArtFlowerAlloc?.[fi] || []).forEach(a => {
+                if (!a?.id || !(Number(a.qty) > 0)) return;
+                if (!colorSplitAgg[a.id]) colorSplitAgg[a.id] = { imsId: a.id, name: a.name || "", qty: 0 };
+                colorSplitAgg[a.id].qty += Number(a.qty) || 0;
+              });
             });
-            const flowers = Object.values(agg).sort((a, b) => b.cost - a.cost);
+            const flowers = Object.values(agg).map(f => ({ ...f, rate: f.qty > 0 ? Math.round((f.cost / f.qty) * 100) / 100 : 0 })).sort((a, b) => b.cost - a.cost);
             if (artTotal >= 1) flowers.push({ name: "Artificial flowers / greens", qty: 0, cost: Math.round(artTotal), unit: "per kg", artificial: true });
             const flowerKg = afBunches / afBPK, greenKg = agBunches / agBPK;
+            const colorSplit = Object.values(colorSplitAgg).map(c => ({ ...c, qty: Math.round(c.qty * 100) / 100 }));
             // Full artificial derivation (bunches ÷ bunches-per-kg = kg × ₹/kg = cost), flowers + greens.
-            const artificial = (afBunches + agBunches) > 0 ? { flowerBunches: Math.round(afBunches), greenBunches: Math.round(agBunches), flowerBPK: afBPK, greenBPK: agBPK, flowerRate: afRate, greenRate: agRate, flowerKg: Math.round(flowerKg * 100) / 100, greenKg: Math.round(greenKg * 100) / 100, flowerCost: Math.round(flowerKg * afRate), greenCost: Math.round(greenKg * agRate), total: Math.round(artTotal) } : null;
+            const artificial = (afBunches + agBunches) > 0 ? { flowerBunches: Math.round(afBunches), greenBunches: Math.round(agBunches), flowerBPK: afBPK, greenBPK: agBPK, flowerRate: afRate, greenRate: agRate, flowerKg: Math.round(flowerKg * 100) / 100, greenKg: Math.round(greenKg * 100) / 100, flowerCost: Math.round(flowerKg * afRate), greenCost: Math.round(greenKg * agRate), total: Math.round(artTotal), ...(colorSplit.length ? { colorSplit } : {}) } : null;
             // Billed floral income split (what the client pays at real vs artificial rates).
             const income = { real: Math.round(incReal), artificial: Math.round(incArt), total: Math.round(incReal + incArt) };
             floralPlan = { projected: Math.round(flowers.reduce((s, f) => s + f.cost, 0)), flowers, artificial, income, season: dcSeasonInfo, capturedAt: Date.now() };
@@ -1832,6 +1879,9 @@ export default function DealCheckOverlay({ ctx }) {
           const _sig = JSON.stringify([
             (dcCostRollup.DEPTS || []).map(d => Math.round(dcCostRollup.dept?.[d]?.total || 0)),
             (_deptSnap.floralPlan?.flowers || []).map(f => `${f.name}:${Math.round((f.qty || 0) * 100)}:${f.colorVariant?.label || ""}:${(f.colorPrefs || []).map(p => p.label).join("/")}`),
+            // Catches a Color Split edit on its own — same dept totals and flower names/qty, just a
+            // different artificial-bunch colour mix — which the two lines above wouldn't notice.
+            (_deptSnap.floralPlan?.artificial?.colorSplit || []).map(c => `${c.imsId}:${c.qty}`),
           ]);
           if (deptSyncRef.current !== _sig) { deptSyncRef.current = _sig; setTimeout(() => { try { persistDeptSnapshot(_deptSnap); } catch {} }, 200); }
         }
@@ -2362,9 +2412,22 @@ export default function DealCheckOverlay({ ctx }) {
                   const platformPlan = buildPlatformPlan(fns, dealCheckData);
                   const platformFattaR = platformPlan?.fattaItem ? imsField.rentalCost(platformPlan.fattaItem) : 0;
                   const platformStandR = platformPlan?.standItem ? imsField.rentalCost(platformPlan.standItem) : 0;
-                  // §7.9.19 — Precompute reuse count per imsId for ♻ chip on cards
+                  // §7.9.19 — Precompute reuse count per imsId for ♻ chip on cards. Walks into kit
+                  // components too (walkKitUnits) — a kit card used to only ever register its OWN
+                  // id, so a component used directly (not as part of a kit) in a sibling function
+                  // never showed as reused/shared stock between the two.
                   const reuseFnCount = {};
-                  fns.forEach((_, fi) => { const cs = dcCards[fi] || {}; Object.values(cs).forEach(c => { if (c.imsId) { if (!reuseFnCount[c.imsId]) reuseFnCount[c.imsId] = new Set(); reuseFnCount[c.imsId].add(fi); } }); });
+                  fns.forEach((_, fi) => {
+                    const cs = dcCards[fi] || {};
+                    Object.entries(cs).forEach(([ck, c]) => {
+                      if (!c.imsId) return;
+                      const item = dealCheckInventory.find(x => x.id === c.imsId);
+                      const qty = Number(c.qty) || 1;
+                      const mark = (id) => { if (!reuseFnCount[id]) reuseFnCount[id] = new Set(); reuseFnCount[id].add(fi); };
+                      if (item) walkKitUnits(item, qty, dealCheckInventory, dcKitEdits?.[fi]?.[ck], (node) => mark(node.id));
+                      else mark(c.imsId);
+                    });
+                  });
                   const fnBlocksForChip = (dealCheckData?.blocksByDate || {})[(fns[fnIdx]||{}).fnDate || clientDate] || {};
                   // Group by zoneKey
                   const byZone = {};
@@ -2647,6 +2710,7 @@ export default function DealCheckOverlay({ ctx }) {
                               costPctFor: _costPctFor,
                               repeatAdjustedRentalFn: (x, q, br, cf) => repeatAdjustedRental(_rep, _fnVenueForRepeat, x, q, br, _fnDateForRepeat, cf),
                               rentalRateFor: (x, ck2) => effKitRental(x, fnIdx, ck2),
+                              fnDate: _fnDateForRepeat,
                             });
                             zoneRentalTotal += splitP.ownedCost + splitP.shortCost;
                             return;
@@ -2658,7 +2722,7 @@ export default function DealCheckOverlay({ ctx }) {
                           const _crossFnAvail = _crossFnTakePill(it.id, qty);
                           const ownedQty = Math.min(qty, available + _crossFnAvail);
                           const shortQty = Math.max(0, qty - ownedQty);
-                          const shortRate = Math.max(baseR, (Number(it.cost) || 0) * (oosCostPctFor(it, _costPctFor) / 100));
+                          const shortRate = Math.max(baseR, (Number(it.cost) || 0) * (oosCostPctFor(it, _costPctFor, _fnDateForRepeat) / 100));
                           zoneRentalTotal += repeatAdjustedRental(_rep, _fnVenueForRepeat, it, ownedQty, baseR, _fnDateForRepeat, _crossFnAvail) + shortQty * shortRate;
                         });
                         manualItemsInZone.forEach(mi => { const it = dcInventoryCache.find(x => x.id === mi.imsId); if (!it) return; const q = Number(mi.qty) || 1; const baseR = effKitRental(it, fnIdx, null); const _rep = mi.zoneKey ? repeatCatFor(fns[fnIdx]?.zoneConfig?.[mi.zoneKey], "elements") : false; zoneRentalTotal += repeatAdjustedRental(_rep, _fnVenueForRepeat, it, q, baseR, _fnDateForRepeat, _crossFnTakePill(it.id, q)); });
@@ -2838,11 +2902,16 @@ export default function DealCheckOverlay({ ctx }) {
                                   // Exact match, not .includes("carpet") — that substring match used to
                                   // also pull in items filed under a DIFFERENT sub-category that merely
                                   // contains the word "carpet" (e.g. "Rug Carpet"), leaking the wrong
-                                  // stock into this picker. "Carpet" is also the literal fallback string
+                                  // stock into this picker. "carpet" is also the literal fallback string
                                   // below and what openAvailModal itself needs as an exact sub-category
                                   // to search within, so this now matches that same string precisely.
                                   const carpetOpts = dcInventoryCache.filter(x => String(imsField.subcategory(x)||"").trim().toLowerCase() === "carpet");
-                                  const pickedId = dcCarpetPick[fnIdx]?.[zk];
+                                  // Falls back to Build's own stock pick (zc.cpInvId, set via the same
+                                  // IconBox control on the Platform card's Carpet row) when this zone
+                                  // has no Deal-Check-specific override yet — so a carpet picked in
+                                  // Build is already reflected here the first time Deal Check runs,
+                                  // instead of showing "no carpet picked" until someone repicks it here.
+                                  const pickedId = dcCarpetPick[fnIdx]?.[zk] ?? zc.cpInvId ?? null;
                                   const carpetItem = pickedId ? dcInventoryCache.find(x=>x.id===pickedId) : null;
                                   const markup = dealCheckData?.carpetFreshMarkup ?? 40;
                                   const calc = carpetItem ? calcZoneCarpet(zc, carpetItem, markup) : null;
@@ -2883,12 +2952,12 @@ export default function DealCheckOverlay({ ctx }) {
                                   // and dimensions in one list, rather than a bespoke search-and-thumbnail
                                   // grid duplicating that same question just for carpets. Falls back to
                                   // whichever sub-category an already-known carpet item carries (either
-                                  // the one currently picked, or the first of the exact "Carpet"
+                                  // the one currently picked, or the first of the exact "carpet"
                                   // set above) since openAvailModal needs a concrete sub-category
                                   // to search within, not a substring. Also offers Split (opts.splitQty/
                                   // onSplit) so the modal's own "pick 2+ items" flow seeds splitLines —
                                   // exactly how a regular item card's split starts.
-                                  const carpetSubcatFallback = carpetItem ? imsField.subcategory(carpetItem) : (carpetOpts[0] ? imsField.subcategory(carpetOpts[0]) : "Carpet");
+                                  const carpetSubcatFallback = carpetItem ? imsField.subcategory(carpetItem) : (carpetOpts[0] ? imsField.subcategory(carpetOpts[0]) : "carpet");
                                   const openCarpetPicker = () => openAvailModal?.(
                                     zk, 0,
                                     { invId: pickedId || null, imsId: pickedId || null, name: carpetItem?.name || "" },
@@ -3061,6 +3130,7 @@ export default function DealCheckOverlay({ ctx }) {
                                       costPctFor: _kitCostPctForC,
                                       repeatAdjustedRentalFn: (x, q, br, cf) => repeatAdjustedRental(_rep, _venue, x, q, br, _fnDateForRepeat, cf),
                                       rentalRateFor: (x, ck2) => effKitRental(x, fnIdx, ck2),
+                                      fnDate: _fnDateForRepeat,
                                     });
                                     _lineTotal = splitC.ownedCost + splitC.shortCost;
                                   } else if (item) {
@@ -3069,7 +3139,7 @@ export default function DealCheckOverlay({ ctx }) {
                                     const _cardOwnedQty = Math.min(_cardQty, _cardAvail + _cardCrossFn);
                                     const _cardShortQty = Math.max(0, _cardQty - _cardOwnedQty);
                                     const _cardCostPctFor = (subcat) => { const key = String(subcat || "").trim().toLowerCase(); const row = (rcSubcatFactors || []).find(r => r?.id === key); const v = row ? Number(row.cost_percent) : undefined; return (typeof v === "number" && isFinite(v) && v >= 0) ? v : 100; };
-                                    const _cardShortRate = Math.max(rental, (Number(item.cost) || 0) * (oosCostPctFor(item, _cardCostPctFor) / 100));
+                                    const _cardShortRate = Math.max(rental, (Number(item.cost) || 0) * (oosCostPctFor(item, _cardCostPctFor, _fnDateForRepeat) / 100));
                                     _lineTotal = repeatAdjustedRental(_rep, _venue, item, _cardOwnedQty, rental, _fnDateForRepeat, _cardCrossFn) + _cardShortQty * _cardShortRate;
                                   }
                                   // The per-unit rate shown next to "×" — the discounted equivalent, not
@@ -3118,7 +3188,7 @@ export default function DealCheckOverlay({ ctx }) {
                                             </span>
                                           )}
                                           {hold && <span title={`Held by ${hold.salesperson} for ${hold.eventName}`} style={{fontSize:11,padding:"2px 6px",borderRadius:4,background:"rgba(245,158,11,0.20)",color:"#F59E0B",fontWeight:700,letterSpacing:0.4}}>⏳ {hold.salesperson}</span>}
-                                          {item && (()=>{ const cq=Number(card.qty)||1; const av=Math.min(dcAvailable(item, fnBlocksForChip, fnIdx), availableAtVenue({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, fns[fnIdx]?.fnVenue, item)); if (cq<=av) return null; const canMake = canFulfillShortfall(item); return <span title={canMake?undefined:"Out of stock and can't be made in production"} style={{fontSize:11,padding:"2px 6px",borderRadius:4,background:"rgba(239,68,68,0.18)",color:"#EF4444",fontWeight:700,letterSpacing:0.4}}>{canMake?`⚠ ${av}`:"⚠ out of stock"}</span>; })()}
+                                          {item && (()=>{ const cq=Number(card.qty)||1; const av=Math.min(dcAvailable(item, fnBlocksForChip, fnIdx), availableAtVenue({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, fns[fnIdx]?.fnVenue, item)); if (cq<=av) return null; const canMake = canFulfillShortfall(item, fns[fnIdx]?.fnDate); return <span title={canMake?undefined:"Out of stock and can't be made in production"} style={{fontSize:11,padding:"2px 6px",borderRadius:4,background:"rgba(239,68,68,0.18)",color:"#EF4444",fontWeight:700,letterSpacing:0.4}}>{canMake?`⚠ ${av}`:"⚠ out of stock"}</span>; })()}
                                           {card.imsId && reuseFnCount[card.imsId]?.size >= 2 && <span style={{fontSize:11,padding:"2px 6px",borderRadius:4,background:"rgba(16,185,129,0.18)",color:"#10B981",fontWeight:700,letterSpacing:0.4}}>♻ {reuseFnCount[card.imsId].size} fns</span>}
                                           <span onClick={()=>setDcCards(prev=>{const fn={...(prev[fnIdx]||{})}; delete fn[card._cardKey]; return {...prev,[fnIdx]:fn};})} title="Remove from Deal Check" style={{marginLeft:"auto",cursor:"pointer",color:"#EF4444",fontSize:15.5,fontWeight:700,padding:"0 4px",lineHeight:1,flexShrink:0,opacity:0.6,transition:"opacity 0.15s"}} onMouseEnter={e=>e.currentTarget.style.opacity=1} onMouseLeave={e=>e.currentTarget.style.opacity=0.6}>×</span>
                                         </div>
@@ -3470,7 +3540,7 @@ export default function DealCheckOverlay({ ctx }) {
                                                       </span>
                                                       {cItem && (()=>{ const cr=imsField.rentalCost(cItem); return <span style={{...NUM,flex:"1 1 auto",minWidth:108,color:IV.ink3,whiteSpace:"nowrap"}}>₹{cr.toLocaleString("en-IN")} × {needed} = <b style={{color:"#4338CA"}}>₹{(cr*needed).toLocaleString("en-IN")}</b></span>; })()}
                                                       {cItem && (short
-                                                        ? <span style={{color:"#EF4444",fontWeight:700,whiteSpace:"nowrap",textAlign:"right",...NUM}}>{canFulfillShortfall(cItem) ? `⚠ need ${needed}, only ${owned}` : `⚠ out of stock (need ${needed}, only ${owned})`}</span>
+                                                        ? <span style={{color:"#EF4444",fontWeight:700,whiteSpace:"nowrap",textAlign:"right",...NUM}}>{canFulfillShortfall(cItem,_fnDateForRepeat) ? `⚠ need ${needed}, only ${owned}` : `⚠ out of stock (need ${needed}, only ${owned})`}</span>
                                                         : <span style={{color:"#10B981",whiteSpace:"nowrap",textAlign:"right",...NUM}}>✓ {owned} avail</span>)}
                                                     </div>
                                                     {unavailable && (
@@ -4393,44 +4463,60 @@ export default function DealCheckOverlay({ ctx }) {
                       const item = dcInventoryCache.find(x => x.id === card.imsId);
                       if (!item) return;
                       const cardQty = Number(card.qty) || 1;
-                      // Same fixed-venue standing-stock ceiling as the main rollup — otherwise an
-                      // outdoor deal could bill at cost% for a real shortfall while this conflict
-                      // scan stayed silent about it.
-                      const available = Math.min(dcAvailable(item, fnBlocks, fi), availableAtVenue({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, fn.fnVenue, item));
-                      const hold = getActiveSoftHold(softHolds, card.imsId, authUser?.name, nowMs);
-                      const isShort = cardQty > available;
-                      const isHeld = !!hold;
-                      if (!isShort && !isHeld) return;
-                      const dedup = `${card.imsId}::${fnDate}`;
-                      if (conflictSeen.has(dedup)) return;
-                      conflictSeen.add(dedup);
-                      const photo = imsField.photos(item)[0];
-                      // fi is carried so a row can be matched against the sidebar selection —
-                      // this tab is booking-wide, and without the index there was no way to say
-                      // which conflicts belong to the function you are actually looking at.
-                      conflicts.push({ imsId: card.imsId, name: item.name || card.imsName, photo, needed: cardQty, available, isShort, outOfStock: isShort && !canFulfillShortfall(item), hold, isHeld, fnDate, fi, fnLabel: fn.fnType || `Function ${fi+1}`, item });
+                      // walkKitUnits visits the item itself (a plain item just once, same as before)
+                      // AND every kit component — a kit's own shortfall used to hide a COMPONENT
+                      // that's independently oversubscribed (e.g. also used as its own direct card
+                      // in another function), since only the kit's own imsId was ever checked here.
+                      walkKitUnits(item, cardQty, dcInventoryCache, dcKitEdits?.[fi]?.[ck], (node, nodeQty) => {
+                        // Same fixed-venue standing-stock ceiling as the main rollup — otherwise an
+                        // outdoor deal could bill at cost% for a real shortfall while this conflict
+                        // scan stayed silent about it.
+                        const available = Math.min(dcAvailable(node, fnBlocks, fi), availableAtVenue({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, fn.fnVenue, node));
+                        const hold = getActiveSoftHold(softHolds, node.id, authUser?.name, nowMs);
+                        const isShort = nodeQty > available;
+                        const isHeld = !!hold;
+                        if (!isShort && !isHeld) return;
+                        const dedup = `${node.id}::${fnDate}`;
+                        if (conflictSeen.has(dedup)) return;
+                        conflictSeen.add(dedup);
+                        const photo = imsField.photos(node)[0];
+                        // fi is carried so a row can be matched against the sidebar selection —
+                        // this tab is booking-wide, and without the index there was no way to say
+                        // which conflicts belong to the function you are actually looking at.
+                        conflicts.push({ imsId: node.id, name: node.name || card.imsName, photo, needed: nodeQty, available, isShort, outOfStock: isShort && !canFulfillShortfall(node, fnDate), hold, isHeld, fnDate, fi, fnLabel: fn.fnType || `Function ${fi+1}`, item: node });
+                      });
                     });
                   });
 
                   // ── §7.9.19 Cross-Function Reuse ──
-                  // Find items appearing in 2+ functions (by imsId)
+                  // Find items appearing in 2+ functions (by imsId). Walks into kit components too
+                  // (walkKitUnits) — a component only ever registered under the OUTER kit's own
+                  // imsId before, so the same chandelier used directly as its own card in one
+                  // function and inside a console kit in another never showed as shared/reused
+                  // stock between the two.
                   const itemFnMap = {};  // { imsId: { name, photo, rental, fns: Set<fnIdx>, totalQty } }
+                  const markReuse = (fi, id, name, photo, rental, qty) => {
+                    if (!itemFnMap[id]) itemFnMap[id] = { name: name || "?", photo, rental, fns: new Set(), totalQty: 0, fnLabels: {} };
+                    const m = itemFnMap[id];
+                    m.fns.add(fi);
+                    m.totalQty += qty;
+                    m.fnLabels[fi] = fns[fi]?.fnType || `Fn ${fi+1}`;
+                  };
                   fns.forEach((fn, fi) => {
                     const cards = dcCards[fi] || {};
-                    Object.values(cards).forEach(card => {
+                    Object.entries(cards).forEach(([ck, card]) => {
                       if (!card.imsId) return;
-                      if (!itemFnMap[card.imsId]) {
-                        const item = dcInventoryCache.find(x => x.id === card.imsId);
+                      const item = dcInventoryCache.find(x => x.id === card.imsId);
+                      const qty = Number(card.qty) || 1;
+                      if (item) {
                         // Aggregated across functions, so the master component list is the right
-                        // basis here — no single function's kit edits apply.
-                        const rental = item ? effKitRental(item, null, null) : 0;
-                        const photo = item ? imsField.photos(item)[0] : null;
-                        itemFnMap[card.imsId] = { name: item?.name || card.imsName || "?", photo, rental, fns: new Set(), totalQty: 0, fnLabels: {} };
+                        // basis here — no single function's kit edits apply to rental/photo.
+                        walkKitUnits(item, qty, dcInventoryCache, dcKitEdits?.[fi]?.[ck], (node, nodeQty) => {
+                          markReuse(fi, node.id, node.name, imsField.photos(node)[0], effKitRental(node, null, null), nodeQty);
+                        });
+                      } else {
+                        markReuse(fi, card.imsId, card.imsName, null, 0, qty);
                       }
-                      const m = itemFnMap[card.imsId];
-                      m.fns.add(fi);
-                      m.totalQty += (Number(card.qty) || 1);
-                      m.fnLabels[fi] = fns[fi]?.fnType || `Fn ${fi+1}`;
                     });
                   });
                   const reuseItems = Object.entries(itemFnMap)

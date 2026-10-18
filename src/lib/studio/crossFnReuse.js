@@ -7,9 +7,12 @@
 // the same venue". Moved out of StudioApp.jsx (where it originated) so DealCheckOverlay.jsx can
 // import it too without a circular import back into StudioApp.jsx.
 
-// The immediately-preceding function (by date), same venue string (case/trim-insensitive), on the
-// SAME calendar date or exactly the NEXT one — no gap day between them — or null if there isn't
-// one. `allFns` is collectAllFunctionData()'s own return.
+// Every sibling function at the same venue (case/trim-insensitive) that's reuse-eligible for
+// fnData — on the SAME calendar date, or exactly the day before — merged into ONE synthetic
+// function-shaped object, or null if there isn't one. `allFns` is collectAllFunctionData()'s own
+// return. Callers all just read zoneElements/enabledEls/zoneConfig off whatever this returns
+// (computeFnInvQty, computeFnSubQty, or a direct zoneConfig/enabledEls check for a given zone), so
+// a merged object drops straight in with no caller changes needed.
 //
 // Calendar-date adjacency, not a fixed hour count: this used to map each shift to a made-up
 // representative hour (Sundowner ~5pm, Night ~7pm, etc) and require the two functions to land
@@ -19,18 +22,38 @@
 // What "immediately preceding, still reusable" actually means physically is "no empty day in
 // between" — which calendar dates answer directly, with no guessing at clock times a shift name
 // doesn't actually carry.
+//
+// Merged, not "nearest only": owner-reported — a 3-function booking (Haldi + Cocktail both on day
+// 1, Wedding on day 2, all the same venue) still showed zero reuse credit for Warm LED between
+// Cocktail and Wedding. The OLD code picked a single "immediately preceding" function by date-sort
+// position — with two functions sharing day 1, whichever of Haldi/Cocktail didn't land in that one
+// slot (an accident of array order, not physical reality) was invisible to reuse entirely, even
+// though both functions' setups are equally still standing at the venue for Wedding to draw on.
 export function findCrossFnReuseSource(fnData, allFns) {
   if (!fnData?.fnVenue || !fnData?.fnDate) return null;
-  const sorted = [...(allFns || [])].sort((a, b) => (a.fnDate || "9999-12-31").localeCompare(b.fnDate || "9999-12-31"));
-  const myPos = sorted.findIndex(f => f.fnIdx === fnData.fnIdx);
-  const prev = myPos > 0 ? sorted[myPos - 1] : null;
-  if (!prev || !prev.fnVenue || !prev.fnDate) return null;
-  if (prev.fnVenue.toLowerCase().trim() !== fnData.fnVenue.toLowerCase().trim()) return null;
-  const t1 = Date.parse(prev.fnDate), t2 = Date.parse(fnData.fnDate);
-  if (!Number.isFinite(t1) || !Number.isFinite(t2)) return null;
-  const dayDiff = Math.round((t2 - t1) / (24 * 60 * 60 * 1000));
-  if (dayDiff < 0 || dayDiff > 1) return null;
-  return prev;
+  const venue = fnData.fnVenue.toLowerCase().trim();
+  const myDate = Date.parse(fnData.fnDate);
+  if (!Number.isFinite(myDate)) return null;
+  const eligible = (allFns || []).filter(f => {
+    if (f === fnData || f.fnIdx === fnData.fnIdx || !f.fnVenue || !f.fnDate) return false;
+    if (f.fnVenue.toLowerCase().trim() !== venue) return false;
+    const t = Date.parse(f.fnDate);
+    if (!Number.isFinite(t)) return false;
+    const dayDiff = Math.round((myDate - t) / (24 * 60 * 60 * 1000));
+    return dayDiff === 0 || dayDiff === 1; // same calendar date, or exactly the day before
+  });
+  if (!eligible.length) return null;
+  if (eligible.length === 1) return eligible[0]; // no merge needed — identical to the old behaviour
+  const zoneElements = {}, enabledEls = {}, zoneConfig = {};
+  eligible.forEach(f => {
+    Object.entries(f.zoneElements || {}).forEach(([zk, elems]) => {
+      if (!f.enabledEls?.[zk] || !Array.isArray(elems)) return;
+      zoneElements[zk] = [...(zoneElements[zk] || []), ...elems];
+      enabledEls[zk] = true;
+      if (f.zoneConfig?.[zk] && !zoneConfig[zk]) zoneConfig[zk] = f.zoneConfig[zk];
+    });
+  });
+  return { fnVenue: fnData.fnVenue, fnDate: fnData.fnDate, fnIdx: -1, fnType: eligible.map(f => f.fnType || "").filter(Boolean).join(" + "), zoneElements, enabledEls, zoneConfig };
 }
 
 // Per-invId qty a function used, top-level elements only (no kit-component walk — the

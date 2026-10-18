@@ -84,9 +84,10 @@ import { allocateRowAvailability, netOwnReservedBlocksLive } from "../../lib/stu
 import { callClaudeStreaming } from "../../lib/ai";
 import { heavyExtraLabour, eventTimingMultFor, SETTINGS_DEFAULTS, SIT_MULT_DEFAULTS } from "../../lib/ims/constants";
 import { resolveDateCategory, getEffectivePricing } from "../../lib/inventory/helpers";
-import { itemImsSubcat, lookupBySubcat, priceForInvItem, itemDimsText, walkKitUnits } from "../../lib/ims/helpers";
+import { itemImsSubcat, lookupBySubcat, priceForInvItem, itemDimsText, walkKitUnits, kitDescendantIds } from "../../lib/ims/helpers";
 import { matchFlowerPattern, floralPatternUnitRates, sizeClassToPatternKey, normalizeSizeClass, kitFloralCompDelta } from "../../lib/ims/flowerHelpers";
 import { rowToRcItem, rcItemToRow, rcIsSMB, getFloralMode, oosCostPctFor, canFulfillShortfall } from "../../lib/rateCard";
+import { todayStr } from "../../lib/ims/attendance";
 import { supabase, fetchAll, upsertRow, deleteRow, subscribeTable, keepaliveUpsert } from "../../lib/supabase";
 import {
   rowToLibItem, libItemToRow, fetchLibraryItemsByIds, fetchLibraryItemsByUrls,
@@ -793,6 +794,11 @@ function getCardSpecsForZone(zoneElems, zoneKey, photoUrl, hardPropMap, rcItems,
         propType: null,
         photoUrl,
         pinnedImsId: el.invId,
+        // Carried through so Deal Check can seed its own per-card kit edit the first time this
+        // card is generated — see runDealCheckGenerate's runSpec — instead of IMS always showing
+        // a kit's generic default parts list when a Build-side override was never separately
+        // re-entered inside Deal Check's own kit editor.
+        kitOverrides: Array.isArray(el.kitOverrides) ? el.kitOverrides : null,
       });
       return;
     }
@@ -2063,6 +2069,14 @@ export default function StudioApp() {
   // returned. Blocking, not a warning: closing it just cancels markSold, same as a failed
   // name/date/venue check above it. See scanOutOfStockElements's own comment for why.
   const [oosGateModal, setOosGateModal] = useState(null);
+  // One flagged row's {fnIdx, zoneKey, idx} while its own function switch is still catching up to
+  // openAvailModal — see the effect right below. null the rest of the time.
+  const [oosFixPending, setOosFixPending] = useState(null);
+  // oosGateModal's own list, stashed here while its inline 📦 fix opens availModal on top — availModal
+  // renders at a LOWER z-index (9300 vs oosGateModal's 9400, so the normal element picker never sits
+  // above THIS gate), so the gate modal is hidden (not stacked under it) for the duration instead.
+  // Restored once availModal closes — see the effect right below.
+  const oosGateStashRef = useRef(null);
   // Swap modal local state — lifted to App scope to avoid hook-reset on parent re-render.
   const [dcSwapSearch, setDcSwapSearch] = useState("");
   const [dcSwapPicked, setDcSwapPicked] = useState(null);
@@ -4661,19 +4675,28 @@ export default function StudioApp() {
       ownedQty += crossFnBonus;
       shortQty -= crossFnBonus;
       const ownedRate = priceForInvItem(item, rcFactorByKey, imsInventory, el.kitOverrides);
+      // fnDate/asOfDate feed the production lead-time gate inside canFulfillShortfall/oosCostPctFor
+      // (lib/rateCard.js): fnDate is this row's own function date (same resolution already used for
+      // the allocation check above); asOfDate is el.addedAt when present — frozen to the sold date
+      // for an element already sitting in a Sold deal's build (markDealSold bulk-stamps it there),
+      // or the day it was actually added for anything newer. No addedAt at all (a pre-Sold build, or
+      // legacy data predating this field) falls back to the live "today" countdown.
+      const shortfallFnDate = opts?.fnDate || activeFnMeta?.date || clientDate;
+      const shortfallAsOf = el?.addedAt || undefined;
       // Floor: cost%-of-production must never undercut what the item would've sold for if it
       // were simply in stock — a true shortfall is never cheaper for the client than owning it.
       // When the item can't be made (canFulfillShortfall false), oosCostPctFor itself returns 0%,
       // so this floors to ownedRate — no production premium for something that can't be produced.
-      const shortRate = Math.max(ownedRate, (Number(item.cost) || 0) * (oosCostPctFor(item, rcCostPctForSub) / 100));
+      const shortRate = Math.max(ownedRate, (Number(item.cost) || 0) * (oosCostPctFor(item, rcCostPctForSub, shortfallFnDate, shortfallAsOf) / 100));
       const shortCost = shortQty * shortRate;
       const lineCost = repeatAdjustedLineCost(item, ownedQty, ownedRate, opts?.zc, opts?.venueName, crossFnTake, el.repeatOverride) + shortCost;
       const unitPrice = qty > 0 ? lineCost / qty : ownedRate;
       // outOfStock: genuinely nothing can be done about this shortfall (no stock, can't be made
-      // either) — StudioBuild.jsx's badge reads this to show "Out of stock" instead of "priced at
-      // cost%", openAvailModal (StudioApp.jsx) refuses to let this item be picked while it's short,
-      // and the pre-Sold gate (markDealSold) scans every element for it.
-      const outOfStock = shortQty > 0 && !canFulfillShortfall(item);
+      // either, or not enough production lead time left) — StudioBuild.jsx's badge reads this to
+      // show "Out of stock" instead of "priced at cost%", openAvailModal (StudioApp.jsx) refuses to
+      // let this item be picked while it's short, and the pre-Sold gate (markDealSold) scans every
+      // element for it.
+      const outOfStock = shortQty > 0 && !canFulfillShortfall(item, shortfallFnDate, shortfallAsOf);
       const warning = shortQty > 0 ? (outOfStock ? `⚠ ${shortQty} of ${qty} out of stock for this date — pick an alternative` : `⚠ ${shortQty} of ${qty} not free in stock for this date — priced at cost%`) : null;
       // `available` here is "how much of THIS row's own qty is real stock" (= ownedQty) — the sole
       // consumer (StudioBuild.jsx's isUnavail badge) only ever checks <= 0, which ownedQty matches
@@ -5423,7 +5446,10 @@ export default function StudioApp() {
           const r = getElPriceForFn(el, fZoneConfig[zk], fFloralRatio, true, fnData.fnVenue, fBlocksForDate, fnData.fnDate, pricingPool, fnData.fnIdx, zk, i);
           if (r.outOfStock) {
             const item = (imsInventory || []).find((x) => x.id === el.invId);
-            flagged.push({ fnIdx: fnData.fnIdx, fnLabel: fnData.fnType || `Function ${fnData.fnIdx + 1}`, zoneKey: zk, name: item?.name || el.name || "Item" });
+            // idx/invId carried so the gate modal's own 📦 picker can open directly against this
+            // exact element (openAvailModal(zoneKey, idx, el, rc)) instead of only pointing the
+            // salesperson at the right function/zone and making them find it by hand.
+            flagged.push({ fnIdx: fnData.fnIdx, fnLabel: fnData.fnType || `Function ${fnData.fnIdx + 1}`, zoneKey: zk, idx: i, invId: el.invId, name: item?.name || el.name || "Item" });
           }
         });
       });
@@ -5904,7 +5930,6 @@ export default function StudioApp() {
         flowerAgg.set(targetId, { totalQty: swapQty, totalCost: swapQty * targetRate, unitPrice: targetRate, name: targetParent.name || "Flower", unit: targetParent.unit || "" });
       }
     });
-    let tReal = fixedExtras;
     // flowerName → { name, qty, cost } — the mandi shopping breakdown. v.totalQty already carries
     // the repeat-zone 80% cut where it applies (real flowers only), so this list and the cost below
     // both reflect the reduced quantity actually needed — no separate discount step here.
@@ -5912,11 +5937,30 @@ export default function StudioApp() {
     flowerAgg.forEach(v => {
       if (!(v.totalQty > 0)) return;
       const cost = v.totalCost != null ? v.totalCost : v.totalQty * v.unitPrice;
-      tReal += cost;
       if (!fbreak[v.name]) fbreak[v.name] = { name: v.name, qty: 0, cost: 0, unit: v.unit, colorVariant: v.colorVariant || null, colorPrefs: v.colorPrefs || null };
       fbreak[v.name].qty += v.totalQty; fbreak[v.name].cost += cost;
     });
-    return { totalReal: tReal, totalArtificial: tArt, grandTotal: tReal + tArt, breakdown: Object.values(fbreak).map(f => ({ ...f, qty: Math.ceil(f.qty), cost: Math.round(f.cost) })).sort((a, b) => b.cost - a.cost), artFlowerBunches, artGreenBunches, income: { real: realIncome, art: artIncome } };
+    // Owner ask: a purchaser buys WHOLE bundles at the real mandi rate — not a fractional-bundle
+    // cost computed exactly and then divided back out. `rate` is the true per-unit price this
+    // flower actually costed at (mandi price × season multiplier, or a picked colour preference's
+    // own rate, weighted across every zone/element that contributed — whatever `bp` was above,
+    // before rounding). `cost` is now qty(whole units) × rate, so the two numbers IMS shows next
+    // to each other always agree — previously `cost` stayed independently rounded off the
+    // fractional need, and IMS's own "price" column back-derived cost÷qty into a THIRD number that
+    // matched neither the real mandi rate nor anything anyone would actually pay.
+    const breakdown = Object.values(fbreak).map(f => {
+      // rate rounds FIRST, cost derives from that rounded rate — so `cost` and `qty × rate` always
+      // match exactly, to the rupee, with nothing left for a displayed price and total to disagree on.
+      const rate = f.qty > 0 ? Math.round((f.cost / f.qty) * 100) / 100 : 0;
+      const qty = Math.ceil(f.qty);
+      return { ...f, qty, rate, cost: Math.round(qty * rate) };
+    }).sort((a, b) => b.cost - a.cost);
+    // Owner ask: P&L has to cost what will actually be PAID at the mandi — whole bundles at the
+    // real rate — not the fractional-need estimate. tReal (feeds Deal Check's own Floral cost
+    // rollup, DealCheckOverlay.jsx's dcCostRollup.florals / margin) now sums the breakdown's own
+    // already-whole-unit, already-real-rate cost, instead of the pre-ceiling fractional total.
+    const tReal = fixedExtras + breakdown.reduce((s, f) => s + (f.cost || 0), 0);
+    return { totalReal: tReal, totalArtificial: tArt, grandTotal: tReal + tArt, breakdown, artFlowerBunches, artGreenBunches, income: { real: realIncome, art: artIncome } };
   }, [dealCheckData, studioFloralData, sharedFloralSettings, rcItems, floralRatio, resolveRcRate, rcFloralModeByKey, dcFloralColorPrefs, imsInventory, dcInventoryCache, collectAllFunctionData]);
   // Sync for calcFnFloralSourcingCostRef — see its declaration (near collectAllFunctionDataRef) for
   // why transportCalc/calcFunctionCost need to reach this function through a ref instead of calling
@@ -6054,18 +6098,37 @@ export default function StudioApp() {
         return { count: adj + he, basis: `venue min ${vm}${sm > 1 ? ` ×${sm.toFixed(2)} season/timing` : ""}${he ? ` + ${he} heavy-element` : ""}`, trace: { kind: "labours", venueMin: vm, mult: sm, heavy: he, heavyRows, result: adj + he } };
       }
       if (type === "Fabric Bangali") {
-        let sq = 0; walk(fn, ({ rc, el }) => { const s = String(rc.sub || "").toLowerCase(); if (s.includes("wall masking") || s.includes("fabric") || s.includes("draping")) { const L = Number(el.L || el.l || 0); const W = Number(el.W || el.w || el.H || el.h || 0); if (L > 0 && W > 0) sq += L * W; } });
+        // Grouped by element (same reasoning as Electricians' per-sub-category rows above) — Dept
+        // Ops used to get one opaque "N sqft fabric" line with no way to tell which wall/drape
+        // actually drove the figure. sq is a straight sum of these rows, not a batch-divided need —
+        // the range lookup below is still the one and only threshold step.
+        const agg = {};
+        walk(fn, ({ rc, el }) => {
+          const s = String(rc.sub || "").toLowerCase();
+          if (!(s.includes("wall masking") || s.includes("fabric") || s.includes("draping"))) return;
+          const L = Number(el.L || el.l || 0); const W = Number(el.W || el.w || el.H || el.h || 0);
+          if (L > 0 && W > 0) { const k = rc.name || rc.sub || "item"; agg[k] = (agg[k] || 0) + L * W; }
+        });
+        const rows = Object.entries(agg).map(([name, sqft]) => ({ sub: name, sqft: Math.round(sqft * 100) / 100 }));
+        const sq = rows.reduce((s, r) => s + r.sqft, 0);
         if (sq <= 0 || !fabricBangaliRanges.length) return { count: 0, basis: "no fabric sqft" };
         let lab = fabricBangaliRanges[fabricBangaliRanges.length - 1]?.labour || 0; for (const r of fabricBangaliRanges) { if (sq <= r.upTo) { lab = r.labour || 0; break; } }
-        return { count: lab, basis: `${Math.round(sq)} sqft fabric → range`, trace: { kind: "range", value: Math.round(sq), unit: "sqft", result: lab } };
+        return { count: lab, basis: `${Math.round(sq)} sqft fabric → range`, trace: { kind: "range", value: Math.round(sq), unit: "sqft", result: lab, rows } };
       }
       if (type === "Truss Labour") {
-        let recipeP = 0; walk(fn, ({ rc, qty }) => { const s = String(rc.sub || "").toLowerCase(); if (s.includes("pillar") || s.includes("column") || s.includes("truss")) recipeP += qty; });
-        let zoneP = 0; try { const tInv = d.trussInv; if (tInv) { const zc = fn.zoneConfig || {}, en = fn.enabledEls || {}; Object.keys(zc).forEach(zk => { if (!en[zk] || !zc[zk]) return; const pv = calcZoneTrussPreview(zc[zk], tInv); zoneP += (pv?.topology?.pillars || []).length; }); } } catch {}
+        // Same per-contributor breakdown as Fabric Bangali above: which build elements and which
+        // zones (via the truss tool) each added how many pillars, summing to the total `p` the range
+        // lookup below runs against — one threshold step, not a per-row division.
+        const recipeAgg = {};
+        walk(fn, ({ rc, qty }) => { const s = String(rc.sub || "").toLowerCase(); if (s.includes("pillar") || s.includes("column") || s.includes("truss")) { const k = rc.name || rc.sub || "item"; recipeAgg[k] = (recipeAgg[k] || 0) + qty; } });
+        let recipeP = 0; Object.values(recipeAgg).forEach(v => { recipeP += v; });
+        const zoneRows = []; let zoneP = 0;
+        try { const tInv = d.trussInv; if (tInv) { const zc = fn.zoneConfig || {}, en = fn.enabledEls || {}; Object.keys(zc).forEach(zk => { if (!en[zk] || !zc[zk]) return; const pv = calcZoneTrussPreview(zc[zk], tInv); const n = (pv?.topology?.pillars || []).length; if (n > 0) { const zLabel = zoneLabelsD[zk]?.label || (fn.customZones || []).find(cz => cz.id === zk)?.name || zk; zoneRows.push({ sub: `${zLabel} (truss tool)`, count: n }); zoneP += n; } }); } } catch {}
         const p = recipeP + zoneP;
         if (p <= 0 || !trussLabourRanges.length) return { count: 0, basis: "no truss/pillars" };
         let lab = trussLabourRanges[trussLabourRanges.length - 1]?.labour || 0; for (const r of trussLabourRanges) { if (p <= r.upTo) { lab = r.labour || 0; break; } }
-        return { count: lab, basis: `${p} pillar(s)${zoneP ? ` (${zoneP} from truss tool${recipeP ? ` + ${recipeP} build` : ""})` : ""} → range`, trace: { kind: "pillars", recipeP, zoneP, total: p, result: lab } };
+        const rows = [...Object.entries(recipeAgg).map(([name, count]) => ({ sub: name, count })), ...zoneRows];
+        return { count: lab, basis: `${p} pillar(s)${zoneP ? ` (${zoneP} from truss tool${recipeP ? ` + ${recipeP} build` : ""})` : ""} → range`, trace: { kind: "pillars", recipeP, zoneP, total: p, result: lab, rows } };
       }
       const cfg = labourTiers[type];
       if (cfg && cfg.tier === 2) {
@@ -6095,7 +6158,7 @@ export default function StudioApp() {
       });
       return { type, count: best.count, basis: best.basis, rate: Number(dihari[type]?.rate) || 0, trace: best.trace || null };
     }).filter(r => r.count > 0);
-  }, [dealCheckData, rcItems, imsInventory]);
+  }, [dealCheckData, rcItems, imsInventory, zoneLabelsD]);
 
   const eventGrandTotal = useMemo(() => {
     const all = collectAllFunctionData();
@@ -8262,6 +8325,37 @@ export default function StudioApp() {
       const updated = ledger.map(c => c.id === client.id ? { ...c, status: "booked", bookedAt: Date.now(), bookedBy: authUser?.name || "—", finalSession: c.sessions?.[0] || null, bookedSystemTotal: (c.bookedSystemTotal != null ? c.bookedSystemTotal : eventGrandTotal) } : c);
       saveClientLedger(updated);
       const allFns = collectAllFunctionData();
+      // Freeze every element currently in the build to TODAY (the sold date) for the production
+      // lead-time gate (canFulfillShortfall, lib/rateCard.js) — confirming a booking is the moment
+      // ops actually commits to making whatever's flagged "Can be made," so that's when the 10-day
+      // countdown starts, not whenever each item happened to be dragged into a pre-Sold draft that
+      // may have sat around for weeks. A re-confirm of an already-booked deal re-stamps the same
+      // way — it's a fresh commitment checkpoint for whatever's currently in the build, same as the
+      // first confirm. Builds fresh zone/element objects rather than mutating collectAllFunctionData's
+      // own (live, non-cloned) zoneElements in place, same immutability convention every other
+      // zoneElements writer in this file already follows.
+      const soldDateStamp = todayStr();
+      const stampZoneElements = (ze) => {
+        const next = {};
+        Object.entries(ze || {}).forEach(([zk, els]) => {
+          next[zk] = (els || []).map(el => (el && el.invId) ? { ...el, addedAt: soldDateStamp } : el);
+        });
+        return next;
+      };
+      const activeFnStamped = allFns.find(f => f.fnIdx === activeFnIdx);
+      if (activeFnStamped) setZoneElements(stampZoneElements(activeFnStamped.zoneElements));
+      const otherFnsStamped = allFns.filter(f => f.fnIdx !== activeFnIdx);
+      if (otherFnsStamped.length) {
+        setFnBuilds(prev => {
+          const next = { ...prev };
+          otherFnsStamped.forEach(fnData => { next[fnData.fnIdx] = { ...(next[fnData.fnIdx] || {}), zoneElements: stampZoneElements(fnData.zoneElements) }; });
+          return next;
+        });
+      }
+      // allFns itself still needs the stamped values for fnEOs (the event-order snapshot) built
+      // below — rebuilt here from the same stampZoneElements() call, not from the live state setters
+      // above (which won't have re-rendered yet).
+      allFns.forEach(fnData => { fnData.zoneElements = stampZoneElements(fnData.zoneElements); });
       const fnEOs = allFns.map(fnData => {
         const bd = calcFunctionBreakdown(fnData);
         return {
@@ -8303,7 +8397,10 @@ export default function StudioApp() {
       try {
         const fbAgg = {};
         allFns.forEach(fnData => { const r = calcFnFloralSourcingCost(fnData); (r.breakdown || []).forEach(f => { if (!fbAgg[f.name]) fbAgg[f.name] = { name: f.name, qty: 0, cost: 0, unit: f.unit }; fbAgg[f.name].qty += f.qty; fbAgg[f.name].cost += f.cost; }); });
-        const flowers = Object.values(fbAgg).sort((a, b) => b.cost - a.cost);
+        // rate: the true per-unit price (qty is already whole-unit-respecting from the breakdown
+        // above) — so IMS's mandi list can seed its own ₹/unit field with the real rate instead of
+        // back-deriving one from cost÷qty.
+        const flowers = Object.values(fbAgg).map(f => ({ ...f, rate: f.qty > 0 ? Math.round((f.cost / f.qty) * 100) / 100 : 0 })).sort((a, b) => b.cost - a.cost);
         floralPlan = { projected: Math.round(flowers.reduce((s, f) => s + f.cost, 0)), flowers, capturedAt: Date.now() };
       } catch {}
       // Snapshot the system manpower plan (counts + how each was derived) so dept heads see it.
@@ -9002,7 +9099,9 @@ export default function StudioApp() {
     // itself doesn't ALSO get its individual sub-items tagged as separate elements (double-counts
     // cost and double-blocks inventory for the same physical objects).
     const kitOf = {};
-    taggableInv.forEach(i => { if (Array.isArray(i.subItems) && i.subItems.length) kitOf[i.id] = i.subItems.map(s => s.itemId); });
+    // kitDescendantIds recurses the whole kit tree (not just i.subItems' own direct ids) — a
+    // kit-of-a-kit's grandchild component used to still be tag-able as its own separate element.
+    taggableInv.forEach(i => { if (Array.isArray(i.subItems) && i.subItems.length) kitOf[i.id] = [...kitDescendantIds(i, imsInventory)]; });
     // Pure flower-recipe patterns with no inventory backing (e.g. "Flower Garden") join the same
     // vocabulary so they can be tagged/matched exactly like an inventory item.
     const elemList = [...taggableInv.map(i => `"${i.name}" (${i.unit})`), ...taggableRecipePatterns.map(p => `"${p.name}" (${p.unit})`)].join(", ");
@@ -10335,9 +10434,25 @@ export default function StudioApp() {
           elems.forEach((e, ei) => {
             if (!e?.invId) return;
             if (f.fnIdx === activeFnIdx && zk === zoneKey && ei === idx) return;
-            usedQty[e.invId] = (usedQty[e.invId] || 0) + (Number(e.qty) || 0);
-            if (f.fnIdx !== activeFnIdx) {
-              (usedElsewhere[e.invId] ||= []).push(`${f.fnType || `Function ${f.fnIdx + 1}`} · ${zk}`);
+            // Walk into kit components too — a plain item (e.g. a side table) tied up as a
+            // COMPONENT of a kit elsewhere in the deal was invisible here before, so this picker
+            // could show it as fully free (overcounting availability) and never flag it with the
+            // orange "already used elsewhere" badge, even though picking it would double-book a
+            // physical piece a kit already has claimed.
+            const topItem = (imsInventory || []).find(i => i.id === e.invId);
+            const elQty = Number(e.qty) || 0;
+            if (topItem && elQty > 0) {
+              walkKitUnits(topItem, elQty, imsInventory, e.kitOverrides, (node, nodeQty) => {
+                usedQty[node.id] = (usedQty[node.id] || 0) + nodeQty;
+                if (f.fnIdx !== activeFnIdx) {
+                  (usedElsewhere[node.id] ||= []).push(`${f.fnType || `Function ${f.fnIdx + 1}`} · ${zk}`);
+                }
+              });
+            } else {
+              usedQty[e.invId] = (usedQty[e.invId] || 0) + elQty;
+              if (f.fnIdx !== activeFnIdx) {
+                (usedElsewhere[e.invId] ||= []).push(`${f.fnType || `Function ${f.fnIdx + 1}`} · ${zk}`);
+              }
             }
           });
         });
@@ -10388,10 +10503,13 @@ export default function StudioApp() {
           const netBlocksForDate = netOwnReservedBlocksLive(blocksForDate, it.id, blocksDetailForDate, eo?.id);
           const free = Math.max(0, Math.min(getStudioAvailable(it, netBlocksForDate), availableAtVenue(fvCfgForRepeat, pickerVenue, it)) - (usedQty[it.id] || 0));
           return { id: it.id, name: it.name, photo: (Array.isArray(it.photoUrls) && it.photoUrls[0]) || it.img || "", free, total: Number(it.qty) || 0, usedIn: usedElsewhere[it.id] || [], venueSlack: _slack, unit: it.unit || "",
-            // Out of stock AND can't be made in production (IMS Inventory's "Can be made" checkbox) —
-            // genuinely unpickable here, not just a cost%-priced shortfall. StudioModals.jsx's picker
-            // disables the card instead of letting it be selected only to price wrong later.
-            canMake: canFulfillShortfall(it),
+            // Out of stock AND can't be made in production (IMS Inventory's "Can be made" checkbox,
+            // or not enough production lead time left before `date`) — genuinely unpickable here,
+            // not just a cost%-priced shortfall. StudioModals.jsx's picker disables the card instead
+            // of letting it be selected only to price wrong later. No asOfDate: picking something
+            // here is itself a brand-new commitment happening right now, so it's judged against the
+            // live, real "today" — never a frozen stamp, since nothing's been added yet.
+            canMake: canFulfillShortfall(it, date),
             price: opts?.rateFn ? opts.rateFn(it)
               : opts?.priceMode === "cost" ? (Number(it.cost) || 0)
               : opts?.priceMode === "rental" ? imsField.rentalCost(it)
@@ -10409,6 +10527,39 @@ export default function StudioApp() {
       setAvailModal(m => (m && m.zoneKey === zoneKey && m.idx === idx) ? { ...m, loading: false, items } : m);
     } catch { setAvailModal(m => m ? { ...m, loading: false } : m); }
   }, [imsInventory, activeFnMeta, clientDate, loadAvailability, getStudioAvailable, rcFactorByKey, zoneConfig, venue, guestPriceMultiplier, hideDiscountFromClient, fvCfgForRepeat, dealCheckData, studioFloralData, collectAllFunctionData, activeFnIdx, eventOrders, activeClientId, clientName]);
+  // Opens the availability picker straight from the pre-Sold out-of-stock gate (StudioModals.jsx's
+  // oosGateModal), for a flagged row {fnIdx, zoneKey, idx, invId, name} — instead of the old "Go
+  // fix" that only switched tabs and left the salesperson to find the element by hand.
+  // openAvailModal's own saveAvailPick writes straight into THIS flagged element's zoneElements
+  // entry, which only exists on whichever function is currently active — so a row belonging to a
+  // DIFFERENT function must wait for that switch to actually land (next render) before the picker
+  // opens, or the pick would be written into the wrong function's build. oosFixPending carries the
+  // row across that one-render gap; the effect below fires once activeFnIdx catches up to it.
+  const openOosFix = useCallback((f) => {
+    oosGateStashRef.current = oosGateModal;
+    setOosGateModal(null);
+    if (f.fnIdx === activeFnIdx) {
+      openAvailModal(f.zoneKey, f.idx, { invId: f.invId, name: f.name }, null);
+    } else {
+      setOosFixPending(f);
+      setActiveFnIdx(f.fnIdx);
+    }
+  }, [activeFnIdx, openAvailModal, oosGateModal]);
+  useEffect(() => {
+    if (oosFixPending && oosFixPending.fnIdx === activeFnIdx) {
+      const f = oosFixPending;
+      setOosFixPending(null);
+      openAvailModal(f.zoneKey, f.idx, { invId: f.invId, name: f.name }, null);
+    }
+  }, [activeFnIdx, oosFixPending, openAvailModal]);
+  // Brings the gate list back once its own inline pick finishes (saved or cancelled either way),
+  // so the salesperson can keep working through the rest of the flagged rows in one sitting.
+  useEffect(() => {
+    if (!availModal && oosGateStashRef.current) {
+      setOosGateModal(oosGateStashRef.current);
+      oosGateStashRef.current = null;
+    }
+  }, [availModal]);
   const saveAvailPick = useCallback(() => {
     if (!availModal) return;
     const { zoneKey, idx, selectedId, items, onPick } = availModal;
@@ -11150,6 +11301,11 @@ export default function StudioApp() {
     const fnsToProcess = fnIdxFilter == null ? allFns : allFns.filter((_, i) => i === fnIdxFilter);
     const newCards = { ...dcCards };
     const newZoneState = { ...dcZoneState };
+    // Seeded (not overwritten) from Build's own el.kitOverrides inside runSpec below, per card,
+    // only when this card has no kit edit of its own yet — see the kitOverrides comment on the
+    // spec object in getCardSpecsForZone.
+    const newKitEdits = { ...dcKitEdits };
+    let kitEditsSeeded = false;
     const matchedItemIds = new Set();
     // Every fnIdx actually processed this run gets its current valid cardKey set recorded here —
     // read by the final merge below to stop it resurrecting a manual-swap card whose underlying
@@ -11164,6 +11320,7 @@ export default function StudioApp() {
       const fnIdx = fnIdxFilter == null ? fi : fnIdxFilter;
       if (!fn || !fn.enabledEls) continue;
       newCards[fnIdx] = { ...(newCards[fnIdx] || {}) };
+      newKitEdits[fnIdx] = { ...(newKitEdits[fnIdx] || {}) };
       newZoneState[fnIdx] = { ...(newZoneState[fnIdx] || {}) };
       const enabledZoneKeys = Object.keys(fn.enabledEls).filter(k => fn.enabledEls[k]);
       // Card specs come straight from the CURRENT build (getCardSpecsForZone(zoneElements)). Build the
@@ -11292,7 +11449,16 @@ export default function StudioApp() {
             const pItem = inventory.find(i => i.id === primary.imsId);
             if (pItem && Array.isArray(pItem.subItems) && pItem.subItems.length) {
               const edited = dcKitEdits[fnIdx]?.[spec.cardKey];
-              const comps = Array.isArray(edited) ? edited : pItem.subItems;
+              // No Deal-Check-side edit yet — seed one straight from Build's own el.kitOverrides
+              // (carried on spec.kitOverrides), so this card's parts list — and everything that
+              // reads dcKitEdits downstream, including the deptInv/Dept-Ops Kit detail page — already
+              // matches what was actually configured in Build instead of the kit's generic default.
+              // A real Deal-Check edit (`edited`) always wins and is never touched here.
+              if (!edited && Array.isArray(spec.kitOverrides) && spec.kitOverrides.length) {
+                newKitEdits[fnIdx][spec.cardKey] = spec.kitOverrides;
+                kitEditsSeeded = true;
+              }
+              const comps = edited || (Array.isArray(spec.kitOverrides) ? spec.kitOverrides : pItem.subItems);
               comps.forEach(cp => { if (cp?.itemId) matchedItemIds.add(cp.itemId); });
             }
           }
@@ -11340,6 +11506,7 @@ export default function StudioApp() {
       return merged;
     });
     setDcZoneState(newZoneState);
+    if (kitEditsSeeded) setDcKitEdits(newKitEdits);
     // §26 — Add artificial flower allocated item IDs to soft-holds
     Object.values(dcArtFlowerAlloc).forEach(allocs => {
       (allocs || []).forEach(a => { if (a.itemId) matchedItemIds.add(a.itemId); });
@@ -11421,7 +11588,7 @@ export default function StudioApp() {
       ? `Deal Check ready · ${cardsUnmatched} item${cardsUnmatched === 1 ? "" : "s"} couldn't be matched to IMS — please check`
       : "Deal Check ready", "green");
     return { ok: true, summary: { zonesProcessed, cardsResolved, cardsAi, cardsNameMatch, cardsUnmatched } };
-  }, [activeClientId, clientLedger, dcRunCounter, dcCards, dcZoneState, floralHardPropMap, softHolds, collectAllFunctionData, clientDate, authUser, showMsg, rcItems, trussAlloc, dealCheckData, writeStudioTrussSoftHolds, reconcileSoldInventoryBlocks]);
+  }, [activeClientId, clientLedger, dcRunCounter, dcCards, dcZoneState, dcKitEdits, floralHardPropMap, softHolds, collectAllFunctionData, clientDate, authUser, showMsg, rcItems, trussAlloc, dealCheckData, writeStudioTrussSoftHolds, reconcileSoldInventoryBlocks]);
   useEffect(() => { runDealCheckGenerateRef.current = runDealCheckGenerate; });
 
   // Fill Deal Check from the build as soon as it opens, deterministically. The Generate button that
@@ -11729,7 +11896,7 @@ export default function StudioApp() {
     dcArtFlowerAlloc, setDcArtFlowerAlloc, dcArtFlowerAllocSrc, setDcArtFlowerAllocSrc, dcArtFlowerModal, setDcArtFlowerModal, dcFloralColorPrefs, setDcFloralColorPrefs, dcPrefModal, setDcPrefModal,
     dcCustomItems, setDcCustomItems: setDcCustomItemsAndFlush, dcCustomModal, setDcCustomModal,
     availModal, setAvailModal, openAvailModal, saveAvailPick, saveAvailSplit,
-    oosGateModal, setOosGateModal,
+    oosGateModal, setOosGateModal, openOosFix,
     dcSwapSearch, setDcSwapSearch, dcSwapPicked, setDcSwapPicked, dcSwapMode, setDcSwapMode, dcSwapSplitQty, setDcSwapSplitQty,
     // pricing helpers
     rcIsSMB, buildZoneConfig, getFloralMode, applyFloralRatio, getElPrice, getElPriceForFn, calcElsCost, calcElsCostForFn, rcCostPctForSub,
