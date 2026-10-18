@@ -1926,7 +1926,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     );
     if (t.kind === "pillars") return (
       <div className="mb-1.5">
-        <div className="text-[13px] text-gray-600">🏗️ {t.total} pillar(s){t.zoneP ? ` — ${t.zoneP} from truss tool${t.recipeP ? `, ${t.recipeP} from build` : ""}` : ""} → range → <b>{t.result}</b></div>
+        {/* "→ range →" was the internal name for "more pillars means more hands, in steps" — a
+            lookup table of thresholds, not a concept a dept head needs named. Just state the pillar
+            count and the crew it calls for. */}
+        <div className="text-[13px] text-gray-600">🏗️ <b className="text-gray-900">{t.total}</b> pillar{t.total === 1 ? "" : "s"} to put up → <b className="text-gray-900">{t.result}</b> Truss Labour needed</div>
         {Array.isArray(t.rows) && t.rows.length > 0 && renderMpNameValueRows(t.rows.map(r => ({ sub: r.sub, value: r.count })), "Pillars")}
       </div>
     );
@@ -1966,17 +1969,31 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
             </div>
           </div>
         )}
-        {t.rftTotal > 0 && <div className="mt-1 text-[12.5px] text-gray-500">{t.rftTotal} ft of wrap, {t.rftPerWorker} ft per worker → {t.rftLabour} worker{t.rftLabour === 1 ? "" : "s"}</div>}
+        {/* The zone table above shows WHERE the canopy/wrap work is; this line is the actual sum
+            that gets you to the headline number — without it, "canopy team 3" and "108 ft → 2
+            workers" just sit there as two unconnected facts instead of visibly adding to the 5
+            at the top. */}
+        <div className="mt-1 text-[12.5px] text-gray-500">
+          {t.topTotal > 0 && <>{t.topTotal} for the canopy{t.rftLabour > 0 ? " + " : ""}</>}
+          {t.rftLabour > 0 && <>{t.rftLabour} to wrap {t.rftTotal} ft of fabric ({t.rftPerWorker} ft per worker)</>}
+          {(t.topTotal > 0 || t.rftLabour > 0) && <> = <b className="text-gray-700">{t.result}</b> total</>}
+        </div>
       </div>
     );
     // Plain-language, dept-head-facing version — no formulas (base/situational multiplier/floor
     // comparisons). Those numbers are real but meaningless to someone who isn't reading the code;
-    // all a head needs is "this many people, because of these items".
+    // all a head needs is "this many people, because of these items". "Labours" is always the
+    // SHARED, event-wide crew (never one department's own) — said explicitly, because the number
+    // here otherwise reads like it's this department's own headcount, and the "X of Y" share line
+    // right below it (outside this box) is the only place that actually says whose slice is whose.
+    // Without "across today's whole event" spelled out, a department whose own share happened to
+    // round to the same number as the total (small booking, high share) had no way to tell the two
+    // apart at a glance.
     if (t.kind === "labours") return (
       <div className="mb-1.5">
         <div className="rounded-lg bg-amber-50/70 ring-1 ring-amber-200/70 px-2.5 py-1.5 text-[13.5px] text-gray-700">
           <span aria-hidden="true" className="text-amber-500 mr-1">⚡</span>
-          <b className="text-amber-700">{t.result} labourer{t.result === 1 ? "" : "s"}</b> needed this day
+          <b className="text-amber-700">{t.result} labourer{t.result === 1 ? "" : "s"}</b> needed across today's whole event (shared by every department)
         </div>
         {Array.isArray(t.heavyRows) && t.heavyRows.length > 0 && (
           <div className="mt-1">
