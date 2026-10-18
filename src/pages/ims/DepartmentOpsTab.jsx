@@ -2734,13 +2734,15 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       if (it.isKit && Array.isArray(it.components) && it.components.length) {
         const kInv = (it.invId && invById.get(String(it.invId))) || invByName.get(String(it.name || "").trim().toLowerCase()) || null;
         // The held quantity is the kit's own count; the parts under it are already totals for all of them.
-        kitBlocks.push({ name: it.name, ours: true, qty: Number(it.qty) || zoneQtyFor(it.name), photo: invPhoto(kInv, it), zones: zonesFor(it.name), parts: it.components.map(c => ({ name: c.name, qty: c.qty })) });
+        // Each part carries its own photo (its inventory item's, else the one Deal Check sent) so the
+        // kit's parts list shows what each piece looks like, not just its name.
+        kitBlocks.push({ name: it.name, ours: true, qty: Number(it.qty) || zoneQtyFor(it.name), photo: invPhoto(kInv, it), zones: zonesFor(it.name), parts: it.components.map(c => ({ name: c.name, qty: c.qty, photo: invPhoto(c.imsId ? invById.get(String(c.imsId)) : null, c) })) });
       }
     });
     [...partsByKit.values()].forEach(parts => {
       const label = String(parts[0]?.fromKit || "").trim();
       if (!label || kitBlocks.some(k => String(k.name).trim().toLowerCase() === label.toLowerCase())) return;
-      kitBlocks.push({ name: label, ours: false, qty: zoneQtyFor(label), photo: invPhoto(invByName.get(label.toLowerCase()) || null, null), zones: zonesFor(label), parts: parts.map(p => ({ name: p.name, qty: p.qty })) });
+      kitBlocks.push({ name: label, ours: false, qty: zoneQtyFor(label), photo: invPhoto(invByName.get(label.toLowerCase()) || null, null), zones: zonesFor(label), parts: parts.map(p => ({ name: p.name, qty: p.qty, photo: invPhoto(p.invId ? invById.get(String(p.invId)) : null, p) })) });
     });
     // kitBlocks (name → full parts list, "ours"/zones) now only feeds zoneDetailPages' lookup
     // below (kitBlocksByName) — it no longer builds a standalone "What is inside each kit" page of
@@ -2761,7 +2763,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         <div class="kb-t"><div class="kb-nm">${icon} ${esc(name)}</div></div>
         ${qty ? `<div class="kb-z kb-q"><div class="kb-zk">Qty</div><div class="kb-zv">${esc(qty)}${unit ? " " + esc(unit) : ""}</div></div>` : ""}
       </div>
-      <ul class="kb-l${cols === 1 ? " one" : ""}">${parts.map(p => `<li><i class="kb-x"></i><span>${esc(p.name)}</span><i class="kb-d"></i><b>${esc(p.qty)}${p.unit ? ` ${esc(p.unit)}` : ""}</b></li>`).join("")}</ul>
+      <ul class="kb-l${cols === 1 ? " one" : ""}">${parts.map(p => `<li><i class="kb-x"></i>${p.photo ? `<i class="kb-p" style="${bgCss(p.photo, 40)}" ${bgData(p.photo, 40)}></i>` : ""}<span>${esc(p.name)}</span><i class="kb-d"></i><b>${esc(p.qty)}${p.unit ? ` ${esc(p.unit)}` : ""}</b></li>`).join("")}</ul>
     </div>`; };
     // One page (or more, if a zone's own recipes+kits don't fit one sheet) per zone, built right
     // after that zone's card pages in the loop below — never bundled with any OTHER zone's.
@@ -3139,6 +3141,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   .kb-l li b{flex-shrink:0;font-size:11.5px;font-weight:700;font-variant-numeric:tabular-nums}
   .kb-d{flex:1 1 auto;min-width:12px;border-bottom:1px dotted #C7BFAC;transform:translateY(-3px)}
   .kb-x{width:11px;height:11px;border:1.5px solid #1A1A1A;border-radius:3px;flex-shrink:0;background:#fff;align-self:center}
+  /* A kit part's photo — row-height, so a parts list with photos lays out exactly as one without. */
+  .kb-p{width:22px;height:22px;border-radius:5px;flex-shrink:0;background:#fff center/cover no-repeat;border:1px solid #E6E1D5;align-self:center}
   /* ── THE PAGE PATTERN ──
      A faint gold dot grid behind each zone page, and gold corner brackets echoing the cover's.
      The dots are an SVG tile rather than a CSS radial-gradient: html2canvas draws gradients once,
