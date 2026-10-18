@@ -1452,6 +1452,23 @@ export default function DealCheckOverlay({ ctx }) {
               };
               // Per-function calculation trace (the "how" for each day) — mirrors manpowerPlanForBooking's
               // trace shapes so Dept Ops' renderMpTrace can show each day's own bifurcation table.
+              // Shared by the Truss Labour and Fabric Bangali traces below — both derive crew from
+              // a zone's truss shape, and dept heads asked to see that shape/size/masking alongside
+              // the pillar or sqft numbers instead of just a bare zone name.
+              const zoneShapeMeta = (z, config, spanFt) => {
+                const cfgLabel = config === "u_only" ? "U Truss" : config === "half_box" ? "Half Box" : "Full Box";
+                const dL = Number(z.dims?.L) || 0, dW = Number(z.dims?.W) || 0, dH = Number(z.dims?.H) || 0;
+                const dims = config === "full_box"
+                  ? `${dL}×${dW}${dH ? "×" + dH : ""} ft`
+                  : `${Math.round((spanFt || dL || dW) * 100) / 100} ft span${dH ? ` × ${dH} ft high` : ""}`;
+                const mw = z.mkWalls || {};
+                let masking = null;
+                if (z.mkOn) {
+                  const walls = config === "u_only" ? (mw.back ? ["back"] : []) : [mw.back && "back", mw.left && "left", mw.right && "right"].filter(Boolean);
+                  if (walls.length) masking = `Masking: ${walls.join(", ")}`;
+                }
+                return { shape: cfgLabel, dims, masking: masking || "No masking" };
+              };
               const traceOf = (fn, type) => {
                 if (type === "Flowerists") {
                   const agg = {}; walkFn(fn, ({ rc, el, qty }) => {
@@ -1527,7 +1544,7 @@ export default function DealCheckOverlay({ ctx }) {
                     else if (config === "half_box") { const spanL = cfg.spanFt || dL || dW; if (z.mkOn) { if (mw.back && spanL > 0) zoneRft += spanL; if (mw.left && sideDepth > 0) zoneRft += sideDepth; if (mw.right && sideDepth > 0) zoneRft += sideDepth; } }
                     else if (config === "u_only") { const spanL = cfg.spanFt || dL || dW; if (z.mkOn && mw.back && spanL > 0) zoneRft += spanL; }
                     if (tInv) { try { const pv = calcZoneTrussPreview(z, tInv); if (pv?.batta?.rftWithBuffer) zoneRft += pv.batta.rftWithBuffer; } catch {} }
-                    if (zoneTop > 0 || zoneRft > 0) { const zLabel = zoneLabelsD[zk]?.label || (fn.customZones || []).find(cz2 => cz2.id === zk)?.name || zk; zones.push({ zone: zLabel, topSqft: Math.round(dL * dW), topLabour: zoneTop, rft: Math.round(zoneRft) }); }
+                    if (zoneTop > 0 || zoneRft > 0) { const zLabel = zoneLabelsD[zk]?.label || (fn.customZones || []).find(cz2 => cz2.id === zk)?.name || zk; zones.push({ zone: zLabel, topSqft: Math.round(dL * dW), topLabour: zoneTop, rft: Math.round(zoneRft), ...zoneShapeMeta(z, config, cfg.spanFt) }); }
                     topTotal += zoneTop; rftTotal += zoneRft;
                   });
                   if (topTotal <= 0 && rftTotal <= 0) return null;
@@ -1542,7 +1559,7 @@ export default function DealCheckOverlay({ ctx }) {
                   walkFn(fn, ({ rc, qty }) => { const s = String(rc.sub || "").toLowerCase(); if (s.includes("pillar") || s.includes("column") || s.includes("truss")) { const k = rc.name || rc.sub || "item"; recipeAgg[k] = (recipeAgg[k] || 0) + qty; } });
                   let recipeP = 0; Object.values(recipeAgg).forEach(v => { recipeP += v; });
                   const zoneRows = []; let zoneP = 0;
-                  try { const tInv = dealCheckData?.trussInv; if (tInv) { const zc = fn.zoneConfig || {}, en = fn.enabledEls || {}; Object.keys(zc).forEach(zk => { if (!en[zk] || !zc[zk]) return; const pv = calcZoneTrussPreview(zc[zk], tInv); const n = (pv?.topology?.pillars || []).length; if (n > 0) { const zLabel = zoneLabelsD[zk]?.label || (fn.customZones || []).find(cz => cz.id === zk)?.name || zk; zoneRows.push({ sub: `${zLabel} (truss tool)`, count: n }); zoneP += n; } }); } } catch {}
+                  try { const tInv = dealCheckData?.trussInv; if (tInv) { const zc = fn.zoneConfig || {}, en = fn.enabledEls || {}; Object.keys(zc).forEach(zk => { if (!en[zk] || !zc[zk]) return; const z = zc[zk]; const pv = calcZoneTrussPreview(z, tInv); const n = (pv?.topology?.pillars || []).length; if (n > 0) { const zLabel = zoneLabelsD[zk]?.label || (fn.customZones || []).find(cz => cz.id === zk)?.name || zk; zoneRows.push({ sub: `${zLabel} (truss tool)`, count: n, ...zoneShapeMeta(z, pv.config, pv.spanFt) }); zoneP += n; } }); } } catch {}
                   const p = recipeP + zoneP; if (p <= 0 || !trussLabourRanges.length) return null;
                   let lab = trussLabourRanges[trussLabourRanges.length - 1]?.labour || 0; for (const r of trussLabourRanges) { if (p <= r.upTo) { lab = r.labour || 0; break; } }
                   const rows = [...Object.entries(recipeAgg).map(([name, count]) => ({ sub: name, count })), ...zoneRows];
