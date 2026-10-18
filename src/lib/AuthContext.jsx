@@ -33,12 +33,22 @@ export function AuthProvider({ children }) {
       if (active && (!row || row.active === false)) { await doLogout(); setUser(null); }
     });
     // React to auth changes (token refresh, sign-out, sign-in from another tab).
-    const { data: sub } = supabase.auth.onAuthStateChange(async (event) => {
+    // ── NEVER AWAIT SUPABASE INSIDE THIS CALLBACK ──
+    // supabase-js awaits these callbacks while it is still initialising the session, and every
+    // other call (auth.getUser, and each DB query, which first asks auth for its token) waits for
+    // that initialisation to finish. Awaiting fetchProfile() here therefore waited on itself: in a
+    // fresh tab whose stored token had expired, the start-up refresh fired TOKEN_REFRESHED, this
+    // callback blocked on getUser(), and every query in the app queued behind it — "Loading
+    // Ambria IMS…" forever until a reload (by then the token was fresh, so no event fired). The
+    // profile fetch is pushed out of the callback with setTimeout, as Supabase's docs prescribe.
+    const { data: sub } = supabase.auth.onAuthStateChange((event) => {
       if (!active) return;
       if (event === "SIGNED_OUT") { setUser(null); return; }
       if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") {
-        const profile = await fetchProfile();
-        if (active && profile) setUser(profile);
+        setTimeout(async () => {
+          const profile = await fetchProfile();
+          if (active && profile) setUser(profile);
+        }, 0);
       }
     });
     return () => { active = false; sub?.subscription?.unsubscribe?.(); };
