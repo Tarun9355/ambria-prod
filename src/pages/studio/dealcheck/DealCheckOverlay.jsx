@@ -623,6 +623,11 @@ export default function DealCheckOverlay({ ctx }) {
           // each sub-category's labour charged to ITS department. Populated in the manpower block below.
           const labourUsageByDept = {}; DEPTS.forEach(d => { labourUsageByDept[d] = 0; });
           let labourUsageTotal = 0, labourUsageMode = false;
+          // Per-function usage totals ({ [fi]: { byDept, total } }), populated in the manpower block
+          // below — declared up here (like labourUsageTotal/labourUsageMode above it) purely so
+          // calcTier3/traceOf's per-function usage-mode floor can close over it before it's assigned;
+          // nothing reads it before that assignment runs.
+          let labourUsageByFn = {};
           // Per-DAY usage split: each day's Labour cost is routed to departments by THAT day's element
           // usage. labourDeptCost = Σ-over-days(dayCost × dayFrac[dept]); labourShareByDayDept exposes
           // the per-day fraction so Dept Ops can show each day's bifurcation + this dept's share.
@@ -1365,8 +1370,21 @@ export default function DealCheckOverlay({ ctx }) {
                   // Net fixed-venue standing stock before heavy-element labour (fixed venues have installed pieces).
                   const reduction = standingReductionBySubcat(fvCfg, venueName, (dcCards || {})[fns.indexOf(fn)], dealCheckData?.inventory || []);
                   let he = 0; heavyElementRanges.forEach(her => { const count = Math.max(0, (lookupBySubcat(sc, her.subCat)||0) - (lookupBySubcat(reduction, her.subCat)||0)); he += heavyExtraLabour(her, count); });
-                  // Usage-based labour (Σ qty÷per-unit) with the venue-min (adj+he) as a floor.
-                  return labourUsageMode ? Math.max(adj + he, Math.ceil(labourUsageTotal)) : (adj + he);
+                  // Usage-based labour (Σ qty÷per-unit) as a floor — but THIS FUNCTION's own usage total
+                  // (labourUsageByFn[fns.indexOf(fn)]), not labourUsageTotal (the WHOLE BOOKING's combined
+                  // total, every function's usage summed together). That mix-up has been here since this
+                  // floor was introduced (09dfbd7): because labourUsageTotal is one shared number for the
+                  // entire multi-day event, EVERY function — even a 20-minute Mata Ki Chowki puja with one
+                  // sofa — got floored up to the crew count the WHOLE wedding needs combined. The day-wise
+                  // rollup then takes the busiest function each day as that day's headcount, so with every
+                  // function floored to the same inflated number, every day showed that same number too —
+                  // confirmed live: a booking whose own simple "whole event" estimate was 10 Labours was
+                  // actually billing 17 per day, for every single day, because the floor had nothing
+                  // function-specific left to compare against. labourUsageByFn (below) already computes
+                  // the matching per-function figure for the department-split math — this just reads the
+                  // same number instead of its booking-wide sum.
+                  const fnUsageTotal = (labourUsageByFn[fns.indexOf(fn)] || {}).total || 0;
+                  return labourUsageMode ? Math.max(adj + he, Math.ceil(fnUsageTotal)) : (adj + he);
                 };
                 if (type === "Labours") return calcTier3(fn);
                 if (type === "Fabric Bangali") {
@@ -1474,7 +1492,15 @@ export default function DealCheckOverlay({ ctx }) {
                   // break down there), only the add-on is item-driven.
                   const heavyRows = []; let he = 0;
                   heavyElementRanges.forEach(her => { const count = Math.max(0, (lookupBySubcat(sc, her.subCat) || 0) - (lookupBySubcat(reduction, her.subCat) || 0)); const extra = heavyExtraLabour(her, count); if (extra > 0) heavyRows.push({ sub: her.subCat, count, extra }); he += extra; });
-                  return { kind: "labours", venueMin: vm, mult: sm, heavy: he, heavyRows, result: adj + he };
+                  // Same per-function usage-mode floor calcTier3 applies (see its own comment) — without
+                  // this, the "how" shown here stayed stuck at the small un-floored venueMin+heavy number
+                  // while the real headcount actually billed (calcPpl, floored at this function's own
+                  // usage total) was a different, usually much bigger, figure — the derivation on screen
+                  // didn't explain the number next to it at all.
+                  const fnUsageTotal = (labourUsageByFn[fns.indexOf(fn)] || {}).total || 0;
+                  const usageFloor = labourUsageMode ? Math.ceil(fnUsageTotal) : 0;
+                  const result = Math.max(adj + he, usageFloor);
+                  return { kind: "labours", venueMin: vm, mult: sm, heavy: he, heavyRows, result, ...(usageFloor > adj + he ? { usageFloor, usageTotal: Math.round(fnUsageTotal * 100) / 100 } : {}) };
                 }
                 if (type === "Fabric Bangali") {
                   // Grouped by element — same per-contributor rows as manpowerPlanForBooking's own
@@ -1520,7 +1546,7 @@ export default function DealCheckOverlay({ ctx }) {
               // subCatBatches config needed. Each sub-category's labour is routed to its dept via catToDept.
               const _labBatches = {}; (heavyElementRanges || []).forEach(her => { if (her && her.subCat && Number(her.perCount) > 0) _labBatches[her.subCat] = Number(her.perCount); });
               labourUsageMode = Object.keys(_labBatches).length > 0;
-              const labourUsageByFn = {};
+              labourUsageByFn = {};
               fns.forEach((fn, fi) => {
                 const byDept = {}; let total = 0;
                 if (labourUsageMode) walkFn(freshFnMP(fn), ({ rc, qty }) => { const b = lookupBySubcat(_labBatches, itemImsSubcat(rc)); if (!b) return; const need = (Number(qty) || 0) / b; if (need <= 0) return; const dp = catToDept(rc.cat); byDept[dp] = (byDept[dp] || 0) + need; total += need; });

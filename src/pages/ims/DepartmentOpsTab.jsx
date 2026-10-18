@@ -1944,6 +1944,13 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           {t.heavy > 0 && <><span className="text-gray-400">+</span><span><b className="text-gray-900">{t.heavy}</b> heavy-element add-on</span></>}
           <span className="ml-auto font-bold text-amber-700">= {t.result} Labours</span>
         </div>
+        {/* usageFloor only appears when IMS's usage-based split (Heavy Element Add-ons' "1 labour
+            per N units" ratios) computed a BIGGER number for this function than the venue-min +
+            heavy-element math above — the count shown is this floor, not the smaller figure the
+            line above would otherwise suggest, so say so rather than leaving the jump unexplained. */}
+        {t.usageFloor != null && (
+          <div className="mt-1 text-[12px] text-amber-700">↳ raised to {t.usageFloor} — this function's own usage-based need (qty ÷ per-unit across its heavy sub-categories ≈ {t.usageTotal}) ran higher than the venue-min + heavy-element total above.</div>
+        )}
         {/* The base figure above is a flat venue minimum — nothing item-level to break down there,
             same as Supervisors' flat "1 per booking". The heavy-element ADD-ON on top of it IS
             item-driven (each configured sub-category range contributes its own extra labour), so
