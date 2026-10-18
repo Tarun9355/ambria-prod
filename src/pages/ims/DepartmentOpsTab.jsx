@@ -1965,12 +1965,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
        photo an item stands. */
     const invById = new Map((inventory || []).map(i => [String(i.id), i]));
     const invByName = new Map((inventory || []).map(i => [String(i.name || "").trim().toLowerCase(), i]));
-    const heldByInv = new Map(blockedItemsGrouped.filter(b => b.invId).map(b => [String(b.invId), b]));
-    const heldByName = new Map(blockedItemsGrouped.map(b => [String(b.name || "").trim().toLowerCase(), b]));
-    // blockedItemsGrouped is scoped to whichever single `dept` happened to be selected before
-    // Export was clicked — exportPdf's combined pass never changes it. Fine for everything else
-    // here (the zone-card loop below is already gated !combined wherever it reads this dept-scoped
-    // data), but the Kits reference page needs an item list that actually spans every department —
+    // Every department's items — not just whichever single `dept` happened to be selected before
+    // Export was clicked (exportPdf's combined pass never changes it). Needed for the combined book
+    // so a kit whose OWN shell line lives on a DIFFERENT department's sheet than the zone it sits
+    // in (e.g. a "Floral" zone item whose kit-shell is filed under Furniture) is still found —
     // owner-reported: kits were still missing from the all-departments book after Recipe/Transport
     // were fixed to span every department.
     const allDeptItems = () => {
@@ -1993,6 +1991,13 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       return out;
     };
     const kitSourceItems = combined ? allDeptItems() : blockedItemsGrouped;
+    // heldByInv/heldByName used to always read blockedItemsGrouped (single-dept-scoped) even in
+    // combined mode — the zone-card merge loop below does gate "mine" on `combined`, but it still
+    // reads `held` unconditionally for the item's kit/photo/dims/recipe fields, so a kit filed on
+    // another department's sheet silently looked un-kitted (held undefined -> kit: 0) instead of
+    // missing just its own card. Rebased on kitSourceItems, which is already all-departments-aware.
+    const heldByInv = new Map(kitSourceItems.filter(b => b.invId).map(b => [String(b.invId), b]));
+    const heldByName = new Map(kitSourceItems.map(b => [String(b.name || "").trim().toLowerCase(), b]));
     // ── WHERE A KIT'S PARTS HIDE ──
     // Deal Check splits a kit across departments by each PART's own category, so Floral ends up
     // holding a terracotta element bolted to a coffee table that Furniture owns. The zone lists
