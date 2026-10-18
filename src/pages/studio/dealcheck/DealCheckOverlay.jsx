@@ -1664,6 +1664,18 @@ export default function DealCheckOverlay({ ctx }) {
                       let trace = null, drivenBy = null;
                       if (d.phase === "event" && d.fns.length) { let bf = d.fns[0], bc = -1; d.fns.forEach(fn => { const c = peopleByFn[t][fns.indexOf(fn)] || 0; if (c > bc) { bc = c; bf = fn; } }); trace = traceOf(bf, t); drivenBy = bf?.fnType || null; }
                       else if (d.phase === "minusOne") { let bf = fns[0], bc = -1; fns.forEach((fn, fi) => { const c = peopleByFn[t][fi] || 0; if (c > bc) { bc = c; bf = fn; } }); trace = traceOf(bf, t); drivenBy = bf?.fnType || null; }
+                      // Every function behind this day, each with its own rows — Dept Ops shows them
+                      // side by side (one column per function), not just the busiest one's.
+                      // Display-only extra, so its own try: a failure here must never take down the
+                      // enclosing manpower rollup (whose catch would zero every department's crew).
+                      if (trace && trace.kind === "tier2") {
+                        try {
+                          const dayFns = d.phase === "event" ? (d.fns || []) : d.phase === "minusOne" ? (fns || []) : [];
+                          // A function with nothing for this crew type still gets its (empty) column.
+                          const byFn = dayFns.map(fn => { const tr = traceOf(fn, t); return tr && tr.kind === "tier2" ? { fn: fn.fnType || "Function", shift: fn.fnShift || "", rows: tr.rows, result: tr.result } : { fn: fn.fnType || "Function", shift: fn.fnShift || "", rows: [], result: 0 }; });
+                          if (byFn.length) trace = { ...trace, byFn };
+                        } catch (e) { console.warn("[mpSchedule] per-function trace failed", e); }
+                      }
                       // winCount → snapshot so Dept Ops + On-Site inherit the same per-shift crew (they fall
                       // back to schedule.winCount until a head overrides it).
                       mpSchedule[t].push({ date: d.date, phase: d.phase, count: ppl, windows: wins.length, windowIds: wins, winCount: winCountMap, trace, drivenBy });

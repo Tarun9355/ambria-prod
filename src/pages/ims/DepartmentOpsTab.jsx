@@ -839,8 +839,97 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   // exactly manpowerDetail[dept] — even if empty (a dept with no crew share, e.g. Furniture with no
   // income, must show 0 to match its income card, NOT the global plan). Only with no snapshot at all
   // do we fall back to the global plan / defaults.
+  const mpFns = Array.isArray(sel?.functionsDetail) ? sel.functionsDetail : [];
+  const SHIFT_START_HOUR = { brunch: 11, morning: 9, lunch: 12, sundowner: 16, evening: 18, dinner: 20, night: 20, latenight: 22, "late night": 22 };
+  const slotHours = (label) => {
+    const m = [...String(label || "").matchAll(/(\d{1,2})(?::(\d{2}))?\s*(AM|PM)/gi)].map(x => (Number(x[1]) % 12) + (x[3].toUpperCase() === "PM" ? 12 : 0) + (Number(x[2]) || 0) / 60);
+    return m.length ? { start: m[0], end: m.length > 1 ? m[1] : null } : null;
+  };
+  // Flowerists rows for ONE function, worked out here from its own zone lists — the same walk Deal
+  // Check's traceOf("Flowerists") does (enabled zones, qty > 0, kits walked into their parts, a
+  // florals item matched to its recipe by patternId or sub-category, medium size, grouped by name +
+  // units-per-flowerist). Lets a day show every function's column even when the order was synced
+  // before Deal Check started sending trace.byFn.
+  const invByIdMp = useMemo(() => new Map((inventory || []).map(i => [i.id, i])), [inventory]);
+  const flowerTraceForFn = (fn) => {
+    const agg = {};
+    const add = (rc, el, qty) => {
+      if (String(rc.cat || "").toLowerCase() !== "florals") return;
+      let pat = el.patternId ? flowerPatterns.find(p => p.id === el.patternId) : null;
+      if (!pat) pat = matchFlowerPattern({ subcategory: rc.sub, name: rc.name }, flowerPatterns);
+      if (!pat) return;
+      const c = (pat.sizes || {}).medium;
+      const upf = Number(c?.unitsPerFlowerist || 0);
+      if (upf > 0) { const k = (rc.name || "flower") + "|" + upf; if (!agg[k]) agg[k] = { sub: rc.name || "flower", batch: upf, count: 0 }; agg[k].count += qty; }
+    };
+    const en = fn?.enabledEls || {}, ze = fn?.elements || {};
+    Object.keys(en).forEach(zk => { if (!en[zk]) return; (ze[zk] || []).forEach(el => {
+      const qty = el?.qty || 0; if (qty <= 0) return;
+      const inv = el.invId ? invByIdMp.get(el.invId) : null;
+      if (inv) {
+        if (Array.isArray(inv.subItems) && inv.subItems.length > 0) walkKitUnits(inv, qty, inventory || [], el.kitOverrides, (node, nodeQty) => add({ name: node.name, cat: node.cat || node.category || "", sub: node.subCat || node.subcategory || "" }, el, nodeQty));
+        else add({ name: inv.name, cat: inv.cat || inv.category || "", sub: inv.subCat || inv.subcategory || "" }, el, qty);
+        return;
+      }
+      if (el.patternId) add({ name: el.name || "", cat: "florals", sub: "" }, el, qty);
+    }); });
+    const rows = Object.values(agg).map(r => ({ ...r, need: r.count / r.batch }));
+    return { fn: fn?.type || "Function", shift: fn?.shift || "", rows, result: Math.ceil(rows.reduce((s, r) => s + r.need, 0)) };
+  };
+  // ── EACH DIHARI SLOT'S DEFAULT CREW, FROM THE FUNCTIONS IT SERVES ──
+  // On an event day the crew of every function up to lunch is summed into the early slot
+  // (2 AM – 8 AM, set up before a morning/lunch start); every function after lunch — or with no
+  // shift set — into the day slot (9 AM – 6 PM); and a night function also into the night slot
+  // (6 PM – 2 AM, the event and its strike). Slots are told apart by the hours in their labels.
+  // These fill schedule day .winCount, which the cost/dihari helpers and the shift inputs already
+  // read; a per-shift count set in Deal Check (.winCount) or by the head (mpWinCount) still wins.
+  const slotRoleIds = (ids, winDefs) => {
+    let pre = null, day = null, night = null;
+    ids.forEach(id => {
+      const h = slotHours((winDefs || []).find(w => w.id === id)?.label); if (!h) return;
+      const wraps = h.end != null && h.end <= h.start;
+      if (!wraps && h.end != null && h.start < 9 && h.end <= 9) pre = pre ?? id;
+      else if (!wraps && h.start <= 12 && (h.end == null || h.end > 12)) day = day ?? id;
+      else if (h.start >= 17) night = night ?? id;
+    });
+    return { pre, day, night };
+  };
+  const fnCrewForDay = (s, d) => {
+    const t = d?.trace;
+    if (!t || t.kind !== "tier2" || d.phase !== "event") return null;
+    const fnsToday = mpFns.filter(f => String(f?.date || "").slice(0, 10) === d.date);
+    if (Array.isArray(t.byFn) && t.byFn.length) return t.byFn.map(c => ({ shift: c.shift || fnsToday.find(f => f?.type === c.fn)?.shift || "", crew: Number(c.result) || 0 }));
+    if (t.perRow && fnsToday.length) return fnsToday.map(f => ({ shift: f?.shift || "", crew: flowerTraceForFn(f).result }));
+    return null;
+  };
+  const slotDefaults = (s, d) => {
+    const fnc = fnCrewForDay(s, d); if (!fnc || !fnc.length) return null;
+    const winDefs = (dihari[s.type] && Array.isArray(dihari[s.type].windows)) ? dihari[s.type].windows : [];
+    const ov = deptData.mpWin && deptData.mpWin[s.type];
+    const ids = ov && ov[d.date] != null ? ov[d.date] : d.windowIds;
+    if (!Array.isArray(ids) || !ids.length) return null;
+    const { pre, day, night } = slotRoleIds(ids, winDefs);
+    const out = {};
+    const addTo = (id, n) => { if (id) out[id] = (out[id] || 0) + n; };
+    fnc.forEach(({ shift, crew }) => {
+      const h = SHIFT_START_HOUR[String(shift || "").trim().toLowerCase()];
+      if (h != null && h <= 12) addTo(pre || day, crew); else addTo(day || pre, crew);
+      if (h != null && h >= 18) addTo(night, crew);
+    });
+    return Object.keys(out).length ? out : null;
+  };
   const hasMpSnapshot = !!(sel?.manpowerDetail && typeof sel.manpowerDetail === "object" && Object.keys(sel.manpowerDetail).length);
-  const mpDetail = (sel?.manpowerDetail && Array.isArray(sel.manpowerDetail[dept])) ? sel.manpowerDetail[dept] : (hasMpSnapshot ? [] : null);
+  const mpDetailRaw = (sel?.manpowerDetail && Array.isArray(sel.manpowerDetail[dept])) ? sel.manpowerDetail[dept] : (hasMpSnapshot ? [] : null);
+  // autoSlots[type][date][slotId] — the function-driven default, kept so a head's own count can be
+  // checked against the default it was typed over (mpWinCount filtering below).
+  const autoSlots = {};
+  const mpDetail = Array.isArray(mpDetailRaw) ? mpDetailRaw.map(r => !Array.isArray(r?.schedule) ? r : ({
+    ...r, schedule: r.schedule.map(d => {
+      const def = slotDefaults(r, d); if (!def) return d;
+      (autoSlots[r.type] = autoSlots[r.type] || {})[d.date] = def;
+      return { ...d, winCount: { ...(d.winCount || {}), ...def } };
+    }),
+  })) : mpDetailRaw;
   const sysPlan = (Array.isArray(sel?.manpowerPlan) ? sel.manpowerPlan : []).filter(p => deptTypes.includes(p.type));
   // days = the multi-day total cost ÷ (peak crew × day rate) — so the derivation math actually adds up.
   const dayCount = (count, rate, cost) => (count > 0 && rate > 0 && cost > 0) ? Math.max(1, Math.round(cost / (count * rate))) : 1;
@@ -897,19 +986,52 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const mpWin = (deptData.mpWin && typeof deptData.mpWin === "object") ? deptData.mpWin : {};
   // Per-shift crew counts (ops on-site): deptData.mpWinCount = { [type]: { [date]: { [windowId]: count } } }.
   // Lets a single day hold different crew per shift (e.g. 3 in the day, 1 in the evening).
-  const mpWinCount = (deptData.mpWinCount && typeof deptData.mpWinCount === "object") ? deptData.mpWinCount : {};
+  // The function-driven slot default always wins: a head's per-shift count only stands while the
+  // default it was typed over (mpWinBasis, saved with it) is still the current one. Once the
+  // functions change the sum — or for a count saved before mpWinBasis existed — it is ignored.
+  const mpWinCountRaw = (deptData.mpWinCount && typeof deptData.mpWinCount === "object") ? deptData.mpWinCount : {};
+  const mpWinBasis = (deptData.mpWinBasis && typeof deptData.mpWinBasis === "object") ? deptData.mpWinBasis : {};
+  const mpWinCount = Object.fromEntries(Object.entries(mpWinCountRaw).map(([type, byDate]) => [type, Object.fromEntries(Object.entries(byDate || {}).map(([date, byWin]) => {
+    const auto = autoSlots[type] && autoSlots[type][date];
+    if (!auto) return [date, byWin];
+    const basis = (mpWinBasis[type] && mpWinBasis[type][date]) || {};
+    return [date, Object.fromEntries(Object.entries(byWin || {}).filter(([id]) => auto[id] == null || basis[id] === auto[id]))];
+  }))]));
   const dayWise = mpDayWise;
   const effDay = (r, d) => mpEffDay(r, d, mpDay);
   const showDay = (r, d) => Math.round(effDay(r, d));
   const dayOv = (r, d) => { const ov = mpDay[r.type]; return !!(ov && ov[d.date] != null && Number(ov[d.date]) !== Math.round(mpBaseDay(r, d))); };
   const effWinIds = (r, d) => { const ov = mpWin[r.type]; return ov && ov[d.date] != null ? ov[d.date] : (Array.isArray(d.windowIds) ? d.windowIds : []); };
+  // ── DIHARI SLOTS IN THE ORDER THE CREW WORKS THEM ──
+  // A day's shift slots are shown starting from the slot just before that day's first function
+  // and then round the clock: a 9 AM Mata Ki Chowki puts 2 AM–8 AM first, then 9 AM–6 PM, then
+  // 6 PM–2 AM. Slots carry only a label ("9 AM – 6 PM"), so their hours are read from it; the
+  // function's start comes from its shift. Display order only — the saved ids are untouched.
+  const firstFnHour = (date) => {
+    const hrs = mpFns.filter(f => String(f?.date || "").slice(0, 10) === date)
+      .map(f => SHIFT_START_HOUR[String(f?.shift || "").trim().toLowerCase()]).filter(h => h != null);
+    return hrs.length ? Math.min(...hrs) : 9;
+  };
+  const orderWinIds = (ids, winDefs, date) => {
+    if (!Array.isArray(ids) || ids.length < 2) return ids;
+    const hrsOf = (id) => slotHours((winDefs || []).find(w => w.id === id)?.label);
+    const fnHour = firstFnHour(date);
+    // The anchor: the slot that ends latest at or before the function starts (a slot running past
+    // midnight never ends "before" a same-day start). No such slot → plain clock order from midnight.
+    let anchor = 0, best = -1;
+    ids.forEach(id => { const h = hrsOf(id); if (h && h.end != null && h.end > h.start && h.end <= fnHour && h.end > best) { best = h.end; anchor = h.start; } });
+    const key = (id) => { const h = hrsOf(id); return h ? (h.start - anchor + 24) % 24 : 99; };
+    return [...ids].sort((a, b) => key(a) - key(b));
+  };
   const effWin = (r, d) => mpEffWindows(r, d, mpWin);
   const setMpDay = (type, date, val) => { if (!canManpower) return; saveDept({ mpDay: { ...mpDay, [type]: { ...(mpDay[type] || {}), [date]: val } } }); };
   const setMpAllDays = (type, schedule, val) => { const m = { ...(mpDay[type] || {}) }; (schedule || []).forEach(d => { m[d.date] = val; }); saveDept({ mpDay: { ...mpDay, [type]: m } }); };
   const toggleWin = (type, date, winId, curIds) => { const next = curIds.includes(winId) ? curIds.filter(x => x !== winId) : [...curIds, winId]; saveDept({ mpWin: { ...mpWin, [type]: { ...(mpWin[type] || {}), [date]: next } } }); };
   const setWinAllDays = (type, schedule, ids) => { const m = { ...(mpWin[type] || {}) }; (schedule || []).forEach(d => { m[d.date] = ids; }); saveDept({ mpWin: { ...mpWin, [type]: m } }); };
   // Set the crew for ONE shift on ONE day (per-shift split). Ensures that window is marked worked.
-  const setShiftCount = (type, date, winId, val, curIds) => { const n = Math.max(0, Number(val) || 0); const t = { ...(mpWinCount[type] || {}) }; t[date] = { ...(t[date] || {}), [winId]: n }; const patch = { mpWinCount: { ...mpWinCount, [type]: t } }; if (Array.isArray(curIds) && !curIds.includes(winId)) patch.mpWin = { ...mpWin, [type]: { ...(mpWin[type] || {}), [date]: [...curIds, winId] } }; saveDept(patch); };
+  // A cleared box (val "") drops the head's own count for that shift, so it falls back to the
+  // slot's default (Deal Check's per-shift count, else the functions it serves — slotDefaults).
+  const setShiftCount = (type, date, winId, val, curIds) => { const n = Math.max(0, Number(val) || 0); const t = { ...(mpWinCount[type] || {}) }; t[date] = { ...(t[date] || {}), [winId]: n }; if (val === "") delete t[date][winId]; const auto = autoSlots[type] && autoSlots[type][date] && autoSlots[type][date][winId]; const b = { ...(mpWinBasis[type] || {}) }; b[date] = { ...(b[date] || {}) }; if (auto != null && val !== "") b[date][winId] = auto; else delete b[date][winId]; const patch = { mpWinCount: { ...mpWinCount, [type]: t }, mpWinBasis: { ...mpWinBasis, [type]: b } }; if (Array.isArray(curIds) && !curIds.includes(winId)) patch.mpWin = { ...mpWin, [type]: { ...(mpWin[type] || {}), [date]: [...curIds, winId] } }; saveDept(patch); };
   const effShift = (r, d, winId) => { const wc = mpWinCount[r.type] && mpWinCount[r.type][d.date]; if (wc && wc[winId] != null) return Number(wc[winId]); const sc = d && d.winCount; if (sc && sc[winId] != null) return Number(sc[winId]); return Math.round(effDay(r, d)); }; // head override → Deal Check per-shift (schedule.winCount) → day count
   // Add another dihari (shift) to a day — the next unused scheme window, else a synthetic slot — so ops
   // can split a single day into e.g. 2 crew in the day shift + 1 in the evening (each shift billed).
@@ -926,7 +1048,6 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   // dismantle day right after it, and — if it is the first function — the −1 setup day. Gap days
   // belong to no single function, so they show under All functions only. Crew lines with no
   // day-wise schedule cannot be split by day, so they stay under All functions too.
-  const mpFns = Array.isArray(sel?.functionsDetail) ? sel.functionsDetail : [];
   const mpFnDate = (f) => String(f?.date || "").slice(0, 10);
   const mpFirstDate = mpFns.map(mpFnDate).filter(Boolean).sort()[0] || "";
   const mpNextDay = (iso) => { const d = new Date(iso + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + 1); return d.toISOString().slice(0, 10); };
@@ -1914,41 +2035,81 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     </div>
   );
   // Derivation box for a crew type — same pattern as Deal Check's "HOW … DERIVED".
-  const renderMpTrace = (t) => {
+  // Grid tracks for the per-function trace table: a name column + one per function (static class
+  // names so Tailwind generates them; 6 covers any realistic day).
+  const FN_GRID = {
+    1: "grid-cols-[minmax(160px,max-content)_repeat(1,minmax(120px,1fr))]",
+    2: "grid-cols-[minmax(160px,max-content)_repeat(2,minmax(120px,1fr))]",
+    3: "grid-cols-[minmax(160px,max-content)_repeat(3,minmax(120px,1fr))]",
+    4: "grid-cols-[minmax(160px,max-content)_repeat(4,minmax(120px,1fr))]",
+    5: "grid-cols-[minmax(160px,max-content)_repeat(5,minmax(120px,1fr))]",
+    6: "grid-cols-[minmax(160px,max-content)_repeat(6,minmax(120px,1fr))]",
+  };
+  const renderMpTrace = (t, drivenBy, day) => {
     if (!t) return null;
-    if (t.kind === "tier2" && Array.isArray(t.rows) && t.rows.length > 0) return (
-      <div className="mb-1.5 bg-white border rounded-lg overflow-hidden">
-        {/* ONE shared grid for the header AND every data row — a separate grid per row (the previous
-            shape) let each row size its own "auto" columns independently, so a wide header
-            ("arrangements") and a data row's short values ("5", "0.11") never agreed on where a
-            column actually sat; nothing lined up under its own header. display:contents makes each
-            row's wrapping div invisible to layout while its cells still join this ONE grid's column
-            tracks, so every row (header included) is forced to the same widths. gap-x only — a
-            gap-y here would space rows apart the way gap-2 used to only within a row. */}
-        <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-2">
-          <div className="contents">
-            <span className="px-2 py-1 bg-gray-100 text-[13px] uppercase tracking-wide text-gray-500 font-semibold">{t.perRow ? "Recipe / item" : "Sub-category"}</span>
-            <span className="px-2 py-1 bg-gray-100 text-[13px] uppercase tracking-wide text-gray-500 font-semibold text-right whitespace-nowrap">{t.countLabel || "Count"}</span>
-            <span className="px-2 py-1 bg-gray-100 text-[13px] uppercase tracking-wide text-gray-500 font-semibold text-right whitespace-nowrap">Batch</span>
-            <span className="px-2 py-1 bg-gray-100 text-[13px] uppercase tracking-wide text-gray-500 font-semibold text-right whitespace-nowrap">Need</span>
-          </div>
-          {/* Dotted leader (like a table of contents) filling whatever's left of the name column, so
-              the eye has something to follow across to this row's numbers instead of a blank gap. */}
-          {t.rows.map((tr, ti) => (
-            <div className="contents" key={ti}>
-              <div className="flex items-baseline gap-1.5 min-w-0 overflow-hidden px-2 py-0.5 text-[13px] text-gray-700">
-                <span className="truncate" title={tr.sub}>{tr.sub}</span>
-                <span aria-hidden="true" className="flex-1 min-w-2 border-b border-dotted border-gray-300 mb-[3px]" />
-              </div>
-              <span className="px-2 py-0.5 text-[13px] text-gray-700 text-right whitespace-nowrap">{tr.count}</span>
-              <span className="px-2 py-0.5 text-[13px] text-gray-400 text-right whitespace-nowrap">÷{tr.batch}</span>
-              <span className="px-2 py-0.5 text-[13px] text-gray-700 font-semibold text-right whitespace-nowrap">{tr.need.toFixed(2)}</span>
+    // One column per function behind this day (Deal Check's trace.byFn), each cell that function's
+    // own count ÷ batch = need for the row. A trace synced before byFn existed carries only the
+    // busiest function's rows, shown as that one function's column.
+    if (t.kind === "tier2" && Array.isArray(t.rows) && t.rows.length > 0) {
+      // No byFn from Deal Check yet: a Flowerists day (perRow) is rebuilt here per function.
+      const dayFns = !day ? [] : day.phase === "event" ? mpFns.filter(f => String(f?.date || "").slice(0, 10) === day.date) : day.phase === "minusOne" ? mpFns : [];
+      const localByFn = (!Array.isArray(t.byFn) && t.perRow && dayFns.length > 1) ? dayFns.map(flowerTraceForFn) : null;
+      const rawCols = Array.isArray(t.byFn) && t.byFn.length ? t.byFn : localByFn || [{ fn: drivenBy || "Function", rows: t.rows, result: t.result }];
+      // Columns in the order the functions happen, each header carrying its time. Only the shift is
+      // stored (Morning / Lunch / …), so the time shown is that shift's usual start. A function with
+      // no shift stays right after the function before it in the booking's own order.
+      const fnRec = (c) => (day ? dayFns : mpFns).find(f => (f?.type || "") === c.fn) || null;
+      const shiftOf = (c) => String(c.shift || fnRec(c)?.shift || "").trim();
+      const hourOf = (c) => SHIFT_START_HOUR[shiftOf(c).toLowerCase()];
+      let lastHour = -1;
+      const cols = rawCols
+        .map((c, i) => { const h = hourOf(c); const at = h != null ? h : lastHour + 0.01 * (i + 1); if (h != null) lastHour = h; return { ...c, _at: at }; })
+        .sort((a, b) => a._at - b._at);
+      const timeLabel = (c) => { const sh = shiftOf(c); const h = hourOf(c); if (!sh) return "time not set"; if (h == null) return sh; const hr = Math.floor(h), mm = Math.round((h - hr) * 60); return `${sh} · ${hr % 12 || 12}${mm ? ":" + String(mm).padStart(2, "0") : ""} ${hr < 12 ? "AM" : "PM"}`; };
+      const names = [];
+      cols.forEach(c => (c.rows || []).forEach(r => { if (!names.includes(r.sub)) names.push(r.sub); }));
+      const cellOf = (c, sub) => (c.rows || []).filter(r => r.sub === sub);
+      return (
+        <div className="mb-1.5 bg-white border rounded-lg overflow-x-auto">
+          {/* One shared grid for header + rows (display:contents), so every column lines up. */}
+          <div className={"grid " + (FN_GRID[cols.length] || FN_GRID[6])}>
+            <div className="contents">
+              <span className="px-2 pr-6 py-1 bg-gray-100 text-[13px] uppercase tracking-wide text-gray-500 font-semibold whitespace-nowrap">{t.perRow ? "Recipe / item" : "Sub-category"}</span>
+              {cols.map((c, ci) => <span key={ci} className="px-2 py-1 bg-gray-100 text-center border-l border-gray-200 whitespace-nowrap"><span className="block text-[13px] uppercase tracking-wide text-gray-500 font-semibold">{c.fn}</span><span className={"block text-[12px] font-semibold normal-case " + (shiftOf(c) ? "text-blue-700" : "text-amber-600")}>{timeLabel(c)}</span></span>)}
             </div>
-          ))}
+            {names.map((sub, ri) => (
+              <div className="contents" key={ri}>
+                <div className="flex items-baseline gap-1.5 min-w-0 overflow-hidden px-2 py-0.5 text-[13px] text-gray-700">
+                  <span className="truncate" title={sub}>{sub}</span>
+                  <span aria-hidden="true" className="flex-1 min-w-2 border-b border-dotted border-gray-300 mb-[3px]" />
+                </div>
+                {cols.map((c, ci) => {
+                  const rs = cellOf(c, sub);
+                  return (
+                    <span key={ci} className="px-2 py-0.5 text-[13px] text-center border-l border-gray-100 whitespace-nowrap">
+                      {rs.length ? rs.map((r, k) => (
+                        <span key={k} className={k ? "block" : ""}>
+                          <b className="text-gray-800">{r.count}</b>
+                          <span className="text-gray-400"> ÷{r.batch} = </span>
+                          <b className="text-gray-900">{(Number(r.need) || 0).toFixed(2)}</b>
+                        </span>
+                      )) : <span className="text-gray-300">—</span>}
+                    </span>
+                  );
+                })}
+              </div>
+            ))}
+            <div className="contents">
+              <span className="px-2 py-1 bg-gray-50 text-[13px] text-gray-600">Crew per function</span>
+              {cols.map((c, ci) => <span key={ci} className="px-2 py-1 bg-gray-50 text-[13px] text-center border-l border-gray-100 text-gray-900 font-semibold whitespace-nowrap">{c.result}</span>)}
+            </div>
+          </div>
+          <div className="px-2 py-1 bg-gray-50 border-t text-[13px] text-right text-gray-600">
+            {cols.length > 1 ? <>Today = busiest function = <b className="text-gray-900">{t.result}</b></> : t.perRow ? <>Σ each ⌈need⌉ = <b className="text-gray-900">{t.result}</b></> : <>Σ {(Number(t.need) || 0).toFixed(2)} → ⌈ {Math.ceil(Number(t.need) || 0)} ⌉{t.min > 0 ? <> · max(min {t.min})</> : null} = <b className="text-gray-900">{t.result}</b></>}
+          </div>
         </div>
-        <div className="px-2 py-1 bg-gray-50 text-[13px] text-right text-gray-600">{t.perRow ? <>Σ each ⌈need⌉ = <b className="text-gray-900">{t.result}</b></> : <>Σ {t.need.toFixed(2)} → ⌈ {Math.ceil(t.need)} ⌉{t.min > 0 ? <> · max(min {t.min})</> : null} = <b className="text-gray-900">{t.result}</b></>}</div>
-      </div>
-    );
+      );
+    }
     // A tier2 type (Carpenters, Painters, etc.) with NO matching items today still often shows crew
     // assigned — a configured minimum (e.g. "always keep at least 1 on-site whenever this booking has
     // this role at all") floors it above zero even with nothing to point to. Previously this whole box
@@ -2088,7 +2249,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         <div className="divide-y divide-gray-100">
         {sch.map((d, i) => {
           const ov = editable && dayOv(r, d);
-          const ids = effWinIds(r, d);
+          const ids = orderWinIds(effWinIds(r, d), winDefs, d.date);
           const shifts = effWin(r, d);
           const dayKey = `${r.type}|${d.date}`;
           const howOpen = !!mpDayHow[dayKey];
@@ -2131,7 +2292,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
                 )}
                 {hasWin && !editable && (
                   <span className="flex flex-wrap gap-1">
-                    {winDefs.map(w => { const on = ids.includes(w.id); return <span key={w.id} className={"px-1.5 py-0.5 rounded-full border text-[12.5px] " + (on ? "border-emerald-300 bg-emerald-50 text-emerald-600" : "border-gray-100 text-gray-300")}>{on ? "✓ " : ""}{w.label}{on ? ` ${effShift(r, d, w.id)}` : ""}</span>; })}
+                    {orderWinIds(winDefs.map(w => w.id), winDefs, d.date).map(id => winDefs.find(w => w.id === id)).map(w => { const on = ids.includes(w.id); return <span key={w.id} className={"px-1.5 py-0.5 rounded-full border text-[12.5px] " + (on ? "border-emerald-300 bg-emerald-50 text-emerald-600" : "border-gray-100 text-gray-300")}>{on ? "✓ " : ""}{w.label}{on ? ` ${effShift(r, d, w.id)}` : ""}</span>; })}
                   </span>
                 )}
                 <span className="ml-auto shrink-0 flex items-center gap-1.5 text-[13px] text-gray-500">
@@ -2148,7 +2309,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
               </div>
               {howOpen && (
                 <div className="mt-1.5 ml-7 bg-slate-50 ring-1 ring-slate-200 rounded-lg p-2">
-                  {d.trace ? renderMpTrace(d.trace)
+                  {d.trace ? renderMpTrace(d.trace, d.drivenBy, d)
                     : <div className="text-[13px] text-gray-500">{d.phase === "minusOne" ? "⏮️ −1 setup — full crew staged early (peak of all functions)." : d.phase === "dismantle" ? "🧹 dismantle day — crew carried from the event." : "⏸️ gap day — crew carried from the previous day."}</div>}
                   {d.trace && Number(d.trace.result) > 0 && Number(d.trace.result) < Number(d.count) && (
                     <div className="text-[13px] text-amber-600 mt-1">🔼 Today only needs {d.trace.result}, but crew is kept at {d.count} — carried over from a busier earlier day (crew never drops mid-event, only grows).</div>
@@ -2720,13 +2881,25 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     // flowers) always ran out of room and showed a bare "+3 more" with nowhere to actually see
     // them. Every recipe's FULL ingredient list now lives on its own dedicated page (recipePages
     // below); the card just points there, one line, regardless of how many flowers are in it.
-    const flowerRows = (it) => {
-      const r = it.recipe || [];
-      if (!r.length) return "";
-      return `<div class="zc-r f"><span>📖 Check Recipe Page for Mandi</span><b></b></div>`;
+    // The flowers themselves get a card of their own next to the item (flowerCard below, slotted in
+    // by withFlowerCards) — names only, so the crew sees what goes in without turning the page;
+    // quantities stay on the recipe page.
+    const flowerRows = () => "";
+    const FL_MAX = 8;
+    const flowerCard = (it) => {
+      const names = (it.recipe || []).map(f => String(f.name || "").trim()).filter(Boolean);
+      const shown = names.length > FL_MAX ? names.slice(0, FL_MAX - 1) : names;
+      return `<div class="zc-b">
+        <div class="zc-n">🌸 Flowers<div class="zc-fs">${esc(it.name)}</div></div>
+        ${shown.map(n => `<div class="zc-r f"><span>• ${esc(n)}</span><b></b></div>`).join("")}
+        ${names.length > shown.length ? `<div class="zc-r f"><span>+${names.length - shown.length} more</span><b></b></div>` : ""}
+        <div class="zc-r f"><span>📖 Qty: Mandi &amp; Kits page</span><b></b></div>
+      </div>`;
     };
-    // The paint line takes its 20px out of the photo the same way a flower line does.
-    const flLines = (it) => ((it.recipe || []).length ? 1 : 0) + (it.paint?.size ? 1 : 0) + (it.extra || []).length;
+    // Each recipe item followed by its flower card, for laying out a zone page's card slots.
+    const withFlowerCards = (items) => items.flatMap(it => (it.recipe || []).length ? [it, { flowerCard: true, name: it.name, recipe: it.recipe }] : [it]);
+    // The paint line takes its 20px out of the photo.
+    const flLines = (it) => (it.paint?.size ? 1 : 0) + (it.extra || []).length;
     const card = (it, zone, num) => `
       ${it.photo ? `<div class="zc-ph" style="${bgCss(it.photo, 180)}${flLines(it) ? `height:${168 - flLines(it) * 20}px` : ""}" ${bgData(it.photo, 180)}></div>` : ""}
       ${num ? `<div class="zc-no">${num}</div>` : ""}
@@ -2766,9 +2939,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       // No item numbers (removed by request) — each card's arrow alone ties it to the photo.
       // A top-row card without a photo is shorter, so it is pinned by its BOTTOM to keep sitting on its arrow.
       const cards = [
-        ...top.map((it, i) => { const x = colX(i, top.length); return `<div class="zc${npCls(it)}" style="left:${x}px;${it.photo ? "top:0" : `bottom:${stageH - ROW_H}px`}">${card(it, pg.title)}</div>
+        ...top.map((it, i) => { const x = colX(i, top.length); return `<div class="zc${npCls(it)}" style="left:${x}px;${it.photo ? "top:0" : `bottom:${stageH - ROW_H}px`}">${it.flowerCard ? flowerCard(it) : card(it, pg.title)}</div>
           <div class="za down" style="left:${x + CARD_W / 2 - 1}px;top:${ROW_H}px;height:${ARROW}px"></div>`; }),
-        ...bot.map((it, i) => { const x = colX(i, bot.length); return `<div class="zc${npCls(it)}" style="left:${x}px;top:${botTop}px">${card(it, pg.title)}</div>
+        ...bot.map((it, i) => { const x = colX(i, bot.length); return `<div class="zc${npCls(it)}" style="left:${x}px;top:${botTop}px">${it.flowerCard ? flowerCard(it) : card(it, pg.title)}</div>
           <div class="za up" style="left:${x + CARD_W / 2 - 1}px;top:${photoTop + PHOTO_H}px;height:${ARROW}px"></div>`; }),
       ].join("");
       return `<section data-block data-page class="zp"><div class="pc tl"></div><div class="pc tr"></div>
@@ -2913,7 +3086,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         lastFi = pg.fi;
         zonePageHtml.push(fnDivider(pg.fi + 1, pg.fnType, pg.fnDate));
       }
-      const cs = pg.items.length ? chunks(pg.items, 6) : [[]];
+      const cs = pg.items.length ? chunks(withFlowerCards(pg.items), 6) : [[]];
       cs.forEach((c, i) => zonePageHtml.push(zoneSection(pg, c, i + 1, cs.length, zi + 1, i * 6)));
       // Right after THIS zone's own card page(s) — a zone's recipe/kit detail never shares a page
       // with another zone's, and never lands in a single combined reference page at the book's end.
@@ -3187,6 +3360,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   .zc-r span{color:#6B6B6B;text-transform:uppercase;letter-spacing:.1em;font-size:9.5px;font-weight:700;flex-shrink:0}
   .zc-r b{color:#1A1A1A;font-size:11px;font-weight:700;text-align:right}
   /* Flower lines: names read as names, not as the uppercase field labels above them. */
+  .zc-fs{font-family:"Inter",Arial,sans-serif;font-size:10px;font-weight:600;color:#8A8270;margin-top:1px}
   .zc-r.f span{text-transform:none;letter-spacing:0;font-size:10.5px;font-weight:600;flex-shrink:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   /* The arrow: a gold shaft with a drawn head at the photo end and a dot at the card end. */
   .za{position:absolute;width:1.5px;background:#1A1A1A}
@@ -6149,7 +6323,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                           <div className="mt-2.5 bg-gray-50 ring-1 ring-gray-200 rounded-lg p-2.5 space-y-1">
                             <div className="text-[10px] text-gray-400">Set the crew per day & per dihari (shift). Add a dihari to split a day — e.g. 2 in the day shift + 1 in the evening; each shift is billed. Set 0 or remove to drop one.</div>
                             {sched.map((d, di) => {
-                              const ids = effWinIds(r, d) || [];
+                              const ids = orderWinIds(effWinIds(r, d) || [], winDefs, d.date);
                               const dayCost = mpDayCost(r, d, mpDay, mpWin, mpWinCount, rate);
                               const hasSlots = winDefs.length > 0 || ids.length > 0;
                               return (
