@@ -2069,6 +2069,14 @@ export default function StudioApp() {
   // returned. Blocking, not a warning: closing it just cancels markSold, same as a failed
   // name/date/venue check above it. See scanOutOfStockElements's own comment for why.
   const [oosGateModal, setOosGateModal] = useState(null);
+  // One flagged row's {fnIdx, zoneKey, idx} while its own function switch is still catching up to
+  // openAvailModal — see the effect right below. null the rest of the time.
+  const [oosFixPending, setOosFixPending] = useState(null);
+  // oosGateModal's own list, stashed here while its inline 📦 fix opens availModal on top — availModal
+  // renders at a LOWER z-index (9300 vs oosGateModal's 9400, so the normal element picker never sits
+  // above THIS gate), so the gate modal is hidden (not stacked under it) for the duration instead.
+  // Restored once availModal closes — see the effect right below.
+  const oosGateStashRef = useRef(null);
   // Swap modal local state — lifted to App scope to avoid hook-reset on parent re-render.
   const [dcSwapSearch, setDcSwapSearch] = useState("");
   const [dcSwapPicked, setDcSwapPicked] = useState(null);
@@ -5438,7 +5446,10 @@ export default function StudioApp() {
           const r = getElPriceForFn(el, fZoneConfig[zk], fFloralRatio, true, fnData.fnVenue, fBlocksForDate, fnData.fnDate, pricingPool, fnData.fnIdx, zk, i);
           if (r.outOfStock) {
             const item = (imsInventory || []).find((x) => x.id === el.invId);
-            flagged.push({ fnIdx: fnData.fnIdx, fnLabel: fnData.fnType || `Function ${fnData.fnIdx + 1}`, zoneKey: zk, name: item?.name || el.name || "Item" });
+            // idx/invId carried so the gate modal's own 📦 picker can open directly against this
+            // exact element (openAvailModal(zoneKey, idx, el, rc)) instead of only pointing the
+            // salesperson at the right function/zone and making them find it by hand.
+            flagged.push({ fnIdx: fnData.fnIdx, fnLabel: fnData.fnType || `Function ${fnData.fnIdx + 1}`, zoneKey: zk, idx: i, invId: el.invId, name: item?.name || el.name || "Item" });
           }
         });
       });
@@ -10516,6 +10527,39 @@ export default function StudioApp() {
       setAvailModal(m => (m && m.zoneKey === zoneKey && m.idx === idx) ? { ...m, loading: false, items } : m);
     } catch { setAvailModal(m => m ? { ...m, loading: false } : m); }
   }, [imsInventory, activeFnMeta, clientDate, loadAvailability, getStudioAvailable, rcFactorByKey, zoneConfig, venue, guestPriceMultiplier, hideDiscountFromClient, fvCfgForRepeat, dealCheckData, studioFloralData, collectAllFunctionData, activeFnIdx, eventOrders, activeClientId, clientName]);
+  // Opens the availability picker straight from the pre-Sold out-of-stock gate (StudioModals.jsx's
+  // oosGateModal), for a flagged row {fnIdx, zoneKey, idx, invId, name} — instead of the old "Go
+  // fix" that only switched tabs and left the salesperson to find the element by hand.
+  // openAvailModal's own saveAvailPick writes straight into THIS flagged element's zoneElements
+  // entry, which only exists on whichever function is currently active — so a row belonging to a
+  // DIFFERENT function must wait for that switch to actually land (next render) before the picker
+  // opens, or the pick would be written into the wrong function's build. oosFixPending carries the
+  // row across that one-render gap; the effect below fires once activeFnIdx catches up to it.
+  const openOosFix = useCallback((f) => {
+    oosGateStashRef.current = oosGateModal;
+    setOosGateModal(null);
+    if (f.fnIdx === activeFnIdx) {
+      openAvailModal(f.zoneKey, f.idx, { invId: f.invId, name: f.name }, null);
+    } else {
+      setOosFixPending(f);
+      setActiveFnIdx(f.fnIdx);
+    }
+  }, [activeFnIdx, openAvailModal, oosGateModal]);
+  useEffect(() => {
+    if (oosFixPending && oosFixPending.fnIdx === activeFnIdx) {
+      const f = oosFixPending;
+      setOosFixPending(null);
+      openAvailModal(f.zoneKey, f.idx, { invId: f.invId, name: f.name }, null);
+    }
+  }, [activeFnIdx, oosFixPending, openAvailModal]);
+  // Brings the gate list back once its own inline pick finishes (saved or cancelled either way),
+  // so the salesperson can keep working through the rest of the flagged rows in one sitting.
+  useEffect(() => {
+    if (!availModal && oosGateStashRef.current) {
+      setOosGateModal(oosGateStashRef.current);
+      oosGateStashRef.current = null;
+    }
+  }, [availModal]);
   const saveAvailPick = useCallback(() => {
     if (!availModal) return;
     const { zoneKey, idx, selectedId, items, onPick } = availModal;
@@ -11852,7 +11896,7 @@ export default function StudioApp() {
     dcArtFlowerAlloc, setDcArtFlowerAlloc, dcArtFlowerAllocSrc, setDcArtFlowerAllocSrc, dcArtFlowerModal, setDcArtFlowerModal, dcFloralColorPrefs, setDcFloralColorPrefs, dcPrefModal, setDcPrefModal,
     dcCustomItems, setDcCustomItems: setDcCustomItemsAndFlush, dcCustomModal, setDcCustomModal,
     availModal, setAvailModal, openAvailModal, saveAvailPick, saveAvailSplit,
-    oosGateModal, setOosGateModal,
+    oosGateModal, setOosGateModal, openOosFix,
     dcSwapSearch, setDcSwapSearch, dcSwapPicked, setDcSwapPicked, dcSwapMode, setDcSwapMode, dcSwapSplitQty, setDcSwapSplitQty,
     // pricing helpers
     rcIsSMB, buildZoneConfig, getFloralMode, applyFloralRatio, getElPrice, getElPriceForFn, calcElsCost, calcElsCostForFn, rcCostPctForSub,
