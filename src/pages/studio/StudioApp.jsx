@@ -2471,6 +2471,16 @@ export default function StudioApp() {
   const fnBuildsRef = useRef({});
   const snapshotFnRef = useRef(null);
   const switchingRef = useRef(false);
+  // Switching functions replaces zoneElements/zoneConfig/etc with the target function's own
+  // snapshot — the exact same state the debounced-edit effect below watches for real edits, so a
+  // pure tab switch looked identical to an edit and scheduled a save (plus, on a booked deal, a
+  // full uncached inventory+blocks regenerate — see autoSaveBuild's opts.edited branch) every time.
+  // Fast switching could then queue that heavy regenerate right as the next switch's transition was
+  // trying to render, freezing the screen on whichever function was mid-switch. Set synchronously
+  // here, before the transition commits the swapped state; the debounced-edit effect reads and
+  // clears it the one time it fires for this switch, skipping the schedule for that pass only — a
+  // genuine edit (which never sets this ref) schedules normally.
+  const fnSwitchNoSaveRef = useRef(false);
   // Set whenever loadClientSession runs — i.e. a fresh visit/meeting has just been opened, whether
   // starting clean or resuming a past draft. The rolling auto-save below normally collapses
   // consecutive auto-drafts into the same array slot (so a 15s background timer doesn't spam the
@@ -2592,6 +2602,7 @@ export default function StudioApp() {
       fnBuildsRef.current = builds;
     }
     switchingRef.current = true;
+    fnSwitchNoSaveRef.current = true;
     activeFnIdxRef.current = newIdx;
     const nextBuilds = builds;
     const target = builds[newIdx] || null;
@@ -8188,6 +8199,11 @@ export default function StudioApp() {
   // 1) Debounced on edits.
   useEffect(() => {
     if (!buildHasDataRef.current) return;
+    // Consume-once: this effect's own deps (zoneElements, zoneConfig, ...) just flipped because
+    // switchActiveFn loaded a different function's snapshot into them, not because anything was
+    // edited — see fnSwitchNoSaveRef's own comment. Skip scheduling for this one pass only; a real
+    // edit afterward (which never touches this ref) schedules normally.
+    if (fnSwitchNoSaveRef.current) { fnSwitchNoSaveRef.current = false; return; }
     unsavedEditRef.current = true;
     setHasUnsavedChanges(true);
     const t = setTimeout(() => autoSaveBuild({ edited: true }), 1500);
