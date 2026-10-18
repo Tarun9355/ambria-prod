@@ -98,7 +98,7 @@ import { calcZoneFabric, autoFillFabricAllocation, anchorsForPalette, anchorsFor
 import { carpetPricingFor, CARPET_OFF } from "../../../lib/studio/taxonomy";
 import { qtyUsedElsewhereInDealCheck, netOwnReservedBlocksLive } from "../../../lib/studio/dealAvailability";
 import { isHiddenSubcat, oosCostPctFor, canFulfillShortfall } from "../../../lib/rateCard";
-import { findCrossFnReuseSource, computeFnInvQty } from "../../../lib/studio/crossFnReuse";
+import { findCrossFnReuseSource, computeFnInvQty, groupConsecutiveFns } from "../../../lib/studio/crossFnReuse";
 import { kitShortfallSplit } from "../../../lib/studio/kitShortfallSplit";
 
 // Commission override box (one per venue, Commission tab below) — its OWN local draft state, not
@@ -648,18 +648,52 @@ export default function DealCheckOverlay({ ctx }) {
             const override = parsed?.idx != null ? fn.zoneElements?.[zk]?.[parsed.idx]?.repeatOverride : undefined;
             return typeof override === "boolean" ? override : repeatCatFor(fn.zoneConfig?.[zk], "elements");
           };
+          // ── Cross-function reuse pool, shared across a WHOLE connected group, not rebuilt per function ──
+          // fnGroupFrontier[groupId] tracks, per invId, the biggest qty any function processed SO FAR
+          // in that group has needed — a running peak, mutated in function-processing order as the
+          // loop below works through fns. groupConsecutiveFns (lib/studio/crossFnReuse.js) groups every
+          // function at the same venue with no gap day anywhere along the chain into one component —
+          // three same-day functions land in ONE group, not three independent pairwise pools.
+          //
+          // This replaces a per-function pool built fresh from findCrossFnReuseSource's OWN eligible-
+          // siblings list (every other function in the group, unconditionally) — which, with only two
+          // functions in a group, happened to behave correctly, but with three or more sharing a day
+          // over-credited reuse in every direction at once: function A's pool counted B's and C's full
+          // need as "already installed and free to reuse", B's pool counted A's and C's, and C's
+          // counted A's and B's — the SAME physical units credited two or three times over instead of
+          // once, netting every function's own billed qty toward zero (and its displayed "blocked"
+          // qty along with it) even though nothing was actually overbought. A running peak, consumed
+          // in order, grants each unit of reuse credit exactly once: the first function in the group to
+          // need an item bills it in full (nothing stood yet), and each later function reuses up to
+          // whatever the group's peak need has reached so far, with only its own excess over that peak
+          // (if any) billing as genuinely fresh — which also raises the peak for whichever function
+          // comes after it.
+          const fnGroupIds = groupConsecutiveFns(fns);
+          const fnGroupFrontier = {};
+          // Each function's OWN total need per invId (top-level elements only — same computeFnInvQty
+          // every other cross-fn-reuse consumer already shares), computed up front so the frontier only
+          // ever advances ONCE per function, after ALL of its own cards/manual items have drawn against
+          // it. Reading the frontier through a snapshot frozen at the START of each function (below)
+          // instead of letting it climb card-by-card matters here: two cards in the SAME function
+          // needing the same item (e.g. 5 on one card + 3 on another, both wanted AT ONCE for this one
+          // function) must never let the first card's demand look like "already installed" reuse stock
+          // for the second — they're simultaneous need, not sequential reuse, and only a cross-FUNCTION
+          // peak (a sibling's demand already accounted for before this function even started) is real
+          // reuse credit.
+          const fnOwnNeed = fns.map(computeFnInvQty);
           fns.forEach((fn, fi) => {
             const cards = dcCards[fi] || {};
-            // Cross-function reuse — the immediately-preceding function of this deal, same venue,
-            // within 24h (findCrossFnReuseSource, lib/studio/crossFnReuse.js). ONE pool per function
-            // (not per line), drawn down as lines below claim it, so two cards sharing the same
-            // invId can't both claim the same physical units already used in that prior function.
-            // Feeds repeatAdjustedRental's own new crossFnReuseQty param below AND the truss block's
-            // isRepeat flag further down (the same physical fact — a zone this deal's prior function
-            // already built at this venue needs nothing new — applies to both).
+            // Still needed for the truss block's isRepeat flag further down (a ZONE-identity question —
+            // "did any eligible sibling also build this zone" — not an item-quantity one, so it's
+            // untouched by the running-peak rework above).
             const crossFnPrevFn = findCrossFnReuseSource(fn, fns);
-            const crossFnInvPool = crossFnPrevFn ? new Map(Object.entries(computeFnInvQty(crossFnPrevFn))) : null;
-            const crossFnTake = (invId, qty) => { if (!crossFnInvPool || !invId) return 0; const t = Math.min(qty, crossFnInvPool.get(invId) || 0); if (t > 0) crossFnInvPool.set(invId, (crossFnInvPool.get(invId) || 0) - t); return t; };
+            const frontierMap = (fnGroupFrontier[fnGroupIds[fi]] ||= new Map());
+            const frozenFrontier = new Map(frontierMap); // this function's own cards never see their own later bump
+            const crossFnTake = (invId, qty) => {
+              if (!invId || !(Number(qty) > 0)) return 0;
+              const prior = frozenFrontier.get(invId) || 0;
+              return Math.min(qty, prior);
+            };
             // Same blocksByDate resolution the Inventory Status tab already uses (line ~1690) —
             // one lookup per function, reused for every card's availability check below.
             const fnBlocks = (dealCheckData?.blocksByDate || {})[fn.fnDate || clientDate] || {};
@@ -681,7 +715,7 @@ export default function DealCheckOverlay({ ctx }) {
                   rental += line; byFn[fi].rental += line;
                   const dd = catToDept(imsField.category(it));
                   addD(dd, "rental", line);
-                  if (line > 0 && deptInv[dd]) deptInv[dd].push({ name: it.name, photo: imsField.photos(it)[0] || "", qty: Math.max(0, q - reused), rentalQty: q, unit: br, total: Math.round(line), sub: imsField.subcategory(it) || "", imsId: it.id });
+                  if (line > 0 && deptInv[dd]) deptInv[dd].push({ name: it.name, photo: imsField.photos(it)[0] || "", qty: Math.max(0, q - reused), rentalQty: q, unit: br, total: Math.round(line), sub: imsField.subcategory(it) || "", imsId: it.id, fnIdx: fi });
                 });
                 return;
               }
@@ -813,7 +847,7 @@ export default function DealCheckOverlay({ ctx }) {
                 // split.reusedQty above (previously only its internal component-level shortfall
                 // accounting saw the reuse credit, so a reused KIT's displayed qty still summed
                 // across its sibling functions instead of showing the true peak).
-                deptInv[dD].push({ name: item.name || c.name || "Item", photo: imsField.photos(item)[0] || "", qty: Math.max(0, qty - reusedQty), rentalQty: qty, unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "", imsId: c.imsId, ...(components && components.length ? { isKit: true, components: components.map(({ci, ...rest}) => ({ ...rest, total: Math.round(rest.total) })) } : {}), ...(shortQty > 0 ? { shortQty, shortCost: Math.round(shortCost), outOfStock: !canFulfillShortfall(item, fn.fnDate) } : {}) });
+                deptInv[dD].push({ name: item.name || c.name || "Item", photo: imsField.photos(item)[0] || "", qty: Math.max(0, qty - reusedQty), rentalQty: qty, unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "", imsId: c.imsId, fnIdx: fi, ...(components && components.length ? { isKit: true, components: components.map(({ci, ...rest}) => ({ ...rest, total: Math.round(rest.total) })) } : {}), ...(shortQty > 0 ? { shortQty, shortCost: Math.round(shortCost), outOfStock: !canFulfillShortfall(item, fn.fnDate) } : {}) });
               }
             });
             // Manually-added inventory blocks (dcManualItems) — the salesperson added these directly in
@@ -862,7 +896,15 @@ export default function DealCheckOverlay({ ctx }) {
               } else {
                 addD(dD, "rental", lineRental);
               }
-              if (deptInv[dD]) deptInv[dD].push({ name: item.name || "Item", photo: imsField.photos(item)[0] || "", qty: Math.max(0, q - miReused), rentalQty: q, unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "", imsId: mi.imsId, ...(miComponents && miComponents.length ? { isKit: true, components: miComponents.map(({ci, ...rest}) => ({ ...rest, total: Math.round(rest.total) })) } : {}) });
+              if (deptInv[dD]) deptInv[dD].push({ name: item.name || "Item", photo: imsField.photos(item)[0] || "", qty: Math.max(0, q - miReused), rentalQty: q, unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "", imsId: mi.imsId, fnIdx: fi, ...(miComponents && miComponents.length ? { isKit: true, components: miComponents.map(({ci, ...rest}) => ({ ...rest, total: Math.round(rest.total) })) } : {}) });
+            });
+            // Advance the GROUP's shared frontier now that this function is done drawing against it —
+            // using its own total top-level need (fnOwnNeed[fi]), not whatever individual cards happened
+            // to claim, so a function matched to 3 separate cards for the same item still only ever
+            // bumps the peak by its true combined need, once.
+            Object.entries(fnOwnNeed[fi] || {}).forEach(([invId, q]) => {
+              const cur = frontierMap.get(invId) || 0;
+              if (q > cur) frontierMap.set(invId, q);
             });
             try { const fl = calcFnFloralSourcingCost(fn).grandTotal; florals += fl; byFn[fi].florals += fl; addD("Floral", "florals", fl); } catch {}
             // `genset` (used only for the Power tab's own nav-pill amount) reads gensetCostOurs —
@@ -1105,6 +1147,22 @@ export default function DealCheckOverlay({ ctx }) {
                 }
               }
               else { seen[key] = { ...it, rentalQty: rq, components: Array.isArray(it.components) ? it.components.map(c => ({ ...c })) : undefined }; merged.push(seen[key]); }
+              // Per-function truth, kept alongside the merged line — Dept Ops' own scoped-to-one-
+              // function view used to ESTIMATE a function's share by scaling the merged total
+              // proportionally to its qty (qty ÷ merged qty), which only happens to be right when
+              // every function in the group pays the same per-unit rate. The whole point of cross-
+              // function reuse billing a later function's repeat-discounted units differently from
+              // the first function's full-rate units is that they DON'T — two functions needing the
+              // identical qty would both show qty÷qty = 100% share and so both display the FULL
+              // merged total as if it were theirs alone. Reading the real per-function total back out
+              // here instead removes the guesswork. Not set for lines with no fnIdx (truss/fabric/
+              // platform/print/custom items) — those never claim cross-fn reuse credit in the first
+              // place, so the proportional estimate is exact for them and needs no override.
+              if (it.fnIdx != null) {
+                const bf = seen[key].byFn || (seen[key].byFn = {});
+                const cur = bf[it.fnIdx] || (bf[it.fnIdx] = { qty: 0, rentalQty: 0, total: 0 });
+                cur.qty += (it.qty || 0); cur.rentalQty += rq; cur.total += (it.total || 0);
+              }
             });
             deptInv[dn] = merged;
           });

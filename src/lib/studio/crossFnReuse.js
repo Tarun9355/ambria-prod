@@ -129,3 +129,46 @@ export function findSiblingFnSubcatOpportunity(fnData, allFns, imsInventory) {
   });
   return out;
 }
+
+// Connected groups of functions at the same venue with no gap day anywhere along the chain —
+// same pairwise adjacency rule as findCrossFnReuseSource above (same calendar date, or exactly
+// the day before/after), but as a full graph instead of "this one function's eligible siblings":
+// three same-day functions at one venue all land in ONE group together, not three separate
+// pairwise pools.
+//
+// Dept Ops' "Inventory blocked" qty needs this instead of findCrossFnReuseSource's own per-function
+// pool for a different reason than pricing does: pricing legitimately charges each function's own
+// card at its own discount, so a chain of independent pairwise credits is fine there. But the
+// PHYSICAL peak — how many of an item are ever on site at once — is the single largest ask any one
+// function in the whole connected group makes, not a sum of pairwise "already used by my immediate
+// neighbour" credits. With only two functions those give the same answer; with three or more
+// sharing a day, each function's own pool (built from every OTHER sibling's need, per
+// findCrossFnReuseSource) double- and triple-counts the same physical units as reusable from
+// multiple directions at once, so every function nets its own need down toward zero even though
+// nothing is actually overbought — the group's one true peak is the fix, computed once here instead
+// of trusting that chain's output as a stand-in for it.
+//
+// Returns a plain array, positionally indexed to match `allFns` (callers already loop it as
+// `fns.forEach((fn, fi) => …)` with `fi` as the shared index into byFn/deptInv/etc.) — groups[i] is
+// an arbitrary but stable id shared by every function in the same connected component.
+export function groupConsecutiveFns(allFns) {
+  const fns = allFns || [];
+  const parent = fns.map((_, i) => i);
+  const find = (x) => { while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; } return x; };
+  const union = (a, b) => { const ra = find(a), rb = find(b); if (ra !== rb) parent[ra] = rb; };
+  for (let i = 0; i < fns.length; i++) {
+    const fi = fns[i];
+    if (!fi?.fnVenue || !fi?.fnDate) continue;
+    const vi = fi.fnVenue.toLowerCase().trim();
+    const ti = Date.parse(fi.fnDate);
+    if (!Number.isFinite(ti)) continue;
+    for (let j = i + 1; j < fns.length; j++) {
+      const fj = fns[j];
+      if (!fj?.fnVenue || !fj?.fnDate || fj.fnVenue.toLowerCase().trim() !== vi) continue;
+      const tj = Date.parse(fj.fnDate);
+      if (!Number.isFinite(tj)) continue;
+      if (Math.abs(Math.round((tj - ti) / (24 * 60 * 60 * 1000))) <= 1) union(i, j);
+    }
+  }
+  return fns.map((_, i) => find(i));
+}

@@ -763,7 +763,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       // departments by each part's own category, so a row can be a component of a kit owned by
       // another department. It is the only record of that parent, and the PDF needs it to avoid
       // reporting a bolted-on part as a loose item.
-      const rows = deptInvSnap.map((x, i) => ({ id: x.name + i, invId: x.imsId || null, name: x.name, photo: x.photo || "", qty: x.qty || 0, rentalQty: x.rentalQty != null ? x.rentalQty : (x.qty || 0), unit: x.unit || 0, total: x.total || 0, sub: x.sub || "", isKit: !!x.isKit, fromKit: x.fromKit || null, components: Array.isArray(x.components) ? x.components : null, shortQty: x.shortQty || 0, shortCost: x.shortCost || 0, outOfStock: !!x.outOfStock, prodOrBuy: x.prodOrBuy || null, isSwapped: swapInfo.has(x.name), swappedFrom: swapInfo.get(x.name)?.swappedFrom || null }));
+      const rows = deptInvSnap.map((x, i) => ({ id: x.name + i, invId: x.imsId || null, name: x.name, photo: x.photo || "", qty: x.qty || 0, rentalQty: x.rentalQty != null ? x.rentalQty : (x.qty || 0), byFn: x.byFn || null, unit: x.unit || 0, total: x.total || 0, sub: x.sub || "", isKit: !!x.isKit, fromKit: x.fromKit || null, components: Array.isArray(x.components) ? x.components : null, shortQty: x.shortQty || 0, shortCost: x.shortCost || 0, outOfStock: !!x.outOfStock, prodOrBuy: x.prodOrBuy || null, isSwapped: swapInfo.has(x.name), swappedFrom: swapInfo.get(x.name)?.swappedFrom || null }));
       // Short items first (need chasing/ordering), then Production/Buying (not real stock — worth
       // knowing apart from what's actually reserved), then everything else — the order requested
       // for this list. Stable within each group: Array.prototype.sort is stable, so ties keep the
@@ -952,8 +952,18 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     ? blockedItemsGrouped.map(it => {
         const q = (it.invId && invFnQty.byId.get(String(it.invId))) || invFnQty.byName.get(String(it.name || "").trim().toLowerCase()) || 0;
         if (!q) return null;
-        const share = (Number(it.qty) || 0) > 0 ? q / Number(it.qty) : 1;
-        return { ...it, qty: q, rentalQty: q, total: Math.round((Number(it.total) || 0) * share), shortQty: Math.min(Number(it.shortQty) || 0, q) };
+        // byFn[invFn] (Deal Check's own per-function record, dealcheck/DealCheckOverlay.jsx's cost
+        // rollup) is this function's REAL billed total — read it directly rather than estimating a
+        // share. The old qty÷mergedQty proportional estimate only gives the right answer when every
+        // function in a reuse group bills the same per-unit rate; a function reusing a sibling's
+        // already-standing units at a Repeat discount does NOT, so two functions needing the
+        // identical qty both computed a 100% share and both showed the FULL merged total as if it
+        // were theirs alone. Falls back to the old estimate for rows with no byFn (truss/fabric/
+        // platform/print/custom items never claim cross-function reuse, so the estimate is exact
+        // for them) or an event synced before this field existed.
+        const fnRow = it.byFn && it.byFn[invFn];
+        const total = fnRow ? Math.round(fnRow.total) : Math.round((Number(it.total) || 0) * ((Number(it.qty) || 0) > 0 ? q / Number(it.qty) : 1));
+        return { ...it, qty: q, rentalQty: q, total, shortQty: Math.min(Number(it.shortQty) || 0, q) };
       }).filter(Boolean)
     : blockedItemsGrouped;
   const invWholeOnly = invScoped ? blockedItemsGrouped.length - invShown.length : 0;
