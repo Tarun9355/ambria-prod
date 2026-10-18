@@ -568,7 +568,13 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   // backdrop-filter of its own on purpose: a backdrop-filter makes an element the containing
   // block for position:fixed descendants, and the "Add a site" menu inside it is fixed-positioned
   // from viewport coordinates — it would open offset by the sheet's own position.
-  const PANEL_CARD = "relative w-full max-h-[85vh] flex flex-col rounded-t-2xl bg-white/85 ring-1 ring-white/70 sm:bg-gray-50 sm:ring-gray-200 sm:max-h-none sm:block sm:rounded-2xl sm:overflow-hidden";
+  // No sm:overflow-hidden. It used to clip to the rounded corners there, but PANEL_BODY's own
+  // sm:p-4 padding already keeps every child inset from this edge — nothing was actually bleeding
+  // past the corners for it to clip. Keeping it was the reason the inventory list's own sticky
+  // column header (further down, its own overflow-hidden already dropped for the same reason)
+  // still never stuck to the page scroll: this ancestor became its own scroll container for
+  // sticky-positioning purposes, trapping the header inside a box that never itself scrolls.
+  const PANEL_CARD = "relative w-full max-h-[85vh] flex flex-col rounded-t-2xl bg-white/85 ring-1 ring-white/70 sm:bg-gray-50 sm:ring-gray-200 sm:max-h-none sm:block sm:rounded-2xl";
   const PANEL_BODY = "flex-1 min-h-0 overflow-y-auto overscroll-contain rounded-t-2xl p-3 space-y-3 sm:rounded-none sm:flex-none sm:overflow-visible sm:p-4";
   // Tapping the dimmed area closes, the way every sheet on the platform does. Guarded on the
   // phone breakpoint: from sm up this same element is the plain inline wrapper, and a click that
