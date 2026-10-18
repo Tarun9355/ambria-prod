@@ -4373,10 +4373,14 @@ export default function StudioApp() {
   // Returns a per-category object (not a single bool) once discount-eligible in principle, so
   // calcStructCost can gate its three structural groups separately; false short-circuits it
   // entirely, same as before, when the client-facing discount toggle itself is off.
+  // Owner ask (2026-10-18): the structure discount follows the Repeat chips ONLY. A Fixed Venue used
+  // to switch it on by itself, so a chip still reading ✨ Fresh billed 25% off — the price disagreed
+  // with what the salesperson could see. venueName is kept for the call sites; it no longer decides.
+  // (Elements keep their own Fixed-Venue standing-stock discount — repeatAdjustedLineCost.)
+  // eslint-disable-next-line no-unused-vars
   const structDiscountFor = (zc, venueName) => {
     if (hideDiscountFromClient) return false;
-    const fv = !!fixedVenueFor(fvCfgForRepeat, venueName);
-    return { truss: fv || repeatCatFor(zc, "truss"), platform: fv || repeatCatFor(zc, "platform"), print: fv || repeatCatFor(zc, "print") };
+    return { truss: repeatCatFor(zc, "truss"), platform: repeatCatFor(zc, "platform"), print: repeatCatFor(zc, "print") };
   };
   // Owner ask: a second discrete per-deal lever, alongside hideDiscountFromClient — the small dot on
   // each Photo Filters section (Build's left rail) doubles as a markup tier picker when clicked

@@ -74,7 +74,6 @@ function NumField({ value, onCommit, min = 0, allowDecimal = true, onFocus, onBl
   );
 }
 import { sizeClassToPatternKey, resolveSizeKey } from "../../../lib/ims/flowerHelpers";
-import { fixedVenueFor } from "../../../lib/ims/fixedVenues";
 import { itemDimsText, kitDescendantIds } from "../../../lib/ims/helpers";
 import LazyYT from "../../../components/studio/LazyYT.jsx";
 import KitComponentsEditor from "../../../components/shared/KitComponentsEditor";
@@ -148,7 +147,7 @@ const cloneTrussRow = (src = {}) => ({
 // titled "Truss N", carrying a remove control and no Add button of its own. Reusing the component
 // rather than writing a cut-down row is what keeps an added truss genuinely equal to the first —
 // front extension, the auto Box/Single-U line, custom ceiling and its own masking all included.
-export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, showCosts, isDark, border, textP, textS, accent, customMaskingField, maskOpts = [], trussRates, structRates, nested = false, title, onRemove, rowIdx, trussInv, venueTruss, scale = 1 }) {
+export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, showCosts, isDark, border, textP, textS, accent, customMaskingField, maskOpts = [], trussRates, structRates, nested = false, title, onRemove, rowIdx, trussInv, venueTruss, scale = 1, guestDiscPct = 0 }) {
   // What THIS truss structure costs. Same function the cost engine sums over every row, so the
   // figure on the card and the figure in the bill cannot drift.
   const rowCost = trussRowCost(zc, structRates || { trussRates });
@@ -158,7 +157,12 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
   // two by subtracting this same rupee figure from its own total. Mirrored here so the card the
   // salesperson is looking at agrees with that total instead of showing the pre-discount number.
   const rowDiscount = venueTruss ? zoneTrussStandingDiscountDetail(zc, trussInv, venueTruss).total : 0;
-  const discountedTruss = Math.max(0, rowCost.truss - rowDiscount);
+  // The guest's flat Repeat structure discount (calcStructCost's applyDiscount, 25%) — the Truss &
+  // Masking tile already takes it off, so the card has to as well or the two disagree by exactly
+  // that amount. Fabric is never in it, same as calcStructCost.
+  const guestDisc = guestDiscPct > 0 ? Math.round(rowCost.truss * guestDiscPct / 100) : 0;
+  const maskingShown = guestDiscPct > 0 ? Math.round(rowCost.masking * (1 - guestDiscPct / 100)) : rowCost.masking;
+  const discountedTruss = Math.max(0, rowCost.truss - rowDiscount - guestDisc);
   // ═══ ONE SELECTED-STATE ═══ These three rows previously used a dark outline (material),
   // PINK (drape) and a borderless grey fill (masking). The borderless one was the real problem:
   // unselected options rendered as plain text and did not look clickable. `border` is never
@@ -217,6 +221,7 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                       return <span style={{fontSize:10.5,color:textS,fontWeight:400}}>
                         {base.a}×{base.b} = {base.area} sqft × {fmt(r.rate)}/sqft{qty>1?` × ${qty}`:""}
                         {rowDiscount>0&&<span style={{color:"#10B981",fontWeight:600}}> − {fmt(rowDiscount)} venue discount</span>}
+                        {guestDisc>0&&<span style={{color:"#10B981",fontWeight:600}}> − {fmt(guestDisc)} ({guestDiscPct}% repeat discount)</span>}
                       </span>;
                     })()}
                   </div>
@@ -229,7 +234,7 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                       extra cards, so the figures sat at two different x positions down the stack
                       and stopped reading as a column. */}
                   <span style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
-                    {showCosts&&<span title={rowDiscount>0?"Fixed-venue standing pillar/beam discount applied":undefined} style={{fontWeight:600,color:rowDiscount>0?"#10B981":textP}}>{fmt(discountedTruss)}</span>}
+                    {showCosts&&<span title={rowDiscount>0||guestDisc>0?"Discount applied":undefined} style={{fontWeight:600,color:rowDiscount>0||guestDisc>0?"#10B981":textP}}>{fmt(discountedTruss)}</span>}
                     <span style={{width:14,display:"inline-flex",justifyContent:"center",flexShrink:0}}>
                       {nested&&<span onClick={onRemove} title="Remove this truss" style={{cursor:"pointer",color:"#E11D48",fontSize:14,fontWeight:700,lineHeight:1}}>✕</span>}
                     </span>
@@ -385,7 +390,7 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                           ...(turningOn&&!zc.mkT&&!zc.customMaskingItemId?{mkT:maskOpts[0]?.id||"fabric"}:{}),
                         });
                       })}
-                      {showCosts&&zc.mkOn&&<span style={{fontWeight:600,color:textP,fontSize:11}}>{fmt(rowCost.masking)}</span>}
+                      {showCosts&&zc.mkOn&&<span style={{fontWeight:600,color:textP,fontSize:11}}>{fmt(maskingShown)}</span>}
                     </div>
                   </div>
               </div>;
@@ -510,10 +515,10 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
 //
 // calcStructCost has always summed zc.extraTrussRows, and Deal Check, the truss engine and the
 // stock reservation all read them — Build was simply the one place with no way to create one.
-export function TrussStack({ S, customCeilingField, customMaskingField, k, zc, zm, st, sZ, sD, fmt, showCosts, isDark, border, textP, textS, accent, maskOpts, trussRates, structRates, trussInv, venueTruss, scale = 1 }) {
+export function TrussStack({ S, customCeilingField, customMaskingField, k, zc, zm, st, sZ, sD, fmt, showCosts, isDark, border, textP, textS, accent, maskOpts, trussRates, structRates, trussInv, venueTruss, scale = 1, guestDiscPct = 0 }) {
   const rows = zc.extraTrussRows || [];
   const write = (next) => sZ({ extraTrussRows: next });
-  const shared = { S, customCeilingField, customMaskingField, k, zm, st, fmt, showCosts, isDark, border, textP, textS, accent, maskOpts, trussRates, structRates, trussInv, venueTruss, scale };
+  const shared = { S, customCeilingField, customMaskingField, k, zm, st, fmt, showCosts, isDark, border, textP, textS, accent, maskOpts, trussRates, structRates, trussInv, venueTruss, scale, guestDiscPct };
   return (<>
     <TrussCard {...shared} zc={zc} sZ={sZ} sD={sD} title={rows.length ? "Truss 1" : "Truss"} />
     {rows.map((row, ri) => {
@@ -1427,25 +1432,11 @@ export default function StudioBuild({ ctx }) {
     </span>;
     return <button onClick={() => setCustomPicker({ k, kind: "masking", rowIdx, wallId, wallMatSnapshot: zc.mkWallMat })} style={{ padding: dense ? "2px 7px" : "3px 9px", borderRadius: 5, fontSize: fs, border: `1px dashed ${border}`, background: "transparent", color: textS, cursor: "pointer" }}><IconCamera size={11}/> Custom Masking</button>;
   };
-  // Fixed-venue "Repeat setup" — when the current function's venue is a fixed venue, each zone can be
-  // marked ♻️ Repeat (reuse the standing setup → discounted rental, no build labour; venue's fixed crew
-  // covers it) vs ✨ Fresh (default). Stored in zoneConfig[k].repeat so it flows to Deal Check.
-  // Prefer dealCheckData (populated once Deal Check opens); fall back to the mount-loaded config so the
-  // Repeat/Fresh chip shows in Build without needing to open Deal Check first.
-  const _fvCfg = {
-    fixedVenues: (dealCheckData?.fixedVenues && dealCheckData.fixedVenues.length) ? dealCheckData.fixedVenues : (studioFloralData?.fixedVenues || []),
-    venueParents: dealCheckData?.venueParents || venueParents || {},
-  };
-  const fixedVenueHere = fixedVenueFor(_fvCfg, activeFnMeta?.venue || venue);
-  // The ✨Fresh/♻️Repeat toggle above stays driven by fixedVenueHere as-is — zc.repeat still needs to
-  // flow to Deal Check exactly as before regardless of the hide-discount checkbox. Mirrors
-  // StudioApp.jsx's structDiscountFor: flat 25% off calcStructCost's total (see its own comment) when
-  // the toggle is on AND (this category is Repeat OR the venue itself is a registered Fixed Venue).
-  // Per-category object, not one bool — each of the Truss & Masking/Platform/Print chips below can
-  // now override the zone's own default independently (repeatCatFor, lib/studio/pricing.js).
+  // Repeat chips only — a Fixed Venue no longer switches the structure discount on by itself (owner
+  // ask 2026-10-18; see StudioApp.jsx's structDiscountFor).
   const structDiscountFor = (zc) => {
     if (hideDiscountFromClient) return false;
-    return { truss: !!fixedVenueHere || repeatCatFor(zc, "truss"), platform: !!fixedVenueHere || repeatCatFor(zc, "platform"), print: !!fixedVenueHere || repeatCatFor(zc, "print") };
+    return { truss: repeatCatFor(zc, "truss"), platform: repeatCatFor(zc, "platform"), print: repeatCatFor(zc, "print") };
   };
   // Same scaleStruct StudioApp.jsx uses for its own guest-facing calcStructCost calls (getElPrice/
   // getElPriceForFn already fold guestPriceMultiplier in there) — Build's own local truss/masking/
@@ -4695,7 +4686,7 @@ undefined
                   DCTrussTab still shows that detailed breakdown for its own purposes, unaffected. */}
               {zoneSection[k]==="truss"&&<TrussStack S={S} customCeilingField={customCeilingField} k={k} zc={zc} zm={zm} st={st} sZ={sZ} sD={sD} fmt={fmt} showCosts={showCosts}
                 isDark={isDark} border={border} textP={textP} textS={textS} accent={accent}
-                customMaskingField={customMaskingField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} scale={zoneScaleVal(k)} />}
+                customMaskingField={customMaskingField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} scale={zoneScaleVal(k)} guestDiscPct={structDiscountFor(zc,aVenue)?.truss?25:0} />}
               {/* ── PLATFORM + CARPET → then floor dims ── */}
               {zoneSection[k]==="platform"&&<FloorStack S={S} zc={zc} zm={zm} st={st} sZ={sZ} sFD={sFD} fd={fd} fmt={fmt} showCosts={showCosts}
                 isDark={isDark} border={border} accent={accent} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} scale={zoneScaleVal(k)} openAvailModal={openAvailModal} zoneKey={k} />}
@@ -5201,7 +5192,7 @@ undefined
                   {secHead(<IconRuler size={14}/>,"Zone Dimensions","#C9A96E")}
                   <TrussStack S={S} customCeilingField={ownsLive?customCeilingField:noCustomField} k={zk} zc={cfgCur} zm={zm} st={st} sZ={sZ} sD={sD} fmt={fmt} showCosts={showCosts}
                     isDark={isDark} border={border} textP={textP} textS={textS} accent={accent}
-                    customMaskingField={ownsLive?customMaskingField:noCustomField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} scale={scaleFor} />
+                    customMaskingField={ownsLive?customMaskingField:noCustomField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} scale={scaleFor} guestDiscPct={structDiscountFor(cfgCur,aVenue)?.truss?25:0} />
                   <FloorStack S={S} zc={cfgCur} zm={zm} st={st} sZ={sZ} sFD={sFD} fd={fd} fmt={fmt} showCosts={showCosts}
                     isDark={isDark} border={border} accent={accent} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} scale={scaleFor} openAvailModal={ownsLive?openAvailModal:undefined} zoneKey={zk} />
                 </div>
