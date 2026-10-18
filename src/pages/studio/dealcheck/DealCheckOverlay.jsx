@@ -714,6 +714,7 @@ export default function DealCheckOverlay({ ctx }) {
                   costPctFor,
                   repeatAdjustedRentalFn: (it, q, br, cf) => repeatAdjustedRental(_rep, fn.fnVenue, it, q, br, fn.fnDate, cf),
                   rentalRateFor: (it, ck2) => effKitRental(it, fi, ck2),
+                  fnDate: fn.fnDate,
                 });
                 lineRental = split.ownedCost + split.shortCost;
                 shortCost = split.shortCost;
@@ -744,7 +745,12 @@ export default function DealCheckOverlay({ ctx }) {
                 // changes what it actually costs Ambria to produce or buy a brand-new unit.
                 // Floor: cost%-of-production must never undercut what the item would've sold for if
                 // it were simply in stock (StudioApp.jsx's getElPrice applies the same floor).
-                shortCost = shortQty * Math.max(baseR, (Number(item.cost) || 0) * (oosCostPctFor(item, costPctFor) / 100));
+                // fn.fnDate gates the production lead-time check inside oosCostPctFor/canFulfillShortfall
+                // (lib/rateCard.js) — no asOfDate here (defaults to the live "today" countdown); the
+                // frozen-at-commitment version (el.addedAt) is applied in Build's own getElPriceFromInventory,
+                // which has direct access to the originating element — this rollup only has the
+                // already-matched Deal Check card, not that element, to read a stamp off.
+                shortCost = shortQty * Math.max(baseR, (Number(item.cost) || 0) * (oosCostPctFor(item, costPctFor, fn.fnDate) / 100));
                 lineRental = ownedRental + shortCost;
               }
               rental += lineRental; byFn[fi].rental += lineRental;
@@ -801,7 +807,7 @@ export default function DealCheckOverlay({ ctx }) {
                 // true 50 — the same physical units carried from function 1 into function 2 were
                 // being counted twice). Not applied to a kit's own top-level qty — reuse there is
                 // scoped inside kitShortfallSplit's own component-level accounting, not this field.
-                deptInv[dD].push({ name: item.name || c.name || "Item", photo: imsField.photos(item)[0] || "", qty: isKit ? qty : Math.max(0, qty - reusedQty), unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "", imsId: c.imsId, ...(components && components.length ? { isKit: true, components: components.map(({ci, ...rest}) => ({ ...rest, total: Math.round(rest.total) })) } : {}), ...(shortQty > 0 ? { shortQty, shortCost: Math.round(shortCost), outOfStock: !canFulfillShortfall(item) } : {}) });
+                deptInv[dD].push({ name: item.name || c.name || "Item", photo: imsField.photos(item)[0] || "", qty: isKit ? qty : Math.max(0, qty - reusedQty), unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "", imsId: c.imsId, ...(components && components.length ? { isKit: true, components: components.map(({ci, ...rest}) => ({ ...rest, total: Math.round(rest.total) })) } : {}), ...(shortQty > 0 ? { shortQty, shortCost: Math.round(shortCost), outOfStock: !canFulfillShortfall(item, fn.fnDate) } : {}) });
               }
             });
             // Manually-added inventory blocks (dcManualItems) — the salesperson added these directly in
@@ -2704,6 +2710,7 @@ export default function DealCheckOverlay({ ctx }) {
                               costPctFor: _costPctFor,
                               repeatAdjustedRentalFn: (x, q, br, cf) => repeatAdjustedRental(_rep, _fnVenueForRepeat, x, q, br, _fnDateForRepeat, cf),
                               rentalRateFor: (x, ck2) => effKitRental(x, fnIdx, ck2),
+                              fnDate: _fnDateForRepeat,
                             });
                             zoneRentalTotal += splitP.ownedCost + splitP.shortCost;
                             return;
@@ -2715,7 +2722,7 @@ export default function DealCheckOverlay({ ctx }) {
                           const _crossFnAvail = _crossFnTakePill(it.id, qty);
                           const ownedQty = Math.min(qty, available + _crossFnAvail);
                           const shortQty = Math.max(0, qty - ownedQty);
-                          const shortRate = Math.max(baseR, (Number(it.cost) || 0) * (oosCostPctFor(it, _costPctFor) / 100));
+                          const shortRate = Math.max(baseR, (Number(it.cost) || 0) * (oosCostPctFor(it, _costPctFor, _fnDateForRepeat) / 100));
                           zoneRentalTotal += repeatAdjustedRental(_rep, _fnVenueForRepeat, it, ownedQty, baseR, _fnDateForRepeat, _crossFnAvail) + shortQty * shortRate;
                         });
                         manualItemsInZone.forEach(mi => { const it = dcInventoryCache.find(x => x.id === mi.imsId); if (!it) return; const q = Number(mi.qty) || 1; const baseR = effKitRental(it, fnIdx, null); const _rep = mi.zoneKey ? repeatCatFor(fns[fnIdx]?.zoneConfig?.[mi.zoneKey], "elements") : false; zoneRentalTotal += repeatAdjustedRental(_rep, _fnVenueForRepeat, it, q, baseR, _fnDateForRepeat, _crossFnTakePill(it.id, q)); });
@@ -3123,6 +3130,7 @@ export default function DealCheckOverlay({ ctx }) {
                                       costPctFor: _kitCostPctForC,
                                       repeatAdjustedRentalFn: (x, q, br, cf) => repeatAdjustedRental(_rep, _venue, x, q, br, _fnDateForRepeat, cf),
                                       rentalRateFor: (x, ck2) => effKitRental(x, fnIdx, ck2),
+                                      fnDate: _fnDateForRepeat,
                                     });
                                     _lineTotal = splitC.ownedCost + splitC.shortCost;
                                   } else if (item) {
@@ -3131,7 +3139,7 @@ export default function DealCheckOverlay({ ctx }) {
                                     const _cardOwnedQty = Math.min(_cardQty, _cardAvail + _cardCrossFn);
                                     const _cardShortQty = Math.max(0, _cardQty - _cardOwnedQty);
                                     const _cardCostPctFor = (subcat) => { const key = String(subcat || "").trim().toLowerCase(); const row = (rcSubcatFactors || []).find(r => r?.id === key); const v = row ? Number(row.cost_percent) : undefined; return (typeof v === "number" && isFinite(v) && v >= 0) ? v : 100; };
-                                    const _cardShortRate = Math.max(rental, (Number(item.cost) || 0) * (oosCostPctFor(item, _cardCostPctFor) / 100));
+                                    const _cardShortRate = Math.max(rental, (Number(item.cost) || 0) * (oosCostPctFor(item, _cardCostPctFor, _fnDateForRepeat) / 100));
                                     _lineTotal = repeatAdjustedRental(_rep, _venue, item, _cardOwnedQty, rental, _fnDateForRepeat, _cardCrossFn) + _cardShortQty * _cardShortRate;
                                   }
                                   // The per-unit rate shown next to "×" — the discounted equivalent, not
@@ -3180,7 +3188,7 @@ export default function DealCheckOverlay({ ctx }) {
                                             </span>
                                           )}
                                           {hold && <span title={`Held by ${hold.salesperson} for ${hold.eventName}`} style={{fontSize:11,padding:"2px 6px",borderRadius:4,background:"rgba(245,158,11,0.20)",color:"#F59E0B",fontWeight:700,letterSpacing:0.4}}>⏳ {hold.salesperson}</span>}
-                                          {item && (()=>{ const cq=Number(card.qty)||1; const av=Math.min(dcAvailable(item, fnBlocksForChip, fnIdx), availableAtVenue({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, fns[fnIdx]?.fnVenue, item)); if (cq<=av) return null; const canMake = canFulfillShortfall(item); return <span title={canMake?undefined:"Out of stock and can't be made in production"} style={{fontSize:11,padding:"2px 6px",borderRadius:4,background:"rgba(239,68,68,0.18)",color:"#EF4444",fontWeight:700,letterSpacing:0.4}}>{canMake?`⚠ ${av}`:"⚠ out of stock"}</span>; })()}
+                                          {item && (()=>{ const cq=Number(card.qty)||1; const av=Math.min(dcAvailable(item, fnBlocksForChip, fnIdx), availableAtVenue({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, fns[fnIdx]?.fnVenue, item)); if (cq<=av) return null; const canMake = canFulfillShortfall(item, fns[fnIdx]?.fnDate); return <span title={canMake?undefined:"Out of stock and can't be made in production"} style={{fontSize:11,padding:"2px 6px",borderRadius:4,background:"rgba(239,68,68,0.18)",color:"#EF4444",fontWeight:700,letterSpacing:0.4}}>{canMake?`⚠ ${av}`:"⚠ out of stock"}</span>; })()}
                                           {card.imsId && reuseFnCount[card.imsId]?.size >= 2 && <span style={{fontSize:11,padding:"2px 6px",borderRadius:4,background:"rgba(16,185,129,0.18)",color:"#10B981",fontWeight:700,letterSpacing:0.4}}>♻ {reuseFnCount[card.imsId].size} fns</span>}
                                           <span onClick={()=>setDcCards(prev=>{const fn={...(prev[fnIdx]||{})}; delete fn[card._cardKey]; return {...prev,[fnIdx]:fn};})} title="Remove from Deal Check" style={{marginLeft:"auto",cursor:"pointer",color:"#EF4444",fontSize:15.5,fontWeight:700,padding:"0 4px",lineHeight:1,flexShrink:0,opacity:0.6,transition:"opacity 0.15s"}} onMouseEnter={e=>e.currentTarget.style.opacity=1} onMouseLeave={e=>e.currentTarget.style.opacity=0.6}>×</span>
                                         </div>
@@ -3532,7 +3540,7 @@ export default function DealCheckOverlay({ ctx }) {
                                                       </span>
                                                       {cItem && (()=>{ const cr=imsField.rentalCost(cItem); return <span style={{...NUM,flex:"1 1 auto",minWidth:108,color:IV.ink3,whiteSpace:"nowrap"}}>₹{cr.toLocaleString("en-IN")} × {needed} = <b style={{color:"#4338CA"}}>₹{(cr*needed).toLocaleString("en-IN")}</b></span>; })()}
                                                       {cItem && (short
-                                                        ? <span style={{color:"#EF4444",fontWeight:700,whiteSpace:"nowrap",textAlign:"right",...NUM}}>{canFulfillShortfall(cItem) ? `⚠ need ${needed}, only ${owned}` : `⚠ out of stock (need ${needed}, only ${owned})`}</span>
+                                                        ? <span style={{color:"#EF4444",fontWeight:700,whiteSpace:"nowrap",textAlign:"right",...NUM}}>{canFulfillShortfall(cItem,_fnDateForRepeat) ? `⚠ need ${needed}, only ${owned}` : `⚠ out of stock (need ${needed}, only ${owned})`}</span>
                                                         : <span style={{color:"#10B981",whiteSpace:"nowrap",textAlign:"right",...NUM}}>✓ {owned} avail</span>)}
                                                     </div>
                                                     {unavailable && (
@@ -4475,7 +4483,7 @@ export default function DealCheckOverlay({ ctx }) {
                         // fi is carried so a row can be matched against the sidebar selection —
                         // this tab is booking-wide, and without the index there was no way to say
                         // which conflicts belong to the function you are actually looking at.
-                        conflicts.push({ imsId: node.id, name: node.name || card.imsName, photo, needed: nodeQty, available, isShort, outOfStock: isShort && !canFulfillShortfall(node), hold, isHeld, fnDate, fi, fnLabel: fn.fnType || `Function ${fi+1}`, item: node });
+                        conflicts.push({ imsId: node.id, name: node.name || card.imsName, photo, needed: nodeQty, available, isShort, outOfStock: isShort && !canFulfillShortfall(node, fnDate), hold, isHeld, fnDate, fi, fnLabel: fn.fnType || `Function ${fi+1}`, item: node });
                       });
                     });
                   });

@@ -17,6 +17,7 @@ import { paletteSearch, paletteMatches } from "../../../components/studio/filter
 import { resolveTrussConfig } from "../../../lib/studio/pricing";
 import { qtyUsedElsewhereInBuild } from "../../../lib/studio/dealAvailability";
 import { logDiscountToClientToggle } from "../../../lib/studio/userActions";
+import { todayStr } from "../../../lib/ims/attendance";
 import { isHiddenSubcat, canFulfillShortfall } from "../../../lib/rateCard";
 import { groupIdsForZones } from "../../../lib/studio/zoneGroups";
 import { CUSTOM_ZONE_TAG_PREFIX } from "../../../lib/studio/keys.js";
@@ -4133,7 +4134,10 @@ undefined
                           // % of the item's production cost, per sub-category). The badge stays as a
                           // heads-up, not a lock.
                           const remaining=remainingForItem(it.id,k); const isFullyUsed=remaining!=null&&remaining<=0;
-                          const canMake=canFulfillShortfall(it);
+                          // No asOfDate — adding this item here is a brand-new commitment happening
+                          // right now, judged against the live "today" countdown to the active
+                          // function's own date, same as openAvailModal's own candidate list.
+                          const canMake=canFulfillShortfall(it,activeFnMeta?.date||clientDate);
                           // Real stock for THIS EVENT DATE, not just "used elsewhere in this same
                           // deal" — remainingForItem above only warns once a sibling zone/function
                           // has already drawn on the item, so an item every OTHER event already has
@@ -4146,7 +4150,12 @@ undefined
                           const isDateUnavail=dateFree<=0;
                           return <div key={"inv:"+it.id}
                             onClick={()=>{
-                              if(!(zoneElements[k]||[]).find(el=>el.invId===it.id)){setZoneElements(prev=>({...prev,[k]:[...(prev[k]||[]),{name:it.name,qty:1,unit:it.unit,size:"",invId:it.id}]}));}
+                              // addedAt: the production lead-time gate (canFulfillShortfall,
+                              // lib/rateCard.js) needs to know WHEN this specific commitment was
+                              // made, not just today's live date — markSold bulk-freezes every
+                              // element present at sale time to the sold date, so this stamp only
+                              // ever matters for an item added to a deal that's already Sold.
+                              if(!(zoneElements[k]||[]).find(el=>el.invId===it.id)){setZoneElements(prev=>({...prev,[k]:[...(prev[k]||[]),{name:it.name,qty:1,unit:it.unit,size:"",invId:it.id,addedAt:todayStr()}]}));}
                               setZoneElSearch(prev=>({...prev,[k]:""}));
                             }}
                             style={{padding:"8px 10px",fontSize:12,cursor:"pointer",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",gap:10}}>
@@ -5170,7 +5179,7 @@ undefined
               const q=(zoneElSearch[zk]||"").toLowerCase().trim();
               const addMatches=q?(()=>{
                 const kitCoveredIds=new Set(els.filter(el=>el.invId).flatMap(el=>{const it=(imsInventory||[]).find(i=>i.id===el.invId);return it?[...kitDescendantIds(it,imsInventory,el.kitOverrides)]:[];}));
-                const inv=(imsInventory||[]).filter(it=>!els.find(el=>el.invId===it.id)&&!kitCoveredIds.has(it.id)&&!isHiddenSubcat(it,rcSubcatFactors)&&(it.name.toLowerCase().includes(q)||(it.cat||"").toLowerCase().includes(q)||(it.subCat||it.subcategory||"").toLowerCase().includes(q))).slice(0,40).map(it=>({key:"inv:"+it.id,label:it.name,sub:(it.subCat||it.subcategory)?(it.subCat||it.subcategory)+" › "+(it.cat||""):(it.cat||""),src:it.img||it.photoUrls?.[0],make:()=>({name:it.name,qty:1,unit:it.unit,size:"",invId:it.id})}));
+                const inv=(imsInventory||[]).filter(it=>!els.find(el=>el.invId===it.id)&&!kitCoveredIds.has(it.id)&&!isHiddenSubcat(it,rcSubcatFactors)&&(it.name.toLowerCase().includes(q)||(it.cat||"").toLowerCase().includes(q)||(it.subCat||it.subcategory||"").toLowerCase().includes(q))).slice(0,40).map(it=>({key:"inv:"+it.id,label:it.name,sub:(it.subCat||it.subcategory)?(it.subCat||it.subcategory)+" › "+(it.cat||""):(it.cat||""),src:it.img||it.photoUrls?.[0],make:()=>({name:it.name,qty:1,unit:it.unit,size:"",invId:it.id,addedAt:todayStr()})}));
                 const pat=(recipeOnlyPatterns||[]).filter(pt=>!els.find(el=>el.patternId===pt.id)&&pt.name.toLowerCase().includes(q)).map(pt=>({key:"pat:"+pt.id,label:pt.name,sub:"🌺 Flower recipe",make:()=>({name:pt.name,qty:1,unit:pt.unit,size:"",patternId:pt.id})}));
                 const mandi=((dealCheckData||studioFloralData)?.mandiCatalogue||[]).filter(m=>isDirectMandiElement(m)&&!els.find(el=>el.mandiId===m.id)&&(m.name||"").toLowerCase().includes(q)).map(m=>{const v=Array.isArray(m.colorVariants)?m.colorVariants:[];return {key:"mandi:"+m.id,label:m.name,sub:`🌸 Mandi · ${m.unit||"kg"}`,src:m.photoUrl,make:()=>({name:m.name,qty:1,unit:m.unit||"kg",size:"",mandiId:m.id,mandiVariantId:v.length===1?v[0].variantId:""})};});
                 return [...inv,...pat,...mandi];

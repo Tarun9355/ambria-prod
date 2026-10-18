@@ -87,6 +87,7 @@ import { resolveDateCategory, getEffectivePricing } from "../../lib/inventory/he
 import { itemImsSubcat, lookupBySubcat, priceForInvItem, itemDimsText, walkKitUnits, kitDescendantIds } from "../../lib/ims/helpers";
 import { matchFlowerPattern, floralPatternUnitRates, sizeClassToPatternKey, normalizeSizeClass, kitFloralCompDelta } from "../../lib/ims/flowerHelpers";
 import { rowToRcItem, rcItemToRow, rcIsSMB, getFloralMode, oosCostPctFor, canFulfillShortfall } from "../../lib/rateCard";
+import { todayStr } from "../../lib/ims/attendance";
 import { supabase, fetchAll, upsertRow, deleteRow, subscribeTable, keepaliveUpsert } from "../../lib/supabase";
 import {
   rowToLibItem, libItemToRow, fetchLibraryItemsByIds, fetchLibraryItemsByUrls,
@@ -4666,19 +4667,28 @@ export default function StudioApp() {
       ownedQty += crossFnBonus;
       shortQty -= crossFnBonus;
       const ownedRate = priceForInvItem(item, rcFactorByKey, imsInventory, el.kitOverrides);
+      // fnDate/asOfDate feed the production lead-time gate inside canFulfillShortfall/oosCostPctFor
+      // (lib/rateCard.js): fnDate is this row's own function date (same resolution already used for
+      // the allocation check above); asOfDate is el.addedAt when present — frozen to the sold date
+      // for an element already sitting in a Sold deal's build (markDealSold bulk-stamps it there),
+      // or the day it was actually added for anything newer. No addedAt at all (a pre-Sold build, or
+      // legacy data predating this field) falls back to the live "today" countdown.
+      const shortfallFnDate = opts?.fnDate || activeFnMeta?.date || clientDate;
+      const shortfallAsOf = el?.addedAt || undefined;
       // Floor: cost%-of-production must never undercut what the item would've sold for if it
       // were simply in stock — a true shortfall is never cheaper for the client than owning it.
       // When the item can't be made (canFulfillShortfall false), oosCostPctFor itself returns 0%,
       // so this floors to ownedRate — no production premium for something that can't be produced.
-      const shortRate = Math.max(ownedRate, (Number(item.cost) || 0) * (oosCostPctFor(item, rcCostPctForSub) / 100));
+      const shortRate = Math.max(ownedRate, (Number(item.cost) || 0) * (oosCostPctFor(item, rcCostPctForSub, shortfallFnDate, shortfallAsOf) / 100));
       const shortCost = shortQty * shortRate;
       const lineCost = repeatAdjustedLineCost(item, ownedQty, ownedRate, opts?.zc, opts?.venueName, crossFnTake, el.repeatOverride) + shortCost;
       const unitPrice = qty > 0 ? lineCost / qty : ownedRate;
       // outOfStock: genuinely nothing can be done about this shortfall (no stock, can't be made
-      // either) — StudioBuild.jsx's badge reads this to show "Out of stock" instead of "priced at
-      // cost%", openAvailModal (StudioApp.jsx) refuses to let this item be picked while it's short,
-      // and the pre-Sold gate (markDealSold) scans every element for it.
-      const outOfStock = shortQty > 0 && !canFulfillShortfall(item);
+      // either, or not enough production lead time left) — StudioBuild.jsx's badge reads this to
+      // show "Out of stock" instead of "priced at cost%", openAvailModal (StudioApp.jsx) refuses to
+      // let this item be picked while it's short, and the pre-Sold gate (markDealSold) scans every
+      // element for it.
+      const outOfStock = shortQty > 0 && !canFulfillShortfall(item, shortfallFnDate, shortfallAsOf);
       const warning = shortQty > 0 ? (outOfStock ? `⚠ ${shortQty} of ${qty} out of stock for this date — pick an alternative` : `⚠ ${shortQty} of ${qty} not free in stock for this date — priced at cost%`) : null;
       // `available` here is "how much of THIS row's own qty is real stock" (= ownedQty) — the sole
       // consumer (StudioBuild.jsx's isUnavail badge) only ever checks <= 0, which ownedQty matches
@@ -8304,6 +8314,37 @@ export default function StudioApp() {
       const updated = ledger.map(c => c.id === client.id ? { ...c, status: "booked", bookedAt: Date.now(), bookedBy: authUser?.name || "—", finalSession: c.sessions?.[0] || null, bookedSystemTotal: (c.bookedSystemTotal != null ? c.bookedSystemTotal : eventGrandTotal) } : c);
       saveClientLedger(updated);
       const allFns = collectAllFunctionData();
+      // Freeze every element currently in the build to TODAY (the sold date) for the production
+      // lead-time gate (canFulfillShortfall, lib/rateCard.js) — confirming a booking is the moment
+      // ops actually commits to making whatever's flagged "Can be made," so that's when the 10-day
+      // countdown starts, not whenever each item happened to be dragged into a pre-Sold draft that
+      // may have sat around for weeks. A re-confirm of an already-booked deal re-stamps the same
+      // way — it's a fresh commitment checkpoint for whatever's currently in the build, same as the
+      // first confirm. Builds fresh zone/element objects rather than mutating collectAllFunctionData's
+      // own (live, non-cloned) zoneElements in place, same immutability convention every other
+      // zoneElements writer in this file already follows.
+      const soldDateStamp = todayStr();
+      const stampZoneElements = (ze) => {
+        const next = {};
+        Object.entries(ze || {}).forEach(([zk, els]) => {
+          next[zk] = (els || []).map(el => (el && el.invId) ? { ...el, addedAt: soldDateStamp } : el);
+        });
+        return next;
+      };
+      const activeFnStamped = allFns.find(f => f.fnIdx === activeFnIdx);
+      if (activeFnStamped) setZoneElements(stampZoneElements(activeFnStamped.zoneElements));
+      const otherFnsStamped = allFns.filter(f => f.fnIdx !== activeFnIdx);
+      if (otherFnsStamped.length) {
+        setFnBuilds(prev => {
+          const next = { ...prev };
+          otherFnsStamped.forEach(fnData => { next[fnData.fnIdx] = { ...(next[fnData.fnIdx] || {}), zoneElements: stampZoneElements(fnData.zoneElements) }; });
+          return next;
+        });
+      }
+      // allFns itself still needs the stamped values for fnEOs (the event-order snapshot) built
+      // below — rebuilt here from the same stampZoneElements() call, not from the live state setters
+      // above (which won't have re-rendered yet).
+      allFns.forEach(fnData => { fnData.zoneElements = stampZoneElements(fnData.zoneElements); });
       const fnEOs = allFns.map(fnData => {
         const bd = calcFunctionBreakdown(fnData);
         return {
@@ -10451,10 +10492,13 @@ export default function StudioApp() {
           const netBlocksForDate = netOwnReservedBlocksLive(blocksForDate, it.id, blocksDetailForDate, eo?.id);
           const free = Math.max(0, Math.min(getStudioAvailable(it, netBlocksForDate), availableAtVenue(fvCfgForRepeat, pickerVenue, it)) - (usedQty[it.id] || 0));
           return { id: it.id, name: it.name, photo: (Array.isArray(it.photoUrls) && it.photoUrls[0]) || it.img || "", free, total: Number(it.qty) || 0, usedIn: usedElsewhere[it.id] || [], venueSlack: _slack, unit: it.unit || "",
-            // Out of stock AND can't be made in production (IMS Inventory's "Can be made" checkbox) —
-            // genuinely unpickable here, not just a cost%-priced shortfall. StudioModals.jsx's picker
-            // disables the card instead of letting it be selected only to price wrong later.
-            canMake: canFulfillShortfall(it),
+            // Out of stock AND can't be made in production (IMS Inventory's "Can be made" checkbox,
+            // or not enough production lead time left before `date`) — genuinely unpickable here,
+            // not just a cost%-priced shortfall. StudioModals.jsx's picker disables the card instead
+            // of letting it be selected only to price wrong later. No asOfDate: picking something
+            // here is itself a brand-new commitment happening right now, so it's judged against the
+            // live, real "today" — never a frozen stamp, since nothing's been added yet.
+            canMake: canFulfillShortfall(it, date),
             price: opts?.rateFn ? opts.rateFn(it)
               : opts?.priceMode === "cost" ? (Number(it.cost) || 0)
               : opts?.priceMode === "rental" ? imsField.rentalCost(it)

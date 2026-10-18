@@ -17,7 +17,11 @@ import { oosCostPctFor } from "../rateCard";
 // call (dcKitEdits only tracks the card the salesperson actually edited) — nested kit-inside-a-kit
 // levels always price off their own live default recipe, same limitation effKitRental documents.
 export function kitShortfallSplit(item, qty, cardKey, ctx) {
-  const { inventoryCache, kitEditsFor, availFor, crossFnTake, costPctFor, repeatAdjustedRentalFn, rentalRateFor } = ctx;
+  // fnDate (optional): the function's own date, gating the production lead-time check inside
+  // oosCostPctFor/canFulfillShortfall (lib/rateCard.js). No asOfDate is passed — the frozen-at-
+  // commitment version (el.addedAt) needs the originating Build element, which a kit's OWN
+  // components don't individually carry here; this always judges against the live "today" countdown.
+  const { inventoryCache, kitEditsFor, availFor, crossFnTake, costPctFor, repeatAdjustedRentalFn, rentalRateFor, fnDate } = ctx;
   if (!item || !(Number(qty) > 0)) return { ownedCost: 0, shortCost: 0, ownedQty: 0, shortQty: 0 };
   const avail = availFor(item);
   const crossFn = crossFnTake(item.id, qty);
@@ -29,10 +33,10 @@ export function kitShortfallSplit(item, qty, cardKey, ctx) {
   if (!isKit || shortQty <= 0) {
     // Floor: cost%-of-production must never undercut what the item would've sold for if it were
     // simply in stock — a true shortfall is never cheaper for the client than owning it.
-    const shortCost = shortQty * Math.max(baseRental, (Number(item.cost) || 0) * (oosCostPctFor(item, costPctFor) / 100));
+    const shortCost = shortQty * Math.max(baseRental, (Number(item.cost) || 0) * (oosCostPctFor(item, costPctFor, fnDate) / 100));
     return { ownedCost, shortCost, ownedQty, shortQty };
   }
-  const kitBaseCost = shortQty * (Number(item.kitBase) || 0) * (oosCostPctFor(item, costPctFor) / 100);
+  const kitBaseCost = shortQty * (Number(item.kitBase) || 0) * (oosCostPctFor(item, costPctFor, fnDate) / 100);
   const edited = kitEditsFor(cardKey);
   const comps = Array.isArray(edited) ? edited : item.subItems.map((s) => ({ itemId: s.itemId, qty: Number(s.qty) || 1 }));
   let compsCost = 0;
