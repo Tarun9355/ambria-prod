@@ -168,7 +168,12 @@ export function trussRateFor(shape, material, density, trussRates) {
   const mat = material || "iron", den = density || "moderate";
   const row = list.find((r) => r.shape === shape && r.material === mat && r.density === den)
     || DEFAULT_TRUSS_RATES.find((r) => r.shape === shape && r.material === mat && r.density === den);
-  return { rate: Number(row?.ratePerSqft) || 0, ceilingRate: Number(row?.ceilingRatePerSqft) || 0 };
+  // noFabricRate — the bare-frame rate for a truss with "No fabric" on. Until an admin fills the
+  // "Without fabric" column it falls back to the normal rate, so no deal changes price on its own.
+  const rate = Number(row?.ratePerSqft) || 0;
+  const nf = row?.noFabricRatePerSqft;
+  const noFabricRate = (nf === undefined || nf === null || nf === "") ? rate : (Number(nf) || 0);
+  return { rate, ceilingRate: Number(row?.ceilingRatePerSqft) || 0, noFabricRate };
 }
 // The two dimensions a truss is charged on, and their area. Shared by trussRowCost (the pricing
 // authority) and the Build card's "how did this number happen" caption, so the caption can never

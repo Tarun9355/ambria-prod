@@ -495,7 +495,9 @@ export const calcZoneFabric = (zc, trussInv, drapeDensity) => {
     lizaWrapKg = Math.ceil(wrapRft * (factors.kgPerRftWrap || 0.3) * 100) / 100;
     lizaModel = "wrap";
   }
-  if (config === "full_box") {
+  // A Custom Ceiling (an inventory panel, zc.customCeilingItemId) replaces the fabric ceiling drape,
+  // so no ceiling Liza is needed — only the wrap. Without this the guest paid for both.
+  if (config === "full_box" && !zc.customCeilingItemId) {
     // ── Ceiling drape component (Full Box only) ──
     const area = (topo.physicalL > 0 ? topo.physicalL : 0) * (topo.physicalW > 0 ? topo.physicalW : 0);
     const dKey = density === "dense" ? "kgPerSqftDense" : density === "minimum" ? "kgPerSqftMinimum" : "kgPerSqftModerate";
@@ -532,15 +534,19 @@ export const calcZoneFabric = (zc, trussInv, drapeDensity) => {
   // Multiple identical trusses in one zone → all physical counts (fabric pieces, liza, curtains,
   // pillars) scale by quantity. Per-truss dimensions (maskL/W, physL/W) stay as a single truss.
   const qty = Math.max(1, zc.trussQty || 1);
+  // "No fabric" on this truss (Build → Fabric card): a bare frame, no Liza/curtains/masking pieces
+  // at all. Zeroed here, at the quantity source, so pricing (calcZoneFabricCost), Deal Check's
+  // allocation panel and the truck count all follow without each needing its own check.
+  const fab = zc.noFabric ? 0 : 1;
   return {
-    maskingPieces: (maskingPieces + extMaskingPieces) * qty,
+    maskingPieces: (maskingPieces + extMaskingPieces) * qty * fab,
     maskL,             // §23 Phase 2.9e — outer footprint used for masking RFT
     maskW,
-    lizaKg: Math.round(lizaKg * qty * 100) / 100,            // total (wrap + ceiling)
-    lizaWrapKg: Math.round(lizaWrapKg * qty * 100) / 100,    // wrap component (always present for any truss)
-    lizaCeilingKg: Math.round(lizaCeilingKg * qty * 100) / 100, // ceiling component (Full Box only, else 0)
-    lizaModel,         // "none" | "wrap" | "wrap+ceiling"
-    curtainPieces: (curtainPieces + extCurtains) * qty,
+    lizaKg: Math.round(lizaKg * qty * fab * 100) / 100,            // total (wrap + ceiling)
+    lizaWrapKg: Math.round(lizaWrapKg * qty * fab * 100) / 100,    // wrap component (always present for any truss)
+    lizaCeilingKg: Math.round(lizaCeilingKg * qty * fab * 100) / 100, // ceiling component (Full Box only, else 0)
+    lizaModel: fab ? lizaModel : "none", // "none" | "wrap" | "wrap+ceiling"
+    curtainPieces: (curtainPieces + extCurtains) * qty * fab,
     curtainPillarCount: (curtainPillarCount + extPillars) * qty,
     physL: topo.physicalL,
     physW: topo.physicalW,
@@ -803,6 +809,10 @@ export const autoSplitArtificialByPalette = (totalKg, paletteColors, artItems) =
 // Build and Deal Check's zone rollup both read, so neither can disagree with the other.
 // paletteAnchors is kept as a parameter for call-site compatibility but no longer used (colour/stock
 // matching is now Deal Check's own per-colour allocation panel's concern, not pricing's).
+// What the GUEST pays for drape fabric, as a multiple of its rental cost above. Owner ask
+// (2026-10-18, "for now"): 3×. Applied only on the guest-price side (calcStructCost and Build's
+// Fabric card) — Deal Check reads calcZoneFabricCost directly as Ambria's own cost, unscaled.
+export const GUEST_FABRIC_MULTIPLIER = 3;
 export const calcZoneFabricCost = (zCfg, trussInv, paletteAnchors, density) => {
   if (!zCfg || !trussInv) return 0;
   const fab = calcZoneFabric(zCfg, trussInv, density || "moderate");
@@ -1000,8 +1010,10 @@ export function trussRowCost(row, rates) {
   // that item's own rental (× its sub-category's scaling factor) is charged instead. Single U has
   // no ceiling concept (open-top structure), so its rate is never reduced this way.
   const hasCustomCeiling = !!row.customCeilingItemId;
-  const boxRate = hasCustomCeiling ? Math.max(0, box.rate - box.ceilingRate) : box.rate;
-  const singleURate = singleU.rate;
+  // "No fabric" (row.noFabric): the bare-frame rate from IMS Admin → Truss & Masking Rates'
+  // "Without fabric" column. It already carries no drape, so there's no ceiling portion to take off.
+  const boxRate = row.noFabric ? box.noFabricRate : hasCustomCeiling ? Math.max(0, box.rate - box.ceilingRate) : box.rate;
+  const singleURate = row.noFabric ? singleU.noFabricRate : singleU.rate;
   if (_trMode === "box") {
     truss = _base.area * boxRate;
     // Optional FRONT EXTENSION (box only, rare): a Single U truss on EACH front side, priced at the
@@ -1014,9 +1026,12 @@ export function trussRowCost(row, rates) {
   else if (_trMode === "singleU") { truss = _base.area * singleURate; }
   // Multiple identical trusses in one row (e.g. 3× Single U) — cost scales by quantity.
   truss *= Math.max(1, row.trussQty || 1);
+  // `ceiling` is the custom ceiling panel's share of `truss` (already included in it), returned on
+  // its own so Build's Fabric card can show it next to the drape it replaces.
+  let ceiling = 0;
   if (hasCustomCeiling) {
     const ceilingItem = (rates?.imsInventory || []).find((i) => i.id === row.customCeilingItemId);
-    if (ceilingItem) truss += priceForInvItem(ceilingItem, rates?.rcFactorByKey, rates?.imsInventory) * Math.max(1, row.trussQty || 1);
+    if (ceilingItem) { ceiling = priceForInvItem(ceilingItem, rates?.rcFactorByKey, rates?.imsInventory) * Math.max(1, row.trussQty || 1); truss += ceiling; }
   }
   // Custom masking — same idea as custom ceiling: a specific IMS inventory item (e.g. a printed
   // wall panel) replaces the flat sqft × material-rate masking cost for this row's masked walls.
@@ -1082,5 +1097,5 @@ export function trussRowCost(row, rates) {
     }
     masking *= Math.max(1, row.trussQty || 1);
   }
-  return { truss, masking };
+  return { truss, masking, ceiling };
 }

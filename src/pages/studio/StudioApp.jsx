@@ -77,7 +77,7 @@ import { RC_D, RC_CATS_DEFAULT } from "../../lib/studio/constants";
 import {
   resolveTrussConfig, findZoneForArea, findAreaForZone, makeZoneId,
   defaultZoneFromArea, resolveMandiFlower, calcZoneTrussPreview,
-  calcZoneFabric, calcZoneFabricCost, calcZoneCarpet, buildPlatformPlan, getStudioAvailable,
+  calcZoneFabric, calcZoneFabricCost, GUEST_FABRIC_MULTIPLIER, calcZoneCarpet, buildPlatformPlan, getStudioAvailable,
   buildTopology, PLATFORM_FATTA_CODE, PLATFORM_STAND_CODE, trussRowCost, repeatCatFor, repeatCatsOn, REPEAT_CAT_LABELS,
 } from "../../lib/studio/pricing";
 import { allocateRowAvailability, netOwnReservedBlocksLive } from "../../lib/studio/dealAvailability";
@@ -294,7 +294,7 @@ function calcStructCost(zk, zc, rates, applyDiscount) {
   // differently, so each extra row carries its own (set via its own card in the zone editor).
   const trussRows = [
     { dims: d, trT: zc.trT, trussType: zc.trussType, trussQty: zc.trussQty, trussFrontExt: zc.trussFrontExt, trussFrontExtH: zc.trussFrontExtH, trussBackDepth: zc.trussBackDepth, mkOn: zc.mkOn, mkT: zc.mkT, mkWalls: zc.mkWalls, mkWallMat: zc.mkWallMat, mkS: zc.mkS, trussMaterial: zc.trussMaterial, drapeDensity: zc.drapeDensity, customCeilingItemId: zc.customCeilingItemId, customMaskingItemId: zc.customMaskingItemId,
-      useNewFabric: zc.useNewFabric },
+      useNewFabric: zc.useNewFabric, noFabric: zc.noFabric },
     ...(zc.extraTrussRows || []),
   ];
   trussRows.forEach((row) => { const { truss, masking } = trussRowCost(row, rates); r.truss += truss; r.masking += masking; });
@@ -306,7 +306,7 @@ function calcStructCost(zk, zc, rates, applyDiscount) {
   // never disagree.
   if (rates?.trussInv) {
     trussRows.forEach((row) => {
-      r.fabric += calcZoneFabricCost(row, rates.trussInv, [], row.drapeDensity || "moderate");
+      r.fabric += calcZoneFabricCost(row, rates.trussInv, [], row.drapeDensity || "moderate") * GUEST_FABRIC_MULTIPLIER;
       if (row.useNewFabric) r.fabricNew = true;
     });
   }
@@ -10012,7 +10012,8 @@ export default function StudioApp() {
         const _tShape = zc.trT === "box" ? "box" : "singleU";
         const _tRate = trussRateFor(_tShape, zc.trussMaterial, zc.drapeDensity, imsTrussRates);
         const _tHasCustomCeiling = _tShape === "box" && !!zc.customCeilingItemId;
-        const _tEffRate = _tHasCustomCeiling ? Math.max(0, _tRate.rate - _tRate.ceilingRate) : _tRate.rate;
+        // Same rate trussRowCost charges — the bare-frame rate when "No fabric" is on.
+        const _tEffRate = zc.noFabric ? _tRate.noFabricRate : _tHasCustomCeiling ? Math.max(0, _tRate.rate - _tRate.ceilingRate) : _tRate.rate;
         const _tMatLabel = (TRUSS_MATERIALS.find((m) => m.key === (zc.trussMaterial || "iron"))?.label) || "Pole";
         const _tCeilingItem = _tHasCustomCeiling ? (imsInventory || []).find((i) => i.id === zc.customCeilingItemId) : null;
         // The two dims a truss is actually charged on (trussBaseArea — same authority calcStructCost's
@@ -10021,7 +10022,7 @@ export default function StudioApp() {
         // that's a second, smaller area on top, not part of this base sqft.
         const _tBase = trussBaseArea({ dims: zc.dims, trT: zc.trT });
         structItems.push({
-          name: "Truss (" + (_tShape === "box" ? "Box" : "Single U") + " · " + _tMatLabel + " ₹" + _tEffRate + "/sqft)" + (_tCeilingItem ? ` · custom ceiling: ${_tCeilingItem.name}` : "") + (zc.trT === "box" && (Number(zc.trussFrontExt) || 0) > 0 ? ` + 2× Single-U front ext ${zc.trussFrontExt}×${Number(zc.trussFrontExtH) || dims.H || 0}ft` : "") + ((zc.trussQty || 1) > 1 ? " ×" + zc.trussQty : ""),
+          name: "Truss (" + (_tShape === "box" ? "Box" : "Single U") + " · " + _tMatLabel + (zc.noFabric ? " · no fabric" : "") + " ₹" + _tEffRate + "/sqft)" + (_tCeilingItem ? ` · custom ceiling: ${_tCeilingItem.name}` : "") + (zc.trT === "box" && (Number(zc.trussFrontExt) || 0) > 0 ? ` + 2× Single-U front ext ${zc.trussFrontExt}×${Number(zc.trussFrontExtH) || dims.H || 0}ft` : "") + ((zc.trussQty || 1) > 1 ? " ×" + zc.trussQty : ""),
           size: `${_tBase.a || 0}×${_tBase.b || 0}ft`, qty: Math.round((_tBase.area || 0) * Math.max(1, zc.trussQty || 1) * 100) / 100, rate: _tEffRate, unit: "sqft",
           total: zl.truss,
         });

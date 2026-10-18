@@ -12,7 +12,7 @@ import {
 } from "../../../lib/studio/taxonomy";
 import { paletteNames, addPaletteInline } from "../../../lib/studio/colours";
 import PaletteQuickAdd from "../../../components/studio/PaletteQuickAdd.jsx";
-import { trussRowCost, zoneTrussStandingDiscountDetail, repeatCatFor, parseFlowerPalette, stringifyFlowerPalette, parseFabricPalette, stringifyFabricPalette, isDirectMandiElement } from "../../../lib/studio/pricing";
+import { trussRowCost, calcZoneFabricCost, GUEST_FABRIC_MULTIPLIER, zoneTrussStandingDiscountDetail, repeatCatFor, parseFlowerPalette, stringifyFlowerPalette, parseFabricPalette, stringifyFabricPalette, isDirectMandiElement } from "../../../lib/studio/pricing";
 import { paletteSearch, paletteMatches } from "../../../components/studio/filterUI.jsx";
 import { resolveTrussConfig } from "../../../lib/studio/pricing";
 import { qtyUsedElsewhereInBuild } from "../../../lib/studio/dealAvailability";
@@ -163,6 +163,23 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
   const guestDisc = guestDiscPct > 0 ? Math.round(rowCost.truss * guestDiscPct / 100) : 0;
   const maskingShown = guestDiscPct > 0 ? Math.round(rowCost.masking * (1 - guestDiscPct / 100)) : rowCost.masking;
   const discountedTruss = Math.max(0, rowCost.truss - rowDiscount - guestDisc);
+  // The drape fabric (Liza / masking panels / curtains) this truss is billed for — the same call
+  // calcStructCost adds into the Truss & Masking total. It had no figure on the card, so the chip
+  // above showed truss + fabric while the card showed the truss alone, and the two looked unrelated.
+  const fabricInv = trussInv || structRates?.trussInv;
+  // Guest price — same GUEST_FABRIC_MULTIPLIER calcStructCost folds into the Truss & Masking tile.
+  // The Fabric card shows Liza + velvet curtains only. The wall masking panels in the same fabric
+  // bill belong with the walls, so they are shown on the Masking card instead (added to its own
+  // figure below) — same total, each part under the control that causes it. Without-walls is the
+  // same calculation with no walls masked.
+  const fabricAll = fabricInv ? calcZoneFabricCost(zc, fabricInv, [], zc.drapeDensity || "moderate") * GUEST_FABRIC_MULTIPLIER : 0;
+  const fabricCost = fabricInv ? calcZoneFabricCost({ ...zc, mkOn: false, mkWalls: {} }, fabricInv, [], zc.drapeDensity || "moderate") * GUEST_FABRIC_MULTIPLIER : 0;
+  const wallPanelCost = Math.max(0, fabricAll - fabricCost);
+  // The Custom Ceiling panel bills inside rowCost.truss (and takes the Repeat discount with it), but
+  // it replaces the ceiling drape, so the card shows it on Fabric instead — same total, moved.
+  const ceilingShown = guestDiscPct > 0 ? Math.round(rowCost.ceiling * (1 - guestDiscPct / 100)) : rowCost.ceiling;
+  const trussShown = Math.max(0, discountedTruss - ceilingShown);
+  const fabricShown = fabricCost + ceilingShown;
   // ═══ ONE SELECTED-STATE ═══ These three rows previously used a dark outline (material),
   // PINK (drape) and a borderless grey fill (masking). The borderless one was the real problem:
   // unselected options rendered as plain text and did not look clickable. `border` is never
@@ -219,7 +236,7 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                       if (zc.trussQty === 0) return <span style={{fontSize:10.5,color:textS,fontWeight:400}}>{base.a}×{base.b} = {base.area} sqft — <b style={{color:accent}}>dims only, no truss billed</b> (still used for fabric/liza/curtain)</span>;
                       const qty=Math.max(1,zc.trussQty||1);
                       return <span style={{fontSize:10.5,color:textS,fontWeight:400}}>
-                        {base.a}×{base.b} = {base.area} sqft × {fmt(r.rate)}/sqft{qty>1?` × ${qty}`:""}
+                        {base.a}×{base.b} = {base.area} sqft × {fmt(zc.noFabric?r.noFabricRate:r.rate)}/sqft{zc.noFabric?" (no fabric)":""}{qty>1?` × ${qty}`:""}
                         {rowDiscount>0&&<span style={{color:"#10B981",fontWeight:600}}> − {fmt(rowDiscount)} venue discount</span>}
                         {guestDisc>0&&<span style={{color:"#10B981",fontWeight:600}}> − {fmt(guestDisc)} ({guestDiscPct}% repeat discount)</span>}
                       </span>;
@@ -234,7 +251,7 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                       extra cards, so the figures sat at two different x positions down the stack
                       and stopped reading as a column. */}
                   <span style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
-                    {showCosts&&<span title={rowDiscount>0||guestDisc>0?"Discount applied":undefined} style={{fontWeight:600,color:rowDiscount>0||guestDisc>0?"#10B981":textP}}>{fmt(discountedTruss)}</span>}
+                    {showCosts&&<span title={rowDiscount>0||guestDisc>0?"Discount applied":undefined} style={{fontWeight:600,color:rowDiscount>0||guestDisc>0?"#10B981":textP}}>{fmt(trussShown)}</span>}
                     <span style={{width:14,display:"inline-flex",justifyContent:"center",flexShrink:0}}>
                       {nested&&<span onClick={onRemove} title="Remove this truss" style={{cursor:"pointer",color:"#E11D48",fontSize:14,fontWeight:700,lineHeight:1}}>✕</span>}
                     </span>
@@ -350,7 +367,12 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                     </div>
                   </div>}
                   {zc.trT && <div style={groupCard}>
-                    <div style={{...rowCap,marginBottom:6}}>Drape</div>
+                    <div style={{display:"flex",alignItems:"center",marginBottom:6}}>
+                      <div style={rowCap}>Drape</div>
+                      {/* The Custom Ceiling's own price, next to the chip that picks it. Already part of
+                          the Fabric figure — shown here too, not added twice. */}
+                      {showCosts&&ceilingShown>0&&<span style={{marginLeft:"auto",fontSize:12,fontWeight:600,color:textP}} title="Custom ceiling — also included in the Fabric figure">{fmt(ceilingShown)}</span>}
+                    </div>
                     <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
                       {[{v:"minimum",l:"Minimum"},{v:"moderate",l:"Moderate"},{v:"dense",l:"Dense"}].map(o=>{
                         const sel=(zc.drapeDensity||"moderate")===o.v;
@@ -371,9 +393,16 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                   {zc.trT && <div style={groupCard} title="Which drape fabric stock this truss's masking/Liza/curtains are billed from">
                     <div style={{...rowCap,marginBottom:6}}>Fabric</div>
                     <div style={{display:"flex",alignItems:"center",gap:8}}>
-                      {toggle(!!zc.useNewFabric, ()=>sZ({useNewFabric:!zc.useNewFabric}))}
-                      <span style={{fontSize:11,fontWeight:600,color:zc.useNewFabric?textP:textS}}>{zc.useNewFabric?"New":"Old"}</span>
+                      {!zc.noFabric&&<>
+                        {toggle(!!zc.useNewFabric, ()=>sZ({useNewFabric:!zc.useNewFabric}))}
+                        <span style={{fontSize:11,fontWeight:600,color:zc.useNewFabric?textP:textS}}>{zc.useNewFabric?"New":"Old"}</span>
+                      </>}
+                      {showCosts&&fabricShown>0&&<span style={{marginLeft:"auto",fontSize:12,fontWeight:600,color:textP}} title={`Liza + velvet curtains for a ${zc.drapeDensity||"moderate"} drape, ${zc.useNewFabric?"New":"Old"} stock${ceilingShown>0?` ${fmt(fabricCost)} + custom ceiling ${fmt(ceilingShown)}`:""} (wall panels are on the Masking card)`}>{fmt(fabricShown)}</span>}
                     </div>
+                    {/* A bare frame: the truss bills at IMS's "Without fabric" rate and no Liza,
+                        curtains or masking pieces are counted (see calcZoneFabric/trussRowCost). */}
+                    <span onClick={()=>sZ({noFabric:!zc.noFabric})} style={{...optPill(!!zc.noFabric),marginTop:6,display:"inline-flex"}}
+                      title="Truss without any drape fabric — billed at the 'Without fabric' rate">{zc.noFabric&&<IconCheck size={9}/>}No fabric</span>
                   </div>}
                   <div style={groupCard} title="Masking panels attach to this truss">
                     <div style={{...rowCap,marginBottom:6}}>Masking</div>
@@ -390,7 +419,7 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                           ...(turningOn&&!zc.mkT&&!zc.customMaskingItemId?{mkT:maskOpts[0]?.id||"fabric"}:{}),
                         });
                       })}
-                      {showCosts&&zc.mkOn&&<span style={{fontWeight:600,color:textP,fontSize:11}}>{fmt(maskingShown)}</span>}
+                      {showCosts&&zc.mkOn&&<span style={{fontWeight:600,color:textP,fontSize:11}} title={wallPanelCost>0?`Masking ${fmt(maskingShown)} + wall fabric panels ${fmt(wallPanelCost)}`:undefined}>{fmt(maskingShown + wallPanelCost)}</span>}
                     </div>
                   </div>
               </div>;
@@ -928,7 +957,9 @@ export default function StudioBuild({ ctx }) {
     if (id === "elements") { const n = (zoneElements[k] || []).length; return n ? `${n} item${n === 1 ? "" : "s"}` : "No items yet"; }
     // Empty rather than "Not set" — the tile already reads as untouched, and the words added a
     // line of noise to every zone on first open. sectionTile skips the sub-label row when blank.
-    if (id === "truss") return (d.W || d.L) ? `${d.W || "–"} × ${d.L || "–"} ft${zm.hasMasking && zc.mkT ? " · masking" : ""}` : "";
+    // "· masking" only when masking is actually on — mkT (the material) stays set after the toggle is
+    // switched off, so keying on it labelled zones "masking" that bill none.
+    if (id === "truss") return (d.W || d.L) ? `${d.W || "–"} × ${d.L || "–"} ft${zc.mkOn && zc.mkT ? " · masking" : ""}` : "";
     // floorDims keys are W/L — `fd.D` never existed, so the depth always rendered as "–".
     if (id === "platform") return (fd.W || fd.L) ? `${fd.W || "–"} × ${fd.L || "–"} ft` : "";
     const n = (zc.prints || []).length; return n ? `${n} print${n === 1 ? "" : "s"}` : "None";
