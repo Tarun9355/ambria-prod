@@ -77,7 +77,7 @@ import { RC_D, RC_CATS_DEFAULT } from "../../lib/studio/constants";
 import {
   resolveTrussConfig, findZoneForArea, findAreaForZone, makeZoneId,
   defaultZoneFromArea, resolveMandiFlower, calcZoneTrussPreview,
-  calcZoneFabric, calcZoneFabricCost, GUEST_FABRIC_MULTIPLIER, calcZoneCarpet, buildPlatformPlan, getStudioAvailable,
+  calcZoneFabric, calcZoneFabricCost, guestFabricMultiplier, calcZoneCarpet, buildPlatformPlan, getStudioAvailable,
   buildTopology, PLATFORM_FATTA_CODE, PLATFORM_STAND_CODE, trussRowCost, repeatCatFor, repeatCatsOn, REPEAT_CAT_LABELS,
 } from "../../lib/studio/pricing";
 import { allocateRowAvailability, netOwnReservedBlocksLive } from "../../lib/studio/dealAvailability";
@@ -306,7 +306,7 @@ function calcStructCost(zk, zc, rates, applyDiscount) {
   // never disagree.
   if (rates?.trussInv) {
     trussRows.forEach((row) => {
-      r.fabric += calcZoneFabricCost(row, rates.trussInv, [], row.drapeDensity || "moderate") * GUEST_FABRIC_MULTIPLIER;
+      r.fabric += calcZoneFabricCost(row, rates.trussInv, [], row.drapeDensity || "moderate") * guestFabricMultiplier(rates);
       if (row.useNewFabric) r.fabricNew = true;
     });
   }
@@ -1894,6 +1894,9 @@ export default function StudioApp() {
   // to DEFAULT_TRUSS_RATES/DEFAULT_MASKING_RATES via trussRateFor/maskingRateFor until customized.
   const [imsTrussRates, setImsTrussRates] = useState([]);
   const [imsMaskingRates, setImsMaskingRates] = useState([]);
+  // Guest multiplier on drape fabric (Liza / velvet) — settings.fabricMultiplier, same panel.
+  // null = not set yet → guestFabricMultiplier's 3× default.
+  const [imsFabricMultiplier, setImsFabricMultiplier] = useState(null);
   // IMS Admin → Settings → 🪵 Platform Rates (settings.platformRates) — falls back to
   // DEFAULT_PLATFORM_RATES via platformRateFor until an admin edits one.
   const [imsPlatformRates, setImsPlatformRates] = useState([]);
@@ -3218,6 +3221,7 @@ export default function StudioApp() {
         // Truss & Masking Rates (IMS Admin → Settings → 🏗️) — same per-field kv row pattern.
         (async () => { try { const trv = await kvGet("trussRates"); if (trv != null) { const tr = parse(trv); if (Array.isArray(tr) && !cancelled) setImsTrussRates(tr); } } catch {} })(),
         (async () => { try { const mrv = await kvGet("maskingRates"); if (mrv != null) { const mr = parse(mrv); if (Array.isArray(mr) && !cancelled) setImsMaskingRates(mr); } } catch {} })(),
+        (async () => { try { const fmv = await kvGet("fabricMultiplier"); if (fmv != null && !cancelled) setImsFabricMultiplier(parse(fmv)); } catch {} })(),
         (async () => { try { const prv = await kvGet("platformRates"); if (prv != null) { const pr = parse(prv); if (Array.isArray(pr) && !cancelled) setImsPlatformRates(pr); } } catch {} })(),
       ]);
       // Every input the estimate reads has now landed: the rate card and its scaling factors,
@@ -3330,6 +3334,7 @@ export default function StudioApp() {
           else if (key === "carpetMaterials") { const cm = pj(await kvGet("carpetMaterials")); if (Array.isArray(cm)) setImsCarpetMaterials(cm); }
           else if (key === "trussRates") { const tr = pj(await kvGet("trussRates")); if (Array.isArray(tr)) setImsTrussRates(tr); }
           else if (key === "maskingRates") { const mr = pj(await kvGet("maskingRates")); if (Array.isArray(mr)) setImsMaskingRates(mr); }
+          else if (key === "fabricMultiplier") { setImsFabricMultiplier(pj(await kvGet("fabricMultiplier"))); }
           else if (key === "platformRates") { const pr = pj(await kvGet("platformRates")); if (Array.isArray(pr)) setImsPlatformRates(pr); }
           // YT_TAG_SK is deliberately NOT handled here any more. Video tags have their own row-level
           // subscription on the `video_tags` table now, and the blob is a write-only mirror during the
@@ -4206,7 +4211,7 @@ export default function StudioApp() {
   // sharedFloralSettings itself reads — can't use sharedFloralSettings here, it's declared further
   // down) so calcStructCost can price a true Liza/masking/curtain fabric shortfall into the guest
   // build itself, not just Deal Check's internal cost tracking (see calcFabricAllocCost's own note).
-  const structRates = useMemo(() => ({ printMaterials: imsPrintMaterials, carpetMaterials: imsCarpetMaterials, trussRates: imsTrussRates, maskingRates: imsMaskingRates, platformRates: imsPlatformRates, imsInventory, rcFactorByKey, trussInv: studioFloralData?.trussInv ?? dealCheckData?.trussInv }), [imsPrintMaterials, imsCarpetMaterials, imsTrussRates, imsMaskingRates, imsPlatformRates, imsInventory, rcFactorByKey, studioFloralData, dealCheckData]);
+  const structRates = useMemo(() => ({ printMaterials: imsPrintMaterials, carpetMaterials: imsCarpetMaterials, trussRates: imsTrussRates, maskingRates: imsMaskingRates, fabricMultiplier: imsFabricMultiplier, platformRates: imsPlatformRates, imsInventory, rcFactorByKey, trussInv: studioFloralData?.trussInv ?? dealCheckData?.trussInv }), [imsPrintMaterials, imsCarpetMaterials, imsTrussRates, imsMaskingRates, imsFabricMultiplier, imsPlatformRates, imsInventory, rcFactorByKey, studioFloralData, dealCheckData]);
 
   // Cost% for pricing an inventory-sourced element's shortfall (qty beyond what's free in stock
   // for the active date) — same rate_card_categories row as the scaling factor, same join key.
