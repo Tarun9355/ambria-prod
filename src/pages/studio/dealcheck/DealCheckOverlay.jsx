@@ -677,7 +677,17 @@ export default function DealCheckOverlay({ ctx }) {
             // untouched by the running-peak rework above).
             const crossFnPrevFn = findCrossFnReuseSource(fn, fns);
             const frontierMap = (fnGroupFrontier[fnGroupIds[fi]] ||= new Map());
-            const frozenFrontier = new Map(frontierMap); // this function's own cards never see their own later bump
+            // consumablePool is seeded ONCE from the frontier as it stood before this function started
+            // (so it reflects exactly what earlier functions in the group contributed, no more — this
+            // function's own cards never inflate it for each other), but then DECREMENTS as this
+            // function's own cards draw from it. A read-only frozen snapshot here (an earlier version
+            // of this fix) let every card in a multi-card function see the SAME leftover credit and
+            // each claim it in full — a couch split across two zones in one function (two cards, qty 1
+            // each) both drew the one real unit a sibling function had already installed, crediting it
+            // twice over for a single physical piece. Decrementing the pool as each card consumes it
+            // keeps that credit from being spent more than once, the same way normal stock
+            // availability already works — this is just a second, cross-function stock of the same kind.
+            const consumablePool = new Map(frontierMap);
             // thisFnDemand accumulates the REAL qty this function's own cards actually asked crossFnTake
             // for, per invId — the bump below advances the frontier by exactly this, not by a second,
             // independently-sourced "raw need" figure (computeFnInvQty off zoneElements). Those two
@@ -692,8 +702,10 @@ export default function DealCheckOverlay({ ctx }) {
             const crossFnTake = (invId, qty) => {
               if (!invId || !(Number(qty) > 0)) return 0;
               thisFnDemand.set(invId, (thisFnDemand.get(invId) || 0) + qty);
-              const prior = frozenFrontier.get(invId) || 0;
-              return Math.min(qty, prior);
+              const avail = consumablePool.get(invId) || 0;
+              const reused = Math.min(qty, avail);
+              if (reused > 0) consumablePool.set(invId, avail - reused);
+              return reused;
             };
             // Same blocksByDate resolution the Inventory Status tab already uses (line ~1690) —
             // one lookup per function, reused for every card's availability check below.
