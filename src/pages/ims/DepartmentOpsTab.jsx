@@ -4580,7 +4580,14 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
             )}
 
             {/* Blocked inventory */}
-            <div className={"bg-white rounded-xl shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] overflow-hidden" + modalCls("inv")}>
+            {/* No overflow-hidden here (unlike its sibling cards) — every child below is inset with
+                its own margin/padding and never touches this card's edges, so the rounded corners
+                were never actually at risk of a square-cornered child bleeding past them. Dropping it
+                is what lets the column header's `sticky` below attach to the PAGE's real scroll
+                instead of being trapped inside this card's own box (overflow-hidden makes an element
+                its own scroll container for sticky-positioning purposes, which is exactly what broke
+                the first attempt at pinning it). */}
+            <div className={"bg-white rounded-xl shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)]" + modalCls("inv")}>
               {/* Summary strip. Tinted blue rather than grey and the figure set in a white pill:
                   with the rows below now white cards on a light ground, a grey header read as
                   one more row instead of as the thing they add up to. */}
@@ -4637,19 +4644,17 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                   const anyRentalQty = !invScoped && invShown.some(it => Number(it.rentalQty ?? it.qty) !== (Number(it.qty) || 0));
                   const qtyHeaderLabel = anyRentalQty ? "To load" : "Qty";
                   return (
-                /* A bounded, independently-scrollable region with its own sticky header (the standard
-                   "sticky thead over a scrollable tbody" pattern) was tried here to get the header to
-                   actually pin — the card's own overflow-hidden (for its rounded corners) was stopping
-                   a plain page-level `sticky` from ever attaching to the real scroll. That nested
-                   region fought with the surrounding layout (the sticky header visibly overlapped row
-                   content, numbers clipped at the edge) instead of fixing it. Reverted to a single,
-                   PLAIN (non-sticky) header — same declutter win (no repeated QTY/RATE/TOTAL on every
-                   card), same exact column classes as each row's own stats block so it lines up
-                   pixel-for-pixel, just not pinned while scrolling. True pinning needs the card's own
-                   overflow-hidden restructured without breaking its rounded corners elsewhere, which is
-                   a bigger, riskier change than this fix warrants on its own. */
+                /* Two earlier attempts at pinning this: a plain `sticky` while the card still had
+                   overflow-hidden (never attached to the real scroll — overflow-hidden makes an
+                   element its own scroll container for sticky purposes, so it just rode along with
+                   the card), then a bounded independently-scrollable region with its own sticky header
+                   (fought the surrounding layout — overlapping row content, clipped numbers). The
+                   card's own overflow-hidden is gone now (see its own comment, above), so a plain
+                   `sticky top-0` here finally has the real page scroll to attach to. Solid background
+                   (not translucent) this time — a see-through header over scrolling rows was part of
+                   what made the previous attempt look broken. */
                 <div className="p-2.5 space-y-2">
-                  <div className="hidden sm:flex items-center gap-x-3 px-2.5 bg-gray-50 rounded-lg ring-1 ring-gray-100 py-1.5 -mt-0.5 mb-1">
+                  <div className="hidden sm:flex items-center gap-x-3 px-2.5 sticky top-0 z-10 bg-white rounded-lg ring-1 ring-gray-100 py-1.5 -mt-0.5 mb-1">
                     <span className="flex-1 min-w-0" />
                     <div className="w-full sm:w-auto flex items-start gap-0 sm:pl-1">
                       <div className={"text-right text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400 " + STAT_W.qty}>{qtyHeaderLabel}</div>
