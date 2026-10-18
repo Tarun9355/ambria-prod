@@ -542,7 +542,7 @@ export function TrussStack({ S, customCeilingField, customMaskingField, k, zc, z
 // `nested` marks one of a zone's EXTRA platform footprints: same card, same colours, titled
 // "Platform N" with a remove control in place of the cost, which the first card already totals
 // across every footprint.
-export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, nested = false, title, onRemove, scale = 1 }) {
+export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, nested = false, title, onRemove, scale = 1, openAvailModal, zoneKey }) {
   // What THIS footprint costs, via the same function the cost engine sums over every row.
   //
   // Dims are read off zc, NOT off the `fd` prop — the prop is always `zc.floorDims || {}`, whether
@@ -648,12 +648,29 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
                     sZ({plQty:nextQty, plQtyBase: scale>1?nextQty/scale:nextQty});
                   }} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}}/></div>
                 <div style={{flex:1.5,minWidth:150}}>
-                  <div style={{fontSize:11.5,color:textS,marginBottom:3,display:"inline-flex",alignItems:"center",gap:5}}><IconCarpet size={12}/>Carpet</div>
+                  <div style={{fontSize:11.5,color:textS,marginBottom:3,display:"inline-flex",alignItems:"center",gap:5}}>
+                    <IconCarpet size={12}/>Carpet
+                    {/* Which PHYSICAL carpet to pull — purely a stock pick, separate from the material
+                        dropdown's rate. It never changes rowCost.carpet (still area × the material's
+                        ₹/sqft below); it only tells ops which item to use, read by Deal Check's own
+                        carpet card (falls back to this pick when it has no pick of its own yet) and
+                        carried from there into IMS when the deal is sent. Hidden once carpet is
+                        explicitly turned off — nothing to pick for a floor with none. */}
+                    {openAvailModal && zc.cpT!==CARPET_OFF && <span onClick={()=>openAvailModal(zoneKey, 0,
+                        {invId:zc.cpInvId||null, imsId:zc.cpInvId||null, name:zc.cpInvName||""},
+                        {sub:"carpets"},
+                        (pick)=>sZ({cpInvId:pick?.id||null, cpInvName:pick?.name||""}),
+                        {pickHint:"Pick which physical carpet to use for this floor — a stock pick only, it doesn't change the price.", priceMode:"rental"})}
+                      title={zc.cpInvName?`Stock pick: ${zc.cpInvName} — tap to check availability & change`:"Check carpet stock availability & pick an item"}
+                      style={{cursor:"pointer",display:"inline-flex",opacity:zc.cpInvName?1:0.5}}><IconBox size={11}/></span>}
+                  </div>
                   <select value={zc.cpT===CARPET_OFF?"":(zc.cpT||defaultCarpetMatId(imsCarpetMaterials)||"")} onChange={e=>sZ({cpT:e.target.value||CARPET_OFF})}
                     style={{width:"100%",boxSizing:"border-box",fontSize:11.5,padding:"7px 8px",borderRadius:8,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
                     <option value="" style={{color:"#111827",background:"#fff"}}>— None —</option>
                     {(imsCarpetMaterials||[]).map(m=><option key={m.id} value={m.id} style={{color:"#111827",background:"#fff"}}>{m.name}{showCosts?` · ₹${m.ratePerSqft}/sqft`:""}</option>)}
-                  </select></div>
+                  </select>
+                  {zc.cpT!==CARPET_OFF && zc.cpInvName && <div style={{fontSize:10,color:"#059669",fontWeight:600,marginTop:3}}>📦 {zc.cpInvName}</div>}
+                </div>
                 {showCosts&&<div style={{fontSize:11.5,color:textS,paddingBottom:8,whiteSpace:"nowrap"}}>Carpet <span style={{fontWeight:600,color:textP}}>{fmt(rowCost.carpet)}</span></div>}
               </div>
               <div style={{fontSize:11.5,color:textS,lineHeight:1.3,marginBottom:4}}>{(fd.L||fd.W)?`${fd.L||0}×${fd.W||0} = ${(fd.L||0)*(fd.W||0)} sqft${(zc.plQty||1)>1?` × ${zc.plQty}`:""}`:"No floor size set — priced at 0 sqft until you enter one below"}</div>
@@ -668,12 +685,12 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
 //
 // platformRowCost already runs per row over zc.extraPlatformRows and buildPlatformPlan draws one
 // ops entry each, so the cost and the plan were ready long before there was a way to add one.
-export function FloorStack({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, scale = 1 }) {
+export function FloorStack({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, scale = 1, openAvailModal, zoneKey }) {
   const rows = zc.extraPlatformRows || [];
   const write = (next) => sZ({ extraPlatformRows: next });
   // accent rides in `shared`, so both the first floor and every added row get it from one place —
   // FloorCard needs it for the platform-height control's selected fill.
-  const shared = { S, zm, st, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, scale };
+  const shared = { S, zm, st, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, scale, openAvailModal, zoneKey };
   return (<>
     <FloorCard {...shared} zc={zc} sZ={sZ} sFD={sFD} fd={fd} title={rows.length ? "Floor 1" : "Floor"} />
     {rows.map((row, ri) => {
@@ -4668,7 +4685,7 @@ undefined
                 customMaskingField={customMaskingField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} scale={zoneScaleVal(k)} />}
               {/* ── PLATFORM + CARPET → then floor dims ── */}
               {zoneSection[k]==="platform"&&<FloorStack S={S} zc={zc} zm={zm} st={st} sZ={sZ} sFD={sFD} fd={fd} fmt={fmt} showCosts={showCosts}
-                isDark={isDark} border={border} accent={accent} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} scale={zoneScaleVal(k)} />}
+                isDark={isDark} border={border} accent={accent} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} scale={zoneScaleVal(k)} openAvailModal={openAvailModal} zoneKey={k} />}
             </div>);
           })()}
           </Fragment>}
@@ -5173,7 +5190,7 @@ undefined
                     isDark={isDark} border={border} textP={textP} textS={textS} accent={accent}
                     customMaskingField={ownsLive?customMaskingField:noCustomField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} scale={scaleFor} />
                   <FloorStack S={S} zc={cfgCur} zm={zm} st={st} sZ={sZ} sFD={sFD} fd={fd} fmt={fmt} showCosts={showCosts}
-                    isDark={isDark} border={border} accent={accent} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} scale={scaleFor} />
+                    isDark={isDark} border={border} accent={accent} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} scale={scaleFor} openAvailModal={ownsLive?openAvailModal:undefined} zoneKey={zk} />
                 </div>
                 <div style={sectionBox}>
                   {secHead(<IconClipboard size={14}/>,"Element Breakdown","#7C3AED",

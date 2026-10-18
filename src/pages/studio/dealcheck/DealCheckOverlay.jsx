@@ -1012,7 +1012,10 @@ export default function DealCheckOverlay({ ctx }) {
                 const area = (Number(fd.L) || Number(fd.S) || 0) * (Number(fd.W) || Number(fd.S) || 0);
                 const cRate = carpetPricingFor(zcz.cpT, imsCarpetMaterials).rate || 0;
                 const cc = area > 0 ? area * cRate : 0;
-                const pickedId = picks[zk];
+                // Deal Check's own override (picks[zk]) wins if set; otherwise fall back to whichever
+                // physical carpet was already picked in Build (zcz.cpInvId) — so IMS gets told which
+                // carpet to pull even for a deal whose Deal Check carpet card was never touched.
+                const pickedId = picks[zk] ?? zcz.cpInvId ?? null;
                 const carpetItem = pickedId ? dcInventoryCache.find(x => x.id === pickedId) : null;
                 if (cc > 0) {
                   rental += cc; byFn[fi].rental += cc;
@@ -1021,7 +1024,7 @@ export default function DealCheckOverlay({ ctx }) {
                     name: carpetItem?.name || carpetPricingFor(zcz.cpT, imsCarpetMaterials).label || "Carpet",
                     photo: carpetItem ? imsField.photos(carpetItem)[0] || "" : "",
                     qty: 1, unit: 0, total: Math.round(cc),
-                    sub: carpetItem ? imsField.subcategory(carpetItem) || "carpet" : "carpet",
+                    sub: carpetItem ? imsField.subcategory(carpetItem) || "carpets" : "carpets",
                     imsId: carpetItem?.id,
                   });
                 }
@@ -2851,11 +2854,17 @@ export default function DealCheckOverlay({ ctx }) {
                                   // Exact match, not .includes("carpet") — that substring match used to
                                   // also pull in items filed under a DIFFERENT sub-category that merely
                                   // contains the word "carpet" (e.g. "Rug Carpet"), leaking the wrong
-                                  // stock into this picker. "Carpet" is also the literal fallback string
-                                  // below and what openAvailModal itself needs as an exact sub-category
-                                  // to search within, so this now matches that same string precisely.
-                                  const carpetOpts = dcInventoryCache.filter(x => String(imsField.subcategory(x)||"").trim().toLowerCase() === "carpet");
-                                  const pickedId = dcCarpetPick[fnIdx]?.[zk];
+                                  // stock into this picker. "carpets" (the real IMS sub-category name,
+                                  // plural) is also the literal fallback string below and what
+                                  // openAvailModal itself needs as an exact sub-category to search
+                                  // within, so this now matches that same string precisely.
+                                  const carpetOpts = dcInventoryCache.filter(x => String(imsField.subcategory(x)||"").trim().toLowerCase() === "carpets");
+                                  // Falls back to Build's own stock pick (zc.cpInvId, set via the same
+                                  // IconBox control on the Platform card's Carpet row) when this zone
+                                  // has no Deal-Check-specific override yet — so a carpet picked in
+                                  // Build is already reflected here the first time Deal Check runs,
+                                  // instead of showing "no carpet picked" until someone repicks it here.
+                                  const pickedId = dcCarpetPick[fnIdx]?.[zk] ?? zc.cpInvId ?? null;
                                   const carpetItem = pickedId ? dcInventoryCache.find(x=>x.id===pickedId) : null;
                                   const markup = dealCheckData?.carpetFreshMarkup ?? 40;
                                   const calc = carpetItem ? calcZoneCarpet(zc, carpetItem, markup) : null;
@@ -2896,12 +2905,12 @@ export default function DealCheckOverlay({ ctx }) {
                                   // and dimensions in one list, rather than a bespoke search-and-thumbnail
                                   // grid duplicating that same question just for carpets. Falls back to
                                   // whichever sub-category an already-known carpet item carries (either
-                                  // the one currently picked, or the first of the exact "Carpet"
+                                  // the one currently picked, or the first of the exact "carpets"
                                   // set above) since openAvailModal needs a concrete sub-category
                                   // to search within, not a substring. Also offers Split (opts.splitQty/
                                   // onSplit) so the modal's own "pick 2+ items" flow seeds splitLines —
                                   // exactly how a regular item card's split starts.
-                                  const carpetSubcatFallback = carpetItem ? imsField.subcategory(carpetItem) : (carpetOpts[0] ? imsField.subcategory(carpetOpts[0]) : "Carpet");
+                                  const carpetSubcatFallback = carpetItem ? imsField.subcategory(carpetItem) : (carpetOpts[0] ? imsField.subcategory(carpetOpts[0]) : "carpets");
                                   const openCarpetPicker = () => openAvailModal?.(
                                     zk, 0,
                                     { invId: pickedId || null, imsId: pickedId || null, name: carpetItem?.name || "" },
