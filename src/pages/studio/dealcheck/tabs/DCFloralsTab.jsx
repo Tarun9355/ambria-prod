@@ -156,9 +156,20 @@ export default function DCFloralsTab({ ctx }) {
                   Object.entries(activeFn.zoneElements || {}).forEach(([zk, elems]) => {
                     if (!activeFn.enabledEls?.[zk]) return;
                     // The Elements chip, not the zone toggle alone (RC-30) — must match calcFnFloralSourcingCost.
-                    const zoneRepeat = repeatCatFor(activeFn.zoneConfig?.[zk], "elements") || !!(crossFnPrevFnFloral?.enabledEls?.[zk] && crossFnPrevFnFloral?.zoneConfig?.[zk]);
+                    const manualRepeat = repeatCatFor(activeFn.zoneConfig?.[zk], "elements");
+                    const crossFnRepeat = !manualRepeat && !!(crossFnPrevFnFloral?.enabledEls?.[zk] && crossFnPrevFnFloral?.zoneConfig?.[zk]);
+                    const zoneRepeat = manualRepeat || crossFnRepeat;
                     const realQtyFrac = zoneRepeat ? REPEAT_REAL_QTY_MULT : 1;
                     const artQtyFrac = zoneRepeat ? REPEAT_ART_QTY_MULT : 1;
+                    // Two different reasons a zone can land on the discounted quantity — a salesperson
+                    // can only ever see one of them in Build (this zone's own ✨Fresh/♻️Repeat chip);
+                    // the other fires silently off a SIBLING function's zone, with nothing on this
+                    // function to check. "it's not a repeat, I checked the build" kept coming up
+                    // because the chip really was off — the cut was carried over from the other
+                    // function instead. Label which one it was so the "how" panels can say so.
+                    const repeatLabel = manualRepeat ? "set to Repeat in Build"
+                      : crossFnRepeat ? `carried over from ${crossFnPrevFnFloral.fnType || "another function"} (same venue, ${crossFnPrevFnFloral.fnDate === activeFn.fnDate ? "same day" : "day before"})`
+                      : null;
                     // A kit's own subItems can carry floral content of their own — a flower-recipe
                     // add-on (si.patternId, e.g. a floral topper baked into a stage kit) or a
                     // component item that is itself categorized as florals. Neither ever reached this
@@ -384,6 +395,7 @@ export default function DCFloralsTab({ ctx }) {
                               prev.contributors.push({
                                 elName: el.name, zoneKey: zk, elQty,
                                 perPattern: fl.qty || 0, realFrac: effectiveRealFrac, contribution: totalFlowerQty,
+                                repeatZone: zoneRepeat, repeatQtyFrac: realQtyFrac, repeatLabel,
                                 size: sizeKey, realOnly: flowerType === "real_only"
                               });
                               flowerAgg.set(parentId, prev);
@@ -491,7 +503,7 @@ export default function DCFloralsTab({ ctx }) {
                       // breakdown below can skip showing it a second time here (with a "no pattern"
                       // warning that's really just "this was never supposed to have one").
                       const isInvOnlyNoPattern = !!invItem && !pattern;
-                      elementBreakdown.push({ name: el.name, zoneKey: zk, qty: elQty, realPct, realCost, artCost, total: realCost + artCost, hasPattern: !!pattern, realLines, size: sizeKey, artLines, artBunchesFlower, artBunchesGreen, artBunchesFlowerFull, artBunchesGreenFull, flowerPerBunchRate, greenPerBunchRate, isInvOnlyNoPattern });
+                      elementBreakdown.push({ name: el.name, zoneKey: zk, qty: elQty, realPct, realCost, artCost, total: realCost + artCost, hasPattern: !!pattern, realLines, size: sizeKey, artLines, artBunchesFlower, artBunchesGreen, artBunchesFlowerFull, artBunchesGreenFull, flowerPerBunchRate, greenPerBunchRate, isInvOnlyNoPattern, repeatZone: zoneRepeat, repeatLabel, realQtyFrac, artQtyFrac });
                     });
                   });
                   if (elementBreakdown.length === 0) {
@@ -927,6 +939,8 @@ export default function DCFloralsTab({ ctx }) {
                                               <th style={{textAlign:"right",padding:"3px 4px 5px",color:"#1A1A2E",fontWeight:500}}>per pattern</th>
                                               <th style={{textAlign:"right",padding:"3px 4px 5px",color:"#1A1A2E",fontWeight:500}}>×</th>
                                               <th style={{textAlign:"right",padding:"3px 4px 5px",color:"#1A1A2E",fontWeight:500}}>real %</th>
+                                              <th style={{textAlign:"right",padding:"3px 4px 5px",color:"#1A1A2E",fontWeight:500}}>×</th>
+                                              <th style={{textAlign:"right",padding:"3px 4px 5px",color:"#1A1A2E",fontWeight:500}}>repeat</th>
                                               <th style={{textAlign:"right",padding:"3px 4px 5px",color:"#1A1A2E",fontWeight:500}}>= contrib</th>
                                             </tr></thead>
                                             <tbody>
@@ -938,21 +952,28 @@ export default function DCFloralsTab({ ctx }) {
                                                   <td style={{textAlign:"right",padding:"4px 4px",color:"#1A1A2E",fontVariantNumeric:"tabular-nums"}}>{c.perPattern} {f.unit}</td>
                                                   <td style={{textAlign:"right",padding:"4px 4px",color:"#1A1A2E"}}>×</td>
                                                   <td style={{textAlign:"right",padding:"4px 4px",color:"#1A1A2E",fontVariantNumeric:"tabular-nums"}}>{Math.round(c.realFrac*100)}%</td>
+                                                  <td style={{textAlign:"right",padding:"4px 4px",color:"#1A1A2E"}}>×</td>
+                                                  {/* The cut a zone's ♻️Repeat (or a reused sibling function) applies on top of the
+                                                      real% blend — without this column the formula shown never actually multiplied
+                                                      out to the contrib figure next to it, and looked simply wrong. */}
+                                                  <td style={{textAlign:"right",padding:"4px 4px",color:c.repeatZone?"#B45309":"#1A1A2E",fontVariantNumeric:"tabular-nums"}} title={c.repeatZone ? `Repeat zone — ${c.repeatLabel}` : "Not a repeat zone"}>
+                                                    {c.repeatZone ? `×${c.repeatQtyFrac}` : "×1"}
+                                                  </td>
                                                   <td style={{textAlign:"right",padding:"4px 4px",color:"#1A1A2E",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{c.contribution.toFixed(2)} {f.unit}</td>
                                                 </tr>
                                               ))}
                                               <tr style={{borderTop:`1px solid ${border}`}}>
-                                                <td colSpan={6} style={{textAlign:"right",padding:"4px 4px",color:"#1A1A2E"}}>Sum:</td>
+                                                <td colSpan={8} style={{textAlign:"right",padding:"4px 4px",color:"#1A1A2E"}}>Sum:</td>
                                                 <td style={{textAlign:"right",padding:"4px 4px",color:"#B45309",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{f.totalQty.toFixed(2)} {f.unit}</td>
                                               </tr>
                                               <tr>
-                                                <td colSpan={6} style={{textAlign:"right",padding:"4px 4px",color:"#1A1A2E"}}>× ₹{Math.round(f.unitPrice)}/{f.unit} =</td>
+                                                <td colSpan={8} style={{textAlign:"right",padding:"4px 4px",color:"#1A1A2E"}}>× ₹{Math.round(f.unitPrice)}/{f.unit} =</td>
                                                 <td style={{textAlign:"right",padding:"4px 4px",color:"#10B981",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>₹{Math.round(f.totalQty * f.unitPrice).toLocaleString("en-IN")}</td>
                                               </tr>
                                             </tbody>
                                           </table>
                                         )}
-                                        <div style={{marginTop:8,paddingTop:6,borderTop:`1px dashed ${border}`,fontSize:12,color:"#1A1A2E",fontStyle:"italic"}}>Σ(element qty × per-pattern recipe × real %) summed across all elements using this flower</div>
+                                        <div style={{marginTop:8,paddingTop:6,borderTop:`1px dashed ${border}`,fontSize:12,color:"#1A1A2E",fontStyle:"italic"}}>Σ(element qty × per-pattern recipe × real % × repeat factor) summed across all elements using this flower</div>
                                       </div>
                                     </td>
                                   </tr>
@@ -1229,6 +1250,15 @@ export default function DCFloralsTab({ ctx }) {
                                   <td colSpan={7} style={{padding:"4px 4px 10px"}}>
                                     <div style={{padding:"10px 12px",background:"rgba(124,58,237,0.06)",border:"1px dashed rgba(167,139,250,0.35)",borderRadius:7}}>
                                       <div style={{fontSize:11,color:"#7C3AED",fontWeight:600,letterSpacing:0.4,textTransform:"uppercase",marginBottom:8}}>How ₹{Math.round(eb.total).toLocaleString("en-IN")} for {eb.name} · {eb.zoneKey} × {eb.qty} derived</div>
+                                      {/* Same cut as the per-flower "how" panel, stated once here since it applies
+                                          equally to every flower in this element — real flowers need 80% less fresh
+                                          stock, artificial 30% less, and it can come from a toggle on THIS zone or
+                                          be carried over silently from a sibling function at the same venue. */}
+                                      {eb.repeatZone && (
+                                        <div style={{fontSize:11,color:"#B45309",fontWeight:500,marginBottom:8,padding:"4px 8px",background:"rgba(180,83,9,0.08)",borderRadius:6}}>
+                                          ♻️ Repeat zone — {eb.repeatLabel}. Real flower qty ×{eb.realQtyFrac}, artificial qty ×{eb.artQtyFrac}.
+                                        </div>
+                                      )}
 
                                       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,fontSize:12}}>
                                         {/* Real side */}
