@@ -4513,7 +4513,11 @@ undefined
                       flowerPatterns={sharedFloralSettings.flowerPatterns||recipeOnlyPatterns}
                       qtyMultiplier={el.qty||1}
                       dealAwareness={{getRemaining:(itemId)=>remainingForItem(itemId,k,idx)}}
-                      onCheckAvailability={(cItem,onPick,opts)=>openAvailModal(null,null,{invId:cItem.id,name:cItem.name},null,onPick,{priceMode:"cost",pickHint:"Pick the item this is based on — its production cost becomes the reference price.",splitQty:opts?.splitQty,onSplit:opts?.onSplit})}
+                      // A kit part is RENTED: the kit prices a swapped-in part at its rental (priceForInvItem),
+                      // so the picker shows that same guest-facing rate (its default mode). It used to pass
+                      // priceMode "cost" with the custom-item picker's wording, so a part renting at ₹70 was
+                      // listed at its ₹500 purchase cost — a figure the kit never charges.
+                      onCheckAvailability={(cItem,onPick,opts)=>openAvailModal(null,null,{invId:cItem.id,name:cItem.name},null,onPick,{pickHint:"Pick the item to use for this part of the kit — shown at its rental price.",splitQty:opts?.splitQty,onSplit:opts?.onSplit})}
                       rcSubcatFactors={rcSubcatFactors}
                       rcFactorByKey={rcFactorByKey}
                       mandiCatalogue={sharedFloralSettings.mandiCatalogue||[]} studioMarkup={Number(sharedFloralSettings.defaultStudioMarkup)||3} elSize={el.size}
