@@ -21,7 +21,7 @@ describe("kitShortfallSplit — plain (non-kit) item", () => {
   it("fully available: all owned, no shortfall cost", () => {
     const ctx = baseCtx({ availFor: () => 20 });
     const r = kitShortfallSplit(item, 10, null, ctx);
-    expect(r).toEqual({ ownedCost: 1000, shortCost: 0, ownedQty: 10, shortQty: 0 });
+    expect(r).toEqual({ ownedCost: 1000, shortCost: 0, ownedQty: 10, shortQty: 0, reusedQty: 0 });
   });
 
   it("partially short: owned bills at rate, shortfall bills at cost x cost%", () => {
@@ -102,6 +102,16 @@ describe("kitShortfallSplit — kit with components", () => {
     //   inner shortCost = 40 + 60 = 100; inner ownedCost = 0
     // outer shortCost = 100 (own kitBase) + 100 (inner's owned+short) = 200
     expect(r.shortCost).toBe(200);
+  });
+
+  it("surfaces the kit's own top-level cross-function reuse credit as reusedQty", () => {
+    // Dept Ops' "Inventory blocked" display nets a line's displayed qty against reusedQty so a kit
+    // reused across two back-to-back functions shows the true physical peak, not qty1+qty2 summed.
+    const ctx = baseCtx({ inventoryCache, availFor: (it) => (it.id === "KIT" ? 2 : 0), crossFnTake: () => 3 });
+    const r = kitShortfallSplit(kit, 5, null, ctx);
+    expect(r.reusedQty).toBe(3); // the kit's own crossFnTake(item.id, qty) call, not a component's
+    expect(r.ownedQty).toBe(5); // 2 stock + 3 cross-fn credit = fully covered
+    expect(r.shortQty).toBe(0);
   });
 
   it("an explicit Deal-Check component override replaces the kit's default recipe for the shortfall split", () => {

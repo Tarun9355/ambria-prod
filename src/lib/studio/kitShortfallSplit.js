@@ -34,7 +34,7 @@ export function kitShortfallSplit(item, qty, cardKey, ctx) {
     // Floor: cost%-of-production must never undercut what the item would've sold for if it were
     // simply in stock — a true shortfall is never cheaper for the client than owning it.
     const shortCost = shortQty * Math.max(baseRental, (Number(item.cost) || 0) * (oosCostPctFor(item, costPctFor, fnDate) / 100));
-    return { ownedCost, shortCost, ownedQty, shortQty };
+    return { ownedCost, shortCost, ownedQty, shortQty, reusedQty: crossFn };
   }
   const kitBaseCost = shortQty * (Number(item.kitBase) || 0) * (oosCostPctFor(item, costPctFor, fnDate) / 100);
   const edited = kitEditsFor(cardKey);
@@ -48,5 +48,5 @@ export function kitShortfallSplit(item, qty, cardKey, ctx) {
     const sub = kitShortfallSplit(ci, cq, null, ctx);
     compsCost += sub.ownedCost + sub.shortCost;
   });
-  return { ownedCost, shortCost: kitBaseCost + compsCost, ownedQty, shortQty };
+  return { ownedCost, shortCost: kitBaseCost + compsCost, ownedQty, shortQty, reusedQty: crossFn };
 }

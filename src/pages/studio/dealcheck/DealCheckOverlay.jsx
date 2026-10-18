@@ -681,7 +681,7 @@ export default function DealCheckOverlay({ ctx }) {
                   rental += line; byFn[fi].rental += line;
                   const dd = catToDept(imsField.category(it));
                   addD(dd, "rental", line);
-                  if (line > 0 && deptInv[dd]) deptInv[dd].push({ name: it.name, photo: imsField.photos(it)[0] || "", qty: Math.max(0, q - reused), unit: br, total: Math.round(line), sub: imsField.subcategory(it) || "", imsId: it.id });
+                  if (line > 0 && deptInv[dd]) deptInv[dd].push({ name: it.name, photo: imsField.photos(it)[0] || "", qty: Math.max(0, q - reused), rentalQty: q, unit: br, total: Math.round(line), sub: imsField.subcategory(it) || "", imsId: it.id });
                 });
                 return;
               }
@@ -721,6 +721,9 @@ export default function DealCheckOverlay({ ctx }) {
                 // Display-only: how many WHOLE kits are short (badge/Dept-Ops copy) — the kit's own
                 // top-level owned/short split kitShortfallSplit already computed, not a re-derivation.
                 shortQty = split.shortQty;
+                // Same cross-function reuse credit the plain-item branch applies to its displayed qty
+                // below — kitShortfallSplit's own top-level crossFnTake call for THIS kit id/qty.
+                reusedQty = split.reusedQty || 0;
               } else {
                 // Owner ask: fixed venues keep a permanent standing allocation of certain items —
                 // that stock furnishes THOSE venues, not an outdoor (non-fixed-venue) deal. Folding
@@ -805,9 +808,12 @@ export default function DealCheckOverlay({ ctx }) {
                 // qty shown is net of cross-function reuse (owner-reported: a 15-then-50 Warm LED
                 // pair of back-to-back functions at the same venue was showing 65 blocked, not the
                 // true 50 — the same physical units carried from function 1 into function 2 were
-                // being counted twice). Not applied to a kit's own top-level qty — reuse there is
-                // scoped inside kitShortfallSplit's own component-level accounting, not this field.
-                deptInv[dD].push({ name: item.name || c.name || "Item", photo: imsField.photos(item)[0] || "", qty: isKit ? qty : Math.max(0, qty - reusedQty), unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "", imsId: c.imsId, ...(components && components.length ? { isKit: true, components: components.map(({ci, ...rest}) => ({ ...rest, total: Math.round(rest.total) })) } : {}), ...(shortQty > 0 ? { shortQty, shortCost: Math.round(shortCost), outOfStock: !canFulfillShortfall(item, fn.fnDate) } : {}) });
+                // being counted twice). A kit's own top-level qty gets the same treatment now —
+                // kitShortfallSplit's own crossFnTake call for the kit's own id/qty is surfaced as
+                // split.reusedQty above (previously only its internal component-level shortfall
+                // accounting saw the reuse credit, so a reused KIT's displayed qty still summed
+                // across its sibling functions instead of showing the true peak).
+                deptInv[dD].push({ name: item.name || c.name || "Item", photo: imsField.photos(item)[0] || "", qty: Math.max(0, qty - reusedQty), rentalQty: qty, unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "", imsId: c.imsId, ...(components && components.length ? { isKit: true, components: components.map(({ci, ...rest}) => ({ ...rest, total: Math.round(rest.total) })) } : {}), ...(shortQty > 0 ? { shortQty, shortCost: Math.round(shortCost), outOfStock: !canFulfillShortfall(item, fn.fnDate) } : {}) });
               }
             });
             // Manually-added inventory blocks (dcManualItems) — the salesperson added these directly in
@@ -856,7 +862,7 @@ export default function DealCheckOverlay({ ctx }) {
               } else {
                 addD(dD, "rental", lineRental);
               }
-              if (deptInv[dD]) deptInv[dD].push({ name: item.name || "Item", photo: imsField.photos(item)[0] || "", qty: Math.max(0, q - miReused), unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "", imsId: mi.imsId, ...(miComponents && miComponents.length ? { isKit: true, components: miComponents.map(({ci, ...rest}) => ({ ...rest, total: Math.round(rest.total) })) } : {}) });
+              if (deptInv[dD]) deptInv[dD].push({ name: item.name || "Item", photo: imsField.photos(item)[0] || "", qty: Math.max(0, q - miReused), rentalQty: q, unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "", imsId: mi.imsId, ...(miComponents && miComponents.length ? { isKit: true, components: miComponents.map(({ci, ...rest}) => ({ ...rest, total: Math.round(rest.total) })) } : {}) });
             });
             try { const fl = calcFnFloralSourcingCost(fn).grandTotal; florals += fl; byFn[fi].florals += fl; addD("Floral", "florals", fl); } catch {}
             // `genset` (used only for the Power tab's own nav-pill amount) reads gensetCostOurs —
@@ -1080,8 +1086,14 @@ export default function DealCheckOverlay({ ctx }) {
               // those are different transactions (make/buy new vs. reserve the stocked one) that
               // must never blend into one merged line.
               const key = (it.name || "") + "|" + (it.sub || "") + "|" + (it.imsId || "") + "|" + (it.prodOrBuy || "");
+              // rentalQty: the raw per-function qty this line was actually billed against, summed
+              // straight across every function with NO cross-function dedup — unlike `qty` ("to
+              // load"), which nets out the same physical units a sibling function already reuses.
+              // Falls back to `qty` for push sites that never claimed a cross-fn reuse credit (truss,
+              // platform, print, custom items) — there, to-load and rental-basis are identical anyway.
+              const rq = it.rentalQty != null ? it.rentalQty : (it.qty || 0);
               if (seen[key]) {
-                seen[key].qty += (it.qty || 0); seen[key].total += (it.total || 0);
+                seen[key].qty += (it.qty || 0); seen[key].rentalQty += rq; seen[key].total += (it.total || 0);
                 if (it.shortQty) { seen[key].shortQty = (seen[key].shortQty || 0) + it.shortQty; seen[key].shortCost = (seen[key].shortCost || 0) + (it.shortCost || 0); }
                 if (Array.isArray(it.components)) { // merge kit sub-elements too (same kit across zones)
                   const base = seen[key].components || (seen[key].components = []);
@@ -1092,7 +1104,7 @@ export default function DealCheckOverlay({ ctx }) {
                   });
                 }
               }
-              else { seen[key] = { ...it, components: Array.isArray(it.components) ? it.components.map(c => ({ ...c })) : undefined }; merged.push(seen[key]); }
+              else { seen[key] = { ...it, rentalQty: rq, components: Array.isArray(it.components) ? it.components.map(c => ({ ...c })) : undefined }; merged.push(seen[key]); }
             });
             deptInv[dn] = merged;
           });

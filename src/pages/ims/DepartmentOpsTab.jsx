@@ -183,7 +183,7 @@ const StatCell = ({ label, w, children }) => (
     <div className="mt-1">{children}</div>
   </div>
 );
-const STAT_W = { qty: "sm:w-16", rate: "sm:w-20", total: "sm:w-24" };
+const STAT_W = { qty: "sm:w-16", rentalQty: "sm:w-20", rate: "sm:w-20", total: "sm:w-24" };
 
 /* Page with a down-arrow: a document you take away, which is what the export produces. Not a
    printer glyph — the print dialog is how it is saved, not what it is for. */
@@ -763,7 +763,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       // departments by each part's own category, so a row can be a component of a kit owned by
       // another department. It is the only record of that parent, and the PDF needs it to avoid
       // reporting a bolted-on part as a loose item.
-      const rows = deptInvSnap.map((x, i) => ({ id: x.name + i, invId: x.imsId || null, name: x.name, photo: x.photo || "", qty: x.qty || 0, unit: x.unit || 0, total: x.total || 0, sub: x.sub || "", isKit: !!x.isKit, fromKit: x.fromKit || null, components: Array.isArray(x.components) ? x.components : null, shortQty: x.shortQty || 0, shortCost: x.shortCost || 0, outOfStock: !!x.outOfStock, prodOrBuy: x.prodOrBuy || null, isSwapped: swapInfo.has(x.name), swappedFrom: swapInfo.get(x.name)?.swappedFrom || null }));
+      const rows = deptInvSnap.map((x, i) => ({ id: x.name + i, invId: x.imsId || null, name: x.name, photo: x.photo || "", qty: x.qty || 0, rentalQty: x.rentalQty != null ? x.rentalQty : (x.qty || 0), unit: x.unit || 0, total: x.total || 0, sub: x.sub || "", isKit: !!x.isKit, fromKit: x.fromKit || null, components: Array.isArray(x.components) ? x.components : null, shortQty: x.shortQty || 0, shortCost: x.shortCost || 0, outOfStock: !!x.outOfStock, prodOrBuy: x.prodOrBuy || null, isSwapped: swapInfo.has(x.name), swappedFrom: swapInfo.get(x.name)?.swappedFrom || null }));
       // Short items first (need chasing/ordering), then Production/Buying (not real stock — worth
       // knowing apart from what's actually reserved), then everything else — the order requested
       // for this list. Stable within each group: Array.prototype.sort is stable, so ties keep the
@@ -953,7 +953,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         const q = (it.invId && invFnQty.byId.get(String(it.invId))) || invFnQty.byName.get(String(it.name || "").trim().toLowerCase()) || 0;
         if (!q) return null;
         const share = (Number(it.qty) || 0) > 0 ? q / Number(it.qty) : 1;
-        return { ...it, qty: q, total: Math.round((Number(it.total) || 0) * share), shortQty: Math.min(Number(it.shortQty) || 0, q) };
+        return { ...it, qty: q, rentalQty: q, total: Math.round((Number(it.total) || 0) * share), shortQty: Math.min(Number(it.shortQty) || 0, q) };
       }).filter(Boolean)
     : blockedItemsGrouped;
   const invWholeOnly = invScoped ? blockedItemsGrouped.length - invShown.length : 0;
@@ -4571,6 +4571,23 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                    also the only form that survived the phone layout anyway. */
                 <div className="p-2.5 space-y-2">
                   {invShown.map(it => {
+                    // ── TWO DIFFERENT QUANTITIES, ON PURPOSE ──
+                    // `qty` ("To load") is the true physical peak: the most this item is ever
+                    // needed on-site at once, net of cross-function reuse (two back-to-back
+                    // functions needing 1 then 2 of the same sofa load 2, not 3 — the second
+                    // function's crew finds 1 already standing from the first). `rentalQty` is
+                    // the raw per-function need summed with NO such netting — it's what the item
+                    // was actually billed against across the whole booking (1 + 2 = 3 "uses"),
+                    // because a reused unit's SECOND use still often bills (at a Repeat/
+                    // date-category discount) even though no new physical unit went out. The two
+                    // only ever show as separate columns in the All-functions view; scoped to one
+                    // function there is no reuse to net, so they're identical and only one shows.
+                    // `rate` is the blended average actually realized — total ÷ rentalQty — since
+                    // a Repeat-discounted reuse and a fresh unit can bill at different rates within
+                    // the same merged line.
+                    const rentalQty = Number(it.rentalQty ?? it.qty) || 0;
+                    const showRentalQty = !invScoped && rentalQty !== (Number(it.qty) || 0);
+                    const avgRate = rentalQty > 0 ? Math.round((Number(it.total) || 0) / rentalQty) : (Number(it.unit) || 0);
                     // ── WHY THE TOTAL IS NOT ALWAYS RATE × QTY ──
                     // On rows pushed from Deal Check, `unit` and `total` are independent fields:
                     // unit is the base rental, total is the line rental — and for a KIT that
@@ -4578,8 +4595,12 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                     // blockedItemsGrouped). Only the IMS fallback path computes total = unit ×
                     // qty. Naming the two as columns therefore displays arithmetic that visibly
                     // fails on kit lines, so a row where they disagree says why instead of
-                    // looking like a calculation bug.
-                    const derived = Math.round((Number(it.unit) || 0) * (Number(it.qty) || 0));
+                    // looking like a calculation bug. Compared against rentalQty (the billing
+                    // basis) × the base `unit` rate — not qty (the to-load basis) and not the
+                    // blended avgRate, both of which intentionally diverge from a plain unit×qty
+                    // whenever reuse or a kit's components apply, which isn't the "rate × qty ≠
+                    // total" case this badge exists to explain.
+                    const derived = Math.round((Number(it.unit) || 0) * rentalQty);
                     const mismatch = derived !== Math.round(Number(it.total) || 0);
                     return (
                     <div key={it.id} className="rounded-xl bg-white ring-1 ring-gray-100 shadow-[0_1px_2px_rgba(16,24,40,0.05)] overflow-hidden">
@@ -4639,11 +4660,16 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                           {/* Divided from the name and from each other, so three right-aligned
                               figures read as three columns rather than one run of digits. */}
                           <div className="w-full sm:w-auto flex items-start gap-0 divide-x divide-gray-100 sm:border-l sm:border-gray-100 sm:pl-1">
-                            <StatCell label="Qty" w={STAT_W.qty}>
+                            <StatCell label={showRentalQty ? "To load" : "Qty"} w={STAT_W.qty}>
                               <span className="text-sm font-semibold text-gray-700 tabular-nums">×{it.qty}</span>
                             </StatCell>
+                            {showRentalQty && (
+                              <StatCell label="Rental qty" w={STAT_W.rentalQty}>
+                                <span className="text-sm text-gray-600 tabular-nums" title="Raw qty billed per function, summed with no cross-function reuse credit — this is the billing basis the averaged rate is derived from.">×{rentalQty}</span>
+                              </StatCell>
+                            )}
                             <StatCell label="Rate" w={STAT_W.rate}>
-                              <span className="text-sm text-gray-600 tabular-nums">{fmt(it.unit)}</span>
+                              <span className="text-sm text-gray-600 tabular-nums" title={showRentalQty ? "Averaged across functions — a reused unit's repeat-discounted rate blends with a fresh unit's full rate." : undefined}>{fmt(avgRate)}</span>
                             </StatCell>
                             <StatCell label="Total" w={STAT_W.total}>
                               <div className="text-sm font-bold text-gray-900 tabular-nums">{fmt(it.total)}</div>
