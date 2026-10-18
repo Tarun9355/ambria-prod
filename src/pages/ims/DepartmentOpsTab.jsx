@@ -8,7 +8,7 @@ import { TabsMenu, useConfirm } from "../../components/ui";
 import { IconPrinter } from "../../components/icons";
 import { hasIMSPerm } from "../../lib/ims/constants";
 import { ZONE_META } from "../../lib/studio/taxonomy";
-import { ZONE_DEF_SK } from "../../lib/studio/keys";
+import { ZONE_DEF_SK, RC_SK_TR } from "../../lib/studio/keys";
 import { LOGO_ASSET, LOGO_BOX } from "../../lib/studio/brand.js";
 import { fitUrl } from "../../lib/studio/thumb.js";
 import { matchFlowerPattern, resolveSizeKey, sizeClassToPatternKey, resolveMandiFlower } from "../../lib/ims/flowerHelpers";
@@ -1181,12 +1181,134 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const setDispatch = (key, val) => saveDept({ dispatch: { ...dispatch, [key]: val } });
   // ── Multi-truck dispatch — inventory goes out across several trucks, each with its own challan ──
   const TRUCK_STATUS = ["loading", "dispatched", "at-site", "returned"];
-  const trucks = Array.isArray(deptData.trucks) ? deptData.trucks : [];
-  const addTruck = () => saveDept({ trucks: [...trucks, { id: "trk_" + Date.now(), vehicle: "", driver: "", phone: "", status: "loading", items: {} }] });
-  const setTruck = (id, patch) => saveDept({ trucks: trucks.map(t => t.id === id ? { ...t, ...patch } : t) });
-  const setTruckItem = (id, key, qty) => saveDept({ trucks: trucks.map(t => t.id === id ? { ...t, items: { ...(t.items || {}), [key]: qty } } : t) });
-  const delTruck = (id) => saveDept({ trucks: trucks.filter(t => t.id !== id) });
+
+  // ── ONE SET OF TRUCKS FOR THE WHOLE EVENT ──
+  // The same truck usually carries several departments' loads, so trucks belong to the event
+  // (eo.trucks), not to a department. Each department fills only its own slice of a truck
+  // (truck.loads[dept] = { itemKey: qty }) and sees the others' as read-only, which also keeps two
+  // heads loading the same truck from writing over each other's lines.
+  //
+  // How full a truck is comes from Planning → 🚚 Truck: how many of a sub-category fit one truck
+  // (truckCap, "ambria-transport-v3" — the blob IMS settings state leaves out, so it is read here).
+  // 50 pots to a truck and 10 loaded is 20% of it. Capacities set by area or weight (truss, platform,
+  // carpet in sqft, liza in kg) cannot be divided into a piece count, so those items take Deal
+  // Check's own truck share for their load (transportPlan), spread over the pieces that make it up.
+  // An item with neither is shown as "no capacity set" and left out of the %, rather than counted as
+  // taking no room — a truck must never look emptier than it is.
+  const [truckCap, setTruckCap] = useState([]);
+  useEffect(() => {
+    let on = true;
+    kvGet(RC_SK_TR).then(v => {
+      let o = v;
+      for (let i = 0; i < 2 && typeof o === "string"; i++) { try { o = JSON.parse(o); } catch { break; } }
+      if (on && Array.isArray(o?.truckCap)) setTruckCap(o.truckCap);
+    }).catch(() => {});
+    return () => { on = false; };
+  }, []);
+  const capBySub = useMemo(() => {
+    const m = new Map();
+    truckCap.forEach(t => { if (t?.item && Number(t.perTruck) > 0) m.set(String(t.item).trim().toLowerCase(), t); });
+    return m;
+  }, [truckCap]);
+  const PIECE_UNITS = ["pc", "bundle", "bunch"];
+  // Which of Deal Check's transport loads an item belongs to. Its own sub-category for inventory;
+  // the structural and fabric rows Deal Check pushes carry made-up subs ("truss structure",
+  // "kg · zone"), so those are mapped to the load names the truck settings use.
+  const planLabelOf = (it) => {
+    const sb = String(it.sub || "").trim().toLowerCase(), nm = String(it.name || "").toLowerCase();
+    if (sb.startsWith("truss")) return "truss";
+    if (sb.startsWith("platform")) return "platform";
+    if (sb.includes("carpet") || nm.includes("carpet")) return "carpet";
+    if (nm.includes("liza")) return "liza";
+    if (nm.includes("masking")) return "masking";
+    if (nm.includes("curtain")) return "curtains";
+    return sb;
+  };
+  // A department's flat item list, with the same ids its own Inventory list uses (kit shell + parts).
+  const flatDeptItems = (d) => {
+    if (d === dept) return blockedItems;
+    const out = [];
+    (Array.isArray(sel?.deptInventory?.[d]) ? sel.deptInventory[d] : []).forEach((x, i) => {
+      const base = { id: x.name + i, invId: x.imsId || null, name: x.name, qty: Number(x.qty) || 0, sub: x.sub || "" };
+      out.push(base);
+      if (x.isKit && Array.isArray(x.components)) x.components.forEach((cp, ci) => out.push({ id: base.id + "__c" + ci, invId: cp.imsId || null, name: cp.name, qty: Number(cp.qty) || 0, sub: cp.sub || "", kitOf: x.name }));
+    });
+    return out;
+  };
+  // What a truck load is keyed by. The list ids above are positions in Deal Check's snapshot and move
+  // when it is re-synced, so a load saved on the event is keyed by the inventory id (or the name).
+  const truckKey = (it) => it.invId ? "inv:" + it.invId + (it.kitOf ? "@" + String(it.kitOf).toLowerCase() : "") : "nm:" + String(it.name || "").trim().toLowerCase();
+  // Per department: itemKey → { perUnit (share of one truck per piece), perTruck, basis } or null.
+  const truckShares = useMemo(() => {
+    const out = {};
+    DEPTS.forEach(d => {
+      const items = flatDeptItems(d);
+      const planByLabel = new Map();
+      (sel?.transportPlan?.byDept?.[d]?.rows || []).forEach(r => { if (r?.buffer) return; const k = String(r.label || "").trim().toLowerCase(); planByLabel.set(k, (planByLabel.get(k) || 0) + (Number(r.trucks) || 0)); });
+      const labelQty = new Map();
+      items.forEach(it => { const l = planLabelOf(it); labelQty.set(l, (labelQty.get(l) || 0) + (Number(it.qty) || 0)); });
+      const m = new Map();
+      items.forEach(it => {
+        const cap = capBySub.get(String(it.sub || "").trim().toLowerCase());
+        if (cap && PIECE_UNITS.includes(String(cap.unit || "pc").toLowerCase())) { m.set(truckKey(it), { perUnit: 1 / Number(cap.perTruck), perTruck: Number(cap.perTruck), basis: "capacity" }); return; }
+        const l = planLabelOf(it), pt = planByLabel.get(l) || 0, lq = labelQty.get(l) || 0;
+        m.set(truckKey(it), pt > 0 && lq > 0 ? { perUnit: pt / lq, perTruck: lq / pt, basis: "deal check" } : null);
+      });
+      out[d] = m;
+    });
+    return out;
+  }, [sel, blockedItems, capBySub, dept]);
+  // Trucks saved before they were shared lived in each department's own deptOps; until the event has
+  // a list of its own, they are read from there (every department's) and become the list on the
+  // first change, loads re-keyed from list positions to inventory ids.
+  const eventTruckList = Array.isArray(sel?.trucks) ? sel.trucks : Object.entries(sel?.deptOps || {}).flatMap(([d, od]) =>
+    (Array.isArray(od?.trucks) ? od.trucks : []).map(t => {
+      const items = flatDeptItems(d), ld = {};
+      Object.entries(t.items || {}).forEach(([k, q]) => { const it = items.find(x => "inv:" + x.id === k); if (it && Number(q) > 0) ld[truckKey(it)] = Number(q); });
+      return { id: t.id, vehicle: t.vehicle || "", driver: t.driver || "", phone: t.phone || "", status: t.status || "loading", loads: { [d]: ld } };
+    }));
+  const saveEventTrucks = (fn) => {
+    if (!sel) return;
+    const next = fn(eventTruckList);
+    setEventOrders(prev => prev.map(e => e.id === sel.id ? { ...e, trucks: next } : e));
+  };
+  // This department's view of the shared trucks, in the shape the rest of the tab already reads —
+  // items keyed "inv:"+listId — so the challans, the PDF and Receiving carry on unchanged.
+  const keyByListId = new Map(blockedItems.map(it => ["inv:" + it.id, truckKey(it)]));
+  const trucks = eventTruckList.map(t => {
+    const mine = t.loads?.[dept] || {}, items = {};
+    blockedItems.forEach(it => { const q = mine[truckKey(it)]; if (Number(q) > 0) items["inv:" + it.id] = q; });
+    return { ...t, items };
+  });
+  const addTruck = () => saveEventTrucks(list => [...list, { id: "trk_" + Date.now(), vehicle: "", driver: "", phone: "", status: "loading", loads: {} }]);
+  const setTruck = (id, patch) => saveEventTrucks(list => list.map(t => t.id === id ? { ...t, ...patch } : t));
+  const setTruckItem = (id, key, qty) => {
+    const k = keyByListId.get(key);
+    if (!k) return;
+    saveEventTrucks(list => list.map(t => t.id === id ? { ...t, loads: { ...(t.loads || {}), [dept]: { ...((t.loads || {})[dept] || {}), [k]: qty } } } : t));
+  };
+  const delTruck = (id) => saveEventTrucks(list => list.filter(t => t.id !== id));
   const truckLoadedQty = (key) => trucks.reduce((s, t) => s + (Number(t.items?.[key]) || 0), 0); // total loaded across all trucks
+  // How full each truck is: every department's loads, each piece counted at its share of a truck.
+  const truckOcc = (t) => {
+    let used = 0, unknown = 0;
+    const byDept = [];
+    Object.entries(t.loads || {}).forEach(([d, ld]) => {
+      let du = 0;
+      Object.entries(ld || {}).forEach(([k, q]) => {
+        const qn = Number(q) || 0;
+        if (qn <= 0) return;
+        const sh = truckShares[d]?.get(k);
+        if (sh) du += qn * sh.perUnit; else unknown += 1;
+      });
+      if (du > 0) byDept.push({ dept: d, used: du });
+      used += du;
+    });
+    return { used, byDept, unknown };
+  };
+  const truckOccs = Object.fromEntries(eventTruckList.map(t => [t.id, truckOcc(t)]));
+  const fullTrucks = eventTruckList.filter(t => truckOccs[t.id].used >= 0.999).length;
+  const DEPT_BAR = { Furniture: "bg-amber-500", Floral: "bg-pink-500", Structure: "bg-slate-500", Tenting: "bg-emerald-500", Transport: "bg-orange-500", Lighting: "bg-yellow-400", Fabric: "bg-violet-500" };
   const printTruckChallan = (truck, n) => {
     const w = window.open("", "_blank");
     if (!w) return;
@@ -1270,6 +1392,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     (Array.isArray(settings?.fleet) ? settings.fleet : []).forEach(f => add(f.vehicle, f.driver, f.phone));
     if (sel) Object.values(sel.deptOps || {}).forEach(od => {
       (Array.isArray(od?.trucks) ? od.trucks : []).forEach(t => add(t.vehicle, t.driver, t.phone));
+      (Array.isArray(sel?.trucks) ? sel.trucks : []).forEach(t => add(t.vehicle, t.driver, t.phone));
       (Array.isArray(od?.movements) ? od.movements : []).forEach(m => add(m.vehicle, m.driver, m.phone));
       if (od?.dispatch) add(od.dispatch.vehicle, od.dispatch.driver, od.dispatch.phone);
     });
@@ -4183,7 +4306,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                 { k: "inv", icon: "📦", title: "Inventory blocked", sub: n(blockedItemsGrouped.length, "item") + " held", value: fmt(rentalIncome) },
                 { k: "mp", icon: "👷", title: "Manpower plan", sub: mpRows.length ? n(mpRows.length, "crew line") : "no crew assigned", value: fmt(mpCost) },
                 { k: "actuals", icon: "🧾", title: "Actuals", sub: hasActuals ? "real spend logged" : "nothing logged yet", value: hasActuals ? fmt(actualCost) : null },
-                { k: "truck", icon: "🚚", title: "Truck planning", sub: trucks.length ? n(trucks.length, "truck") : "no trucks yet" },
+                { k: "truck", icon: "🚚", title: "Truck planning", sub: trucks.length ? n(trucks.length, "truck") + (fullTrucks ? ` · ${fullTrucks} full` : "") : "no trucks yet" },
                 SHOW_DISMANTLE_IN_PLANNING && blockedItems.length > 0 && { k: "dism", icon: "🔁", title: "Dismantle plan", sub: "where each item goes after" },
               ].filter(Boolean);
               return (
@@ -4979,7 +5102,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                   </button>
                 </div>
                 <div className="mt-1.5 flex items-center justify-between gap-3">
-                  <span className="text-xs text-gray-500">Each truck prints its own challan.</span>
+                  <span className="text-xs text-gray-500">Trucks are shared by every department on this event. Each prints its own challan.</span>
                   <button onClick={() => setShowFleet(v => !v)} aria-expanded={showFleet}
                     className={"shrink-0 text-xs font-semibold transition-colors " + (showFleet ? "text-gray-900" : "text-blue-600 hover:text-blue-800")}>
                     {showFleet ? "Done" : "Manage fleet"}
@@ -5032,11 +5155,38 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                     <div key={t.id} className="rounded-xl ring-1 ring-gray-200 p-3 space-y-2.5">
                       <div className="flex items-center justify-between gap-2">
                         <span className="min-w-0 truncate text-sm font-semibold text-gray-900">Truck {ti + 1}{t.driver ? <span className="font-normal text-gray-500"> · {t.driver}</span> : null}</span>
-                        <button onClick={() => delTruck(t.id)} aria-label={`Remove truck ${ti + 1}`} title="Remove truck"
-                          className="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-gray-300 hover:text-red-600 hover:bg-red-50 transition-colors">
+                        {/* Removing a truck removes it for every department, so it is held back while
+                            another department still has items on it. */}
+                        <button onClick={() => delTruck(t.id)} disabled={Object.entries(t.loads || {}).some(([d, ld]) => d !== dept && Object.values(ld || {}).some(q => Number(q) > 0))}
+                          aria-label={`Remove truck ${ti + 1}`} title={Object.entries(t.loads || {}).some(([d, ld]) => d !== dept && Object.values(ld || {}).some(q => Number(q) > 0)) ? "Another department has items on this truck" : "Remove truck"}
+                          className="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-gray-300 hover:text-red-600 hover:bg-red-50 disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-gray-300 transition-colors">
                           <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M3.5 3.5 L10.5 10.5 M10.5 3.5 L3.5 10.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" /></svg>
                         </button>
                       </div>
+                      {/* ── HOW FULL ── every department's load, stacked in its own colour. Widths are a
+                          share of the truck, known only at runtime, hence inline styles. */}
+                      {(() => {
+                        const oc = truckOccs[t.id] || { used: 0, byDept: [], unknown: 0 };
+                        const pct = Math.round(oc.used * 100);
+                        const over = oc.used > 1.005, full = oc.used >= 0.999;
+                        return (
+                          <div>
+                            <div className="flex items-center justify-between gap-2 text-[11px]">
+                              <span className="font-semibold text-gray-600">Truck space</span>
+                              <span className={"font-bold tabular-nums " + (over || full ? "text-red-600" : pct >= 80 ? "text-amber-600" : "text-gray-900")}>{over ? `Over by ${pct - 100}% — move items to another truck` : full ? "Full — no space left" : `${pct}% full`}</span>
+                            </div>
+                            <div className={"mt-1 h-2.5 rounded-full overflow-hidden flex " + (over ? "bg-red-100 ring-1 ring-red-300" : "bg-gray-100")}>
+                              {oc.byDept.map(b => <div key={b.dept} className={DEPT_BAR[b.dept] || "bg-gray-400"} style={{ width: `${Math.min(100, b.used * 100)}%` }} title={`${b.dept}: ${Math.round(b.used * 100)}%`} />)}
+                            </div>
+                            {oc.byDept.length > 0 && (
+                              <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-gray-500">
+                                {oc.byDept.map(b => <span key={b.dept} className={"inline-flex items-center gap-1 " + (b.dept === dept ? "font-semibold text-gray-800" : "")}><span className={"w-2 h-2 rounded-sm " + (DEPT_BAR[b.dept] || "bg-gray-400")} />{b.dept} {Math.round(b.used * 100)}%</span>)}
+                              </div>
+                            )}
+                            {oc.unknown > 0 && <div className="mt-0.5 text-[10px] text-gray-400">{oc.unknown} item{oc.unknown === 1 ? " has" : "s have"} no truck capacity set — not counted. Set it in Planning → 🚚 Truck.</div>}
+                          </div>
+                        );
+                      })()}
                       <div className="flex items-center gap-2 flex-wrap">
                         <select value={t.status || "loading"} onChange={e => setTruck(t.id, { status: e.target.value })} className="h-8 rounded-lg bg-white ring-1 ring-gray-200 px-2 text-xs font-medium capitalize focus:outline-none focus:ring-2 focus:ring-blue-400">{TRUCK_STATUS.map(s => <option key={s} value={s}>{s}</option>)}</select>
                         {t.phone && <a href={"tel:" + t.phone} className="h-8 inline-flex items-center text-xs font-semibold text-emerald-700 bg-emerald-50 ring-1 ring-emerald-200 rounded-lg px-2.5 hover:bg-emerald-100" title={"Call " + (t.driver || "driver") + " · " + t.phone}>Call {t.phone}</a>}
@@ -5078,6 +5228,13 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                               <div className="min-w-0 flex-1">
                                 <div className="text-xs font-medium text-gray-800 leading-snug line-clamp-2" title={it.name}>{it.name}</div>
                                 <div className={"mt-0.5 text-[11px] font-semibold tabular-nums " + matchCls}>{totalLoaded} of {it.qty} loaded{totalLoaded > it.qty ? " · too many" : totalLoaded === it.qty ? " ✓" : ""}</div>
+                                {/* This item's share of the truck, and how many more of it the space left takes. */}
+                                {(() => {
+                                  const sh = truckShares[dept]?.get(truckKey(it));
+                                  if (!sh) return <div className="text-[10px] text-gray-400">no truck capacity set</div>;
+                                  const left = Math.max(0, 1 - (truckOccs[t.id]?.used || 0));
+                                  return <div className="text-[10px] text-gray-500 tabular-nums">{onThis > 0 ? `${Math.round(onThis * sh.perUnit * 100)}% of this truck · ` : ""}{left > 0 ? `fits ~${Math.floor(left / sh.perUnit + 1e-9)} more` : "no space left"} · ~{Math.round(sh.perTruck)} per truck</div>;
+                                })()}
                               </div>
                               <input type="number" min="0" value={onThis || ""} onChange={e => setTruckItem(t.id, k, e.target.value)} placeholder="0" aria-label={`${it.name} on this truck`} title="On this truck"
                                 className="shrink-0 w-14 h-8 rounded-lg bg-white ring-1 ring-gray-200 px-2 text-sm text-center font-semibold tabular-nums placeholder:font-normal placeholder:text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-400" />
