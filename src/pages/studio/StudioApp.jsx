@@ -38,6 +38,7 @@ import { extractLabeledValue, bestTaxMatch } from "../../lib/studio/videoDescrip
 import { paletteNames, paletteInList } from "../../lib/studio/colours";
 import { makeS } from "../../lib/studio/styles";
 import { findCrossFnReuseSource, computeFnInvQty, findSiblingFnInvUse, findSiblingFnSubcatOpportunity } from "../../lib/studio/crossFnReuse";
+import { computeFnFloralCost, buildMandiBreakdown } from "../../lib/studio/floralCost";
 
 // ═══ HEADER TYPE + CHIP SCALE ═══
 // The header used to mix 8/9/10/11/12/13px in a single row. It now has exactly two tiers:
@@ -5664,323 +5665,43 @@ export default function StudioApp() {
     return { decor, transport, grand: decor + transport };
   }, [calcElsCostForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, dcCustomItems, structRates, blocksByDate, imsInventory, dealCheckData, studioFloralData, fvCfgForRepeat, venueParents, clientLedger, activeClientId, hideDiscountFromClient, collectAllFunctionData]);
 
+  // ═══ Shared floral cost engine (src/lib/studio/floralCost.js) ═══
+  // Used to be ~320 lines here AND a near-identical ~400 lines in DCFloralsTab.jsx's own Florals
+  // tab — two copies of "is this zone repeat, what's the real/artificial split, does a kit's
+  // sub-item carry its own florals" that drifted apart repeatedly despite years of one-off fixes
+  // (each commented on above, in the git history this replaces). Confirmed live: Mehendi showed
+  // ₹1,887 on this rollup (feeds the FUNCTIONS sidebar) and ₹298 on the Florals tab for the SAME
+  // function, because this rollup correctly detected the booking's automatic cross-function reuse
+  // cut and the tab's own copy hadn't yet. Both now call the one function below, so a fix only
+  // has one place to land. This rollup still does its own two things the tab doesn't need: bills
+  // income (resolveRcRate) and re-prices the real side at whole mandi-bundle quantities (owner
+  // ask — P&L must cost what will actually be PAID at the mandi, not a fractional estimate).
   const calcFnFloralSourcingCost = useCallback((fn) => {
-    // fp/mc/the two BPK figures now also drive the truck-count wiring below (real-flower kg and
-    // artificial bunch counts feed computeTruckItems) — falling back to studioFloralData for those
-    // four is the same "no Deal-Check-gated pricing" fix applied to trussInv/agencyFeePct/fixedVenues
-    // elsewhere, now needed here too since this function's OUTPUT quantities are no longer purely
-    // internal-cost. mults/sMap/the two RATE figures still only affect the internal ₹ cost (not the
-    // quantities), so they're left Deal-Check-only for now.
-    const fp = sharedFloralSettings.flowerPatterns;
-    const mc = sharedFloralSettings.mandiCatalogue;
-    const mults = sharedFloralSettings.mandiPriceMultipliers || {};
-    const sMap = sharedFloralSettings.seasonMap || {};
-    const artFlowerRate = Number(sharedFloralSettings.artificialFlowerRatePerKg ?? 50);
-    const artFlowerBPK = Number(sharedFloralSettings.artificialFlowerBunchesPerKg ?? 16) || 16;
-    const artGreenRate = Number(sharedFloralSettings.artificialGreenRatePerKg ?? 40);
-    const artGreenBPK = Number(sharedFloralSettings.artificialGreenBunchesPerKg ?? 23) || 23;
-    const fnRatio = typeof fn?.floralRatio === "number" ? fn.floralRatio : (typeof floralRatio === "number" ? floralRatio : 70);
-    const szMap = (m, s) => { if (m === "smb") { const u = (s || "M").toUpperCase(); return u === "S" ? "small" : u === "B" ? "big" : "medium"; } return "medium"; };
-    // MUST mirror DCFloralsTab.jsx's own resolveRealPct exactly, precedence and all — this used to
-    // check rc.floralMode/rc.sub/rc.defaultRealPct FIRST, unconditionally, so a Rate Card row that
-    // merely happened to share an element's display name (e.g. a "Flower Bunch" bridal-bouquet row
-    // pinned to 100% real) overrode the element's own inventory/pattern sub-category — a real
-    // element's actual identity losing to a coincidental name match. The tab was already fixed to
-    // check invItem's/the pattern's OWN sub-category first and only fall back to rc when NEITHER
-    // identity exists; this rollup (which feeds the nav-pill/byFn florals total) never got the same
-    // fix, so the two silently priced the same element at two different real/artificial splits.
-    const resRP = (el, rc, invItem, elPattern) => {
-      if (typeof el.realPct === "number" && el.realPct >= 0 && el.realPct <= 100) return el.realPct;
-      const subKey = String((invItem && (invItem.subCat || invItem.subcategory)) || elPattern?.sub || rc?.sub || rc?.imsAlias || "").trim().toLowerCase();
-      const subMode = subKey ? rcFloralModeByKey[subKey] : undefined;
-      if (subMode === "real") return 100;
-      if (subMode === "artificial") return 0;
-      if (!invItem && !elPattern) {
-        const mode = String(rc?.floralMode || "").toLowerCase();
-        if (mode === "real") return 100;
-        if (mode === "artificial") return 0;
-        if (typeof rc?.defaultRealPct === "number") return rc.defaultRealPct;
-      }
-      return Math.max(0, Math.min(100, 100 - fnRatio));
+    const result = computeFnFloralCost(fn, collectAllFunctionData(), {
+      flowerPatterns: sharedFloralSettings.flowerPatterns,
+      mandiCatalogue: sharedFloralSettings.mandiCatalogue,
+      mandiMults: sharedFloralSettings.mandiPriceMultipliers || {},
+      seasonMap: sharedFloralSettings.seasonMap || {},
+      floralRatio,
+      rcItems,
+      rcFloralModeByKey,
+      resolveMandiFlower,
+      imsInventory,
+      dcInventoryCache,
+      colorPrefsForFn: dcFloralColorPrefs?.[fn?.fnIdx] || {},
+      artFlowerRatePerKg: Number(sharedFloralSettings.artificialFlowerRatePerKg ?? 50),
+      artFlowerBunchesPerKg: Number(sharedFloralSettings.artificialFlowerBunchesPerKg ?? 16) || 16,
+      artGreenRatePerKg: Number(sharedFloralSettings.artificialGreenRatePerKg ?? 40),
+      artGreenBunchesPerKg: Number(sharedFloralSettings.artificialGreenBunchesPerKg ?? 23) || 23,
+      resolveRcRate,
+    });
+    const breakdown = buildMandiBreakdown(result.flowerAgg);
+    const tReal = result.fixedExtras + breakdown.reduce((s, f) => s + (f.cost || 0), 0);
+    return {
+      totalReal: tReal, totalArtificial: result.totalArtificial, grandTotal: tReal + result.totalArtificial,
+      breakdown, artFlowerBunches: result.artFlowerBunches, artGreenBunches: result.artGreenBunches,
+      income: result.income,
     };
-    // Repeat-zone floral discount, Deal Check's own internal cost lever (owner decision) — a pure
-    // QUANTITY cut, never a direct ₹ discount: real flowers need 80% less fresh stock on a repeat
-    // zone (qty × 0.2), artificial needs 30% less (qty × 0.7). Cost, the mandi shopping list
-    // (breakdown, below), and the artificial bunch counts (artFlowerBunches/artGreenBunches, which
-    // feed truck loading) all follow automatically from the reduced quantity — no separate cost
-    // multiplier anywhere.
-    const REPEAT_REAL_QTY_MULT = 0.2;
-    const REPEAT_ART_QTY_MULT = 0.7;
-    let tArt = 0, realIncome = 0, artIncome = 0, artFlowerBunches = 0, artGreenBunches = 0, fixedExtras = 0;
-    // Real-flower quantities/rates, aggregated by mandi parent id across every element in this
-    // function — mirrors DCFloralsTab.jsx's own `flowerAgg`. Needed (not just a running total)
-    // because the swap-override pass below has to divert quantity FROM one flower's aggregate
-    // INTO another's, same as the tab does; a flat running total can't express that.
-    const flowerAgg = new Map(); // parentId → { totalQty, unitPrice, name, unit }
-    // Salesperson customizations made in Deal Check's own Florals tab — this rollup used to ignore
-    // both entirely, so a swapped-in flower or a picked colour/preference rate never reached the
-    // bottom-bar Florals total (or GYV/Dept Income, which is built from this same function).
-    const colorPrefsForFn = dcFloralColorPrefs?.[fn?.fnIdx] || {};
-    const fnOverrides = fn?.floralOverrides || { rows: [] };
-    const overrideByParentId = new Map();
-    (fnOverrides.rows || []).forEach(r => { if (r?.flowerId) overrideByParentId.set(r.flowerId, r); });
-    // Cross-function reuse (Ambria's own cost basis, always on — same reasoning as the Repeat-zone
-    // quantity cut just below): if the immediately-preceding function of this deal is at the same
-    // venue within 24h (findCrossFnReuseSource — the SAME definition truss/transport carryover and
-    // the guest-facing element discount all share) and it ALSO enabled this same zone key, this
-    // zone's flowers are being reused rather than sourced fresh for this function — same
-    // REPEAT_REAL_QTY_MULT/REPEAT_ART_QTY_MULT cut a manually-flagged Repeat zone gets, without
-    // requiring the salesperson to also tick Repeat on THIS function's own copy of the zone.
-    const crossFnPrevFnFloral = findCrossFnReuseSource(fn, collectAllFunctionData());
-    Object.entries(fn?.zoneElements || {}).forEach(([zk, elems]) => {
-      if (!fn.enabledEls?.[zk]) return;
-      // The Elements chip, not the zone toggle alone (RC-30) — the flowers are elements.
-      const zoneRepeat = repeatCatFor(fn.zoneConfig?.[zk], "elements") || !!(crossFnPrevFnFloral?.enabledEls?.[zk] && crossFnPrevFnFloral?.zoneConfig?.[zk]);
-      // A kit's own subItems can carry floral content of their own (a flower-recipe add-on via
-      // si.patternId, or a component item itself categorized as florals, e.g. "Round Fibre Pot"
-      // nested inside a stage kit) — mirrors DCFloralsTab.jsx's own expandedElems fix exactly.
-      // That fix only ever landed in the tab; this rollup kept walking `elems` raw, so a kit's
-      // floral sub-components never existed here under their own name at all — not a resolution
-      // failure, the element simply never appeared in this loop to resolve in the first place.
-      // Confirmed live: "Round Fibre Pot"/"Iron bucket" (real florals-category sub-items of a kit)
-      // counted correctly in the tab via this exact expansion and never appeared in this rollup's
-      // diagnostic logging at all, at any gate — because there was nothing here named that to gate.
-      const expandedElems = [];
-      (elems || []).forEach(el => {
-        expandedElems.push(el);
-        const kitInvItem = el.invId ? (imsInventory.find(i => i.id === el.invId) || (dcInventoryCache || []).find(i => i.id === el.invId)) : null;
-        if (kitInvItem && Array.isArray(kitInvItem.subItems) && kitInvItem.subItems.length > 0) {
-          const outerQty = el.qty || 0;
-          (kitInvItem.subItems || []).forEach(si => {
-            const siQty = (Number(si.qty) || 0) * outerQty;
-            if (siQty <= 0) return;
-            if (si.patternId) {
-              expandedElems.push({ name: `${el.name || kitInvItem.name} · recipe`, patternId: si.patternId, qty: siQty, size: el.size });
-              return;
-            }
-            const ci = si.itemId ? (imsInventory.find(i => i.id === si.itemId) || (dcInventoryCache || []).find(i => i.id === si.itemId)) : null;
-            if (ci && String(ci.cat || ci.category || "").toLowerCase() === "florals") {
-              expandedElems.push({ name: ci.name, invId: ci.id, qty: siQty, size: el.size });
-            }
-          });
-        }
-      });
-      expandedElems.forEach(el => {
-        // Mirrors DCFloralsTab's resolution — the two must agree, or the tab lists elements the
-        // bottom-bar total does not count. An exact-only rate-card match dropped "Blue Pottery Pot
-        // Big" (the row is "Blue Pottery Pot"), and keying "is this floral" off the rate-card
-        // category alone dropped "Floating Floral", which is priced from its own patternId and has
-        // no rate-card row at all. Both were costed as plain rental instead.
-        const elNm = (el.name || "").toLowerCase().trim();
-        let rc = rcItems.find(i => (i.name || "").toLowerCase().trim() === elNm);
-        // Same leniency gate DCFloralsTab.jsx uses: BOTH names need ≥4 chars before substring
-        // matching is attempted. This rollup was missing the elNm-length half of that guard, so a
-        // short element name (e.g. "Pot") could spuriously substring-match an unrelated florals
-        // Rate Card row here while the tab correctly left it unmatched — the two disagreeing on
-        // which elements even counted as priced florals, not just on the price.
-        if (!rc && elNm.length >= 4) {
-          rc = rcItems.find(i => {
-            if (String(i.cat || "").toLowerCase() !== "florals") return false;
-            const n = (i.name || "").toLowerCase().trim();
-            return n && n.length >= 4 && (elNm.includes(n) || n.includes(elNm));
-          });
-        }
-        // el.invId is Build's THIRD identity source (getElPrice/getElPriceForFn check invId before
-        // patternId before falling back to the Rate Card by name — Rate Card is never even consulted
-        // for an invId element). This rollup had no branch for it at all: an IMS-inventory-sourced
-        // floral element — the common case for a real physical product; patternId is reserved for
-        // pure recipe-only elements with no inventory backing — only counted here if its name also
-        // happened to match a Rate Card row, so most of a real build's florals silently contributed
-        // NOTHING to this total, while DCFloralsTab.jsx (which resolves invId directly) kept showing
-        // the correct, much larger figure. Same fix as that tab, ported here so the two agree.
-        // imsInventory is the boot-time snapshot (fetchAll("inventory") once at app load, patched
-        // only by realtime deltas afterward) — dcInventoryCache is Deal Check's own copy, freshly
-        // re-fetched every time Deal Check opens/regenerates. An item added or changed since boot
-        // (confirmed: "Round Fibre Pot"/"Iron bucket" resolved fine in DCFloralsTab.jsx via
-        // dcInventoryCache but came back undefined here) silently dropped out of this rollup's
-        // floral total while the tab kept counting it correctly. dcInventoryCache as a fallback,
-        // not primary, since this function must still work before Deal Check has ever been opened
-        // (dcInventoryCache is empty until then) — same "no Deal-Check-gated pricing" reasoning as
-        // the dealCheckData→studioFloralData fallbacks already in this function.
-        const invItem = el.invId ? (imsInventory.find(i => i.id === el.invId) || (dcInventoryCache || []).find(i => i.id === el.invId)) : null;
-        const invIsFloral = !!invItem && String(invItem.cat || invItem.category || "").toLowerCase() === "florals";
-        const elPat = el.patternId ? fp.find(p => p.id === el.patternId) : null;
-        if (!el.patternId && !invIsFloral && String(rc?.cat || "").toLowerCase() !== "florals") return;
-        const q = el.qty || 0; if (q <= 0) return;
-        const rp = resRP(el, rc, invItem, elPat) / 100, ap = 1 - rp;
-        // Billed income split — EVERY floral arrangement bills (recipe-driven or not): the real
-        // portion at the inhouse rate, the artificial portion at the artificial rate (mirrors
-        // getElPrice's blend). Computed at element level, before the recipe gate below.
-        // Guarded: rc can be null now (element priced from its own patternId/invId with no rate-card
-        // row). resolveRcRate reads rc.inhouseFlat unguarded and would throw. No rate-card row means
-        // no billed rate to split, so income simply has nothing to add here — the sourcing COST below
-        // still computes from the recipe, which is the number this function exists to produce.
-        if (rc) { const szU = String(el.size || "").toUpperCase(); const { realRate: rr, artRate: ar } = resolveRcRate(rc, szU);
-          realIncome += q * rp * rr; artIncome += q * ap * ar; }
-        // Prefer the recipe Build actually priced this element with, in Build's own priority order
-        // (invId, then patternId, then Rate Card by name) — re-deriving it a different way could land
-        // on a different recipe than Build/the salesperson actually used, or on none at all.
-        // matchFlowerPattern is the same sub-category-first matcher Build itself prices from; for an
-        // invId element it's fed the real IMS inventory item (matching getElPriceFromInventory
-        // exactly) instead of a coincidental Rate Card name-match.
-        let pat = elPat || (invItem ? matchFlowerPattern(invItem, fp) : null) || matchFlowerPattern({ subcategory: rc?.sub, name: rc?.name || el.name }, fp);
-        if (!pat) return;
-        // Build sizes an invId floral element the same way regardless of any Rate Card "smb" mode —
-        // sizeFromMode/szMap below requires rc.inhouseMode==="smb" to honour el.size at all, which an
-        // invId element (no rc, or an unrelated coincidental match) would never have, silently always
-        // pricing at "medium" regardless of the S/M/B toggle actually picked on Build.
-        const sk = invItem ? sizeClassToPatternKey(normalizeSizeClass(el.size || "B")) : szMap(pat?.mode || rc?.inhouseMode, el.size);
-        const sizes = pat.sizes || {};
-        let comp = sizes[sk] || sizes.medium;
-        if (!comp && sk === "big" && sizes.large) comp = sizes.large;
-        if (!comp && Object.keys(sizes).length > 0) comp = sizes[Object.keys(sizes)[0]];
-        if (!comp || !Array.isArray(comp.flowers)) return;
-        // Fixed extra cost (pot/base) per unit — a real cost regardless of real/artificial split.
-        // Not tied to any one flower, so it sits outside flowerAgg/the swap pass entirely.
-        { const ex = (Number(comp.extraCost) || 0) * q; if (ex > 0) { fixedExtras += ex; realIncome += ex; } }
-        const season = sMap[fn.fnDate] || "non_saya";
-        const sMult = mults[season] || 1;
-        comp.flowers.forEach(fl => {
-          // A direct IMS Inventory ingredient in the recipe (fl.invItemId set, no flowerId at all) —
-          // a physical rented piece bundled into the recipe (a vase, a wire base), not a mandi
-          // flower — counts in FULL regardless of the real/artificial slider (there's no "artificial"
-          // version of a physical prop). Bucketed into tArt, NOT fixedExtras/tReal: DCFloralsTab.jsx
-          // (this rollup's own "must agree with" tab, see its comment) holds it aside and adds it to
-          // its OWN artificial total — "manufactured pieces charged in full, so the real/artificial
-          // blend does not scale them" per that tab's UI copy. This rollup used to add it to
-          // fixedExtras/tReal instead — same total either way (grandTotal = tReal+tArt), but the
-          // Real/Artificial SPLIT the two screens report for the same function disagreed, which is
-          // its own confusing "the numbers don't match" bug independent of the total itself.
-          // imsInventory falls back to dcInventoryCache — same "no Deal-Check-gated pricing" reasoning
-          // as every other invId lookup in this rollup (an item added to IMS after boot but before a
-          // reload resolves via the freshly-fetched dcInventoryCache instead of pricing at ₹0).
-          if (fl.invItemId) {
-            const item = imsInventory.find(i => i.id === fl.invItemId) || (dcInventoryCache || []).find(i => i.id === fl.invItemId);
-            const rawPrice = item ? (Number(item.price ?? item.rentalCost) || 0) : 0;
-            tArt += (fl.qty || 0) * q * rawPrice;
-            return;
-          }
-          const resolved = resolveMandiFlower(fl.flowerId, mc);
-          const parent = resolved?.parent || null;
-          const parentId = parent?.id || fl.flowerId;
-          const ft = parent?.flowerType || (parent?.isGreen ? "green" : "flower");
-          const effR = ft === "real_only" ? 1 : rp;
-          const effA = ft === "real_only" ? 0 : ap;
-          // Ranked colour preference (1st choice) or a legacy single colour-variant pick overrides
-          // the mandi parent's base price — and skips the season multiplier, same as the Florals
-          // tab: an explicit price the salesperson picked shouldn't silently move with the season.
-          const override = overrideByParentId.get(parentId);
-          const prefArr = colorPrefsForFn?.[parentId];
-          const prefRate = Array.isArray(prefArr) && prefArr.length > 0 ? Number(prefArr[0].rate) : 0;
-          const variantRate = Number(override?.colorVariant?.rate) || 0;
-          const basePrice = prefRate > 0 ? prefRate : variantRate > 0 ? variantRate : (Number(parent?.currentPrice) || 0);
-          const bp = (prefRate > 0 || variantRate > 0) ? basePrice : basePrice * sMult;
-          const realUnits = (fl.qty || 0) * q * effR * (zoneRepeat ? REPEAT_REAL_QTY_MULT : 1);
-          // Which colour the salesperson actually picked (ranked preference 1st choice, else the
-          // legacy single colorVariant override) — mirrors DCFloralsTab.jsx's own variantPicked,
-          // so IMS Dept Ops' mandi list (fed from this function's breakdown, not the tab) can show
-          // the same colour + reference photo instead of a bare flower name.
-          const colorVariant = Array.isArray(prefArr) && prefArr.length > 0 ? prefArr[0] : (override?.colorVariant || null);
-          // Full ranked list (owner-reported: picked 2 preferences in Deal Check, IMS only showed
-          // the 1st) — carried alongside colorVariant (still the 1st choice, which is what prices
-          // and what the primary tag shows) so IMS's mandi list can also tell ops "if 1st choice
-          // isn't at the mandi today, here's the 2nd/3rd choice" instead of only ever naming one.
-          const colorPrefs = Array.isArray(prefArr) && prefArr.length > 1 ? prefArr : null;
-          if (realUnits > 0 && parent) {
-            // totalCost accumulates each contribution at ITS OWN rate — owner-reported: the same
-            // flower bought in 2+ zones of the SAME single-day function (so no season-multiplier
-            // excuse) at different rates (e.g. one zone's own colour preference overriding price,
-            // another using the plain mandi rate) priced the whole aggregate at whichever zone's
-            // rate happened to be processed last, instead of each zone's own units at its own rate —
-            // both the shown "rate" and the row's total (qty × that wrong rate) came out wrong.
-            // unitPrice is now a derived weighted average for display only; totalCost is what
-            // actually feeds tReal below.
-            const agg = flowerAgg.get(parentId) || { totalQty: 0, totalCost: 0, unitPrice: bp, name: parent.name || "Flower", unit: parent.unit || "", colorVariant, colorPrefs };
-            agg.totalQty += realUnits;
-            agg.totalCost += realUnits * bp;
-            agg.unitPrice = agg.totalQty > 0 ? agg.totalCost / agg.totalQty : bp;
-            if (colorVariant && !agg.colorVariant) agg.colorVariant = colorVariant;
-            if (colorPrefs && !agg.colorPrefs) agg.colorPrefs = colorPrefs;
-            flowerAgg.set(parentId, agg);
-          }
-          const effAQty = effA * (zoneRepeat ? REPEAT_ART_QTY_MULT : 1);
-          if (effAQty > 0) {
-            if (ft === "mapping") {
-              // Mapped to a specific artificial inventory item — sourcing cost = its purchase cost per unit.
-              tArt += (fl.qty || 0) * q * effAQty * (Number(parent?.artificialMapCost) || 0);
-            } else {
-              const bpu = Number(parent?.artificialBunchesPerUnit) || 0;
-              const bunches = (fl.qty || 0) * q * effAQty * bpu;
-              const isG = ft === "green";
-              if (isG) artGreenBunches += bunches; else artFlowerBunches += bunches;
-              tArt += bunches * (isG ? artGreenRate / artGreenBPK : artFlowerRate / artFlowerBPK);
-            }
-          }
-        });
-      });
-    });
-    // Manual flower swaps (Deal Check's 🔄 swap button) — divert quantity from one flower's
-    // aggregate to another's, exactly like DCFloralsTab.jsx's own post-aggregation pass, so a swap
-    // made there is reflected here too instead of only in the tab's own displayed total.
-    (fnOverrides.rows || []).forEach(override => {
-      if (!override?.swapTo) return;
-      const fromAgg = flowerAgg.get(override.swapTo.fromParentId);
-      if (!fromAgg) return;
-      const swapQty = Number(override.swapTo.qty) || 0;
-      const isSplit = !!override.swapTo.isSplit;
-      if (swapQty <= 0) return;
-      const fromRate = fromAgg.totalQty > 0 ? (fromAgg.totalCost || 0) / fromAgg.totalQty : fromAgg.unitPrice;
-      if (isSplit) {
-        fromAgg.totalQty = Math.max(0, fromAgg.totalQty - swapQty);
-        fromAgg.totalCost = Math.max(0, (fromAgg.totalCost || 0) - swapQty * fromRate);
-        if (fromAgg.totalQty <= 0.0001) flowerAgg.delete(override.swapTo.fromParentId);
-      } else {
-        flowerAgg.delete(override.swapTo.fromParentId);
-      }
-      const targetParent = resolveMandiFlower(override.swapTo.toParentId, mc)?.parent;
-      if (!targetParent) return;
-      const targetId = targetParent.id;
-      const targetRate = (override.swapTo.toRate || targetParent.currentPrice || 0);
-      const existing = flowerAgg.get(targetId);
-      if (existing) {
-        existing.totalQty += swapQty;
-        existing.totalCost = (existing.totalCost || 0) + swapQty * targetRate;
-        existing.unitPrice = existing.totalQty > 0 ? existing.totalCost / existing.totalQty : targetRate;
-      } else {
-        flowerAgg.set(targetId, { totalQty: swapQty, totalCost: swapQty * targetRate, unitPrice: targetRate, name: targetParent.name || "Flower", unit: targetParent.unit || "" });
-      }
-    });
-    // flowerName → { name, qty, cost } — the mandi shopping breakdown. v.totalQty already carries
-    // the repeat-zone 80% cut where it applies (real flowers only), so this list and the cost below
-    // both reflect the reduced quantity actually needed — no separate discount step here.
-    const fbreak = {};
-    flowerAgg.forEach(v => {
-      if (!(v.totalQty > 0)) return;
-      const cost = v.totalCost != null ? v.totalCost : v.totalQty * v.unitPrice;
-      if (!fbreak[v.name]) fbreak[v.name] = { name: v.name, qty: 0, cost: 0, unit: v.unit, colorVariant: v.colorVariant || null, colorPrefs: v.colorPrefs || null };
-      fbreak[v.name].qty += v.totalQty; fbreak[v.name].cost += cost;
-    });
-    // Owner ask: a purchaser buys WHOLE bundles at the real mandi rate — not a fractional-bundle
-    // cost computed exactly and then divided back out. `rate` is the true per-unit price this
-    // flower actually costed at (mandi price × season multiplier, or a picked colour preference's
-    // own rate, weighted across every zone/element that contributed — whatever `bp` was above,
-    // before rounding). `cost` is now qty(whole units) × rate, so the two numbers IMS shows next
-    // to each other always agree — previously `cost` stayed independently rounded off the
-    // fractional need, and IMS's own "price" column back-derived cost÷qty into a THIRD number that
-    // matched neither the real mandi rate nor anything anyone would actually pay.
-    const breakdown = Object.values(fbreak).map(f => {
-      // rate rounds FIRST, cost derives from that rounded rate — so `cost` and `qty × rate` always
-      // match exactly, to the rupee, with nothing left for a displayed price and total to disagree on.
-      const rate = f.qty > 0 ? Math.round((f.cost / f.qty) * 100) / 100 : 0;
-      const qty = Math.ceil(f.qty);
-      return { ...f, qty, rate, cost: Math.round(qty * rate) };
-    }).sort((a, b) => b.cost - a.cost);
-    // Owner ask: P&L has to cost what will actually be PAID at the mandi — whole bundles at the
-    // real rate — not the fractional-need estimate. tReal (feeds Deal Check's own Floral cost
-    // rollup, DealCheckOverlay.jsx's dcCostRollup.florals / margin) now sums the breakdown's own
-    // already-whole-unit, already-real-rate cost, instead of the pre-ceiling fractional total.
-    const tReal = fixedExtras + breakdown.reduce((s, f) => s + (f.cost || 0), 0);
-    return { totalReal: tReal, totalArtificial: tArt, grandTotal: tReal + tArt, breakdown, artFlowerBunches, artGreenBunches, income: { real: realIncome, art: artIncome } };
   }, [dealCheckData, studioFloralData, sharedFloralSettings, rcItems, floralRatio, resolveRcRate, rcFloralModeByKey, dcFloralColorPrefs, imsInventory, dcInventoryCache, collectAllFunctionData]);
   // Sync for calcFnFloralSourcingCostRef — see its declaration (near collectAllFunctionDataRef) for
   // why transportCalc/calcFunctionCost need to reach this function through a ref instead of calling
