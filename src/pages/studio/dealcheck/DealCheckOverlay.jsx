@@ -670,17 +670,6 @@ export default function DealCheckOverlay({ ctx }) {
           // comes after it.
           const fnGroupIds = groupConsecutiveFns(fns);
           const fnGroupFrontier = {};
-          // Each function's OWN total need per invId (top-level elements only — same computeFnInvQty
-          // every other cross-fn-reuse consumer already shares), computed up front so the frontier only
-          // ever advances ONCE per function, after ALL of its own cards/manual items have drawn against
-          // it. Reading the frontier through a snapshot frozen at the START of each function (below)
-          // instead of letting it climb card-by-card matters here: two cards in the SAME function
-          // needing the same item (e.g. 5 on one card + 3 on another, both wanted AT ONCE for this one
-          // function) must never let the first card's demand look like "already installed" reuse stock
-          // for the second — they're simultaneous need, not sequential reuse, and only a cross-FUNCTION
-          // peak (a sibling's demand already accounted for before this function even started) is real
-          // reuse credit.
-          const fnOwnNeed = fns.map(computeFnInvQty);
           fns.forEach((fn, fi) => {
             const cards = dcCards[fi] || {};
             // Still needed for the truss block's isRepeat flag further down (a ZONE-identity question —
@@ -689,8 +678,20 @@ export default function DealCheckOverlay({ ctx }) {
             const crossFnPrevFn = findCrossFnReuseSource(fn, fns);
             const frontierMap = (fnGroupFrontier[fnGroupIds[fi]] ||= new Map());
             const frozenFrontier = new Map(frontierMap); // this function's own cards never see their own later bump
+            // thisFnDemand accumulates the REAL qty this function's own cards actually asked crossFnTake
+            // for, per invId — the bump below advances the frontier by exactly this, not by a second,
+            // independently-sourced "raw need" figure (computeFnInvQty off zoneElements). Those two
+            // numbers can legitimately disagree — a zone element Deal Check never matched into a
+            // priced card, a disabled zone, a stale element left over from an earlier edit — and
+            // bumping off the raw one let a function's peak advance past what anyone ever actually
+            // billed for, stealing reuse credit a LATER function's real card never had a chance to
+            // draw against (it showed as "reused" against a demand that was never genuinely there).
+            // Grounding the bump in the exact same qty values that pass through crossFnTake keeps the
+            // frontier self-consistent with billing by construction, not by coincidence.
+            const thisFnDemand = new Map();
             const crossFnTake = (invId, qty) => {
               if (!invId || !(Number(qty) > 0)) return 0;
+              thisFnDemand.set(invId, (thisFnDemand.get(invId) || 0) + qty);
               const prior = frozenFrontier.get(invId) || 0;
               return Math.min(qty, prior);
             };
@@ -806,9 +807,19 @@ export default function DealCheckOverlay({ ctx }) {
                 components = comps.map(cp => {
                   const ci = dcInventoryCache.find(x => x.id === cp.itemId);
                   if (!ci) return null;
-                  const cq = (Number(cp.qty) || 1) * qty;   // component qty × number of kits
+                  const perKit = Number(cp.qty) || 1;
+                  const cq = perKit * qty;   // component qty × number of kits — the $ WEIGHT below (and
+                  // the scale it feeds) stays keyed to this raw figure on purpose: lineRental already
+                  // prices the kit net of reuse, so scale (lineRental ÷ fullBase, fullBase also raw)
+                  // correctly nets the dollars back down regardless. Only the physical count shown/
+                  // loaded needs its own net-of-reuse figure — the kit's own displayed qty already gets
+                  // this same treatment (Math.max(0, qty - reusedQty)) and a component is physically
+                  // just a part of a kit unit, so it must shrink the same way or the "to load" peak
+                  // fix above would show e.g. 12 kits but the components list under it would still sum
+                  // to 36 kits' worth of parts once merged across the same sibling functions.
+                  const cqNet = perKit * Math.max(0, qty - reusedQty);
                   const cr = imsField.rentalCost(ci);
-                  return { ci, name: ci.name, imsId: ci.id, qty: cq, unit: cr, total: cr * cq, sub: imsField.subcategory(ci) || "", photo: imsField.photos(ci)[0] || "" };
+                  return { ci, name: ci.name, imsId: ci.id, qty: cqNet, unit: cr, total: cr * cq, sub: imsField.subcategory(ci) || "", photo: imsField.photos(ci)[0] || "" };
                 }).filter(Boolean);
               }
               if (isKit && components && components.length) {
@@ -899,10 +910,11 @@ export default function DealCheckOverlay({ ctx }) {
               if (deptInv[dD]) deptInv[dD].push({ name: item.name || "Item", photo: imsField.photos(item)[0] || "", qty: Math.max(0, q - miReused), rentalQty: q, unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "", imsId: mi.imsId, fnIdx: fi, ...(miComponents && miComponents.length ? { isKit: true, components: miComponents.map(({ci, ...rest}) => ({ ...rest, total: Math.round(rest.total) })) } : {}) });
             });
             // Advance the GROUP's shared frontier now that this function is done drawing against it —
-            // using its own total top-level need (fnOwnNeed[fi]), not whatever individual cards happened
-            // to claim, so a function matched to 3 separate cards for the same item still only ever
-            // bumps the peak by its true combined need, once.
-            Object.entries(fnOwnNeed[fi] || {}).forEach(([invId, q]) => {
+            // by its own total ACTUAL demand (thisFnDemand, accumulated above from every crossFnTake
+            // call its own cards/manual items made), so a function matched to 3 separate cards for the
+            // same item still only ever bumps the peak by its true combined billed need, once — and
+            // never by more than that.
+            thisFnDemand.forEach((q, invId) => {
               const cur = frontierMap.get(invId) || 0;
               if (q > cur) frontierMap.set(invId, q);
             });
