@@ -1898,9 +1898,14 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         </div>
         {rows.map((rr, ri) => (
           <div className="contents" key={ri}>
-            <div className="flex items-baseline gap-1.5 min-w-0 overflow-hidden px-2 py-0.5 text-[13px] text-gray-700">
-              <span className="truncate" title={rr.sub}>{rr.sub}</span>
-              <span aria-hidden="true" className="flex-1 min-w-2 border-b border-dotted border-gray-300 mb-[3px]" />
+            <div className="min-w-0 overflow-hidden px-2 py-0.5">
+              <div className="flex items-baseline gap-1.5 text-[13px] text-gray-700">
+                <span className="truncate" title={rr.sub}>{rr.sub}</span>
+                <span aria-hidden="true" className="flex-1 min-w-2 border-b border-dotted border-gray-300 mb-[3px]" />
+              </div>
+              {/* Shape/size/masking for a truss-derived row — a dept head asked to see what the
+                  zone's truss actually looks like, not just its name. */}
+              {rr.meta && <div className="text-[11px] text-gray-400 truncate">{rr.meta}</div>}
             </div>
             <span className="px-2 py-0.5 text-[13px] text-gray-700 font-semibold text-right whitespace-nowrap">{decimals ? Number(rr.value).toFixed(decimals) : rr.value}</span>
           </div>
@@ -1960,7 +1965,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
             lookup table of thresholds, not a concept a dept head needs named. Just state the pillar
             count and the crew it calls for. */}
         <div className="text-[13px] text-gray-600">🏗️ <b className="text-gray-900">{t.total}</b> pillar{t.total === 1 ? "" : "s"} to put up → <b className="text-gray-900">{t.result}</b> Truss Labour needed</div>
-        {Array.isArray(t.rows) && t.rows.length > 0 && renderMpNameValueRows(t.rows.map(r => ({ sub: r.sub, value: r.count })), "Pillars")}
+        {Array.isArray(t.rows) && t.rows.length > 0 && renderMpNameValueRows(t.rows.map(r => ({ sub: r.sub, value: r.count, meta: r.shape ? [r.shape, r.dims, r.masking].filter(Boolean).join(" · ") : null })), "Pillars")}
       </div>
     );
     if (t.kind === "ratio") return <div className="mb-1.5 text-[13px] text-gray-600">📐 {t.num} {t.numLabel} ÷ {t.denomLabel} = <b>{t.result}</b></div>;
@@ -1988,9 +1993,15 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
               </div>
               {t.zones.map((z, zi) => (
                 <div className="contents" key={zi}>
-                  <div className="flex items-baseline gap-1.5 min-w-0 overflow-hidden px-2 py-0.5 text-[13px] text-gray-700">
-                    <span className="truncate" title={z.zone}>{z.zone}</span>
-                    <span aria-hidden="true" className="flex-1 min-w-2 border-b border-dotted border-gray-300 mb-[3px]" />
+                  <div className="min-w-0 overflow-hidden px-2 py-0.5">
+                    <div className="flex items-baseline gap-1.5 text-[13px] text-gray-700">
+                      <span className="truncate" title={z.zone}>{z.zone}</span>
+                      <span aria-hidden="true" className="flex-1 min-w-2 border-b border-dotted border-gray-300 mb-[3px]" />
+                    </div>
+                    {/* The truss's own shape/size, and whether it's masked — same info a dept head
+                        asked to see for Truss Labour's rows, needed here too since the same zone
+                        structure drives this crew count. */}
+                    {z.shape && <div className="text-[11px] text-gray-400 truncate">{[z.shape, z.dims, z.masking].filter(Boolean).join(" · ")}</div>}
                   </div>
                   <span className="px-2 py-0.5 text-[13px] text-gray-700 text-right whitespace-nowrap">{z.topLabour > 0 ? `${z.topLabour}` : "—"}</span>
                   <span className="px-2 py-0.5 text-[13px] text-gray-700 text-right whitespace-nowrap">{z.rft > 0 ? `${z.rft} ft` : "—"}</span>
