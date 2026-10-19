@@ -30,7 +30,7 @@ import StudioSummary from "./views/StudioSummary.jsx";
 import { kvGet, kvTryGet, kvSet, reliableSave } from "../../lib/ims/kv";
 import { makeAmendRequest } from "../../lib/ims/amend";
 import { catToDept } from "../../lib/ims/deptClassify";
-import { availableAtVenue, isStandingAt, rentalSplit, fixedVenueDealDiscount, fixedVenueDiscountPctFor, proratedVenueDiscount, fixedVenueFor, builtQty, venueSlackFor, standingReductionBySubcat } from "../../lib/ims/fixedVenues";
+import { availableAtVenue, isStandingAt, rentalSplit, fixedVenueDealDiscount, fixedVenueDiscountPctFor, proratedVenueDiscount, fixedVenueFor, builtQty, venueSlackFor, standingReductionBySubcat, standingQty } from "../../lib/ims/fixedVenues";
 import { searchLmsLeads, triggerLmsSync, fetchCachedContracts, fetchLmsLeadByEntry } from "../../lib/ims/lms";
 import { uploadToStorage, compressImageForUpload, STORAGE_FOLDERS, listStorage, deleteStorageObjects, deleteStorageFolder } from "../../lib/storage";
 import { ytApi, ytDuration } from "../../lib/youtube";
@@ -10296,9 +10296,16 @@ export default function StudioApp() {
           // capped by what's blocked on the date. Other venues' stock is still listed on the card
           // ("30 at AP") so it's visible, it just isn't offered as pickable.
           const _slack = venueSlackFor(fvCfgForRepeat, pickerVenue, it);
+          // This venue's OWN standing qty for this item (0 if pickerVenue isn't a Fixed Venue, or
+          // this item isn't standing there) — already folded silently into `free` below via
+          // availableAtVenue's own-venue skip, with nothing on the card ever saying so. Confirmed
+          // real confusion: Exotica's own 4 standing Iron Pedestals showing up nowhere while two
+          // OTHER venues' stock ("1 at MKT, 4 at AR") was listed read as "my own venue's stock
+          // vanished," when it was actually just quietly counted rather than named.
+          const _ownStanding = standingQty(fvCfgForRepeat, pickerVenue, it.id);
           const netBlocksForDate = netOwnReservedBlocksLive(blocksForDate, it.id, blocksDetailForDate, eo?.id);
           const free = Math.max(0, Math.min(getStudioAvailable(it, netBlocksForDate), availableAtVenue(fvCfgForRepeat, pickerVenue, it)) - (usedQty[it.id] || 0));
-          return { id: it.id, name: it.name, photo: (Array.isArray(it.photoUrls) && it.photoUrls[0]) || it.img || "", free, total: Number(it.qty) || 0, usedIn: usedElsewhere[it.id] || [], venueSlack: _slack, unit: it.unit || "",
+          return { id: it.id, name: it.name, photo: (Array.isArray(it.photoUrls) && it.photoUrls[0]) || it.img || "", free, total: Number(it.qty) || 0, usedIn: usedElsewhere[it.id] || [], venueSlack: _slack, ownStanding: _ownStanding, ownVenueName: _ownStanding > 0 ? (fixedVenueFor(fvCfgForRepeat, pickerVenue)?.name || pickerVenue) : null, unit: it.unit || "",
             // Out of stock AND can't be made in production (IMS Inventory's "Can be made" checkbox,
             // or not enough production lead time left before `date`) — genuinely unpickable here,
             // not just a cost%-priced shortfall. StudioModals.jsx's picker disables the card instead

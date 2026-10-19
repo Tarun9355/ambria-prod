@@ -323,6 +323,13 @@ export default function StudioModals({ ctx }) {
                               already, so "Piece" was mislabeling the exact same 42 as a count of rugs
                               instead of the sqft that number has always meant. */}
                           <div style={{fontSize:9.5,marginTop:2,color:out?"#EF4444":"#059669",fontWeight:600}}>{it.total ?? it.free} {availModal.unitLabel || it.unit || "pc"} total</div>
+                          {/* This venue's OWN standing stock — already folded into the green free
+                              badge above (availableAtVenue's own-venue skip), with nothing saying so
+                              until now. Without this line, a venue's own fixed-standing units looked
+                              like they'd vanished, the exact opposite of what's actually happening. */}
+                          {it.ownStanding > 0 && (
+                            <div style={{fontSize:8.5,marginTop:1,color:"#059669",fontWeight:600}}>✓ {it.ownStanding} already standing here{it.ownVenueName ? ` (${it.ownVenueName})` : ""}</div>
+                          )}
                           {/* Stock allocated to OTHER Fixed Venues — excluded from the free badge (see
                               openAvailModal in StudioApp.jsx), listed here so it's visible rather than
                               silently vanishing from the count. */}
