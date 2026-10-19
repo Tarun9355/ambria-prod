@@ -177,10 +177,12 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
   const fabricCost = fabricInv ? calcZoneFabricCost({ ...zc, mkOn: false, mkWalls: {} }, fabricInv, [], zc.drapeDensity || "moderate") * fabMult : 0;
   const wallPanelCost = Math.max(0, fabricAll - fabricCost);
   // The Custom Ceiling panel bills inside rowCost.truss (and takes the Repeat discount with it), but
-  // it replaces the ceiling drape, so the card shows it on Fabric instead — same total, moved.
+  // it replaces the ceiling drape, so it's pulled out of Truss and shown on its own under Drape
+  // instead — a standalone figure, not folded into Fabric (which used to add it on top of fabricCost,
+  // making Fabric's own number look inflated next to Drape's identical figure right beside it).
   const ceilingShown = guestDiscPct > 0 ? Math.round(rowCost.ceiling * (1 - guestDiscPct / 100)) : rowCost.ceiling;
   const trussShown = Math.max(0, discountedTruss - ceilingShown);
-  const fabricShown = fabricCost + ceilingShown;
+  const fabricShown = fabricCost;
   // ═══ ONE SELECTED-STATE ═══ These three rows previously used a dark outline (material),
   // PINK (drape) and a borderless grey fill (masking). The borderless one was the real problem:
   // unselected options rendered as plain text and did not look clickable. `border` is never
@@ -370,13 +372,11 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                   {zc.trT && <div style={groupCard}>
                     <div style={{display:"flex",alignItems:"center",marginBottom:6}}>
                       <div style={rowCap}>Drape</div>
-                      {/* The Custom Ceiling's own price, next to the chip that picks it. Already part of
-                          the Fabric figure, not a second charge — styled as a muted footnote (not the
-                          bold black every other card's price uses) so it can't be read as a THIRD
-                          number to add on top of Truss + Fabric when eyeballing the chip total. It
-                          used to share that same bold styling, which is exactly what made it look
-                          additive and the chip total look like it had "drifted". */}
-                      {showCosts&&ceilingShown>0&&<span style={{marginLeft:"auto",fontSize:10.5,fontWeight:500,color:textS}} title="Custom ceiling — already included in the Fabric figure, not billed separately">{fmt(ceilingShown)} <span style={{opacity:0.75}}>(in Fabric)</span></span>}
+                      {/* The Custom Ceiling's own price, pulled out of Truss (trussShown subtracts it)
+                          and shown here on its own — not folded into Fabric, which used to add it on
+                          top of fabricCost and make Fabric's figure look inflated next to this
+                          identical number sitting right beside it. One number, one home. */}
+                      {showCosts&&ceilingShown>0&&<span style={{marginLeft:"auto",fontSize:12,fontWeight:600,color:textP}} title="Custom ceiling panel — replaces the fabric ceiling drape">{fmt(ceilingShown)}</span>}
                     </div>
                     <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
                       {[{v:"minimum",l:"Minimum"},{v:"moderate",l:"Moderate"},{v:"dense",l:"Dense"}].map(o=>{
@@ -407,7 +407,7 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                           been computed at all", which is exactly the ambiguity that made a genuine
                           non-zero figure (e.g. on a dims-only, 0-qty truss still billing Liza/curtain)
                           impossible to tell apart from a legitimately-zero one without opening devtools. */}
-                      {showCosts&&<span style={{marginLeft:"auto",fontSize:12,fontWeight:600,color:textP}} title={`Liza + velvet curtains for a ${zc.drapeDensity||"moderate"} drape, ${zc.useNewFabric?"New":"Old"} stock${ceilingShown>0?` ${fmt(fabricCost)} + custom ceiling ${fmt(ceilingShown)}`:""} (wall panels are on the Masking card)`}>{fmt(fabricShown)}</span>}
+                      {showCosts&&<span style={{marginLeft:"auto",fontSize:12,fontWeight:600,color:textP}} title={`Liza + velvet curtains for a ${zc.drapeDensity||"moderate"} drape, ${zc.useNewFabric?"New":"Old"} stock (wall panels are on the Masking card${ceilingShown>0?"; the ceiling panel's own cost is on the Drape card":""})`}>{fmt(fabricShown)}</span>}
                     </div>
                     {/* A bare frame: the truss bills at IMS's "Without fabric" rate and no Liza,
                         curtains or masking pieces are counted (see calcZoneFabric/trussRowCost). */}
