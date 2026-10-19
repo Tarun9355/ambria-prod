@@ -231,7 +231,7 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                     {showCosts&&(()=>{
                       const base=trussBaseArea(zc);
                       if(!base.area) return null;
-                      const r=trussRateFor(base.mode==="box"?"box":"singleU",zc.trussMaterial,zc.drapeDensity,trussRates);
+                      const r=trussRateFor(base.mode==="box"?"box":"singleU",zc.trussMaterial,zc.drapeDensity,trussRates,base.area);
                       // Explicit 0 — a placeholder truss: no physical structure billed, dims kept only
                       // to drive Liza/Masking/Curtain fabric demand (trussRowCost returns ₹0 for it).
                       if (zc.trussQty === 0) return <span style={{fontSize:10.5,color:textS,fontWeight:400}}>{base.a}×{base.b} = {base.area} sqft — <b style={{color:accent}}>dims only, no truss billed</b> (still used for fabric/liza/curtain)</span>;

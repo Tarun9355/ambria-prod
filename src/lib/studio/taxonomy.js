@@ -163,14 +163,26 @@ export const DEFAULT_TRUSS_RATES = TRUSS_SHAPES.flatMap((shape) => TRUSS_MATERIA
 export const DEFAULT_MASKING_RATES=[{key:"fabric",name:"Fabric",ratePerSqft:20},{key:"acrylic",name:"Acrylic",ratePerSqft:100},{key:"flex",name:"Flex",ratePerSqft:45},{key:"vinyl",name:"Vinyl",ratePerSqft:90}];
 // `material`/`density` default to "iron"/"moderate" when a row hasn't set them yet (e.g. zones or
 // tagged photos saved before this model existed) — Iron is the house-standard default truss material.
-export function trussRateFor(shape, material, density, trussRates) {
+// `area` (sqft) is optional — omitting it (existing callers that have no figure to pass yet)
+// reproduces the exact prior behavior, always the base rate.
+export function trussRateFor(shape, material, density, trussRates, area) {
   const list = (Array.isArray(trussRates) && trussRates.length) ? trussRates : DEFAULT_TRUSS_RATES;
   const mat = material || "iron", den = density || "moderate";
   const row = list.find((r) => r.shape === shape && r.material === mat && r.density === den)
     || DEFAULT_TRUSS_RATES.find((r) => r.shape === shape && r.material === mat && r.density === den);
+  const baseRate = Number(row?.ratePerSqft) || 0;
+  // Oversize rate: once the structure being priced crosses an admin-set sqft threshold, the
+  // PER-SQFT rate itself switches to a (usually lower, bulk) rate — e.g. Iron truss at ₹20/sqft
+  // normally, ₹15/sqft once the structure is over 1850 sqft. Unset threshold (0/blank) = no
+  // oversize rule, same as every row before this existed.
+  const overThreshold = Number(row?.oversizeThresholdSqft) || 0;
+  const overRate = row?.oversizeRatePerSqft;
+  const rate = (overThreshold > 0 && (Number(area) || 0) > overThreshold && overRate != null && overRate !== "")
+    ? (Number(overRate) || 0)
+    : baseRate;
   // noFabricRate — the bare-frame rate for a truss with "No fabric" on. Until an admin fills the
-  // "Without fabric" column it falls back to the normal rate, so no deal changes price on its own.
-  const rate = Number(row?.ratePerSqft) || 0;
+  // "Without fabric" column it falls back to the (possibly oversize-adjusted) normal rate, so no
+  // deal changes price on its own.
   const nf = row?.noFabricRatePerSqft;
   const noFabricRate = (nf === undefined || nf === null || nf === "") ? rate : (Number(nf) || 0);
   return { rate, ceilingRate: Number(row?.ceilingRatePerSqft) || 0, noFabricRate };

@@ -9795,17 +9795,18 @@ export default function StudioApp() {
       const floorDimLabel = `${floorDims.L || floorDims.S || 0}×${floorDims.W || floorDims.S || 0}ft`;
       if (zl.truss > 0) {
         const _tShape = zc.trT === "box" ? "box" : "singleU";
-        const _tRate = trussRateFor(_tShape, zc.trussMaterial, zc.drapeDensity, imsTrussRates);
+        // The two dims a truss is actually charged on (trussBaseArea — same authority calcStructCost's
+        // trussRowCost uses), not the raw L×W×H: a Box charges its two LARGEST dims, a Single U charges
+        // width×height. Doesn't account for the front-extension add-on (shown in the name text only) —
+        // that's a second, smaller area on top, not part of this base sqft. Computed before the rate
+        // lookup now — trussRateFor needs it to apply an oversize rate, if one is configured.
+        const _tBase = trussBaseArea({ dims: zc.dims, trT: zc.trT });
+        const _tRate = trussRateFor(_tShape, zc.trussMaterial, zc.drapeDensity, imsTrussRates, _tBase.area);
         const _tHasCustomCeiling = _tShape === "box" && !!zc.customCeilingItemId;
         // Same rate trussRowCost charges — the bare-frame rate when "No fabric" is on.
         const _tEffRate = zc.noFabric ? _tRate.noFabricRate : _tHasCustomCeiling ? Math.max(0, _tRate.rate - _tRate.ceilingRate) : _tRate.rate;
         const _tMatLabel = (TRUSS_MATERIALS.find((m) => m.key === (zc.trussMaterial || "iron"))?.label) || "Pole";
         const _tCeilingItem = _tHasCustomCeiling ? (imsInventory || []).find((i) => i.id === zc.customCeilingItemId) : null;
-        // The two dims a truss is actually charged on (trussBaseArea — same authority calcStructCost's
-        // trussRowCost uses), not the raw L×W×H: a Box charges its two LARGEST dims, a Single U charges
-        // width×height. Doesn't account for the front-extension add-on (shown in the name text only) —
-        // that's a second, smaller area on top, not part of this base sqft.
-        const _tBase = trussBaseArea({ dims: zc.dims, trT: zc.trT });
         structItems.push({
           name: "Truss (" + (_tShape === "box" ? "Box" : "Single U") + " · " + _tMatLabel + (zc.noFabric ? " · no fabric" : "") + " ₹" + _tEffRate + "/sqft)" + (_tCeilingItem ? ` · custom ceiling: ${_tCeilingItem.name}` : "") + (zc.trT === "box" && (Number(zc.trussFrontExt) || 0) > 0 ? ` + 2× Single-U front ext ${zc.trussFrontExt}×${Number(zc.trussFrontExtH) || dims.H || 0}ft` : "") + ((zc.trussQty || 1) > 1 ? " ×" + zc.trussQty : ""),
           size: `${_tBase.a || 0}×${_tBase.b || 0}ft`, qty: Math.round((_tBase.area || 0) * Math.max(1, zc.trussQty || 1) * 100) / 100, rate: _tEffRate, unit: "sqft",

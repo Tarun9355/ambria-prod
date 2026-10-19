@@ -1011,8 +1011,8 @@ export function trussRowCost(row, rates) {
   // rule this charges on, rather than a second copy of it that can drift.
   const _base = trussBaseArea(row);
   const _trMode = _base.mode;
-  const box = trussRateFor("box", row.trussMaterial, row.drapeDensity, rates?.trussRates);
-  const singleU = trussRateFor("singleU", row.trussMaterial, row.drapeDensity, rates?.trussRates);
+  const box = trussRateFor("box", row.trussMaterial, row.drapeDensity, rates?.trussRates, _base.area);
+  const singleU = trussRateFor("singleU", row.trussMaterial, row.drapeDensity, rates?.trussRates, _base.area);
   // Custom ceiling — the salesperson picked a specific IMS inventory item (a printed ceiling panel)
   // instead of the fabric ceiling drape, so the ceiling portion of the Box rate doesn't apply and
   // that item's own rental (× its sub-category's scaling factor) is charged instead. Single U has

@@ -733,7 +733,7 @@ export default function StudioModals({ ctx }) {
                   const isBox=dL&&dW&&dH;
                   const isSingleU=!isBox&&dW&&dH;
                   const trussSqft=isBox?(()=>{const s=[dL,dW,dH].sort((a,b)=>b-a);return s[0]*s[1];})():(isSingleU?dW*dH:0);
-                  const _tr=isBox?trussRateFor("box",row.trussMaterial,row.drapeDensity,imsTrussRates):trussRateFor("singleU",row.trussMaterial,row.drapeDensity,imsTrussRates);
+                  const _tr=isBox?trussRateFor("box",row.trussMaterial,row.drapeDensity,imsTrussRates,trussSqft):trussRateFor("singleU",row.trussMaterial,row.drapeDensity,imsTrussRates,trussSqft);
                   const ceilingItem = row.customCeilingItemId ? (imsInventory||[]).find(i=>i.id===row.customCeilingItemId) : null;
                   const trussRate=(isBox&&ceilingItem)?Math.max(0,_tr.rate-_tr.ceilingRate):_tr.rate;
                   const qty=Math.max(1,Number(row.trussQty)||1);

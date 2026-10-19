@@ -147,7 +147,8 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
   const trussRateIsCustom = (row, shape, material, density) => {
     const def = DEFAULT_TRUSS_RATES.find((r) => r.shape === shape && r.material === material && r.density === density);
     if (!def || !row) return false;
-    return (Number(row.ratePerSqft) || 0) !== def.ratePerSqft || (Number(row.ceilingRatePerSqft) || 0) !== def.ceilingRatePerSqft;
+    return (Number(row.ratePerSqft) || 0) !== def.ratePerSqft || (Number(row.ceilingRatePerSqft) || 0) !== def.ceilingRatePerSqft
+      || (Number(row.oversizeThresholdSqft) || 0) > 0;
   };
   // MASKING is a genuine list — types can be added and removed. The pickers in Studio (Build,
   // tagging, Library) all read it through maskingOptions(), so removing a type here takes it out of
@@ -431,7 +432,12 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                       {cfg.tier === 2 && (
                         <div className="flex items-center gap-1">
                           <span className="text-xs text-gray-500">Min:</span>
-                          <input type="number" min="1" max="20" value={cfg.minimum || 1} onChange={(e) => setSettings((s) => ({ ...s, labourTiers: { ...s.labourTiers, [type]: { ...cfg, minimum: parseInt(e.target.value) || 1 } } }))} className="w-14 border rounded px-2 py-1 text-xs" />
+                          {/* `|| 1` on both the display and the setter used to coerce a typed 0 straight
+                              back to 1 — 0 is a valid minimum (some sub-categories need no floor crew
+                              at all), so both need an explicit numeric check instead of falsy-coalescing. */}
+                          <input type="number" min="0" max="20" value={typeof cfg.minimum === "number" ? cfg.minimum : 1}
+                            onChange={(e) => { const n = parseInt(e.target.value, 10); setSettings((s) => ({ ...s, labourTiers: { ...s.labourTiers, [type]: { ...cfg, minimum: Number.isFinite(n) ? Math.max(0, n) : 1 } } })); }}
+                            className="w-14 border rounded px-2 py-1 text-xs" />
                         </div>
                       )}
                       <div className="flex items-center gap-1 ml-auto">
@@ -2682,6 +2688,8 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                       <span className="flex-1">Density</span>
                       <span className="w-32 text-center">Rate (₹/sqft)</span>
                       <span className="w-40 text-center">Ceiling portion (₹/sqft)</span>
+                      <span className="w-32 text-center">Oversize at (sqft)</span>
+                      <span className="w-32 text-center">Oversize rate (₹/sqft)</span>
                       <span className="w-8" />
                     </div>
                     {TRUSS_MATERIALS.map((material) => DRAPE_DENSITIES.map((density) => {
@@ -2701,6 +2709,22 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                             <span className="text-xs text-gray-400">₹</span>
                             <input type="number" min="0" value={row?.ceilingRatePerSqft ?? 0}
                               onChange={(e) => updateTrussRate(shape.key, material.key, density.key, "ceilingRatePerSqft", parseFloat(e.target.value) || 0)}
+                              className="w-16 border rounded-lg px-2 py-1 text-sm text-center font-semibold" />
+                          </div>
+                          {/* Both blank/0 = no oversize rule at all — trussRateFor only switches to the
+                              oversize rate once a threshold is actually set, so every row stays priced
+                              exactly as before until an admin opts in here. */}
+                          <div className="w-32 flex items-center justify-center gap-1">
+                            <input type="number" min="0" placeholder="—" value={row?.oversizeThresholdSqft || ""}
+                              title="Above this many sqft, switch to the oversize rate instead"
+                              onChange={(e) => { const v = e.target.value; updateTrussRate(shape.key, material.key, density.key, "oversizeThresholdSqft", v === "" ? 0 : (parseInt(v, 10) || 0)); }}
+                              className="w-16 border rounded-lg px-2 py-1 text-sm text-center font-semibold" />
+                          </div>
+                          <div className="w-32 flex items-center justify-center gap-1">
+                            <span className="text-xs text-gray-400">₹</span>
+                            <input type="number" min="0" placeholder="—" value={row?.oversizeRatePerSqft ?? ""}
+                              title="Rate charged once the structure crosses the oversize threshold"
+                              onChange={(e) => { const v = e.target.value; updateTrussRate(shape.key, material.key, density.key, "oversizeRatePerSqft", v === "" ? null : (parseFloat(v) || 0)); }}
                               className="w-16 border rounded-lg px-2 py-1 text-sm text-center font-semibold" />
                           </div>
                           {/* Only offered once the row differs from its seed — a reset that would do

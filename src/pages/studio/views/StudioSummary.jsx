@@ -3011,7 +3011,7 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
                                    rather than inventing a number. */
                                 const zc=eb.zc; if(!zc) return null;
                                 const base=trussBaseArea(zc); if(!base?.area) return null;
-                                const r=trussRateFor(base.mode==="box"?"box":"singleU",zc.trussMaterial,zc.drapeDensity,imsTrussRates);
+                                const r=trussRateFor(base.mode==="box"?"box":"singleU",zc.trussMaterial,zc.drapeDensity,imsTrussRates,base.area);
                                 const rr=zc.noFabric?r?.noFabricRate:r?.rate;
                                 if(!rr) return null;
                                 return ` (${base.mode==="box"?"Box":"U"} ${fmt(rr)}/sqft${zc.noFabric?", no fabric":""})`;
