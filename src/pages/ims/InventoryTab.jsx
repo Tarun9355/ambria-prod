@@ -91,11 +91,13 @@ export default function InventoryTab({ inventory, setInventory, functions, setFu
     (studioSubcatsByCat[catLabel] = studioSubcatsByCat[catLabel] || []).push(r.label);
     studioSubcats.push(r.label);
   });
-  // Returns subcats for a given cat label, falling back to flat list for legacy/ambiguous cats
-  const subcatsForCat = (catLabel) => {
-    const scoped = studioSubcatsByCat[catLabel];
-    return (scoped && scoped.length > 0) ? scoped : studioSubcats;
-  };
+  // Returns the sub-categories actually assigned to a given category label (IMS → Settings →
+  // Sub-Categories' "move to category" control sets category_label; see studioSubcatsByCat
+  // above) — empty when none have been assigned to it yet. Used to fall back to the ENTIRE flat
+  // list across every category whenever a category's own scope was empty, which is
+  // indistinguishable from "cascading just doesn't work" — a category nobody has assigned
+  // sub-categories to yet now honestly shows none, with a hint to go assign some.
+  const subcatsForCat = (catLabel) => studioSubcatsByCat[catLabel] || [];
 
   const [subOtherAdd, setSubOtherAdd] = useState(false); // Add modal "Other" mode
   const [search, setSearch] = useState("");
@@ -1104,6 +1106,9 @@ Rules:
                   {studioSubcats.length === 0 && (
                     <p className="text-[10px] text-gray-400 mt-1">Loading sub-categories…</p>
                   )}
+                  {studioSubcats.length > 0 && form.cat && subcatsForCat(form.cat).length === 0 && (
+                    <p className="text-[10px] text-amber-600 mt-1">No sub-categories assigned to "{form.cat}" yet — set it in Settings → Sub-Categories, or pick "Other (custom)" above.</p>
+                  )}
                 </div>
                 <div>
                   <label className="text-xs font-semibold text-orange-600">Quantity * (verify!)</label>
@@ -1241,6 +1246,9 @@ Rules:
                 {subcatsForCat(form.cat).map((sc) => <option key={sc} value={sc}>{sc}</option>)}
                 {form.subCat && !subcatsForCat(form.cat).includes(form.subCat) && <option value={form.subCat}>{form.subCat} (AI guess)</option>}
               </select>
+              {form.cat && subcatsForCat(form.cat).length === 0 && (
+                <p className="text-[10px] text-amber-600 mt-1">No sub-categories assigned to "{form.cat}" yet — set it in Settings → Sub-Categories.</p>
+              )}
             </div>
 
             {/* Number / text fields */}
