@@ -2206,16 +2206,10 @@ export default function StudioBuild({ ctx }) {
                 </>}
           </div>
         </div>
-        <div style={{padding:"9px 15px",borderBottom:`1px solid ${rule}`}}>
-          {line("Décor", fmt(totalCost()))}
-          {line("Transport", fmt(transportCalc.total))}
-          {/* Its own line, not folded silently into the headline — same convention the Cost Sheet's
-              Agency Fee row already uses. Without it, Décor + Transport never added back up to the
-              total above, which read exactly like the fee had been dropped even though it was always
-              inside that number. */}
-          {line(`Design and Management Fee`, fmt(agencyFeeAmt))}
-        </div>
-        <div style={{padding:"11px 15px"}}>
+        {/* Decor's own breakdown comes first — by zone, then its subtotal — so the summary lines
+            below (Transport/Genset/Fee) read as what's added ON TOP of decor, not a disconnected
+            headline sitting above a detail list that repeats it. */}
+        <div style={{padding:"11px 15px",borderBottom:`1px solid ${rule}`}}>
           <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:4}}>
             <span style={{fontSize:9.5,fontWeight:700,letterSpacing:1.1,textTransform:"uppercase",color:textS}}>By zone</span>
             {rows.length>0&&<span style={{marginLeft:"auto",fontSize:9,fontWeight:700,padding:"1px 6px",borderRadius:5,background:isDark?"rgba(201,169,110,0.18)":"#F6E7C8",color:zpGold,border:`1px solid ${accent}44`}}>{rows.length}</span>}
@@ -2229,9 +2223,16 @@ export default function StudioBuild({ ctx }) {
                 <span style={{fontWeight:600,color:textP,fontVariantNumeric:"tabular-nums"}}>{fmt(r.amt)}</span>
               </div>
             ))}
-          {/* Zones only ever sum to the décor side; transport is added on top, so a mismatch
-              here is expected and shown rather than hidden. */}
-          {rows.length>0&&<div style={{marginTop:7,paddingTop:7,borderTop:`1px solid ${rule}`}}>{line("Zones subtotal", fmt(zonesSum), {strong:true})}</div>}
+          <div style={{marginTop:7,paddingTop:7,borderTop:`1px solid ${rule}`}}>{line("Decor subtotal", fmt(zonesSum), {strong:true})}</div>
+        </div>
+        <div style={{padding:"9px 15px"}}>
+          {/* Genset/Power split out of Transport's own total (transportCalc.truckTotal is the truck-
+              only figure; transportCalc.gensetCost is already the guest-billed genset portion) — same
+              reasoning the Agency Fee row below already uses: a cost folded silently into a bigger
+              number upstream reads as missing, not included, the moment someone tries to reconcile it. */}
+          {line("Transport", fmt(transportCalc.truckTotal))}
+          {line("Genset / Power", fmt(transportCalc.gensetCost))}
+          {line(`Design and Management Fee`, fmt(agencyFeeAmt))}
         </div>
       </div>
     );
