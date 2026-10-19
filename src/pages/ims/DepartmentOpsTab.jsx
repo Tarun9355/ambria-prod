@@ -1236,7 +1236,18 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       const row = { name: f.name, unit: f.unit || "", projQty: Number(f.qty) || 0, projCost: Number(f.cost) || 0, qty: Number(f.qty) || 0, price, colorVariant: f.colorVariant || null, colorPrefs: f.colorPrefs || null };
       return row;
     });
-  const mandiRows = Array.isArray(deptData.mandiLines) ? deptData.mandiLines : seedMandi;
+  // Once shopping has started, mandiLines (the logged qty/price/swap data) is the source of truth
+  // for everything EXCEPT colour — re-merging colorVariant/colorPrefs fresh from seedMandi (i.e.
+  // from whatever floralPlan currently says) on every render means a colour picked in Deal Check
+  // AFTER shopping began still reaches the purchase manager, instead of being frozen out until
+  // someone remembers to click "↺ Reset to system plan" (which would also wipe the logged qty/price
+  // nobody wants touched). Matched by name; a row with no live match (e.g. a swap replacement) is
+  // left exactly as it was.
+  const seedColourByName = {};
+  seedMandi.forEach(r => { if (!seedColourByName[r.name]) seedColourByName[r.name] = { colorVariant: r.colorVariant, colorPrefs: r.colorPrefs }; });
+  const mandiRows = Array.isArray(deptData.mandiLines)
+    ? deptData.mandiLines.map(r => seedColourByName[r.name] ? { ...r, ...seedColourByName[r.name] } : r)
+    : seedMandi;
   // Real shopping hasn't been logged until someone actually edits a row — until then, mandiRows is
   // just seedMandi (the plan's own quantities/prices mirrored in as a starting point), so the "Real
   // shopping" numbers can look fully filled in even though nobody has been to the mandi yet.

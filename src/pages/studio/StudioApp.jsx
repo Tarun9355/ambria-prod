@@ -8185,7 +8185,12 @@ export default function StudioApp() {
       let floralPlan = { projected: 0, flowers: [] };
       try {
         const fbAgg = {};
-        allFns.forEach(fnData => { const r = calcFnFloralSourcingCost(fnData); (r.breakdown || []).forEach(f => { if (!fbAgg[f.name]) fbAgg[f.name] = { name: f.name, qty: 0, cost: 0, unit: f.unit }; fbAgg[f.name].qty += f.qty; fbAgg[f.name].cost += f.cost; }); });
+        // colorVariant/colorPrefs carried through here too (same shape DealCheckOverlay's own
+        // snapshot writer already uses) — this used to only copy name/qty/cost/unit, so a colour
+        // picked in Deal Check's Florals tab before the deal was ever booked was silently dropped
+        // the moment "Confirm booking" ran, even though `f` (from calcFnFloralSourcingCost's own
+        // breakdown) already carried it.
+        allFns.forEach(fnData => { const r = calcFnFloralSourcingCost(fnData); (r.breakdown || []).forEach(f => { if (!fbAgg[f.name]) fbAgg[f.name] = { name: f.name, qty: 0, cost: 0, unit: f.unit, colorVariant: f.colorVariant || null, colorPrefs: f.colorPrefs || null }; fbAgg[f.name].qty += f.qty; fbAgg[f.name].cost += f.cost; }); });
         // rate: the true per-unit price (qty is already whole-unit-respecting from the breakdown
         // above) — so IMS's mandi list can seed its own ₹/unit field with the real rate instead of
         // back-deriving one from cost÷qty.
