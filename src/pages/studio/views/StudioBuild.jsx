@@ -398,7 +398,12 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                         {toggle(!!zc.useNewFabric, ()=>sZ({useNewFabric:!zc.useNewFabric}))}
                         <span style={{fontSize:11,fontWeight:600,color:zc.useNewFabric?textP:textS}}>{zc.useNewFabric?"New":"Old"}</span>
                       </>}
-                      {showCosts&&fabricShown>0&&<span style={{marginLeft:"auto",fontSize:12,fontWeight:600,color:textP}} title={`Liza + velvet curtains for a ${zc.drapeDensity||"moderate"} drape, ${zc.useNewFabric?"New":"Old"} stock${ceilingShown>0?` ${fmt(fabricCost)} + custom ceiling ${fmt(ceilingShown)}`:""} (wall panels are on the Masking card)`}>{fmt(fabricShown)}</span>}
+                      {/* Unconditional now (used to be `fabricShown>0`, same gate Masking's own
+                          figure never had) — a silently-skipped ₹0 looked identical to "this hasn't
+                          been computed at all", which is exactly the ambiguity that made a genuine
+                          non-zero figure (e.g. on a dims-only, 0-qty truss still billing Liza/curtain)
+                          impossible to tell apart from a legitimately-zero one without opening devtools. */}
+                      {showCosts&&<span style={{marginLeft:"auto",fontSize:12,fontWeight:600,color:textP}} title={`Liza + velvet curtains for a ${zc.drapeDensity||"moderate"} drape, ${zc.useNewFabric?"New":"Old"} stock${ceilingShown>0?` ${fmt(fabricCost)} + custom ceiling ${fmt(ceilingShown)}`:""} (wall panels are on the Masking card)`}>{fmt(fabricShown)}</span>}
                     </div>
                     {/* A bare frame: the truss bills at IMS's "Without fabric" rate and no Liza,
                         curtains or masking pieces are counted (see calcZoneFabric/trussRowCost). */}
