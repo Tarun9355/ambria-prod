@@ -404,9 +404,9 @@ export default function DCFloralsTab({ ctx }) {
                                       </div>
                                     )}
                                   </td>
-                                  {/* Repeat-zone discount is a QUANTITY cut (§ see REPEAT_REAL_QTY_MULT
-                                      above), not a rate cut — the rate never changes, so the strike-
-                                      through goes on Qty/Total, the two figures the cut actually moves.
+                                  {/* Cross-function flower reuse is a QUANTITY credit (see FLOWER_REUSE_RATE
+                                      in floralCost.js), not a rate cut — the rate never changes, so the strike-
+                                      through goes on Qty/Total, the two figures the credit actually moves.
                                       Without it the row just shows one number and a salesperson can't
                                       tell whether a discount landed or the flower simply needed less. */}
                                   {(() => {
@@ -415,7 +415,7 @@ export default function DCFloralsTab({ ctx }) {
                                       <>
                                         <td style={{padding:"6px 4px",color:"#1A1A2E",textAlign:"right",fontVariantNumeric:"tabular-nums"}}>
                                           {discounted && <span title="Qty before the repeat-zone discount" style={{textDecoration:"line-through",opacity:0.4,marginRight:6}}>{f.totalQtyFull.toFixed(2)}</span>}
-                                          <span title={discounted ? "♻ Repeat zone — 80% less fresh stock needed" : undefined} style={{color:discounted?"#10B981":undefined,fontWeight:discounted?700:400}}>{f.totalQty.toFixed(2)} {f.unit}</span>
+                                          <span title={discounted ? "♻ Reused from an earlier function — see \"how\" below for the exact credit" : undefined} style={{color:discounted?"#10B981":undefined,fontWeight:discounted?700:400}}>{f.totalQty.toFixed(2)} {f.unit}</span>
                                         </td>
                                         <td style={{padding:"6px 4px",color:"#1A1A2E",textAlign:"right",fontVariantNumeric:"tabular-nums"}}>₹{Math.round(f.unitPrice).toLocaleString("en-IN")}/{f.unit}</td>
                                         <td style={{padding:"6px 4px",color:"#1A1A2E",textAlign:"right",fontVariantNumeric:"tabular-nums",fontWeight:600}}>
@@ -470,8 +470,8 @@ export default function DCFloralsTab({ ctx }) {
                                               <th style={{textAlign:"right",padding:"3px 4px 5px",color:"#1A1A2E",fontWeight:500}}>per pattern</th>
                                               <th style={{textAlign:"right",padding:"3px 4px 5px",color:"#1A1A2E",fontWeight:500}}>×</th>
                                               <th style={{textAlign:"right",padding:"3px 4px 5px",color:"#1A1A2E",fontWeight:500}}>real %</th>
-                                              <th style={{textAlign:"right",padding:"3px 4px 5px",color:"#1A1A2E",fontWeight:500}}>×</th>
-                                              <th style={{textAlign:"right",padding:"3px 4px 5px",color:"#1A1A2E",fontWeight:500}}>repeat</th>
+                                              <th style={{textAlign:"right",padding:"3px 4px 5px",color:"#1A1A2E",fontWeight:500}}>−</th>
+                                              <th style={{textAlign:"right",padding:"3px 4px 5px",color:"#1A1A2E",fontWeight:500}}>reused</th>
                                               <th style={{textAlign:"right",padding:"3px 4px 5px",color:"#1A1A2E",fontWeight:500}}>= contrib</th>
                                             </tr></thead>
                                             <tbody>
@@ -483,12 +483,13 @@ export default function DCFloralsTab({ ctx }) {
                                                   <td style={{textAlign:"right",padding:"4px 4px",color:"#1A1A2E",fontVariantNumeric:"tabular-nums"}}>{c.perPattern} {f.unit}</td>
                                                   <td style={{textAlign:"right",padding:"4px 4px",color:"#1A1A2E"}}>×</td>
                                                   <td style={{textAlign:"right",padding:"4px 4px",color:"#1A1A2E",fontVariantNumeric:"tabular-nums"}}>{Math.round(c.realFrac*100)}%</td>
-                                                  <td style={{textAlign:"right",padding:"4px 4px",color:"#1A1A2E"}}>×</td>
-                                                  {/* The cut a zone's ♻️Repeat (or a reused sibling function) applies on top of the
-                                                      real% blend — without this column the formula shown never actually multiplied
-                                                      out to the contrib figure next to it, and looked simply wrong. */}
-                                                  <td style={{textAlign:"right",padding:"4px 4px",color:c.repeatZone?"#B45309":"#1A1A2E",fontVariantNumeric:"tabular-nums"}} title={c.repeatZone ? `Repeat zone — ${c.repeatLabel}` : "Not a repeat zone"}>
-                                                    {c.repeatZone ? `×${c.repeatQtyFrac}` : "×1"}
+                                                  <td style={{textAlign:"right",padding:"4px 4px",color:"#1A1A2E"}}>−</td>
+                                                  {/* Reused credit — a flat quantity subtracted (70% of the EXACT same flower's own
+                                                      quantity in the function it's reused from), not a multiplier any more: the
+                                                      amount depends on what that other function actually had, so it varies per row
+                                                      even within the same zone, unlike the old flat ×0.2/×0.7 cut. */}
+                                                  <td style={{textAlign:"right",padding:"4px 4px",color:c.reuseCredit>0?"#B45309":"#1A1A2E",fontVariantNumeric:"tabular-nums"}} title={c.repeatZone ? `Repeat zone — ${c.repeatLabel}` : "Not a repeat zone"}>
+                                                    {c.reuseCredit > 0 ? `${c.reuseCredit.toFixed(2)} ${f.unit}` : "—"}
                                                   </td>
                                                   <td style={{textAlign:"right",padding:"4px 4px",color:"#1A1A2E",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{c.contribution.toFixed(2)} {f.unit}</td>
                                                 </tr>
@@ -504,7 +505,7 @@ export default function DCFloralsTab({ ctx }) {
                                             </tbody>
                                           </table>
                                         )}
-                                        <div style={{marginTop:8,paddingTop:6,borderTop:`1px dashed ${border}`,fontSize:12,color:"#1A1A2E",fontStyle:"italic"}}>Σ(element qty × per-pattern recipe × real % × repeat factor) summed across all elements using this flower</div>
+                                        <div style={{marginTop:8,paddingTop:6,borderTop:`1px dashed ${border}`,fontSize:12,color:"#1A1A2E",fontStyle:"italic"}}>Σ(element qty × per-pattern recipe × real %) − reused, summed across all elements using this flower</div>
                                       </div>
                                     </td>
                                   </tr>
@@ -572,7 +573,7 @@ export default function DCFloralsTab({ ctx }) {
                                 <div style={{fontSize:12,color:"#EC4899",fontWeight:600,marginBottom:4}}>🌹 Flower bunches</div>
                                 <div style={{color:"#1A1A2E",fontVariantNumeric:"tabular-nums"}}>
                                   {flowerDiscounted && <span title="Bunches before the repeat-zone discount" style={{textDecoration:"line-through",opacity:0.4,marginRight:5}}>{totalArtBunchesFlowerFull.toFixed(1)} bunches</span>}
-                                  <span title={flowerDiscounted ? "♻ Repeat zone — 30% less artificial stock needed" : undefined} style={{color:flowerDiscounted?"#10B981":undefined,fontWeight:flowerDiscounted?700:undefined}}>{totalArtBunchesFlower.toFixed(1)} bunches</span> = <b>{flowerKg.toFixed(2)} kg</b>
+                                  <span title={flowerDiscounted ? "♻ Reused from an earlier function — see each flower's own row for the exact credit" : undefined} style={{color:flowerDiscounted?"#10B981":undefined,fontWeight:flowerDiscounted?700:undefined}}>{totalArtBunchesFlower.toFixed(1)} bunches</span> = <b>{flowerKg.toFixed(2)} kg</b>
                                 </div>
                                 <div style={{fontSize:11,color:"#1A1A2E",marginTop:2}}>
                                   × ₹{flowerRate}/kg = {flowerDiscounted && <span style={{textDecoration:"line-through",opacity:0.4,marginRight:4}}>₹{Math.round(flowerCostFull).toLocaleString("en-IN")}</span>}<span style={{color:"#EC4899",fontWeight:600}}>₹{Math.round(flowerCost).toLocaleString("en-IN")}</span>
@@ -582,7 +583,7 @@ export default function DCFloralsTab({ ctx }) {
                                 <div style={{fontSize:12,color:"#10B981",fontWeight:600,marginBottom:4}}>🌿 Green bunches</div>
                                 <div style={{color:"#1A1A2E",fontVariantNumeric:"tabular-nums"}}>
                                   {greenDiscounted && <span title="Bunches before the repeat-zone discount" style={{textDecoration:"line-through",opacity:0.4,marginRight:5}}>{totalArtBunchesGreenFull.toFixed(1)} bunches</span>}
-                                  <span title={greenDiscounted ? "♻ Repeat zone — 30% less artificial stock needed" : undefined} style={{color:greenDiscounted?"#10B981":undefined,fontWeight:greenDiscounted?700:undefined}}>{totalArtBunchesGreen.toFixed(1)} bunches</span> = <b>{greenKg.toFixed(2)} kg</b>
+                                  <span title={greenDiscounted ? "♻ Reused from an earlier function — see each flower's own row for the exact credit" : undefined} style={{color:greenDiscounted?"#10B981":undefined,fontWeight:greenDiscounted?700:undefined}}>{totalArtBunchesGreen.toFixed(1)} bunches</span> = <b>{greenKg.toFixed(2)} kg</b>
                                 </div>
                                 <div style={{fontSize:11,color:"#1A1A2E",marginTop:2}}>
                                   × ₹{greenRate}/kg = {greenDiscounted && <span style={{textDecoration:"line-through",opacity:0.4,marginRight:4}}>₹{Math.round(greenCostFull).toLocaleString("en-IN")}</span>}<span style={{color:"#10B981",fontWeight:600}}>₹{Math.round(greenCost).toLocaleString("en-IN")}</span>
@@ -781,13 +782,13 @@ export default function DCFloralsTab({ ctx }) {
                                   <td colSpan={7} style={{padding:"4px 4px 10px"}}>
                                     <div style={{padding:"10px 12px",background:"rgba(124,58,237,0.06)",border:"1px dashed rgba(167,139,250,0.35)",borderRadius:7}}>
                                       <div style={{fontSize:11,color:"#7C3AED",fontWeight:600,letterSpacing:0.4,textTransform:"uppercase",marginBottom:8}}>How ₹{Math.round(eb.total).toLocaleString("en-IN")} for {eb.name} · {eb.zoneKey} × {eb.qty} derived</div>
-                                      {/* Same cut as the per-flower "how" panel, stated once here since it applies
-                                          equally to every flower in this element — real flowers need 80% less fresh
-                                          stock, artificial 30% less, and it can come from a toggle on THIS zone or
-                                          be carried over silently from a sibling function at the same venue. */}
+                                      {/* Stated once here since it applies to every flower in this element, but
+                                          the actual amount reused varies per flower (70% of THAT exact flower's
+                                          own quantity in the function it's carried over from) — see each flower's
+                                          own "reused" column below for the real figure, not a flat percentage. */}
                                       {eb.repeatZone && (
                                         <div style={{fontSize:11,color:"#B45309",fontWeight:500,marginBottom:8,padding:"4px 8px",background:"rgba(180,83,9,0.08)",borderRadius:6}}>
-                                          ♻️ Repeat zone — {eb.repeatLabel}. Real flower qty ×{eb.realQtyFrac}, artificial qty ×{eb.artQtyFrac}.
+                                          ♻️ Repeat zone — {eb.repeatLabel}.
                                         </div>
                                       )}
 
@@ -821,7 +822,10 @@ export default function DCFloralsTab({ ctx }) {
                                                   <tr key={ri}>
                                                     <td style={{padding:"3px 2px",color:"#1A1A2E"}}>{rl.name}{rl.realOnly && <span title="Real Only — 100% always" style={{marginLeft:4,fontSize:11,color:"#F59E0B"}}>🔒</span>}</td>
                                                     <td style={{textAlign:"right",padding:"3px 2px",color:"#1A1A2E",fontVariantNumeric:"tabular-nums"}}>{rl.perPattern} {rl.unit}{rl.realOnly && <span style={{marginLeft:3,fontSize:10,color:"#F59E0B"}}>×100%</span>}</td>
-                                                    <td style={{textAlign:"right",padding:"3px 2px",color:"#1A1A2E",fontVariantNumeric:"tabular-nums"}}>{rl.qty.toFixed(2)} {rl.unit}</td>
+                                                    <td style={{textAlign:"right",padding:"3px 2px",color:"#1A1A2E",fontVariantNumeric:"tabular-nums"}}>
+                                                      {rl.reuseCredit > 0 && <span title={`${rl.reuseCredit.toFixed(2)} ${rl.unit} reused from an earlier function`} style={{textDecoration:"line-through",opacity:0.4,marginRight:4}}>{rl.qtyFull.toFixed(2)}</span>}
+                                                      {rl.qty.toFixed(2)} {rl.unit}
+                                                    </td>
                                                     <td style={{textAlign:"right",padding:"3px 2px",color:"#10B981",fontVariantNumeric:"tabular-nums"}}>₹{Math.round(rl.lineCost).toLocaleString("en-IN")}</td>
                                                   </tr>
                                                 ))}

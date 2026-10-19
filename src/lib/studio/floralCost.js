@@ -8,10 +8,7 @@
 // the repeat-zone quantity cut, kit sub-item expansion, real_only/mapping flower types,
 // manual swap overrides) that drifted apart repeatedly — confirmed live: Mehendi showing
 // ₹1,887 on the sidebar and ₹298 on the Florals tab for the SAME function, because the
-// sidebar's copy and the tab's copy had each picked up fixes the other one missed (most
-// recently: this exact Mehendi booking's automatic cross-function reuse cut applying in
-// one and not the other). Extracting the shared half here means a fix to "how a floral
-// element is costed" only has one place to land, and both screens inherit it together.
+// sidebar's copy and the tab's copy had each picked up fixes the other one missed.
 //
 // What stays OUTSIDE this module, by design, not oversight: the two callers deliberately
 // want different final NUMBERS from the same per-flower aggregate —
@@ -21,20 +18,206 @@
 //   - DCFloralsTab.jsx shows the exact fractional need, because its job is to explain the
 //     derivation precisely, not to state a purchase order.
 // That split is intentional product behaviour, not drift, so it is left to each caller.
+//
+// ═══ Cross-function FLOWER reuse (2026-10-19 redesign) ═══
+// Previously: a zone auto-reused at a flat ×0.2 real / ×0.7 artificial quantity whenever a
+// same-day/adjacent-day, same-venue sibling function ALSO had a zone of the same KEY enabled —
+// regardless of what flowers that sibling's zone actually held. Confirmed live on Taj Test
+// Client: Mehendi's "stage" zone (Marigold String / genda) got the cut because Get Together's
+// and Cocktail's "stage" zones existed too — but those held completely different flowers
+// (Flower Reet, Greens Reet). The zone NAME matched; nothing physical actually did.
+//
+// Owner's replacement rule: reuse is now about the FLOWER PALETTE actually selected in Build
+// (fn.fnFlowerPalette — the same field the artificial-bunch Colour Split already reads), not a
+// zone key —
+//   - Eligibility is gated PER PRECEDING FUNCTION: the single chronologically NEAREST earlier
+//     function at the same venue, within the existing day-adjacency window (same day, or
+//     exactly the day before) — not a merged pool of every eligible sibling.
+//   - For colours present in BOTH functions' own selected palettes, a flower that the EXACT
+//     SAME species+colour was also used for in the preceding function is credited 70% of that
+//     preceding function's own (raw, uncredited) quantity — real and artificial alike. A flower
+//     whose colour isn't in the overlap, or that the preceding function never actually had, is
+//     NOT credited even if the zone/function is otherwise eligible.
+//   - A zone's own manual ✨Fresh/♻️Repeat toggle (unchanged control) bypasses the PALETTE
+//     overlap requirement — the salesperson has already said "treat this as reused" — but the
+//     credit is still looked up by actual species+colour match against the preceding function;
+//     it can never invent a saving for a flower that function never had.
 
 import { matchFlowerPattern, sizeClassToPatternKey, normalizeSizeClass } from "../ims/flowerHelpers";
-import { findCrossFnReuseSource } from "./crossFnReuse";
-import { repeatCatFor } from "./pricing";
+import { repeatCatFor, parseFlowerPalette, fuzzyColourMatch } from "./pricing";
+import { shiftToTiming } from "./manpowerCount";
 
-export const REPEAT_REAL_QTY_MULT = 0.2;
-export const REPEAT_ART_QTY_MULT = 0.7;
+// The one reuse rate — credited the same way against both real (fresh) quantity and
+// artificial-bunch-equivalent quantity, per the owner's own call (no separate real/artificial
+// rates the way the old zone-key system had).
+export const FLOWER_REUSE_RATE = 0.7;
+
+const TIMING_ORDER = { brunch: 0, lunch: 1, sundowner: 2, dinner: 3 };
+// A sortable (date, time-of-day) key: whole days apart dominate (×10), same-day ordering
+// (brunch < lunch < sundowner < dinner) breaks ties within one day.
+function fnSortKey(f) {
+  const t = Date.parse(f?.fnDate || "");
+  if (!Number.isFinite(t)) return null;
+  const dayIndex = Math.round(t / 86400000);
+  const timing = TIMING_ORDER[shiftToTiming(f?.fnShift)] ?? 3;
+  return dayIndex * 10 + timing;
+}
+
+/**
+ * The single chronologically NEAREST earlier function at the same venue as `fn`, within the
+ * existing reuse-eligible window (same calendar day, or exactly the day before) — or null if
+ * none exists. Deliberately NOT a merged pool of every eligible sibling (unlike
+ * findCrossFnReuseSource, still used by truss/transport/inventory-qty reuse) — the owner's own
+ * call for flower-palette reuse specifically: a function only ever looks at the ONE function
+ * immediately before it, never further back.
+ */
+export function findImmediatePrecedingFn(fn, allFns) {
+  if (!fn?.fnVenue || !fn?.fnDate) return null;
+  const venue = fn.fnVenue.toLowerCase().trim();
+  const myKey = fnSortKey(fn);
+  if (myKey == null) return null;
+  const myDay = Math.floor(myKey / 10);
+  let best = null, bestKey = -Infinity;
+  (allFns || []).forEach((f) => {
+    if (f === fn || f.fnIdx === fn.fnIdx || !f.fnVenue || !f.fnDate) return;
+    if (f.fnVenue.toLowerCase().trim() !== venue) return;
+    const k = fnSortKey(f);
+    if (k == null || k >= myKey) return; // must be strictly chronologically before fn
+    const fDay = Math.floor(k / 10);
+    if (myDay - fDay > 1) return; // same day or exactly one day before, same as every other reuse rule
+    if (k > bestKey) { bestKey = k; best = f; }
+  });
+  return best;
+}
+
+const fnPaletteColors = (fn) => parseFlowerPalette(fn?.fnFlowerPalette || "").map((c) => c.name);
+
+/** Colours present in BOTH functions' own selected palettes (exact match, case-insensitive —
+ * NOT fuzzy: "White" and "Off-White" are deliberately different swatches here, unlike matching
+ * a flower's own name against a palette colour below, which does want substring leniency). */
+function paletteOverlapColors(fn, precedingFn) {
+  const mine = fnPaletteColors(fn), theirs = fnPaletteColors(precedingFn);
+  if (!mine.length || !theirs.length) return [];
+  const theirsNorm = new Set(theirs.map((c) => c.toLowerCase().trim()));
+  return mine.filter((c) => theirsNorm.has(c.toLowerCase().trim()));
+}
+
+/** Does this specific flower (by its resolved colour-variant name, or its parent's bare name
+ * when no variant was chosen) correspond to any of the given palette colours? */
+function flowerMatchesAnyColor(parent, variant, colors) {
+  if (!colors || !colors.length) return false;
+  const names = [variant?.name, parent?.name].filter(Boolean);
+  return names.some((name) => colors.some((c) => fuzzyColourMatch(c, name)));
+}
+
+/**
+ * The raw (uncredited — no repeat cut of any kind applied) per-flower need for one function,
+ * keyed by the EXACT recipe ingredient id (`fl.flowerId`, a bare mandi-catalogue parent id or a
+ * specific colour-variant id — "same species AND colour" per the owner's own call) rather than
+ * the resolved/collapsed parentId computeFnFloralCost's own flowerAgg uses for display. Used
+ * ONLY to look up "how much of this exact flower did the PRECEDING function actually need" when
+ * costing a later function's own reuse credit — never shown directly, so it skips everything
+ * cost/trace/swap-override/income does not need: no realCost, no artCost, no elementBreakdown.
+ */
+export function computeFnRawFlowerUsage(fn, opts) {
+  const {
+    flowerPatterns = [], mandiCatalogue = [], rcItems = [], rcFloralModeByKey = {},
+    resolveMandiFlower, imsInventory = [], dcInventoryCache = [], floralRatio = 70,
+  } = opts || {};
+  const findInv = (id) => (!id ? null : (imsInventory.find((i) => i.id === id) || (dcInventoryCache || []).find((i) => i.id === id)));
+  const sizeFromMode = (inhouseMode, elSize) => {
+    if (inhouseMode === "smb") { const s = (elSize || "M").toUpperCase(); return s === "S" ? "small" : s === "B" ? "big" : "medium"; }
+    return "medium";
+  };
+  const fnFloralRatio = typeof fn?.floralRatio === "number" ? fn.floralRatio : (typeof floralRatio === "number" ? floralRatio : 70);
+  const resolveRealPct = (el, rc, invItem, elPattern) => {
+    if (typeof el.realPct === "number" && el.realPct >= 0 && el.realPct <= 100) return el.realPct;
+    const subKey = String((invItem && (invItem.subCat || invItem.subcategory)) || elPattern?.sub || rc?.sub || rc?.imsAlias || "").trim().toLowerCase();
+    const subMode = subKey ? rcFloralModeByKey?.[subKey] : undefined;
+    if (subMode === "real") return 100;
+    if (subMode === "artificial") return 0;
+    if (!invItem && !elPattern) {
+      const mode = String(rc?.floralMode || "").toLowerCase();
+      if (mode === "real") return 100;
+      if (mode === "artificial") return 0;
+      if (typeof rc?.defaultRealPct === "number") return rc.defaultRealPct;
+    }
+    return Math.max(0, Math.min(100, 100 - fnFloralRatio));
+  };
+
+  const usage = new Map(); // fl.flowerId -> { realQty, artUnits, parent, variant }
+  const add = (flowerId, realQty, artUnits, parent, variant) => {
+    const prev = usage.get(flowerId) || { realQty: 0, artUnits: 0, parent: null, variant: null };
+    prev.realQty += realQty; prev.artUnits += artUnits;
+    if (!prev.parent && parent) prev.parent = parent;
+    if (!prev.variant && variant) prev.variant = variant;
+    usage.set(flowerId, prev);
+  };
+
+  Object.entries(fn?.zoneElements || {}).forEach(([zk, elems]) => {
+    if (!fn.enabledEls?.[zk]) return;
+    const expandedElems = [];
+    (elems || []).forEach((el) => {
+      expandedElems.push(el);
+      const kitInvItem = findInv(el.invId);
+      if (kitInvItem && Array.isArray(kitInvItem.subItems) && kitInvItem.subItems.length > 0) {
+        const outerQty = el.qty || 0;
+        (kitInvItem.subItems || []).forEach((si) => {
+          const siQty = (Number(si.qty) || 0) * outerQty;
+          if (siQty <= 0) return;
+          if (si.patternId) { expandedElems.push({ name: `${el.name || kitInvItem.name} · recipe`, patternId: si.patternId, qty: siQty, size: el.size }); return; }
+          const ci = findInv(si.itemId);
+          if (ci && String(ci.cat || ci.category || "").toLowerCase() === "florals") expandedElems.push({ name: ci.name, invId: ci.id, qty: siQty, size: el.size });
+        });
+      }
+    });
+    expandedElems.forEach((el) => {
+      const elName = (el.name || "").toLowerCase().trim();
+      const elQty = el.qty || 0;
+      let rc = rcItems.find((i) => (i.name || "").toLowerCase().trim() === elName);
+      if (!rc && elName.length >= 4) {
+        rc = rcItems.find((i) => {
+          if (String(i.cat || "").toLowerCase() !== "florals") return false;
+          const n = (i.name || "").toLowerCase().trim();
+          return n && n.length >= 4 && (elName.includes(n) || n.includes(elName));
+        });
+      }
+      const elPattern = el.patternId ? flowerPatterns.find((p) => p.id === el.patternId) : null;
+      const invItem = findInv(el.invId);
+      const pattern = elPattern
+        || (invItem ? matchFlowerPattern(invItem, flowerPatterns) : null)
+        || matchFlowerPattern({ subcategory: rc?.sub, name: rc?.name || el.name }, flowerPatterns);
+      if (!pattern) return;
+      const realPct = resolveRealPct(el, rc, invItem, elPattern);
+      const realFrac = realPct / 100, artFrac = 1 - realFrac;
+      const sizeKey = invItem ? sizeClassToPatternKey(normalizeSizeClass(el.size || "B")) : sizeFromMode(pattern?.mode || rc?.inhouseMode, el.size);
+      const sizes = pattern.sizes || {};
+      let comp = sizes[sizeKey] || sizes.medium;
+      if (!comp && sizeKey === "big" && sizes.large) comp = sizes.large;
+      if (!comp && Object.keys(sizes).length > 0) comp = sizes[Object.keys(sizes)[0]];
+      if (!comp || !Array.isArray(comp.flowers)) return;
+      comp.flowers.forEach((fl) => {
+        if (fl.invItemId) return; // a physical rented prop, never a flower-reuse candidate
+        const resolved = resolveMandiFlower(fl.flowerId, mandiCatalogue);
+        const parent = resolved?.parent || null;
+        const flowerType = parent?.flowerType || (parent?.isGreen ? "green" : "flower");
+        const effRealFrac = flowerType === "real_only" ? 1 : realFrac;
+        const effArtFrac = flowerType === "real_only" ? 0 : artFrac;
+        const realQty = (fl.qty || 0) * elQty * effRealFrac;
+        const artUnits = (fl.qty || 0) * elQty * effArtFrac;
+        add(fl.flowerId, realQty, artUnits, parent, resolved?.variant || null);
+      });
+    });
+  });
+  return usage;
+}
 
 /**
  * Computes the full per-element / per-flower floral cost breakdown for one function.
  *
  * @param {object} fn - the function (from collectAllFunctionData()) to cost.
  * @param {object[]} allFns - every function in the booking (collectAllFunctionData()'s own
- *   return) — needed for cross-function reuse detection.
+ *   return) — needed to find the immediately preceding function for reuse crediting.
  * @param {object} opts
  * @param {object[]} opts.flowerPatterns
  * @param {object[]} opts.mandiCatalogue
@@ -53,6 +236,11 @@ export const REPEAT_ART_QTY_MULT = 0.7;
  * @param {number} [opts.artGreenBunchesPerKg]
  * @param {function} [opts.resolveRcRate] - (rc, sizeUpper) => {realRate, artRate}; only the
  *   billed-income figure needs this — omit it (the tab does) and income stays {real:0, art:0}.
+ * @param {boolean} [opts.ignoreRepeatCuts] - internal: compute the fully-fresh, uncredited need
+ *   with no reuse applied at all. Used by this function itself when it needs a PRECEDING
+ *   function's own raw usage to credit against — that function's displayed/billed figure should
+ *   never recursively depend on what's bought it ITS OWN preceding function, since the physical
+ *   quantity standing at its own event is the full need regardless of how it was sourced.
  */
 export function computeFnFloralCost(fn, allFns, opts) {
   const {
@@ -61,7 +249,7 @@ export function computeFnFloralCost(fn, allFns, opts) {
     imsInventory = [], dcInventoryCache = [], colorPrefsForFn = {},
     artFlowerRatePerKg = 50, artFlowerBunchesPerKg = 16,
     artGreenRatePerKg = 40, artGreenBunchesPerKg = 23,
-    resolveRcRate = null,
+    resolveRcRate = null, ignoreRepeatCuts = false,
   } = opts || {};
   const artFlowerBPK = artFlowerBunchesPerKg || 16;
   const artGreenBPK = artGreenBunchesPerKg || 23;
@@ -92,6 +280,16 @@ export function computeFnFloralCost(fn, allFns, opts) {
   };
   const findInv = (id) => !id ? null : (imsInventory.find(i => i.id === id) || (dcInventoryCache || []).find(i => i.id === id));
 
+  // ── Cross-function flower-palette reuse: resolved ONCE per function, not per zone ──
+  let precedingFn = null, overlapColors = [], precedingUsage = null;
+  if (!ignoreRepeatCuts) {
+    precedingFn = findImmediatePrecedingFn(fn, allFns || []);
+    if (precedingFn) {
+      overlapColors = paletteOverlapColors(fn, precedingFn);
+      precedingUsage = computeFnRawFlowerUsage(precedingFn, opts);
+    }
+  }
+
   const flowerAgg = new Map();
   const elementBreakdown = [];
   const uncosted = [];
@@ -102,22 +300,25 @@ export function computeFnFloralCost(fn, allFns, opts) {
   const overrideByParentId = new Map();
   (fnOverrides.rows || []).forEach(r => { if (r?.flowerId) overrideByParentId.set(r.flowerId, r); });
 
-  const crossFnPrevFnFloral = findCrossFnReuseSource(fn, allFns || []);
   Object.entries(fn?.zoneElements || {}).forEach(([zk, elems]) => {
     if (!fn.enabledEls?.[zk]) return;
-    // The Elements chip, not the zone toggle alone (RC-30) — the flowers are elements.
+    // The Elements chip, not the zone toggle alone (RC-30) — the flowers are elements. This
+    // manual toggle bypasses the palette-overlap requirement below (the salesperson has
+    // already declared the zone reused); it never bypasses the per-flower identity match,
+    // which still only ever credits a flower the preceding function actually had.
     const manualRepeat = repeatCatFor(fn.zoneConfig?.[zk], "elements");
-    const crossFnRepeat = !manualRepeat && !!(crossFnPrevFnFloral?.enabledEls?.[zk] && crossFnPrevFnFloral?.zoneConfig?.[zk]);
-    const zoneRepeat = manualRepeat || crossFnRepeat;
-    const realQtyFrac = zoneRepeat ? REPEAT_REAL_QTY_MULT : 1;
-    const artQtyFrac = zoneRepeat ? REPEAT_ART_QTY_MULT : 1;
+    const autoEligible = overlapColors.length > 0;
+    const zoneRepeat = manualRepeat || autoEligible;
     const repeatLabel = manualRepeat ? "set to Repeat in Build"
-      : crossFnRepeat ? `carried over from ${crossFnPrevFnFloral.fnType || "another function"} (same venue, ${crossFnPrevFnFloral.fnDate === fn.fnDate ? "same day" : "day before"})`
+      : autoEligible ? `carried over from ${precedingFn.fnType || "another function"} — shared palette colour${overlapColors.length > 1 ? "s" : ""}: ${overlapColors.join(", ")}`
       : null;
 
     // A kit's own subItems can carry floral content of their own — a flower-recipe add-on
-    // (si.patternId) or a component item itself categorized as florals — neither of which
-    // is visible from the outer element's own invId/patternId/name alone.
+    // (si.patternId, e.g. a floral topper baked into a stage kit) or a component item that is
+    // itself categorized as florals. Neither ever reached this tab before: the loop below only
+    // ever looked at the outer element's own invId/patternId/name, so a kit's floral pieces
+    // were priced correctly (Build's getElPrice already folds kitFloralCompDelta/
+    // attachedPatterns into the rental line) but never itemized here.
     const expandedElems = [];
     (elems || []).forEach(el => {
       expandedElems.push(el);
@@ -177,7 +378,7 @@ export function computeFnFloralCost(fn, allFns, opts) {
       if (!pattern) {
         // Floral by identity but nothing to price it by — recorded, not dropped, so the
         // money is traceable to "priced as plain rental elsewhere" instead of silently lost.
-        elementBreakdown.push({ name: el.name, zoneKey: zk, qty: elQty, realPct, realCost: 0, artCost: 0, total: 0, hasPattern: false, realLines: [], size: sizeKey, artLines: [], artBunchesFlower: 0, artBunchesGreen: 0, artBunchesFlowerFull: 0, artBunchesGreenFull: 0, flowerPerBunchRate, greenPerBunchRate, isInvOnlyNoPattern: invIsFloral, repeatZone: zoneRepeat, repeatLabel, realQtyFrac, artQtyFrac });
+        elementBreakdown.push({ name: el.name, zoneKey: zk, qty: elQty, realPct, realCost: 0, artCost: 0, total: 0, hasPattern: false, realLines: [], size: sizeKey, artLines: [], artBunchesFlower: 0, artBunchesGreen: 0, artBunchesFlowerFull: 0, artBunchesGreenFull: 0, flowerPerBunchRate, greenPerBunchRate, isInvOnlyNoPattern: invIsFloral, repeatZone: zoneRepeat, repeatLabel });
         return;
       }
       const sizes = pattern.sizes || {};
@@ -212,10 +413,20 @@ export function computeFnFloralCost(fn, allFns, opts) {
           const flowerType = parent?.flowerType || (parent?.isGreen ? "green" : "flower");
           const effectiveRealFrac = flowerType === "real_only" ? 1 : realFrac;
           const totalFlowerQtyFull = (fl.qty || 0) * elQty * effectiveRealFrac;
-          const totalFlowerQty = totalFlowerQtyFull * realQtyFrac;
+          // Reuse credit: only when this zone is eligible (manual toggle, or an automatic
+          // palette-colour overlap with the immediately preceding function) AND — for the
+          // automatic path only — this specific flower's own colour is one of the overlapping
+          // ones. The manual toggle skips that colour check entirely (see this function's own
+          // top comment), but the credit itself is ALWAYS looked up by the exact same
+          // species+colour (fl.flowerId, not the collapsed display parentId) actually appearing
+          // in the preceding function's own raw usage — never invented from a palette alone.
+          const colorEligible = manualRepeat || (autoEligible && flowerMatchesAnyColor(parent, resolved?.variant, overlapColors));
+          const pUsage = colorEligible ? precedingUsage?.get(fl.flowerId) : null;
+          const reuseCredit = pUsage ? FLOWER_REUSE_RATE * pUsage.realQty : 0;
+          const totalFlowerQty = Math.max(0, totalFlowerQtyFull - reuseCredit);
           const lineCost = totalFlowerQty * unitPrice;
           const displayName = parent?.name || fl.flowerId;
-          realLines.push({ flowerId: parentId, name: displayName, perPattern: fl.qty || 0, qty: totalFlowerQty, unit: parent?.unit || "kg", unitPrice, lineCost, realOnly: flowerType === "real_only", variantPicked: override?.colorVariant?.label || null });
+          realLines.push({ flowerId: parentId, name: displayName, perPattern: fl.qty || 0, qty: totalFlowerQty, qtyFull: totalFlowerQtyFull, reuseCredit, unit: parent?.unit || "kg", unitPrice, lineCost, realOnly: flowerType === "real_only", variantPicked: override?.colorVariant?.label || null });
           if (totalFlowerQty > 0 && parent) {
             // colorVariant/colorPrefs (distinct from realLines' own `variantPicked` display label
             // above): which colour IMS's mandi list should show a reference photo for — the ranked
@@ -232,7 +443,7 @@ export function computeFnFloralCost(fn, allFns, opts) {
             prev.variantPicked = override?.colorVariant || prev.variantPicked;
             if (rowColorVariant && !prev.colorVariant) prev.colorVariant = rowColorVariant;
             if (rowColorPrefs && !prev.colorPrefs) prev.colorPrefs = rowColorPrefs;
-            prev.contributors.push({ elName: el.name, zoneKey: zk, elQty, perPattern: fl.qty || 0, realFrac: effectiveRealFrac, contribution: totalFlowerQty, repeatZone: zoneRepeat, repeatQtyFrac: realQtyFrac, repeatLabel, size: sizeKey, realOnly: flowerType === "real_only" });
+            prev.contributors.push({ elName: el.name, zoneKey: zk, elQty, perPattern: fl.qty || 0, realFrac: effectiveRealFrac, contribution: totalFlowerQty, repeatZone: zoneRepeat, reuseCredit, repeatLabel, size: sizeKey, realOnly: flowerType === "real_only" });
             flowerAgg.set(parentId, prev);
           }
         });
@@ -253,8 +464,12 @@ export function computeFnFloralCost(fn, allFns, opts) {
             artLines.push({ flowerId: parentId, name: parent?.name || fl.flowerId, realUnitsReplaced: 0, unit: parent?.unit || "?", bunchesPerUnit: 0, bunches: 0, isGreen: false, perBunch: 0, lineCost: 0, missingRatio: false, realOnly: true });
             return;
           }
+          const colorEligible = manualRepeat || (autoEligible && flowerMatchesAnyColor(parent, resolved?.variant, overlapColors));
+          const pUsage = colorEligible ? precedingUsage?.get(fl.flowerId) : null;
+          const artReuseCredit = pUsage ? FLOWER_REUSE_RATE * pUsage.artUnits : 0;
           if (flowerType === "mapping") {
-            const realUnitsReplaced = (fl.qty || 0) * elQty * artFrac * artQtyFrac;
+            const realUnitsReplacedFull = (fl.qty || 0) * elQty * artFrac;
+            const realUnitsReplaced = Math.max(0, realUnitsReplacedFull - artReuseCredit);
             const mapCost = Number(parent?.artificialMapCost) || 0;
             const lineCost = realUnitsReplaced * mapCost;
             artLines.push({ flowerId: parentId, name: parent?.name || fl.flowerId, realUnitsReplaced, unit: parent?.unit || "?", bunchesPerUnit: 0, bunches: 0, isGreen: false, perBunch: mapCost, lineCost, missingRatio: mapCost <= 0, realOnly: false, isMapped: true, mappedName: parent?.artificialMapName || null });
@@ -262,7 +477,7 @@ export function computeFnFloralCost(fn, allFns, opts) {
           }
           const bunchesPerUnit = Number(parent?.artificialBunchesPerUnit) || 0;
           const realUnitsReplacedFull = (fl.qty || 0) * elQty * artFrac;
-          const realUnitsReplaced = realUnitsReplacedFull * artQtyFrac;
+          const realUnitsReplaced = Math.max(0, realUnitsReplacedFull - artReuseCredit);
           const bunches = realUnitsReplaced * bunchesPerUnit;
           const bunchesFull = realUnitsReplacedFull * bunchesPerUnit;
           const isGreen = flowerType === "green";
@@ -287,7 +502,7 @@ export function computeFnFloralCost(fn, allFns, opts) {
         artBunchesFlowerFull, artBunchesGreenFull,
         flowerPerBunchRate, greenPerBunchRate,
         isInvOnlyNoPattern: false,
-        repeatZone: zoneRepeat, repeatLabel, realQtyFrac, artQtyFrac,
+        repeatZone: zoneRepeat, repeatLabel,
       });
     });
   });
@@ -340,6 +555,7 @@ export function computeFnFloralCost(fn, allFns, opts) {
     totalReal, totalArtificial, grandTotal: totalReal + totalArtificial,
     income: { real: realIncome, art: artIncome },
     artFlowerBunches, artGreenBunches, artFlowerBunchesFull, artGreenBunchesFull,
+    precedingFn, overlapColors,
   };
 }
 
