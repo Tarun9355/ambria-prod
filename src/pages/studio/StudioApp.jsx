@@ -30,7 +30,7 @@ import StudioSummary from "./views/StudioSummary.jsx";
 import { kvGet, kvTryGet, kvSet, reliableSave } from "../../lib/ims/kv";
 import { makeAmendRequest } from "../../lib/ims/amend";
 import { catToDept } from "../../lib/ims/deptClassify";
-import { availableAtVenue, isStandingAt, rentalSplit, fixedVenueDealDiscount, fixedVenueDiscountPctFor, proratedVenueDiscount, fixedVenueFor, builtQty, venueSlackFor } from "../../lib/ims/fixedVenues";
+import { availableAtVenue, isStandingAt, rentalSplit, fixedVenueDealDiscount, fixedVenueDiscountPctFor, proratedVenueDiscount, fixedVenueFor, builtQty, venueSlackFor, standingReductionBySubcat } from "../../lib/ims/fixedVenues";
 import { searchLmsLeads, triggerLmsSync, fetchCachedContracts, fetchLmsLeadByEntry } from "../../lib/ims/lms";
 import { uploadToStorage, compressImageForUpload, STORAGE_FOLDERS, listStorage, deleteStorageObjects, deleteStorageFolder } from "../../lib/storage";
 import { ytApi, ytDuration } from "../../lib/youtube";
@@ -39,6 +39,7 @@ import { paletteNames, paletteInList } from "../../lib/studio/colours";
 import { makeS } from "../../lib/studio/styles";
 import { findCrossFnReuseSource, computeFnInvQty, findSiblingFnInvUse, findSiblingFnSubcatOpportunity } from "../../lib/studio/crossFnReuse";
 import { computeFnFloralCost, buildMandiBreakdown } from "../../lib/studio/floralCost";
+import { computePeople, shiftToTiming, sizeFromMode, heavySayaMultFor, walkFnElements } from "../../lib/studio/manpowerCount";
 
 // ═══ HEADER TYPE + CHIP SCALE ═══
 // The header used to mix 8/9/10/11/12/13px in a single row. It now has exactly two tiers:
@@ -80,6 +81,7 @@ import {
   defaultZoneFromArea, resolveMandiFlower, calcZoneTrussPreview,
   calcZoneFabric, calcZoneFabricCost, guestFabricMultiplier, calcZoneCarpet, buildPlatformPlan, getStudioAvailable,
   buildTopology, PLATFORM_FATTA_CODE, PLATFORM_STAND_CODE, trussRowCost, repeatCatFor, repeatCatsOn, REPEAT_CAT_LABELS,
+  freshFnForManpower,
 } from "../../lib/studio/pricing";
 import { allocateRowAvailability, netOwnReservedBlocksLive } from "../../lib/studio/dealAvailability";
 import { callClaudeStreaming } from "../../lib/ai";
@@ -5712,11 +5714,22 @@ export default function StudioApp() {
   // Crew counts per manpower type for the whole booking, WITH a plain-English "basis" so the dept
   // head sees how the system derived each number (e.g. "6 = 12 arrangements ÷ 2 per flowerist").
   // Peak count across functions (= people to book). Mirrors the Deal Check manpower rules.
+  // ═══ Shared manpower count engine (src/lib/studio/manpowerCount.js) ═══
+  // This used to be a FOURTH hand-rolled copy of "how many of this crew type does this function
+  // need" (DCManpowerTab.jsx and DealCheckOverlay.jsx's calcPpl/calcPplRaw were the other three,
+  // already unified) — already stale relative to those fixes: it used a 3-way morning/evening/day
+  // shift bucket instead of brunch/lunch/sundowner/dinner (wrong recipe-size lookups on anything
+  // but a "day" shift), a flat per-venue venueMinLabour floor applied to EVERY venue instead of
+  // only a configured Fixed Venue, no repeat-zone filtering before counting (so a function's
+  // REPEATED zones inflated crew here when they correctly don't anywhere else), and no support at
+  // all for an admin-configured tier-3 custom labour type. Only the COUNT comes from the shared
+  // engine now — the "how" trace below stays its own copy, same reasoning as the other two call
+  // sites (see manpowerCount.js's top comment): a per-type breakdown for this booking snapshot,
+  // not a second computation of the number it explains.
   const manpowerPlanForBooking = useCallback((allFns) => {
     const d = dealCheckData || {};
     const dihari = d.dihariSchemes || {};
     const labourTiers = d.labourTiers || {};
-    const venueMinLabour = d.venueMinLabour || {};
     const defaultMinLabour = d.defaultMinLabour || 4;
     const eventTypeMultipliers = d.eventTypeMultipliers || { outdoor_budgeted: 1 };
     const eventTimingMultipliers = d.eventTimingMultipliers || {};
@@ -5728,86 +5741,63 @@ export default function StudioApp() {
     const seasonMap = d.seasonMap || {};
     const types = Object.keys(dihari);
     if (!types.length || !(allFns || []).length) return [];
-    const sizeFromMode = (mode, sz) => (mode === "flat" || !sz) ? "medium" : (String(sz).toLowerCase() || "medium");
-    const shiftToTiming = (s) => { const sl = String(s || "").toLowerCase(); if (sl.includes("morning")) return "morning"; if (sl.includes("evening") || sl.includes("night")) return "evening"; return "day"; };
-    // Situational Multipliers (IMS → Admin → Calendar → Date Pricing Config): Heavy Saya — a
-    // King's-season date needs more crew per role, at that role's OWN configured pressure factor
-    // (heavySayaMultFor), not the old flat sayaMultiplier applied only to Labours. Combined via the
-    // same "biggest single pressure factor wins" max() the existing dumping/timing candidates
-    // already use below (not multiplied together), then capped — Premium Segment/Day-Prior aren't
-    // wired here yet: Premium has no per-function segment field to gate on (Studio hard-codes
-    // "outdoor_budgeted" everywhere a segment is read), and Day-Prior needs the separate -1-day
-    // phase/schedule engine (DCManpowerTab's dayList), not this whole-booking snapshot.
     const situMultCap = d.situationalMultiplierCap || 1.8;
     const sitMults = d.situationalMultipliers || SIT_MULT_DEFAULTS;
-    const heavySayaMultFor = (fn, type) => {
-      if (seasonMap[fn.fnDate || ""] !== "kings") return 1.0;
-      const m = Number((sitMults.heavySaya || {})[type]);
-      return m > 0 ? m : 1.0;
+    const fvCfgMP = { fixedVenues: d.fixedVenues || [], venueParents: d.venueParents || venueParents || {} };
+    // Venue-min/fixed-crew floor: ONLY at a configured Fixed Venue (Admin → Settings → Fixed
+    // Venues), applied outside the shared engine — same split as DealCheckOverlay/DCManpowerTab.
+    const fixedCrewFloor = (fv, type) => {
+      const c = fv.fixedCrew || {};
+      if (c[type] != null && c[type] !== "") return Number(c[type]) || 0;
+      if (type === "Labours") return Number(fv.minLabour) || 0;
+      return 0;
     };
-    // An element's cat/sub/inhouseMode for manpower purposes comes ONLY from live IMS identity now
-    // — el.invId (Inventory, the normal path for anything added via "+ Add element" today) or
-    // el.patternId (a pure flower-recipe element). The legacy Rate-Card name-match fallback is
-    // gone: Rate Card's own `.sub` is a separate, older vocabulary that doesn't track IMS's live
-    // Sub-Categories master, and a name coincidentally matching a Rate Card row used to silently
-    // override the element's real Inventory sub-category for labour-batching purposes. An element
-    // with neither identity (should not exist in a build made through today's UI) simply doesn't
-    // count here, same as before this comment — it never did without SOME resolvable identity.
-    // A kit (invItem.subItems non-empty) used to contribute ONE bucket — its own top-level cat/sub —
-    // no matter what its components actually are. walkKitUnits (already the shared node-walker for
-    // transport/pricing) visits the kit's own node plus every component recursively, so a stage kit
-    // built from truss + fabric + lighting sub-parts now feeds crew-hours into each of THEIR
-    // categories too, instead of all of it landing under whatever the kit itself is filed as.
-    const walk = (fn, cb) => { const en = fn.enabledEls || {}; const ze = fn.zoneElements || {}; Object.keys(en).forEach(zk => { if (!en[zk]) return; (ze[zk] || []).forEach(el => {
-      const qty0 = Number(el.qty || el.count || 1);
-      if (el.invId) {
-        const invItem = imsInventory.find(i => i.id === el.invId);
-        if (invItem) {
-          if (Array.isArray(invItem.subItems) && invItem.subItems.length > 0) {
-            walkKitUnits(invItem, qty0, imsInventory, el.kitOverrides, (node, nodeQty) => {
-              cb({ rc: { name: node.name, cat: node.cat || node.category, sub: node.subCat || node.subcategory, inhouseMode: "flat" }, el, qty: nodeQty });
-            });
-          } else {
-            cb({ rc: { name: invItem.name, cat: invItem.cat || invItem.category, sub: invItem.subCat || invItem.subcategory, inhouseMode: "flat" }, el, qty: qty0 });
-          }
-          return;
-        }
+    const mpCtxFor = (fn) => ({
+      dcInventoryCache: imsInventory, flowerPatterns: fps, electricianProd: elecProd,
+      labourTiers, eventTypeMultipliers, eventTimingMultipliers, dcMpIncludeMinusOne,
+      seasonMap, sitMults, situMultCap,
+      venueDumping: d.venueDumping || {}, fixedVenues: d.fixedVenues || [],
+      venueParents: d.venueParents || venueParents || {}, heavyElementRanges,
+      cardsForFn: (dcCards || {})[fn.fnIdx], inventory: d.inventory || [],
+      trussInv: d.trussInv, fabricBangaliRanges,
+      fabricRftPerWorker: Number(d.fabricRftPerWorker) || 100, trussLabourRanges,
+    });
+    // Zone shape/dims/masking display — Fabric Bangali and Truss Labour both derive crew from a
+    // zone's truss shape, and a dept head asked to see that shape/size/masking next to the count.
+    const zoneShapeMeta = (z, config, spanFt) => {
+      const cfgLabel = config === "u_only" ? "U Truss" : config === "half_box" ? "Half Box" : "Full Box";
+      const dL = Number(z.dims?.L) || 0, dW = Number(z.dims?.W) || 0, dH = Number(z.dims?.H) || 0;
+      const dims = config === "full_box"
+        ? `${dL}×${dW}${dH ? "×" + dH : ""} ft`
+        : `${Math.round((spanFt || dL || dW) * 100) / 100} ft span${dH ? ` × ${dH} ft high` : ""}`;
+      const mw = z.mkWalls || {};
+      let masking = null;
+      if (z.mkOn) {
+        const walls = config === "u_only" ? (mw.back ? ["back"] : []) : [mw.back && "back", mw.left && "left", mw.right && "right"].filter(Boolean);
+        if (walls.length) masking = `Masking: ${walls.join(", ")}`;
       }
-      if (el.patternId) {
-        const pat = fps.find(p => p.id === el.patternId);
-        if (pat) cb({ rc: { name: pat.name, cat: "florals", sub: pat.sub, inhouseMode: pat.mode === "smb" ? "smb" : "flat" }, el, qty: qty0 });
-      }
-    }); }); };
-    const calc = (fn, type) => {
+      return { shape: cfgLabel, dims, masking: masking || "No masking" };
+    };
+    const traceFor = (fn, type) => {
       if (type === "Flowerists") {
-        let t = 0; const agg = {}; walk(fn, ({ rc, el, qty }) => {
+        const agg = {};
+        walkFnElements(fn, imsInventory, ({ rc, el, qty }) => {
           if (String(rc.cat || "").toLowerCase() !== "florals") return;
-          // matchFlowerPattern (flowerHelpers.js) is the SAME sub-category-first matcher Build's own
-          // pricing (matchFlowerPattern call ~line 4143 below) and Deal Check's tabs already use — a
-          // recipe is created PER SUB-CATEGORY and applies to every differently-named product filed
-          // under it, not to one product whose name happens to match. This used to be a hand-rolled
-          // exact-name-then-substring lookup against the item's OWN name (gated further behind
-          // flowerRecipeSubcats for the substring branch), which could only ever find a pattern
-          // coincidentally named identically to the physical prop — every sub-category-linked recipe
-          // (the normal case) silently dropped out of this count while pricing fine elsewhere.
-          let pat = matchFlowerPattern({ subcategory: rc.sub, name: rc.name }, fps);
-          if (!pat) return; const sk = sizeFromMode(rc.inhouseMode, el.size); let c = pat.sizes?.[sk] || pat.sizes?.medium; if (!c && sk === "big" && pat.sizes?.large) c = pat.sizes.large;
-          const upf = Number(c?.unitsPerFlowerist || 0); if (upf > 0) { const k = (rc.name || "flower") + "|" + upf; if (!agg[k]) agg[k] = { sub: rc.name || "flower", batch: upf, count: 0 }; agg[k].count += qty; }
+          let pattern = el.patternId ? fps.find(p => p.id === el.patternId) : null;
+          if (!pattern) pattern = matchFlowerPattern({ subcategory: rc.sub, name: rc.name }, fps);
+          if (!pattern) return;
+          const sz = pattern.sizes || {}; const sk = sizeFromMode(pattern?.mode || rc.inhouseMode, el.size);
+          let c = sz[sk] || sz.medium; if (!c && sk === "big" && sz.large) c = sz.large;
+          const upf = Number(c?.unitsPerFlowerist || 0);
+          if (upf > 0) { const k = (rc.name || "flower") + "|" + upf; if (!agg[k]) agg[k] = { sub: rc.name || "flower", batch: upf, count: 0 }; agg[k].count += qty; }
         });
         const rows = Object.values(agg).map(r => ({ ...r, need: r.count / r.batch }));
-        rows.forEach(r => { t += Math.ceil(r.need); });
-        return { count: t, basis: rows.length ? "arrangements ÷ units-per-flowerist (per recipe)" : "no recipe-driven florals", trace: rows.length ? { kind: "tier2", perRow: true, rows, need: rows.reduce((s, r) => s + r.need, 0), min: 0, result: t, countLabel: "arrangements", batchLabel: "÷per flowerist" } : null };
+        const t = Math.ceil(rows.reduce((s, r) => s + r.need, 0));
+        return rows.length ? { kind: "tier2", perRow: true, rows, need: rows.reduce((s, r) => s + r.need, 0), min: 0, result: t, countLabel: "arrangements", batchLabel: "÷per flowerist", basis: "arrangements ÷ units-per-flowerist (per recipe)" } : null;
       }
       if (type === "Electricians") {
-        // Grouped by sub-category (+ its productivity rate) so Dept Ops can show the same per-item
-        // breakdown table Flowerists already gets, instead of one opaque "N lighting units ÷
-        // productivity" line. Ceiling the GROUPED total once (not each walk() occurrence separately)
-        // also matches Deal Check's own Electricians formula (DCManpowerTab/DealCheckOverlay — see
-        // their "per-element ceiling over-counted vs the tab" comments): summing several same-
-        // sub-category elements before the single ceil can only lower the count, never raise it, so
-        // this also quietly fixes the same over-count bug there instead of introducing a new mismatch.
         const agg = {};
-        walk(fn, ({ rc, el, qty }) => {
+        walkFnElements(fn, imsInventory, ({ rc, el, qty }) => {
           if (String(rc.cat || "").toLowerCase() !== "lighting") return;
           const pr = elecProd[rc.sub || ""]; if (!pr) return;
           const sk = sizeFromMode(rc.inhouseMode, el.size);
@@ -5817,89 +5807,116 @@ export default function StudioApp() {
         const rows = Object.values(agg).map(r => ({ ...r, need: r.count / r.batch }));
         const need = rows.reduce((s, r) => s + r.need, 0);
         const t = Math.ceil(need);
-        return { count: t, basis: rows.length ? `${rows.reduce((s, r) => s + r.count, 0)} lighting unit(s) ÷ productivity` : "no lighting", trace: rows.length ? { kind: "tier2", rows, need, min: 0, result: t, countLabel: "lighting units" } : null };
+        return rows.length ? { kind: "tier2", rows, need, min: 0, result: t, countLabel: "lighting units", basis: `${rows.reduce((s, r) => s + r.count, 0)} lighting unit(s) ÷ productivity` } : null;
       }
       if (type === "Labours") {
-        const vc = venueMinLabour[fn.fnVenue || ""]; const vm = (vc && typeof vc === "object" ? vc.min : (typeof vc === "number" ? vc : null)) || defaultMinLabour;
-        const em = eventTypeMultipliers["outdoor_budgeted"] || 1; const base = Math.ceil(vm * em);
-        const cand = [1.0, heavySayaMultFor(fn, "Labours"), eventTimingMultFor(eventTimingMultipliers, shiftToTiming(fn.fnShift), "Labours", 1.0)]; const sm = Math.min(situMultCap, Math.max(...cand));
-        const adj = Math.ceil(base * sm); const sc = {}; walk(fn, ({ rc, qty }) => { sc[rc.sub || ""] = (sc[rc.sub || ""] || 0) + qty; });
-        // Labours' BASE count (venue minimum × situational multiplier) isn't item-driven — there's no
-        // per-element recipe to break down, same as Supervisors' flat "1 per booking". The heavy-
-        // element ADD-ON on top of that base is item-driven though (each configured sub-category
-        // range contributes its own extra labour), so that part gets its own breakdown rows for
-        // Dept Ops to show underneath the existing base/multiplier summary.
+        const venueName = fn.fnVenue || "";
+        const fv = fixedVenueFor(fvCfgMP, venueName);
+        const vm = fv ? (fv.minLabour ?? defaultMinLabour) : 0;
+        const em = eventTypeMultipliers["outdoor_budgeted"] || 1;
+        const base = Math.ceil(vm * em);
+        let sm = 1.0;
+        if (!dcMpIncludeMinusOne) {
+          const dumpingMult = ({ nearby: 1.0, medium: 1.1, far: 1.2 })[(d.venueDumping || {})[venueName] || "nearby"] || 1.0;
+          const cand = [dumpingMult, heavySayaMultFor(fn, "Labours", seasonMap, sitMults), eventTimingMultFor(eventTimingMultipliers, shiftToTiming(fn.fnShift), "Labours", 1.0)];
+          sm = Math.min(situMultCap, Math.max(...cand, 1.0));
+        }
+        const adj = Math.ceil(base * sm);
+        const sc = {}; walkFnElements(fn, imsInventory, ({ rc, qty }) => { const s = itemImsSubcat(rc); sc[s] = (sc[s] || 0) + qty; });
+        const reduction = standingReductionBySubcat(fvCfgMP, venueName, (dcCards || {})[fn.fnIdx], d.inventory || []);
         const heavyRows = []; let he = 0;
         heavyElementRanges.forEach(her => {
-          const cnt = lookupBySubcat(sc, her.subCat) || 0;
-          const extra = heavyExtraLabour(her, cnt);
-          if (extra > 0) heavyRows.push({ sub: her.subCat, count: cnt, extra });
+          const count = Math.max(0, (lookupBySubcat(sc, her.subCat) || 0) - (lookupBySubcat(reduction, her.subCat) || 0));
+          const extra = heavyExtraLabour(her, count);
+          if (extra > 0) heavyRows.push({ sub: her.subCat, count, extra });
           he += extra;
         });
-        return { count: adj + he, basis: `venue min ${vm}${sm > 1 ? ` ×${sm.toFixed(2)} season/timing` : ""}${he ? ` + ${he} heavy-element` : ""}`, trace: { kind: "labours", venueMin: vm, mult: sm, heavy: he, heavyRows, result: adj + he } };
+        return { kind: "labours", venueMin: vm, mult: sm, heavy: he, heavyRows, result: adj + he, basis: `venue min ${vm}${sm > 1 ? ` ×${sm.toFixed(2)} season/timing` : ""}${he ? ` + ${he} heavy-element` : ""}` };
       }
       if (type === "Fabric Bangali") {
-        // Grouped by element (same reasoning as Electricians' per-sub-category rows above) — Dept
-        // Ops used to get one opaque "N sqft fabric" line with no way to tell which wall/drape
-        // actually drove the figure. sq is a straight sum of these rows, not a batch-divided need —
-        // the range lookup below is still the one and only threshold step.
-        const agg = {};
-        walk(fn, ({ rc, el }) => {
-          const s = String(rc.sub || "").toLowerCase();
-          if (!(s.includes("wall masking") || s.includes("fabric") || s.includes("draping"))) return;
-          const L = Number(el.L || el.l || 0); const W = Number(el.W || el.w || el.H || el.h || 0);
-          if (L > 0 && W > 0) { const k = rc.name || rc.sub || "item"; agg[k] = (agg[k] || 0) + L * W; }
+        // Crew is driven by the ZONE's own truss/tenting structure (shape, dims, which masking
+        // walls are on, the batta wrap around every pillar+beam) — not by picking individual decor
+        // items with dimensions of their own (real bookings rarely have any such "element" at all).
+        const zc = fn.zoneConfig || {}, en = fn.enabledEls || {};
+        const engBackDepth = Number(d.trussInv?.settings?.defaultBackDepthFt) || 4;
+        const fabricRftPerWorker = Number(d.fabricRftPerWorker) || 100;
+        const tInv = d.trussInv;
+        let topTotal = 0, rftTotal = 0; const zones = [];
+        Object.keys(zc).forEach(zk => {
+          if (!en[zk] || !zc[zk]) return; const z = zc[zk];
+          const cfg = resolveTrussConfig(z); if (!cfg || !cfg.config) return; const config = cfg.config;
+          const dL = Number(z.dims?.L) || Number(z.dims?.S) || 0, dW = Number(z.dims?.W) || Number(z.dims?.S) || 0;
+          const mw = z.mkWalls || {}, sideDepth = Number(z.trussBackDepth) || engBackDepth;
+          let zoneTop = 0, zoneRft = 0;
+          if (config === "full_box") {
+            const topSqft = dL * dW;
+            if (topSqft > 0 && fabricBangaliRanges.length > 0) { for (const r of fabricBangaliRanges) { if (topSqft <= r.upTo) { zoneTop = r.labour || 0; break; } } }
+            if (z.mkOn) { if (mw.back && dW > 0) zoneRft += dW; if (mw.left && dL > 0) zoneRft += dL; if (mw.right && dL > 0) zoneRft += dL; }
+          } else if (config === "half_box") {
+            const spanL = cfg.spanFt || dL || dW;
+            if (z.mkOn) { if (mw.back && spanL > 0) zoneRft += spanL; if (mw.left && sideDepth > 0) zoneRft += sideDepth; if (mw.right && sideDepth > 0) zoneRft += sideDepth; }
+          } else if (config === "u_only") {
+            const spanL = cfg.spanFt || dL || dW;
+            if (z.mkOn && mw.back && spanL > 0) zoneRft += spanL;
+          }
+          if (tInv) { try { const pv = calcZoneTrussPreview(z, tInv); if (pv?.batta?.rftWithBuffer) zoneRft += pv.batta.rftWithBuffer; } catch { /* zone has no resolvable truss preview */ } }
+          if (zoneTop > 0 || zoneRft > 0) { const zLabel = zoneLabelsD[zk]?.label || (fn.customZones || []).find(cz => cz.id === zk)?.name || zk; zones.push({ zone: zLabel, topSqft: Math.round(dL * dW), topLabour: zoneTop, rft: Math.round(zoneRft), ...zoneShapeMeta(z, config, cfg.spanFt) }); }
+          topTotal += zoneTop; rftTotal += zoneRft;
         });
-        const rows = Object.entries(agg).map(([name, sqft]) => ({ sub: name, sqft: Math.round(sqft * 100) / 100 }));
-        const sq = rows.reduce((s, r) => s + r.sqft, 0);
-        if (sq <= 0 || !fabricBangaliRanges.length) return { count: 0, basis: "no fabric sqft" };
-        let lab = fabricBangaliRanges[fabricBangaliRanges.length - 1]?.labour || 0; for (const r of fabricBangaliRanges) { if (sq <= r.upTo) { lab = r.labour || 0; break; } }
-        return { count: lab, basis: `${Math.round(sq)} sqft fabric → range`, trace: { kind: "range", value: Math.round(sq), unit: "sqft", result: lab, rows } };
+        if (topTotal <= 0 && rftTotal <= 0) return null;
+        const rftLabour = rftTotal > 0 ? Math.ceil(rftTotal / fabricRftPerWorker) : 0;
+        const basis = [topTotal > 0 ? `${topTotal} canopy` : "", rftLabour > 0 ? `${rftLabour} wrap (${Math.round(rftTotal)} rft)` : ""].filter(Boolean).join(" + ");
+        return { kind: "fabricBangali", topTotal, rftTotal: Math.round(rftTotal), rftPerWorker: fabricRftPerWorker, rftLabour, zones, result: topTotal + rftLabour, basis };
       }
       if (type === "Truss Labour") {
-        // Same per-contributor breakdown as Fabric Bangali above: which build elements and which
-        // zones (via the truss tool) each added how many pillars, summing to the total `p` the range
-        // lookup below runs against — one threshold step, not a per-row division.
         const recipeAgg = {};
-        walk(fn, ({ rc, qty }) => { const s = String(rc.sub || "").toLowerCase(); if (s.includes("pillar") || s.includes("column") || s.includes("truss")) { const k = rc.name || rc.sub || "item"; recipeAgg[k] = (recipeAgg[k] || 0) + qty; } });
+        walkFnElements(fn, imsInventory, ({ rc, qty }) => { const s = String(rc.sub || "").toLowerCase(); if (s.includes("pillar") || s.includes("column") || s.includes("truss")) { const k = rc.name || rc.sub || "item"; recipeAgg[k] = (recipeAgg[k] || 0) + qty; } });
         let recipeP = 0; Object.values(recipeAgg).forEach(v => { recipeP += v; });
         const zoneRows = []; let zoneP = 0;
-        try { const tInv = d.trussInv; if (tInv) { const zc = fn.zoneConfig || {}, en = fn.enabledEls || {}; Object.keys(zc).forEach(zk => { if (!en[zk] || !zc[zk]) return; const pv = calcZoneTrussPreview(zc[zk], tInv); const n = (pv?.topology?.pillars || []).length; if (n > 0) { const zLabel = zoneLabelsD[zk]?.label || (fn.customZones || []).find(cz => cz.id === zk)?.name || zk; zoneRows.push({ sub: `${zLabel} (truss tool)`, count: n }); zoneP += n; } }); } } catch {}
+        try {
+          const tInv = d.trussInv;
+          if (tInv) {
+            const zc = fn.zoneConfig || {}, en = fn.enabledEls || {};
+            Object.keys(zc).forEach(zk => {
+              if (!en[zk] || !zc[zk]) return; const z = zc[zk];
+              const pv = calcZoneTrussPreview(z, tInv); const n = (pv?.topology?.pillars || []).length;
+              if (n > 0) { const zLabel = zoneLabelsD[zk]?.label || (fn.customZones || []).find(cz => cz.id === zk)?.name || zk; zoneRows.push({ sub: `${zLabel} (truss tool)`, count: n, ...zoneShapeMeta(z, pv.config, pv.spanFt) }); zoneP += n; }
+            });
+          }
+        } catch { /* zone has no resolvable truss preview */ }
         const p = recipeP + zoneP;
-        if (p <= 0 || !trussLabourRanges.length) return { count: 0, basis: "no truss/pillars" };
+        if (p <= 0 || !trussLabourRanges.length) return null;
         let lab = trussLabourRanges[trussLabourRanges.length - 1]?.labour || 0; for (const r of trussLabourRanges) { if (p <= r.upTo) { lab = r.labour || 0; break; } }
         const rows = [...Object.entries(recipeAgg).map(([name, count]) => ({ sub: name, count })), ...zoneRows];
-        return { count: lab, basis: `${p} pillar(s)${zoneP ? ` (${zoneP} from truss tool${recipeP ? ` + ${recipeP} build` : ""})` : ""} → range`, trace: { kind: "pillars", recipeP, zoneP, total: p, result: lab, rows } };
+        return { kind: "pillars", recipeP, zoneP, total: p, result: lab, rows, basis: `${p} pillar(s)${zoneP ? ` (${zoneP} from truss tool${recipeP ? ` + ${recipeP} build` : ""})` : ""} → range` };
       }
       const cfg = labourTiers[type];
       if (cfg && cfg.tier === 2) {
         const batches = cfg.subCatBatches || {}; const sc = {};
-        // Case/whitespace-insensitive — an admin's config chip and an inventory item's own sub-
-        // category are independently typed strings (see lookupBySubcat in lib/ims/helpers.js).
-        walk(fn, ({ rc, qty }) => { if (lookupBySubcat(batches, rc.sub || "") != null) sc[rc.sub || ""] = (sc[rc.sub || ""] || 0) + qty; });
+        walkFnElements(fn, imsInventory, ({ rc, qty }) => { const s = itemImsSubcat(rc); if (lookupBySubcat(batches, s) != null) sc[s] = (sc[s] || 0) + qty; });
         const rows = Object.entries(sc).map(([k, v]) => ({ sub: k, count: v, batch: lookupBySubcat(batches, k) || 3, need: v / (lookupBySubcat(batches, k) || 3) }));
         const need = rows.reduce((s, r) => s + r.need, 0);
         const count = Math.max(cfg.minimum || 1, Math.ceil(need));
-        return { count, basis: `⌈Σ(count÷batch)⌉ = ${count} (min ${cfg.minimum || 1})`, trace: { kind: "tier2", rows, need, min: cfg.minimum || 1, result: count } };
+        return { kind: "tier2", rows, need, min: cfg.minimum || 1, result: count, basis: `⌈Σ(count÷batch)⌉ = ${count} (min ${cfg.minimum || 1})` };
       }
-      if (type === "Supervisors") return { count: 1, basis: "1 per booking", trace: { kind: "fixed", note: "1 supervisor per booking", result: 1 } };
-      return { count: 0, basis: "" };
+      if (type === "Supervisors") return { kind: "fixed", note: "1 supervisor per booking", result: 1, basis: "1 per booking" };
+      return null;
     };
     return types.map(type => {
       let best = { count: 0, basis: "", trace: null };
       (allFns || []).forEach(fn => {
-        let r = calc(fn, type);
-        // Labours already folds heavySaya into `sm` above; Supervisors is a fixed 1-per-booking role.
-        // Every other type gets the same King's-date pressure factor applied here, at its own rate.
-        if (type !== "Labours" && type !== "Supervisors" && r.count > 0) {
-          const m = Math.min(situMultCap, heavySayaMultFor(fn, type));
-          if (m > 1) r = { ...r, count: Math.ceil(r.count * m), basis: `${r.basis} ×${m.toFixed(2)} King's` };
-        }
-        if (r.count > best.count) best = r;
+        const fresh = freshFnForManpower(fn);
+        const ctx = mpCtxFor(fresh);
+        let count = computePeople(fresh, type, ctx);
+        const fv = fixedVenueFor(fvCfgMP, fresh.fnVenue || "");
+        if (fv) count = Math.max(fixedCrewFloor(fv, type), count);
+        if (count <= 0) return;
+        const tr = traceFor(fresh, type);
+        if (count > best.count) best = { count, basis: tr?.basis || "", trace: tr || null };
       });
       return { type, count: best.count, basis: best.basis, rate: Number(dihari[type]?.rate) || 0, trace: best.trace || null };
     }).filter(r => r.count > 0);
-  }, [dealCheckData, rcItems, imsInventory, zoneLabelsD]);
+  }, [dealCheckData, imsInventory, dcCards, dcMpIncludeMinusOne, venueParents, zoneLabelsD]);
 
   const eventGrandTotal = useMemo(() => {
     const all = collectAllFunctionData();

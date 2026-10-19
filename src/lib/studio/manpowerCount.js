@@ -15,16 +15,13 @@
 //
 // What stays OUTSIDE this module: the "how was this derived" TRACE/explanation text.
 // DCManpowerTab's own trace is a detailed, formula-level breakdown for the salesperson
-// who built the deal; DealCheckOverlay's traceOf (consumed by IMS Dept Ops' plain-language
-// "how" panels) is a simplified rewrite for a dept head with no interest in formula
-// notation — two legitimately different presentations of the same number for two
-// different readers, not drift to fix. Both read the NUMBER from here, so it can never
-// disagree between them even while the explanation stays tailored per audience.
-//
-// StudioApp.jsx's manpowerPlanForBooking still has its own separate (and currently stale —
-// pre-dating this module's Fabric Bangali/Truss Labour fixes) trace generation as of this
-// writing; wiring its count AND its trace to this module is tracked as follow-up work, not
-// done yet.
+// who built the deal; DealCheckOverlay's traceOf and StudioApp's manpowerPlanForBooking
+// (consumed by IMS Dept Ops' plain-language "how" panels — the latter also snapshotted
+// onto the event_order at booking confirmation) are each their own copy of a simplified,
+// per-type breakdown for a dept head with no interest in formula notation — legitimately
+// different presentations of the same number for different readers, not drift to fix. All
+// three read the NUMBER from here, so it can never disagree between them even while the
+// explanation stays tailored per audience/file.
 
 import { matchFlowerPattern } from "../ims/flowerHelpers";
 import { resolveTrussConfig, calcZoneTrussPreview } from "./pricing";
