@@ -1000,8 +1000,12 @@ export function trussRowCost(row, rates) {
   // Curtain FABRIC demand (calcZoneFabric/calcZoneFabricCost, a separate calc untouched by this —
   // it still floors qty to 1), for a backdrop that uses no actual rental truss/masking structure
   // (e.g. a client-owned or pre-existing frame). No structure, no masking panel, no custom ceiling
-  // item — zero billed cost for this row.
-  if (row.trussQty === 0) return { truss: 0, masking: 0 };
+  // item — zero billed cost for this row. `ceiling` included explicitly (not just truss/masking) —
+  // Build's own Fabric card does `fabricCost + ceilingShown` (StudioBuild.jsx), and an undefined
+  // `rowCost.ceiling` silently poisoned that sum to NaN, which fmt() then quietly displayed as "₹0" —
+  // a real, non-zero Liza/curtain figure made invisible by one missing key on a 0-qty row, the exact
+  // case the dims-only/no-truss-billed design is meant to still bill fabric for.
+  if (row.trussQty === 0) return { truss: 0, masking: 0, ceiling: 0 };
   const d = row.dims || {};
   let truss = 0, masking = 0;
   // A Box truss needs all 3 dims. With only 2 dims filled it's physically a Single U, so price it at
