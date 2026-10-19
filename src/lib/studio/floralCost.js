@@ -338,7 +338,13 @@ export function computeFnFloralCost(fn, allFns, opts) {
     expandedElems.forEach(el => {
       const elName = (el.name || "").toLowerCase().trim();
       const elQty = el.qty || 0;
-      let rc = rcItems.find(i => (i.name || "").toLowerCase().trim() === elName);
+      // Both the exact match and the substring fallback are scoped to the Rate Card's OWN
+      // florals category — an exact name coincidence with a lighting/furnishing/other Rate
+      // Card row (e.g. a "Warm LED" or "Sethi Bolster" element) used to slip through here
+      // un-scoped, dragging that non-floral element into this florals cost/income breakdown
+      // (and, when resolveRcRate was supplied, into realIncome/artIncome too) purely because
+      // its name happened to match SOME Rate Card row, in any category.
+      let rc = rcItems.find(i => String(i.cat || "").toLowerCase() === "florals" && (i.name || "").toLowerCase().trim() === elName);
       // Both names need ≥4 chars before substring matching — a short name like "T" or "Pot"
       // can spuriously substring-match an unrelated florals Rate Card row otherwise.
       if (!rc && elName.length >= 4) {
@@ -354,6 +360,14 @@ export function computeFnFloralCost(fn, allFns, opts) {
       let pattern = elPattern
         || (invItem ? matchFlowerPattern(invItem, flowerPatterns) : null)
         || matchFlowerPattern({ subcategory: rc?.sub, name: rc?.name || el.name }, flowerPatterns);
+      // A real, resolvable IMS inventory item that is NOT in the florals category (lighting,
+      // furnishing, etc.) — definitively not a floral element, skip it silently. This is the
+      // other half of the same bug as the rc scoping above: el.invId resolving to a known,
+      // non-floral item used to be treated as "identified" and fall through to the per-element
+      // breakdown with hasPattern:false, surfacing a "⚠ No IMS pattern" warning on something
+      // that was never a floral element in the first place (a lighting fixture, a cushion
+      // cover, a bolster — none of these have or need a flower recipe).
+      if (invItem && !invIsFloral) return;
       if (!rc && !elPattern && !invItem && !pattern) {
         uncosted.push({ name: el.name || "(unnamed)", zoneKey: zk, qty: elQty, reason: "No rate-card entry or recipe" });
         return;

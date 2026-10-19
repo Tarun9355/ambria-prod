@@ -175,6 +175,22 @@ describe("computeFnFloralCost — core per-element resolution (unaffected by the
     expect(result.uncosted).toHaveLength(1);
   });
 
+  it("ignores a non-floral inventory element entirely, even when its name exactly matches a non-florals Rate Card row", () => {
+    // "Warm LED" is a real, resolvable lighting fixture (el.invId -> a lighting-category
+    // IMS item) that also happens to share its exact name with a Rate Card row filed under
+    // "lighting", not "florals". Neither signal makes it a floral element — it must not show
+    // up in elementBreakdown (with a bogus "no IMS pattern" warning) or in uncosted (it was
+    // never floral to begin with), and it must not contribute to real/artificial income.
+    const f = fn({ zoneElements: { stage: [{ name: "Warm LED", invId: "led1", qty: 10 }] }, enabledEls: { stage: true } });
+    const rc = { name: "Warm LED", cat: "lighting", sub: "Fairy Lights" };
+    const opts = { ...baseOpts([]), rcItems: [rc], imsInventory: [{ id: "led1", name: "Warm LED", cat: "lighting" }] };
+    const result = computeFnFloralCost(f, [f], opts);
+    expect(result.elementBreakdown).toHaveLength(0);
+    expect(result.uncosted).toHaveLength(0);
+    expect(result.totalReal).toBe(0);
+    expect(result.totalArtificial).toBe(0);
+  });
+
   it("computes billed income only when resolveRcRate is supplied", () => {
     const rc = { name: "Rose White", cat: "florals", sub: "Flower Bunch" };
     const f = fn({ zoneElements: { stage: [elWhite(10)] }, enabledEls: { stage: true } });
