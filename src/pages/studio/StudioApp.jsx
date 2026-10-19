@@ -8190,7 +8190,18 @@ export default function StudioApp() {
         // picked in Deal Check's Florals tab before the deal was ever booked was silently dropped
         // the moment "Confirm booking" ran, even though `f` (from calcFnFloralSourcingCost's own
         // breakdown) already carried it.
-        allFns.forEach(fnData => { const r = calcFnFloralSourcingCost(fnData); (r.breakdown || []).forEach(f => { if (!fbAgg[f.name]) fbAgg[f.name] = { name: f.name, qty: 0, cost: 0, unit: f.unit, colorVariant: f.colorVariant || null, colorPrefs: f.colorPrefs || null }; fbAgg[f.name].qty += f.qty; fbAgg[f.name].cost += f.cost; }); });
+        // This aggregates ACROSS every function in the booking, keyed by flower name — two
+        // functions sharing a flower species is the normal case (Haldi + Mehendi both using
+        // "carnation himachal"), and whichever function's row happened to be processed FIRST used
+        // to permanently decide the colour for every other function's rows of the same flower too,
+        // even when that first one had no colour picked at all. Prefer a non-null incoming colour
+        // instead of only ever taking the first, same fix as buildMandiBreakdown's own collision case.
+        allFns.forEach(fnData => { const r = calcFnFloralSourcingCost(fnData); (r.breakdown || []).forEach(f => {
+          if (!fbAgg[f.name]) fbAgg[f.name] = { name: f.name, qty: 0, cost: 0, unit: f.unit, colorVariant: f.colorVariant || null, colorPrefs: f.colorPrefs || null };
+          fbAgg[f.name].qty += f.qty; fbAgg[f.name].cost += f.cost;
+          if (f.colorVariant && !fbAgg[f.name].colorVariant) fbAgg[f.name].colorVariant = f.colorVariant;
+          if (f.colorPrefs && !fbAgg[f.name].colorPrefs) fbAgg[f.name].colorPrefs = f.colorPrefs;
+        }); });
         // rate: the true per-unit price (qty is already whole-unit-respecting from the breakdown
         // above) — so IMS's mandi list can seed its own ₹/unit field with the real rate instead of
         // back-deriving one from cost÷qty.

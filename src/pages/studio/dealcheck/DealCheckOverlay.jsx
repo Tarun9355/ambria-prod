@@ -1822,7 +1822,19 @@ export default function DealCheckOverlay({ ctx }) {
               artTotal += r.totalArtificial || 0;
               afBunches += r.artFlowerBunches || 0; agBunches += r.artGreenBunches || 0;
               incReal += r.income?.real || 0; incArt += r.income?.art || 0;
-              (r.breakdown || []).forEach(f => { if (!agg[f.name]) agg[f.name] = { name: f.name, qty: 0, cost: 0, unit: f.unit, colorVariant: f.colorVariant || null, colorPrefs: f.colorPrefs || null }; agg[f.name].qty += f.qty; agg[f.name].cost += f.cost; });
+              // Keyed across every function by flower name — two functions commonly share a species
+              // (e.g. Haldi + Mehendi both using carnation himachal). Whichever function's row got
+              // iterated FIRST used to permanently decide the colour for every later function's rows
+              // of that same flower too, even when the first one had no colour picked — this is the
+              // actual reason a colour picked on one function never reached IMS: this is the live
+              // snapshot-push path for an already-booked deal, the one that runs every time Deal
+              // Check is open (unlike markSold, which only runs once at booking).
+              (r.breakdown || []).forEach(f => {
+                if (!agg[f.name]) agg[f.name] = { name: f.name, qty: 0, cost: 0, unit: f.unit, colorVariant: f.colorVariant || null, colorPrefs: f.colorPrefs || null };
+                agg[f.name].qty += f.qty; agg[f.name].cost += f.cost;
+                if (f.colorVariant && !agg[f.name].colorVariant) agg[f.name].colorVariant = f.colorVariant;
+                if (f.colorPrefs && !agg[f.name].colorPrefs) agg[f.name].colorPrefs = f.colorPrefs;
+              });
               // rate: the true per-unit price (qty is already whole-unit-respecting, from
               // calcFnFloralSourcingCost's own breakdown) — IMS's mandi list seeds its ₹/unit field
               // from this directly now, instead of back-deriving one from cost÷qty.

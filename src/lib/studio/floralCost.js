@@ -617,6 +617,11 @@ export function buildMandiBreakdown(flowerAgg) {
     const cost = v.totalCost != null ? v.totalCost : v.totalQty * v.unitPrice;
     if (!fbreak[v.name]) fbreak[v.name] = { name: v.name, qty: 0, cost: 0, unit: v.unit, colorVariant: v.colorVariant || null, colorPrefs: v.colorPrefs || null };
     fbreak[v.name].qty += v.totalQty; fbreak[v.name].cost += cost;
+    // A same-name collision (two different flowerIds sharing one display name) must not let
+    // whichever one happened to be processed FIRST permanently decide the colour for both —
+    // the first one may have no colour picked at all while a later one does.
+    if (v.colorVariant && !fbreak[v.name].colorVariant) fbreak[v.name].colorVariant = v.colorVariant;
+    if (v.colorPrefs && !fbreak[v.name].colorPrefs) fbreak[v.name].colorPrefs = v.colorPrefs;
   });
   return Object.values(fbreak).map(f => {
     const rate = f.qty > 0 ? Math.round((f.cost / f.qty) * 100) / 100 : 0;
