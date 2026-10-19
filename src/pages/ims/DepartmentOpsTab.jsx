@@ -2073,8 +2073,13 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     if (tr.kind === "range") return (tr.rows || []).map(r => ({ label: r.sub, value: `${Number(r.sqft || 0).toFixed(0)} ${tr.unit || ""}`.trim() }));
     if (tr.kind === "fabricBangali") return (tr.zones || []).map(z => ({ label: z.zone, value: [z.topLabour > 0 ? `canopy ${z.topLabour}` : "", z.rft > 0 ? `wrap ${z.rft} ft` : ""].filter(Boolean).join(" · ") || "—" }));
     if (tr.kind === "labours") return [
+      // Venue minimum is a flat booking-wide floor, not owned by any one department's items, so
+      // every department sees it. Each heavy row IS owned by whichever department its own
+      // sub-category routes to (catToDept("Sofa") -> Furniture) — filtered to the department
+      // currently open, so Lighting/Tenting/etc. don't see Furniture's "Sofa" row (or vice
+      // versa) just because Labours is one shared crew pool for the whole event.
       ...(tr.venueMin > 0 ? [{ label: "Venue minimum", value: `${tr.venueMin}` }] : []),
-      ...(tr.heavyRows || []).map(hr => ({ label: `${hr.sub}`, value: `×${hr.count} → +${hr.extra}` })),
+      ...(tr.heavyRows || []).filter(hr => catToDept(hr.sub) === dept).map(hr => ({ label: `${hr.sub}`, value: `×${hr.count} → +${hr.extra}` })),
     ];
     if (tr.kind === "ratio") return [{ label: tr.numLabel || "Count", value: `${tr.num}` }];
     if (tr.kind === "fixed") return [{ label: tr.note || "Fixed", value: `${tr.result}` }];
@@ -2247,17 +2252,24 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     // Without "across today's whole event" spelled out, a department whose own share happened to
     // round to the same number as the total (small booking, high share) had no way to tell the two
     // apart at a glance.
-    if (t.kind === "labours") return (
+    if (t.kind === "labours") {
+      // Each heavy row belongs to whichever department its own sub-category routes to
+      // (catToDept("Sofa") -> Furniture) — filtered to the department currently open, so this
+      // box only ever shows items that are actually this department's own. `t.result` itself
+      // stays the whole event's shared headcount (unfiltered) — that number is genuinely shared,
+      // only the "which items drove the heavy add-on" list is department-specific.
+      const deptHeavyRows = Array.isArray(t.heavyRows) ? t.heavyRows.filter(hr => catToDept(hr.sub) === dept) : [];
+      return (
       <div className="mb-1.5">
         <div className="rounded-lg bg-amber-50/70 ring-1 ring-amber-200/70 px-2.5 py-1.5 text-[13.5px] text-gray-700">
           <span aria-hidden="true" className="text-amber-500 mr-1">⚡</span>
           <b className="text-amber-700">{t.result} labourer{t.result === 1 ? "" : "s"}</b> needed across today's whole event (shared by every department)
         </div>
-        {Array.isArray(t.heavyRows) && t.heavyRows.length > 0 && (
+        {deptHeavyRows.length > 0 && (
           <div className="mt-1">
-            <div className="text-[12.5px] text-gray-500">Extra hands needed for:</div>
+            <div className="text-[12.5px] text-gray-500">Extra hands needed for {dept}'s own items:</div>
             <div className="mt-0.5 bg-white border rounded-lg overflow-hidden divide-y divide-gray-100">
-              {t.heavyRows.map((hr, hi) => (
+              {deptHeavyRows.map((hr, hi) => (
                 <div key={hi} className="flex items-center justify-between px-2 py-1 text-[13px] text-gray-700">
                   <span className="truncate">{hr.sub} <span className="text-gray-400">× {hr.count}</span></span>
                   <span className="font-semibold shrink-0">+{hr.extra}</span>
@@ -2275,7 +2287,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           <div className="mt-1 text-[12.5px] text-gray-500">Rounded up to cover today's overall décor workload.</div>
         )}
       </div>
-    );
+      );
+    }
     if (t.kind === "fixed") return <div className="mb-1.5 text-[13px] text-gray-600">📐 {t.note} = <b>{t.result}</b>{" "}(before split)</div>;
     return null;
   };
