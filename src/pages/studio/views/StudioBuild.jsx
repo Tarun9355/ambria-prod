@@ -2223,9 +2223,8 @@ export default function StudioBuild({ ctx }) {
                 <span style={{fontWeight:600,color:textP,fontVariantNumeric:"tabular-nums"}}>{fmt(r.amt)}</span>
               </div>
             ))}
-          <div style={{marginTop:7,paddingTop:7,borderTop:`1px solid ${rule}`}}>{line("Decor subtotal", fmt(zonesSum), {strong:true})}</div>
         </div>
-        <div style={{padding:"9px 15px"}}>
+        <div style={{padding:"9px 15px",borderTop:`1px solid ${rule}`}}>
           {/* Genset/Power split out of Transport's own total (transportCalc.truckTotal is the truck-
               only figure; transportCalc.gensetCost is already the guest-billed genset portion) — same
               reasoning the Agency Fee row below already uses: a cost folded silently into a bigger
