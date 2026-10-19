@@ -5831,7 +5831,32 @@ export default function StudioApp() {
           if (extra > 0) heavyRows.push({ sub: her.subCat, count, extra });
           he += extra;
         });
-        return { kind: "labours", venueMin: vm, mult: sm, heavy: he, heavyRows, result: adj + he, basis: `venue min ${vm}${sm > 1 ? ` ×${sm.toFixed(2)} season/timing` : ""}${he ? ` + ${he} heavy-element` : ""}` };
+        // Per-ELEMENT usage rows (name, not just sub-category) behind the pooled usage floor below —
+        // a sub-category's fractional need (e.g. 10 Roman Fibre Pot Small ÷ 40-per-labour = 0.25)
+        // never shows up in heavyRows above at all (that's an independent per-sub-category FLOOR,
+        // so anything under its own perCount silently rounds to 0 there) even though it's exactly
+        // what the pooled usage floor sums before ceiling once — kept so "why" can show every
+        // contributing item, not just the few that independently cross 1. Mirrors DealCheckOverlay's
+        // labourUsageByFn[].items (same formula, computed per-function there, inline here).
+        const labBatches = {}; heavyElementRanges.forEach(her => { if (her?.subCat && Number(her.perCount) > 0) labBatches[her.subCat] = Number(her.perCount); });
+        const itemAgg = {}; let fnUsageTotal = 0;
+        if (Object.keys(labBatches).length > 0) {
+          walkFnElements(fn, imsInventory, ({ rc, qty }) => {
+            const sub = itemImsSubcat(rc);
+            const per = lookupBySubcat(labBatches, sub);
+            if (!per) return;
+            const need = (Number(qty) || 0) / per;
+            if (need <= 0) return;
+            fnUsageTotal += need;
+            const key = rc.name || sub;
+            if (!itemAgg[key]) itemAgg[key] = { name: rc.name || sub, sub, qty: 0, per, need: 0 };
+            itemAgg[key].qty += Number(qty) || 0; itemAgg[key].need += need;
+          });
+        }
+        const usageRows = Object.values(itemAgg);
+        const usageFloor = Object.keys(labBatches).length > 0 ? Math.ceil(fnUsageTotal) : 0;
+        const result = Math.max(adj + he, usageFloor);
+        return { kind: "labours", venueMin: vm, mult: sm, heavy: he, heavyRows, usageRows, result, ...(usageFloor > adj + he ? { usageFloor, usageTotal: Math.round(fnUsageTotal * 100) / 100 } : {}), basis: `venue min ${vm}${sm > 1 ? ` ×${sm.toFixed(2)} season/timing` : ""}${he ? ` + ${he} heavy-element` : ""}${usageFloor > adj + he ? ` (floored at ${usageFloor} by overall décor usage)` : ""}` };
       }
       if (type === "Fabric Bangali") {
         // Crew is driven by the ZONE's own truss/tenting structure (shape, dims, which masking

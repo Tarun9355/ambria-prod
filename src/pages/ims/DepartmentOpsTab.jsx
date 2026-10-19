@@ -2080,6 +2080,11 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       // versa) just because Labours is one shared crew pool for the whole event.
       ...(tr.venueMin > 0 ? [{ label: "Venue minimum", value: `${tr.venueMin}` }] : []),
       ...(tr.heavyRows || []).filter(hr => catToDept(hr.sub) === dept).map(hr => ({ label: `${hr.sub}`, value: `×${hr.count} → +${hr.extra}` })),
+      // Per-ITEM fractional usage (e.g. "Roman Fibre Pot Small" at 10 ÷ 40 = 0.25) — the items
+      // behind the pooled usage floor, which heavyRows above never shows (that's an independent
+      // per-sub-category floor; anything under its own perCount rounds to 0 there even though it
+      // still feeds this pooled total). Same department filter as heavyRows.
+      ...(tr.usageRows || []).filter(ur => catToDept(ur.sub) === dept).map(ur => ({ label: ur.name, value: `${ur.qty} ÷ ${ur.per} = ${ur.need.toFixed(2)}` })),
     ];
     if (tr.kind === "ratio") return [{ label: tr.numLabel || "Count", value: `${tr.num}` }];
     if (tr.kind === "fixed") return [{ label: tr.note || "Fixed", value: `${tr.result}` }];
@@ -2259,6 +2264,12 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       // stays the whole event's shared headcount (unfiltered) — that number is genuinely shared,
       // only the "which items drove the heavy add-on" list is department-specific.
       const deptHeavyRows = Array.isArray(t.heavyRows) ? t.heavyRows.filter(hr => catToDept(hr.sub) === dept) : [];
+      // Every ITEM (not just sub-category) behind the pooled usage floor — e.g. 10 "Roman Fibre
+      // Pot Small" at 1-per-40 is 0.25 labour, which never shows up in deptHeavyRows above at all
+      // (that's an independent per-sub-category floor; anything under its OWN perCount silently
+      // rounds to 0 there) even though it's exactly what this pooled floor sums before ceiling
+      // once. Same department filter, by name instead of by sub-category.
+      const deptUsageRows = Array.isArray(t.usageRows) ? t.usageRows.filter(ur => catToDept(ur.sub) === dept) : [];
       return (
       <div className="mb-1.5">
         <div className="rounded-lg bg-amber-50/70 ring-1 ring-amber-200/70 px-2.5 py-1.5 text-[13.5px] text-gray-700">
@@ -2279,12 +2290,23 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           </div>
         )}
         {t.venueMin > 0 && <div className="mt-1 text-[12.5px] text-gray-500">+ {t.venueMin} minimum crew this venue always requires</div>}
-        {/* usageFloor: IMS's usage-based split found MORE crew needed overall today than the item
-            list above alone accounts for — stated plainly, no ÷/× shown, since the exact mechanics
-            (qty ÷ per-unit across every heavy sub-category) aren't something a head needs to verify
-            by hand, just to know the number above already includes it. */}
-        {t.usageFloor != null && (
-          <div className="mt-1 text-[12.5px] text-gray-500">Rounded up to cover today's overall décor workload.</div>
+        {/* Every item (not just sub-category) behind the pooled usage floor — shown whenever this
+            department has any, whether or not that pooled floor ended up being the binding reason
+            for today's count (usageFloor set <=> it was; otherwise this is still real, informative
+            usage that just didn't happen to be the larger of the two candidate numbers). Used to be
+            a single vague sentence with no itemization at all. */}
+        {deptUsageRows.length > 0 && (
+          <div className="mt-1">
+            <div className="text-[12.5px] text-gray-500">{t.usageFloor != null ? "Rounded up to cover today's overall décor workload — " : ""}{dept}'s own item usage:</div>
+            <div className="mt-0.5 bg-white border rounded-lg overflow-hidden divide-y divide-gray-100">
+              {deptUsageRows.map((ur, ui) => (
+                <div key={ui} className="flex items-center justify-between px-2 py-1 text-[13px] text-gray-700">
+                  <span className="truncate">{ur.name}</span>
+                  <span className="font-semibold shrink-0 tabular-nums">{ur.qty} ÷ {ur.per} = {ur.need.toFixed(2)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
         )}
       </div>
       );

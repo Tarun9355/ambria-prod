@@ -1397,9 +1397,10 @@ export default function DealCheckOverlay({ ctx }) {
                   // usage total) was a different, usually much bigger, figure — the derivation on screen
                   // didn't explain the number next to it at all.
                   const fnUsageTotal = (labourUsageByFn[fns.indexOf(fn)] || {}).total || 0;
+                  const usageRows = (labourUsageByFn[fns.indexOf(fn)] || {}).items || [];
                   const usageFloor = labourUsageMode ? Math.ceil(fnUsageTotal) : 0;
                   const result = Math.max(adj + he, usageFloor);
-                  return { kind: "labours", venueMin: vm, mult: sm, heavy: he, heavyRows, result, ...(usageFloor > adj + he ? { usageFloor, usageTotal: Math.round(fnUsageTotal * 100) / 100 } : {}) };
+                  return { kind: "labours", venueMin: vm, mult: sm, heavy: he, heavyRows, usageRows, result, ...(usageFloor > adj + he ? { usageFloor, usageTotal: Math.round(fnUsageTotal * 100) / 100 } : {}) };
                 }
                 if (type === "Fabric Bangali") {
                   // Was grouped by individual FABRIC ELEMENTS (anything whose sub-category name says
@@ -1468,8 +1469,26 @@ export default function DealCheckOverlay({ ctx }) {
               labourUsageByFn = {};
               fns.forEach((fn, fi) => {
                 const byDept = {}; let total = 0;
-                if (labourUsageMode) walkFn(freshFnMP(fn), ({ rc, qty }) => { const b = lookupBySubcat(_labBatches, itemImsSubcat(rc)); if (!b) return; const need = (Number(qty) || 0) / b; if (need <= 0) return; const dp = catToDept(rc.cat); byDept[dp] = (byDept[dp] || 0) + need; total += need; });
-                labourUsageByFn[fi] = { byDept, total };
+                // Per-ELEMENT rows (name, not just sub-category) behind this total — a sub-category's
+                // fractional need (e.g. 10 Roman Fibre Pot Small ÷ 40-per-labour = 0.25) never shows up
+                // in heavyRows below at all (that's an independent per-sub-category FLOOR, so anything
+                // under its own perCount silently rounds to 0 there) even though it's exactly what
+                // feeds this pooled total — kept here so "why is this function's Labours count what it
+                // is" can show every contributing item, not just the few that independently cross 1.
+                const itemAgg = {};
+                if (labourUsageMode) walkFn(freshFnMP(fn), ({ rc, qty }) => {
+                  const sub = itemImsSubcat(rc);
+                  const b = lookupBySubcat(_labBatches, sub);
+                  if (!b) return;
+                  const need = (Number(qty) || 0) / b;
+                  if (need <= 0) return;
+                  const dp = catToDept(rc.cat);
+                  byDept[dp] = (byDept[dp] || 0) + need; total += need;
+                  const key = rc.name || sub;
+                  if (!itemAgg[key]) itemAgg[key] = { name: rc.name || sub, sub, qty: 0, per: b, need: 0 };
+                  itemAgg[key].qty += Number(qty) || 0; itemAgg[key].need += need;
+                });
+                labourUsageByFn[fi] = { byDept, total, items: Object.values(itemAgg) };
                 Object.entries(byDept).forEach(([dp, n]) => { labourUsageByDept[dp] = (labourUsageByDept[dp] || 0) + n; });
                 labourUsageTotal += total;
               });
