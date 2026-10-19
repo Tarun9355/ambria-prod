@@ -1,4 +1,6 @@
 import { useState, useEffect } from "react";
+import { supabase } from "../../lib/supabase";
+import { RC_SK_CATS } from "../../lib/studio/keys";
 import { Tabs, AddInlineItem, FlowerPicker, Btn, useConfirm } from "../../components/ui";
 import { canvaAuthUrl, canvaConnectionStatus, canvaClientId } from "../../lib/canva";
 import { uploadToStorage, compressImageForUpload, STORAGE_FOLDERS } from "../../lib/storage";
@@ -332,6 +334,24 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
     if (n > 0) { alert(`Cannot delete "${r.label}" — ${n} inventory item(s) still use this sub-category.\n\nMove them to another sub-category first: Inventory tab → 🔀 Move Sub-Category.`); return; }
     if (!window.confirm(`Delete sub-category "${r.label}"? This cannot be undone.`)) return;
     onDeleteSubcat?.(r.id);
+  }
+  // Deletes a CATEGORY (not a sub-category) from the live `ambria-rccats-v1` list the Category
+  // dropdown reads (see VenuesEditor-adjacent investigation — this list is legacy/stale, has no
+  // other editor anywhere, and nothing currently lets you prune it). Writes straight to the
+  // settings row; IMS.jsx's own realtime subscription on that table re-applies it and refreshes
+  // studioRcCats/rcCats everywhere, same as every other settings-row editor in this app (no local
+  // state to sync by hand). Safe even if this guess turns out wrong: the sidebar's own catOrder
+  // also pulls labels live from inventory (invSubToCat/studioCatLabels) independently of this
+  // list, so a category any inventory item still actually uses reappears on its own — nothing
+  // here can silently strand an item under a vanished category.
+  async function deleteCategory(label) {
+    if (!canManageCategories) return;
+    const cat = rcCats.find((c) => c.l === label);
+    if (!cat) return; // a synthesized label (e.g. "Uncategorized") has no real row to delete
+    if (!window.confirm(`Delete category "${label}"? This cannot be undone.`)) return;
+    const next = rcCats.filter((c) => c.id !== cat.id);
+    const { error } = await supabase.from("settings").upsert({ key: RC_SK_CATS, value: JSON.stringify(next) }, { onConflict: "key" });
+    if (error) alert("Delete failed: " + error.message);
   }
   async function syncMissingSubcats(missing) {
     if (!missing?.length || subcatSyncing) return;
@@ -2282,6 +2302,11 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                         const color = rcCats.find((c) => c.l === label)?.c || "#9CA3AF";
                         const n = groups[label]?.length || 0;
                         const missingN = missingSubcats.filter((m) => m.cat === label).length;
+                        // Only offer deletion for a REAL rcCats row (not a synthesized label like
+                        // "Uncategorized"/"Other" with nothing behind it) that currently has zero
+                        // sub-categories configured — exactly what you'd want to prune, never one
+                        // still holding real pricing config.
+                        const canDeleteCat = canManageCategories && n === 0 && rcCats.some((c) => c.l === label);
                         return (
                           <div key={label} onClick={() => setSubcatActiveCat(label)}
                             className={"px-3 py-2 rounded-lg cursor-pointer border text-sm flex items-center justify-between " + (curCat === label ? "bg-indigo-50 border-indigo-300" : "bg-white border-gray-200")}>
@@ -2292,6 +2317,11 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                             <span className="flex items-center gap-1 flex-shrink-0">
                               <span className="text-[10px] text-gray-400">{n}</span>
                               {missingN > 0 && <span title={`${missingN} inventory sub-categor${missingN === 1 ? "y" : "ies"} not yet configured`} className="w-1.5 h-1.5 rounded-full bg-amber-500" />}
+                              {canDeleteCat && (
+                                <button onClick={(e) => { e.stopPropagation(); deleteCategory(label); }}
+                                  title={`Delete empty category "${label}"`}
+                                  className="text-gray-300 hover:text-red-500 text-xs leading-none">🗑️</button>
+                              )}
                             </span>
                           </div>
                         );
