@@ -161,6 +161,40 @@ export default function VenuesEditor({ settings, setSettings, showMsg }) {
   );
   const subVenuesOf = (propertyId) => (venues?.inhouse || []).filter((sv) => sv.propertyId === propertyId).sort((a, b) => a.name.localeCompare(b.name));
 
+  // Sub-venues whose propertyId doesn't resolve to any property above — invisible here, in
+  // Studio's own venue picker (allInhouseVenues/allInhouseGroups require a resolvable, non-"Custom"
+  // parent), and in Fixed Venues, with no "orphaned" section anywhere to surface them. Confirmed
+  // real incident: a property ("Restro", 2 sub-venues) silently dropped off every one of those
+  // lists at once — its sub-venues were still sitting in `inhouse`, just with no property owning
+  // them any more, so there was nowhere in the UI to even find them, let alone restore the
+  // commission % that lived on the property row. This section exists so that state is never
+  // silently invisible again: whatever caused a property to vanish, its sub-venues resurface here
+  // with a one-click way to relink them to their (recreated) property.
+  const propertyIds = useMemo(() => new Set((venues?.properties || []).map((p) => p.id)), [venues]);
+  const orphanedSubVenues = useMemo(
+    () => (venues?.inhouse || []).filter((sv) => !sv.propertyId || !propertyIds.has(sv.propertyId)),
+    [venues, propertyIds],
+  );
+  const [orphanAssign, setOrphanAssign] = useState({}); // subVenueId -> { propertyId: "__new__"|id, newName }
+  const assignOrphanToExisting = (svId, propertyId) => {
+    const property = (venues.properties || []).find((p) => p.id === propertyId);
+    if (!property) return;
+    save({ ...venues, inhouse: venues.inhouse.map((sv) => (sv.id === svId ? { ...sv, propertyId: property.id, parent: property.name } : sv)) });
+    setOrphanAssign((s) => { const n = { ...s }; delete n[svId]; return n; });
+  };
+  const assignOrphanToNewProperty = (svId, name) => {
+    const trimmed = (name || "").trim();
+    if (!trimmed) return;
+    if (venues.properties.some((p) => p.name.toLowerCase() === trimmed.toLowerCase())) { showMsg?.("Property already exists — pick it from the dropdown instead", "red"); return; }
+    const id = genVenueId("prop");
+    save({
+      ...venues,
+      properties: [...venues.properties, { id, name: trimmed, manager: "—", icon: "🏛️" }],
+      inhouse: venues.inhouse.map((sv) => (sv.id === svId ? { ...sv, propertyId: id, parent: trimmed } : sv)),
+    });
+    setOrphanAssign((s) => { const n = { ...s }; delete n[svId]; return n; });
+  };
+
   const addProperty = () => {
     const name = newPropName.trim();
     if (!name) return;
@@ -291,6 +325,46 @@ export default function VenuesEditor({ settings, setSettings, showMsg }) {
         carries a commission % — Deal Check uses it to set aside that share of the deal amount as commission for
         wherever the booking is held.
       </p>
+
+      {orphanedSubVenues.length > 0 && (
+        <div className="mb-5 border border-amber-300 bg-amber-50 rounded-xl p-4">
+          <p className="font-bold text-amber-800 mb-1">⚠️ Unassigned sub-venues</p>
+          <p className="text-xs text-amber-700 mb-3">
+            These rooms/halls still exist but aren't linked to any property above — so they're invisible
+            in Studio's venue picker and in Fixed Venues too, and any commission % their property used to
+            carry isn't showing anywhere. Link each one to its property (pick an existing one, or recreate
+            it) to bring it back.
+          </p>
+          <div className="space-y-2">
+            {orphanedSubVenues.map((sv) => {
+              const draft = orphanAssign[sv.id] || {};
+              return (
+                <div key={sv.id} className="flex items-center gap-2 flex-wrap bg-white border border-amber-200 rounded-lg px-3 py-2">
+                  <span className="text-sm font-medium text-gray-800">{sv.name}</span>
+                  <select value={draft.propertyId || ""} onChange={(e) => {
+                    const v = e.target.value;
+                    if (v === "__new__") setOrphanAssign((s) => ({ ...s, [sv.id]: { propertyId: "__new__", newName: "" } }));
+                    else if (v) assignOrphanToExisting(sv.id, v);
+                  }} className="border rounded px-2 py-1 text-xs">
+                    <option value="">Assign to property…</option>
+                    {propertiesSorted.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    <option value="__new__">+ Recreate property…</option>
+                  </select>
+                  {draft.propertyId === "__new__" && (
+                    <>
+                      <input value={draft.newName || ""} onChange={(e) => setOrphanAssign((s) => ({ ...s, [sv.id]: { ...draft, newName: e.target.value } }))}
+                        onKeyDown={(e) => e.key === "Enter" && assignOrphanToNewProperty(sv.id, draft.newName)}
+                        placeholder="e.g. Restro" autoFocus className="border rounded px-2 py-1 text-xs w-32" />
+                      <button onClick={() => assignOrphanToNewProperty(sv.id, draft.newName)} className="text-xs px-2.5 py-1 rounded bg-indigo-600 text-white font-medium">Create &amp; link</button>
+                      <button onClick={() => setOrphanAssign((s) => { const n = { ...s }; delete n[sv.id]; return n; })} className="text-xs px-2 py-1 rounded border text-gray-500">Cancel</button>
+                    </>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <div className="space-y-4 mb-5">
         {propertiesSorted.map((p) => {
