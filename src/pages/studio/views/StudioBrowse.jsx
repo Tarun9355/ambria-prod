@@ -90,6 +90,24 @@ function StudioBrowse({ ctx }) {
   // changes, since it's a plain top-level flag rather than anything keyed to pageVideos — open it
   // once and it stays open while paging through the rest of the grid.
   const [favRecentOpen, setFavRecentOpen] = useState(false);
+  // Sort the grid by its own price badge — null (default) leaves the existing favourites/
+  // recently-viewed-first, then preferred-venue-first ordering untouched. "asc"/"desc" sort by
+  // price WITHIN each of those groups rather than replacing them outright, so picking a sort
+  // doesn't throw away the venue-preference grouping the grid already uses to surface relevant
+  // videos first — a video with no price (never tagged with zone photos) always sorts last,
+  // regardless of direction, matching the "Price TBD" badge it already shows.
+  const [priceSort, setPriceSort] = useState(null); // null | "asc" | "desc"
+  const sortByPrice = (arr) => {
+    if (!priceSort) return arr;
+    const dir = priceSort === "asc" ? 1 : -1;
+    return [...arr].sort((a, b) => {
+      const pa = typeof a.price === "number", pb = typeof b.price === "number";
+      if (!pa && !pb) return 0;
+      if (!pa) return 1; // no price always last
+      if (!pb) return -1;
+      return (a.price - b.price) * dir;
+    });
+  };
   const {
     // theme / chrome
     S, isDark, accent, border, textS, fmt,
@@ -230,7 +248,7 @@ function StudioBrowse({ ctx }) {
   // not the arrays themselves: those are new identities on every render and would loop the effect.
   const filterSig = JSON.stringify([
     vq, venueGroup, outsideSub, browseVenues, filterFn, filterCat, filterSpace, filterMood,
-    filterPalette, activeFnIdx,
+    filterPalette, activeFnIdx, priceSort,
   ]);
   useEffect(() => { setPage(1); }, [filterSig]);
   // ═══ THE HEADER, WHILE THE RAIL IS UP ═══
@@ -272,12 +290,18 @@ function StudioBrowse({ ctx }) {
       .filter(id => !myFavIds.has(id))
       .map(id => byId.get(id) || (!tokens.length ? allById.get(id) : null))
       .filter(Boolean);
-    if (!favs.length && !recent.length) return base;
+    // Price sort applies WITHIN each of these groups (favourites, recently-viewed, everything
+    // else) rather than across them — a sort re-orders what you see inside a group, it doesn't
+    // un-pin a favourite out from under the "favourites first" promise. Downstream venue-group
+    // partitioning (restVideos/preferred/otherVenues/noVenue, further down this file) only ever
+    // filters, which preserves whatever order it's handed — so sorting here is enough for the
+    // price order to carry through every later grouping step too.
+    if (!favs.length && !recent.length) return sortByPrice(base);
     const pinnedIds = new Set([...favs, ...recent].map(v => v.id));
     return [
-      ...favs.map(v => ({ ...v, _pin: "fav" })),
-      ...recent.map(v => ({ ...v, _pin: "recent" })),
-      ...base.filter(v => !pinnedIds.has(v.id)),
+      ...sortByPrice(favs).map(v => ({ ...v, _pin: "fav" })),
+      ...sortByPrice(recent).map(v => ({ ...v, _pin: "recent" })),
+      ...sortByPrice(base.filter(v => !pinnedIds.has(v.id))),
     ];
   })();
 
@@ -1867,6 +1891,21 @@ function StudioBrowse({ ctx }) {
             <div style={{fontSize:13,fontWeight:600,color:textP}}>{shownVideos.length} video{shownVideos.length===1?"":"s"}{vq.trim()&&browseVideosAll.length!==shownVideos.length&&<span style={{fontWeight:500,color:pageTextM}}> of {browseVideosAll.length}</span>}
               {totalPages>1&&<span style={{fontWeight:500,color:pageTextM}}> · showing {pageFrom}–{pageTo}</span>}</div>
             <div style={{fontSize:12,color:pageTextM}}>{browseVenues.length===0&&venueGroup!=="all"?`(${venueGroup})`:""}</div>
+            {/* Price sort — within whatever grouping (favourites/recently-viewed, then preferred
+                venue) is already on screen, not a replacement for it; see sortByPrice's own comment.
+                Clicking the already-active direction turns sorting back off, same toggle-pill
+                convention the rest of this screen's filter chips already use. */}
+            <div style={{display:"flex",alignItems:"center",gap:5,marginLeft:activeTotal>0?0:"auto"}}>
+              <span style={{fontSize:11,color:pageTextM,fontWeight:600}}>Sort by price</span>
+              {[["asc","↑ Low to High"],["desc","↓ High to Low"]].map(([dir,label])=>(
+                <div key={dir} onClick={()=>setPriceSort(s=>s===dir?null:dir)}
+                  title={`Sort the grid by price, ${dir==="asc"?"lowest":"highest"} first`}
+                  style={{...pageGhost,borderStyle:"solid",cursor:"pointer",
+                    ...(priceSort===dir?{background:pageGold,borderColor:pageGold,color:isDark?"#1A1A2E":"#fff"}:{})}}>
+                  {label}
+                </div>
+              ))}
+            </div>
             {activeTotal>0&&<div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:8}}>
               <span style={{fontSize:11.5,fontWeight:600,color:pageTextM}}>{activeTotal} filter{activeTotal===1?"":"s"} applied</span>
               <div className="sb-pill sb-ghost" onClick={clearAllFilters} style={pageGhost}>Clear all</div>
