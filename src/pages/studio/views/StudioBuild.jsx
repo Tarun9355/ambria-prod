@@ -1161,6 +1161,7 @@ export default function StudioBuild({ ctx }) {
   const [correctPhoto, setCorrectPhoto] = useState(null);
   const [corrVenueGrp, setCorrVenueGrp] = useState(""); // build correction modal: inhouse|outside venue group
   const [gridZones, setGridZones] = useState({}); // per-zone: show the photo picker as a wrapping grid vs horizontal strip
+  const [gridPriceSort, setGridPriceSort] = useState({}); // per-zone, grid view only: null | "asc" | "desc" — cycles on click
   // Zone photos this salesperson recently opened (lightbox) or picked, newest first, keyed like
   // favourites (eventId || src). They lead the grid under a "Recently viewed" heading and fill the
   // strip's four tiles. Per user, per browser (localStorage), same convention as Browse's recent
@@ -3467,6 +3468,16 @@ undefined
         const tiers = [[], [], [], [], []];
         for (const ph of matchedPhotos) tiers[phTier(ph)].push(ph);
         tiers[0].sort((a, b) => recentRank.get(favKey(a)) - recentRank.get(favKey(b)));
+        // Price sort (grid view only) re-sorts WITHIN each tier rather than replacing them — a
+        // ticked/favourited/recent photo stays in its tier, just reordered by price inside it, same
+        // as Browse's grid sorts within favourites/recently-viewed rather than flattening past them.
+        const priceDir = gridZones[k] ? gridPriceSort[k] : null;
+        if (priceDir) {
+          const dir = priceDir === "asc" ? 1 : -1;
+          const priceOf = (ph) => { const c = calcPhotoCost(k, ph); return Number.isFinite(c) ? c : null; };
+          const byPrice = (a, b) => { const pa = priceOf(a), pb = priceOf(b); if (pa == null && pb == null) return 0; if (pa == null) return 1; if (pb == null) return -1; return (pa - pb) * dir; };
+          for (const t of tiers) t.sort(byPrice);
+        }
         matchedPhotos = tiers.flat();
       }
       // Pin the last-selected photo to the FRONT of the strip (and force it in even if relevance/
@@ -3638,6 +3649,13 @@ undefined
             // carried-over index means "page 6" lands on a completely different stretch of the same
             // list depending on which view you were in when you set it.
             setPhPage(p=>({...p,[k]:0}));}} title={gridZones[k]?"Show as strip":"Show all in a grid — pick photos to pin here"} style={{padding:"4px 10px",borderRadius:8,border:`1px solid ${gridZones[k]?accent:border}`,background:gridZones[k]?`${accent}15`:"transparent",color:gridZones[k]?accent:textS,fontSize:12,fontWeight:500,cursor:"pointer"}}>{gridZones[k]?"▭":"▦"}</button>}
+            {/* Grid-only: cycles off → low-to-high → high-to-low → off. Lives next to the ▦/▭ toggle
+                since it only means anything once the grid is open. */}
+            {isOn&&gridZones[k]&&<button onClick={e=>{e.stopPropagation();setGridPriceSort(p=>({...p,[k]:p[k]==="asc"?"desc":p[k]==="desc"?null:"asc"}));}}
+              title={gridPriceSort[k]==="asc"?"Sorted low to high — click for high to low":gridPriceSort[k]==="desc"?"Sorted high to low — click to turn off":"Sort this grid by price"}
+              style={{padding:"4px 10px",borderRadius:8,border:`1px solid ${gridPriceSort[k]?accent:border}`,background:gridPriceSort[k]?`${accent}15`:"transparent",color:gridPriceSort[k]?accent:textS,fontSize:12,fontWeight:500,cursor:"pointer"}}>
+              {gridPriceSort[k]==="asc"?"₹ ↑":gridPriceSort[k]==="desc"?"₹ ↓":"₹ Sort"}
+            </button>}
             {/* Clear every tick in this zone in one click — with the auto-save above, this also
                 empties the saved group, same as unticking each photo would. */}
             {isOn&&grpOn&&grpPicked.size>0&&<button onClick={e=>{e.stopPropagation();clearGrpPick(k,srcType,el.label);}} title="Clear all ticked photos in this zone" style={{padding:"4px 10px",borderRadius:8,border:`1px solid ${border}`,background:"transparent",color:textS,fontSize:12,fontWeight:500,cursor:"pointer"}}>✕ Clear</button>}
