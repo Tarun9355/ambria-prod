@@ -96,7 +96,7 @@ export default function DCFloralsTab({ ctx }) {
                   // this tab's copy didn't yet. Now both call the one function below, so a fix to how
                   // a floral element is costed only has one place to land.
                   const {
-                    elementBreakdown, flowerAgg, uncosted, totalReal, totalArtificial,
+                    elementBreakdown, flowerAgg, uncosted, totalArtificial, fixedExtras,
                   } = computeFnFloralCost(activeFn, fns, {
                     flowerPatterns, mandiCatalogue, mandiMults, seasonMap, floralRatio, rcItems,
                     rcFloralModeByKey, resolveMandiFlower, imsInventory, dcInventoryCache,
@@ -110,8 +110,17 @@ export default function DCFloralsTab({ ctx }) {
                     return <div style={{padding:"50px 30px",textAlign:"center",color:"#1A1A2E",fontSize:13}}>No floral elements in this function.</div>;
                   }
                   const sortedAgg = Array.from(flowerAgg.values()).sort((a,b) => b.totalQty - a.totalQty);
-                  const grandTotal = totalReal + totalArtificial;
-                  const overallRealPct = grandTotal > 0 ? Math.round((totalReal / grandTotal) * 100) : 0;
+                  // The mandi vendor sells in whole units (a bundle/kodi/piece can't be split), so
+                  // what this booking is ACTUALLY billed/sourced for — same figure the FUNCTIONS
+                  // sidebar and Dept Income show (calcFnFloralSourcingCost, StudioApp.jsx) — ceils
+                  // each flower's own real quantity (sortedAgg's per-row f.totalQty, still exact and
+                  // fractional) to the next whole purchasable unit before pricing it, rather than
+                  // pricing the exact fractional need. The exact per-flower quantity is still shown
+                  // (and still drives the "how" drill-down) — only the PRICE this total reflects
+                  // rounds up to what actually gets bought.
+                  const realTotalCeiled = fixedExtras + sortedAgg.reduce((s, f) => s + Math.ceil(f.totalQty) * f.unitPrice, 0);
+                  const grandTotal = realTotalCeiled + totalArtificial;
+                  const overallRealPct = grandTotal > 0 ? Math.round((realTotalCeiled / grandTotal) * 100) : 0;
                   // §26 — Total artificial bunches for this function (sum of realUnitsReplaced across all art lines)
                   const totalArtBunches = elementBreakdown.reduce((sum, eb) =>
                     sum + eb.artLines.reduce((s, al) => s + (al.realOnly ? 0 : al.realUnitsReplaced || 0), 0), 0);
@@ -245,8 +254,10 @@ export default function DCFloralsTab({ ctx }) {
                           pill is the better call anyway — a ring implies a target being filled, and
                           this number has no target. 100% real is not "complete", it is simply the
                           blend this deal happens to use.
-                          EVERY VALUE IS THE ONE THAT WAS ALWAYS HERE — grandTotal, totalReal,
-                          totalArtificial, overallRealPct. This is paint, not arithmetic. */}
+                          grandTotal/overallRealPct now read the whole-unit-rounded real total
+                          (realTotalCeiled, not the exact fractional totalReal) — see its own
+                          comment above sortedAgg: same figure the FUNCTIONS sidebar/Dept Income
+                          already bill, so this header can't disagree with them any more. */}
                       <div className="dcf-card" style={{padding:"14px 16px",borderRadius:14,background:"#FFFFFF",border:`1px solid rgba(236,72,153,0.30)`,boxShadow:"0 1px 2px rgba(236,72,153,0.05), 0 12px 26px -12px rgba(236,72,153,0.35)"}}>
                         <div style={{display:"flex",alignItems:"center",gap:14,flexWrap:"wrap"}}>
                           {/* Icon tile — the reference leads with one, and it gives the eyebrow and the
@@ -261,7 +272,7 @@ export default function DCFloralsTab({ ctx }) {
                               <span style={{fontSize:26,fontWeight:700,color:"#1A1A2E",lineHeight:1.2,fontVariantNumeric:"tabular-nums"}}>₹{Math.round(grandTotal).toLocaleString("en-IN")}</span>
                               <span style={{fontSize:12.5,color:"#10B981",fontWeight:600,display:"inline-flex",alignItems:"center",gap:6}}>
                                 <span style={{width:7,height:7,borderRadius:"50%",background:"#10B981",display:"inline-block"}}/>
-                                Real ₹{Math.round(totalReal).toLocaleString("en-IN")}
+                                Real ₹{Math.round(realTotalCeiled).toLocaleString("en-IN")}
                               </span>
                               <span style={{fontSize:12.5,color:"#EC4899",fontWeight:600,display:"inline-flex",alignItems:"center",gap:6}}>
                                 <span style={{width:7,height:7,borderRadius:"50%",background:"#EC4899",display:"inline-block"}}/>
@@ -359,7 +370,7 @@ export default function DCFloralsTab({ ctx }) {
                                 <span style={{fontSize:14,lineHeight:1,color:"#10B981",display:"inline-block",flexShrink:0,
                                   transform:listOpen?"rotate(90deg)":"none",transition:"transform 0.15s"}}>▸</span>
                                 <span style={{fontSize:13,fontWeight:700,color:"#10B981",letterSpacing:0.6,textTransform:"uppercase"}}>🌹 Real Flower Mandi List ({sortedAgg.length} flower{sortedAgg.length===1?"":"s"})</span>
-                                <span style={{marginLeft:"auto",fontSize:14,fontWeight:700,color:"#10B981",fontVariantNumeric:"tabular-nums"}}>₹{Math.round(totalReal).toLocaleString("en-IN")}</span>
+                                <span style={{marginLeft:"auto",fontSize:14,fontWeight:700,color:"#10B981",fontVariantNumeric:"tabular-nums"}}>₹{Math.round(realTotalCeiled).toLocaleString("en-IN")}</span>
                               </button>
                             );
                           })()}
@@ -404,23 +415,33 @@ export default function DCFloralsTab({ ctx }) {
                                       </div>
                                     )}
                                   </td>
-                                  {/* Cross-function flower reuse is a QUANTITY credit (see FLOWER_REUSE_RATE
-                                      in floralCost.js), not a rate cut — the rate never changes, so the strike-
-                                      through goes on Qty/Total, the two figures the credit actually moves.
-                                      Without it the row just shows one number and a salesperson can't
-                                      tell whether a discount landed or the flower simply needed less. */}
+                                  {/* Qty/Total show the whole-unit PURCHASE quantity — the mandi vendor
+                                      sells in whole bundles/kodis/pieces, not fractions of one, so this
+                                      row prices what actually gets bought (same figure the FUNCTIONS
+                                      sidebar/Dept Income show), not the exact fractional need. The
+                                      exact need is still there on hover and in the "how" drill-down
+                                      below. Cross-function flower reuse is a QUANTITY credit (see
+                                      FLOWER_REUSE_RATE in floralCost.js), not a rate cut, applied BEFORE
+                                      this rounding — so the strike-through compares the two WHOLE-UNIT
+                                      purchase quantities, not the raw fractional ones (a small credit
+                                      can round away to the same whole unit either side, in which case
+                                      there is nothing to strike through: the credit didn't change what
+                                      gets bought this time). */}
                                   {(() => {
-                                    const discounted = f.totalQtyFull != null && f.totalQtyFull > f.totalQty + 0.005;
+                                    const qtyCeiled = Math.ceil(f.totalQty);
+                                    const qtyFullCeiled = f.totalQtyFull != null ? Math.ceil(f.totalQtyFull) : null;
+                                    const discounted = qtyFullCeiled != null && qtyFullCeiled > qtyCeiled;
+                                    const needTitle = `Exact need: ${f.totalQty.toFixed(2)} ${f.unit}${discounted ? ` (before reuse credit: ${f.totalQtyFull.toFixed(2)} ${f.unit})` : ""} — rounded up to whole ${f.unit}s for purchase`;
                                     return (
                                       <>
-                                        <td style={{padding:"6px 4px",color:"#1A1A2E",textAlign:"right",fontVariantNumeric:"tabular-nums"}}>
-                                          {discounted && <span title="Qty before the repeat-zone discount" style={{textDecoration:"line-through",opacity:0.4,marginRight:6}}>{f.totalQtyFull.toFixed(2)}</span>}
-                                          <span title={discounted ? "♻ Reused from an earlier function — see \"how\" below for the exact credit" : undefined} style={{color:discounted?"#10B981":undefined,fontWeight:discounted?700:400}}>{f.totalQty.toFixed(2)} {f.unit}</span>
+                                        <td style={{padding:"6px 4px",color:"#1A1A2E",textAlign:"right",fontVariantNumeric:"tabular-nums"}} title={needTitle}>
+                                          {discounted && <span title="Qty before the repeat-zone discount" style={{textDecoration:"line-through",opacity:0.4,marginRight:6}}>{qtyFullCeiled}</span>}
+                                          <span style={{color:discounted?"#10B981":undefined,fontWeight:discounted?700:400}}>{qtyCeiled} {f.unit}</span>
                                         </td>
                                         <td style={{padding:"6px 4px",color:"#1A1A2E",textAlign:"right",fontVariantNumeric:"tabular-nums"}}>₹{Math.round(f.unitPrice).toLocaleString("en-IN")}/{f.unit}</td>
                                         <td style={{padding:"6px 4px",color:"#1A1A2E",textAlign:"right",fontVariantNumeric:"tabular-nums",fontWeight:600}}>
-                                          {discounted && <span title="Cost before the repeat-zone discount" style={{textDecoration:"line-through",opacity:0.4,marginRight:6,fontWeight:400}}>₹{Math.round(f.totalQtyFull * f.unitPrice).toLocaleString("en-IN")}</span>}
-                                          <span style={{color:discounted?"#10B981":undefined}}>₹{Math.round(f.totalQty * f.unitPrice).toLocaleString("en-IN")}</span>
+                                          {discounted && <span title="Cost before the repeat-zone discount" style={{textDecoration:"line-through",opacity:0.4,marginRight:6,fontWeight:400}}>₹{Math.round(qtyFullCeiled * f.unitPrice).toLocaleString("en-IN")}</span>}
+                                          <span style={{color:discounted?"#10B981":undefined}}>₹{Math.round(qtyCeiled * f.unitPrice).toLocaleString("en-IN")}</span>
                                         </td>
                                       </>
                                     );
@@ -495,24 +516,32 @@ export default function DCFloralsTab({ ctx }) {
                                                 </tr>
                                               ))}
                                               <tr style={{borderTop:`1px solid ${border}`}}>
-                                                <td colSpan={8} style={{textAlign:"right",padding:"4px 4px",color:"#1A1A2E"}}>Sum:</td>
+                                                <td colSpan={8} style={{textAlign:"right",padding:"4px 4px",color:"#1A1A2E"}}>Sum (exact need):</td>
                                                 <td style={{textAlign:"right",padding:"4px 4px",color:"#B45309",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{f.totalQty.toFixed(2)} {f.unit}</td>
+                                              </tr>
+                                              {/* The mandi vendor only sells whole units — this is the extra step
+                                                  the row-level Qty/Total above already shows, spelled out here so
+                                                  the jump from the exact need to what actually gets bought isn't
+                                                  a mystery. */}
+                                              <tr>
+                                                <td colSpan={8} style={{textAlign:"right",padding:"4px 4px",color:"#1A1A2E"}}>⌈rounded up⌉ to whole {f.unit}s:</td>
+                                                <td style={{textAlign:"right",padding:"4px 4px",color:"#1A1A2E",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{Math.ceil(f.totalQty)} {f.unit}</td>
                                               </tr>
                                               <tr>
                                                 <td colSpan={8} style={{textAlign:"right",padding:"4px 4px",color:"#1A1A2E"}}>× ₹{Math.round(f.unitPrice)}/{f.unit} =</td>
-                                                <td style={{textAlign:"right",padding:"4px 4px",color:"#10B981",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>₹{Math.round(f.totalQty * f.unitPrice).toLocaleString("en-IN")}</td>
+                                                <td style={{textAlign:"right",padding:"4px 4px",color:"#10B981",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>₹{Math.round(Math.ceil(f.totalQty) * f.unitPrice).toLocaleString("en-IN")}</td>
                                               </tr>
                                             </tbody>
                                           </table>
                                         )}
-                                        <div style={{marginTop:8,paddingTop:6,borderTop:`1px dashed ${border}`,fontSize:12,color:"#1A1A2E",fontStyle:"italic"}}>Σ(element qty × per-pattern recipe × real %) − reused, summed across all elements using this flower</div>
+                                        <div style={{marginTop:8,paddingTop:6,borderTop:`1px dashed ${border}`,fontSize:12,color:"#1A1A2E",fontStyle:"italic"}}>Σ(element qty × per-pattern recipe × real %) − reused, summed across all elements using this flower, then rounded up to a whole purchasable {f.unit}</div>
                                       </div>
                                     </td>
                                   </tr>
                                 )}
                                 </Fragment>
                               );})}
-                              <tr style={{borderTop:`1px solid rgba(16,185,129,0.22)`}}><td colSpan={3} style={{padding:"11px 4px 4px",textAlign:"right",color:"#1A1A2E",fontWeight:600}}>Real Total</td><td style={{padding:"11px 4px 4px",textAlign:"right",color:"#10B981",fontWeight:700,fontSize:14,fontVariantNumeric:"tabular-nums"}}>₹{Math.round(totalReal).toLocaleString("en-IN")}</td><td></td></tr>
+                              <tr style={{borderTop:`1px solid rgba(16,185,129,0.22)`}}><td colSpan={3} style={{padding:"11px 4px 4px",textAlign:"right",color:"#1A1A2E",fontWeight:600}}>Real Total</td><td style={{padding:"11px 4px 4px",textAlign:"right",color:"#10B981",fontWeight:700,fontSize:14,fontVariantNumeric:"tabular-nums"}}>₹{Math.round(realTotalCeiled).toLocaleString("en-IN")}</td><td></td></tr>
                             </tbody>
                           </table>
                           )}
