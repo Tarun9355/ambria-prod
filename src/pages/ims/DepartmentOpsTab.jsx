@@ -2090,6 +2090,19 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     if (tr.kind === "fixed") return [{ label: tr.note || "Fixed", value: `${tr.result}` }];
     return [];
   };
+  // Labours is the one SHARED crew type — a function's real "Crew per function" (c.result) is
+  // the whole pool, everyone's items combined, same number regardless of which department tab is
+  // open. For a department's OWN view, that reads as "my dedicated crew of 3" when it isn't —
+  // this is this department's own fractional slice of that function's pooled usage (its own
+  // usageRows, same filter/formula as the item rows above it and the day-level "X's share"
+  // sentence), ceiled once. NOT additive across departments — summing every department's own
+  // ceiled number for one function can exceed the real shared total, because ceiling several
+  // small fractions separately can only ever round UP more than ceiling their sum once.
+  const deptCrewForFn = (c) => {
+    const rows = Array.isArray(c?.trace?.usageRows) ? c.trace.usageRows.filter(ur => catToDept(ur.sub) === dept) : [];
+    if (!rows.length) return 0;
+    return Math.ceil(rows.reduce((s, ur) => s + (Number(ur.need) || 0), 0));
+  };
   const renderMpTrace = (t, drivenBy, day) => {
     if (!t) return null;
     // Any other crew type with per-function traces from Deal Check: same table, its own rows.
@@ -2116,8 +2129,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
               </div>
             ))}
             <div className="contents">
-              <span className="px-2 py-1 bg-gray-50 text-[13px] text-gray-600">Crew per function</span>
-              {cols.map((c, ci) => <span key={ci} className="px-2 py-1 bg-gray-50 text-[13px] text-center border-l border-gray-100 text-gray-900 font-semibold whitespace-nowrap">{c.result}</span>)}
+              <span className="px-2 py-1 bg-gray-50 text-[13px] text-gray-600" title={t.kind === "labours" ? `${dept}'s own ceiled slice of each function's shared crew — not a dedicated headcount, and not additive across departments` : undefined}>
+                {t.kind === "labours" ? `${dept}'s share per function` : "Crew per function"}
+              </span>
+              {cols.map((c, ci) => <span key={ci} className="px-2 py-1 bg-gray-50 text-[13px] text-center border-l border-gray-100 text-gray-900 font-semibold whitespace-nowrap">{t.kind === "labours" ? deptCrewForFn(c) : c.result}</span>)}
             </div>
           </div>
         </div>
