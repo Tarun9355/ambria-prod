@@ -371,8 +371,12 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                     <div style={{display:"flex",alignItems:"center",marginBottom:6}}>
                       <div style={rowCap}>Drape</div>
                       {/* The Custom Ceiling's own price, next to the chip that picks it. Already part of
-                          the Fabric figure — shown here too, not added twice. */}
-                      {showCosts&&ceilingShown>0&&<span style={{marginLeft:"auto",fontSize:12,fontWeight:600,color:textP}} title="Custom ceiling — also included in the Fabric figure">{fmt(ceilingShown)}</span>}
+                          the Fabric figure, not a second charge — styled as a muted footnote (not the
+                          bold black every other card's price uses) so it can't be read as a THIRD
+                          number to add on top of Truss + Fabric when eyeballing the chip total. It
+                          used to share that same bold styling, which is exactly what made it look
+                          additive and the chip total look like it had "drifted". */}
+                      {showCosts&&ceilingShown>0&&<span style={{marginLeft:"auto",fontSize:10.5,fontWeight:500,color:textS}} title="Custom ceiling — already included in the Fabric figure, not billed separately">{fmt(ceilingShown)} <span style={{opacity:0.75}}>(in Fabric)</span></span>}
                     </div>
                     <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
                       {[{v:"minimum",l:"Minimum"},{v:"moderate",l:"Moderate"},{v:"dense",l:"Dense"}].map(o=>{
