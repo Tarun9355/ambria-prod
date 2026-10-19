@@ -293,7 +293,14 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
               </div>
               {/* Kit-inside-a-kit → fully editable, PER THIS PARENT INSTANCE. Edits are stored in this
                   component's `subOverrides`, so the master sub-kit and every other kit/photo using it
-                  stay untouched. Recursively renders this same editor for the nested kit. */}
+                  stay untouched. Recursively renders this same editor for the nested kit.
+                  qtyMultiplier carries through as qtyEach × this level's own qtyMultiplier — how
+                  many of THIS nested kit actually exist (its own per-parent-kit count, scaled by
+                  however many of the parent kit there are) — not a hardcoded 1. That hardcoded 1 was
+                  the bug: bumping this kit's own qty stepper above never updated the "× Kits"/total
+                  columns shown for ITS OWN components, because the nested editor had no way to know
+                  more than one of it now existed. Compounds correctly through any further nesting
+                  depth since each level multiplies the one above it. */}
               {cItemIsKit && (
                 <div style={{ marginLeft: 20, paddingLeft: 6, borderLeft: `2px solid rgba(99,102,241,0.25)` }}>
                   <KitComponentsEditor
@@ -306,7 +313,7 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
                     }))}
                     imsInventory={imsInventory}
                     flowerPatterns={flowerPatterns}
-                    qtyMultiplier={1}
+                    qtyMultiplier={qtyEach * qtyMultiplier}
                     onCheckAvailability={onCheckAvailability}
                     rcSubcatFactors={rcSubcatFactors}
                     rcFactorByKey={rcFactorByKey}
