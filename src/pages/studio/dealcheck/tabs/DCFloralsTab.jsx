@@ -101,6 +101,7 @@ export default function DCFloralsTab({ ctx }) {
                     flowerPatterns, mandiCatalogue, mandiMults, seasonMap, floralRatio, rcItems,
                     rcFloralModeByKey, resolveMandiFlower, imsInventory, dcInventoryCache,
                     colorPrefsForFn: dcFloralColorPrefs?.[fnIdx] || {},
+                    colorPrefsByFnIdx: dcFloralColorPrefs,
                     artFlowerRatePerKg: Number(dealCheckData?.artificialFlowerRatePerKg ?? 50),
                     artFlowerBunchesPerKg: Number(dealCheckData?.artificialFlowerBunchesPerKg ?? 16) || 16,
                     artGreenRatePerKg: Number(dealCheckData?.artificialGreenRatePerKg ?? 40),

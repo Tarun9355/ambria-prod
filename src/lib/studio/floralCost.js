@@ -102,12 +102,25 @@ function paletteOverlapColors(fn, precedingFn) {
   return mine.filter((c) => theirsNorm.has(c.toLowerCase().trim()));
 }
 
-/** Does this specific flower (by its resolved colour-variant name, or its parent's bare name
- * when no variant was chosen) correspond to any of the given palette colours? */
-function flowerMatchesAnyColor(parent, variant, colors) {
-  if (!colors || !colors.length) return false;
-  const names = [variant?.name, parent?.name].filter(Boolean);
-  return names.some((name) => colors.some((c) => fuzzyColourMatch(c, name)));
+/**
+ * What colour was this specific flower (by its resolved mandi parentId) actually SET to for
+ * this function, via Deal Check's own per-flower colour-preference ranking (1st choice) or the
+ * manual swap override — never by matching the species' own catalogue name against the
+ * function's free-text Flower Palette label. Those are two different vocabularies (a palette
+ * label like "White" or "Rose Gold" vs a bare species name like "Carnation Himachal" or
+ * "Banglore Daisy") that essentially never textually coincide — confirmed on a real build where
+ * every recipe referenced a bare species id with no colour variant at all, so the species-name
+ * match this replaced could never succeed regardless of how well the two functions' palettes
+ * actually overlapped. Returns null when nobody has ever explicitly picked a colour for this
+ * flower on this function — a flower with no explicit pick is never assumed to match anything.
+ */
+function resolvedFlowerColour(parentId, colorPrefsForFn, overrideByParentId) {
+  if (!parentId) return null;
+  const prefArr = colorPrefsForFn?.[parentId];
+  if (Array.isArray(prefArr) && prefArr.length > 0 && prefArr[0]?.label) return prefArr[0].label;
+  const override = overrideByParentId?.get(parentId);
+  if (override?.colorVariant?.label) return override.colorVariant.label;
+  return null;
 }
 
 /**
@@ -123,7 +136,15 @@ export function computeFnRawFlowerUsage(fn, opts) {
   const {
     flowerPatterns = [], mandiCatalogue = [], rcItems = [], rcFloralModeByKey = {},
     resolveMandiFlower, imsInventory = [], dcInventoryCache = [], floralRatio = 70,
+    // This function's OWN colour preferences (opts.colorPrefsForFn is scoped to whichever `fn` is
+    // actually passed in here by the caller — computeFnFloralCost re-scopes it to the PRECEDING
+    // function's own slice before calling this, since the credit needs to know what colour THAT
+    // function's own flowers were actually picked as, not the later function's).
+    colorPrefsForFn = {},
   } = opts || {};
+  const fnOverrides = fn?.floralOverrides || { rows: [] };
+  const overrideByParentId = new Map();
+  (fnOverrides.rows || []).forEach((r) => { if (r?.flowerId) overrideByParentId.set(r.flowerId, r); });
   const findInv = (id) => (!id ? null : (imsInventory.find((i) => i.id === id) || (dcInventoryCache || []).find((i) => i.id === id)));
   const sizeFromMode = (inhouseMode, elSize) => {
     if (inhouseMode === "smb") { const s = (elSize || "M").toUpperCase(); return s === "S" ? "small" : s === "B" ? "big" : "medium"; }
@@ -145,12 +166,13 @@ export function computeFnRawFlowerUsage(fn, opts) {
     return Math.max(0, Math.min(100, 100 - fnFloralRatio));
   };
 
-  const usage = new Map(); // fl.flowerId -> { realQty, artUnits, parent, variant }
+  const usage = new Map(); // fl.flowerId -> { realQty, artUnits, parent, variant, colour }
   const add = (flowerId, realQty, artUnits, parent, variant) => {
-    const prev = usage.get(flowerId) || { realQty: 0, artUnits: 0, parent: null, variant: null };
+    const prev = usage.get(flowerId) || { realQty: 0, artUnits: 0, parent: null, variant: null, colour: null };
     prev.realQty += realQty; prev.artUnits += artUnits;
     if (!prev.parent && parent) prev.parent = parent;
     if (!prev.variant && variant) prev.variant = variant;
+    if (!prev.colour) prev.colour = resolvedFlowerColour(parent?.id || flowerId, colorPrefsForFn, overrideByParentId);
     usage.set(flowerId, prev);
   };
 
@@ -229,7 +251,10 @@ export function computeFnRawFlowerUsage(fn, opts) {
  * @param {function} opts.resolveMandiFlower
  * @param {object[]} opts.imsInventory - boot-time IMS inventory snapshot
  * @param {object[]} opts.dcInventoryCache - Deal Check's freshly-fetched inventory cache
- * @param {object} [opts.colorPrefsForFn] - parentId → ranked colour preference rows
+ * @param {object} [opts.colorPrefsForFn] - parentId → ranked colour preference rows, for `fn` itself
+ * @param {object} [opts.colorPrefsByFnIdx] - fnIdx → colorPrefsForFn, for every OTHER function —
+ *   needed to look up the PRECEDING function's own colour pick per flower when crediting reuse
+ *   (see computeFnRawFlowerUsage's own `colour` field)
  * @param {number} [opts.artFlowerRatePerKg]
  * @param {number} [opts.artFlowerBunchesPerKg]
  * @param {number} [opts.artGreenRatePerKg]
@@ -246,7 +271,7 @@ export function computeFnFloralCost(fn, allFns, opts) {
   const {
     flowerPatterns = [], mandiCatalogue = [], mandiMults = {}, seasonMap = {},
     floralRatio = 70, rcItems = [], rcFloralModeByKey = {}, resolveMandiFlower,
-    imsInventory = [], dcInventoryCache = [], colorPrefsForFn = {},
+    imsInventory = [], dcInventoryCache = [], colorPrefsForFn = {}, colorPrefsByFnIdx = {},
     artFlowerRatePerKg = 50, artFlowerBunchesPerKg = 16,
     artGreenRatePerKg = 40, artGreenBunchesPerKg = 23,
     resolveRcRate = null, ignoreRepeatCuts = false,
@@ -286,7 +311,10 @@ export function computeFnFloralCost(fn, allFns, opts) {
     precedingFn = findImmediatePrecedingFn(fn, allFns || []);
     if (precedingFn) {
       overlapColors = paletteOverlapColors(fn, precedingFn);
-      precedingUsage = computeFnRawFlowerUsage(precedingFn, opts);
+      // The preceding function's OWN colour picks, not fn's — computeFnRawFlowerUsage resolves
+      // each flower's `colour` field against whichever colorPrefsForFn it's handed.
+      const precedingColorPrefs = colorPrefsByFnIdx?.[precedingFn.fnIdx] || {};
+      precedingUsage = computeFnRawFlowerUsage(precedingFn, { ...opts, colorPrefsForFn: precedingColorPrefs });
     }
   }
 
@@ -427,16 +455,18 @@ export function computeFnFloralCost(fn, allFns, opts) {
           const flowerType = parent?.flowerType || (parent?.isGreen ? "green" : "flower");
           const effectiveRealFrac = flowerType === "real_only" ? 1 : realFrac;
           const totalFlowerQtyFull = (fl.qty || 0) * elQty * effectiveRealFrac;
-          // Reuse credit: only when this zone is eligible (manual toggle, or an automatic
-          // palette-colour overlap with the immediately preceding function) AND — for the
-          // automatic path only — this specific flower's own colour is one of the overlapping
-          // ones. The manual toggle skips that colour check entirely (see this function's own
-          // top comment), but the credit itself is ALWAYS looked up by the exact same
-          // species+colour (fl.flowerId, not the collapsed display parentId) actually appearing
-          // in the preceding function's own raw usage — never invented from a palette alone.
-          const colorEligible = manualRepeat || (autoEligible && flowerMatchesAnyColor(parent, resolved?.variant, overlapColors));
-          const pUsage = colorEligible ? precedingUsage?.get(fl.flowerId) : null;
-          const reuseCredit = pUsage ? FLOWER_REUSE_RATE * pUsage.realQty : 0;
+          // Reuse credit: the manual toggle credits by SPECIES identity alone (fl.flowerId found
+          // in the preceding function's own raw usage) — see this function's own top comment. The
+          // automatic path additionally requires an explicit, MATCHING colour preference on this
+          // exact flower in both functions (resolvedFlowerColour, Deal Check's own per-flower
+          // colour picker) — never a match against the species' own catalogue name, which a real
+          // build's recipes never carry any colour on at all (bare species ids throughout), so
+          // that comparison could never succeed regardless of how well the two functions'
+          // declared palettes overlapped.
+          const pUsage = precedingUsage?.get(fl.flowerId) || null;
+          const myColour = resolvedFlowerColour(parentId, colorPrefsForFn, overrideByParentId);
+          const colorEligible = manualRepeat || (autoEligible && !!pUsage && !!myColour && !!pUsage.colour && fuzzyColourMatch(myColour, pUsage.colour));
+          const reuseCredit = (colorEligible && pUsage) ? FLOWER_REUSE_RATE * pUsage.realQty : 0;
           const totalFlowerQty = Math.max(0, totalFlowerQtyFull - reuseCredit);
           const lineCost = totalFlowerQty * unitPrice;
           const displayName = parent?.name || fl.flowerId;
@@ -478,9 +508,10 @@ export function computeFnFloralCost(fn, allFns, opts) {
             artLines.push({ flowerId: parentId, name: parent?.name || fl.flowerId, realUnitsReplaced: 0, unit: parent?.unit || "?", bunchesPerUnit: 0, bunches: 0, isGreen: false, perBunch: 0, lineCost: 0, missingRatio: false, realOnly: true });
             return;
           }
-          const colorEligible = manualRepeat || (autoEligible && flowerMatchesAnyColor(parent, resolved?.variant, overlapColors));
-          const pUsage = colorEligible ? precedingUsage?.get(fl.flowerId) : null;
-          const artReuseCredit = pUsage ? FLOWER_REUSE_RATE * pUsage.artUnits : 0;
+          const pUsage = precedingUsage?.get(fl.flowerId) || null;
+          const myColour = resolvedFlowerColour(parentId, colorPrefsForFn, overrideByParentId);
+          const colorEligible = manualRepeat || (autoEligible && !!pUsage && !!myColour && !!pUsage.colour && fuzzyColourMatch(myColour, pUsage.colour));
+          const artReuseCredit = (colorEligible && pUsage) ? FLOWER_REUSE_RATE * pUsage.artUnits : 0;
           if (flowerType === "mapping") {
             const realUnitsReplacedFull = (fl.qty || 0) * elQty * artFrac;
             const realUnitsReplaced = Math.max(0, realUnitsReplacedFull - artReuseCredit);

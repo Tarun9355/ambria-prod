@@ -5691,6 +5691,7 @@ export default function StudioApp() {
       imsInventory,
       dcInventoryCache,
       colorPrefsForFn: dcFloralColorPrefs?.[fn?.fnIdx] || {},
+      colorPrefsByFnIdx: dcFloralColorPrefs,
       artFlowerRatePerKg: Number(sharedFloralSettings.artificialFlowerRatePerKg ?? 50),
       artFlowerBunchesPerKg: Number(sharedFloralSettings.artificialFlowerBunchesPerKg ?? 16) || 16,
       artGreenRatePerKg: Number(sharedFloralSettings.artificialGreenRatePerKg ?? 40),

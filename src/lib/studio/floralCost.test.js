@@ -2,23 +2,23 @@ import { describe, it, expect } from "vitest";
 import { computeFnFloralCost, computeFnRawFlowerUsage, buildMandiBreakdown, findImmediatePrecedingFn, FLOWER_REUSE_RATE } from "./floralCost";
 import { resolveMandiFlower } from "../ims/flowerHelpers";
 
-// Minimal fixtures. `rose` carries two colour variants so species+colour matching can be
-// tested precisely; `marigold` carries its OWN separate "White" variant — a different
-// species, same colour — for the "same species AND colour must match" rule.
-const rose = {
-  id: "rose", name: "Rose", unit: "kg", flowerType: "flower", artificialBunchesPerUnit: 2,
-  colorVariants: [{ variantId: "rose_white", name: "White", currentPrice: 100 }, { variantId: "rose_maroon", name: "Maroon", currentPrice: 110 }],
-};
-const marigold = {
-  id: "marigold", name: "Marigold", unit: "kg", flowerType: "flower", artificialBunchesPerUnit: 1,
-  colorVariants: [{ variantId: "marigold_white", name: "White", currentPrice: 60 }],
-};
+// Minimal fixtures. Recipes reference a bare SPECIES id only — exactly how real flower patterns
+// are built (confirmed against a real production build: every pattern stores `flowerId` as the
+// mandi catalogue's own PARENT id, never a colour-variant id). Colour is never part of the
+// recipe; it only ever exists as a per-function, per-species preference (colorPrefsForFn /
+// colorPrefsByFnIdx below), set through Deal Check's own colour picker — matching how this is
+// actually recorded, and why the reuse credit now keys off that instead of the species' own name.
+const rose = { id: "rose", name: "Rose", unit: "kg", flowerType: "flower", artificialBunchesPerUnit: 2 };
+const marigold = { id: "marigold", name: "Marigold", unit: "kg", flowerType: "flower", artificialBunchesPerUnit: 1 };
 const mandiCatalogue = [rose, marigold];
 
 const patternFor = (id, flowerId, qty = 1, extra) => ({ id, sub: "Flower Bunch", sizes: { medium: { flowers: [{ flowerId, qty }], extraCost: 0, ...extra } } });
-const pRoseWhite = patternFor("p_rose_white", "rose_white");
-const pRoseMaroon = patternFor("p_rose_maroon", "rose_maroon");
-const pMarigoldWhite = patternFor("p_marigold_white", "marigold_white");
+const pRose = patternFor("p_rose", "rose");
+const pMarigold = patternFor("p_marigold", "marigold");
+
+// A single ranked colour pick, shaped the way Deal Check's own picker stores one (see
+// DCFloralsTab.jsx's togglePref) — only `.label` is compared.
+const pick = (label) => [{ label, rate: 100, variantId: `v_${label}` }];
 
 const baseOpts = (patterns) => ({
   flowerPatterns: patterns, mandiCatalogue, mandiMults: {}, seasonMap: {},
@@ -34,9 +34,8 @@ const fn = (over) => ({
   floralOverrides: { rows: [] },
   ...over,
 });
-const elWhite = (qty) => ({ name: "Rose White", patternId: "p_rose_white", qty, realPct: 100 });
-const elMaroon = (qty) => ({ name: "Rose Maroon", patternId: "p_rose_maroon", qty, realPct: 100 });
-const elMarigoldWhite = (qty) => ({ name: "Marigold White", patternId: "p_marigold_white", qty, realPct: 100 });
+const elRose = (qty) => ({ name: "Rose", patternId: "p_rose", qty, realPct: 100 });
+const elMarigold = (qty) => ({ name: "Marigold", patternId: "p_marigold", qty, realPct: 100 });
 
 describe("findImmediatePrecedingFn", () => {
   it("picks the nearest earlier same-venue function within a day, not a merged pool", () => {
@@ -63,64 +62,90 @@ describe("findImmediatePrecedingFn", () => {
 
 describe("computeFnFloralCost — palette-based flower reuse", () => {
   it("0 reuse when the two functions' palettes don't overlap at all", () => {
-    const f1 = fn({ fnIdx: 0, fnShift: "lunch", fnFlowerPalette: "White", zoneElements: { stage: [elWhite(10)] }, enabledEls: { stage: true } });
-    const f2 = fn({ fnIdx: 1, fnShift: "dinner", fnFlowerPalette: "Maroon", zoneElements: { stage: [elMaroon(20)] }, enabledEls: { stage: true } });
-    const result = computeFnFloralCost(f2, [f1, f2], baseOpts([pRoseMaroon, pRoseWhite]));
+    const f1 = fn({ fnIdx: 0, fnShift: "lunch", fnFlowerPalette: "White", zoneElements: { stage: [elRose(10)] }, enabledEls: { stage: true } });
+    const f2 = fn({ fnIdx: 1, fnShift: "dinner", fnFlowerPalette: "Maroon", zoneElements: { stage: [elRose(20)] }, enabledEls: { stage: true } });
+    const result = computeFnFloralCost(f2, [f1, f2], baseOpts([pRose]));
     expect(result.overlapColors).toEqual([]);
     expect(result.elementBreakdown[0].realLines[0].qty).toBe(20); // full price, no credit
   });
 
-  it("credits 70% of the preceding function's own quantity when palettes match (the owner's own example: 10 -> 20 drops to 13)", () => {
-    const f1 = fn({ fnIdx: 0, fnShift: "lunch", fnFlowerPalette: "White", zoneElements: { stage: [elWhite(10)] }, enabledEls: { stage: true } });
-    const f2 = fn({ fnIdx: 1, fnShift: "dinner", fnFlowerPalette: "White", zoneElements: { stage: [elWhite(20)] }, enabledEls: { stage: true } });
-    const result = computeFnFloralCost(f2, [f1, f2], baseOpts([pRoseWhite]));
+  it("credits 70% of the preceding function's own quantity when palettes overlap AND both functions picked the same colour for this flower (the owner's own example: 10 -> 20 drops to 13)", () => {
+    const f1 = fn({ fnIdx: 0, fnShift: "lunch", fnFlowerPalette: "White", zoneElements: { stage: [elRose(10)] }, enabledEls: { stage: true } });
+    const f2 = fn({ fnIdx: 1, fnShift: "dinner", fnFlowerPalette: "White", zoneElements: { stage: [elRose(20)] }, enabledEls: { stage: true } });
+    const opts = {
+      ...baseOpts([pRose]),
+      colorPrefsForFn: { rose: pick("White") }, // f2's own pick for Rose
+      colorPrefsByFnIdx: { 0: { rose: pick("White") }, 1: { rose: pick("White") } },
+    };
+    const result = computeFnFloralCost(f2, [f1, f2], opts);
     const line = result.elementBreakdown[0].realLines[0];
     expect(line.qtyFull).toBe(20);
     expect(line.reuseCredit).toBeCloseTo(10 * FLOWER_REUSE_RATE, 5); // 7
     expect(line.qty).toBeCloseTo(13, 5);
   });
 
-  it("a mixed palette only credits the overlapping colour, not the one the preceding function never had (the owner's own white+maroon example)", () => {
-    const f1 = fn({ fnIdx: 0, fnShift: "lunch", fnFlowerPalette: "White", zoneElements: { stage: [elWhite(10)] }, enabledEls: { stage: true } });
-    const f2 = fn({ fnIdx: 1, fnShift: "dinner", fnFlowerPalette: "White, Maroon", zoneElements: { stage: [elWhite(10), elMaroon(10)] }, enabledEls: { stage: true } });
-    const result = computeFnFloralCost(f2, [f1, f2], baseOpts([pRoseWhite, pRoseMaroon]));
-    const [whiteLine, maroonLine] = result.elementBreakdown.map((eb) => eb.realLines[0]);
-    expect(whiteLine.qty).toBeCloseTo(3, 5); // 10 - 0.7*10
-    expect(maroonLine.qty).toBe(10); // no credit — f1 never had maroon
+  it("no credit at all when the palette overlaps but neither function has ever picked an explicit colour for this flower", () => {
+    // This is the real-world default: recipes never carry colour, and a colour preference is
+    // opt-in in Deal Check. Confirmed on a real build — every flower came back uncredited this
+    // way until someone actually picks colours for it on both functions.
+    const f1 = fn({ fnIdx: 0, fnShift: "lunch", fnFlowerPalette: "White", zoneElements: { stage: [elRose(10)] }, enabledEls: { stage: true } });
+    const f2 = fn({ fnIdx: 1, fnShift: "dinner", fnFlowerPalette: "White", zoneElements: { stage: [elRose(20)] }, enabledEls: { stage: true } });
+    const result = computeFnFloralCost(f2, [f1, f2], baseOpts([pRose]));
+    expect(result.overlapColors).toEqual(["White"]); // the zone-level gate IS open...
+    expect(result.elementBreakdown[0].realLines[0].qty).toBe(20); // ...but nobody said what colour Rose actually was
   });
 
-  it("requires the SAME species, not just the same colour — a different flower in the same colour gets no credit", () => {
-    const f1 = fn({ fnIdx: 0, fnShift: "lunch", fnFlowerPalette: "White", zoneElements: { stage: [elWhite(10)] }, enabledEls: { stage: true } }); // Rose White
-    const f2 = fn({ fnIdx: 1, fnShift: "dinner", fnFlowerPalette: "White", zoneElements: { stage: [elMarigoldWhite(10)] }, enabledEls: { stage: true } }); // Marigold White
-    const result = computeFnFloralCost(f2, [f1, f2], baseOpts([pRoseWhite, pMarigoldWhite]));
+  it("only credits the flower with an actual matching colour pick in both functions, not one the preceding function never had", () => {
+    const f1 = fn({ fnIdx: 0, fnShift: "lunch", fnFlowerPalette: "White", zoneElements: { stage: [elRose(10)] }, enabledEls: { stage: true } });
+    const f2 = fn({ fnIdx: 1, fnShift: "dinner", fnFlowerPalette: "White, Maroon", zoneElements: { stage: [elRose(10), elMarigold(10)] }, enabledEls: { stage: true } });
+    const opts = {
+      ...baseOpts([pRose, pMarigold]),
+      colorPrefsForFn: { rose: pick("White"), marigold: pick("Maroon") },
+      colorPrefsByFnIdx: { 0: { rose: pick("White") }, 1: { rose: pick("White"), marigold: pick("Maroon") } },
+    };
+    const result = computeFnFloralCost(f2, [f1, f2], opts);
+    const [roseLine, marigoldLine] = result.elementBreakdown.map((eb) => eb.realLines[0]);
+    expect(roseLine.qty).toBeCloseTo(3, 5); // 10 - 0.7*10
+    expect(marigoldLine.qty).toBe(10); // no credit — f1 never had marigold at all
+  });
+
+  it("requires the SAME species, not just a matching colour pick — a different flower in the same colour gets no credit", () => {
+    const f1 = fn({ fnIdx: 0, fnShift: "lunch", fnFlowerPalette: "White", zoneElements: { stage: [elRose(10)] }, enabledEls: { stage: true } }); // Rose, White
+    const f2 = fn({ fnIdx: 1, fnShift: "dinner", fnFlowerPalette: "White", zoneElements: { stage: [elMarigold(10)] }, enabledEls: { stage: true } }); // Marigold, White
+    const opts = {
+      ...baseOpts([pRose, pMarigold]),
+      colorPrefsForFn: { marigold: pick("White") },
+      colorPrefsByFnIdx: { 0: { rose: pick("White") }, 1: { marigold: pick("White") } },
+    };
+    const result = computeFnFloralCost(f2, [f1, f2], opts);
     const line = result.elementBreakdown[0].realLines[0];
-    expect(line.qty).toBe(10); // colour gate passes, but species differs -> no credit
+    expect(line.qty).toBe(10); // colour matches, but species differs -> no credit
   });
 
-  it("a manual zone Repeat toggle bypasses the palette gate but still only credits an actual physical match", () => {
-    // f2's palette (Maroon) never overlaps f1's (White) — without the toggle this is 0 reuse
-    // (covered by the first test above). With the zone manually marked Repeat, f2 should still
-    // get 0 credit here because f1 never actually had any Maroon flower at all.
-    const f1 = fn({ fnIdx: 0, fnShift: "lunch", fnFlowerPalette: "White", zoneElements: { stage: [elWhite(10)] }, enabledEls: { stage: true } });
-    const f2 = fn({ fnIdx: 1, fnShift: "dinner", fnFlowerPalette: "Maroon", zoneElements: { stage: [elMaroon(10)] }, enabledEls: { stage: true }, zoneConfig: { stage: { repeat: true } } });
-    const result = computeFnFloralCost(f2, [f1, f2], baseOpts([pRoseMaroon, pRoseWhite]));
+  it("a manual zone Repeat toggle bypasses the palette AND colour-pick gate but still only credits an actual physical match", () => {
+    // f2's palette (Maroon) never overlaps f1's (White), and neither has picked any explicit
+    // colour — without the toggle this is 0 reuse. With the zone manually marked Repeat, f2
+    // should still get 0 credit here because f1 never actually had Marigold at all.
+    const f1 = fn({ fnIdx: 0, fnShift: "lunch", fnFlowerPalette: "White", zoneElements: { stage: [elRose(10)] }, enabledEls: { stage: true } });
+    const f2 = fn({ fnIdx: 1, fnShift: "dinner", fnFlowerPalette: "Maroon", zoneElements: { stage: [elMarigold(10)] }, enabledEls: { stage: true }, zoneConfig: { stage: { repeat: true } } });
+    const result = computeFnFloralCost(f2, [f1, f2], baseOpts([pRose, pMarigold]));
     expect(result.elementBreakdown[0].realLines[0].qty).toBe(10);
     expect(result.elementBreakdown[0].repeatZone).toBe(true); // flagged reused, even though nothing to credit
   });
 
-  it("a manual zone Repeat toggle DOES credit a real physical overlap the palette fields alone wouldn't have declared", () => {
-    // f1's own build actually includes some Maroon (qty 5) even though its DECLARED palette is
-    // only White — e.g. a small uncatalogued accent. f2's palette is Maroon (no overlap with
-    // f1's declared White palette), but its zone is manually marked Repeat.
-    const f1 = fn({ fnIdx: 0, fnShift: "lunch", fnFlowerPalette: "White", zoneElements: { stage: [elWhite(10)], entry: [elMaroon(5)] }, enabledEls: { stage: true, entry: true } });
-    const f2 = fn({ fnIdx: 1, fnShift: "dinner", fnFlowerPalette: "Maroon", zoneElements: { stage: [elMaroon(10)] }, enabledEls: { stage: true }, zoneConfig: { stage: { repeat: true } } });
-    const result = computeFnFloralCost(f2, [f1, f2], baseOpts([pRoseMaroon, pRoseWhite]));
+  it("a manual zone Repeat toggle DOES credit a real physical overlap the palette fields alone wouldn't have declared, with no colour pick needed", () => {
+    // f1 built some Marigold (qty 5) in a different zone than its declared palette would suggest.
+    // f2's declared palette (Maroon) never overlaps f1's (White), but its zone is manually marked
+    // Repeat — the manual toggle finds the real species match without any colour pick at all.
+    const f1 = fn({ fnIdx: 0, fnShift: "lunch", fnFlowerPalette: "White", zoneElements: { stage: [elRose(10)], entry: [elMarigold(5)] }, enabledEls: { stage: true, entry: true } });
+    const f2 = fn({ fnIdx: 1, fnShift: "dinner", fnFlowerPalette: "Maroon", zoneElements: { stage: [elMarigold(10)] }, enabledEls: { stage: true }, zoneConfig: { stage: { repeat: true } } });
+    const result = computeFnFloralCost(f2, [f1, f2], baseOpts([pRose, pMarigold]));
     expect(result.elementBreakdown[0].realLines[0].qty).toBeCloseTo(10 - 0.7 * 5, 5); // 6.5
   });
 
   it("no reuse at all with no identifiable preceding function, even with a matching palette", () => {
-    const f2 = fn({ fnIdx: 0, fnShift: "dinner", fnFlowerPalette: "White", zoneElements: { stage: [elWhite(10)] }, enabledEls: { stage: true } });
-    const result = computeFnFloralCost(f2, [f2], baseOpts([pRoseWhite]));
+    const f2 = fn({ fnIdx: 0, fnShift: "dinner", fnFlowerPalette: "White", zoneElements: { stage: [elRose(10)] }, enabledEls: { stage: true } });
+    const result = computeFnFloralCost(f2, [f2], baseOpts([pRose]));
     expect(result.precedingFn).toBe(null);
     expect(result.elementBreakdown[0].realLines[0].qty).toBe(10);
   });
@@ -161,7 +186,7 @@ describe("computeFnFloralCost — core per-element resolution (unaffected by the
   it("expands a kit's floral sub-items into their own priced elements", () => {
     const f = fn({ zoneElements: { stage: [{ name: "Stage Kit", invId: "kit1", qty: 2 }] }, enabledEls: { stage: true } });
     const opts = {
-      ...baseOpts([pRoseWhite]),
+      ...baseOpts([pRose]),
       imsInventory: [{ id: "kit1", name: "Stage Kit", cat: "structure", subItems: [{ itemId: "sub1", qty: 3 }] }, { id: "sub1", name: "Round Fibre Pot", cat: "florals", subCat: "Flower Bunch" }],
     };
     const result = computeFnFloralCost(f, [f], opts);
@@ -192,23 +217,35 @@ describe("computeFnFloralCost — core per-element resolution (unaffected by the
   });
 
   it("computes billed income only when resolveRcRate is supplied", () => {
-    const rc = { name: "Rose White", cat: "florals", sub: "Flower Bunch" };
-    const f = fn({ zoneElements: { stage: [elWhite(10)] }, enabledEls: { stage: true } });
+    const rc = { name: "Rose", cat: "florals", sub: "Flower Bunch" };
+    const f = fn({ zoneElements: { stage: [elRose(10)] }, enabledEls: { stage: true } });
     const resolveRcRate = () => ({ realRate: 500, artRate: 300 });
-    const withIncome = computeFnFloralCost(f, [f], { ...baseOpts([pRoseWhite]), rcItems: [rc], resolveRcRate });
-    expect(withIncome.income.real).toBeCloseTo(10 * 1 * 500, 5); // realPct:100 on elWhite -> realFrac 1
-    const withoutIncome = computeFnFloralCost(f, [f], { ...baseOpts([pRoseWhite]), rcItems: [rc] });
+    const withIncome = computeFnFloralCost(f, [f], { ...baseOpts([pRose]), rcItems: [rc], resolveRcRate });
+    expect(withIncome.income.real).toBeCloseTo(10 * 1 * 500, 5); // realPct:100 on elRose -> realFrac 1
+    const withoutIncome = computeFnFloralCost(f, [f], { ...baseOpts([pRose]), rcItems: [rc] });
     expect(withoutIncome.income).toEqual({ real: 0, art: 0 });
   });
 });
 
 describe("computeFnRawFlowerUsage", () => {
   it("aggregates raw (uncredited) real and artificial need per exact flower id, ignoring reuse entirely", () => {
-    const f = fn({ zoneElements: { stage: [{ name: "Rose White", patternId: "p_rose_white", qty: 10, realPct: 30 }] }, enabledEls: { stage: true } });
-    const usage = computeFnRawFlowerUsage(f, baseOpts([pRoseWhite]));
-    const u = usage.get("rose_white");
+    const f = fn({ zoneElements: { stage: [{ name: "Rose", patternId: "p_rose", qty: 10, realPct: 30 }] }, enabledEls: { stage: true } });
+    const usage = computeFnRawFlowerUsage(f, baseOpts([pRose]));
+    const u = usage.get("rose");
     expect(u.realQty).toBeCloseTo(10 * 0.3, 5);
     expect(u.artUnits).toBeCloseTo(10 * 0.7, 5);
+  });
+
+  it("resolves each flower's colour from colorPrefsForFn, for the reuse credit to match against", () => {
+    const f = fn({ zoneElements: { stage: [{ name: "Rose", patternId: "p_rose", qty: 10, realPct: 100 }] }, enabledEls: { stage: true } });
+    const usage = computeFnRawFlowerUsage(f, { ...baseOpts([pRose]), colorPrefsForFn: { rose: pick("White") } });
+    expect(usage.get("rose").colour).toBe("White");
+  });
+
+  it("colour is null when nobody picked one — never assumed", () => {
+    const f = fn({ zoneElements: { stage: [{ name: "Rose", patternId: "p_rose", qty: 10, realPct: 100 }] }, enabledEls: { stage: true } });
+    const usage = computeFnRawFlowerUsage(f, baseOpts([pRose]));
+    expect(usage.get("rose").colour).toBe(null);
   });
 });
 
