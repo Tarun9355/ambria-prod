@@ -310,8 +310,12 @@ export default function IMS() {
     for (const it of studioRcItems) {
       // Map a rate-card item's category id → label. If the id isn't in the live cats yet
       // (orphan / freshly-added before the cats blob synced), surface it under its raw id so its
-      // sub-cats are NEVER dropped — being dynamic means losing nothing.
-      const label = catById[it.cat] || it.cat;
+      // sub-cats are NEVER dropped — being dynamic means losing nothing. An id shaped like an
+      // auto-generated one ("cat_xxxxx") specifically means its OWN category row was since
+      // deleted/renamed with these items never reassigned — there's no real name left to show, so
+      // it reads as "Uncategorized" (pooling with any other such orphan) rather than leaking a raw
+      // database id into a category picker. Anything else unresolved still surfaces as itself.
+      const label = catById[it.cat] || (/^cat_[a-z0-9]+$/i.test(String(it.cat || "")) ? "Uncategorized" : it.cat);
       if (!label) continue;
       pushLabel(label);
       if (!byCat[label]) byCat[label] = new Set();
