@@ -4875,10 +4875,17 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                   </div>
                   {fabricReqRows.length === 0 ? (
                     <div className="px-4 py-5 text-center text-xs text-gray-400">{sel?.fabricPlan ? "No fabric required for this event." : "No fabric plan synced yet — open Deal Check for this event in Studio."}</div>
-                  ) : fabricReqRows.map(ft => (
-                    <div key={ft.key}>
-                      <div className="px-4 py-1.5 bg-gray-50/60 text-xs font-semibold text-gray-700">{ft.emoji} {ft.label}</div>
-                      <div className="">
+                  ) : fabricReqRows.map((ft, fti) => (
+                    // Liza / Wall Masking / Velvet Curtains are three genuinely different fabric
+                    // stocks (own stock pool, own unit — kg vs pcs) — a thin tinted label row used
+                    // to be the only thing telling them apart, easy to miss scrolling a long list.
+                    // A real divider + a bolder, uppercase header reads as "new section", not just
+                    // another row.
+                    <div key={ft.key} className={fti > 0 ? "border-t-4 border-gray-100" : ""}>
+                      <div className="px-4 py-2 bg-gray-100 text-xs font-bold text-gray-700 uppercase tracking-wide flex items-center gap-1.5">
+                        <span className="text-sm">{ft.emoji}</span>{ft.label}
+                      </div>
+                      <div className="divide-y divide-gray-50">
                         {ft.rows.map((r, i) => (
                           /* Four fixed columns need ~430px. Below sm the colour takes its own
                              line and need / have / short wrap under it left-aligned — the

@@ -12,7 +12,7 @@ import {
 } from "../../../lib/studio/taxonomy";
 import { paletteNames, addPaletteInline } from "../../../lib/studio/colours";
 import PaletteQuickAdd from "../../../components/studio/PaletteQuickAdd.jsx";
-import { trussRowCost, calcZoneFabricCost, guestFabricMultiplier, zoneTrussStandingDiscountDetail, repeatCatFor, parseFlowerPalette, stringifyFlowerPalette, parseFabricPalette, stringifyFabricPalette, isDirectMandiElement } from "../../../lib/studio/pricing";
+import { trussRowCost, calcZoneFabricCost, guestFabricMultiplier, zoneTrussStandingDiscountDetail, repeatCatFor, parseFlowerPalette, stringifyFlowerPalette, parseFabricPalette, stringifyFabricPalette, isDirectMandiElement, anchorsForPaletteByMaterial } from "../../../lib/studio/pricing";
 import { paletteSearch, paletteMatches } from "../../../components/studio/filterUI.jsx";
 import { resolveTrussConfig } from "../../../lib/studio/pricing";
 import { qtyUsedElsewhereInBuild } from "../../../lib/studio/dealAvailability";
@@ -147,7 +147,7 @@ const cloneTrussRow = (src = {}) => ({
 // titled "Truss N", carrying a remove control and no Add button of its own. Reusing the component
 // rather than writing a cut-down row is what keeps an added truss genuinely equal to the first —
 // front extension, the auto Box/Single-U line, custom ceiling and its own masking all included.
-export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, showCosts, isDark, border, textP, textS, accent, customMaskingField, maskOpts = [], trussRates, structRates, nested = false, title, onRemove, rowIdx, trussInv, venueTruss, scale = 1, guestDiscPct = 0 }) {
+export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, showCosts, isDark, border, textP, textS, accent, customMaskingField, maskOpts = [], trussRates, structRates, nested = false, title, onRemove, rowIdx, trussInv, venueTruss, scale = 1, guestDiscPct = 0, maskingColourLabel = null }) {
   // What THIS truss structure costs. Same function the cost engine sums over every row, so the
   // figure on the card and the figure in the bill cannot drift.
   const rowCost = trussRowCost(zc, structRates || { trussRates });
@@ -502,7 +502,17 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                           material here clears any custom item; clicking the ALREADY-selected material
                           turns it off rather than re-picking the same thing. */}
                       <span style={{fontSize:9,fontWeight:700,color:textS,textTransform:"uppercase",letterSpacing:0.5,marginRight:2}}>Default:</span>
-                      {maskOpts.map(o=><button key={o.id} onClick={()=>sZ({mkT:zc.mkT===o.id?"":o.id,customMaskingItemId:null})} style={optPill(zc.mkT===o.id)}>{zc.mkT===o.id&&<IconCheck size={9}/>}{o.l}{showCosts?` ₹${o.r}`:""}</button>)}
+                      {maskOpts.map(o=>{
+                        // The colour only applies to the "fabric" masking material (o.id — see
+                        // DEFAULT_MASKING_RATES, lib/studio/taxonomy.js) — that's the one actually
+                        // drawn from IMS's Masking fabric stock, so it's the only one a Fabric
+                        // Palette "use for masking" tag can mean anything for. Acrylic/Flex/Vinyl
+                        // have no fabric-palette colour to show.
+                        const showColour = o.id==="fabric" && zc.mkT===o.id && maskingColourLabel;
+                        return <button key={o.id} onClick={()=>sZ({mkT:zc.mkT===o.id?"":o.id,customMaskingItemId:null})} style={optPill(zc.mkT===o.id)} title={showColour?`Masking colour from the Fabric Palette: ${maskingColourLabel}`:undefined}>
+                          {zc.mkT===o.id&&<IconCheck size={9}/>}{o.l}{showCosts?` ₹${o.r}`:""}{showColour?<span style={{marginLeft:5,fontWeight:600,opacity:0.8}}>· {maskingColourLabel}</span>:null}
+                        </button>;
+                      })}
                       {customMaskingField(k, zc, false, rowIdx)}
                     </div>
                     <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
@@ -545,10 +555,10 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
 //
 // calcStructCost has always summed zc.extraTrussRows, and Deal Check, the truss engine and the
 // stock reservation all read them — Build was simply the one place with no way to create one.
-export function TrussStack({ S, customCeilingField, customMaskingField, k, zc, zm, st, sZ, sD, fmt, showCosts, isDark, border, textP, textS, accent, maskOpts, trussRates, structRates, trussInv, venueTruss, scale = 1, guestDiscPct = 0 }) {
+export function TrussStack({ S, customCeilingField, customMaskingField, k, zc, zm, st, sZ, sD, fmt, showCosts, isDark, border, textP, textS, accent, maskOpts, trussRates, structRates, trussInv, venueTruss, scale = 1, guestDiscPct = 0, maskingColourLabel = null }) {
   const rows = zc.extraTrussRows || [];
   const write = (next) => sZ({ extraTrussRows: next });
-  const shared = { S, customCeilingField, customMaskingField, k, zm, st, fmt, showCosts, isDark, border, textP, textS, accent, maskOpts, trussRates, structRates, trussInv, venueTruss, scale, guestDiscPct };
+  const shared = { S, customCeilingField, customMaskingField, k, zm, st, fmt, showCosts, isDark, border, textP, textS, accent, maskOpts, trussRates, structRates, trussInv, venueTruss, scale, guestDiscPct, maskingColourLabel };
   return (<>
     <TrussCard {...shared} zc={zc} sZ={sZ} sD={sD} title={rows.length ? "Truss 1" : "Truss"} />
     {rows.map((row, ri) => {
@@ -4705,6 +4715,12 @@ undefined
             // an explicit "— None —" pick (or any other material) is never overwritten.
             const sFD=(d,v)=>{setActiveZones([]);setZoneConfig(p=>{const cur=p[k]||{};return {...p,[k]:{...cur,cpT:cur.cpT||defaultCarpetMatId(imsCarpetMaterials),floorDims:{...(cur.floorDims||{}),[d]:parseFloat(v)||0}}};});};
             const fd=zc.floorDims||{};
+            // The Fabric Palette's own "Use for" tagging (masking 🧱) says which colour(s) masking
+            // should actually draw from — shown next to the Default masking material's rate so a
+            // salesperson building a truss can see what colour it'll be in, not just what it costs.
+            // Same resolver Deal Check's own auto-fill (DCTrussTab/StudioModals) already uses.
+            const activeFabricPaletteStr=activeFnIdx===0?(clientPalette||"Custom"):(extraFunctions[activeFnIdx-1]?.palette||"Custom");
+            const maskingColourLabel=anchorsForPaletteByMaterial(imsPaletteCatalogue,activeFabricPaletteStr,"masking").join(", ")||null;
             return(<div style={{background:isDark?"#12121F":"#F9F9F6",borderRadius:10,padding:"10px 14px",marginBottom:10,border:`1px solid ${border}`}}>
               {/* The "Zone Structure" header row is gone. Its label named a panel you had already
                   opened, and its Truss + Platform + Carpet breakdown and roll-up restated what the
@@ -4718,7 +4734,7 @@ undefined
                   DCTrussTab still shows that detailed breakdown for its own purposes, unaffected. */}
               {zoneSection[k]==="truss"&&<TrussStack S={S} customCeilingField={customCeilingField} k={k} zc={zc} zm={zm} st={st} sZ={sZ} sD={sD} fmt={fmt} showCosts={showCosts}
                 isDark={isDark} border={border} textP={textP} textS={textS} accent={accent}
-                customMaskingField={customMaskingField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} scale={zoneScaleVal(k)} guestDiscPct={structDiscountFor(zc,aVenue)?.truss?25:0} />}
+                customMaskingField={customMaskingField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} scale={zoneScaleVal(k)} guestDiscPct={structDiscountFor(zc,aVenue)?.truss?25:0} maskingColourLabel={maskingColourLabel} />}
               {/* ── PLATFORM + CARPET → then floor dims ── */}
               {zoneSection[k]==="platform"&&<FloorStack S={S} zc={zc} zm={zm} st={st} sZ={sZ} sFD={sFD} fd={fd} fmt={fmt} showCosts={showCosts}
                 isDark={isDark} border={border} accent={accent} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} scale={zoneScaleVal(k)} openAvailModal={openAvailModal} zoneKey={k} />}
@@ -5216,6 +5232,10 @@ undefined
               const addPrint=()=>writeCfg(cur=>({...cur,prints:[...(cur.prints||[]),{id:"PR"+Date.now()+Math.floor(Math.random()*1000),material:(imsPrintMaterials||[])[0]?.id||"",areaW:0,areaD:0,qty:1,refImageUrl:"",invId:null}]}));
               const removePrint=(pi)=>writeCfg(cur=>({...cur,prints:(cur.prints||[]).filter((_,i)=>i!==pi)}));
               const sectionBox={marginTop:14,borderTop:`1px solid ${border}`,paddingTop:12};
+              // Same resolver as the build card's own truss (see its comment) — this photo still
+              // belongs to the active function, so its masking draws from the same palette.
+              const activeFabricPaletteStr=activeFnIdx===0?(clientPalette||"Custom"):(extraFunctions[activeFnIdx-1]?.palette||"Custom");
+              const maskingColourLabel=anchorsForPaletteByMaterial(imsPaletteCatalogue,activeFabricPaletteStr,"masking").join(", ")||null;
               return <>
                 {!ownsLive&&<div style={{marginTop:14,padding:"8px 12px",borderRadius:9,background:"rgba(201,169,110,0.12)",border:"1px solid rgba(201,169,110,0.45)",fontSize:11.5,color:textP,lineHeight:1.5}}>
                   You're editing this photo's own saved details — not the zone's selected photo, so the build card stays as it is. Save to master writes these to this photo.
@@ -5224,7 +5244,7 @@ undefined
                   {secHead(<IconRuler size={14}/>,"Zone Dimensions","#C9A96E")}
                   <TrussStack S={S} customCeilingField={ownsLive?customCeilingField:noCustomField} k={zk} zc={cfgCur} zm={zm} st={st} sZ={sZ} sD={sD} fmt={fmt} showCosts={showCosts}
                     isDark={isDark} border={border} textP={textP} textS={textS} accent={accent}
-                    customMaskingField={ownsLive?customMaskingField:noCustomField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} scale={scaleFor} guestDiscPct={structDiscountFor(cfgCur,aVenue)?.truss?25:0} />
+                    customMaskingField={ownsLive?customMaskingField:noCustomField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} scale={scaleFor} guestDiscPct={structDiscountFor(cfgCur,aVenue)?.truss?25:0} maskingColourLabel={maskingColourLabel} />
                   <FloorStack S={S} zc={cfgCur} zm={zm} st={st} sZ={sZ} sFD={sFD} fd={fd} fmt={fmt} showCosts={showCosts}
                     isDark={isDark} border={border} accent={accent} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} scale={scaleFor} openAvailModal={ownsLive?openAvailModal:undefined} zoneKey={zk} />
                 </div>
