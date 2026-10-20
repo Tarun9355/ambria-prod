@@ -183,7 +183,9 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
   // making Fabric's own number look inflated next to Drape's identical figure right beside it).
   const ceilingShown = guestDiscPct > 0 ? Math.round(rowCost.ceiling * (1 - guestDiscPct / 100)) : rowCost.ceiling;
   const trussShown = Math.max(0, discountedTruss - ceilingShown);
-  const fabricShown = fabricCost;
+  // Wall-masking fabric pieces belong to the Fabric figure (owner ask: the Masking card shows the
+  // masking price alone), so Fabric = Liza + curtains + wall fabric pieces, and the tile still adds up.
+  const fabricShown = fabricCost + wallPanelCost;
   // ═══ ONE SELECTED-STATE ═══ These three rows previously used a dark outline (material),
   // PINK (drape) and a borderless grey fill (masking). The borderless one was the real problem:
   // unselected options rendered as plain text and did not look clickable. `border` is never
@@ -426,7 +428,7 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                           been computed at all", which is exactly the ambiguity that made a genuine
                           non-zero figure (e.g. on a dims-only, 0-qty truss still billing Liza/curtain)
                           impossible to tell apart from a legitimately-zero one without opening devtools. */}
-                      {showCosts&&<span style={{marginLeft:"auto",fontSize:12,fontWeight:600,color:textP}} title={`Liza + velvet curtains for a ${zc.drapeDensity||"moderate"} drape, ${zc.useNewFabric?"New":"Old"} stock (wall panels are on the Masking card${ceilingShown>0?"; the ceiling panel's own cost is on the Drape card":""})`}>{fmt(fabricShown)}</span>}
+                      {showCosts&&<span style={{marginLeft:"auto",fontSize:12,fontWeight:600,color:textP}} title={`Liza + velvet curtains${wallPanelCost>0?` + wall fabric pieces ${fmt(wallPanelCost)}`:""} for a ${zc.drapeDensity||"moderate"} drape, ${zc.useNewFabric?"New":"Old"} stock${ceilingShown>0?" (the ceiling panel's own cost is on the Drape card)":""}`}>{fmt(fabricShown)}</span>}
                     </div>
                     {/* A bare frame: the truss bills at IMS's "Without fabric" rate and no Liza,
                         curtains or masking pieces are counted (see calcZoneFabric/trussRowCost). */}
@@ -448,7 +450,7 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                           ...(turningOn&&!zc.mkT&&!zc.customMaskingItemId?{mkT:maskOpts[0]?.id||"fabric"}:{}),
                         });
                       })}
-                      {showCosts&&zc.mkOn&&<span style={{fontWeight:600,color:textP,fontSize:11}} title={wallPanelCost>0?`Masking ${fmt(maskingShown)} + wall fabric panels ${fmt(wallPanelCost)}`:undefined}>{fmt(maskingShown + wallPanelCost)}</span>}
+                      {showCosts&&zc.mkOn&&<span style={{fontWeight:600,color:textP,fontSize:11}}>{fmt(maskingShown)}</span>}
                     </div>
                   </div>
               </div>;
