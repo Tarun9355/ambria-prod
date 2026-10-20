@@ -1,5 +1,5 @@
 import { Fragment } from "react";
-import { calcZoneFabric, autoFillFabricAllocation, anchorsForPalette, anchorsForPaletteByMaterial, calcFabricAllocationTotal, zoneTrussStandingDiscountDetail, repeatCatFor } from "../../../../lib/studio/pricing";
+import { calcZoneFabric, autoFillFabricAllocation, anchorsForPalette, anchorsForPaletteByMaterial, calcFabricAllocationTotal, zoneTrussStandingDiscountDetail, repeatCatFor, snapRowDimsForProduction } from "../../../../lib/studio/pricing";
 import { fixedVenueFor } from "../../../../lib/ims/fixedVenues";
 import { findCrossFnReuseSource } from "../../../../lib/studio/crossFnReuse";
 import { TRUSS_ALLOC_SK } from "../../../../lib/studio/keys.js";
@@ -112,9 +112,14 @@ export default function DCTrussTab({ ctx }) {
                       const rows = [zCfg, ...(zCfg.extraTrussRows || [])];
                       const isRepeat = repeatCatFor(zCfg, "truss") || !!(crossFnPrevFn?.enabledEls?.[zk] && crossFnPrevFn?.zoneConfig?.[zk]);
                       return rows.map((row, rowIdx) => {
-                        const pv = calcZoneTrussPreview(row, trussInv);
+                        // Snapped for THIS preview's pillar/beam/joint figures only — never for the
+                        // billed Truss rate or Fabric/Liza cost below, both of which keep reading
+                        // `row` itself (the real entered dims). See snapRowDimsForProduction's own
+                        // comment (pricing.js) for the full reasoning and exact scope.
+                        const snappedRow = snapRowDimsForProduction(row, trussInv);
+                        const pv = calcZoneTrussPreview(snappedRow, trussInv);
                         if (pv && pv.costs) {
-                          const disc = venueTrussHere ? zoneTrussStandingDiscountDetail(row, trussInv, venueTrussHere) : { pillar: 0, beam: 0, total: 0 };
+                          const disc = venueTrussHere ? zoneTrussStandingDiscountDetail(snappedRow, trussInv, venueTrussHere) : { pillar: 0, beam: 0, total: 0 };
                           if (disc.total > 0) {
                             pv.costs.pillarCost = Math.max(0, pv.costs.pillarCost - disc.pillar);
                             pv.costs.beamCost = Math.max(0, pv.costs.beamCost - disc.beam);
@@ -156,7 +161,14 @@ export default function DCTrussTab({ ctx }) {
                         }
                         if (pv?.source === "default-on-forget") anyDefault = true;
                         if (pv?.smartFlag === "red") anyShortage = true;
-                        return { zk, zLabel: rowIdx > 0 ? `${zLabel} (truss #${rowIdx + 1})${isRepeat ? " · ♻️ Repeat (30%)" : ""}` : `${zLabel}${isRepeat ? " · ♻️ Repeat (30%)" : ""}`, pv, row, rowIdx };
+                        // Surfaced next to the joint count below — a silent pillar/beam count that
+                        // doesn't match the entered dims at a glance would read as a bug, not an
+                        // optimization, if nothing on screen said why.
+                        const snapNote = (snappedRow !== row) ? {
+                          fromL: row.dims?.L, toL: snappedRow.dims?.L,
+                          fromW: row.dims?.W, toW: snappedRow.dims?.W,
+                        } : null;
+                        return { zk, zLabel: rowIdx > 0 ? `${zLabel} (truss #${rowIdx + 1})${isRepeat ? " · ♻️ Repeat (30%)" : ""}` : `${zLabel}${isRepeat ? " · ♻️ Repeat (30%)" : ""}`, pv, row, rowIdx, snapNote };
                       });
                     }).filter(x => x.pv && x.pv.source !== "none");
                     return { fn, previews };
@@ -443,7 +455,7 @@ export default function DCTrussTab({ ctx }) {
                               </div>
                             )}
                           </div>
-                          {previews.map(({ zk, zLabel, pv, row, rowIdx }, previewIdx) => {
+                          {previews.map(({ zk, zLabel, pv, row, rowIdx, snapNote }, previewIdx) => {
                             const isInvalid = pv.smartFlag === "red";
                             const topo = pv.topology;
                             const costs = pv.costs;
@@ -488,6 +500,17 @@ export default function DCTrussTab({ ctx }) {
                                     </div>
                                     {topo && <div style={{fontSize:12,lineHeight:1.5,color:INK_2,marginTop:5}}>
                                       Method {topo.method} · {topo.pillarCount} pillar{topo.pillarCount===1?"":"s"} · {topo.beamCount} beam segment{topo.beamCount===1?"":"s"} · {topo.totals?.totalJoints || (topo.pillarCount + topo.beamCount - 1)} joint{((topo.totals?.totalJoints || 0))===1?"":"s"} expected
+                                      {/* snapRowDimsForProduction only ever shrinks, and only within a small
+                                          window — see pricing.js. Surfaced so a pillar/beam count that doesn't
+                                          match the dims typed in Build reads as an optimization, not a bug.
+                                          Billed Truss/Fabric cost are untouched — this line is purely informational. */}
+                                      {snapNote && <span title="This structure is priced and billed at the dims entered in Build — only this production reference (pillars/beams/joints) is optimized for fewer joints">
+                                        {" · "}<span style={{color:"#B45309",fontWeight:600}}>⚡ optimized for fewer joints</span>
+                                        {" "}({[
+                                          snapNote.fromL !== snapNote.toL ? `L ${snapNote.fromL}→${snapNote.toL}ft` : null,
+                                          snapNote.fromW !== snapNote.toW ? `W ${snapNote.fromW}→${snapNote.toW}ft` : null,
+                                        ].filter(Boolean).join(", ")})
+                                      </span>}
                                     </div>}
                                   </div>
                                   {zoneRowTotal > 0 && (
