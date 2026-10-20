@@ -2206,12 +2206,12 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       </div>
     );
   };
-  const renderMpTrace = (t, drivenBy, day) => {
+  const renderMpTrace = (t, drivenBy, day, crewType = "") => {
     if (!t) return null;
     // Any other crew type with per-function traces from Deal Check: same table, its own rows.
     if (t.kind !== "tier2" && Array.isArray(t.byFn) && t.byFn.length) {
       const { cols, timeLabel, shiftOf } = orderFnCols(t.byFn, day);
-      const labHowKey = `labfn|${day?.date || ""}`;
+      const labHowKey = `fn|${crewType}|${day?.date || ""}`;
       const labels = [];
       cols.forEach(c => traceRowsOf(c.trace).forEach(r => { if (!labels.includes(r.label)) labels.push(r.label); }));
       return (
@@ -2235,11 +2235,18 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
             <div className="contents">
               <span className="px-2 py-1 bg-gray-50 text-[13px] text-gray-600 flex items-center gap-1.5" title={t.kind === "labours" ? `${dept}'s own ceiled slice of each function's shared crew — not a dedicated headcount, and not additive across departments` : undefined}>
                 {t.kind === "labours" ? `${dept}'s share per function` : "Crew per function"}
-                {t.kind === "labours" && <button type="button" onClick={() => setLaboursHow(p => ({ ...p, [labHowKey]: !p[labHowKey] }))} className="text-[12px] font-semibold text-blue-600 hover:underline">{laboursHow[labHowKey] ? "hide" : "how?"}</button>}
+                <button type="button" onClick={() => setLaboursHow(p => ({ ...p, [labHowKey]: !p[labHowKey] }))} className="text-[12px] font-semibold text-blue-600 hover:underline">{laboursHow[labHowKey] ? "hide" : "how?"}</button>
               </span>
               {cols.map((c, ci) => <span key={ci} className="px-2 py-1 bg-gray-50 text-[13px] text-center border-l border-gray-100 text-gray-900 font-semibold whitespace-nowrap">{t.kind === "labours" ? deptCrewForFn(c) : c.result}</span>)}
             </div>
           </div>
+          {t.kind !== "labours" && laboursHow[labHowKey] && (
+            <div className="border-t px-2 py-1.5 text-[13px] text-gray-700 space-y-1">
+              <div className="text-[12.5px] text-gray-500">Each function's crew comes from the rows above (Deal Check's rule for this crew type). The day keeps the busiest function's crew, since the same people cover every function that day.</div>
+              {cols.map((c, ci) => <div key={ci}><b className="text-gray-900">{c.fn}</b> ({timeLabel(c)}): <b>{c.result}</b></div>)}
+              <div>Today = busiest function = <b className="text-gray-900">{Math.max(0, ...cols.map(c => Number(c.result) || 0))}</b></div>
+            </div>
+          )}
           {t.kind === "labours" && laboursHow[labHowKey] && (
             <div className="border-t px-2 py-1.5 text-[13px] text-gray-700 space-y-1.5">
               <div className="text-[12.5px] text-gray-500">How each row reads: <b className="text-gray-700">12 ÷ 40 = 0.30</b> — 12 of the item, one labourer handles 40, so it needs 0.30 of a labourer. <b className="text-gray-700">×46 → +1</b> — 46 of a heavy item add 1 extra labourer to the whole event's crew.</div>
@@ -2268,6 +2275,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       const localByFn = (!Array.isArray(t.byFn) && t.perRow && dayFns.length > 1) ? dayFns.map(flowerTraceForFn) : null;
       const rawCols = Array.isArray(t.byFn) && t.byFn.length ? t.byFn : localByFn || [{ fn: drivenBy || "Function", rows: t.rows, result: t.result }];
       const { cols, timeLabel, shiftOf } = orderFnCols(rawCols, day);
+      const t2HowKey = `t2|${crewType}|${day?.date || ""}`;
       const names = [];
       cols.forEach(c => (c.rows || []).forEach(r => { if (!names.includes(r.sub)) names.push(r.sub); }));
       const cellOf = (c, sub) => (c.rows || []).filter(r => r.sub === sub);
@@ -2302,13 +2310,27 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
               </div>
             ))}
             <div className="contents">
-              <span className="px-2 py-1 bg-gray-50 text-[13px] text-gray-600">Crew per function</span>
+              <span className="px-2 py-1 bg-gray-50 text-[13px] text-gray-600 flex items-center gap-1.5">Crew per function
+                <button type="button" onClick={() => setLaboursHow(p => ({ ...p, [t2HowKey]: !p[t2HowKey] }))} className="text-[12px] font-semibold text-blue-600 hover:underline">{laboursHow[t2HowKey] ? "hide" : "how?"}</button>
+              </span>
               {cols.map((c, ci) => <span key={ci} className="px-2 py-1 bg-gray-50 text-[13px] text-center border-l border-gray-100 text-gray-900 font-semibold whitespace-nowrap">{c.result}</span>)}
             </div>
           </div>
+          {/* Deal Check ceils ONCE over a function's summed need (traceOf / calcPpl), never each row —
+              the old "Σ each ⌈need⌉" label described a rule nothing used. */}
           <div className="px-2 py-1 bg-gray-50 border-t text-[13px] text-right text-gray-600">
-            {cols.length > 1 ? <>Today = busiest function = <b className="text-gray-900">{t.result}</b></> : t.perRow ? <>Σ each ⌈need⌉ = <b className="text-gray-900">{t.result}</b></> : <>Σ {(Number(t.need) || 0).toFixed(2)} → ⌈ {Math.ceil(Number(t.need) || 0)} ⌉{t.min > 0 ? <> · max(min {t.min})</> : null} = <b className="text-gray-900">{t.result}</b></>}
+            {cols.length > 1 ? <>Today = busiest function = <b className="text-gray-900">{t.result}</b></> : <>⌈ Σ {(Number(t.need) || 0).toFixed(2)} ⌉{t.min > 0 ? <> · at least {t.min}</> : null} = <b className="text-gray-900">{t.result}</b></>}
           </div>
+          {laboursHow[t2HowKey] && (
+            <div className="border-t px-2 py-1.5 text-[13px] text-gray-700 space-y-1">
+              <div className="text-[12.5px] text-gray-500">How each row reads: <b className="text-gray-700">34 ÷45 = 0.76</b> — 34 of the item, one person handles 45, so it needs 0.76 of a person. A function's rows are added up and rounded up once.</div>
+              {cols.map((c, ci) => {
+                const sum = Math.round((c.rows || []).reduce((acc, r) => acc + (Number(r.need) || 0), 0) * 100) / 100;
+                return <div key={ci}><b className="text-gray-900">{c.fn}</b> ({timeLabel(c)}): rows add up to <b>{sum.toFixed(2)}</b> → rounded up = <b>{Math.ceil(sum)}</b>{t.min > 0 && Math.ceil(sum) < t.min ? <> → at least {t.min}</> : null}{Number(c.result) !== Math.max(Math.ceil(sum), t.min || 0) ? <> → <b>{c.result}</b> (date / venue factors)</> : null} = <b className="text-gray-900">{c.result}</b> crew</div>;
+              })}
+              {cols.length > 1 && <div>Today = busiest function = <b className="text-gray-900">{t.result}</b> — the same people cover every function that day.</div>}
+            </div>
+          )}
         </div>
       );
     }
@@ -2545,7 +2567,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
               )}
               {howOpen && !useLabTable && (
                 <div className="mt-1.5 ml-7 bg-slate-50 ring-1 ring-slate-200 rounded-lg p-2">
-                  {d.trace ? renderMpTrace(d.trace, d.drivenBy, d)
+                  {d.trace ? renderMpTrace(d.trace, d.drivenBy, d, r.type)
                     : <div className="text-[13px] text-gray-500">{d.phase === "minusOne" ? "⏮️ −1 setup — full crew staged early (peak of all functions)." : d.phase === "dismantle" ? "🧹 dismantle day — crew carried from the event." : "⏸️ gap day — crew carried from the previous day."}</div>}
                   {d.trace && Number(d.trace.result) > 0 && Number(d.trace.result) < Number(d.count) && (
                     <div className="text-[13px] text-amber-600 mt-1">🔼 Today only needs {d.trace.result}, but crew is kept at {d.count} — carried over from a busier earlier day (crew never drops mid-event, only grows).</div>
