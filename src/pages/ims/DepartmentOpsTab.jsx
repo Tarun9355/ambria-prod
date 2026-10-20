@@ -4960,6 +4960,17 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                     <span className="text-sm font-semibold text-gray-800">🧵 Fabric required vs available <span className="text-xs font-normal text-gray-400">— for this event</span></span>
                     <span className="text-xs text-gray-400">Available = Old + New stock</span>
                   </div>
+                  {/* The Fabric Palette picked in Build per function (fn.fnPalette) — synced into
+                      functionsDetail so ops can see the colour scheme the figures above are sourcing
+                      against, without re-deriving it from each resolved fabric type's own colour. */}
+                  {mpFns.some(f => f.fabricPalette) && (
+                    <div className="px-4 py-2 bg-indigo-50/60 border-t border-indigo-100 text-xs text-indigo-800 flex flex-wrap gap-x-4 gap-y-1">
+                      <span className="font-semibold text-indigo-900">🎨 Fabric Palette:</span>
+                      {mpFns.filter(f => f.fabricPalette).map((f, i) => (
+                        <span key={i}><b>{f.type || `Function ${i + 1}`}</b>: {f.fabricPalette}</span>
+                      ))}
+                    </div>
+                  )}
                   {fabricReqRows.length === 0 ? (
                     <div className="px-4 py-5 text-center text-xs text-gray-400">{sel?.fabricPlan ? "No fabric required for this event." : "No fabric plan synced yet — open Deal Check for this event in Studio."}</div>
                   ) : fabricReqRows.map((ft, fti) => (
@@ -5549,6 +5560,17 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                   const variance = mandiActualReal - projectedTotal;
                   return (
                     <div className="space-y-2">
+                      {/* The Flower Palette picked in Build per function (fn.fnFlowerPalette) — synced
+                          into functionsDetail. This is what each flower's own colour (shown further
+                          below, per-mandi-row) is actually being matched/defaulted against. */}
+                      {mpFns.some(f => f.flowerPalette) && (
+                        <div className="px-3 py-1.5 rounded-lg text-[10px] text-indigo-800 bg-indigo-50 border border-indigo-100 flex flex-wrap gap-x-3 gap-y-0.5">
+                          <span className="font-semibold text-indigo-900">🎨 Flower Palette:</span>
+                          {mpFns.filter(f => f.flowerPalette).map((f, i) => (
+                            <span key={i}><b>{f.type || `Function ${i + 1}`}</b>: {f.flowerPalette}</span>
+                          ))}
+                        </div>
+                      )}
                       {/* Ops view — FLORAL COST (what ops spends to source flowers). Client billing is
                           intentionally NOT shown here — ops only needs the real mandi + artificial spend
                           and how each is derived. */}

@@ -1759,6 +1759,11 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                           className={"px-2 py-1 rounded-lg text-[10px] font-semibold border " + (pat?.artificialIncluded ? "bg-indigo-600 text-white border-indigo-600" : "bg-white text-gray-500 border-gray-300 hover:bg-gray-50")}>
                           🧵 Artificial included?
                         </button>
+                        <button onClick={() => mutatePattern(studioItem, (p) => ({ ...p, taggable: p.taggable === false ? true : false }))}
+                          title="When on (default), this recipe can be found and added directly from the + Add Element search, in Build and everywhere else it appears. Turn off for a recipe meant only as a sub-component of something else, never added on its own."
+                          className={"px-2 py-1 rounded-lg text-[10px] font-semibold border " + (pat?.taggable !== false ? "bg-indigo-600 text-white border-indigo-600" : "bg-white text-gray-500 border-gray-300 hover:bg-gray-50")}>
+                          🔍 Taggable
+                        </button>
                         <span className="ml-auto flex items-center gap-2">
                           {!hasRecipe && <span className="text-[10px] text-amber-600 italic">Empty recipe</span>}
                           {hasRecipe && <span className="text-[10px] text-green-600">✓ Recipe set</span>}
