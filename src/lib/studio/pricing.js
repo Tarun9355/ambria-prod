@@ -9,6 +9,9 @@ import { CARPET_OFF, trussRateFor, maskingRateFor, trussBaseArea } from "./taxon
 // trussRowCost prices a custom ceiling / masking panel off a real IMS inventory item, so it needs
 // the same valuation the rest of the app uses rather than a second opinion on what an item costs.
 import { priceForInvItem } from "../ims/helpers.js";
+// The real beam-stock-aware joint solver, reused by snapRowDimsForProduction below instead of a
+// second hand-rolled "clean span" table — see that function's own comment.
+import { resolveBeamSegment } from "../ims/trussEngine.js";
 export { resolveMandiFlower };
 
 // One shared resolver for "is THIS pricing category of a zone repeat-discounted". Build's own
@@ -407,6 +410,67 @@ export const calcZoneTrussPreview = (zc, trussInv) => {
 
   return out;
 };
+
+// ─── Deal Check Truss tab — "use minimum joints" dimension snap (owner ask, 2026-10-20) ───────
+// Salespeople type round numbers (50x50) that don't divide cleanly into standard beam stock once
+// pillar width is subtracted, forcing more joints/cuts than the span actually needs. Build already
+// shows a passive "try 47ft" tip next to the input, but almost nobody acts on it.
+//
+// This picks the best span AT OR BELOW whatever was entered — NEVER larger, since growing the
+// footprint risks not fitting the venue — within a small shrink window, by reusing the real
+// beam-stock-aware joint solver (resolveBeamSegment, lib/ims/trussEngine.js — the same one IMS's
+// own stock allocation already uses) rather than a second hand-rolled "clean span" table, so this
+// always matches whatever beam sizes / pillar width / max span IMS has actually configured instead
+// of assuming a fixed set that silently goes stale if those ever change.
+//
+// Deliberately narrow in scope: snapRowDimsForProduction is called ONLY from the Deal Check Truss
+// tab's own preview (DCTrussTab.jsx), for its pillar/beam/joint reference display and the
+// fixed-venue standing-discount lookup that reads the same preview. It must never be used for the
+// billed Truss sqft rate (trussRowCost/trussBaseArea — unaffected, still reads the real dims),
+// Fabric/Liza cost (calcZoneFabricCost — unaffected, same reason), or Build's own display (which
+// must keep showing exactly what the salesperson typed).
+const CLEAN_SPAN_MAX_SHRINK_FT = 5; // same tolerance window Build's own "try Nft" tip already uses
+function pickCleanSpan(span, trussInvForMat, engSettings) {
+  if (!(span > 0)) return span;
+  const eng = engSettings || {};
+  const maxSpan = eng.maxSpanFt || 30;
+  const pillarWidth = eng.pillarWidthFt || 0.75;
+  const pillarCountForSpan = (s) => 2 + Math.max(0, Math.ceil(s / maxSpan) - 1);
+  // A "shortage" result (resolveBeamSegment couldn't find any combo within its own 1ft-gap
+  // tolerance) falls back to a single undersized piece with a misleadingly low joint count — that
+  // is a BAD placement, not a genuinely clean one, so it's scored as Infinity rather than trusted
+  // at face value. Otherwise a span that's already unresolvable at its own entered size would look
+  // artificially "perfect" (0 joints) and block every real improvement a smaller span could offer.
+  const totalJointsFor = (s) => {
+    const pillars = pillarCountForSpan(s);
+    const segments = Math.max(1, pillars - 1);
+    const segLen = Math.max(0, s - pillars * pillarWidth) / segments;
+    const r = resolveBeamSegment(segLen, trussInvForMat);
+    return { joints: r.shortage ? Infinity : (r.joints || 0) * segments, shortage: !!r.shortage };
+  };
+  let best = { span, ...totalJointsFor(span) };
+  // Only ever test SMALLER spans (descending from the original) — the first candidate found with
+  // fewer joints than the current best wins, so ties naturally resolve to the smallest shrink.
+  for (let s = span - 0.5; s >= Math.max(0.5, span - CLEAN_SPAN_MAX_SHRINK_FT); s -= 0.5) {
+    const cand = totalJointsFor(s);
+    if (cand.joints < best.joints) best = { span: s, ...cand };
+  }
+  return best.span;
+}
+// A per-row clone with L/W snapped to their own cleanest-joint span — H, trussQty, material,
+// masking and everything else untouched. See the block comment above for exactly where this may
+// (and must not) be used.
+export function snapRowDimsForProduction(row, trussInv) {
+  if (!row?.dims) return row;
+  const mat = trussInvForMaterial(trussInv, row.trussMaterial);
+  const eng = mat?.settings || {};
+  const d = row.dims;
+  const L = parseFloat(d.L) || 0, W = parseFloat(d.W) || 0;
+  const snappedL = L > 0 ? pickCleanSpan(L, mat, eng) : L;
+  const snappedW = W > 0 ? pickCleanSpan(W, mat, eng) : W;
+  if (snappedL === L && snappedW === W) return row;
+  return { ...row, dims: { ...d, L: snappedL, W: snappedW } };
+}
 
 // Fixed-venue standing discount for ONE zone's truss — bridges two genuinely different pricing
 // models. The zone's actually-BILLED truss cost (trussRowCost, below) is a flat ₹/sqft-by-shape
