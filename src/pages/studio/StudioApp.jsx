@@ -11718,7 +11718,7 @@ export default function StudioApp() {
     dcPhotoOverrides, setDcPhotoOverrides, dcSkipped, setDcSkipped, dcProductionAccepted, setDcProductionAccepted, dcManualItems, setDcManualItems,
     dcManualSearch, setDcManualSearch, dcDedupOverrides, setDcDedupOverrides, dcBlockedFnOpen, setDcBlockedFnOpen, dcBlockedSubOpen, setDcBlockedSubOpen,
     dcFloralExpanded, setDcFloralExpanded, dcFloralUnmatchedExpanded, setDcFloralUnmatchedExpanded, dcResolved, setDcResolved, dcResolving, setDcResolving, dcAbortRef, setDcAbortRef,
-    dcFullPageOpen, setDcFullPageOpen, closeDealCheck, syncDeptOpsHeadless, finishDcHeadless, dcCards, setDcCards, dcZoneState, setDcZoneState, dcKitEdits, setDcKitEdits, dcCarpetPick, setDcCarpetPick, dcCarpetSplit, setDcCarpetSplit,
+    dcFullPageOpen, setDcFullPageOpen, closeDealCheck, syncDeptOpsHeadless, finishDcHeadless, dcCards, setDcCards, dcZoneState, setDcZoneState, dcKitEdits, setDcKitEdits, buildElCardKey, dcCarpetPick, setDcCarpetPick, dcCarpetSplit, setDcCarpetSplit,
     dcCarpetSearch, setDcCarpetSearch, dcDesiredMargin, setDcDesiredMargin, dcRunCounter, setDcRunCounter, dcCache, setDcCache, dcGenerating, setDcGenerating,
     dcSaveBaselineRef, dcConflictWarnedAtRef, dcStateReadyForClientRef,
     dcGenStatus, setDcGenStatus, dcActiveTab, setDcActiveTab, dcShowAllFns, setDcShowAllFns, dcCollapsedFnBlocks, setDcCollapsedFnBlocks, dcMpOverrides, setDcMpOverrides, dcMpWinCount, setDcMpWinCount, dcMpIncludeMinusOne, setDcMpIncludeMinusOne,

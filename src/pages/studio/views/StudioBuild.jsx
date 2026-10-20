@@ -809,6 +809,8 @@ export default function StudioBuild({ ctx }) {
     clientPalette, setClientPalette, clientFlowerPalette, setClientFlowerPalette,
     studioFloralData, sharedFloralSettings, venueParents, loadAvailability, getStudioAvailable, activeBlocksForDate, openAvailModal,
     activeFnIdx, collectAllFunctionData, rcSubcatFactors, rcFactorByKey, rcFloralModeByKey,
+    // Build's kit edits also land in Deal Check's own per-card copy (see the kit editor below).
+    setDcKitEdits, buildElCardKey,
     // palette / colour catalogues
     imsPaletteCatalogue, imsColourCatalogue, setImsPaletteCatalogue, savePaletteData,
     // venues (for named-venue correction + the zone-photo Venue pill filter)
@@ -4593,7 +4595,15 @@ undefined
                     {isKit&&<KitComponentsEditor
                       item={invItem}
                       overrides={el.kitOverrides}
-                      onChange={(next)=>{const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],kitOverrides:next};setZoneElements(p=>({...p,[k]:elems}));}}
+                      onChange={(next)=>{const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],kitOverrides:next};setZoneElements(p=>({...p,[k]:elems}));
+                        // Deal Check keeps its own copy of this kit's parts (dcKitEdits), seeded from
+                        // Build only once, at its first Generate. It is what goes to IMS (Dept Ops'
+                        // kit parts, the PDF's parts list) and what Deal Check writes BACK into Build —
+                        // so a part swapped here afterwards (Golden pot → Orange pot) never reached the
+                        // dept head, and could be undone the next time Deal Check opened. The edit is
+                        // copied across the moment it is made; a reset (undefined) clears it to null,
+                        // Deal Check's "back to the kit's default" marker.
+                        if(setDcKitEdits&&buildElCardKey&&el.invId){const ck=buildElCardKey(k,el.name||"",idx);const fi=activeFnIdx||0;setDcKitEdits(prev=>({...prev,[fi]:{...(prev?.[fi]||{}),[ck]:Array.isArray(next)?next:null}}));}}}
                       imsInventory={imsInventory}
                       // sharedFloralSettings (StudioApp.jsx), not the raw dealCheckData||studioFloralData
                       // fallback — that older pattern prefers dealCheckData the instant Deal Check has
