@@ -2184,12 +2184,12 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           </div>
           {rows.map((row, ri) => (
             <div className="contents" key={ri}>
-              <div className="flex items-baseline gap-1.5 min-w-0 overflow-hidden px-2 py-0.5 text-[13px] text-gray-700">
+              <div className={"flex items-baseline gap-1.5 min-w-0 overflow-hidden px-2 py-1 text-[13px] text-gray-700 border-t border-gray-200" + (ri % 2 ? " bg-gray-50" : "")}>
                 <span className="truncate" title={row.label}>{row.label}</span>
                 {row.how && <button type="button" onClick={() => setLaboursHow(p => ({ ...p, [howKey]: !p[howKey] }))} className="shrink-0 text-[12px] font-semibold text-blue-600 hover:underline">{laboursHow[howKey] ? "hide" : "how?"}</button>}
                 <span aria-hidden="true" className="flex-1 min-w-2 border-b border-dotted border-gray-300 mb-[3px]" />
               </div>
-              <span className={"px-2 py-0.5 text-[13px] text-center border-l border-gray-100 whitespace-nowrap font-semibold " + (row.warn ? "text-amber-600" : "text-gray-800")}>{row.value}</span>
+              <span className={"px-2 py-1 text-[13px] text-center border-l border-t border-gray-200 whitespace-nowrap font-semibold " + (ri % 2 ? "bg-gray-50 " : "") + (row.warn ? "text-amber-600" : "text-gray-800")}>{row.value}</span>
             </div>
           ))}
           <div className="contents">
@@ -2235,12 +2235,12 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
             </div>
             {labels.map((lb, ri) => (
               <div className="contents" key={ri}>
-                <div className="flex items-baseline gap-1.5 min-w-0 overflow-hidden px-2 py-0.5 text-[13px] text-gray-700">
+                <div className={"flex items-baseline gap-1.5 min-w-0 overflow-hidden px-2 py-1 text-[13px] text-gray-700 border-t border-gray-200" + (ri % 2 ? " bg-gray-50" : "")}>
                   <span className="truncate" title={lb}>{lb}</span>
                   <span aria-hidden="true" className="flex-1 min-w-2 border-b border-dotted border-gray-300 mb-[3px]" />
                 </div>
                 {cols.map((c, ci) => { const r = traceRowsOf(c.trace).find(x => x.label === lb); return (
-                  <span key={ci} className="px-2 py-0.5 text-[13px] text-center border-l border-gray-100 whitespace-nowrap">{r ? <b className="text-gray-800">{r.value}</b> : <span className="text-gray-300">—</span>}</span>
+                  <span key={ci} className={"px-2 py-1 text-[13px] text-center border-l border-t border-gray-200 whitespace-nowrap" + (ri % 2 ? " bg-gray-50" : "")}>{r ? <b className="text-gray-800">{r.value}</b> : <span className="text-gray-300">—</span>}</span>
                 ); })}
               </div>
             ))}
@@ -2301,14 +2301,14 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
             </div>
             {names.map((sub, ri) => (
               <div className="contents" key={ri}>
-                <div className="flex items-baseline gap-1.5 min-w-0 overflow-hidden px-2 py-0.5 text-[13px] text-gray-700">
+                <div className={"flex items-baseline gap-1.5 min-w-0 overflow-hidden px-2 py-1 text-[13px] text-gray-700 border-t border-gray-200" + (ri % 2 ? " bg-gray-50" : "")}>
                   <span className="truncate" title={sub}>{sub}</span>
                   <span aria-hidden="true" className="flex-1 min-w-2 border-b border-dotted border-gray-300 mb-[3px]" />
                 </div>
                 {cols.map((c, ci) => {
                   const rs = cellOf(c, sub);
                   return (
-                    <span key={ci} className="px-2 py-0.5 text-[13px] text-center border-l border-gray-100 whitespace-nowrap">
+                    <span key={ci} className={"px-2 py-1 text-[13px] text-center border-l border-t border-gray-200 whitespace-nowrap" + (ri % 2 ? " bg-gray-50" : "")}>
                       {rs.length ? rs.map((r, k) => (
                         <span key={k} className={k ? "block" : ""}>
                           <b className="text-gray-800">{r.count}</b>
