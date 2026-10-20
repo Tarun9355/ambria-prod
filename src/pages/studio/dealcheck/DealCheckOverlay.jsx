@@ -95,7 +95,7 @@ import { heavyExtraLabour, eventTimingMultFor, SIT_MULT_DEFAULTS } from "../../.
 import { deptMpReconciled, itemImsSubcat, lookupBySubcat, itemDimsText, walkKitUnits } from "../../../lib/ims/helpers";
 import { rentalSplit, availableAtVenue, isStandingAt, fixedVenueFor, standingReductionBySubcat, fixedVenueDealDiscount, reservedByVenueToday, venueSlackFor } from "../../../lib/ims/fixedVenues";
 import { calcZoneFabric, autoFillFabricAllocation, anchorsForPalette, anchorsForPaletteByMaterial, resolveTrussConfig, zoneTrussStandingDiscount, repeatCatFor, freshFnForManpower , dcFabricMultOf } from "../../../lib/studio/pricing";
-import { carpetPricingFor, CARPET_OFF } from "../../../lib/studio/taxonomy";
+import { carpetPricingFor, carpetRateForRow, CARPET_OFF } from "../../../lib/studio/taxonomy";
 import { qtyUsedElsewhereInDealCheck, netOwnReservedBlocksLive } from "../../../lib/studio/dealAvailability";
 import { isHiddenSubcat, oosCostPctFor, canFulfillShortfall } from "../../../lib/rateCard";
 import { findCrossFnReuseSource, computeFnInvQty, groupConsecutiveFns } from "../../../lib/studio/crossFnReuse";
@@ -281,6 +281,34 @@ export default function DealCheckOverlay({ ctx }) {
   // one missed would leave the sidebar and the panel disagreeing about which function is open.
   const activeFnIdx = fnPending ?? activeFnIdxCommitted;
 
+  // ── CARPET SHORT ── (same rule as Build's Platform card)
+  // A function's carpeted floors in page order (dragged zone order first, then the admin order;
+  // inside a zone floor 1, then its extra platforms). Each picked carpet's free sqft (cpInvFree,
+  // recorded when it was picked) is handed out in that order; what a floor can't get is short.
+  // Returns { [zoneKey]: shortSqft } for the zone's floors added together.
+  const carpetShortByZone = (fn) => {
+    const zc = fn?.zoneConfig || {}, en = fn?.enabledEls || {};
+    const all = [...(zoneKeys || []), ...((fn?.customZones || []).map(c => c.id))];
+    const rank = {}; all.forEach((k, i) => { rank[k] = i; });
+    const zo = Array.isArray(fn?.zoneOrder) ? fn.zoneOrder : [];
+    zo.forEach((k, i) => { rank[k] = i - zo.length; });
+    const keys = Object.keys(zc).filter(k => en[k] && zc[k]).sort((a, b) => (rank[a] ?? 1e6) - (rank[b] ?? 1e6));
+    const used = {}, out = {};
+    keys.forEach(k => {
+      const z = zc[k];
+      [z, ...(z.extraPlatformRows || [])].forEach(r => {
+        if (!r || r.cpT === CARPET_OFF || !r.cpInvId || r.cpInvFree == null) return;
+        const f = r.floorDims || {};
+        const area = (Number(f.L) || 0) * (Number(f.W) || 0);
+        if (!(area > 0)) return;
+        const before = used[r.cpInvId] || 0;
+        used[r.cpInvId] = before + area;
+        const short = Math.min(area, Math.max(0, before + area - (Number(r.cpInvFree) || 0)));
+        if (short > 0) out[k] = (out[k] || 0) + short;
+      });
+    });
+    return out;
+  };
   const effKitRental = (item, fnIdx, cardKey) => {
     if (!item || !Array.isArray(item.subItems) || !item.subItems.length) return imsField.rentalCost(item);
     const edited = dcKitEdits?.[fnIdx]?.[cardKey];
@@ -3031,8 +3059,10 @@ export default function DealCheckOverlay({ ctx }) {
                                   // What the rollup actually charges — area × the zone's carpet
                                   // material rate, the same figure Build shows. Displayed here so the
                                   // card cannot state one number while the total is built on another.
-                                  const cPrice = carpetPricingFor(zc.cpT, imsCarpetMaterials);
+                                  // The rate the guest is billed (a picked carpet's own rental, else the material).
+                                  const cPrice = carpetRateForRow({ cpT: zc.cpT, cpInvId: pickedId }, imsCarpetMaterials, dcInventoryCache);
                                   const chargedCarpet = neededSqft * (cPrice.rate || 0);
+                                  const carpetShort = Math.round(carpetShortByZone(fns[fnIdx])[zk] || 0);
                                   const setPick = (id)=> {
                                     const it = id ? dcInventoryCache.find(x=>x.id===id) : null;
                                     const apply = (z) => ({ ...(z || {}), cpInvId: id || null, cpInvName: it?.name || "" });
@@ -3102,12 +3132,13 @@ export default function DealCheckOverlay({ ctx }) {
                                     },
                                   );
                                   return (
-                                    <div style={{padding:"10px 12px",borderRadius:11,background:CARD_BG,border:`1px solid ${CARD_BORDER}`,display:"flex",flexDirection:"column",gap:8}}>
+                                    <div style={{padding:"10px 12px",borderRadius:11,background:CARD_BG,border:`1px solid ${carpetShort>0?"#EF4444":CARD_BORDER}`,borderBottom:carpetShort>0?"3px solid #EF4444":undefined,display:"flex",flexDirection:"column",gap:8}}>
                                       <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
                                         <span aria-hidden="true" style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:26,height:26,borderRadius:8,flexShrink:0,fontSize:13,background:"#F6E9E6"}}>🟥</span>
                                         <span style={{fontSize:10.5,fontWeight:700,color:INK,letterSpacing:0.8,textTransform:"uppercase"}}>Carpet</span>
                                         <span style={{fontSize:9.5,padding:"2px 7px",borderRadius:999,background:CHIP_BG,color:INK_2,fontWeight:700,letterSpacing:0.4}}>{carpetPricingFor(zc.cpT, imsCarpetMaterials).label.toLowerCase().includes("old")?"REUSED PREF":"FLOOR"}</span>
                                         <span style={{fontSize:11,color:INK_3,...NUM}}>{neededSqft} sqft needed</span>
+                                        {carpetShort > 0 && <span title="The picked carpet's free stock runs out before this zone (handed out zone by zone, top to bottom)" style={{fontSize:10.5,fontWeight:700,color:"#fff",background:"#EF4444",padding:"2px 8px",borderRadius:999,...NUM}}>⚠ short {carpetShort} sqft</span>}
                                         {/* The charged figure, from the zone's carpet material —
                                             the same basis Build quotes on. The picker chooses
                                             WHICH carpet ops pulls, not what it costs. */}

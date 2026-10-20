@@ -1049,7 +1049,21 @@ export default function StudioBuild({ ctx }) {
     // switched off, so keying on it labelled zones "masking" that bill none.
     if (id === "truss") return (d.W || d.L) ? `${d.W || "–"} × ${d.L || "–"} ft${zc.mkOn && zc.mkT ? " · masking" : ""}` : "";
     // floorDims keys are W/L — `fd.D` never existed, so the depth always rendered as "–".
-    if (id === "platform") return (fd.W || fd.L) ? `${fd.W || "–"} × ${fd.L || "–"} ft` : "";
+    if (id === "platform") {
+      // The tile says the carpet state up front, so a floor with no carpet, or one whose carpet runs
+      // short, is visible without opening the section. "⚠" marks it for red in sectionTile.
+      const size = (fd.W || fd.L) ? `${fd.W || "–"} × ${fd.L || "–"} ft` : "";
+      const rows = [zc, ...(zc.extraPlatformRows || [])];
+      const short = rows.reduce((a, _r, ri) => a + carpetShortOf(k, ri), 0);
+      if (short > 0) return `⚠ Carpet short ${Math.round(short)} sqft`;
+      const anySize = rows.some(r => (Number(r?.floorDims?.L) || 0) > 0 && (Number(r?.floorDims?.W) || 0) > 0);
+      const allOff = rows.every(r => r?.cpT === CARPET_OFF);
+      const picked = rows.filter(r => r?.cpT !== CARPET_OFF && r?.cpInvName).map(r => r.cpInvName);
+      // Nothing picked from stock on any floor (carpet off, or never set up at all) reads the same way.
+      if (allOff || (!anySize && !picked.length)) return size ? `${size} · No carpet` : "No carpet selected";
+      if (anySize && rows.some(r => r?.cpT !== CARPET_OFF && !r?.cpInvId)) return `${size || "Floor"} · carpet not picked`;
+      return [size, picked[0] ? `📦 ${picked[0]}` : ""].filter(Boolean).join(" · ");
+    }
     const n = (zc.prints || []).length; return n ? `${n} print${n === 1 ? "" : "s"}` : "None";
   };
   // What this section actually costs — same calc functions the zone header/live total already use,
@@ -1157,7 +1171,8 @@ export default function StudioBuild({ ctx }) {
       <span style={{display:"flex",flexShrink:0,color:on?accent:textS}}><sec.Icon size={16}/></span>
       <div style={{flex:1,minWidth:0}}>
         <div style={{fontSize:12.5,fontWeight:700,color:on?accent:textP}}>{sec.label}</div>
-        {sub&&<div style={{fontSize:10.5,color:textS,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sub}</div>}
+        {/* Red for a carpet problem on the Platform tile: short, none selected, or not picked. */}
+        {sub&&(()=>{const warn=sec.id==="platform"&&/^⚠|No carpet|carpet not picked/.test(String(sub));return <div style={{fontSize:10.5,color:warn?"#EF4444":textS,fontWeight:warn?700:undefined,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sub}</div>;})()}
       </div>
       {/* Per-chip Repeat override — defaults to the zone's own ✨Fresh/♻️Repeat toggle (repeatCatFor)
           until flipped here specifically for this one category. Icon-only: the tile is already
