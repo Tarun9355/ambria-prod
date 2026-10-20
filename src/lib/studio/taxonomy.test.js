@@ -1,5 +1,35 @@
 import { describe, it, expect } from "vitest";
-import { liveAreaElementOptions, DEFAULT_TAX } from "./taxonomy";
+import { liveAreaElementOptions, DEFAULT_TAX, trussRateFor } from "./taxonomy";
+
+// Owner ask (2026-10-20): oversize used to be a cliff — crossing the sqft threshold switched the
+// WHOLE area to the lower oversize rate, so a truss just over the line could price LOWER overall
+// than one just under it. Now only the sqft ABOVE the threshold gets the oversize rate; the result
+// is expressed as a single blended ₹/sqft so `area × rate` still gives the right total everywhere
+// that multiplies by it, with the two tiers exposed alongside for a caption to explain.
+describe("trussRateFor — oversize is tiered (first N sqft at base, only the rest at oversize)", () => {
+  const rates = [{ shape: "box", material: "iron", density: "moderate", ratePerSqft: 20, oversizeThresholdSqft: 1850, oversizeRatePerSqft: 15 }];
+
+  it("bills the first 1850 sqft at the base rate and only the remainder at the oversize rate", () => {
+    const r = trussRateFor("box", "iron", "moderate", rates, 2000);
+    expect(r.overApplies).toBe(true);
+    const expectedTotal = 1850 * 20 + 150 * 15;
+    expect(r.rate * 2000).toBeCloseTo(expectedTotal, 5); // blended rate × area = the tiered total
+    expect(r.rate).toBeLessThan(20); // still cheaper overall than flat base-rate pricing
+    expect(r.rate).toBeGreaterThan(15); // but never as cheap as the old cliff (whole area at 15)
+  });
+
+  it("never applies the oversize rate at or under the threshold", () => {
+    const atThreshold = trussRateFor("box", "iron", "moderate", rates, 1850);
+    expect(atThreshold.overApplies).toBe(false);
+    expect(atThreshold.rate).toBe(20);
+  });
+
+  it("with no area given (existing callers with nothing to pass), prices flat at the base rate", () => {
+    const r = trussRateFor("box", "iron", "moderate", rates);
+    expect(r.overApplies).toBe(false);
+    expect(r.rate).toBe(20);
+  });
+});
 
 // Regression guard for a live bug: Build's "Review Upload → zone" tag editor (PhotoTagFields) kept
 // showing taxonomy.areasElements' factory-default zone names (Stage, Entry Passage, Centre Lounge…)

@@ -238,8 +238,17 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                       // to drive Liza/Masking/Curtain fabric demand (trussRowCost returns ₹0 for it).
                       if (zc.trussQty === 0) return <span style={{fontSize:10.5,color:textS,fontWeight:400}}>{base.a}×{base.b} = {base.area} sqft — <b style={{color:accent}}>dims only, no truss billed</b> (still used for fabric/liza/curtain)</span>;
                       const qty=Math.max(1,zc.trussQty||1);
+                      // Oversize tiering (!zc.noFabric only — the "Without fabric" column is a flat
+                      // admin-set number with no tiering concept of its own): show the two bands
+                      // explicitly rather than one blended decimal rate, which priced correctly but
+                      // read like a typo (e.g. "₹19.59/sqft") with nothing explaining where it came
+                      // from.
+                      const showTiered = !zc.noFabric && r.overApplies;
                       return <span style={{fontSize:10.5,color:textS,fontWeight:400}}>
-                        {base.a}×{base.b} = {base.area} sqft × {fmt(zc.noFabric?r.noFabricRate:r.rate)}/sqft{zc.noFabric?" (no fabric)":""}{qty>1?` × ${qty}`:""}
+                        {base.a}×{base.b} = {base.area} sqft{showTiered
+                          ? <> — {r.overThreshold} sqft × {fmt(r.baseRate)} + {Math.round((base.area-r.overThreshold)*100)/100} sqft × {fmt(r.overRate)} (oversize)</>
+                          : <> × {fmt(zc.noFabric?r.noFabricRate:r.rate)}/sqft{zc.noFabric?" (no fabric)":""}</>}
+                        {qty>1?` × ${qty}`:""}
                         {rowDiscount>0&&<span style={{color:"#10B981",fontWeight:600}}> − {fmt(rowDiscount)} venue discount</span>}
                         {guestDisc>0&&<span style={{color:"#10B981",fontWeight:600}}> − {fmt(guestDisc)} ({guestDiscPct}% repeat discount)</span>}
                       </span>;

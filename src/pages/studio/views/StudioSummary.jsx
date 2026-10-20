@@ -3014,6 +3014,13 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
                                 const r=trussRateFor(base.mode==="box"?"box":"singleU",zc.trussMaterial,zc.drapeDensity,imsTrussRates,base.area);
                                 const rr=zc.noFabric?r?.noFabricRate:r?.rate;
                                 if(!rr) return null;
+                                // Oversize tiering blends two different ₹/sqft rates into one — a
+                                // decimal like ₹19.59/sqft on a CLIENT-facing cost sheet reads like a
+                                // typo with no two-tier breakdown here to explain it (unlike Build's
+                                // own card, which shows the full "X sqft @ rate + Y sqft @ rate"
+                                // split). Simpler to just drop the per-sqft annotation in that case —
+                                // the total itself is still exactly right.
+                                if(!zc.noFabric&&r?.overApplies) return ` (${base.mode==="box"?"Box":"U"})`;
                                 return ` (${base.mode==="box"?"Box":"U"} ${fmt(rr)}/sqft${zc.noFabric?", no fabric":""})`;
                               })()}</span><span style={{fontWeight:600}}>{fmt(eb.zl.truss)}</span></div>}
                               {eb.zl.masking>0&&(()=>{
