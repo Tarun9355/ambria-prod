@@ -919,10 +919,22 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   };
   const fnCrewForDay = (s, d) => {
     const t = d?.trace;
-    // Shared crew (Labours, Supervisors) is one event-wide team split across departments by share,
-    // not a per-function headcount, so its slots keep the day's crew.
-    if (!t || s.shared || d.phase !== "event") return null;
+    if (!t || d.phase !== "event") return null;
     const fnsToday = mpFns.filter(f => String(f?.date || "").slice(0, 10) === d.date);
+    // Labours (shared): each function's crew for THIS department is its own items' summed need,
+    // rounded up once — the same "share per function" the day's table shows — so the morning
+    // shift carries the morning function's labour and the night shift the night function's, the
+    // way every other crew type's shifts already work. Before, every shift took the day's whole
+    // share (3 / 3 / 3 when Haldi needed 1 and the Wedding 2). Supervisors (and a Labours day synced
+    // before per-function traces existed) keep the day's crew in every shift.
+    if (s.shared) {
+      if (t.kind !== "labours" || !Array.isArray(t.byFn) || !t.byFn.length) return null;
+      return t.byFn.map(c => {
+        const rows = Array.isArray(c?.trace?.usageRows) ? c.trace.usageRows.filter(ur => catToDept(ur.sub) === dept) : [];
+        const need = Math.round(rows.reduce((acc, ur) => acc + (Number(ur.need) || 0), 0) * 100) / 100;
+        return { shift: c.shift || fnsToday.find(f => f?.type === c.fn)?.shift || "", crew: Math.ceil(need) };
+      });
+    }
     if (Array.isArray(t.byFn) && t.byFn.length) return t.byFn.map(c => ({ shift: c.shift || fnsToday.find(f => f?.type === c.fn)?.shift || "", crew: Number(c.result) || 0 }));
     if (t.kind === "tier2" && t.perRow && fnsToday.length) return fnsToday.map(f => ({ shift: f?.shift || "", crew: flowerTraceForFn(f).result }));
     return null;
