@@ -2061,7 +2061,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                 </div>
               </div>
             </div>
-            {renderFabric("Liza Fabric", "🧵", "rose", "lizaStock", "stockKg", "kg", "lizaKgRate", "lizaKgRateNew")}
+            {renderFabric("Liza Fabric", "🧣", "rose", "lizaStock", "stockKg", "kg", "lizaKgRate", "lizaKgRateNew")}
             {renderFabric("Wall Masking Panels", "🧱", "orange", "maskingStock", "stockPieces", "pcs", "maskingPieceRate", "maskingPieceRateNew")}
             {renderFabric("Velvet Curtains", "🎀", "purple", "curtainStock", "stockPieces", "pcs", "curtainPieceRate", "curtainPieceRateNew")}
           </div>

@@ -2004,7 +2004,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
 
   // ── Fabric (dept = Fabric): total available (Old + New) vs required, with date-wise shortfall ──
   const FABRIC_TYPES = [
-    { key: "liza", label: "Liza Fabric", stockKey: "lizaStock", qtyField: "stockKg", unit: "kg", emoji: "🧵" },
+    { key: "liza", label: "Liza Fabric", stockKey: "lizaStock", qtyField: "stockKg", unit: "kg", emoji: "🧣" },
     { key: "masking", label: "Wall Masking", stockKey: "maskingStock", qtyField: "stockPieces", unit: "pcs", emoji: "🧱" },
     { key: "curtain", label: "Velvet Curtains", stockKey: "curtainStock", qtyField: "stockPieces", unit: "pcs", emoji: "🎀" },
   ];
@@ -6153,7 +6153,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                       const physical = pv.config === "u_only" ? `${phyL}W × ${dH}H ft` : `${phyW}W × ${phyL}D × ${dH}H ft`;
                       const fabRows = fab ? [
                         fab.maskingPieces > 0 && { ic: "🧱", label: "Wall Masking", needN: fab.maskingPieces, allocs: row.maskingAllocation, unit: "pc", part: "masking", stockKey: "maskingStock", qtyField: "stockPieces" },
-                        fab.lizaKg > 0 && { ic: "🧵", label: "Liza", needN: fab.lizaKg, note: fab.lizaModel === "wrap+ceiling" ? `wrap ${fab.lizaWrapKg}kg + ceiling ${fab.lizaCeilingKg}kg` : "wrap only", allocs: row.lizaAllocation, unit: "kg", part: "liza", stockKey: "lizaStock", qtyField: "stockKg" },
+                        fab.lizaKg > 0 && { ic: "🧣", label: "Liza", needN: fab.lizaKg, note: fab.lizaModel === "wrap+ceiling" ? `wrap ${fab.lizaWrapKg}kg + ceiling ${fab.lizaCeilingKg}kg` : "wrap only", allocs: row.lizaAllocation, unit: "kg", part: "liza", stockKey: "lizaStock", qtyField: "stockKg" },
                         fab.curtainPieces > 0 && { ic: "🎀", label: "Velvet Curtains", needN: fab.curtainPieces, allocs: row.curtainAllocation, unit: "pc", part: "curtain", stockKey: "curtainStock", qtyField: "stockPieces" },
                       ].filter(Boolean).map(f => {
                         // The dept head's own colour pick (deptOps.trussFabric, IMS-owned, kept across

@@ -268,10 +268,9 @@ export function billedCarpetSqft(rawSqft, carpetLabel) {
   if (!(rawSqft > 0)) return rawSqft;
   return /new/i.test(carpetLabel || "") ? Math.ceil(rawSqft / CARPET_NEW_ROLL_SQFT) * CARPET_NEW_ROLL_SQFT : rawSqft;
 }
-// The rate a floor's carpet is billed at. A carpet picked from stock (row.cpInvId, Build's 📦)
-// bills at that item's own IMS rental per sqft (owner ask 2026-10-20 — "Brown Beige at ₹4", not
-// the generic Carpet Old ₹7); with no pick, or a pick with no rental set, the material dropdown's
-// rate as before. fromItem tells the display which one it is.
+// A picked stock carpet's own IMS rental per sqft (row.cpInvId, Build's 📦) — Ambria's COST for
+// it — else the material's rate. Not the guest price: the guest is always billed the material
+// (carpetPricingFor, e.g. Carpet Old ₹7) — owner, 2026-10-20: "₹4 is just rental, we charge ₹7".
 export function carpetRateForRow(row, carpetMaterials, inventory) {
   const item = row?.cpInvId ? (inventory || []).find((i) => i.id === row.cpInvId) : null;
   const itemRate = item ? (Number(item.rentalCost ?? item.price ?? 0) || 0) : 0;
@@ -291,9 +290,9 @@ export function platformRowCost(row, rates) {
   const platform = (row?.plH ? a * platformRateFor(row.plH, rates?.platformRates) : 0) * qty;
   let carpet = 0;
   if (row?.cpT !== CARPET_OFF) {
-    const cp = carpetRateForRow(row, rates?.carpetMaterials, rates?.imsInventory);
-    // Roll rounding is a "Carpet New" material rule — not applied to a specific picked carpet.
-    carpet = (cp.fromItem ? a * qty : billedCarpetSqft(a * qty, cp.label)) * cp.rate;
+    // Guest price: the material's rate, whichever physical carpet is picked.
+    const cp = carpetPricingFor(row?.cpT, rates?.carpetMaterials);
+    carpet = billedCarpetSqft(a * qty, cp.label) * cp.rate;
   }
   return { platform, carpet };
 }

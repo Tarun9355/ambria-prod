@@ -71,7 +71,7 @@ const NAV_RULE = { width: 1, height: 22, background: "rgba(255,255,255,0.1)", fl
 import {
   DEFAULT_TAX, ZONE_META, ZONE_LABELS, ZONE_PRESETS, BASE_RATES,
   getCat, taxOr, FUNCTIONS, CATEGORIES, SHIFT_LETTER,
-  carpetPricingFor, carpetRateForRow, CARPET_OFF, trussRateFor, maskingRateFor, platformRateFor, platformRowCost, trussBaseArea, TRUSS_MATERIALS, DRAPE_DENSITIES,
+  carpetPricingFor, CARPET_OFF, trussRateFor, maskingRateFor, platformRateFor, platformRowCost, trussBaseArea, TRUSS_MATERIALS, DRAPE_DENSITIES,
   resolveVenueGensets,
 } from "../../lib/studio/taxonomy";
 
@@ -9906,8 +9906,8 @@ export default function StudioApp() {
         });
       }
       if (zl.carpet > 0) {
-        // Same rate the price was built on — a picked stock carpet's own rental, else the material.
-        const cp = carpetRateForRow(zc, imsCarpetMaterials, imsInventory);
+        // The guest is billed the material's rate (the picked carpet's rental is Ambria's cost only).
+        const cp = carpetPricingFor(zc.cpT, imsCarpetMaterials);
         structItems.push({
           name: "Carpet (" + cp.label + " ₹" + cp.rate + "/sqft)",
           size: floorDimLabel, qty: Math.round(floorArea * 100) / 100, rate: cp.rate, unit: "sqft",

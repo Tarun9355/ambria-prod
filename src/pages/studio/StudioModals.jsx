@@ -534,7 +534,7 @@ export default function StudioModals({ ctx }) {
                       })()}
                     </div>
                     <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6, flexWrap:"wrap", padding:"5px 8px", borderRadius:6, background: missing?(isDark?"rgba(239,68,68,0.10)":"#FEF2F2"):"transparent" }}>
-                      <span style={{ fontSize:9, fontWeight:600, color: missing?"#B91C1C":textS }}>🧵 Density{missing?" * Required":!isFullBox?" (optional)":""}:</span>
+                      <span style={{ fontSize:9, fontWeight:600, color: missing?"#B91C1C":textS }}>🧣 Density{missing?" * Required":!isFullBox?" (optional)":""}:</span>
                       {[{v:"minimum",l:"Minimum"},{v:"moderate",l:"Moderate"},{v:"dense",l:"Dense"}].map(o => {
                         const sel = (d.drapeDensity || "moderate") === o.v;
                         return <span key={o.v} onClick={()=>setZoneUploadReview({...zoneUploadReview, dims:{...(zoneUploadReview.dims||{}), drapeDensity: o.v}})}
@@ -634,7 +634,7 @@ export default function StudioModals({ ctx }) {
                     )}
                     {rIsBox && (
                       <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6, flexWrap:"wrap", padding:"5px 8px", borderRadius:6, background: rMissing?(isDark?"rgba(239,68,68,0.10)":"#FEF2F2"):"transparent" }}>
-                        <span style={{ fontSize:9, fontWeight:600, color: rMissing?"#B91C1C":textS }}>🧵 Density{rMissing?" * Required":""}:</span>
+                        <span style={{ fontSize:9, fontWeight:600, color: rMissing?"#B91C1C":textS }}>🧣 Density{rMissing?" * Required":""}:</span>
                         {[{v:"minimum",l:"Minimum"},{v:"moderate",l:"Moderate"},{v:"dense",l:"Dense"}].map(o => {
                           const sel = (row.drapeDensity || "moderate") === o.v;
                           return <span key={o.v} onClick={()=>setRow({drapeDensity:o.v})} style={{ padding:"3px 8px", borderRadius:5, fontSize:9, fontWeight:sel?700:500, cursor:"pointer", border:`1px solid ${sel?"#EC4899":border}`, background: sel?"rgba(236,72,153,0.12)":"transparent", color: sel?"#9D174D":textS }}>{o.l}</span>;

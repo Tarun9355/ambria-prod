@@ -8,7 +8,7 @@ import { IconClipboard, IconPencil, IconRuler, IconBolt, IconWall, IconPlatform,
 import {
   ZONE_TYPE_TO_AREA, getCat, taxOr, FUNCTIONS, CATEGORIES, venueTypeLabel,
   maskingOptions, platformOptions, defaultCarpetMatId, CARPET_OFF, TRUSS_MATERIALS, trussBaseArea, trussRateFor,
-  platformRowCost, liveAreaElementOptions, carpetRateForRow,
+  platformRowCost, liveAreaElementOptions, carpetPricingFor,
 } from "../../../lib/studio/taxonomy";
 import { paletteNames, addPaletteInline } from "../../../lib/studio/colours";
 import PaletteQuickAdd from "../../../components/studio/PaletteQuickAdd.jsx";
@@ -80,6 +80,7 @@ import KitComponentsEditor from "../../../components/shared/KitComponentsEditor"
 import ItemHoverThumb from "../../../components/shared/ItemHoverThumb";
 import InventoryItemPickerModal from "../../../components/shared/InventoryItemPickerModal";
 import CopyBuildModal from "../../../components/studio/CopyBuildModal.jsx";
+import { uploadToStorage, STORAGE_FOLDERS } from "../../../lib/storage";
 
 // Temporary crowd-sourced library cleanup (Phase 1b). While true, anyone on the build screen
 // can push a corrected element list back to the master library photo ("Save correction to
@@ -410,7 +411,7 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                         see calcZoneFabric's fabLiza / fabCurtain. */}
                     <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}>
                       <span style={rowCap}>Fabric</span>
-                      {!zc.noFabric&&[["fabLiza","🧵","Liza"],["fabCurtain","🎀","Velvet curtains"]].map(([key,ic,lbl])=>{const on=zc[key]!==false;return(
+                      {!zc.noFabric&&[["fabLiza","🧣","Liza"],["fabCurtain","🎀","Velvet curtains"]].map(([key,ic,lbl])=>{const on=zc[key]!==false;return(
                         <span key={key} onClick={()=>sZ({[key]:on?false:undefined})} title={`${lbl}: ${on?"on — click to leave it off this truss":"off — click to add it back"}`}
                           style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:22,height:22,borderRadius:6,cursor:"pointer",fontSize:12,
                             border:`1px solid ${on?accent:border}`,background:on?`${accent}18`:"transparent",opacity:on?1:0.4,filter:on?"none":"grayscale(1)"}}>{ic}</span>);})}
@@ -661,7 +662,18 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
     { plH: zc.plH, floorDims: rowDims, cpT: zc.cpT, plQty: zc.plQty, cpInvId: zc.cpInvId },
     { platformRates: imsPlatformRates, carpetMaterials: imsCarpetMaterials, imsInventory },
   );
-  const carpetBilled = carpetRateForRow(zc, imsCarpetMaterials, imsInventory);
+  // Guest rate = the material; the picked carpet's own rental is shown beside it (Ambria's cost).
+  const carpetBilled = carpetPricingFor(zc.cpT, imsCarpetMaterials);
+  const isNewCarpet = /new/i.test(carpetBilled.label || "");
+  const [cpUploading, setCpUploading] = useState(false);
+  // Carpet New is bought fresh, so there is no stock photo to pick — the salesperson attaches one.
+  const uploadCarpetPhoto = async (file) => {
+    if (!file) return;
+    setCpUploading(true);
+    try { const url = await uploadToStorage(file, STORAGE_FOLDERS.CLIENT); sZ({ cpPhoto: url }); }
+    catch (e) { alert("Photo upload failed: " + (e?.message || e)); }
+    finally { setCpUploading(false); }
+  };
   return (
               <div style={{boxSizing:"border-box",width:"100%",
                 border:`1px solid ${isDark?"rgba(255,255,255,0.07)":"rgba(26,26,46,0.08)"}`,
@@ -779,7 +791,7 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
                       <span style={{flex:1,minWidth:0}}>
                         <span style={{display:"block",fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:carpetShort>0?"#EF4444":"#047857"}} title={zc.cpInvName}>📦 {zc.cpInvName}</span>
                         <span style={{display:"block",fontSize:10,color:carpetShort>0?"#EF4444":"#6B7280"}}>
-                          {carpetShort>0?`short ${Math.round(carpetShort)} sqft · `:""}{showCosts?(carpetBilled.fromItem?`₹${carpetBilled.rate}/sqft (IMS rental)`:`billed at ${carpetBilled.label} ₹${carpetBilled.rate}/sqft — no rental set on this carpet in IMS`):""}
+                          {carpetShort>0?`short ${Math.round(carpetShort)} sqft · `:""}{showCosts?`billed at ${carpetBilled.label} ₹${carpetBilled.rate}/sqft`:""}
                         </span>
                       </span>
                       <span onClick={()=>sZ({cpInvId:null, cpInvName:"", cpInvFree:null})} title="Remove this carpet pick" style={{cursor:"pointer",color:"#9CA3AF",fontWeight:700,fontSize:13,lineHeight:1}}>×</span>
@@ -790,6 +802,16 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
                     <option value="" style={{color:"#111827",background:"#fff"}}>— None —</option>
                     {(imsCarpetMaterials||[]).map(m=><option key={m.id} value={m.id} style={{color:"#111827",background:"#fff"}}>{m.name}{showCosts?` · ₹${m.ratePerSqft}/sqft`:""}</option>)}
                   </select>
+                  )}
+                  {zc.cpT!==CARPET_OFF && isNewCarpet && (
+                    <div style={{display:"flex",alignItems:"center",gap:6,marginTop:5}}>
+                      {zc.cpPhoto && <img src={zc.cpPhoto} alt="" style={{width:28,height:28,borderRadius:5,objectFit:"cover",border:`1px solid ${border}`}} />}
+                      <label style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:10.5,fontWeight:600,color:accent,cursor:cpUploading?"wait":"pointer",padding:"3px 8px",borderRadius:6,border:`1px dashed ${accent}`}}>
+                        📷 {cpUploading?"Uploading…":zc.cpPhoto?"Change photo":"Upload photo"}
+                        <input type="file" accept="image/*" style={{display:"none"}} disabled={cpUploading} onChange={e=>{uploadCarpetPhoto(e.target.files?.[0]);e.target.value="";}} />
+                      </label>
+                      {zc.cpPhoto && <span onClick={()=>sZ({cpPhoto:null})} title="Remove photo" style={{cursor:"pointer",color:"#9CA3AF",fontWeight:700,fontSize:12}}>×</span>}
+                    </div>
                   )}
                 </div>
                 {showCosts&&<div style={{fontSize:11.5,color:textS,paddingBottom:8,whiteSpace:"nowrap"}}>Carpet <span style={{fontWeight:600,color:textP}}>{fmt(rowCost.carpet)}</span></div>}
@@ -1059,8 +1081,9 @@ export default function StudioBuild({ ctx }) {
       const anySize = rows.some(r => (Number(r?.floorDims?.L) || 0) > 0 && (Number(r?.floorDims?.W) || 0) > 0);
       const allOff = rows.every(r => r?.cpT === CARPET_OFF);
       const picked = rows.filter(r => r?.cpT !== CARPET_OFF && r?.cpInvName).map(r => r.cpInvName);
-      // Nothing picked from stock on any floor (carpet off, or never set up at all) reads the same way.
-      if (allOff || (!anySize && !picked.length)) return size ? `${size} · No carpet` : "No carpet selected";
+      // A zone with no floor size needs no carpet — say nothing about carpet there.
+      if (!anySize) return size;
+      if (allOff) return `${size} · No carpet selected`;
       if (anySize && rows.some(r => r?.cpT !== CARPET_OFF && !r?.cpInvId)) return `${size || "Floor"} · carpet not picked`;
       return [size, picked[0] ? `📦 ${picked[0]}` : ""].filter(Boolean).join(" · ");
     }
@@ -3194,7 +3217,7 @@ undefined
         const on = curColors.some(c => c.name === name);
         setFabricColors(on ? curColors.filter(c => c.name !== name) : [...curColors, { name, materials: null }]);
       };
-      const FABRIC_MATERIAL_ICONS = [["liza","🧵"],["masking","🧱"],["curtain","🎀"]];
+      const FABRIC_MATERIAL_ICONS = [["liza","🧣"],["masking","🧱"],["curtain","🎀"]];
       const toggleMaterial = (name, material) => {
         setFabricColors(curColors.map(c => {
           if (c.name !== name) return c;

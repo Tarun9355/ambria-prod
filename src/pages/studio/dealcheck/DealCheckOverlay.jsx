@@ -95,7 +95,7 @@ import { heavyExtraLabour, eventTimingMultFor, SIT_MULT_DEFAULTS } from "../../.
 import { deptMpReconciled, itemImsSubcat, lookupBySubcat, itemDimsText, walkKitUnits } from "../../../lib/ims/helpers";
 import { rentalSplit, availableAtVenue, isStandingAt, fixedVenueFor, standingReductionBySubcat, fixedVenueDealDiscount, reservedByVenueToday, venueSlackFor } from "../../../lib/ims/fixedVenues";
 import { calcZoneFabric, autoFillFabricAllocation, anchorsForPalette, anchorsForPaletteByMaterial, resolveTrussConfig, zoneTrussStandingDiscount, repeatCatFor, freshFnForManpower , dcFabricMultOf } from "../../../lib/studio/pricing";
-import { carpetPricingFor, carpetRateForRow, CARPET_OFF } from "../../../lib/studio/taxonomy";
+import { carpetPricingFor, CARPET_OFF } from "../../../lib/studio/taxonomy";
 import { qtyUsedElsewhereInDealCheck, netOwnReservedBlocksLive } from "../../../lib/studio/dealAvailability";
 import { isHiddenSubcat, oosCostPctFor, canFulfillShortfall } from "../../../lib/rateCard";
 import { findCrossFnReuseSource, computeFnInvQty, groupConsecutiveFns } from "../../../lib/studio/crossFnReuse";
@@ -3059,8 +3059,8 @@ export default function DealCheckOverlay({ ctx }) {
                                   // What the rollup actually charges — area × the zone's carpet
                                   // material rate, the same figure Build shows. Displayed here so the
                                   // card cannot state one number while the total is built on another.
-                                  // The rate the guest is billed (a picked carpet's own rental, else the material).
-                                  const cPrice = carpetRateForRow({ cpT: zc.cpT, cpInvId: pickedId }, imsCarpetMaterials, dcInventoryCache);
+                                  // The rate the guest is billed — the material's (the picked carpet's rental is our cost).
+                                  const cPrice = carpetPricingFor(zc.cpT, imsCarpetMaterials);
                                   const chargedCarpet = neededSqft * (cPrice.rate || 0);
                                   const carpetShort = Math.round(carpetShortByZone(fns[fnIdx])[zk] || 0);
                                   const setPick = (id)=> {
