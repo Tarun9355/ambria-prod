@@ -461,7 +461,7 @@ export default function DCTrussTab({ ctx }) {
                           // allocation) rather than always reading the zone's top-level zCfg, which
                           // used to double-count row 0's fabric once per extra row a zone had, and
                           // always missed an extra row's own fabric entirely.
-                          const fabCost = calcZoneFabricCost(row, trussInv, anchors, density, row.dcFabricMult) * (pv?.costs?.isRepeat ? 0.7 : 1);
+                          const fabCost = calcZoneFabricCost(row, trussInv, anchors, row.drapeDensity || density, row.dcFabricMult) * (pv?.costs?.isRepeat ? 0.7 : 1);
                           fabricCostByPreviewIdx[idx] = fabCost;
                           fnGrand += fabCost;
                         });
@@ -636,7 +636,8 @@ export default function DCTrussTab({ ctx }) {
                                         const li = libItems.find(l => l.url === photoUrl);
                                         if (li?.dims?.drapeDensity) density = li.dims.drapeDensity;
                                       }
-                                      const fab = calcZoneFabric(row, trussInv, density);
+                                      // The truss's own drape density (Build's Drape pills) first — what Build bills on — else the photo tag.
+                                      const fab = calcZoneFabric(row, trussInv, row.drapeDensity || density);
                                       const showMasking = fab.maskingPieces > 0;
                                       const showLiza    = fab.lizaKg > 0;
                                       const showCurtain = fab.curtainPieces > 0;
@@ -702,9 +703,14 @@ export default function DCTrussTab({ ctx }) {
                                         if (fn.fnIdx === activeFnIdx) setZoneConfig(prev => ({ ...prev, [zk]: patch(prev[zk]) }));
                                         else setFnBuilds(prev => { const snap = prev[fn.fnIdx] || {}; const curZc = snap.zoneConfig || {}; return { ...prev, [fn.fnIdx]: { ...snap, zoneConfig: { ...curZc, [zk]: patch(curZc[zk]) } } }; });
                                       };
-                                      const maskingTotals = applyRepeatFab(calcFabricAllocationTotal(maskingAlloc, trussInv.maskingStock, "stockPieces", maskRate, undefined, undefined, maskRate));
-                                      const lizaTotals    = applyRepeatFab(calcFabricAllocationTotal(lizaAlloc,    trussInv.lizaStock,    "stockKg",     lizaRate, undefined, undefined, lizaRate));
-                                      const curtainTotals = applyRepeatFab(calcFabricAllocationTotal(curtainAlloc, trussInv.curtainStock, "stockPieces", curtainRate, undefined, undefined, curtainRate));
+                                      // The line's money is the NEEDED qty × rate — the same figure the cost rollup
+                                      // (calcZoneFabricCost) and Build bill on. The allocation is whole kg / pieces
+                                      // pulled from stock (14 kg for a 13.45 kg need), so pricing it made this panel
+                                      // disagree with Build by the rounding. Allocation still drives stock/shortfall.
+                                      const atNeed = (t, need, rate) => ({ ...t, total: Math.round((Number(need) || 0) * rate * repeatFabMult * 100) / 100 });
+                                      const maskingTotals = atNeed(calcFabricAllocationTotal(maskingAlloc, trussInv.maskingStock, "stockPieces", maskRate, undefined, undefined, maskRate), fab.maskingPieces, maskRate);
+                                      const lizaTotals    = atNeed(calcFabricAllocationTotal(lizaAlloc,    trussInv.lizaStock,    "stockKg",     lizaRate, undefined, undefined, lizaRate), fab.lizaKg, lizaRate);
+                                      const curtainTotals = atNeed(calcFabricAllocationTotal(curtainAlloc, trussInv.curtainStock, "stockPieces", curtainRate, undefined, undefined, curtainRate), fab.curtainPieces, curtainRate);
 
                                       // Write allocation to the correct row — row 0 sits directly on the zone,
                                       // extra rows sit on zoneConfig[zk].extraTrussRows[rowIdx-1].

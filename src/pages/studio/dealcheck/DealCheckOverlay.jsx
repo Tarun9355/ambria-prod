@@ -1052,7 +1052,7 @@ export default function DealCheckOverlay({ ctx }) {
                         deptInv["Tenting"].push({ name: "Batta", photo: "", qty: pv.batta.rftWithBuffer, unit: battaUnit, total: Math.round(pv.costs.battaCost), sub: "truss structure" });
                       }
                     }
-                    const fabCost = calcZoneFabricCost(row, tInv, anchors, density, row.dcFabricMult) * repeatFabMult;
+                    const fabCost = calcZoneFabricCost(row, tInv, anchors, row.drapeDensity || density, row.dcFabricMult) * repeatFabMult;
                     truss += fabCost; byFn[fi].truss += fabCost; addD("Fabric", "fabric", fabCost); // truss/masking fabric → Fabric
                     // Line items for the Fabric dept's own planning view (IMS Dept Ops) — this never
                     // existed before (addD above only ever fed a dollar total, nothing a warehouse team
@@ -1060,7 +1060,7 @@ export default function DealCheckOverlay({ ctx }) {
                     // stock knows which tier this zone was billed at, straight from the salesperson's
                     // own Build toggle (row.useNewFabric) — not a guess.
                     if (deptInv["Fabric"]) {
-                      const fab = calcZoneFabric(row, tInv, density);
+                      const fab = calcZoneFabric(row, tInv, row.drapeDensity || density);
                       const tierLabel = row.useNewFabric ? "New" : "Old";
                       const rateFor = (oldKey, newKey) => {
                         const oldR = Number(tInv.rates?.[oldKey]) || 0;
@@ -1928,7 +1928,7 @@ export default function DealCheckOverlay({ ctx }) {
                   if (photoUrl) { const li = (libItems || []).find(l => l.url === photoUrl); if (li?.dims?.drapeDensity) density = li.dims.drapeDensity; }
                   // A zone can carry more than one truss row — each row's own allocation (or auto-fill).
                   [zc[zk], ...(zc[zk].extraTrussRows || [])].forEach(row => {
-                    const fab = calcZoneFabric(row, tInv, density);
+                    const fab = calcZoneFabric(row, tInv, row.drapeDensity || density);
                     // Owner ask (2026-10-15): the Fabric dept needs to know WHICH tier a requirement is
                     // for, not just a colour+qty total — row.useNewFabric (the salesperson's own Build
                     // toggle) says so directly, so every row/colour here is tagged old vs new instead of
