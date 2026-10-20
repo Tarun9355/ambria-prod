@@ -13,6 +13,7 @@ import { itemImsSubcat, lookupBySubcat, walkKitUnits, aggregateEventManpower, ha
 import { matchFlowerPattern } from "../../../../lib/ims/flowerHelpers";
 import { computePeopleRaw, computePeople } from "../../../../lib/studio/manpowerCount";
 import ManpowerFactorPills from "../../../../components/shared/ManpowerFactorPills.jsx";
+import { withSetupSlot } from "../../../../lib/studio/dihariWindows.js";
 
 // ═════════════════════════════════════════════════
 // SURFACES
@@ -716,10 +717,15 @@ export default function DCManpowerTab({ ctx }) {
                   });
 
                   // ── Resolve windows for a day × type (overrides → defaults → empty) ──
+                  // An event day's defaults also get the setup shift before the day's first function
+                  // (withSetupSlot — a 9 AM function no longer gets a first shift starting at 9 AM).
+                  // Must match DealCheckOverlay's rollup, which prices the same windows.
                   const getWindowsForDayType = (dateISO, type, phase) => {
                     const overrideKey = `${dateISO}|${type}`;
                     if (dcMpOverrides[overrideKey]) return dcMpOverrides[overrideKey];
-                    return (defaultWindowsByPhase[type] || {})[phase] || [];
+                    const defs = (defaultWindowsByPhase[type] || {})[phase] || [];
+                    if (phase !== "event") return defs;
+                    return withSetupSlot(defs, dihariSchemes[type]?.windows, fns.filter(fn => fn.fnDate === dateISO));
                   };
                   const setWindowsForDayType = (dateISO, type, windowIds) => {
                     setDcMpOverrides(prev => ({ ...prev, [`${dateISO}|${type}`]: windowIds }));

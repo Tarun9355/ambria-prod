@@ -101,6 +101,7 @@ import { isHiddenSubcat, oosCostPctFor, canFulfillShortfall } from "../../../lib
 import { findCrossFnReuseSource, computeFnInvQty, groupConsecutiveFns } from "../../../lib/studio/crossFnReuse";
 import { computePeopleRaw, computePeople } from "../../../lib/studio/manpowerCount";
 import { kitShortfallSplit } from "../../../lib/studio/kitShortfallSplit";
+import { withSetupSlot } from "../../../lib/studio/dihariWindows.js";
 
 // Commission override box (one per venue, Commission tab below) — its OWN local draft state, not
 // a slice of DealCheckOverlay's. That component recomputes dcCostRollup (florals, manpower
@@ -1541,7 +1542,10 @@ export default function DealCheckOverlay({ ctx }) {
                   if (dayFrac) labourShareByDayDept[d.date] = dayFrac;
                   labourTypes.forEach(t => {
                     const ppl = running[t] || 0; if (ppl <= 0) return;
-                    const wins = dcMpOverrides[`${d.date}|${t}`] || (defaultWindowsByPhase[t]||{})[d.phase] || [];
+                    // Event day: the setup shift before the first function is added to the defaults
+                    // (withSetupSlot) — same as DCManpowerTab's getWindowsForDayType.
+                    const _defWins = (defaultWindowsByPhase[t]||{})[d.phase] || [];
+                    const wins = dcMpOverrides[`${d.date}|${t}`] || (d.phase === "event" ? withSetupSlot(_defWins, dihariSchemes[t]?.windows, d.fns) : _defWins);
                     // Per-shift crew: a worked window uses its own dcMpWinCount ONLY if the ops manager set one,
                     // else the day's crew count. Cost = Σ(perWindowCount) × rate (MUST match the Manpower tab).
                     // Only EXPLICIT per-shift edits go into winCountMap → schedule, so a dept-head day-count edit

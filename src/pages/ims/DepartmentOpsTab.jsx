@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useRef, Fragment } from "react";
 import { createPortal } from "react-dom";
+import { withSetupSlot } from "../../lib/studio/dihariWindows.js";
 import { fmt } from "../../lib/format";
 import { mpDayWise, mpBaseDay, mpEffDay, mpEffWindows, mpLineCost, mpDayCost, mpDayDihari, aggregateEventManpower, isLiveEventOrder, phone10, walkKitUnits } from "../../lib/ims/helpers";
 import { uploadAudioToStorage } from "../../lib/storage";
@@ -951,7 +952,19 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   // checked against the default it was typed over (mpWinCount filtering below).
   const autoSlots = {};
   const mpDetail = Array.isArray(mpDetailRaw) ? mpDetailRaw.map(r => !Array.isArray(r?.schedule) ? r : ({
-    ...r, schedule: r.schedule.map(d => {
+    ...r, schedule: r.schedule.map(d0 => {
+      // An order synced before Deal Check added the setup shift (withSetupSlot) still carries the
+      // bare phase defaults for an event day — give it the same setup shift here. Only when the day
+      // still holds exactly those defaults, so a day Deal Check's ops set by hand is left alone.
+      let d = d0;
+      if (d0?.phase === "event" && Array.isArray(d0.windowIds)) {
+        const defs = (settings?.defaultWindowsByPhase?.[r.type] || {}).event || [];
+        const same = defs.length === d0.windowIds.length && defs.every(id => d0.windowIds.includes(id));
+        if (same) {
+          const ids = withSetupSlot(d0.windowIds, dihari[r.type]?.windows, mpFns.filter(f => String(f?.date || "").slice(0, 10) === d0.date));
+          if (ids.length !== d0.windowIds.length) d = { ...d0, windowIds: ids, windows: ids.length };
+        }
+      }
       const def = slotDefaults(r, d); if (!def) return d;
       (autoSlots[r.type] = autoSlots[r.type] || {})[d.date] = def;
       return { ...d, winCount: { ...(d.winCount || {}), ...def } };
@@ -1033,6 +1046,15 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const setMpDay = (type, date, val) => { if (!canManpower) return; saveDept({ mpDay: { ...mpDay, [type]: { ...(mpDay[type] || {}), [date]: val } } }); };
   const setMpAllDays = (type, schedule, val) => { const m = { ...(mpDay[type] || {}) }; (schedule || []).forEach(d => { m[d.date] = val; }); saveDept({ mpDay: { ...mpDay, [type]: m } }); };
   const toggleWin = (type, date, winId, curIds) => { const next = curIds.includes(winId) ? curIds.filter(x => x !== winId) : [...curIds, winId]; saveDept({ mpWin: { ...mpWin, [type]: { ...(mpWin[type] || {}), [date]: next } } }); };
+  // ↺ on a day: drop every hand edit for that crew type on that date — chosen shifts, per-shift
+  // counts (and the defaults they were typed over), and the day's crew — so the day goes back to the
+  // system plan (Deal Check's schedule plus the setup-shift rule).
+  const dayHasEdits = (type, date) => [mpWin, mpWinCountRaw, mpDay].some(m => m[type] && m[type][date] != null);
+  const resetMpDay = (type, date) => {
+    if (!canManpower) return;
+    const drop = (m) => { if (!m[type] || m[type][date] == null) return m; const t = { ...m[type] }; delete t[date]; return { ...m, [type]: t }; };
+    saveDept({ mpWin: drop(mpWin), mpWinCount: drop(mpWinCountRaw), mpWinBasis: drop(mpWinBasis), mpDay: drop(mpDay) });
+  };
   const setWinAllDays = (type, schedule, ids) => { const m = { ...(mpWin[type] || {}) }; (schedule || []).forEach(d => { m[d.date] = ids; }); saveDept({ mpWin: { ...mpWin, [type]: m } }); };
   // Set the crew for ONE shift on ONE day (per-shift split). Ensures that window is marked worked.
   // A cleared box (val "") drops the head's own count for that shift, so it falls back to the
@@ -2476,6 +2498,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
                       </span>
                     ); })}
                     <button onClick={() => addDihari(r, d.date, ids)} className="text-[12.5px] font-semibold text-blue-600 hover:bg-blue-50 rounded-md px-1.5 py-0.5" title="Add another dihari (shift) this day">+ dihari</button>
+                    {dayHasEdits(r.type, d.date) && <button onClick={() => resetMpDay(r.type, d.date)} disabled={!canManpower} className="text-[12.5px] font-semibold text-amber-600 hover:bg-amber-50 rounded-md px-1.5 py-0.5 disabled:opacity-50" title="Undo this day's hand edits (shifts, per-shift crew, day crew) and go back to the system plan">↺ reset</button>}
                   </span>
                 )}
                 {hasWin && !editable && (
