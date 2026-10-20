@@ -102,21 +102,65 @@ function paletteOverlapColors(fn, precedingFn) {
   return mine.filter((c) => theirsNorm.has(c.toLowerCase().trim()));
 }
 
+/** Highest-ratio colour in this function's own Flower Palette (fn.fnFlowerPalette — the same
+ * field the artificial-bunch Colour Split already reads), or null if no palette is set. */
+function dominantPaletteColor(fn) {
+  const colors = parseFlowerPalette(fn?.fnFlowerPalette || "");
+  if (!colors.length) return null;
+  let best = colors[0];
+  for (const c of colors) if (c.pct > best.pct) best = c;
+  return best.name;
+}
+
+/**
+ * A flower with no EXPLICIT colour pick (see resolvedFlowerColour below) still defaults to this
+ * function's own dominant Flower Palette colour, when the flower actually comes in a colour
+ * variant that matches it — owner ask (2026-10-20): a salesperson shouldn't have to open the 🎨
+ * picker on every single flower for reuse (or correct mandi pricing) to work; the palette they
+ * already picked should apply to every real flower by default, and the picker is then only for
+ * the flowers that should deviate from it. Returns the same ranked-row shape a manual pick
+ * stores (so it can stand in for one anywhere that reads it), or null if there's no palette, or
+ * this flower has no colour variants at all, or none of them match the dominant colour.
+ */
+function defaultColorPref(fn, parent) {
+  const variants = Array.isArray(parent?.colorVariants) ? parent.colorVariants : [];
+  if (!variants.length) return null;
+  const dominant = dominantPaletteColor(fn);
+  if (!dominant) return null;
+  const match = variants.find((v) => fuzzyColourMatch(dominant, v.name || ""));
+  if (!match) return null;
+  return [{ variantId: match.variantId, label: match.name || "", photoUrl: match.photoUrl || null, rate: Number(match.currentPrice) || 0 }];
+}
+
+/**
+ * The ranked colour-preference rows actually in effect for this flower on this function: an
+ * explicit pick — or an explicit Clear-all, stored as [] by the 🎨 picker — always wins; only
+ * when the key has never been touched at all (colorPrefsForFn[parentId] is undefined) does the
+ * palette default above apply. That distinction is what stops the default from silently
+ * reasserting itself over a salesperson's deliberate "no colour" clear.
+ */
+export function effectiveColorPrefRows(colorPrefsForFn, parentId, fn, parent) {
+  const explicit = colorPrefsForFn?.[parentId];
+  if (explicit !== undefined) return explicit;
+  return defaultColorPref(fn, parent) || [];
+}
+
 /**
  * What colour was this specific flower (by its resolved mandi parentId) actually SET to for
- * this function, via Deal Check's own per-flower colour-preference ranking (1st choice) or the
- * manual swap override — never by matching the species' own catalogue name against the
- * function's free-text Flower Palette label. Those are two different vocabularies (a palette
- * label like "White" or "Rose Gold" vs a bare species name like "Carnation Himachal" or
- * "Banglore Daisy") that essentially never textually coincide — confirmed on a real build where
- * every recipe referenced a bare species id with no colour variant at all, so the species-name
- * match this replaced could never succeed regardless of how well the two functions' palettes
- * actually overlapped. Returns null when nobody has ever explicitly picked a colour for this
- * flower on this function — a flower with no explicit pick is never assumed to match anything.
+ * this function — an explicit per-flower colour-preference ranking (1st choice), a manual swap
+ * override, or (new) the function's own Flower Palette default — never by matching the species'
+ * own catalogue name against the function's free-text Flower Palette label. Those are two
+ * different vocabularies (a palette label like "White" or "Rose Gold" vs a bare species name
+ * like "Carnation Himachal" or "Banglore Daisy") that essentially never textually coincide —
+ * confirmed on a real build where every recipe referenced a bare species id with no colour
+ * variant at all, so the species-name match this replaced could never succeed regardless of how
+ * well the two functions' palettes actually overlapped. Returns null when this flower has no
+ * resolvable colour at all (no pick, no override, no matching palette default) — never assumed
+ * to match anything in that case.
  */
-function resolvedFlowerColour(parentId, colorPrefsForFn, overrideByParentId) {
+function resolvedFlowerColour(parentId, colorPrefsForFn, overrideByParentId, fn, parent) {
   if (!parentId) return null;
-  const prefArr = colorPrefsForFn?.[parentId];
+  const prefArr = effectiveColorPrefRows(colorPrefsForFn, parentId, fn, parent);
   if (Array.isArray(prefArr) && prefArr.length > 0 && prefArr[0]?.label) return prefArr[0].label;
   const override = overrideByParentId?.get(parentId);
   if (override?.colorVariant?.label) return override.colorVariant.label;
@@ -172,7 +216,7 @@ export function computeFnRawFlowerUsage(fn, opts) {
     prev.realQty += realQty; prev.artUnits += artUnits;
     if (!prev.parent && parent) prev.parent = parent;
     if (!prev.variant && variant) prev.variant = variant;
-    if (!prev.colour) prev.colour = resolvedFlowerColour(parent?.id || flowerId, colorPrefsForFn, overrideByParentId);
+    if (!prev.colour) prev.colour = resolvedFlowerColour(parent?.id || flowerId, colorPrefsForFn, overrideByParentId, fn, parent);
     usage.set(flowerId, prev);
   };
 
@@ -447,7 +491,7 @@ export function computeFnFloralCost(fn, allFns, opts) {
           const parent = resolved?.parent || null;
           const parentId = parent?.id || fl.flowerId;
           const override = overrideByParentId.get(parentId);
-          const prefArr = colorPrefsForFn?.[parentId];
+          const prefArr = effectiveColorPrefRows(colorPrefsForFn, parentId, fn, parent);
           const prefRate = Array.isArray(prefArr) && prefArr.length > 0 ? Number(prefArr[0].rate) : 0;
           const variantRate = Number(override?.colorVariant?.rate) || 0;
           const basePrice = prefRate > 0 ? prefRate : variantRate > 0 ? variantRate : (Number(parent?.currentPrice) || 0);
@@ -464,7 +508,7 @@ export function computeFnFloralCost(fn, allFns, opts) {
           // that comparison could never succeed regardless of how well the two functions'
           // declared palettes overlapped.
           const pUsage = precedingUsage?.get(fl.flowerId) || null;
-          const myColour = resolvedFlowerColour(parentId, colorPrefsForFn, overrideByParentId);
+          const myColour = resolvedFlowerColour(parentId, colorPrefsForFn, overrideByParentId, fn, parent);
           const colorEligible = manualRepeat || (autoEligible && !!pUsage && !!myColour && !!pUsage.colour && fuzzyColourMatch(myColour, pUsage.colour));
           const reuseCredit = (colorEligible && pUsage) ? FLOWER_REUSE_RATE * pUsage.realQty : 0;
           const totalFlowerQty = Math.max(0, totalFlowerQtyFull - reuseCredit);
@@ -509,7 +553,7 @@ export function computeFnFloralCost(fn, allFns, opts) {
             return;
           }
           const pUsage = precedingUsage?.get(fl.flowerId) || null;
-          const myColour = resolvedFlowerColour(parentId, colorPrefsForFn, overrideByParentId);
+          const myColour = resolvedFlowerColour(parentId, colorPrefsForFn, overrideByParentId, fn, parent);
           const colorEligible = manualRepeat || (autoEligible && !!pUsage && !!myColour && !!pUsage.colour && fuzzyColourMatch(myColour, pUsage.colour));
           const artReuseCredit = (colorEligible && pUsage) ? FLOWER_REUSE_RATE * pUsage.artUnits : 0;
           if (flowerType === "mapping") {

@@ -10,7 +10,7 @@
 import { Fragment, useState } from "react";
 import { parseFlowerPalette, autoSplitArtificialByPalette } from "../../../../lib/studio/pricing";
 import { thumbUrl, fitUrl } from "../../../../lib/studio/thumb.js";
-import { computeFnFloralCost } from "../../../../lib/studio/floralCost";
+import { computeFnFloralCost, effectiveColorPrefRows } from "../../../../lib/studio/floralCost";
 
 // ═══ THE FLORAL GROUND ═══
 // Drop the artwork at src/assets/ambria-florals.(jpg|jpeg|png|webp) and this tab is drawn on it.
@@ -390,6 +390,11 @@ export default function DCFloralsTab({ ctx }) {
                               {sortedAgg.map(f => {
                                 const fKey = `mandi:${f.flowerId||f.name}`;
                                 const open = !!dcFloralCalcOpen[fKey];
+                                // Shows the Flower Palette default here too, not just an explicit
+                                // pick — a salesperson should see (and be able to override) the
+                                // colour reuse/pricing is actually assuming, even when they never
+                                // opened the 🎨 picker for this flower themselves.
+                                const rowPrefs = effectiveColorPrefRows(dcFloralColorPrefs[fnIdx], f.flowerId, activeFn, resolveMandiFlower(f.flowerId, mandiCatalogue)?.parent);
                                 return (
                                 <Fragment key={f.flowerId||f.name}>
                                 <tr className="dcf-row" style={{borderBottom:open?"none":`1px solid ${border}33`}}>
@@ -404,9 +409,9 @@ export default function DCFloralsTab({ ctx }) {
                                         🔄 swap
                                       </span>
                                     )}
-                                    {(dcFloralColorPrefs[fnIdx]?.[f.flowerId]||[]).length > 0 && (
+                                    {rowPrefs.length > 0 && (
                                       <div style={{display:"flex",gap:3,marginTop:3,flexWrap:"wrap"}}>
-                                        {(dcFloralColorPrefs[fnIdx][f.flowerId]).map((p,pi) => (
+                                        {rowPrefs.map((p,pi) => (
                                           <span key={p.variantId} style={{fontSize:10,padding:"1px 6px",borderRadius:6,fontWeight:600,
                                             background: pi===0?"rgba(192,132,252,0.20)":pi===1?"rgba(168,85,247,0.12)":"rgba(107,114,128,0.12)",
                                             color: pi===0?"#9333EA":pi===1?"#A855F7":"#9CA3AF"}}>
@@ -454,8 +459,8 @@ export default function DCFloralsTab({ ctx }) {
                                           <button className="dcf-btn" onClick={()=>setDcPrefModal({ fnIdx, flowerId: f.flowerId, flowerName: f.name })}
                                             title="Pick colour + set preferences (top 3)"
                                             style={{fontSize:12,padding:"2px 6px",borderRadius:7,cursor:"pointer",
-                                              border:(dcFloralColorPrefs[fnIdx]?.[f.flowerId]?.length>0)?"1px solid #C084FC":"1px solid rgba(192,132,252,0.40)",
-                                              background:(dcFloralColorPrefs[fnIdx]?.[f.flowerId]?.length>0)?"rgba(192,132,252,0.20)":"rgba(192,132,252,0.06)",color:"#9333EA",fontWeight:500}}>
+                                              border:rowPrefs.length>0?"1px solid #C084FC":"1px solid rgba(192,132,252,0.40)",
+                                              background:rowPrefs.length>0?"rgba(192,132,252,0.20)":"rgba(192,132,252,0.06)",color:"#9333EA",fontWeight:500}}>
                                             🎨
                                           </button>
                                           <button className="dcf-btn" onClick={()=>setDcSwapModal({ fnIdx, parentId: f.flowerId, currentRow: f })}
@@ -1022,7 +1027,11 @@ export default function DCFloralsTab({ ctx }) {
         }
         const variants = Array.isArray(parent.colorVariants) ? parent.colorVariants : [];
         const { fnIdx, flowerId } = dcPrefModal;
-        const prefs = dcFloralColorPrefs[fnIdx]?.[flowerId] || [];
+        // Opens already showing the Flower Palette default (if any) ranked 1st, exactly as if it
+        // had been picked — ticking a different colour on top of it, or unticking it, commits
+        // whatever's left in here to state the same way an explicit pick always has.
+        const modalFn = (collectAllFunctionData?.() || [])[fnIdx];
+        const prefs = effectiveColorPrefRows(dcFloralColorPrefs[fnIdx], flowerId, modalFn, parent);
         const prefIds = new Set(prefs.map(p => p.variantId));
         const rankOf = (vid) => prefs.findIndex(p => p.variantId === vid);
         const togglePref = (v) => {
