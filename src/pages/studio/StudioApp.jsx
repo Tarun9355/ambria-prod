@@ -4299,6 +4299,11 @@ export default function StudioApp() {
     if (!patterns.length) return [];
     return patterns
       .filter((p) => Object.values(p?.sizes || {}).some((sd) => (sd?.flowers || []).length > 0))
+      // `taggable` (IMS Admin → Recipes, the same per-recipe toggle row as "Artificial included?")
+      // — undefined/true (the default, every pre-existing recipe) keeps a recipe searchable and
+      // directly addable from every "+ Add element…" search in the app; explicit false hides it
+      // from all of them, for a recipe meant only as a sub-component of something else.
+      .filter((p) => p.taggable !== false)
       .map((p) => ({ id: p.id, name: p.name, sub: p.sub || "", unit: p.unit || "pc" }));
   }, [dealCheckData, studioFloralData]);
 
@@ -8154,6 +8159,11 @@ export default function StudioApp() {
           venue: fnData.fnVenue || "",
           shift: fnData.fnShift || "",
           pax: fnData.fnPax || "",
+          // The two palettes picked in Build (fn.fnFlowerPalette / fn.fnPalette) weren't synced to
+          // IMS at all before this — ops had no visibility into what colour scheme a function was
+          // actually built to beyond re-deriving it from the mandi list's own per-flower picks.
+          flowerPalette: fnData.fnFlowerPalette || "",
+          fabricPalette: fnData.fnPalette || "",
           zones: JSON.parse(JSON.stringify(fnData.zoneConfig || {})),
           elements: JSON.parse(JSON.stringify(fnData.zoneElements || {})),
           enabledEls: { ...(fnData.enabledEls || {}) },
