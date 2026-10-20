@@ -171,21 +171,29 @@ export function trussRateFor(shape, material, density, trussRates, area) {
   const row = list.find((r) => r.shape === shape && r.material === mat && r.density === den)
     || DEFAULT_TRUSS_RATES.find((r) => r.shape === shape && r.material === mat && r.density === den);
   const baseRate = Number(row?.ratePerSqft) || 0;
-  // Oversize rate: once the structure being priced crosses an admin-set sqft threshold, the
-  // PER-SQFT rate itself switches to a (usually lower, bulk) rate — e.g. Iron truss at ₹20/sqft
-  // normally, ₹15/sqft once the structure is over 1850 sqft. Unset threshold (0/blank) = no
-  // oversize rule, same as every row before this existed.
+  // Oversize rate: once the structure being priced crosses an admin-set sqft threshold, only the
+  // sqft ABOVE that threshold bills at a (usually lower, bulk) rate — e.g. Iron truss at ₹20/sqft
+  // for the first 1850 sqft, ₹15/sqft for whatever's over that. Tiered, not a cliff: a 2000 sqft
+  // truss with a 1850 threshold is 1850×₹20 + 150×₹15, never the whole 2000 at ₹15 (that used to
+  // let a truss just over the line price LOWER overall than one just under it).
+  // Expressed as a single blended ₹/sqft (`rate`) so area × rate still gives the right total for
+  // every existing caller — `overApplies`/`overThreshold`/`overRateNum` are exposed alongside it
+  // purely so a caption can explain the two tiers instead of showing one odd decimal rate.
   const overThreshold = Number(row?.oversizeThresholdSqft) || 0;
-  const overRate = row?.oversizeRatePerSqft;
-  const rate = (overThreshold > 0 && (Number(area) || 0) > overThreshold && overRate != null && overRate !== "")
-    ? (Number(overRate) || 0)
+  const overRateRaw = row?.oversizeRatePerSqft;
+  const hasOverRate = overRateRaw != null && overRateRaw !== "";
+  const overRateNum = hasOverRate ? (Number(overRateRaw) || 0) : baseRate;
+  const areaNum = Number(area) || 0;
+  const overApplies = overThreshold > 0 && hasOverRate && areaNum > overThreshold;
+  const rate = overApplies
+    ? ((overThreshold * baseRate + (areaNum - overThreshold) * overRateNum) / areaNum)
     : baseRate;
   // noFabricRate — the bare-frame rate for a truss with "No fabric" on. Until an admin fills the
-  // "Without fabric" column it falls back to the (possibly oversize-adjusted) normal rate, so no
+  // "Without fabric" column it falls back to the (possibly oversize-blended) normal rate, so no
   // deal changes price on its own.
   const nf = row?.noFabricRatePerSqft;
   const noFabricRate = (nf === undefined || nf === null || nf === "") ? rate : (Number(nf) || 0);
-  return { rate, ceilingRate: Number(row?.ceilingRatePerSqft) || 0, noFabricRate };
+  return { rate, ceilingRate: Number(row?.ceilingRatePerSqft) || 0, noFabricRate, overApplies, overThreshold, baseRate, overRate: overRateNum };
 }
 // The two dimensions a truss is charged on, and their area. Shared by trussRowCost (the pricing
 // authority) and the Build card's "how did this number happen" caption, so the caption can never
