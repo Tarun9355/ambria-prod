@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useRef } from "react";
+import { useState, useMemo, useEffect, useRef, Fragment } from "react";
 import { createPortal } from "react-dom";
 import { fmt } from "../../lib/format";
 import { mpDayWise, mpBaseDay, mpEffDay, mpEffWindows, mpLineCost, mpDayCost, mpDayDihari, aggregateEventManpower, isLiveEventOrder, phone10, walkKitUnits } from "../../lib/ims/helpers";
@@ -643,6 +643,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const [exporting, setExporting] = useState(false);
   // Set while the Actuals PDF is being written (the first one also loads the jsPDF chunk).
   const [actualsPdfBusy, setActualsPdfBusy] = useState(false);
+  const [laboursHow, setLaboursHow] = useState({}); // "type|date" → the carry-over breakdown is open
   const [challanPdfBusy, setChallanPdfBusy] = useState(null); // id of the truck whose challan PDF is being made
   // Fetch the PDF libraries a few seconds after the tab opens, while the page's own files are
   // still the deployed ones — see loadPdfLibs.
@@ -2114,6 +2115,73 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     if (!rows.length) return 0;
     return Math.ceil(rows.reduce((s, ur) => s + (Number(ur.need) || 0), 0));
   };
+  // A Labours day whose order carries no per-function trace (synced before Deal Check sent
+  // trace.byFn, or nothing per function to show): the same facts the old prose box gave — whole-event
+  // need, venue minimum, this department's own items, the carry-over and this department's share —
+  // laid out in the same table style as the Flowerists day, one row each.
+  const renderLaboursDayTable = (r, d, hasShare) => {
+    const t = d.trace || {};
+    const fnsToday = mpFns.filter(f => String(f?.date || "").slice(0, 10) === d.date);
+    const head = fnsToday.length ? fnsToday.map(f => f?.type || "Function").join(" + ") : d.phase === "dismantle" ? "Dismantle" : d.phase === "minusOne" ? "−1 setup" : (d.drivenBy || "Today");
+    // "how?" on the carry-over row: every event day up to this one, what it needed and the crew it
+    // kept — crew only ever grows, so this day's crew is the largest need on any day before it.
+    const howKey = `${r.type}|${d.date}`;
+    const evDays = (Array.isArray(r.schedule) ? r.schedule : []).filter(x => (x.phase || "event") === "event" && x.date <= d.date).sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    const peakDay = evDays.find(x => Number(x.trace?.result) === Number(d.count)) || evDays.find(x => Number(x.count) === Number(d.count));
+    const phaseRow = d.phase === "dismantle" ? "🧹 Dismantle day — crew carried from the event"
+      : d.phase === "minusOne" ? "⏮️ −1 setup — full crew staged early (peak of all functions)"
+      : "⏸️ Gap day — crew carried from the previous day";
+    const rows = d.trace ? [
+      { label: `${r.type} needed (whole event, all departments)`, value: t.result ?? 0 },
+      ...traceRowsOf(t).map(x => ({ label: x.label, value: x.value })),
+    ] : [{ label: phaseRow, value: d.count }];
+    rows.push(
+      ...(d.trace && Number(t.result) > 0 && Number(t.result) < Number(d.count) ? [{ label: "Crew kept today (carried over from a busier day)", value: d.count, warn: true, how: true }] : []),
+      ...(hasShare ? [{ label: `${dept}'s share (${Math.round((Number(d.share) || 0) * 100)}% of today's heavy décor)`, value: `${(Number(d.share) * Number(d.count) || 0).toFixed(2)}` }] : []),
+    );
+    return (
+      <div className="mb-1.5 bg-white border rounded-lg overflow-x-auto">
+        <div className={"grid " + FN_GRID[1]}>
+          <div className="contents">
+            <span className="px-2 pr-6 py-1 bg-gray-100 text-[13px] uppercase tracking-wide text-gray-500 font-semibold whitespace-nowrap">{r.type}</span>
+            <span className="px-2 py-1 bg-gray-100 text-center border-l border-gray-200 whitespace-nowrap"><span className="block text-[13px] uppercase tracking-wide text-gray-500 font-semibold">{head}</span></span>
+          </div>
+          {rows.map((row, ri) => (
+            <div className="contents" key={ri}>
+              <div className="flex items-baseline gap-1.5 min-w-0 overflow-hidden px-2 py-0.5 text-[13px] text-gray-700">
+                <span className="truncate" title={row.label}>{row.label}</span>
+                {row.how && <button type="button" onClick={() => setLaboursHow(p => ({ ...p, [howKey]: !p[howKey] }))} className="shrink-0 text-[12px] font-semibold text-blue-600 hover:underline">{laboursHow[howKey] ? "hide" : "how?"}</button>}
+                <span aria-hidden="true" className="flex-1 min-w-2 border-b border-dotted border-gray-300 mb-[3px]" />
+              </div>
+              <span className={"px-2 py-0.5 text-[13px] text-center border-l border-gray-100 whitespace-nowrap font-semibold " + (row.warn ? "text-amber-600" : "text-gray-800")}>{row.value}</span>
+            </div>
+          ))}
+          <div className="contents">
+            <span className="px-2 py-1 bg-gray-50 text-[13px] text-gray-600">{hasShare ? `${dept}'s crew today` : "Crew today"}</span>
+            <span className="px-2 py-1 bg-gray-50 text-[13px] text-center border-l border-gray-100 text-gray-900 font-semibold whitespace-nowrap">{hasShare ? Math.round(effDay(r, d)) : d.count}</span>
+          </div>
+        </div>
+        {laboursHow[howKey] && evDays.length > 0 && (
+          <div className="border-t px-2 py-1.5 text-[13px] text-gray-700">
+            <div className="text-[12.5px] text-gray-500 mb-1">Crew never drops mid-event, only grows — each day keeps the biggest need so far:</div>
+            <div className="grid grid-cols-[max-content_max-content_max-content] gap-x-6 gap-y-0.5">
+              <span className="text-[12px] uppercase tracking-wide text-gray-400 font-semibold">Day</span>
+              <span className="text-[12px] uppercase tracking-wide text-gray-400 font-semibold text-center">Needed that day</span>
+              <span className="text-[12px] uppercase tracking-wide text-gray-400 font-semibold text-center">Crew kept</span>
+              {evDays.map(x => (
+                <Fragment key={x.date}>
+                  <span className={x === peakDay ? "font-semibold text-gray-900" : ""}>{x.date}{mpFns.filter(f => String(f?.date || "").slice(0, 10) === x.date).map(f => f?.type).filter(Boolean).length ? ` · ${mpFns.filter(f => String(f?.date || "").slice(0, 10) === x.date).map(f => f?.type).filter(Boolean).join(" + ")}` : ""}</span>
+                  <span className={"text-center " + (x === peakDay ? "font-semibold text-gray-900" : "")}>{x.trace?.result ?? "—"}</span>
+                  <span className="text-center font-semibold">{x.count}</span>
+                </Fragment>
+              ))}
+            </div>
+            {peakDay && <div className="mt-1 text-[12.5px] text-amber-600">{d.count} comes from {peakDay.date} — the busiest day so far — and is carried to {d.date}.</div>}
+          </div>
+        )}
+      </div>
+    );
+  };
   const renderMpTrace = (t, drivenBy, day) => {
     if (!t) return null;
     // Any other crew type with per-function traces from Deal Check: same table, its own rows.
@@ -2371,6 +2439,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           const dayKey = `${r.type}|${d.date}`;
           const howOpen = !!mpDayHow[dayKey];
           const hasShare = r.shared && d.share != null;
+          // Table layout for a shared-crew day: a Labours day with no per-function trace, or a
+          // dismantle / gap / −1 setup day (no trace of its own) that still carries a share.
+          const useLabTable = (d.trace?.kind === "labours" && !(Array.isArray(d.trace.byFn) && d.trace.byFn.length)) || (!d.trace && hasShare);
           // A head setting different crew PER SHIFT (mpWinCount, the "+ dihari" inputs above) means
           // there is no longer one single day-level crew count the "crew × shifts" caption below can
           // multiply out to — each shift already carries its own number. winOverridden gates both
@@ -2424,7 +2495,12 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
                     : <span className="whitespace-nowrap">crew × <b className="text-gray-800">{shifts}</b></span>}
                 </span>
               </div>
-              {howOpen && (
+              {howOpen && useLabTable && (
+                <div className="mt-1.5 ml-7 bg-slate-50 ring-1 ring-slate-200 rounded-lg p-2">
+                  {renderLaboursDayTable(r, d, hasShare)}
+                </div>
+              )}
+              {howOpen && !useLabTable && (
                 <div className="mt-1.5 ml-7 bg-slate-50 ring-1 ring-slate-200 rounded-lg p-2">
                   {d.trace ? renderMpTrace(d.trace, d.drivenBy, d)
                     : <div className="text-[13px] text-gray-500">{d.phase === "minusOne" ? "⏮️ −1 setup — full crew staged early (peak of all functions)." : d.phase === "dismantle" ? "🧹 dismantle day — crew carried from the event." : "⏸️ gap day — crew carried from the previous day."}</div>}
