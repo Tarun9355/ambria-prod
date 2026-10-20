@@ -8,7 +8,7 @@ import { DEPTS as SHARED_DEPTS, catToDept as sharedCatToDept, userDepartments } 
 import { TabsMenu, useConfirm } from "../../components/ui";
 import { IconPrinter } from "../../components/icons";
 import { hasIMSPerm } from "../../lib/ims/constants";
-import { ZONE_META } from "../../lib/studio/taxonomy";
+import { ZONE_META, trussBaseArea } from "../../lib/studio/taxonomy";
 import { ZONE_DEF_SK, RC_SK_TR } from "../../lib/studio/keys";
 import { LOGO_ASSET, LOGO_BOX } from "../../lib/studio/brand.js";
 import { fitUrl } from "../../lib/studio/thumb.js";
@@ -2915,15 +2915,23 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       const extraTr = Array.isArray(z.extraTrussRows) ? z.extraTrussRows : [];
       const extraPl = Array.isArray(z.extraPlatformRows) ? z.extraPlatformRows : [];
       const out = [];
-      const truss = [trussTypeLbl(z.trT), Number(z.trussQty) > 1 ? `x${z.trussQty}` : "", z.trussMaterial ? String(z.trussMaterial) : ""].filter(Boolean).join(" ");
-      if (truss) out.push({ k: "Truss", v: truss + (extraTr.length ? ` +${extraTr.length} more` : "") });
+      // A truss only exists once it has a size — the same rule pricing uses (trussBaseArea; 0 sqft
+      // bills ₹0). A zone keeps its truss TYPE (and a Truss Qty) after the dims are cleared, which
+      // printed "Truss Single U" / "Truss x4" on zones that have no truss in Build. Extra rows count
+      // only when they have a size too.
+      const sizedExtra = extraTr.filter(r => (trussBaseArea(r || {}).area || 0) > 0 && r?.trussQty !== 0);
+      const hasTruss = (trussBaseArea(z).area || 0) > 0 && z.trussQty !== 0;
+      const truss = hasTruss ? [trussTypeLbl(z.trT), Number(z.trussQty) > 1 ? `x${z.trussQty}` : "", z.trussMaterial ? String(z.trussMaterial) : ""].filter(Boolean).join(" ") : "";
+      if (truss) out.push({ k: "Truss", v: truss + (sizedExtra.length ? ` +${sizedExtra.length} more` : "") });
+      else if (sizedExtra.length) out.push({ k: "Truss", v: `${sizedExtra.length} truss${sizedExtra.length === 1 ? "" : "es"}` });
       const plats = [
         z.plH ? [platLbl(z.plH, z.plHft), floor].filter(Boolean).join(" · ") : "",
         ...extraPl.map(r => [platLbl(r?.plH, r?.plHft), ftArea(r?.floorDims)].filter(Boolean).join(" · ")),
       ].filter(Boolean);
       if (plats.length) out.push({ k: "Platform", v: plats.join("; ") });
       if (z.cpT) out.push({ k: "Carpet", v: [carpetName(z.cpT), floor].filter(Boolean).join(" · ") });
-      if (z.mkOn) out.push({ k: "Masking", v: "Yes" });
+      // Masking hangs on a truss — with no sized truss there is nothing to mask (and nothing billed).
+      if (z.mkOn && (hasTruss || sizedExtra.length)) out.push({ k: "Masking", v: "Yes" });
       if (!z.plH && !z.cpT && floor) out.push({ k: "Floor", v: floor });
       return out;
     };
