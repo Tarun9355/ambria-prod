@@ -9,6 +9,7 @@ import { TabsMenu, useConfirm } from "../../components/ui";
 import { IconPrinter } from "../../components/icons";
 import { hasIMSPerm } from "../../lib/ims/constants";
 import { ZONE_META, trussBaseArea } from "../../lib/studio/taxonomy";
+import { calcZoneTrussPreview, calcZoneFabric, dcFabricMultOf } from "../../lib/studio/pricing";
 import { ZONE_DEF_SK, RC_SK_TR } from "../../lib/studio/keys";
 import { LOGO_ASSET, LOGO_BOX } from "../../lib/studio/brand.js";
 import { fitUrl } from "../../lib/studio/thumb.js";
@@ -571,6 +572,36 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     return () => mq.removeEventListener("change", sync);
   }, []);
   const modalCls = (k) => (modal === k ? "" : " hidden");
+  // ── TRUSS PLAN ── (the Truss tab of Deal Check, for the people who build it)
+  // Every truss row of every function on the event: Customer demand vs Physical footprint, the
+  // pillars / beams / batta it takes and its fabric (Liza / curtains / masking) with the colours
+  // Deal Check allocated. Worked out here from the event's own zone layout and IMS's truss
+  // inventory (same calcZoneTrussPreview / calcZoneFabric Deal Check uses), so it is always the
+  // current plan, not a snapshot.
+  // Read on first use, not here: `sel` (the open event) is declared further down this component.
+  let trussPlanCache = null;
+  const trussPlanOf = () => {
+    if (trussPlanCache) return trussPlanCache;
+    const out = [];
+    trussPlanCache = out;
+    const fnsT = Array.isArray(sel?.functionsDetail) ? sel.functionsDetail : [];
+    if (!trussInv) return out;
+    fnsT.forEach((fn, fi) => {
+      const en = fn?.enabledEls || {}, zones = fn?.zones || {};
+      Object.keys(zones).forEach(zk => {
+        const zc = zones[zk]; if (!en[zk] || !zc) return;
+        [zc, ...(Array.isArray(zc.extraTrussRows) ? zc.extraTrussRows : [])].forEach((row, ri) => {
+          if (!row || !((trussBaseArea(row).area || 0) > 0) || row.trussQty === 0) return;
+          let pv = null; try { pv = calcZoneTrussPreview(row, trussInv); } catch { pv = null; }
+          if (!pv || !pv.topology) return;
+          let fab = null; try { fab = calcZoneFabric(row, trussInv, row.drapeDensity || "moderate"); } catch { fab = null; }
+          const zLabel = (fn?.zoneNames?.[zk]) || ZONE_META[zk]?.label || String(zk).replace(/[_-]+/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+          out.push({ key: `${fi}|${zk}|${ri}`, fn, fi, zk, ri, row, pv, fab, zLabel: ri > 0 ? `${zLabel} (truss #${ri + 1})` : zLabel });
+        });
+      });
+    });
+    return out;
+  };
   // ── THE PANEL: inline from sm up, a bottom sheet on a phone ──
   // Opening in place works on the desktop grid because the tiles sit four to a row and stay in
   // view beside the panel. On a 390px column the tiles are stacked one per row, so "inline under
@@ -644,7 +675,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const [exporting, setExporting] = useState(false);
   // Set while the Actuals PDF is being written (the first one also loads the jsPDF chunk).
   const [actualsPdfBusy, setActualsPdfBusy] = useState(false);
-  const [laboursHow, setLaboursHow] = useState({}); // "type|date" → the carry-over breakdown is open
+  const [laboursHow, setLaboursHow] = useState({});
+  const [trussFabEdit, setTrussFabEdit] = useState(null); // "zoneKey|part" whose fabric colours are being edited in the Truss plan // "type|date" → the carry-over breakdown is open
   const [challanPdfBusy, setChallanPdfBusy] = useState(null); // id of the truck whose challan PDF is being made
   // Fetch the PDF libraries a few seconds after the tab opens, while the page's own files are
   // still the deployed ones — see loadPdfLibs.
@@ -795,7 +827,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       // departments by each part's own category, so a row can be a component of a kit owned by
       // another department. It is the only record of that parent, and the PDF needs it to avoid
       // reporting a bolted-on part as a loose item.
-      const rows = deptInvSnap.map((x, i) => ({ id: x.name + i, invId: x.imsId || null, name: x.name, photo: x.photo || "", qty: x.qty || 0, rentalQty: x.rentalQty != null ? x.rentalQty : (x.qty || 0), byFn: x.byFn || null, unit: x.unit || 0, total: x.total || 0, sub: x.sub || "", isKit: !!x.isKit, fromKit: x.fromKit || null, components: Array.isArray(x.components) ? x.components : null, shortQty: x.shortQty || 0, shortCost: x.shortCost || 0, outOfStock: !!x.outOfStock, prodOrBuy: x.prodOrBuy || null, isSwapped: swapInfo.has(x.name), swappedFrom: swapInfo.get(x.name)?.swappedFrom || null }));
+      const rows = deptInvSnap.map((x, i) => ({ id: x.name + i, invId: x.imsId || null, name: x.name, photo: x.photo || "", qty: x.qty || 0, rentalQty: x.rentalQty != null ? x.rentalQty : (x.qty || 0), byFn: x.byFn || null, unit: x.unit || 0, total: x.total || 0, sub: x.sub || "", isKit: !!x.isKit, fromKit: x.fromKit || null, components: Array.isArray(x.components) ? x.components : null, shortQty: x.shortQty || 0, shortCost: x.shortCost || 0, outOfStock: !!x.outOfStock, prodOrBuy: x.prodOrBuy || null, isSwapped: swapInfo.has(x.name), swappedFrom: swapInfo.get(x.name)?.swappedFrom || null, qtyUnit: x.qtyUnit || "", parts: Array.isArray(x.parts) ? x.parts : null }));
       // Short items first (need chasing/ordering), then Production/Buying (not real stock — worth
       // knowing apart from what's actually reserved), then everything else — the order requested
       // for this list. Stable within each group: Array.prototype.sort is stable, so ties keep the
@@ -4943,6 +4975,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                 dept === "Fabric" && upcomingFabricShort.length > 0 && { k: "fabshort", icon: "⚠️", title: "Fabric shortfalls", sub: n(upcomingFabricShort.length, "upcoming event"), tone: "bg-red-50", alert: true },
                 dept === "Fabric" && { k: "fabreq", icon: "🧵", title: "Fabric required", sub: fabricReqRows.length ? n(fabricReqRows.length, "fabric type") : "nothing required" },
                 { k: "inv", icon: "📦", title: "Inventory blocked", sub: n(blockedItemsGrouped.length, "item") + " held", value: fmt(rentalIncome) },
+                trussPlanOf().length > 0 && { k: "truss", icon: "🏗️", title: "Truss plan", sub: n(trussPlanOf().length, "truss") + " · pillars, beams, fabric" },
                 { k: "mp", icon: "👷", title: "Manpower plan", sub: mpRows.length ? n(mpRows.length, "crew line") : "no crew assigned", value: fmt(mpCost) },
                 { k: "actuals", icon: "🧾", title: "Actuals", sub: hasActuals ? "real spend logged" : "nothing logged yet", value: hasActuals ? fmt(actualCost) : null },
                 { k: "truck", icon: "🚚", title: "Truck planning", sub: trucks.length ? n(trucks.length, "truck") + (fullTrucks ? ` · ${fullTrucks} full` : "") : "no trucks yet" },
@@ -5247,6 +5280,11 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                                   : <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-bold">SHORT ×{it.shortQty}</span>)}
                                 {it.prodOrBuy && <span className={"text-[10px] px-1.5 py-0.5 rounded font-bold " + (it.prodOrBuy === "buying" ? "bg-orange-100 text-orange-700" : "bg-purple-100 text-purple-700")}>{it.prodOrBuy === "buying" ? "🛒 BUYING" : "🏭 PRODUCTION"}</span>}
                                 {it.isSwapped && <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-100 text-sky-700 font-bold">🔁 SWAPPED</span>}
+                                {/* Where a merged line's qty comes from (e.g. carpet sqft per zone floor). */}
+                                {Array.isArray(it.parts) && it.parts.length > 0 && (
+                                  <button onClick={() => setKitOpen(o => ({ ...o, ["how:" + it.id]: !o["how:" + it.id] }))} aria-expanded={!!kitOpen["how:" + it.id]}
+                                    className="text-[11px] font-semibold text-blue-600 hover:underline">{kitOpen["how:" + it.id] ? "hide" : "how?"}</button>
+                                )}
                               </div>
                               {/* Sub-category and the explanations that go with it. They used to
                                   be their own DETAILS column; on a card they belong under the
@@ -5265,7 +5303,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                               figures read as three columns rather than one run of digits. */}
                           <div className="w-full sm:w-auto flex items-start gap-0 divide-x divide-gray-100 sm:border-l sm:border-gray-100 sm:pl-1">
                             <StatCell label={showRentalQty ? "To load" : "Qty"} w={STAT_W.qty}>
-                              <span className="text-sm font-semibold text-gray-700 tabular-nums">×{it.qty}</span>
+                              <span className="text-sm font-semibold text-gray-700 tabular-nums">×{it.qty}{it.qtyUnit ? <span className="ml-0.5 text-xs font-normal text-gray-400">{it.qtyUnit}</span> : null}</span>
                             </StatCell>
                             {/* Reserved whenever ANY row in this list needs it (anyRentalQty), not just
                                 this one (showRentalQty) — so every row's Rate/Total lands under the
@@ -5279,7 +5317,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                               </StatCell>
                             )}
                             <StatCell label="Rate" w={STAT_W.rate}>
-                              <span className="text-sm text-gray-600 tabular-nums" title={showRentalQty ? "Averaged across functions — a reused unit's repeat-discounted rate blends with a fresh unit's full rate." : undefined}>{fmt(avgRate)}</span>
+                              <span className="text-sm text-gray-600 tabular-nums" title={showRentalQty ? "Averaged across functions — a reused unit's repeat-discounted rate blends with a fresh unit's full rate." : undefined}>{fmt(avgRate)}{it.qtyUnit ? <span className="text-xs text-gray-400">/{it.qtyUnit}</span> : null}</span>
                             </StatCell>
                             <StatCell label="Total" w={STAT_W.total}>
                               <div className="text-sm font-bold text-gray-900 tabular-nums">{fmt(it.total)}</div>
@@ -5293,6 +5331,25 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                           column widths: the sum only reads as a sum if it lines up under it.
                           Tinted and inset, so an opened kit is visibly part of its card rather
                           than a run of new items after it. */}
+                      {Array.isArray(it.parts) && it.parts.length > 0 && kitOpen["how:" + it.id] && (
+                        <div className="bg-slate-50 px-2.5 py-1.5 space-y-1 text-xs">
+                          {it.parts.map((pt, pi) => (
+                            <div key={"p" + pi} className="flex items-center gap-2">
+                              <span aria-hidden="true" className="text-gray-300 shrink-0">└</span>
+                              <span className="text-gray-700 truncate flex-1 min-w-0">{pt.zone}{pt.fn ? <span className="text-gray-400"> · {pt.fn}</span> : null}{pt.dims ? <span className="text-gray-400"> · {pt.dims} ft</span> : null}</span>
+                              <span className={"shrink-0 font-medium text-gray-500 text-right tabular-nums " + STAT_W.qty}>{pt.qty}{it.qtyUnit ? " " + it.qtyUnit : ""}</span>
+                              <span className={"shrink-0 text-gray-500 text-right tabular-nums " + STAT_W.rate}>× {fmt(pt.rate)}</span>
+                              <span className={"shrink-0 font-semibold text-gray-700 text-right tabular-nums " + STAT_W.total}>{fmt(pt.total)}</span>
+                            </div>
+                          ))}
+                          <div className="flex items-center gap-2 border-t border-gray-200 pt-1">
+                            <span className="flex-1 text-gray-600 font-semibold">Total</span>
+                            <span className={"shrink-0 font-semibold text-gray-700 text-right tabular-nums " + STAT_W.qty}>{it.parts.reduce((a, pt) => a + (Number(pt.qty) || 0), 0)}{it.qtyUnit ? " " + it.qtyUnit : ""}</span>
+                            <span className={"shrink-0 " + STAT_W.rate} />
+                            <span className={"shrink-0 font-bold text-gray-900 text-right tabular-nums " + STAT_W.total}>{fmt(it.parts.reduce((a, pt) => a + (Number(pt.total) || 0), 0))}</span>
+                          </div>
+                        </div>
+                      )}
                       {it.isKit && kitOpen[it.id] && it.components && it.components.length > 0 && (
                         <div className="bg-blue-50/50 px-2.5 py-1.5 space-y-1">
                           {it.components.map((cp, ci) => (
@@ -6067,6 +6124,117 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
 
             {/* Dismantle plan — the department head's pre-set; opens under its own tile. On-site's
                 "Dismantle & routing" confirms it at teardown. See SHOW_DISMANTLE_IN_PLANNING. */}
+            {trussPlanOf().length > 0 && (
+              <div className={"bg-white rounded-xl shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] overflow-hidden" + modalCls("truss")}>
+                <div className="px-3 sm:px-4 py-3 bg-gray-50 flex items-center gap-3">
+                  <span aria-hidden="true" className="shrink-0 w-9 h-9 rounded-lg bg-white shadow-[0_1px_3px_rgba(15,23,42,0.12),0_4px_10px_-4px_rgba(15,23,42,0.22)] flex items-center justify-center text-base leading-none">🏗️</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[15px] font-semibold text-gray-900">Truss plan</div>
+                    <div className="text-xs text-gray-500">Every truss on this event — what to build, and the fabric it takes.</div>
+                  </div>
+                </div>
+                <div className="p-3 sm:p-4 space-y-3">
+                  {(() => {
+                    const fnCount = new Set(trussPlanOf().map(z => z.fi)).size;
+                    const groupLen = (arr, get) => Object.entries((arr || []).reduce((m, x) => { const len = Math.round((get(x) || 0) * 100) / 100; m[len] = (m[len] || 0) + 1; return m; }, {})).sort((a, b) => Number(b[0]) - Number(a[0])).map(([len, c]) => `${c} × ${len}ft`).join(" · ");
+                    const cfgLabel = (c) => c === "u_only" ? "U Truss" : c === "half_box" ? "Half Box" : c === "full_box" ? "Full Box" : "—";
+                    const tile = (label, value) => (
+                      <div className="flex-1 min-w-[180px] rounded-lg bg-gray-50 px-3 py-2">
+                        <div className="text-[11px] font-bold uppercase tracking-wide text-gray-500">{label}</div>
+                        <div className="text-[13px] font-semibold text-gray-900 tabular-nums mt-0.5">{value}</div>
+                      </div>
+                    );
+                    const allocChips = (allocs, unit) => (Array.isArray(allocs) && allocs.length) ? allocs.map((a, i) => <span key={i} className="inline-flex items-center gap-1 rounded bg-gray-100 px-1.5 py-0.5 text-[12px]"><b className="text-gray-800">{a.colour}</b><span className="text-gray-500">×{a.qty}{unit}</span></span>) : <span className="text-[12px] text-gray-400">not allocated in Deal Check</span>;
+                    return trussPlanOf().map(z => {
+                      const { pv, row, fab } = z; const topo = pv.topology, costs = pv.costs || {}, batta = pv.batta;
+                      const dL = parseFloat(row.dims?.L) || 0, dW = parseFloat(row.dims?.W) || 0, dH = parseFloat(row.dims?.H) || 0;
+                      const demanded = pv.config === "u_only" || pv.config === "half_box" ? `${pv.spanFt || Math.max(dL, dW)}W × ${dH}H ft` : `${dW}W × ${dL}D × ${dH}H ft`;
+                      const phyL = topo.physicalL ? Math.round(topo.physicalL * 100) / 100 : 0, phyW = topo.physicalW ? Math.round(topo.physicalW * 100) / 100 : 0;
+                      const physical = pv.config === "u_only" ? `${phyL}W × ${dH}H ft` : `${phyW}W × ${phyL}D × ${dH}H ft`;
+                      const fabRows = fab ? [
+                        fab.maskingPieces > 0 && { ic: "🧱", label: "Wall Masking", needN: fab.maskingPieces, allocs: row.maskingAllocation, unit: "pc", part: "masking", stockKey: "maskingStock", qtyField: "stockPieces" },
+                        fab.lizaKg > 0 && { ic: "🪡", label: "Liza", needN: fab.lizaKg, note: fab.lizaModel === "wrap+ceiling" ? `wrap ${fab.lizaWrapKg}kg + ceiling ${fab.lizaCeilingKg}kg` : "wrap only", allocs: row.lizaAllocation, unit: "kg", part: "liza", stockKey: "lizaStock", qtyField: "stockKg" },
+                        fab.curtainPieces > 0 && { ic: "🎀", label: "Velvet Curtains", needN: fab.curtainPieces, allocs: row.curtainAllocation, unit: "pc", part: "curtain", stockKey: "curtainStock", qtyField: "stockPieces" },
+                      ].filter(Boolean).map(f => {
+                        // The dept head's own colour pick (deptOps.trussFabric, IMS-owned, kept across
+                        // every sync) wins over Deal Check's allocation.
+                        const ek = `${z.key}|${f.part}`;
+                        const own = deptData.trussFabric && Array.isArray(deptData.trussFabric[ek]) ? deptData.trussFabric[ek] : null;
+                        return { ...f, ek, need: `${f.needN}${f.unit}`, allocs: own || f.allocs, own: !!own };
+                      }) : [];
+                      return (
+                        <div key={z.key} className="rounded-xl border border-gray-200 border-l-4 border-l-amber-400 p-3">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-[15px] font-bold text-gray-900">{z.zLabel}</span>
+                            <span className="text-[11px] font-bold uppercase tracking-wide rounded px-2 py-0.5 bg-amber-50 text-amber-700">{cfgLabel(pv.config)}</span>
+                            {fnCount > 1 && <span className="text-[12px] text-gray-500">{z.fn?.type || `Function ${z.fi + 1}`}{z.fn?.date ? ` · ${z.fn.date}` : ""}</span>}
+                            <span className="text-[12px] text-gray-500">{row.trussMaterial ? String(row.trussMaterial) : "iron"} · {row.useNewFabric ? "New" : "Old"} fabric{row.noFabric ? " · no fabric" : ""}</span>
+                          </div>
+                          <div className="text-[12.5px] text-gray-600 mt-1">Method {topo.method} · {topo.pillarCount} pillar{topo.pillarCount === 1 ? "" : "s"} · {topo.beamCount} beam segment{topo.beamCount === 1 ? "" : "s"} · {topo.totals?.totalJoints || 0} joint{(topo.totals?.totalJoints || 0) === 1 ? "" : "s"} expected</div>
+                          <div className="flex flex-wrap gap-2 mt-2">
+                            {tile("Customer demand", demanded)}
+                            {tile("Physical footprint", physical)}
+                          </div>
+                          <div className="flex flex-wrap gap-2 mt-2">
+                            {tile(`🏛️ Pillars (${topo.pillars.length})`, `${groupLen(topo.pillars, x => x.H)} = ${costs.pillarRft || 0} RFT`)}
+                            {tile(`🔗 Beams (${topo.beams.length})`, `${groupLen(topo.beams, x => x.lengthFt)} = ${costs.beamRft || 0} RFT`)}
+                            {batta && tile(`🎗️ Batta (+${batta.bufferPct}% buffer)`, `${batta.rftRequired} RFT + ${batta.bufferPct}% = ${batta.rftWithBuffer} RFT`)}
+                          </div>
+                          {fabRows.length > 0 && (
+                            <div className="mt-2 rounded-lg border border-dashed border-gray-300 p-2">
+                              <div className="text-[11px] font-bold uppercase tracking-wide text-gray-500 mb-1.5">🧵 Fabric allocation</div>
+                              <div className="flex flex-wrap gap-2">
+                                {fabRows.map(f => (
+                                  <div key={f.label} className="flex-1 min-w-[240px] rounded-lg bg-white border border-gray-200 border-l-2 border-l-emerald-400 px-2.5 py-2">
+                                    <div className="flex items-start gap-2">
+                                      <div className="text-[13px] flex-1 min-w-0"><span className="mr-1">{f.ic}</span><b className="text-gray-900">{f.label}</b> <span className="text-gray-500">· {f.need} needed</span>{f.note && <span className="text-[11px] italic text-gray-400"> ({f.note})</span>}{dcFabricMultOf(row, f.part) !== 1 && <span className="text-[11px] font-semibold text-indigo-600"> ×{dcFabricMultOf(row, f.part)}</span>}</div>
+                                      <button onClick={() => setTrussFabEdit(trussFabEdit === f.ek ? null : f.ek)} className="shrink-0 text-[11.5px] font-semibold rounded-md px-2 py-0.5 ring-1 ring-gray-200 bg-gray-50 hover:bg-white">🎨 {trussFabEdit === f.ek ? "Done" : "Edit"}</button>
+                                    </div>
+                                    <div className="mt-1 flex flex-wrap gap-1 items-center">{allocChips(f.allocs, f.unit)}{f.own && <span className="text-[10.5px] text-indigo-600 font-semibold">· set here</span>}</div>
+                                    {trussFabEdit === f.ek && (() => {
+                                      // The department's own pick: a colour from IMS fabric stock, a qty per colour.
+                                      const stock = Array.isArray(trussInv?.[f.stockKey]) ? trussInv[f.stockKey] : [];
+                                      const cur = Array.isArray(f.allocs) && f.allocs.length ? f.allocs : [{ colour: "", qty: Math.ceil(f.needN) }];
+                                      const save = (next) => saveDept({ trussFabric: { ...(deptData.trussFabric || {}), [f.ek]: next } });
+                                      const setAt = (i, patch) => save(cur.map((a, j) => j === i ? { ...a, ...patch } : a));
+                                      const sum = cur.reduce((a, x) => a + (Number(x.qty) || 0), 0);
+                                      const resetOwn = () => { const n2 = { ...(deptData.trussFabric || {}) }; delete n2[f.ek]; saveDept({ trussFabric: n2 }); };
+                                      return (
+                                        <div className="mt-2 space-y-1.5 border-t border-gray-100 pt-2">
+                                          {cur.map((a, i) => (
+                                            <div key={i} className="flex items-center gap-1.5">
+                                              <select value={a.colour || ""} onChange={e => setAt(i, { colour: e.target.value })} className="flex-1 min-w-0 text-[12px] rounded-md ring-1 ring-gray-200 px-1.5 py-1 bg-white">
+                                                <option value="">Pick colour…</option>
+                                                {stock.map(st => <option key={st.colour} value={st.colour}>{st.colour} · {Number(st[f.qtyField]) || 0}{f.unit} in stock</option>)}
+                                              </select>
+                                              <input type="number" min="0" step="0.1" value={a.qty ?? ""} onChange={e => setAt(i, { qty: e.target.value === "" ? 0 : Number(e.target.value) })} className="w-16 text-[12px] text-center rounded-md ring-1 ring-gray-200 px-1 py-1" />
+                                              <span className="text-[11px] text-gray-400">{f.unit}</span>
+                                              {cur.length > 1 && <button onClick={() => save(cur.filter((_, j) => j !== i))} className="text-gray-300 hover:text-red-500 text-sm" title="Remove this colour">×</button>}
+                                            </div>
+                                          ))}
+                                          <div className="flex items-center gap-2 text-[11.5px]">
+                                            <button onClick={() => save([...cur, { colour: "", qty: 0 }])} className="font-semibold text-blue-600 hover:underline">+ colour</button>
+                                            <span className={sum < f.needN ? "text-amber-600" : "text-gray-500"}>{Math.round(sum * 100) / 100} of {f.need}</span>
+                                            {f.own && <button onClick={resetOwn} className="ml-auto font-semibold text-gray-500 hover:text-gray-800">↺ back to Deal Check pick</button>}
+                                          </div>
+                                        </div>
+                                      );
+                                    })()}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {pv.source === "default-on-forget" && <div className="mt-2 text-[12px] text-amber-700">ℹ️ Truss type not picked — defaulted to Half Box</div>}
+                          {(pv.warnings || []).filter(w => !/cost preview|not picked/i.test(w)).map((w, i) => <div key={i} className="mt-1 text-[12px] text-red-600">⚠️ {w}</div>)}
+                        </div>
+                      );
+                    });
+                  })()}
+                </div>
+              </div>
+            )}
+
             {SHOW_DISMANTLE_IN_PLANNING && blockedItems.length > 0 && (
               <div className={"bg-white rounded-xl shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] overflow-hidden" + modalCls("dism")}>
                 <div className="px-3 sm:px-4 py-3 bg-gray-50">

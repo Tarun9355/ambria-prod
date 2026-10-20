@@ -358,7 +358,15 @@ export default function StudioModals({ ctx }) {
                 <button onClick={closeModal} style={{padding:"8px 16px",borderRadius:8,border:`1px solid ${border}`,background:"transparent",color:textS,fontSize:12,fontWeight:600,cursor:"pointer"}}>Cancel</button>
                 {inSplit
                   ? <button onClick={()=>{saveAvailSplit(splitIds);setAvailSplit(null);}} disabled={splitIds.length<2} style={{padding:"8px 18px",borderRadius:8,border:"none",background:splitIds.length<2?"#6B7280":"#059669",color:"#fff",fontSize:12,fontWeight:700,cursor:splitIds.length<2?"default":"pointer"}}>Save Split{splitIds.length>=2?` (${splitIds.length})`:""}</button>
-                  : <button onClick={()=>{saveAvailPick();setAvailSplit(null);}} style={{padding:"8px 18px",borderRadius:8,border:"none",background:"#059669",color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer"}}>Save</button>}
+                  : <>
+                    {/* Carpet only (the caller passes onPickAll): the same pick on every carpeted floor
+                        of this function, as far as the stock goes — floors past it show short in Build. */}
+                    {availModal.onPickAll && (()=>{const pick=(availModal.items||[]).find(i=>i.id===availModal.selectedId);return(
+                      <button onClick={()=>{if(!pick)return;availModal.onPickAll(pick);closeModal();setAvailSplit(null);}} disabled={!pick}
+                        title={pick?`Use ${pick.name} on every carpeted floor — ${pick.free} sqft free; floors beyond that are marked short`:"Pick a carpet first"}
+                        style={{padding:"8px 14px",borderRadius:8,border:"1px solid #059669",background:"transparent",color:pick?"#059669":"#9CA3AF",fontSize:12,fontWeight:700,cursor:pick?"pointer":"not-allowed"}}>Save to all</button>);})()}
+                    <button onClick={()=>{saveAvailPick();setAvailSplit(null);}} style={{padding:"8px 18px",borderRadius:8,border:"none",background:"#059669",color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer"}}>Save</button>
+                  </>}
               </div>
             </div>
           </div>

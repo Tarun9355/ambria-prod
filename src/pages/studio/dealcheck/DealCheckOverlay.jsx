@@ -94,7 +94,7 @@ const NUM = { fontVariantNumeric: "tabular-nums" };
 import { heavyExtraLabour, eventTimingMultFor, SIT_MULT_DEFAULTS } from "../../../lib/ims/constants";
 import { deptMpReconciled, itemImsSubcat, lookupBySubcat, itemDimsText, walkKitUnits } from "../../../lib/ims/helpers";
 import { rentalSplit, availableAtVenue, isStandingAt, fixedVenueFor, standingReductionBySubcat, fixedVenueDealDiscount, reservedByVenueToday, venueSlackFor } from "../../../lib/ims/fixedVenues";
-import { calcZoneFabric, autoFillFabricAllocation, anchorsForPalette, anchorsForPaletteByMaterial, resolveTrussConfig, zoneTrussStandingDiscount, repeatCatFor, freshFnForManpower } from "../../../lib/studio/pricing";
+import { calcZoneFabric, autoFillFabricAllocation, anchorsForPalette, anchorsForPaletteByMaterial, resolveTrussConfig, zoneTrussStandingDiscount, repeatCatFor, freshFnForManpower , dcFabricMultOf } from "../../../lib/studio/pricing";
 import { carpetPricingFor, CARPET_OFF } from "../../../lib/studio/taxonomy";
 import { qtyUsedElsewhereInDealCheck, netOwnReservedBlocksLive } from "../../../lib/studio/dealAvailability";
 import { isHiddenSubcat, oosCostPctFor, canFulfillShortfall } from "../../../lib/rateCard";
@@ -1024,7 +1024,7 @@ export default function DealCheckOverlay({ ctx }) {
                         deptInv["Tenting"].push({ name: "Batta", photo: "", qty: pv.batta.rftWithBuffer, unit: battaUnit, total: Math.round(pv.costs.battaCost), sub: "truss structure" });
                       }
                     }
-                    const fabCost = calcZoneFabricCost(row, tInv, anchors, density) * repeatFabMult;
+                    const fabCost = calcZoneFabricCost(row, tInv, anchors, density, row.dcFabricMult) * repeatFabMult;
                     truss += fabCost; byFn[fi].truss += fabCost; addD("Fabric", "fabric", fabCost); // truss/masking fabric → Fabric
                     // Line items for the Fabric dept's own planning view (IMS Dept Ops) — this never
                     // existed before (addD above only ever fed a dollar total, nothing a warehouse team
@@ -1040,14 +1040,14 @@ export default function DealCheckOverlay({ ctx }) {
                         const newR = (newRaw === undefined || newRaw === null || newRaw === "") ? oldR : (Number(newRaw) || 0);
                         return row.useNewFabric ? newR : oldR;
                       };
-                      const pushFab = (qty, unitLabel, name, oldKey, newKey) => {
+                      const pushFab = (qty, unitLabel, name, oldKey, newKey, part) => {
                         if (!(qty > 0)) return;
-                        const unit = rateFor(oldKey, newKey);
+                        const unit = rateFor(oldKey, newKey) * dcFabricMultOf(row, part);
                         deptInv["Fabric"].push({ name: `${name} (${tierLabel})`, photo: "", qty: Math.round(qty * 100) / 100, unit: Math.round(unit * repeatFabMult), total: Math.round(qty * unit * repeatFabMult), sub: `${unitLabel} · ${zk}` });
                       };
-                      pushFab(fab.maskingPieces, "pc", "Wall Masking", "maskingPieceRate", "maskingPieceRateNew");
-                      pushFab(fab.lizaKg, "kg", "Liza Fabric", "lizaKgRate", "lizaKgRateNew");
-                      pushFab(fab.curtainPieces, "pc", "Velvet Curtains", "curtainPieceRate", "curtainPieceRateNew");
+                      pushFab(fab.maskingPieces, "pc", "Wall Masking", "maskingPieceRate", "maskingPieceRateNew", "masking");
+                      pushFab(fab.lizaKg, "kg", "Liza Fabric", "lizaKgRate", "lizaKgRateNew", "liza");
+                      pushFab(fab.curtainPieces, "pc", "Velvet Curtains", "curtainPieceRate", "curtainPieceRateNew", "curtain");
                     }
                   });
                 });
@@ -1082,8 +1082,10 @@ export default function DealCheckOverlay({ ctx }) {
               const en = fn.enabledEls || {};
               const picks = dcCarpetPick[fi] || {};
               Object.keys(zc).forEach(zk => {
-                if (!en[zk] || !zc[zk] || zc[zk].cpT === CARPET_OFF) return;
-                // ═══ CARPET COST — priced from the BUILD's carpet material, not the IMS pick ═══
+                if (!en[zk] || !zc[zk]) return; // each platform row checks its own carpet below
+                // ═══ CARPET COST — the picked IMS carpet's own rental, else the Build material ═══
+                // (Updated 2026-10-20: a picked carpet now costs its own rental — see below. The
+                // history that follows is why the Build material is still the fallback.)
                 // The zone already carries a carpet material (zc.cpT, e.g. "Carpet Old · ₹5/sqft")
                 // and Build charges area × that rate. Deal Check used to ignore it and cost from
                 // whichever IMS carpet was picked, at that item's own rental — ₹400/sqft against
@@ -1094,26 +1096,40 @@ export default function DealCheckOverlay({ ctx }) {
                 // stock/availability checks — but the money now comes from the same place the quote
                 // does, so the two agree.
                 const zcz = zc[zk];
-                const fd = zcz.floorDims || {}; // no truss-dims fallback — see calcStructCost's own comment (StudioApp.jsx)
-                const area = (Number(fd.L) || Number(fd.S) || 0) * (Number(fd.W) || Number(fd.S) || 0);
-                const cRate = carpetPricingFor(zcz.cpT, imsCarpetMaterials).rate || 0;
-                const cc = area > 0 ? area * cRate : 0;
-                // Deal Check's own override (picks[zk]) wins if set; otherwise fall back to whichever
-                // physical carpet was already picked in Build (zcz.cpInvId) — so IMS gets told which
-                // carpet to pull even for a deal whose Deal Check carpet card was never touched.
-                const pickedId = picks[zk] ?? zcz.cpInvId ?? null;
-                const carpetItem = pickedId ? dcInventoryCache.find(x => x.id === pickedId) : null;
-                if (cc > 0) {
+                // Every platform row of the zone, not just its own floor: a zone can carry extra
+                // platforms ("+ Add Platform", zcz.extraPlatformRows), each with its own floor and
+                // carpet. Build's quote (calcStructCost's platformRows) charges them all; this only
+                // read row 0, so a stage's second 40x55 platform carpet cost nothing and never
+                // reached IMS. Row 0 uses Deal Check's carpet pick (picks[zk]) or Build's cpInvId;
+                // an extra row its own cpInvId.
+                const rows = [{ ...zcz, _pick: zcz.cpInvId ?? picks[zk] ?? null }, ...((zcz.extraPlatformRows || []).map(r => ({ ...r, _pick: r?.cpInvId ?? null })))];
+                const zoneLbl = zoneLabelsD?.[zk]?.label || (fn.customZones || []).find(cz => cz.id === zk)?.name || zk;
+                rows.forEach((row, rIdx) => {
+                  if (!row || !row.cpT || row.cpT === CARPET_OFF) return;
+                  const fd = row.floorDims || {}; // no truss-dims fallback — see calcStructCost's own comment (StudioApp.jsx)
+                  const area = (Number(fd.L) || Number(fd.S) || 0) * (Number(fd.W) || Number(fd.S) || 0);
+                  if (!(area > 0)) return;
+                  const carpetItem = row._pick ? dcInventoryCache.find(x => x.id === row._pick) : null;
+                  // Ambria's own cost: a specific carpet picked from IMS costs ITS rental per sqft
+                  // (what that carpet actually costs us — e.g. ₹4); with no pick (or a pick with no
+                  // rental set) it falls back to the Build material's rate. The guest quote is
+                  // untouched — it always bills the Build material (calcStructCost).
+                  const itemRate = carpetItem ? imsField.rentalCost(carpetItem) : 0;
+                  const cRate = itemRate > 0 ? itemRate : (carpetPricingFor(row.cpT, imsCarpetMaterials).rate || 0);
+                  const cc = area * cRate;
+                  if (!(cc > 0)) return;
                   rental += cc; byFn[fi].rental += cc;
                   addD("Tenting", "rental", cc);
                   if (deptInv["Tenting"]) deptInv["Tenting"].push({
-                    name: carpetItem?.name || carpetPricingFor(zcz.cpT, imsCarpetMaterials).label || "Carpet",
+                    name: carpetItem?.name || carpetPricingFor(row.cpT, imsCarpetMaterials).label || "Carpet",
                     photo: carpetItem ? imsField.photos(carpetItem)[0] || "" : "",
-                    qty: 1, unit: 0, total: Math.round(cc),
+                    qty: Math.round(area), unit: cRate, total: Math.round(cc), qtyUnit: "sqft",
+                    // Where these sqft come from, for IMS's "how?" on the merged line.
+                    parts: [{ zone: rows.length > 1 ? `${zoneLbl} · floor ${rIdx + 1}` : zoneLbl, fn: fns.length > 1 ? (fn.fnType || "") : "", dims: `${Number(fd.L) || Number(fd.S) || 0} × ${Number(fd.W) || Number(fd.S) || 0}`, qty: Math.round(area), rate: cRate, total: Math.round(cc) }],
                     sub: carpetItem ? imsField.subcategory(carpetItem) || "carpet" : "carpet",
                     imsId: carpetItem?.id,
                   });
-                }
+                });
               });
             });
           } catch {}
@@ -1168,6 +1184,7 @@ export default function DealCheckOverlay({ ctx }) {
               if (seen[key]) {
                 seen[key].qty += (it.qty || 0); seen[key].rentalQty += rq; seen[key].total += (it.total || 0);
                 if (it.shortQty) { seen[key].shortQty = (seen[key].shortQty || 0) + it.shortQty; seen[key].shortCost = (seen[key].shortCost || 0) + (it.shortCost || 0); }
+                if (Array.isArray(it.parts)) seen[key].parts = [...(seen[key].parts || []), ...it.parts];
                 if (Array.isArray(it.components)) { // merge kit sub-elements too (same kit across zones)
                   const base = seen[key].components || (seen[key].components = []);
                   it.components.forEach(cp => {
@@ -1177,7 +1194,7 @@ export default function DealCheckOverlay({ ctx }) {
                   });
                 }
               }
-              else { seen[key] = { ...it, rentalQty: rq, components: Array.isArray(it.components) ? it.components.map(c => ({ ...c })) : undefined }; merged.push(seen[key]); }
+              else { seen[key] = { ...it, rentalQty: rq, components: Array.isArray(it.components) ? it.components.map(c => ({ ...c })) : undefined, parts: Array.isArray(it.parts) ? [...it.parts] : undefined }; merged.push(seen[key]); }
               // Per-function truth, kept alongside the merged line — Dept Ops' own scoped-to-one-
               // function view used to ESTIMATE a function's share by scaling the merged total
               // proportionally to its qty (qty ÷ merged qty), which only happens to be right when
@@ -3003,7 +3020,11 @@ export default function DealCheckOverlay({ ctx }) {
                                   // has no Deal-Check-specific override yet — so a carpet picked in
                                   // Build is already reflected here the first time Deal Check runs,
                                   // instead of showing "no carpet picked" until someone repicks it here.
-                                  const pickedId = dcCarpetPick[fnIdx]?.[zk] ?? zc.cpInvId ?? null;
+                                  // ONE pick, shared with Build: the zone's own zc.cpInvId (Build's 📦 on the
+                                  // Platform card). A pick made here is written there too (setPick below), so
+                                  // Build and Deal Check always show the same carpet. dcCarpetPick is only read
+                                  // for an older deal whose pick was made here before this and never in Build.
+                                  const pickedId = zc.cpInvId ?? dcCarpetPick[fnIdx]?.[zk] ?? null;
                                   const carpetItem = pickedId ? dcInventoryCache.find(x=>x.id===pickedId) : null;
                                   const markup = dealCheckData?.carpetFreshMarkup ?? 40;
                                   const calc = carpetItem ? calcZoneCarpet(zc, carpetItem, markup) : null;
@@ -3012,7 +3033,15 @@ export default function DealCheckOverlay({ ctx }) {
                                   // card cannot state one number while the total is built on another.
                                   const cPrice = carpetPricingFor(zc.cpT, imsCarpetMaterials);
                                   const chargedCarpet = neededSqft * (cPrice.rate || 0);
-                                  const setPick = (id)=> setDcCarpetPick(prev=>({...prev,[fnIdx]:{...(prev[fnIdx]||{}),[zk]: id}}));
+                                  const setPick = (id)=> {
+                                    const it = id ? dcInventoryCache.find(x=>x.id===id) : null;
+                                    const apply = (z) => ({ ...(z || {}), cpInvId: id || null, cpInvName: it?.name || "" });
+                                    // Same live-vs-snapshot split every other Deal Check → Build write uses.
+                                    if (fnIdx === activeFnIdxCommitted) setZoneConfig(prev => ({ ...prev, [zk]: apply(prev[zk]) }));
+                                    else setFnBuilds(prev => { const snap = prev[fnIdx] || {}; const curZc = snap.zoneConfig || {}; return { ...prev, [fnIdx]: { ...snap, zoneConfig: { ...curZc, [zk]: apply(curZc[zk]) } } }; });
+                                    // Drop the old Deal-Check-only pick so it can't shadow Build's from now on.
+                                    setDcCarpetPick(prev => { const f = { ...(prev[fnIdx] || {}) }; delete f[zk]; return { ...prev, [fnIdx]: f }; });
+                                  };
                                   // ── SPLIT: the needed sqft divided across 2+ carpet designs, each ──
                                   // carrying its OWN sqft — never equal, since one design covers what
                                   // stock it actually has and the rest comes from another. Mirrors the

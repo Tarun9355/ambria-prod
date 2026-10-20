@@ -602,15 +602,18 @@ export const calcZoneFabric = (zc, trussInv, drapeDensity) => {
   // at all. Zeroed here, at the quantity source, so pricing (calcZoneFabricCost), Deal Check's
   // allocation panel and the truck count all follow without each needing its own check.
   const fab = zc.noFabric ? 0 : 1;
+  // Build's Fabric card icons switch each drape part off on its own (zc.fabLiza / zc.fabCurtain,
+  // default on): every reader — guest price, Deal Check's allocation, the truck count — follows.
+  const lz = zc.fabLiza === false ? 0 : 1, ct = zc.fabCurtain === false ? 0 : 1;
   return {
     maskingPieces: (maskingPieces + extMaskingPieces) * qty * fab,
     maskL,             // §23 Phase 2.9e — outer footprint used for masking RFT
     maskW,
-    lizaKg: Math.round(lizaKg * qty * fab * 100) / 100,            // total (wrap + ceiling)
-    lizaWrapKg: Math.round(lizaWrapKg * qty * fab * 100) / 100,    // wrap component (always present for any truss)
-    lizaCeilingKg: Math.round(lizaCeilingKg * qty * fab * 100) / 100, // ceiling component (Full Box only, else 0)
-    lizaModel: fab ? lizaModel : "none", // "none" | "wrap" | "wrap+ceiling"
-    curtainPieces: (curtainPieces + extCurtains) * qty * fab,
+    lizaKg: Math.round(lizaKg * qty * fab * lz * 100) / 100,            // total (wrap + ceiling)
+    lizaWrapKg: Math.round(lizaWrapKg * qty * fab * lz * 100) / 100,    // wrap component (always present for any truss)
+    lizaCeilingKg: Math.round(lizaCeilingKg * qty * fab * lz * 100) / 100, // ceiling component (Full Box only, else 0)
+    lizaModel: fab && lz ? lizaModel : "none", // "none" | "wrap" | "wrap+ceiling"
+    curtainPieces: (curtainPieces + extCurtains) * qty * fab * ct,
     curtainPillarCount: (curtainPillarCount + extPillars) * qty,
     physL: topo.physicalL,
     physW: topo.physicalW,
@@ -885,22 +888,33 @@ export const guestFabricMultiplier = (rates) => {
   const n = Number(v);
   return Number.isFinite(n) && n >= 0 ? n : GUEST_FABRIC_MULTIPLIER;
 };
-export const calcZoneFabricCost = (zCfg, trussInv, paletteAnchors, density) => {
+// Deal Check's own per-truss "x N" on each fabric line (row.dcFabricMult = {masking, liza, curtain}),
+// Ambria's cost side only - blank/missing = 1. Never read by the guest price.
+export const dcFabricMultOf = (row, part) => {
+  const v = row?.dcFabricMult?.[part];
+  if (v === undefined || v === null || v === "") return 1;
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 ? n : 1;
+};
+// mults (optional): { masking, liza, curtain } - Deal Check passes the row's own dcFabricMult; the
+// guest price (calcStructCost, Build) never does, so it is always 1x there.
+export const calcZoneFabricCost = (zCfg, trussInv, paletteAnchors, density, mults) => {
   if (!zCfg || !trussInv) return 0;
   const fab = calcZoneFabric(zCfg, trussInv, density || "moderate");
   const rates = trussInv.rates || {};
   const useNew = !!zCfg.useNewFabric;
   let cost = 0;
-  const addFab = (totalQty, rentalKey, rentalKeyNew) => {
+  const addFab = (totalQty, rentalKey, rentalKeyNew, part) => {
     if (!totalQty || totalQty <= 0) return;
+    const m = dcFabricMultOf({ dcFabricMult: mults }, part);
     const oldRate = Number(rates[rentalKey]) || 0;
     const newRateRaw = rates[rentalKeyNew];
     const newRate = (newRateRaw === undefined || newRateRaw === null || newRateRaw === "") ? oldRate : (Number(newRateRaw) || 0);
-    cost += totalQty * (useNew ? newRate : oldRate);
+    cost += totalQty * (useNew ? newRate : oldRate) * m;
   };
-  addFab(fab.maskingPieces, "maskingPieceRate", "maskingPieceRateNew");
-  addFab(fab.lizaKg,        "lizaKgRate",       "lizaKgRateNew");
-  addFab(fab.curtainPieces, "curtainPieceRate", "curtainPieceRateNew");
+  addFab(fab.maskingPieces, "maskingPieceRate", "maskingPieceRateNew", "masking");
+  addFab(fab.lizaKg,        "lizaKgRate",       "lizaKgRateNew",       "liza");
+  addFab(fab.curtainPieces, "curtainPieceRate", "curtainPieceRateNew", "curtain");
   return cost;
 };
 

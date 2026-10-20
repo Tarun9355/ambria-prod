@@ -71,7 +71,7 @@ const NAV_RULE = { width: 1, height: 22, background: "rgba(255,255,255,0.1)", fl
 import {
   DEFAULT_TAX, ZONE_META, ZONE_LABELS, ZONE_PRESETS, BASE_RATES,
   getCat, taxOr, FUNCTIONS, CATEGORIES, SHIFT_LETTER,
-  carpetPricingFor, CARPET_OFF, trussRateFor, maskingRateFor, platformRateFor, platformRowCost, trussBaseArea, TRUSS_MATERIALS, DRAPE_DENSITIES,
+  carpetPricingFor, carpetRateForRow, CARPET_OFF, trussRateFor, maskingRateFor, platformRateFor, platformRowCost, trussBaseArea, TRUSS_MATERIALS, DRAPE_DENSITIES,
   resolveVenueGensets,
 } from "../../lib/studio/taxonomy";
 
@@ -297,7 +297,7 @@ function calcStructCost(zk, zc, rates, applyDiscount) {
   // differently, so each extra row carries its own (set via its own card in the zone editor).
   const trussRows = [
     { dims: d, trT: zc.trT, trussType: zc.trussType, trussQty: zc.trussQty, trussFrontExt: zc.trussFrontExt, trussFrontExtH: zc.trussFrontExtH, trussBackDepth: zc.trussBackDepth, mkOn: zc.mkOn, mkT: zc.mkT, mkWalls: zc.mkWalls, mkWallMat: zc.mkWallMat, mkS: zc.mkS, trussMaterial: zc.trussMaterial, drapeDensity: zc.drapeDensity, customCeilingItemId: zc.customCeilingItemId, customMaskingItemId: zc.customMaskingItemId,
-      useNewFabric: zc.useNewFabric, noFabric: zc.noFabric },
+      useNewFabric: zc.useNewFabric, noFabric: zc.noFabric, fabLiza: zc.fabLiza, fabCurtain: zc.fabCurtain },
     ...(zc.extraTrussRows || []),
   ];
   trussRows.forEach((row) => { const { truss, masking } = trussRowCost(row, rates); r.truss += truss; r.masking += masking; });
@@ -313,7 +313,7 @@ function calcStructCost(zk, zc, rates, applyDiscount) {
       if (row.useNewFabric) r.fabricNew = true;
     });
   }
-  const platformRows = [{ plH: zc.plH, floorDims: fd, cpT: zc.cpT, plQty: zc.plQty }, ...(zc.extraPlatformRows || [])];
+  const platformRows = [{ plH: zc.plH, floorDims: fd, cpT: zc.cpT, plQty: zc.plQty, cpInvId: zc.cpInvId }, ...(zc.extraPlatformRows || [])];
   platformRows.forEach((row) => { const { platform, carpet } = platformRowCost(row, rates); r.platform += platform; r.carpet += carpet; });
   if (zc.archOn && zc.archT) { const aq = zc.archQty || 0, aw = zc.archW || 0, ah = zc.archH || 0; r.arches = aq * aw * ah * (BASE_RATES.arch[zc.archT] || 60); }
   if (zc.pillarQty) { r.pillars = (zc.pillarQty || 0) * BASE_RATES.pillar; }
@@ -9899,7 +9899,8 @@ export default function StudioApp() {
         });
       }
       if (zl.carpet > 0) {
-        const cp = carpetPricingFor(zc.cpT, imsCarpetMaterials);
+        // Same rate the price was built on — a picked stock carpet's own rental, else the material.
+        const cp = carpetRateForRow(zc, imsCarpetMaterials, imsInventory);
         structItems.push({
           name: "Carpet (" + cp.label + " ₹" + cp.rate + "/sqft)",
           size: floorDimLabel, qty: Math.round(floorArea * 100) / 100, rate: cp.rate, unit: "sqft",
@@ -10218,7 +10219,7 @@ export default function StudioApp() {
     // Deal Check needs both: it MUST pass onPick (or the pick lands in Build's zoneElements),
     // and onPick was the very flag that used to mean "no split here". So the capability is now
     // declared rather than inferred — the same correction made for priceMode above.
-    setAvailModal({ zoneKey, idx, elName: el?.name || "", subcat, date, loading: true, items: [], selectedId: el?.imsId || el?.invId || null, onPick: onPick || null, splitQty: Number(opts?.splitQty) || 0, onSplit: opts?.onSplit || null, pickHint: opts?.pickHint || "", neededLabel: opts?.neededLabel || "", unitLabel: opts?.unitLabel || "" });
+    setAvailModal({ zoneKey, idx, elName: el?.name || "", subcat, date, loading: true, items: [], selectedId: el?.imsId || el?.invId || null, onPick: onPick || null, onPickAll: opts?.onPickAll || null, splitQty: Number(opts?.splitQty) || 0, onSplit: opts?.onSplit || null, pickHint: opts?.pickHint || "", neededLabel: opts?.neededLabel || "", unitLabel: opts?.unitLabel || "" });
     try {
       const { inventory, blocksForDate, blocksDetailForDate } = await loadAvailability(date);
       const target = String(subcat).toLowerCase().trim();

@@ -212,15 +212,9 @@ export function trussBaseArea(row = {}) {
 export function maskingRateFor(key, maskingRates) {
   const list = (Array.isArray(maskingRates) && maskingRates.length) ? maskingRates : DEFAULT_MASKING_RATES;
   const row = list.find((r) => r.key === key) || DEFAULT_MASKING_RATES.find((r) => r.key === key);
-  return (Number(row?.ratePerSqft) || 0) * maskingMultiplierOf(row);
-}
-// Per-type multiplier on the masking rate (IMS Admin → Truss & Masking Rates → Masking). Blank or
-// missing = 1×, so a type nobody has touched prices exactly as before.
-export function maskingMultiplierOf(row) {
-  const m = row?.multiplier;
-  if (m === undefined || m === null || m === "") return 1;
-  const n = Number(m);
-  return Number.isFinite(n) && n >= 0 ? n : 1;
+  // The per-type multiplier column was removed (owner ask, 2026-10-20): a type bills its own
+  // ₹/sqft and nothing else. A `multiplier` still stored on an old row is ignored.
+  return Number(row?.ratePerSqft) || 0;
 }
 // The masking types a salesperson can PICK, in `MASK_OPTS` shape ({id, l, r}) so every existing
 // call site reads the same. Derived from the admin's saved list rather than a hardcoded array —
@@ -233,7 +227,7 @@ export function maskingMultiplierOf(row) {
 // to ₹0. Deleting removes a type from the menu going forward; it does not rewrite priced history.
 export function maskingOptions(maskingRates) {
   const list = (Array.isArray(maskingRates) && maskingRates.length) ? maskingRates : DEFAULT_MASKING_RATES;
-  return list.map((r) => ({ id: r.key, l: r.name, r: (Number(r.ratePerSqft) || 0) * maskingMultiplierOf(r) }));
+  return list.map((r) => ({ id: r.key, l: r.name, r: Number(r.ratePerSqft) || 0 }));
 }
 
 // Sentinel `cpT` value meaning "salesperson explicitly turned carpet off". Any OTHER falsy value
@@ -266,6 +260,17 @@ export function billedCarpetSqft(rawSqft, carpetLabel) {
   if (!(rawSqft > 0)) return rawSqft;
   return /new/i.test(carpetLabel || "") ? Math.ceil(rawSqft / CARPET_NEW_ROLL_SQFT) * CARPET_NEW_ROLL_SQFT : rawSqft;
 }
+// The rate a floor's carpet is billed at. A carpet picked from stock (row.cpInvId, Build's 📦)
+// bills at that item's own IMS rental per sqft (owner ask 2026-10-20 — "Brown Beige at ₹4", not
+// the generic Carpet Old ₹7); with no pick, or a pick with no rental set, the material dropdown's
+// rate as before. fromItem tells the display which one it is.
+export function carpetRateForRow(row, carpetMaterials, inventory) {
+  const item = row?.cpInvId ? (inventory || []).find((i) => i.id === row.cpInvId) : null;
+  const itemRate = item ? (Number(item.rentalCost ?? item.price ?? 0) || 0) : 0;
+  if (itemRate > 0) return { rate: itemRate, label: item.name || "Carpet", fromItem: true };
+  const cp = carpetPricingFor(row?.cpT, carpetMaterials);
+  return { ...cp, fromItem: false };
+}
 export function platformRowCost(row, rates) {
   const fd = row?.floorDims || {};
   const a = (fd.L || fd.S || 0) * (fd.W || (fd.S || 0));
@@ -278,8 +283,9 @@ export function platformRowCost(row, rates) {
   const platform = (row?.plH ? a * platformRateFor(row.plH, rates?.platformRates) : 0) * qty;
   let carpet = 0;
   if (row?.cpT !== CARPET_OFF) {
-    const cp = carpetPricingFor(row?.cpT, rates?.carpetMaterials);
-    carpet = billedCarpetSqft(a * qty, cp.label) * cp.rate;
+    const cp = carpetRateForRow(row, rates?.carpetMaterials, rates?.imsInventory);
+    // Roll rounding is a "Carpet New" material rule — not applied to a specific picked carpet.
+    carpet = (cp.fromItem ? a * qty : billedCarpetSqft(a * qty, cp.label)) * cp.rate;
   }
   return { platform, carpet };
 }

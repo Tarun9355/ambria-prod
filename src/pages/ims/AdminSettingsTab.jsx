@@ -14,7 +14,7 @@ import FixedVenuesEditor from "./FixedVenuesEditor.jsx";
 import VenuesEditor from "./VenuesEditor.jsx";
 import { getFloralMode } from "../../lib/rateCard";
 import { RC_UNITS } from "../../lib/studio/constants";
-import { DEFAULT_TRUSS_RATES, DEFAULT_MASKING_RATES, DEFAULT_PLATFORM_RATES, TRUSS_SHAPES, TRUSS_MATERIALS, DRAPE_DENSITIES, maskingMultiplierOf } from "../../lib/studio/taxonomy";
+import { DEFAULT_TRUSS_RATES, DEFAULT_MASKING_RATES, DEFAULT_PLATFORM_RATES, TRUSS_SHAPES, TRUSS_MATERIALS, DRAPE_DENSITIES } from "../../lib/studio/taxonomy";
 import { GUEST_FABRIC_MULTIPLIER, guestFabricMultiplier } from "../../lib/studio/pricing";
 
 // Same canonical unit list as the Mandi Prices panel's own flower-unit dropdown (below), plus two
@@ -157,11 +157,6 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
   const updateMaskingRate = (key, ratePerSqft) => {
     const current = (settings.maskingRates && settings.maskingRates.length) ? settings.maskingRates : DEFAULT_MASKING_RATES;
     setSettings((s) => ({ ...s, maskingRates: current.map((r) => (r.key === key ? { ...r, ratePerSqft } : r)) }));
-  };
-  // null (blank input) = 1×, see maskingMultiplierOf.
-  const updateMaskingMultiplier = (key, multiplier) => {
-    const current = (settings.maskingRates && settings.maskingRates.length) ? settings.maskingRates : DEFAULT_MASKING_RATES;
-    setSettings((s) => ({ ...s, maskingRates: current.map((r) => (r.key === key ? { ...r, multiplier } : r)) }));
   };
   const updateMaskingName = (key, name) => {
     const current = (settings.maskingRates && settings.maskingRates.length) ? settings.maskingRates : DEFAULT_MASKING_RATES;
@@ -2782,15 +2777,6 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                       <input type="number" min="0" value={r.ratePerSqft ?? 0} onChange={(e) => updateMaskingRate(r.key, parseFloat(e.target.value) || 0)}
                         className="w-20 border rounded-lg px-2 py-1 text-sm text-center font-semibold" />
                       <span className="text-xs text-gray-400">/sqft</span>
-                    </div>
-                    {/* Blank = 1×. Studio prices this type at rate × multiplier (maskingRateFor). */}
-                    <div className="flex items-center gap-1" title={`Studio bills ₹${(Number(r.ratePerSqft) || 0) * maskingMultiplierOf(r)}/sqft`}>
-                      <span className="text-xs text-gray-400">×</span>
-                      <input type="number" min="0" step="0.1" value={r.multiplier ?? ""} placeholder="1"
-                        onChange={(e) => updateMaskingMultiplier(r.key, e.target.value === "" ? null : (parseFloat(e.target.value) || 0))}
-                        aria-label={`${r.name} multiplier`}
-                        className="w-16 border rounded-lg px-2 py-1 text-sm text-center font-semibold" />
-                      <span className="text-xs text-gray-400 w-24">= ₹{(Number(r.ratePerSqft) || 0) * maskingMultiplierOf(r)}/sqft</span>
                     </div>
                     <button type="button" onClick={() => deleteMaskingRate(r.key)}
                       title={`Remove ${r.name}`} aria-label={`Remove ${r.name}`}

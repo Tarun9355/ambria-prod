@@ -1,5 +1,5 @@
 import { Fragment } from "react";
-import { calcZoneFabric, autoFillFabricAllocation, anchorsForPalette, anchorsForPaletteByMaterial, calcFabricAllocationTotal, zoneTrussStandingDiscountDetail, repeatCatFor, snapRowDimsForProduction } from "../../../../lib/studio/pricing";
+import { calcZoneFabric, autoFillFabricAllocation, anchorsForPalette, anchorsForPaletteByMaterial, calcFabricAllocationTotal, zoneTrussStandingDiscountDetail, repeatCatFor, snapRowDimsForProduction , dcFabricMultOf } from "../../../../lib/studio/pricing";
 import { fixedVenueFor } from "../../../../lib/ims/fixedVenues";
 import { findCrossFnReuseSource } from "../../../../lib/studio/crossFnReuse";
 import { TRUSS_ALLOC_SK } from "../../../../lib/studio/keys.js";
@@ -438,7 +438,7 @@ export default function DCTrussTab({ ctx }) {
                           // allocation) rather than always reading the zone's top-level zCfg, which
                           // used to double-count row 0's fabric once per extra row a zone had, and
                           // always missed an extra row's own fabric entirely.
-                          const fabCost = calcZoneFabricCost(row, trussInv, anchors, density) * (pv?.costs?.isRepeat ? 0.7 : 1);
+                          const fabCost = calcZoneFabricCost(row, trussInv, anchors, density, row.dcFabricMult) * (pv?.costs?.isRepeat ? 0.7 : 1);
                           fabricCostByPreviewIdx[idx] = fabCost;
                           fnGrand += fabCost;
                         });
@@ -654,9 +654,30 @@ export default function DCTrussTab({ ctx }) {
                                         const newR = (newRaw === undefined || newRaw === null || newRaw === "") ? oldR : (Number(newRaw) || 0);
                                         return useNewFabric ? newR : oldR;
                                       };
-                                      const maskRate = flatRateFor("maskingPieceRate", "maskingPieceRateNew");
-                                      const lizaRate = flatRateFor("lizaKgRate", "lizaKgRateNew");
-                                      const curtainRate = flatRateFor("curtainPieceRate", "curtainPieceRateNew");
+                                      // x this row's own per-line multiplier (row.dcFabricMult, the "x N" box on each line).
+                                      const maskRate = flatRateFor("maskingPieceRate", "maskingPieceRateNew") * dcFabricMultOf(row, "masking");
+                                      const lizaRate = flatRateFor("lizaKgRate", "lizaKgRateNew") * dcFabricMultOf(row, "liza");
+                                      const curtainRate = flatRateFor("curtainPieceRate", "curtainPieceRateNew") * dcFabricMultOf(row, "curtain");
+                                      // Saved on the same truss row the allocations live on (row 0 = the zone, else
+                                      // extraTrussRows[rowIdx-1]); blank or 1 removes the key.
+                                      const setFabricMult = (part, val) => {
+                                        const v = val === "" ? null : Math.max(0, Number(val) || 0);
+                                        const apply = (z) => {
+                                          const next = { ...((z && z.dcFabricMult) || {}) };
+                                          if (v == null || v === 1) delete next[part]; else next[part] = v;
+                                          const out = { ...(z || {}) };
+                                          if (Object.keys(next).length) out.dcFabricMult = next; else delete out.dcFabricMult;
+                                          return out;
+                                        };
+                                        const patch = (zoneObj) => {
+                                          if (rowIdx === 0) return apply(zoneObj);
+                                          const rows = [...((zoneObj || {}).extraTrussRows || [])];
+                                          rows[rowIdx - 1] = apply(rows[rowIdx - 1]);
+                                          return { ...(zoneObj || {}), extraTrussRows: rows };
+                                        };
+                                        if (fn.fnIdx === activeFnIdx) setZoneConfig(prev => ({ ...prev, [zk]: patch(prev[zk]) }));
+                                        else setFnBuilds(prev => { const snap = prev[fn.fnIdx] || {}; const curZc = snap.zoneConfig || {}; return { ...prev, [fn.fnIdx]: { ...snap, zoneConfig: { ...curZc, [zk]: patch(curZc[zk]) } } }; });
+                                      };
                                       const maskingTotals = applyRepeatFab(calcFabricAllocationTotal(maskingAlloc, trussInv.maskingStock, "stockPieces", maskRate, undefined, undefined, maskRate));
                                       const lizaTotals    = applyRepeatFab(calcFabricAllocationTotal(lizaAlloc,    trussInv.lizaStock,    "stockKg",     lizaRate, undefined, undefined, lizaRate));
                                       const curtainTotals = applyRepeatFab(calcFabricAllocationTotal(curtainAlloc, trussInv.curtainStock, "stockPieces", curtainRate, undefined, undefined, curtainRate));
@@ -706,7 +727,8 @@ export default function DCTrussTab({ ctx }) {
                                         </span>
                                       );
 
-                                      const FabricRow = ({ emoji, label, qty, unitLabel, allocs, totals, fabricType, allocField, breakdown, discounted, useNewFabric }) => {
+                                      const FabricRow = ({ emoji, label, qty, unitLabel, allocs, totals, fabricType, allocField, breakdown, discounted, useNewFabric, multPart }) => {
+                                        const mult = dcFabricMultOf(row, multPart);
                                         const shortQty = totals.totalShort || 0;
                                         const hasShort = shortQty > 0;
                                         const marginLoss = totals.freshCost || 0;
@@ -731,6 +753,14 @@ export default function DCTrussTab({ ctx }) {
                                                 style={{padding:"3px 9px",borderRadius:5,border:"1px solid #D3D7DF",background:TILE_BG,color:INK,fontSize:11.5,cursor:"pointer",fontWeight:700}}>
                                                 🎨 {allocs.length === 0 ? "Pick" : "Edit"}
                                               </button>
+                                              <label title="Multiply this line's cost (Ambria's cost side only, the guest price is not touched). Blank = 1." style={{display:"inline-flex",alignItems:"center",gap:3,fontSize:11.5,color:mult !== 1 ? "#4338CA" : INK_2,fontWeight:600}}>
+                                                ×<input type="number" min="0" step="0.1" placeholder="1"
+                                                  key={`${zk}-${rowIdx}-${multPart}-${row?.dcFabricMult?.[multPart] ?? ""}`}
+                                                  defaultValue={row?.dcFabricMult?.[multPart] ?? ""}
+                                                  onBlur={e => setFabricMult(multPart, e.target.value)}
+                                                  onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
+                                                  style={{width:44,padding:"2px 4px",borderRadius:5,border:`1px solid ${mult !== 1 ? "#A5B4FC" : "#D3D7DF"}`,fontSize:11.5,textAlign:"center",fontWeight:700,color:INK}} />
+                                              </label>
                                             </div>
                                             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,flexWrap:"wrap"}}>
                                               <AllocChips allocs={allocs} unitLabel={unitLabel} />
@@ -765,13 +795,13 @@ export default function DCTrussTab({ ctx }) {
                                             emoji="🧱" label="Wall Masking" qty={fab.maskingPieces} unitLabel="pc"
                                             allocs={maskingAlloc} totals={maskingTotals} fabricType="masking" allocField="maskingAllocation"
                                             breakdown={`RFT ${Math.round((fab.maskL || 0) + 2*(fab.maskW || 0))} ÷ 13`}
-                                            discounted={costs?.isRepeat} useNewFabric={useNewFabric}
+                                            discounted={costs?.isRepeat} useNewFabric={useNewFabric} multPart="masking"
                                           />}
                                           {showLiza && <FabricRow
                                             emoji="🪡" label="Liza" qty={fab.lizaKg} unitLabel="kg"
                                             allocs={lizaAlloc} totals={lizaTotals} fabricType="liza" allocField="lizaAllocation"
                                             breakdown={fab.lizaModel === "wrap+ceiling" ? `wrap ${fab.lizaWrapKg}kg + ceiling ${fab.lizaCeilingKg}kg (${density})` : `wrap only`}
-                                            discounted={costs?.isRepeat} useNewFabric={useNewFabric}
+                                            discounted={costs?.isRepeat} useNewFabric={useNewFabric} multPart="liza"
                                           />}
                                           {showCurtain && <FabricRow
                                             emoji="🎀" label="Velvet Curtains" qty={fab.curtainPieces} unitLabel="pc"
@@ -785,7 +815,7 @@ export default function DCTrussTab({ ctx }) {
                                               const perPillar = pc > 0 ? Math.round((fab.curtainPieces || 0) / pc) : (row.curtainsPerPillar || 4);
                                               return `${pc} ${fab.curtainPillarCount && fab.curtainPillarCount < fab.pillarCount ? "front " : ""}pillars × ${perPillar} curtains/pillar`;
                                             })()}
-                                            discounted={costs?.isRepeat} useNewFabric={useNewFabric}
+                                            discounted={costs?.isRepeat} useNewFabric={useNewFabric} multPart="curtain"
                                           />}
                                           </div>
                                         </div>
