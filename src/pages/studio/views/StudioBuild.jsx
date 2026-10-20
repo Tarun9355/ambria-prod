@@ -410,7 +410,7 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                         see calcZoneFabric's fabLiza / fabCurtain. */}
                     <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}>
                       <span style={rowCap}>Fabric</span>
-                      {!zc.noFabric&&[["fabLiza","🪡","Liza"],["fabCurtain","🎀","Velvet curtains"]].map(([key,ic,lbl])=>{const on=zc[key]!==false;return(
+                      {!zc.noFabric&&[["fabLiza","🧵","Liza"],["fabCurtain","🎀","Velvet curtains"]].map(([key,ic,lbl])=>{const on=zc[key]!==false;return(
                         <span key={key} onClick={()=>sZ({[key]:on?false:undefined})} title={`${lbl}: ${on?"on — click to leave it off this truss":"off — click to add it back"}`}
                           style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:22,height:22,borderRadius:6,cursor:"pointer",fontSize:12,
                             border:`1px solid ${on?accent:border}`,background:on?`${accent}18`:"transparent",opacity:on?1:0.4,filter:on?"none":"grayscale(1)"}}>{ic}</span>);})}
@@ -3179,7 +3179,7 @@ undefined
         const on = curColors.some(c => c.name === name);
         setFabricColors(on ? curColors.filter(c => c.name !== name) : [...curColors, { name, materials: null }]);
       };
-      const FABRIC_MATERIAL_ICONS = [["liza","🪡"],["masking","🧱"],["curtain","🎀"]];
+      const FABRIC_MATERIAL_ICONS = [["liza","🧵"],["masking","🧱"],["curtain","🎀"]];
       const toggleMaterial = (name, material) => {
         setFabricColors(curColors.map(c => {
           if (c.name !== name) return c;

@@ -822,7 +822,7 @@ export default function DCTrussTab({ ctx }) {
                                             discounted={costs?.isRepeat} useNewFabric={useNewFabric} multPart="masking"
                                           />}
                                           {showLiza && <FabricRow
-                                            emoji="🪡" label="Liza" qty={fab.lizaKg} unitLabel="kg"
+                                            emoji="🧵" label="Liza" qty={fab.lizaKg} unitLabel="kg"
                                             allocs={lizaAlloc} totals={lizaTotals} fabricType="liza" allocField="lizaAllocation"
                                             breakdown={fab.lizaModel === "wrap+ceiling" ? `wrap ${fab.lizaWrapKg}kg + ceiling ${fab.lizaCeilingKg}kg (${density})` : `wrap only`}
                                             discounted={costs?.isRepeat} useNewFabric={useNewFabric} multPart="liza"
