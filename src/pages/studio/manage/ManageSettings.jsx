@@ -589,13 +589,38 @@ export default function ManageSettings({ ctx }) {
                     </div>;
                   })}
                 </div>}
-                {c.sessions?.length>0&&<div>
-                  <div style={{fontSize:10,fontWeight:600,color:textS,marginBottom:4}}>Sessions ({c.sessions.length})</div>
-                  {c.sessions.slice(0,5).map((s,si)=><div key={si} style={{display:"flex",justifyContent:"space-between",padding:"4px 8px",marginBottom:2,borderRadius:6,background:isDark?"rgba(255,255,255,0.03)":"#fff",fontSize:11}}>
-                    <span style={{color:textS}}>{new Date(s.savedAt).toLocaleDateString("en-IN",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"})} — {s.savedBy||"—"}</span>
-                    <span style={{fontWeight:600,color:accentText}}>{s.total?fmt(s.total):"—"} <span style={{fontWeight:400,color:textS,fontSize:10}}>{s.tier||""}</span></span>
-                  </div>)}
-                </div>}
+                {c.sessions?.length>0&&(()=>{
+                  // One row per CALENDAR DAY, not per save — a deal worked on 5× in one afternoon
+                  // used to print 5 near-identical rows (same day, same figure give or take a last
+                  // tweak) and buried which OTHER days it was touched on behind the old slice(0,5).
+                  // c.sessions is already newest-first (saveSession prepends), so the first save
+                  // grouped under a given day is that day's LATEST — the figure actually carried
+                  // into the next day — and insertion order of the day keys below is itself already
+                  // most-recent-day-first, with nothing further to sort.
+                  const byDay = {};
+                  const dayOrder = [];
+                  (c.sessions||[]).forEach(s=>{
+                    const dayKey = new Date(s.savedAt).toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"});
+                    if (!byDay[dayKey]) { byDay[dayKey] = []; dayOrder.push(dayKey); }
+                    byDay[dayKey].push(s);
+                  });
+                  const fmtTime = (t)=>new Date(t).toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"});
+                  return <div>
+                    <div style={{fontSize:10,fontWeight:600,color:textS,marginBottom:4}}>Sessions ({c.sessions.length}) · {dayOrder.length} day{dayOrder.length===1?"":"s"} touched</div>
+                    {dayOrder.map(day=>{
+                      const group = byDay[day];
+                      const last = group[0], first = group[group.length-1];
+                      const people = [...new Set(group.map(s=>s.savedBy||"—"))];
+                      return <div key={day} style={{display:"flex",justifyContent:"space-between",padding:"4px 8px",marginBottom:2,borderRadius:6,background:isDark?"rgba(255,255,255,0.03)":"#fff",fontSize:11}}>
+                        <span style={{color:textS}}>
+                          {day} · {group.length>1?`${fmtTime(first.savedAt)}–${fmtTime(last.savedAt)}`:fmtTime(last.savedAt)} — {people.join(", ")}
+                          {group.length>1&&<span style={{opacity:0.6}}> ({group.length} saves)</span>}
+                        </span>
+                        <span style={{fontWeight:600,color:accentText}}>{last.total?fmt(last.total):"—"} <span style={{fontWeight:400,color:textS,fontSize:10}}>{last.tier||""}</span></span>
+                      </div>;
+                    })}
+                  </div>;
+                })()}
               </div>}
             </div>;
             })}
