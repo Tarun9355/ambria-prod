@@ -2132,11 +2132,13 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   // sentence), ceiled once. NOT additive across departments — summing every department's own
   // ceiled number for one function can exceed the real shared total, because ceiling several
   // small fractions separately can only ever round UP more than ceiling their sum once.
-  const deptCrewForFn = (c) => {
+  // Summed to the hundredth before the ceiling: 0.25 + 0.30 + … that is exactly 2.00 on paper comes
+  // out as 2.0000000000000004 in floating point, and Math.ceil turned that into 3.
+  const deptNeedForFn = (c) => {
     const rows = Array.isArray(c?.trace?.usageRows) ? c.trace.usageRows.filter(ur => catToDept(ur.sub) === dept) : [];
-    if (!rows.length) return 0;
-    return Math.ceil(rows.reduce((s, ur) => s + (Number(ur.need) || 0), 0));
+    return Math.round(rows.reduce((s, ur) => s + (Number(ur.need) || 0), 0) * 100) / 100;
   };
+  const deptCrewForFn = (c) => Math.ceil(deptNeedForFn(c));
   // A Labours day whose order carries no per-function trace (synced before Deal Check sent
   // trace.byFn, or nothing per function to show): the same facts the old prose box gave — whole-event
   // need, venue minimum, this department's own items, the carry-over and this department's share —
@@ -2209,6 +2211,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     // Any other crew type with per-function traces from Deal Check: same table, its own rows.
     if (t.kind !== "tier2" && Array.isArray(t.byFn) && t.byFn.length) {
       const { cols, timeLabel, shiftOf } = orderFnCols(t.byFn, day);
+      const labHowKey = `labfn|${day?.date || ""}`;
       const labels = [];
       cols.forEach(c => traceRowsOf(c.trace).forEach(r => { if (!labels.includes(r.label)) labels.push(r.label); }));
       return (
@@ -2230,12 +2233,29 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
               </div>
             ))}
             <div className="contents">
-              <span className="px-2 py-1 bg-gray-50 text-[13px] text-gray-600" title={t.kind === "labours" ? `${dept}'s own ceiled slice of each function's shared crew — not a dedicated headcount, and not additive across departments` : undefined}>
+              <span className="px-2 py-1 bg-gray-50 text-[13px] text-gray-600 flex items-center gap-1.5" title={t.kind === "labours" ? `${dept}'s own ceiled slice of each function's shared crew — not a dedicated headcount, and not additive across departments` : undefined}>
                 {t.kind === "labours" ? `${dept}'s share per function` : "Crew per function"}
+                {t.kind === "labours" && <button type="button" onClick={() => setLaboursHow(p => ({ ...p, [labHowKey]: !p[labHowKey] }))} className="text-[12px] font-semibold text-blue-600 hover:underline">{laboursHow[labHowKey] ? "hide" : "how?"}</button>}
               </span>
               {cols.map((c, ci) => <span key={ci} className="px-2 py-1 bg-gray-50 text-[13px] text-center border-l border-gray-100 text-gray-900 font-semibold whitespace-nowrap">{t.kind === "labours" ? deptCrewForFn(c) : c.result}</span>)}
             </div>
           </div>
+          {t.kind === "labours" && laboursHow[labHowKey] && (
+            <div className="border-t px-2 py-1.5 text-[13px] text-gray-700 space-y-1.5">
+              <div className="text-[12.5px] text-gray-500">How each row reads: <b className="text-gray-700">12 ÷ 40 = 0.30</b> — 12 of the item, one labourer handles 40, so it needs 0.30 of a labourer. <b className="text-gray-700">×46 → +1</b> — 46 of a heavy item add 1 extra labourer to the whole event's crew.</div>
+              {cols.map((c, ci) => {
+                const need = deptNeedForFn(c);
+                const heavy = (c.trace?.heavyRows || []).filter(hr => catToDept(hr.sub) === dept);
+                return (
+                  <div key={ci}>
+                    <b className="text-gray-900">{c.fn}</b>: {dept}'s items add up to <b>{need.toFixed(2)}</b> labourer{need === 1 ? "" : "s"} → rounded up = <b className="text-gray-900">{deptCrewForFn(c)}</b>.
+                    {heavy.length > 0 && <> Heavy items ({heavy.map(hr => `${hr.sub} ×${hr.count} → +${hr.extra}`).join(", ")}) add to the whole event's crew, not to this share.</>}
+                    {" "}The whole event needs <b>{c.result}</b> for {c.fn} (all departments).
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       );
     }
