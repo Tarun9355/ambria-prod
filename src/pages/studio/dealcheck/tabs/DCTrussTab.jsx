@@ -1,6 +1,7 @@
 import { Fragment } from "react";
-import { calcZoneFabric, autoFillFabricAllocation, anchorsForPalette, anchorsForPaletteByMaterial, calcFabricAllocationTotal, zoneTrussStandingDiscountDetail, repeatCatFor, snapRowDimsForProduction , dcFabricMultOf } from "../../../../lib/studio/pricing";
+import { calcZoneFabric, autoFillFabricAllocation, anchorsForPalette, anchorsForPaletteByMaterial, calcFabricAllocationTotal, zoneTrussStandingDiscountDetail, repeatCatFor, snapRowDimsForProduction, trussInvForMaterial, dcFabricMultOf } from "../../../../lib/studio/pricing";
 import { fixedVenueFor } from "../../../../lib/ims/fixedVenues";
+import { resolveBeamSegment, resolvePillarHeight } from "../../../../lib/ims/trussEngine";
 import { findCrossFnReuseSource } from "../../../../lib/studio/crossFnReuse";
 import { TRUSS_ALLOC_SK } from "../../../../lib/studio/keys.js";
 import { supabase } from "../../../../lib/supabase";
@@ -168,7 +169,29 @@ export default function DCTrussTab({ ctx }) {
                           fromL: row.dims?.L, toL: snappedRow.dims?.L,
                           fromW: row.dims?.W, toW: snappedRow.dims?.W,
                         } : null;
-                        return { zk, zLabel: rowIdx > 0 ? `${zLabel} (truss #${rowIdx + 1})${isRepeat ? " · ♻️ Repeat (30%)" : ""}` : `${zLabel}${isRepeat ? " · ♻️ Repeat (30%)" : ""}`, pv, row, rowIdx, snapNote };
+                        // The real, stock-aware joint count — how many actual cuts/connections this
+                        // structure needs — rather than `pillarCount + beamCount - 1`, a naive
+                        // headcount formula that was never wired to real stock at all (a 50ft U
+                        // Truss showed "4 joints expected" from that formula when the real beam
+                        // solver, run against the same stock, resolves it in 2). Sums
+                        // resolveBeamSegment's own joint count per beam segment (same solver the
+                        // snap above uses) and resolvePillarHeight's per pillar (a non-standard
+                        // height needs its own spacer joint, e.g. 17ft = 15ft pillar + 2ft spacer).
+                        let realJoints = 0, realJointsShortage = false;
+                        if (pv?.topology) {
+                          const matInv = trussInvForMaterial(trussInv, snappedRow.trussMaterial);
+                          (pv.topology.beams || []).forEach(b => {
+                            const r = resolveBeamSegment(b.lengthFt, matInv);
+                            if (r.shortage) realJointsShortage = true;
+                            realJoints += r.joints || 0;
+                          });
+                          (pv.topology.pillars || []).forEach(p => {
+                            const r = resolvePillarHeight(p.H, matInv);
+                            if (r.shortage) realJointsShortage = true;
+                            realJoints += r.joints || 0;
+                          });
+                        }
+                        return { zk, zLabel: rowIdx > 0 ? `${zLabel} (truss #${rowIdx + 1})${isRepeat ? " · ♻️ Repeat (30%)" : ""}` : `${zLabel}${isRepeat ? " · ♻️ Repeat (30%)" : ""}`, pv, row, rowIdx, snapNote, realJoints, realJointsShortage };
                       });
                     }).filter(x => x.pv && x.pv.source !== "none");
                     return { fn, previews };
@@ -455,7 +478,7 @@ export default function DCTrussTab({ ctx }) {
                               </div>
                             )}
                           </div>
-                          {previews.map(({ zk, zLabel, pv, row, rowIdx, snapNote }, previewIdx) => {
+                          {previews.map(({ zk, zLabel, pv, row, rowIdx, snapNote, realJoints, realJointsShortage }, previewIdx) => {
                             const isInvalid = pv.smartFlag === "red";
                             const topo = pv.topology;
                             const costs = pv.costs;
@@ -499,7 +522,8 @@ export default function DCTrussTab({ ctx }) {
                                       <span style={{fontSize:10.5,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase",padding:"2px 8px",borderRadius:5,background:CHIP_BG,color:flagColor(pv.smartFlag)}}>{configLabel}</span>
                                     </div>
                                     {topo && <div style={{fontSize:12,lineHeight:1.5,color:INK_2,marginTop:5}}>
-                                      Method {topo.method} · {topo.pillarCount} pillar{topo.pillarCount===1?"":"s"} · {topo.beamCount} beam segment{topo.beamCount===1?"":"s"} · {topo.totals?.totalJoints || (topo.pillarCount + topo.beamCount - 1)} joint{((topo.totals?.totalJoints || 0))===1?"":"s"} expected
+                                      Method {topo.method} · {topo.pillarCount} pillar{topo.pillarCount===1?"":"s"} · {topo.beamCount} beam segment{topo.beamCount===1?"":"s"} · <span title="Real, stock-aware count — every beam segment's own piece-combination joints plus every non-standard pillar height's own spacer joint, resolved against the current IMS beam/pillar stock">{realJoints} joint{realJoints===1?"":"s"} expected</span>
+                                      {realJointsShortage && <span title="At least one beam segment or pillar height has no combination of current stock within the usual 1ft gap tolerance — it'll need a visible gap or an undersized piece on site" style={{color:"#B91C1C",fontWeight:600}}> · ⚠️ stock gap</span>}
                                       {/* snapRowDimsForProduction only ever shrinks, and only within a small
                                           window — see pricing.js. Surfaced so a pillar/beam count that doesn't
                                           match the dims typed in Build reads as an optimization, not a bug.
