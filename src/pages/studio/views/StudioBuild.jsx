@@ -803,7 +803,8 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
                     {(imsCarpetMaterials||[]).map(m=><option key={m.id} value={m.id} style={{color:"#111827",background:"#fff"}}>{m.name}{showCosts?` · ₹${m.ratePerSqft}/sqft`:""}</option>)}
                   </select>
                   )}
-                  {zc.cpT!==CARPET_OFF && isNewCarpet && (
+                  {/* Only when no stock carpet is picked — a picked carpet already has its own photo. */}
+                  {zc.cpT!==CARPET_OFF && isNewCarpet && !zc.cpInvId && (
                     <div style={{display:"flex",alignItems:"center",gap:6,marginTop:5}}>
                       {zc.cpPhoto && <img src={zc.cpPhoto} alt="" style={{width:28,height:28,borderRadius:5,objectFit:"cover",border:`1px solid ${border}`}} />}
                       <label style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:10.5,fontWeight:600,color:accent,cursor:cpUploading?"wait":"pointer",padding:"3px 8px",borderRadius:6,border:`1px dashed ${accent}`}}>
