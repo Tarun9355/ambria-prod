@@ -1150,7 +1150,8 @@ export default function DealCheckOverlay({ ctx }) {
                   addD("Tenting", "rental", cc);
                   if (deptInv["Tenting"]) deptInv["Tenting"].push({
                     name: carpetItem?.name || carpetPricingFor(row.cpT, imsCarpetMaterials).label || "Carpet",
-                    photo: carpetItem ? imsField.photos(carpetItem)[0] || "" : "",
+                    // A stock carpet's own photo, else the one uploaded for a Carpet New floor in Build.
+                    photo: carpetItem ? imsField.photos(carpetItem)[0] || "" : (row.cpPhoto || ""),
                     qty: Math.round(area), unit: cRate, total: Math.round(cc), qtyUnit: "sqft",
                     // Where these sqft come from, for IMS's "how?" on the merged line.
                     parts: [{ zone: rows.length > 1 ? `${zoneLbl} · floor ${rIdx + 1}` : zoneLbl, fn: fns.length > 1 ? (fn.fnType || "") : "", dims: `${Number(fd.L) || Number(fd.S) || 0} × ${Number(fd.W) || Number(fd.S) || 0}`, qty: Math.round(area), rate: cRate, total: Math.round(cc) }],

@@ -3,7 +3,7 @@
 // Reused standing items generate NO build labour and bill at a discount; anything
 // built beyond the standing qty, a swapped design, or any other venue → full.
 import { heavyExtraLabour } from "./constants";
-import { walkKitUnits } from "./helpers";
+import { walkKitUnits, kitDescendantIds } from "./helpers";
 
 // Normalize a venue name for matching: lowercase, drop a leading "Ambria ", trim, and drop
 // trailing punctuation. The trailing-punctuation strip closes a real, confusing bug: a deal's own
@@ -69,6 +69,41 @@ export function standingDiscountPct(settings, venueName, invId, inventory) {
 // Qty of an inventory line that is "built fresh" this event = total minus what's standing here.
 export function builtQty(settings, venueName, invId, qty) {
   return Math.max(0, (Number(qty) || 0) - standingQty(settings, venueName, invId));
+}
+
+// ── STANDING STOCK IS POOLED ACROSS A FUNCTION'S ELEMENTS ──
+// A venue's standing qty (50 chairs installed) covers the WHOLE function, not each element on its
+// own: 30 in one zone and 30 in another is 60 chairs, 10 more than stand there, so 10 are carried.
+// Netting each element against the full 50 separately (as builtQty alone does) carried none.
+// `pool` is one Map per function-level calculation (new Map()); it remembers how much of each
+// item's standing qty is already spoken for, and the kit share of the element being walked.
+//
+// A kit standing at a venue is the WHOLE kit: its parts (pots, books, candles) stand with it, but
+// the Fixed Venue list registers only the kit's own id, so per-node netting carried every part in
+// full. kitBuiltQty is called for each node of one kit walk (top = the element's kit, topQty = its
+// qty; walkKitUnits visits the kit first, then its parts): the kit draws its standing units, and a
+// part of the kit's own recipe takes the kit's fresh share (fresh kits / kits). The kit itself, a
+// part swapped in for this deal (not in the master recipe) and a plain item are netted by their
+// own standing qty only; a part registered on its own is netted by that as well, the smaller
+// figure wins.
+export function kitBuiltQty(pool, settings, venueName, top, topQty, node, nodeQty, inventory) {
+  const q = Number(nodeQty) || 0;
+  const draw = (id, n) => {
+    const left = pool.has(id) ? pool.get(id) : standingQty(settings, venueName, id);
+    const used = Math.min(left, n);
+    pool.set(id, left - used);
+    return n - used;
+  };
+  if (!top || !node || node.id === top.id) {
+    const fresh = draw(node?.id, q);
+    if (top && node && (Number(topQty) || 0) > 0) pool.set("ratio|" + top.id, fresh / (Number(topQty) || 1));
+    return fresh;
+  }
+  const ownFresh = standingQty(settings, venueName, node.id) > 0 ? draw(node.id, q) : q;
+  if (!(standingQty(settings, venueName, top.id) > 0)) return ownFresh;
+  if (!kitDescendantIds(top, inventory).has(node.id)) return ownFresh;
+  const ratio = pool.has("ratio|" + top.id) ? pool.get("ratio|" + top.id) : 1;
+  return Math.min(ownFresh, q * ratio);
 }
 
 // Split a line's qty into { standingUnits, freshUnits } for rental pricing at a venue.

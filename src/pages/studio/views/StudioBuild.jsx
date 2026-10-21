@@ -64,9 +64,12 @@ function NumField({ value, onCommit, min = 0, allowDecimal = true, onFocus, onBl
       onChange={(e) => {
         const raw = e.target.value;
         if (raw !== "" && raw !== "-" && !re.test(raw)) return; // reject a keystroke that isn't a valid numeric prefix
+        const prevText = text;
         setText(raw);
         const n = parseFloat(raw);
-        if (!Number.isNaN(n)) onCommit(Math.max(min, n));
+        // A commit handler may refuse the value by returning false (e.g. more carpet than is in
+        // stock): the field goes back to what it showed, so the screen never holds an unsaved number.
+        if (!Number.isNaN(n) && onCommit(Math.max(min, n)) === false) setText(prevText);
       }}
       onBlur={(e) => { editingRef.current = false; setText(value === null || value === undefined ? "" : String(value)); onBlur?.(e); }}
       {...rest}
@@ -648,7 +651,20 @@ export function TrussStack({ S, customCeilingField, customMaskingField, k, zc, z
 // `nested` marks one of a zone's EXTRA platform footprints: same card, same colours, titled
 // "Platform N" with a remove control in place of the cost, which the first card already totals
 // across every footprint.
-export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, imsInventory = [], nested = false, title, onRemove, scale = 1, openAvailModal, zoneKey, rowIdx = 0, onCarpetAll, carpetShortOf }) {
+export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, imsInventory = [], nested = false, title, onRemove, scale = 1, openAvailModal, zoneKey, rowIdx = 0, onCarpetAll, carpetShortOf, carpetRemainingOf }) {
+  // The picked carpet can only cover so many sqft: a width/depth that would take this floor past
+  // what is left of its free stock (minus the other floors using the same carpet) is not saved.
+  const [cpLimit, setCpLimit] = useState("");
+  const guardFd = (d, n) => {
+    const rem = zc.cpInvId && carpetRemainingOf ? carpetRemainingOf(zoneKey, rowIdx) : null;
+    if (rem != null) {
+      const L = d === "L" ? n : (Number(fd.L) || 0), W = d === "W" ? n : (Number(fd.W) || 0);
+      const area = L * W;
+      if (area > rem) { setCpLimit(`Only ${Math.max(0, Math.floor(rem))} sqft of ${zc.cpInvName || "this carpet"} is available — can't set ${area} sqft`); return false; }
+    }
+    setCpLimit("");
+    return sFD(d, n);
+  };
   // Sqft of this floor the picked carpet can't cover (stock runs out in an earlier floor first).
   const carpetShort = carpetShortOf ? carpetShortOf(zoneKey, rowIdx) : 0;
   // What THIS footprint costs, via the same function the cost engine sums over every row.
@@ -672,7 +688,7 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
   const uploadCarpetPhoto = async (file) => {
     if (!file) return;
     setCpUploading(true);
-    try { const url = await uploadToStorage(file, STORAGE_FOLDERS.CLIENT); sZ({ cpPhoto: url }); }
+    try { const url = await uploadToStorage(file, STORAGE_FOLDERS.CLIENT); sZ({ cpPhoto: url, cpInvId: null, cpInvName: "", cpInvFree: null }); }
     catch (e) { alert("Photo upload failed: " + (e?.message || e)); }
     finally { setCpUploading(false); }
   };
@@ -757,9 +773,9 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
                   {/* Placeholder no longer previews the truss's own dims — owner ask: a Platform/
                       Carpet floor size must never silently follow the truss's footprint, so nothing
                       here should suggest it still does. A blank field really does mean 0 sqft now. */}
-                  <NumField value={fd.W||""} onCommit={n=>sFD("W",n)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}} placeholder="—"/></div>
+                  <NumField value={fd.W||""} onCommit={n=>guardFd("W",n)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}} placeholder="—"/></div>
                 <div style={{flex:1,minWidth:96}}><div style={{fontSize:11.5,color:textS,marginBottom:3}}>Floor Depth (ft)</div>
-                  <NumField value={fd.L||""} onCommit={n=>sFD("L",n)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}} placeholder="—"/></div>
+                  <NumField value={fd.L||""} onCommit={n=>guardFd("L",n)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}} placeholder="—"/></div>
                 {/* How many identical footprints this one row is — Scale By (the zone header's "set
                     of N" multiplier) rescales this the same way it rescales Truss Qty and a print
                     row's own qty, keeping a per-set base across changes (see setZoneScale). */}
@@ -787,7 +803,15 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
                   {/* A carpet picked from stock (📦) takes the dropdown's place: the floor shows the
                       carpet itself, with the rate it is billed at under it. × drops the pick and
                       brings the material dropdown back (to change the rate or turn carpet off). */}
-                  {zc.cpT!==CARPET_OFF && zc.cpInvName ? (
+                  {zc.cpT!==CARPET_OFF && isNewCarpet && zc.cpPhoto && !zc.cpInvName ? (
+                    <div style={{display:"flex",alignItems:"center",gap:8,boxSizing:"border-box",width:"100%",fontSize:11.5,padding:"6px 8px",borderRadius:8,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
+                      <img src={zc.cpPhoto} alt="" style={{width:32,height:32,borderRadius:6,objectFit:"cover",flexShrink:0}} />
+                      <span style={{flex:1,minWidth:0}}>
+                        <span style={{display:"block",fontWeight:600,color:"#047857"}}>🆕 {carpetBilled.label}</span>
+                        <span style={{display:"block",fontSize:10,color:"#6B7280"}}>{showCosts?`billed at ₹${carpetBilled.rate}/sqft`:""}</span>
+                      </span>
+                    </div>
+                  ) : zc.cpT!==CARPET_OFF && zc.cpInvName ? (
                     <div style={{display:"flex",alignItems:"center",gap:6,boxSizing:"border-box",width:"100%",fontSize:11.5,padding:"6px 8px",borderRadius:8,
                       border:`1px solid ${carpetShort>0?"#EF4444":border}`,borderBottom:carpetShort>0?"3px solid #EF4444":undefined,background:"#fff",color:"#111827"}}>
                       <span style={{flex:1,minWidth:0}}>
@@ -819,6 +843,7 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
                 </div>
                 {showCosts&&<div style={{fontSize:11.5,color:textS,paddingBottom:8,whiteSpace:"nowrap"}}>Carpet <span style={{fontWeight:600,color:textP}}>{fmt(rowCost.carpet)}</span></div>}
               </div>
+              {cpLimit&&<div style={{fontSize:11.5,color:"#EF4444",fontWeight:700,lineHeight:1.3,marginBottom:4}}>⚠ {cpLimit}</div>}
               <div style={{fontSize:11.5,color:textS,lineHeight:1.3,marginBottom:4}}>{(fd.L||fd.W)?`${fd.L||0}×${fd.W||0} = ${(fd.L||0)*(fd.W||0)} sqft${(zc.plQty||1)>1?` × ${zc.plQty}`:""}`:"No floor size set — priced at 0 sqft until you enter one below"}</div>
 
               </div>
@@ -831,12 +856,12 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
 //
 // platformRowCost already runs per row over zc.extraPlatformRows and buildPlatformPlan draws one
 // ops entry each, so the cost and the plan were ready long before there was a way to add one.
-export function FloorStack({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, imsInventory = [], scale = 1, openAvailModal, zoneKey, onCarpetAll, carpetShortOf }) {
+export function FloorStack({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, imsInventory = [], scale = 1, openAvailModal, zoneKey, onCarpetAll, carpetShortOf, carpetRemainingOf }) {
   const rows = zc.extraPlatformRows || [];
   const write = (next) => sZ({ extraPlatformRows: next });
   // accent rides in `shared`, so both the first floor and every added row get it from one place —
   // FloorCard needs it for the platform-height control's selected fill.
-  const shared = { S, zm, st, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, imsInventory, scale, openAvailModal, zoneKey, onCarpetAll, carpetShortOf };
+  const shared = { S, zm, st, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, imsInventory, scale, openAvailModal, zoneKey, onCarpetAll, carpetShortOf, carpetRemainingOf };
   return (<>
     <FloorCard {...shared} zc={zc} sZ={sZ} sFD={sFD} fd={fd} title={rows.length ? "Floor 1" : "Floor"} />
     {rows.map((row, ri) => {
@@ -1150,6 +1175,14 @@ export default function StudioBuild({ ctx }) {
     return out;
   };
   const carpetShortOf = (k, ri) => carpetShortMapOf()[`${k}|${ri}`] || 0;
+  // Sqft of a floor's picked carpet still free for IT: the free stock recorded at pick time minus
+  // what every OTHER floor using that same carpet already takes. null when nothing is picked.
+  const carpetRemainingOf = (k, ri) => {
+    const row = ri === 0 ? zoneConfig?.[k] : (zoneConfig?.[k]?.extraPlatformRows || [])[ri - 1];
+    if (!row?.cpInvId || row.cpInvFree == null) return null;
+    const others = carpetFloors().filter(f => !(f.k === k && f.ri === ri) && f.r.cpInvId === row.cpInvId).reduce((a, f) => a + f.area, 0);
+    return (Number(row.cpInvFree) || 0) - others;
+  };
   // fromK/fromRi: the floor the picker was opened from — always gets the carpet, even with no size.
   const applyCarpetToAll = (pick, fromK, fromRi) => {
     if (!pick?.id) return;
@@ -1163,7 +1196,7 @@ export default function StudioBuild({ ctx }) {
       floors.forEach(f => { (byZone[f.k] = byZone[f.k] || []).push(f.ri); });
       Object.entries(byZone).forEach(([k, ris]) => {
         const z = { ...(next[k] || {}) };
-        const tag = (r) => ({ ...r, cpInvId: pick.id, cpInvName: pick.name || "", cpInvFree: free });
+        const tag = (r) => (r.cpPhoto ? r : ({ ...r, cpInvId: pick.id, cpInvName: pick.name || "", cpInvFree: free }));
         if (ris.includes(0)) Object.assign(z, tag(z));
         if (Array.isArray(z.extraPlatformRows)) z.extraPlatformRows = z.extraPlatformRows.map((r, i) => ris.includes(i + 1) ? tag(r) : r);
         next[k] = z;
@@ -4947,7 +4980,7 @@ undefined
                 customMaskingField={customMaskingField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} scale={zoneScaleVal(k)} guestDiscPct={structDiscountFor(zc,aVenue)?.truss?25:0} maskingColours={maskingColours} maskingColourOptions={maskingColourOptions} />}
               {/* ── PLATFORM + CARPET → then floor dims ── */}
               {zoneSection[k]==="platform"&&<FloorStack S={S} zc={zc} zm={zm} st={st} sZ={sZ} sFD={sFD} fd={fd} fmt={fmt} showCosts={showCosts}
-                isDark={isDark} border={border} accent={accent} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} imsInventory={imsInventory} scale={zoneScaleVal(k)} openAvailModal={openAvailModal} zoneKey={k} onCarpetAll={applyCarpetToAll} carpetShortOf={carpetShortOf} />}
+                isDark={isDark} border={border} accent={accent} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} imsInventory={imsInventory} scale={zoneScaleVal(k)} openAvailModal={openAvailModal} zoneKey={k} onCarpetAll={applyCarpetToAll} carpetShortOf={carpetShortOf} carpetRemainingOf={carpetRemainingOf} />}
             </div>);
           })()}
           </Fragment>}

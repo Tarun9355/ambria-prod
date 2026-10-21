@@ -30,7 +30,7 @@ import StudioSummary from "./views/StudioSummary.jsx";
 import { kvGet, kvTryGet, kvSet, reliableSave } from "../../lib/ims/kv";
 import { makeAmendRequest } from "../../lib/ims/amend";
 import { catToDept } from "../../lib/ims/deptClassify";
-import { availableAtVenue, isStandingAt, rentalSplit, fixedVenueDealDiscount, fixedVenueDiscountPctFor, proratedVenueDiscount, fixedVenueFor, builtQty, venueSlackFor, standingReductionBySubcat, standingQty } from "../../lib/ims/fixedVenues";
+import { availableAtVenue, isStandingAt, rentalSplit, fixedVenueDealDiscount, fixedVenueDiscountPctFor, proratedVenueDiscount, fixedVenueFor, builtQty, kitBuiltQty, venueSlackFor, standingReductionBySubcat, standingQty } from "../../lib/ims/fixedVenues";
 import { searchLmsLeads, triggerLmsSync, fetchCachedContracts, fetchLmsLeadByEntry } from "../../lib/ims/lms";
 import { uploadToStorage, compressImageForUpload, STORAGE_FOLDERS, listStorage, deleteStorageObjects, deleteStorageFolder } from "../../lib/storage";
 import { ytApi, ytDuration } from "../../lib/youtube";
@@ -383,6 +383,7 @@ function resolveGensetPlan(match, customGenset125, customGenset62, gensetRate, g
 // calcFunctionBreakdown call (which would repeat pricing/genset work we don't need here and would
 // double-net a chain of same-venue functions against each other).
 function computeFnSubQty(fnData, capBySub, imsInventory, flowerPatterns, trussInv, fvCfg, venueName) {
+  const standPool = new Map(); // standing stock is pooled across this function's elements (kitBuiltQty)
   const fZoneElements = fnData?.zoneElements || {};
   const fZoneConfig = fnData?.zoneConfig || {};
   const fEnabledEls = fnData?.enabledEls || {};
@@ -415,7 +416,7 @@ function computeFnSubQty(fnData, capBySub, imsInventory, flowerPatterns, trussIn
           // under ITS OWN sub-category. See computeTruckItems' matching comment.
           walkKitUnits(invItem, Number(el.qty) || 0, imsInventory, el.kitOverrides, (node, nodeQty) => {
             const nodeSub = node.subCat || node.subcategory || "";
-            const freshQty = fvCfg && venueName ? builtQty(fvCfg, venueName, node.id, nodeQty) : nodeQty;
+            const freshQty = fvCfg && venueName ? kitBuiltQty(standPool, fvCfg, venueName, invItem, Number(el.qty) || 0, node, nodeQty, imsInventory) : nodeQty;
             add(nodeSub, freshQty);
           });
         }
@@ -1111,6 +1112,7 @@ function maxRepaintCostInSubcat(rcSub, imsInventory, fallback) {
 // calcFunctionCost/calcFunctionBreakdown do, so Build's Live Estimate stops trucking reused units
 // that the Total Estimate, Summary and the cost sheet already treat as "already there".
 function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckCap, imsInventory, flowerPatterns, trussInv, flowerMaterialQty, fvCfg, venueName, guestDiscountOn, reusePool) {
+  const standPool = new Map(); // standing stock is pooled across this function's elements (kitBuiltQty)
   const capBySub = {};
   (truckCap || []).forEach(tc => { if ((Number(tc.perTruck) || 0) > 0) capBySub[String(tc.item || "").toLowerCase().trim()] = tc; });
   const subAgg = {}; // subLower → { label, qty, perTruck, unit }
@@ -1157,7 +1159,9 @@ function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckC
             // at this venue — no truck needed for that portion, same "already there" reasoning as
             // its pricing discount. Checked per-node: a kit can have some pieces standing and others
             // not, same as its discount.
-            const freshQty = (guestDiscountOn && fvCfg && venueName) ? builtQty(fvCfg, venueName, node.id, nodeQty) : nodeQty;
+            // Standing stock needs no truck whether or not the client sees a discount: only what is
+            // beyond the venue's standing qty is carried (owner, 2026-10-21).
+            const freshQty = (fvCfg && venueName) ? kitBuiltQty(standPool, fvCfg, venueName, invItem, effQty, node, nodeQty, imsInventory) : nodeQty;
             addSub(nodeSub, freshQty);
           });
         }
@@ -5586,6 +5590,7 @@ export default function StudioApp() {
       const fcFlowerPatterns = sharedFloralSettings.flowerPatterns;
       // Own pool, separate from pricingPool above — see the comment where crossFnPrevFn is computed.
       const transportPool = crossFnPrevFn ? new Map(Object.entries(computeFnInvQty(crossFnPrevFn))) : null;
+      const standPool = new Map(); // standing stock pooled across this function's elements (kitBuiltQty)
       Object.entries(fZoneElements).forEach(([zk, elems]) => {
         if (!fEnabledEls[zk] || !elems) return;
         // Same guest-discount-gated repeat/fixed-venue transport waiver as computeTruckItems — per
@@ -5611,7 +5616,8 @@ export default function StudioApp() {
               // under ITS OWN sub-category. See computeTruckItems' matching comment.
               walkKitUnits(invItem, effQty, imsInventory, el.kitOverrides, (node, nodeQty) => {
                 const nodeSub = node.subCat || node.subcategory || "";
-                const freshQty = hideDiscountFromClient ? nodeQty : builtQty(fvCfgForRepeat, fVenue, node.id, nodeQty);
+                // Standing stock is never trucked — with or without the client-discount toggle.
+                const freshQty = kitBuiltQty(standPool, fvCfgForRepeat, fVenue, invItem, effQty, node, nodeQty, imsInventory);
                 addSub(nodeSub, freshQty);
               });
             }
@@ -6124,6 +6130,9 @@ export default function StudioApp() {
       // The guest's own reuse pool for trucks — same source and same per-element draw-down order as
       // calcFunctionCost's transportPool, so the two count the guest's trucks identically.
       const clientTruckPool = crossFnPrevFn ? new Map(Object.entries(computeFnInvQty(crossFnPrevFn))) : null;
+      // Standing stock pooled across this function's elements: one pool for Ambria's own cost
+      // count, one for the guest's (they draw different quantities from the same standing stock).
+      const standPoolCost = new Map(), standPoolGuest = new Map();
       // Per category (RC-30): a zone whose only the Truss & Masking chip is Repeat drops its truss
       // loads and keeps its elements, and so on. `cats` names what was dropped; `whole` is every
       // category, which the Transport tab says as the zone alone.
@@ -6166,9 +6175,11 @@ export default function StudioApp() {
                 const nodeSub = node.subCat || node.subcategory || "";
                 // Fixed-venue standing netting is ALSO cost-only (`qty`) — qtyFull ignores it, same
                 // "as if nothing were reused" reasoning as the repeat zone treatment above.
-                const netQty = zoneRepeat ? 0 : builtQty(fvCfgForRepeat, fVenue, node.id, nodeQty);
+                const netQty = zoneRepeat ? 0 : kitBuiltQty(standPoolCost, fvCfgForRepeat, fVenue, invItem, elQty, node, nodeQty, imsInventory);
                 const label = node.id === invItem.id ? (el.name || node.name || nodeSub) : (node.name || nodeSub);
-                const clientQty = hideDiscountFromClient ? nodeQty : (zoneRepeat ? 0 : builtQty(fvCfgForRepeat, fVenue, node.id, nodeQty * effRatio));
+                // Guest side: a Repeat zone drops to 0 only with the discount on; the standing qty is
+                // netted either way (it is physically at the venue — no truck).
+                const clientQty = (!hideDiscountFromClient && zoneRepeat) ? 0 : kitBuiltQty(standPoolGuest, fvCfgForRepeat, fVenue, invItem, elQty * effRatio, node, nodeQty * effRatio, imsInventory);
                 addSub(nodeSub, netQty, nodeQty, zk, label, node.cat || node.category || "", clientQty);
               });
             }
