@@ -382,6 +382,19 @@ function resolveGensetPlan(match, customGenset125, customGenset62, gensetRate, g
 // PREVIOUS function's raw data to find carryover (below), without recursing into a full
 // calcFunctionBreakdown call (which would repeat pricing/genset work we don't need here and would
 // double-net a chain of same-venue functions against each other).
+// IMS settings + inventory that feed a booked deal's Dept Ops snapshot (crew, kit parts, fabric, mandi…).
+// A snapshot older than the newest change to any of them is stale: the auto-sync on open and the
+// startup sweep both test exactly this.
+const PLANNING_SETTING_KEYS = ["heavyElementRanges", "categoryDepartments", "labourTiers", "dihariSchemes", "defaultWindowsByPhase", "venueMinLabour", "defaultMinLabour", "eventTypeMultipliers", "eventTimingMultipliers", "fabricBangaliRanges", "trussLabourRanges", "fabricRftPerWorker", "flowerPatterns", "mandiCatalogue", "mandiPriceMultipliers", "fixedVenues", "fixedVenueSubcatDiscount", "trussRates", "maskingRates", "fabricMultiplier", "carpetMaterials", "platformRates", "venueParents", "situationalMultipliers", "situationalMultiplierCap", "agencyFeePct", "rcCategories"];
+async function latestPlanningInputStamp() {
+  const [{ data: srows }, { data: irow }] = await Promise.all([
+    supabase.from("settings").select("key,updated_at").in("key", PLANNING_SETTING_KEYS),
+    supabase.from("inventory").select("updated_at").order("updated_at", { ascending: false }).limit(1),
+  ]);
+  const stamps = [...(srows || []), ...(irow || [])].map(r => Date.parse(r.updated_at)).filter(Number.isFinite);
+  return stamps.length ? Math.max(...stamps) : 0;
+}
+
 function computeFnSubQty(fnData, capBySub, imsInventory, flowerPatterns, trussInv, fvCfg, venueName) {
   const standPool = new Map(); // standing stock is pooled across this function's elements (kitBuiltQty)
   const fZoneElements = fnData?.zoneElements || {};
@@ -2740,6 +2753,11 @@ export default function StudioApp() {
   // started right here, once per client per session. The rest is the same run Apply uses, so
   // nothing about what gets pushed to IMS changes — only who has to ask for it.
   const autoSyncedClientsRef = useRef(new Set());
+  // The startup sweep (further down, after startNewDeal) walks every stale booked deal through this
+  // same auto-sync. `id` is the deal it has open right now; autoSaveBuild stands still while it is
+  // set — a sweep never edits anything, and its screen is covered so nobody else can.
+  const sweepRef = useRef({ id: null, stop: false });
+  const [sweepInfo, setSweepInfo] = useState(null);
   useEffect(() => {
     if (!activeClientId || dcFullPageOpen || dcHeadless) return;
     if (autoSyncedClientsRef.current.has(activeClientId)) return;
@@ -2753,13 +2771,7 @@ export default function StudioApp() {
     autoSyncedClientsRef.current.add(activeClientId); // once per client per session
     (async () => {
       try {
-        const KEYS = ["heavyElementRanges", "categoryDepartments", "labourTiers", "dihariSchemes", "defaultWindowsByPhase", "venueMinLabour", "defaultMinLabour", "eventTypeMultipliers", "eventTimingMultipliers", "fabricBangaliRanges", "trussLabourRanges", "fabricRftPerWorker", "flowerPatterns", "mandiCatalogue", "mandiPriceMultipliers", "fixedVenues", "fixedVenueSubcatDiscount", "trussRates", "maskingRates", "fabricMultiplier", "carpetMaterials", "platformRates", "venueParents", "situationalMultipliers", "situationalMultiplierCap", "agencyFeePct", "rcCategories"];
-        const [{ data: srows }, { data: irow }] = await Promise.all([
-          supabase.from("settings").select("key,updated_at").in("key", KEYS),
-          supabase.from("inventory").select("updated_at").order("updated_at", { ascending: false }).limit(1),
-        ]);
-        const stamps = [...(srows || []).map(r => Date.parse(r.updated_at)), ...((irow || []).map(r => Date.parse(r.updated_at)))].filter(Number.isFinite);
-        const latest = stamps.length ? Math.max(...stamps) : 0;
+        const latest = await latestPlanningInputStamp();
         if (!latest) return;
         // A minute of slack: the sync's own write lands moments after the run it belongs to.
         if (latest > Number(eo.deptSyncedAt) + 60000) syncDeptOpsHeadlessRef.current?.();
@@ -4033,7 +4045,13 @@ export default function StudioApp() {
         // The KEY's presence is the test, not its value — a booking with no venue or no decor
         // legitimately has none, and testing the value would re-push that order on every pass.
         const transportOk = Object.prototype.hasOwnProperty.call(cur, "transportPlan");
-        if (cur.deptSyncedAt && cur.deptIncomeSig === sig && incomeOk && transportOk) return; // already in sync — leave the head's edits untouched
+        if (cur.deptSyncedAt && cur.deptIncomeSig === sig && incomeOk && transportOk) {
+          // Already in sync — leave the head's edits untouched. Only stamp the check time (at most
+          // every 10 minutes), so a settings change that left this plan identical stops reading as
+          // "stale" and the sweep does not pick this deal up again on every start.
+          if (Date.now() - Number(cur.deptSyncedAt) > 600000) await supabase.from("event_orders").update({ data: { ...cur, deptSyncedAt: Date.now() } }).eq("id", eo.id);
+          return;
+        }
         await supabase.from("event_orders").update({ data: applySnap(cur) }).eq("id", eo.id);
       } else {
         // No table row yet → create it from the local EO (first sync).
@@ -7922,6 +7940,7 @@ export default function StudioApp() {
     // Both flags: switchingRef covers the click-to-commit half, fnSwitchingRef the render-and-settle
     // half. Either one alone leaves a window where a save can capture a half-loaded function.
     if (switchingRef.current || fnSwitchingRef.current) return;
+    if (sweepRef.current.id) return; // the planning sweep has a deal open only to sync it — nothing to save
     // Deliberately NOT gated on pricingReady. That used to block the save itself, on the theory that
     // boot "finishes in well under a second" — but a slow network can leave pricingReady false for
     // several seconds, which is easily enough time for a real edit (e.g. adding a Production item)
@@ -8599,6 +8618,81 @@ export default function StudioApp() {
     // disagree (see loadClientSession's own comment on this).
     loadClientSession(client, session, landingStep, { isNewVisit: false, landingFnIdx: savedFn });
   }, [clientLedger, activeClientId, loadClientSession]);
+
+  // ── IMS PLANNING SWEEP: BOOKED DEALS CATCH UP WITH IMS SETTINGS ON THEIR OWN ──
+  // Planning shows each booked deal's Deal Check snapshot, and Deal Check only runs in a browser, so
+  // a change an admin makes in IMS (per-labour counts, labour tiers, shifts, rentals, recipes…)
+  // reached a deal only once someone opened it. Once per Studio start — when nothing is open and
+  // nothing is being typed — this walks every booked, upcoming deal whose snapshot is older than the
+  // newest of those inputs through the same open-and-sync the auto-sync on open does (one at a
+  // time, ~10-15 s each), then closes it again. While it runs the screen is covered and the build
+  // autosave stands still (sweepRef.id), so it cannot save or lose anyone's edit; Stop ends it.
+  const sweepStartedRef = useRef(false);
+  const dcHeadlessRef = useRef(false); dcHeadlessRef.current = dcHeadless;
+  const sweepFnsRef = useRef({});
+  sweepFnsRef.current = { loadClientSession, startNewDeal, showMsg };
+  const runPlanningSweep = async () => {
+    const sw = sweepRef.current; sw.stop = false;
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+    const eoOf = (c) => (eventOrdersRef2.current || []).find(e => e.clientId === c.id) || (eventOrdersRef2.current || []).find(e => c.name && (e.clientName || "") === (c.name || "").trim());
+    const yesterday = new Date(Date.now() - 86400000).toLocaleDateString("en-CA");
+    const upcoming = (eo) => [eo.date, ...((Array.isArray(eo.functionsDetail) ? eo.functionsDetail : []).map(f => f?.date))].filter(Boolean).map(d => String(d).slice(0, 10)).sort().pop() >= yesterday;
+    try {
+      const latest = await latestPlanningInputStamp();
+      if (!latest) return;
+      const stale = (c) => {
+        const eo = c.status === "booked" ? eoOf(c) : null;
+        return !!eo && !!eo.deptSyncedAt && upcoming(eo) && latest > Number(eo.deptSyncedAt) + 60000 && !autoSyncedClientsRef.current.has(c.id);
+      };
+      const queue = (clientLedgerRef.current || []).filter(c => stale(c) && findLatestBuild(c.sessions, 0)).map(c => c.id);
+      if (!queue.length) return;
+      let done = 0;
+      setSweepInfo({ done, total: queue.length, name: "" });
+      for (const id of queue) {
+        if (sw.stop || activeClientIdRef.current) break;
+        const c = (clientLedgerRef.current || []).find(x => x.id === id);
+        if (!c || !stale(c)) { done++; continue; } // someone else synced it meanwhile
+        const resumable = findLatestBuild(c.sessions, 0);
+        setSweepInfo({ done, total: queue.length, name: c.name || "" });
+        sw.id = c.id;
+        const t0 = Date.now();
+        let sawRun = false;
+        sweepFnsRef.current.loadClientSession(c, resumable.session, 2, { landingFnIdx: resumable.fnIdx });
+        // Done when the order's sync stamp moves past the load (the realtime echo of the write), or
+        // the unseen run started and ended; give up on this deal after 90 s so one stuck run
+        // cannot hold the rest.
+        while (Date.now() - t0 < 90000 && !sw.stop) {
+          await sleep(500);
+          if (activeClientIdRef.current !== c.id) break;
+          if (dcHeadlessRef.current) sawRun = true;
+          const eo = eoOf(c);
+          if (eo && Number(eo.deptSyncedAt) >= t0) break;
+          if (sawRun && !dcHeadlessRef.current && Date.now() - t0 > 4000) { await sleep(1500); break; }
+          if (!sawRun && Date.now() - t0 > 40000) break; // the run never started (empty build / already fresh)
+        }
+        await sleep(1200); // let the run's last flush land before the deal is closed
+        sw.id = null;
+        if (activeClientIdRef.current === c.id) sweepFnsRef.current.startNewDeal();
+        done++;
+        for (let w = 0; w < 10 && activeClientIdRef.current; w++) await sleep(300); // closed deal settles
+      }
+      if (done > 0) sweepFnsRef.current.showMsg(`IMS planning synced for ${done} deal${done === 1 ? "" : "s"}`, "green");
+    } catch { /* best effort — the auto-sync on open still covers each deal */ }
+    finally { sw.id = null; setSweepInfo(null); }
+  };
+  const runPlanningSweepRef = useRef(null);
+  runPlanningSweepRef.current = runPlanningSweep;
+  useEffect(() => {
+    if (sweepStartedRef.current || restoring || !authUser || !buildRestoredRef.current) return;
+    if (activeClientId || step !== 0 || clientName || clientPhone || dcRun) return;
+    if (!(clientLedger || []).length || !(eventOrders || []).length) return;
+    const t = setTimeout(() => {
+      if (sweepStartedRef.current || activeClientIdRef.current) return;
+      sweepStartedRef.current = true;
+      runPlanningSweepRef.current?.();
+    }, 4000);
+    return () => clearTimeout(t);
+  }, [restoring, authUser, activeClientId, step, clientName, clientPhone, dcRun, clientLedger, eventOrders]);
 
   // Backstop: if the ledger never arrives — offline, a failed fetch — drop the gate anyway rather
   // than leaving the app on a spinner with no way forward.
@@ -12425,6 +12519,17 @@ export default function StudioApp() {
             {/* dcHeadless reaches only this instance, never the visible overlay. */}
             <DealCheckOverlay ctx={{ ...ctx, dcHeadless: true }} />
           </Suspense>
+        </div>
+      )}
+
+      {/* IMS planning sweep: covers the screen while stale booked deals are synced one by one. */}
+      {authUser && sweepInfo && (
+        <div className="fixed inset-0 z-[300] bg-white/90 flex items-center justify-center">
+          <div className="max-w-sm w-[calc(100%-32px)] rounded-2xl border border-gray-200 bg-white shadow-lg p-5 text-center">
+            <div className="text-sm font-semibold text-gray-900">Updating IMS planning</div>
+            <div className="mt-1 text-xs text-gray-500">IMS settings changed — syncing booked deals ({Math.min(sweepInfo.done + 1, sweepInfo.total)} of {sweepInfo.total}){sweepInfo.name ? `: ${sweepInfo.name}` : ""}</div>
+            <button onClick={() => { sweepRef.current.stop = true; }} className="mt-4 text-xs font-medium text-gray-600 hover:text-gray-900 px-3 py-1.5 rounded-lg border border-gray-200">Stop</button>
+          </div>
         </div>
       )}
 
