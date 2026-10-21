@@ -388,6 +388,14 @@ function resolveGensetPlan(match, customGenset125, customGenset62, gensetRate, g
 // PREVIOUS function's raw data to find carryover (below), without recursing into a full
 // calcFunctionBreakdown call (which would repeat pricing/genset work we don't need here and would
 // double-net a chain of same-venue functions against each other).
+// A flower element priced from its recipe / the mandi / a florals Rate Card item (the "Flower Reet",
+// "Guldavari RFT 4ft", loose petals kind) — NOT an inventory rental that merely sits in Florals.
+// Owner ask (2026-10-21): the date category (King's / Perfect / Filler) does not move flower prices.
+function isFlowerPriced(el, r) {
+  if (!el || el.invId) return false;
+  return !!(el.patternId || el.mandiId || (r?.rc && String(r.rc.cat || "").toLowerCase() === "florals"));
+}
+
 function computeFnSubQty(fnData, capBySub, imsInventory, flowerPatterns, trussInv, fvCfg, venueName) {
   const standPool = new Map(); // standing stock is pooled across this function's elements (kitBuiltQty)
   const fZoneElements = fnData?.zoneElements || {};
@@ -5066,7 +5074,7 @@ export default function StudioApp() {
   // function 2 was the one open in Build.
   const getElPrice = useCallback((el, zc, opts, venueName) => {
     const r = getElPriceRaw(el, zc, opts, venueName);
-    const mult = guestPriceMultiplier * dateCategoryMultiplierFor(activeFnMeta.date);
+    const mult = guestPriceMultiplier * (isFlowerPriced(el, r) ? 1 : dateCategoryMultiplierFor(activeFnMeta.date));
     if (mult === 1) return r;
     // r.shortCost (getElPriceFromInventory only — every other branch has none, so shortCost is
     // always 0 there and this reduces to the exact same blanket multiplication as before) is the
@@ -5175,7 +5183,7 @@ export default function StudioApp() {
   // Omitted, it prices at 1x category multiplier same as before this existed.
   const getElPriceForFn = useCallback((el, zc, fnRatio, checkAvail, venueName, blocksForDate, fnDate, crossFnReusePool, fnIdx, zoneKey, elIdx) => {
     const r = getElPriceForFnRaw(el, zc, fnRatio, checkAvail, venueName, blocksForDate, crossFnReusePool, fnIdx, zoneKey, elIdx, fnDate);
-    const mult = guestPriceMultiplier * dateCategoryMultiplierFor(fnDate);
+    const mult = guestPriceMultiplier * (isFlowerPriced(el, r) ? 1 : dateCategoryMultiplierFor(fnDate));
     if (mult === 1) return r;
     // Same shortCost carve-out as getElPrice's own wrapper (its comment has the full reasoning) —
     // r.shortCost is only ever set by getElPriceFromInventory, so every other element type reduces
