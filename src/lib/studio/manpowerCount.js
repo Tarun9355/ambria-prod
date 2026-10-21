@@ -65,17 +65,25 @@ export const heavySayaMultFor = (fn, type, seasonMap, sitMults, datePricing) => 
 // factor, the shift-timing factor (lunch / brunch / sundowner) and — for Labours — the venue's
 // dumping distance, capped (situationalMultiplierCap). Not stacked: the biggest pressure wins.
 // A day-prior (−1) setup has no event shift, so timing and dumping skip it; a King's date still counts.
-export function situationalMultFor(fn, type, ctx) {
-  const saya = heavySayaMultFor(fn, type, ctx.seasonMap, ctx.sitMults, ctx.datePricing);
-  if (type === "Labours") {
-    if (ctx.dcMpIncludeMinusOne) return 1.0;
-    const dumping = ({ nearby: 1.0, medium: 1.1, far: 1.2 })[(ctx.venueDumping || {})[fn?.fnVenue || ""] || "nearby"] || 1.0;
-    const timing = eventTimingMultFor(ctx.eventTimingMultipliers, shiftToTiming(fn?.fnShift), type, 1.0);
-    return Math.min(ctx.situMultCap, Math.max(1.0, saya, dumping, timing));
+const TIMING_LABEL = { brunch: "Brunch shift", lunch: "Lunch shift", sundowner: "Sundowner shift", dinner: "Dinner shift", latenight: "Late-night shift" };
+// The factors behind that multiplier, for the "how" shown to the department head:
+// { mult, winner (label of the biggest factor, null when none is above 1), parts: [{ key, label, mult }], cap, capped }.
+export function situationalFactorsFor(fn, type, ctx) {
+  const cap = Number(ctx.situMultCap) || 1.8;
+  if (type === "Labours" && ctx.dcMpIncludeMinusOne) return { mult: 1.0, winner: null, parts: [], cap, capped: false };
+  const timingId = shiftToTiming(fn?.fnShift);
+  const parts = [{ key: "kings", label: "King's date", mult: heavySayaMultFor(fn, type, ctx.seasonMap, ctx.sitMults, ctx.datePricing) }];
+  if (!ctx.dcMpIncludeMinusOne) {
+    parts.push({ key: "timing", label: TIMING_LABEL[timingId] || "Shift", mult: eventTimingMultFor(ctx.eventTimingMultipliers, timingId, type, 1.0) });
+    if (type === "Labours") {
+      const level = (ctx.venueDumping || {})[fn?.fnVenue || ""] || "nearby";
+      parts.push({ key: "dumping", label: `Venue ${level}`, mult: ({ nearby: 1.0, medium: 1.1, far: 1.2 })[level] || 1.0 });
+    }
   }
-  const timing = ctx.dcMpIncludeMinusOne ? 1.0 : eventTimingMultFor(ctx.eventTimingMultipliers, shiftToTiming(fn?.fnShift), type, 1.0);
-  return Math.min(ctx.situMultCap, Math.max(1.0, saya, timing));
+  const top = parts.reduce((a, p) => (p.mult > a.mult ? p : a), { mult: 1.0, label: null });
+  return { mult: Math.min(cap, Math.max(1.0, top.mult)), winner: top.mult > 1 ? top.label : null, parts, cap, capped: top.mult > cap };
 }
+export const situationalMultFor = (fn, type, ctx) => situationalFactorsFor(fn, type, ctx).mult;
 
 // An element's identity for manpower purposes comes ONLY from live IMS — el.invId
 // (Inventory) or el.patternId (a pure flower-recipe element). No Rate-Card name-match

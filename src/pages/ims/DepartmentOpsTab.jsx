@@ -2305,6 +2305,14 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
                     <b className="text-gray-900">{c.fn}</b>: {dept}'s items add up to <b className="text-gray-900">{need.toFixed(2)}</b> labourer{need === 1 ? "" : "s"}.
                     {heavy.length > 0 && <> Heavy items ({heavy.map(hr => `${hr.sub} ×${hr.count} → +${hr.extra}`).join(", ")}) add to the whole event's crew, not to this share.</>}
                     {" "}The whole event needs <b>{c.result}</b> for {c.fn} (all departments).
+                    {(() => {
+                      // How the situation multiplier applied to that whole-event crew, and what it did.
+                      const sit = c.trace?.situational;
+                      if (!sit) return null;
+                      const over = (sit.parts || []).filter(p => Number(p.mult) > 1);
+                      if (!(sit.mult > 1)) return <div className="text-gray-500">⚡ Situation multiplier: none applies{(sit.parts || []).length ? ` (${(sit.parts || []).map(p => p.label).join(", ")} — all ×1)` : ""}, so the crew stays {sit.after}.</div>;
+                      return <div className="text-amber-700">⚡ Situation multiplier ×{Number(sit.mult).toFixed(2).replace(/\.?0+$/, "")} ({sit.winner}{over.length > 1 ? `, the biggest of ${over.map(p => `${p.label} ×${p.mult}`).join(" / ")} — they do not stack` : ""}{sit.capped ? `, capped at ×${sit.cap}` : ""}): crew {sit.before} × {Number(sit.mult).toFixed(2).replace(/\.?0+$/, "")} = {(sit.before * sit.mult).toFixed(2).replace(/\.?0+$/, "")} → rounded up to <b>{sit.after}</b>.</div>;
+                    })()}
                   </div>
                 );
               })}

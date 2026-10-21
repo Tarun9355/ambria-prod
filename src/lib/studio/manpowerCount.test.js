@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computePeople, computePeopleRaw, shiftToTiming, heavySayaMultFor } from "./manpowerCount";
+import { computePeople, computePeopleRaw, shiftToTiming, heavySayaMultFor, situationalFactorsFor } from "./manpowerCount";
 
 const computeRaw = (f, ctx) => computePeopleRaw(f, "Labours", ctx);
 
@@ -219,5 +219,26 @@ describe("shiftToTiming / heavySayaMultFor", () => {
 
   it("is 1.0 outside a King's-season date regardless of configured factor", () => {
     expect(heavySayaMultFor(fn(), "Labours", { "2026-10-19": "non_saya" }, { heavySaya: { Labours: 3 } })).toBe(1.0);
+  });
+});
+
+describe("situationalFactorsFor — what the Dept Ops line explains", () => {
+  const ctx = (over) => ({ ...baseCtx(), eventTimingMultipliers: { lunch: { Labours: 1.5 } }, sitMults: { heavySaya: { Labours: 1.2 } }, ...over });
+  it("names the biggest factor and does not stack them", () => {
+    const r = situationalFactorsFor(fn({ fnShift: "Lunch" }), "Labours", ctx({ seasonMap: { "2026-10-19": "kings" } }));
+    expect(r.mult).toBe(1.5);
+    expect(r.winner).toBe("Lunch shift");
+    expect(r.parts.map(p => p.mult)).toEqual([1.2, 1.5, 1]);
+  });
+  it("reports the cap when the biggest factor is above it", () => {
+    const r = situationalFactorsFor(fn({ fnShift: "Lunch" }), "Labours", ctx({ eventTimingMultipliers: { lunch: { Labours: 3 } } }));
+    expect(r.mult).toBe(1.8);
+    expect(r.capped).toBe(true);
+  });
+  it("says none applies on a plain night, and a day-prior setup carries nothing for Labours", () => {
+    const r = situationalFactorsFor(fn({ fnShift: "Night" }), "Labours", ctx());
+    expect(r.mult).toBe(1);
+    expect(r.winner).toBe(null);
+    expect(situationalFactorsFor(fn({ fnShift: "Lunch" }), "Labours", ctx({ dcMpIncludeMinusOne: true })).mult).toBe(1);
   });
 });

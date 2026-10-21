@@ -39,7 +39,7 @@ import { paletteNames, paletteInList } from "../../lib/studio/colours";
 import { makeS } from "../../lib/studio/styles";
 import { findCrossFnReuseSource, computeFnInvQty, findSiblingFnInvUse, findSiblingFnSubcatOpportunity } from "../../lib/studio/crossFnReuse";
 import { computeFnFloralCost, buildMandiBreakdown } from "../../lib/studio/floralCost";
-import { computePeople, shiftToTiming, sizeFromMode, heavySayaMultFor, walkFnElements } from "../../lib/studio/manpowerCount";
+import { computePeople, shiftToTiming, sizeFromMode, situationalFactorsFor, walkFnElements } from "../../lib/studio/manpowerCount";
 
 // ═══ HEADER TYPE + CHIP SCALE ═══
 // The header used to mix 8/9/10/11/12/13px in a single row. It now has exactly two tiers:
@@ -5882,12 +5882,10 @@ export default function StudioApp() {
         const vm = fv ? (fv.minLabour ?? defaultMinLabour) : 0;
         const em = eventTypeMultipliers["outdoor_budgeted"] || 1;
         const base = Math.ceil(vm * em);
-        let sm = 1.0;
-        if (!dcMpIncludeMinusOne) {
-          const dumpingMult = ({ nearby: 1.0, medium: 1.1, far: 1.2 })[(d.venueDumping || {})[venueName] || "nearby"] || 1.0;
-          const cand = [dumpingMult, heavySayaMultFor(fn, "Labours", seasonMap, sitMults, d.datePricing), eventTimingMultFor(eventTimingMultipliers, shiftToTiming(fn.fnShift), "Labours", 1.0)];
-          sm = Math.min(situMultCap, Math.max(...cand, 1.0));
-        }
+        // The same factors the engine multiplies the crew by (situationalFactorsFor) — kept with the
+        // trace so Dept Ops can say which one applied and what it did to the crew.
+        const sit = situationalFactorsFor(fn, "Labours", mpCtxFor(fn));
+        const sm = sit.mult;
         const adj = Math.ceil(base * sm);
         const sc = {}; walkFnElements(fn, imsInventory, ({ rc, qty }) => { const s = itemImsSubcat(rc); sc[s] = (sc[s] || 0) + qty; });
         const reduction = standingReductionBySubcat(fvCfgMP, venueName, (dcCards || {})[fn.fnIdx], d.inventory || []);
@@ -5922,8 +5920,11 @@ export default function StudioApp() {
         }
         const usageRows = Object.values(itemAgg);
         const usageFloor = Object.keys(labBatches).length > 0 ? Math.ceil(fnUsageTotal) : 0;
-        const result = Math.max(adj + he, usageFloor);
-        return { kind: "labours", venueMin: vm, mult: sm, heavy: he, heavyRows, usageRows, result, ...(usageFloor > adj + he ? { usageFloor, usageTotal: Math.round(fnUsageTotal * 100) / 100 } : {}), basis: `venue min ${vm}${sm > 1 ? ` ×${sm.toFixed(2)} season/timing` : ""}${he ? ` + ${he} heavy-element` : ""}${usageFloor > adj + he ? ` (floored at ${usageFloor} by overall décor usage)` : ""}` };
+        // The engine multiplies the usage / heavy-element crew by the situational factor, so the number
+        // shown here is the same one that gets billed.
+        const beforeSit = Math.max(he, usageFloor);
+        const result = Math.max(adj + he, Math.ceil(beforeSit * sm - 1e-9));
+        return { kind: "labours", venueMin: vm, mult: sm, situational: { mult: sm, winner: sit.winner, parts: sit.parts.map(p => ({ label: p.label, mult: p.mult })), cap: sit.cap, capped: sit.capped, before: beforeSit, after: result }, heavy: he, heavyRows, usageRows, result, ...(usageFloor > adj + he ? { usageFloor, usageTotal: Math.round(fnUsageTotal * 100) / 100 } : {}), basis: `venue min ${vm}${sm > 1 ? ` ×${sm.toFixed(2)} season/timing` : ""}${he ? ` + ${he} heavy-element` : ""}${usageFloor > adj + he ? ` (floored at ${usageFloor} by overall décor usage)` : ""}` };
       }
       if (type === "Fabric Bangali") {
         // Crew is driven by the ZONE's own truss/tenting structure (shape, dims, which masking

@@ -99,7 +99,7 @@ import { carpetPricingFor, CARPET_OFF } from "../../../lib/studio/taxonomy";
 import { qtyUsedElsewhereInDealCheck, netOwnReservedBlocksLive } from "../../../lib/studio/dealAvailability";
 import { isHiddenSubcat, oosCostPctFor, canFulfillShortfall } from "../../../lib/rateCard";
 import { findCrossFnReuseSource, computeFnInvQty, groupConsecutiveFns } from "../../../lib/studio/crossFnReuse";
-import { computePeopleRaw, computePeople, heavySayaMultFor as sharedHeavySayaMultFor } from "../../../lib/studio/manpowerCount";
+import { computePeopleRaw, computePeople, situationalFactorsFor, heavySayaMultFor as sharedHeavySayaMultFor } from "../../../lib/studio/manpowerCount";
 import { kitShortfallSplit } from "../../../lib/studio/kitShortfallSplit";
 import { withSetupSlot } from "../../../lib/studio/dihariWindows.js";
 
@@ -1425,8 +1425,9 @@ export default function DealCheckOverlay({ ctx }) {
                   const fv = fixedVenueFor(fvCfg, venueName);
                   const vm = fv ? (fv.minLabour ?? defaultMinLabour) : 0; // min only for fixed venues
                   const em = eventTypeMultipliers["outdoor_budgeted"] || 1; const base = Math.ceil(vm * em);
-                  let sm = 1.0;
-                  if (!dcMpIncludeMinusOne) { const c = [({ nearby: 1.0, medium: 1.1, far: 1.2 })[(dealCheckData?.venueDumping || {})[venueName] || "nearby"] || 1.0, heavySayaMultFor(fn, "Labours")]; c.push(eventTimingMultFor(eventTimingMultipliers, shiftToTiming(fn.fnShift), "Labours", 1.0)); sm = Math.min(situMultCap, Math.max(...c, 1.0)); }
+                  // The same factors the engine multiplies the crew by — see StudioApp's manpowerPlanForBooking trace.
+                  const sit = situationalFactorsFor(fn, "Labours", mpCtxFor(fn));
+                  const sm = sit.mult;
                   const adj = Math.ceil(base * sm); const sc = {}; walkFn(fn, ({ rc, qty }) => { const _s = itemImsSubcat(rc); sc[_s] = (sc[_s] || 0) + qty; });
                   const reduction = standingReductionBySubcat(fvCfg, venueName, (dcCards || {})[fns.indexOf(fn)], dealCheckData?.inventory || []);
                   // Per-sub-category rows for the heavy-element add-on, same as manpowerPlanForBooking's
@@ -1442,8 +1443,9 @@ export default function DealCheckOverlay({ ctx }) {
                   const fnUsageTotal = (labourUsageByFn[fns.indexOf(fn)] || {}).total || 0;
                   const usageRows = (labourUsageByFn[fns.indexOf(fn)] || {}).items || [];
                   const usageFloor = labourUsageMode ? Math.ceil(fnUsageTotal) : 0;
-                  const result = Math.max(adj + he, usageFloor);
-                  return { kind: "labours", venueMin: vm, mult: sm, heavy: he, heavyRows, usageRows, result, ...(usageFloor > adj + he ? { usageFloor, usageTotal: Math.round(fnUsageTotal * 100) / 100 } : {}) };
+                  const beforeSit = Math.max(he, usageFloor);
+                  const result = Math.max(adj + he, Math.ceil(beforeSit * sm - 1e-9));
+                  return { kind: "labours", venueMin: vm, mult: sm, situational: { mult: sm, winner: sit.winner, parts: sit.parts.map(p => ({ label: p.label, mult: p.mult })), cap: sit.cap, capped: sit.capped, before: beforeSit, after: result }, heavy: he, heavyRows, usageRows, result, ...(usageFloor > adj + he ? { usageFloor, usageTotal: Math.round(fnUsageTotal * 100) / 100 } : {}) };
                 }
                 if (type === "Fabric Bangali") {
                   // Was grouped by individual FABRIC ELEMENTS (anything whose sub-category name says
