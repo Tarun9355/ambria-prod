@@ -12,7 +12,7 @@ import {
 } from "../../../lib/studio/taxonomy";
 import { paletteNames, addPaletteInline } from "../../../lib/studio/colours";
 import PaletteQuickAdd from "../../../components/studio/PaletteQuickAdd.jsx";
-import { trussRowCost, calcZoneFabricCost, guestFabricMultiplier, zoneTrussStandingDiscountDetail, repeatCatFor, parseFlowerPalette, stringifyFlowerPalette, parseFabricPalette, stringifyFabricPalette, isDirectMandiElement, anchorsForPaletteByMaterial } from "../../../lib/studio/pricing";
+import { trussRowCost, calcZoneFabricCost, guestFabricMultiplier, fabricRepeatDiscount, zoneTrussStandingDiscountDetail, repeatCatFor, parseFlowerPalette, stringifyFlowerPalette, parseFabricPalette, stringifyFabricPalette, isDirectMandiElement, anchorsForPaletteByMaterial } from "../../../lib/studio/pricing";
 import { paletteSearch, paletteMatches } from "../../../components/studio/filterUI.jsx";
 import { resolveTrussConfig } from "../../../lib/studio/pricing";
 import { qtyUsedElsewhereInBuild } from "../../../lib/studio/dealAvailability";
@@ -151,7 +151,7 @@ const cloneTrussRow = (src = {}) => ({
 // titled "Truss N", carrying a remove control and no Add button of its own. Reusing the component
 // rather than writing a cut-down row is what keeps an added truss genuinely equal to the first —
 // front extension, the auto Box/Single-U line, custom ceiling and its own masking all included.
-export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, showCosts, isDark, border, textP, textS, accent, customMaskingField, maskOpts = [], trussRates, structRates, nested = false, title, onRemove, rowIdx, trussInv, venueTruss, scale = 1, guestDiscPct = 0, maskingColours = [], maskingColourOptions = [] }) {
+export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, showCosts, isDark, border, textP, textS, accent, customMaskingField, maskOpts = [], trussRates, structRates, nested = false, title, onRemove, rowIdx, trussInv, venueTruss, scale = 1, guestDiscPct = 0, guestFabricDiscPct = 0, maskingColours = [], maskingColourOptions = [] }) {
   // What THIS truss structure costs. Same function the cost engine sums over every row, so the
   // figure on the card and the figure in the bill cannot drift.
   const rowCost = trussRowCost(zc, structRates || { trussRates });
@@ -188,7 +188,11 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
   const trussShown = Math.max(0, discountedTruss - ceilingShown);
   // Wall-masking fabric pieces belong to the Fabric figure (owner ask: the Masking card shows the
   // masking price alone), so Fabric = Liza + curtains + wall fabric pieces, and the tile still adds up.
-  const fabricShown = fabricCost + wallPanelCost;
+  // Repeat on a Fabric-card icon (Liza / curtains) takes the flat pct off that part only — the
+  // truss's own Repeat never reaches fabric. Same helper calcStructCost uses, so card and bill agree.
+  const fabricRepOff = fabricInv ? fabricRepeatDiscount(zc, fabricInv, zc.drapeDensity || "moderate", fabMult, guestFabricDiscPct) : 0;
+  const fabricShown = fabricCost + wallPanelCost - fabricRepOff;
+  const [fabMenu, setFabMenu] = useState(null); // which Fabric icon's menu is open ("fabLiza" | "fabCurtain")
   // ═══ ONE SELECTED-STATE ═══ These three rows previously used a dark outline (material),
   // PINK (drape) and a borderless grey fill (masking). The borderless one was the real problem:
   // unselected options rendered as plain text and did not look clickable. `border` is never
@@ -416,10 +420,25 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                         see calcZoneFabric's fabLiza / fabCurtain. */}
                     <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}>
                       <span style={rowCap}>Fabric</span>
-                      {!zc.noFabric&&[["fabLiza","🧣","Liza"],["fabCurtain","🎀","Velvet curtains"]].map(([key,ic,lbl])=>{const on=zc[key]!==false;return(
-                        <span key={key} onClick={()=>sZ({[key]:on?false:undefined})} title={`${lbl}: ${on?"on — click to leave it off this truss":"off — click to add it back"}`}
-                          style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:22,height:22,borderRadius:6,cursor:"pointer",fontSize:12,
-                            border:`1px solid ${on?accent:border}`,background:on?`${accent}18`:"transparent",opacity:on?1:0.4,filter:on?"none":"grayscale(1)"}}>{ic}</span>);})}
+                      {!zc.noFabric&&[["fabLiza","fabLizaRep","🧣","Liza"],["fabCurtain","fabCurtainRep","🎀","Velvet curtains"]].map(([key,repKey,ic,lbl])=>{const on=zc[key]!==false;const rep=on&&!!zc[repKey];return(
+                        <div key={key} className="relative inline-flex">
+                          <span onClick={()=>setFabMenu(fabMenu===key?null:key)} title={`${lbl}: ${on?"on":"off"}${rep?" · repeat":""} — click for options`}
+                            style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:22,height:22,borderRadius:6,cursor:"pointer",fontSize:12,
+                              border:`1px solid ${on?accent:border}`,background:on?`${accent}18`:"transparent",opacity:on?1:0.4,filter:on?"none":"grayscale(1)"}}>{ic}</span>
+                          {rep&&<span className="absolute -top-1.5 -right-1.5 text-[10px] leading-none text-emerald-600 pointer-events-none">♻</span>}
+                          {fabMenu===key&&<>
+                            <div className="fixed inset-0 z-40" onClick={()=>setFabMenu(null)} />
+                            <div className={`absolute left-0 top-7 z-50 w-52 rounded-lg border shadow-lg p-1 flex flex-col ${isDark?"bg-gray-800 border-gray-600 text-gray-100":"bg-white border-gray-200 text-gray-800"}`}>
+                              <button type="button" className="text-left text-[12px] px-2 py-1.5 rounded hover:bg-black/5" onClick={()=>{sZ({[key]:on?false:undefined,...(on?{[repKey]:undefined}:{})});setFabMenu(null);}}>
+                                {on?`✓ ${lbl} selected · tap to leave off`:`Select ${lbl}`}
+                              </button>
+                              <button type="button" disabled={!on} className="text-left text-[12px] px-2 py-1.5 rounded hover:bg-black/5 disabled:opacity-40 disabled:cursor-not-allowed" onClick={()=>{sZ({[repKey]:rep?undefined:true});setFabMenu(null);}}
+                                title={guestFabricDiscPct>0?`${lbl} is reused — ${guestFabricDiscPct}% off its price`:"Repeat is marked; the discount shows once the client discount toggle is on"}>
+                                {rep?"♻ Repeat on · tap to remove":"♻ Repeat this item"}
+                              </button>
+                            </div>
+                          </>}
+                        </div>);})}
                     </div>
                     <div style={{display:"flex",alignItems:"center",gap:8}}>
                       {!zc.noFabric&&<>
@@ -431,7 +450,8 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                           been computed at all", which is exactly the ambiguity that made a genuine
                           non-zero figure (e.g. on a dims-only, 0-qty truss still billing Liza/curtain)
                           impossible to tell apart from a legitimately-zero one without opening devtools. */}
-                      {showCosts&&<span style={{marginLeft:"auto",fontSize:12,fontWeight:600,color:textP}} title={`Liza + velvet curtains${wallPanelCost>0?` + wall fabric pieces ${fmt(wallPanelCost)}`:""} for a ${zc.drapeDensity||"moderate"} drape, ${zc.useNewFabric?"New":"Old"} stock${ceilingShown>0?" (the ceiling panel's own cost is on the Drape card)":""}`}>{fmt(fabricShown)}</span>}
+                      {showCosts&&fabricRepOff>0&&<span style={{marginLeft:"auto",fontSize:10.5,fontWeight:600,color:"#10B981"}}>♻ − {fmt(fabricRepOff)}</span>}
+                      {showCosts&&<span style={{marginLeft:fabricRepOff>0?0:"auto",fontSize:12,fontWeight:600,color:textP}} title={`Liza + velvet curtains${wallPanelCost>0?` + wall fabric pieces ${fmt(wallPanelCost)}`:""} for a ${zc.drapeDensity||"moderate"} drape, ${zc.useNewFabric?"New":"Old"} stock${ceilingShown>0?" (the ceiling panel's own cost is on the Drape card)":""}`}>{fmt(fabricShown)}</span>}
                     </div>
                     {/* A bare frame: the truss bills at IMS's "Without fabric" rate and no Liza,
                         curtains or masking pieces are counted (see calcZoneFabric/trussRowCost). */}
@@ -618,10 +638,10 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
 //
 // calcStructCost has always summed zc.extraTrussRows, and Deal Check, the truss engine and the
 // stock reservation all read them — Build was simply the one place with no way to create one.
-export function TrussStack({ S, customCeilingField, customMaskingField, k, zc, zm, st, sZ, sD, fmt, showCosts, isDark, border, textP, textS, accent, maskOpts, trussRates, structRates, trussInv, venueTruss, scale = 1, guestDiscPct = 0, maskingColours = [], maskingColourOptions = [] }) {
+export function TrussStack({ S, customCeilingField, customMaskingField, k, zc, zm, st, sZ, sD, fmt, showCosts, isDark, border, textP, textS, accent, maskOpts, trussRates, structRates, trussInv, venueTruss, scale = 1, guestDiscPct = 0, guestFabricDiscPct = 0, maskingColours = [], maskingColourOptions = [] }) {
   const rows = zc.extraTrussRows || [];
   const write = (next) => sZ({ extraTrussRows: next });
-  const shared = { S, customCeilingField, customMaskingField, k, zm, st, fmt, showCosts, isDark, border, textP, textS, accent, maskOpts, trussRates, structRates, trussInv, venueTruss, scale, guestDiscPct, maskingColours, maskingColourOptions };
+  const shared = { S, customCeilingField, customMaskingField, k, zm, st, fmt, showCosts, isDark, border, textP, textS, accent, maskOpts, trussRates, structRates, trussInv, venueTruss, scale, guestDiscPct, guestFabricDiscPct, maskingColours, maskingColourOptions };
   return (<>
     <TrussCard {...shared} zc={zc} sZ={sZ} sD={sD} title={rows.length ? "Truss 1" : "Truss"} />
     {rows.map((row, ri) => {
@@ -4979,7 +4999,7 @@ undefined
                   DCTrussTab still shows that detailed breakdown for its own purposes, unaffected. */}
               {zoneSection[k]==="truss"&&<TrussStack S={S} customCeilingField={customCeilingField} k={k} zc={zc} zm={zm} st={st} sZ={sZ} sD={sD} fmt={fmt} showCosts={showCosts}
                 isDark={isDark} border={border} textP={textP} textS={textS} accent={accent}
-                customMaskingField={customMaskingField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} scale={zoneScaleVal(k)} guestDiscPct={structDiscountFor(zc,aVenue)?.truss?25:0} maskingColours={maskingColours} maskingColourOptions={maskingColourOptions} />}
+                customMaskingField={customMaskingField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} scale={zoneScaleVal(k)} guestDiscPct={structDiscountFor(zc,aVenue)?.truss?25:0} guestFabricDiscPct={structDiscountFor(zc,aVenue)?25:0} maskingColours={maskingColours} maskingColourOptions={maskingColourOptions} />}
               {/* ── PLATFORM + CARPET → then floor dims ── */}
               {zoneSection[k]==="platform"&&<FloorStack S={S} zc={zc} zm={zm} st={st} sZ={sZ} sFD={sFD} fd={fd} fmt={fmt} showCosts={showCosts}
                 isDark={isDark} border={border} accent={accent} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} imsInventory={imsInventory} scale={zoneScaleVal(k)} openAvailModal={openAvailModal} zoneKey={k} onCarpetAll={applyCarpetToAll} carpetShortOf={carpetShortOf} carpetRemainingOf={carpetRemainingOf} />}
@@ -5490,7 +5510,7 @@ undefined
                   {secHead(<IconRuler size={14}/>,"Zone Dimensions","#C9A96E")}
                   <TrussStack S={S} customCeilingField={ownsLive?customCeilingField:noCustomField} k={zk} zc={cfgCur} zm={zm} st={st} sZ={sZ} sD={sD} fmt={fmt} showCosts={showCosts}
                     isDark={isDark} border={border} textP={textP} textS={textS} accent={accent}
-                    customMaskingField={ownsLive?customMaskingField:noCustomField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} scale={scaleFor} guestDiscPct={structDiscountFor(cfgCur,aVenue)?.truss?25:0} maskingColours={maskingColours} maskingColourOptions={maskingColourOptions} />
+                    customMaskingField={ownsLive?customMaskingField:noCustomField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} scale={scaleFor} guestDiscPct={structDiscountFor(cfgCur,aVenue)?.truss?25:0} guestFabricDiscPct={structDiscountFor(cfgCur,aVenue)?25:0} maskingColours={maskingColours} maskingColourOptions={maskingColourOptions} />
                   <FloorStack S={S} zc={cfgCur} zm={zm} st={st} sZ={sZ} sFD={sFD} fd={fd} fmt={fmt} showCosts={showCosts}
                     isDark={isDark} border={border} accent={accent} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} scale={scaleFor} openAvailModal={ownsLive?openAvailModal:undefined} zoneKey={zk} />
                 </div>

@@ -79,7 +79,7 @@ import { RC_D, RC_CATS_DEFAULT } from "../../lib/studio/constants";
 import {
   resolveTrussConfig, findZoneForArea, findAreaForZone, makeZoneId,
   defaultZoneFromArea, resolveMandiFlower, calcZoneTrussPreview,
-  calcZoneFabric, calcZoneFabricCost, guestFabricMultiplier, calcZoneCarpet, buildPlatformPlan, getStudioAvailable,
+  calcZoneFabric, calcZoneFabricCost, guestFabricMultiplier, fabricRepeatDiscount, calcZoneCarpet, buildPlatformPlan, getStudioAvailable,
   buildTopology, PLATFORM_FATTA_CODE, PLATFORM_STAND_CODE, trussRowCost, repeatCatFor, repeatCatsOn, REPEAT_CAT_LABELS,
   freshFnForManpower,
 } from "../../lib/studio/pricing";
@@ -297,7 +297,7 @@ function calcStructCost(zk, zc, rates, applyDiscount) {
   // differently, so each extra row carries its own (set via its own card in the zone editor).
   const trussRows = [
     { dims: d, trT: zc.trT, trussType: zc.trussType, trussQty: zc.trussQty, trussFrontExt: zc.trussFrontExt, trussFrontExtH: zc.trussFrontExtH, trussBackDepth: zc.trussBackDepth, mkOn: zc.mkOn, mkT: zc.mkT, mkWalls: zc.mkWalls, mkWallMat: zc.mkWallMat, mkS: zc.mkS, trussMaterial: zc.trussMaterial, drapeDensity: zc.drapeDensity, customCeilingItemId: zc.customCeilingItemId, customMaskingItemId: zc.customMaskingItemId,
-      useNewFabric: zc.useNewFabric, noFabric: zc.noFabric, fabLiza: zc.fabLiza, fabCurtain: zc.fabCurtain },
+      useNewFabric: zc.useNewFabric, noFabric: zc.noFabric, fabLiza: zc.fabLiza, fabCurtain: zc.fabCurtain, fabLizaRep: zc.fabLizaRep, fabCurtainRep: zc.fabCurtainRep },
     ...(zc.extraTrussRows || []),
   ];
   trussRows.forEach((row) => { const { truss, masking } = trussRowCost(row, rates); r.truss += truss; r.masking += masking; });
@@ -351,9 +351,14 @@ function calcStructCost(zk, zc, rates, applyDiscount) {
       if (!flags[grp]) return;
       keys.forEach((k) => { r[k] = Math.round(r[k] * (1 - pct / 100)); });
     });
-    // Fabric is NOT part of any discount group — a true shortfall's fresh-markup charge isn't the
-    // kind of standing/reuse discount this flat pct exists for, so it's always added back at full
-    // price, same as the truss discount itself never touches arches/pillars/glass that aren't flagged.
+    // Fabric is NOT part of any discount group — the truss's Repeat chip never touches it (a truss is
+    // reused, drape fabric is consumed). Only a part the salesperson marked Repeat on the Fabric card
+    // (Liza / velvet curtains, fabLizaRep / fabCurtainRep) takes the same flat pct off its own share.
+    if (rates?.trussInv) {
+      const mult = guestFabricMultiplier(rates);
+      const off = trussRows.reduce((s, row) => s + fabricRepeatDiscount(row, rates.trussInv, row.drapeDensity || "moderate", mult, pct), 0);
+      r.fabric = Math.max(0, r.fabric - off);
+    }
     r.total = r.truss + r.masking + r.platform + r.carpet + r.arches + r.pillars + r.glass + r.print + r.fabric;
     r.trussDiscount = before - r.total;
   }

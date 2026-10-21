@@ -918,6 +918,19 @@ export const calcZoneFabricCost = (zCfg, trussInv, paletteAnchors, density, mult
   return cost;
 };
 
+// Guest Repeat discount on the drape fabric, per part. Fabric is consumed, so the truss's Repeat
+// chip never touches it (calcStructCost); instead each Fabric-card icon carries its own Repeat flag
+// (row.fabLizaRep / row.fabCurtainRep), and only that part's share of the guest price (× mult, the
+// IMS guest multiplier) comes off at `pct`. Wall-masking pieces are not a part and stay full price.
+export const fabricRepeatDiscount = (row, trussInv, density, mult, pct) => {
+  if (!row || !trussInv || row.noFabric || !(row.fabLizaRep || row.fabCurtainRep)) return 0;
+  const whole = calcZoneFabricCost(row, trussInv, [], density);
+  let off = 0;
+  if (row.fabLizaRep && row.fabLiza !== false) off += whole - calcZoneFabricCost({ ...row, fabLiza: false }, trussInv, [], density);
+  if (row.fabCurtainRep && row.fabCurtain !== false) off += whole - calcZoneFabricCost({ ...row, fabCurtain: false }, trussInv, [], density);
+  return Math.round(off * (Number(mult) || 0) * (Number(pct) || 0) / 100);
+};
+
 // ─── IMS field accessor shim (used by carpet cost) ───────────────────────────
 const imsField = {
   category:    (i) => i?.category || i?.cat || "",
