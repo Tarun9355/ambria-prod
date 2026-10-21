@@ -92,6 +92,7 @@ import { matchFlowerPattern, floralPatternUnitRates, sizeClassToPatternKey, norm
 import { rowToRcItem, rcItemToRow, rcIsSMB, getFloralMode, oosCostPctFor, canFulfillShortfall } from "../../lib/rateCard";
 import { todayStr } from "../../lib/ims/attendance";
 import { supabase, fetchAll, upsertRow, deleteRow, subscribeTable, keepaliveUpsert } from "../../lib/supabase";
+import { latestPlanningInputStamp, planningUpcoming } from "../../lib/studio/planningSync.js";
 import {
   rowToLibItem, libItemToRow, fetchLibraryItemsByIds, fetchLibraryItemsByUrls,
   fetchZoneLibraryPhotos, fetchCustomZoneLibraryPhotos, fetchUntaggedLibraryTargets,
@@ -387,19 +388,6 @@ function resolveGensetPlan(match, customGenset125, customGenset62, gensetRate, g
 // PREVIOUS function's raw data to find carryover (below), without recursing into a full
 // calcFunctionBreakdown call (which would repeat pricing/genset work we don't need here and would
 // double-net a chain of same-venue functions against each other).
-// IMS settings + inventory that feed a booked deal's Dept Ops snapshot (crew, kit parts, fabric, mandi…).
-// A snapshot older than the newest change to any of them is stale: the auto-sync on open and the
-// startup sweep both test exactly this.
-const PLANNING_SETTING_KEYS = ["heavyElementRanges", "categoryDepartments", "labourTiers", "dihariSchemes", "defaultWindowsByPhase", "venueMinLabour", "defaultMinLabour", "eventTypeMultipliers", "eventTimingMultipliers", "fabricBangaliRanges", "trussLabourRanges", "fabricRftPerWorker", "flowerPatterns", "mandiCatalogue", "mandiPriceMultipliers", "fixedVenues", "fixedVenueSubcatDiscount", "trussRates", "maskingRates", "fabricMultiplier", "carpetMaterials", "platformRates", "venueParents", "situationalMultipliers", "situationalMultiplierCap", "agencyFeePct", "rcCategories"];
-async function latestPlanningInputStamp() {
-  const [{ data: srows }, { data: irow }] = await Promise.all([
-    supabase.from("settings").select("key,updated_at").in("key", PLANNING_SETTING_KEYS),
-    supabase.from("inventory").select("updated_at").order("updated_at", { ascending: false }).limit(1),
-  ]);
-  const stamps = [...(srows || []), ...(irow || [])].map(r => Date.parse(r.updated_at)).filter(Number.isFinite);
-  return stamps.length ? Math.max(...stamps) : 0;
-}
-
 function computeFnSubQty(fnData, capBySub, imsInventory, flowerPatterns, trussInv, fvCfg, venueName) {
   const standPool = new Map(); // standing stock is pooled across this function's elements (kitBuiltQty)
   const fZoneElements = fnData?.zoneElements || {};
@@ -8624,14 +8612,15 @@ export default function StudioApp() {
     loadClientSession(client, session, landingStep, { isNewVisit: false, landingFnIdx: savedFn });
   }, [clientLedger, activeClientId, loadClientSession]);
 
-  // ── IMS PLANNING SWEEP: BOOKED DEALS CATCH UP WITH IMS SETTINGS ON THEIR OWN ──
+  // ── IMS PLANNING SWEEP: BOOKED DEALS CATCH UP WITH IMS SETTINGS ──
   // Planning shows each booked deal's Deal Check snapshot, and Deal Check only runs in a browser, so
   // a change an admin makes in IMS (per-labour counts, labour tiers, shifts, rentals, recipes…)
-  // reached a deal only once someone opened it. Once per Studio start — when nothing is open and
-  // nothing is being typed — this walks every booked, upcoming deal whose snapshot is older than the
+  // reached a deal only once someone opened it. IMS's "Sync planning" button loads Studio in a hidden
+  // frame (#/studio?sweep=1, see main.jsx) and that run walks every booked, upcoming deal whose snapshot is older than the
   // newest of those inputs through the same open-and-sync the auto-sync on open does (one at a
-  // time, ~10-15 s each), then closes it again. While it runs the screen is covered and the build
-  // autosave stands still (sweepRef.id), so it cannot save or lose anyone's edit; Stop ends it.
+  // time, ~10-15 s each), then closes it again. Nobody sees it: it is a frame of its own with its own
+  // in-memory sessionStorage, so it cannot touch the page the person is using. While it runs the
+  // build autosave stands still (sweepRef.id), so it cannot save or lose anything.
   const sweepStartedRef = useRef(false);
   const dcHeadlessRef = useRef(false); dcHeadlessRef.current = dcHeadless;
   const sweepFnsRef = useRef({});
@@ -8640,18 +8629,19 @@ export default function StudioApp() {
     const sw = sweepRef.current; sw.stop = false;
     const sleep = (ms) => new Promise(r => setTimeout(r, ms));
     const eoOf = (c) => (eventOrdersRef2.current || []).find(e => e.clientId === c.id) || (eventOrdersRef2.current || []).find(e => c.name && (e.clientName || "") === (c.name || "").trim());
-    const yesterday = new Date(Date.now() - 86400000).toLocaleDateString("en-CA");
-    const upcoming = (eo) => [eo.date, ...((Array.isArray(eo.functionsDetail) ? eo.functionsDetail : []).map(f => f?.date))].filter(Boolean).map(d => String(d).slice(0, 10)).sort().pop() >= yesterday;
+    // Tells the page that started this hidden run (IMS's "Sync planning" button) how it is going.
+    const tell = (phase, extra = {}) => { try { window.parent?.postMessage({ type: "ambria-planning-sweep", phase, ...extra }, window.location.origin); } catch { /* not framed */ } };
+    let done = 0;
     try {
       const latest = await latestPlanningInputStamp();
-      if (!latest) return;
+      if (!latest) { tell("done", { done: 0, total: 0 }); return; }
       const stale = (c) => {
         const eo = c.status === "booked" ? eoOf(c) : null;
-        return !!eo && !!eo.deptSyncedAt && upcoming(eo) && latest > Number(eo.deptSyncedAt) + 60000 && !autoSyncedClientsRef.current.has(c.id);
+        return !!eo && !!eo.deptSyncedAt && planningUpcoming(eo) && latest > Number(eo.deptSyncedAt) + 60000 && !autoSyncedClientsRef.current.has(c.id);
       };
       const queue = (clientLedgerRef.current || []).filter(c => stale(c) && findLatestBuild(c.sessions, 0)).map(c => c.id);
-      if (!queue.length) return;
-      let done = 0;
+      if (!queue.length) { tell("done", { done: 0, total: 0 }); return; }
+      tell("ready", { total: queue.length });
       setSweepInfo({ done, total: queue.length, name: "" });
       for (const id of queue) {
         if (sw.stop || activeClientIdRef.current) break;
@@ -8679,15 +8669,17 @@ export default function StudioApp() {
         sw.id = null;
         if (activeClientIdRef.current === c.id) sweepFnsRef.current.startNewDeal();
         done++;
+        tell("progress", { done, total: queue.length });
         for (let w = 0; w < 10 && activeClientIdRef.current; w++) await sleep(300); // closed deal settles
       }
-      if (done > 0) sweepFnsRef.current.showMsg(`IMS planning synced for ${done} deal${done === 1 ? "" : "s"}`, "green");
-    } catch { /* best effort — the auto-sync on open still covers each deal */ }
+      tell("done", { done, total: queue.length });
+    } catch { tell("done", { done, total: 0, error: true }); /* best effort — the auto-sync on open still covers each deal */ }
     finally { sw.id = null; setSweepInfo(null); }
   };
   const runPlanningSweepRef = useRef(null);
   runPlanningSweepRef.current = runPlanningSweep;
   useEffect(() => {
+    if (!window.__AMBRIA_SWEEP__) return; // only the hidden run ever sweeps
     if (sweepStartedRef.current || restoring || !authUser || !buildRestoredRef.current) return;
     if (activeClientId || step !== 0 || clientName || clientPhone || dcRun) return;
     if (!(clientLedger || []).length || !(eventOrders || []).length) return;

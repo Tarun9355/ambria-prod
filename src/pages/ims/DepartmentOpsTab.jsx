@@ -15,6 +15,7 @@ import { LOGO_ASSET, LOGO_BOX } from "../../lib/studio/brand.js";
 import { fitUrl } from "../../lib/studio/thumb.js";
 import { matchFlowerPattern, resolveSizeKey, sizeClassToPatternKey, resolveMandiFlower } from "../../lib/ims/flowerHelpers";
 import { swatchHexFor } from "../../lib/studio/colours";
+import PlanningSyncButton from "./PlanningSyncButton.jsx";
 
 // ── THE OFFICIAL LOGO, READY FOR THE PDF ──
 // ambria-logo.png is a WHITE wordmark with a gold dot and gold "DESIGN & DECOR", on a transparent
@@ -4433,6 +4434,8 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
               <span>{exporting === "download" && exportNote ? exportNote : "Download PDF"}</span>
             </button>
           )}
+          {/* Only while an event's planning is older than an IMS setting / inventory change. */}
+          <PlanningSyncButton eventOrders={eventOrders} />
         </div>
       </div>
       </div>
