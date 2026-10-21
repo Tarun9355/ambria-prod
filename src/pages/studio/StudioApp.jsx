@@ -5822,7 +5822,7 @@ export default function StudioApp() {
     const mpCtxFor = (fn) => ({
       dcInventoryCache: imsInventory, flowerPatterns: fps, electricianProd: elecProd,
       labourTiers, eventTypeMultipliers, eventTimingMultipliers, dcMpIncludeMinusOne,
-      seasonMap, sitMults, situMultCap,
+      seasonMap, sitMults, situMultCap, datePricing: d.datePricing,
       venueDumping: d.venueDumping || {}, fixedVenues: d.fixedVenues || [],
       venueParents: d.venueParents || venueParents || {}, heavyElementRanges,
       cardsForFn: (dcCards || {})[fn.fnIdx], inventory: d.inventory || [],
@@ -5885,7 +5885,7 @@ export default function StudioApp() {
         let sm = 1.0;
         if (!dcMpIncludeMinusOne) {
           const dumpingMult = ({ nearby: 1.0, medium: 1.1, far: 1.2 })[(d.venueDumping || {})[venueName] || "nearby"] || 1.0;
-          const cand = [dumpingMult, heavySayaMultFor(fn, "Labours", seasonMap, sitMults), eventTimingMultFor(eventTimingMultipliers, shiftToTiming(fn.fnShift), "Labours", 1.0)];
+          const cand = [dumpingMult, heavySayaMultFor(fn, "Labours", seasonMap, sitMults, d.datePricing), eventTimingMultFor(eventTimingMultipliers, shiftToTiming(fn.fnShift), "Labours", 1.0)];
           sm = Math.min(situMultCap, Math.max(...cand, 1.0));
         }
         const adj = Math.ceil(base * sm);

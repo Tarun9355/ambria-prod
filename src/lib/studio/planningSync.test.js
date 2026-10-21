@@ -23,6 +23,6 @@ describe("planningNeedsSync", () => {
   });
   it("a finished sweep (since) stops flagging an order it skipped", () => {
     const old = eo({ deptSnapVer: undefined, deptSyncedAt: Date.parse("2026-10-21T08:00:00Z") });
-    expect(planningNeedsSync(old, 1, Date.now())).toBe(false);
+    expect(planningNeedsSync(old, 1, Date.parse("2030-01-01T00:00:00Z"))).toBe(false);
   });
 });

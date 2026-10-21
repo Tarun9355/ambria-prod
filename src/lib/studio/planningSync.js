@@ -3,7 +3,7 @@ import { supabase } from "../supabase";
 // IMS settings + inventory that feed a booked deal's Dept Ops snapshot (crew, kit parts, fabric, mandi…).
 // A snapshot older than the newest change to any of them is stale: the auto-sync on opening a deal,
 // the background planning sweep and IMS's "Sync planning" button all test exactly this.
-export const PLANNING_SETTING_KEYS = ["heavyElementRanges", "categoryDepartments", "labourTiers", "dihariSchemes", "defaultWindowsByPhase", "venueMinLabour", "defaultMinLabour", "eventTypeMultipliers", "eventTimingMultipliers", "fabricBangaliRanges", "trussLabourRanges", "fabricRftPerWorker", "flowerPatterns", "mandiCatalogue", "mandiPriceMultipliers", "fixedVenues", "fixedVenueSubcatDiscount", "trussRates", "maskingRates", "fabricMultiplier", "carpetMaterials", "platformRates", "venueParents", "situationalMultipliers", "situationalMultiplierCap", "agencyFeePct", "rcCategories"];
+export const PLANNING_SETTING_KEYS = ["heavyElementRanges", "categoryDepartments", "labourTiers", "dihariSchemes", "defaultWindowsByPhase", "venueMinLabour", "defaultMinLabour", "eventTypeMultipliers", "eventTimingMultipliers", "fabricBangaliRanges", "trussLabourRanges", "fabricRftPerWorker", "flowerPatterns", "mandiCatalogue", "mandiPriceMultipliers", "fixedVenues", "fixedVenueSubcatDiscount", "trussRates", "maskingRates", "fabricMultiplier", "carpetMaterials", "platformRates", "venueParents", "situationalMultipliers", "situationalMultiplierCap", "agencyFeePct", "rcCategories", "datePricing", "seasonMap", "eventTimingMultipliers"];
 
 // Newest change (ms) to any planning setting or inventory row; 0 when nothing could be read.
 export async function latestPlanningInputStamp() {
@@ -25,9 +25,10 @@ export function planningUpcoming(eo, now = Date.now()) {
 
 // Shape of what a sync writes into the order (event_orders.data). Bump it when Deal Check starts
 // recording something Dept Ops reads (v2: each labour usage row carries the department it was charged
-// to), and every order synced under an older shape counts as stale until it is synced again.
-export const PLANNING_SNAPSHOT_VERSION = 2;
-const PLANNING_SNAPSHOT_SHIPPED_AT = Date.parse("2026-10-21T09:20:00Z");
+// to; v3: crew counts carry the situational multiplier — King's date / shift timing), and every order
+// synced under an older shape counts as stale until it is synced again.
+export const PLANNING_SNAPSHOT_VERSION = 3;
+const PLANNING_SNAPSHOT_SHIPPED_AT = Date.parse("2026-10-21T11:15:00Z");
 export const planningSnapshotOutdated = (eo) => (Number(eo?.deptSnapVer) || 1) < PLANNING_SNAPSHOT_VERSION;
 
 // Synced before, still upcoming, and a planning input changed after that sync (a minute of slack: the

@@ -99,7 +99,7 @@ import { carpetPricingFor, CARPET_OFF } from "../../../lib/studio/taxonomy";
 import { qtyUsedElsewhereInDealCheck, netOwnReservedBlocksLive } from "../../../lib/studio/dealAvailability";
 import { isHiddenSubcat, oosCostPctFor, canFulfillShortfall } from "../../../lib/rateCard";
 import { findCrossFnReuseSource, computeFnInvQty, groupConsecutiveFns } from "../../../lib/studio/crossFnReuse";
-import { computePeopleRaw, computePeople } from "../../../lib/studio/manpowerCount";
+import { computePeopleRaw, computePeople, heavySayaMultFor as sharedHeavySayaMultFor } from "../../../lib/studio/manpowerCount";
 import { kitShortfallSplit } from "../../../lib/studio/kitShortfallSplit";
 import { withSetupSlot } from "../../../lib/studio/dihariWindows.js";
 
@@ -1267,11 +1267,7 @@ export default function DealCheckOverlay({ ctx }) {
             // relative to the tab whenever one of those roles' pressure factor exceeded 1.
             const situMultCap = dealCheckData?.situationalMultiplierCap || 1.8;
             const sitMultsMP = dealCheckData?.situationalMultipliers || SIT_MULT_DEFAULTS;
-            const heavySayaMultFor = (fn, type) => {
-              if (seasonMapMP[fn.fnDate || ""] !== "kings") return 1.0;
-              const m = Number((sitMultsMP.heavySaya || {})[type]);
-              return m > 0 ? m : 1.0;
-            };
+            const heavySayaMultFor = (fn, type) => sharedHeavySayaMultFor(fn, type, seasonMapMP, sitMultsMP, dealCheckData?.datePricing);
             const labourTypes = Object.keys(dihariSchemes);
             if (labourTypes.length && fns.length) {
               // Rate per type MUST match the Manpower tab exactly (else the bottom bar diverges from the tab):
@@ -1370,7 +1366,7 @@ export default function DealCheckOverlay({ ctx }) {
               const mpCtxFor = (fn) => ({
                 dcInventoryCache, flowerPatterns: flowerPatternsMP, electricianProd: electricianProdMP,
                 labourTiers, eventTypeMultipliers, eventTimingMultipliers, dcMpIncludeMinusOne,
-                seasonMap: seasonMapMP, sitMults: sitMultsMP, situMultCap,
+                seasonMap: seasonMapMP, sitMults: sitMultsMP, situMultCap, datePricing: dealCheckData?.datePricing,
                 venueDumping: dealCheckData?.venueDumping || {}, fixedVenues: dealCheckData?.fixedVenues || [],
                 venueParents: dealCheckData?.venueParents || {}, heavyElementRanges,
                 cardsForFn: (dcCards || {})[fns.indexOf(fn)], inventory: dealCheckData?.inventory || [],

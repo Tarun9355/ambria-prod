@@ -11,7 +11,7 @@ import { heavyExtraLabour, eventTimingMultFor, EVENT_TIMINGS, SIT_MULT_DEFAULTS 
 import { standingReductionBySubcat, fixedVenueFor } from "../../../../lib/ims/fixedVenues";
 import { itemImsSubcat, lookupBySubcat, walkKitUnits, aggregateEventManpower, hasAnyMpEdits } from "../../../../lib/ims/helpers";
 import { matchFlowerPattern } from "../../../../lib/ims/flowerHelpers";
-import { computePeopleRaw, computePeople } from "../../../../lib/studio/manpowerCount";
+import { computePeopleRaw, computePeople, heavySayaMultFor as sharedHeavySayaMultFor } from "../../../../lib/studio/manpowerCount";
 import ManpowerFactorPills from "../../../../components/shared/ManpowerFactorPills.jsx";
 import { withSetupSlot } from "../../../../lib/studio/dihariWindows.js";
 
@@ -226,11 +226,7 @@ export default function DCManpowerTab({ ctx }) {
                   // reduction applied to the separate -1-day phase, not this per-type multiplier.
                   const situMultCap = dealCheckData?.situationalMultiplierCap || 1.8;
                   const sitMultsMP = dealCheckData?.situationalMultipliers || SIT_MULT_DEFAULTS;
-                  const heavySayaMultFor = (fn, type) => {
-                    if (seasonMapMP[fn.fnDate || ""] !== "kings") return 1.0;
-                    const m = Number((sitMultsMP.heavySaya || {})[type]);
-                    return m > 0 ? m : 1.0;
-                  };
+                  const heavySayaMultFor = (fn, type) => sharedHeavySayaMultFor(fn, type, seasonMapMP, sitMultsMP, dealCheckData?.datePricing);
                   // ── Vendor avg-rate lookup (22 May 2026) ─────────────
                   // For each labour type: avg of (vendor.storedRate.amount) where
                   // vendor.type==="Manpower Contractor", vendor.active, vendor.isFixed, vendor.labourType===type.
@@ -338,7 +334,7 @@ export default function DCManpowerTab({ ctx }) {
                   const mpCtxFor = (fn) => ({
                     dcInventoryCache, flowerPatterns: flowerPatternsMP, electricianProd: electricianProdMP,
                     labourTiers, eventTypeMultipliers, eventTimingMultipliers, dcMpIncludeMinusOne,
-                    seasonMap: seasonMapMP, sitMults: sitMultsMP, situMultCap,
+                    seasonMap: seasonMapMP, sitMults: sitMultsMP, situMultCap, datePricing: dealCheckData?.datePricing,
                     venueDumping: dealCheckData?.venueDumping || {}, fixedVenues: dealCheckData?.fixedVenues || [],
                     venueParents: dealCheckData?.venueParents || {}, heavyElementRanges,
                     cardsForFn: (dcCards || {})[fns.indexOf(fn)], inventory: dealCheckData?.inventory || [],
@@ -467,7 +463,8 @@ export default function DCManpowerTab({ ctx }) {
                     rows.sort((a, b) => b.need - a.need);
                     const usageCeil = Math.ceil(usageSum);
                     const floorSide = adjusted + heavyFloor; // venue-min (situational) + per-sub-cat heavy floors
-                    const total = Math.max(floorSide, usageCeil);
+                    // The engine multiplies the usage-based count by the situational factor (situationalMultFor), so the trace does too.
+                    const total = Math.max(floorSide, Math.ceil(Math.max(heavyFloor, usageCeil) * situationalMult - 1e-9));
                     // Read-only trace for the shared ManpowerFactorPills breakdown (Deal Check → Dept
                     // Ops → old Manpower tab parity) — mirrors computeTier3Trace's shape.
                     const situational = {

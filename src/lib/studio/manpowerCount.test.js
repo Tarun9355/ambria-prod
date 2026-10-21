@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { computePeople, computePeopleRaw, shiftToTiming, heavySayaMultFor } from "./manpowerCount";
 
+const computeRaw = (f, ctx) => computePeopleRaw(f, "Labours", ctx);
+
 const baseCtx = () => ({
   dcInventoryCache: [],
   flowerPatterns: [],
@@ -149,16 +151,56 @@ describe("computePeople — heavySaya wrap", () => {
     expect(computePeople(f, "Electricians", ctx)).toBe(2);
   });
 
-  it("never double-applies heavySaya to Labours (already folded in internally)", () => {
+  it("multiplies Labours' count once, by the biggest situational factor, capped", () => {
     const heavyElementRanges = [{ subCat: "Sofa", perCount: 2, labour: 1 }];
     const f = fn({ zoneElements: { stage: [{ name: "Sofa", invId: "sofa1", qty: 2 }] } });
     const ctx = {
       ...baseCtx(), dcInventoryCache: [{ id: "sofa1", name: "Sofa", cat: "furniture", subCat: "Sofa" }], heavyElementRanges,
       seasonMap: { "2026-10-19": "kings" }, sitMults: { heavySaya: { Labours: 5 } },
     };
-    // If heavySaya were applied a second time on top of Labours' own internal situational
-    // multiplier, this would come out far higher than the raw heavy-element add-on.
-    expect(computePeople(f, "Labours", ctx)).toBe(computePeopleRaw(f, "Labours", ctx));
+    // Raw = 1; the factor 5 is capped at 1.8 (not stacked with anything else) -> ceil(1.8) = 2.
+    expect(computeRaw(f, ctx)).toBe(1);
+    expect(computePeople(f, "Labours", ctx)).toBe(2);
+  });
+
+  it("a date the Calendar marks King's counts even though the legacy seasonMap is empty", () => {
+    const f = fn({ zoneElements: { stage: [{ name: "Warm LED", invId: "led1", qty: 10 }] } });
+    const ctx = {
+      ...baseCtx(), dcInventoryCache: [{ id: "led1", name: "Warm LED", cat: "lighting", subCat: "LED String" }],
+      electricianProd: { "LED String": { sizes: { medium: 10 } } }, sitMults: { heavySaya: { Electricians: 2 } },
+      datePricing: { autoCategories: { "2026-10-19": "heavy_saya" } },
+    };
+    expect(computePeople(f, "Electricians", ctx)).toBe(2);
+    expect(computePeople(f, "Electricians", { ...ctx, datePricing: { autoCategories: { "2026-10-19": "non_saya" } } })).toBe(1);
+  });
+
+  it("applies the shift-timing factor to every type, not only Labours", () => {
+    const f = fn({ fnShift: "Lunch", zoneElements: { stage: [{ name: "Warm LED", invId: "led1", qty: 10 }] } });
+    const ctx = {
+      ...baseCtx(), dcInventoryCache: [{ id: "led1", name: "Warm LED", cat: "lighting", subCat: "LED String" }],
+      electricianProd: { "LED String": { sizes: { medium: 10 } } }, eventTimingMultipliers: { lunch: { Electricians: 1.5 } },
+    };
+    expect(computePeople(f, "Electricians", ctx)).toBe(2); // 1 × 1.5 -> 2
+    expect(computePeople(fn({ ...f, fnShift: "Night" }), "Electricians", ctx)).toBe(1); // dinner = no factor
+  });
+
+  it("does not stack the factors: the biggest one wins", () => {
+    const f = fn({ fnShift: "Lunch", zoneElements: { stage: [{ name: "Warm LED", invId: "led1", qty: 50 }] } });
+    const ctx = {
+      ...baseCtx(), dcInventoryCache: [{ id: "led1", name: "Warm LED", cat: "lighting", subCat: "LED String" }],
+      electricianProd: { "LED String": { sizes: { medium: 10 } } }, eventTimingMultipliers: { lunch: { Electricians: 1.2 } },
+      seasonMap: { "2026-10-19": "kings" }, sitMults: { heavySaya: { Electricians: 1.2 } },
+    };
+    expect(computePeople(f, "Electricians", ctx)).toBe(6); // 5 × 1.2 (not 1.44) = 6 — and 6.000000000000001 must not become 7
+  });
+
+  it("a day-prior setup carries no timing or dumping factor", () => {
+    const f = fn({ fnShift: "Lunch", zoneElements: { stage: [{ name: "Warm LED", invId: "led1", qty: 10 }] } });
+    const ctx = {
+      ...baseCtx(), dcMpIncludeMinusOne: true, dcInventoryCache: [{ id: "led1", name: "Warm LED", cat: "lighting", subCat: "LED String" }],
+      electricianProd: { "LED String": { sizes: { medium: 10 } } }, eventTimingMultipliers: { lunch: { Electricians: 1.5 } },
+    };
+    expect(computePeople(f, "Electricians", ctx)).toBe(1);
   });
 
   it("skips the wrap entirely when the raw count is 0 (never manufactures crew from a multiplier alone)", () => {

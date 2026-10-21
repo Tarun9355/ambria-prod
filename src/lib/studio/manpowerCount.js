@@ -28,6 +28,7 @@ import { resolveTrussConfig, calcZoneTrussPreview } from "./pricing";
 import { heavyExtraLabour, eventTimingMultFor } from "../ims/constants";
 import { standingReductionBySubcat } from "../ims/fixedVenues";
 import { itemImsSubcat, lookupBySubcat, walkKitUnits } from "../ims/helpers";
+import { resolveDateCategory } from "../inventory/helpers";
 
 export const shiftToTiming = (shift) => {
   const s = String(shift || "").toLowerCase();
@@ -50,11 +51,31 @@ export const sizeFromMode = (inhouseMode, elSize) => {
 
 // A King's-season date needs more crew per role, at that role's own configured pressure
 // factor. Returns 1.0 outside a King's date, or for a type with no configured factor.
-export const heavySayaMultFor = (fn, type, seasonMap, sitMults) => {
-  if ((seasonMap || {})[fn?.fnDate || ""] !== "kings") return 1.0;
+// A date is King's when the legacy seasonMap says so OR the Calendar's own Date Pricing marks it
+// 👑 King's (heavy_saya) — the seasonMap has been empty for months, so on its own this never fired.
+export const heavySayaMultFor = (fn, type, seasonMap, sitMults, datePricing) => {
+  const date = fn?.fnDate || "";
+  const kings = (seasonMap || {})[date] === "kings" || (!!datePricing && !!date && resolveDateCategory(date, { datePricing }) === "heavy_saya");
+  if (!kings) return 1.0;
   const m = Number(((sitMults || {}).heavySaya || {})[type]);
   return m > 0 ? m : 1.0;
 };
+
+// The situational crew multiplier for one type on one function: the largest of the King's-date
+// factor, the shift-timing factor (lunch / brunch / sundowner) and — for Labours — the venue's
+// dumping distance, capped (situationalMultiplierCap). Not stacked: the biggest pressure wins.
+// A day-prior (−1) setup has no event shift, so timing and dumping skip it; a King's date still counts.
+export function situationalMultFor(fn, type, ctx) {
+  const saya = heavySayaMultFor(fn, type, ctx.seasonMap, ctx.sitMults, ctx.datePricing);
+  if (type === "Labours") {
+    if (ctx.dcMpIncludeMinusOne) return 1.0;
+    const dumping = ({ nearby: 1.0, medium: 1.1, far: 1.2 })[(ctx.venueDumping || {})[fn?.fnVenue || ""] || "nearby"] || 1.0;
+    const timing = eventTimingMultFor(ctx.eventTimingMultipliers, shiftToTiming(fn?.fnShift), type, 1.0);
+    return Math.min(ctx.situMultCap, Math.max(1.0, saya, dumping, timing));
+  }
+  const timing = ctx.dcMpIncludeMinusOne ? 1.0 : eventTimingMultFor(ctx.eventTimingMultipliers, shiftToTiming(fn?.fnShift), type, 1.0);
+  return Math.min(ctx.situMultCap, Math.max(1.0, saya, timing));
+}
 
 // An element's identity for manpower purposes comes ONLY from live IMS — el.invId
 // (Inventory) or el.patternId (a pure flower-recipe element). No Rate-Card name-match
@@ -147,7 +168,7 @@ function peopleTier3Labours(fn, ctx) {
   if (!ctx.dcMpIncludeMinusOne) {
     const dumpingLevel = (ctx.venueDumping || {})[venueName] || "nearby";
     const dumpingMult = ({ nearby: 1.0, medium: 1.1, far: 1.2 })[dumpingLevel] || 1.0;
-    const candidates = [dumpingMult, heavySayaMultFor(fn, "Labours", ctx.seasonMap, ctx.sitMults)];
+    const candidates = [dumpingMult, heavySayaMultFor(fn, "Labours", ctx.seasonMap, ctx.sitMults, ctx.datePricing)];
     candidates.push(eventTimingMultFor(ctx.eventTimingMultipliers, shiftToTiming(fn.fnShift), "Labours", 1.0));
     situationalMult = Math.min(ctx.situMultCap, Math.max(...candidates, 1.0));
   }
@@ -247,9 +268,10 @@ export function computePeopleRaw(fn, type, ctx) {
 }
 
 /**
- * The final headcount for one crew type on one function — what gets billed. Labours (and
- * anything configured as a generic tier-3 type, which already folds heavySaya internally)
- * and Supervisors/Drivers skip the wrap below so it isn't applied twice.
+ * The final headcount for one crew type on one function — what gets billed: the raw count times
+ * the situational multiplier (situationalMultFor — King's date / shift timing / dumping, capped).
+ * Supervisors and Drivers have no per-type factors and are returned as is. (Labours' own venue-min
+ * floor is applied outside this engine and its multiplier here is on the usage-based count.)
  *
  * @param {object} fn - the function (ideally already passed through freshFnForManpower —
  *   lib/studio/pricing.js — so repeat zones are already dropped; this engine does not
@@ -280,9 +302,8 @@ export function computePeopleRaw(fn, type, ctx) {
  */
 export function computePeople(fn, type, ctx) {
   const raw = computePeopleRaw(fn, type, ctx);
-  const cfg = (ctx.labourTiers || {})[type];
-  const isTier3Labours = type === "Labours" || (cfg && cfg.tier === 3);
-  if (isTier3Labours || type === "Supervisors" || type === "Drivers" || !(raw > 0)) return raw;
-  const m = Math.min(ctx.situMultCap, heavySayaMultFor(fn, type, ctx.seasonMap, ctx.sitMults));
-  return m > 1 ? Math.ceil(raw * m) : raw;
+  if (type === "Supervisors" || type === "Drivers" || !(raw > 0)) return raw;
+  const m = situationalMultFor(fn, type, ctx);
+  // 1e-9: 5 × 1.2 is 6.000000000000001 in floating point, and ceil would call that 7 people.
+  return m > 1 ? Math.ceil(raw * m - 1e-9) : raw;
 }
