@@ -1119,6 +1119,31 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     ? Math.round(r.schedule.reduce((s, d) => s + mpDayCost(r, d, mpDay, mpWin, mpWinCount, Number(r.rate) || 0), 0))
     : mpLineCost(r, mpDay, mpOverrides, mpWin, mpWinCount);
   const mpCost = mpRows.reduce((s, r) => s + lineCost(r), 0);
+  // ── "THE CREW PLAN CHANGED" ALERT ──
+  // What Studio pushed for this department (crew, cost, each day's count/shifts/share) boiled down to
+  // a signature. The head's own edits are not in it (they live in deptOps), so only a change coming
+  // from the deal itself — an item added or removed, a rate, a multiplier — moves it. Opening the
+  // Manpower plan records the signature as seen (deptOps.mpSeen); until then the tile stays red.
+  const mpSnapCost = Array.isArray(mpDetailRaw) ? Math.round(mpDetailRaw.reduce((a, r) => a + (Number(r?.cost) || 0), 0)) : 0;
+  const mpSnapSig = Array.isArray(mpDetailRaw)
+    ? JSON.stringify(mpDetailRaw.map(r => [r?.type, Math.round(Number(r?.cost) || 0), r?.count ?? null, (Array.isArray(r?.schedule) ? r.schedule : []).map(d => [d?.date, d?.count, d?.windows ?? (Array.isArray(d?.windowIds) ? d.windowIds.length : null), d?.share != null ? Math.round(Number(d.share) * 100) : null])]))
+    : "";
+  const mpSeen = deptData.mpSeen && typeof deptData.mpSeen === "object" ? deptData.mpSeen : null;
+  const mpChanged = !!mpSeen?.sig && hasMpSnapshot && mpSeen.sig !== mpSnapSig;
+  // What it was and what it is now, kept for the panel while it is open (the baseline moves on open).
+  const [mpNote, setMpNote] = useState(null);
+  useEffect(() => {
+    if (modal !== "mp") { setMpNote(null); return; }
+    if (!sel || !hasMpSnapshot) return;
+    if (mpChanged) setMpNote({ from: Number(mpSeen.cost) || 0, to: mpSnapCost });
+    // Only mpSeen is written — not saveDept, which also stamps "updated by" on the department's
+    // sheet: looking at a plan is not an edit of it.
+    if (!mpSeen?.sig || mpSeen.sig !== mpSnapSig) {
+      const seen = { sig: mpSnapSig, cost: mpSnapCost, at: Date.now() };
+      setEventOrders(prev => prev.map(e => e.id !== sel.id ? e : ({ ...e, deptOps: { ...(e.deptOps || {}), [dept]: { ...((e.deptOps || {})[dept] || {}), mpSeen: seen } } })));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modal, sel?.id, dept, mpSnapSig]);
   // ── ONE FUNCTION'S CREW ──
   // The same day rule as Deal Check's Manpower tab: a function owns its own event day, the
   // dismantle day right after it, and — if it is the first function — the −1 setup day. Gap days
@@ -4990,7 +5015,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                 dept === "Fabric" && { k: "fabreq", icon: "🧵", title: "Fabric required", sub: fabricReqRows.length ? n(fabricReqRows.length, "fabric type") : "nothing required" },
                 { k: "inv", icon: "📦", title: "Inventory blocked", sub: n(blockedItemsGrouped.length, "item") + " held", value: fmt(rentalIncome) },
                 dept === "Tenting" && trussPlanOf().length > 0 && { k: "truss", icon: "🏗️", title: "Truss plan", sub: n(trussPlanOf().length, "truss") + " · pillars, beams, fabric" },
-                { k: "mp", icon: "👷", title: "Manpower plan", sub: mpRows.length ? n(mpRows.length, "crew line") : "no crew assigned", value: fmt(mpCost) },
+                { k: "mp", icon: "👷", title: "Manpower plan", sub: mpChanged ? <span className="text-red-600 font-semibold">⚠ Changed since you last looked · {fmt(Number(mpSeen.cost) || 0)} → {fmt(mpSnapCost)}</span> : mpRows.length ? n(mpRows.length, "crew line") : "no crew assigned", value: fmt(mpCost), ...(mpChanged ? { tone: "bg-red-50", alert: true } : {}) },
                 { k: "actuals", icon: "🧾", title: "Actuals", sub: hasActuals ? "real spend logged" : "nothing logged yet", value: hasActuals ? fmt(actualCost) : null },
                 { k: "truck", icon: "🚚", title: "Truck planning", sub: trucks.length ? n(trucks.length, "truck") + (fullTrucks ? ` · ${fullTrucks} full` : "") : "no trucks yet" },
                 SHOW_DISMANTLE_IN_PLANNING && blockedItems.length > 0 && { k: "dism", icon: "🔁", title: "Dismantle plan", sub: "where each item goes after" },
@@ -5389,6 +5414,11 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
 
             {/* Manpower plan (editable / override) */}
             <div className={"bg-white rounded-xl shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] overflow-hidden" + modalCls("mp")}>
+              {mpNote && (
+                <div className="m-2.5 mb-0 px-3 py-2 rounded-xl bg-red-50 text-[12.5px] text-red-700 font-medium">
+                  ⚠ The crew plan changed since you last opened it — the deal was edited in Studio (an item added or removed, a rate or a multiplier): {fmt(mpNote.from)} → {fmt(mpNote.to)}. It is marked as seen now.
+                </div>
+              )}
               {/* Same compact tinted strip the Inventory panel uses, deliberately. The reference
                   for this panel draws a taller header with the figure on its own line below the
                   caption — but that is the shape that was just trimmed off Inventory for being
