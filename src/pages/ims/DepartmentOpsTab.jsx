@@ -2364,7 +2364,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
               <span className="px-2 py-1 bg-gray-50 text-[13px] text-gray-600 flex items-center gap-1.5">Crew per function
                 <button type="button" onClick={() => setLaboursHow(p => ({ ...p, [t2HowKey]: !p[t2HowKey] }))} className="text-[12px] font-semibold text-blue-600 hover:underline">{laboursHow[t2HowKey] ? "hide" : "how?"}</button>
               </span>
-              {cols.map((c, ci) => <span key={ci} className="px-2 py-1 bg-gray-50 text-[13px] text-center border-l border-gray-100 text-gray-900 font-semibold whitespace-nowrap">{c.result}</span>)}
+              {/* Plain sum of the rows above (owner ask) — the rounding up to whole people is shown below. */}
+              {cols.map((c, ci) => <span key={ci} className="px-2 py-1 bg-gray-50 text-[13px] text-center border-l border-gray-100 text-gray-900 font-semibold whitespace-nowrap tabular-nums">{((c.rows || []).reduce((acc, r) => acc + Math.round((Number(r.need) || 0) * 100), 0) / 100).toFixed(2)}</span>)}
             </div>
           </div>
           {/* Deal Check ceils ONCE over a function's summed need (traceOf / calcPpl), never each row —
