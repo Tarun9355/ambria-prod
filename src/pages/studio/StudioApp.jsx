@@ -9979,16 +9979,14 @@ export default function StudioApp() {
         const _tEffRate = zc.noFabric ? _tRate.noFabricRate : _tHasCustomCeiling ? Math.max(0, _tRate.rate - _tRate.ceilingRate) : _tRate.rate;
         const _tMatLabel = (TRUSS_MATERIALS.find((m) => m.key === (zc.trussMaterial || "iron"))?.label) || "Pole";
         const _tCeilingItem = _tHasCustomCeiling ? (imsInventory || []).find((i) => i.id === zc.customCeilingItemId) : null;
-        // Oversize tiering blends two different ₹/sqft rates into one — printing that raw (an
-        // unrounded decimal like ₹19.591397.../sqft) on an itemized export reads like a bug. Show
-        // the two tiers instead of the blended figure when they apply; the row's own qty/total are
-        // already the correct tiered amount either way.
-        const _tRateLabel = (!zc.noFabric && _tRate.overApplies)
-          ? `₹${_tRate.baseRate}/sqft for first ${_tRate.overThreshold} + ₹${_tRate.overRate}/sqft above`
-          : `₹${Math.round(_tEffRate * 100) / 100}/sqft`;
+        // Oversize tiering (e.g. ₹20 for the first 1850 sqft, ₹15 above) blends into one flat average
+        // ₹/sqft on the sheet (owner ask) — no tier breakdown, just the average rounded to the paisa.
+        // The row's own total is already the correct tiered amount.
+        const _tRateFlat = Math.round(_tEffRate * 100) / 100;
+        const _tRateLabel = `₹${_tRateFlat}/sqft`;
         structItems.push({
           name: "Truss (" + (_tShape === "box" ? "Box" : "Single U") + " · " + _tMatLabel + (zc.noFabric ? " · no fabric" : "") + " " + _tRateLabel + ")" + (_tCeilingItem ? ` · custom ceiling: ${_tCeilingItem.name}` : "") + (zc.trT === "box" && (Number(zc.trussFrontExt) || 0) > 0 ? ` + 2× Single-U front ext ${zc.trussFrontExt}×${Number(zc.trussFrontExtH) || dims.H || 0}ft` : "") + ((zc.trussQty || 1) > 1 ? " ×" + zc.trussQty : ""),
-          size: `${_tBase.a || 0}×${_tBase.b || 0}ft`, qty: Math.round((_tBase.area || 0) * Math.max(1, zc.trussQty || 1) * 100) / 100, rate: _tEffRate, unit: "sqft",
+          size: `${_tBase.a || 0}×${_tBase.b || 0}ft`, qty: Math.round((_tBase.area || 0) * Math.max(1, zc.trussQty || 1) * 100) / 100, rate: _tRateFlat, unit: "sqft",
           total: zl.truss,
         });
       }
