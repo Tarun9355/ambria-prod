@@ -2276,9 +2276,16 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
                 ); })}
               </div>
             ))}
+            {/* The sum before rounding, so "1" below reads as 0.35 rounded up, not as a mystery. */}
+            {t.kind === "labours" && (
+              <div className="contents">
+                <span className="px-2 py-1 text-[13px] text-gray-600 border-t border-gray-200">Total of the rows above</span>
+                {cols.map((c, ci) => <span key={ci} className="px-2 py-1 text-[13px] text-center border-l border-t border-gray-200 text-gray-800 font-semibold whitespace-nowrap tabular-nums">{deptNeedForFn(c).toFixed(2)}</span>)}
+              </div>
+            )}
             <div className="contents">
               <span className="px-2 py-1 bg-gray-50 text-[13px] text-gray-600 flex items-center gap-1.5" title={t.kind === "labours" ? `${dept}'s own ceiled slice of each function's shared crew — not a dedicated headcount, and not additive across departments` : undefined}>
-                {t.kind === "labours" ? `${dept}'s share per function` : "Crew per function"}
+                {t.kind === "labours" ? `${dept}'s share per function (rounded up)` : "Crew per function"}
                 <button type="button" onClick={() => setLaboursHow(p => ({ ...p, [labHowKey]: !p[labHowKey] }))} className="text-[12px] font-semibold text-blue-600 hover:underline">{laboursHow[labHowKey] ? "hide" : "how?"}</button>
               </span>
               {cols.map((c, ci) => <span key={ci} className="px-2 py-1 bg-gray-50 text-[13px] text-center border-l border-gray-100 text-gray-900 font-semibold whitespace-nowrap">{t.kind === "labours" ? deptCrewForFn(c) : c.result}</span>)}

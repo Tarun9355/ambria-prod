@@ -2731,6 +2731,42 @@ export default function StudioApp() {
     setDcHeadless(false);
   }, []);
 
+  // ── IMS PLANNING FOLLOWS IMS SETTINGS WITHOUT ANYONE OPENING DEAL CHECK ──
+  // Crew, kit parts, fabric and every other Dept Ops figure are Deal Check's result, pushed to IMS
+  // as a snapshot, so a change made in IMS (a per-labour count, a recipe, a rate, a fixed-venue
+  // item, an inventory rental) reached a booked deal only when someone next opened its Deal Check.
+  // Opening a booked client now checks that snapshot against the settings and inventory that feed
+  // it; if any changed after the last sync, the unseen Deal Check run (syncDeptOpsHeadless) is
+  // started right here, once per client per session. The rest is the same run Apply uses, so
+  // nothing about what gets pushed to IMS changes — only who has to ask for it.
+  const autoSyncedClientsRef = useRef(new Set());
+  useEffect(() => {
+    if (!activeClientId || dcFullPageOpen || dcHeadless) return;
+    if (autoSyncedClientsRef.current.has(activeClientId)) return;
+    const cli = (clientLedger || []).find(c => c.id === activeClientId);
+    if (!cli || cli.status !== "booked") return;
+    const eo = (eventOrders || []).find(e => e.clientId === activeClientId) || (eventOrders || []).find(e => (e.clientName || "") === (clientName || "").trim());
+    if (!eo || !eo.deptSyncedAt) return; // never synced yet — the first Deal Check open does that
+    // Only once this client's build has actually loaded: a run over a build that is still empty
+    // would push an empty plan to IMS. Until then this effect just waits for the next change.
+    if (!Object.values(zoneElements || {}).some(a => Array.isArray(a) && a.length > 0)) return;
+    autoSyncedClientsRef.current.add(activeClientId); // once per client per session
+    (async () => {
+      try {
+        const KEYS = ["heavyElementRanges", "categoryDepartments", "labourTiers", "dihariSchemes", "defaultWindowsByPhase", "venueMinLabour", "defaultMinLabour", "eventTypeMultipliers", "eventTimingMultipliers", "fabricBangaliRanges", "trussLabourRanges", "fabricRftPerWorker", "flowerPatterns", "mandiCatalogue", "mandiPriceMultipliers", "fixedVenues", "fixedVenueSubcatDiscount", "trussRates", "maskingRates", "fabricMultiplier", "carpetMaterials", "platformRates", "venueParents", "situationalMultipliers", "situationalMultiplierCap", "agencyFeePct", "rcCategories"];
+        const [{ data: srows }, { data: irow }] = await Promise.all([
+          supabase.from("settings").select("key,updated_at").in("key", KEYS),
+          supabase.from("inventory").select("updated_at").order("updated_at", { ascending: false }).limit(1),
+        ]);
+        const stamps = [...(srows || []).map(r => Date.parse(r.updated_at)), ...((irow || []).map(r => Date.parse(r.updated_at)))].filter(Number.isFinite);
+        const latest = stamps.length ? Math.max(...stamps) : 0;
+        if (!latest) return;
+        // A minute of slack: the sync's own write lands moments after the run it belongs to.
+        if (latest > Number(eo.deptSyncedAt) + 60000) syncDeptOpsHeadlessRef.current?.();
+      } catch { /* best effort — a missed auto-sync only means the old manual way */ }
+    })();
+  }, [activeClientId, clientLedger, eventOrders, zoneElements, dcFullPageOpen, dcHeadless, clientName]);
+
   // Same race as the Studio↔IMS switcher (AppSwitcher.jsx): logout() flips `user` to null, which
   // unmounts this whole component on the next render — a bare call here gave a pending edit no
   // chance to actually reach the server before that happened. Reuses the same registered flush
