@@ -1128,6 +1128,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const mpSnapSig = Array.isArray(mpDetailRaw)
     ? JSON.stringify(mpDetailRaw.map(r => [r?.type, Math.round(Number(r?.cost) || 0), r?.count ?? null, (Array.isArray(r?.schedule) ? r.schedule : []).map(d => [d?.date, d?.count, d?.windows ?? (Array.isArray(d?.windowIds) ? d.windowIds.length : null), d?.share != null ? Math.round(Number(d.share) * 100) : null])]))
     : "";
+  // This department's items as Studio last pushed them (name -> qty) — what "added / changed / removed"
+  // is measured against, so the Manpower plan can point at the exact item that moved the crew.
+  const mpItemsNow = {};
+  (Array.isArray(deptInvSnap) ? deptInvSnap : []).forEach(x => { const k = String(x?.name || "").trim(); if (k) mpItemsNow[k] = (mpItemsNow[k] || 0) + (Number(x?.qty) || 0); });
   const mpSeen = deptData.mpSeen && typeof deptData.mpSeen === "object" ? deptData.mpSeen : null;
   const mpChanged = !!mpSeen?.sig && hasMpSnapshot && mpSeen.sig !== mpSnapSig;
   // What it was and what it is now, kept for the panel while it is open (the baseline moves on open).
@@ -1135,11 +1139,22 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   useEffect(() => {
     if (modal !== "mp") { setMpNote(null); return; }
     if (!sel || !hasMpSnapshot) return;
-    if (mpChanged) setMpNote({ from: Number(mpSeen.cost) || 0, to: mpSnapCost });
+    if (mpChanged) {
+      const before = mpSeen.items && typeof mpSeen.items === "object" ? mpSeen.items : null;
+      const byName = {}; const removed = [];
+      if (before) {
+        Object.entries(mpItemsNow).forEach(([name, qty]) => {
+          if (before[name] == null) byName[name] = { kind: "new", to: qty };
+          else if (before[name] !== qty) byName[name] = { kind: "qty", from: before[name], to: qty };
+        });
+        Object.entries(before).forEach(([name, qty]) => { if (mpItemsNow[name] == null) removed.push({ name, qty }); });
+      }
+      setMpNote({ from: Number(mpSeen.cost) || 0, to: mpSnapCost, byName, removed, itemsKnown: !!before });
+    }
     // Only mpSeen is written — not saveDept, which also stamps "updated by" on the department's
     // sheet: looking at a plan is not an edit of it.
     if (!mpSeen?.sig || mpSeen.sig !== mpSnapSig) {
-      const seen = { sig: mpSnapSig, cost: mpSnapCost, at: Date.now() };
+      const seen = { sig: mpSnapSig, cost: mpSnapCost, items: mpItemsNow, at: Date.now() };
       setEventOrders(prev => prev.map(e => e.id !== sel.id ? e : ({ ...e, deptOps: { ...(e.deptOps || {}), [dept]: { ...((e.deptOps || {})[dept] || {}), mpSeen: seen } } })));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2296,7 +2311,14 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
             {labels.map((lb, ri) => (
               <div className="contents" key={ri}>
                 <div className={"flex items-baseline gap-1.5 min-w-0 overflow-hidden px-2 py-1 text-[13px] text-gray-700 border-t border-gray-200" + (ri % 2 ? " bg-gray-50" : "")}>
-                  <span className="truncate" title={lb}>{lb}</span>
+                  {(() => {
+                    // The item that was added / changed since the plan was last opened shows in red.
+                    const mk = mpNote?.byName?.[String(lb).trim()];
+                    return (<>
+                      <span className={"truncate " + (mk ? "text-red-600 font-semibold" : "")} title={lb}>{lb}</span>
+                      {mk && <span className="shrink-0 rounded bg-red-50 px-1 text-[10px] font-bold uppercase text-red-600">{mk.kind === "new" ? "new" : `qty ${mk.from}→${mk.to}`}</span>}
+                    </>);
+                  })()}
                   <span aria-hidden="true" className="flex-1 min-w-2 border-b border-dotted border-gray-300 mb-[3px]" />
                 </div>
                 {cols.map((c, ci) => { const r = traceRowsOf(c.trace).find(x => x.label === lb); return (
@@ -5417,6 +5439,16 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
               {mpNote && (
                 <div className="m-2.5 mb-0 px-3 py-2 rounded-xl bg-red-50 text-[12.5px] text-red-700 font-medium">
                   ⚠ The crew plan changed since you last opened it — the deal was edited in Studio (an item added or removed, a rate or a multiplier): {fmt(mpNote.from)} → {fmt(mpNote.to)}. It is marked as seen now.
+                  {mpNote.itemsKnown && (() => {
+                    const ch = Object.entries(mpNote.byName || {});
+                    if (!ch.length && !(mpNote.removed || []).length) return null;
+                    return (
+                      <div className="mt-1 font-normal text-red-700">
+                        {ch.map(([name, v]) => <span key={name} className="inline-block mr-2"><b>{name}</b> {v.kind === "new" ? `added ×${v.to}` : `qty ${v.from} → ${v.to}`}</span>)}
+                        {(mpNote.removed || []).map(r => <span key={r.name} className="inline-block mr-2 line-through">{r.name} ×{r.qty} removed</span>)}
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
               {/* Same compact tinted strip the Inventory panel uses, deliberately. The reference
