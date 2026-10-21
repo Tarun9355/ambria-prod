@@ -428,13 +428,13 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                           {rep&&<span className="absolute -top-1.5 -right-1.5 text-[10px] leading-none text-emerald-600 pointer-events-none">♻</span>}
                           {fabMenu===key&&<>
                             <div className="fixed inset-0 z-40" onClick={()=>setFabMenu(null)} />
-                            <div className={`absolute left-0 top-7 z-50 w-52 rounded-lg border shadow-lg p-1 flex flex-col ${isDark?"bg-gray-800 border-gray-600 text-gray-100":"bg-white border-gray-200 text-gray-800"}`}>
+                            <div className={`absolute left-0 top-7 z-50 w-32 rounded-lg border shadow-lg p-1 flex flex-col ${isDark?"bg-gray-800 border-gray-600 text-gray-100":"bg-white border-gray-200 text-gray-800"}`}>
                               <button type="button" className="text-left text-[12px] px-2 py-1.5 rounded hover:bg-black/5" onClick={()=>{sZ({[key]:on?false:undefined,...(on?{[repKey]:undefined}:{})});setFabMenu(null);}}>
-                                {on?`✓ ${lbl} selected · tap to leave off`:`Select ${lbl}`}
+                                {on?"✓ Selected":"Select"}
                               </button>
                               <button type="button" disabled={!on} className="text-left text-[12px] px-2 py-1.5 rounded hover:bg-black/5 disabled:opacity-40 disabled:cursor-not-allowed" onClick={()=>{sZ({[repKey]:rep?undefined:true});setFabMenu(null);}}
                                 title={guestFabricDiscPct>0?`${lbl} is reused — ${guestFabricDiscPct}% off its price`:"Repeat is marked; the discount shows once the client discount toggle is on"}>
-                                {rep?"♻ Repeat on · tap to remove":"♻ Repeat this item"}
+                                {rep?"♻ Repeat on":"♻ Repeat"}
                               </button>
                             </div>
                           </>}
