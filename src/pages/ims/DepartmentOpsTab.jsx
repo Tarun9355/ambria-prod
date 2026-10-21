@@ -6143,21 +6143,21 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                 <div className="p-3 sm:p-4 space-y-3">
                   {(() => {
                     const fnCount = new Set(trussPlanOf().map(z => z.fi)).size;
-                    const groupLen = (arr, get) => Object.entries((arr || []).reduce((m, x) => { const len = Math.round((get(x) || 0) * 100) / 100; m[len] = (m[len] || 0) + 1; return m; }, {})).sort((a, b) => Number(b[0]) - Number(a[0])).map(([len, c]) => `${c} × ${len}ft`).join(" · ");
+                    // Pillars / beams as editable groups: "N × L ft" rows (same grouping Deal Check shows).
+                    const groupsOf = (arr, get) => Object.entries((arr || []).reduce((m, x) => { const len = Math.round((get(x) || 0) * 100) / 100; m[len] = (m[len] || 0) + 1; return m; }, {})).sort((a, b) => Number(b[0]) - Number(a[0])).map(([len, c]) => ({ len: Number(len), n: c }));
                     const cfgLabel = (c) => c === "u_only" ? "U Truss" : c === "half_box" ? "Half Box" : c === "full_box" ? "Full Box" : "—";
-                    const tile = (label, value) => (
+                    const numCls = "text-[13px] text-center rounded-md ring-1 ring-gray-200 bg-white px-1 py-0.5 tabular-nums font-semibold text-gray-900";
+                    const tileBox = (label, children) => (
                       <div className="flex-1 min-w-[180px] rounded-lg bg-gray-50 px-3 py-2">
                         <div className="text-[11px] font-bold uppercase tracking-wide text-gray-500">{label}</div>
-                        <div className="text-[13px] font-semibold text-gray-900 tabular-nums mt-0.5">{value}</div>
+                        {children}
                       </div>
                     );
                     const allocChips = (allocs, unit) => (Array.isArray(allocs) && allocs.length) ? allocs.map((a, i) => <span key={i} className="inline-flex items-center gap-1 rounded bg-gray-100 px-1.5 py-0.5 text-[12px]"><b className="text-gray-800">{a.colour}</b><span className="text-gray-500">×{a.qty}{unit}</span></span>) : <span className="text-[12px] text-gray-400">not allocated in Deal Check</span>;
                     return trussPlanOf().map(z => {
                       const { pv, row, fab } = z; const topo = pv.topology, costs = pv.costs || {}, batta = pv.batta;
                       const dL = parseFloat(row.dims?.L) || 0, dW = parseFloat(row.dims?.W) || 0, dH = parseFloat(row.dims?.H) || 0;
-                      const demanded = pv.config === "u_only" || pv.config === "half_box" ? `${pv.spanFt || Math.max(dL, dW)}W × ${dH}H ft` : `${dW}W × ${dL}D × ${dH}H ft`;
                       const phyL = topo.physicalL ? Math.round(topo.physicalL * 100) / 100 : 0, phyW = topo.physicalW ? Math.round(topo.physicalW * 100) / 100 : 0;
-                      const physical = pv.config === "u_only" ? `${phyL}W × ${dH}H ft` : `${phyW}W × ${phyL}D × ${dH}H ft`;
                       const fabRows = fab ? [
                         fab.maskingPieces > 0 && { ic: "🧱", label: "Wall Masking", needN: fab.maskingPieces, allocs: row.maskingAllocation, unit: "pc", part: "masking", stockKey: "maskingStock", qtyField: "stockPieces" },
                         fab.lizaKg > 0 && { ic: "🧣", label: "Liza", needN: fab.lizaKg, note: fab.lizaModel === "wrap+ceiling" ? `wrap ${fab.lizaWrapKg}kg + ceiling ${fab.lizaCeilingKg}kg` : "wrap only", allocs: row.lizaAllocation, unit: "kg", part: "liza", stockKey: "lizaStock", qtyField: "stockKg" },
@@ -6169,6 +6169,67 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                         const own = deptData.trussFabric && Array.isArray(deptData.trussFabric[ek]) ? deptData.trussFabric[ek] : null;
                         return { ...f, ek, need: `${f.needN}${f.unit}`, allocs: own || f.allocs, own: !!own };
                       }) : [];
+                      // ── THE DEPARTMENT'S OWN EDITS ── deptOps.trussPlan[key]: demand / footprint sizes,
+                      // pillar + beam groups, batta. IMS-owned, so every Studio sync leaves them alone;
+                      // anything not edited keeps showing Deal Check's own figure.
+                      const ed = (deptData.trussPlan && deptData.trussPlan[z.key]) || null;
+                      const saveEd = (patch) => saveDept({ trussPlan: { ...(deptData.trussPlan || {}), [z.key]: { ...(ed || {}), ...patch } } });
+                      const resetEd = () => { const n2 = { ...(deptData.trussPlan || {}) }; delete n2[z.key]; saveDept({ trussPlan: n2 }); };
+                      const openForm = pv.config === "u_only" || pv.config === "half_box";
+                      const demandBase = openForm ? { W: pv.spanFt || Math.max(dL, dW), H: dH } : { W: dW, D: dL, H: dH };
+                      const physBase = pv.config === "u_only" ? { W: phyL, H: dH } : { W: phyW, D: phyL, H: dH };
+                      const pillarGroups = Array.isArray(ed?.pillars) ? ed.pillars : groupsOf(topo.pillars, x => x.H);
+                      const beamGroups = Array.isArray(ed?.beams) ? ed.beams : groupsOf(topo.beams, x => x.lengthFt);
+                      const rftOfG = (gs) => Math.round(gs.reduce((a, g) => a + (Number(g.len) || 0) * (Number(g.n) || 0), 0) * 100) / 100;
+                      const countOfG = (gs) => gs.reduce((a, g) => a + (Number(g.n) || 0), 0);
+                      const pillarRft = Array.isArray(ed?.pillars) ? rftOfG(pillarGroups) : (costs.pillarRft || 0);
+                      const beamRft = Array.isArray(ed?.beams) ? rftOfG(beamGroups) : (costs.beamRft || 0);
+                      const nPillars = Array.isArray(ed?.pillars) ? countOfG(pillarGroups) : topo.pillars.length;
+                      const nBeams = Array.isArray(ed?.beams) ? countOfG(beamGroups) : topo.beams.length;
+                      const bRft = ed?.batta?.rft ?? batta?.rftRequired ?? 0;
+                      const bBuf = ed?.batta?.buf ?? batta?.bufferPct ?? 10;
+                      const bTotal = ed?.batta ? Math.round((Number(bRft) || 0) * (1 + (Number(bBuf) || 0) / 100)) : (batta?.rftWithBuffer ?? 0);
+                      const dimsTile = (label, key, base) => {
+                        const v = { ...base, ...(ed?.[key] || {}) };
+                        const set = (f, val) => saveEd({ [key]: { ...(ed?.[key] || {}), [f]: val } });
+                        const inp = (f) => <input type="number" min="0" step="0.5" value={v[f] ?? ""} onChange={e => set(f, e.target.value === "" ? "" : Number(e.target.value))} className={numCls + " w-14"} />;
+                        return tileBox(label, (
+                          <div className="mt-1 flex items-center gap-1 flex-wrap text-[12.5px] text-gray-500">
+                            {inp("W")}<span>W ×</span>{base.D !== undefined && <>{inp("D")}<span>D ×</span></>}{inp("H")}<span>H ft</span>
+                          </div>
+                        ));
+                      };
+                      const groupTile = (label, field, groups, rft) => {
+                        const setG = (i, patch) => saveEd({ [field]: groups.map((g, j) => j === i ? { ...g, ...patch } : g) });
+                        return tileBox(label, (
+                          <div className="mt-1 space-y-1">
+                            {groups.map((g, i) => (
+                              <div key={i} className="flex items-center gap-1 text-[12.5px] text-gray-500">
+                                <input type="number" min="0" step="1" value={g.n ?? ""} onChange={e => setG(i, { n: e.target.value === "" ? "" : Number(e.target.value) })} className={numCls + " w-12"} />
+                                <span>×</span>
+                                <input type="number" min="0" step="0.5" value={g.len ?? ""} onChange={e => setG(i, { len: e.target.value === "" ? "" : Number(e.target.value) })} className={numCls + " w-14"} />
+                                <span>ft</span>
+                                <button onClick={() => saveEd({ [field]: groups.filter((_, j) => j !== i) })} className="text-gray-300 hover:text-red-500 text-sm leading-none" title="Remove this row">×</button>
+                              </div>
+                            ))}
+                            <div className="flex items-center gap-2 text-[12px]">
+                              <button onClick={() => saveEd({ [field]: [...groups, { n: 1, len: groups[0]?.len || 10 }] })} className="font-semibold text-blue-600 hover:underline">+ add</button>
+                              <span className="font-semibold text-gray-900 tabular-nums">= {rft} RFT</span>
+                            </div>
+                          </div>
+                        ));
+                      };
+                      const battaTile = () => {
+                        const setB = (patch) => saveEd({ batta: { rft: bRft, buf: bBuf, ...(ed?.batta || {}), ...patch } });
+                        return tileBox(`🎗️ Batta (+${bBuf}% buffer)`, (
+                          <div className="mt-1 flex items-center gap-1 flex-wrap text-[12.5px] text-gray-500">
+                            <input type="number" min="0" step="1" value={bRft ?? ""} onChange={e => setB({ rft: e.target.value === "" ? "" : Number(e.target.value) })} className={numCls + " w-16"} />
+                            <span>RFT +</span>
+                            <input type="number" min="0" step="1" value={bBuf ?? ""} onChange={e => setB({ buf: e.target.value === "" ? "" : Number(e.target.value) })} className={numCls + " w-12"} />
+                            <span>% =</span><span className="font-semibold text-gray-900 tabular-nums">{bTotal} RFT</span>
+                          </div>
+                        ));
+                      };
                       return (
                         <div key={z.key} className="rounded-xl border border-gray-200 border-l-4 border-l-amber-400 p-3">
                           <div className="flex items-center gap-2 flex-wrap">
@@ -6177,15 +6238,19 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                             {fnCount > 1 && <span className="text-[12px] text-gray-500">{z.fn?.type || `Function ${z.fi + 1}`}{z.fn?.date ? ` · ${z.fn.date}` : ""}</span>}
                             <span className="text-[12px] text-gray-500">{row.trussMaterial ? String(row.trussMaterial) : "iron"} · {row.useNewFabric ? "New" : "Old"} fabric{row.noFabric ? " · no fabric" : ""}</span>
                           </div>
-                          <div className="text-[12.5px] text-gray-600 mt-1">Method {topo.method} · {topo.pillarCount} pillar{topo.pillarCount === 1 ? "" : "s"} · {topo.beamCount} beam segment{topo.beamCount === 1 ? "" : "s"} · {topo.totals?.totalJoints || 0} joint{(topo.totals?.totalJoints || 0) === 1 ? "" : "s"} expected</div>
-                          <div className="flex flex-wrap gap-2 mt-2">
-                            {tile("Customer demand", demanded)}
-                            {tile("Physical footprint", physical)}
+                          <div className="text-[12.5px] text-gray-600 mt-1 flex items-center gap-2 flex-wrap">
+                            <span>Method {topo.method} · {nPillars} pillar{nPillars === 1 ? "" : "s"} · {nBeams} beam segment{nBeams === 1 ? "" : "s"} · {topo.totals?.totalJoints || 0} joint{(topo.totals?.totalJoints || 0) === 1 ? "" : "s"} expected</span>
+                            {ed && <span className="text-[10.5px] text-indigo-600 font-semibold">· set here</span>}
+                            {ed && <button onClick={resetEd} className="text-[11.5px] font-semibold text-gray-500 hover:text-gray-800">↺ back to Deal Check plan</button>}
                           </div>
                           <div className="flex flex-wrap gap-2 mt-2">
-                            {tile(`🏛️ Pillars (${topo.pillars.length})`, `${groupLen(topo.pillars, x => x.H)} = ${costs.pillarRft || 0} RFT`)}
-                            {tile(`🔗 Beams (${topo.beams.length})`, `${groupLen(topo.beams, x => x.lengthFt)} = ${costs.beamRft || 0} RFT`)}
-                            {batta && tile(`🎗️ Batta (+${batta.bufferPct}% buffer)`, `${batta.rftRequired} RFT + ${batta.bufferPct}% = ${batta.rftWithBuffer} RFT`)}
+                            {dimsTile("Customer demand", "demand", demandBase)}
+                            {dimsTile("Physical footprint", "physical", physBase)}
+                          </div>
+                          <div className="flex flex-wrap gap-2 mt-2">
+                            {groupTile(`🏛️ Pillars (${nPillars})`, "pillars", pillarGroups, pillarRft)}
+                            {groupTile(`🔗 Beams (${nBeams})`, "beams", beamGroups, beamRft)}
+                            {(batta || ed?.batta) && battaTile()}
                           </div>
                           {fabRows.length > 0 && (
                             <div className="mt-2 rounded-lg border border-dashed border-gray-300 p-2">
