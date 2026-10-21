@@ -1112,7 +1112,9 @@ export default function StudioBuild({ ctx }) {
       // A zone with no floor size needs no carpet — say nothing about carpet there.
       if (!anySize) return size;
       if (allOff) return `${size} · No carpet selected`;
-      if (anySize && rows.some(r => r?.cpT !== CARPET_OFF && !r?.cpInvId)) return `${size || "Floor"} · carpet not picked`;
+      // Carpet New is bought fresh — no stock carpet to pick (a photo is attached instead).
+      const needsPick = (r) => r?.cpT !== CARPET_OFF && !r?.cpInvId && !/new/i.test(carpetPricingFor(r?.cpT, imsCarpetMaterials)?.label || "");
+      if (anySize && rows.some(needsPick)) return `${size || "Floor"} · carpet not picked`;
       return [size, picked[0] ? `📦 ${picked[0]}` : ""].filter(Boolean).join(" · ");
     }
     const n = (zc.prints || []).length; return n ? `${n} print${n === 1 ? "" : "s"}` : "None";
