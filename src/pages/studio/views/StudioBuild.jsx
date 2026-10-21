@@ -1111,7 +1111,7 @@ export default function StudioBuild({ ctx }) {
       const picked = rows.filter(r => r?.cpT !== CARPET_OFF && r?.cpInvName).map(r => r.cpInvName);
       // A zone with no floor size needs no carpet — say nothing about carpet there.
       if (!anySize) return size;
-      if (allOff) return `${size} · No carpet selected`;
+      if (allOff) return size;
       // Carpet New is bought fresh — no stock carpet to pick (a photo is attached instead).
       const needsPick = (r) => r?.cpT !== CARPET_OFF && !r?.cpInvId && !/new/i.test(carpetPricingFor(r?.cpT, imsCarpetMaterials)?.label || "");
       if (anySize && rows.some(needsPick)) return `${size || "Floor"} · carpet not picked`;
