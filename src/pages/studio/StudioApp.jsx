@@ -92,7 +92,7 @@ import { matchFlowerPattern, floralPatternUnitRates, sizeClassToPatternKey, norm
 import { rowToRcItem, rcItemToRow, rcIsSMB, getFloralMode, oosCostPctFor, canFulfillShortfall } from "../../lib/rateCard";
 import { todayStr } from "../../lib/ims/attendance";
 import { supabase, fetchAll, upsertRow, deleteRow, subscribeTable, keepaliveUpsert } from "../../lib/supabase";
-import { latestPlanningInputStamp, planningUpcoming } from "../../lib/studio/planningSync.js";
+import { latestPlanningInputStamp, planningNeedsSync, planningSnapshotOutdated, PLANNING_SNAPSHOT_VERSION } from "../../lib/studio/planningSync.js";
 import {
   rowToLibItem, libItemToRow, fetchLibraryItemsByIds, fetchLibraryItemsByUrls,
   fetchZoneLibraryPhotos, fetchCustomZoneLibraryPhotos, fetchUntaggedLibraryTargets,
@@ -2775,7 +2775,7 @@ export default function StudioApp() {
         const latest = await latestPlanningInputStamp();
         if (!latest) return;
         // A minute of slack: the sync's own write lands moments after the run it belongs to.
-        if (latest > Number(eo.deptSyncedAt) + 60000) syncDeptOpsHeadlessRef.current?.();
+        if (latest > Number(eo.deptSyncedAt) + 60000 || planningSnapshotOutdated(eo)) syncDeptOpsHeadlessRef.current?.();
       } catch { /* best effort — a missed auto-sync only means the old manual way */ }
     })();
   }, [activeClientId, clientLedger, eventOrders, zoneElements, dcFullPageOpen, dcHeadless, clientName]);
@@ -4032,7 +4032,7 @@ export default function StudioApp() {
     const withLayout = (fns) => Array.isArray(fns) && layout.size ? fns.map(f => (f && layout.has(f.fnIdx)) ? { ...f, ...layout.get(f.fnIdx) } : f) : fns;
     // The order's own date follows its first function's (what IMS falls back to when it needs one date).
     const firstDate = [...layout.values()].map(l => l.date).filter(Boolean).sort()[0];
-    const applySnap = (base) => ({ ...base, ...(firstDate ? { date: firstDate } : {}), functionsDetail: withLayout(base.functionsDetail), deptIncome: snap.income || {}, deptInventory: snap.inventory || {}, floralPlan: snap.floralPlan || base.floralPlan || null, fabricPlan: snap.fabricPlan || base.fabricPlan || null, manpowerPlan: snap.manpowerPlan || [], manpowerDetail: snap.manpowerDetail || {}, mpPhases: snap.mpPhases || null, deptSeason: snap.season || null, deptIncomeSig: sig, deptSyncedAt: Date.now(), dealValue: snap.dealValue || base.dealValue || null, transportPlan: snap.transportPlan ?? null });
+    const applySnap = (base) => ({ ...base, ...(firstDate ? { date: firstDate } : {}), functionsDetail: withLayout(base.functionsDetail), deptIncome: snap.income || {}, deptInventory: snap.inventory || {}, floralPlan: snap.floralPlan || base.floralPlan || null, fabricPlan: snap.fabricPlan || base.fabricPlan || null, manpowerPlan: snap.manpowerPlan || [], manpowerDetail: snap.manpowerDetail || {}, mpPhases: snap.mpPhases || null, deptSeason: snap.season || null, deptIncomeSig: sig, deptSyncedAt: Date.now(), deptSnapVer: PLANNING_SNAPSHOT_VERSION, dealValue: snap.dealValue || base.dealValue || null, transportPlan: snap.transportPlan ?? null });
     try {
       // Read the FRESHEST row so we never clobber IMS-owned fields with Studio's stale local copy.
       const { data: row } = await supabase.from("event_orders").select("data").eq("id", eo.id).maybeSingle();
@@ -4050,7 +4050,7 @@ export default function StudioApp() {
           // Already in sync — leave the head's edits untouched. Only stamp the check time (at most
           // every 10 minutes), so a settings change that left this plan identical stops reading as
           // "stale" and the sweep does not pick this deal up again on every start.
-          if (Date.now() - Number(cur.deptSyncedAt) > 600000) await supabase.from("event_orders").update({ data: { ...cur, deptSyncedAt: Date.now() } }).eq("id", eo.id);
+          if (Date.now() - Number(cur.deptSyncedAt) > 600000) await supabase.from("event_orders").update({ data: { ...cur, deptSyncedAt: Date.now(), deptSnapVer: PLANNING_SNAPSHOT_VERSION } }).eq("id", eo.id);
           return;
         }
         await supabase.from("event_orders").update({ data: applySnap(cur) }).eq("id", eo.id);
@@ -8645,7 +8645,7 @@ export default function StudioApp() {
       if (!latest) { tell("done", { done: 0, total: 0 }); return; }
       const stale = (c) => {
         const eo = c.status === "booked" ? eoOf(c) : null;
-        return !!eo && !!eo.deptSyncedAt && planningUpcoming(eo) && latest > Number(eo.deptSyncedAt) + 60000 && !autoSyncedClientsRef.current.has(c.id);
+        return planningNeedsSync(eo, latest) && !autoSyncedClientsRef.current.has(c.id);
       };
       const queue = (clientLedgerRef.current || []).filter(c => stale(c) && findLatestBuild(c.sessions, 0)).map(c => c.id);
       if (!queue.length) { tell("done", { done: 0, total: 0 }); return; }

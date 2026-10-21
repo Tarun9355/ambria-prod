@@ -464,6 +464,9 @@ function buildFinish(fnList, inventory, printMaterials) {
 export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEventOrders, inventory, setInventory, blocks, settings, setSettings, trussInv, setTrussInv, authUser, amendRequests, focusEventId, focusSearch, focusLeadEntry, onFocusHandled, onGoToCalendar }) {
   const catDeptCfg = (settings && settings.categoryDepartments && typeof settings.categoryDepartments === "object") ? settings.categoryDepartments : {};
   const catToDept = (cat) => sharedCatToDept(cat, catDeptCfg);
+  // A labour usage row belongs to the department Deal Check charged it to (ur.dept — the item's own
+  // category); a plan synced before that was recorded falls back to its sub-category.
+  const usageDept = (ur) => ur?.dept || catToDept(ur?.sub);
   const dihari = settings?.dihariSchemes || {};
   const [confirm, confirmDialog] = useConfirm();
   const isAdmin = authUser?.role === "Admin" || authUser?.id === "u_admin";
@@ -963,7 +966,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     if (s.shared) {
       if (t.kind !== "labours" || !Array.isArray(t.byFn) || !t.byFn.length) return null;
       return t.byFn.map(c => {
-        const rows = Array.isArray(c?.trace?.usageRows) ? c.trace.usageRows.filter(ur => catToDept(ur.sub) === dept) : [];
+        const rows = Array.isArray(c?.trace?.usageRows) ? c.trace.usageRows.filter(ur => usageDept(ur) === dept) : [];
         const need = Math.round(rows.reduce((acc, ur) => acc + (Number(ur.need) || 0), 0) * 100) / 100;
         return { shift: c.shift || fnsToday.find(f => f?.type === c.fn)?.shift || "", crew: Math.ceil(need) };
       });
@@ -2163,7 +2166,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       // behind the pooled usage floor, which heavyRows above never shows (that's an independent
       // per-sub-category floor; anything under its own perCount rounds to 0 there even though it
       // still feeds this pooled total). Same department filter as heavyRows.
-      ...(tr.usageRows || []).filter(ur => catToDept(ur.sub) === dept).map(ur => ({ label: ur.name, value: `${ur.qty} ÷ ${ur.per} = ${ur.need.toFixed(2)}` })),
+      ...(tr.usageRows || []).filter(ur => usageDept(ur) === dept).map(ur => ({ label: ur.name, value: `${ur.qty} ÷ ${ur.per} = ${ur.need.toFixed(2)}` })),
     ];
     if (tr.kind === "ratio") return [{ label: tr.numLabel || "Count", value: `${tr.num}` }];
     if (tr.kind === "fixed") return [{ label: tr.note || "Fixed", value: `${tr.result}` }];
@@ -2180,7 +2183,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   // Summed to the hundredth before the ceiling: 0.25 + 0.30 + … that is exactly 2.00 on paper comes
   // out as 2.0000000000000004 in floating point, and Math.ceil turned that into 3.
   const deptNeedForFn = (c) => {
-    const rows = Array.isArray(c?.trace?.usageRows) ? c.trace.usageRows.filter(ur => catToDept(ur.sub) === dept) : [];
+    const rows = Array.isArray(c?.trace?.usageRows) ? c.trace.usageRows.filter(ur => usageDept(ur) === dept) : [];
     return Math.round(rows.reduce((s, ur) => s + (Number(ur.need) || 0), 0) * 100) / 100;
   };
   // A Labours day whose order carries no per-function trace (synced before Deal Check sent
@@ -2472,7 +2475,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       // (that's an independent per-sub-category floor; anything under its OWN perCount silently
       // rounds to 0 there) even though it's exactly what this pooled floor sums before ceiling
       // once. Same department filter, by name instead of by sub-category.
-      const deptUsageRows = Array.isArray(t.usageRows) ? t.usageRows.filter(ur => catToDept(ur.sub) === dept) : [];
+      const deptUsageRows = Array.isArray(t.usageRows) ? t.usageRows.filter(ur => usageDept(ur) === dept) : [];
       return (
       <div className="mb-1.5">
         <div className="rounded-lg bg-amber-50/70 ring-1 ring-amber-200/70 px-2.5 py-1.5 text-[13.5px] text-gray-700">

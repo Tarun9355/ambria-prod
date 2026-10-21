@@ -23,10 +23,19 @@ export function planningUpcoming(eo, now = Date.now()) {
   return !!last && last >= yesterday;
 }
 
+// Shape of what a sync writes into the order (event_orders.data). Bump it when Deal Check starts
+// recording something Dept Ops reads (v2: each labour usage row carries the department it was charged
+// to), and every order synced under an older shape counts as stale until it is synced again.
+export const PLANNING_SNAPSHOT_VERSION = 2;
+const PLANNING_SNAPSHOT_SHIPPED_AT = Date.parse("2026-10-21T09:20:00Z");
+export const planningSnapshotOutdated = (eo) => (Number(eo?.deptSnapVer) || 1) < PLANNING_SNAPSHOT_VERSION;
+
 // Synced before, still upcoming, and a planning input changed after that sync (a minute of slack: the
-// sync's own write lands moments after the run it belongs to). `since` lets a finished sweep that
-// skipped the order (no saved build) stop flagging it until something changes again.
+// sync's own write lands moments after the run it belongs to). An outdated snapshot shape counts as a
+// change made when it shipped. `since` lets a finished sweep that skipped the order (no saved build)
+// stop flagging it until something changes again.
 export function planningNeedsSync(eo, latest, since = 0) {
   if (!eo || !eo.deptSyncedAt || !latest) return false;
-  return planningUpcoming(eo) && latest > Math.max(Number(eo.deptSyncedAt), Number(since) || 0) + 60000;
+  const changed = planningSnapshotOutdated(eo) ? Math.max(latest, PLANNING_SNAPSHOT_SHIPPED_AT) : latest;
+  return planningUpcoming(eo) && changed > Math.max(Number(eo.deptSyncedAt), Number(since) || 0) + 60000;
 }

@@ -1532,7 +1532,8 @@ export default function DealCheckOverlay({ ctx }) {
                   const dp = catToDept(rc.cat);
                   byDept[dp] = (byDept[dp] || 0) + need; total += need;
                   const key = rc.name || sub;
-                  if (!itemAgg[key]) itemAgg[key] = { name: rc.name || sub, sub, qty: 0, per: b, need: 0 };
+                  // dept: the department Deal Check actually charged this item's labour to (by the item's own category), so Dept Ops lists the row under the same one.
+                  if (!itemAgg[key]) itemAgg[key] = { name: rc.name || sub, sub, dept: dp, qty: 0, per: b, need: 0 };
                   itemAgg[key].qty += Number(qty) || 0; itemAgg[key].need += need;
                 });
                 labourUsageByFn[fi] = { byDept, total, items: Object.values(itemAgg) };
