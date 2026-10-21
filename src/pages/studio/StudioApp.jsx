@@ -9918,7 +9918,9 @@ export default function StudioApp() {
         if (_curtainPc > 0) _fabParts.push(`${_curtainPc} curtains`);
         if (_maskPc > 0) _fabParts.push(`${_maskPc} masking pc`);
         structItems.push({
-          name: "Drape Fabric (" + (_fabParts.length ? _fabParts.join(" + ") : "wrap/ceiling") + " · " + _fabTier + (_lizaKg > 0 ? ` · Liza ₹${_lizaRate}/kg` : "") + ")",
+          // Just the cost on the sheet (owner ask): no kg / pieces / per-kg rate in the line — the
+          // quantities behind it stay in Build and Deal Check.
+          name: "Drape Fabric",
           total: zl.fabric,
         });
       }
