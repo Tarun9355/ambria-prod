@@ -12,6 +12,7 @@ import CustomItemModal from "../../components/studio/CustomItemModal.jsx";
 import VideoPlayerModal from "../../components/studio/VideoPlayerModal.jsx";
 import KitComponentsEditor from "../../components/shared/KitComponentsEditor.jsx";
 import ItemHoverThumb from "../../components/shared/ItemHoverThumb.jsx";
+import ClickablePhoto from "../../components/shared/ClickablePhoto.jsx";
 import InventoryItemPickerModal from "../../components/shared/InventoryItemPickerModal.jsx";
 import PhotoTagFields from "../../components/studio/PhotoTagFields.jsx";
 import { getCat, carpetPricingFor, defaultCarpetMatId, CARPET_OFF, trussRateFor, maskingRateFor, maskingOptions, TRUSS_MATERIALS } from "../../lib/studio/taxonomy";
@@ -306,10 +307,22 @@ export default function StudioModals({ ctx }) {
                     return (
                       <div key={it.id} onClick={()=>{ if (unpickable) return; inSplit ? toggleSplitId(it.id) : setAvailModal(m=>({...m,selectedId: sel?null:it.id})); }}
                         title={unpickable ? "Out of stock and can't be made in production — pick a different item" : swap ? `Already used for this guest: ${usedIn.join(" · ")}` : it.venueSlack?.length ? `Allocated to other Fixed Venues (not counted as free): ${it.venueSlack.map(s=>`${s.slack} ${s.name}`).join(" · ")}` : undefined}
-                        style={{cursor:unpickable?"not-allowed":"pointer",borderRadius:12,overflow:"hidden",border:`2px solid ${sel?"#059669":swap?SWAP:border}`,background:isDark?"#0F0F1A":"#FAFAFA",position:"relative",opacity:unpickable?0.55:1}}>
+                        onMouseEnter={e=>{ e.currentTarget.style.transform="scale(1.06)"; e.currentTarget.style.boxShadow="0 10px 24px rgba(0,0,0,0.25)"; e.currentTarget.style.zIndex="3"; }}
+                        onMouseLeave={e=>{ e.currentTarget.style.transform=""; e.currentTarget.style.boxShadow=""; e.currentTarget.style.zIndex=""; }}
+                        style={{cursor:unpickable?"not-allowed":"pointer",borderRadius:12,overflow:"hidden",border:`2px solid ${sel?"#059669":swap?SWAP:border}`,background:isDark?"#0F0F1A":"#FAFAFA",position:"relative",opacity:unpickable?0.55:1,transition:"transform .16s ease, box-shadow .16s ease"}}>
                         {sel&&<span style={{position:"absolute",top:6,left:6,zIndex:2,fontSize:9,fontWeight:700,padding:"2px 7px",borderRadius:6,background:"#059669",color:"#fff"}}>✓</span>}
                         <div title="Free on the event date" style={{position:"absolute",top:6,right:6,zIndex:2,fontSize:12,fontWeight:800,minWidth:22,textAlign:"center",padding:"2px 7px",borderRadius:8,background:out?"rgba(239,68,68,0.92)":"rgba(16,185,129,0.92)",color:"#fff"}}>{it.free}</div>
-                        {it.photo ? <img src={thumbUrl(it.photo, AVAIL_THUMB)} alt="" decoding="async" style={{width:"100%",height:120,objectFit:"cover",display:"block",opacity:out?0.5:1}}/> : <div style={{width:"100%",height:120,display:"flex",alignItems:"center",justifyContent:"center",fontSize:30,background:isDark?"#1a1a2e":"#eee"}}><IconBox size={22}/></div>}
+                        {it.photo ? <ClickablePhoto src={it.photo} photos={it.photos} thumbSize={AVAIL_THUMB} name={it.name}
+                          style={{width:"100%",height:120,objectFit:"cover",display:"block",opacity:out?0.5:1}}
+                          details={[
+                            ["Sub-category", availModal.subcat || "—"],
+                            ["Free on the event date", `${it.free} of ${it.total ?? it.free} ${availModal.unitLabel || it.unit || "pc"}`],
+                            ...(it.ownStanding > 0 ? [["Already standing here", `${it.ownStanding}${it.ownVenueName ? ` (${it.ownVenueName})` : ""}`]] : []),
+                            ...(it.venueSlack?.length ? [["Held by other fixed venues", it.venueSlack.map(s=>`${s.slack} at ${venueShortCode(s.name)}`).join(", ")]] : []),
+                            ...(it.dims ? [["Size", it.dims]] : []),
+                            ...(swap ? [["In use for this guest", usedIn.join(", ")]] : []),
+                            ["Rate", fmt(Math.round(it.price))],
+                          ]}/> : <div style={{width:"100%",height:120,display:"flex",alignItems:"center",justifyContent:"center",fontSize:30,background:isDark?"#1a1a2e":"#eee"}}><IconBox size={22}/></div>}
                         <div style={{padding:"8px 10px"}}>
                           <div style={{fontSize:11,fontWeight:600,color:textP,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.name}</div>
                           {unpickable && <div style={{fontSize:8.5,marginTop:1,color:"#EF4444",fontWeight:700}}>Out of stock — can't be made</div>}
