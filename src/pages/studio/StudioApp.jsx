@@ -71,7 +71,7 @@ const NAV_RULE = { width: 1, height: 22, background: "rgba(255,255,255,0.1)", fl
 import {
   DEFAULT_TAX, ZONE_META, ZONE_LABELS, ZONE_PRESETS, BASE_RATES,
   getCat, taxOr, FUNCTIONS, CATEGORIES, SHIFT_LETTER,
-  carpetPricingFor, CARPET_OFF, trussRateFor, maskingRateFor, platformRateFor, platformRowCost, trussBaseArea, TRUSS_MATERIALS, DRAPE_DENSITIES,
+  carpetPricingFor, CARPET_OFF, trussRateFor, maskingRateFor, platformRateFor, platformRowCost, billedCarpetSqft, trussBaseArea, TRUSS_MATERIALS, DRAPE_DENSITIES,
   resolveVenueGensets,
 } from "../../lib/studio/taxonomy";
 
@@ -10062,38 +10062,49 @@ export default function StudioApp() {
       const zm = zoneMeta[k];
       const dims = zc.dims || {};
       const dimLabel = zm ? ["L", "W", "H"].map(d => `${dims[d] || 0}ft`).join(" × ") : "";
-      // Footprint used by platform/carpet — a separate figure from the truss's own L×W×H (a platform
-      // can be a different shape from the truss standing on it). No truss-dims fallback — see
-      // calcStructCost's own comment.
-      const floorDims = zc.floorDims || {};
-      const floorArea = (floorDims.L || floorDims.S || 0) * (floorDims.W || (floorDims.S || 0));
-      const floorDimLabel = `${floorDims.L || floorDims.S || 0}×${floorDims.W || floorDims.S || 0}ft`;
       if (zl.truss > 0) {
-        const _tShape = zc.trT === "box" ? "box" : "singleU";
-        // The two dims a truss is actually charged on (trussBaseArea — same authority calcStructCost's
-        // trussRowCost uses), not the raw L×W×H: a Box charges its two LARGEST dims, a Single U charges
-        // width×height. Doesn't account for the front-extension add-on (shown in the name text only) —
-        // that's a second, smaller area on top, not part of this base sqft. Computed before the rate
-        // lookup now — trussRateFor needs it to apply an oversize rate, if one is configured.
-        const _tBase = trussBaseArea({ dims: zc.dims, trT: zc.trT });
-        const _tRate = trussRateFor(_tShape, zc.trussMaterial, zc.drapeDensity, imsTrussRates, _tBase.area);
-        const _tHasCustomCeiling = _tShape === "box" && !!zc.customCeilingItemId;
-        // Same rate trussRowCost charges — the bare-frame rate when "No fabric" is on.
-        const _tEffRate = zc.noFabric ? _tRate.noFabricRate : _tHasCustomCeiling ? Math.max(0, _tRate.rate - _tRate.ceilingRate) : _tRate.rate;
-        const _tMatLabel = (TRUSS_MATERIALS.find((m) => m.key === (zc.trussMaterial || "iron"))?.label) || "Pole";
-        const _tCeilingItem = _tHasCustomCeiling ? (imsInventory || []).find((i) => i.id === zc.customCeilingItemId) : null;
-        // Oversize tiering (e.g. ₹20 for the first 1850 sqft, ₹15 above) blends into one flat average
-        // ₹/sqft on the sheet (owner ask) — no tier breakdown, just the average rounded to the paisa.
-        // The row's own total is already the correct tiered amount.
-        // guestPriceMultiplier — zl.truss (this row's `total`, below) already has it folded in via
-        // scaleStruct; this displayed rate didn't, so a 1.1x markup bumped Amount 10% while Rate sat
-        // at the raw IMS number — Qty × Rate no longer reproduced Amount, and the sheet looked wrong.
-        const _tRateFlat = Math.round(_tEffRate * guestPriceMultiplier * 100) / 100;
-        const _tRateLabel = `₹${_tRateFlat}/sqft`;
-        structItems.push({
-          name: "Truss (" + (_tShape === "box" ? "Box" : "Single U") + " · " + _tMatLabel + (zc.noFabric ? " · no fabric" : "") + " " + _tRateLabel + ")" + (_tCeilingItem ? ` · custom ceiling: ${_tCeilingItem.name}` : "") + (zc.trT === "box" && (Number(zc.trussFrontExt) || 0) > 0 ? ` + 2× Single-U front ext ${zc.trussFrontExt}×${Number(zc.trussFrontExtH) || dims.H || 0}ft` : "") + ((zc.trussQty || 1) > 1 ? " ×" + zc.trussQty : ""),
-          size: `${_tBase.a || 0}×${_tBase.b || 0}ft`, qty: Math.round((_tBase.area || 0) * Math.max(1, zc.trussQty || 1) * 100) / 100, rate: _tRateFlat, unit: "sqft",
-          total: zl.truss,
+        // Multiple truss structures in one zone (zc + zc.extraTrussRows — the exact rows
+        // calcStructCost's own trussRows loop sums into zl.truss) used to collapse into ONE
+        // structItems row built only from the zone's PRIMARY fields: Qty/Size/Rate showed only the
+        // first truss while zl.truss (the Amount this row claimed to explain) already counted every
+        // extra truss too — a second truss on a different material/rate was invisible, and Qty ×
+        // Rate could never reproduce Amount once a zone had more than one. Now one row per truss.
+        // zl.truss already carries any group discount (rounded once for the WHOLE zone by
+        // calcStructCost, not per row) and guestPriceMultiplier — each row's share of it is
+        // allocated proportionally to its own RAW (undiscounted, unscaled) cost, so the rows always
+        // sum back to exactly zl.truss regardless of how many trusses there are.
+        const _trussRows = [zc, ...(zc.extraTrussRows || [])];
+        const _trussRaw = _trussRows.map((row) => trussRowCost(row, structRates).truss);
+        const _trussRawSum = _trussRaw.reduce((a, b) => a + b, 0);
+        _trussRows.forEach((row, ri) => {
+          if (row.trussQty === 0) return; // dims-only placeholder — no structure billed (trussRowCost agrees)
+          const _tShape = row.trT === "box" ? "box" : "singleU";
+          // The two dims a truss is actually charged on (trussBaseArea — same authority calcStructCost's
+          // trussRowCost uses), not the raw L×W×H: a Box charges its two LARGEST dims, a Single U
+          // charges width×height. Doesn't account for the front-extension add-on (shown in the name
+          // text only) — that's a second, smaller area on top, not part of this base sqft.
+          const rowDims = row.dims || {};
+          const _tBase = trussBaseArea({ dims: rowDims, trT: row.trT });
+          if (!_tBase.area) return;
+          const _tRate = trussRateFor(_tShape, row.trussMaterial, row.drapeDensity, imsTrussRates, _tBase.area);
+          const _tHasCustomCeiling = _tShape === "box" && !!row.customCeilingItemId;
+          // Same rate trussRowCost charges — the bare-frame rate when "No fabric" is on.
+          const _tEffRate = row.noFabric ? _tRate.noFabricRate : _tHasCustomCeiling ? Math.max(0, _tRate.rate - _tRate.ceilingRate) : _tRate.rate;
+          const _tMatLabel = (TRUSS_MATERIALS.find((m) => m.key === (row.trussMaterial || "iron"))?.label) || "Pole";
+          const _tCeilingItem = _tHasCustomCeiling ? (imsInventory || []).find((i) => i.id === row.customCeilingItemId) : null;
+          // Oversize tiering (e.g. ₹20 for the first 1850 sqft, ₹15 above) blends into one flat average
+          // ₹/sqft on the sheet (owner ask) — no tier breakdown, just the average rounded to the paisa.
+          // guestPriceMultiplier — folded into the displayed rate too, so Qty × Rate still reads as
+          // the row's share of Amount instead of a stale pre-markup number.
+          const _tRateFlat = Math.round(_tEffRate * guestPriceMultiplier * 100) / 100;
+          const _tRateLabel = `₹${_tRateFlat}/sqft`;
+          const qty = Math.max(1, row.trussQty || 1);
+          const share = _trussRawSum > 0 ? _trussRaw[ri] / _trussRawSum : (ri === 0 ? 1 : 0);
+          structItems.push({
+            name: "Truss (" + (_tShape === "box" ? "Box" : "Single U") + " · " + _tMatLabel + (row.noFabric ? " · no fabric" : "") + " " + _tRateLabel + ")" + (_tCeilingItem ? ` · custom ceiling: ${_tCeilingItem.name}` : "") + (row.trT === "box" && (Number(row.trussFrontExt) || 0) > 0 ? ` + 2× Single-U front ext ${row.trussFrontExt}×${Number(row.trussFrontExtH) || rowDims.H || 0}ft` : "") + (qty > 1 ? " ×" + qty : "") + (ri > 0 ? ` (truss #${ri + 1})` : ""),
+            size: `${_tBase.a || 0}×${_tBase.b || 0}ft`, qty: Math.round((_tBase.area || 0) * qty * 100) / 100, rate: _tRateFlat, unit: "sqft",
+            total: zl.truss * share,
+          });
         });
       }
       // Drape Fabric (Liza wrap+ceiling, velvet curtains, Liza wall-masking pieces) — calcStructCost
@@ -10151,25 +10162,50 @@ export default function StudioApp() {
           structItems.push({ name: _mCustomItem ? `Wall Masking — custom: ${_mCustomItem.name}` : "Wall Masking — " + (zc.mkT || "fabric") + " ₹" + Math.round(maskingRateFor(zc.mkT || "fabric", imsMaskingRates) * guestPriceMultiplier * 100) / 100 + "/sqft (" + (zc.mkS || 1) + " side" + ((zc.mkS || 1) > 1 ? "s" : "") + ")", total: zl.masking });
         }
       }
-      if (zl.platform > 0) {
-        // guestPriceMultiplier — zl.platform already has it folded in (scaleStruct); the quoted rate
-        // didn't, same Rate-vs-Amount mismatch as Truss above.
-        const _pRate = Math.round(platformRateFor(zc.plH, structRates.platformRates) * guestPriceMultiplier * 100) / 100;
-        structItems.push({
-          name: "Platform (" + (zc.plH === "4in" ? "4 inch" : zc.plH === "1ft" ? "1ft–3ft" : zc.plH || "") + " ₹" + _pRate + "/sqft)",
-          size: floorDimLabel, qty: Math.round(floorArea * 100) / 100, rate: _pRate, unit: "sqft",
-          total: zl.platform,
-        });
-      }
-      if (zl.carpet > 0) {
-        // The guest is billed the material's rate (the picked carpet's rental is Ambria's cost only).
-        // guestPriceMultiplier folded into the displayed rate too, same reason as Platform above.
-        const cp = carpetPricingFor(zc.cpT, imsCarpetMaterials);
-        const _cpRate = Math.round(cp.rate * guestPriceMultiplier * 100) / 100;
-        structItems.push({
-          name: "Carpet (" + cp.label + " ₹" + _cpRate + "/sqft)",
-          size: floorDimLabel, qty: Math.round(floorArea * 100) / 100, rate: _cpRate, unit: "sqft",
-          total: zl.carpet,
+      if (zl.platform > 0 || zl.carpet > 0) {
+        // Same multi-row treatment as Truss above: zc + zc.extraPlatformRows (the exact rows
+        // calcStructCost's own platformRows loop sums into zl.platform/zl.carpet) can each carry a
+        // DIFFERENT height and/or carpet material — a single row built from only the zone's primary
+        // fields couldn't show that, and ignored row.plQty entirely, so Qty/Rate/Amount could all
+        // disagree the moment a second footprint (or a plQty > 1) existed. zl.platform/zl.carpet
+        // already carry their group discount (rounded once for the whole zone) and
+        // guestPriceMultiplier — each row's share is allocated proportionally to its own RAW
+        // (undiscounted, unscaled) platformRowCost output, so the rows always sum back to exactly
+        // zl.platform / zl.carpet.
+        const _platRows = [{ plH: zc.plH, floorDims: zc.floorDims, cpT: zc.cpT, plQty: zc.plQty, cpInvId: zc.cpInvId }, ...(zc.extraPlatformRows || [])];
+        const _platRaw = _platRows.map((row) => platformRowCost(row, structRates));
+        const _platRawSumP = _platRaw.reduce((s, r2) => s + r2.platform, 0);
+        const _platRawSumC = _platRaw.reduce((s, r2) => s + r2.carpet, 0);
+        _platRows.forEach((row, ri) => {
+          const rFd = row.floorDims || {};
+          const rArea = (rFd.L || rFd.S || 0) * (rFd.W || (rFd.S || 0));
+          const rQty = Math.max(1, Math.round(Number(row.plQty) || 1));
+          const rDimLabel = `${rFd.L || rFd.S || 0}×${rFd.W || rFd.S || 0}ft`;
+          const suffix = ri > 0 ? ` (footprint #${ri + 1})` : "";
+          if (_platRaw[ri].platform > 0) {
+            // guestPriceMultiplier — folded into the displayed rate too, same reason as Truss above.
+            const _pRate = Math.round(platformRateFor(row.plH, structRates.platformRates) * guestPriceMultiplier * 100) / 100;
+            const share = _platRawSumP > 0 ? _platRaw[ri].platform / _platRawSumP : 0;
+            structItems.push({
+              name: "Platform (" + (row.plH === "4in" ? "4 inch" : row.plH === "1ft" ? "1ft–3ft" : row.plH || "") + " ₹" + _pRate + "/sqft)" + suffix + (rQty > 1 ? " ×" + rQty : ""),
+              size: rDimLabel, qty: Math.round(rArea * rQty * 100) / 100, rate: _pRate, unit: "sqft",
+              total: zl.platform * share,
+            });
+          }
+          if (_platRaw[ri].carpet > 0) {
+            // The guest is billed the material's rate (the picked carpet's rental is Ambria's cost only).
+            const cp = carpetPricingFor(row.cpT, structRates.carpetMaterials);
+            const _cpRate = Math.round(cp.rate * guestPriceMultiplier * 100) / 100;
+            // "New" carpet bills in whole 1500-sqft rolls (billedCarpetSqft) — the real qty this row
+            // is charged for, not the raw floor area, so Qty × Rate keeps matching this row's share.
+            const billedQty = billedCarpetSqft(rArea * rQty, cp.label);
+            const share = _platRawSumC > 0 ? _platRaw[ri].carpet / _platRawSumC : 0;
+            structItems.push({
+              name: "Carpet (" + cp.label + " ₹" + _cpRate + "/sqft)" + suffix,
+              size: rDimLabel, qty: Math.round(billedQty * 100) / 100, rate: _cpRate, unit: "sqft",
+              total: zl.carpet * share,
+            });
+          }
         });
       }
       if (zl.arches > 0) structItems.push({ name: "Arches (" + (zc.archT || "").toUpperCase() + " ×" + (zc.archQty || 0) + ")", total: zl.arches });
