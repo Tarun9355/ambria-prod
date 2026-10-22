@@ -5690,7 +5690,8 @@ undefined
                           <div style={{width:"100%",height:50,borderRadius:6,background:isDark?"rgba(255,255,255,0.05)":"#eee",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,color:textS}}>🌸</div>
                         )}
                         <div style={{fontSize:13,fontWeight:600,color:textP,lineHeight:1.2}}>{v.name||"Unnamed"}</div>
-                        <div style={{fontSize:12,color:"#F59E0B",fontWeight:600}}>₹{Math.round(Number(v.currentPrice)||0).toLocaleString("en-IN")}/{parent?.unit||"unit"}</div>
+                        {/* the rate the build bills: mandi price × (1 + the flower's Markup %), as getElPriceFromMandi */}
+                        <div style={{fontSize:12,color:"#F59E0B",fontWeight:600}}>₹{Math.round((Number(v.currentPrice)||0)*(1+(Number(parent?.markup)||0)/100)).toLocaleString("en-IN")}/{parent?.unit||"unit"}</div>
                       </div>
                     );
                   })}
