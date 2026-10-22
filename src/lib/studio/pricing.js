@@ -294,6 +294,12 @@ export const trussInvForMaterial = (trussInv, material) => {
 };
 
 export const calcZoneTrussPreview = (zc, trussInv) => {
+  // Same minimum-joints clean-span snap trussRowCost applies for Build/Summary/export billing
+  // (owner ask, 2026-10-22) — this function is the OTHER pricing model (Deal Check's dcCostRollup,
+  // manpower/batta RFT counting, the Fixed-Venue standing discount, calcZoneFabric's Liza/curtain
+  // qty all read it), so it has to price the same real, snapped structure or the two models would
+  // disagree about what's actually being built.
+  zc = trussInv ? (snapRowDimsForProduction(zc, trussInv) || zc) : zc;
   trussInv = trussInvForMaterial(trussInv, zc?.trussMaterial); // material-aware pillars/beams/rates
   const layer0 = resolveTrussConfig(zc);
   if (!layer0) return null;
@@ -423,12 +429,13 @@ export const calcZoneTrussPreview = (zc, trussInv) => {
 // always matches whatever beam sizes / pillar width / max span IMS has actually configured instead
 // of assuming a fixed set that silently goes stale if those ever change.
 //
-// Deliberately narrow in scope: snapRowDimsForProduction is called ONLY from the Deal Check Truss
-// tab's own preview (DCTrussTab.jsx), for its pillar/beam/joint reference display and the
-// fixed-venue standing-discount lookup that reads the same preview. It must never be used for the
-// billed Truss sqft rate (trussRowCost/trussBaseArea — unaffected, still reads the real dims),
-// Fabric/Liza cost (calcZoneFabricCost — unaffected, same reason), or Build's own display (which
-// must keep showing exactly what the salesperson typed).
+// Owner ask (2026-10-22): no longer a narrow Deal-Check-only reference. trussRowCost and
+// calcZoneTrussPreview — the TWO pricing models every truss consumer reads (Build/Summary/exports
+// via the first, Deal Check's dcCostRollup/manpower/standing-discount/fabric via the second) — both
+// snap internally now, so the billed sqft, the Liza/curtain fabric qty, the pillar/beam/joint count,
+// and what IMS actually assembles all agree on the SAME real structure. Build's own input field, and
+// the zone's saved dims, are untouched — only what every pricing/production call computes FROM them
+// is snapped, at the point each of those functions reads row.dims, not by mutating the zone.
 const CLEAN_SPAN_MAX_SHRINK_FT = 5; // same tolerance window Build's own "try Nft" tip already uses
 function pickCleanSpan(span, trussInvForMat, engSettings) {
   if (!(span > 0)) return span;
@@ -1122,6 +1129,13 @@ export function trussRowCost(row, rates) {
   // a real, non-zero Liza/curtain figure made invisible by one missing key on a 0-qty row, the exact
   // case the dims-only/no-truss-billed design is meant to still bill fabric for.
   if (row.trussQty === 0) return { truss: 0, masking: 0, ceiling: 0 };
+  // Owner ask (2026-10-22): billing/build now uses the minimum-joints CLEAN SPAN, not necessarily
+  // what was typed — see snapRowDimsForProduction's own comment, which used to scope this to Deal
+  // Check's reference display only. Reassigning `row` here (not mutating the saved zone) means
+  // every consumer below — area, masking sqft, front-extension math — prices off the snapped L/W,
+  // while Build's own input field keeps showing exactly what the salesperson typed; only the
+  // structure actually priced (and therefore actually built) shrinks.
+  row = rates?.trussInv ? snapRowDimsForProduction(row, rates.trussInv) : row;
   const d = row.dims || {};
   let truss = 0, masking = 0;
   // A Box truss needs all 3 dims. With only 2 dims filled it's physically a Single U, so price it at

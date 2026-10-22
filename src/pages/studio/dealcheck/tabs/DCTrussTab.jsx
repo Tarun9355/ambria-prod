@@ -113,14 +113,17 @@ export default function DCTrussTab({ ctx }) {
                       const rows = [zCfg, ...(zCfg.extraTrussRows || [])];
                       const isRepeat = repeatCatFor(zCfg, "truss") || !!(crossFnPrevFn?.enabledEls?.[zk] && crossFnPrevFn?.zoneConfig?.[zk]);
                       return rows.map((row, rowIdx) => {
-                        // Snapped for THIS preview's pillar/beam/joint figures only — never for the
-                        // billed Truss rate or Fabric/Liza cost below, both of which keep reading
-                        // `row` itself (the real entered dims). See snapRowDimsForProduction's own
-                        // comment (pricing.js) for the full reasoning and exact scope.
+                        // Owner ask (2026-10-22): the minimum-joints CLEAN SPAN is no longer just a
+                        // reference figure here — calcZoneTrussPreview/trussRowCost now snap to it
+                        // internally for billing and production everywhere (Build, Summary, exports,
+                        // Deal Check all price the SAME real structure). `snappedRow` below is kept
+                        // only to show what changed (the "L 50→47ft" note) and to resolve the real
+                        // joint count — `row` itself is passed to every pricing call now; they snap
+                        // on their own.
                         const snappedRow = snapRowDimsForProduction(row, trussInv);
-                        const pv = calcZoneTrussPreview(snappedRow, trussInv);
+                        const pv = calcZoneTrussPreview(row, trussInv);
                         if (pv && pv.costs) {
-                          const disc = venueTrussHere ? zoneTrussStandingDiscountDetail(snappedRow, trussInv, venueTrussHere) : { pillar: 0, beam: 0, total: 0 };
+                          const disc = venueTrussHere ? zoneTrussStandingDiscountDetail(row, trussInv, venueTrussHere) : { pillar: 0, beam: 0, total: 0 };
                           // The venue's standing discount and a Repeat zone's do not stack: each part takes
                           // only the bigger of the two (trussDiscountedCosts, pricing.js).
                           const net = trussDiscountedCosts(pv.costs, disc, isRepeat);
@@ -525,11 +528,12 @@ export default function DCTrussTab({ ctx }) {
                                       Method {topo.method} · {topo.pillarCount} pillar{topo.pillarCount===1?"":"s"} · {topo.beamCount} beam segment{topo.beamCount===1?"":"s"} · <span title="Real, stock-aware count — every beam segment's own piece-combination joints plus every non-standard pillar height's own spacer joint, resolved against the current IMS beam/pillar stock">{realJoints} joint{realJoints===1?"":"s"} expected</span>
                                       {realJointsShortage && <span title="At least one beam segment or pillar height has no combination of current stock within the usual 1ft gap tolerance — it'll need a visible gap or an undersized piece on site" style={{color:"#B91C1C",fontWeight:600}}> · ⚠️ stock gap</span>}
                                       {/* snapRowDimsForProduction only ever shrinks, and only within a small
-                                          window — see pricing.js. Surfaced so a pillar/beam count that doesn't
-                                          match the dims typed in Build reads as an optimization, not a bug.
-                                          Billed Truss/Fabric cost are untouched — this line is purely informational. */}
-                                      {snapNote && <span title="This structure is priced and billed at the dims entered in Build — only this production reference (pillars/beams/joints) is optimized for fewer joints">
-                                        {" · "}<span style={{color:"#B45309",fontWeight:600}}>⚡ optimized for fewer joints</span>
+                                          window — see pricing.js. Owner ask (2026-10-22): billing/production
+                                          now both use this smaller size too (trussRowCost/calcZoneTrussPreview
+                                          snap internally) — Build's input field still shows what was typed,
+                                          but this IS the real sqft/fabric/pillar/beam figure everywhere else. */}
+                                      {snapNote && <span title="Build's input still shows what was typed — billing, fabric and production all use this smaller, fewer-joints size instead">
+                                        {" · "}<span style={{color:"#B45309",fontWeight:600}}>⚡ shrunk for fewer joints</span>
                                         {" "}({[
                                           snapNote.fromL !== snapNote.toL ? `L ${snapNote.fromL}→${snapNote.toL}ft` : null,
                                           snapNote.fromW !== snapNote.toW ? `W ${snapNote.fromW}→${snapNote.toW}ft` : null,
