@@ -2990,8 +2990,10 @@ undefined
   .zone-upload:hover,.zone-upload:active{transform:none}
 }
 /* mandi variant picker: the card under the pointer grows */
-.mv-card{transition:transform .16s ease,box-shadow .16s ease}
-.mv-card:hover{transform:scale(1.1);box-shadow:0 12px 28px rgba(0,0,0,0.3);z-index:2}
+@media (hover: hover) and (pointer: fine){
+  .mv-card{transition:transform 160ms cubic-bezier(0.23,1,0.32,1),box-shadow 160ms cubic-bezier(0.23,1,0.32,1)}
+  .mv-card:hover{transform:scale(1.1);box-shadow:0 12px 28px rgba(0,0,0,0.3);z-index:2}
+}
 @media (prefers-reduced-motion: reduce){
   .mv-card,.mv-card:hover{transition:none;transform:none}
   .el-row,.el-row::before{transition:none}
@@ -5708,7 +5710,7 @@ undefined
       // then competes only with that ancestor, not with the rail outside it. Rendering at the
       // body removes the ancestor from the question altogether.
       return createPortal((
-      <div onClick={()=>setLightbox(null)} style={{position:"fixed",inset:0,zIndex:10001,background:"rgba(0,0,0,0.9)",display:"flex",alignItems:"center",justifyContent:"center",padding:24,cursor:"zoom-out"}}>
+      <div className="ui-overlay-in" onClick={()=>setLightbox(null)} style={{position:"fixed",inset:0,zIndex:10001,background:"rgba(0,0,0,0.9)",display:"flex",alignItems:"center",justifyContent:"center",padding:24,cursor:"zoom-out"}}>
         <span onClick={()=>setLightbox(null)} style={{position:"absolute",top:16,right:20,fontSize:30,lineHeight:1,color:"#fff",cursor:"pointer",fontWeight:300}}>×</span>
         {many&&<span title="Previous (←)" aria-label="Previous photo" onClick={e=>{e.stopPropagation();lightboxStep(-1);}} style={navBtn("left")}>{"‹"}</span>}
         {many&&<span title="Next (→)" aria-label="Next photo" onClick={e=>{e.stopPropagation();lightboxStep(1);}} style={navBtn("right")}>{"›"}</span>}
@@ -5750,8 +5752,8 @@ undefined
         setMandiVariantPicker(null);
       };
       return createPortal((
-        <div onClick={()=>setMandiVariantPicker(null)} style={{position:"fixed",inset:0,zIndex:10000,background:"rgba(10,10,20,0.75)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
-          <div onClick={e=>e.stopPropagation()} style={{width:"min(640px,100%)",maxHeight:"82vh",background:isDark?"#15151f":"#fff",borderRadius:14,border:`1px solid ${border}`,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+        <div className="ui-overlay-in" onClick={()=>setMandiVariantPicker(null)} style={{position:"fixed",inset:0,zIndex:10000,background:"rgba(10,10,20,0.75)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+          <div className="ui-pop-in" onClick={e=>e.stopPropagation()} style={{width:"min(640px,100%)",maxHeight:"82vh",background:isDark?"#15151f":"#fff",borderRadius:14,border:`1px solid ${border}`,display:"flex",flexDirection:"column",overflow:"hidden"}}>
             <div style={{padding:"14px 18px",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
               <div style={{fontSize:14.5,fontWeight:700,color:textP}}>🌸 Which {parent?.name||"flower"} variant?</div>
               <button onClick={()=>setMandiVariantPicker(null)} style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:textP,fontSize:14.5,cursor:"pointer"}}>✕</button>

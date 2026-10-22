@@ -38,6 +38,36 @@
   --text-secondary: #6B7280;
 }
 
+/* ── MOTION ──
+   One vocabulary, so every surface moves the same way (curves from Emil Kowalski's set: a strong ease-out for
+   anything entering, never ease-in on UI). Entry only — these surfaces are mounted by a condition, so there is
+   no exit to animate; that is fine for rare-to-occasional surfaces. Transform + opacity only.
+   Reduced motion keeps a short fade (gentler, not zero). */
+:root {
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+}
+@keyframes ui-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes ui-pop-in { from { opacity: 0; transform: scale(0.97); } to { opacity: 1; transform: none; } }
+@keyframes ui-reveal-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+/* a modal's dimmed backdrop */
+.ui-overlay-in { animation: ui-fade-in 150ms var(--ease-out) both; }
+/* a modal / dialog panel — stays centred, so it grows from its own middle (never from scale(0)) */
+.ui-pop-in { animation: ui-pop-in 200ms var(--ease-out) both; }
+/* a panel that opens under its trigger (the "How" breakdowns, kit contents) */
+.ui-reveal-in { animation: ui-reveal-in 160ms var(--ease-out) both; }
+/* the card under the pointer grows — a hover effect, so only where there IS hover (a touch screen keeps :hover stuck on the last tap) */
+@media (hover: hover) and (pointer: fine) {
+  .ui-hover-grow { transition: transform 160ms var(--ease-out), box-shadow 160ms var(--ease-out); }
+  .ui-hover-grow:hover { transform: scale(1.06); box-shadow: 0 10px 24px rgba(0,0,0,0.25); z-index: 3; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ui-pop-in, .ui-reveal-in { animation-name: ui-fade-in; animation-duration: 100ms; }
+  .ui-overlay-in { animation-duration: 100ms; }
+  .ui-hover-grow, .ui-hover-grow:hover { transition: none; transform: none; }
+}
+
 /* Always keep the scrollbar's space. Several screens (Studio's Event Info / Summary, Deal Check,
    the video player, the phone sheets) lock page scrolling while open, which removed the scrollbar
    on Windows and shifted the whole layout ~15px sideways each time one opened or closed — a visible

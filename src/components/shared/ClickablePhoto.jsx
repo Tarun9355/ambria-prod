@@ -62,7 +62,7 @@ export function PhotoLightbox({ items, start = 0, onClose }) {
   });
   const hasDetails = cur.details?.length > 0 || !!cur.action;
   return createPortal(
-    <div onClick={(e) => { e.stopPropagation(); onClose(); }} style={{ position: "fixed", inset: 0, zIndex: 100000, background: "rgba(0,0,0,0.9)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, cursor: "zoom-out" }}>
+    <div className="ui-overlay-in" onClick={(e) => { e.stopPropagation(); onClose(); }} style={{ position: "fixed", inset: 0, zIndex: 100000, background: "rgba(0,0,0,0.9)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, cursor: "zoom-out" }}>
       <span onClick={onClose} style={{ position: "absolute", top: 16, right: 20, fontSize: 30, lineHeight: 1, color: "#fff", cursor: "pointer", fontWeight: 300 }}>×</span>
       {n > 1 && <span title="Previous (←)" onClick={(e) => { e.stopPropagation(); setIdx((i) => (i + n - 1) % n); }} style={navBtn("left")}>{"‹"}</span>}
       {n > 1 && <span title="Next (→)" onClick={(e) => { e.stopPropagation(); setIdx((i) => (i + 1) % n); }} style={navBtn("right")}>{"›"}</span>}

@@ -93,8 +93,8 @@ export function TypeBadge({ type }) {
 export function Modal({ open, onClose, title, children, wide = false }) {
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.5)", backdropFilter: "blur(2px)" }}>
-      <div className={"bg-white rounded-2xl shadow-2xl flex flex-col max-h-[90vh] " + (wide ? "w-full max-w-4xl" : "w-full max-w-lg")}>
+    <div className="ui-overlay-in fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.5)", backdropFilter: "blur(2px)" }}>
+      <div className={"ui-pop-in bg-white rounded-2xl shadow-2xl flex flex-col max-h-[90vh] " + (wide ? "w-full max-w-4xl" : "w-full max-w-lg")}>
         <div className="flex items-center justify-between px-6 py-4 border-b">
           <h3 className="text-lg font-bold text-gray-900">{title}</h3>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
@@ -143,10 +143,10 @@ export function useConfirm() {
   }, [state]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const dialog = !state ? null : (
-    <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4"
+    <div className="ui-overlay-in fixed inset-0 z-[10000] flex items-center justify-center p-4"
       style={{ background: "rgba(0,0,0,0.5)", backdropFilter: "blur(2px)" }}
       onClick={() => settle(false)}>
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
+      <div className="ui-pop-in bg-white rounded-2xl shadow-2xl w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
         <div className="px-6 pt-5 pb-4">
           <h3 className="text-base font-bold text-gray-900">{state.title}</h3>
           {state.body && <p className="text-sm text-gray-500 mt-2 leading-relaxed whitespace-pre-line">{state.body}</p>}

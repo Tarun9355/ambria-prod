@@ -682,8 +682,8 @@ function DeptIncomeModal({ eo, depts, startDept, onClose }) {
   ];
   const rupee = (n) => "₹" + Math.round(Math.abs(n)).toLocaleString("en-IN");
   return (
-    <div className="fixed inset-0 z-[9100] flex items-center justify-center p-5" style={{ background: "rgba(10,10,20,0.85)" }} onClick={onClose}>
-      <div className={"bg-white rounded-2xl border border-gray-200 w-full max-h-[88vh] flex flex-col overflow-hidden " + (d === "Floral" ? "max-w-[900px]" : "max-w-[560px]")} onClick={e => e.stopPropagation()}>
+    <div className="ui-overlay-in fixed inset-0 z-[9100] flex items-center justify-center p-5" style={{ background: "rgba(10,10,20,0.85)" }} onClick={onClose}>
+      <div className={"ui-pop-in bg-white rounded-2xl border border-gray-200 w-full max-h-[88vh] flex flex-col overflow-hidden " + (d === "Floral" ? "max-w-[900px]" : "max-w-[560px]")} onClick={e => e.stopPropagation()}>
         <div className="px-[18px] py-3.5 border-b border-gray-200 flex items-center justify-between">
           <div>
             <div className="text-[14.5px] font-bold text-[#1A1A2E] tracking-wide">🏦 Department Income</div>
@@ -5785,7 +5785,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                           ...(mismatch ? [["Kit parts, discounts and other adjustments", Math.round(Number(it.total) || 0) - derived, "worked out by Deal Check"]] : []),
                         ];
                         return (
-                          <div className="bg-slate-50 px-3 py-1.5 divide-y divide-slate-100">
+                          <div className="ui-reveal-in bg-slate-50 px-3 py-1.5 divide-y divide-slate-100">
                             {lines.map(([label, val, hint], i) => (
                               <div key={i} className="flex items-baseline justify-between gap-3 py-1 text-[12px]">
                                 <span className="text-gray-600">{label}{hint ? <span className="text-gray-400"> · {hint}</span> : null}</span>
@@ -5800,7 +5800,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                         );
                       })()}
                       {Array.isArray(it.parts) && it.parts.length > 0 && kitOpen["how:" + it.id] && (
-                        <div className="bg-slate-50 px-2.5 py-1.5 space-y-1 text-xs">
+                        <div className="ui-reveal-in bg-slate-50 px-2.5 py-1.5 space-y-1 text-xs">
                           {it.parts.map((pt, pi) => (
                             <div key={"p" + pi} className="flex items-center gap-2">
                               <span aria-hidden="true" className="text-gray-300 shrink-0">└</span>
@@ -5819,7 +5819,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                         </div>
                       )}
                       {it.isKit && kitOpen[it.id] && it.components && it.components.length > 0 && (
-                        <div className="bg-blue-50/50 px-2.5 py-1.5 space-y-1">
+                        <div className="ui-reveal-in bg-blue-50/50 px-2.5 py-1.5 space-y-1">
                           {it.components.map((cp, ci) => (
                             <div key={"c" + ci} className="flex items-center gap-2">
                               <span aria-hidden="true" className="text-blue-300 shrink-0 text-xs">└</span>

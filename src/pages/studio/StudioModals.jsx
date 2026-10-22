@@ -231,8 +231,8 @@ export default function StudioModals({ ctx }) {
         };
         const availPhotoSet = (availModal.items || []).filter(x => x.photo).map(x => ({ id: x.id, src: x.photo, name: x.name, details: availDetailsFor(x) }));
         return (
-        <div onClick={closeModal} style={{position:"fixed",inset:0,zIndex:9300,background:"rgba(0,0,0,0.6)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
-          <div onClick={e=>e.stopPropagation()} style={{background:isDark?"#12121F":"#fff",borderRadius:16,border:`1px solid ${border}`,width:"min(900px,95vw)",maxHeight:"85vh",display:"flex",flexDirection:"column",overflow:"hidden",boxShadow:"0 20px 60px rgba(0,0,0,0.4)"}}>
+        <div className="ui-overlay-in" onClick={closeModal} style={{position:"fixed",inset:0,zIndex:9300,background:"rgba(0,0,0,0.6)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+          <div className="ui-pop-in" onClick={e=>e.stopPropagation()} style={{background:isDark?"#12121F":"#fff",borderRadius:16,border:`1px solid ${border}`,width:"min(900px,95vw)",maxHeight:"85vh",display:"flex",flexDirection:"column",overflow:"hidden",boxShadow:"0 20px 60px rgba(0,0,0,0.4)"}}>
             <div style={{padding:"16px 20px",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:12}}>
               <div>
                 <div style={{fontSize:16,fontWeight:700,color:textP}}><IconBox size={14}/> Availability — {availModal.elName}</div>
@@ -319,11 +319,9 @@ export default function StudioModals({ ctx }) {
                     const swap = usedIn.length > 0;
                     const SWAP = "#F97316";
                     return (
-                      <div key={it.id} onClick={()=>{ if (unpickable) return; inSplit ? toggleSplitId(it.id) : setAvailModal(m=>({...m,selectedId: sel?null:it.id})); }}
+                      <div key={it.id} className="ui-hover-grow" onClick={()=>{ if (unpickable) return; inSplit ? toggleSplitId(it.id) : setAvailModal(m=>({...m,selectedId: sel?null:it.id})); }}
                         title={unpickable ? "Out of stock and can't be made in production — pick a different item" : swap ? `Already used for this guest: ${usedIn.join(" · ")}` : it.venueSlack?.length ? `Allocated to other Fixed Venues (not counted as free): ${it.venueSlack.map(s=>`${s.slack} ${s.name}`).join(" · ")}` : undefined}
-                        onMouseEnter={e=>{ e.currentTarget.style.transform="scale(1.06)"; e.currentTarget.style.boxShadow="0 10px 24px rgba(0,0,0,0.25)"; e.currentTarget.style.zIndex="3"; }}
-                        onMouseLeave={e=>{ e.currentTarget.style.transform=""; e.currentTarget.style.boxShadow=""; e.currentTarget.style.zIndex=""; }}
-                        style={{cursor:unpickable?"not-allowed":"pointer",borderRadius:12,overflow:"hidden",border:`2px solid ${sel?"#059669":swap?SWAP:border}`,background:isDark?"#0F0F1A":"#FAFAFA",position:"relative",opacity:unpickable?0.55:1,transition:"transform .16s ease, box-shadow .16s ease"}}>
+                        style={{cursor:unpickable?"not-allowed":"pointer",borderRadius:12,overflow:"hidden",border:`2px solid ${sel?"#059669":swap?SWAP:border}`,background:isDark?"#0F0F1A":"#FAFAFA",position:"relative",opacity:unpickable?0.55:1}}>
                         {sel&&<span style={{position:"absolute",top:6,left:6,zIndex:2,fontSize:9,fontWeight:700,padding:"2px 7px",borderRadius:6,background:"#059669",color:"#fff"}}>✓</span>}
                         <div title="Free on the event date" style={{position:"absolute",top:6,right:6,zIndex:2,fontSize:12,fontWeight:800,minWidth:22,textAlign:"center",padding:"2px 7px",borderRadius:8,background:out?"rgba(239,68,68,0.92)":"rgba(16,185,129,0.92)",color:"#fff"}}>{it.free}</div>
                         {it.photo ? <ClickablePhoto src={it.photo} thumbSize={AVAIL_THUMB} name={it.name}
