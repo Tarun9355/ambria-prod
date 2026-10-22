@@ -18,7 +18,9 @@ const readSwept = () => { try { return Number(localStorage.getItem(SWEPT_KEY)) |
 const SKIPPED_KEY = "ambria-planning-skipped-v1";
 const readSkipped = () => { try { return JSON.parse(localStorage.getItem(SKIPPED_KEY) || "{}") || {}; } catch { return {}; } };
 
-export default function PlanningSyncButton({ eventOrders, onlyOrder }) {
+// force (with onlyOrder): offered even when the event is not stale — used where something the snapshot did not carry
+// before (e.g. the Florals tab detail) has to be pulled in by running Deal Check for that one event again.
+export default function PlanningSyncButton({ eventOrders, onlyOrder, force = false, label = "" }) {
   const onlyId = onlyOrder?.id || null;
   const [latest, setLatest] = useState(0);
   const [sweptAt, setSweptAt] = useState(readSwept);
@@ -38,7 +40,8 @@ export default function PlanningSyncButton({ eventOrders, onlyOrder }) {
 
   const [skipped, setSkipped] = useState(readSkipped);
   const eventOrdersRef = useRef(eventOrders); eventOrdersRef.current = eventOrders;
-  const need = useMemo(() => (eventOrders || []).filter(eo => (!onlyId || eo.id === onlyId) && planningNeedsSync(eo, latest, sweptAt) && skipped[eo.id] !== eo.deptSyncedAt).length, [eventOrders, latest, sweptAt, skipped, onlyId]);
+  const needStale = useMemo(() => (eventOrders || []).filter(eo => (!onlyId || eo.id === onlyId) && planningNeedsSync(eo, latest, sweptAt) && skipped[eo.id] !== eo.deptSyncedAt).length, [eventOrders, latest, sweptAt, skipped, onlyId]);
+  const need = force && onlyId ? 1 : needStale;
 
   // The event the running sync was started for: opening another event meanwhile must not change it.
   const runOnlyRef = useRef(null);
@@ -95,7 +98,7 @@ export default function PlanningSyncButton({ eventOrders, onlyOrder }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [!!run]);
 
-  const frameUrl = (shard) => `${window.location.origin}${window.location.pathname}#/studio?sweep=1${runOnlyRef.current ? `&order=${encodeURIComponent(runOnlyRef.current)}` : `&shard=${shard}&of=${runShardsRef.current}`}`;
+  const frameUrl = (shard) => `${window.location.origin}${window.location.pathname}#/studio?sweep=1${runOnlyRef.current ? `&order=${encodeURIComponent(runOnlyRef.current)}${force ? "&force=1" : ""}` : `&shard=${shard}&of=${runShardsRef.current}`}`;
   if (!run && !need && !note) return null;
   return (
     <>
@@ -110,8 +113,8 @@ export default function PlanningSyncButton({ eventOrders, onlyOrder }) {
       ) : need > 0 ? (
         <button onClick={() => { setNote(""); runOnlyRef.current = onlyId; runShardsRef.current = onlyId ? 1 : SHARDS; setRun({ done: 0, total: 0, started: false }); }}
           title={onlyId ? "IMS settings or inventory changed after this event was last synced from Deal Check. Runs Deal Check for this event only, in the background — you can keep working." : "IMS settings or inventory changed after these events were last synced from Deal Check. Runs Deal Check for each in the background — you can keep working."}
-          className="hidden sm:inline-flex shrink-0 items-center gap-1.5 ml-1 px-3 py-1.5 rounded-lg text-sm font-semibold whitespace-nowrap border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 transition-colors">
-          {onlyId ? "🔄 Sync this event" : `🔄 Sync planning · ${need} event${need === 1 ? "" : "s"}`}
+          className={(force ? "inline-flex" : "hidden sm:inline-flex") + " shrink-0 items-center gap-1.5 ml-1 px-3 py-1.5 rounded-lg text-sm font-semibold whitespace-nowrap border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 transition-colors"}>
+          {label ? label : onlyId ? "🔄 Sync this event" : `🔄 Sync planning · ${need} event${need === 1 ? "" : "s"}`}
         </button>
       ) : (
         <span className="hidden sm:inline-flex shrink-0 items-center ml-1 px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap text-emerald-700">{note}</span>

@@ -723,7 +723,10 @@ function DeptIncomeModal({ eo, depts, startDept, onClose }) {
           )}
           {d === "Floral" && (eo?.floralDetail
             ? <FloralDetailView detail={eo.floralDetail} />
-            : <div className="mt-3.5 rounded-lg bg-slate-50 px-3 py-2 text-[12px] text-gray-500">Deal Check's Florals tab (mandi list, artificial bunches, per-element breakdown) shows here once this event is synced from Deal Check — press "Sync this event".</div>)}
+            : <div className="mt-3.5 rounded-lg bg-slate-50 px-3 py-2.5 text-[12px] text-gray-500 flex items-center gap-3 flex-wrap">
+              <span className="flex-1 min-w-[200px]">Deal Check's Florals tab (mandi list, artificial bunches, per-element breakdown) is not saved for this event yet. It is pulled in by running Deal Check for this one event.</span>
+              <PlanningSyncButton eventOrders={[eo]} onlyOrder={eo} force label="🔄 Load Deal Check details" />
+            </div>)}
           <div className="text-[12px] text-[#1A1A2E] mt-2.5 leading-normal">General labour & supervisors are split across departments by each one's direct-income share. Truss steel → Tenting · masking/drape fabric → Fabric · platform & carpet → Tenting · genset → Lighting · everything else → by its category.</div>
         </div>
       </div>

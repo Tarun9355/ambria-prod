@@ -2755,6 +2755,9 @@ export default function StudioApp() {
   // started right here, once per client per session. The rest is the same run Apply uses, so
   // nothing about what gets pushed to IMS changes — only who has to ask for it.
   const autoSyncedClientsRef = useRef(new Set());
+  // The hidden run IMS starts with "Load Deal Check details" (#/studio?sweep=1&order=ID&force=1): that one order is
+  // synced even though no setting changed since its last sync.
+  const forceSyncOrderRef = useRef((() => { try { const h = window.location.hash; const m = /[?&]force=1/.test(h) && /[?&]order=([^&]+)/.exec(h); return m ? decodeURIComponent(m[1]) : null; } catch { return null; } })());
   // The startup sweep (further down, after startNewDeal) walks every stale booked deal through this
   // same auto-sync. `id` is the deal it has open right now; autoSaveBuild stands still while it is
   // set — a sweep never edits anything, and its screen is covered so nobody else can.
@@ -2776,7 +2779,7 @@ export default function StudioApp() {
         const latest = await latestPlanningInputStamp();
         if (!latest) return;
         // A minute of slack: the sync's own write lands moments after the run it belongs to.
-        if (latest > Number(eo.deptSyncedAt) + 60000 || planningSnapshotOutdated(eo)) syncDeptOpsHeadlessRef.current?.();
+        if (latest > Number(eo.deptSyncedAt) + 60000 || planningSnapshotOutdated(eo) || (forceSyncOrderRef.current && forceSyncOrderRef.current === eo.id)) syncDeptOpsHeadlessRef.current?.();
       } catch { /* best effort — a missed auto-sync only means the old manual way */ }
     })();
   }, [activeClientId, clientLedger, eventOrders, zoneElements, dcFullPageOpen, dcHeadless, clientName]);
@@ -8803,7 +8806,7 @@ export default function StudioApp() {
       if (!latest) { tell("done", { done: 0, total: 0, skipped: [] }); return; }
       const stale = (c) => {
         const eo = c.status === "booked" ? eoOf(c) : null;
-        return (!onlyId || eo?.id === onlyId) && inShard(eo) && planningNeedsSync(eo, latest) && !autoSyncedClientsRef.current.has(c.id);
+        return (!onlyId || eo?.id === onlyId) && inShard(eo) && (planningNeedsSync(eo, latest) || (forceSyncOrderRef.current && forceSyncOrderRef.current === eo?.id)) && !autoSyncedClientsRef.current.has(c.id);
       };
       // Upcoming events first (nearest first), then the ones whose dates have gone by (latest first).
       const lastDateOf = (c) => { const eo = eoOf(c); return [eo?.date, ...((Array.isArray(eo?.functionsDetail) ? eo.functionsDetail : []).map(f => f?.date))].filter(Boolean).map(d => String(d).slice(0, 10)).sort().pop() || ""; };
