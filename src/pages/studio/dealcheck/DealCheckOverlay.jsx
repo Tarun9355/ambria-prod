@@ -6,6 +6,7 @@
 // production / buying / transport) are placeholders pending later slices.
 // ═══════════════════════════════════════════════════════════════
 import { useState, useEffect, useRef } from "react";
+import DeptPdfButton from "../../../components/studio/DeptPdfButton.jsx";
 import { createPortal } from "react-dom";
 import DCFloralsTab from "./tabs/DCFloralsTab.jsx";
 import DCManpowerTab from "./tabs/DCManpowerTab.jsx";
@@ -2392,6 +2393,7 @@ export default function DealCheckOverlay({ ctx }) {
                     needs no label to be understood.
                     A ring, not a filled box, and red only on HOVER: a permanently red control in the
                     corner of a screen that is fine reads as an error rather than as an exit. */}
+                {!dcHeadless && eoForAvail?.id && eoForAvail.deptInventory && Object.values(eoForAvail.deptInventory).some(a => Array.isArray(a) && a.length > 0) && <DeptPdfButton eventOrderId={eoForAvail.id} border={border} />}
                 <button onClick={()=>closeDealCheck()} className="dc-x" title="Close Deal Check"
                   style={{width:36,height:36,padding:0,borderRadius:999,border:`1px solid ${border}`,background:"transparent",color:"#1A1A2E",fontSize:16,cursor:"pointer",lineHeight:1,display:"inline-flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>✕</button>
               </div>

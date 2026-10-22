@@ -10,7 +10,8 @@ import "./index.css";
 // #/studio?sweep=1). A same-origin frame shares sessionStorage with the page that opened it, and
 // Studio keeps "which deal is open / which step" there — so this run gets a private in-memory one:
 // it restores nothing from the person's session and leaves their pointers exactly as they were.
-if (/[?&]sweep=1\b/.test(window.location.hash) && window.self !== window.top) {
+// Deal Check's "All departments PDF" loads IMS the same way (#/ims?pdfEvent=ID) and needs the same isolation.
+if (/[?&](sweep=1\b|pdfEvent=)/.test(window.location.hash) && window.self !== window.top) {
   const mem = new Map();
   try {
     Object.defineProperty(window, "sessionStorage", {
@@ -24,7 +25,7 @@ if (/[?&]sweep=1\b/.test(window.location.hash) && window.self !== window.top) {
         get length() { return mem.size; },
       },
     });
-    window.__AMBRIA_SWEEP__ = true; // only once the private storage is in place
+    if (/[?&]sweep=1\b/.test(window.location.hash)) window.__AMBRIA_SWEEP__ = true; // only once the private storage is in place
   } catch { /* cannot isolate sessionStorage — then no sweep runs here at all */ }
 }
 

@@ -289,6 +289,18 @@ export default function IMS() {
   // season Edge Function (no manual button). Shape matches the reference studioLmsCache.
   const [studioLmsCache, setStudioLmsCache] = useState(null);
   const [loading, setLoading] = useState(true);
+  // Hidden run started by Studio's Deal Check "All departments PDF" (#/ims?pdfEvent=ID, in an invisible frame):
+  // once the data is in, open that event in Planning → Dept Ops, which builds and downloads the PDF.
+  const [autoPdfFor, setAutoPdfFor] = useState(() => {
+    try { const m = /[?&]pdfEvent=([^&]+)/.exec(window.location.hash); return m && window.self !== window.top ? decodeURIComponent(m[1]) : null; } catch { return null; }
+  });
+  const autoPdfOpenedRef = useRef(false);
+  useEffect(() => {
+    if (!autoPdfFor || loading || autoPdfOpenedRef.current) return;
+    autoPdfOpenedRef.current = true;
+    openEventInPlanning(autoPdfFor);
+  }, [autoPdfFor, loading]); // eslint-disable-line react-hooks/exhaustive-deps
+  const finishAutoPdf = useCallback(() => setAutoPdfFor(null), []);
   const [error, setError] = useState("");
 
   // Derive cat labels / sub-cats / florals / raw items from the shared `rate_card` table — IMS's
@@ -1714,6 +1726,7 @@ export default function IMS() {
             trussAlloc={trussAlloc} setTrussAlloc={setTrussAlloc} eventOrders={eventOrders} setEventOrders={setEventOrders} blocks={blocks}
             studio={studio} authUser={user} amendRequests={amendRequests}
             focusEventId={focusEventId} focusSearch={focusSearch} focusLeadEntry={focusLeadEntry} onFocusHandled={clearFocusEvent}
+            autoPdfFor={autoPdfFor} onAutoPdfDone={finishAutoPdf}
             onGoToCalendar={canSeeCalendar ? goToCalendar : undefined}
             rateCardCategories={rateCardCategories} rcItems={studioRcItems} rcCats={studioRcCats}
           />

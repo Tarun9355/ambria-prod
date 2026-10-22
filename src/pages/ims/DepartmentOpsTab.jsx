@@ -461,7 +461,7 @@ function buildFinish(fnList, inventory, printMaterials) {
   return { paintFor, prints, printLine };
 }
 
-export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEventOrders, inventory, setInventory, blocks, settings, setSettings, trussInv, setTrussInv, authUser, amendRequests, focusEventId, focusSearch, focusLeadEntry, onFocusHandled, onGoToCalendar }) {
+export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEventOrders, inventory, setInventory, blocks, settings, setSettings, trussInv, setTrussInv, authUser, amendRequests, focusEventId, focusSearch, focusLeadEntry, onFocusHandled, onGoToCalendar, autoPdfFor, onAutoPdfDone }) {
   const catDeptCfg = (settings && settings.categoryDepartments && typeof settings.categoryDepartments === "object") ? settings.categoryDepartments : {};
   const catToDept = (cat) => sharedCatToDept(cat, catDeptCfg);
   // A labour usage row belongs to the department Deal Check charged it to (ur.dept — the item's own
@@ -3913,6 +3913,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
     if (exporting) return;
     const multi = depts.length > 1;
     const startedOn = dept;
+    let ok = false; // true once a PDF was produced (the caller of a hidden run reports it)
     setExporting(view ? "view" : "download");
     // Zone names as the admin set them in Studio (e.g. "Centre Lounge"), not the raw keys. A
     // failed read just falls back to the built-in names.
@@ -4203,6 +4204,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
         setDeckView({ url, name: fileName });
       }
       else pdf.save(fileName);
+      ok = true;
       // Said out loud, because a report quietly missing a page is worse than one that failed
       // outright — you would only find out when the crew on site needed the page that is gone.
       if (skipped.length) {
@@ -4255,11 +4257,39 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
       if (multi) setDept(startedOn);
       setExporting(false);
     }
+    return ok;
   };
 
   // Declared after exportPdf on purpose: a const referenced above its own declaration is a
   // TDZ error the build does not catch.
   const exportDeptPdf = (depts) => exportPdf(Array.isArray(depts) && depts.length ? depts : [dept]);
+
+  // Started from Studio's Deal Check ("All departments PDF"): IMS runs hidden in a frame, selects that event
+  // and builds the combined book exactly as the Download PDF button does, then tells Deal Check how it went.
+  // A few seconds' wait first lets the event's inventory, settings and blocks finish arriving, so the book
+  // is not drawn from a half-loaded page. Alerts (a skipped section…) are passed on instead of popping up
+  // in a frame nobody can see.
+  const autoPdfStartedRef = useRef(false);
+  useEffect(() => {
+    if (!autoPdfFor || autoPdfStartedRef.current || selId !== autoPdfFor || !sel) return undefined;
+    const t = setTimeout(async () => {
+      if (autoPdfStartedRef.current) return;
+      autoPdfStartedRef.current = true;
+      const tell = (phase, extra = {}) => { try { window.parent?.postMessage({ type: "ambria-dept-pdf", phase, ...extra }, window.location.origin); } catch { /* not framed */ } };
+      const notes = [];
+      const realAlert = window.alert;
+      window.alert = (m) => { notes.push(String(m).split("\n")[0]); };
+      let ok = false;
+      try {
+        if (!deptsWithWork.length) { tell("error", { reason: "No department plan on this event yet — sync it from Deal Check first" }); return; }
+        ok = await exportPdf(deptsWithWork);
+      } finally { window.alert = realAlert; }
+      tell(ok ? "done" : "error", { notes });
+      onAutoPdfDone?.();
+    }, 3000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoPdfFor, selId, sel, deptsWithWork]);
   // What the department PDF is built from. The item photos come from inventory, not the event, so a
   // photo added since must count too; floral cards also read the recipes and the mandi list.
   const deckKeyNow = () => {
