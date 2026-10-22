@@ -1,5 +1,5 @@
 import { Fragment } from "react";
-import { calcZoneFabric, autoFillFabricAllocation, anchorsForPalette, anchorsForPaletteByMaterial, calcFabricAllocationTotal, zoneTrussStandingDiscountDetail, repeatCatFor, snapRowDimsForProduction, trussInvForMaterial, dcFabricMultOf } from "../../../../lib/studio/pricing";
+import { calcZoneFabric, autoFillFabricAllocation, anchorsForPalette, anchorsForPaletteByMaterial, calcFabricAllocationTotal, zoneTrussStandingDiscountDetail, trussDiscountedCosts, repeatCatFor, snapRowDimsForProduction, trussInvForMaterial, dcFabricMultOf } from "../../../../lib/studio/pricing";
 import { fixedVenueFor } from "../../../../lib/ims/fixedVenues";
 import { resolveBeamSegment, resolvePillarHeight } from "../../../../lib/ims/trussEngine";
 import { findCrossFnReuseSource } from "../../../../lib/studio/crossFnReuse";
@@ -121,10 +121,10 @@ export default function DCTrussTab({ ctx }) {
                         const pv = calcZoneTrussPreview(snappedRow, trussInv);
                         if (pv && pv.costs) {
                           const disc = venueTrussHere ? zoneTrussStandingDiscountDetail(snappedRow, trussInv, venueTrussHere) : { pillar: 0, beam: 0, total: 0 };
+                          // The venue's standing discount and a Repeat zone's do not stack: each part takes
+                          // only the bigger of the two (trussDiscountedCosts, pricing.js).
+                          const net = trussDiscountedCosts(pv.costs, disc, isRepeat);
                           if (disc.total > 0) {
-                            pv.costs.pillarCost = Math.max(0, pv.costs.pillarCost - disc.pillar);
-                            pv.costs.beamCost = Math.max(0, pv.costs.beamCost - disc.beam);
-                            pv.costs.actual = Math.max(0, pv.costs.actual - disc.total);
                             pv.costs.venueDiscount = disc.total;
                             pv.costs.pillarDiscounted = disc.pillar > 0;
                             pv.costs.beamDiscounted = disc.beam > 0;
@@ -138,11 +138,11 @@ export default function DCTrussTab({ ctx }) {
                           // pillar/beam RFT and batta RFT figures stay OUT of the grand totals below
                           // regardless — those drive truss-inventory sourcing, and a repeat zone needs
                           // nothing new sourced for a rig that isn't moving.
+                          pv.costs.pillarCost = net.pillarCost;
+                          pv.costs.beamCost = net.beamCost;
+                          pv.costs.battaCost = net.battaCost;
+                          pv.costs.actual = net.actual;
                           if (isRepeat) {
-                            pv.costs.pillarCost = Math.round(pv.costs.pillarCost * 0.7);
-                            pv.costs.beamCost = Math.round(pv.costs.beamCost * 0.7);
-                            pv.costs.battaCost = Math.round((pv.costs.battaCost || 0) * 0.7);
-                            pv.costs.actual = Math.round(pv.costs.actual * 0.7);
                             pv.costs.isRepeat = true;
                             // OR'd in, not overwritten — a zone can be BOTH a fixed-venue standing
                             // match (disc.pillar>0 above) AND repeat; either reason is enough to show

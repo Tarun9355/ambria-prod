@@ -512,7 +512,32 @@ export function zoneTrussStandingDiscountDetail(zc, trussInv, venueTruss) {
   const usedBeamRft = Math.min(preview.costs.beamRft || 0, standingBeamRft);
   const pillar = Math.round(usedPillarRft * pillarRftRate * pillarPct / 100);
   const beam = Math.round(usedBeamRft * beamRftRate * beamPct / 100);
-  return { pillar, beam, total: pillar + beam };
+  // What the standing stock itself costs (before its %), and the %: trussDiscountedCosts needs them to
+  // keep this discount and a Repeat zone's from stacking.
+  return { pillar, beam, total: pillar + beam, pillarStandingCost: usedPillarRft * pillarRftRate, beamStandingCost: usedBeamRft * beamRftRate, pillarPct, beamPct };
+}
+
+// A truss at a Fixed Venue can carry two discounts at once: the venue's standing pillars/beams (their
+// own % off, on the part that stands) and a ♻ Repeat zone (a flat repeatPct% off the whole rig). They do
+// not stack — each part takes only the BIGGER of the two. The standing part therefore goes at
+// max(its %, repeatPct) and everything else at repeatPct. With only one of them this is exactly what it
+// always was (standing alone: cost − standing %; Repeat alone: cost × (1 − repeatPct)).
+// `costs` is calcZoneTrussPreview's costs ({ pillarCost, beamCost, battaCost, actual }), `detail` is
+// zoneTrussStandingDiscountDetail's. `actual` is not always pillar + beam + batta (a half box is priced
+// as a hybrid), so it is scaled the same way rather than re-added.
+export function trussDiscountedCosts(costs, detail, isRepeat, repeatPct = 30) {
+  const r = isRepeat ? repeatPct / 100 : 0;
+  const c = costs || {};
+  const d = detail || {};
+  const extraP = Math.min(Number(c.pillarCost) || 0, Number(d.pillarStandingCost) || 0) * Math.max(0, (Number(d.pillarPct) || 0) / 100 - r);
+  const extraB = Math.min(Number(c.beamCost) || 0, Number(d.beamStandingCost) || 0) * Math.max(0, (Number(d.beamPct) || 0) / 100 - r);
+  const part = (v, extra) => Math.max(0, Math.round((Number(v) || 0) * (1 - r) - extra));
+  return {
+    pillarCost: part(c.pillarCost, extraP),
+    beamCost: part(c.beamCost, extraB),
+    battaCost: Math.max(0, Math.round((Number(c.battaCost) || 0) * (1 - r))),
+    actual: part(c.actual, extraP + extraB),
+  };
 }
 export function zoneTrussStandingDiscount(zc, trussInv, venueTruss) {
   return zoneTrussStandingDiscountDetail(zc, trussInv, venueTruss).total;

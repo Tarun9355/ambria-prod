@@ -94,7 +94,7 @@ const NUM = { fontVariantNumeric: "tabular-nums" };
 import { heavyExtraLabour, eventTimingMultFor, SIT_MULT_DEFAULTS } from "../../../lib/ims/constants";
 import { deptMpReconciled, itemImsSubcat, lookupBySubcat, itemDimsText, walkKitUnits } from "../../../lib/ims/helpers";
 import { rentalSplit, availableAtVenue, isStandingAt, fixedVenueFor, standingReductionBySubcat, fixedVenueDealDiscount, reservedByVenueToday, venueSlackFor } from "../../../lib/ims/fixedVenues";
-import { calcZoneFabric, autoFillFabricAllocation, anchorsForPalette, anchorsForPaletteByMaterial, resolveTrussConfig, zoneTrussStandingDiscount, repeatCatFor, freshFnForManpower , dcFabricMultOf } from "../../../lib/studio/pricing";
+import { calcZoneFabric, autoFillFabricAllocation, anchorsForPalette, anchorsForPaletteByMaterial, resolveTrussConfig, zoneTrussStandingDiscountDetail, trussDiscountedCosts, repeatCatFor, freshFnForManpower , dcFabricMultOf } from "../../../lib/studio/pricing";
 import { carpetPricingFor, CARPET_OFF } from "../../../lib/studio/taxonomy";
 import { qtyUsedElsewhereInDealCheck, netOwnReservedBlocksLive } from "../../../lib/studio/dealAvailability";
 import { isHiddenSubcat, oosCostPctFor, canFulfillShortfall } from "../../../lib/rateCard";
@@ -1009,7 +1009,6 @@ export default function DealCheckOverlay({ ctx }) {
                   // same "entrance"/"stage"/etc vocabulary), so the same key in two consecutive
                   // functions at the same venue is the same physical setup.
                   const isRepeat = repeatCatFor(zc[zk], "truss") || !!(crossFnPrevFn?.enabledEls?.[zk] && crossFnPrevFn?.zoneConfig?.[zk]);
-                  const repeatMult = isRepeat ? 0.7 : 1;
                   const repeatFabMult = isRepeat ? 0.7 : 1;
                   const photoUrl = (fn.elSelectedPhoto || {})[zk];
                   let density = "moderate";
@@ -1024,8 +1023,11 @@ export default function DealCheckOverlay({ ctx }) {
                   [zc[zk], ...(zc[zk].extraTrussRows || [])].forEach(row => {
                     const pv = calcZoneTrussPreview(row, tInv);
                     if (pv?.costs?.actual) {
-                      const discount = _venueTrussHere ? zoneTrussStandingDiscount(row, tInv, _venueTrussHere) : 0;
-                      const netActual = Math.max(0, pv.costs.actual - discount) * repeatMult;
+                      // The venue's standing-truss discount and a Repeat zone's do not stack: each part
+                      // takes only the bigger of the two (trussDiscountedCosts, pricing.js) — same as
+                      // the Truss tab, so the rollup and the tab agree.
+                      const _detail = _venueTrussHere ? zoneTrussStandingDiscountDetail(row, tInv, _venueTrussHere) : null;
+                      const netActual = trussDiscountedCosts(pv.costs, _detail, isRepeat).actual;
                       truss += netActual; byFn[fi].truss += netActual; addD("Tenting", "truss", netActual); // truss steel → Tenting
                     }
                     // Truss requirement → loadable line items grouped BY SIZE (e.g. "Truss pillar 15ft").
