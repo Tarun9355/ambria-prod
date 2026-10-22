@@ -41,6 +41,17 @@ function Placeholder({ name, note }) {
   );
 }
 
+// "Previous price" for a flower: the price it had before TODAY's first change. Typing a new price into
+// the box changes it on every keystroke (8 → 80 → 150), and a history entry per keystroke filled the
+// history with half-typed prices (₹1, ₹15) so "Prev price" showed one of those. One entry per day keeps
+// the real previous price.
+function withPrevPrice(history, price) {
+  const h = Array.isArray(history) ? history : [];
+  const today = new Date().toISOString().split("T")[0];
+  const last = h[h.length - 1];
+  return last && last.date === today ? h : [...h, { price: price || 0, date: today }];
+}
+
 export default function AdminSettingsTab({ settings, setSettings, supervisors, setSupervisors, studio, mode, syncRecipeRatesToStudio, tier15LastSync, tier15Syncing, trussInv, setTrussInv, inventory = [], rateCardCategories = [], onUpdateSubcatFactor, onUpdateSubcatCostPercent, onAddSubcat, onRenameSubcat, onUpdateSubcatCategory, onSyncSubcatsFromInventory, onDeleteSubcat, onUpdateSubcatFloralMode, onUpdateSubcatTagHidden, rcItems = [], rcCats = [], authUser }) {
   const canManageCategories = hasIMSPerm(authUser, "inv_categories");
   // The "+ sub-category" quick-add lists below (Manpower's Tier-2 batches, Heavy Element Add-ons)
@@ -1145,7 +1156,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                                   const nv = parseFloat(e.target.value) || 0;
                                   setSettings((s) => ({ ...s, mandiCatalogue: s.mandiCatalogue.map((x) => {
                                     if (x.id !== p.id) return x;
-                                    return { ...x, priceHistory: [...(x.priceHistory || []), { price: x.currentPrice || 0, date: new Date().toISOString().split("T")[0] }], currentPrice: nv };
+                                    return { ...x, priceHistory: withPrevPrice(x.priceHistory, x.currentPrice), currentPrice: nv };
                                   }) }));
                                 }}
                                 className={"border rounded px-2 py-1 text-xs text-center w-20 font-semibold " + (hasVariants ? "bg-gray-100 text-gray-500 cursor-not-allowed" : "bg-white")} />
@@ -1221,7 +1232,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                                         onChange={(e) => { const nv = parseFloat(e.target.value) || 0;
                                           setSettings((s) => ({ ...s, mandiCatalogue: s.mandiCatalogue.map((x) => {
                                             if (x.id !== p.id) return x;
-                                            const newVariants = (x.colorVariants || []).map((cv) => cv.variantId === v.variantId ? { ...cv, priceHistory: [...(cv.priceHistory || []), { price: cv.currentPrice, date: new Date().toISOString().split("T")[0] }], currentPrice: nv } : cv);
+                                            const newVariants = (x.colorVariants || []).map((cv) => cv.variantId === v.variantId ? { ...cv, priceHistory: withPrevPrice(cv.priceHistory, cv.currentPrice), currentPrice: nv } : cv);
                                             return { ...x, colorVariants: newVariants, currentPrice: recalcParentLowest(newVariants) };
                                           }) }));
                                         }}

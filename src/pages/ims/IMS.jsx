@@ -4,6 +4,7 @@ import { useAuth } from "../../lib/AuthContext";
 import { supabase, fetchAll, updateRow } from "../../lib/supabase";
 import { rowToItem, itemToRow, diffInventory } from "../../lib/inventory/adapter";
 import { computePatternSizeCost, effectiveMarkup } from "../../lib/ims/flowerHelpers";
+import { createSettingsWriter } from "../../lib/ims/settingsWriter";
 import { SETTINGS_DEFAULTS, INIT_TRUSS_INV } from "../../lib/ims/constants";
 import { RC_CATS_DEFAULT } from "../../lib/studio/constants";
 import InventoryTab from "./InventoryTab.jsx";
@@ -413,19 +414,23 @@ export default function IMS() {
   // Settings are a key→value table; persist only the keys that changed. Declared here (rather
   // than near its other read/write siblings further down) so effects that run earlier in this
   // component — like the LMS/season sync — can depend on it without a temporal-dead-zone error.
+  // Every write goes through one ordered, coalescing queue (lib/ims/settingsWriter.js): fast typing used
+  // to fire overlapping upserts that could land out of order, leave an older keystroke in the database,
+  // and have its realtime echo wind the field back under the person typing.
+  const settingsWriterRef = useRef(null);
+  if (!settingsWriterRef.current) {
+    settingsWriterRef.current = createSettingsWriter(
+      async (k, value) => { const { error: e } = await supabase.from("settings").upsert({ key: k, value }, { onConflict: "key" }); return e || null; },
+      (k, e) => setError(`Save failed: ${e.message || e}`),
+    );
+  }
   const setSettings = useCallback((updater) => {
     const prev = settingsRef.current;
     const next = typeof updater === "function" ? updater(prev) : updater;
     settingsRef.current = next;
     setSettingsState(next);
-    trackWrite((async () => {
-      for (const k of Object.keys(next)) {
-        if (JSON.stringify(prev[k]) !== JSON.stringify(next[k])) {
-          const { error: e } = await supabase.from("settings").upsert({ key: k, value: next[k] }, { onConflict: "key" });
-          if (e) setError(`Save failed: ${e.message}`);
-        }
-      }
-    })());
+    const task = settingsWriterRef.current.enqueue(prev, next);
+    if (task) trackWrite(task);
   }, [trackWrite]);
 
   // Apply settings-table rows → blocks blob, Studio rate-card mirror (RC_SK), settings object.
@@ -439,7 +444,13 @@ export default function IMS() {
     const rcCatsBlob = setRows.find((r) => r.key === RC_SK_CATS);
     if (rcCatsBlob?.value != null) { let c = rcCatsBlob.value; if (typeof c === "string") { try { c = JSON.parse(c); } catch { c = null; } } if (Array.isArray(c) && c.length) setStudioRcCats(c); }
     const settingsObj = { ...SETTINGS_DEFAULTS };
-    for (const r of setRows) { if (!/^ambria-/.test(r.key)) settingsObj[r.key] = r.value; }
+    // A key with a local edit still waiting to be written is newer on screen than in the database: its
+    // row here is an older echo, so the screen keeps its own value until that write has landed.
+    const prevLocal = settingsRef.current || {};
+    for (const r of setRows) {
+      if (/^ambria-/.test(r.key)) continue;
+      settingsObj[r.key] = (settingsWriterRef.current?.isDirty(r.key) && r.key in prevLocal) ? prevLocal[r.key] : r.value;
+    }
     settingsRef.current = settingsObj;
     setSettingsState(settingsObj);
     setSettingsLoaded(true);
