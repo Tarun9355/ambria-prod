@@ -1,4 +1,5 @@
 import { Component } from "react";
+import { isChunkLoadError, reloadForNewBuild } from "../lib/chunkReload";
 
 // App-wide safety net. Without this, ANY uncaught render error unmounts React and leaves a blank
 // white screen (no theme, no message) — impossible to diagnose from a screenshot. This catches the
@@ -7,7 +8,7 @@ import { Component } from "react";
 export default class ErrorBoundary extends Component {
   constructor(props) {
     super(props);
-    this.state = { error: null, info: null };
+    this.state = { error: null, info: null, reloading: false };
   }
 
   static getDerivedStateFromError(error) {
@@ -16,14 +17,24 @@ export default class ErrorBoundary extends Component {
 
   componentDidCatch(error, info) {
     this.setState({ info });
+    // A tab opened before a deploy asking for a screen whose file the deploy removed: not a bug, just an
+    // old tab — load the new build (once; see lib/chunkReload.js) instead of showing a crash screen.
+    if (isChunkLoadError(error) && reloadForNewBuild()) this.setState({ reloading: true });
     // Also log to console for DevTools.
     // eslint-disable-next-line no-console
     console.error("Ambria crashed:", error, info);
   }
 
   render() {
-    const { error, info } = this.state;
+    const { error, info, reloading } = this.state;
     if (!error) return this.props.children;
+    if (reloading) {
+      return (
+        <div style={{ minHeight: "100vh", background: "#13131f", color: "#f1f1f4", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14 }}>
+          A new version of Ambria was released — loading it…
+        </div>
+      );
+    }
 
     const text = `${error?.message || error}\n\n${error?.stack || ""}\n\nComponent stack:${info?.componentStack || ""}`;
     const box = { fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: 12, lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-word", background: "#0d0d18", color: "#f1f1f4", border: "1px solid #333", borderRadius: 8, padding: 14, marginTop: 14, maxHeight: "50vh", overflow: "auto" };
