@@ -151,10 +151,19 @@ const cloneTrussRow = (src = {}) => ({
 // titled "Truss N", carrying a remove control and no Add button of its own. Reusing the component
 // rather than writing a cut-down row is what keeps an added truss genuinely equal to the first —
 // front extension, the auto Box/Single-U line, custom ceiling and its own masking all included.
-export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, showCosts, isDark, border, textP, textS, accent, customMaskingField, maskOpts = [], trussRates, structRates, nested = false, title, onRemove, rowIdx, trussInv, venueTruss, scale = 1, guestDiscPct = 0, guestFabricDiscPct = 0, maskingColours = [], maskingColourOptions = [] }) {
+export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, showCosts, isDark, border, textP, textS, accent, customMaskingField, maskOpts = [], trussRates, structRates, nested = false, title, onRemove, rowIdx, trussInv, venueTruss, scale = 1, guestDiscPct = 0, guestFabricDiscPct = 0, maskingColours = [], maskingColourOptions = [], guestPriceMultiplier = 1 }) {
   // What THIS truss structure costs. Same function the cost engine sums over every row, so the
   // figure on the card and the figure in the bill cannot drift.
-  const rowCost = trussRowCost(zc, structRates || { trussRates });
+  // guestPriceMultiplier — the 1.0/1.1/1.2…x dial (Build's own filter-rail dots) folds into the
+  // Truss & Masking SECTION TILE via StudioApp.jsx's scaleStruct, but this per-row card computed its
+  // own rowCost straight from trussRowCost and never got the multiplier — the card showed the raw
+  // pre-markup figure while the tile total summing these same cards was already marked up.
+  const rowCostRaw = trussRowCost(zc, structRates || { trussRates });
+  const rowCost = guestPriceMultiplier === 1 ? rowCostRaw : {
+    truss: rowCostRaw.truss * guestPriceMultiplier,
+    masking: rowCostRaw.masking * guestPriceMultiplier,
+    ceiling: rowCostRaw.ceiling * guestPriceMultiplier,
+  };
   // TEMP — owner ask, pending team discussion, may be removed: this card prices off the flat
   // sqft model (trussRowCost) while the fixed-venue pillar/beam discount is computed from the
   // detailed RFT model (zoneTrussStandingDiscountDetail) — see calcStructCost, which bridges the
@@ -261,10 +270,14 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                       // read like a typo (e.g. "₹19.59/sqft") with nothing explaining where it came
                       // from.
                       const showTiered = !zc.noFabric && r.overApplies;
+                      // guestPriceMultiplier — rowCost.truss above already has it folded in; these
+                      // rate figures are read straight off IMS and didn't, so the caption quoted a
+                      // stale pre-markup ₹/sqft next to an already-marked-up card total.
+                      const gpm = guestPriceMultiplier;
                       return <span style={{fontSize:10.5,color:textS,fontWeight:400}}>
                         {base.a}×{base.b} = {base.area} sqft{showTiered
-                          ? <> — {r.overThreshold} sqft × {fmt(r.baseRate)} + {Math.round((base.area-r.overThreshold)*100)/100} sqft × {fmt(r.overRate)} (oversize)</>
-                          : <> × {fmt(zc.noFabric?r.noFabricRate:r.rate)}/sqft{zc.noFabric?" (no fabric)":""}</>}
+                          ? <> — {r.overThreshold} sqft × {fmt(r.baseRate*gpm)} + {Math.round((base.area-r.overThreshold)*100)/100} sqft × {fmt(r.overRate*gpm)} (oversize)</>
+                          : <> × {fmt((zc.noFabric?r.noFabricRate:r.rate)*gpm)}/sqft{zc.noFabric?" (no fabric)":""}</>}
                         {qty>1?` × ${qty}`:""}
                         {rowDiscount>0&&<span style={{color:"#10B981",fontWeight:600}}> − {fmt(rowDiscount)} venue discount</span>}
                         {guestDisc>0&&<span style={{color:"#10B981",fontWeight:600}}> − {fmt(guestDisc)} ({guestDiscPct}% repeat discount)</span>}
@@ -647,10 +660,10 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
 //
 // calcStructCost has always summed zc.extraTrussRows, and Deal Check, the truss engine and the
 // stock reservation all read them — Build was simply the one place with no way to create one.
-export function TrussStack({ S, customCeilingField, customMaskingField, k, zc, zm, st, sZ, sD, fmt, showCosts, isDark, border, textP, textS, accent, maskOpts, trussRates, structRates, trussInv, venueTruss, scale = 1, guestDiscPct = 0, guestFabricDiscPct = 0, maskingColours = [], maskingColourOptions = [] }) {
+export function TrussStack({ S, customCeilingField, customMaskingField, k, zc, zm, st, sZ, sD, fmt, showCosts, isDark, border, textP, textS, accent, maskOpts, trussRates, structRates, trussInv, venueTruss, scale = 1, guestDiscPct = 0, guestFabricDiscPct = 0, maskingColours = [], maskingColourOptions = [], guestPriceMultiplier = 1 }) {
   const rows = zc.extraTrussRows || [];
   const write = (next) => sZ({ extraTrussRows: next });
-  const shared = { S, customCeilingField, customMaskingField, k, zm, st, fmt, showCosts, isDark, border, textP, textS, accent, maskOpts, trussRates, structRates, trussInv, venueTruss, scale, guestDiscPct, guestFabricDiscPct, maskingColours, maskingColourOptions };
+  const shared = { S, customCeilingField, customMaskingField, k, zm, st, fmt, showCosts, isDark, border, textP, textS, accent, maskOpts, trussRates, structRates, trussInv, venueTruss, scale, guestDiscPct, guestFabricDiscPct, maskingColours, maskingColourOptions, guestPriceMultiplier };
   return (<>
     <TrussCard {...shared} zc={zc} sZ={sZ} sD={sD} title={rows.length ? "Truss 1" : "Truss"} />
     {rows.map((row, ri) => {
@@ -680,7 +693,7 @@ export function TrussStack({ S, customCeilingField, customMaskingField, k, zc, z
 // `nested` marks one of a zone's EXTRA platform footprints: same card, same colours, titled
 // "Platform N" with a remove control in place of the cost, which the first card already totals
 // across every footprint.
-export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, imsInventory = [], nested = false, title, onRemove, scale = 1, openAvailModal, zoneKey, rowIdx = 0, onCarpetAll, carpetShortOf, carpetRemainingOf }) {
+export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, imsInventory = [], nested = false, title, onRemove, scale = 1, openAvailModal, zoneKey, rowIdx = 0, onCarpetAll, carpetShortOf, carpetRemainingOf, guestPriceMultiplier = 1 }) {
   // The picked carpet can only cover so many sqft: a width/depth that would take this floor past
   // what is left of its free stock (minus the other floors using the same carpet) is not saved.
   const [cpLimit, setCpLimit] = useState("");
@@ -705,12 +718,17 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
   // no Platform/Carpet area (₹0) until someone types one, same as an extra platform row already
   // required. See calcStructCost's own comment (StudioApp.jsx) for the engine-side half of this.
   const rowDims = zc.floorDims || {};
-  const rowCost = platformRowCost(
+  const rowCostRaw = platformRowCost(
     { plH: zc.plH, floorDims: rowDims, cpT: zc.cpT, plQty: zc.plQty, cpInvId: zc.cpInvId },
     { platformRates: imsPlatformRates, carpetMaterials: imsCarpetMaterials, imsInventory },
   );
+  // guestPriceMultiplier — the Platform/Carpet SECTION TILE total already folds this in
+  // (scaleStruct); this per-row card computed straight off platformRowCost and never got it, same
+  // Rate-vs-Amount mismatch as the Truss card above.
+  const rowCost = guestPriceMultiplier === 1 ? rowCostRaw : Object.fromEntries(Object.entries(rowCostRaw).map(([k2, v]) => [k2, typeof v === "number" ? v * guestPriceMultiplier : v]));
   // Guest rate = the material; the picked carpet's own rental is shown beside it (Ambria's cost).
-  const carpetBilled = carpetPricingFor(zc.cpT, imsCarpetMaterials);
+  const carpetBilledRaw = carpetPricingFor(zc.cpT, imsCarpetMaterials);
+  const carpetBilled = { ...carpetBilledRaw, rate: Math.round((carpetBilledRaw.rate || 0) * guestPriceMultiplier * 100) / 100 };
   const isNewCarpet = /new/i.test(carpetBilled.label || "");
   const [cpUploading, setCpUploading] = useState(false);
   // Carpet New is bought fresh, so there is no stock photo to pick — the salesperson attaches one.
@@ -885,12 +903,12 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
 //
 // platformRowCost already runs per row over zc.extraPlatformRows and buildPlatformPlan draws one
 // ops entry each, so the cost and the plan were ready long before there was a way to add one.
-export function FloorStack({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, imsInventory = [], scale = 1, openAvailModal, zoneKey, onCarpetAll, carpetShortOf, carpetRemainingOf }) {
+export function FloorStack({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, imsInventory = [], scale = 1, openAvailModal, zoneKey, onCarpetAll, carpetShortOf, carpetRemainingOf, guestPriceMultiplier = 1 }) {
   const rows = zc.extraPlatformRows || [];
   const write = (next) => sZ({ extraPlatformRows: next });
   // accent rides in `shared`, so both the first floor and every added row get it from one place —
   // FloorCard needs it for the platform-height control's selected fill.
-  const shared = { S, zm, st, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, imsInventory, scale, openAvailModal, zoneKey, onCarpetAll, carpetShortOf, carpetRemainingOf };
+  const shared = { S, zm, st, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, imsInventory, scale, openAvailModal, zoneKey, onCarpetAll, carpetShortOf, carpetRemainingOf, guestPriceMultiplier };
   return (<>
     <FloorCard {...shared} zc={zc} sZ={sZ} sFD={sFD} fd={fd} title={rows.length ? "Floor 1" : "Floor"} />
     {rows.map((row, ri) => {
@@ -5021,10 +5039,10 @@ undefined
                   DCTrussTab still shows that detailed breakdown for its own purposes, unaffected. */}
               {zoneSection[k]==="truss"&&<TrussStack S={S} customCeilingField={customCeilingField} k={k} zc={zc} zm={zm} st={st} sZ={sZ} sD={sD} fmt={fmt} showCosts={showCosts}
                 isDark={isDark} border={border} textP={textP} textS={textS} accent={accent}
-                customMaskingField={customMaskingField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} scale={zoneScaleVal(k)} guestDiscPct={structDiscountFor(zc,aVenue)?.truss?25:0} guestFabricDiscPct={structDiscountFor(zc,aVenue)?25:0} maskingColours={maskingColours} maskingColourOptions={maskingColourOptions} />}
+                customMaskingField={customMaskingField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} scale={zoneScaleVal(k)} guestDiscPct={structDiscountFor(zc,aVenue)?.truss?25:0} guestFabricDiscPct={structDiscountFor(zc,aVenue)?25:0} maskingColours={maskingColours} maskingColourOptions={maskingColourOptions} guestPriceMultiplier={guestPriceMultiplier} />}
               {/* ── PLATFORM + CARPET → then floor dims ── */}
               {zoneSection[k]==="platform"&&<FloorStack S={S} zc={zc} zm={zm} st={st} sZ={sZ} sFD={sFD} fd={fd} fmt={fmt} showCosts={showCosts}
-                isDark={isDark} border={border} accent={accent} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} imsInventory={imsInventory} scale={zoneScaleVal(k)} openAvailModal={openAvailModal} zoneKey={k} onCarpetAll={applyCarpetToAll} carpetShortOf={carpetShortOf} carpetRemainingOf={carpetRemainingOf} />}
+                isDark={isDark} border={border} accent={accent} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} imsInventory={imsInventory} scale={zoneScaleVal(k)} openAvailModal={openAvailModal} zoneKey={k} onCarpetAll={applyCarpetToAll} carpetShortOf={carpetShortOf} carpetRemainingOf={carpetRemainingOf} guestPriceMultiplier={guestPriceMultiplier} />}
             </div>);
           })()}
           </Fragment>}
@@ -5532,9 +5550,9 @@ undefined
                   {secHead(<IconRuler size={14}/>,"Zone Dimensions","#C9A96E")}
                   <TrussStack S={S} customCeilingField={ownsLive?customCeilingField:noCustomField} k={zk} zc={cfgCur} zm={zm} st={st} sZ={sZ} sD={sD} fmt={fmt} showCosts={showCosts}
                     isDark={isDark} border={border} textP={textP} textS={textS} accent={accent}
-                    customMaskingField={ownsLive?customMaskingField:noCustomField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} scale={scaleFor} guestDiscPct={structDiscountFor(cfgCur,aVenue)?.truss?25:0} guestFabricDiscPct={structDiscountFor(cfgCur,aVenue)?25:0} maskingColours={maskingColours} maskingColourOptions={maskingColourOptions} />
+                    customMaskingField={ownsLive?customMaskingField:noCustomField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} scale={scaleFor} guestDiscPct={structDiscountFor(cfgCur,aVenue)?.truss?25:0} guestFabricDiscPct={structDiscountFor(cfgCur,aVenue)?25:0} maskingColours={maskingColours} maskingColourOptions={maskingColourOptions} guestPriceMultiplier={guestPriceMultiplier} />
                   <FloorStack S={S} zc={cfgCur} zm={zm} st={st} sZ={sZ} sFD={sFD} fd={fd} fmt={fmt} showCosts={showCosts}
-                    isDark={isDark} border={border} accent={accent} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} scale={scaleFor} openAvailModal={ownsLive?openAvailModal:undefined} zoneKey={zk} />
+                    isDark={isDark} border={border} accent={accent} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} scale={scaleFor} openAvailModal={ownsLive?openAvailModal:undefined} zoneKey={zk} guestPriceMultiplier={guestPriceMultiplier} />
                 </div>
                 <div style={sectionBox}>
                   {secHead(<IconClipboard size={14}/>,"Element Breakdown","#7C3AED",

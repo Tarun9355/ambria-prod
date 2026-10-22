@@ -10085,7 +10085,10 @@ export default function StudioApp() {
         // Oversize tiering (e.g. ₹20 for the first 1850 sqft, ₹15 above) blends into one flat average
         // ₹/sqft on the sheet (owner ask) — no tier breakdown, just the average rounded to the paisa.
         // The row's own total is already the correct tiered amount.
-        const _tRateFlat = Math.round(_tEffRate * 100) / 100;
+        // guestPriceMultiplier — zl.truss (this row's `total`, below) already has it folded in via
+        // scaleStruct; this displayed rate didn't, so a 1.1x markup bumped Amount 10% while Rate sat
+        // at the raw IMS number — Qty × Rate no longer reproduced Amount, and the sheet looked wrong.
+        const _tRateFlat = Math.round(_tEffRate * guestPriceMultiplier * 100) / 100;
         const _tRateLabel = `₹${_tRateFlat}/sqft`;
         structItems.push({
           name: "Truss (" + (_tShape === "box" ? "Box" : "Single U") + " · " + _tMatLabel + (zc.noFabric ? " · no fabric" : "") + " " + _tRateLabel + ")" + (_tCeilingItem ? ` · custom ceiling: ${_tCeilingItem.name}` : "") + (zc.trT === "box" && (Number(zc.trussFrontExt) || 0) > 0 ? ` + 2× Single-U front ext ${zc.trussFrontExt}×${Number(zc.trussFrontExtH) || dims.H || 0}ft` : "") + ((zc.trussQty || 1) > 1 ? " ×" + zc.trussQty : ""),
@@ -10143,11 +10146,15 @@ export default function StudioApp() {
           structItems.push({ name: "Wall Masking — " + _maskedWalls.map((wId) => `${_wallName[wId]}: ${_wallLabel(wId)}`).join(", "), total: zl.masking });
         } else {
           const _mCustomItem = zc.customMaskingItemId ? (imsInventory || []).find((i) => i.id === zc.customMaskingItemId) : null;
-          structItems.push({ name: _mCustomItem ? `Wall Masking — custom: ${_mCustomItem.name}` : "Wall Masking — " + (zc.mkT || "fabric") + " ₹" + maskingRateFor(zc.mkT || "fabric", imsMaskingRates) + "/sqft (" + (zc.mkS || 1) + " side" + ((zc.mkS || 1) > 1 ? "s" : "") + ")", total: zl.masking });
+          // guestPriceMultiplier — zl.masking already has it folded in; the rate quoted in this name
+          // string didn't, same bug as Truss/Platform/Carpet below.
+          structItems.push({ name: _mCustomItem ? `Wall Masking — custom: ${_mCustomItem.name}` : "Wall Masking — " + (zc.mkT || "fabric") + " ₹" + Math.round(maskingRateFor(zc.mkT || "fabric", imsMaskingRates) * guestPriceMultiplier * 100) / 100 + "/sqft (" + (zc.mkS || 1) + " side" + ((zc.mkS || 1) > 1 ? "s" : "") + ")", total: zl.masking });
         }
       }
       if (zl.platform > 0) {
-        const _pRate = platformRateFor(zc.plH, structRates.platformRates);
+        // guestPriceMultiplier — zl.platform already has it folded in (scaleStruct); the quoted rate
+        // didn't, same Rate-vs-Amount mismatch as Truss above.
+        const _pRate = Math.round(platformRateFor(zc.plH, structRates.platformRates) * guestPriceMultiplier * 100) / 100;
         structItems.push({
           name: "Platform (" + (zc.plH === "4in" ? "4 inch" : zc.plH === "1ft" ? "1ft–3ft" : zc.plH || "") + " ₹" + _pRate + "/sqft)",
           size: floorDimLabel, qty: Math.round(floorArea * 100) / 100, rate: _pRate, unit: "sqft",
@@ -10156,10 +10163,12 @@ export default function StudioApp() {
       }
       if (zl.carpet > 0) {
         // The guest is billed the material's rate (the picked carpet's rental is Ambria's cost only).
+        // guestPriceMultiplier folded into the displayed rate too, same reason as Platform above.
         const cp = carpetPricingFor(zc.cpT, imsCarpetMaterials);
+        const _cpRate = Math.round(cp.rate * guestPriceMultiplier * 100) / 100;
         structItems.push({
-          name: "Carpet (" + cp.label + " ₹" + cp.rate + "/sqft)",
-          size: floorDimLabel, qty: Math.round(floorArea * 100) / 100, rate: cp.rate, unit: "sqft",
+          name: "Carpet (" + cp.label + " ₹" + _cpRate + "/sqft)",
+          size: floorDimLabel, qty: Math.round(floorArea * 100) / 100, rate: _cpRate, unit: "sqft",
           total: zl.carpet,
         });
       }
@@ -10181,9 +10190,12 @@ export default function StudioApp() {
         // back up to match the total they supposedly made up.
         const pTotal = pw * pd * pRate * pq * guestPriceMultiplier;
         if (pTotal <= 0) return;
+        // Same fold for the displayed rate as pTotal just above it, so Rate × Qty still reads as
+        // Amount on the sheet instead of a stale pre-markup number next to an already-scaled total.
+        const pRateShown = Math.round(pRate * guestPriceMultiplier * 100) / 100;
         structItems.push({
-          name: "🖨 Print — " + (m?.name || "material") + " ₹" + pRate + "/sqft" + (pq > 1 ? " ×" + pq : ""),
-          size: `${pw}×${pd}ft`, qty: Math.round(pw * pd * pq * 100) / 100, rate: pRate, unit: "sqft",
+          name: "🖨 Print — " + (m?.name || "material") + " ₹" + pRateShown + "/sqft" + (pq > 1 ? " ×" + pq : ""),
+          size: `${pw}×${pd}ft`, qty: Math.round(pw * pd * pq * 100) / 100, rate: pRateShown, unit: "sqft",
           total: pTotal,
         });
       });
