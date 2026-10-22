@@ -193,6 +193,13 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
   const fabricRepOff = fabricInv ? fabricRepeatDiscount(zc, fabricInv, zc.drapeDensity || "moderate", fabMult, guestFabricDiscPct) : 0;
   const fabricShown = fabricCost + wallPanelCost - fabricRepOff;
   const [fabMenu, setFabMenu] = useState(null); // which Fabric icon's menu is open ("fabLiza" | "fabCurtain")
+  // Width, Depth and Height all filled = a Box (the rule sD applies when a dimension is typed). A truss
+  // whose type was left at "Single U" by some other path (a copied build, a photo's own dims) hid the
+  // Custom Ceiling and priced as a U; trT is brought back in line so every reader — price, Deal Check,
+  // IMS — sees the same truss. No saved quote is in that state (checked), so nothing re-prices.
+  const _dm = zc.dims || {};
+  const threeDims = [_dm.W || _dm.S, _dm.L, _dm.H].every(x => (Number(x) || 0) > 0);
+  useEffect(() => { if (threeDims && zc.trT && zc.trT !== "box") sZ({ trT: "box" }); }, [threeDims, zc.trT]); // eslint-disable-line react-hooks/exhaustive-deps
   // ═══ ONE SELECTED-STATE ═══ These three rows previously used a dark outline (material),
   // PINK (drape) and a borderless grey fill (masking). The borderless one was the real problem:
   // unselected options rendered as plain text and did not look clickable. `border` is never
@@ -405,7 +412,7 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                       {/* Sits with Drape, not Material: it swaps the fabric ceiling drape for an
                           inventory item, so its cost comes out of the drape portion of the rate
                           (ceilingRatePerSqft), and it has nothing to do with the truss metal. */}
-                      {zc.trT==="box" && <span style={{display:"inline-flex"}}>{customCeilingField(k, zc, false, rowIdx)}</span>}
+                      {(zc.trT==="box" || threeDims) && <span style={{display:"inline-flex"}}>{customCeilingField(k, zc, false, rowIdx)}</span>}
                     </div>
                   </div>}
                   {/* Liza/Masking-panel/Curtain drape fabric grade. Old is the default, billed
@@ -650,7 +657,7 @@ export function TrussStack({ S, customCeilingField, customMaskingField, k, zc, z
       const setRow = (patch) => write(rows.map((x, i) => (i === ri ? { ...x, ...patch } : x)));
       // Same "3 dims ⇒ Box, 2 ⇒ Single U" rule the zone's own row applies.
       const setDim = (d, v) => { const cur = rows[ri] || {}; const dims = { ...(cur.dims || {}), [d]: parseFloat(v) || 0 };
-        const n = [dims.W, dims.L, dims.H].filter((x) => (Number(x) || 0) > 0).length;
+        const n = [dims.W || dims.S, dims.L, dims.H].filter((x) => (Number(x) || 0) > 0).length;
         write(rows.map((x, i) => (i === ri ? { ...x, dims, trT: n >= 3 ? "box" : n === 2 ? "singleU" : x.trT } : x))); };
       return <TrussCard key={row.id || ri} {...shared} zc={row} sZ={setRow} sD={setDim}
         nested title={`Truss ${ri + 2}`} rowIdx={ri} onRemove={() => write(rows.filter((_, i) => i !== ri))} />;
@@ -4972,7 +4979,7 @@ undefined
             const sZ=u=>{setActiveZones([]);setZoneConfig(p=>({...p,[k]:{...p[k],...u}}));};
             const sD=(d,v)=>{setActiveZones([]);setZoneConfig(p=>{const cur=p[k]||{};const dims={...(cur.dims||{}),[d]:parseFloat(v)||0};
               // 3 dims filled ⇒ Box, exactly 2 ⇒ Single U — keep the toggle + pricing in sync with the dims.
-              const n=[dims.W,dims.L,dims.H].filter(x=>(Number(x)||0)>0).length;const trT=n>=3?"box":n===2?"singleU":cur.trT;
+              const n=[dims.W||dims.S,dims.L,dims.H].filter(x=>(Number(x)||0)>0).length;const trT=n>=3?"box":n===2?"singleU":cur.trT;
               return {...p,[k]:{...cur,dims,trT}};});};
             // Typing a floor dimension no longer silently picks a PLATFORM HEIGHT for you — it used
             // to write a default height in here the moment ANY dimension was typed, which is how a
@@ -5472,7 +5479,7 @@ undefined
               const zm=zoneMeta[zk],st=scaleStruct(calcStructCost(zk,cfgCur,structRates,structDiscountFor(cfgCur,aVenue)));
               const sZ=u=>writeCfg(cur=>({...cur,...u}));
               const sD=(d,v)=>writeCfg(cur=>{const dims={...(cur.dims||{}),[d]:parseFloat(v)||0};
-                const n=[dims.W,dims.L,dims.H].filter(x=>(Number(x)||0)>0).length;const trT=n>=3?"box":n===2?"singleU":cur.trT;
+                const n=[dims.W||dims.S,dims.L,dims.H].filter(x=>(Number(x)||0)>0).length;const trT=n>=3?"box":n===2?"singleU":cur.trT;
                 return {...cur,dims,trT};});
               const sFD=(d,v)=>writeCfg(cur=>({...cur,cpT:cur.cpT||defaultCarpetMatId(imsCarpetMaterials),floorDims:{...(cur.floorDims||{}),[d]:parseFloat(v)||0}}));
               const fd=cfgCur.floorDims||{};
