@@ -933,7 +933,7 @@ export default function StudioBuild({ ctx }) {
     // zone photo groups (hand-picked leading photos, keyed by zone + function)
     zoneGroups = {}, writeZoneGroup,
     // date demand
-    dateTypes, clientLedger, activeClientId, saveClientLedger, hideDiscountFromClient, guestPriceMultiplier, activeCrossFnReuseQty, activeSiblingFnInvUse = {}, activeSiblingFnSubcatOpportunity = {},
+    dateTypes, clientLedger, activeClientId, saveClientLedger, floatPending, hideDiscountFromClient, guestPriceMultiplier, activeCrossFnReuseQty, activeSiblingFnInvUse = {}, activeSiblingFnSubcatOpportunity = {},
     // build canvas
     setShowCosts, grandTotal, agencyFeeAmt, totalCost, transportCalc, pricingReady,
     savedInsps, setStep, setPreviewImg,
@@ -2366,12 +2366,12 @@ export default function StudioBuild({ ctx }) {
   // estimate is not shown on the Build page). With more than one function the amount is for all of
   // them and has no meaning for one function's rail, so it is left alone.
   const negClient = (clientLedger||[]).find(c=>c.id===activeClientId);
-  // A floating negotiated amount is worked out here from THIS tab's build (amount + total now − base),
-  // not read from the stored value, so another tab writing its own figure cannot make it flicker.
+  // A floating negotiated amount is the stored amount plus this tab's own edits not yet written
+  // (floatPending — StudioApp's follow-the-build logic). It moves only when the build is edited: never
+  // with a rate change, never just because the deal was opened, never with another tab's writes.
   const nfl = negClient?.negotiatedFloat;
-  const negAmt = (nfl && Number(nfl.amount) > 0 && Number.isFinite(Number(nfl.base)) && grandTotal > 0)
-    ? Math.max(0, Math.round(Number(nfl.amount) + (grandTotal - Number(nfl.base))))
-    : (Number(negClient?.negotiatedAmount) || 0);
+  const negBase = Number(negClient?.negotiatedAmount) || 0;
+  const negAmt = (nfl && negBase > 0) ? Math.max(0, Math.round(negBase + (Number(floatPending) || 0))) : negBase;
   const showNeg = negAmt > 0 && (extraFunctions||[]).length === 0;
   const shownTotal = showNeg ? negAmt : grandTotal;
   const PRICING_TILE = showCosts && (()=>{

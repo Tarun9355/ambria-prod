@@ -6040,50 +6040,68 @@ export default function StudioApp() {
   }, [collectAllFunctionData, calcFunctionCost, dealCheckData, studioFloralData, sharedFloralSettings, venueParents]);
 
   // ── A NEGOTIATED AMOUNT THAT FOLLOWS THE BUILD (client.negotiatedFloat = { amount, base }) ──
-  // `amount` is the price agreed at the moment it was set and `base` is Build's total at that moment.
-  // The negotiated amount keeps moving with the build — amount + (total now − base) — so removing a
-  // ₹1L zone takes ₹1L off it instead of leaving it pinned. Only clients that carry negotiatedFloat do
-  // this (a plain negotiated amount stays fixed, as before). It follows a BOOKED deal too (owner ask):
-  // there the deal value is what moves, so the booked baseline is re-pointed at the same time (no
-  // "pending" is left to Apply twice) and IMS's deal value is updated. Typing a new amount in Summary
-  // drops the float. Single-function deals only, and never while the build is loading.
+  // Switched on per deal from Build's Live Estimate ("follow build"). While on, an EDIT to the build
+  // moves the negotiated amount by exactly what that edit changed the total by: removing a ₹1L zone
+  // takes ₹1L off it. Single-function deals only. It follows a BOOKED deal too (owner ask): there the
+  // deal value is what moves, so the booked baseline is re-pointed at the same time (no "pending" is
+  // left to Apply twice) and IMS's deal value is updated.
   //
-  // ── IT WRITES ONLY WHEN THIS TAB'S OWN BUILD TOTAL MOVES ──
-  // The first version rewrote the stored amount whenever it differed from this tab's figure. With the
-  // same client open in two tabs (two people, two builds) each tab "corrected" the other's value, the
-  // echo reached the first tab, which corrected it back — a ping-pong every second or two, and the
-  // amount (and everything reading it) flickered between the two builds' figures with nobody editing.
-  // Now a tab writes once when it opens the client and after that only when ITS total changes (a real
-  // local edit), never because an echo of someone else's value arrived. Build's own headline does not
-  // read the stored amount for a floating client at all: it works the figure out from this tab's own
-  // build (see StudioBuild), so it cannot flicker with another tab's writes.
-  const floatTotalRef = useRef({ id: null, total: null });
+  // ── ONLY AN EDIT MOVES IT ──
+  // It used to track the build TOTAL, so anything that moved the total moved the price: a rate edited
+  // in IMS, pricing data landing late, the deal simply being opened in a tab whose total had drifted
+  // since. Now it tracks the build's CONTENT (buildSig: elements, quantities, zones, structure, custom
+  // items, venue/date — what a salesperson changes), and the price moves only when that changes:
+  //   • the deal is opened / loading — take what is there as the starting point, write nothing;
+  //   • the total moves but the build did not (rates, settings) — same, absorbed silently;
+  //   • the build changed — add that change in total to the amount, once, after a short pause.
+  // A build open in another tab never arrives in this one (its saves only refresh the session list),
+  // so each tab adds only its own edits, onto the latest stored amount — two tabs cannot ping-pong.
+  // floatPending carries an edit's change until it is written, so Build's headline moves at once.
+  const buildSig = useMemo(() => {
+    try { return JSON.stringify([zoneElements, zoneConfig, enabledEls, elTiers, itemQty, itemGrades, customZones, dcCustomItems, floralRatio, venue, fn, clientDate, clientShift]); } catch { return ""; }
+  }, [zoneElements, zoneConfig, enabledEls, elTiers, itemQty, itemGrades, customZones, dcCustomItems, floralRatio, venue, fn, clientDate, clientShift]);
+  const floatSeenRef = useRef({ id: null, sig: null, total: 0, openedAt: 0 });
   const floatTimerRef = useRef(null);
+  const floatPendingRef = useRef(0);
+  const [floatPending, setFloatPending] = useState(0);
   const floatLatestRef = useRef({});
   floatLatestRef.current = { grandTotal, eventGrandTotal, saveClientLedger, syncDealValueNow, clientLedger };
   useEffect(() => () => { if (floatTimerRef.current) clearTimeout(floatTimerRef.current); }, []);
+  const floatOn = !!((clientLedger || []).find(c => c.id === activeClientId)?.negotiatedFloat);
   useEffect(() => {
-    const ac = (clientLedger || []).find(c => c.id === activeClientId);
-    const nf = ac?.negotiatedFloat;
-    if (!ac || !nf || !(Number(nf.amount) > 0) || !Number.isFinite(Number(nf.base))) return;
-    if (!pricingReady || (extraFunctions || []).length > 0 || !(grandTotal > 0)) return;
-    if (!Object.values(zoneElements || {}).some(a => Array.isArray(a) && a.length > 0)) return;
-    const seen = floatTotalRef.current;
-    if (seen.id === ac.id && Math.abs(grandTotal - seen.total) < 1) return; // an echo, not an edit of this tab's build
-    floatTotalRef.current = { id: ac.id, total: grandTotal };
+    const ac = (clientLedgerRef.current || clientLedger || []).find(c => c.id === activeClientId);
+    const seen = floatSeenRef.current;
+    const opened = seen.id !== activeClientId;
+    const ready = floatOn && Number(ac?.negotiatedAmount) > 0 && pricingReady && !restoring && (extraFunctions || []).length === 0
+      && grandTotal > 0 && Object.values(zoneElements || {}).some(a => Array.isArray(a) && a.length > 0);
+    // Not following, still loading, or a different deal just opened (and its first seconds while the
+    // build lands): this is the starting point. Nothing written, nothing pending.
+    if (!ready || opened || Date.now() - seen.openedAt < 3000) {
+      floatSeenRef.current = { id: activeClientId, sig: buildSig, total: grandTotal, openedAt: opened ? Date.now() : seen.openedAt };
+      if (!ready && floatPendingRef.current) { floatPendingRef.current = 0; setFloatPending(0); }
+      return;
+    }
+    // The total moved but nothing in the build did — a rate or setting changed. Not an edit.
+    if (seen.sig === buildSig) { seen.total = grandTotal; return; }
+    const delta = grandTotal - seen.total;
+    floatSeenRef.current = { ...seen, sig: buildSig, total: grandTotal };
+    if (Math.abs(delta) < 0.5) return;
+    floatPendingRef.current += delta;
+    setFloatPending(floatPendingRef.current);
     if (floatTimerRef.current) clearTimeout(floatTimerRef.current);
     floatTimerRef.current = setTimeout(() => {
       const L = floatLatestRef.current;
-      const cur = (clientLedgerRef.current || L.clientLedger || []).find(c => c.id === ac.id);
-      const f = cur?.negotiatedFloat;
-      if (!cur || !f) return; // the float was dropped meanwhile (someone typed an amount)
-      const want = Math.round(Number(f.amount) + (L.grandTotal - Number(f.base)));
-      if (!(want > 0) || want === Math.round(Number(cur.negotiatedAmount) || 0)) return;
+      const cur = (clientLedgerRef.current || L.clientLedger || []).find(c => c.id === activeClientId);
+      const add = floatPendingRef.current;
+      floatPendingRef.current = 0;
+      setFloatPending(0);
+      if (!cur || !cur.negotiatedFloat || !add) return; // switched off meanwhile
+      const want = Math.max(0, Math.round((Number(cur.negotiatedAmount) || 0) + add));
       const booked = cur.status === "booked";
-      L.saveClientLedger((clientLedgerRef.current || L.clientLedger).map(c => c.id === ac.id ? { ...c, negotiatedAmount: want, ...(booked ? { bookedSystemTotal: L.eventGrandTotal } : {}) } : c));
+      L.saveClientLedger((clientLedgerRef.current || L.clientLedger).map(c => c.id === cur.id ? { ...c, negotiatedAmount: want, negotiatedFloat: { amount: want, base: L.grandTotal }, ...(booked ? { bookedSystemTotal: L.eventGrandTotal } : {}) } : c));
       if (booked) L.syncDealValueNow?.({ amount: want, pending: 0 });
-    }, 1000);
-  }, [grandTotal, clientLedger, activeClientId, pricingReady, extraFunctions, zoneElements]);
+    }, 800);
+  }, [grandTotal, buildSig, activeClientId, pricingReady, restoring, extraFunctions, zoneElements, floatOn]);
 
   const calcFunctionBreakdown = useCallback((fnData) => {
     if (!fnData) return { zones: [], transport: null, decorTotal: 0, transportTotal: 0, transportTotalClient: 0, grand: 0, grandClient: 0 };
@@ -11947,7 +11965,7 @@ export default function StudioApp() {
     // pricing helpers
     rcIsSMB, buildZoneConfig, getFloralMode, applyFloralRatio, getElPrice, getElPriceForFn, calcElsCost, calcElsCostForFn, rcCostPctForSub,
     calcPhotoCost, calcStructCost, calcFullEventCost, getFullCost, totalCost, transportCalc, grandTotal, lastSavedFnTotal, agencyFeeAmt, pricingReady,
-    collectAllFunctionData, calcFunctionCost, calcFnFloralSourcingCost, eventGrandTotal, calcFunctionBreakdown, manpowerPlanForBooking, persistDeptSnapshot, syncDealValueNow, dcEoActuals, refreshDcEoActuals,
+    collectAllFunctionData, calcFunctionCost, calcFnFloralSourcingCost, eventGrandTotal, calcFunctionBreakdown, manpowerPlanForBooking, persistDeptSnapshot, syncDealValueNow, floatPending, dcEoActuals, refreshDcEoActuals,
     // deal check orchestration + persistence (overlay)
     openDealCheck, runDealCheckGenerate, getStudioAvailable, loadAvailability, getActiveSoftHold, reliableSave, DC_CACHE_SK,
     flushDcAutosaveRef,
