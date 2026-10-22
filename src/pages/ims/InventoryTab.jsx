@@ -1,4 +1,5 @@
 import React, { useState, useRef, useMemo } from "react";
+import { thumbUrl, fitUrl } from "../../lib/studio/thumb.js";
 import { Badge, TypeBadge, Modal } from "../../components/ui";
 import { fmt } from "../../lib/format";
 import { INV_CATS, INV_LOCATIONS, DEPTS, INV_TYPES, PRICING_CAT_STYLES, SUBCAT_OTHER, PAINT_TOKENS } from "../../lib/inventory/constants";
@@ -913,7 +914,7 @@ Rules:
                     <td className="px-3 py-2">
                       {i.img
                         ? <div className="relative w-14 h-14">
-                            <img src={i.img} alt={i.name} title="Click to view full size" onClick={(e) => { e.stopPropagation(); setBigImg(i.img); }} className="w-14 h-14 rounded-xl object-cover border shadow-sm cursor-zoom-in hover:opacity-90" onError={(e) => { e.target.style.display = "none"; e.target.parentElement.querySelector(".img-fallback").style.display = "flex"; }} />
+                            <img src={thumbUrl(i.img, 56)} loading="lazy" decoding="async" alt={i.name} title="Click to view full size" onClick={(e) => { e.stopPropagation(); setBigImg(i.img); }} className="w-14 h-14 rounded-xl object-cover border shadow-sm cursor-zoom-in hover:opacity-90" onError={(e) => { e.target.style.display = "none"; e.target.parentElement.querySelector(".img-fallback").style.display = "flex"; }} />
                             <div className="img-fallback w-14 h-14 rounded-xl border bg-gray-100 flex-col items-center justify-center text-gray-300 absolute top-0 left-0" style={{ display: "none" }}>
                               <span className="text-2xl leading-none">📷</span>
                             </div>
@@ -1166,7 +1167,7 @@ Rules:
               <div className="flex-shrink-0">
                 {form.img
                   ? <div className="relative">
-                      <img src={form.img} alt="Item" className="w-24 h-24 rounded-xl object-cover border-2 border-green-400 shadow" onError={(e) => { e.target.onerror = null; e.target.style.display = "none"; }} />
+                      <img src={thumbUrl(form.img, 96)} loading="lazy" decoding="async" alt="Item" className="w-24 h-24 rounded-xl object-cover border-2 border-green-400 shadow" onError={(e) => { e.target.onerror = null; e.target.style.display = "none"; }} />
                       {photoLoading && (
                         <div className="absolute inset-0 rounded-xl bg-black/50 flex flex-col items-center justify-center">
                           <div className="w-6 h-6 border-white/30 border-t-white rounded-full animate-spin mb-1" style={{ borderWidth: "3px" }}></div>
@@ -1388,7 +1389,7 @@ Rules:
           return <div className="space-y-4">
           <div className="flex gap-4">
             {selItem.img
-              ? <img src={selItem.img} alt="" className="w-28 h-28 rounded-xl object-cover border shadow" onError={(e) => { e.target.onerror = null; e.target.src = ""; e.target.style.display = "none"; }} />
+              ? <img src={thumbUrl(selItem.img, 112)} loading="lazy" decoding="async" alt="" className="w-28 h-28 rounded-xl object-cover border shadow" onError={(e) => { e.target.onerror = null; e.target.src = ""; e.target.style.display = "none"; }} />
               : <div className="w-28 h-28 rounded-xl border bg-gray-100 flex flex-col items-center justify-center text-gray-300 flex-shrink-0"><span className="text-4xl">📷</span><span className="text-xs mt-1">No photo</span></div>
             }
             <div className="grid grid-cols-3 gap-x-6 gap-y-2 text-sm flex-1">
@@ -1406,7 +1407,7 @@ Rules:
                   const cq = Number(s.qty) || 1;
                   return (
                     <div key={idx} className="flex items-center gap-2 text-sm px-3 py-2 border-b last:border-b-0">
-                      {ci?.img ? <img src={ci.img} alt="" className="w-8 h-8 rounded object-cover flex-shrink-0" onError={(e) => { e.target.style.display = "none"; }} /> : <div className="w-8 h-8 rounded bg-gray-100 flex-shrink-0 flex items-center justify-center text-gray-300 text-xs">📷</div>}
+                      {ci?.img ? <img src={thumbUrl(ci.img, 32)} loading="lazy" decoding="async" alt="" className="w-8 h-8 rounded object-cover flex-shrink-0" onError={(e) => { e.target.style.display = "none"; }} /> : <div className="w-8 h-8 rounded bg-gray-100 flex-shrink-0 flex items-center justify-center text-gray-300 text-xs">📷</div>}
                       <span className="font-medium text-gray-800">{ci?.name || `⚠ ${s.itemId} (not in inventory)`}</span>
                       <span className="ml-auto text-gray-500">×{cq}{ci ? ` · ${fmt((Number(ci.price) || 0) * cq)}` : ""}</span>
                     </div>
@@ -1487,7 +1488,7 @@ Rules:
               <div className="flex gap-4 items-start">
                 <div className="relative">
                   {editForm.img
-                    ? <img src={editForm.img} alt="" title="Click to view full size" onClick={() => setBigImg(editForm.img)} className="w-32 h-32 rounded-xl object-cover border shadow cursor-zoom-in hover:opacity-90" onError={(e) => { e.target.style.display = "none"; }} />
+                    ? <img src={thumbUrl(editForm.img, 128)} loading="lazy" decoding="async" alt="" title="Click to view full size" onClick={() => setBigImg(editForm.img)} className="w-32 h-32 rounded-xl object-cover border shadow cursor-zoom-in hover:opacity-90" onError={(e) => { e.target.style.display = "none"; }} />
                     : <div className="w-32 h-32 rounded-xl border bg-gray-100 flex flex-col items-center justify-center text-gray-300"><span className="text-4xl">📷</span><span className="text-xs mt-1">No photo</span></div>
                   }
                   {editForm.img && <div className="absolute bottom-1 right-1 bg-black/55 text-white text-[9px] px-1.5 py-0.5 rounded pointer-events-none">🔍 Click to enlarge</div>}
@@ -1784,7 +1785,7 @@ Rules:
                         <React.Fragment key={idx}>
                           <div className="flex items-center gap-2 bg-white border border-indigo-100 rounded-lg px-2 py-1.5">
                             {childImg
-                              ? <img src={childImg} alt="" className="w-7 h-7 rounded object-cover flex-shrink-0" onError={(e) => { e.target.style.display = "none"; }} />
+                              ? <img src={thumbUrl(childImg, 28)} loading="lazy" decoding="async" alt="" className="w-7 h-7 rounded object-cover flex-shrink-0" onError={(e) => { e.target.style.display = "none"; }} />
                               : <div className="w-7 h-7 rounded bg-gray-100 flex-shrink-0" />}
                             <span className="flex-1 text-xs font-medium text-gray-700 truncate">{child ? child.name : `⚠ ${si.itemId} (missing)`}{childIsKit && <span className="ml-1 text-[10px] text-indigo-600 font-semibold">📦 kit</span>}</span>
                             <span className="text-xs text-gray-400">₹{childRental.toLocaleString("en-IN")} ea</span>
@@ -1815,7 +1816,7 @@ Rules:
                                 const gcRate = gc ? (gcIsKit ? kitPriceFrom(gc.subItems, Number(gc.kitBase) || 0, new Set([child.id])) : (Number(gc.price ?? gc.rentalCost) || 0)) : 0;
                                 return (
                                   <div key={cidx} className="flex items-center gap-2 text-[11px] text-gray-500">
-                                    {gc?.img ? <img src={gc.img} alt="" className="w-4 h-4 rounded object-cover flex-shrink-0" /> : <div className="w-4 h-4 rounded bg-gray-100 flex-shrink-0" />}
+                                    {gc?.img ? <img src={thumbUrl(gc.img, 16)} loading="lazy" decoding="async" alt="" className="w-4 h-4 rounded object-cover flex-shrink-0" /> : <div className="w-4 h-4 rounded bg-gray-100 flex-shrink-0" />}
                                     <span className="flex-1 truncate">{gc ? gc.name : `⚠ ${cs.itemId} (missing)`}{gcIsKit && " 📦"}</span>
                                     <span>×{cs.qty ?? 1}</span>
                                     <span className="w-16 text-right">₹{(gcRate * (Number(cs.qty) || 1)).toLocaleString("en-IN")}</span>
@@ -1980,7 +1981,7 @@ Rules:
                         onClick={() => { setBlockModal(alt.id); setBlockForm({ ...blockForm, qty: 1 }); }}
                         className="w-full flex items-center gap-3 bg-white hover:bg-amber-100 border border-amber-200 hover:border-amber-400 rounded-lg px-3 py-2.5 text-left transition-all group">
                         {alt.img
-                          ? <img src={alt.img} alt="" className="w-10 h-10 rounded-lg object-cover flex-shrink-0 border" />
+                          ? <img src={thumbUrl(alt.img, 40)} loading="lazy" decoding="async" alt="" className="w-10 h-10 rounded-lg object-cover flex-shrink-0 border" />
                           : <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 flex-shrink-0">📦</div>
                         }
                         <div className="flex-1 min-w-0">
@@ -2101,7 +2102,7 @@ Rules:
                   <div key={i.id} className={"border rounded-xl p-3 transition-colors " + (sel ? "border-indigo-300 bg-indigo-50" : "hover:bg-gray-50")}>
                     <div className="flex items-center gap-3">
                       <input type="checkbox" checked={!!sel} onChange={() => toggleBulkItem(i.id)} className="w-4 h-4" />
-                      {i.img && <img src={i.img} alt="" className="w-10 h-10 rounded-lg object-cover border" />}
+                      {i.img && <img src={thumbUrl(i.img, 40)} loading="lazy" decoding="async" alt="" className="w-10 h-10 rounded-lg object-cover border" />}
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-gray-900 truncate">{i.name}</p>
                         <div className="flex items-center gap-2 mt-0.5">
@@ -2274,7 +2275,7 @@ Rules:
       {/* Full-size inventory photo preview — opens above the edit modal */}
       {bigImg && (
         <div onClick={() => setBigImg(null)} className="fixed inset-0 z-[100001] bg-black/85 flex items-center justify-center p-6 cursor-zoom-out">
-          <img src={bigImg} alt="Inventory photo" className="max-w-[92vw] max-h-[92vh] rounded-xl object-contain shadow-2xl" onClick={(e) => e.stopPropagation()} />
+          <img src={fitUrl(bigImg, 700, 75)} loading="lazy" decoding="async" alt="Inventory photo" className="max-w-[92vw] max-h-[92vh] rounded-xl object-contain shadow-2xl" onClick={(e) => e.stopPropagation()} />
           <button onClick={() => setBigImg(null)} className="absolute top-4 right-5 text-white/90 hover:text-white text-3xl leading-none">×</button>
         </div>
       )}

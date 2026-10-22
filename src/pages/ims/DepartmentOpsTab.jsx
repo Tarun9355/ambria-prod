@@ -12,7 +12,7 @@ import { ZONE_META, trussBaseArea } from "../../lib/studio/taxonomy";
 import { calcZoneTrussPreview, calcZoneFabric, dcFabricMultOf } from "../../lib/studio/pricing";
 import { ZONE_DEF_SK, RC_SK_TR } from "../../lib/studio/keys";
 import { LOGO_ASSET, LOGO_BOX } from "../../lib/studio/brand.js";
-import { fitUrl } from "../../lib/studio/thumb.js";
+import { thumbUrl, fitUrl } from "../../lib/studio/thumb.js";
 import { matchFlowerPattern, resolveSizeKey, sizeClassToPatternKey, resolveMandiFlower } from "../../lib/ims/flowerHelpers";
 import { swatchHexFor } from "../../lib/studio/colours";
 import PlanningSyncButton from "./PlanningSyncButton.jsx";
@@ -5221,7 +5221,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                   <div className="text-[12px] font-semibold text-sky-900">🖨 Print jobs · {invFinish.prints.length}</div>
                   {invFinish.prints.map((p, pi) => (
                     <div key={pi} className="text-xs text-sky-800 mt-1 flex items-center gap-2">
-                      {p.ref && <img src={p.ref} alt="" onClick={() => setZoomImg(p.ref)} className="w-8 h-8 rounded object-cover border cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} />}
+                      {p.ref && <img src={thumbUrl(p.ref, 32)} loading="lazy" decoding="async" alt="" onClick={() => setZoomImg(p.ref)} className="w-8 h-8 rounded object-cover border cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} />}
                       <span>{invFinish.printLine(p)}</span>
                     </div>
                   ))}
@@ -5307,7 +5307,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                           layouts. */}
                       <div className="p-2.5 flex flex-wrap items-center gap-x-3 gap-y-2">
                           <div className="flex items-center gap-3 min-w-0 flex-1">
-                            {it.photo ? <img src={it.photo} alt="" onClick={() => setZoomImg(it.photo)} className="w-12 h-12 rounded-lg object-cover border cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-12 h-12 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-lg shrink-0">📦</div>}
+                            {it.photo ? <img src={thumbUrl(it.photo, 48)} loading="lazy" decoding="async" alt="" onClick={() => setZoomImg(it.photo)} className="w-12 h-12 rounded-lg object-cover border cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-12 h-12 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-lg shrink-0">📦</div>}
                             <div className="min-w-0">
                               <div className="text-sm font-semibold text-gray-900 truncate">{it.name}</div>
                               {/* Every status badge the flat-list version carried, kept as a
@@ -5416,7 +5416,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                           {it.components.map((cp, ci) => (
                             <div key={"c" + ci} className="flex items-center gap-2">
                               <span aria-hidden="true" className="text-blue-300 shrink-0 text-xs">└</span>
-                              {cp.photo ? <img src={cp.photo} alt="" onClick={() => setZoomImg(cp.photo)} className="w-6 h-6 rounded object-cover border cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-6 h-6 rounded bg-gray-100 flex items-center justify-center text-gray-300 text-[10px] shrink-0">🌸</div>}
+                              {cp.photo ? <img src={thumbUrl(cp.photo, 24)} loading="lazy" decoding="async" alt="" onClick={() => setZoomImg(cp.photo)} className="w-6 h-6 rounded object-cover border cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-6 h-6 rounded bg-gray-100 flex items-center justify-center text-gray-300 text-[10px] shrink-0">🌸</div>}
                               <span className="text-xs text-gray-700 truncate flex-1 min-w-0" title={cp.sub || ""}>{cp.name}</span>
                               <span className={"shrink-0 text-xs font-medium text-gray-500 text-right tabular-nums " + STAT_W.qty}>×{cp.qty}</span>
                               <span className={"shrink-0 text-xs text-gray-500 text-right tabular-nums " + STAT_W.rate}>{fmt(cp.unit)}</span>
@@ -5874,7 +5874,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                                         instead of the full row, so the line stopped well short of the
                                         numbers instead of reaching them. */}
                                     <div className="flex items-center gap-2 min-w-0">
-                                      {r.colorVariant?.photoUrl && <img src={r.colorVariant.photoUrl} alt={r.colorVariant.label || ""} onClick={() => setZoomImg(r.colorVariant.photoUrl)} className="w-7 h-7 rounded object-cover border border-gray-200 shrink-0 cursor-zoom-in" title={r.colorVariant.label || ""} />}
+                                      {r.colorVariant?.photoUrl && <img src={thumbUrl(r.colorVariant.photoUrl, 28)} loading="lazy" decoding="async" alt={r.colorVariant.label || ""} onClick={() => setZoomImg(r.colorVariant.photoUrl)} className="w-7 h-7 rounded object-cover border border-gray-200 shrink-0 cursor-zoom-in" title={r.colorVariant.label || ""} />}
                                       <span className="text-xs font-medium text-gray-800 truncate">{r.name}{r.colorVariant?.label && <span className="ml-1.5 font-normal text-[10px] text-purple-600">🎨 {r.colorVariant.label}</span>}</span>
                                       <span aria-hidden="true" className="flex-1 min-w-2 border-b border-dotted border-gray-300 mb-[3px]" />
                                     </div>
@@ -6122,7 +6122,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                         <div className="rounded-lg bg-gray-50 divide-y divide-gray-100">
                           {blockedItems.map(it => { const k = "inv:" + it.id; const onThis = Number(t.items?.[k]) || 0; const totalLoaded = truckLoadedQty(k); const extraHere = Number(t.extras?.[k]) || 0; const extraAll = truckExtraQty(k); const maxHere = Math.max(onThis, (Number(it.qty) || 0) - (totalLoaded - onThis)); const matchCls = totalLoaded === it.qty ? "text-emerald-600" : totalLoaded > it.qty ? "text-red-600" : totalLoaded > 0 ? "text-amber-600" : "text-gray-400"; return (
                             <div key={k} className="flex items-center gap-2.5 px-2.5 py-2">
-                              {it.photo ? <img src={it.photo} alt="" onClick={() => setZoomImg(it.photo)} className="w-8 h-8 rounded-lg object-cover cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-xs shrink-0">📦</div>}
+                              {it.photo ? <img src={thumbUrl(it.photo, 32)} loading="lazy" decoding="async" alt="" onClick={() => setZoomImg(it.photo)} className="w-8 h-8 rounded-lg object-cover cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-xs shrink-0">📦</div>}
                               <div className="min-w-0 flex-1">
                                 <div className="text-xs font-medium text-gray-800 leading-snug line-clamp-2" title={it.name}>{it.name}</div>
                                 <div className={"mt-0.5 text-[11px] font-semibold tabular-nums " + matchCls}>{totalLoaded} of {it.qty} loaded{totalLoaded > it.qty ? " · too many" : totalLoaded === it.qty ? " ✓" : ""}{extraAll > 0 && <span className="text-amber-600"> · +{extraAll} extra</span>}</div>
@@ -6482,7 +6482,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                       <div key={it.id} className={"rounded-xl bg-white ring-1 ring-gray-200 overflow-hidden flex flex-col transition hover:shadow-lg hover:ring-gray-300 " + (done ? "opacity-70" : "")}>
                         <div className="group relative h-40 bg-gray-100 overflow-hidden">
                           {it.photo
-                            ? <img src={it.photo} alt="" loading="lazy" onClick={() => setZoomImg(it.photo)} title="Click to open full size"
+                            ? <img src={fitUrl(it.photo, 300)} alt="" loading="lazy" onClick={() => setZoomImg(it.photo)} title="Click to open full size"
                                 className="w-full h-full object-cover cursor-zoom-in transition-transform duration-300 ease-out group-hover:scale-150"
                                 onError={e => { e.target.style.display = "none"; }} />
                             : <div className="w-full h-full flex items-center justify-center text-3xl text-gray-300">📦</div>}
@@ -6603,7 +6603,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                     <div key={i} className="px-4 py-2">
                       <div className="flex items-center justify-between flex-wrap gap-x-2 gap-y-1 text-xs">
                         <span className="text-sky-900 font-semibold flex items-center gap-2 min-w-0">
-                          {r.photo ? <img src={r.photo} alt="" onClick={() => setZoomImg(r.photo)} className="w-8 h-8 rounded object-cover border cursor-zoom-in" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-8 h-8 rounded bg-sky-100 flex items-center justify-center text-sky-300 text-xs">📦</div>}
+                          {r.photo ? <img src={thumbUrl(r.photo, 32)} loading="lazy" decoding="async" alt="" onClick={() => setZoomImg(r.photo)} className="w-8 h-8 rounded object-cover border cursor-zoom-in" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-8 h-8 rounded bg-sky-100 flex items-center justify-center text-sky-300 text-xs">📦</div>}
                           {r.name}
                         </span>
                         <span className={r.shortfall > 0 ? "text-red-600 font-bold" : "text-sky-800"}>
@@ -6732,7 +6732,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                           <div key={i} className={"px-3 py-2.5 border-t border-gray-100 " + (isTransfer && !sel ? "opacity-40" : "")}>
                             <div className="flex items-center gap-2.5">
                               {isTransfer && <input type="checkbox" checked={sel} onChange={() => toggleManSel(ck)} className="w-4 h-4 shrink-0" title="load this item on this truck" />}
-                              {it.photo ? <img src={it.photo} alt="" onClick={() => setZoomImg(it.photo)} className="shrink-0 w-9 h-9 rounded-lg object-cover cursor-zoom-in" onError={e => { e.target.style.display = "none"; }} /> : <div className="shrink-0 w-9 h-9 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-xs">📦</div>}
+                              {it.photo ? <img src={thumbUrl(it.photo, 36)} loading="lazy" decoding="async" alt="" onClick={() => setZoomImg(it.photo)} className="shrink-0 w-9 h-9 rounded-lg object-cover cursor-zoom-in" onError={e => { e.target.style.display = "none"; }} /> : <div className="shrink-0 w-9 h-9 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-xs">📦</div>}
                               <div className="min-w-0 flex-1">
                                 <div className="text-xs font-medium text-gray-800 leading-snug line-clamp-2" title={it.name}>{it.name}</div>
                                 <div className="mt-0.5 text-[11px] text-gray-500 tabular-nums" title="going to this destination">
@@ -7065,7 +7065,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                     return (
                       <div key={c.id || c.name} onClick={() => set({ toName: c.name, price: isCur ? mandiSwap.price : String(Number(c.currentPrice) || "") })}
                         className={"cursor-pointer rounded-xl overflow-hidden border-2 " + (isCur ? "border-amber-500" : "border-gray-200 hover:border-amber-300")}>
-                        {photo ? <img src={photo} alt="" className="w-full aspect-[4/3] object-cover bg-gray-50" /> : <div className="w-full aspect-[4/3] bg-gray-100 flex items-center justify-center text-2xl text-gray-300">🌸</div>}
+                        {photo ? <img src={fitUrl(photo, 320)} loading="lazy" decoding="async" alt="" className="w-full aspect-[4/3] object-cover bg-gray-50" /> : <div className="w-full aspect-[4/3] bg-gray-100 flex items-center justify-center text-2xl text-gray-300">🌸</div>}
                         <div className="px-2 py-1.5">
                           <div className="text-xs font-semibold text-gray-800 truncate">{c.name}</div>
                           <div className="text-[10px] text-gray-400 truncate">{c.flowerCat || ""} · ₹{Number(c.currentPrice) || 0}/{c.unit}</div>
@@ -7103,7 +7103,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
       {/* Click-to-enlarge lightbox — ops can view any item/kit photo big & clear */}
       {zoomImg && (
         <div onClick={() => setZoomImg(null)} className="fixed inset-0 z-[9999] bg-black/80 flex items-center justify-center p-6 cursor-zoom-out">
-          <img src={zoomImg} alt="" className="max-w-[90vw] max-h-[90vh] rounded-lg object-contain shadow-2xl" onClick={e => e.stopPropagation()} />
+          <img src={fitUrl(zoomImg, 700, 75)} loading="lazy" decoding="async" alt="" className="max-w-[90vw] max-h-[90vh] rounded-lg object-contain shadow-2xl" onClick={e => e.stopPropagation()} />
         </div>
       )}
       {confirmDialog}

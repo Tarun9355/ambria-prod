@@ -834,7 +834,7 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
                       brings the material dropdown back (to change the rate or turn carpet off). */}
                   {zc.cpT!==CARPET_OFF && isNewCarpet && zc.cpPhoto && !zc.cpInvName ? (
                     <div style={{display:"flex",alignItems:"center",gap:8,boxSizing:"border-box",width:"100%",fontSize:11.5,padding:"6px 8px",borderRadius:8,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
-                      <img src={zc.cpPhoto} alt="" style={{width:32,height:32,borderRadius:6,objectFit:"cover",flexShrink:0}} />
+                      <img src={thumbUrl(zc.cpPhoto, 32)} loading="lazy" decoding="async" alt="" style={{width:32,height:32,borderRadius:6,objectFit:"cover",flexShrink:0}} />
                       <span style={{flex:1,minWidth:0}}>
                         <span style={{display:"block",fontWeight:600,color:"#047857"}}>🆕 {carpetBilled.label}</span>
                         <span style={{display:"block",fontSize:10,color:"#6B7280"}}>{showCosts?`billed at ₹${carpetBilled.rate}/sqft`:""}</span>
@@ -861,7 +861,7 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
                   {/* Only when no stock carpet is picked — a picked carpet already has its own photo. */}
                   {zc.cpT!==CARPET_OFF && isNewCarpet && !zc.cpInvId && (
                     <div style={{display:"flex",alignItems:"center",gap:6,marginTop:5}}>
-                      {zc.cpPhoto && <img src={zc.cpPhoto} alt="" style={{width:28,height:28,borderRadius:5,objectFit:"cover",border:`1px solid ${border}`}} />}
+                      {zc.cpPhoto && <img src={thumbUrl(zc.cpPhoto, 28)} loading="lazy" decoding="async" alt="" style={{width:28,height:28,borderRadius:5,objectFit:"cover",border:`1px solid ${border}`}} />}
                       <label style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:10.5,fontWeight:600,color:accent,cursor:cpUploading?"wait":"pointer",padding:"3px 8px",borderRadius:6,border:`1px dashed ${accent}`}}>
                         📷 {cpUploading?"Uploading…":zc.cpPhoto?"Change photo":"Upload photo"}
                         <input type="file" accept="image/*" style={{display:"none"}} disabled={cpUploading} onChange={e=>{uploadCarpetPhoto(e.target.files?.[0]);e.target.value="";}} />
@@ -910,6 +910,19 @@ export function FloorStack({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark,
         style={{ fontSize: 10.5, fontWeight: 600, color: "#059669", background: "transparent", border: "1px dashed #05966980", borderRadius: 6, padding: "4px 10px", cursor: "pointer" }}>+ Add Platform</button>
     </div>
   </>);
+}
+
+// The big photo in the lightbox. Photos are stored at camera resolution (2–4 MB); the lightbox asks for a
+// screen-sized copy (see thumb.js) and says so while it arrives instead of showing an empty frame.
+const lightboxSrc = (src) => fitUrl(src, 700, 75);
+function LightboxPhoto({ src, alt, style }) {
+  const [ready, setReady] = useState(false);
+  return (
+    <div style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "center", minWidth: ready ? 0 : 220, minHeight: ready ? 0 : 160 }}>
+      {!ready && <span style={{ position: "absolute", color: "rgba(255,255,255,0.7)", fontSize: 13 }}>Loading photo…</span>}
+      <img src={lightboxSrc(src)} alt={alt} onLoad={() => setReady(true)} onError={(e) => { if (e.currentTarget.src !== src) e.currentTarget.src = src; else setReady(true); }} style={{ ...style, opacity: ready ? 1 : 0, transition: "opacity .2s" }} />
+    </div>
+  );
 }
 
 export default function StudioBuild({ ctx }) {
@@ -1007,6 +1020,12 @@ export default function StudioBuild({ ctx }) {
   // Wraps at both ends: the sets are small and a dead arrow on the last photo is just a puzzle.
   const lightboxStep = (d) => setLightbox(lb => (lb && lb.items?.length)
     ? { ...lb, idx: (lb.idx + d + lb.items.length) % lb.items.length } : lb);
+  // The photos either side of the one on screen are fetched ahead, so ‹ › shows them at once.
+  useEffect(() => {
+    if (!lightbox?.items?.length || lightbox.items.length < 2) return;
+    const n = lightbox.items.length;
+    [1, n - 1].forEach(d => { const it = lightbox.items[(lightbox.idx + d) % n]; if (it?.src) new Image().src = lightboxSrc(it.src); });
+  }, [lightbox?.idx, lightbox?.items]);
   useEffect(() => {
     if (!lightbox) return;
     const onKey = (e) => {
@@ -3170,7 +3189,7 @@ undefined
               the filters — the thing you actually work with — further down. The tags still live on
               the video and still drive the filters in the panel above. */}
           {sourceEvent.photos?.length>0&&<div style={{display:"flex",gap:5,marginTop:7,overflowX:"auto"}}>
-            {sourceEvent.photos.map((p,i)=><img key={i} src={p} alt="" loading="lazy" style={{width:54,height:36,objectFit:"cover",borderRadius:6,flexShrink:0,cursor:"pointer",border:`2px solid ${border}`}} onClick={()=>setPreviewImg(p)} onError={e=>{e.target.style.display="none"}}/>)}
+            {sourceEvent.photos.map((p,i)=><img key={i} src={fitUrl(p, 60)} alt="" loading="lazy" style={{width:54,height:36,objectFit:"cover",borderRadius:6,flexShrink:0,cursor:"pointer",border:`2px solid ${border}`}} onClick={()=>setPreviewImg(p)} onError={e=>{e.target.style.display="none"}}/>)}
           </div>}
         </div>
       </div>
@@ -3319,7 +3338,7 @@ undefined
             background:on?`${accent}18`:"transparent",
             color:on?accent:textP}}>
             <span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:13,height:13,borderRadius:4,flexShrink:0,border:`1px solid ${on?accent:border}`,background:on?accent:"transparent",color:"#fff"}}>{on&&<IconCheck size={9}/>}</span>
-            {info?.photo ? <img src={info.photo} alt="" onClick={e=>{e.stopPropagation();setLightbox({idx:0,items:[{src:info.photo,name:v}]});}} style={{width:16,height:16,borderRadius:3,objectFit:"cover",flexShrink:0,cursor:"zoom-in"}}/> : null}
+            {info?.photo ? <img src={thumbUrl(info.photo, 16)} loading="lazy" decoding="async" alt="" onClick={e=>{e.stopPropagation();setLightbox({idx:0,items:[{src:info.photo,name:v}]});}} style={{width:16,height:16,borderRadius:3,objectFit:"cover",flexShrink:0,cursor:"zoom-in"}}/> : null}
             <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{v}</span>
           </div>
         );
@@ -4428,7 +4447,7 @@ undefined
                             }}
                             style={{padding:"8px 10px",fontSize:12,cursor:"pointer",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",gap:10}}>
                             <div style={{width:56,height:56,borderRadius:8,overflow:"hidden",flexShrink:0,background:isDark?"#1a1a2e":"#eee",display:"flex",alignItems:"center",justifyContent:"center"}}>
-                              {mi.photoUrl ? <img src={mi.photoUrl} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/> : <span style={{fontSize:22,opacity:0.5}}>🌸</span>}
+                              {mi.photoUrl ? <img src={thumbUrl(mi.photoUrl, 56)} loading="lazy" decoding="async" alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/> : <span style={{fontSize:22,opacity:0.5}}>🌸</span>}
                             </div>
                             <div style={{flex:1,minWidth:0}}>
                               <div style={{fontWeight:500,color:textP,display:"flex",alignItems:"center",gap:4,minWidth:0}}>
@@ -4665,7 +4684,7 @@ undefined
                           return <button onClick={()=>setMandiVariantPicker({k,idx,mandiId:el.mandiId})} title="Which variant of this flower is being used"
                             style={{display:"flex",alignItems:"center",gap:5,fontSize:11,padding:"2px 8px 2px 2px",borderRadius:6,border:`1px solid ${el.mandiVariantId?border:"#F59E0B"}`,background:cardBg,color:textP,cursor:"pointer"}}>
                             {cur?.photoUrl
-                              ? <img src={cur.photoUrl} alt="" style={{width:18,height:18,borderRadius:4,objectFit:"cover"}}/>
+                              ? <img src={thumbUrl(cur.photoUrl, 18)} loading="lazy" decoding="async" alt="" style={{width:18,height:18,borderRadius:4,objectFit:"cover"}}/>
                               : <span style={{width:18,height:18,borderRadius:4,background:isDark?"#1a1a2e":"#eee",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10}}>🌸</span>}
                             <span>{cur?.name||"Choose variant…"}</span>
                           </button>;
@@ -5444,7 +5463,7 @@ undefined
           {/* Left: the photo, fixed — the right side scrolls on its own. */}
           <div className="bc-photo" style={{width:"38%",flexShrink:0,padding:16,borderRight:`1px solid ${border}`,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}>
             {bigSrc
-              ? <img src={bigSrc} alt="" style={{width:"100%",maxHeight:"100%",objectFit:"contain",borderRadius:10}} onError={e=>{e.target.style.display="none"}}/>
+              ? <img src={fitUrl(bigSrc, 500, 70)} loading="lazy" decoding="async" alt="" style={{width:"100%",maxHeight:"100%",objectFit:"contain",borderRadius:10}} onError={e=>{e.target.style.display="none"}}/>
               : <div style={{fontSize:11,color:textS}}>No photo</div>}
           </div>
           <div style={{flex:1,minWidth:0,padding:16,overflowY:"auto"}}>
@@ -5672,7 +5691,7 @@ undefined
         {many&&<span title="Next (→)" aria-label="Next photo" onClick={e=>{e.stopPropagation();lightboxStep(1);}} style={navBtn("right")}>{"›"}</span>}
         {/* An item may carry `details` ([[label, value], …]) — shown in a panel beside the photo. */}
         <div onClick={e=>e.stopPropagation()} style={{display:"flex",flexWrap:"wrap",justifyContent:"center",alignItems:"stretch",gap:16,maxWidth:"94vw",maxHeight:"86vh",overflowY:"auto",cursor:"default"}}>
-          <img src={cur.src} alt={cur.name||""} style={{maxWidth:cur.details?.length?"min(62vw,100%)":"88vw",maxHeight:"84vh",objectFit:"contain",borderRadius:8,boxShadow:"0 20px 60px rgba(0,0,0,0.6)"}}/>
+          <LightboxPhoto key={cur.src} src={cur.src} alt={cur.name||""} style={{maxWidth:cur.details?.length?"min(62vw,100%)":"88vw",maxHeight:"84vh",objectFit:"contain",borderRadius:8,boxShadow:"0 20px 60px rgba(0,0,0,0.6)"}}/>
           {cur.details?.length>0&&(
             <div style={{width:270,flexShrink:0,alignSelf:"center",background:"rgba(255,255,255,0.97)",color:"#1a1a2e",borderRadius:10,padding:"16px 18px",boxShadow:"0 20px 60px rgba(0,0,0,0.5)"}}>
               <div style={{fontSize:16,fontWeight:700,marginBottom:12,lineHeight:1.25}}>{cur.name}</div>
@@ -5727,7 +5746,7 @@ undefined
                           background:isSelected?"#9333EA12":isDark?"rgba(255,255,255,0.03)":"#FAFAFA",display:"flex",flexDirection:"column",gap:6,position:"relative"}}>
                         {isSelected&&<div style={{position:"absolute",top:-6,right:-6,width:22,height:22,borderRadius:"50%",background:"#9333EA",color:"#fff",fontSize:13,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 2px 6px rgba(0,0,0,0.3)"}}>✓</div>}
                         {v.photoUrl ? (
-                          <img src={v.photoUrl} alt={v.name||""} title="Click to see the full photo" onClick={e=>{
+                          <img src={fitUrl(v.photoUrl, 150)} loading="lazy" decoding="async" alt={v.name||""} title="Click to see the full photo" onClick={e=>{
                             e.stopPropagation();
                             const withPhoto=variants.filter(x=>x.photoUrl);
                             setLightbox({idx:Math.max(0,withPhoto.findIndex(x=>x.variantId===v.variantId)),items:withPhoto.map(x=>({src:x.photoUrl,name:x.name||"Unnamed",details:[

@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { thumbUrl, fitUrl } from "../../lib/studio/thumb.js";
 import { supabase } from "../../lib/supabase";
 import { RC_SK_CATS } from "../../lib/studio/keys";
 import { Tabs, AddInlineItem, FlowerPicker, Btn, useConfirm, DraftInput } from "../../components/ui";
@@ -868,7 +869,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                         const isCur = it.id === flower?.artificialMapItemId;
                         return (
                           <div key={it.id} onClick={() => pick(it)} className={"cursor-pointer rounded-xl overflow-hidden border-2 " + (isCur ? "border-blue-500" : "border-gray-200 hover:border-blue-300")}>
-                            {photo ? <img src={photo} alt="" className="w-full h-24 object-cover" /> : <div className="w-full h-24 bg-gray-100 flex items-center justify-center text-2xl text-gray-300">🌸</div>}
+                            {photo ? <img src={fitUrl(photo, 200)} loading="lazy" decoding="async" alt="" className="w-full h-24 object-cover" /> : <div className="w-full h-24 bg-gray-100 flex items-center justify-center text-2xl text-gray-300">🌸</div>}
                             <div className="px-2 py-1.5">
                               <div className="text-xs font-semibold text-gray-800 truncate">{it.name}</div>
                               <div className="text-[10px] text-gray-400 truncate">{it.subCat || it.subcategory || ""}</div>
@@ -1046,14 +1047,14 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                         if (hasVariants) {
                           return (
                             <div onClick={(e) => e.stopPropagation()} title={cheapestVariant ? `Photo of cheapest variant: ${cheapestVariant.name} (₹${Number(cheapestVariant.currentPrice) || 0}). Expand to manage variant photos.` : "No variant photos yet. Expand to upload."}>
-                              {displayUrl ? <img src={displayUrl} alt={cheapestVariant?.name || p.name} className="w-12 h-12 rounded object-cover border" />
+                              {displayUrl ? <img src={thumbUrl(displayUrl, 48)} loading="lazy" decoding="async" alt={cheapestVariant?.name || p.name} className="w-12 h-12 rounded object-cover border" />
                                 : <div className="w-12 h-12 rounded border border-dashed border-gray-300 flex items-center justify-center text-gray-300 text-xl">🌸</div>}
                             </div>
                           );
                         }
                         return (
                           <label className="block cursor-pointer" onClick={(e) => e.stopPropagation()}>
-                            {displayUrl ? <img src={displayUrl} alt={p.name} className="w-12 h-12 rounded object-cover border" title="Click to replace photo" />
+                            {displayUrl ? <img src={thumbUrl(displayUrl, 48)} loading="lazy" decoding="async" alt={p.name} className="w-12 h-12 rounded object-cover border" title="Click to replace photo" />
                               : <div className="w-12 h-12 rounded border-2 border-dashed border-gray-300 flex items-center justify-center text-gray-400 text-xl hover:border-indigo-400 hover:text-indigo-500" title="Upload parent flower photo">{parentUploading ? "…" : "+"}</div>}
                             <input type="file" accept="image/*" className="hidden" onChange={async (e) => {
                               const file = e.target.files?.[0]; if (!file) return;
@@ -1205,7 +1206,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                                 <tr key={v.variantId} className="border-t border-gray-200 bg-white">
                                   <td className="px-2 py-1.5">
                                     <label className="block cursor-pointer">
-                                      {v.photoUrl ? <img src={v.photoUrl} alt={v.name} className="w-12 h-12 rounded object-cover border" title="Click to replace" />
+                                      {v.photoUrl ? <img src={thumbUrl(v.photoUrl, 48)} loading="lazy" decoding="async" alt={v.name} className="w-12 h-12 rounded object-cover border" title="Click to replace" />
                                         : <div className="w-12 h-12 rounded border-2 border-dashed border-gray-300 flex items-center justify-center text-gray-400 text-xl hover:border-indigo-400 hover:text-indigo-500" title="Upload variant photo">{uploading ? "…" : "+"}</div>}
                                       <input type="file" accept="image/*" className="hidden" onChange={async (e) => {
                                         const file = e.target.files?.[0]; if (!file) return;
@@ -1393,7 +1394,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
               <div className="relative w-16 mb-2">
                 <label className="block cursor-pointer">
                   {sizeData.img
-                    ? <img src={sizeData.img} alt={sizeLabel} className="w-16 h-16 rounded object-cover border" title="Click to replace this size's reference photo" />
+                    ? <img src={thumbUrl(sizeData.img, 64)} loading="lazy" decoding="async" alt={sizeLabel} className="w-16 h-16 rounded object-cover border" title="Click to replace this size's reference photo" />
                     : <div className="w-16 h-16 rounded border-2 border-dashed border-gray-300 flex items-center justify-center text-gray-400 text-xl hover:border-indigo-400 hover:text-indigo-500" title={`Upload a ${sizeLabel.toLowerCase()} reference photo`}>
                         {recipeImgUploading[`${studioItem.id}:${sz}`] ? "…" : "+"}
                       </div>}
@@ -2010,7 +2011,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                                 return (
                                   <>
                                     <button type="button" onClick={() => setFabricPhotoMenuOpen((k) => k === photoKey ? null : photoKey)} className="block cursor-pointer">
-                                      {row.photo ? <img src={row.photo} alt={row.colour} className="w-9 h-9 rounded object-cover border border-gray-300" title="Click to replace" />
+                                      {row.photo ? <img src={thumbUrl(row.photo, 36)} loading="lazy" decoding="async" alt={row.colour} className="w-9 h-9 rounded object-cover border border-gray-300" title="Click to replace" />
                                         : <div className={`w-9 h-9 rounded border-2 border-dashed border-gray-300 flex items-center justify-center text-gray-400 text-base hover:border-${themeColor}-400 hover:text-${themeColor}-500`} title="Upload a reference photo">{photoUploading ? "…" : "+"}</div>}
                                     </button>
                                     {fabricPhotoMenuOpen === photoKey && (
