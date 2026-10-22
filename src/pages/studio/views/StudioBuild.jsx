@@ -1730,7 +1730,7 @@ export default function StudioBuild({ ctx }) {
   const scaleStruct = (r) => {
     if (guestPriceMultiplier === 1 || !r) return r;
     const s = { ...r };
-    ["truss", "masking", "platform", "carpet", "arches", "pillars", "glass", "print", "total", "trussDiscount"].forEach((k) => {
+    ["truss", "masking", "platform", "carpet", "arches", "pillars", "glass", "print", "fabric", "total", "trussDiscount"].forEach((k) => {
       if (typeof s[k] === "number") s[k] = s[k] * guestPriceMultiplier;
     });
     return s;
