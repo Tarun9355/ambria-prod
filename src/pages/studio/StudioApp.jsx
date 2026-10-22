@@ -10159,7 +10159,12 @@ export default function StudioApp() {
         const pw = Number(p.areaW) || 0, pd = Number(p.areaD) || 0;
         const pq = Math.max(1, Math.round(Number(p.qty) || 1));
         const pRate = m?.ratePerSqft || 0;
-        const pTotal = pw * pd * pRate * pq;
+        // guestPriceMultiplier — every other guest-facing cost on this page folds it in (scaleStruct,
+        // getElPriceForFn, truck/genset); this one row computed straight from raw dims×rate and never
+        // did, so a Print line item understated itself next to a zone/function total (zl.total, via
+        // scaleStruct) that already had the multiplier baked in — the line items could never be summed
+        // back up to match the total they supposedly made up.
+        const pTotal = pw * pd * pRate * pq * guestPriceMultiplier;
         if (pTotal <= 0) return;
         structItems.push({
           name: "🖨 Print — " + (m?.name || "material") + " ₹" + pRate + "/sqft" + (pq > 1 ? " ×" + pq : ""),
@@ -10176,7 +10181,7 @@ export default function StudioApp() {
       const ic = items.reduce((s, i) => s + i.total, 0);
       return { k, label: el.label, icon: el.icon, tier: t, items, structItems, structTotal: zl.total, itemTotal: ic, zoneTotal: ic + zl.total, note: fElNotes[k] || "", dims, dimLabel, photo: fElSelectedPhoto[k]?.src || null, photoName: fElSelectedPhoto[k]?.eventName || "" };
     }).filter(z => z.items.length > 0 || z.structItems.length > 0);
-  }, [getElPriceForFn, zoneLabelsD, zoneMeta, zoneKeys, dealCheckData, studioFloralData, imsDefaultPaintCost, dcCustomItems, structRates, imsInventory, fvCfgForRepeat, clientLedger, activeClientId, blocksByDate, hideDiscountFromClient, collectAllFunctionData]);
+  }, [getElPriceForFn, zoneLabelsD, zoneMeta, zoneKeys, dealCheckData, studioFloralData, imsDefaultPaintCost, dcCustomItems, structRates, imsInventory, fvCfgForRepeat, clientLedger, activeClientId, blocksByDate, hideDiscountFromClient, collectAllFunctionData, guestPriceMultiplier]);
 
   const buildCombinedCostSheetData = useCallback(() => {
     const all = collectAllFunctionData();
