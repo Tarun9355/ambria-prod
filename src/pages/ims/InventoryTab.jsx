@@ -1281,7 +1281,7 @@ Rules:
                 </button>
                 <div>
                   <div className="text-xs font-medium text-gray-700">♻️ This item repeats</div>
-                  <div className="text-xs text-gray-400">On: when a zone is marked Repeat, or the item stands at the venue or was used in an earlier function, it is treated as reused (discounted, not trucked again, no build crew). Off: always brought fresh — full price, trucked, counted in the crew — e.g. flowers, candles, consumables.</div>
+                  <div className="text-xs text-gray-400">ON: this item can be used again (Repeat zone, already at the venue, or used in an earlier function). It gets the repeat discount and is not carried again. OFF: it is new every time, so full price and it is carried every time. Keep OFF for flowers, candles and things that get used up.</div>
                 </div>
               </div>
             {/* Location dropdown */}
@@ -1633,7 +1633,7 @@ Rules:
                 </button>
                 <div>
                   <div className="text-xs font-medium text-gray-700">♻️ This item repeats</div>
-                  <div className="text-xs text-gray-400">On: when a zone is marked Repeat, or the item stands at the venue or was used in an earlier function, it is treated as reused (discounted, not trucked again, no build crew). Off: always brought fresh — full price, trucked, counted in the crew — e.g. flowers, candles, consumables.</div>
+                  <div className="text-xs text-gray-400">ON: this item can be used again (Repeat zone, already at the venue, or used in an earlier function). It gets the repeat discount and is not carried again. OFF: it is new every time, so full price and it is carried every time. Keep OFF for flowers, candles and things that get used up.</div>
                 </div>
               </div>
               </div>
