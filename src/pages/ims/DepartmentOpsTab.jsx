@@ -677,6 +677,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   // false | "download" | "view" — which button started it, so only THAT one spins. Viewing used to
   // spin the download buttons too, which read as the PDF being downloaded again.
   const [exporting, setExporting] = useState(false);
+  const [dlMenuOpen, setDlMenuOpen] = useState(false); // phone: the download icon's "this department / all departments" menu
   // Set while the Actuals PDF is being written (the first one also loads the jsPDF chunk).
   const [actualsPdfBusy, setActualsPdfBusy] = useState(false);
   const [laboursHow, setLaboursHow] = useState({});
@@ -4310,8 +4311,39 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
         the header names is exactly what the PDF contains.
         Icon-only, like the bell: spelled out it was the widest thing in a row that already has
         two tags to fit on a 390px screen. The tooltip and the sr-only label carry the meaning. */}
+    {/* ── PHONE: ALL DEPARTMENTS TOO ──
+        The "Download PDF" button for the whole event sits in the department row, which on a phone is
+        a dropdown with no room for it — so on a phone the icon opens a two-choice menu instead (when
+        the event has more than one department): this department, or every department in one file. */}
+    {deptsWithWork.length > 1 && (
+      <div className="sm:hidden relative shrink-0">
+        <button onClick={() => setDlMenuOpen(o => !o)} disabled={!!exporting} aria-haspopup="menu" aria-expanded={dlMenuOpen}
+          className="relative w-7 h-7 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-500 hover:text-gray-900 disabled:opacity-60 flex items-center justify-center transition-colors">
+          {exporting === "download"
+            ? <span aria-hidden="true" className="w-3.5 h-3.5 rounded-full border-2 border-gray-300 border-t-blue-600 animate-spin" />
+            : <IconDownload />}
+          <span className="sr-only">Download PDF</span>
+        </button>
+        {dlMenuOpen && (
+          <>
+            <div className="fixed inset-0 z-30" onClick={() => setDlMenuOpen(false)} />
+            <div role="menu" className="absolute right-0 top-full mt-2 z-40 w-56 rounded-xl bg-white border border-gray-200 shadow-[0_14px_32px_-10px_rgba(15,23,42,0.35)] p-1">
+              <button role="menuitem" onClick={() => { setDlMenuOpen(false); exportDeptPdf(); }}
+                className="w-full text-left px-3 py-2.5 rounded-lg text-[13px] font-medium text-gray-700 hover:bg-gray-50 active:bg-gray-100">
+                {DEPT_ICON[dept]} {dept} only
+              </button>
+              <button role="menuitem" onClick={() => { setDlMenuOpen(false); exportDeptPdf(deptsWithWork); }}
+                className="w-full text-left px-3 py-2.5 rounded-lg text-[13px] font-semibold text-blue-700 hover:bg-blue-50 active:bg-blue-100">
+                📚 All {deptsWithWork.length} departments
+                <span className="block text-[11px] font-normal text-gray-400">One PDF, every department</span>
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    )}
     <button onClick={() => exportDeptPdf()} disabled={!!exporting}
-      className="group relative shrink-0 w-7 h-7 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-500 hover:text-gray-900 disabled:opacity-60 flex items-center justify-center transition-colors">
+      className={(deptsWithWork.length > 1 ? "hidden sm:flex " : "flex ") + "group relative shrink-0 w-7 h-7 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-500 hover:text-gray-900 disabled:opacity-60 items-center justify-center transition-colors"}>
       {exporting === "download"
         ? <span aria-hidden="true" className="w-3.5 h-3.5 rounded-full border-2 border-gray-300 border-t-blue-600 animate-spin" />
         : <IconDownload />}
