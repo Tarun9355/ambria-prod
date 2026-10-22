@@ -478,7 +478,7 @@ function invCalcSummary(rows) {
   return t;
 }
 function DeptIncomeModal({ eo, depts, startDept, onClose }) {
-  const [d, setD] = useState(startDept);
+  const d = startDept; // only the department this panel is for
   useEffect(() => {
     const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); onClose(); } };
     window.addEventListener("keydown", onKey, true);
@@ -505,23 +505,11 @@ function DeptIncomeModal({ eo, depts, startDept, onClose }) {
         <div className="px-[18px] py-3.5 border-b border-gray-200 flex items-center justify-between">
           <div>
             <div className="text-[14.5px] font-bold text-[#1A1A2E] tracking-wide">🏦 Department Income</div>
-            <div className="text-[12px] text-[#1A1A2E] uppercase tracking-[0.08em] mt-0.5">What each department is earning off this deal</div>
+            <div className="text-[12px] text-[#1A1A2E] uppercase tracking-[0.08em] mt-0.5">What {d} is earning off this deal</div>
           </div>
           <button onClick={onClose} className="px-2.5 py-1.5 rounded-md border border-gray-200 text-[#1A1A2E] text-sm leading-none hover:bg-gray-50">✕</button>
         </div>
         <div className="px-[18px] py-3.5 overflow-y-auto">
-          <div className="flex gap-1.5 flex-wrap mb-3.5">
-            {depts.map(x => {
-              const on = d === x;
-              return (
-                <button key={x} onClick={() => setD(x)}
-                  className={"px-3 py-2 rounded-xl text-left border-[1.5px] transition-colors " + (on ? "border-blue-500 bg-blue-50" : "border-gray-200 hover:bg-gray-50")}>
-                  <div className={"text-[13px] " + (on ? "font-bold" : "font-medium") + " text-[#1A1A2E]"}>{DEPT_ICON[x] || "🏦"} {x}</div>
-                  <div className="text-[14.5px] font-extrabold text-[#1A1A2E] tabular-nums">{rupee(Number(inc[x]?.total) || 0)}</div>
-                </button>
-              );
-            })}
-          </div>
           <div className="rounded-[10px] border border-gray-200 overflow-hidden">
             <div className="px-3.5 py-2.5 bg-slate-50 text-[13.5px] font-bold text-[#1A1A2E] flex justify-between">
               <span>{DEPT_ICON[d]} {d} — Department Income</span><span className="tabular-nums">{rupee(Number(cur.total) || 0)}</span>
