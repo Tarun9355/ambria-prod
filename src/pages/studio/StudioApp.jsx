@@ -3558,7 +3558,10 @@ export default function StudioApp() {
           setEventOrders((prev) => { const next = prev.filter((e) => e.id !== id); eventOrdersRef2.current = next; return next; });
         } else if (payload.new) {
           const eo = rowToEO(payload.new); if (!eo?.id) return;
-          setEventOrders((prev) => { const i = prev.findIndex((e) => e.id === eo.id); const next = i >= 0 ? prev.map((e) => (e.id === eo.id ? eo : e)) : [...prev, eo]; eventOrdersRef2.current = next; return next; });
+          // A change event that carries no `data` (only another column changed, or the blob was too large to send)
+          // must not wipe the order's details from memory — keep what is held and take just the new status.
+          const dataless = payload.new.data == null;
+          setEventOrders((prev) => { const i = prev.findIndex((e) => e.id === eo.id); const merged = (dataless && i >= 0) ? { ...prev[i], status: eo.status ?? prev[i].status } : eo; const next = i >= 0 ? prev.map((e) => (e.id === eo.id ? merged : e)) : [...prev, eo]; eventOrdersRef2.current = next; return next; });
         }
       } catch { /* ignore */ }
     });

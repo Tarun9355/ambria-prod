@@ -9,10 +9,17 @@ import { useState, useEffect, useRef } from "react";
 // sessionStorage so it cannot disturb the tab IMS remembers for this browser.
 const NOTE_MS = 7000;
 
-export default function DeptPdfButton({ eventOrderId, border = "rgba(26,26,46,0.15)" }) {
+export default function DeptPdfButton({ eventOrderId, clientKey, border = "rgba(26,26,46,0.15)" }) {
   const [run, setRun] = useState(false);
   const [note, setNote] = useState("");
   const heard = useRef(false);
+  // Once this deal's event order has been seen, the button stays for as long as this deal is open. The
+  // order is looked up in a list that live updates replace row by row, and for a moment a row can come
+  // back without its details — the lookup then found nothing and the button blinked out and back.
+  const seen = useRef({ key: null, id: null });
+  if (seen.current.key !== clientKey) seen.current = { key: clientKey, id: null };
+  if (eventOrderId) seen.current.id = eventOrderId;
+  const orderId = seen.current.id;
 
   const finish = (text, ms = NOTE_MS) => {
     setRun(false);
@@ -39,7 +46,8 @@ export default function DeptPdfButton({ eventOrderId, border = "rgba(26,26,46,0.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [run]);
 
-  const frameUrl = `${window.location.origin}${window.location.pathname}#/ims?pdfEvent=${encodeURIComponent(eventOrderId)}`;
+  if (!orderId) return null;
+  const frameUrl = `${window.location.origin}${window.location.pathname}#/ims?pdfEvent=${encodeURIComponent(orderId)}`;
   return (
     <>
       {run && <iframe title="dept-pdf" src={frameUrl} aria-hidden="true" tabIndex={-1} style={{ position: "fixed", top: 0, left: -20000, width: 1400, height: 900, opacity: 0, pointerEvents: "none", border: 0 }} />}
