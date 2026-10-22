@@ -93,7 +93,7 @@ import { rowToRcItem, rcItemToRow, rcIsSMB, getFloralMode, oosCostPctFor, canFul
 import { todayStr } from "../../lib/ims/attendance";
 import { supabase, fetchAll, upsertRow, deleteRow, subscribeTable, keepaliveUpsert } from "../../lib/supabase";
 import { latestPlanningInputStamp, planningNeedsSync, planningSnapshotOutdated, planningUpcoming, PLANNING_SNAPSHOT_VERSION } from "../../lib/studio/planningSync.js";
-import { innerDiscountFactor } from "../../lib/studio/discounts.js";
+import { guestRepeatLineCost, flaggedUnitRate } from "../../lib/studio/repeatPricing.js";
 import {
   rowToLibItem, libItemToRow, fetchLibraryItemsByIds, fetchLibraryItemsByUrls,
   fetchZoneLibraryPhotos, fetchCustomZoneLibraryPhotos, fetchUntaggedLibraryTargets,
@@ -4545,20 +4545,20 @@ export default function StudioApp() {
   // discounts.js): the part applied here shrinks so that, once the date factor is multiplied on,
   // the unit lands on the bigger discount alone. Units with no discount of their own just get the
   // date factor afterwards, as before. King's / Perfect (×1.2 / ×1) are not discounts and still multiply.
-  const repeatAdjustedLineCost = (item, qty, unitRate, zc, venueName, crossFnReuseQty = 0, repeatOverride, dateFactor = 1) => {
-    const full = qty * unitRate;
-    if (!item) return full;
-    if (item.noRepeatDiscount === true) return full; // IMS → Inventory: "No repeat discount on this item" is ON
-    if (hideDiscountFromClient) return full; // see hideDiscountFromClient above — guest-facing only
+  // kitOverrides (optional): the element's own edited component list, so a kit's switched-off components
+  // (IMS "No repeat discount") are found in the same list the kit's price was built from.
+  // The arithmetic itself is guestRepeatLineCost (lib/studio/repeatPricing.js), which is tested.
+  const repeatAdjustedLineCost = (item, qty, unitRate, zc, venueName, crossFnReuseQty = 0, repeatOverride, dateFactor = 1, kitOverrides) => {
+    if (!item) return qty * unitRate;
     const isRepeat = typeof repeatOverride === "boolean" ? repeatOverride : repeatCatFor(zc, "elements");
-    const discFactor = innerDiscountFactor(dateFactor, GUEST_DISCOUNT_PCT);
-    // Rounded to the rupee — a 25% cut rarely lands on a whole number otherwise (₹1,289 × 0.75 =
-    // ₹966.75), and every other price in the build is a whole rupee.
-    if (isRepeat) return Math.round(full * discFactor);
-    const { standingUnits } = rentalSplit(fvCfgForRepeat, venueName, item.id, qty, imsInventory);
-    const discEligible = Math.min(qty, Math.max(0, standingUnits) + Math.max(0, crossFnReuseQty));
-    if (discEligible <= 0) return full;
-    return Math.round(discEligible * unitRate * discFactor + (qty - discEligible) * unitRate);
+    const { standingUnits } = isRepeat ? { standingUnits: 0 } : rentalSplit(fvCfgForRepeat, venueName, item.id, qty, imsInventory);
+    return guestRepeatLineCost({
+      qty, unitRate,
+      // a kit with switched-off components: their share of the kit's price is never discounted
+      flaggedUnitRate: flaggedUnitRate(item, (it, ov) => priceForInvItem(it, rcFactorByKey, imsInventory, ov), imsInventory, kitOverrides),
+      noDiscount: item.noRepeatDiscount === true, hidden: hideDiscountFromClient,
+      isRepeat, standingUnits, crossFnReuseQty, dateFactor, pct: GUEST_DISCOUNT_PCT,
+    });
   };
   // The date factor getElPrice / getElPriceForFn will multiply onto this element's line — 1 for a
   // flower priced from a recipe / the mandi (no date factor there), else the function date's category.
@@ -4679,7 +4679,7 @@ export default function StudioApp() {
         const flowerCost = recipeCost(subCatPattern, item.subCat || item.subcategory) + attachedPatterns.reduce((sum, x) => sum + recipeCost(x.pattern, x.pattern.sub, x.qty, x.si), 0) + compDelta;
         const unitPrice = priceForInvItem(item, rcFactorByKey, imsInventory, el.kitOverrides) + flowerCost;
         const anySMB = subCatPattern?.mode === "smb" || attachedPatterns.some((x) => x.pattern.mode === "smb");
-        return { rc: null, unitPrice, fullUnitPrice: unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName, crossFnTake, el.repeatOverride, dateFactorFor(el, opts)), area: 0, warning: null, isFloralBlend: false, realPct: null, patternSMB: anySMB };
+        return { rc: null, unitPrice, fullUnitPrice: unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName, crossFnTake, el.repeatOverride, dateFactorFor(el, opts), el.kitOverrides), area: 0, warning: null, isFloralBlend: false, realPct: null, patternSMB: anySMB };
       }
     }
 
@@ -4703,7 +4703,7 @@ export default function StudioApp() {
         // item's own rental (× its sub-category's scaling factor) is always added on top, alongside
         // the recipe's own generic "extra (pot/base)" figure.
         const unitPrice = Math.round(realPct / 100 * rates.realRate + (100 - realPct) / 100 * rates.artRate) + rates.extra + priceForInvItem(item, rcFactorByKey, imsInventory);
-        return { rc: null, unitPrice, fullUnitPrice: unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName, crossFnTake, el.repeatOverride, dateFactorFor(el, opts)), area: 0, warning: null, isFloralBlend: true, realPct, patternSMB: pattern.mode === "smb" };
+        return { rc: null, unitPrice, fullUnitPrice: unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName, crossFnTake, el.repeatOverride, dateFactorFor(el, opts), el.kitOverrides), area: 0, warning: null, isFloralBlend: true, realPct, patternSMB: pattern.mode === "smb" };
       }
     }
 
@@ -4788,7 +4788,7 @@ export default function StudioApp() {
       // so this floors to ownedRate — no production premium for something that can't be produced.
       const shortRate = Math.max(ownedRate, (Number(item.cost) || 0) * (oosCostPctFor(item, rcCostPctForSub, shortfallFnDate, shortfallAsOf) / 100));
       const shortCost = shortQty * shortRate;
-      const lineCost = repeatAdjustedLineCost(item, ownedQty, ownedRate, opts?.zc, opts?.venueName, crossFnTake, el.repeatOverride, dateFactorFor(el, opts)) + shortCost;
+      const lineCost = repeatAdjustedLineCost(item, ownedQty, ownedRate, opts?.zc, opts?.venueName, crossFnTake, el.repeatOverride, dateFactorFor(el, opts), el.kitOverrides) + shortCost;
       const unitPrice = qty > 0 ? lineCost / qty : ownedRate;
       // outOfStock: genuinely nothing can be done about this shortfall (no stock, can't be made
       // either, or not enough production lead time left) — StudioBuild.jsx's badge reads this to
@@ -4811,7 +4811,7 @@ export default function StudioApp() {
       return { rc: null, unitPrice, fullUnitPrice: ownedRate, lineCost, area: 0, warning, isFloralBlend: false, realPct: null, available: ownedQty, shortCost, outOfStock };
     }
     const unitPrice = priceForInvItem(item, rcFactorByKey, imsInventory, el.kitOverrides);
-    return { rc: null, unitPrice, fullUnitPrice: unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName, crossFnTake, el.repeatOverride, dateFactorFor(el, opts)), area: 0, warning: null, isFloralBlend: false, realPct: null };
+    return { rc: null, unitPrice, fullUnitPrice: unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName, crossFnTake, el.repeatOverride, dateFactorFor(el, opts), el.kitOverrides), area: 0, warning: null, isFloralBlend: false, realPct: null };
   }, [imsInventory, rcFactorByKey, rcCostPctForSub, activeBlocksForDate, activeBlocksDetailForDate, dealCheckData, studioFloralData, rcFloralModeByKey, floralRatio, fvCfgForRepeat, eventOrders, activeClientId, clientName, activeFnIdx, activeFnMeta, clientDate]);
   // Shared SMB/flat rate resolution — the one place `getElPrice`, `getElPriceForFn`, and
   // `calcFullEventCost` all resolve a rate-card item's base rate for an element's size, now with

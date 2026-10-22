@@ -100,7 +100,7 @@ import { qtyUsedElsewhereInDealCheck, netOwnReservedBlocksLive } from "../../../
 import { isHiddenSubcat, oosCostPctFor, canFulfillShortfall } from "../../../lib/rateCard";
 import { findCrossFnReuseSource, computeFnInvQty, groupConsecutiveFns } from "../../../lib/studio/crossFnReuse";
 import { computePeopleRaw, computePeople, situationalFactorsFor, heavySayaMultFor as sharedHeavySayaMultFor } from "../../../lib/studio/manpowerCount";
-import { innerDiscountFactor } from "../../../lib/studio/discounts.js";
+import { dcRentalCost } from "../../../lib/studio/repeatPricing.js";
 import { kitShortfallSplit } from "../../../lib/studio/kitShortfallSplit";
 import { withSetupSlot } from "../../../lib/studio/dihariWindows.js";
 
@@ -368,14 +368,10 @@ export default function DealCheckOverlay({ ctx }) {
   // standing split above didn't already claim), so the same physical unit is never discounted twice.
   const repeatAdjustedRental = (isRepeatZone, venueName, item, qty, baseRentalIn, fnDate, crossFnReuseQty = 0) => {
     const dateMult = fnDate ? dateCategoryMultiplierFor(fnDate) : 1;
-    const baseRental = baseRentalIn * dateMult;
-    // A date below ×1 (Filler, last-minute) is itself a discount, and discounts do not stack: a unit
-    // that also has a Fixed-Venue / reuse discount takes only the bigger of the two (see
-    // lib/studio/discounts.js). dateMult is already in baseRental, so this is what is left to apply.
-    const disc = (pct) => innerDiscountFactor(dateMult, pct);
-    const full = qty * baseRental;
-    if (!item) return full;
-    if (item.noRepeatDiscount === true) return full; // IMS → Inventory: "No repeat discount on this item" is ON (the date factor above still counts)
+    // The arithmetic is dcRentalCost (lib/studio/repeatPricing.js, tested): a date below ×1 (Filler,
+    // last-minute) is itself a discount, so it competes with a unit's Fixed-Venue / reuse discount instead
+    // of stacking, and an item with IMS "No repeat discount" ON is billed at its full (date-adjusted) rate.
+    if (!item) return dcRentalCost({ qty, baseRentalIn, dateMult, hasItem: false });
     // fixedVenueSubcatDiscount rides along here too — standingDiscountPct falls back to it when
     // a standing item has no per-item override of its own, so that fallback needs it on the
     // same object rentalSplit passes through, not just the two keys fixedVenueFor itself reads.
@@ -388,16 +384,10 @@ export default function DealCheckOverlay({ ctx }) {
     const key = String(imsField.subcategory(item) || "").toLowerCase().trim();
     const sc = key ? Number((dealCheckData?.fixedVenueSubcatDiscount || {})[key]) : NaN;
     const subcatPct = Number.isFinite(sc) && sc > 0 ? sc : 0;
-    const crossFnEligible = Math.max(0, Math.min(freshUnits, crossFnReuseQty));
-    if (standingUnits > 0 || crossFnEligible > 0) {
-      const trulyFresh = freshUnits - crossFnEligible;
-      return standingUnits * baseRental * disc(discountPct) + crossFnEligible * baseRental * disc(subcatPct) + trulyFresh * baseRental;
-    }
     // Not a specifically-registered standing item, so there's nothing "always there" about it — the
     // sub-category-level Repeat discount only makes sense when THIS event's own setup is being
-    // reused across days, which is exactly what isRepeatZone means. Stays gated on it.
-    if (!isRepeatZone) return full;
-    return full * disc(subcatPct);
+    // reused across days, which is exactly what isRepeatZone means (dcRentalCost keeps it gated on it).
+    return dcRentalCost({ qty, baseRentalIn, dateMult, noDiscount: item.noRepeatDiscount === true, isRepeatZone, standingUnits, freshUnits, discountPct, subcatPct, crossFnReuseQty });
   };
 
   // One function's print jobs (Flex/Vinyl/Sunboard etc., zoneConfig[zk].prints) priced out — the
