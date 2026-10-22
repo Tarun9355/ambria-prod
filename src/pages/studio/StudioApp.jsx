@@ -8719,17 +8719,24 @@ export default function StudioApp() {
     let done = 0;
     try {
       const latest = await latestPlanningInputStamp();
-      if (!latest) { tell("done", { done: 0, total: 0 }); return; }
+      if (!latest) { tell("done", { done: 0, total: 0, skipped: [] }); return; }
       const stale = (c) => {
         const eo = c.status === "booked" ? eoOf(c) : null;
         return planningNeedsSync(eo, latest) && !autoSyncedClientsRef.current.has(c.id);
       };
       // Upcoming events first (nearest first), then the ones whose dates have gone by (latest first).
       const lastDateOf = (c) => { const eo = eoOf(c); return [eo?.date, ...((Array.isArray(eo?.functionsDetail) ? eo.functionsDetail : []).map(f => f?.date))].filter(Boolean).map(d => String(d).slice(0, 10)).sort().pop() || ""; };
+      // Orders that are stale but cannot be synced from here — no client behind them any more, a deal
+      // that is not booked, or no saved build — are reported back (skipped) so IMS stops counting them
+      // as something the button could fix.
+      const skipped = (eventOrdersRef2.current || []).filter(eo => planningNeedsSync(eo, latest)).filter(eo => {
+        const c = (clientLedgerRef.current || []).find(x => x.id === eo.clientId || (eo.clientName && (x.name || "").trim() === (eo.clientName || "").trim()));
+        return !c || c.status !== "booked" || !findLatestBuild(c.sessions, 0);
+      }).map(eo => eo.id);
       const queue = (clientLedgerRef.current || []).filter(c => stale(c) && findLatestBuild(c.sessions, 0))
         .sort((a, b) => { const ua = planningUpcoming(eoOf(a)), ub = planningUpcoming(eoOf(b)); if (ua !== ub) return ua ? -1 : 1; const da = lastDateOf(a), db = lastDateOf(b); return ua ? da.localeCompare(db) : db.localeCompare(da); })
         .map(c => c.id);
-      if (!queue.length) { tell("done", { done: 0, total: 0 }); return; }
+      if (!queue.length) { tell("done", { done: 0, total: 0, skipped }); return; }
       tell("ready", { total: queue.length });
       setSweepInfo({ done, total: queue.length, name: "" });
       for (const id of queue) {
@@ -8761,7 +8768,7 @@ export default function StudioApp() {
         tell("progress", { done, total: queue.length });
         for (let w = 0; w < 10 && activeClientIdRef.current; w++) await sleep(300); // closed deal settles
       }
-      tell("done", { done, total: queue.length });
+      tell("done", { done, total: queue.length, skipped });
     } catch { tell("done", { done, total: 0, error: true }); /* best effort — the auto-sync on open still covers each deal */ }
     finally { sw.id = null; setSweepInfo(null); }
   };

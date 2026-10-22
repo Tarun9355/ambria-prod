@@ -7,6 +7,10 @@ import { latestPlanningInputStamp, planningNeedsSync } from "../../lib/studio/pl
 // nobody has to open the deal; the planning below refreshes on its own through the live subscription.
 const SWEPT_KEY = "ambria-planning-swept-at-v2"; // v2: the first version also hid the past events a sweep used to skip
 const readSwept = () => { try { return Number(localStorage.getItem(SWEPT_KEY)) || 0; } catch { return 0; } };
+// Orders the last run found it could not sync (no client / not booked / no saved build), remembered as
+// { orderId: deptSyncedAt } so they are not counted again until that order itself changes.
+const SKIPPED_KEY = "ambria-planning-skipped-v1";
+const readSkipped = () => { try { return JSON.parse(localStorage.getItem(SKIPPED_KEY) || "{}") || {}; } catch { return {}; } };
 
 export default function PlanningSyncButton({ eventOrders }) {
   const [latest, setLatest] = useState(0);
@@ -25,7 +29,9 @@ export default function PlanningSyncButton({ eventOrders }) {
     return () => { alive = false; clearInterval(t); document.removeEventListener("visibilitychange", onVis); };
   }, []);
 
-  const need = useMemo(() => (eventOrders || []).filter(eo => planningNeedsSync(eo, latest, sweptAt)).length, [eventOrders, latest, sweptAt]);
+  const [skipped, setSkipped] = useState(readSkipped);
+  const eventOrdersRef = useRef(eventOrders); eventOrdersRef.current = eventOrders;
+  const need = useMemo(() => (eventOrders || []).filter(eo => planningNeedsSync(eo, latest, sweptAt) && skipped[eo.id] !== eo.deptSyncedAt).length, [eventOrders, latest, sweptAt, skipped]);
 
   const finish = (text, stamp = true) => {
     if (stamp) { const now = Date.now(); try { localStorage.setItem(SWEPT_KEY, String(now)); } catch { /* private mode */ } setSweptAt(now); }
@@ -48,7 +54,14 @@ export default function PlanningSyncButton({ eventOrders }) {
       heardRef.current = true;
       if (d.phase === "ready") setRun(r => (r ? { ...r, total: d.total, started: true } : r));
       else if (d.phase === "progress") setRun(r => (r ? { ...r, done: d.done, total: d.total, started: true } : r));
-      else if (d.phase === "done") finish(d.error ? "Sync stopped early — try again" : d.done > 0 ? `Planning synced for ${d.done} event${d.done === 1 ? "" : "s"}` : "Planning is already up to date");
+      else if (d.phase === "done") {
+        if (Array.isArray(d.skipped)) {
+          const next = {}; d.skipped.forEach(id => { const eo = (eventOrdersRef.current || []).find(e => e.id === id); if (eo) next[id] = eo.deptSyncedAt; });
+          try { localStorage.setItem(SKIPPED_KEY, JSON.stringify(next)); } catch { /* private mode */ }
+          setSkipped(next);
+        }
+        finish(d.error ? "Sync stopped early — try again" : d.done > 0 ? `Planning synced for ${d.done} event${d.done === 1 ? "" : "s"}` : "Planning is already up to date");
+      }
     };
     window.addEventListener("message", onMsg);
     // Never hangs: no word at all in a minute (not signed in to Studio here, say) or a run past a
