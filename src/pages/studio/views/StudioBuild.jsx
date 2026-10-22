@@ -2366,12 +2366,11 @@ export default function StudioBuild({ ctx }) {
   // estimate is not shown on the Build page). With more than one function the amount is for all of
   // them and has no meaning for one function's rail, so it is left alone.
   const negClient = (clientLedger||[]).find(c=>c.id===activeClientId);
-  // A floating negotiated amount is the stored amount plus this tab's own edits not yet written
+  // The negotiated amount (it always follows the build) is the stored amount plus this tab's own edits not yet written
   // (floatPending — StudioApp's follow-the-build logic). It moves only when the build is edited: never
   // with a rate change, never just because the deal was opened, never with another tab's writes.
-  const nfl = negClient?.negotiatedFloat;
   const negBase = Number(negClient?.negotiatedAmount) || 0;
-  const negAmt = (nfl && negBase > 0) ? Math.max(0, Math.round(negBase + (Number(floatPending) || 0))) : negBase;
+  const negAmt = negBase > 0 ? Math.max(0, Math.round(negBase + (Number(floatPending) || 0))) : 0;
   const showNeg = negAmt > 0 && (extraFunctions||[]).length === 0;
   const shownTotal = showNeg ? negAmt : grandTotal;
   const PRICING_TILE = showCosts && (()=>{
@@ -2423,16 +2422,6 @@ export default function StudioBuild({ ctx }) {
                   <div style={{fontSize:23,fontWeight:700,color:textP,letterSpacing:-0.6,fontVariantNumeric:"tabular-nums"}}>{fmt(shownTotal)}</div>
                   <span style={{fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:6,background:cat.bg,color:cat.color}}>{cat.label}</span>
                   {showNeg&&<span style={{fontSize:9.5,fontWeight:700,letterSpacing:0.4,textTransform:"uppercase",color:textS}}>negotiated</span>}
-                  {/* Follow build: a floating amount moves with the build (amount + total now − total when it was
-                      set); a fixed one stays put. Set from here — by the tab that is open — so the choice is saved
-                      with this tab's own copy of the client and no other open tab can wipe it. */}
-                  {showNeg&&<span onClick={()=>{
-                      if(nfl){ saveClientLedger(clientLedger.map(c=>c.id===activeClientId?{...c,negotiatedAmount:negAmt,negotiatedFloat:undefined}:c)); }
-                      else if(grandTotal>0){ saveClientLedger(clientLedger.map(c=>c.id===activeClientId?{...c,negotiatedAmount:negAmt,negotiatedFloat:{amount:negAmt,base:grandTotal}}:c)); }
-                    }}
-                    title={nfl?"The negotiated amount moves with the build. Click to fix it at the current figure.":"The negotiated amount is fixed. Click to make it move with the build from now on."}
-                    className="cursor-pointer select-none rounded-md border px-1.5 py-0.5 text-[9.5px] font-bold uppercase tracking-wide"
-                    style={{borderColor:nfl?"#10B981":border,color:nfl?"#059669":textS,background:nfl?"#10B98118":"transparent"}}>{nfl?"● follows build":"○ fixed · follow build"}</span>}
                 </>
               /* The tier chip is held back with the number. It is derived from the total, so on seed
                  defaults it can read Platinum on a deal that is actually Gold — a wrong word is

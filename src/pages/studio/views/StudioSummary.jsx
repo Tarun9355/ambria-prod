@@ -254,7 +254,8 @@ export default function StudioSummary({ ctx }) {
   const commitNegotiatedAmount = () => {
     const num = negDraft === "" ? null : Math.max(0, Number(negDraft) || 0);
     if (num === (activeClient?.negotiatedAmount ?? null)) return; // no-op — don't write an unchanged row
-    saveClientLedger(clientLedger.map(c => c.id === activeClientId ? { ...c, negotiatedAmount: num, negotiatedFloat: undefined } : c)); // a typed amount is fixed again
+    // Typing sets the amount; Build edits then move it on from here (it always follows the build).
+    saveClientLedger(clientLedger.map(c => c.id === activeClientId ? { ...c, negotiatedAmount: num, negotiatedFloat: undefined } : c));
   };
 
   // ── Deal value stays FROZEN once booked (owner decision — no silent auto-update on every Build

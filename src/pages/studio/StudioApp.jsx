@@ -6039,10 +6039,11 @@ export default function StudioApp() {
     return discounted + Math.round(discounted * feePct / 100);
   }, [collectAllFunctionData, calcFunctionCost, dealCheckData, studioFloralData, sharedFloralSettings, venueParents]);
 
-  // ── A NEGOTIATED AMOUNT THAT FOLLOWS THE BUILD (client.negotiatedFloat = { amount, base }) ──
-  // Switched on per deal from Build's Live Estimate ("follow build"). While on, an EDIT to the build
-  // moves the negotiated amount by exactly what that edit changed the total by: removing a ₹1L zone
-  // takes ₹1L off it. Single-function deals only. It follows a BOOKED deal too (owner ask): there the
+  // ── A NEGOTIATED AMOUNT ALWAYS FOLLOWS THE BUILD ──
+  // Owner ask: no "fixed" amount any more — every negotiated amount moves with the build. An EDIT to
+  // the build moves it by exactly what that edit changed the total by: removing a ₹1L zone takes ₹1L
+  // off it. Single-function deals only (on a multi-function deal the amount covers every function, so
+  // one function's build has no claim on it). It follows a BOOKED deal too (owner ask): there the
   // deal value is what moves, so the booked baseline is re-pointed at the same time (no "pending" is
   // left to Apply twice) and IMS's deal value is updated.
   //
@@ -6067,7 +6068,7 @@ export default function StudioApp() {
   const floatLatestRef = useRef({});
   floatLatestRef.current = { grandTotal, eventGrandTotal, saveClientLedger, syncDealValueNow, clientLedger };
   useEffect(() => () => { if (floatTimerRef.current) clearTimeout(floatTimerRef.current); }, []);
-  const floatOn = !!((clientLedger || []).find(c => c.id === activeClientId)?.negotiatedFloat);
+  const floatOn = Number((clientLedger || []).find(c => c.id === activeClientId)?.negotiatedAmount) > 0;
   useEffect(() => {
     const ac = (clientLedgerRef.current || clientLedger || []).find(c => c.id === activeClientId);
     const seen = floatSeenRef.current;
@@ -6095,10 +6096,10 @@ export default function StudioApp() {
       const add = floatPendingRef.current;
       floatPendingRef.current = 0;
       setFloatPending(0);
-      if (!cur || !cur.negotiatedFloat || !add) return; // switched off meanwhile
+      if (!cur || !(Number(cur.negotiatedAmount) > 0) || !add) return; // the amount was cleared meanwhile
       const want = Math.max(0, Math.round((Number(cur.negotiatedAmount) || 0) + add));
       const booked = cur.status === "booked";
-      L.saveClientLedger((clientLedgerRef.current || L.clientLedger).map(c => c.id === cur.id ? { ...c, negotiatedAmount: want, negotiatedFloat: { amount: want, base: L.grandTotal }, ...(booked ? { bookedSystemTotal: L.eventGrandTotal } : {}) } : c));
+      L.saveClientLedger((clientLedgerRef.current || L.clientLedger).map(c => c.id === cur.id ? { ...c, negotiatedAmount: want, ...(booked ? { bookedSystemTotal: L.eventGrandTotal } : {}) } : c));
       if (booked) L.syncDealValueNow?.({ amount: want, pending: 0 });
     }, 800);
   }, [grandTotal, buildSig, activeClientId, pricingReady, restoring, extraFunctions, zoneElements, floatOn]);
