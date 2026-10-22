@@ -477,6 +477,188 @@ function invCalcSummary(rows) {
   });
   return t;
 }
+// ── Deal Check's Florals tab, in IMS (Floral department only) ──
+// Read from `floralDetail`, the per-function figures Deal Check pushes with the department snapshot (see
+// calcFnFloralDetail in StudioApp). Same sections as the tab: header, mandi list (with how each flower's quantity
+// builds up), artificial bunches, direct-from-inventory pieces, elements not costed as florals, per-element table.
+function FloralDetailView({ detail }) {
+  const keys = Object.keys(detail || {});
+  const [fk, setFk] = useState(keys[0]);
+  const [open, setOpen] = useState({});
+  const f = detail?.[fk] || detail?.[keys[0]];
+  if (!f) return null;
+  const rupee = (n) => "₹" + Math.round(Math.abs(Number(n) || 0)).toLocaleString("en-IN");
+  const realPct = f.total > 0 ? Math.round((f.real / f.total) * 100) : 0;
+  const toggle = (k) => setOpen(o => ({ ...o, [k]: !o[k] }));
+  const A = f.art || {};
+  const side = (label, tone, x) => {
+    const disc = x.bunchesFull > x.bunches + 0.05;
+    return (
+      <div className={"rounded-md px-2.5 py-2 " + (tone === "pink" ? "bg-pink-50" : "bg-emerald-50")}>
+        <div className={"text-[12px] font-semibold mb-1 " + (tone === "pink" ? "text-pink-600" : "text-emerald-600")}>{label}</div>
+        <div className="text-[13px] text-[#1A1A2E] tabular-nums">
+          {disc && <span className="line-through opacity-40 mr-1.5">{x.bunchesFull.toFixed(1)} bunches</span>}
+          <span className={disc ? "text-emerald-600 font-bold" : ""}>{x.bunches.toFixed(1)} bunches</span> = {x.kg} kg
+        </div>
+        <div className="text-[11px] text-[#1A1A2E] mt-0.5">× ₹{x.rate}/kg = {disc && <span className="line-through opacity-40 mr-1">{rupee(x.costFull)}</span>}<span className={"font-semibold " + (tone === "pink" ? "text-pink-600" : "text-emerald-600")}>{rupee(x.cost)}</span></div>
+      </div>
+    );
+  };
+  const card = "rounded-xl border bg-white px-4 py-3.5";
+  const head = "text-[13px] font-bold tracking-[0.04em] uppercase";
+  return (
+    <div className="mt-4 space-y-3.5">
+      <div className="flex items-center gap-2 text-[12px] font-bold uppercase tracking-[0.08em] text-pink-600">🌸 Deal Check · Florals tab</div>
+      {keys.length > 1 && (
+        <div className="flex gap-1.5 flex-wrap">
+          {keys.map(k => (
+            <button key={k} onClick={() => setFk(k)}
+              className={"px-3 py-1.5 rounded-lg text-[12.5px] border " + (k === fk ? "border-pink-400 bg-pink-50 font-semibold text-pink-700" : "border-gray-200 text-gray-600 hover:bg-gray-50")}>
+              {detail[k].fnType || `Function ${Number(k) + 1}`} · {detail[k].fnDate || "—"}
+            </button>
+          ))}
+        </div>
+      )}
+      <div className={card + " border-pink-200"}>
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="min-w-0 flex-1">
+            <div className="text-[12.5px] font-bold uppercase tracking-[0.05em] text-[#1A1A2E]">{f.fnType || "Function"} · {f.fnDate || "—"}</div>
+            <div className="flex items-baseline gap-3.5 flex-wrap mt-0.5">
+              <span className="text-sm font-semibold text-[#1A1A2E]">Total Floral</span>
+              <span className="text-[24px] font-bold text-[#1A1A2E] tabular-nums">{rupee(f.total)}</span>
+              <span className="text-[12.5px] font-semibold text-emerald-600 inline-flex items-center gap-1.5"><span className="w-[7px] h-[7px] rounded-full bg-emerald-500 inline-block" />Real {rupee(f.real)}</span>
+              <span className="text-[12.5px] font-semibold text-pink-600 inline-flex items-center gap-1.5"><span className="w-[7px] h-[7px] rounded-full bg-pink-500 inline-block" />Artificial {rupee(f.artificial)}</span>
+            </div>
+          </div>
+          <div className="shrink-0 text-[12px] font-semibold text-[#1A1A2E] px-3.5 py-1.5 rounded-full border border-pink-200 whitespace-nowrap">{realPct}% real / {100 - realPct}% artificial overall</div>
+        </div>
+      </div>
+      {f.note && (
+        <div className={card + " border-purple-200"}>
+          <div className="text-[12px] font-bold uppercase tracking-[0.05em] text-purple-600 mb-1.5">📝 Floral preference for {f.fnType || "this function"}</div>
+          <div className="text-[13px] text-[#1A1A2E] whitespace-pre-line">{f.note}</div>
+        </div>
+      )}
+      <div className={card + " border-emerald-200"}>
+        <div className="flex items-center justify-between mb-2">
+          <span className={head + " text-emerald-600"}>🌹 Real flower mandi list ({f.mandi.length} flower{f.mandi.length === 1 ? "" : "s"})</span>
+          <span className="text-sm font-bold text-emerald-600 tabular-nums">{rupee(f.real)}</span>
+        </div>
+        <table className="w-full text-[13px]">
+          <thead><tr className="border-b border-gray-200 text-gray-500 text-[11.5px]">
+            <th className="text-left font-semibold py-1.5">Flower</th><th className="text-right font-semibold py-1.5">Qty</th><th className="text-right font-semibold py-1.5">Rate</th><th className="text-right font-semibold py-1.5">Total</th>
+          </tr></thead>
+          <tbody>
+            {f.mandi.map((m, i) => {
+              const disc = m.buyQtyFull != null && m.buyQtyFull > m.buyQty;
+              const k = "m" + i;
+              return (
+                <Fragment key={i}>
+                  <tr className="border-b border-gray-100">
+                    <td className="py-1.5 text-[#1A1A2E]">
+                      <button onClick={() => toggle(k)} className="inline-flex items-center gap-1.5 text-left hover:text-blue-700" title="How this quantity builds up">
+                        <span className="text-emerald-500">●</span>{m.name}{m.colour && <span className="text-[10.5px] px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 font-semibold">{m.colour}</span>}
+                        <span aria-hidden="true" className={"text-gray-400 text-[10px] transition-transform " + (open[k] ? "rotate-90" : "")}>▸</span>
+                      </button>
+                    </td>
+                    <td className="py-1.5 text-right tabular-nums text-[#1A1A2E]" title={`Exact need ${m.need} ${m.unit}, rounded up to whole ${m.unit}s for purchase`}>
+                      {disc && <span className="line-through opacity-40 mr-1.5">{m.buyQtyFull}</span>}
+                      <span className={disc ? "text-emerald-600 font-bold" : ""}>{m.buyQty} {m.unit}</span>
+                    </td>
+                    <td className="py-1.5 text-right tabular-nums text-[#1A1A2E]">{rupee(m.rate)}/{m.unit}</td>
+                    <td className="py-1.5 text-right tabular-nums font-semibold text-[#1A1A2E]">{rupee(m.cost)}</td>
+                  </tr>
+                  {open[k] && (
+                    <tr className="bg-slate-50"><td colSpan={4} className="px-3 py-2">
+                      <div className="text-[11.5px] text-gray-500 mb-1">Exact need {m.need} {m.unit}{m.needFull != null && m.needFull > m.need ? ` (before reuse credit ${m.needFull})` : ""} → bought as {m.buyQty} whole {m.unit}{m.buyQty === 1 ? "" : "s"}</div>
+                      {m.contributors.map((c, ci) => (
+                        <div key={ci} className="flex justify-between gap-3 text-[12px] py-0.5">
+                          <span className="text-[#1A1A2E]">{c.el}{c.zone && c.zone !== "—" ? <span className="text-gray-400"> · {c.zone}</span> : null}{c.size && c.size !== "—" ? <span className="text-gray-400"> · {c.size}</span> : null}</span>
+                          <span className="tabular-nums text-gray-600">×{c.elQty} × {c.per} = <b className="text-[#1A1A2E]">{c.qty} {m.unit}</b></span>
+                        </div>
+                      ))}
+                    </td></tr>
+                  )}
+                </Fragment>
+              );
+            })}
+          </tbody>
+          <tfoot><tr><td colSpan={3} className="text-right font-semibold py-2 text-[#1A1A2E]">Real Total</td><td className="text-right font-bold text-emerald-600 py-2 tabular-nums">{rupee(f.real)}</td></tr></tfoot>
+        </table>
+      </div>
+      <div className={card + " border-pink-200"}>
+        <div className={head + " text-pink-600 mb-2"}>🌺 Artificial bunches</div>
+        <div className="grid grid-cols-2 gap-3.5">
+          {side("🌹 Flower bunches", "pink", A.flower || { bunches: 0, bunchesFull: 0, kg: 0, rate: 0, cost: 0, costFull: 0 })}
+          {side("🌿 Green bunches", "green", A.green || { bunches: 0, bunchesFull: 0, kg: 0, rate: 0, cost: 0, costFull: 0 })}
+        </div>
+        {(A.mapped || []).length > 0 && (
+          <div className="mt-2.5 rounded-md px-2.5 py-2 bg-blue-50 border border-blue-100">
+            <div className="text-[12px] font-semibold text-blue-600 mb-1">🔗 Mapped substitutes</div>
+            {A.mapped.map((m, i) => (
+              <div key={i} className="flex justify-between text-[12px] py-0.5 text-[#1A1A2E]"><span>{m.realFlowerName} → {m.mappedName || "no item mapped"} × {m.qty} {m.unit}</span><span className="text-blue-600 font-semibold tabular-nums">{rupee(m.cost)}</span></div>
+            ))}
+          </div>
+        )}
+        <div className="flex justify-between items-center mt-2.5 pt-2 border-t border-gray-200">
+          <span className="text-[13px] font-medium text-[#1A1A2E]">Total Artificial</span>
+          <span className="text-[15px] font-bold text-pink-600 tabular-nums">{rupee(A.total ?? f.artificial)}</span>
+        </div>
+      </div>
+      {(f.direct || []).length > 0 && (
+        <div className={card + " border-blue-200"}>
+          <div className={head + " text-blue-600 mb-2"}>📦 Direct from inventory</div>
+          {f.direct.map((r, i) => (
+            <div key={i} className="flex items-center gap-2 text-[13px] text-[#1A1A2E] py-0.5">
+              <span className="font-semibold">{r.name}</span><span className="opacity-70 tabular-nums">× {r.qty} {r.unit}</span>{r.rate > 0 && <span className="opacity-70 text-[11.5px]">@ {rupee(r.rate)}</span>}
+              <span className="ml-auto text-blue-600 font-semibold tabular-nums">{rupee(r.cost)}</span>
+            </div>
+          ))}
+          <div className="flex justify-between items-center mt-2 pt-2 border-t border-gray-200">
+            <span className="text-[13px] font-medium text-[#1A1A2E]">Total from inventory</span>
+            <span className="text-[15px] font-bold text-blue-600 tabular-nums">{rupee(f.direct.reduce((a, r) => a + r.cost, 0))}</span>
+          </div>
+          <div className="text-[11px] text-[#1A1A2E] opacity-65 mt-1.5 italic">Included in Total Artificial above — manufactured pieces charged in full, so the real/artificial blend does not scale them.</div>
+        </div>
+      )}
+      {(f.uncosted || []).length > 0 && (
+        <div className={card + " border-amber-300"}>
+          <div className="text-[13px] font-bold text-amber-600 mb-1.5">⚠ {f.uncosted.length} element{f.uncosted.length === 1 ? "" : "s"} not costed as florals</div>
+          {f.uncosted.map((u, i) => (
+            <div key={i} className="flex items-center gap-2 text-[13px] text-[#1A1A2E] py-0.5">
+              <span className="font-semibold">{u.name}</span><span className="opacity-70">{u.zone} · ×{u.qty}</span><span className="ml-auto text-amber-600">{u.reason}</span>
+            </div>
+          ))}
+          <div className="text-[12px] text-[#1A1A2E] mt-1.5 italic">Add these to the Rate Card under “florals” to price them from a flower recipe. Until then they bill as rental.</div>
+        </div>
+      )}
+      <div className={card + " border-gray-200"}>
+        <div className="flex items-center justify-between mb-2">
+          <span className={head + " text-[#1A1A2E]"}>📋 Per-element breakdown ({f.elements.length} element{f.elements.length === 1 ? "" : "s"})</span>
+          <span className="text-sm font-bold text-[#1A1A2E] tabular-nums">{rupee(f.total)}</span>
+        </div>
+        <table className="w-full text-[13px]">
+          <thead><tr className="border-b border-gray-200 text-gray-500 text-[11.5px]">
+            <th className="text-left font-semibold py-1.5">Element</th><th className="text-right font-semibold py-1.5">Qty</th><th className="text-right font-semibold py-1.5">Real %</th><th className="text-right font-semibold py-1.5">Real ₹</th><th className="text-right font-semibold py-1.5">Artif ₹</th><th className="text-right font-semibold py-1.5">Total</th>
+          </tr></thead>
+          <tbody>
+            {f.elements.map((e, i) => (
+              <tr key={i} className="border-b border-gray-100 align-top">
+                <td className="py-1.5 text-[#1A1A2E]"><div className="font-medium">{e.name}</div><div className="text-[11px] text-gray-400">{e.zones.join(", ")}</div></td>
+                <td className="py-1.5 text-right tabular-nums">{e.qty}</td>
+                <td className="py-1.5 text-right tabular-nums">{Math.round(e.realPct)}%</td>
+                <td className="py-1.5 text-right tabular-nums text-emerald-600">{rupee(e.real)}{e.invCost > 0 && <div className="text-[10px] text-blue-500">incl. {rupee(e.invCost)} inventory</div>}</td>
+                <td className="py-1.5 text-right tabular-nums text-pink-600">{rupee(e.art)}</td>
+                <td className="py-1.5 text-right tabular-nums font-semibold text-[#1A1A2E]">{rupee(e.total)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function DeptIncomeModal({ eo, depts, startDept, onClose }) {
   const d = startDept; // only the department this panel is for
   useEffect(() => {
@@ -501,7 +683,7 @@ function DeptIncomeModal({ eo, depts, startDept, onClose }) {
   const rupee = (n) => "₹" + Math.round(Math.abs(n)).toLocaleString("en-IN");
   return (
     <div className="fixed inset-0 z-[9100] flex items-center justify-center p-5" style={{ background: "rgba(10,10,20,0.85)" }} onClick={onClose}>
-      <div className="bg-white rounded-2xl border border-gray-200 w-full max-w-[560px] max-h-[82vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+      <div className={"bg-white rounded-2xl border border-gray-200 w-full max-h-[88vh] flex flex-col overflow-hidden " + (d === "Floral" ? "max-w-[900px]" : "max-w-[560px]")} onClick={e => e.stopPropagation()}>
         <div className="px-[18px] py-3.5 border-b border-gray-200 flex items-center justify-between">
           <div>
             <div className="text-[14.5px] font-bold text-[#1A1A2E] tracking-wide">🏦 Department Income</div>
@@ -539,6 +721,9 @@ function DeptIncomeModal({ eo, depts, startDept, onClose }) {
               {!cs.hasCalc && <div className="px-3.5 py-2 border-t border-gray-100 text-[12px] text-gray-400">This event was synced before the step-by-step breakdown existed — sync it to see base rent, date factor and discounts separately.</div>}
             </div>
           )}
+          {d === "Floral" && (eo?.floralDetail
+            ? <FloralDetailView detail={eo.floralDetail} />
+            : <div className="mt-3.5 rounded-lg bg-slate-50 px-3 py-2 text-[12px] text-gray-500">Deal Check's Florals tab (mandi list, artificial bunches, per-element breakdown) shows here once this event is synced from Deal Check — press "Sync this event".</div>)}
           <div className="text-[12px] text-[#1A1A2E] mt-2.5 leading-normal">General labour & supervisors are split across departments by each one's direct-income share. Truss steel → Tenting · masking/drape fabric → Fabric · platform & carpet → Tenting · genset → Lighting · everything else → by its category.</div>
         </div>
       </div>

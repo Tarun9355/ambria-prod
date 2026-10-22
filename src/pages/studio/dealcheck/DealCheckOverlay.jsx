@@ -238,7 +238,7 @@ export default function DealCheckOverlay({ ctx }) {
     // the exact same field Build's own Print tile writes.
     zoneConfig, setZoneConfig,
     // pricing helpers
-    collectAllFunctionData, calcFnFloralSourcingCost, calcFunctionBreakdown, calcFunctionCost, dateCategoryMultiplierFor,
+    collectAllFunctionData, calcFnFloralSourcingCost, calcFnFloralDetail, calcFunctionBreakdown, calcFunctionCost, dateCategoryMultiplierFor,
     // Shared availability picker — the same one Build's IconBox control opens.
     openAvailModal,
     calcZoneTrussPreview, calcZoneFabricCost, calcZoneCarpet, buildPlatformPlan, imsField,
@@ -1867,6 +1867,16 @@ export default function DealCheckOverlay({ ctx }) {
         const dcBookingDate = (dcCostRollup.fns || []).map(f => f.fnDate).filter(Boolean).sort()[0] || "";
         const dcSeasonKey = dcSeasonMap[dcBookingDate] || "non_saya";
         const dcSeasonInfo = { key: dcSeasonKey, mult: dcMandiMult[dcSeasonKey] || 1, label: (dcSeasonKey === "kings" || dcSeasonKey === "heavy_saya") ? "Saya" : dcSeasonKey === "competition" ? "Competition" : "Non-Saya" };
+        // The Florals tab's figures for every function, pushed along with the snapshot (built only when one is
+        // actually being saved — it re-runs the floral engine once per function).
+        const floralDetailAll = () => {
+          try {
+            const out = {};
+            (collectAllFunctionData ? collectAllFunctionData() : []).forEach(fn => { const d = calcFnFloralDetail ? calcFnFloralDetail(fn) : null; if (d) out[fn.fnIdx] = d; });
+            return Object.keys(out).length ? out : null;
+          } catch { return null; }
+        };
+        const persistWithDetail = (snap) => persistDeptSnapshot(snap && !snap.floralDetail ? { ...snap, floralDetail: floralDetailAll() } : snap);
         const buildDeptSnapshot = () => {
           let floralPlan = { projected: 0, flowers: [] };
           try {
@@ -2035,7 +2045,7 @@ export default function DealCheckOverlay({ ctx }) {
             // different artificial-bunch colour mix — which the two lines above wouldn't notice.
             (_deptSnap.floralPlan?.artificial?.colorSplit || []).map(c => `${c.imsId}:${c.qty}`),
           ]);
-          if (deptSyncRef.current !== _sig) { deptSyncRef.current = _sig; setTimeout(() => { try { persistDeptSnapshot(_deptSnap); } catch {} }, 200); }
+          if (deptSyncRef.current !== _sig) { deptSyncRef.current = _sig; setTimeout(() => { try { persistWithDetail(_deptSnap); } catch {} }, 200); }
         }
 
         return (
@@ -5382,7 +5392,7 @@ export default function DealCheckOverlay({ ctx }) {
                     ["🧵 Fabric / draping", cur.fabric], ["👷 Manpower", cur.manpower], ["🏭 Production", cur.production],
                     ["🛒 Buying", cur.buying], ["🚚 Transport", cur.transport],
                   ].filter(([, v]) => v > 0);
-                  const syncToOps = async () => { await (persistDeptSnapshot && persistDeptSnapshot(buildDeptSnapshot())); showMsg && showMsg("📤 Department breakdown pushed to IMS Dept Ops", "green"); };
+                  const syncToOps = async () => { await (persistDeptSnapshot && persistWithDetail(buildDeptSnapshot())); showMsg && showMsg("📤 Department breakdown pushed to IMS Dept Ops", "green"); };
                   return (
                     <div style={{ padding: "4px" }}>
                       <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
@@ -5427,7 +5437,7 @@ export default function DealCheckOverlay({ ctx }) {
                 ["🧵 Fabric / draping", cur.fabric], ["👷 Manpower", cur.manpower], ["🏭 Production", cur.production],
                 ["🛒 Buying", cur.buying], ["🚚 Transport", cur.transport],
               ].filter(([, v]) => v > 0);
-              const syncToOps = async () => { await (persistDeptSnapshot && persistDeptSnapshot(buildDeptSnapshot())); showMsg && showMsg("📤 Department breakdown pushed to IMS Dept Ops", "green"); };
+              const syncToOps = async () => { await (persistDeptSnapshot && persistWithDetail(buildDeptSnapshot())); showMsg && showMsg("📤 Department breakdown pushed to IMS Dept Ops", "green"); };
               return (
                 <div onClick={()=>setDcDeptModalOpen(false)} style={{position:"fixed",inset:0,zIndex:9100,background:"rgba(10,10,20,0.85)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
                   <div onClick={e=>e.stopPropagation()} style={{width:"min(560px, 100%)",maxHeight:"82vh",background:"#FFFFFF",borderRadius:14,border:`1px solid ${border}`,display:"flex",flexDirection:"column",overflow:"hidden"}}>

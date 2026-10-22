@@ -4026,7 +4026,10 @@ export default function StudioApp() {
     // subscription in IMS.jsx had nothing to even receive, so the mandi list stayed on the pre-swap
     // flower indefinitely regardless of how many times Deal Check tried to push it.
     const sig = JSON.stringify({ inc: snap.income || {}, mp: snap.manpowerDetail || {}, inv: snap.inventory || {}, fab: snap.fabricPlan || {}, dv: snap.dealValue || null, lay: [...layout.entries()],
-      flo: (snap.floralPlan?.flowers || []).map(f => `${f.name}:${Math.round((f.qty || 0) * 100)}:${f.colorVariant?.label || ""}:${(f.colorPrefs || []).map(p => p.label).join("/")}`) });
+      flo: (snap.floralPlan?.flowers || []).map(f => `${f.name}:${Math.round((f.qty || 0) * 100)}:${f.colorVariant?.label || ""}:${(f.colorPrefs || []).map(p => p.label).join("/")}`) ,
+      // The Florals-tab detail: a short marker (not the whole thing), so an order synced before it existed re-pushes once
+      // to get it, and a changed element list or total re-pushes too.
+      fd: snap.floralDetail ? Object.entries(snap.floralDetail).map(([k, v]) => `${k}:${v.total}:${v.mandi?.length}:${v.elements?.length}`).join("|") : "" });
     // Merge ONLY the Studio-owned projected fields. deptOps (the dept head's edits / actuals — IMS-owned)
     // is preserved verbatim, so re-syncing never wipes their work — including across a regenerate on
     // an already-sold deal, which used to wipe deptOps entirely (manpower overrides, logged mandi
@@ -4038,7 +4041,7 @@ export default function StudioApp() {
     const withLayout = (fns) => Array.isArray(fns) && layout.size ? fns.map(f => (f && layout.has(f.fnIdx)) ? { ...f, ...layout.get(f.fnIdx) } : f) : fns;
     // The order's own date follows its first function's (what IMS falls back to when it needs one date).
     const firstDate = [...layout.values()].map(l => l.date).filter(Boolean).sort()[0];
-    const applySnap = (base) => ({ ...base, ...(firstDate ? { date: firstDate } : {}), functionsDetail: withLayout(base.functionsDetail), deptIncome: snap.income || {}, deptInventory: snap.inventory || {}, floralPlan: snap.floralPlan || base.floralPlan || null, fabricPlan: snap.fabricPlan || base.fabricPlan || null, manpowerPlan: snap.manpowerPlan || [], manpowerDetail: snap.manpowerDetail || {}, mpPhases: snap.mpPhases || null, deptSeason: snap.season || null, deptIncomeSig: sig, deptSyncedAt: Date.now(), deptSnapVer: PLANNING_SNAPSHOT_VERSION, dealValue: snap.dealValue || base.dealValue || null, transportPlan: snap.transportPlan ?? null });
+    const applySnap = (base) => ({ ...base, ...(firstDate ? { date: firstDate } : {}), functionsDetail: withLayout(base.functionsDetail), deptIncome: snap.income || {}, deptInventory: snap.inventory || {}, floralPlan: snap.floralPlan || base.floralPlan || null, fabricPlan: snap.fabricPlan || base.fabricPlan || null, manpowerPlan: snap.manpowerPlan || [], manpowerDetail: snap.manpowerDetail || {}, mpPhases: snap.mpPhases || null, deptSeason: snap.season || null, deptIncomeSig: sig, deptSyncedAt: Date.now(), deptSnapVer: PLANNING_SNAPSHOT_VERSION, floralDetail: snap.floralDetail || base.floralDetail || null, dealValue: snap.dealValue || base.dealValue || null, transportPlan: snap.transportPlan ?? null });
     try {
       // Read the FRESHEST row so we never clobber IMS-owned fields with Studio's stale local copy.
       const { data: row } = await supabase.from("event_orders").select("data").eq("id", eo.id).maybeSingle();
@@ -5763,8 +5766,7 @@ export default function StudioApp() {
   // has one place to land. This rollup still does its own two things the tab doesn't need: bills
   // income (resolveRcRate) and re-prices the real side at whole mandi-bundle quantities (owner
   // ask — P&L must cost what will actually be PAID at the mandi, not a fractional estimate).
-  const calcFnFloralSourcingCost = useCallback((fn) => {
-    const result = computeFnFloralCost(fn, collectAllFunctionData(), {
+  const floralOptsFor = useCallback((fn) => ({
       flowerPatterns: sharedFloralSettings.flowerPatterns,
       mandiCatalogue: sharedFloralSettings.mandiCatalogue,
       mandiMults: sharedFloralSettings.mandiPriceMultipliers || {},
@@ -5782,7 +5784,9 @@ export default function StudioApp() {
       artGreenRatePerKg: Number(sharedFloralSettings.artificialGreenRatePerKg ?? 40),
       artGreenBunchesPerKg: Number(sharedFloralSettings.artificialGreenBunchesPerKg ?? 23) || 23,
       resolveRcRate,
-    });
+  }), [sharedFloralSettings, rcItems, floralRatio, resolveRcRate, rcFloralModeByKey, dcFloralColorPrefs, imsInventory, dcInventoryCache]);
+  const calcFnFloralSourcingCost = useCallback((fn) => {
+    const result = computeFnFloralCost(fn, collectAllFunctionData(), floralOptsFor(fn));
     const breakdown = buildMandiBreakdown(result.flowerAgg);
     const tReal = result.fixedExtras + breakdown.reduce((s, f) => s + (f.cost || 0), 0);
     return {
@@ -5790,7 +5794,67 @@ export default function StudioApp() {
       breakdown, artFlowerBunches: result.artFlowerBunches, artGreenBunches: result.artGreenBunches,
       income: result.income,
     };
-  }, [dealCheckData, studioFloralData, sharedFloralSettings, rcItems, floralRatio, resolveRcRate, rcFloralModeByKey, dcFloralColorPrefs, imsInventory, dcInventoryCache, collectAllFunctionData]);
+  }, [dealCheckData, studioFloralData, floralOptsFor, collectAllFunctionData]);
+  // What Deal Check's Florals tab shows for one function, as plain figures (no formulas to re-run): the header, the
+  // mandi list with each flower's contributors, artificial bunches, direct-from-inventory pieces, elements not
+  // costed as florals, and the per-element table. Pushed to IMS with the department snapshot so Dept Ops can show
+  // the same tab. Same engine and same inputs as the tab and as the rollup above, so the figures agree.
+  const calcFnFloralDetail = useCallback((fn) => {
+    const o = floralOptsFor(fn);
+    const r = computeFnFloralCost(fn, collectAllFunctionData(), o);
+    const eb = r.elementBreakdown || [];
+    if (!eb.length) return null;
+    const rnd = (n, p = 100) => Math.round((Number(n) || 0) * p) / p;
+    const agg = Array.from(r.flowerAgg.values()).sort((a, b) => b.totalQty - a.totalQty);
+    const mandi = agg.map(f => ({
+      name: f.name, unit: f.unit, need: rnd(f.totalQty), needFull: f.totalQtyFull != null ? rnd(f.totalQtyFull) : null,
+      buyQty: Math.ceil(f.totalQty), buyQtyFull: f.totalQtyFull != null ? Math.ceil(f.totalQtyFull) : null,
+      rate: rnd(f.unitPrice), cost: Math.round(Math.ceil(f.totalQty) * f.unitPrice),
+      colour: f.colorVariant?.label || f.variantPicked?.label || null,
+      contributors: (f.contributors || []).map(c => ({ el: c.elName, zone: c.zoneKey, elQty: c.elQty, per: rnd(c.perPattern), qty: rnd(c.contribution), size: c.size, realFrac: c.realFrac })),
+    }));
+    const realTotal = r.fixedExtras + agg.reduce((s, f) => s + Math.ceil(f.totalQty) * f.unitPrice, 0);
+    const sum = (k) => eb.reduce((s, e) => s + (e[k] || 0), 0);
+    const bpkF = o.artFlowerBunchesPerKg || 16, bpkG = o.artGreenBunchesPerKg || 23;
+    const side = (bunches, bunchesFull, bpk, rate) => ({ bunches: rnd(bunches, 10), bunchesFull: rnd(bunchesFull, 10), kg: rnd(bunches / bpk), kgFull: rnd(bunchesFull / bpk), rate, cost: Math.round((bunches / bpk) * rate), costFull: Math.round((bunchesFull / bpk) * rate) });
+    const mapped = {};
+    eb.forEach(e => (e.artLines || []).forEach(al => {
+      if (!al.isMapped) return;
+      const key = al.mappedName || al.name;
+      if (!mapped[key]) mapped[key] = { mappedName: al.mappedName || "", realFlowerName: al.name, unit: al.unit, qty: 0, cost: 0 };
+      mapped[key].qty += al.realUnitsReplaced; mapped[key].cost += al.lineCost;
+    }));
+    const direct = {};
+    eb.forEach(e => (e.artLines || []).forEach(rl => {
+      if (!rl.invItem) return;
+      const key = rl.flowerId || rl.name;
+      if (!direct[key]) direct[key] = { name: rl.name, unit: rl.unit, rate: rl.unitPrice || 0, qty: 0, cost: 0 };
+      direct[key].qty += rl.qty || 0; direct[key].cost += rl.lineCost || 0;
+    }));
+    const byName = {}; const elements = [];
+    eb.forEach(e => {
+      if (e.isInvOnlyNoPattern) return;
+      if (!byName[e.name]) { byName[e.name] = { name: e.name, zones: [], qty: 0, realPct: e.realPct, real: 0, art: 0, total: 0, invCost: 0 }; elements.push(byName[e.name]); }
+      const g = byName[e.name];
+      g.zones.push(e.zoneKey); g.qty += e.qty || 0; g.real += e.realCost || 0; g.art += e.artCost || 0; g.total += e.total || 0;
+      g.invCost += (e.artLines || []).reduce((s, rl) => s + (rl.invItem ? (rl.lineCost || 0) : 0), 0);
+    });
+    return {
+      fnType: fn.fnType || "", fnDate: fn.fnDate || "",
+      total: Math.round(realTotal + r.totalArtificial), real: Math.round(realTotal), artificial: Math.round(r.totalArtificial),
+      note: fn.floralOverrides?.note || "",
+      mandi,
+      art: {
+        flower: side(sum("artBunchesFlower"), sum("artBunchesFlowerFull"), bpkF, o.artFlowerRatePerKg),
+        green: side(sum("artBunchesGreen"), sum("artBunchesGreenFull"), bpkG, o.artGreenRatePerKg),
+        total: Math.round(r.totalArtificial),
+        mapped: Object.values(mapped).map(m => ({ ...m, qty: rnd(m.qty, 10), cost: Math.round(m.cost) })),
+      },
+      direct: Object.values(direct).map(d => ({ ...d, qty: rnd(d.qty), cost: Math.round(d.cost) })),
+      uncosted: (r.uncosted || []).map(u => ({ name: u.name, zone: u.zoneKey, qty: u.qty, reason: u.reason })),
+      elements: elements.map(g => ({ ...g, zones: [...new Set(g.zones)], qty: rnd(g.qty), real: Math.round(g.real), art: Math.round(g.art), total: Math.round(g.total), invCost: Math.round(g.invCost) })),
+    };
+  }, [floralOptsFor, collectAllFunctionData]);
   // Sync for calcFnFloralSourcingCostRef — see its declaration (near collectAllFunctionDataRef) for
   // why transportCalc/calcFunctionCost need to reach this function through a ref instead of calling
   // it directly: both are declared earlier in the file, so a direct reference would be a TDZ
@@ -12061,7 +12125,7 @@ export default function StudioApp() {
     // pricing helpers
     rcIsSMB, buildZoneConfig, getFloralMode, applyFloralRatio, getElPrice, getElPriceForFn, calcElsCost, calcElsCostForFn, rcCostPctForSub,
     calcPhotoCost, calcStructCost, calcFullEventCost, getFullCost, totalCost, transportCalc, grandTotal, lastSavedFnTotal, agencyFeeAmt, pricingReady,
-    collectAllFunctionData, calcFunctionCost, calcFnFloralSourcingCost, eventGrandTotal, calcFunctionBreakdown, manpowerPlanForBooking, persistDeptSnapshot, syncDealValueNow, floatPending, dcEoActuals, refreshDcEoActuals,
+    collectAllFunctionData, calcFunctionCost, calcFnFloralSourcingCost, calcFnFloralDetail, eventGrandTotal, calcFunctionBreakdown, manpowerPlanForBooking, persistDeptSnapshot, syncDealValueNow, floatPending, dcEoActuals, refreshDcEoActuals,
     // deal check orchestration + persistence (overlay)
     openDealCheck, runDealCheckGenerate, getStudioAvailable, loadAvailability, getActiveSoftHold, reliableSave, DC_CACHE_SK,
     flushDcAutosaveRef,
