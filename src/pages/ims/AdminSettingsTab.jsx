@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { supabase } from "../../lib/supabase";
 import { RC_SK_CATS } from "../../lib/studio/keys";
-import { Tabs, AddInlineItem, FlowerPicker, Btn, useConfirm } from "../../components/ui";
+import { Tabs, AddInlineItem, FlowerPicker, Btn, useConfirm, DraftInput } from "../../components/ui";
 import { canvaAuthUrl, canvaConnectionStatus, canvaClientId } from "../../lib/canva";
 import { uploadToStorage, compressImageForUpload, STORAGE_FOLDERS } from "../../lib/storage";
 import { resolveMandiFlower, computePatternSizeCost, effectiveMarkup, studioUnitLabel } from "../../lib/ims/flowerHelpers";
@@ -1069,8 +1069,8 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                         );
                       })()}
                       {/* Name */}
-                      <input value={p.name} onClick={(e) => e.stopPropagation()}
-                        onChange={(e) => { const v = e.target.value; setSettings((s) => ({ ...s, mandiCatalogue: s.mandiCatalogue.map((x) => x.id === p.id ? { ...x, name: v } : x) })); }}
+                      <DraftInput value={p.name} onClick={(e) => e.stopPropagation()}
+                        onCommit={(v) => { setSettings((s) => ({ ...s, mandiCatalogue: s.mandiCatalogue.map((x) => x.id === p.id ? { ...x, name: v } : x) })); }}
                         className="border rounded px-2 py-1 text-sm w-full font-semibold" />
                       {/* Category */}
                       <select value={p.flowerCat || "Other"} onClick={(e) => e.stopPropagation()}
@@ -1086,8 +1086,8 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                       </select>
                       {/* Pcs/Unit */}
                       {p.unit !== "piece" ? (
-                        <input type="number" min="1" value={p.gattharSize || ""} placeholder={"pcs/" + p.unit} onClick={(e) => e.stopPropagation()}
-                          onChange={(e) => { const v = parseInt(e.target.value) || null; setSettings((s) => ({ ...s, mandiCatalogue: s.mandiCatalogue.map((x) => x.id === p.id ? { ...x, gattharSize: v } : x) })); }}
+                        <DraftInput type="number" min="1" value={p.gattharSize || ""} placeholder={"pcs/" + p.unit} onClick={(e) => e.stopPropagation()}
+                          onCommit={(raw) => { const v = parseInt(raw) || null; setSettings((s) => ({ ...s, mandiCatalogue: s.mandiCatalogue.map((x) => x.id === p.id ? { ...x, gattharSize: v } : x) })); }}
                           className="border rounded px-2 py-1 text-xs text-center w-full" />
                       ) : <span className="text-center text-gray-300">—</span>}
                       {/* Type */}
@@ -1106,8 +1106,8 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                           </button>
                         );
                       })() : type !== "real_only" ? (
-                        <input type="number" min="0" step="0.01" value={p.artificialBunchesPerUnit ?? ""} onClick={(e) => e.stopPropagation()} placeholder="art b/u"
-                          onChange={(e) => { const v = parseFloat(e.target.value); setSettings((s) => ({ ...s, mandiCatalogue: s.mandiCatalogue.map((x) => x.id === p.id ? { ...x, artificialBunchesPerUnit: isNaN(v) ? null : v } : x) })); }}
+                        <DraftInput type="number" min="0" step="0.01" value={p.artificialBunchesPerUnit ?? ""} onClick={(e) => e.stopPropagation()} placeholder="art b/u"
+                          onCommit={(raw) => { const v = parseFloat(raw); setSettings((s) => ({ ...s, mandiCatalogue: s.mandiCatalogue.map((x) => x.id === p.id ? { ...x, artificialBunchesPerUnit: isNaN(v) ? null : v } : x) })); }}
                           title={`How many artificial ${type === "green" ? "green" : "flower"} bunches replace 1 ${p.unit} of ${p.name}`}
                           className="border rounded px-2 py-1 text-xs text-center w-full" />
                       ) : <span className="text-center text-gray-300">—</span>}
@@ -1149,11 +1149,11 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                             </span>
                             <div className="flex items-center justify-center gap-1" onClick={(e) => e.stopPropagation()}>
                               <span className="text-gray-500 text-xs">₹</span>
-                              <input type="number" min="0" value={parentCurrent} readOnly={hasVariants} disabled={hasVariants}
+                              <DraftInput type="number" min="0" value={parentCurrent} readOnly={hasVariants} disabled={hasVariants}
                                 title={hasVariants ? `Auto = lowest variant price (₹${parentCurrent}). Edit individual variants in expand.` : `Direct mandi price for ${p.name} (no variants).`}
-                                onChange={(e) => {
+                                onCommit={(raw) => {
                                   if (hasVariants) return;
-                                  const nv = parseFloat(e.target.value) || 0;
+                                  const nv = parseFloat(raw) || 0;
                                   setSettings((s) => ({ ...s, mandiCatalogue: s.mandiCatalogue.map((x) => {
                                     if (x.id !== p.id) return x;
                                     return { ...x, priceHistory: withPrevPrice(x.priceHistory, x.currentPrice), currentPrice: nv };
@@ -1163,8 +1163,8 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                             </div>
                             <div className="flex items-center justify-center gap-0.5" onClick={(e) => e.stopPropagation()}
                               title="Selling markup % over mandi price. Give this a value to make the flower directly addable in Build (same as Loose Petals) — billed at mandi price × (1 + markup%). Leave blank for recipe-only flowers.">
-                              <input type="number" min="0" step="1" value={p.markup ?? ""} placeholder="0"
-                                onChange={(e) => { const v = parseFloat(e.target.value); setSettings((s) => ({ ...s, mandiCatalogue: s.mandiCatalogue.map((x) => x.id === p.id ? { ...x, markup: isNaN(v) ? null : v } : x) })); }}
+                              <DraftInput type="number" min="0" step="1" value={p.markup ?? ""} placeholder="0"
+                                onCommit={(raw) => { const v = parseFloat(raw); setSettings((s) => ({ ...s, mandiCatalogue: s.mandiCatalogue.map((x) => x.id === p.id ? { ...x, markup: isNaN(v) ? null : v } : x) })); }}
                                 className="border rounded px-1.5 py-1 text-xs text-center w-12" />
                               <span className="text-gray-400 text-[10px]">%</span>
                             </div>
@@ -1220,16 +1220,16 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                                     </label>
                                   </td>
                                   <td className="px-2 py-1.5">
-                                    <input value={v.name}
-                                      onChange={(e) => { const nv = e.target.value; setSettings((s) => ({ ...s, mandiCatalogue: s.mandiCatalogue.map((x) => x.id === p.id ? { ...x, colorVariants: (x.colorVariants || []).map((cv) => cv.variantId === v.variantId ? { ...cv, name: nv } : cv) } : x) })); }}
+                                    <DraftInput value={v.name}
+                                      onCommit={(nv) => { setSettings((s) => ({ ...s, mandiCatalogue: s.mandiCatalogue.map((x) => x.id === p.id ? { ...x, colorVariants: (x.colorVariants || []).map((cv) => cv.variantId === v.variantId ? { ...cv, name: nv } : cv) } : x) })); }}
                                       className="border rounded px-2 py-1 text-xs w-44" />
                                   </td>
                                   <td className="px-2 py-1.5 text-center text-gray-400">{prev != null ? `₹${prev}` : "—"}</td>
                                   <td className="px-2 py-1.5 text-center">
                                     <div className="flex items-center justify-center gap-1">
                                       <span className="text-gray-500">₹</span>
-                                      <input type="number" min="0" value={v.currentPrice}
-                                        onChange={(e) => { const nv = parseFloat(e.target.value) || 0;
+                                      <DraftInput type="number" min="0" value={v.currentPrice}
+                                        onCommit={(raw) => { const nv = parseFloat(raw) || 0;
                                           setSettings((s) => ({ ...s, mandiCatalogue: s.mandiCatalogue.map((x) => {
                                             if (x.id !== p.id) return x;
                                             const newVariants = (x.colorVariants || []).map((cv) => cv.variantId === v.variantId ? { ...cv, priceHistory: withPrevPrice(cv.priceHistory, cv.currentPrice), currentPrice: nv } : cv);

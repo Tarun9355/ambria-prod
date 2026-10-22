@@ -435,7 +435,8 @@ export default function IMS() {
 
   // Apply settings-table rows → blocks blob, Studio rate-card mirror (RC_SK), settings object.
   // Shared by the initial load and the settings Realtime subscription so config syncs live.
-  const applySettingsRows = useCallback((setRows) => {
+  // fetchMark: settingsWriter.mark() taken when the fetch that produced setRows started (see isStaleFor).
+  const applySettingsRows = useCallback((setRows, fetchMark) => {
     // blocks now come from the `blocks` TABLE (boot fetch + its own realtime), not this blob.
     // Rate-card ITEMS now live in the `rate_card` TABLE (read on load + via its own realtime), not
     // the RC_SK settings blob — so it's intentionally no longer read here.
@@ -444,12 +445,14 @@ export default function IMS() {
     const rcCatsBlob = setRows.find((r) => r.key === RC_SK_CATS);
     if (rcCatsBlob?.value != null) { let c = rcCatsBlob.value; if (typeof c === "string") { try { c = JSON.parse(c); } catch { c = null; } } if (Array.isArray(c) && c.length) setStudioRcCats(c); }
     const settingsObj = { ...SETTINGS_DEFAULTS };
-    // A key with a local edit still waiting to be written is newer on screen than in the database: its
-    // row here is an older echo, so the screen keeps its own value until that write has landed.
+    // A key with a local edit still waiting to be written — or written since this fetch began — is newer
+    // on screen than in these rows: they are an older echo, so the screen keeps its own value.
     const prevLocal = settingsRef.current || {};
+    const writer = settingsWriterRef.current;
     for (const r of setRows) {
       if (/^ambria-/.test(r.key)) continue;
-      settingsObj[r.key] = (settingsWriterRef.current?.isDirty(r.key) && r.key in prevLocal) ? prevLocal[r.key] : r.value;
+      const staleRow = writer && r.key in prevLocal && (fetchMark == null ? writer.isDirty(r.key) : writer.isStaleFor(r.key, fetchMark));
+      settingsObj[r.key] = staleRow ? prevLocal[r.key] : r.value;
     }
     settingsRef.current = settingsObj;
     setSettingsState(settingsObj);
@@ -860,14 +863,15 @@ export default function IMS() {
         .channel(`realtime:${table}`)
         .on("postgres_changes", { event: "*", schema: "public", table }, async () => {
           const myReq = ++liveTableSeq[table];
+          const fetchMark = settingsWriterRef.current.mark(); // for the settings table: see isStaleFor
           const rows = await fetchAll(table).catch(() => null);
           if (myReq !== liveTableSeq[table]) return; // a newer fetch has since been issued — stale, drop it
-          if (rows && active) apply(rows);
+          if (rows && active) apply(rows, fetchMark);
         })
         .subscribe();
       extraChannels.push(ch);
     };
-    liveTable("settings", (rows) => applySettingsRows(rows));
+    liveTable("settings", (rows, fetchMark) => applySettingsRows(rows, fetchMark));
     liveTable("rate_card", (rows) => setStudioRcItems(rows.map(rowToRcItem).filter(Boolean)));
     liveTable("rate_card_categories", (rows) => setRateCardCategories(rows));
     // blocks gets its own channel too, same reason as event_orders below: Build reconciles this

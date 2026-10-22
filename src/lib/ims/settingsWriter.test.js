@@ -61,6 +61,28 @@ describe("settings writer", () => {
     expect(db.value.p).toBe(3);
   });
 
+  it("a refetch started before a key's write finished is stale for that key even after it is clean", async () => {
+    const db = makeDb([20]);
+    const w = createSettingsWriter(db.write);
+    const mark = w.mark();                       // refetch starts: it will return the pre-write value
+    const t = w.enqueue({ name: "fic" }, { name: "ficu" });
+    await t;
+    expect(w.isDirty("name")).toBe(false);
+    expect(w.isStaleFor("name", mark)).toBe(true);   // its result must not replace "ficu"
+    expect(w.isStaleFor("other", mark)).toBe(false); // untouched keys still take the database value
+    expect(w.isStaleFor("name", w.mark())).toBe(false); // a refetch started after the write is trusted
+  });
+
+  it("a refetch started while the write is still in flight is stale until a later refetch", async () => {
+    const db = makeDb([30]);
+    const w = createSettingsWriter(db.write);
+    const t = w.enqueue({ p: 1 }, { p: 2 });
+    const mark = w.mark();
+    expect(w.isStaleFor("p", mark)).toBe(true);  // dirty
+    await t;
+    expect(w.isStaleFor("p", mark)).toBe(true);  // settled after the fetch began
+  });
+
   it("an unchanged settings object writes nothing, and a failed write is reported and does not stick", async () => {
     const errors = [];
     const w = createSettingsWriter(async () => "boom", (k, e) => errors.push([k, e]));

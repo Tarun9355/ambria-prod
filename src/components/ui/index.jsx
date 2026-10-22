@@ -337,6 +337,36 @@ export function Input(props) {
   return <input {...props} className={"w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 " + (props.className || "")} />;
 }
 
+// A text / number input for a value that lives in shared state which is saved and re-synced behind the
+// person's back (IMS settings). While the field is being typed in it shows its own draft, so nothing
+// arriving from the database or another tab can wind the letters back; the value is handed to
+// `onCommit(rawString)` shortly after typing pauses and again on blur / unmount. When not being
+// edited it shows `value`.
+export function DraftInput({ value, onCommit, delay = 250, ...rest }) {
+  const [draft, setDraft] = useState(null);
+  const timer = useRef(null);
+  const pending = useRef(null);
+  const commitRef = useRef(onCommit);
+  commitRef.current = onCommit;
+  const flush = () => {
+    clearTimeout(timer.current);
+    if (pending.current !== null) { const raw = pending.current; pending.current = null; commitRef.current(raw); }
+  };
+  useEffect(() => flush, []); // eslint-disable-line react-hooks/exhaustive-deps
+  return (
+    <input {...rest}
+      value={draft !== null ? draft : (value ?? "")}
+      onChange={(e) => {
+        const raw = e.target.value;
+        setDraft(raw);
+        pending.current = raw;
+        clearTimeout(timer.current);
+        timer.current = setTimeout(flush, delay);
+      }}
+      onBlur={(e) => { flush(); setDraft(null); rest.onBlur?.(e); }} />
+  );
+}
+
 export function Select({ value, onChange, children, className = "" }) {
   return <select value={value} onChange={onChange} className={"w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 " + className}>{children}</select>;
 }

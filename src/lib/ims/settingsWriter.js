@@ -13,9 +13,15 @@
 //     is sent, once;
 //   · isDirty(key) — true from the moment a local edit is made until the newest value has been written,
 //     so the realtime echo (which can only be older than the screen in that window) is ignored for that
-//     key instead of replacing what was just typed.
+//     key instead of replacing what was just typed;
+//   · mark() / isStaleFor(key, mark) — the same protection for a refetch that was already on its way:
+//     a fetch of the table started BEFORE a key's newest write landed returns the value from before that
+//     write, and can arrive AFTER the key stopped being dirty. Take mark() when the fetch starts; a
+//     key is stale for that fetch if it is dirty or was written since the mark.
 export function createSettingsWriter(writeFn, onError) {
   const latest = {};
+  const settledAt = {};   // key → value of `clock` when its newest write last finished
+  let clock = 0;
   let chain = Promise.resolve();
 
   const enqueue = (prev, next) => {
@@ -31,6 +37,7 @@ export function createSettingsWriter(writeFn, onError) {
         try { err = await writeFn(k, value); } catch (e) { err = e; }
         if (err && onError) onError(k, err);
         // Clean only if nothing newer arrived while this write was in flight.
+        settledAt[k] = ++clock;
         if (JSON.stringify(latest[k]) === sig) delete latest[k];
       }
     });
@@ -38,5 +45,10 @@ export function createSettingsWriter(writeFn, onError) {
     return task;
   };
 
-  return { enqueue, isDirty: (key) => key in latest };
+  const isDirty = (key) => key in latest;
+  return {
+    enqueue, isDirty,
+    mark: () => clock,
+    isStaleFor: (key, mark) => isDirty(key) || (settledAt[key] || 0) > mark,
+  };
 }
