@@ -2355,9 +2355,9 @@ export default function StudioBuild({ ctx }) {
   // the rest of the page uses — grandTotal / totalCost() / transportCalc / cat / zoneTotal —
   // so it is a view, never a second calculation. Hidden entirely when costs are hidden.
   // A negotiated amount (Summary → Final negotiated amount) is the agreed price for the whole deal. On a
-  // single-function deal that IS this build's total, so the headline shows it, with the system estimate
-  // and the adjustment kept as lines under the zones so the rail still adds up. With more than one
-  // function the amount is for all of them and has no meaning for one function's rail, so it is left alone.
+  // single-function deal that IS this build's total, so the headline shows it (owner ask: the system
+  // estimate is not shown on the Build page). With more than one function the amount is for all of
+  // them and has no meaning for one function's rail, so it is left alone.
   const negAmt = Number((clientLedger||[]).find(c=>c.id===activeClientId)?.negotiatedAmount) || 0;
   const showNeg = negAmt > 0 && (extraFunctions||[]).length === 0;
   const shownTotal = showNeg ? negAmt : grandTotal;
@@ -2446,11 +2446,6 @@ export default function StudioBuild({ ctx }) {
           {line("Transport", fmt(transportCalc.truckTotal))}
           {line("Genset / Power", fmt(transportCalc.gensetCost))}
           {line(`Design and Management Fee`, fmt(agencyFeeAmt))}
-          {showNeg&&<>
-            {line("System estimate", fmt(grandTotal))}
-            {line("Negotiated adjustment", (negAmt-grandTotal>=0?"+":"−")+fmt(Math.abs(negAmt-grandTotal)))}
-            {line("Negotiated amount", fmt(negAmt), {strong:true})}
-          </>}
         </div>
       </div>
     );
@@ -5187,7 +5182,6 @@ undefined
           {pricingReady
             ? <>
                 <div style={{fontSize:28,fontWeight:700}}>{fmt(shownTotal)}</div>
-                {showNeg&&<div style={{fontSize:10.5,opacity:0.75}}>negotiated · system {fmt(grandTotal)}</div>}
                 <span style={{fontSize:11,padding:"3px 12px",borderRadius:8,background:cat.bg,color:cat.color,fontWeight:600}}>{cat.label}</span>
               </>
             : <>
