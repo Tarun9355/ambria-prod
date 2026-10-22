@@ -9,6 +9,7 @@ import { TabsMenu, useConfirm } from "../../components/ui";
 import { IconPrinter } from "../../components/icons";
 import { hasIMSPerm } from "../../lib/ims/constants";
 import { ZONE_META, trussBaseArea } from "../../lib/studio/taxonomy";
+import { orderZoneKeys } from "../../lib/ims/zoneOrder";
 import { calcZoneTrussPreview, calcZoneFabric, dcFabricMultOf } from "../../lib/studio/pricing";
 import { ZONE_DEF_SK, RC_SK_TR } from "../../lib/studio/keys";
 import { LOGO_ASSET, LOGO_BOX } from "../../lib/studio/brand.js";
@@ -2722,6 +2723,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   // items (each tagged with its department), instead of one book per department back to back.
   // Department-only sections (loading, transport, dismantle, fabric, kits, production lists) are
   // left out of it: they describe one department's stock and would mislead in a combined book.
+  // Admin → Zone Types order (the keys of the zone definitions), read when the export starts; the Build
+  // page lists zones in it unless the salesperson dragged them into their own order.
+  const zoneAdminOrderRef = useRef(null);
   const buildReportHtml = (zoneLabels = {}, logos = {}, opts = {}) => {
     const combined = !!opts.combined;
     const bookTitle = combined ? "All departments" : dept;
@@ -3052,7 +3056,17 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       // and dropped every zone whose elements all belong to OTHER departments, which on a Floral
       // book is most of the bar, the food stalls and the centrepieces. The crew sets up alongside
       // everyone else, so those zones belong in the book too — as the reference photo, at least.
-      const zoneKeys = [...new Set([...Object.keys(els), ...Object.keys(fn?.zones || {}), ...Object.keys(fn?.elSelectedPhoto || {})])];
+      const zoneKeysFound = [...new Set([...Object.keys(els), ...Object.keys(fn?.zones || {}), ...Object.keys(fn?.elSelectedPhoto || {})])];
+      // ── THE ORDER THE BUILD PAGE SHOWS ──
+      // Same rule as Studio's Build / Summary: a hand-dragged order (zoneOrder) first, in the sequence it
+      // was dragged; then Admin → Zone Types' order; then the deal's own custom zones in the order they
+      // were added; anything unknown last, in the order found. (Before this the zones came out in
+      // whatever order their keys happened to be stored in.)
+      const zoneKeys = orderZoneKeys(zoneKeysFound, {
+        adminOrder: zoneAdminOrderRef.current || Object.keys(ZONE_META),
+        customKeys: Object.keys(fn?.zoneNames || {}),
+        dragged: Array.isArray(fn?.zoneOrder) ? fn.zoneOrder : [],
+      });
       zoneKeys.forEach(zk => {
         if (fn.enabledEls && fn.enabledEls[zk] === false) return;
         const merged = new Map();
@@ -3913,6 +3927,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
     if (exporting) return;
     const multi = depts.length > 1;
     const startedOn = dept;
+    zoneAdminOrderRef.current = null; // read again below (a failed read leaves the built-in order)
     let ok = false; // true once a PDF was produced (the caller of a hidden run reports it)
     setExporting(view ? "view" : "download");
     // Zone names as the admin set them in Studio (e.g. "Centre Lounge"), not the raw keys. A
@@ -3922,6 +3937,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
       let v = await kvGet(ZONE_DEF_SK);
       for (let i = 0; i < 2 && typeof v === "string"; i++) { try { v = JSON.parse(v); } catch { break; } }
       Object.entries(v?.meta || {}).forEach(([k, m]) => { if (m?.label) zoneLabels[k] = m.label; });
+      if (v?.meta && typeof v.meta === "object") zoneAdminOrderRef.current = Object.keys(v.meta);
     } catch { /* built-in names it is */ }
     const logos = await loadPdfLogosOnce();
     let frame = null;

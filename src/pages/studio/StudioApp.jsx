@@ -4006,6 +4006,8 @@ export default function StudioApp() {
           // A custom zone's key is a generated id ("cz_1789…"); IMS has no other way to learn its name,
           // so the Dept Ops PDF printed the id as the zone title.
           zoneNames: Object.fromEntries((fd.customZones || []).filter(cz => cz && cz.id).map(cz => [cz.id, cz.name || ""])),
+          // The Build page's own zone order (dragged by hand); IMS's PDFs list zones in it.
+          zoneOrder: Array.isArray(fd.zoneOrder) ? [...fd.zoneOrder] : [],
           // Which function, when and where. Set once at booking and never refreshed, so a date moved
           // in Studio after the deal was booked never reached IMS — the event stayed on its old date
           // in the planning calendar and on every report. Only written when Studio has a value.
@@ -4087,6 +4089,8 @@ export default function StudioApp() {
           elSelectedPhoto: Object.fromEntries(Object.entries(fd.elSelectedPhoto || {}).map(([k, v]) => [k, { src: v?.src, eventName: v?.eventName, isLibrary: v?.isLibrary, eventId: v?.eventId }])),
           dims: Object.fromEntries(Object.entries(fd.zoneConfig || {}).map(([zk, zc]) => [zk, zc?.dims || {}])),
           zoneNames: Object.fromEntries((fd.customZones || []).filter(cz => cz && cz.id).map(cz => [cz.id, cz.name || ""])),
+          // The Build page's own zone order (dragged by hand); IMS's PDFs list zones in it.
+          zoneOrder: Array.isArray(fd.zoneOrder) ? [...fd.zoneOrder] : [],
         });
       });
     } catch { return; }
@@ -8316,6 +8320,8 @@ export default function StudioApp() {
           elSelectedPhoto: Object.fromEntries(Object.entries(fnData.elSelectedPhoto || {}).map(([k, v]) => [k, { src: v?.src, eventName: v?.eventName, isLibrary: v?.isLibrary, eventId: v?.eventId }])),
           dims: Object.fromEntries(Object.entries(fnData.zoneConfig || {}).map(([zk, zc]) => [zk, zc?.dims || {}])),
           zoneNames: Object.fromEntries((fnData.customZones || []).filter(cz => cz && cz.id).map(cz => [cz.id, cz.name || ""])),
+          // The Build page's own zone order (dragged by hand); IMS's PDFs list zones in it.
+          zoneOrder: Array.isArray(fnData.zoneOrder) ? [...fnData.zoneOrder] : [],
           decorCost: bd.decorTotal,
           transportCost: bd.transportTotal,
           customItemsCost: dcCustomItems.filter(c => c.fnIdx === fnData.fnIdx).reduce((s, c) => s + (c.manualPrice || c.refPrice || 0) * (Number(c.qty) || 1), 0),
