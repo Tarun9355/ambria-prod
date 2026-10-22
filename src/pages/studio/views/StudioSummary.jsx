@@ -458,6 +458,12 @@ export default function StudioSummary({ ctx }) {
   const exportPDF = (combined) => {
     if (!combined) combined = buildCombinedCostSheetData();
     const f = (n) => "₹" + Math.round(n || 0).toLocaleString("en-IN");
+    // Rate/Disc. Rate keep up to 2 decimals — f() above rounds to the whole rupee, which is right
+    // for a total but not for a per-unit rate: a blended floral rate (real% × real rate + art% ×
+    // art rate, plus a per-size pattern extra) routinely lands on a fraction (e.g. ₹258.50), and
+    // Qty × the ROUNDED rate then silently disagreed with the Amount column right next to it, even
+    // though the real total was always computed off the true, unrounded rate.
+    const fRate = (n) => "₹" + (Math.round((n || 0) * 100) / 100).toLocaleString("en-IN");
     const fmtDate = (iso) => {
       if (!iso) return "—";
       try { return new Date(iso + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }); } catch { return iso; }
@@ -539,7 +545,7 @@ ${fnObj.zones.map(z => `<div class="zone"><div class="zone-head"><h3>${z.label}<
 ${z.photo ? `<div style="padding:8px 12px;background:#FAFAF7;border-bottom:1px solid #E8E0D4"><img src="${z.photo}" style="width:100%;max-height:160px;object-fit:cover;border-radius:8px;display:block" onerror="this.style.display='none'"/>${z.photoName ? `<div style="font-size:9px;color:#8B7355;margin-top:4px;text-align:center">Reference: ${z.photoName}</div>` : ""}</div>` : ""}
 <table><tr><th>Item</th><th>Size</th><th>Qty</th><th>Rate</th><th>Disc. Rate</th><th>List Amt</th><th>Amount</th></tr>
 ${z.structItems.map(si => `<tr class="struct-row"><td>${si.name}</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>${f(si.total)}</td></tr>`).join("")}
-${z.items.map(it => `<tr><td>${it.name}</td><td>${it.size || "—"}</td><td>${it.qty}</td><td>${f(it.rate)}/${it.unit}</td><td${it.hasDiscount ? ' style="color:#15803D;font-weight:700"' : ""}>${it.hasDiscount ? `${f(it.discRate)}/${it.unit}` : "—"}</td><td${it.hasDiscount ? ' style="text-decoration:line-through"' : ""}>${it.hasDiscount ? f(it.noDiscTotal) : "—"}</td><td${it.hasDiscount ? ' style="color:#15803D;font-weight:700"' : ""}>${f(it.total)}</td></tr>`).join("")}
+${z.items.map(it => `<tr><td>${it.name}</td><td>${it.size || "—"}</td><td>${it.qty}</td><td>${fRate(it.rate)}/${it.unit}</td><td${it.hasDiscount ? ' style="color:#15803D;font-weight:700"' : ""}>${it.hasDiscount ? `${fRate(it.discRate)}/${it.unit}` : "—"}</td><td${it.hasDiscount ? ' style="text-decoration:line-through"' : ""}>${it.hasDiscount ? f(it.noDiscTotal) : "—"}</td><td${it.hasDiscount ? ' style="color:#15803D;font-weight:700"' : ""}>${f(it.total)}</td></tr>`).join("")}
 <tr class="subtotal-row"><td colspan="6">${z.label} Subtotal</td><td>${f(z.zoneTotal)}</td></tr>
 ${z.note ? `<tr class="note-row"><td colspan="7">📝 ${z.note}</td></tr>` : ""}
 </table></div>`).join("")}
@@ -597,6 +603,9 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
       const dark = "1A1A2E";
       const gray = "6B7280";
       const f = (n) => "₹" + Math.round(n || 0).toLocaleString("en-IN");
+      // Same reasoning as exportPDF's fRate — a blended floral rate lands on a fraction (e.g.
+      // ₹258.50), and rounding it away left Qty × (displayed) Rate disagreeing with Amount.
+      const fRate = (n) => "₹" + (Math.round((n || 0) * 100) / 100).toLocaleString("en-IN");
       const fmtDate = (iso) => {
         if (!iso) return "—";
         try { return new Date(iso + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }); } catch { return iso; }
@@ -806,8 +815,8 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
               { text: it.name, options: { fontSize: 9, color: dark } },
               { text: it.size || "—", options: { fontSize: 9, align: "center", color: gray } },
               { text: String(it.qty), options: { fontSize: 9, align: "center", color: dark } },
-              { text: f(it.rate) + "/" + it.unit, options: { fontSize: 9, align: "right", color: gray } },
-              { text: it.hasDiscount ? `${f(it.discRate)}/${it.unit}` : "—", options: { fontSize: 9, align: "right", color: it.hasDiscount ? "15803D" : "B0B0B0", bold: !!it.hasDiscount } },
+              { text: fRate(it.rate) + "/" + it.unit, options: { fontSize: 9, align: "right", color: gray } },
+              { text: it.hasDiscount ? `${fRate(it.discRate)}/${it.unit}` : "—", options: { fontSize: 9, align: "right", color: it.hasDiscount ? "15803D" : "B0B0B0", bold: !!it.hasDiscount } },
               { text: it.hasDiscount ? f(it.noDiscTotal) : "—", options: { fontSize: 9, align: "right", color: it.hasDiscount ? "B0B0B0" : "B0B0B0", strike: !!it.hasDiscount } },
               { text: f(it.total), options: { fontSize: 9, align: "right", color: it.hasDiscount ? "15803D" : dark, bold: true } }
             ]);
@@ -981,6 +990,9 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
         { header: "Amount", key: "amount", width: 13 },
       ];
       const money = { numFmt: '"₹"#,##0' };
+      // Up to 2 decimals, trimmed when not needed — a clean truss rate still prints "₹22", a
+      // blended floral rate prints "₹258.5" instead of rounding away the fraction (see addItemRow).
+      const rateMoney = { numFmt: '"₹"#,##0.##' };
       // Each function's share of the Professional Design, Management & Execution fee — on its own
       // total after its own fixed-venue discount (fnObj.discountPct), same as the on-screen preview.
       // One helper so the Event Summary's Grand column and each function tab's fee row agree.
@@ -1063,8 +1075,13 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
             row.getCell(8).value = { formula: `C${r}*D${r}*${opts.tripsX}`, result: total };
           }
         }
-        row.getCell(4).numFmt = money.numFmt;
-        if (typeof discRate === "number") row.getCell(5).numFmt = money.numFmt;
+        // Rate/Disc. Rate get up to 2 decimals (money's own format is whole-rupee only) — a blended
+        // floral rate (real% × real rate + art% × art rate, plus a per-size pattern extra) routinely
+        // lands on a fraction (e.g. ₹258.50), and C×D is a LIVE formula off the cell's true value —
+        // rounding the display to "₹259" left Qty × (displayed) Rate silently disagreeing with the
+        // Amount sitting right next to it, even though the real total was always correct.
+        row.getCell(4).numFmt = rateMoney.numFmt;
+        if (typeof discRate === "number") row.getCell(5).numFmt = rateMoney.numFmt;
         row.getCell(7).numFmt = money.numFmt;
         row.getCell(8).numFmt = money.numFmt;
         row.getCell(3).alignment = { horizontal: "center" };
