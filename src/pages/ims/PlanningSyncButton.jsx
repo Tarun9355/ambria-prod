@@ -31,17 +31,20 @@ export default function PlanningSyncButton({ eventOrders }) {
     if (stamp) { const now = Date.now(); try { localStorage.setItem(SWEPT_KEY, String(now)); } catch { /* private mode */ } setSweptAt(now); }
     setRun(null);
     setNote(text);
-    setTimeout(() => setNote(""), 6000);
+    setTimeout(() => setNote(""), stamp ? 6000 : 25000); // a failure stays long enough to read
   };
 
   // What the hidden Studio reports: ready (how many it will do) → progress → done.
   const heardRef = useRef(false);
+  const waitingRef = useRef("");
   useEffect(() => {
     if (!run) return undefined;
-    heardRef.current = false;
+    heardRef.current = false; waitingRef.current = "";
     const onMsg = (e) => {
       const d = e.data;
       if (e.origin !== window.location.origin || !d || d.type !== "ambria-planning-sweep") return;
+      console.info("[planning-sync]", d);
+      if (d.phase === "wait") { waitingRef.current = d.reason || ""; return; } // alive, not started yet
       heardRef.current = true;
       if (d.phase === "ready") setRun(r => (r ? { ...r, total: d.total, started: true } : r));
       else if (d.phase === "progress") setRun(r => (r ? { ...r, done: d.done, total: d.total, started: true } : r));
@@ -50,7 +53,7 @@ export default function PlanningSyncButton({ eventOrders }) {
     window.addEventListener("message", onMsg);
     // Never hangs: no word at all in a minute (not signed in to Studio here, say) or a run past a
     // quarter of an hour ends the attempt.
-    const quiet = setTimeout(() => { if (!heardRef.current) finish("Could not start — open Studio once in this browser, then try again", false); }, 60000);
+    const quiet = setTimeout(() => { if (!heardRef.current) finish(waitingRef.current ? `Could not start — the hidden Studio is waiting: ${waitingRef.current}` : "Could not start — the hidden Studio never answered (open Studio once in this browser, then try again)", false); }, 60000);
     const cap = setTimeout(() => finish("Sync took too long — stopped", false), 900000);
     return () => { window.removeEventListener("message", onMsg); clearTimeout(quiet); clearTimeout(cap); };
     // eslint-disable-next-line react-hooks/exhaustive-deps

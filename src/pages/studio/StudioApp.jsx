@@ -8767,11 +8767,18 @@ export default function StudioApp() {
   };
   const runPlanningSweepRef = useRef(null);
   runPlanningSweepRef.current = runPlanningSweep;
+  const sweepWhyRef = useRef("");
   useEffect(() => {
     if (!window.__AMBRIA_SWEEP__) return; // only the hidden run ever sweeps
-    if (sweepStartedRef.current || restoring || !authUser || !buildRestoredRef.current) return;
-    if (activeClientId || step !== 0 || clientName || clientPhone || dcRun) return;
-    if (!(clientLedger || []).length || !(eventOrders || []).length) return;
+    if (sweepStartedRef.current) return;
+    // Why it has not started yet, told to the page that opened this frame (IMS's button) so a stuck
+    // run says what it is waiting for instead of just never finishing.
+    const why = restoring ? "still restoring a deal" : !authUser ? "not signed in inside the hidden frame" : !(clientLedger || []).length ? "clients not loaded yet" : !(eventOrders || []).length ? "events not loaded yet" : !buildRestoredRef.current ? "start-up restore not finished" : activeClientId ? "a deal is open" : step !== 0 ? "not on Event Info (step " + step + ")" : (clientName || clientPhone) ? "Event Info is pre-filled" : dcRun ? "Deal Check is running" : "";
+    if (why !== sweepWhyRef.current) {
+      sweepWhyRef.current = why;
+      try { window.parent?.postMessage({ type: "ambria-planning-sweep", phase: "wait", reason: why || "starting" }, window.location.origin); } catch { /* not framed */ }
+    }
+    if (why) return;
     const t = setTimeout(() => {
       if (sweepStartedRef.current || activeClientIdRef.current) return;
       sweepStartedRef.current = true;
