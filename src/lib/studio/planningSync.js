@@ -26,9 +26,10 @@ export function planningUpcoming(eo, now = Date.now()) {
 // Shape of what a sync writes into the order (event_orders.data). Bump it when Deal Check starts
 // recording something Dept Ops reads (v2: each labour usage row carries the department it was charged
 // to; v3: crew counts carry the situational multiplier — King's date / shift timing), and every order
-// synced under an older shape counts as stale until it is synced again.
-export const PLANNING_SNAPSHOT_VERSION = 3;
-const PLANNING_SNAPSHOT_SHIPPED_AT = Date.parse("2026-10-21T11:15:00Z");
+// synced under an older shape counts as stale until it is synced again. v4: rental totals take only the
+// biggest of the date discount and the Fixed-Venue / reuse discount, so every figure moves.
+export const PLANNING_SNAPSHOT_VERSION = 4;
+const PLANNING_SNAPSHOT_SHIPPED_AT = Date.parse("2026-10-22T06:15:00Z");
 export const planningSnapshotOutdated = (eo) => (Number(eo?.deptSnapVer) || 1) < PLANNING_SNAPSHOT_VERSION;
 
 // Synced before, still upcoming, and a planning input changed after that sync (a minute of slack: the

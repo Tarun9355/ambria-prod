@@ -100,6 +100,7 @@ import { qtyUsedElsewhereInDealCheck, netOwnReservedBlocksLive } from "../../../
 import { isHiddenSubcat, oosCostPctFor, canFulfillShortfall } from "../../../lib/rateCard";
 import { findCrossFnReuseSource, computeFnInvQty, groupConsecutiveFns } from "../../../lib/studio/crossFnReuse";
 import { computePeopleRaw, computePeople, situationalFactorsFor, heavySayaMultFor as sharedHeavySayaMultFor } from "../../../lib/studio/manpowerCount";
+import { innerDiscountFactor } from "../../../lib/studio/discounts.js";
 import { kitShortfallSplit } from "../../../lib/studio/kitShortfallSplit";
 import { withSetupSlot } from "../../../lib/studio/dihariWindows.js";
 
@@ -368,6 +369,10 @@ export default function DealCheckOverlay({ ctx }) {
   const repeatAdjustedRental = (isRepeatZone, venueName, item, qty, baseRentalIn, fnDate, crossFnReuseQty = 0) => {
     const dateMult = fnDate ? dateCategoryMultiplierFor(fnDate) : 1;
     const baseRental = baseRentalIn * dateMult;
+    // A date below ×1 (Filler, last-minute) is itself a discount, and discounts do not stack: a unit
+    // that also has a Fixed-Venue / reuse discount takes only the bigger of the two (see
+    // lib/studio/discounts.js). dateMult is already in baseRental, so this is what is left to apply.
+    const disc = (pct) => innerDiscountFactor(dateMult, pct);
     const full = qty * baseRental;
     if (!item) return full;
     // fixedVenueSubcatDiscount rides along here too — standingDiscountPct falls back to it when
@@ -385,13 +390,13 @@ export default function DealCheckOverlay({ ctx }) {
     const crossFnEligible = Math.max(0, Math.min(freshUnits, crossFnReuseQty));
     if (standingUnits > 0 || crossFnEligible > 0) {
       const trulyFresh = freshUnits - crossFnEligible;
-      return standingUnits * baseRental * (1 - discountPct / 100) + crossFnEligible * baseRental * (1 - subcatPct / 100) + trulyFresh * baseRental;
+      return standingUnits * baseRental * disc(discountPct) + crossFnEligible * baseRental * disc(subcatPct) + trulyFresh * baseRental;
     }
     // Not a specifically-registered standing item, so there's nothing "always there" about it — the
     // sub-category-level Repeat discount only makes sense when THIS event's own setup is being
     // reused across days, which is exactly what isRepeatZone means. Stays gated on it.
     if (!isRepeatZone) return full;
-    return full * (1 - subcatPct / 100);
+    return full * disc(subcatPct);
   };
 
   // One function's print jobs (Flex/Vinyl/Sunboard etc., zoneConfig[zk].prints) priced out — the
