@@ -3,6 +3,7 @@ import { thumbUrl, fitUrl } from "../../lib/studio/thumb.js";
 import { supabase } from "../../lib/supabase";
 import { RC_SK_CATS } from "../../lib/studio/keys";
 import { Tabs, AddInlineItem, FlowerPicker, Btn, useConfirm, DraftInput } from "../../components/ui";
+import ClickablePhoto from "../../components/shared/ClickablePhoto.jsx";
 import { canvaAuthUrl, canvaConnectionStatus, canvaClientId } from "../../lib/canva";
 import { uploadToStorage, compressImageForUpload, STORAGE_FOLDERS } from "../../lib/storage";
 import { resolveMandiFlower, computePatternSizeCost, effectiveMarkup, studioUnitLabel } from "../../lib/ims/flowerHelpers";
@@ -46,6 +47,23 @@ function Placeholder({ name, note }) {
 // the box changes it on every keystroke (8 → 80 → 150), and a history entry per keystroke filled the
 // history with half-typed prices (₹1, ₹15) so "Prev price" showed one of those. One entry per day keeps
 // the real previous price.
+// What the photo viewer shows beside a mandi flower / variant: its prices and the rate Studio bills.
+function mandiPhotoDetails(flower, v) {
+  const price = Number((v || flower).currentPrice) || 0;
+  const h = (v || flower).priceHistory;
+  const prev = Array.isArray(h) && h.length ? h[h.length - 1].price : null;
+  const markup = Number(flower.markup) || 0;
+  return [
+    ["Flower", flower.name],
+    ...(v ? [["Colour / variant", v.name]] : []),
+    ["Category", flower.flowerCat || "Other"],
+    ["Unit", flower.unit || "—"],
+    ["Mandi price today", `₹${price.toLocaleString("en-IN")}`],
+    ...(prev != null ? [["Previous price", `₹${Number(prev).toLocaleString("en-IN")}`]] : []),
+    ...(markup > 0 ? [["Markup", `${markup}% → Studio rate ₹${Math.round(price * (1 + markup / 100)).toLocaleString("en-IN")}`]] : []),
+  ];
+}
+
 function withPrevPrice(history, price) {
   const h = Array.isArray(history) ? history : [];
   const today = new Date().toISOString().split("T")[0];
@@ -1047,24 +1065,37 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                         if (hasVariants) {
                           return (
                             <div onClick={(e) => e.stopPropagation()} title={cheapestVariant ? `Photo of cheapest variant: ${cheapestVariant.name} (₹${Number(cheapestVariant.currentPrice) || 0}). Expand to manage variant photos.` : "No variant photos yet. Expand to upload."}>
-                              {displayUrl ? <img src={thumbUrl(displayUrl, 48)} loading="lazy" decoding="async" alt={cheapestVariant?.name || p.name} className="w-12 h-12 rounded object-cover border" />
+                              {displayUrl ? <ClickablePhoto src={displayUrl} thumbSize={48} alt={cheapestVariant?.name || p.name} className="w-12 h-12 rounded object-cover border" name={cheapestVariant?.name || p.name}
+                                  details={[...mandiPhotoDetails(p, cheapestVariant), ["Note", "Photo of the cheapest variant — replace a photo from its own variant row below."]]} />
                                 : <div className="w-12 h-12 rounded border border-dashed border-gray-300 flex items-center justify-center text-gray-300 text-xl">🌸</div>}
                             </div>
                           );
                         }
+                        const replaceParentPhoto = async (file) => {
+                          setSMandiUploading((prev) => ({ ...prev, [parentUploadKey]: true }));
+                          try {
+                            const compressed = await compressImageForUpload(file);
+                            const url = await uploadToStorage(compressed, STORAGE_FOLDERS.MANDI);
+                            setSettings((s) => ({ ...s, mandiCatalogue: s.mandiCatalogue.map((x) => x.id === p.id ? { ...x, photoUrl: url } : x) }));
+                          } catch (err) { alert("Photo upload failed: " + (err?.message || err)); }
+                          finally { setSMandiUploading((prev) => { const np = { ...prev }; delete np[parentUploadKey]; return np; }); }
+                        };
+                        // With a photo: click opens it in full (its Replace button is in that view). Without one:
+                        // the + box picks a file straight away.
+                        if (displayUrl) return (
+                          <div onClick={(e) => e.stopPropagation()}>
+                            <ClickablePhoto src={displayUrl} thumbSize={48} alt={p.name} className="w-12 h-12 rounded object-cover border" name={p.name}
+                              details={mandiPhotoDetails(p)} action={{ label: "🔄 Replace photo", onFile: replaceParentPhoto }} />
+                          </div>
+                        );
                         return (
                           <label className="block cursor-pointer" onClick={(e) => e.stopPropagation()}>
                             {displayUrl ? <img src={thumbUrl(displayUrl, 48)} loading="lazy" decoding="async" alt={p.name} className="w-12 h-12 rounded object-cover border" title="Click to replace photo" />
                               : <div className="w-12 h-12 rounded border-2 border-dashed border-gray-300 flex items-center justify-center text-gray-400 text-xl hover:border-indigo-400 hover:text-indigo-500" title="Upload parent flower photo">{parentUploading ? "…" : "+"}</div>}
                             <input type="file" accept="image/*" className="hidden" onChange={async (e) => {
                               const file = e.target.files?.[0]; if (!file) return;
-                              setSMandiUploading((prev) => ({ ...prev, [parentUploadKey]: true }));
-                              try {
-                                const compressed = await compressImageForUpload(file);
-                                const url = await uploadToStorage(compressed, STORAGE_FOLDERS.MANDI);
-                                setSettings((s) => ({ ...s, mandiCatalogue: s.mandiCatalogue.map((x) => x.id === p.id ? { ...x, photoUrl: url } : x) }));
-                              } catch (err) { alert("Photo upload failed: " + (err?.message || err)); }
-                              finally { setSMandiUploading((prev) => { const np = { ...prev }; delete np[parentUploadKey]; return np; }); e.target.value = ""; }
+                              await replaceParentPhoto(file);
+                              e.target.value = "";
                             }} />
                           </label>
                         );
@@ -1202,23 +1233,32 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                               const trendCls = trend === "↑" ? "text-red-500 font-bold" : trend === "↓" ? "text-green-600 font-bold" : "text-gray-400";
                               const uploadKey = `${p.id}:${v.variantId}`;
                               const uploading = !!sMandiUploading[uploadKey];
+                              const replaceVariantPhoto = async (file) => {
+                                setSMandiUploading((prev) => ({ ...prev, [uploadKey]: true }));
+                                try {
+                                  const compressed = await compressImageForUpload(file);
+                                  const url = await uploadToStorage(compressed, STORAGE_FOLDERS.MANDI);
+                                  setSettings((s) => ({ ...s, mandiCatalogue: s.mandiCatalogue.map((x) => x.id === p.id ? { ...x, colorVariants: (x.colorVariants || []).map((cv) => cv.variantId === v.variantId ? { ...cv, photoUrl: url } : cv) } : x) }));
+                                } catch (err) { alert("Photo upload failed: " + (err?.message || err)); }
+                                finally { setSMandiUploading((prev) => { const np = { ...prev }; delete np[uploadKey]; return np; }); }
+                              };
                               return (
                                 <tr key={v.variantId} className="border-t border-gray-200 bg-white">
                                   <td className="px-2 py-1.5">
+                                    {v.photoUrl ? (
+                                      <ClickablePhoto src={v.photoUrl} thumbSize={48} alt={v.name} className="w-12 h-12 rounded object-cover border" name={v.name}
+                                        details={mandiPhotoDetails(p, v)} action={{ label: "🔄 Replace photo", onFile: replaceVariantPhoto }} />
+                                    ) : (
                                     <label className="block cursor-pointer">
                                       {v.photoUrl ? <img src={thumbUrl(v.photoUrl, 48)} loading="lazy" decoding="async" alt={v.name} className="w-12 h-12 rounded object-cover border" title="Click to replace" />
                                         : <div className="w-12 h-12 rounded border-2 border-dashed border-gray-300 flex items-center justify-center text-gray-400 text-xl hover:border-indigo-400 hover:text-indigo-500" title="Upload variant photo">{uploading ? "…" : "+"}</div>}
                                       <input type="file" accept="image/*" className="hidden" onChange={async (e) => {
                                         const file = e.target.files?.[0]; if (!file) return;
-                                        setSMandiUploading((prev) => ({ ...prev, [uploadKey]: true }));
-                                        try {
-                                          const compressed = await compressImageForUpload(file);
-                                          const url = await uploadToStorage(compressed, STORAGE_FOLDERS.MANDI);
-                                          setSettings((s) => ({ ...s, mandiCatalogue: s.mandiCatalogue.map((x) => x.id === p.id ? { ...x, colorVariants: (x.colorVariants || []).map((cv) => cv.variantId === v.variantId ? { ...cv, photoUrl: url } : cv) } : x) }));
-                                        } catch (err) { alert("Photo upload failed: " + (err?.message || err)); }
-                                        finally { setSMandiUploading((prev) => { const np = { ...prev }; delete np[uploadKey]; return np; }); e.target.value = ""; }
+                                        await replaceVariantPhoto(file);
+                                        e.target.value = "";
                                       }} />
                                     </label>
+                                    )}
                                   </td>
                                   <td className="px-2 py-1.5">
                                     <DraftInput value={v.name}

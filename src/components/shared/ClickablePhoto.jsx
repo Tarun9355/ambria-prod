@@ -19,7 +19,23 @@ function BigPhoto({ src, alt, style }) {
   );
 }
 
-// Full-screen photo with the item's details beside it. items: [{ src, name, details: [[label, value], …] }].
+// A "replace this photo" button for the viewer: picks a file, hands it to action.onFile(file) (which does
+// the upload and saves the new URL itself), then closes the viewer — the photo on screen is the old one.
+function ReplaceButton({ action, onDone }) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <label style={{ display: "block", marginTop: 14, textAlign: "center", padding: "9px 12px", borderRadius: 8, background: busy ? "#9ca3af" : "#4f46e5", color: "#fff", fontSize: 13, fontWeight: 600, cursor: busy ? "wait" : "pointer" }}>
+      {busy ? "Uploading…" : (action.label || "Replace photo")}
+      <input type="file" accept="image/*" style={{ display: "none" }} disabled={busy} onChange={async (e) => {
+        const file = e.target.files?.[0]; if (!file) return;
+        setBusy(true);
+        try { await action.onFile(file); onDone(); } finally { setBusy(false); e.target.value = ""; }
+      }} />
+    </label>
+  );
+}
+
+// Full-screen photo with the item's details beside it. items: [{ src, name, details: [[label, value], …], action?: { label, onFile } }].
 // ‹ › / arrow keys step through the set; Escape or a click outside closes it — and only it (the picker
 // underneath stays open).
 export function PhotoLightbox({ items, start = 0, onClose }) {
@@ -44,7 +60,7 @@ export function PhotoLightbox({ items, start = 0, onClose }) {
     border: "1px solid rgba(255,255,255,0.25)", background: "rgba(0,0,0,0.45)", color: "#fff", fontSize: 24, lineHeight: 1,
     cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", userSelect: "none",
   });
-  const hasDetails = cur.details?.length > 0;
+  const hasDetails = cur.details?.length > 0 || !!cur.action;
   return createPortal(
     <div onClick={(e) => { e.stopPropagation(); onClose(); }} style={{ position: "fixed", inset: 0, zIndex: 100000, background: "rgba(0,0,0,0.9)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, cursor: "zoom-out" }}>
       <span onClick={onClose} style={{ position: "absolute", top: 16, right: 20, fontSize: 30, lineHeight: 1, color: "#fff", cursor: "pointer", fontWeight: 300 }}>×</span>
@@ -56,12 +72,13 @@ export function PhotoLightbox({ items, start = 0, onClose }) {
         {hasDetails && (
           <div style={{ width: 270, flexShrink: 0, alignSelf: "center", background: "rgba(255,255,255,0.97)", color: "#1a1a2e", borderRadius: 10, padding: "16px 18px", boxShadow: "0 20px 60px rgba(0,0,0,0.5)" }}>
             <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 12, lineHeight: 1.25 }}>{cur.name}</div>
-            {cur.details.map(([label, value]) => (
+            {(cur.details || []).map(([label, value]) => (
               <div key={label} style={{ marginBottom: 9 }}>
                 <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase", color: "#8a8aa0" }}>{label}</div>
                 <div style={{ fontSize: 13, fontWeight: 500, lineHeight: 1.35 }}>{value}</div>
               </div>
             ))}
+            {cur.action && <ReplaceButton action={cur.action} onDone={onClose} />}
           </div>
         )}
       </div>
@@ -73,14 +90,14 @@ export function PhotoLightbox({ items, start = 0, onClose }) {
 
 // A thumbnail that opens its full photo, with details, on click. Clicking it never reaches the card
 // it sits in (so it does not also pick / select the item).
-export default function ClickablePhoto({ src, photos, thumbSize = 120, alt = "", style, name, details, children }) {
+export default function ClickablePhoto({ src, photos, thumbSize = 120, alt = "", style, className, name, details, action, children }) {
   const [open, setOpen] = useState(false);
   const set = [...new Set([src, ...(photos || [])].filter(Boolean))];
   return (
     <>
       <img src={thumbUrl(src, thumbSize)} alt={alt} decoding="async" title="Click to see the full photo"
-        onClick={(e) => { e.stopPropagation(); setOpen(true); }} style={{ ...style, cursor: "zoom-in" }} />
-      {open && <PhotoLightbox items={set.map((s) => ({ src: s, name, details }))} onClose={() => setOpen(false)} />}
+        onClick={(e) => { e.stopPropagation(); setOpen(true); }} className={className} style={{ ...style, cursor: "zoom-in" }} />
+      {open && <PhotoLightbox items={set.map((s) => ({ src: s, name, details, action }))} onClose={() => setOpen(false)} />}
       {children}
     </>
   );
