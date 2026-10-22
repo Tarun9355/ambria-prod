@@ -4485,7 +4485,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
             </button>
           )}
           {/* Only while an event's planning is older than an IMS setting / inventory change. */}
-          <PlanningSyncButton eventOrders={eventOrders} />
+          <PlanningSyncButton eventOrders={eventOrders} onlyOrder={sel} />
         </div>
       </div>
       </div>

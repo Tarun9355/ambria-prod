@@ -5,6 +5,8 @@ import { latestPlanningInputStamp, planningNeedsSync } from "../../lib/studio/pl
 // IMS setting / inventory change that feeds it. Pressing it loads Studio in an invisible frame
 // (#/studio?sweep=1) that runs Deal Check for each such event and writes the fresh snapshot back, so
 // nobody has to open the deal; the planning below refreshes on its own through the live subscription.
+// With an event open (`onlyOrder`) it is that event alone: the button says so, counts only it, and the
+// hidden Studio syncs only that order — the rest wait until opened or until the button is used with none open.
 const SWEPT_KEY = "ambria-planning-swept-at-v2"; // v2: the first version also hid the past events a sweep used to skip
 const readSwept = () => { try { return Number(localStorage.getItem(SWEPT_KEY)) || 0; } catch { return 0; } };
 // Orders the last run found it could not sync (no client / not booked / no saved build), remembered as
@@ -12,7 +14,8 @@ const readSwept = () => { try { return Number(localStorage.getItem(SWEPT_KEY)) |
 const SKIPPED_KEY = "ambria-planning-skipped-v1";
 const readSkipped = () => { try { return JSON.parse(localStorage.getItem(SKIPPED_KEY) || "{}") || {}; } catch { return {}; } };
 
-export default function PlanningSyncButton({ eventOrders }) {
+export default function PlanningSyncButton({ eventOrders, onlyOrder }) {
+  const onlyId = onlyOrder?.id || null;
   const [latest, setLatest] = useState(0);
   const [sweptAt, setSweptAt] = useState(readSwept);
   const [run, setRun] = useState(null); // null | { done, total, started }
@@ -31,10 +34,13 @@ export default function PlanningSyncButton({ eventOrders }) {
 
   const [skipped, setSkipped] = useState(readSkipped);
   const eventOrdersRef = useRef(eventOrders); eventOrdersRef.current = eventOrders;
-  const need = useMemo(() => (eventOrders || []).filter(eo => planningNeedsSync(eo, latest, sweptAt) && skipped[eo.id] !== eo.deptSyncedAt).length, [eventOrders, latest, sweptAt, skipped]);
+  const need = useMemo(() => (eventOrders || []).filter(eo => (!onlyId || eo.id === onlyId) && planningNeedsSync(eo, latest, sweptAt) && skipped[eo.id] !== eo.deptSyncedAt).length, [eventOrders, latest, sweptAt, skipped, onlyId]);
 
+  // The event the running sync was started for: opening another event meanwhile must not change it.
+  const runOnlyRef = useRef(null);
   const finish = (text, stamp = true) => {
-    if (stamp) { const now = Date.now(); try { localStorage.setItem(SWEPT_KEY, String(now)); } catch { /* private mode */ } setSweptAt(now); }
+    // a one-event run must not mark the other events as swept
+    if (stamp && !runOnlyRef.current) { const now = Date.now(); try { localStorage.setItem(SWEPT_KEY, String(now)); } catch { /* private mode */ } setSweptAt(now); }
     setRun(null);
     setNote(text);
     setTimeout(() => setNote(""), stamp ? 6000 : 25000); // a failure stays long enough to read
@@ -56,11 +62,14 @@ export default function PlanningSyncButton({ eventOrders }) {
       else if (d.phase === "progress") setRun(r => (r ? { ...r, done: d.done, total: d.total, started: true } : r));
       else if (d.phase === "done") {
         if (Array.isArray(d.skipped)) {
-          const next = {}; d.skipped.forEach(id => { const eo = (eventOrdersRef.current || []).find(e => e.id === id); if (eo) next[id] = eo.deptSyncedAt; });
+          // a one-event run only knows about that event: keep what earlier runs remembered for the others
+          const next = runOnlyRef.current ? { ...readSkipped() } : {};
+          if (runOnlyRef.current) delete next[runOnlyRef.current];
+          d.skipped.forEach(id => { const eo = (eventOrdersRef.current || []).find(e => e.id === id); if (eo) next[id] = eo.deptSyncedAt; });
           try { localStorage.setItem(SKIPPED_KEY, JSON.stringify(next)); } catch { /* private mode */ }
           setSkipped(next);
         }
-        finish(d.error ? "Sync stopped early — try again" : d.done > 0 ? `Planning synced for ${d.done} event${d.done === 1 ? "" : "s"}` : "Planning is already up to date");
+        finish(d.error ? "Sync stopped early — try again" : d.done > 0 ? `Planning synced for ${d.done} event${d.done === 1 ? "" : "s"}` : runOnlyRef.current && d.skipped?.includes(runOnlyRef.current) ? "This event has nothing to sync from Studio" : "Planning is already up to date");
       }
     };
     window.addEventListener("message", onMsg);
@@ -72,7 +81,7 @@ export default function PlanningSyncButton({ eventOrders }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [!!run]);
 
-  const frameUrl = `${window.location.origin}${window.location.pathname}#/studio?sweep=1`;
+  const frameUrl = `${window.location.origin}${window.location.pathname}#/studio?sweep=1${runOnlyRef.current ? `&order=${encodeURIComponent(runOnlyRef.current)}` : ""}`;
   if (!run && !need && !note) return null;
   return (
     <>
@@ -80,13 +89,13 @@ export default function PlanningSyncButton({ eventOrders }) {
       {run ? (
         <span className="hidden sm:inline-flex shrink-0 items-center gap-1.5 ml-1 px-3 py-1.5 rounded-lg text-sm font-semibold whitespace-nowrap border border-blue-200 bg-blue-50 text-blue-700">
           <span aria-hidden="true" className="w-3.5 h-3.5 rounded-full border-2 border-blue-200 border-t-blue-600 animate-spin" />
-          {run.started && run.total ? `Syncing ${Math.min(run.done + 1, run.total)} of ${run.total}…` : "Syncing planning…"}
+          {runOnlyRef.current ? "Syncing this event…" : run.started && run.total ? `Syncing ${Math.min(run.done + 1, run.total)} of ${run.total}…` : "Syncing planning…"}
         </span>
       ) : need > 0 ? (
-        <button onClick={() => { setNote(""); setRun({ done: 0, total: 0, started: false }); }}
-          title="IMS settings or inventory changed after these events were last synced from Deal Check. Runs Deal Check for each in the background — you can keep working."
+        <button onClick={() => { setNote(""); runOnlyRef.current = onlyId; setRun({ done: 0, total: 0, started: false }); }}
+          title={onlyId ? "IMS settings or inventory changed after this event was last synced from Deal Check. Runs Deal Check for this event only, in the background — you can keep working." : "IMS settings or inventory changed after these events were last synced from Deal Check. Runs Deal Check for each in the background — you can keep working."}
           className="hidden sm:inline-flex shrink-0 items-center gap-1.5 ml-1 px-3 py-1.5 rounded-lg text-sm font-semibold whitespace-nowrap border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 transition-colors">
-          🔄 Sync planning · {need} event{need === 1 ? "" : "s"}
+          {onlyId ? "🔄 Sync this event" : `🔄 Sync planning · ${need} event${need === 1 ? "" : "s"}`}
         </button>
       ) : (
         <span className="hidden sm:inline-flex shrink-0 items-center ml-1 px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap text-emerald-700">{note}</span>
