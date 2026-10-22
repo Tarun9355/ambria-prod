@@ -5,7 +5,7 @@ import { latestPlanningInputStamp, planningNeedsSync } from "../../lib/studio/pl
 // IMS setting / inventory change that feeds it. Pressing it loads Studio in an invisible frame
 // (#/studio?sweep=1) that runs Deal Check for each such event and writes the fresh snapshot back, so
 // nobody has to open the deal; the planning below refreshes on its own through the live subscription.
-const SWEPT_KEY = "ambria-planning-swept-at";
+const SWEPT_KEY = "ambria-planning-swept-at-v2"; // v2: the first version also hid the past events a sweep used to skip
 const readSwept = () => { try { return Number(localStorage.getItem(SWEPT_KEY)) || 0; } catch { return 0; } };
 
 export default function PlanningSyncButton({ eventOrders }) {
