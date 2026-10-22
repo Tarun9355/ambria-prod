@@ -833,7 +833,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       // departments by each part's own category, so a row can be a component of a kit owned by
       // another department. It is the only record of that parent, and the PDF needs it to avoid
       // reporting a bolted-on part as a loose item.
-      const rows = deptInvSnap.map((x, i) => ({ id: x.name + i, invId: x.imsId || null, name: x.name, photo: x.photo || "", qty: x.qty || 0, rentalQty: x.rentalQty != null ? x.rentalQty : (x.qty || 0), byFn: x.byFn || null, unit: x.unit || 0, total: x.total || 0, sub: x.sub || "", isKit: !!x.isKit, fromKit: x.fromKit || null, components: Array.isArray(x.components) ? x.components : null, shortQty: x.shortQty || 0, shortCost: x.shortCost || 0, outOfStock: !!x.outOfStock, prodOrBuy: x.prodOrBuy || null, isSwapped: swapInfo.has(x.name), swappedFrom: swapInfo.get(x.name)?.swappedFrom || null, qtyUnit: x.qtyUnit || "", parts: Array.isArray(x.parts) ? x.parts : null }));
+      const rows = deptInvSnap.map((x, i) => ({ id: x.name + i, invId: x.imsId || null, name: x.name, photo: x.photo || "", qty: x.qty || 0, rentalQty: x.rentalQty != null ? x.rentalQty : (x.qty || 0), byFn: x.byFn || null, calc: x.calc || null, unit: x.unit || 0, total: x.total || 0, sub: x.sub || "", isKit: !!x.isKit, fromKit: x.fromKit || null, components: Array.isArray(x.components) ? x.components : null, shortQty: x.shortQty || 0, shortCost: x.shortCost || 0, outOfStock: !!x.outOfStock, prodOrBuy: x.prodOrBuy || null, isSwapped: swapInfo.has(x.name), swappedFrom: swapInfo.get(x.name)?.swappedFrom || null, qtyUnit: x.qtyUnit || "", parts: Array.isArray(x.parts) ? x.parts : null }));
       // Short items first (need chasing/ordering), then Production/Buying (not real stock — worth
       // knowing apart from what's actually reserved), then everything else — the order requested
       // for this list. Stable within each group: Array.prototype.sort is stable, so ties keep the
@@ -1234,7 +1234,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         // for them) or an event synced before this field existed.
         const fnRow = it.byFn && it.byFn[invFn];
         const total = fnRow ? Math.round(fnRow.total) : Math.round((Number(it.total) || 0) * ((Number(it.qty) || 0) > 0 ? q / Number(it.qty) : 1));
-        return { ...it, qty: q, rentalQty: q, total, shortQty: Math.min(Number(it.shortQty) || 0, q) };
+        return { ...it, qty: q, rentalQty: q, total, shortQty: Math.min(Number(it.shortQty) || 0, q), calc: fnRow ? (fnRow.calc || null) : null };
       }).filter(Boolean)
     : blockedItemsGrouped;
   const invWholeOnly = invScoped ? blockedItemsGrouped.length - invShown.length : 0;
@@ -5305,6 +5305,47 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                 <div className="shrink-0 rounded-lg bg-white px-2.5 py-1 text-[15px] font-bold text-gray-900 tabular-nums whitespace-nowrap shadow-[0_1px_2px_rgba(16,24,40,0.06)]">{fmt(invScoped ? invShownTotal : rentalIncome)}</div>
               </div>
               {fnChipRow(invFn, setInvFn)}
+              {/* ── HOW DEAL CHECK PRICED THIS DEPARTMENT ──
+                  Only this department's lines, added up by what moved the price: base rent, the date
+                  category, the discount that applied, short stock at production cost. Rows that carry no
+                  such breakdown (truss, fabric, platform, print, custom) are shown as one line. */}
+              {invShown.length > 0 && (() => {
+                const T = invShown.reduce((a, it) => {
+                  if (it.calc) { a.full += it.calc.full; a.dateAdj += it.calc.dateAdj; a.disc += it.calc.disc; a.short += it.calc.short; a.calcTotal += (Number(it.total) || 0); (it.calc.dms || []).forEach(d => a.dms.add(d)); }
+                  else a.other += (Number(it.total) || 0);
+                  return a;
+                }, { full: 0, dateAdj: 0, disc: 0, short: 0, other: 0, calcTotal: 0, dms: new Set() });
+                const total = invShown.reduce((a, it) => a + (Number(it.total) || 0), 0);
+                const open = !!kitOpen["calc:all"];
+                const dm = [...T.dms];
+                const row = (label, val, hint, strong) => (
+                  <div className="flex items-baseline justify-between gap-3 py-1">
+                    <span className={"text-[12px] " + (strong ? "font-semibold text-gray-900" : "text-gray-600")}>{label}{hint && <span className="text-gray-400"> · {hint}</span>}</span>
+                    <span className={"text-[12px] tabular-nums " + (strong ? "font-bold text-gray-900" : val < 0 ? "text-emerald-700 font-semibold" : "text-gray-800 font-medium")}>{val < 0 ? "−" : (val > 0 && !strong ? "+" : "")}{fmt(Math.abs(val))}</span>
+                  </div>
+                );
+                return (
+                  <div className="mx-2.5 mt-2">
+                    <button onClick={() => setKitOpen(o => ({ ...o, "calc:all": !o["calc:all"] }))} aria-expanded={open}
+                      className="text-[12px] font-semibold text-blue-700 hover:text-blue-900 inline-flex items-center gap-1.5">
+                      💡 How Deal Check priced {dept}
+                      <span aria-hidden="true" className={"transition-transform duration-150 " + (open ? "rotate-180" : "")}><svg width="9" height="9" viewBox="0 0 14 14" fill="none"><path d="M3.5 5 L7 8.5 L10.5 5" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" /></svg></span>
+                    </button>
+                    {open && (
+                      <div className="mt-1.5 rounded-xl bg-slate-50 ring-1 ring-slate-100 px-3 py-1.5 divide-y divide-slate-100">
+                        {(T.calcTotal > 0 || T.short > 0) && <>
+                          {row("Base rent of the units we own", T.full, "rate × quantity")}
+                          {T.dateAdj !== 0 && row(T.dateAdj < 0 ? "Date category discount" : "Date category markup", T.dateAdj, dm.length === 1 ? `×${dm[0]}` : "per function's date")}
+                          {T.disc !== 0 && row("Repeat / standing / reuse discount", T.disc, "only the biggest one applies")}
+                          {T.short > 0 && row("Short stock, priced at production cost", T.short, "units we have to make or buy")}
+                        </>}
+                        {T.other > 0 && row("Truss, fabric, platform, print & other lines", T.other, "quantity × rate")}
+                        {row("Total for " + dept, total, "", true)}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
               {invWholeOnly > 0 && (
                 <div className="m-2.5 mb-0 px-2.5 py-2 rounded-xl bg-gray-50 text-[11px] text-gray-500">{invWholeOnly} item{invWholeOnly === 1 ? " is" : "s are"} not in any of this function's zones (production, fabric and the like) — see All functions.</div>
               )}
@@ -5435,6 +5476,9 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                                   : <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-bold">SHORT ×{it.shortQty}</span>)}
                                 {it.prodOrBuy && <span className={"text-[10px] px-1.5 py-0.5 rounded font-bold " + (it.prodOrBuy === "buying" ? "bg-orange-100 text-orange-700" : "bg-purple-100 text-purple-700")}>{it.prodOrBuy === "buying" ? "🛒 BUYING" : "🏭 PRODUCTION"}</span>}
                                 {it.isSwapped && <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-100 text-sky-700 font-bold">🔁 SWAPPED</span>}
+                                <button onClick={() => setKitOpen(o => ({ ...o, ["calc:" + it.id]: !o["calc:" + it.id] }))} aria-expanded={!!kitOpen["calc:" + it.id]}
+                                  title="How this line's total was worked out"
+                                  className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 font-semibold hover:bg-gray-200 transition-colors">💡 How</button>
                                 {/* Where a merged line's qty comes from (e.g. carpet sqft per zone floor). */}
                                 {Array.isArray(it.parts) && it.parts.length > 0 && (
                                   <button onClick={() => setKitOpen(o => ({ ...o, ["how:" + it.id]: !o["how:" + it.id] }))} aria-expanded={!!kitOpen["how:" + it.id]}
@@ -5486,6 +5530,33 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                           column widths: the sum only reads as a sum if it lines up under it.
                           Tinted and inset, so an opened kit is visibly part of its card rather
                           than a run of new items after it. */}
+                      {kitOpen["calc:" + it.id] && (() => {
+                        const c = it.calc;
+                        const dm = c ? (c.dms || []) : [];
+                        const lines = c ? [
+                          ["Base rent of the units we own", c.full, `${fmt(it.unit)} × ${Math.max(0, rentalQty - (Number(it.shortQty) || 0))}`],
+                          ...(c.dateAdj !== 0 ? [[c.dateAdj < 0 ? "Date category discount" : "Date category markup", c.dateAdj, dm.length === 1 ? `×${dm[0]}` : ""]] : []),
+                          ...(c.disc !== 0 ? [["Repeat / standing / reuse discount", c.disc, "only the biggest applies"]] : []),
+                          ...(c.short > 0 ? [[`Short ×${it.shortQty || ""}, at production cost`, c.short, it.outOfStock ? "cannot be made — pick another item in Build" : "to be made or bought"]] : []),
+                        ] : [
+                          ["Rate × quantity", derived, `${fmt(it.unit)} × ${rentalQty}`],
+                          ...(mismatch ? [["Kit parts, discounts and other adjustments", Math.round(Number(it.total) || 0) - derived, "worked out by Deal Check"]] : []),
+                        ];
+                        return (
+                          <div className="bg-slate-50 px-3 py-1.5 divide-y divide-slate-100">
+                            {lines.map(([label, val, hint], i) => (
+                              <div key={i} className="flex items-baseline justify-between gap-3 py-1 text-[12px]">
+                                <span className="text-gray-600">{label}{hint ? <span className="text-gray-400"> · {hint}</span> : null}</span>
+                                <span className={"tabular-nums font-medium " + (val < 0 ? "text-emerald-700" : "text-gray-800")}>{val < 0 ? "−" : (i > 0 ? "+" : "")}{fmt(Math.abs(val))}</span>
+                              </div>
+                            ))}
+                            <div className="flex items-baseline justify-between gap-3 py-1 text-[12px]">
+                              <span className="font-semibold text-gray-900">Line total{!c ? <span className="text-gray-400 font-normal"> · synced before the breakdown existed — sync this event to see every step</span> : null}</span>
+                              <span className="tabular-nums font-bold text-gray-900">{fmt(it.total)}</span>
+                            </div>
+                          </div>
+                        );
+                      })()}
                       {Array.isArray(it.parts) && it.parts.length > 0 && kitOpen["how:" + it.id] && (
                         <div className="bg-slate-50 px-2.5 py-1.5 space-y-1 text-xs">
                           {it.parts.map((pt, pi) => (

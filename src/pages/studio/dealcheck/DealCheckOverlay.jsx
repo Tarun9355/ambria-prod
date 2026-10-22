@@ -661,6 +661,20 @@ export default function DealCheckOverlay({ ctx }) {
           const labourDeptCost = {}; DEPTS.forEach(d => { labourDeptCost[d] = 0; });
           const labourShareByDayDept = {};
           const addD = (d, key, amt) => { if (!d || !dept[d] || !amt || !(amt > 0)) return; dept[d][key] += amt; };
+          // How a rental line's total is reached, as parts that ADD UP to it (so lines can be summed across
+          // functions and zones): base rent of the units we own, the date category's effect on it (Filler ×0.75,
+          // King's ×1.2…), whatever discount applied on top (Repeat / standing at the venue / reuse — only the
+          // biggest one counts), and the units we are short of, priced at production cost. `disc` is the
+          // remainder, so the parts always sum to the line's total exactly. IMS shows this under each item.
+          const calcParts = (ownedQty, baseRate, fnDate, lineTotal, shortCostAmt) => {
+            const dm = fnDate ? dateCategoryMultiplierFor(fnDate) : 1;
+            const full = Math.round(ownedQty * baseRate);
+            const dateAdj = Math.round(ownedQty * baseRate * (dm - 1));
+            const short = Math.round(shortCostAmt || 0);
+            return { full, dateAdj, disc: Math.round(lineTotal) - full - dateAdj - short, short, dms: [dm] };
+          };
+          const addCalc = (a, b) => !b ? a : !a ? { ...b, dms: [...(b.dms || [])] }
+            : { full: a.full + b.full, dateAdj: a.dateAdj + b.dateAdj, disc: a.disc + b.disc, short: a.short + b.short, dms: [...new Set([...(a.dms || []), ...(b.dms || [])])] };
           // Category (rate-card OR inventory) → department. First the admin-editable map
           // (Settings → Departments); else keyword matching. Sub-cat already implies its category.
           const catDeptCfg = dealCheckData?.categoryDepartments || {};
@@ -760,7 +774,7 @@ export default function DealCheckOverlay({ ctx }) {
                   rental += line; byFn[fi].rental += line;
                   const dd = catToDept(imsField.category(it));
                   addD(dd, "rental", line);
-                  if (line > 0 && deptInv[dd]) deptInv[dd].push({ name: it.name, photo: imsField.photos(it)[0] || "", qty: Math.max(0, q - reused), rentalQty: q, unit: br, total: Math.round(line), sub: imsField.subcategory(it) || "", imsId: it.id, fnIdx: fi });
+                  if (line > 0 && deptInv[dd]) deptInv[dd].push({ name: it.name, photo: imsField.photos(it)[0] || "", qty: Math.max(0, q - reused), rentalQty: q, unit: br, total: Math.round(line), sub: imsField.subcategory(it) || "", imsId: it.id, fnIdx: fi, calc: calcParts(q, br, fn.fnDate, line, 0) });
                 });
                 return;
               }
@@ -902,7 +916,7 @@ export default function DealCheckOverlay({ ctx }) {
                 // split.reusedQty above (previously only its internal component-level shortfall
                 // accounting saw the reuse credit, so a reused KIT's displayed qty still summed
                 // across its sibling functions instead of showing the true peak).
-                deptInv[dD].push({ name: item.name || c.name || "Item", photo: imsField.photos(item)[0] || "", qty: Math.max(0, qty - reusedQty), rentalQty: qty, unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "", imsId: c.imsId, fnIdx: fi, ...(components && components.length ? { isKit: true, components: components.map(({ci, ...rest}) => ({ ...rest, total: Math.round(rest.total) })) } : {}), ...(shortQty > 0 ? { shortQty, shortCost: Math.round(shortCost), outOfStock: !canFulfillShortfall(item, fn.fnDate) } : {}) });
+                deptInv[dD].push({ name: item.name || c.name || "Item", photo: imsField.photos(item)[0] || "", qty: Math.max(0, qty - reusedQty), rentalQty: qty, unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "", imsId: c.imsId, fnIdx: fi, calc: calcParts(Math.max(0, qty - shortQty), baseR, fn.fnDate, lineRental, shortCost), ...(components && components.length ? { isKit: true, components: components.map(({ci, ...rest}) => ({ ...rest, total: Math.round(rest.total) })) } : {}), ...(shortQty > 0 ? { shortQty, shortCost: Math.round(shortCost), outOfStock: !canFulfillShortfall(item, fn.fnDate) } : {}) });
               }
             });
             // Manually-added inventory blocks (dcManualItems) — the salesperson added these directly in
@@ -951,7 +965,7 @@ export default function DealCheckOverlay({ ctx }) {
               } else {
                 addD(dD, "rental", lineRental);
               }
-              if (deptInv[dD]) deptInv[dD].push({ name: item.name || "Item", photo: imsField.photos(item)[0] || "", qty: Math.max(0, q - miReused), rentalQty: q, unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "", imsId: mi.imsId, fnIdx: fi, ...(miComponents && miComponents.length ? { isKit: true, components: miComponents.map(({ci, ...rest}) => ({ ...rest, total: Math.round(rest.total) })) } : {}) });
+              if (deptInv[dD]) deptInv[dD].push({ name: item.name || "Item", photo: imsField.photos(item)[0] || "", qty: Math.max(0, q - miReused), rentalQty: q, unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "", imsId: mi.imsId, fnIdx: fi, calc: calcParts(q, baseR, fn.fnDate, lineRental, 0), ...(miComponents && miComponents.length ? { isKit: true, components: miComponents.map(({ci, ...rest}) => ({ ...rest, total: Math.round(rest.total) })) } : {}) });
             });
             // Advance the GROUP's shared frontier now that this function is done drawing against it —
             // by its own total ACTUAL demand (thisFnDemand, accumulated above from every crossFnTake
@@ -1212,6 +1226,7 @@ export default function DealCheckOverlay({ ctx }) {
               if (seen[key]) {
                 seen[key].qty += (it.qty || 0); seen[key].rentalQty += rq; seen[key].total += (it.total || 0);
                 if (it.shortQty) { seen[key].shortQty = (seen[key].shortQty || 0) + it.shortQty; seen[key].shortCost = (seen[key].shortCost || 0) + (it.shortCost || 0); }
+                if (it.calc) seen[key].calc = addCalc(seen[key].calc, it.calc);
                 if (Array.isArray(it.parts)) seen[key].parts = [...(seen[key].parts || []), ...it.parts];
                 if (Array.isArray(it.components)) { // merge kit sub-elements too (same kit across zones)
                   const base = seen[key].components || (seen[key].components = []);
@@ -1222,7 +1237,7 @@ export default function DealCheckOverlay({ ctx }) {
                   });
                 }
               }
-              else { seen[key] = { ...it, rentalQty: rq, components: Array.isArray(it.components) ? it.components.map(c => ({ ...c })) : undefined, parts: Array.isArray(it.parts) ? [...it.parts] : undefined }; merged.push(seen[key]); }
+              else { seen[key] = { ...it, rentalQty: rq, calc: it.calc ? addCalc(null, it.calc) : undefined, components: Array.isArray(it.components) ? it.components.map(c => ({ ...c })) : undefined, parts: Array.isArray(it.parts) ? [...it.parts] : undefined }; merged.push(seen[key]); }
               // Per-function truth, kept alongside the merged line — Dept Ops' own scoped-to-one-
               // function view used to ESTIMATE a function's share by scaling the merged total
               // proportionally to its qty (qty ÷ merged qty), which only happens to be right when
@@ -1238,6 +1253,7 @@ export default function DealCheckOverlay({ ctx }) {
                 const bf = seen[key].byFn || (seen[key].byFn = {});
                 const cur = bf[it.fnIdx] || (bf[it.fnIdx] = { qty: 0, rentalQty: 0, total: 0 });
                 cur.qty += (it.qty || 0); cur.rentalQty += rq; cur.total += (it.total || 0);
+                if (it.calc) cur.calc = addCalc(cur.calc, it.calc);
               }
             });
             deptInv[dn] = merged;
