@@ -8716,7 +8716,12 @@ export default function StudioApp() {
     const sleep = (ms) => new Promise(r => setTimeout(r, ms));
     const eoOf = (c) => (eventOrdersRef2.current || []).find(e => e.clientId === c.id) || (eventOrdersRef2.current || []).find(e => c.name && (e.clientName || "") === (c.name || "").trim());
     // Tells the page that started this hidden run (IMS's "Sync planning" button) how it is going.
-    const tell = (phase, extra = {}) => { try { window.parent?.postMessage({ type: "ambria-planning-sweep", phase, ...extra }, window.location.origin); } catch { /* not framed */ } };
+    // `shard` says which slice of the run this frame is (IMS's button runs several side by side).
+    const shardOf = (() => { const m = /[?&]shard=(\d+)&of=(\d+)/.exec(window.location.hash); return m && Number(m[2]) > 1 ? { i: Number(m[1]), n: Number(m[2]) } : null; })();
+    const tell = (phase, extra = {}) => { try { window.parent?.postMessage({ type: "ambria-planning-sweep", phase, shard: shardOf ? shardOf.i : 0, ...extra }, window.location.origin); } catch { /* not framed */ } };
+    // An order belongs to the slice at its place in the id-sorted list of all orders (same list in every frame).
+    const allIds = (eventOrdersRef2.current || []).map(e => e.id).sort();
+    const inShard = (eo) => !shardOf || allIds.indexOf(eo?.id) % shardOf.n === shardOf.i;
     let done = 0;
     // #/studio?sweep=1&order=ID — IMS's button with one event open syncs that order alone.
     const onlyId = (() => { const m = /[?&]order=([^&]+)/.exec(window.location.hash); try { return m ? decodeURIComponent(m[1]) : null; } catch { return null; } })();
@@ -8725,14 +8730,14 @@ export default function StudioApp() {
       if (!latest) { tell("done", { done: 0, total: 0, skipped: [] }); return; }
       const stale = (c) => {
         const eo = c.status === "booked" ? eoOf(c) : null;
-        return (!onlyId || eo?.id === onlyId) && planningNeedsSync(eo, latest) && !autoSyncedClientsRef.current.has(c.id);
+        return (!onlyId || eo?.id === onlyId) && inShard(eo) && planningNeedsSync(eo, latest) && !autoSyncedClientsRef.current.has(c.id);
       };
       // Upcoming events first (nearest first), then the ones whose dates have gone by (latest first).
       const lastDateOf = (c) => { const eo = eoOf(c); return [eo?.date, ...((Array.isArray(eo?.functionsDetail) ? eo.functionsDetail : []).map(f => f?.date))].filter(Boolean).map(d => String(d).slice(0, 10)).sort().pop() || ""; };
       // Orders that are stale but cannot be synced from here — no client behind them any more, a deal
       // that is not booked, or no saved build — are reported back (skipped) so IMS stops counting them
       // as something the button could fix.
-      const skipped = (eventOrdersRef2.current || []).filter(eo => (!onlyId || eo.id === onlyId) && planningNeedsSync(eo, latest)).filter(eo => {
+      const skipped = (eventOrdersRef2.current || []).filter(eo => (!onlyId || eo.id === onlyId) && inShard(eo) && planningNeedsSync(eo, latest)).filter(eo => {
         const c = (clientLedgerRef.current || []).find(x => x.id === eo.clientId || (eo.clientName && (x.name || "").trim() === (eo.clientName || "").trim()));
         return !c || c.status !== "booked" || !findLatestBuild(c.sessions, 0);
       }).map(eo => eo.id);
