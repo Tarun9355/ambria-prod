@@ -2947,7 +2947,11 @@ undefined
   .zone-row button:not(:disabled):hover,.zone-row button:not(:disabled):active{transform:none}
   .zone-upload:hover,.zone-upload:active{transform:none}
 }
+/* mandi variant picker: the card under the pointer grows */
+.mv-card{transition:transform .16s ease,box-shadow .16s ease}
+.mv-card:hover{transform:scale(1.1);box-shadow:0 12px 28px rgba(0,0,0,0.3);z-index:2}
 @media (prefers-reduced-motion: reduce){
+  .mv-card,.mv-card:hover{transition:none;transform:none}
   .el-row,.el-row::before{transition:none}
   .el-row:hover,.el-row:active{transform:none}
   /* the spine still appears, it just does not grow into place */
@@ -4545,8 +4549,31 @@ undefined
                     const sk = resolveSizeKey(floralPattern.sizes, sizeClassToPatternKey(el.size));
                     return sk ? floralPattern.sizes[sk]?.img : null;
                   })() : null;
-                  const thumbSrc = thumbItem?.img || thumbItem?.photoUrls?.[0] || patternThumbSrc;
+                  // A raw mandi flower (Loose Petals…) has no inventory row either: its picture is the chosen
+                  // variant's, else the flower's own, else the first variant that has one.
+                  const mandiParent = (!thumbItem && el.mandiId) ? ((dealCheckData||studioFloralData)?.mandiCatalogue||[]).find(m=>m.id===el.mandiId) : null;
+                  const mandiVar = mandiParent ? (mandiParent.colorVariants||[]).find(v=>v.variantId===el.mandiVariantId) : null;
+                  const mandiThumbSrc = mandiParent ? (mandiVar?.photoUrl || mandiParent.photoUrl || (mandiParent.colorVariants||[]).find(v=>v.photoUrl)?.photoUrl || null) : null;
+                  const thumbSrc = thumbItem?.img || thumbItem?.photoUrls?.[0] || patternThumbSrc || mandiThumbSrc;
                   const thumbKey = `${k}:${idx}`;
+                  // Click on the thumbnail: the full photo (every photo the item has) with its details beside it.
+                  const openElPhoto = () => {
+                    if (!thumbSrc) return;
+                    const nm = thumbItem?.name || mandiParent?.name || el.name;
+                    const rows = [];
+                    const catLine = [thumbItem?.cat||thumbItem?.category, thumbItem?.subCat||thumbItem?.subcategory].filter(Boolean).join(" › ");
+                    if (catLine) rows.push(["Category", catLine]);
+                    if (mandiParent) { rows.push(["Flower", mandiParent.name]); if (mandiVar) rows.push(["Colour / variant", mandiVar.name]); }
+                    if (floralPattern) rows.push(["Recipe", floralPattern.name + (el.size ? ` · size ${el.size}` : "")]);
+                    if (showCosts && _effUp > 0) rows.push(["Rate", `${fmt(Math.round(_effUp))}${(thumbItem?.unit||el.unit) ? " / " + (thumbItem?.unit||el.unit) : ""}`]);
+                    rows.push(["In this build", `${el.qty||0} ${thumbItem?.unit||el.unit||""}`.trim()]);
+                    const d = thumbItem?.dims_LxWxH;
+                    const sizeText = thumbItem?.size || (d ? [d.l,d.w,d.h].filter(Boolean).join(" × ") + (d.unit ? " " + d.unit : "") : "");
+                    if (sizeText) rows.push(["Size", sizeText]);
+                    if (isKit) rows.push(["Includes", (thumbItem.subItems||[]).map(s => `${s.qty}× ${(imsInventory||[]).find(i=>i.id===s.itemId)?.name || "item"}`).join(", ")]);
+                    const photos = [...new Set([thumbSrc, ...(thumbItem?.photoUrls||[])].filter(Boolean))];
+                    setLightbox({ idx: 0, items: photos.map(src => ({ src, name: nm, details: rows })) });
+                  };
                   // Per-size reference photo (set per S/M/B in IMS → Flowers → Recipes) for the S/M/B
                   // pills below — lets a salesperson preview a size's actual flower photo on hover
                   // before picking it, not just see the currently-selected size on the thumb above.
@@ -4565,10 +4592,11 @@ undefined
                           onMouseEnter={(e)=>{
                             if(!thumbSrc) return;
                             const r=e.currentTarget.getBoundingClientRect();
-                            const POP=164;
+                            const POP=244;
                             const openUp=window.innerHeight-r.bottom<POP+8 && r.top>POP+8;
-                            setElThumbHover({key:thumbKey,openUp,top:openUp?undefined:r.bottom+4,bottom:openUp?window.innerHeight-r.top+4:undefined,left:Math.min(r.left,window.innerWidth-168)});
+                            setElThumbHover({key:thumbKey,openUp,top:openUp?undefined:r.bottom+4,bottom:openUp?window.innerHeight-r.top+4:undefined,left:Math.min(r.left,window.innerWidth-248)});
                           }}
+                          onClick={(e)=>{ if(!thumbSrc) return; e.stopPropagation(); setElThumbHover(null); openElPhoto(); }}
                           onMouseLeave={()=>setElThumbHover(null)}>
                           {thumbSrc ? <img src={thumbUrl(thumbSrc,20)} decoding="async" alt="" style={{width:20,height:20,borderRadius:4,objectFit:"cover",cursor:"zoom-in"}}/> : <div style={{width:20,height:20,borderRadius:4,background:isDark?"rgba(255,255,255,0.06)":"rgba(0,0,0,0.05)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11.5}}><IconBox size={12}/></div>}
                           {/* Portal straight to <body> — .el-row lifts on :hover via a CSS transform,
@@ -4578,8 +4606,8 @@ undefined
                               and the popup effectively never shows. Escaping the DOM subtree entirely
                               is the fix — the popup no longer has a transformed ancestor to inherit. */}
                           {elThumbHover?.key===thumbKey && thumbSrc && createPortal(
-                            <div style={{position:"fixed",top:elThumbHover.top,bottom:elThumbHover.bottom,left:elThumbHover.left,zIndex:10000,width:160,height:160,borderRadius:8,overflow:"hidden",border:`2px solid ${border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.4)",pointerEvents:"none"}}>
-                              <img src={thumbUrl(thumbSrc,160)} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+                            <div style={{position:"fixed",top:elThumbHover.top,bottom:elThumbHover.bottom,left:elThumbHover.left,zIndex:10000,width:240,height:240,borderRadius:8,overflow:"hidden",border:`2px solid ${border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.4)",pointerEvents:"none"}}>
+                              <img src={thumbUrl(thumbSrc,240)} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
                             </div>,
                             document.body
                           )}
@@ -5638,11 +5666,25 @@ undefined
       // then competes only with that ancestor, not with the rail outside it. Rendering at the
       // body removes the ancestor from the question altogether.
       return createPortal((
-      <div onClick={()=>setLightbox(null)} style={{position:"fixed",inset:0,zIndex:10000,background:"rgba(0,0,0,0.9)",display:"flex",alignItems:"center",justifyContent:"center",padding:24,cursor:"zoom-out"}}>
+      <div onClick={()=>setLightbox(null)} style={{position:"fixed",inset:0,zIndex:10001,background:"rgba(0,0,0,0.9)",display:"flex",alignItems:"center",justifyContent:"center",padding:24,cursor:"zoom-out"}}>
         <span onClick={()=>setLightbox(null)} style={{position:"absolute",top:16,right:20,fontSize:30,lineHeight:1,color:"#fff",cursor:"pointer",fontWeight:300}}>×</span>
         {many&&<span title="Previous (←)" aria-label="Previous photo" onClick={e=>{e.stopPropagation();lightboxStep(-1);}} style={navBtn("left")}>{"‹"}</span>}
         {many&&<span title="Next (→)" aria-label="Next photo" onClick={e=>{e.stopPropagation();lightboxStep(1);}} style={navBtn("right")}>{"›"}</span>}
-        <img src={cur.src} alt={cur.name||""} onClick={e=>e.stopPropagation()} style={{maxWidth:"88vw",maxHeight:"88vh",objectFit:"contain",borderRadius:8,boxShadow:"0 20px 60px rgba(0,0,0,0.6)",cursor:"default"}}/>
+        {/* An item may carry `details` ([[label, value], …]) — shown in a panel beside the photo. */}
+        <div onClick={e=>e.stopPropagation()} style={{display:"flex",flexWrap:"wrap",justifyContent:"center",alignItems:"stretch",gap:16,maxWidth:"94vw",maxHeight:"86vh",overflowY:"auto",cursor:"default"}}>
+          <img src={cur.src} alt={cur.name||""} style={{maxWidth:cur.details?.length?"min(62vw,100%)":"88vw",maxHeight:"84vh",objectFit:"contain",borderRadius:8,boxShadow:"0 20px 60px rgba(0,0,0,0.6)"}}/>
+          {cur.details?.length>0&&(
+            <div style={{width:270,flexShrink:0,alignSelf:"center",background:"rgba(255,255,255,0.97)",color:"#1a1a2e",borderRadius:10,padding:"16px 18px",boxShadow:"0 20px 60px rgba(0,0,0,0.5)"}}>
+              <div style={{fontSize:16,fontWeight:700,marginBottom:12,lineHeight:1.25}}>{cur.name}</div>
+              {cur.details.map(([label,value])=>(
+                <div key={label} style={{marginBottom:9}}>
+                  <div style={{fontSize:10,fontWeight:600,letterSpacing:"0.06em",textTransform:"uppercase",color:"#8a8aa0"}}>{label}</div>
+                  <div style={{fontSize:13,fontWeight:500,lineHeight:1.35}}>{value}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
         <div style={{position:"absolute",bottom:18,left:0,right:0,textAlign:"center",color:"#fff",fontSize:13,fontWeight:600,textShadow:"0 1px 4px rgba(0,0,0,0.8)"}}>
           {/* The caption carried the storage filename. Position is what a viewer actually wants here. */}
           {many&&<span style={{fontWeight:400,opacity:0.75}}>{lightbox.idx+1} / {items.length}</span>}
@@ -5680,12 +5722,20 @@ undefined
                   {variants.map(v=>{
                     const isSelected=el?.mandiVariantId===v.variantId;
                     return (
-                      <div key={v.variantId} onClick={()=>pick(v.variantId)}
+                      <div key={v.variantId} className="mv-card" onClick={()=>pick(v.variantId)}
                         style={{cursor:"pointer",padding:10,borderRadius:10,border:isSelected?"2px solid #9333EA":`1px solid ${border}`,
                           background:isSelected?"#9333EA12":isDark?"rgba(255,255,255,0.03)":"#FAFAFA",display:"flex",flexDirection:"column",gap:6,position:"relative"}}>
                         {isSelected&&<div style={{position:"absolute",top:-6,right:-6,width:22,height:22,borderRadius:"50%",background:"#9333EA",color:"#fff",fontSize:13,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 2px 6px rgba(0,0,0,0.3)"}}>✓</div>}
                         {v.photoUrl ? (
-                          <img src={v.photoUrl} alt={v.name||""} style={{width:"100%",height:50,objectFit:"cover",borderRadius:6,background:isDark?"#1a1a2e":"#eee"}}/>
+                          <img src={v.photoUrl} alt={v.name||""} title="Click to see the full photo" onClick={e=>{
+                            e.stopPropagation();
+                            const withPhoto=variants.filter(x=>x.photoUrl);
+                            setLightbox({idx:Math.max(0,withPhoto.findIndex(x=>x.variantId===v.variantId)),items:withPhoto.map(x=>({src:x.photoUrl,name:x.name||"Unnamed",details:[
+                              ["Flower",parent?.name||"—"],
+                              ["Rate",`₹${Math.round((Number(x.currentPrice)||0)*(1+(Number(parent?.markup)||0)/100)).toLocaleString("en-IN")} / ${parent?.unit||"unit"}`],
+                              ["Colour / variant",x.name||"Unnamed"],
+                            ]}))});
+                          }} style={{width:"100%",height:50,objectFit:"cover",borderRadius:6,background:isDark?"#1a1a2e":"#eee",cursor:"zoom-in"}}/>
                         ) : (
                           <div style={{width:"100%",height:50,borderRadius:6,background:isDark?"rgba(255,255,255,0.05)":"#eee",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,color:textS}}>🌸</div>
                         )}
