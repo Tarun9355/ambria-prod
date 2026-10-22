@@ -10037,7 +10037,10 @@ export default function StudioApp() {
             items.push({
               name: displayName, size: el2.size || "", qty: qtyN, unit: el2.unit || "pc", rate: up, total: lt,
               isFloral: rc && (rc.cat || "").toLowerCase() === "florals",
-              hasDiscount, discRate: hasDiscount ? Math.round(lt / qtyN) : undefined, noDiscTotal: hasDiscount ? noDiscTotal : undefined,
+              // Disc. Rate keeps up to 2 decimals (was Math.round to the whole rupee) — same reason
+              // `rate` above is left unrounded: Qty × a rounded Disc. Rate could disagree with the
+              // real `lt` total next to it whenever lt/qtyN lands on a fraction.
+              hasDiscount, discRate: hasDiscount ? Math.round((lt / qtyN) * 100) / 100 : undefined, noDiscTotal: hasDiscount ? noDiscTotal : undefined,
             });
           }
           if (el2.qty > 0) {
