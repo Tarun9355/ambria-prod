@@ -6047,21 +6047,43 @@ export default function StudioApp() {
   // there the deal value is what moves, so the booked baseline is re-pointed at the same time (no
   // "pending" is left to Apply twice) and IMS's deal value is updated. Typing a new amount in Summary
   // drops the float. Single-function deals only, and never while the build is loading.
+  //
+  // ── IT WRITES ONLY WHEN THIS TAB'S OWN BUILD TOTAL MOVES ──
+  // The first version rewrote the stored amount whenever it differed from this tab's figure. With the
+  // same client open in two tabs (two people, two builds) each tab "corrected" the other's value, the
+  // echo reached the first tab, which corrected it back — a ping-pong every second or two, and the
+  // amount (and everything reading it) flickered between the two builds' figures with nobody editing.
+  // Now a tab writes once when it opens the client and after that only when ITS total changes (a real
+  // local edit), never because an echo of someone else's value arrived. Build's own headline does not
+  // read the stored amount for a floating client at all: it works the figure out from this tab's own
+  // build (see StudioBuild), so it cannot flicker with another tab's writes.
+  const floatTotalRef = useRef({ id: null, total: null });
+  const floatTimerRef = useRef(null);
+  const floatLatestRef = useRef({});
+  floatLatestRef.current = { grandTotal, eventGrandTotal, saveClientLedger, syncDealValueNow, clientLedger };
+  useEffect(() => () => { if (floatTimerRef.current) clearTimeout(floatTimerRef.current); }, []);
   useEffect(() => {
     const ac = (clientLedger || []).find(c => c.id === activeClientId);
     const nf = ac?.negotiatedFloat;
     if (!ac || !nf || !(Number(nf.amount) > 0) || !Number.isFinite(Number(nf.base))) return;
     if (!pricingReady || (extraFunctions || []).length > 0 || !(grandTotal > 0)) return;
     if (!Object.values(zoneElements || {}).some(a => Array.isArray(a) && a.length > 0)) return;
-    const want = Math.round(Number(nf.amount) + (grandTotal - Number(nf.base)));
-    if (!(want > 0) || want === Math.round(Number(ac.negotiatedAmount) || 0)) return;
-    const booked = ac.status === "booked";
-    const t = setTimeout(() => {
-      saveClientLedger((clientLedgerRef.current || clientLedger).map(c => c.id === ac.id ? { ...c, negotiatedAmount: want, ...(booked ? { bookedSystemTotal: eventGrandTotal } : {}) } : c));
-      if (booked) syncDealValueNow?.({ amount: want, pending: 0 });
+    const seen = floatTotalRef.current;
+    if (seen.id === ac.id && Math.abs(grandTotal - seen.total) < 1) return; // an echo, not an edit of this tab's build
+    floatTotalRef.current = { id: ac.id, total: grandTotal };
+    if (floatTimerRef.current) clearTimeout(floatTimerRef.current);
+    floatTimerRef.current = setTimeout(() => {
+      const L = floatLatestRef.current;
+      const cur = (clientLedgerRef.current || L.clientLedger || []).find(c => c.id === ac.id);
+      const f = cur?.negotiatedFloat;
+      if (!cur || !f) return; // the float was dropped meanwhile (someone typed an amount)
+      const want = Math.round(Number(f.amount) + (L.grandTotal - Number(f.base)));
+      if (!(want > 0) || want === Math.round(Number(cur.negotiatedAmount) || 0)) return;
+      const booked = cur.status === "booked";
+      L.saveClientLedger((clientLedgerRef.current || L.clientLedger).map(c => c.id === ac.id ? { ...c, negotiatedAmount: want, ...(booked ? { bookedSystemTotal: L.eventGrandTotal } : {}) } : c));
+      if (booked) L.syncDealValueNow?.({ amount: want, pending: 0 });
     }, 1000);
-    return () => clearTimeout(t);
-  }, [grandTotal, eventGrandTotal, clientLedger, activeClientId, pricingReady, extraFunctions, zoneElements, saveClientLedger, syncDealValueNow]);
+  }, [grandTotal, clientLedger, activeClientId, pricingReady, extraFunctions, zoneElements]);
 
   const calcFunctionBreakdown = useCallback((fnData) => {
     if (!fnData) return { zones: [], transport: null, decorTotal: 0, transportTotal: 0, transportTotalClient: 0, grand: 0, grandClient: 0 };

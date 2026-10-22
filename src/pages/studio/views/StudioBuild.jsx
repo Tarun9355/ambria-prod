@@ -2365,7 +2365,13 @@ export default function StudioBuild({ ctx }) {
   // single-function deal that IS this build's total, so the headline shows it (owner ask: the system
   // estimate is not shown on the Build page). With more than one function the amount is for all of
   // them and has no meaning for one function's rail, so it is left alone.
-  const negAmt = Number((clientLedger||[]).find(c=>c.id===activeClientId)?.negotiatedAmount) || 0;
+  const negClient = (clientLedger||[]).find(c=>c.id===activeClientId);
+  // A floating negotiated amount is worked out here from THIS tab's build (amount + total now − base),
+  // not read from the stored value, so another tab writing its own figure cannot make it flicker.
+  const nfl = negClient?.negotiatedFloat;
+  const negAmt = (nfl && Number(nfl.amount) > 0 && Number.isFinite(Number(nfl.base)) && grandTotal > 0)
+    ? Math.max(0, Math.round(Number(nfl.amount) + (grandTotal - Number(nfl.base))))
+    : (Number(negClient?.negotiatedAmount) || 0);
   const showNeg = negAmt > 0 && (extraFunctions||[]).length === 0;
   const shownTotal = showNeg ? negAmt : grandTotal;
   const PRICING_TILE = showCosts && (()=>{
