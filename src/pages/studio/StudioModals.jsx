@@ -216,6 +216,20 @@ export default function StudioModals({ ctx }) {
           return parts.join(" · ");
         })();
         const closeModal = () => { setAvailModal(null); setAvailSplit(null); };
+        // The photo viewer's ‹ › walk the photos of every card in this picker, each with its own details.
+        const availDetailsFor = (x) => {
+          const used = x.usedIn || [];
+          return [
+            ["Sub-category", availModal.subcat || "—"],
+            ["Free on the event date", `${x.free} of ${x.total ?? x.free} ${availModal.unitLabel || x.unit || "pc"}`],
+            ...(x.ownStanding > 0 ? [["Already standing here", `${x.ownStanding}${x.ownVenueName ? ` (${x.ownVenueName})` : ""}`]] : []),
+            ...(x.venueSlack?.length ? [["Held by other fixed venues", x.venueSlack.map(s=>`${s.slack} at ${venueShortCode(s.name)}`).join(", ")]] : []),
+            ...(x.dims ? [["Size", x.dims]] : []),
+            ...(used.length ? [["In use for this guest", used.join(", ")]] : []),
+            ["Rate", fmt(Math.round(x.price))],
+          ];
+        };
+        const availPhotoSet = (availModal.items || []).filter(x => x.photo).map(x => ({ id: x.id, src: x.photo, name: x.name, details: availDetailsFor(x) }));
         return (
         <div onClick={closeModal} style={{position:"fixed",inset:0,zIndex:9300,background:"rgba(0,0,0,0.6)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
           <div onClick={e=>e.stopPropagation()} style={{background:isDark?"#12121F":"#fff",borderRadius:16,border:`1px solid ${border}`,width:"min(900px,95vw)",maxHeight:"85vh",display:"flex",flexDirection:"column",overflow:"hidden",boxShadow:"0 20px 60px rgba(0,0,0,0.4)"}}>
@@ -312,17 +326,9 @@ export default function StudioModals({ ctx }) {
                         style={{cursor:unpickable?"not-allowed":"pointer",borderRadius:12,overflow:"hidden",border:`2px solid ${sel?"#059669":swap?SWAP:border}`,background:isDark?"#0F0F1A":"#FAFAFA",position:"relative",opacity:unpickable?0.55:1,transition:"transform .16s ease, box-shadow .16s ease"}}>
                         {sel&&<span style={{position:"absolute",top:6,left:6,zIndex:2,fontSize:9,fontWeight:700,padding:"2px 7px",borderRadius:6,background:"#059669",color:"#fff"}}>✓</span>}
                         <div title="Free on the event date" style={{position:"absolute",top:6,right:6,zIndex:2,fontSize:12,fontWeight:800,minWidth:22,textAlign:"center",padding:"2px 7px",borderRadius:8,background:out?"rgba(239,68,68,0.92)":"rgba(16,185,129,0.92)",color:"#fff"}}>{it.free}</div>
-                        {it.photo ? <ClickablePhoto src={it.photo} photos={it.photos} thumbSize={AVAIL_THUMB} name={it.name}
+                        {it.photo ? <ClickablePhoto src={it.photo} thumbSize={AVAIL_THUMB} name={it.name}
                           style={{width:"100%",height:120,objectFit:"cover",display:"block",opacity:out?0.5:1}}
-                          details={[
-                            ["Sub-category", availModal.subcat || "—"],
-                            ["Free on the event date", `${it.free} of ${it.total ?? it.free} ${availModal.unitLabel || it.unit || "pc"}`],
-                            ...(it.ownStanding > 0 ? [["Already standing here", `${it.ownStanding}${it.ownVenueName ? ` (${it.ownVenueName})` : ""}`]] : []),
-                            ...(it.venueSlack?.length ? [["Held by other fixed venues", it.venueSlack.map(s=>`${s.slack} at ${venueShortCode(s.name)}`).join(", ")]] : []),
-                            ...(it.dims ? [["Size", it.dims]] : []),
-                            ...(swap ? [["In use for this guest", usedIn.join(", ")]] : []),
-                            ["Rate", fmt(Math.round(it.price))],
-                          ]}/> : <div style={{width:"100%",height:120,display:"flex",alignItems:"center",justifyContent:"center",fontSize:30,background:isDark?"#1a1a2e":"#eee"}}><IconBox size={22}/></div>}
+                          set={availPhotoSet} startIndex={availPhotoSet.findIndex(x => x.id === it.id)}/> : <div style={{width:"100%",height:120,display:"flex",alignItems:"center",justifyContent:"center",fontSize:30,background:isDark?"#1a1a2e":"#eee"}}><IconBox size={22}/></div>}
                         <div style={{padding:"8px 10px"}}>
                           <div style={{fontSize:11,fontWeight:600,color:textP,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.name}</div>
                           {unpickable && <div style={{fontSize:8.5,marginTop:1,color:"#EF4444",fontWeight:700}}>Out of stock — can't be made</div>}

@@ -90,14 +90,18 @@ export function PhotoLightbox({ items, start = 0, onClose }) {
 
 // A thumbnail that opens its full photo, with details, on click. Clicking it never reaches the card
 // it sits in (so it does not also pick / select the item).
-export default function ClickablePhoto({ src, photos, thumbSize = 120, alt = "", style, className, name, details, action, children }) {
+// `set` (optional): [{ src, name, details }] — the photos of every card in the list this thumbnail belongs to;
+// the viewer then opens on this card's (startIndex) and ‹ › walk to the neighbouring cards' photos, each with
+// its own details. Without it, ‹ › walk this item's own extra photos (if it has any).
+export default function ClickablePhoto({ src, photos, thumbSize = 120, alt = "", style, className, name, details, action, set: listSet, startIndex = 0, children }) {
   const [open, setOpen] = useState(false);
-  const set = [...new Set([src, ...(photos || [])].filter(Boolean))];
+  const own = [...new Set([src, ...(photos || [])].filter(Boolean))];
+  const hasList = Array.isArray(listSet) && listSet.length > 0;
   return (
     <>
       <img src={thumbUrl(src, thumbSize)} alt={alt} decoding="async" title="Click to see the full photo"
         onClick={(e) => { e.stopPropagation(); setOpen(true); }} className={className} style={{ ...style, cursor: "zoom-in" }} />
-      {open && <PhotoLightbox items={set.map((s) => ({ src: s, name, details, action }))} onClose={() => setOpen(false)} />}
+      {open && <PhotoLightbox items={hasList ? listSet : own.map((s) => ({ src: s, name, details, action }))} start={hasList ? Math.max(0, startIndex) : 0} onClose={() => setOpen(false)} />}
       {children}
     </>
   );
