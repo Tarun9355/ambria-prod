@@ -1,4 +1,3 @@
-import { itemRepeats } from "./noRepeat.js";
 // Cross-function reuse: two functions of the SAME deal, same venue, on the same day or the next —
 // e.g. a Sundowner Cocktail followed the next night by the Wedding. The ONE shared definition of
 // "is there a reuse-eligible sibling function" — Build's guest-facing element discount, Build's
@@ -61,14 +60,13 @@ export function findCrossFnReuseSource(fnData, allFns) {
 // cross-function reuse discount, guest-facing or Deal-Check-internal, is scoped to plain rental
 // items). Sibling to computeFnSubQty (StudioApp.jsx), at item identity instead of
 // truck-capacity-subcategory granularity.
-// An item switched off in IMS ('Item repeats') is never lent on to another function.
 export function computeFnInvQty(fnData) {
   const m = {};
   const fZoneElements = fnData?.zoneElements || {};
   const fEnabledEls = fnData?.enabledEls || {};
   Object.entries(fZoneElements).forEach(([zk, elems]) => {
     if (!fEnabledEls[zk] || !elems) return;
-    elems.forEach(el => { if (el.invId && itemRepeats(el.invId)) m[el.invId] = (m[el.invId] || 0) + (Number(el.qty) || 0); });
+    elems.forEach(el => { if (el.invId) m[el.invId] = (m[el.invId] || 0) + (Number(el.qty) || 0); });
   });
   return m;
 }
