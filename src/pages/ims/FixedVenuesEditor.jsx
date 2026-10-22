@@ -10,8 +10,10 @@ import { VENUES_SK } from "../../lib/studio/keys";
 import { migrateVenues, normVenueName } from "../../lib/ims/venueProperties";
 import { MANPOWER_TYPES } from "../../lib/ims/constants";
 import { thumbUrl } from "../../lib/studio/thumb";
+import { useConfirm } from "../../components/ui";
 
 export default function FixedVenuesEditor({ settings, setSettings, inventory = [], trussInv = null }) {
+  const [confirm, confirmDialog] = useConfirm();
   // In-house venue catalogue — this whole screen only ever applies to Ambria-owned properties (a
   // client's own outside venue can't have Ambria structure standing there), so the venue picker
   // below must offer ONLY those, not every venue name IMS has ever seen. venueParents (what the
@@ -158,7 +160,11 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
     updVenue(vid, { items: [...v.items, { invId: inv.id, name: inv.name, qty: 1 }] });
   };
   const updItem = (vid, invId, patch) => { const v = fixedVenues.find((x) => x.id === vid); updVenue(vid, { items: v.items.map((it) => (it.invId === invId ? { ...it, ...patch } : it)) }); };
-  const delItem = (vid, invId) => { const v = fixedVenues.find((x) => x.id === vid); updVenue(vid, { items: v.items.filter((it) => it.invId !== invId) }); };
+  const delItem = async (vid, invId) => {
+    const v = fixedVenues.find((x) => x.id === vid);
+    const it = inventory.find((i) => i.id === invId);
+    if (!(await confirm({ title: `Remove ${it?.name ? `"${it.name}"` : "this item"} from ${v?.name || "this venue"}?`, body: "It will no longer count as standing at this venue." }))) return;
+    updVenue(vid, { items: v.items.filter((it) => it.invId !== invId) }); };
   const updTruss = (vid, kind, size, qty) => {
     const v = fixedVenues.find((x) => x.id === vid);
     const truss = { pillars: { ...(v.truss?.pillars || {}) }, beams: { ...(v.truss?.beams || {}) } };
@@ -214,6 +220,7 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
 
   return (
     <div className="bg-white border rounded-2xl p-5">
+      {confirmDialog}
       <div className="flex items-center justify-between mb-1">
         <p className="font-bold text-gray-900">🏛️ Fixed Venues (standing inventory)</p>
         {addable.length > 0

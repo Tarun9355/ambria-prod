@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { IconPin, IconX } from "../../components/icons.jsx";
+import { useConfirm } from "../../components/ui";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // MANAGE LOCATIONS — admin-editable list of named punch-in locations (Ambria Exotica, Manaktala,
@@ -13,6 +14,7 @@ import { IconPin, IconX } from "../../components/icons.jsx";
 // ═══════════════════════════════════════════════════════════════════════════
 export default function AttendanceLocationsPanel({ settings, setSettings }) {
   const locations = settings?.attendanceLocations || [];
+  const [confirm, confirmDialog] = useConfirm();
   const [name, setName] = useState("");
   const [lat, setLat] = useState("");
   const [lng, setLng] = useState("");
@@ -41,7 +43,9 @@ export default function AttendanceLocationsPanel({ settings, setSettings }) {
     setName(""); setLat(""); setLng(""); setError("");
   }
 
-  function removeLocation(id) {
+  async function removeLocation(id) {
+    const loc = locations.find((l) => l.id === id);
+    if (!(await confirm({ title: `Remove ${loc?.name ? `"${loc.name}"` : "this location"}?`, body: "Staff will no longer be able to punch in at this location." }))) return;
     setSettings((s) => ({ ...s, attendanceLocations: (s.attendanceLocations || []).filter((l) => l.id !== id) }));
   }
 
@@ -55,6 +59,7 @@ export default function AttendanceLocationsPanel({ settings, setSettings }) {
 
   return (
     <div className="mt-3 bg-white rounded-2xl shadow-sm ring-1 ring-gray-100 p-5 sm:p-6">
+      {confirmDialog}
       <div className="flex items-center gap-2 mb-1">
         <h3 className="text-lg font-bold text-gray-900">Punch Locations</h3>
         {locations.length > 0 && (

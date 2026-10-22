@@ -1987,7 +1987,10 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
         const updateRates = (key, val) => setTrussInv((ti) => ({ ...ti, rates: { ...(ti.rates || {}), [key]: parseFloat(val) || 0 } }));
         const updateStock = (which, idx, key, val) => setTrussInv((ti) => { const next = [...(ti[which] || [])]; next[idx] = { ...next[idx], [key]: (key === "colour" || key === "grade" || key === "hex" || key === "photo") ? val : (parseFloat(val) || 0) }; return { ...ti, [which]: next }; });
         const addStockRow = (which, qtyField) => setTrussInv((ti) => ({ ...ti, [which]: [...(ti[which] || []), { colour: colourCat[0] || "White", [qtyField]: 0, [`${qtyField}New`]: 0 }] }));
-        const removeStockRow = (which, idx) => setTrussInv((ti) => ({ ...ti, [which]: (ti[which] || []).filter((_, j) => j !== idx) }));
+        const removeStockRow = async (which, idx) => {
+          if (!(await confirm({ title: "Remove this stock row?", body: "It will no longer count towards the truss / fabric stock." }))) return;
+          setTrussInv((ti) => ({ ...ti, [which]: (ti[which] || []).filter((_, j) => j !== idx) }));
+        };
         // No more fresh-purchase-price / markup-% pair (2026-10-15): the salesperson now picks Old or
         // New fabric explicitly per truss (StudioBuild.jsx's Fabric toggle) and it bills flat at that
         // tier's own rental rate — New IS the "had to source this some other way" rate, so a separate

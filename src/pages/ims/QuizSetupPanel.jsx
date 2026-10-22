@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Tabs } from "../../components/ui";
+import { Tabs, useConfirm } from "../../components/ui";
 import { ATTENDANCE_QUIZ_DEPTS, ATTENDANCE_QUIZ_DEPT_ICON } from "../../lib/ims/attendance";
 import { translateToHindi } from "../../lib/ims/translateHindi";
 import { IconYoutubeMark, IconLink, IconTrash, IconInfo, IconPlusCircle, IconSave, IconX, IconPlay } from "../../components/icons.jsx";
@@ -51,6 +51,7 @@ export default function QuizSetupPanel({ settings, setSettings }) {
 function DeptQuizEditor({ dept, settings, setSettings }) {
   const saved = settings?.attendanceTrainingByDept?.[dept] || { videoUrl: "", questions: [] };
   const [draft, setDraft] = useState(saved);
+  const [confirm, confirmDialog] = useConfirm();
   const [flash, setFlash] = useState(false);
   // A pasted link is just text until it resolves to a real video — the thumbnail below the input
   // is what actually confirms which video got added (title, thumbnail), not the raw URL string.
@@ -82,7 +83,8 @@ function DeptQuizEditor({ dept, settings, setSettings }) {
   function updateQuestion(id, patch) {
     setDraft((d) => ({ ...d, questions: d.questions.map((q) => (q.id === id ? { ...q, ...patch } : q)) }));
   }
-  function removeQuestion(id) {
+  async function removeQuestion(id) {
+    if (!(await confirm({ title: "Delete this question?", body: "It, its options and answers are removed from the quiz (until you leave without saving)." }))) return;
     setDraft((d) => ({ ...d, questions: d.questions.filter((q) => q.id !== id) }));
   }
   // Switching type reshapes the question to that type's own fields — `text`/`textHi` carry over
@@ -162,6 +164,7 @@ function DeptQuizEditor({ dept, settings, setSettings }) {
 
   return (
     <div className="mt-3 bg-white rounded-2xl shadow-sm ring-1 ring-gray-100 p-4 sm:p-5 text-left">
+      {confirmDialog}
       <div className="rounded-2xl p-5" style={{ background: "linear-gradient(135deg, #EEF2FF 0%, #F5F7FF 55%, #FFFFFF 100%)" }}>
         <div className="flex items-start gap-4">
           <div className="w-14 h-14 rounded-2xl bg-red-50 flex items-center justify-center shrink-0">

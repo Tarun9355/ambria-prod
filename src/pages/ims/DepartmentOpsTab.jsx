@@ -1113,7 +1113,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   // Add another dihari (shift) to a day — the next unused scheme window, else a synthetic slot — so ops
   // can split a single day into e.g. 2 crew in the day shift + 1 in the evening (each shift billed).
   const addDihari = (r, date, curIds) => { const wins = (dihari[r.type] && Array.isArray(dihari[r.type].windows)) ? dihari[r.type].windows : []; const unused = wins.find(w => !curIds.includes(w.id)); const id = unused ? unused.id : ("x" + Date.now()); const t = { ...(mpWinCount[r.type] || {}) }; t[date] = { ...(t[date] || {}), [id]: 1 }; saveDept({ mpWin: { ...mpWin, [r.type]: { ...(mpWin[r.type] || {}), [date]: [...curIds, id] } }, mpWinCount: { ...mpWinCount, [r.type]: t } }); };
-  const removeDihari = (type, date, slotId, curIds) => { const t = { ...(mpWinCount[type] || {}) }; if (t[date]) { const dd = { ...t[date] }; delete dd[slotId]; t[date] = dd; } saveDept({ mpWin: { ...mpWin, [type]: { ...(mpWin[type] || {}), [date]: curIds.filter(x => x !== slotId) } }, mpWinCount: { ...mpWinCount, [type]: t } }); };
+  // Every delete on this page asks first (the shared confirm dialog) — a × in a row is easy to hit, on a phone most of all.
+  const askDelete = async (title, body) => confirm({ title, body });
+  const removeDihari = async (type, date, slotId, curIds) => { if (!(await askDelete("Remove this crew slot?", `Removes one ${type} slot on ${date}.`))) return; const t = { ...(mpWinCount[type] || {}) }; if (t[date]) { const dd = { ...t[date] }; delete dd[slotId]; t[date] = dd; } saveDept({ mpWin: { ...mpWin, [type]: { ...(mpWin[type] || {}), [date]: curIds.filter(x => x !== slotId) } }, mpWinCount: { ...mpWinCount, [type]: t } }); };
   // A row scoped to one function (_scoped) costs only the days it kept — the split-allocation
   // shortcut in mpLineCost would hand back the whole booking's figure.
   const lineCost = (r) => r._scoped
@@ -1317,8 +1319,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   // Undo a "+ Add crew type" click (e.g. an accidental double-click that left two identical rows) —
   // by the row's own index in mpExtra, not its type, so one of several same-type extras can be
   // removed without taking the others with it.
-  const removeMp = (row) => {
+  const removeMp = async (row) => {
     if (!row._addedExtra) return;
+    if (!(await askDelete(`Remove "${row.type || row.name || "this crew line"}"?`, "Removes this crew line from the manpower plan."))) return;
     const base = Array.isArray(deptData.mpExtra) ? deptData.mpExtra : mpExtra;
     saveDept({ mpExtra: base.filter((_, i) => i !== row._extraIdx) });
   };
@@ -1328,7 +1331,11 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const resetMpLine = (r) => { const nd = { ...mpDay }; delete nd[r.type]; const nw = { ...mpWin }; delete nw[r.type]; const no = { ...mpOverrides }; delete no[r.type]; const wc = { ...mpWinCount }; delete wc[r.type]; saveDept({ mpDay: nd, mpWin: nw, mpOverrides: no, mpWinCount: wc }); };
   const addExpense = () => saveDept({ expenses: [...expenses, { label: "", amount: "" }] });
   const setExpense = (i, key, val) => { const next = expenses.map((e, j) => j === i ? { ...e, [key]: val } : e); saveDept({ expenses: next }); };
-  const delExpense = (i) => saveDept({ expenses: expenses.filter((_, j) => j !== i) });
+  const delExpense = async (i) => {
+    const ex = expenses[i];
+    if (!(await askDelete(`Delete this expense${ex?.name || ex?.label || ex?.desc ? ` (${ex.name || ex.label || ex.desc})` : ""}?`, "It will no longer count towards the actual spend."))) return;
+    saveDept({ expenses: expenses.filter((_, j) => j !== i) });
+  };
 
   // ── Floral: editable real-mandi shopping list (projected vs actual, side-by-side) ──
   const fp = sel?.floralPlan || {};
@@ -1399,9 +1406,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     saveMandi(next);
     setMandiSwap(null);
   };
-  const removeMandiSwap = (i) => {
+  const removeMandiSwap = async (i) => {
     const orig = mandiRows[i];
     if (!orig) return;
+    if (!(await askDelete("Remove this swap?", `${orig.name} goes back to the original shopping-list line.`))) return;
     saveMandi(mandiRows.filter(x => x.swapFor !== orig.name).map(x => x === orig ? { ...x, swappedTo: undefined, swapNote: undefined, qty: Number(x.projQty) || 0 } : x));
     setMandiSwap(null);
   };
@@ -1459,7 +1467,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const saveTools = (next) => setSettings && setSettings(s => ({ ...s, deptToolkits: { ...(s.deptToolkits || {}), [dept]: next } }));
   const addTool = (name) => { const n = String(name || "").trim(); if (!n || deptTools.some(t => (t.name || "").toLowerCase() === n.toLowerCase())) return; saveTools([...deptTools, { name: n, qty: 1 }]); setNewTool(""); };
   const setTool = (i, key, val) => saveTools(deptTools.map((t, j) => j === i ? { ...t, [key]: val } : t));
-  const delTool = (i) => saveTools(deptTools.filter((_, j) => j !== i));
+  const delTool = async (i) => {
+    if (!(await askDelete(`Remove "${deptTools[i]?.name || "this tool"}"?`, "It will be taken off this event's tools list."))) return;
+    saveTools(deptTools.filter((_, j) => j !== i));
+  };
 
   const loaded = (deptData.loaded && typeof deptData.loaded === "object") ? deptData.loaded : {};
   const toggleLoaded = (key) => saveDept({ loaded: { ...loaded, [key]: !loaded[key] } });
@@ -1730,7 +1741,11 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const saveFleet = (next) => setSettings && setSettings(s => ({ ...s, fleet: next }));
   const pickFleet = (f) => saveDept({ dispatch: { vehicle: f.vehicle || "", driver: f.driver || "", phone: f.phone || "" } });
   const addFleet = () => { const v = (newVeh.vehicle || "").trim(); if (!v) return; saveFleet([...fleet, { id: "veh_" + Date.now(), vehicle: v, driver: (newVeh.driver || "").trim(), phone: (newVeh.phone || "").trim() }]); setNewVeh({ vehicle: "", driver: "", phone: "" }); };
-  const delFleet = (id) => saveFleet(fleet.filter(f => f.id !== id));
+  const delFleet = async (id) => {
+    const f = fleet.find(x => x.id === id);
+    if (!(await askDelete(`Remove ${f?.vehicle || "this vehicle"}?`, "It will be taken off this event's fleet."))) return;
+    saveFleet(fleet.filter(x => x.id !== id));
+  };
 
   // Actual spend logged by the head → exact P&L (mandi list + on-site expenses). Manpower is
   // tracked in its own Manpower plan card (mpCost, above) — folding it in here too double-counted
@@ -1876,8 +1891,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     saveDept({ movements: [...movements, mv] });
     if (type === "damage") adjustInventory(it.invId, -q); // broken units leave owned stock immediately
   };
-  const delMovement = (id) => {
+  const delMovement = async (id) => {
     const mv = movements.find(m => m.id === id);
+    if (!(await askDelete(`Remove ${mv?.name ? `the ${mv.name} movement` : "this movement"}?`, mv?.type === "damage" ? "The damaged quantity is added back to inventory." : "It will be removed from the movement log."))) return;
     saveDept({ movements: movements.filter(m => m.id !== id) });
     if (mv && mv.type === "damage") adjustInventory(mv.invId, +(Number(mv.qty) || 0)); // undo the decrement
   };
@@ -6310,7 +6326,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                                 <span>×</span>
                                 <input type="number" min="0" step="0.5" value={g.len ?? ""} onChange={e => setG(i, { len: e.target.value === "" ? "" : Number(e.target.value) })} className={numCls + " w-14"} />
                                 <span>ft</span>
-                                <button onClick={() => saveEd({ [field]: groups.filter((_, j) => j !== i) })} className="text-gray-300 hover:text-red-500 text-sm leading-none" title="Remove this row">×</button>
+                                <button onClick={async () => { if (await askDelete("Remove this row?")) saveEd({ [field]: groups.filter((_, j) => j !== i) }); }} className="text-gray-300 hover:text-red-500 text-sm leading-none" title="Remove this row">×</button>
                               </div>
                             ))}
                             <div className="flex items-center gap-2 text-[12px]">
@@ -6382,7 +6398,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                                               </select>
                                               <input type="number" min="0" step="0.1" value={a.qty ?? ""} onChange={e => setAt(i, { qty: e.target.value === "" ? 0 : Number(e.target.value) })} className="w-16 text-[12px] text-center rounded-md ring-1 ring-gray-200 px-1 py-1" />
                                               <span className="text-[11px] text-gray-400">{f.unit}</span>
-                                              {cur.length > 1 && <button onClick={() => save(cur.filter((_, j) => j !== i))} className="text-gray-300 hover:text-red-500 text-sm" title="Remove this colour">×</button>}
+                                              {cur.length > 1 && <button onClick={async () => { if (await askDelete("Remove this colour?")) save(cur.filter((_, j) => j !== i)); }} className="text-gray-300 hover:text-red-500 text-sm" title="Remove this colour">×</button>}
                                             </div>
                                           ))}
                                           <div className="flex items-center gap-2 text-[11.5px]">
