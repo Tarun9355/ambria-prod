@@ -462,6 +462,102 @@ function buildFinish(fnList, inventory, printMaterials) {
   return { paintFor, prints, printLine };
 }
 
+// ── Deal Check's "Department Income" table, in IMS ──
+// Same layout as the modal in Deal Check (a chip per department with its total, then the chosen department's
+// lines and its share of the project), read from the snapshot Deal Check pushed to this event. Under it, how
+// the blocked-inventory list for that department adds up.
+const INCOME_LINES = [["📦 Inventory rental", "rental"], ["🌸 Floral (mandi)", "florals"], ["🏗️ Truss", "truss"], ["🧵 Fabric / draping", "fabric"], ["👷 Manpower", "manpower"], ["🏭 Production", "production"], ["🛒 Buying", "buying"], ["🚚 Transport", "transport"]];
+function invCalcSummary(rows) {
+  const t = { full: 0, dateAdj: 0, disc: 0, short: 0, other: 0, total: 0, dms: new Set(), hasCalc: false };
+  rows.forEach(r => {
+    const tot = Number(r.total) || 0;
+    t.total += tot;
+    if (r.calc) { t.hasCalc = true; t.full += r.calc.full; t.dateAdj += r.calc.dateAdj; t.disc += r.calc.disc; t.short += r.calc.short; (r.calc.dms || []).forEach(d => t.dms.add(d)); }
+    else t.other += tot;
+  });
+  return t;
+}
+function DeptIncomeModal({ eo, depts, startDept, onClose }) {
+  const [d, setD] = useState(startDept);
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); onClose(); } };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [onClose]);
+  const inc = eo?.deptIncome || {};
+  const cur = inc[d] || {};
+  const grandAll = depts.reduce((s, x) => s + (Number(inc[x]?.total) || 0), 0);
+  const lines = INCOME_LINES.map(([label, k]) => [label, Number(cur[k]) || 0]).filter(([, v]) => v > 0);
+  const rows = Array.isArray(eo?.deptInventory?.[d]) ? eo.deptInventory[d] : [];
+  const cs = invCalcSummary(rows);
+  const dm = [...cs.dms];
+  const calcLines = [
+    ...(cs.hasCalc ? [["Base rent of the units we own", cs.full, "rate × quantity"]] : []),
+    ...(cs.dateAdj !== 0 ? [[cs.dateAdj < 0 ? "Date category discount" : "Date category markup", cs.dateAdj, dm.length === 1 ? `×${dm[0]}` : "per function's date"]] : []),
+    ...(cs.disc !== 0 ? [["Repeat / standing / reuse discount", cs.disc, "only the biggest one applies"]] : []),
+    ...(cs.short > 0 ? [["Short stock, at production cost", cs.short, "units we have to make or buy"]] : []),
+    ...(cs.other > 0 ? [["Truss, fabric, platform, print & other lines", cs.other, "quantity × rate"]] : []),
+  ];
+  const rupee = (n) => "₹" + Math.round(Math.abs(n)).toLocaleString("en-IN");
+  return (
+    <div className="fixed inset-0 z-[9100] flex items-center justify-center p-5" style={{ background: "rgba(10,10,20,0.85)" }} onClick={onClose}>
+      <div className="bg-white rounded-2xl border border-gray-200 w-full max-w-[560px] max-h-[82vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+        <div className="px-[18px] py-3.5 border-b border-gray-200 flex items-center justify-between">
+          <div>
+            <div className="text-[14.5px] font-bold text-[#1A1A2E] tracking-wide">🏦 Department Income</div>
+            <div className="text-[12px] text-[#1A1A2E] uppercase tracking-[0.08em] mt-0.5">What each department is earning off this deal</div>
+          </div>
+          <button onClick={onClose} className="px-2.5 py-1.5 rounded-md border border-gray-200 text-[#1A1A2E] text-sm leading-none hover:bg-gray-50">✕</button>
+        </div>
+        <div className="px-[18px] py-3.5 overflow-y-auto">
+          <div className="flex gap-1.5 flex-wrap mb-3.5">
+            {depts.map(x => {
+              const on = d === x;
+              return (
+                <button key={x} onClick={() => setD(x)}
+                  className={"px-3 py-2 rounded-xl text-left border-[1.5px] transition-colors " + (on ? "border-blue-500 bg-blue-50" : "border-gray-200 hover:bg-gray-50")}>
+                  <div className={"text-[13px] " + (on ? "font-bold" : "font-medium") + " text-[#1A1A2E]"}>{DEPT_ICON[x] || "🏦"} {x}</div>
+                  <div className="text-[14.5px] font-extrabold text-[#1A1A2E] tabular-nums">{rupee(Number(inc[x]?.total) || 0)}</div>
+                </button>
+              );
+            })}
+          </div>
+          <div className="rounded-[10px] border border-gray-200 overflow-hidden">
+            <div className="px-3.5 py-2.5 bg-slate-50 text-[13.5px] font-bold text-[#1A1A2E] flex justify-between">
+              <span>{DEPT_ICON[d]} {d} — Department Income</span><span className="tabular-nums">{rupee(Number(cur.total) || 0)}</span>
+            </div>
+            {lines.length === 0
+              ? <div className="p-4 text-center text-[13px] text-[#1A1A2E]">No income for this department in the current deal.</div>
+              : lines.map(([label, v], i) => (
+                <div key={i} className="flex justify-between px-3.5 py-[9px] border-t border-gray-100 text-[13.5px]">
+                  <span className="text-[#1A1A2E]">{label}</span><span className="text-[#1A1A2E] font-semibold tabular-nums">{rupee(v)}</span>
+                </div>
+              ))}
+            <div className="flex justify-between px-3.5 py-2.5 border-t border-gray-200 text-[13px] text-[#1A1A2E]">
+              <span>Share of project</span><span className="font-bold text-blue-600">{grandAll > 0 ? Math.round(((Number(cur.total) || 0) / grandAll) * 100) : 0}%</span>
+            </div>
+          </div>
+          {rows.length > 0 && (
+            <div className="rounded-[10px] border border-gray-200 overflow-hidden mt-3.5">
+              <div className="px-3.5 py-2.5 bg-slate-50 text-[13.5px] font-bold text-[#1A1A2E] flex justify-between">
+                <span>📦 {d} — blocked inventory, how it adds up</span><span className="tabular-nums">{rupee(cs.total)}</span>
+              </div>
+              {calcLines.map(([label, v, hint], i) => (
+                <div key={i} className="flex justify-between gap-3 px-3.5 py-[9px] border-t border-gray-100 text-[13.5px]">
+                  <span className="text-[#1A1A2E]">{label}{hint ? <span className="text-gray-400 text-[12px]"> · {hint}</span> : null}</span>
+                  <span className={"font-semibold tabular-nums " + (v < 0 ? "text-emerald-700" : "text-[#1A1A2E]")}>{v < 0 ? "−" : (i > 0 ? "+" : "")}{rupee(v)}</span>
+                </div>
+              ))}
+              {!cs.hasCalc && <div className="px-3.5 py-2 border-t border-gray-100 text-[12px] text-gray-400">This event was synced before the step-by-step breakdown existed — sync it to see base rent, date factor and discounts separately.</div>}
+            </div>
+          )}
+          <div className="text-[12px] text-[#1A1A2E] mt-2.5 leading-normal">General labour & supervisors are split across departments by each one's direct-income share. Truss steel → Tenting · masking/drape fabric → Fabric · platform & carpet → Tenting · genset → Lighting · everything else → by its category.</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEventOrders, inventory, setInventory, blocks, settings, setSettings, trussInv, setTrussInv, authUser, amendRequests, focusEventId, focusSearch, focusLeadEntry, onFocusHandled, onGoToCalendar, autoPdfFor, onAutoPdfDone }) {
   const catDeptCfg = (settings && settings.categoryDepartments && typeof settings.categoryDepartments === "object") ? settings.categoryDepartments : {};
   const catToDept = (cat) => sharedCatToDept(cat, catDeptCfg);
@@ -678,6 +774,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   // false | "download" | "view" — which button started it, so only THAT one spins. Viewing used to
   // spin the download buttons too, which read as the PDF being downloaded again.
   const [exporting, setExporting] = useState(false);
+  const [dcModalOpen, setDcModalOpen] = useState(false); // Deal Check's Department Income table, opened from the Inventory panel
   const [dlMenuOpen, setDlMenuOpen] = useState(false); // phone: the download icon's "this department / all departments" menu
   // Set while the Actuals PDF is being written (the first one also loads the jsPDF chunk).
   const [actualsPdfBusy, setActualsPdfBusy] = useState(false);
@@ -5305,47 +5402,16 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                 <div className="shrink-0 rounded-lg bg-white px-2.5 py-1 text-[15px] font-bold text-gray-900 tabular-nums whitespace-nowrap shadow-[0_1px_2px_rgba(16,24,40,0.06)]">{fmt(invScoped ? invShownTotal : rentalIncome)}</div>
               </div>
               {fnChipRow(invFn, setInvFn)}
-              {/* ── HOW DEAL CHECK PRICED THIS DEPARTMENT ──
-                  Only this department's lines, added up by what moved the price: base rent, the date
-                  category, the discount that applied, short stock at production cost. Rows that carry no
-                  such breakdown (truss, fabric, platform, print, custom) are shown as one line. */}
-              {invShown.length > 0 && (() => {
-                const T = invShown.reduce((a, it) => {
-                  if (it.calc) { a.full += it.calc.full; a.dateAdj += it.calc.dateAdj; a.disc += it.calc.disc; a.short += it.calc.short; a.calcTotal += (Number(it.total) || 0); (it.calc.dms || []).forEach(d => a.dms.add(d)); }
-                  else a.other += (Number(it.total) || 0);
-                  return a;
-                }, { full: 0, dateAdj: 0, disc: 0, short: 0, other: 0, calcTotal: 0, dms: new Set() });
-                const total = invShown.reduce((a, it) => a + (Number(it.total) || 0), 0);
-                const open = !!kitOpen["calc:all"];
-                const dm = [...T.dms];
-                const row = (label, val, hint, strong) => (
-                  <div className="flex items-baseline justify-between gap-3 py-1">
-                    <span className={"text-[12px] " + (strong ? "font-semibold text-gray-900" : "text-gray-600")}>{label}{hint && <span className="text-gray-400"> · {hint}</span>}</span>
-                    <span className={"text-[12px] tabular-nums " + (strong ? "font-bold text-gray-900" : val < 0 ? "text-emerald-700 font-semibold" : "text-gray-800 font-medium")}>{val < 0 ? "−" : (val > 0 && !strong ? "+" : "")}{fmt(Math.abs(val))}</span>
-                  </div>
-                );
-                return (
-                  <div className="mx-2.5 mt-2">
-                    <button onClick={() => setKitOpen(o => ({ ...o, "calc:all": !o["calc:all"] }))} aria-expanded={open}
-                      className="text-[12px] font-semibold text-blue-700 hover:text-blue-900 inline-flex items-center gap-1.5">
-                      💡 How Deal Check priced {dept}
-                      <span aria-hidden="true" className={"transition-transform duration-150 " + (open ? "rotate-180" : "")}><svg width="9" height="9" viewBox="0 0 14 14" fill="none"><path d="M3.5 5 L7 8.5 L10.5 5" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" /></svg></span>
-                    </button>
-                    {open && (
-                      <div className="mt-1.5 rounded-xl bg-slate-50 ring-1 ring-slate-100 px-3 py-1.5 divide-y divide-slate-100">
-                        {(T.calcTotal > 0 || T.short > 0) && <>
-                          {row("Base rent of the units we own", T.full, "rate × quantity")}
-                          {T.dateAdj !== 0 && row(T.dateAdj < 0 ? "Date category discount" : "Date category markup", T.dateAdj, dm.length === 1 ? `×${dm[0]}` : "per function's date")}
-                          {T.disc !== 0 && row("Repeat / standing / reuse discount", T.disc, "only the biggest one applies")}
-                          {T.short > 0 && row("Short stock, priced at production cost", T.short, "units we have to make or buy")}
-                        </>}
-                        {T.other > 0 && row("Truss, fabric, platform, print & other lines", T.other, "quantity × rate")}
-                        {row("Total for " + dept, total, "", true)}
-                      </div>
-                    )}
-                  </div>
-                );
-              })()}
+              {/* The same Department Income table Deal Check shows, opened here — this department's lines, a
+                  chip for each other department, and how the blocked-inventory list adds up. */}
+              {invShown.length > 0 && (
+                <div className="mx-2.5 mt-2">
+                  <button onClick={() => setDcModalOpen(true)}
+                    className="text-[12px] font-semibold text-blue-700 hover:text-blue-900 inline-flex items-center gap-1.5">
+                    🏦 Deal Check breakdown — {dept}
+                  </button>
+                </div>
+              )}
               {invWholeOnly > 0 && (
                 <div className="m-2.5 mb-0 px-2.5 py-2 rounded-xl bg-gray-50 text-[11px] text-gray-500">{invWholeOnly} item{invWholeOnly === 1 ? " is" : "s are"} not in any of this function's zones (production, fabric and the like) — see All functions.</div>
               )}
@@ -7272,6 +7338,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
         </div>
       )}
       {confirmDialog}
+      {dcModalOpen && sel && <DeptIncomeModal eo={sel} depts={deptOptions} startDept={dept} onClose={() => setDcModalOpen(false)} />}
     </div>
   );
 }
