@@ -4548,6 +4548,7 @@ export default function StudioApp() {
   const repeatAdjustedLineCost = (item, qty, unitRate, zc, venueName, crossFnReuseQty = 0, repeatOverride, dateFactor = 1) => {
     const full = qty * unitRate;
     if (!item) return full;
+    if (item.canRepeat === false) return full; // IMS → Inventory: "Repeat discount applies" switched off for this item
     if (hideDiscountFromClient) return full; // see hideDiscountFromClient above — guest-facing only
     const isRepeat = typeof repeatOverride === "boolean" ? repeatOverride : repeatCatFor(zc, "elements");
     const discFactor = innerDiscountFactor(dateFactor, GUEST_DISCOUNT_PCT);

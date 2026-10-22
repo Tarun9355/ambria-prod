@@ -375,6 +375,7 @@ export default function DealCheckOverlay({ ctx }) {
     const disc = (pct) => innerDiscountFactor(dateMult, pct);
     const full = qty * baseRental;
     if (!item) return full;
+    if (item.canRepeat === false) return full; // IMS → Inventory: "Repeat discount applies" switched off for this item (the date factor above still counts)
     // fixedVenueSubcatDiscount rides along here too — standingDiscountPct falls back to it when
     // a standing item has no per-item override of its own, so that fallback needs it on the
     // same object rentalSplit passes through, not just the two keys fixedVenueFor itself reads.

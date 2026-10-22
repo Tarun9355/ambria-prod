@@ -417,6 +417,7 @@ Rules:
         breakagePct: breakNum,
         oosCostPct: oosNum,
         canBeMade: form.canBeMade !== false,
+        canRepeat: form.canRepeat !== false,
         baseColour: form.baseColour || "",
         paintCost: paintNum,
         paintable: paintableFlag,
@@ -427,7 +428,7 @@ Rules:
         photoUrls: img ? [img] : [],
       }];
     });
-    setForm({ name: "", cat: "Florals", subCat: "", type: "Budgeted", itemClass: "discrete", qty: "", unit: "Piece", loc: "Production House", price: "", cost: "", breakagePct: 0, oosCostPct: "", canBeMade: true, dimL: "", dimW: "", dimH: "", dimUnit: "Feet", printL: "", printW: "", printUnit: "Feet", baseColour: "", paintCost: "", notes: "", img: "" });
+    setForm({ name: "", cat: "Florals", subCat: "", type: "Budgeted", itemClass: "discrete", qty: "", unit: "Piece", loc: "Production House", price: "", cost: "", breakagePct: 0, oosCostPct: "", canBeMade: true, canRepeat: true, dimL: "", dimW: "", dimH: "", dimUnit: "Feet", printL: "", printW: "", printUnit: "Feet", baseColour: "", paintCost: "", notes: "", img: "" });
     setAddModal(false);
     // Reveal the new row: the item is appended at the END, so with active filters or while on
     // page 1 of 20+ it would be off-screen — making a successful save look like "added but not
@@ -470,6 +471,7 @@ Rules:
       breakagePct: it.breakagePct ?? 0,
       oosCostPct: it.oosCostPct ?? "",
       canBeMade: it.canBeMade !== false,
+      canRepeat: it.canRepeat !== false,
       notes: it.notes || "",
       img: it.img || (Array.isArray(it.photoUrls) && it.photoUrls[0]) || "",
       dimL: it.dims_LxWxH?.l ?? "",
@@ -574,6 +576,7 @@ Rules:
         breakagePct: breakNum,
         oosCostPct: oosNum,
         canBeMade: f.canBeMade !== false,
+        canRepeat: f.canRepeat !== false,
         notes: f.notes,
         img: f.img,
         photoUrls: f.img ? [f.img] : [],
@@ -1271,6 +1274,16 @@ Rules:
                 <span className="text-xs text-gray-400">— unticked, a shortfall shows "Out of stock" instead of pricing at cost%</span>
               </label>
             </div>
+              <div className="col-span-2 flex items-center gap-3">
+                <button type="button" role="switch" aria-checked={form.canRepeat !== false} onClick={() => setForm({ ...form, canRepeat: form.canRepeat === false })}
+                  className={"relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors " + (form.canRepeat !== false ? "bg-emerald-500" : "bg-gray-300")}>
+                  <span className={"inline-block h-4 w-4 rounded-full bg-white shadow transition-transform " + (form.canRepeat !== false ? "translate-x-4" : "translate-x-0.5")} />
+                </button>
+                <div>
+                  <div className="text-xs font-medium text-gray-700">♻️ Repeat discount applies to this item</div>
+                  <div className="text-xs text-gray-400">On: standing-at-venue, reuse and Repeat-zone discounts can apply. Off: always billed in full (the date's Filler / King's factor still applies).</div>
+                </div>
+              </div>
             {/* Location dropdown */}
             <div>
               <label className="text-xs text-gray-500">Location</label>
@@ -1613,6 +1626,16 @@ Rules:
                     <span className="text-xs text-gray-400">— unticked, a shortfall shows "Out of stock" instead of pricing at cost%</span>
                   </label>
                 </div>
+              <div className="col-span-2 flex items-center gap-3">
+                <button type="button" role="switch" aria-checked={editForm.canRepeat !== false} onClick={() => setEditForm((f) => ({ ...f, canRepeat: f.canRepeat === false }))}
+                  className={"relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors " + (editForm.canRepeat !== false ? "bg-emerald-500" : "bg-gray-300")}>
+                  <span className={"inline-block h-4 w-4 rounded-full bg-white shadow transition-transform " + (editForm.canRepeat !== false ? "translate-x-4" : "translate-x-0.5")} />
+                </button>
+                <div>
+                  <div className="text-xs font-medium text-gray-700">♻️ Repeat discount applies to this item</div>
+                  <div className="text-xs text-gray-400">On: standing-at-venue, reuse and Repeat-zone discounts can apply. Off: always billed in full (the date's Filler / King's factor still applies).</div>
+                </div>
+              </div>
               </div>
 
               {/* Dimensions */}
