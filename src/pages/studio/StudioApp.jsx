@@ -5452,24 +5452,6 @@ export default function StudioApp() {
     return discounted + agencyFeeAmt;
   }, [totalCost, transportCalc, dealCheckData, venue, activeFnMeta, studioFloralData, sharedFloralSettings, venueParents, agencyFeeAmt]);
 
-  // ── A NEGOTIATED AMOUNT THAT FOLLOWS THE BUILD (client.negotiatedFloat = { amount, base }) ──
-  // `amount` is the price agreed at the moment it was set and `base` is Build's total at that moment.
-  // Until the deal is booked, the negotiated amount keeps moving with the build — amount + (total now −
-  // base) — so removing a ₹1L zone takes ₹1L off it instead of leaving it pinned. Only clients that
-  // carry negotiatedFloat do this (a plain negotiated amount stays fixed, as before), a booked deal
-  // stays frozen (owner decision: Apply is the only way its deal value moves), and typing a new amount
-  // in Summary drops the float. Single-function deals only, and never while the build is loading.
-  useEffect(() => {
-    const ac = (clientLedger || []).find(c => c.id === activeClientId);
-    const nf = ac?.negotiatedFloat;
-    if (!ac || ac.status === "booked" || !nf || !(Number(nf.amount) > 0) || !Number.isFinite(Number(nf.base))) return;
-    if (!pricingReady || (extraFunctions || []).length > 0 || !(grandTotal > 0)) return;
-    if (!Object.values(zoneElements || {}).some(a => Array.isArray(a) && a.length > 0)) return;
-    const want = Math.round(Number(nf.amount) + (grandTotal - Number(nf.base)));
-    if (!(want > 0) || want === Math.round(Number(ac.negotiatedAmount) || 0)) return;
-    const t = setTimeout(() => { saveClientLedger((clientLedgerRef.current || clientLedger).map(c => c.id === ac.id ? { ...c, negotiatedAmount: want } : c)); }, 1000);
-    return () => clearTimeout(t);
-  }, [grandTotal, clientLedger, activeClientId, pricingReady, extraFunctions, zoneElements, saveClientLedger]);
   // What was actually saved for THIS function, last time — so Build's Live Estimate can flag when
   // the live figure above has drifted from it. Same precedence Browse's own session-card price
   // already uses (the row's own column > fnTotals > the session-level total, only if it's tagged
@@ -6056,6 +6038,30 @@ export default function StudioApp() {
     const feePct = Number(sharedFloralSettings.agencyFeePct) || 20;
     return discounted + Math.round(discounted * feePct / 100);
   }, [collectAllFunctionData, calcFunctionCost, dealCheckData, studioFloralData, sharedFloralSettings, venueParents]);
+
+  // ── A NEGOTIATED AMOUNT THAT FOLLOWS THE BUILD (client.negotiatedFloat = { amount, base }) ──
+  // `amount` is the price agreed at the moment it was set and `base` is Build's total at that moment.
+  // The negotiated amount keeps moving with the build — amount + (total now − base) — so removing a
+  // ₹1L zone takes ₹1L off it instead of leaving it pinned. Only clients that carry negotiatedFloat do
+  // this (a plain negotiated amount stays fixed, as before). It follows a BOOKED deal too (owner ask):
+  // there the deal value is what moves, so the booked baseline is re-pointed at the same time (no
+  // "pending" is left to Apply twice) and IMS's deal value is updated. Typing a new amount in Summary
+  // drops the float. Single-function deals only, and never while the build is loading.
+  useEffect(() => {
+    const ac = (clientLedger || []).find(c => c.id === activeClientId);
+    const nf = ac?.negotiatedFloat;
+    if (!ac || !nf || !(Number(nf.amount) > 0) || !Number.isFinite(Number(nf.base))) return;
+    if (!pricingReady || (extraFunctions || []).length > 0 || !(grandTotal > 0)) return;
+    if (!Object.values(zoneElements || {}).some(a => Array.isArray(a) && a.length > 0)) return;
+    const want = Math.round(Number(nf.amount) + (grandTotal - Number(nf.base)));
+    if (!(want > 0) || want === Math.round(Number(ac.negotiatedAmount) || 0)) return;
+    const booked = ac.status === "booked";
+    const t = setTimeout(() => {
+      saveClientLedger((clientLedgerRef.current || clientLedger).map(c => c.id === ac.id ? { ...c, negotiatedAmount: want, ...(booked ? { bookedSystemTotal: eventGrandTotal } : {}) } : c));
+      if (booked) syncDealValueNow?.({ amount: want, pending: 0 });
+    }, 1000);
+    return () => clearTimeout(t);
+  }, [grandTotal, eventGrandTotal, clientLedger, activeClientId, pricingReady, extraFunctions, zoneElements, saveClientLedger, syncDealValueNow]);
 
   const calcFunctionBreakdown = useCallback((fnData) => {
     if (!fnData) return { zones: [], transport: null, decorTotal: 0, transportTotal: 0, transportTotalClient: 0, grand: 0, grandClient: 0 };
