@@ -32,12 +32,13 @@ export const PLANNING_SNAPSHOT_VERSION = 4;
 const PLANNING_SNAPSHOT_SHIPPED_AT = Date.parse("2026-10-22T06:15:00Z");
 export const planningSnapshotOutdated = (eo) => (Number(eo?.deptSnapVer) || 1) < PLANNING_SNAPSHOT_VERSION;
 
-// Synced before, still upcoming, and a planning input changed after that sync (a minute of slack: the
-// sync's own write lands moments after the run it belongs to). An outdated snapshot shape counts as a
-// change made when it shipped. `since` lets a finished sweep that skipped the order (no saved build)
+// Synced before, and a planning input changed after that sync (a minute of slack: the sync's own write
+// lands moments after the run it belongs to). An outdated snapshot shape counts as a change made when
+// it shipped. Past events count too (owner ask) — their dates having gone by is no reason to leave
+// their planning on old rules. `since` lets a finished sweep that skipped the order (no saved build)
 // stop flagging it until something changes again.
 export function planningNeedsSync(eo, latest, since = 0) {
   if (!eo || !eo.deptSyncedAt || !latest) return false;
   const changed = planningSnapshotOutdated(eo) ? Math.max(latest, PLANNING_SNAPSHOT_SHIPPED_AT) : latest;
-  return planningUpcoming(eo) && changed > Math.max(Number(eo.deptSyncedAt), Number(since) || 0) + 60000;
+  return changed > Math.max(Number(eo.deptSyncedAt), Number(since) || 0) + 60000;
 }

@@ -10,8 +10,9 @@ describe("planningNeedsSync", () => {
     expect(planningNeedsSync(e, e.deptSyncedAt + 30000)).toBe(false);
     expect(planningNeedsSync(e, e.deptSyncedAt + 120000)).toBe(true);
   });
-  it("ignores past events and orders that were never synced", () => {
-    expect(planningNeedsSync(eo({ date: "2020-01-01" }), Date.now())).toBe(false);
+  it("counts past events too, but not orders that were never synced", () => {
+    const e = eo({ date: "2020-01-01" });
+    expect(planningNeedsSync(e, e.deptSyncedAt + 120000)).toBe(true);
     expect(planningNeedsSync({ date: future }, Date.now())).toBe(false);
   });
   it("an older snapshot shape counts as stale even with no setting change, until synced again", () => {

@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { latestPlanningInputStamp, planningNeedsSync } from "../../lib/studio/planningSync.js";
 
-// "Sync planning" — shows only while some booked, upcoming event's Dept Ops snapshot is older than an
+// "Sync planning" — shows only while some booked event's Dept Ops snapshot (past events too) is older than an
 // IMS setting / inventory change that feeds it. Pressing it loads Studio in an invisible frame
 // (#/studio?sweep=1) that runs Deal Check for each such event and writes the fresh snapshot back, so
 // nobody has to open the deal; the planning below refreshes on its own through the live subscription.

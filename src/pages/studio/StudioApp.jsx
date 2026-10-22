@@ -92,7 +92,7 @@ import { matchFlowerPattern, floralPatternUnitRates, sizeClassToPatternKey, norm
 import { rowToRcItem, rcItemToRow, rcIsSMB, getFloralMode, oosCostPctFor, canFulfillShortfall } from "../../lib/rateCard";
 import { todayStr } from "../../lib/ims/attendance";
 import { supabase, fetchAll, upsertRow, deleteRow, subscribeTable, keepaliveUpsert } from "../../lib/supabase";
-import { latestPlanningInputStamp, planningNeedsSync, planningSnapshotOutdated, PLANNING_SNAPSHOT_VERSION } from "../../lib/studio/planningSync.js";
+import { latestPlanningInputStamp, planningNeedsSync, planningSnapshotOutdated, planningUpcoming, PLANNING_SNAPSHOT_VERSION } from "../../lib/studio/planningSync.js";
 import { innerDiscountFactor } from "../../lib/studio/discounts.js";
 import {
   rowToLibItem, libItemToRow, fetchLibraryItemsByIds, fetchLibraryItemsByUrls,
@@ -8701,7 +8701,7 @@ export default function StudioApp() {
   // Planning shows each booked deal's Deal Check snapshot, and Deal Check only runs in a browser, so
   // a change an admin makes in IMS (per-labour counts, labour tiers, shifts, rentals, recipes…)
   // reached a deal only once someone opened it. IMS's "Sync planning" button loads Studio in a hidden
-  // frame (#/studio?sweep=1, see main.jsx) and that run walks every booked, upcoming deal whose snapshot is older than the
+  // frame (#/studio?sweep=1, see main.jsx) and that run walks every booked deal (past ones too, upcoming first) whose snapshot is older than the
   // newest of those inputs through the same open-and-sync the auto-sync on open does (one at a
   // time, ~10-15 s each), then closes it again. Nobody sees it: it is a frame of its own with its own
   // in-memory sessionStorage, so it cannot touch the page the person is using. While it runs the
@@ -8724,7 +8724,11 @@ export default function StudioApp() {
         const eo = c.status === "booked" ? eoOf(c) : null;
         return planningNeedsSync(eo, latest) && !autoSyncedClientsRef.current.has(c.id);
       };
-      const queue = (clientLedgerRef.current || []).filter(c => stale(c) && findLatestBuild(c.sessions, 0)).map(c => c.id);
+      // Upcoming events first (nearest first), then the ones whose dates have gone by (latest first).
+      const lastDateOf = (c) => { const eo = eoOf(c); return [eo?.date, ...((Array.isArray(eo?.functionsDetail) ? eo.functionsDetail : []).map(f => f?.date))].filter(Boolean).map(d => String(d).slice(0, 10)).sort().pop() || ""; };
+      const queue = (clientLedgerRef.current || []).filter(c => stale(c) && findLatestBuild(c.sessions, 0))
+        .sort((a, b) => { const ua = planningUpcoming(eoOf(a)), ub = planningUpcoming(eoOf(b)); if (ua !== ub) return ua ? -1 : 1; const da = lastDateOf(a), db = lastDateOf(b); return ua ? da.localeCompare(db) : db.localeCompare(da); })
+        .map(c => c.id);
       if (!queue.length) { tell("done", { done: 0, total: 0 }); return; }
       tell("ready", { total: queue.length });
       setSweepInfo({ done, total: queue.length, name: "" });
