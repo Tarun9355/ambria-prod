@@ -81,7 +81,7 @@ import {
   defaultZoneFromArea, resolveMandiFlower, calcZoneTrussPreview,
   calcZoneFabric, calcZoneFabricCost, guestFabricMultiplier, fabricRepeatDiscount, calcZoneCarpet, buildPlatformPlan, getStudioAvailable,
   buildTopology, PLATFORM_FATTA_CODE, PLATFORM_STAND_CODE, trussRowCost, repeatCatFor, repeatCatsOn, REPEAT_CAT_LABELS,
-  freshFnForManpower,
+  freshFnForManpower, snapRowDimsForProduction,
 } from "../../lib/studio/pricing";
 import { allocateRowAvailability, netOwnReservedBlocksLive } from "../../lib/studio/dealAvailability";
 import { callClaudeStreaming } from "../../lib/ai";
@@ -10079,11 +10079,15 @@ export default function StudioApp() {
         _trussRows.forEach((row, ri) => {
           if (row.trussQty === 0) return; // dims-only placeholder — no structure billed (trussRowCost agrees)
           const _tShape = row.trT === "box" ? "box" : "singleU";
+          // Owner ask (2026-10-22): trussRowCost (called above for _trussRaw/share, and for zl.truss
+          // itself via calcStructCost) now bills the minimum-joints CLEAN SPAN internally — snap here
+          // too so the displayed Size/Qty describe the SAME structure, not the raw typed dims.
+          const snappedRow = structRates?.trussInv ? snapRowDimsForProduction(row, structRates.trussInv) : row;
           // The two dims a truss is actually charged on (trussBaseArea — same authority calcStructCost's
           // trussRowCost uses), not the raw L×W×H: a Box charges its two LARGEST dims, a Single U
           // charges width×height. Doesn't account for the front-extension add-on (shown in the name
           // text only) — that's a second, smaller area on top, not part of this base sqft.
-          const rowDims = row.dims || {};
+          const rowDims = snappedRow.dims || {};
           const _tBase = trussBaseArea({ dims: rowDims, trT: row.trT });
           if (!_tBase.area) return;
           const _tRate = trussRateFor(_tShape, row.trussMaterial, row.drapeDensity, imsTrussRates, _tBase.area);

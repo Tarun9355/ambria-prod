@@ -12,7 +12,7 @@ import {
 } from "../../../lib/studio/taxonomy";
 import { paletteNames, addPaletteInline } from "../../../lib/studio/colours";
 import PaletteQuickAdd from "../../../components/studio/PaletteQuickAdd.jsx";
-import { trussRowCost, calcZoneFabricCost, guestFabricMultiplier, fabricRepeatDiscount, zoneTrussStandingDiscountDetail, repeatCatFor, parseFlowerPalette, stringifyFlowerPalette, parseFabricPalette, stringifyFabricPalette, isDirectMandiElement, anchorsForPaletteByMaterial } from "../../../lib/studio/pricing";
+import { trussRowCost, calcZoneFabricCost, guestFabricMultiplier, fabricRepeatDiscount, zoneTrussStandingDiscountDetail, repeatCatFor, parseFlowerPalette, stringifyFlowerPalette, parseFabricPalette, stringifyFabricPalette, isDirectMandiElement, anchorsForPaletteByMaterial, snapRowDimsForProduction } from "../../../lib/studio/pricing";
 import { paletteSearch, paletteMatches } from "../../../components/studio/filterUI.jsx";
 import { resolveTrussConfig } from "../../../lib/studio/pricing";
 import { qtyUsedElsewhereInBuild } from "../../../lib/studio/dealAvailability";
@@ -257,7 +257,12 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                         Shows this ROW's base structure; front extension and a custom ceiling item are
                         priced on top and are visible in their own fields. */}
                     {showCosts&&(()=>{
-                      const base=trussBaseArea(zc);
+                      // Owner ask (2026-10-22): trussRowCost now bills the minimum-joints CLEAN SPAN,
+                      // not necessarily the dims typed above — snap here too so this caption's sqft/
+                      // rate describe the SAME structure the card's own ₹ total (rowCost.truss) was
+                      // just computed from, instead of a stale pre-snap area.
+                      const snappedZc = fabricInv ? snapRowDimsForProduction(zc, fabricInv) : zc;
+                      const base=trussBaseArea(snappedZc);
                       if(!base.area) return null;
                       const r=trussRateFor(base.mode==="box"?"box":"singleU",zc.trussMaterial,zc.drapeDensity,trussRates,base.area);
                       // Explicit 0 — a placeholder truss: no physical structure billed, dims kept only

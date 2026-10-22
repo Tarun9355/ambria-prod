@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { snapRowDimsForProduction } from "./pricing";
+import { snapRowDimsForProduction, trussRowCost, calcZoneTrussPreview } from "./pricing";
 
 // Isolated from real IMS stock numbers on purpose: maxSpanFt huge (always 2 pillars, 1 segment)
 // turns "how many joints does this span need" into "can one or two 10ft beams reach this length,
@@ -55,5 +55,33 @@ describe("snapRowDimsForProduction — Deal Check Truss tab's minimum-joints dim
   it("does nothing to a row with no dims at all", () => {
     const row = { trussMaterial: "iron" };
     expect(snapRowDimsForProduction(row, trussInv)).toBe(row);
+  });
+});
+
+// Owner ask (2026-10-22): the snap above is no longer a Deal-Check-only reference — trussRowCost
+// (Build/Summary/export billing) and calcZoneTrussPreview (Deal Check's own cost rollup, manpower
+// counting, the standing-venue discount, fabric qty) both apply it internally now, so every one of
+// those reads the SAME real, minimum-joints structure instead of the raw typed span.
+describe("trussRowCost / calcZoneTrussPreview — bill off the snapped span, not the raw one", () => {
+  it("trussRowCost prices the Single U area off the snapped W, once real trussInv stock is given", () => {
+    // W=23,H=10 unsnapped area = 230 sqft × default singleU rate 30 = 6900. Same stock/tolerance as
+    // the snap tests above: 23 → 22.5 (two 10ft beams resolve the 21ft segment within 1ft gap).
+    // Snapped area = 22.5×10 = 225 sqft × 30 = 6750 — strictly less, never more.
+    const row = { dims: { W: 23, H: 10 }, trT: "singleU", trussMaterial: "iron", trussQty: 1 };
+    const unsnapped = trussRowCost(row, {}); // no trussInv — no stock to snap against, prices raw
+    const snapped = trussRowCost(row, { trussInv });
+    expect(unsnapped.truss).toBe(6900);
+    expect(snapped.truss).toBe(6750);
+    expect(snapped.truss).toBeLessThan(unsnapped.truss);
+  });
+
+  it("calcZoneTrussPreview's topology already reflects the snap — calling it with the raw row or a pre-snapped row gives the same beams/pillars", () => {
+    const row = { dims: { W: 23, H: 10 }, trussMaterial: "iron" };
+    const previewRaw = calcZoneTrussPreview(row, trussInv);
+    const previewPreSnapped = calcZoneTrussPreview(snapRowDimsForProduction(row, trussInv), trussInv);
+    expect(previewRaw.topology.beams).toEqual(previewPreSnapped.topology.beams);
+    expect(previewRaw.topology.pillars).toEqual(previewPreSnapped.topology.pillars);
+    // And it's strictly the smaller, cleaner span — not the raw 23ft segment.
+    expect(previewRaw.spanFt).toBe(22.5);
   });
 });
