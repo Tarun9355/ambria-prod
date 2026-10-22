@@ -12,6 +12,7 @@ import { priceForInvItem } from "../ims/helpers.js";
 // The real beam-stock-aware joint solver, reused by snapRowDimsForProduction below instead of a
 // second hand-rolled "clean span" table — see that function's own comment.
 import { resolveBeamSegment } from "../ims/trussEngine.js";
+import { itemRepeats } from "./noRepeat.js";
 export { resolveMandiFlower };
 
 // One shared resolver for "is THIS pricing category of a zone repeat-discounted". Build's own
@@ -51,8 +52,11 @@ export function freshFnForManpower(fn) {
   Object.keys(en).forEach((zk) => {
     if (!en[zk]) return;
     const els = repeatCatFor(zc[zk], "elements"), truss = repeatCatFor(zc[zk], "truss");
-    if (els && truss) { (nen = nen || { ...en })[zk] = false; return; }
-    if (els) (nze = nze || { ...ze })[zk] = [];
+    // An item switched off in IMS ('Item repeats') is brought fresh even in a Repeat zone, so it still
+    // needs its crew: those elements stay, and the zone stays on for them.
+    const stay = els ? (ze[zk] || []).filter((el) => el && el.invId && !itemRepeats(el.invId)) : [];
+    if (els && truss && !stay.length) { (nen = nen || { ...en })[zk] = false; return; }
+    if (els) (nze = nze || { ...ze })[zk] = stay;
     if (truss && zc[zk]) { nzc = nzc || { ...zc }; delete nzc[zk]; }
   });
   if (!nen && !nze && !nzc) return fn;

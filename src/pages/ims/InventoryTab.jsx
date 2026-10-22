@@ -1280,8 +1280,8 @@ Rules:
                   <span className={"inline-block h-4 w-4 rounded-full bg-white shadow transition-transform " + (form.canRepeat !== false ? "translate-x-4" : "translate-x-0.5")} />
                 </button>
                 <div>
-                  <div className="text-xs font-medium text-gray-700">♻️ Repeat discount applies to this item</div>
-                  <div className="text-xs text-gray-400">On: standing-at-venue, reuse and Repeat-zone discounts can apply. Off: always billed in full (the date's Filler / King's factor still applies).</div>
+                  <div className="text-xs font-medium text-gray-700">♻️ This item repeats</div>
+                  <div className="text-xs text-gray-400">On: when a zone is marked Repeat, or the item stands at the venue or was used in an earlier function, it is treated as reused (discounted, not trucked again, no build crew). Off: always brought fresh — full price, trucked, counted in the crew — e.g. flowers, candles, consumables.</div>
                 </div>
               </div>
             {/* Location dropdown */}
@@ -1632,8 +1632,8 @@ Rules:
                   <span className={"inline-block h-4 w-4 rounded-full bg-white shadow transition-transform " + (editForm.canRepeat !== false ? "translate-x-4" : "translate-x-0.5")} />
                 </button>
                 <div>
-                  <div className="text-xs font-medium text-gray-700">♻️ Repeat discount applies to this item</div>
-                  <div className="text-xs text-gray-400">On: standing-at-venue, reuse and Repeat-zone discounts can apply. Off: always billed in full (the date's Filler / King's factor still applies).</div>
+                  <div className="text-xs font-medium text-gray-700">♻️ This item repeats</div>
+                  <div className="text-xs text-gray-400">On: when a zone is marked Repeat, or the item stands at the venue or was used in an earlier function, it is treated as reused (discounted, not trucked again, no build crew). Off: always brought fresh — full price, trucked, counted in the crew — e.g. flowers, candles, consumables.</div>
                 </div>
               </div>
               </div>

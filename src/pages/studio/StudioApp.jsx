@@ -94,6 +94,7 @@ import { todayStr } from "../../lib/ims/attendance";
 import { supabase, fetchAll, upsertRow, deleteRow, subscribeTable, keepaliveUpsert } from "../../lib/supabase";
 import { latestPlanningInputStamp, planningNeedsSync, planningSnapshotOutdated, planningUpcoming, PLANNING_SNAPSHOT_VERSION } from "../../lib/studio/planningSync.js";
 import { innerDiscountFactor } from "../../lib/studio/discounts.js";
+import { setNonRepeatingItems, itemRepeats } from "../../lib/studio/noRepeat.js";
 import {
   rowToLibItem, libItemToRow, fetchLibraryItemsByIds, fetchLibraryItemsByUrls,
   fetchZoneLibraryPhotos, fetchCustomZoneLibraryPhotos, fetchUntaggedLibraryTargets,
@@ -406,7 +407,7 @@ function computeFnSubQty(fnData, capBySub, imsInventory, flowerPatterns, trussIn
   // Per chip (RC-30): Elements for the element lists (an element's own repeatOverride first),
   // Truss & Masking for truss/masking/liza/curtains, Platform for platform/carpet.
   const fEnabledElsFresh = fEnabledEls;
-  const elRepeat = (zk, el) => (typeof el?.repeatOverride === "boolean" ? el.repeatOverride : repeatCatFor(fZoneConfig[zk], "elements"));
+  const elRepeat = (zk, el) => itemRepeats(el?.invId) && (typeof el?.repeatOverride === "boolean" ? el.repeatOverride : repeatCatFor(fZoneConfig[zk], "elements"));
   const qty = {};
   const add = (sub, q) => {
     const k = String(sub || "").toLowerCase().trim();
@@ -1142,7 +1143,7 @@ function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckC
     // the Elements chip decides for elements, an element's own repeatOverride first.
     const zoneElRepeat = repeatCatFor(zoneConfig?.[zk], "elements");
     elems.forEach(el => {
-      if (guestDiscountOn && (typeof el.repeatOverride === "boolean" ? el.repeatOverride : zoneElRepeat)) return;
+      if (guestDiscountOn && itemRepeats(el.invId) && (typeof el.repeatOverride === "boolean" ? el.repeatOverride : zoneElRepeat)) return;
       // An element's sub-category for truck-capacity purposes comes ONLY from live IMS identity —
       // el.invId (Inventory, the normal path for anything added via "+ Add element" today) or
       // el.patternId (a pure flower-recipe element). No Rate-Card name-match fallback: Rate Card's
@@ -2298,6 +2299,10 @@ export default function StudioApp() {
   // IMS inventory, always-on (not deal-scoped like dealCheckData.inventory) — needed by Library's
   // "+Add element" search, which sources directly from inventory now, not the Rate Card.
   const [imsInventory, setImsInventory] = useState([]);
+  // Items switched off in IMS ("Item repeats") — refreshed here, in render, so every price / truck /
+  // crew figure computed below already sees the current set (see lib/studio/noRepeat.js).
+  const nonRepeatSyncRef = useRef(null);
+  if (nonRepeatSyncRef.current !== imsInventory) { nonRepeatSyncRef.current = imsInventory; setNonRepeatingItems(imsInventory); }
   // Blocks for just the active function's date — warms once loadAvailability/activeFnMeta exist
   // below. Powers Build view's availability-aware pricing for invId-sourced elements only.
   const [activeBlocksForDate, setActiveBlocksForDate] = useState({});
@@ -5664,7 +5669,7 @@ export default function StudioApp() {
         // chip (RC-30): the Elements chip decides for elements, an element's own repeatOverride first.
         const zoneElRepeat = repeatCatFor(fZoneConfig[zk], "elements");
         elems.forEach(el => {
-          if (!hideDiscountFromClient && (typeof el.repeatOverride === "boolean" ? el.repeatOverride : zoneElRepeat)) return;
+          if (!hideDiscountFromClient && itemRepeats(el.invId) && (typeof el.repeatOverride === "boolean" ? el.repeatOverride : zoneElRepeat)) return;
           const invItem = el.invId ? imsInventory.find(i => i.id === el.invId) : null;
           if (invItem) {
             const kitSub = invItem.subCat || invItem.subcategory || "";
@@ -6284,7 +6289,7 @@ export default function StudioApp() {
         // precedence its rent uses), not the zone toggle alone.
         const zoneElRepeat = repeatCatFor(fZoneConfig[zk], "elements");
         elems.forEach(el => {
-          const zoneRepeat = typeof el.repeatOverride === "boolean" ? el.repeatOverride : zoneElRepeat;
+          const zoneRepeat = itemRepeats(el.invId) && (typeof el.repeatOverride === "boolean" ? el.repeatOverride : zoneElRepeat);
           const invItem = el.invId ? imsInventory.find(i => i.id === el.invId) : null;
           if (invItem) {
             const kitSub = invItem.subCat || invItem.subcategory || "";
