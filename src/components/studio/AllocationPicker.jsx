@@ -54,10 +54,15 @@ export default function AllocationPicker({ open, onClose, elName, totalQty, base
       other: available.filter(c => !anchorSet.has(c.name) && !c.isNeutral),
     };
   })();
+  // The Colour Catalogue's own reference photo (IMS Admin → Library → Palettes), when one is
+  // uploaded — what the colour actually looks like on fabric/flowers, a closer match than a flat
+  // hex square for a paint colour someone is choosing against a real finished piece.
   const Swatch = ({c, disabled}) => (
-    <button onClick={() => !disabled && addColour(c.name)} disabled={disabled}
+    <button onClick={() => !disabled && addColour(c.name)} disabled={disabled} title={c.name}
       style={{display:"flex",alignItems:"center",gap:5,padding:"5px 9px",borderRadius:6,border:"1px solid #e5e7eb",background:disabled?"#f3f4f6":"#fff",cursor:disabled?"not-allowed":"pointer",fontSize:11,opacity:disabled?0.4:1}}>
-      <span style={{width:14,height:14,borderRadius:3,border:"1px solid rgba(0,0,0,0.15)",background:c.hex||"#ccc"}} />
+      {c.refImages?.[0]
+        ? <img src={c.refImages[0]} alt="" style={{width:14,height:14,borderRadius:3,border:"1px solid rgba(0,0,0,0.15)",objectFit:"cover",flexShrink:0}} />
+        : <span style={{width:14,height:14,borderRadius:3,border:"1px solid rgba(0,0,0,0.15)",background:c.hex||"#ccc",flexShrink:0}} />}
       <span>{c.name}</span>
     </button>
   );
@@ -79,7 +84,9 @@ export default function AllocationPicker({ open, onClose, elName, totalQty, base
           <div style={{fontSize:10,fontWeight:700,color:"#666",letterSpacing:0.5,textTransform:"uppercase",marginBottom:6}}>Current Allocation</div>
           {/* Base row — always present, represents "no override / paint base" */}
           <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",borderRadius:8,background:"#F5F0E1",border:"1px solid #C5A572",marginBottom:6}}>
-            <span style={{width:16,height:16,borderRadius:3,border:"1px solid rgba(0,0,0,0.15)",background:catalogue.find(c=>c.name===baseColour)?.hex||"#F5F0E1",flexShrink:0}} />
+            {(() => { const img = catalogue.find(c=>c.name===baseColour)?.refImages?.[0]; return img
+              ? <img src={img} alt="" style={{width:16,height:16,borderRadius:3,border:"1px solid rgba(0,0,0,0.15)",objectFit:"cover",flexShrink:0}} />
+              : <span style={{width:16,height:16,borderRadius:3,border:"1px solid rgba(0,0,0,0.15)",background:catalogue.find(c=>c.name===baseColour)?.hex||"#F5F0E1",flexShrink:0}} />; })()}
             <span style={{flex:1,fontSize:12,fontWeight:600}}>Base — {baseColour||"Ivory"}</span>
             <span style={{fontSize:11,color:"#666"}}>×{remaining < 0 ? 0 : remaining}</span>
             <span style={{fontSize:10,color:"#999",minWidth:50,textAlign:"right"}}>no charge</span>
@@ -88,7 +95,9 @@ export default function AllocationPicker({ open, onClose, elName, totalQty, base
             const cObj = catalogue.find(c => c.name === a.colour);
             return (
               <div key={a.colour} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",borderRadius:8,background:"#FDF2F8",border:"1px solid #F9A8D4",marginBottom:6}}>
-                <span style={{width:16,height:16,borderRadius:3,border:"1px solid rgba(0,0,0,0.15)",background:cObj?.hex||"#ccc",flexShrink:0}} />
+                {cObj?.refImages?.[0]
+                  ? <img src={cObj.refImages[0]} alt="" style={{width:16,height:16,borderRadius:3,border:"1px solid rgba(0,0,0,0.15)",objectFit:"cover",flexShrink:0}} />
+                  : <span style={{width:16,height:16,borderRadius:3,border:"1px solid rgba(0,0,0,0.15)",background:cObj?.hex||"#ccc",flexShrink:0}} />}
                 <span style={{flex:1,fontSize:12,fontWeight:600,color:"#9D174D"}}>{a.colour}</span>
                 <button onClick={()=>updateQty(idx, a.qty - 1)} disabled={a.qty <= 0}
                   style={{width:22,height:22,borderRadius:5,border:"1px solid #F9A8D4",background:a.qty<=0?"#f3f4f6":"#fff",fontSize:13,fontWeight:700,color:"#9D174D",cursor:a.qty<=0?"not-allowed":"pointer",opacity:a.qty<=0?0.4:1}}>−</button>
