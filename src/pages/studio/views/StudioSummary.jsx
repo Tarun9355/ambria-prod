@@ -458,12 +458,8 @@ export default function StudioSummary({ ctx }) {
   const exportPDF = (combined) => {
     if (!combined) combined = buildCombinedCostSheetData();
     const f = (n) => "₹" + Math.round(n || 0).toLocaleString("en-IN");
-    // Rate/Disc. Rate keep up to 2 decimals — f() above rounds to the whole rupee, which is right
-    // for a total but not for a per-unit rate: a blended floral rate (real% × real rate + art% ×
-    // art rate, plus a per-size pattern extra) routinely lands on a fraction (e.g. ₹258.50), and
-    // Qty × the ROUNDED rate then silently disagreed with the Amount column right next to it, even
-    // though the real total was always computed off the true, unrounded rate.
-    const fRate = (n) => "₹" + (Math.round((n || 0) * 100) / 100).toLocaleString("en-IN");
+    // Rate / Disc. Rate are whole rupees, the same as Build shows them.
+    const fRate = (n) => "₹" + Math.round(n || 0).toLocaleString("en-IN");
     const fmtDate = (iso) => {
       if (!iso) return "—";
       try { return new Date(iso + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }); } catch { return iso; }
@@ -603,9 +599,8 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
       const dark = "1A1A2E";
       const gray = "6B7280";
       const f = (n) => "₹" + Math.round(n || 0).toLocaleString("en-IN");
-      // Same reasoning as exportPDF's fRate — a blended floral rate lands on a fraction (e.g.
-      // ₹258.50), and rounding it away left Qty × (displayed) Rate disagreeing with Amount.
-      const fRate = (n) => "₹" + (Math.round((n || 0) * 100) / 100).toLocaleString("en-IN");
+      // Rate / Disc. Rate are whole rupees, the same as Build shows them.
+      const fRate = (n) => "₹" + Math.round(n || 0).toLocaleString("en-IN");
       const fmtDate = (iso) => {
         if (!iso) return "—";
         try { return new Date(iso + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }); } catch { return iso; }
@@ -990,9 +985,10 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
         { header: "Amount", key: "amount", width: 13 },
       ];
       const money = { numFmt: '"₹"#,##0' };
-      // Up to 2 decimals, trimmed when not needed — a clean truss rate still prints "₹22", a
-      // blended floral rate prints "₹258.5" instead of rounding away the fraction (see addItemRow).
-      const rateMoney = { numFmt: '"₹"#,##0.##' };
+      // Rate / Disc. Rate print as whole rupees, exactly like the Build page shows them (₹1,090, not ₹1,090.1).
+      // Only the DISPLAY is rounded: the cell still holds the true rate and Amount is a live Qty × Rate formula
+      // off it, so every total is unchanged.
+      const rateMoney = { numFmt: '"₹"#,##0' };
       // Each function's share of the Professional Design, Management & Execution fee — on its own
       // total after its own fixed-venue discount (fnObj.discountPct), same as the on-screen preview.
       // One helper so the Event Summary's Grand column and each function tab's fee row agree.
@@ -1075,11 +1071,8 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
             row.getCell(8).value = { formula: `C${r}*D${r}*${opts.tripsX}`, result: total };
           }
         }
-        // Rate/Disc. Rate get up to 2 decimals (money's own format is whole-rupee only) — a blended
-        // floral rate (real% × real rate + art% × art rate, plus a per-size pattern extra) routinely
-        // lands on a fraction (e.g. ₹258.50), and C×D is a LIVE formula off the cell's true value —
-        // rounding the display to "₹259" left Qty × (displayed) Rate silently disagreeing with the
-        // Amount sitting right next to it, even though the real total was always correct.
+        // Rate/Disc. Rate show whole rupees, matching Build (rateMoney above). The cell keeps the exact rate, so
+        // Amount (= Qty × Rate, a live formula) stays exact too.
         row.getCell(4).numFmt = rateMoney.numFmt;
         if (typeof discRate === "number") row.getCell(5).numFmt = rateMoney.numFmt;
         row.getCell(7).numFmt = money.numFmt;
