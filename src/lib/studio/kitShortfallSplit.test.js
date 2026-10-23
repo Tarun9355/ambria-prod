@@ -4,6 +4,7 @@ import { kitShortfallSplit } from "./kitShortfallSplit";
 // ctx mocks kept deliberately simple so each test isolates one piece of behavior:
 // repeatAdjustedRentalFn just does qty*baseRental unless a test says otherwise (no hidden discount
 // noise), crossFnTake defaults to "no credit available" so shortfall math is easy to hand-verify.
+// Items are ticked "Can be made in production" (canBeMade: true): only a ticked item is ever priced as production.
 const baseCtx = (overrides = {}) => ({
   inventoryCache: [],
   kitEditsFor: () => undefined,
@@ -16,7 +17,7 @@ const baseCtx = (overrides = {}) => ({
 });
 
 describe("kitShortfallSplit — plain (non-kit) item", () => {
-  const item = { id: "A", cost: 200, rate: 100 };
+  const item = { id: "A", canBeMade: true, cost: 200, rate: 100 };
 
   it("fully available: all owned, no shortfall cost", () => {
     const ctx = baseCtx({ availFor: () => 20 });
@@ -54,8 +55,8 @@ describe("kitShortfallSplit — plain (non-kit) item", () => {
 });
 
 describe("kitShortfallSplit — kit with components", () => {
-  const compA = { id: "COMP_A", cost: 50, rate: 30 };
-  const kit = { id: "KIT", cost: 500, kitBase: 100, rate: 200, subItems: [{ itemId: "COMP_A", qty: 2 }] };
+  const compA = { id: "COMP_A", canBeMade: true, cost: 50, rate: 30 };
+  const kit = { id: "KIT", canBeMade: true, cost: 500, kitBase: 100, rate: 200, subItems: [{ itemId: "COMP_A", qty: 2 }] };
   const inventoryCache = [kit, compA];
 
   it("kit's own stock fully covers demand: no component recursion at all", () => {
@@ -85,9 +86,9 @@ describe("kitShortfallSplit — kit with components", () => {
   });
 
   it("kit-inside-a-kit recurses two levels deep for the shortfall portion", () => {
-    const leaf = { id: "LEAF", cost: 10, rate: 5 };
-    const innerKit = { id: "INNER", cost: 80, kitBase: 20, rate: 40, subItems: [{ itemId: "LEAF", qty: 3 }] };
-    const outerKit = { id: "OUTER", cost: 300, kitBase: 50, rate: 150, subItems: [{ itemId: "INNER", qty: 1 }] };
+    const leaf = { id: "LEAF", canBeMade: true, cost: 10, rate: 5 };
+    const innerKit = { id: "INNER", canBeMade: true, cost: 80, kitBase: 20, rate: 40, subItems: [{ itemId: "LEAF", qty: 3 }] };
+    const outerKit = { id: "OUTER", canBeMade: true, cost: 300, kitBase: 50, rate: 150, subItems: [{ itemId: "INNER", qty: 1 }] };
     const inv = [outerKit, innerKit, leaf];
     // Outer: need 2, 0 available -> fully short (2). Inner: need 1*2=2, 0 available -> fully short (2).
     // Leaf: need 3*2=6, 0 available -> fully short (6).
@@ -115,7 +116,7 @@ describe("kitShortfallSplit — kit with components", () => {
   });
 
   it("an explicit Deal-Check component override replaces the kit's default recipe for the shortfall split", () => {
-    const compB = { id: "COMP_B", cost: 90, rate: 60 };
+    const compB = { id: "COMP_B", canBeMade: true, cost: 90, rate: 60 };
     const inv = [kit, compA, compB];
     const ctx = baseCtx({
       inventoryCache: inv,

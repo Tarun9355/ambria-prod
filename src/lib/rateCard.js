@@ -86,13 +86,13 @@ function daysUntilDate(fnDate, asOfDate) {
   return Math.round((target.getTime() - from.getTime()) / 86400000);
 }
 
-// Can this item's shortfall be fulfilled by production/purchase at all? IMS Inventory's "Can be
-// made" checkbox (item.canBeMade) — missing/undefined (every item before this field existed, and
-// any item not yet reviewed) defaults to true so nothing's behavior changes until someone
-// explicitly unticks it. Only an explicit `false` means "no, this is genuinely unavailable" —
-// at which point a shortfall is never priced as production (oosCostPctFor above returns 0%,
-// flooring to the plain rate) and callers should show "Out of stock" instead of a cost% badge,
-// and the availability picker should refuse to let it be picked while it's short.
+// Can this item's shortfall be fulfilled by production/purchase at all? ONLY an item whose IMS Inventory
+// "Can be made in production" box is ticked (item.canBeMade === true) is ever produced — owner rule.
+// An unticked item, and one nobody has ticked yet (the field missing), is never made: a shortfall is
+// never priced as production (oosCostPctFor above returns 0%, flooring to the plain rate), callers show
+// "Out of stock" instead of a cost% badge, and the availability picker refuses to let it be picked while
+// it's short. (Before 2026-10-23 a missing field counted as ticked; every item in IMS now has the field
+// set except a handful, so those are the only ones that changed.)
 //
 // `fnDate` (optional, "YYYY-MM-DD") is the function's own date — even an item flagged "Can be
 // made" can't actually be produced with fewer than PRODUCTION_LEAD_DAYS days left before the
@@ -108,7 +108,7 @@ function daysUntilDate(fnDate, asOfDate) {
 // (a pre-Sold build, or evaluating a brand-new pick that doesn't exist yet) means "right now" —
 // exactly the live, continuously-shrinking countdown a non-final draft should be judged against.
 export function canFulfillShortfall(item, fnDate, asOfDate) {
-  if (item?.canBeMade === false) return false;
+  if (item?.canBeMade !== true) return false;
   return daysUntilDate(fnDate, asOfDate) >= PRODUCTION_LEAD_DAYS;
 }
 
