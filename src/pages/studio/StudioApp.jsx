@@ -83,6 +83,7 @@ import {
   buildTopology, PLATFORM_FATTA_CODE, PLATFORM_STAND_CODE, trussRowCost, repeatCatFor, repeatCatsOn, REPEAT_CAT_LABELS,
   freshFnForManpower, snapRowDimsForProduction,
 } from "../../lib/studio/pricing";
+import { normalizePaintAllocation, maxRepaintCostInSubcat, paintLinesFor, paintTotalFor } from "../../lib/studio/paint";
 import { allocateRowAvailability, netOwnReservedBlocksLive } from "../../lib/studio/dealAvailability";
 import { callClaudeStreaming } from "../../lib/ai";
 import { heavyExtraLabour, eventTimingMultFor, SETTINGS_DEFAULTS, SIT_MULT_DEFAULTS } from "../../lib/ims/constants";
@@ -1103,19 +1104,6 @@ function isSubcatPaintable(rcSub, imsInventory) {
     return sub === target && Number(item.paintCost || 0) > 0;
   });
 }
-function maxRepaintCostInSubcat(rcSub, imsInventory, fallback) {
-  if (!imsInventory || imsInventory.length === 0 || !rcSub) return fallback;
-  const target = String(rcSub).toLowerCase().trim();
-  let mx = 0;
-  imsInventory.forEach(item => {
-    const sub = String(item.subcategory || item.subCat || item.sub || "").toLowerCase().trim();
-    if (sub === target) {
-      const pc = Number(item.paintCost || 0);
-      if (pc > mx) mx = pc;
-    }
-  });
-  return mx > 0 ? mx : fallback;
-}
 // ── Truck count from per-SUB-CATEGORY capacities (carpenter-style: ⌈Σ(qty ÷ capacity)⌉) ──
 // Each truckCap entry is keyed by sub-category name (`item`), with `perTruck` (capacity) + `unit`
 // (pcs / sqft per truck). Capacity 0 → that sub-category is skipped. Deal items are aggregated by
@@ -1229,20 +1217,6 @@ function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckC
   let frac = 0; const breakdown = [];
   Object.values(subAgg).forEach(s => { const f = s.perTruck > 0 ? s.qty / s.perTruck : 0; frac += f; breakdown.push({ label: s.label, qty: Math.round(s.qty), perTruck: s.perTruck, unit: s.unit, trucks: f }); });
   return { itemTrucks: Math.ceil(frac), truckFraction: frac, breakdown };
-}
-function normalizePaintAllocation(el, baseColour) {
-  if (!el) return [];
-  const totalQty = Number(el.qty) || 0;
-  if (totalQty <= 0) return [];
-  if (Array.isArray(el.paintAllocation) && el.paintAllocation.length > 0) {
-    return el.paintAllocation
-      .filter(a => a && Number(a.qty) > 0 && a.colour && a.colour !== baseColour)
-      .map(a => ({ qty: Number(a.qty), colour: String(a.colour) }));
-  }
-  if (el.paintOverride && el.paintOverride !== baseColour) {
-    return [{ qty: totalQty, colour: String(el.paintOverride) }];
-  }
-  return [];
 }
 function paintPillLabel(el, baseColour) {
   const allocs = normalizePaintAllocation(el, baseColour);
@@ -5123,17 +5097,25 @@ export default function StudioApp() {
     return { ...r, unitPrice, fullUnitPrice: r.fullUnitPrice != null ? r.fullUnitPrice * mult : undefined, lineCost };
   }, [getElPriceRaw, guestPriceMultiplier, activeFnMeta, dealCheckData, studioFloralData]);
 
+  // What repainting an element costs, from the same inventory list the cost sheet reads (Deal Check's once it is
+  // loaded, else the IMS list) — so a zone's total, Build's Elements tile, Summary and the cost sheet's
+  // "Paint:" lines all carry the same figure (paint used to be on the cost sheet only).
+  const paintInv = useMemo(() => (dealCheckData?.inventory?.length ? dealCheckData.inventory : imsInventory), [dealCheckData, imsInventory]);
+  const paintCtx = useMemo(() => ({ inventory: paintInv, defaultPaintCost: imsDefaultPaintCost }), [paintInv, imsDefaultPaintCost]);
+  const paintFor = useCallback((el, rc) => paintTotalFor(el, { ...paintCtx, rcSub: rc?.sub }), [paintCtx]);
+
   const calcElsCost = useCallback((elements, withFloral, zc, opts, venueName) => {
     return (elements || []).reduce((s, el, i) => {
       // With opts.zoneKey, each row is priced by the same booking-wide shortfall allocation as
       // Build's own element cards (zoneKey + elIdx) — so zone totals and the Live Estimate add up
       // to the cards, and match the Total Estimate / cost sheet, which price the same way.
       const { rc, lineCost } = getElPrice(el, zc, opts?.zoneKey != null ? { ...opts, elIdx: i } : opts, venueName);
-      if (!withFloral || !rc) return s + lineCost;
-      if (rc.unit === "truss_sqft") return s + applyFloralRatio(lineCost, rc);
-      return s + (el.qty || 0) * applyFloralRatio(lineCost / (el.qty || 1), rc);
+      const paint = paintFor(el, rc);
+      if (!withFloral || !rc) return s + lineCost + paint;
+      if (rc.unit === "truss_sqft") return s + applyFloralRatio(lineCost, rc) + paint;
+      return s + (el.qty || 0) * applyFloralRatio(lineCost / (el.qty || 1), rc) + paint;
     }, 0);
-  }, [getElPrice, applyFloralRatio]);
+  }, [getElPrice, applyFloralRatio, paintFor]);
 
   // Freezes every element's resolved rate at save time, for the active function only (the other
   // functions are stored builds with no live pricing run against them — same scoping fnTotals
@@ -5231,8 +5213,8 @@ export default function StudioApp() {
   // element's pricing call so the same guest-facing cross-function reuse discount as Fixed-Venue
   // standing units applies. Omitted by every existing caller that has no such pool (full price).
   const calcElsCostForFn = useCallback((elements, zc, fnRatio, checkAvail, venueName, blocksForDate, fnDate, crossFnReusePool, fnIdx, zoneKey) => {
-    return (elements || []).reduce((s, el, i) => s + getElPriceForFn(el, zc, fnRatio, checkAvail, venueName, blocksForDate, fnDate, crossFnReusePool, fnIdx, zoneKey, zoneKey != null ? i : undefined).lineCost, 0);
-  }, [getElPriceForFn]);
+    return (elements || []).reduce((s, el, i) => { const r = getElPriceForFn(el, zc, fnRatio, checkAvail, venueName, blocksForDate, fnDate, crossFnReusePool, fnIdx, zoneKey, zoneKey != null ? i : undefined); return s + r.lineCost + paintFor(el, r.rc); }, 0);
+  }, [getElPriceForFn, paintFor]);
 
   // The price badge on every UNSELECTED photo tile: what this zone would cost if you picked this
   // photo instead. Its whole job is to be compared against the selected tile's number, which comes
@@ -6223,7 +6205,7 @@ export default function StudioApp() {
       const el = zoneLabelsD[k] || (customZoneMatch ? { label: customZoneMatch.name, icon: customZoneMatch.icon || "📦" } : { label: k, icon: "📦" });
       const t = fElTiers[k] || "simple";
       const ze = fZoneElements[k];
-      let ic = 0, itemCount = 0;
+      let ic = 0, itemCount = 0, paintCost = 0;
       const elemLines = [];   // per-element lineCost, index-aligned with `ze` — see BUG-10 below
       if (ze && ze.length > 0) {
         (ze || []).forEach((el2, ei) => {
@@ -6238,6 +6220,8 @@ export default function StudioApp() {
           // oversubscribed, for whichever function's zone this is, not just the active tab's.
           const priceInfo = getElPriceForFn(el2, fZoneConfig[k], fFloralRatio, true, fVenue, fBlocksForDate, fnData.fnDate, pricingPool, fnData.fnIdx, k, ei);
           ic += priceInfo.lineCost;
+          const elPaint = paintFor(el2, priceInfo.rc); // repainted units — shown as its own row, but part of the zone total
+          ic += elPaint; paintCost += elPaint;
           // ── THE LINE ITEMS MUST BE THE SAME NUMBERS THAT MADE THE TOTAL ── (BUG-10)
           // Summary's accordion used to re-price each element itself with checkAvail=false and no
           // blocksForDate, so an oversubscribed item showed its full undiscounted rental on the
@@ -6255,7 +6239,7 @@ export default function StudioApp() {
       const customCost = dcCustomItems
         .filter(c => c.fnIdx === fnData.fnIdx && c.zoneKey === k)
         .reduce((s, c) => s + (c.manualPrice || c.refPrice || 0) * (Number(c.qty) || 1), 0);
-      return { k, label: el.label, icon: el.icon, tier: t, ic, zl, customCost, tot: ic + zl.total + customCost, itemCount,
+      return { k, label: el.label, icon: el.icon, tier: t, ic, paintCost, zl, customCost, tot: ic + zl.total + customCost, itemCount,
         note: "", selPh: fElSelectedPhoto[k] || null, zc: fZoneConfig[k] || null,
         useElementCard: !!ze, elems: ze || [], elemLines };
     });
@@ -6520,7 +6504,7 @@ export default function StudioApp() {
         clientScale, truckTotalClient, totalClient: transportTotalClient, tripRateClient: tripRate * clientScale };
     }
     return { zones, transport, decorTotal, transportTotal, transportTotalClient, grand: decorTotal + transportTotal, grandClient: decorTotal + transportTotalClient };
-  }, [getElPriceForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, gensetCostRate, gensetCostRate62, zoneLabelsD, zoneKeys, dcCustomItems, structRates, blocksByDate, imsInventory, dealCheckData, studioFloralData, collectAllFunctionData, fvCfgForRepeat, calcFnFloralSourcingCost, venueParents, clientLedger, activeClientId, hideDiscountFromClient]);
+  }, [getElPriceForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, gensetCostRate, gensetCostRate62, zoneLabelsD, zoneKeys, dcCustomItems, structRates, blocksByDate, imsInventory, dealCheckData, studioFloralData, collectAllFunctionData, fvCfgForRepeat, calcFnFloralSourcingCost, venueParents, clientLedger, activeClientId, hideDiscountFromClient, paintFor]);
 
   const cat = getCat(grandTotal);
 
@@ -10112,29 +10096,18 @@ export default function StudioApp() {
               hasDiscount, discRate: hasDiscount ? Math.round(lt / qtyN) : undefined, noDiscTotal: hasDiscount ? noDiscTotal : undefined,
             });
           }
-          if (el2.qty > 0) {
-            const imsInv = dealCheckData?.inventory || [];
-            const invItem = imsInv.find(i => i.name === el2.name);
-            const baseColour = invItem?.baseColour || "Ivory";
-            const paintCost = invItem?.paintCost
-              ? invItem.paintCost
-              : maxRepaintCostInSubcat(rc?.sub, imsInv, imsDefaultPaintCost ?? 400);
-            const allocs = normalizePaintAllocation(el2, baseColour);
-            allocs.forEach(a => {
-              const subTotal = paintCost * a.qty;
-              if (subTotal > 0) {
-                items.push({
-                  name: `🖌 Paint: ${displayName} (${baseColour} → ${a.colour})`,   // live name too — see BUG-17 above
-                  size: "",
-                  qty: a.qty,
-                  unit: "item",
-                  rate: paintCost,
-                  total: subTotal,
-                  isPaint: true
-                });
-              }
+          // Paint: one line per colour the element is repainted in — the same helper the zone totals use.
+          paintLinesFor(el2, { rcSub: rc?.sub, inventory: paintInv, defaultPaintCost: imsDefaultPaintCost }).forEach(pl => {
+            items.push({
+              name: `🖌 Paint: ${displayName} (${pl.baseColour} → ${pl.colour})`,   // live name too — see BUG-17 above
+              size: "",
+              qty: pl.qty,
+              unit: "item",
+              rate: pl.rate,
+              total: pl.total,
+              isPaint: true
             });
-          }
+          });
         });
       }
       const zl = fZoneConfig[k] ? scaleStruct(calcStructCost(k, fZoneConfig[k], structRates, structDiscountFor(fZoneConfig[k], fVenue))) : { truss: 0, masking: 0, platform: 0, carpet: 0, total: 0, arches: 0, pillars: 0, glass: 0 };
@@ -10329,7 +10302,7 @@ export default function StudioApp() {
       const ic = items.reduce((s, i) => s + i.total, 0);
       return { k, label: el.label, icon: el.icon, tier: t, items, structItems, structTotal: zl.total, itemTotal: ic, zoneTotal: ic + zl.total, note: fElNotes[k] || "", dims, dimLabel, photo: fElSelectedPhoto[k]?.src || null, photoName: fElSelectedPhoto[k]?.eventName || "" };
     }).filter(z => z.items.length > 0 || z.structItems.length > 0);
-  }, [getElPriceForFn, zoneLabelsD, zoneMeta, zoneKeys, dealCheckData, studioFloralData, imsDefaultPaintCost, dcCustomItems, structRates, imsInventory, fvCfgForRepeat, clientLedger, activeClientId, blocksByDate, hideDiscountFromClient, collectAllFunctionData, guestPriceMultiplier]);
+  }, [getElPriceForFn, zoneLabelsD, zoneMeta, zoneKeys, dealCheckData, studioFloralData, imsDefaultPaintCost, dcCustomItems, structRates, imsInventory, fvCfgForRepeat, clientLedger, activeClientId, blocksByDate, hideDiscountFromClient, collectAllFunctionData, guestPriceMultiplier, paintInv]);
 
   const buildCombinedCostSheetData = useCallback(() => {
     const all = collectAllFunctionData();

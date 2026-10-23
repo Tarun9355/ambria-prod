@@ -3067,6 +3067,8 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
                                   const liveName = (el2.invId ? (imsInventory || []).find(i => i.id === el2.invId)?.name : null) || el2.name;
                                   return lt > 0 ? <div key={ei} style={{display:"flex",justifyContent:"space-between",padding:"3px 0",fontSize:12}}><span style={{color:textS}}>{liveName} {el2.size ? `(${el2.size})` : ""} ×{el2.qty}</span><span style={{fontWeight:600}}>{fmt(lt)}</span></div> : null;
                                 }) :<div style={{display:"flex",justifyContent:"space-between",padding:"3px 0",fontSize:12}}><span style={{color:textS}}>🪑 Items ({eb.itemCount})</span><span style={{fontWeight:600}}>{fmt(eb.ic)}</span></div>}
+                                {/* Repainted units — part of the zone total above, so listed as its own row */}
+                                {eb.paintCost>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"3px 0",fontSize:12}}><span style={{color:textS}}>🖌️ Paint</span><span style={{fontWeight:600}}>{fmt(eb.paintCost)}</span></div>}
                                 {/* §26.13 — Production/Buying custom items in this zone */}
                                 {dcCustomItems.filter(ci => ci.fnIdx === fnData.fnIdx && ci.zoneKey === eb.k).map(ci => {
                                   const isP = ci.type === "production";
