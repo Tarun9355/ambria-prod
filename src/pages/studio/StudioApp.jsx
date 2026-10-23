@@ -79,7 +79,7 @@ import { RC_D, RC_CATS_DEFAULT } from "../../lib/studio/constants";
 import {
   resolveTrussConfig, findZoneForArea, findAreaForZone, makeZoneId,
   defaultZoneFromArea, resolveMandiFlower, calcZoneTrussPreview,
-  calcZoneFabric, calcZoneFabricCost, guestFabricMultiplier, fabricRepeatDiscount, calcZoneCarpet, buildPlatformPlan, getStudioAvailable,
+  calcZoneFabric, calcZoneFabricCost, guestFabricMultiplier, fabricRepeatDiscount, maskingAfterRepeat, calcZoneCarpet, buildPlatformPlan, getStudioAvailable,
   buildTopology, PLATFORM_FATTA_CODE, PLATFORM_STAND_CODE, trussRowCost, repeatCatFor, repeatCatsOn, REPEAT_CAT_LABELS,
   freshFnForManpower, snapRowDimsForProduction,
 } from "../../lib/studio/pricing";
@@ -299,10 +299,11 @@ function calcStructCost(zk, zc, rates, applyDiscount) {
   // differently, so each extra row carries its own (set via its own card in the zone editor).
   const trussRows = [
     { dims: d, trT: zc.trT, trussType: zc.trussType, trussQty: zc.trussQty, trussFrontExt: zc.trussFrontExt, trussFrontExtH: zc.trussFrontExtH, trussBackDepth: zc.trussBackDepth, mkOn: zc.mkOn, mkT: zc.mkT, mkWalls: zc.mkWalls, mkWallMat: zc.mkWallMat, mkS: zc.mkS, trussMaterial: zc.trussMaterial, drapeDensity: zc.drapeDensity, customCeilingItemId: zc.customCeilingItemId, customMaskingItemId: zc.customMaskingItemId,
-      useNewFabric: zc.useNewFabric, noFabric: zc.noFabric, fabLiza: zc.fabLiza, fabCurtain: zc.fabCurtain, fabLizaRep: zc.fabLizaRep, fabCurtainRep: zc.fabCurtainRep },
+      useNewFabric: zc.useNewFabric, noFabric: zc.noFabric, fabLiza: zc.fabLiza, fabCurtain: zc.fabCurtain, fabLizaRep: zc.fabLizaRep, fabCurtainRep: zc.fabCurtainRep, mkRep: zc.mkRep },
     ...(zc.extraTrussRows || []),
   ];
-  trussRows.forEach((row) => { const { truss, masking } = trussRowCost(row, rates); r.truss += truss; r.masking += masking; });
+  const maskingByRow = []; // each truss row's masking before any discount — the Repeat discount below is per row
+  trussRows.forEach((row) => { const { truss, masking } = trussRowCost(row, rates); r.truss += truss; r.masking += masking; maskingByRow.push(masking); });
   // Liza/Wall-Masking/Velvet-Curtain DRAPE FABRIC — a separate, colour-keyed stock pool from the
   // flat sqft masking rate above (trussRowCost's own `masking`). Owner ask (2026-10-15): no more
   // auto-detected stock-availability guess — the salesperson picks Old (default, cheaper) or New
@@ -344,15 +345,18 @@ function calcStructCost(zk, zc, rates, applyDiscount) {
       : { truss: !!applyDiscount.truss, platform: !!applyDiscount.platform, print: !!applyDiscount.print };
     const pct = GUEST_STRUCT_DISCOUNT_PCT;
     const before = r.total;
-    // Truss & Masking chip = truss/masking/arches/pillars/glass (StudioBuild's own sectionCost
-    // groups them the same way); Platform chip = platform/carpet; Print chip = print alone. Each
-    // field rounded to the rupee (a 25% cut rarely lands whole otherwise), then total is re-summed
-    // from the rounded fields so it never disagrees with what the tiles above add up to.
-    const GROUP_KEYS = { truss: ["truss", "masking", "arches", "pillars", "glass"], platform: ["platform", "carpet"], print: ["print"] };
+    // Truss & Masking chip = truss/arches/pillars/glass; Platform chip = platform/carpet; Print chip = print
+    // alone. Each field rounded to the rupee (a 25% cut rarely lands whole otherwise), then total is
+    // re-summed from the rounded fields so it never disagrees with what the tiles above add up to.
+    // Masking is handled on its own just below: it has its own Repeat button on the Masking card.
+    const GROUP_KEYS = { truss: ["truss", "arches", "pillars", "glass"], platform: ["platform", "carpet"], print: ["print"] };
     Object.entries(GROUP_KEYS).forEach(([grp, keys]) => {
       if (!flags[grp]) return;
       keys.forEach((k) => { r[k] = Math.round(r[k] * (1 - pct / 100)); });
     });
+    // Masking: per truss row, Repeat if the row's own Repeat button says so, else if the zone's Truss &
+    // Masking chip is on (the way masking has always been discounted) — see maskingRepeatOn.
+    r.masking = maskingAfterRepeat(trussRows, maskingByRow, flags.truss, pct);
     // Fabric is NOT part of any discount group — the truss's Repeat chip never touches it (a truss is
     // reused, drape fabric is consumed). Only a part the salesperson marked Repeat on the Fabric card
     // (Liza / velvet curtains, fabLizaRep / fabCurtainRep) takes the same flat pct off its own share.

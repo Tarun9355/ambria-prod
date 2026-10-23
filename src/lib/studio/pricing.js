@@ -963,6 +963,25 @@ export const fabricRepeatDiscount = (row, trussInv, density, mult, pct) => {
   return Math.round(off * (Number(mult) || 0) * (Number(pct) || 0) / 100);
 };
 
+// ── Wall masking: Repeat, per truss, like the fabric parts ──
+// row.mkRep: true = the salesperson marked the masking Repeat, false = marked it NOT Repeat, undefined = not
+// touched, in which case the masking follows the zone's Truss & Masking Repeat chip — which is how masking
+// has always been discounted, so a deal built before this button keeps its price. Either way the discount only
+// reaches the guest when the client-discount toggle is on (the caller passes a pct of 0 / skips it otherwise).
+export const maskingRepeatOn = (row, trussRepeat) => !!row && row.mkRep !== false && (row.mkRep === true || !!trussRepeat);
+
+// One truss row's masking price after the guest Repeat discount (pct %, rounded to the rupee like the
+// other structural lines). Not Repeat → the price unchanged.
+export const maskingGuestCost = (masking, row, trussRepeat, pct) => {
+  const m = Number(masking) || 0;
+  return maskingRepeatOn(row, trussRepeat) ? Math.round(m * (1 - (Number(pct) || 0) / 100)) : m;
+};
+
+// A zone's total masking after the discount: rows[i] is the truss row (the zone's own fields, then each extra
+// truss), maskingByRow[i] its undiscounted masking price. calcStructCost sums it; the Masking card shows one row.
+export const maskingAfterRepeat = (rows, maskingByRow, trussRepeat, pct) =>
+  (rows || []).reduce((s, row, i) => s + maskingGuestCost((maskingByRow || [])[i], row, trussRepeat, pct), 0);
+
 // ─── IMS field accessor shim (used by carpet cost) ───────────────────────────
 const imsField = {
   category:    (i) => i?.category || i?.cat || "",
