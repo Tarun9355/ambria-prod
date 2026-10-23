@@ -10063,6 +10063,7 @@ export default function StudioApp() {
       const t = fElTiers[k] || "simple";
       const ze = fZoneElements[k];
       let items = [];
+      let roundAdj = 0;   // sheet total minus the engine's exact total, from showing whole-rupee rates
       if (ze && ze.length > 0) {
         ze.forEach((el2, ei) => {
           const priceInfo = getElPriceForFn(el2, fZoneConfig[k], fFloralRatio, true, fVenue, fBlocksForDate, fnData.fnDate, pricingPool, fnData.fnIdx, k, ei);
@@ -10089,11 +10090,22 @@ export default function StudioApp() {
             const qtyN = el2.qty || 0;
             const noDiscTotal = Math.round(up * qtyN);
             const hasDiscount = qtyN > 0 && (noDiscTotal - lt) > 0.5;
+            // Rate and Disc. Rate are whole rupees, like every rate on Build, and the sheet's Amount is
+            // Qty × that rate — so a guest can check every line with a calculator. The few-rupee
+            // difference against the engine's exact figure (258.5 × 42 vs 259 × 42) is carried in
+            // roundAdj and added to the zone/function totals below, so the sheet still adds up on its own.
+            // A line whose Amount is NOT Qty × Rate to begin with (short-part split, kit shortfall) keeps
+            // its true figure.
+            const wholeRate = Math.round(up);
+            const discRateW = hasDiscount ? Math.round(lt / qtyN) : undefined;
+            const clean = qtyN > 0 && Math.abs(qtyN * up - (hasDiscount ? noDiscTotal : lt)) <= 1;
+            const rateOnSheet = clean ? wholeRate : up;
+            const totalOnSheet = hasDiscount ? qtyN * discRateW : clean ? qtyN * wholeRate : lt;
+            roundAdj += totalOnSheet - lt;
             items.push({
-              name: displayName, size: el2.size || "", qty: qtyN, unit: el2.unit || "pc", rate: up, total: lt,
+              name: displayName, size: el2.size || "", qty: qtyN, unit: el2.unit || "pc", rate: rateOnSheet, total: totalOnSheet,
               isFloral: rc && (rc.cat || "").toLowerCase() === "florals",
-              // Disc. Rate is a whole rupee, like every rate on Build.
-              hasDiscount, discRate: hasDiscount ? Math.round(lt / qtyN) : undefined, noDiscTotal: hasDiscount ? noDiscTotal : undefined,
+              hasDiscount, discRate: discRateW, noDiscTotal: hasDiscount ? (clean ? qtyN * wholeRate : noDiscTotal) : undefined,
             });
           }
           // Paint: one line per colour the element is repainted in — the same helper the zone totals use.
@@ -10300,7 +10312,7 @@ export default function StudioApp() {
         if (lineCost > 0) items.push({ name: (isP ? "🏭 " : "🛒 ") + (ci.subCat || ci.cat || "Custom"), size: "", qty: Number(ci.qty) || 1, unit: "pc", rate: unitCost, total: lineCost, isCustom: true, customType: ci.type });
       });
       const ic = items.reduce((s, i) => s + i.total, 0);
-      return { k, label: el.label, icon: el.icon, tier: t, items, structItems, structTotal: zl.total, itemTotal: ic, zoneTotal: ic + zl.total, note: fElNotes[k] || "", dims, dimLabel, photo: fElSelectedPhoto[k]?.src || null, photoName: fElSelectedPhoto[k]?.eventName || "" };
+      return { k, label: el.label, icon: el.icon, tier: t, items, structItems, structTotal: zl.total, itemTotal: ic, zoneTotal: ic + zl.total, roundAdj, note: fElNotes[k] || "", dims, dimLabel, photo: fElSelectedPhoto[k]?.src || null, photoName: fElSelectedPhoto[k]?.eventName || "" };
     }).filter(z => z.items.length > 0 || z.structItems.length > 0);
   }, [getElPriceForFn, zoneLabelsD, zoneMeta, zoneKeys, dealCheckData, studioFloralData, imsDefaultPaintCost, dcCustomItems, structRates, imsInventory, fvCfgForRepeat, clientLedger, activeClientId, blocksByDate, hideDiscountFromClient, collectAllFunctionData, guestPriceMultiplier, paintInv]);
 
@@ -10342,6 +10354,9 @@ export default function StudioApp() {
       const fnData = enrichFromSession(fnDataRaw);
       const zones = buildZonesForFn(fnData);
       const bd = calcFunctionBreakdown(fnData);
+      // Whole-rupee rates on the sheet move a few rupees against the engine's exact figures; carry that
+      // into the function's totals so zone subtotals → FUNCTION TOTAL → fee → grand all add up as printed.
+      const roundAdj = zones.reduce((s, z) => s + (z.roundAdj || 0), 0);
       return {
         fnIdx: fnData.fnIdx,
         fnType: fnData.fnType,
@@ -10352,14 +10367,14 @@ export default function StudioApp() {
         palette: fnData.fnPalette || "",
         zones,
         transport: bd.transport,
-        decorTotal: bd.decorTotal,
+        decorTotal: bd.decorTotal + roundAdj,
         // Client-facing cost sheet (Excel/PPT/PDF/on-screen exports below) — transportTotal/grand
         // here carry the guest-facing venue-truck markup (bd.transportTotalClient/grandClient),
         // same split as calcFunctionBreakdown's own *Client fields. Nothing in this function reads
         // the internal-cost fields; that's calcFunctionBreakdown's raw transportTotal/grand, read
         // directly by Deal Check's own Transport tab and the Dept-Income/event_orders bridges.
         transportTotal: bd.transportTotalClient,
-        grand: bd.grandClient,
+        grand: bd.grandClient + roundAdj,
         // Stamped once here (rather than re-resolved from settings later) so the on-screen cost
         // sheet's own quantity-edit recompute (StudioSummary's csUpdateQty) can re-derive the
         // discount from proratedVenueDiscount without needing the fixedVenues settings blob at all.

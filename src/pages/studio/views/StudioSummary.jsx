@@ -1071,8 +1071,8 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
             row.getCell(8).value = { formula: `C${r}*D${r}*${opts.tripsX}`, result: total };
           }
         }
-        // Rate/Disc. Rate show whole rupees, matching Build (rateMoney above). The cell keeps the exact rate, so
-        // Amount (= Qty × Rate, a live formula) stays exact too.
+        // Rate/Disc. Rate show whole rupees, matching Build (rateMoney above). Item rates arrive already whole
+        // (buildZonesForFn), so Amount = Qty × Rate is a live formula that checks by hand.
         row.getCell(4).numFmt = rateMoney.numFmt;
         if (typeof discRate === "number") row.getCell(5).numFmt = rateMoney.numFmt;
         row.getCell(7).numFmt = money.numFmt;
