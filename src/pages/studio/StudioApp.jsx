@@ -9672,18 +9672,43 @@ export default function StudioApp() {
   };
 
   // ── Select element photo → load pricing — VERBATIM ──
-  const selectElPhoto = (elKey, photo) => {
+  // opts.skipConfirm — the zone-upload review flow ("Apply to Zone") already IS an explicit,
+  // deliberate confirmation step; asking again right after would just be redundant friction, so that
+  // one call site opts out. Every other caller (browsing the photo strip) gets the warning below.
+  const selectElPhoto = async (elKey, photo, opts = {}) => {
     const currentSel = elSelectedPhoto[elKey];
+    // Has this zone's element list been touched (added to / edited / items removed) since it was
+    // last freshly loaded from a photo pick? `_loadedElements` is the exact list this function
+    // itself stamped onto the selected-photo record at that moment — if the zone's current elements
+    // still match it, nothing has changed since (the common "just browsing photos" case) and there
+    // is nothing to warn about. No stamp at all (a zone picked before this check existed) is treated
+    // as possibly-customized — asking once is safer than silently discarding legacy work.
+    const curEls = zoneElements[elKey] || [];
+    const hasUnsavedWork = curEls.length > 0
+      && (!currentSel?._loadedElements || JSON.stringify(currentSel._loadedElements) !== JSON.stringify(curEls));
     if (currentSel && currentSel.src === photo.src) {
+      if (hasUnsavedWork && !opts.skipConfirm) {
+        const ok = await askConfirmAsync(
+          "This clears everything built for this zone's photo — including anything added or changed since it was picked.",
+          { note: "This can't be undone.", yesLabel: "Clear it" }
+        );
+        if (!ok) return false;
+      }
       setElSelectedPhoto(p => { const n = { ...p }; delete n[elKey]; return n; });
       setZoneElements(p => { const n = { ...p }; delete n[elKey]; return n; });
       // Full deselect means "nothing in this zone" — clear the truss/platform/carpet config too,
       // since it came from this same photo pick. Otherwise the zone reads as empty (no elements,
       // no photo selected) while still silently charging for a structure nobody can see is configured.
       setZoneConfig(p => { const n = { ...p }; delete n[elKey]; return n; });
-      return;
+      return true;
     }
-    setElSelectedPhoto(p => ({ ...p, [elKey]: photo }));
+    if (hasUnsavedWork && !opts.skipConfirm) {
+      const ok = await askConfirmAsync(
+        "Switching to this photo replaces this zone's current element list — including anything added or changed since the current photo was picked.",
+        { note: "This can't be undone.", yesLabel: "Switch anyway" }
+      );
+      if (!ok) return false;
+    }
     // Scale By is a deal-specific "how many of this zone" multiplier (40 tables, say) — it has
     // nothing to do with WHICH reference photo is loaded. Browsing to a different centrepiece photo
     // used to silently drop it: the new photo's elements came in at their own raw (×1) baseQty and
@@ -9691,6 +9716,7 @@ export default function StudioApp() {
     // Scale box kept showing its old number while the actual priced quantities quietly reset to 1×.
     // Carry the CURRENT live scale over onto the incoming photo's elements instead.
     const curScale = Math.max(1, Math.round(Number(zoneConfig[elKey]?.scale) || 1));
+    let finalEls;
     if (photo.isLibrary && (photo.elements || []).length > 0) {
       // Strip any `baseQty` the photo's own saved elements happen to be carrying — "Correct & update
       // master" persists zoneElements verbatim, so a photo corrected while a zone was mid-scale can
@@ -9698,13 +9724,16 @@ export default function StudioApp() {
       // always derives its base from that photo's own qty, never an inherited one, or the very next
       // Scale edit multiplies the WRONG base and lands on a qty nobody asked for.
       const rawEls = JSON.parse(JSON.stringify(photo.elements)).map(({ baseQty: _drop, ...e }) => e);
-      setZoneElements(p => ({ ...p, [elKey]: curScale > 1
+      finalEls = curScale > 1
         ? rawEls.map(e => { const base = Number(e.qty) || 0; return { ...e, baseQty: base, qty: Math.max(0, Math.round(base * curScale)) }; })
-        : rawEls
-      }));
+        : rawEls;
     } else {
-      setZoneElements(p => ({ ...p, [elKey]: [] }));
+      finalEls = [];
     }
+    setZoneElements(p => ({ ...p, [elKey]: finalEls }));
+    // Stamped onto the stored photo record so the NEXT switch/reselect away from this one can tell
+    // whether anything changed in the meantime — see hasUnsavedWork above.
+    setElSelectedPhoto(p => ({ ...p, [elKey]: { ...photo, _loadedElements: finalEls } }));
     const libImg = photo.isLibrary ? libItems.find(i => i.url === photo.src || i.id === photo.eventId) : null;
     const photoDims = photo.dims || libImg?.dims || {};
     let cfg = buildZoneConfig(elKey, photoDims);
@@ -9734,6 +9763,7 @@ export default function StudioApp() {
     }
     setActiveZones([]);
     setCustomMode(p => ({ ...p, [elKey]: false }));
+    return true;
   };
 
   // ── Multi-select element photos — Installations zone ONLY. Every other zone keeps the
@@ -11650,7 +11680,9 @@ export default function StudioApp() {
       return;
     }
     const photo = { src: r.url, eventName: libImg.name, isLibrary: true, eventId: libId, elements: libImg.elements, dims: libImg.dims, fn: "", space: "", zones: [] };
-    selectElPhoto(r.elKey, photo);
+    // skipConfirm — reviewing and clicking "Apply to Zone" IS the deliberate confirmation; asking
+    // again right after would just be redundant friction.
+    selectElPhoto(r.elKey, photo, { skipConfirm: true });
     if (r.dims) {
       const cfg = buildZoneConfig(r.elKey, r.dims);
       if (cfg) {

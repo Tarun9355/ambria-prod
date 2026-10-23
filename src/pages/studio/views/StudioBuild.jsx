@@ -4330,7 +4330,7 @@ undefined
                     // photo you just clicked. Only the strip still pins-and-jumps; the grid leaves
                     // you exactly where you were.
                     markPhotoViewed(ph);
-                    if(multiZone){toggleMultiElPhoto(k,ph);}else{selectElPhoto(k,ph);if(!gridZones[k]){phGoTo(k,0,phPage[k]||0);phScrollTop(k);}}
+                    if(multiZone){toggleMultiElPhoto(k,ph);}else{selectElPhoto(k,ph).then(ok=>{if(ok&&!gridZones[k]){phGoTo(k,0,phPage[k]||0);phScrollTop(k);}});}
                     // Same rule as opening the grid: whatever you actually pick to build with belongs
                     // in the group already, not just whatever happened to be ticked before. Add-only —
                     // never un-ticks anything the checkbox itself didn't touch.
