@@ -4878,7 +4878,7 @@ undefined
                             // An item that is out of stock for this date (and can't be produced in time) can be
                             // reduced or swapped, not grown — same rule as the + button.
                             if (priceInfo.outOfStock && nextQty > (el.qty||0)) {
-                              showMsg(`Out of stock for this date (${priceInfo.available||0} free) — can't go above ${el.qty||0}. Pick another item or reduce the quantity.`, "red");
+                              showMsg(priceInfo.available>0 ? `Only ${priceInfo.available} available for this date — can't add more. Pick another item or reduce the quantity.` : `Out of stock for this date — none available. Pick another item or reduce the quantity.`, "red");
                               return;
                             }
                             // §23 Phase 2.9d — same guard for direct typing
@@ -4900,7 +4900,7 @@ undefined
                               return {...p,[k]:cur};
                             });
                           }} onFocus={e=>e.target.select()} style={{width:46,padding:"3px 4px",borderRadius:6,border:`1px solid ${border}`,background:cardBg,color:(el.qty||0)>0?textP:textS,fontSize:14,fontWeight:700,textAlign:"center",outline:"none",fontFamily:"inherit",MozAppearance:"textfield"}}/>
-                          <button disabled={!!priceInfo.outOfStock} title={priceInfo.outOfStock?`Out of stock for this date (${priceInfo.available||0} free) — can't add more. Pick another item or reduce the quantity.`:undefined} onClick={()=>{
+                          <button disabled={!!priceInfo.outOfStock} title={priceInfo.outOfStock?(priceInfo.available>0?`Only ${priceInfo.available} available for this date — can't add more. Pick another item or reduce the quantity.`:`Out of stock for this date — none available. Pick another item or reduce the quantity.`):undefined} onClick={()=>{
                             if (priceInfo.outOfStock) return;
                             // Increment off the committed qty — see the − button's comment (BUG-16).
                             setZoneElements(p=>{
