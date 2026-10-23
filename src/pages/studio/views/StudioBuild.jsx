@@ -4775,6 +4775,14 @@ undefined
                             // nothing else in its sub-category is.
                             isPaintable = subcatCheck || Number(invItem?.paintCost || 0) > 0;
                           }
+                          // An item's own "Paintable" checkbox (IMS Inventory → edit item), when
+                          // explicitly unchecked, overrides a true sub-category-wide check above — a
+                          // sub-category can mix paintable and non-paintable items (e.g. a fibre vs.
+                          // plastic variant of "the same" pot), and the pill is about THIS element's
+                          // actual assigned item, not whether anything else in its subcat takes paint.
+                          // Only overrides OFF, never forces it on — an item with no explicit flag
+                          // (legacy data, paintable === undefined) keeps the fallback logic above.
+                          if (invItem && invItem.paintable === false) isPaintable = false;
                           if (!isPaintable) return null;
                           const baseColour = invItem?.baseColour || "Ivory";
                           // §23 Phase 2.9d — multi-colour allocation aware
