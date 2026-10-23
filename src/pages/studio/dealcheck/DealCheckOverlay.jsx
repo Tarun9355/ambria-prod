@@ -224,7 +224,7 @@ export default function DealCheckOverlay({ ctx }) {
     dcSaveBaselineRef, dcConflictWarnedAtRef, flushDcAutosaveRef, dcStateReadyForClientRef,
     dcZoneState, dcMpOverrides, dcMpWinCount, dcMpIncludeMinusOne, dcMpIncludeDismantle,
     setDcResolved, setDcCards, setDcZoneState, setDcPhotoOverrides, setDcSkipped, setDcProductionAccepted,
-    dealCheckData, imsPaletteCatalogue, softHolds, imsPrintMaterials, imsCarpetMaterials,
+    dealCheckData, imsPaletteCatalogue, imsPrintMaterials, imsCarpetMaterials,
     // build / fn state
     activeFnIdx: activeFnIdxCommitted, fnPending, switchActiveFn, dcShowAllFns, setDcShowAllFns, dcCollapsedFnBlocks, setDcCollapsedFnBlocks,
     // Deal-Check-into-Build sync (ongoing deals only — see the effect below and dealCheckSync.js)
@@ -248,7 +248,7 @@ export default function DealCheckOverlay({ ctx }) {
     // Settings → Zones' own drag-ordered priority (Object.keys(zoneMeta), same list Build sorts by)
     zoneKeys, zoneLabelsD,
     // orchestration + persistence
-    getStudioAvailable, getActiveSoftHold,
+    getStudioAvailable,
     // misc
     showMsg, saveClientLedger, manpowerPlanForBooking, persistDeptSnapshot, dcEoActuals, refreshDcEoActuals,
   } = ctx;
@@ -3325,7 +3325,6 @@ export default function DealCheckOverlay({ ctx }) {
                                   // the total sitting right next to it instead of looking wrong.
                                   const _effRate = _cardQty > 0 ? Math.round(_lineTotal / _cardQty) : rental;
                                   const dims = item ? imsField.sizeText(item) : "";
-                                  const hold = card.imsId ? getActiveSoftHold(softHolds, card.imsId, authUser?.name, Date.now()) : null;
                                   const sourceMeta = {
                                     "name-match": { icon: "📋", color: "#64748B", label: "name match" },
                                     "knowledge":  { icon: "🧠", color: "#22C55E", label: "learned" },
@@ -3365,7 +3364,6 @@ export default function DealCheckOverlay({ ctx }) {
                                               {_rep ? <IconRepeat size={11}/> : <IconSparkle size={11}/>}
                                             </span>
                                           )}
-                                          {hold && <span title={`Held by ${hold.salesperson} for ${hold.eventName}`} style={{fontSize:11,padding:"2px 6px",borderRadius:4,background:"rgba(245,158,11,0.20)",color:"#F59E0B",fontWeight:700,letterSpacing:0.4}}>⏳ {hold.salesperson}</span>}
                                           {item && (()=>{ const cq=Number(card.qty)||1; const av=Math.min(dcAvailable(item, fnBlocksForChip, fnIdx), availableAtVenue({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, fns[fnIdx]?.fnVenue, item)); if (cq<=av) return null; const canMake = canFulfillShortfall(item, fns[fnIdx]?.fnDate); return <span title={canMake?undefined:"Out of stock and can't be made in production"} style={{fontSize:11,padding:"2px 6px",borderRadius:4,background:"rgba(239,68,68,0.18)",color:"#EF4444",fontWeight:700,letterSpacing:0.4}}>{canMake?`⚠ ${av}`:"⚠ out of stock"}</span>; })()}
                                           {card.imsId && reuseFnCount[card.imsId]?.size >= 2 && <span style={{fontSize:11,padding:"2px 6px",borderRadius:4,background:"rgba(16,185,129,0.18)",color:"#10B981",fontWeight:700,letterSpacing:0.4}}>♻ {reuseFnCount[card.imsId].size} fns</span>}
                                           <span onClick={()=>setDcCards(prev=>{const fn={...(prev[fnIdx]||{})}; delete fn[card._cardKey]; return {...prev,[fnIdx]:fn};})} title="Remove from Deal Check" style={{marginLeft:"auto",cursor:"pointer",color:"#EF4444",fontSize:15.5,fontWeight:700,padding:"0 4px",lineHeight:1,flexShrink:0,opacity:0.6,transition:"opacity 0.15s"}} onMouseEnter={e=>e.currentTarget.style.opacity=1} onMouseLeave={e=>e.currentTarget.style.opacity=0.6}>×</span>
@@ -4626,7 +4624,6 @@ export default function DealCheckOverlay({ ctx }) {
                   const fns = collectAllFunctionData ? collectAllFunctionData() : [];
                   if (fns.length === 0) return <div style={{padding:"50px 30px",textAlign:"center",color:"#1A1A2E",fontSize:13}}>No functions configured yet.</div>;
                   const blocksByDate = dealCheckData?.blocksByDate || {};
-                  const nowMs = Date.now();
 
                   // ── §7.9.18 Calendar Conflicts ──
                   // Scan all fns/cards: detect items where needed > available or held by another salesperson
@@ -4650,10 +4647,8 @@ export default function DealCheckOverlay({ ctx }) {
                         // outdoor deal could bill at cost% for a real shortfall while this conflict
                         // scan stayed silent about it.
                         const available = Math.min(dcAvailable(node, fnBlocks, fi), availableAtVenue({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, fn.fnVenue, node));
-                        const hold = getActiveSoftHold(softHolds, node.id, authUser?.name, nowMs);
                         const isShort = nodeQty > available;
-                        const isHeld = !!hold;
-                        if (!isShort && !isHeld) return;
+                        if (!isShort) return;
                         const dedup = `${node.id}::${fnDate}`;
                         if (conflictSeen.has(dedup)) return;
                         conflictSeen.add(dedup);
@@ -4661,7 +4656,7 @@ export default function DealCheckOverlay({ ctx }) {
                         // fi is carried so a row can be matched against the sidebar selection —
                         // this tab is booking-wide, and without the index there was no way to say
                         // which conflicts belong to the function you are actually looking at.
-                        conflicts.push({ imsId: node.id, name: node.name || card.imsName, photo, needed: nodeQty, available, isShort, outOfStock: isShort && !canFulfillShortfall(node, fnDate), hold, isHeld, fnDate, fi, fnLabel: fn.fnType || `Function ${fi+1}`, item: node });
+                        conflicts.push({ imsId: node.id, name: node.name || card.imsName, photo, needed: nodeQty, available, isShort, outOfStock: isShort && !canFulfillShortfall(node, fnDate), fnDate, fi, fnLabel: fn.fnType || `Function ${fi+1}`, item: node });
                       });
                     });
                   });
@@ -4708,11 +4703,6 @@ export default function DealCheckOverlay({ ctx }) {
 
                   const conflictCount = conflicts.length;
                   const reuseCount = reuseItems.length;
-                  // Split, because they are not the same problem. A shortage is yours to solve —
-                  // swap the item or cut the qty. A hold belongs to another salesperson and may
-                  // simply expire. One combined "conflicts" number hid which kind you had.
-                  const shortCount = conflicts.filter(c => c.isShort).length;
-                  const heldCount = conflicts.filter(c => c.isHeld).length;
 
                   // ── WHY SWITCHING FUNCTIONS SEEMED TO DO NOTHING ──
                   // This tab is booking-wide and always has been: a conflict is a clash on a DATE,
@@ -4738,7 +4728,7 @@ export default function DealCheckOverlay({ ctx }) {
                           <style>{DC_CSS}</style>
                           <div aria-hidden="true" style={{width:44,height:44,borderRadius:12,background:GOOD_SOFT,display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:20,marginBottom:12}}>✓</div>
                           <div style={{fontSize:15.5,fontWeight:700,color:INK,letterSpacing:-0.3}}>Inventory clean</div>
-                          <div style={{fontSize:12,color:INK_3,marginTop:5,lineHeight:1.5}}>Every booked item has free stock on its date, and nothing is held by another salesperson. No item repeats across functions, so there is nothing to share.</div>
+                          <div style={{fontSize:12,color:INK_3,marginTop:5,lineHeight:1.5}}>Every booked item has free stock on its date. No item repeats across functions, so there is nothing to share.</div>
                         </div>
                       </div>
                     );
@@ -4764,14 +4754,10 @@ export default function DealCheckOverlay({ ctx }) {
                       {/* ── SUMMARY BAR, FIRST ──
                           This tab is an exceptions list: everything on it is either a problem or
                           money on the table. It opened straight into rows, so "how bad is it" took
-                          counting. Four figures answer that before any row is read — and short vs
-                          held matters more than the combined count, because a shortage is yours to
-                          solve and a hold belongs to another salesperson. */}
-                      <div className="dc2-sum">
+                          counting. Two figures answer that before any row is read. */}
+                      <div className="dc2-sum dc2-sum2">
                         {[
-                          { label: "Conflicts", value: conflictCount, foot: conflictCount ? "need attention" : "none", tone: conflictCount ? BAD : INK },
-                          { label: "Short", value: shortCount, foot: "not enough free stock", tone: shortCount ? BAD : INK },
-                          { label: "Held elsewhere", value: heldCount, foot: "by another salesperson", tone: heldCount ? GOLD : INK },
+                          { label: "Conflicts", value: conflictCount, foot: conflictCount ? "not enough free stock" : "none", tone: conflictCount ? BAD : INK },
                           { label: "Reuse savings", value: `₹${Math.round(totalSaving).toLocaleString("en-IN")}`, foot: reuseCount ? `${reuseCount} item${reuseCount===1?"":"s"} shared` : "nothing shared yet", tone: totalSaving > 0 ? GOOD : INK },
                         ].map((s, si) => (
                           <div key={si} className="dc2-card" style={{background:CARD_BG,border:`1px solid ${CARD_BORDER}`,borderRadius:11,boxShadow:CARD_SHADOW,padding:"9px 13px",minWidth:0}}>
@@ -4791,7 +4777,7 @@ export default function DealCheckOverlay({ ctx }) {
                               <span aria-hidden="true" style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:36,height:36,borderRadius:10,flexShrink:0,fontSize:17,lineHeight:1,background:BAD_SOFT}}>⚠</span>
                               <div style={{flex:"1 1 auto",minWidth:0}}>
                                 <div style={{fontSize:15.5,fontWeight:700,color:INK,letterSpacing:-0.35,lineHeight:1.2}}>Calendar conflicts</div>
-                                <div style={{fontSize:11.5,color:INK_3,marginTop:3}}>Booked on a date where the stock is short, or already held by someone else.</div>
+                                <div style={{fontSize:11.5,color:INK_3,marginTop:3}}>Booked on a date where the stock is short.</div>
                               </div>
                               <span style={{flexShrink:0,fontSize:10,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase",padding:"3px 9px",borderRadius:999,background:BAD_SOFT,color:BAD,whiteSpace:"nowrap",...NUM}}>{conflictCount} item{conflictCount===1?"":"s"}</span>
                             </div>
@@ -4827,12 +4813,6 @@ export default function DealCheckOverlay({ ctx }) {
                                         <div style={{marginTop:6,fontSize:11.5,color:INK_2,...NUM}}>
                                           need <strong style={{color:BAD,fontWeight:700}}>{c.needed}</strong>, only <strong style={{color:INK,fontWeight:700}}>{c.available}</strong> free
                                           {c.outOfStock && <span style={{color:BAD,fontWeight:600}}> — can't be made in production, pick an alternative</span>}
-                                        </div>
-                                      )}
-                                      {c.isHeld && (
-                                        <div style={{marginTop:6,fontSize:11.5,color:INK_2}}>
-                                          Held by <strong style={{color:INK,fontWeight:650}}>{c.hold.salesperson}</strong> for {c.hold.eventName}
-                                          {c.hold.expiry && <span style={{color:INK_3}}> · expires {new Date(c.hold.expiry).toLocaleString("en-IN",{hour:"2-digit",minute:"2-digit",hour12:true})}</span>}
                                         </div>
                                       )}
                                     </div>
@@ -5505,7 +5485,6 @@ export default function DealCheckOverlay({ ctx }) {
                         const photo = imsField.photos(it)[0];
                         const rental = imsField.rentalCost(it);
                         const dims = imsField.sizeText(it);
-                        const hold = getActiveSoftHold(softHolds, it.id, authUser?.name, Date.now());
                         const isCurrent = splitAdd ? _mSplitIds.includes(it.id) : it.id === _mCurId;
                         const _mExclude = manualId ? { manualId } : { cardKey };
                         const _mUsedElsewhere = qtyUsedElsewhereInDealCheck(it.id, _mFns, dcCards, dcManualItems, dcKitEdits, dcInventoryCache, { fnIdx, ..._mExclude }, (_mFns[fnIdx]||{}).fnDate || clientDate);
@@ -5535,7 +5514,7 @@ export default function DealCheckOverlay({ ctx }) {
                             // other copy anywhere but this draft, so it can't wait out the 2.5s debounce.
                             setTimeout(() => flushDcAutosaveRef?.current?.(), 0);
                             setDcBrowseAllOpen(null);
-                          }} style={{position:"relative",borderRadius:9,overflow:"hidden",border:isCurrent?`2px solid ${accent}`:`1px solid ${border}`,cursor:isCurrent?"default":isBlocked?"not-allowed":"pointer",background:"rgba(26, 26, 46,0.02)",opacity:hold?0.6:isBlocked?0.45:1}}>
+                          }} style={{position:"relative",borderRadius:9,overflow:"hidden",border:isCurrent?`2px solid ${accent}`:`1px solid ${border}`,cursor:isCurrent?"default":isBlocked?"not-allowed":"pointer",background:"rgba(26, 26, 46,0.02)",opacity:isBlocked?0.45:1}}>
                             {photo ? <img loading="lazy" decoding="async" src={thumbUrl(photo, 56)} alt="" style={{width:"100%",height:110,objectFit:"cover",display:"block",background:"#FAF9F6"}}/> : <div style={{width:"100%",height:110,background:"#FAF9F6",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,color:"#1A1A2E"}}>?</div>}
                             <div style={{padding:"8px 9px"}}>
                               <div style={{fontSize:13,fontWeight:600,color:"#1A1A2E",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.name}</div>
@@ -5543,7 +5522,6 @@ export default function DealCheckOverlay({ ctx }) {
                             </div>
                             {/* Free-on-date availability badge (nets out other zones/cards in this same deal too) */}
                             <div title={isBlocked?"🚫 fully used in this event":_mSlackIt.length?`Free for this event (includes idle stock at other Fixed Venues: ${_mSlackIt.map(s=>`${s.slack} ${s.name}`).join(" · ")})`:"Free for this event"} style={{position:"absolute",bottom:38,right:5,fontSize:12,fontWeight:800,minWidth:20,textAlign:"center",background:avail>0?"rgba(16,185,129,0.92)":"rgba(239,68,68,0.92)",borderRadius:6,padding:"2px 6px",color:"#1A1A2E"}}>{avail}</div>
-                            {hold && <div style={{position:"absolute",top:5,right:5,fontSize:11,background:"rgba(245,158,11,0.92)",borderRadius:4,padding:"2px 5px",color:"#0F0F1A",fontWeight:700,letterSpacing:0.3}}>⏳ {hold.salesperson}</div>}
                             {isCurrent && <div style={{position:"absolute",top:5,left:5,fontSize:11,background:`${accent}ee`,borderRadius:4,padding:"2px 5px",color:"#0F0F1A",fontWeight:700,letterSpacing:0.3}}>{splitAdd?"✓ in split":"✓ current"}</div>}
                           </div>
                         );

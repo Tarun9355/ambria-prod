@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import { allocateForDate, applyOverridesToEvents, expireStaleSimulations, isDeptHead, buildEventAllocation, simulateImpact, TRUSS_AUDIT_SK, TRUSS_OVERRIDES_SK, TRUSS_SIMULATIONS_SK } from "../../lib/ims/trussEngine";
+import { allocateForDate, applyOverridesToEvents, expireStaleSimulations, isDeptHead, simulateImpact, TRUSS_AUDIT_SK, TRUSS_OVERRIDES_SK, TRUSS_SIMULATIONS_SK } from "../../lib/ims/trussEngine";
 import { kvGet, reliableSave } from "../../lib/ims/kv";
 import { fetchAll, supabase } from "../../lib/supabase";
 import { Modal } from "../../components/ui";
@@ -141,45 +141,6 @@ export default function TrussPlanningTab({ trussAlloc, setTrussAlloc, trussInv, 
     const next = { ...simulations };
     delete next[simId];
     await saveSimulations(next);
-  };
-
-  const convertSimToDeal = async (sim) => {
-    if (!canEdit) return;
-    if (!trussInv) return;
-    if (!confirm(`Convert "${sim.label}" to a soft-hold reservation? This will appear in Studio Deal Check too.`)) return;
-    // Create a soft-hold event in trussAlloc with this client (sim becomes a real reservation)
-    const syntheticFns = [{
-      fnIdx: 0,
-      date: sim.date,
-      zones: {},
-      enabledEls: {},
-    }];
-    (sim.zones || []).forEach((z, idx) => {
-      const zoneKey = `sim-converted-${idx}`;
-      syntheticFns[0].zones[zoneKey] = { dims: { L: z.L, W: z.W, H: z.H }, trussType: z.config };
-      syntheticFns[0].enabledEls[zoneKey] = true;
-    });
-    const evEntry = buildEventAllocation({
-      eoId: `sim-deal-${sim.id}`,
-      clientId: `sim-deal-${sim.id}`,
-      clientName: sim.label || "Converted Simulation",
-      fnIdx: 0,
-      state: "soft",
-      expiry: Date.now() + 24 * 60 * 60 * 1000,
-      heldBy: authUser?.name || sim.createdBy || "Dept Head",
-      createdAt: Date.now(),
-    }, syntheticFns, trussInv);
-    if (!evEntry.trusses || evEntry.trusses.length === 0) { alert("Conversion failed: no valid trusses"); return; }
-    let nextAlloc = { ...trussAlloc };
-    const dateE = nextAlloc[sim.date] || { events: [] };
-    const existingEvents = Array.isArray(dateE.events) ? [...dateE.events] : [];
-    existingEvents.push(evEntry);
-    nextAlloc[sim.date] = { ...dateE, events: existingEvents };
-    nextAlloc = allocateForDate(nextAlloc, sim.date, existingEvents, trussInv, `sim-conversion-by-${authUser?.name || "—"}`);
-    setTrussAlloc(nextAlloc);
-    // Remove from drafts
-    await discardSimulation(sim.id);
-    alert("Converted to soft-hold reservation. Visible in Studio Deal Check.");
   };
 
   // Fmt helpers
@@ -519,11 +480,6 @@ export default function TrussPlanningTab({ trussAlloc, setTrussAlloc, trussInv, 
                     </div>
                   </div>
                   <div className="mt-2 flex items-center gap-2">
-                    {canEdit && (
-                      <button onClick={() => convertSimToDeal(sim)} className="text-xs px-3 py-1 rounded bg-green-600 hover:bg-green-700 text-white">
-                        ➜ Convert to Soft Hold
-                      </button>
-                    )}
                     {canEdit && (
                       <button onClick={() => discardSimulation(sim.id)} className="text-xs px-3 py-1 rounded bg-gray-200 hover:bg-gray-300 text-gray-800">
                         Discard

@@ -109,7 +109,7 @@ import {
   YT_SK, YT_TAG_SK, MANUAL_VID_SK, HIDDEN_VID_SK, FAV_VID_SK, FAV_PHOTO_SK,
   NOTIF_SK, DT_SK, PIMAP_SK, SCAN_HIST_SK,
   IMS_SETTINGS_SK, STUDIO_LMS_CACHE_SK, PALETTE_SK,
-  DC_RUN_COUNTER_SK, DC_CACHE_SK, FLORAL_HARDPROP_MAP_SK, SOFT_HOLDS_SK,
+  DC_RUN_COUNTER_SK, DC_CACHE_SK, FLORAL_HARDPROP_MAP_SK,
   TRUSS_ALLOC_SK, FILTER_PRIORITY_SK, DEFAULT_FILTER_PRIORITY,
   RC_SK_CATS, RC_SK_TR, TR_TIERS, TC_UNITS, TPL_SK, ZONE_DEF_SK, TEAM_SK, TAX_SK, TAX_BOTH_MIG_SK, TAG_KB_SK,
   TAG_HIDDEN_SUBS_SK, PREMIA_CFG_SK, ZONE_GROUPS_SK, CUSTOM_ZONE_TAG_PREFIX,
@@ -502,205 +502,6 @@ function initZP(zk, size) {
   const dims = {}; zm.dimFields.forEach(f => { dims[f] = p[f] || 0; });
   return { dims, trT: p.tr || zm.defaultTruss || null, trussQty: p.trussQty || 1, trussFrontExt: p.trussFrontExt || 0, trussFrontExtH: p.trussFrontExtH || 0, mkOn: !!p.mk, mkT: p.mk || "fabric", mkS: p.ms || 1, plH: p.pl || null, cpT: p.cp || null, archOn: !!p.archT, archT: p.archT || null, archQty: p.archQty || 0, archW: p.archW || 0, archH: p.archH || 0, pillarQty: p.pillarQty || 0, glassOn: !!p.glassT, glassT: p.glassT || null, glassQty: p.glassQty || 0, glassW: p.glassW || 0, glassH: p.glassH || 0 };
 }
-
-// ═══ Active soft-hold lookup (Deal Check inventory-status conflicts) — VERBATIM ═══
-function getActiveSoftHold(softHolds, itemId, currentSalesperson, nowMs) {
-  const h = softHolds?.[itemId];
-  if (!h) return null;
-  const expiryMs = typeof h.expiry === "number" ? h.expiry : Date.parse(h.expiry || "");
-  if (!expiryMs || expiryMs <= (nowMs ?? Date.now())) return null;  // expired
-  if (h.salesperson === currentSalesperson) return null;  // own hold, not a conflict
-  return h;
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// §23 PHASE 3 — Studio-side Layer 2+3 + truss soft-hold helpers — VERBATIM
-// (mirrors IMS allocator so soft-hold drafts carry actual BOM, not just intent)
-// ════════════════════════════════════════════════════════════════════════════
-
-// ─── Layer 2 — Pillar Height Resolver (mirrors IMS) ──
-const resolvePillarHeight = (H, trussInv) => {
-  if (!H || H <= 0) return { pieces: [], joints: 0, shortage: true, reason: "Invalid height" };
-  const inv = trussInv || {};
-  const pillarSizes = Object.keys(inv.pillars || {}).map(Number).sort((a,b) => b - a);
-  const beamSizes   = Object.keys(inv.beams   || {}).map(Number).sort((a,b) => b - a);
-  if (pillarSizes.length === 0) return { pieces: [], joints: 0, shortage: true, reason: "No pillar sizes defined" };
-  if (pillarSizes.includes(H)) {
-    return { pieces: [{ type: "pillar", size: H, qty: 1 }], joints: 0, shortage: false };
-  }
-  for (const topPillar of pillarSizes) {
-    if (topPillar >= H) continue;
-    const gap = H - topPillar;
-    if (beamSizes.includes(gap)) {
-      return { pieces: [{ type: "beam", size: gap, qty: 1, position: "ground" }, { type: "pillar", size: topPillar, qty: 1, position: "top" }], joints: 1, shortage: false };
-    }
-    for (let i = 0; i < beamSizes.length; i++) {
-      for (let j = i; j < beamSizes.length; j++) {
-        if (beamSizes[i] + beamSizes[j] === gap) {
-          return { pieces: [{ type: "beam", size: beamSizes[i], qty: 1, position: "ground" }, { type: "beam", size: beamSizes[j], qty: 1, position: "ground" }, { type: "pillar", size: topPillar, qty: 1, position: "top" }], joints: 1, shortage: false };
-        }
-      }
-    }
-  }
-  return { pieces: [], joints: 0, shortage: true, reason: `Cannot assemble ${H}ft pillar from available sizes` };
-};
-
-// ─── Layer 3 — Beam Segment Resolver (mirrors IMS) ──
-const resolveBeamSegment = (targetLength, trussInv) => {
-  if (!targetLength || targetLength <= 0) return { pieces: [], joints: 0, shortage: false, gap: 0 };
-  const MAX_GAP = 1.0;
-  const inv = trussInv || {};
-  const beamSizes = Object.keys(inv.beams || {}).map(Number).filter(n => n > 0).sort((a,b) => b - a);
-  if (beamSizes.length === 0) return { pieces: [], joints: 0, shortage: true, reason: "No beam sizes" };
-
-  const targetFloor = Math.floor(targetLength + 1e-9);
-  const minAcceptable = Math.max(0, Math.ceil(targetLength - MAX_GAP - 1e-9));
-
-  const candidates = [];
-  const MAX_DEPTH = 6;
-  const search = (remainingBudget, combo, startIdx, currentSum) => {
-    if (currentSum >= minAcceptable && currentSum <= targetFloor) {
-      candidates.push({ combo: [...combo], sum: currentSum });
-    }
-    if (combo.length >= MAX_DEPTH) return;
-    if (remainingBudget < beamSizes[beamSizes.length - 1]) return;
-    for (let i = startIdx; i < beamSizes.length; i++) {
-      if (beamSizes[i] <= remainingBudget) {
-        combo.push(beamSizes[i]);
-        search(remainingBudget - beamSizes[i], combo, i, currentSum + beamSizes[i]);
-        combo.pop();
-      }
-    }
-  };
-  search(targetFloor, [], 0, 0);
-
-  if (candidates.length === 0) {
-    const fallback = beamSizes.find(s => s <= targetFloor);
-    if (fallback) return { pieces: [{ type: "beam", size: fallback, qty: 1 }], joints: 0, shortage: true, gap: targetLength - fallback, reason: `No combo within ${MAX_GAP}ft of ${targetLength}ft; closest under = ${fallback}ft` };
-    return { pieces: [], joints: 0, shortage: true, reason: `No combo possible for ${targetLength}ft` };
-  }
-
-  let best = null;
-  for (const cand of candidates) {
-    const joints = cand.combo.length - 1;
-    const gap = targetLength - cand.sum;
-    const sizeCounts = {};
-    cand.combo.forEach(s => { sizeCounts[s] = (sizeCounts[s] || 0) + 1; });
-    let abundance = Infinity;
-    Object.entries(sizeCounts).forEach(([sz, qty]) => {
-      const stock = inv.beams[sz]?.stock || 0;
-      const ratio = Math.log10(Math.max(stock - qty + 1, 1));
-      if (ratio < abundance) abundance = ratio;
-    });
-    if (!isFinite(abundance)) abundance = 0;
-    const cost = (100 * joints) + (10 * gap) + (1 * cand.combo.length) - (0.1 * abundance);
-    if (!best || cost < best.cost) best = { cost, joints, gap, sizeCounts, sum: cand.sum };
-  }
-
-  const piecesArr = Object.entries(best.sizeCounts).map(([sz, qty]) => ({ type: "beam", size: parseFloat(sz), qty })).sort((a, b) => b.size - a.size);
-  return { pieces: piecesArr, joints: best.joints, shortage: false, cost: best.cost, gap: best.gap, rounded: best.sum !== targetLength };
-};
-
-// ─── allocateTruss (mirrors IMS Phase 2) ──
-const allocateTruss = (zoneId, topology, trussInv) => {
-  if (!topology) return null;
-  const inv = trussInv || {};
-  const result = {
-    trussId: `T-${zoneId}`,
-    zone: zoneId,
-    trussConfig: topology.config,
-    method: topology.method,
-    pillarCount: topology.pillarCount,
-    pillars: [],
-    beamSegments: [],
-    totals: { pillarsUsed: {}, beamsUsed: {}, totalJoints: 0, physicalL: topology.physicalL, physicalW: topology.physicalW },
-    shortage: false,
-    shortageNotes: [],
-  };
-  topology.pillars.forEach((p, idx) => {
-    const r = resolvePillarHeight(p.H, inv);
-    result.pillars.push({ id: p.id, H: p.H, pieces: r.pieces, joints: r.joints });
-    result.totals.totalJoints += r.joints;
-    if (r.shortage) { result.shortage = true; result.shortageNotes.push(`${p.id}: ${r.reason}`); }
-    r.pieces.forEach(pc => {
-      if (pc.type === "pillar") result.totals.pillarsUsed[pc.size] = (result.totals.pillarsUsed[pc.size] || 0) + pc.qty;
-      else                       result.totals.beamsUsed[pc.size]   = (result.totals.beamsUsed[pc.size]   || 0) + pc.qty;
-    });
-  });
-  topology.beams.forEach(b => {
-    const r = resolveBeamSegment(b.lengthFt, inv);
-    result.beamSegments.push({ side: b.side, lengthFt: b.lengthFt, pieces: r.pieces, joints: r.joints });
-    result.totals.totalJoints += r.joints;
-    if (r.shortage) { result.shortage = true; result.shortageNotes.push(`Beam ${b.side} (${b.lengthFt}ft): ${r.reason}`); }
-    r.pieces.forEach(pc => {
-      result.totals.beamsUsed[pc.size] = (result.totals.beamsUsed[pc.size] || 0) + pc.qty;
-    });
-  });
-  return result;
-};
-
-// ─── Helper — Build truss soft-hold event entry for an entire fn list — VERBATIM ──
-const buildSoftHoldEntry = ({ clientId, clientName, salesperson, fnList, trussInv, expiry, eventDate }) => {
-  const trusses = [];
-  (fnList || []).forEach(fn => {
-    const zc = fn?.zoneConfig || {};
-    const en = fn?.enabledEls || {};
-    Object.entries(zc).forEach(([zoneKey, z]) => {
-      if (!z) return;
-      if (en && Object.keys(en).length > 0 && !en[zoneKey]) return;
-      // A zone can carry more than one truss structure (row 0 = the zone's own scalar fields, plus
-      // any z.extraTrussRows added via "+ Add Truss") — reserve stock for each independently.
-      const rows = [z, ...(z.extraTrussRows || [])];
-      rows.forEach((row, rowIdx) => {
-        const layer0 = resolveTrussConfig(row);
-        if (!layer0 || layer0.source === "none" || layer0.source === "invalid") return;
-        const eng = trussInv?.settings || {};
-        const L = parseFloat(row.dims?.L) || 0;
-        const W = parseFloat(row.dims?.W) || 0;
-        const H = parseFloat(row.dims?.H) || 0;
-        const spanFt = layer0.spanFt || (layer0.source === "auto-3dim" ? Math.max(L, W) : 0);
-        const backDepth = row.trussBackDepth || eng.defaultBackDepthFt || 4;
-        const topology = buildTopology(layer0.config, L, W, H, spanFt, backDepth, eng);
-        if (!topology) return;
-        const alloc = allocateTruss(`${fn.fnIdx || 0}-${zoneKey}${rowIdx > 0 ? `-r${rowIdx}` : ""}`, topology, trussInv);
-        if (!alloc) return;
-        trusses.push({
-          fnIdx: fn.fnIdx ?? 0,
-          zoneKey: rowIdx > 0 ? `${zoneKey} (truss #${rowIdx + 1})` : zoneKey,
-          trussConfig: layer0.config,
-          allocation: alloc,
-          shortage: !!alloc.shortage,
-        });
-      });
-    });
-  });
-  if (trusses.length === 0) return null;
-  // Aggregate totals
-  const totalPillarsUsed = {};
-  const totalBeamsUsed   = {};
-  let totalJoints = 0;
-  trusses.forEach(t => {
-    Object.entries(t.allocation.totals.pillarsUsed || {}).forEach(([sz, q]) => { totalPillarsUsed[sz] = (totalPillarsUsed[sz] || 0) + q; });
-    Object.entries(t.allocation.totals.beamsUsed   || {}).forEach(([sz, q]) => { totalBeamsUsed[sz]   = (totalBeamsUsed[sz]   || 0) + q; });
-    totalJoints += t.allocation.totals.totalJoints || 0;
-  });
-  return {
-    eoId: `soft-${clientId}`,        // soft-hold pseudo-eoId; promoted to real EO id on SOLD
-    clientId,
-    clientName,
-    fnIdx: 0,
-    state: "soft",
-    expiry: expiry || (Date.now() + 24 * 60 * 60 * 1000),
-    heldBy: salesperson || "—",
-    createdAt: Date.now(),
-    eventDate: eventDate || "",
-    trusses,
-    totalPillarsUsed,
-    totalBeamsUsed,
-    totalJoints,
-    shortageBorne: false,
-  };
-};
 
 // ═══ DEAL CHECK REBUILD HELPERS (§7.9 · Deploy 1) — VERBATIM ═══
 
@@ -2042,7 +1843,6 @@ export default function StudioApp() {
   const [dcFloralCalcOpen, setDcFloralCalcOpen] = useState({});
   const [dcCollapsedZones, setDcCollapsedZones] = useState({});
   const [floralHardPropMap, setFloralHardPropMap] = useState(FLORAL_HARDPROP_DEFAULT);
-  const [softHolds, setSoftHolds] = useState({});
   const [trussAlloc, setTrussAlloc] = useState({});
   const [dcAmendDiff, setDcAmendDiff] = useState(null);
   const [amendRequests, setAmendRequests] = useState([]);
@@ -3287,27 +3087,16 @@ export default function StudioApp() {
         (async () => { try { const rows = await fetchAll("dc_photo_knowledge"); if (Array.isArray(rows) && !cancelled) { const m = {}; for (const r of rows) { if (r?.id && r.data?.imsId) m[r.id] = r.data; } setPhotoKnowledge(m); } } catch { /* table missing → knowledge disabled, AI still works */ } })(),
         (async () => { try { const v = await kvGet(FLORAL_HARDPROP_MAP_SK); if (v != null) { const m = parse(v); if (m && typeof m === "object" && !Array.isArray(m) && !cancelled) setFloralHardPropMap(m); } } catch {} })(),
         (async () => { try { const v = await kvGet(DC_RUN_COUNTER_SK); if (v != null) { const rc = parse(v); if (rc && typeof rc === "object" && !Array.isArray(rc) && !cancelled) setDcRunCounter(rc); } } catch {} })(),
-        (async () => {
-          try {
-            const rows = await fetchAll("soft_holds");
-            if (Array.isArray(rows) && !cancelled) {
-              const now = Date.now(); const live = {}; const expiredIds = [];
-              for (const r of rows) { const h = r.data || {}; const exp = typeof h.expiry === "number" ? h.expiry : Date.parse(h.expiry || ""); if (exp && exp > now) live[r.id] = h; else expiredIds.push(r.id); }
-              setSoftHolds(live);
-              for (const id of expiredIds) supabase.from("soft_holds").delete().eq("id", id).then(() => {});
-            }
-          } catch {}
-        })(),
         (async () => { try { const v = await kvGet(DC_CACHE_SK); if (v != null) { const dc = parse(v); if (dc && typeof dc === "object" && !Array.isArray(dc) && !cancelled) setDcCache(dc); } } catch {} })(),
         (async () => {
           try {
             const rows = await fetchAll("truss_allocations"); // now the shared table (IMS + Studio), off the blob
             if (Array.isArray(rows) && !cancelled) {
-              const now = Date.now(); const cleaned = {};
+              const cleaned = {};
               for (const r of rows) {
                 const entry = rowToAlloc(r);
                 if (!Array.isArray(entry.events)) { cleaned[entry.date] = entry; continue; }
-                const liveEvents = entry.events.filter(ev => { if (ev.state !== "soft") return true; const exp = typeof ev.expiry === "number" ? ev.expiry : Date.parse(ev.expiry || ""); return exp && exp > now; });
+                const liveEvents = entry.events.filter(ev => ev.state !== "soft"); // soft holds are gone; drop one the old feature left behind
                 cleaned[entry.date] = { ...entry, events: liveEvents };
               }
               setTrussAlloc(cleaned);
@@ -9747,30 +9536,6 @@ export default function StudioApp() {
     return { ok, fail };
   }, [bulkTag.running, aiTagImage, saveLib, showMsg, taxonomy, ensureLibItems]);
 
-  // ── Soft-hold expiry sweeper ─────────────────────────────────────────────────
-  // Runs every 5 minutes while the app is open. Expired soft holds are removed from
-  // in-memory state AND deleted from the soft_holds DB table so other salesperson
-  // sessions immediately see freed inventory. The draft in client_ledger is untouched.
-  useEffect(() => {
-    if (!authUser) return;
-    const sweep = () => {
-      const now = Date.now();
-      setSoftHolds(prev => {
-        const expiredIds = Object.entries(prev)
-          .filter(([, h]) => { const exp = typeof h.expiry === "number" ? h.expiry : Date.parse(h.expiry || ""); return !exp || exp <= now; })
-          .map(([id]) => id);
-        if (!expiredIds.length) return prev;
-        const next = { ...prev };
-        expiredIds.forEach(id => delete next[id]);
-        for (const id of expiredIds) supabase.from("soft_holds").delete().eq("id", id).then(() => {});
-        return next;
-      });
-    };
-    sweep();
-    const id = setInterval(sweep, 5 * 60 * 1000);
-    return () => clearInterval(id);
-  }, [authUser]);
-
   // ── App-wide background bulk AI tagging ─────────────────────────────────────
   // Tags every untagged library photo. Lives at the app root so it keeps running while you move
   // between Studio screens, with a global progress pill + a completion toast. Results merge into
@@ -10455,7 +10220,7 @@ export default function StudioApp() {
 
   // ═══════════════════════════════════════════════════════════════
   // DEAL CHECK orchestration — IMS fetch (Supabase) + AI photo-match loop +
-  // subcat-scoped Generate engine + truss soft-hold bridge writes. VERBATIM ports
+  // subcat-scoped Generate engine. VERBATIM ports
   // (Redis→Supabase rewires are the only adaptations).
   // ═══════════════════════════════════════════════════════════════
 
@@ -10506,29 +10271,6 @@ export default function StudioApp() {
     if (typeof cli.dcMpIncludeMinusOne === "boolean") setDcMpIncludeMinusOne(cli.dcMpIncludeMinusOne);
     if (typeof cli.dcMpIncludeDismantle === "boolean") setDcMpIncludeDismantle(cli.dcMpIncludeDismantle);
   }, [dcRun, activeClientId, clientLedger]);
-
-  // ═══ Part 3 — write Studio truss soft-holds into the truss_allocations TABLE ═══
-  // Merges Studio's soft event into each date's existing events[], dropping any prior
-  // soft entry for the same eoId (soft-<clientId>) and PRESERVING IMS hard events.
-  // Row shape: { date, events:[...], pool:{...rest} } — matches IMS rowToAlloc/allocToRow.
-  const writeStudioTrussSoftHolds = useCallback(async (allocByDate) => {
-    for (const [date, entry] of Object.entries(allocByDate || {})) {
-      if (!entry) continue;
-      try {
-        // Read the existing row first (do NOT clobber IMS hard events).
-        const { data: rows } = await supabase.from("truss_allocations").select("*").eq("date", date).maybeSingle();
-        const existingEvents = Array.isArray(rows?.events) ? rows.events : [];
-        const pool = rows?.pool || {};
-        // Drop any prior entry for this client's soft hold (idempotent re-Generate).
-        const filtered = existingEvents.filter(ev => !(ev?.eoId === entry.eoId && ev?.state === "soft"));
-        filtered.push(entry);
-        const row = { date, events: filtered, pool };
-        await supabase.from("truss_allocations").upsert(row, { onConflict: "date" });
-      } catch (e) {
-        console.warn("[tier23-p3] writeStudioTrussSoftHolds failed for", date, e?.message || e);
-      }
-    }
-  }, []);
 
   // On-demand IMS availability for the Build-view per-element stock browser: fetch inventory + one date's
   // blocks, cached per date. free = owned − blocked (getStudioAvailable). Lets the Build modal show live
@@ -11517,7 +11259,6 @@ export default function StudioApp() {
     // spec object in getCardSpecsForZone.
     const newKitEdits = { ...dcKitEdits };
     let kitEditsSeeded = false;
-    const matchedItemIds = new Set();
     // Every fnIdx actually processed this run gets its current valid cardKey set recorded here —
     // read by the final merge below to stop it resurrecting a manual-swap card whose underlying
     // Build element is genuinely gone/renamed/reindexed (a real prune), not just protecting it from
@@ -11654,9 +11395,7 @@ export default function StudioApp() {
             resolvedAt: Date.now(),
           };
           if (primary?.imsId) {
-            matchedItemIds.add(primary.imsId); cardsResolved += 1;
-            // Kit → soft-hold each COMPONENT individually too (customised per-deal via dcKitEdits, else
-            // the master subItems), so every sub-item is reserved in IMS, not just the kit shell.
+            cardsResolved += 1;
             const pItem = inventory.find(i => i.id === primary.imsId);
             if (pItem && Array.isArray(pItem.subItems) && pItem.subItems.length) {
               const edited = dcKitEdits[fnIdx]?.[spec.cardKey];
@@ -11669,8 +11408,6 @@ export default function StudioApp() {
                 newKitEdits[fnIdx][spec.cardKey] = spec.kitOverrides;
                 kitEditsSeeded = true;
               }
-              const comps = edited || (Array.isArray(spec.kitOverrides) ? spec.kitOverrides : pItem.subItems);
-              comps.forEach(cp => { if (cp?.itemId) matchedItemIds.add(cp.itemId); });
             }
           }
         };
@@ -11718,77 +11455,9 @@ export default function StudioApp() {
     });
     setDcZoneState(newZoneState);
     if (kitEditsSeeded) setDcKitEdits(newKitEdits);
-    // §26 — Add artificial flower allocated item IDs to soft-holds
-    Object.values(dcArtFlowerAlloc).forEach(allocs => {
-      (allocs || []).forEach(a => { if (a.itemId) matchedItemIds.add(a.itemId); });
-    });
-    // §7.9.7 — write 24h soft holds for newly-matched items (pre-SOLD only)
-    if (!isSold && matchedItemIds.size > 0) {
-      const expiry = Date.now() + 24 * 60 * 60 * 1000;
-      const salesperson = (typeof authUser !== "undefined" ? authUser?.name : "") || "—";
-      const eventName = cli.name || "—";
-      const nextHolds = { ...softHolds };
-      const holdRows = [];
-      for (const itemId of matchedItemIds) {
-        const h = { salesperson, expiry, clientId: counterKey, eventName };
-        nextHolds[itemId] = h; holdRows.push({ id: itemId, data: h });
-      }
-      setSoftHolds(nextHolds);
-      // Row-per-item to the soft_holds TABLE (off the whole-blob write) — only the items we just held.
-      try { if (holdRows.length) await supabase.from("soft_holds").upsert(holdRows, { onConflict: "id" }); } catch {}
-    }
     // Owner decision: a SOLD deal's inventory changes reserve immediately (no approval gate) —
     // see reconcileSoldInventoryBlocks above.
     if (isSold) { try { await reconcileSoldInventoryBlocks(fnsToProcess, newCards, inventory, cli); } catch (e) { console.warn("[reconcile] sold-deal block reconcile failed:", e?.message || e); } }
-    // ════════════════════════════════════════════════════════════════════════
-    // §23 PHASE 3 — Write truss soft-hold draft to the truss_allocations TABLE.
-    // Pre-SOLD only. Merges Studio's soft event into each date row, preserving IMS
-    // hard events (Part 3 bridge write — adapted Redis→Supabase).
-    // ════════════════════════════════════════════════════════════════════════
-    try {
-      const trussInvLocal = dealCheckData?.trussInv;
-      if (!isSold && trussInvLocal && trussInvLocal.pillars) {
-        const salesperson = (typeof authUser !== "undefined" ? authUser?.name : "") || "—";
-        const fnList = fnsToProcess;
-        const fnsByDate = {};
-        fnList.forEach(fn => {
-          const d = fn.fnDate || cli.eventDate || "";
-          if (!d) return;
-          if (!fnsByDate[d]) fnsByDate[d] = [];
-          fnsByDate[d].push(fn);
-        });
-        const allocByDate = {};
-        let nextAlloc = { ...trussAlloc };
-        let datesWritten = 0;
-        Object.entries(fnsByDate).forEach(([d, fnsForDate]) => {
-          const entry = buildSoftHoldEntry({
-            clientId: counterKey,
-            clientName: cli.name || "—",
-            salesperson,
-            fnList: fnsForDate,
-            trussInv: trussInvLocal,
-            expiry: Date.now() + 24 * 60 * 60 * 1000,
-            eventDate: d,
-          });
-          if (!entry) return;
-          allocByDate[d] = entry;
-          // Keep local React mirror in sync (drop prior soft for this client, preserve hard)
-          const dateEntry = nextAlloc[d] || { events: [] };
-          const existing = Array.isArray(dateEntry.events) ? [...dateEntry.events] : [];
-          const filtered = existing.filter(ev => !(ev.state === "soft" && ev.clientId === counterKey));
-          filtered.push(entry);
-          nextAlloc[d] = { ...dateEntry, events: filtered, lastCascadeAt: Date.now(), lastCascadeBy: `studio-softhold-${salesperson}` };
-          datesWritten += 1;
-        });
-        if (datesWritten > 0) {
-          setTrussAlloc(nextAlloc);
-          await writeStudioTrussSoftHolds(allocByDate);
-          console.log("[tier23-p3] truss soft-hold written for", datesWritten, "date(s) ·", cli.name);
-        }
-      }
-    } catch (e) {
-      console.warn("[tier23-p3] truss soft-hold write failed:", e?.message || e);
-    }
     setDcGenerating(false);
     setDcGenStatus("");
     setDcAbortRef(null);
@@ -11799,7 +11468,7 @@ export default function StudioApp() {
       ? `Deal Check ready · ${cardsUnmatched} item${cardsUnmatched === 1 ? "" : "s"} couldn't be matched to IMS — please check`
       : "Deal Check ready", "green");
     return { ok: true, summary: { zonesProcessed, cardsResolved, cardsAi, cardsNameMatch, cardsUnmatched } };
-  }, [activeClientId, clientLedger, dcRunCounter, dcCards, dcZoneState, dcKitEdits, floralHardPropMap, softHolds, collectAllFunctionData, clientDate, authUser, showMsg, rcItems, trussAlloc, dealCheckData, writeStudioTrussSoftHolds, reconcileSoldInventoryBlocks]);
+  }, [activeClientId, clientLedger, dcRunCounter, dcCards, dcZoneState, dcKitEdits, floralHardPropMap, collectAllFunctionData, clientDate, authUser, showMsg, rcItems, trussAlloc, dealCheckData, reconcileSoldInventoryBlocks]);
   useEffect(() => { runDealCheckGenerateRef.current = runDealCheckGenerate; });
 
   // Fill Deal Check from the build as soon as it opens, deterministically. The Generate button that
@@ -12100,7 +11769,7 @@ export default function StudioApp() {
     dcSaveBaselineRef, dcConflictWarnedAtRef, dcStateReadyForClientRef,
     dcGenStatus, setDcGenStatus, dcActiveTab, setDcActiveTab, dcShowAllFns, setDcShowAllFns, dcCollapsedFnBlocks, setDcCollapsedFnBlocks, dcMpOverrides, setDcMpOverrides, dcMpWinCount, setDcMpWinCount, dcMpIncludeMinusOne, setDcMpIncludeMinusOne,
     dcMpIncludeDismantle, setDcMpIncludeDismantle, dcMpCalcOpen, setDcMpCalcOpen, dcFloralCalcOpen, setDcFloralCalcOpen, dcCollapsedZones, setDcCollapsedZones,
-    floralHardPropMap, setFloralHardPropMap, softHolds, setSoftHolds, trussAlloc, setTrussAlloc, dcAmendDiff, setDcAmendDiff, dcSavingDraft, setDcSavingDraft,
+    floralHardPropMap, setFloralHardPropMap, trussAlloc, setTrussAlloc, dcAmendDiff, setDcAmendDiff, dcSavingDraft, setDcSavingDraft,
     amendRequests, submitAmendRequest,
     dcInventoryCache, setDcInventoryCache, dcBrowseAllOpen, setDcBrowseAllOpen, dcSwapModal, setDcSwapModal, dcColorModal, setDcColorModal,
     photoKnowledge, saveKnowledgeEntry, dcKnowledgeKey,
@@ -12114,9 +11783,8 @@ export default function StudioApp() {
     calcPhotoCost, calcStructCost, calcFullEventCost, getFullCost, totalCost, transportCalc, grandTotal, lastSavedFnTotal, agencyFeeAmt, pricingReady,
     collectAllFunctionData, calcFunctionCost, calcFnFloralSourcingCost, calcFnFloralDetail, eventGrandTotal, calcFunctionBreakdown, manpowerPlanForBooking, persistDeptSnapshot, syncDealValueNow, floatPending, dcEoActuals, refreshDcEoActuals,
     // deal check orchestration + persistence (overlay)
-    openDealCheck, runDealCheckGenerate, getStudioAvailable, loadAvailability, getActiveSoftHold, reliableSave, DC_CACHE_SK,
+    openDealCheck, runDealCheckGenerate, getStudioAvailable, loadAvailability, reliableSave, DC_CACHE_SK,
     flushDcAutosaveRef,
-    writeStudioTrussSoftHolds,
     // deal check inventory-tab module helpers
     isZoneDirty, parseCardKey, PLATFORM_FATTA_CODE, PLATFORM_STAND_CODE,
     // module helpers exposed for views

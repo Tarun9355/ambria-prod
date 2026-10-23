@@ -30,7 +30,7 @@ export default function DCTrussTab({ ctx }) {
                   // ═══ §23 PHASE 2 — TRUSS TAB BODY ═══
                   // Per-fn / per-zone preview using Layer 0 + Layer 1 + cost calc.
                   // §23 Phase 3 (26 May 2026) — adds reservation status banner showing
-                  // soft-hold / hard-block state per fn date + held-by-other warnings.
+                  // hard-block state per fn date + other events on the same date.
                   const fns = collectAllFunctionData ? collectAllFunctionData() : [];
                   if (fns.length === 0) return <div style={{padding:"50px 30px",textAlign:"center",color:"#5A6076",fontSize:13,lineHeight:1.6}}>No functions configured yet.</div>;
                   const trussInv = dealCheckData?.trussInv;
@@ -54,9 +54,7 @@ export default function DCTrussTab({ ctx }) {
 
                   // §23 Phase 3 — resolve reservation state for THIS client on the SELECTED fn date.
                   // States we render:
-                  //   "free"        — no entry yet, will be created on next Generate
-                  //   "soft-own"    — my soft hold present, expires at X
-                  //   "soft-other"  — someone else's soft hold (read indicator only)
+                  //   "free"        — no entry yet; the truss is reserved when the deal is SOLD
                   //   "hard"        — locked permanent block (post-SOLD)
                   //   "hard-amend"  — SOLD event being edited; diff vs current allocation
                   // Active fn only. Every other section of this tab is already scoped to the
@@ -72,18 +70,14 @@ export default function DCTrussTab({ ctx }) {
                   if (activeResDate) {
                     const d = activeResDate;
                     const events = trussAlloc?.[d]?.events || [];
-                    const ownEntry = events.find(ev => ev.clientId === currentClientId);
+                    const ownEntry = events.find(ev => ev.clientId === currentClientId && ev.state === "hard");
                     if (ownEntry) {
-                      const isSoldEvent = (clientLedger || []).find(c => c.id === currentClientId)?.status === "booked";
-                      reservationByDate[d] = {
-                        state: ownEntry.state === "hard" ? (isSoldEvent ? "hard" : "hard") : (ownEntry.heldBy === currentSalesperson ? "soft-own" : "soft-other"),
-                        entry: ownEntry,
-                      };
+                      reservationByDate[d] = { state: "hard", entry: ownEntry };
                     } else {
                       reservationByDate[d] = { state: "free", entry: null };
                     }
-                    // Always collect held-by-others for visibility
-                    const others = events.filter(ev => ev.clientId !== currentClientId);
+                    // Always collect the other events on this date for visibility
+                    const others = events.filter(ev => ev.clientId !== currentClientId && ev.state === "hard");
                     if (others.length > 0) heldByOthersByDate[d] = others;
                   }
 
@@ -226,18 +220,6 @@ export default function DCTrussTab({ ctx }) {
                    .map(([len, n]) => `${n} × ${len}ft`).join(" · ");
                   const flagEmoji = (flag) => flag === "green" ? "🟢" : flag === "yellow" ? "🟡" : "🔴";
 
-                  // §23 Phase 3 — Format expiry as relative time ("expires in 18h")
-                  const fmtExpiry = (exp) => {
-                    if (!exp) return "";
-                    const ms = typeof exp === "number" ? exp : Date.parse(exp || "");
-                    const diff = ms - Date.now();
-                    if (diff <= 0) return "expired";
-                    const hours = Math.floor(diff / (1000 * 60 * 60));
-                    if (hours >= 1) return `expires in ${hours}h`;
-                    const mins = Math.floor(diff / (1000 * 60));
-                    return `expires in ${mins}m`;
-                  };
-
                   // Deal Check sits on a wedding-artwork ground, so translucent tints let the
                   // artwork bleed through and washed the status text out. Same answer as Florals:
                   // opaque white card, state colour carried by the left stripe instead of the fill.
@@ -298,26 +280,10 @@ export default function DCTrussTab({ ctx }) {
                         let label, sublabel, accentColor, borderColor, icon;
                         if (res.state === "free") {
                           label = "Truss not reserved yet on " + d;
-                          sublabel = "Click Generate to soft-hold inventory for 24 hours.";
+                          sublabel = "The truss is reserved when this deal is marked SOLD.";
                           accentColor = "#6B7280";
                           borderColor = "#E4E6EA";
                           icon = "📐";
-                        } else if (res.state === "soft-own") {
-                          const ev = res.entry;
-                          const ttotal = Object.values(ev.totalPillarsUsed || {}).reduce((s,n)=>s+n,0);
-                          const btotal = Object.values(ev.totalBeamsUsed || {}).reduce((s,n)=>s+n,0);
-                          label = `✅ Reserved on ${d} · ${fmtExpiry(ev.expiry)}`;
-                          sublabel = `${ttotal} pillar piece(s) + ${btotal} beam piece(s) held in your name. Re-Generate to refresh expiry.`;
-                          accentColor = "#10B981";
-                          borderColor = "#CDEBDF";
-                          icon = "🔒";
-                        } else if (res.state === "soft-other") {
-                          const ev = res.entry;
-                          label = `⚠️ Held by ${ev.heldBy} · ${fmtExpiry(ev.expiry)}`;
-                          sublabel = "Another salesperson has soft-reserved truss inventory under this client name. Contact them or wait for expiry.";
-                          accentColor = "#F59E0B";
-                          borderColor = "#F4E2C0";
-                          icon = "⏳";
                         } else if (res.state === "hard") {
                           const ev = res.entry;
                           const ttotal = Object.values(ev.totalPillarsUsed || {}).reduce((s,n)=>s+n,0);
@@ -431,7 +397,7 @@ export default function DCTrussTab({ ctx }) {
                         </div>
                         {anyDefault && <div style={{marginTop:6,fontSize:12,lineHeight:1.5,color:"#B45309"}}>ℹ️ Some zones defaulted to Half Box (sales didn't pick) — review &amp; pick in Build to lock the type.</div>}
                         {anyShortage && <div style={{marginTop:4,fontSize:12,lineHeight:1.5,color:"#DC2626"}}>⚠️ One or more zones have invalid truss dimensions — fix in Build before SOLD.</div>}
-                        <div style={{marginTop:6,fontSize:11,lineHeight:1.5,color:INK_3,fontStyle:"italic"}}>§23 Phase 3 active — Generate writes a 24h soft-hold to IMS; SOLD promotes to hard block.</div>
+                        <div style={{marginTop:6,fontSize:11,lineHeight:1.5,color:INK_3,fontStyle:"italic"}}>§23 Phase 3 active — marking the deal SOLD reserves this truss (hard block).</div>
                       </div>
                       </div>
 

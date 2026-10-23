@@ -512,7 +512,7 @@ export const computeEventTrussTotals = (trusses) => {
   return totals;
 };
 
-// ─── Layer 4.2 — Build event allocation from EO (or soft-hold draft) ────────
+// ─── Layer 4.2 — Build event allocation from EO ────────
 // Iterates zones in the event, runs Layer 1+2+3 for each, returns event entry.
 // Caller passes the dimensions/configs source (EO.functionsDetail OR draft from Studio).
 export const buildEventAllocation = (eventMeta, fnList, trussInv) => {
@@ -701,21 +701,6 @@ export const simulateImpact = (sim, dateAlloc, otherDrafts, trussInv) => {
 
 // ─── Phase 3 backfill flag storage key ───────────────────────────────────────
 export const TRUSS_P3_BACKFILLED_SK = "ambria-ims-tier23-p3-backfilled-v1";
-
-// ─── Layer 4.5 — Expire stale soft holds for a date ─────────────────────────
-// Returns updated events array (or null if no changes).
-export const expireStaleSoftHolds = (eventsForDate, now) => {
-  if (!Array.isArray(eventsForDate)) return null;
-  const nowMs = now || Date.now();
-  let changed = false;
-  const kept = eventsForDate.filter(ev => {
-    if (ev.state !== "soft") return true;
-    const expMs = typeof ev.expiry === "number" ? ev.expiry : Date.parse(ev.expiry || "");
-    if (!expMs || expMs <= nowMs) { changed = true; return false; }
-    return true;
-  });
-  return changed ? kept : null;
-};
 
 // ─── Layer 4.6 — Append audit entry — one INSERT into the truss_audit TABLE (off the blob) ──
 export const appendTrussAudit = async (entry) => {
