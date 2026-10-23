@@ -28,6 +28,9 @@ export const STORAGE_FOLDERS = {
   // The admin-uploaded punch-in briefing video — self-hosted, not a YouTube link (see
   // AttendanceVideoPlayer.jsx for why). Its own folder, distinct from the selfie photos above.
   ATTENDANCE_VIDEO: "attendance-video",
+  // Reference photos on a Colour Catalogue entry (IMS Admin → Library → Palettes) — what the
+  // colour actually looks like on fabric/flowers, distinct from the swatch hex.
+  COLOUR_REF: "colour-ref",
 };
 
 /**

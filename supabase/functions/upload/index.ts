@@ -51,6 +51,8 @@ const FOLDERS = new Set([
   "attendance",
   // The self-hosted punch-in briefing video (src/lib/storage.js's ATTENDANCE_VIDEO).
   "attendance-video",
+  // Reference photos on a Colour Catalogue entry (src/lib/storage.js's COLOUR_REF).
+  "colour-ref",
 ]);
 
 const EXT: Record<string, string> = {
