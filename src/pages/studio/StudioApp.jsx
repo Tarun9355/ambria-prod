@@ -85,6 +85,7 @@ import {
 } from "../../lib/studio/pricing";
 import { normalizePaintAllocation, maxRepaintCostInSubcat, paintLinesFor, paintTotalFor } from "../../lib/studio/paint";
 import { sheetItemLine } from "../../lib/studio/sheetRounding";
+import { sigHash } from "../../lib/sigHash";
 import { allocateRowAvailability, netOwnReservedBlocksLive } from "../../lib/studio/dealAvailability";
 import { callClaudeStreaming } from "../../lib/ai";
 import { heavyExtraLabour, eventTimingMultFor, SETTINGS_DEFAULTS, SIT_MULT_DEFAULTS } from "../../lib/ims/constants";
@@ -4007,11 +4008,12 @@ export default function StudioApp() {
     // signature match the row's last-written one and skip the write entirely — the real-time
     // subscription in IMS.jsx had nothing to even receive, so the mandi list stayed on the pre-swap
     // flower indefinitely regardless of how many times Deal Check tried to push it.
-    const sig = JSON.stringify({ inc: snap.income || {}, mp: snap.manpowerDetail || {}, inv: snap.inventory || {}, fab: snap.fabricPlan || {}, dv: snap.dealValue || null, lay: [...layout.entries()],
+    // Stored as a short fingerprint, not the whole string (it was ~72 KB a row — see lib/sigHash.js).
+    const sig = sigHash(JSON.stringify({ inc: snap.income || {}, mp: snap.manpowerDetail || {}, inv: snap.inventory || {}, fab: snap.fabricPlan || {}, dv: snap.dealValue || null, lay: [...layout.entries()],
       flo: (snap.floralPlan?.flowers || []).map(f => `${f.name}:${Math.round((f.qty || 0) * 100)}:${f.colorVariant?.label || ""}:${(f.colorPrefs || []).map(p => p.label).join("/")}`) ,
       // The Florals-tab detail: a short marker (not the whole thing), so an order synced before it existed re-pushes once
       // to get it, and a changed element list or total re-pushes too.
-      fd: snap.floralDetail ? Object.entries(snap.floralDetail).map(([k, v]) => `${k}:${v.total}:${v.mandi?.length}:${v.elements?.length}`).join("|") : "" });
+      fd: snap.floralDetail ? Object.entries(snap.floralDetail).map(([k, v]) => `${k}:${v.total}:${v.mandi?.length}:${v.elements?.length}`).join("|") : "" }));
     // Merge ONLY the Studio-owned projected fields. deptOps (the dept head's edits / actuals — IMS-owned)
     // is preserved verbatim, so re-syncing never wipes their work — including across a regenerate on
     // an already-sold deal, which used to wipe deptOps entirely (manpower overrides, logged mandi
@@ -4083,7 +4085,7 @@ export default function StudioApp() {
       });
     } catch { return; }
     if (!layout.size) return;
-    const laySig = JSON.stringify([...layout.entries()]);
+    const laySig = sigHash(JSON.stringify([...layout.entries()])); // a fingerprint, not the whole layout (was ~7 KB a row)
     try {
       const { data: row } = await supabase.from("event_orders").select("data").eq("id", eo.id).maybeSingle();
       if (!row || !row.data) return;
