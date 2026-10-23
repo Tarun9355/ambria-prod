@@ -24,7 +24,7 @@ import AppSwitcher from "../../components/AppSwitcher.jsx";
 import PullToRefresh from "../../components/shared/PullToRefresh.jsx";
 import { useSwipeDrawer } from "../../lib/useSwipeDrawer";
 import { triggerLmsSync, fetchCachedContracts, fetchSeason, buildDateCategories } from "../../lib/ims/lms";
-import { allocateForDate, buildEventAllocation, eoToFnList, expireStaleSoftHolds, appendTrussAudit, TRUSS_P3_BACKFILLED_SK } from "../../lib/ims/trussEngine";
+import { allocateForDate, buildEventAllocation, eoToFnList, appendTrussAudit, TRUSS_P3_BACKFILLED_SK } from "../../lib/ims/trussEngine";
 import { ensureCdnLibs } from "../../lib/ims/pdf";
 import { kvGet, reliableSave } from "../../lib/ims/kv";
 import { rowToRcItem, rcItemToRow } from "../../lib/rateCard";
@@ -183,7 +183,9 @@ const rowToEO = (row) => ({ ...(row.data || {}), id: row.id, status: row.status 
 // truss_allocations — keyed by date. The reference treats trussAlloc as an object
 // { [date]: entry } where entry = { events, pool, stockSummary, ... }. The table has
 // date / events / pool columns, so the non-events remainder of the entry rides in `pool`.
-const rowToAlloc = (row) => ({ ...(row.pool || {}), date: row.date, events: row.events || [] });
+// Soft-hold events are gone (a truss is reserved only when a deal is sold); one left in a row by the old
+// feature is dropped here, and the next write of that date removes it from the row.
+const rowToAlloc = (row) => ({ ...(row.pool || {}), date: row.date, events: (row.events || []).filter((ev) => ev?.state !== "soft") });
 const allocToRow = (date, entry) => {
   const { events, date: _d, ...rest } = entry || {};
   return { date, events: events || [], pool: rest };
@@ -1002,9 +1004,8 @@ export default function IMS() {
   useEffect(() => { ensureCdnLibs(); }, []);
 
   // ══════════════════════════════════════════════════════════════════════════
-  // §23 PHASE 3 ORCHESTRATOR — keep trussAlloc in sync with sold event orders.
-  // Faithful to the reference: (1) promote soft→hard when an EO is sold, (2) sweep
-  // expired soft holds every 5 min, (3) one-time backfill of already-sold EOs.
+  // §23 PHASE 3 ORCHESTRATOR — keep trussAlloc in sync with sold event orders:
+  // (1) reserve (hard block) when an EO is sold, (2) one-time backfill of already-sold EOs.
   // ══════════════════════════════════════════════════════════════════════════
   // ── Promote soft → hard when EO is sold/confirmed ──
   useEffect(() => {
@@ -1047,28 +1048,6 @@ export default function IMS() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eventOrders, trussInv, user]);
-
-  // ── Soft-hold expiry sweeper — runs every 5 min ──
-  useEffect(() => {
-    if (!user) return;
-    const sweep = () => {
-      const now = Date.now();
-      let next = { ...trussAllocRef.current };
-      const datesChanged = new Set();
-      Object.keys(next).forEach((d) => {
-        const fresh = expireStaleSoftHolds(next[d]?.events || [], now);
-        if (fresh) { next[d] = { ...next[d], events: fresh }; datesChanged.add(d); }
-      });
-      if (datesChanged.size === 0) return;
-      datesChanged.forEach((d) => { next = allocateForDate(next, d, next[d]?.events || [], trussInv, "soft-hold-expiry-sweep"); });
-      setTrussAlloc(next);
-      datesChanged.forEach((d) => appendTrussAudit({ date: d, event: "soft-hold-expired", eventCount: next[d]?.events?.length || 0 }));
-    };
-    sweep();
-    const id = setInterval(sweep, 5 * 60 * 1000);
-    return () => clearInterval(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, trussInv]);
 
   // ── One-time backfill of already-sold EOs into truss allocation ──
   useEffect(() => {

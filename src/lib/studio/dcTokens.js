@@ -110,6 +110,7 @@ export const DC_CSS = `
 .dc2-sum{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
 @media (max-width:1040px){.dc2-sum{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:560px){.dc2-sum{grid-template-columns:1fr}}
+@media (min-width:561px){.dc2-sum.dc2-sum2{grid-template-columns:repeat(2,minmax(0,1fr))}}
 /* Content cards (department groups, trade cards). Three up rather than the summary
    bar's four, because these carry two right-aligned number columns as well as a
    name — at a quarter width the name would ellipsise to nothing. Grid, not

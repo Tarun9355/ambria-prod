@@ -65,7 +65,6 @@ export const PALETTE_SK = "ambria-palette-v1";
 export const DC_RUN_COUNTER_SK = "ambria-dc-run-counter-v1";
 export const DC_CACHE_SK = "ambria-dc-cache-v1";
 export const FLORAL_HARDPROP_MAP_SK = "ambria-floral-hardprop-v1";
-export const SOFT_HOLDS_SK = "ambria-soft-holds-v1";
 export const TRUSS_ALLOC_SK = "ambria-ims-truss-allocations-v1";
 
 export const MAX_NOTIFS = 200;
