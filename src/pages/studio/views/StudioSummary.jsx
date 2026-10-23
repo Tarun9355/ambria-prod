@@ -199,7 +199,7 @@ export default function StudioSummary({ ctx }) {
     isAdmin, clientLedger, saveClientLedger, eventOrders, activeClientId, askConfirm,
     // events / cost sheet
     eventGrandTotal, pricingReady, collectAllFunctionData, calcFunctionBreakdown,
-    buildCombinedCostSheetData, csData, setCsData, saveSession, showMsg, syncDealValueNow, syncDeptOpsHeadless,
+    buildCombinedCostSheetData, applyCostSheetQty, csData, setCsData, saveSession, showMsg, syncDealValueNow, syncDeptOpsHeadless,
     // summary accordion state
     expandedSummaryFnIdx, setExpandedSummaryFnIdx,
     // pricing helpers
@@ -409,6 +409,16 @@ export default function StudioSummary({ ctx }) {
   // Which zone cards are open on the cost sheet. Keyed by function index + zone key, because zone
   // keys repeat across functions — a wedding and its reception both have a Vedi / Mandap, and
   // keying on the zone alone opened both at once.
+  // A quantity edited in the cost sheet is written to the build (applyCostSheetQty); once that has landed the
+  // sheet is re-derived from the build, so what it shows — discounts, repeat, stock — is exactly what Build
+  // and the totals say rather than a hand-patched copy. Set by an accepted edit, cleared by the refresh.
+  const csSyncPendingRef = useRef(false);
+  useEffect(() => {
+    if (!csSyncPendingRef.current || !csData) return;
+    csSyncPendingRef.current = false;
+    try { const fresh = buildCombinedCostSheetData(); if (fresh && Array.isArray(fresh.functions)) setCsData(fresh); } catch { /* keep the figures already on screen */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [buildCombinedCostSheetData]);
   const [csOpenZones, setCsOpenZones] = useState({});
   const toggleZoneCard = (key) => setCsOpenZones((o) => ({ ...o, [key]: !o[key] }));
   // The cost sheet is a fixed, full-screen panel, but the Studio page underneath stayed scrollable
@@ -3203,7 +3213,21 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
         if(!fnObj||!fnObj.zones[zi])return;
         const item=fnObj.zones[zi].items[ii];
         if(!item)return;
-        item.qty=Math.max(0,newQty);
+        let q=Math.max(0,newQty);
+        // A line that is an element of the build: the change goes to Build first (same stock ceiling as
+        // Build's own stepper), and only then to the sheet. Paint and custom lines have no build row here.
+        if(item.src){
+          const cap=typeof item.maxQty==="number"?item.maxQty:null;
+          if(cap!=null&&q>cap&&q>item.qty){
+            showMsg(cap>0?`Only ${cap} available for this date — can't add more. Pick another item or reduce the quantity.`:"Out of stock for this date — none available. Pick another item or reduce the quantity.","red");
+            if(item.qty>=cap)return;
+            q=cap;
+          }
+          const res=applyCostSheetQty(item.src.fnIdx,item.src.zoneKey,item.src.elIdx,q,item.src.key);
+          if(res&&res.ok===false){showMsg(res.msg||"Could not update the build","red");return;}
+          if(q>0)csSyncPendingRef.current=true;
+        }
+        item.qty=q;
         item.total=item.qty*item.rate;
         fnObj.zones[zi].itemTotal=fnObj.zones[zi].items.reduce((s,i)=>s+i.total,0);
         fnObj.zones[zi].zoneTotal=fnObj.zones[zi].structTotal+fnObj.zones[zi].itemTotal;
@@ -3511,7 +3535,7 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
                           <div key={ii} className="sm-costgrid" style={{display:"grid",gridTemplateColumns:"2fr 0.6fr 0.6fr 0.9fr 0.9fr 1fr 1.1fr",gap:0,padding:"6px 0",borderBottom:`1px solid ${isDark?"rgba(255,255,255,0.04)":"#F3EDE4"}`,alignItems:"center",fontSize:12}}>
                             <div style={{fontWeight:500}}>{it.name}</div>
                             <div style={{textAlign:"center",color:textS}}>{it.size||"—"}</div>
-                            <div style={{textAlign:"center"}}><input type="number" min="0" value={it.qty} onChange={e=>csUpdateQty(fi,zi,ii,parseInt(e.target.value)||0)} style={{width:48,padding:"4px 6px",borderRadius:6,border:`1px solid ${accentText}40`,background:isDark?"#0A0A14":"#FFFDF7",color:isDark?"#fff":"#1a1a2e",fontSize:13,fontWeight:700,textAlign:"center",outline:"none",fontFamily:"inherit"}}/></div>
+                            <div style={{textAlign:"center"}}><input type="number" min="0" value={it.qty} disabled={!it.src} title={it.src?undefined:"Paint and Deal Check lines are edited in Build / Deal Check"} onChange={e=>csUpdateQty(fi,zi,ii,parseInt(e.target.value)||0)} style={{opacity:it.src?1:0.6,width:48,padding:"4px 6px",borderRadius:6,border:`1px solid ${accentText}40`,background:isDark?"#0A0A14":"#FFFDF7",color:isDark?"#fff":"#1a1a2e",fontSize:13,fontWeight:700,textAlign:"center",outline:"none",fontFamily:"inherit"}}/></div>
                             <div style={{textAlign:"right",color:textS,fontSize:11}}>{fmt(it.rate)}/{it.unit}</div>
                             <div style={{textAlign:"right",fontSize:11,fontWeight:it.hasDiscount?700:400,color:it.hasDiscount?"#15803D":textS}}>{it.hasDiscount?`${fmt(it.discRate)}/${it.unit}`:"—"}</div>
                             <div style={{textAlign:"right",fontSize:11,color:textS,textDecoration:it.hasDiscount?"line-through":"none"}}>{it.hasDiscount?fmt(it.noDiscTotal):"—"}</div>

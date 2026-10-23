@@ -9877,6 +9877,10 @@ export default function StudioApp() {
             roundAdj += sl.adj;
             items.push({
               name: displayName, size: el2.size || "", qty: qtyN, unit: el2.unit || "pc", rate: sl.rate, total: sl.total,
+              // Where this line lives in the build, and the most it may be raised to — so the cost sheet's own
+              // quantity box can write the change back to Build (applyCostSheetQty) instead of editing a copy.
+              src: { fnIdx: fnData.fnIdx, zoneKey: k, elIdx: ei, key: el2.invId || el2.patternId || el2.mandiId || el2.name || "" },
+              maxQty: typeof priceInfo.maxQty === "number" ? priceInfo.maxQty : null,
               isFloral: rc && (rc.cat || "").toLowerCase() === "florals",
               hasDiscount: sl.hasDiscount, discRate: sl.discRate, noDiscTotal: sl.noDiscTotal,
             });
@@ -10088,6 +10092,35 @@ export default function StudioApp() {
       return { k, label: el.label, icon: el.icon, tier: t, items, structItems, structTotal: zl.total, itemTotal: ic, zoneTotal: ic + zl.total, roundAdj, note: fElNotes[k] || "", dims, dimLabel, photo: fElSelectedPhoto[k]?.src || null, photoName: fElSelectedPhoto[k]?.eventName || "" };
     }).filter(z => z.items.length > 0 || z.structItems.length > 0);
   }, [getElPriceForFn, zoneLabelsD, zoneMeta, zoneKeys, dealCheckData, studioFloralData, imsDefaultPaintCost, dcCustomItems, structRates, imsInventory, fvCfgForRepeat, clientLedger, activeClientId, blocksByDate, hideDiscountFromClient, collectAllFunctionData, guestPriceMultiplier, paintInv]);
+
+  // The cost sheet preview's quantity box → the build. The element is found by where it sits (function, zone,
+  // row) and double-checked by its id/name, so a build that changed since the sheet opened is refused rather
+  // than a different row being edited. Same quantity bookkeeping as Build's own stepper (baseQty follows the
+  // zone's Scale), and the same floor Build keeps: not below the units already assigned a paint colour.
+  const applyCostSheetQty = useCallback((fnIdx, zoneKey, elIdx, qty, key) => {
+    const q = Math.max(0, Number(qty) || 0);
+    const isActive = fnIdx === activeFnIdx;
+    const els = isActive ? zoneElements : fnBuilds[fnIdx]?.zoneElements;
+    const zc = isActive ? zoneConfig : fnBuilds[fnIdx]?.zoneConfig;
+    const el = els?.[zoneKey]?.[elIdx];
+    if (!el) return { ok: false, msg: "The build has changed since this sheet opened — close and reopen the preview." };
+    if (key && (el.invId || el.patternId || el.mandiId || el.name || "") !== key) return { ok: false, msg: "The build has changed since this sheet opened — close and reopen the preview." };
+    const invItem = el.invId ? (paintInv || []).find((i) => i.id === el.invId) : (paintInv || []).find((i) => i.name === el.name);
+    const allocTotal = normalizePaintAllocation(el, invItem?.baseColour || "Ivory").reduce((sum, a) => sum + a.qty, 0);
+    if (allocTotal > 0 && q < allocTotal) return { ok: false, msg: `Cannot set qty below ${allocTotal} — paint allocation is set in Build.` };
+    const scale = Math.max(1, Math.round(Number(zc?.[zoneKey]?.scale) || 1));
+    const next = { ...el, qty: q, baseQty: scale > 1 ? q / scale : q };
+    if (isActive) {
+      setZoneElements((p) => { const cur = [...(p[zoneKey] || [])]; if (!cur[elIdx]) return p; cur[elIdx] = { ...cur[elIdx], qty: next.qty, baseQty: next.baseQty }; return { ...p, [zoneKey]: cur }; });
+    } else {
+      setFnBuilds((prev) => {
+        const b = prev[fnIdx]; const cur = b?.zoneElements?.[zoneKey]; if (!cur?.[elIdx]) return prev;
+        const arr = [...cur]; arr[elIdx] = { ...arr[elIdx], qty: next.qty, baseQty: next.baseQty };
+        return { ...prev, [fnIdx]: { ...b, zoneElements: { ...b.zoneElements, [zoneKey]: arr } } };
+      });
+    }
+    return { ok: true };
+  }, [activeFnIdx, zoneElements, zoneConfig, fnBuilds, paintInv]);
 
   const buildCombinedCostSheetData = useCallback(() => {
     const all = collectAllFunctionData();
@@ -11640,7 +11673,7 @@ export default function StudioApp() {
     loadedClientIdentityRef, confirmClientRename, revertClientNameEdit,
     resumeSavedSession, toggleEl, selectElPhoto, handleZoneUpload, aiTagImage, findTemplate,
     getLibPhotosForZone, maxRepaintCostInSubcat, saveSession, markSold, unbookDeal, loadEvent,
-    buildZonesForFn, buildCombinedCostSheetData, logActivity, saveTR,
+    buildZonesForFn, buildCombinedCostSheetData, applyCostSheetQty, logActivity, saveTR,
     normalizePaintAllocation, paintPillLabel, isSubcatPaintable,
     lmsCacheRef,
     // zone photo filters + upload
