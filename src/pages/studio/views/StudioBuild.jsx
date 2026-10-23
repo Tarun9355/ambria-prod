@@ -4652,6 +4652,13 @@ undefined
                     return sk ? floralPattern.sizes[sk]?.img : null;
                   };
                   const isUnavail = !!el.invId && typeof priceInfo.available==="number" && priceInfo.available<=0 && (el.qty||0)>0;
+                  // Ceiling on this row's quantity for an item that can't be made to cover a shortfall
+                  // (priceInfo.maxQty is null for one that can). The message names the real number.
+                  const stockCap = el.invId && typeof priceInfo.maxQty==="number" ? priceInfo.maxQty : null;
+                  const atStockCap = stockCap != null && (el.qty||0) >= stockCap;
+                  const stockCapMsg = stockCap == null ? "" : stockCap > 0
+                    ? `Only ${stockCap} available for this date — can't add more. Pick another item or reduce the quantity.`
+                    : `Out of stock for this date — none available. Pick another item or reduce the quantity.`;
                   return (
                   <div key={idx} className="el-row" data-kit={isKit?"1":"0"} style={{display:"flex",flexDirection:"column",gap:6,padding:"9px 10px",borderRadius:12,border:`1px solid ${isDark?"rgba(255,255,255,0.09)":"rgba(26,26,46,0.10)"}`,background:cardBg,gridColumn:isKit?(firstKit?`1 / span ${kitSpan}`:`span ${kitSpan}`):"span 1",minHeight:isKit?undefined:98,justifyContent:isKit?"flex-start":"space-between"}}>
                     <div style={{display:"flex",flexDirection:"column",gap:8}}>
@@ -4874,12 +4881,15 @@ undefined
                               return {...p,[k]:cur};
                             });
                           }} style={{width:26,height:26,borderRadius:6,border:`1px solid ${border}`,background:cardBg,cursor:"pointer",fontSize:14,fontWeight:600,color:textS,display:"flex",alignItems:"center",justifyContent:"center"}}>{"−"}</button>
-                          <NumField min={0} value={el.qty||0} onCommit={nextQty=>{
-                            // An item that is out of stock for this date (and can't be produced in time) can be
-                            // reduced or swapped, not grown — same rule as the + button.
-                            if (priceInfo.outOfStock && nextQty > (el.qty||0)) {
-                              showMsg(priceInfo.available>0 ? `Only ${priceInfo.available} available for this date — can't add more. Pick another item or reduce the quantity.` : `Out of stock for this date — none available. Pick another item or reduce the quantity.`, "red");
-                              return;
+                          <NumField min={0} value={el.qty||0} onCommit={nextQtyTyped=>{
+                            // An item that can't be produced to cover a shortfall can't be taken past what is
+                            // free for this date — same ceiling as the + button. Typing more lands on the
+                            // ceiling (or is refused when the row is already at/over it); reducing is always fine.
+                            let nextQty = nextQtyTyped;
+                            if (stockCap != null && nextQty > stockCap && nextQty > (el.qty||0)) {
+                              showMsg(stockCapMsg, "red");
+                              if ((el.qty||0) >= stockCap) return;
+                              nextQty = stockCap;
                             }
                             // §23 Phase 2.9d — same guard for direct typing
                             const invItem = el.invId ? (dealCheckData?.inventory || []).find(i => i.id === el.invId) : (dealCheckData?.inventory || []).find(i => i.name === el.name);
@@ -4900,8 +4910,8 @@ undefined
                               return {...p,[k]:cur};
                             });
                           }} onFocus={e=>e.target.select()} style={{width:46,padding:"3px 4px",borderRadius:6,border:`1px solid ${border}`,background:cardBg,color:(el.qty||0)>0?textP:textS,fontSize:14,fontWeight:700,textAlign:"center",outline:"none",fontFamily:"inherit",MozAppearance:"textfield"}}/>
-                          <button disabled={!!priceInfo.outOfStock} title={priceInfo.outOfStock?(priceInfo.available>0?`Only ${priceInfo.available} available for this date — can't add more. Pick another item or reduce the quantity.`:`Out of stock for this date — none available. Pick another item or reduce the quantity.`):undefined} onClick={()=>{
-                            if (priceInfo.outOfStock) return;
+                          <button disabled={atStockCap} title={atStockCap?stockCapMsg:undefined} onClick={()=>{
+                            if (atStockCap) return;
                             // Increment off the committed qty — see the − button's comment (BUG-16).
                             setZoneElements(p=>{
                               const cur=[...(p[k]||[])];
@@ -4909,7 +4919,7 @@ undefined
                               cur[idx]=applyQty(k,cur[idx],(cur[idx].qty||0)+1);
                               return {...p,[k]:cur};
                             });
-                          }} style={{width:26,height:26,borderRadius:6,border:`1px solid ${border}`,background:cardBg,cursor:(priceInfo.outOfStock?"not-allowed":"pointer"),fontSize:14,fontWeight:600,color:textS,opacity:priceInfo.outOfStock?0.4:1,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
+                          }} style={{width:26,height:26,borderRadius:6,border:`1px solid ${border}`,background:cardBg,cursor:(atStockCap?"not-allowed":"pointer"),fontSize:14,fontWeight:600,color:textS,opacity:atStockCap?0.4:1,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
                         </>
                       )}
                       </div>

@@ -86,7 +86,7 @@ import {
 import { normalizePaintAllocation, maxRepaintCostInSubcat, paintLinesFor, paintTotalFor } from "../../lib/studio/paint";
 import { sheetItemLine } from "../../lib/studio/sheetRounding";
 import { sigHash } from "../../lib/sigHash";
-import { allocateRowAvailability, netOwnReservedBlocksLive } from "../../lib/studio/dealAvailability";
+import { allocateRowAvailability, maxQtyForRow, netOwnReservedBlocksLive } from "../../lib/studio/dealAvailability";
 import { callClaudeStreaming } from "../../lib/ai";
 import { heavyExtraLabour, eventTimingMultFor, SETTINGS_DEFAULTS, SIT_MULT_DEFAULTS } from "../../lib/ims/constants";
 import { resolveDateCategory, getEffectivePricing } from "../../lib/inventory/helpers";
@@ -4542,8 +4542,15 @@ export default function StudioApp() {
       // only 1 spare unit elsewhere read as short THERE, and a completely separate 1-unit zone read
       // as short again too, when only one unit total was ever actually missing).
       let ownedQty, shortQty;
+      // The most this row could ask for and still be fully covered by stock (see maxQtyForRow) — Build
+      // stops the quantity there when the item can't be produced to cover the difference.
+      let rowMaxQty = Math.max(0, Math.floor(otherEventsAvail));
       if (opts?.zoneKey != null && opts?.elIdx != null) {
-        const alloc = allocateRowAvailability(item.id, collectAllFunctionDataRef.current ? collectAllFunctionDataRef.current() : [], imsInventory, { fnIdx, zoneKey: opts.zoneKey, elIdx: opts.elIdx }, opts?.fnDate || activeFnMeta?.date || clientDate, otherEventsAvail);
+        const _fnsForAlloc = collectAllFunctionDataRef.current ? collectAllFunctionDataRef.current() : [];
+        const _rowTarget = { fnIdx, zoneKey: opts.zoneKey, elIdx: opts.elIdx };
+        const _allocDate = opts?.fnDate || activeFnMeta?.date || clientDate;
+        const alloc = allocateRowAvailability(item.id, _fnsForAlloc, imsInventory, _rowTarget, _allocDate, otherEventsAvail);
+        rowMaxQty = maxQtyForRow(item.id, _fnsForAlloc, imsInventory, _rowTarget, _allocDate, otherEventsAvail);
         ownedQty = alloc.ownedQty; shortQty = alloc.shortQty;
       } else {
         ownedQty = Math.min(qty, otherEventsAvail);
@@ -4580,7 +4587,12 @@ export default function StudioApp() {
       // show "Out of stock" instead of "priced at cost%", openAvailModal (StudioApp.jsx) refuses to
       // let this item be picked while it's short, and the pre-Sold gate (markDealSold) scans every
       // element for it.
-      const outOfStock = shortQty > 0 && !canFulfillShortfall(item, shortfallFnDate, shortfallAsOf);
+      const canMakeShort = canFulfillShortfall(item, shortfallFnDate, shortfallAsOf);
+      const outOfStock = shortQty > 0 && !canMakeShort;
+      // maxQty: the ceiling on this row's quantity — only for an item that can't be produced to cover a
+      // shortfall (a makeable item may exceed stock; the excess is priced at cost%). Units reused from the
+      // deal's preceding function count as owned, so they raise the ceiling too.
+      const maxQty = canMakeShort ? null : rowMaxQty + crossFnTake;
       const warning = shortQty > 0 ? (outOfStock ? `⚠ ${shortQty} of ${qty} out of stock for this date — pick an alternative` : `⚠ ${shortQty} of ${qty} not free in stock for this date — priced at cost%`) : null;
       // `available` here is "how much of THIS row's own qty is real stock" (= ownedQty) — the sole
       // consumer (StudioBuild.jsx's isUnavail badge) only ever checks <= 0, which ownedQty matches
@@ -4593,7 +4605,7 @@ export default function StudioApp() {
       // item that ever took this availability-checked path — which is every element card in Build.
       // shortCost (raw, pre-date-multiplier) — getElPrice's own wrapper reads this to keep the
       // date-category multiplier off a true shortfall's cost-basis price (see its own comment).
-      return { rc: null, unitPrice, fullUnitPrice: ownedRate, lineCost, area: 0, warning, isFloralBlend: false, realPct: null, available: ownedQty, shortCost, outOfStock };
+      return { rc: null, unitPrice, fullUnitPrice: ownedRate, lineCost, area: 0, warning, isFloralBlend: false, realPct: null, available: ownedQty, shortCost, outOfStock, maxQty };
     }
     const unitPrice = priceForInvItem(item, rcFactorByKey, imsInventory, el.kitOverrides);
     return { rc: null, unitPrice, fullUnitPrice: unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName, crossFnTake, el.repeatOverride, dateFactorFor(el, opts), el.kitOverrides), area: 0, warning: null, isFloralBlend: false, realPct: null };
