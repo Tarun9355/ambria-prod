@@ -85,11 +85,10 @@ function StudioBrowse({ ctx }) {
   // doesn't compete with the filters/videos for space; per-client is enough (doesn't need to
   // persist across clients), so plain local state rather than anything ctx-level.
   const [bannerHistoryOpen, setBannerHistoryOpen] = useState(false);
-  // Favourites/recently-viewed block above the grid — collapsed by default (it's the same handful of
-  // videos on every visit, not something to scroll past each time) and NOT reset by page/filter
-  // changes, since it's a plain top-level flag rather than anything keyed to pageVideos — open it
-  // once and it stays open while paging through the rest of the grid.
-  const [favRecentOpen, setFavRecentOpen] = useState(false);
+  // Favourites/recently-viewed block above the grid — open by default (the shortlist is the quickest way back
+  // to a reference) and NOT reset by page/filter changes, since it's a plain top-level flag rather than anything
+  // keyed to pageVideos — fold it away once and it stays folded while paging through the rest of the grid.
+  const [favRecentOpen, setFavRecentOpen] = useState(true);
   // Sort the grid by its own price badge — null (default) leaves the existing favourites/
   // recently-viewed-first, then preferred-venue-first ordering untouched. "asc"/"desc" sort by
   // price WITHIN each of those groups rather than replacing them outright, so picking a sort
@@ -1950,9 +1949,8 @@ function StudioBrowse({ ctx }) {
             // Invoking it returns the same plain <div> element type, so React updates in place.
             // Safe because VideoCard holds no hooks — it is a pure render helper.
             const favN = pinned.filter(v=>v._pin==="fav").length, recentN = pinned.length - favN;
-            // Collapsed by default behind a small chevron toggle — same "scroll past it once you've
-            // seen it" reasoning, and same pattern, as the saved-session banner's own "Past N
-            // sessions" history above (bannerHistoryOpen).
+            // Open by default (the salesperson's own shortlist is the quickest way back to a reference), with a small
+            // chevron toggle to fold it away — same pattern as the saved-session banner's "Past N sessions" history above.
             const pinnedBlock = pinned.length>0 && <>
               <button type="button" onClick={()=>setFavRecentOpen(v=>!v)} aria-expanded={favRecentOpen}
                 style={{display:"flex",alignItems:"center",gap:7,border:"none",background:"transparent",cursor:"pointer",padding:0,textAlign:"left"}}>
