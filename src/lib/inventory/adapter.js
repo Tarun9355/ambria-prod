@@ -10,7 +10,13 @@ const num = (v) => Number(v) || 0;
 
 // Keys we map to dedicated columns; everything else `_`-prefixed (+ a few extras) is
 // stashed in the `flags` JSONB so no superset data is lost on round-trip.
-const FLAG_EXTRAS = ["source", "usageChargePct", "tier", "kitBase", "oosCostPct", "canBeMade", "noRepeatDiscount"];
+// `paintable` was missing here entirely — baseColour/paintCost round-trip via their own dedicated
+// columns, but the per-item "can this be painted" override itself was silently dropped on every
+// save (never written to the row, so the before/after diff below saw no change and skipped the
+// write too) and fell back to the auto-detected default on next load, no matter how many times an
+// admin unchecked it in IMS. `false` survives this list's own filter below (false !== "" / null /
+// undefined), same as the other booleans already here.
+const FLAG_EXTRAS = ["source", "usageChargePct", "tier", "kitBase", "oosCostPct", "canBeMade", "noRepeatDiscount", "paintable"];
 
 // DB row (snake_case) → component item (camelCase superset).
 export function rowToItem(row) {
