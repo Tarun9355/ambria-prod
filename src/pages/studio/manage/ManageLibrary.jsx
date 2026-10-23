@@ -22,7 +22,7 @@ import { applyAiTagResult } from "../../../lib/studio/tagging/applyResult.js";
 import { fetchLibraryPage, fetchLibraryCounts, checkExistingLibraryUrls, fetchAllLibraryRowsMinimal, LIB_STATUS, TAG_SOURCE, LIBRARY_PAGE_SIZE } from "../../../lib/studio/libraryQueries";
 import { isHiddenSubcat } from "../../../lib/rateCard";
 import { supabase, subscribeTable } from "../../../lib/supabase";
-import { deleteStorageObjects, listStorageTree, uploadToStorage, compressImageForUpload } from "../../../lib/storage";
+import { deleteStorageObjects, listStorageTree, uploadToStorage, compressImageForUpload, STORAGE_FOLDERS } from "../../../lib/storage";
 import { itemDimsText, priceForInvItem, kitDescendantIds } from "../../../lib/ims/helpers";
 import { addPaletteInline } from "../../../lib/studio/colours";
 import PaletteQuickAdd from "../../../components/studio/PaletteQuickAdd.jsx";
@@ -443,6 +443,35 @@ export default function ManageLibrary({ ctx }) {
   // { v, items: [{ key, file, url, zones: [] }] } while the review step is open.
   const [vidPhotoPick, setVidPhotoPick] = useState(null);
   const vidPhotoRef = useRef(null);
+  // Colour Catalogue's own reference-photo upload — which row (by index) is currently uploading,
+  // so only that chip shows a busy state rather than locking the whole catalogue.
+  const [colourRefBusy, setColourRefBusy] = useState(null);
+  const handleColourRefUpload = async (i, files) => {
+    const imgs = [...(files || [])].filter(f => f.type?.startsWith("image/"));
+    if (!imgs.length) return;
+    setColourRefBusy(i);
+    try {
+      const urls = [];
+      for (const file of imgs) {
+        const res = await uploadToStorage(await compressImageForUpload(file), STORAGE_FOLDERS.COLOUR_REF, { detail: true });
+        urls.push(res.url);
+      }
+      const next = [...imsColourCatalogue];
+      next[i] = { ...next[i], refImages: [...(next[i].refImages || []), ...urls] };
+      setImsColourCatalogue(next);
+      savePaletteData(next, null);
+    } catch (e) {
+      showMsg("Reference photo upload failed: " + (e?.message || e), "red");
+    } finally {
+      setColourRefBusy(null);
+    }
+  };
+  const removeColourRef = (i, url) => {
+    const next = [...imsColourCatalogue];
+    next[i] = { ...next[i], refImages: (next[i].refImages || []).filter(u => u !== url) };
+    setImsColourCatalogue(next);
+    savePaletteData(next, null);
+  };
   const vidPhotoTarget = useRef(null);
   const isImageFile = (f) => /\.(jpe?g|png|webp|heic|heif|avif|gif|bmp|tiff?)$/i.test(f.name);
   // Previews are object URLs — released whenever the review closes, uploaded or not.
@@ -2715,7 +2744,33 @@ export default function ManageLibrary({ ctx }) {
                 <div key={i} style={{ display: "flex", alignItems: "center", gap: 5, padding: "4px 10px", borderRadius: 8, border: `1px solid ${c.isNeutral ? accent : border}`, background: c.isNeutral ? `${accent}08` : "transparent" }}>
                   <input type="color" value={c.hex || "#ccc"} onChange={e => { const next = [...imsColourCatalogue]; next[i] = { ...next[i], hex: e.target.value }; setImsColourCatalogue(next); savePaletteData(next, null); }} style={{ width: 20, height: 20, border: "none", cursor: "pointer", borderRadius: 4, padding: 0 }} />
                   <input type="text" value={c.name || ""} onChange={e => { const next = [...imsColourCatalogue]; next[i] = { ...next[i], name: e.target.value }; setImsColourCatalogue(next); }} onBlur={() => savePaletteData(null, null)} style={{ border: "none", background: "transparent", color: textP, fontSize: 12.5, fontWeight: 500, width: 104, outline: "none" }} />
+                  {/* Colour code — typed/pasted directly rather than relying on the native swatch
+                      dialog alone. Free text while editing (matches the Name field's own pattern);
+                      normalized to a leading "#" on blur, when saving. */}
+                  <input type="text" value={c.hex || ""} placeholder="#RRGGBB" title="Colour code (hex)"
+                    onChange={e => { const next = [...imsColourCatalogue]; next[i] = { ...next[i], hex: e.target.value }; setImsColourCatalogue(next); }}
+                    onBlur={() => {
+                      const next = [...imsColourCatalogue];
+                      const v = (next[i].hex || "").trim();
+                      next[i] = { ...next[i], hex: v && !v.startsWith("#") ? `#${v}` : v };
+                      setImsColourCatalogue(next); savePaletteData(next, null);
+                    }}
+                    style={{ border: "none", background: "transparent", color: textS, fontSize: 11, fontFamily: "monospace", width: 60, outline: "none" }} />
                   <span onClick={() => { const next = [...imsColourCatalogue]; next[i] = { ...next[i], isNeutral: !next[i].isNeutral }; setImsColourCatalogue(next); savePaletteData(next, null); }} className="pal-star" style={{ fontSize: 13, cursor: "pointer", borderRadius: 4, padding: "0 2px", color: c.isNeutral ? accent : textS }} title="Toggle neutral">{c.isNeutral ? "★" : "☆"}</span>
+                  {/* Reference photos — what this colour actually looks like on fabric/flowers, not
+                      just the swatch. Multiple allowed (a colour can be shown against more than one
+                      material). Click a thumbnail to open it full size in a new tab. */}
+                  <label title="Upload reference photo(s)" style={{ display: "inline-flex", alignItems: "center", cursor: colourRefBusy === i ? "wait" : "pointer", opacity: colourRefBusy === i ? 0.5 : 1 }}>
+                    <input type="file" accept="image/*" multiple disabled={colourRefBusy === i} style={{ display: "none" }}
+                      onChange={e => { handleColourRefUpload(i, e.target.files); e.target.value = ""; }} />
+                    <span style={{ fontSize: 13 }}>{colourRefBusy === i ? "⏳" : "📷"}</span>
+                  </label>
+                  {(c.refImages || []).map((url, ri) => (
+                    <span key={ri} style={{ position: "relative", display: "inline-flex" }}>
+                      <img src={url} onClick={() => window.open(url, "_blank")} title="Click to view full size" style={{ width: 18, height: 18, borderRadius: 4, objectFit: "cover", cursor: "pointer", border: `1px solid ${border}` }} />
+                      <span onClick={() => removeColourRef(i, url)} title="Remove this reference photo" style={{ position: "absolute", top: -5, right: -5, fontSize: 9, lineHeight: 1, background: "#E11D48", color: "#fff", borderRadius: "50%", width: 11, height: 11, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>×</span>
+                    </span>
+                  ))}
                   {/* Confirm first. This was a one-click permanent delete on a master record: the
                       colour feeds the paint picker, the inventory base colour and the anchor list of
                       every palette, and it saves immediately with no undo. The count of palettes
