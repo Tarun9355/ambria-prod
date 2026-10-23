@@ -146,6 +146,16 @@ export function IconCrown({ size = 15 }) {
   );
 }
 
+// Hollow circle with a dash — a Filler date (a quiet day, priced below standard).
+export function IconFiller({ size = 15 }) {
+  return (
+    <svg {...svg(size)}>
+      <circle cx="12" cy="12" r="8" />
+      <path d="M8.5 12h7" />
+    </svg>
+  );
+}
+
 // Diskette — a saved session.
 export function IconSave({ size = 15 }) {
   return (
