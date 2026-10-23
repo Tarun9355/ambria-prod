@@ -3179,7 +3179,7 @@ undefined
                           : { icon:<IconStar size={13}/>, text:"Perfect date", tone:"#34D399" };
                         const m = Math.round((Number(dc.multiplier)||1)*100)/100;
                         const lastMin = /last-minute/i.test(dc.reason||"");
-                        const tip = `${meta.text} · ${m!==1?`rentals ×${m}`:"standard rates"}${lastMin?" (last-minute)":""}`;
+                        const tip = `${meta.text}${m!==1?` · rentals ×${m}`:""}${lastMin?" (last-minute)":""}`;
                         return <span className="bd-datebadge" tabIndex={0} role="img" aria-label={tip} data-tip={tip} style={{"--tone":meta.tone}}>{meta.icon}</span>;
                       })()}
                     </div>}
