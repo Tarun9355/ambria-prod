@@ -84,6 +84,7 @@ import {
   freshFnForManpower, snapRowDimsForProduction,
 } from "../../lib/studio/pricing";
 import { normalizePaintAllocation, maxRepaintCostInSubcat, paintLinesFor, paintTotalFor } from "../../lib/studio/paint";
+import { sheetItemLine } from "../../lib/studio/sheetRounding";
 import { allocateRowAvailability, netOwnReservedBlocksLive } from "../../lib/studio/dealAvailability";
 import { callClaudeStreaming } from "../../lib/ai";
 import { heavyExtraLabour, eventTimingMultFor, SETTINGS_DEFAULTS, SIT_MULT_DEFAULTS } from "../../lib/ims/constants";
@@ -10088,24 +10089,15 @@ export default function StudioApp() {
             // getElPriceForFn). Surfacing both, plus the delta, lets the cost sheet show the guest the
             // benefit explicitly instead of just a lower total they have no way to attribute.
             const qtyN = el2.qty || 0;
-            const noDiscTotal = Math.round(up * qtyN);
-            const hasDiscount = qtyN > 0 && (noDiscTotal - lt) > 0.5;
             // Rate and Disc. Rate are whole rupees, like every rate on Build, and the sheet's Amount is
-            // Qty × that rate — so a guest can check every line with a calculator. The few-rupee
-            // difference against the engine's exact figure (258.5 × 42 vs 259 × 42) is carried in
-            // roundAdj and added to the zone/function totals below, so the sheet still adds up on its own.
-            // A line whose Amount is NOT Qty × Rate to begin with (short-part split, kit shortfall) keeps
-            // its true figure.
-            const wholeRate = Math.round(up);
-            const discRateW = hasDiscount ? Math.round(lt / qtyN) : undefined;
-            const clean = qtyN > 0 && Math.abs(qtyN * up - (hasDiscount ? noDiscTotal : lt)) <= 1;
-            const rateOnSheet = clean ? wholeRate : up;
-            const totalOnSheet = hasDiscount ? qtyN * discRateW : clean ? qtyN * wholeRate : lt;
-            roundAdj += totalOnSheet - lt;
+            // Qty × that rate (sheetItemLine). The few-rupee difference against the engine's exact figure
+            // is carried in roundAdj and added to the zone/function totals below.
+            const sl = sheetItemLine({ qty: qtyN, up, lt });
+            roundAdj += sl.adj;
             items.push({
-              name: displayName, size: el2.size || "", qty: qtyN, unit: el2.unit || "pc", rate: rateOnSheet, total: totalOnSheet,
+              name: displayName, size: el2.size || "", qty: qtyN, unit: el2.unit || "pc", rate: sl.rate, total: sl.total,
               isFloral: rc && (rc.cat || "").toLowerCase() === "florals",
-              hasDiscount, discRate: discRateW, noDiscTotal: hasDiscount ? (clean ? qtyN * wholeRate : noDiscTotal) : undefined,
+              hasDiscount: sl.hasDiscount, discRate: sl.discRate, noDiscTotal: sl.noDiscTotal,
             });
           }
           // Paint: one line per colour the element is repainted in — the same helper the zone totals use.
