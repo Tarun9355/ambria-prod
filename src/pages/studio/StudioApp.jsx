@@ -4589,10 +4589,11 @@ export default function StudioApp() {
       // element for it.
       const canMakeShort = canFulfillShortfall(item, shortfallFnDate, shortfallAsOf);
       const outOfStock = shortQty > 0 && !canMakeShort;
-      // maxQty: the ceiling on this row's quantity — only for an item that can't be produced to cover a
-      // shortfall (a makeable item may exceed stock; the excess is priced at cost%). Units reused from the
-      // deal's preceding function count as owned, so they raise the ceiling too.
-      const maxQty = canMakeShort ? null : rowMaxQty + crossFnTake;
+      // maxQty: the ceiling on a quantity typed or stepped in Build — what stock can actually cover on this date,
+      // for EVERY inventory item (owner ask: ask for 140 of something with 130 and it lands on 130, tagged short).
+      // A row already above it (saved earlier) keeps pricing its excess as before. Units reused from the deal's
+      // preceding function count as owned, so they raise the ceiling too.
+      const maxQty = rowMaxQty + crossFnTake;
       const warning = shortQty > 0 ? (outOfStock ? `⚠ ${shortQty} of ${qty} out of stock for this date — pick an alternative` : `⚠ ${shortQty} of ${qty} not free in stock for this date — priced at cost%`) : null;
       // `available` here is "how much of THIS row's own qty is real stock" (= ownedQty) — the sole
       // consumer (StudioBuild.jsx's isUnavail badge) only ever checks <= 0, which ownedQty matches
@@ -10110,12 +10111,13 @@ export default function StudioApp() {
     if (allocTotal > 0 && q < allocTotal) return { ok: false, msg: `Cannot set qty below ${allocTotal} — paint allocation is set in Build.` };
     const scale = Math.max(1, Math.round(Number(zc?.[zoneKey]?.scale) || 1));
     const next = { ...el, qty: q, baseQty: scale > 1 ? q / scale : q };
+    // (a hand-set quantity ends any "asked for more than was available" note Build was carrying)
     if (isActive) {
-      setZoneElements((p) => { const cur = [...(p[zoneKey] || [])]; if (!cur[elIdx]) return p; cur[elIdx] = { ...cur[elIdx], qty: next.qty, baseQty: next.baseQty }; return { ...p, [zoneKey]: cur }; });
+      setZoneElements((p) => { const cur = [...(p[zoneKey] || [])]; if (!cur[elIdx]) return p; cur[elIdx] = { ...cur[elIdx], qty: next.qty, baseQty: next.baseQty, wantedQty: undefined }; return { ...p, [zoneKey]: cur }; });
     } else {
       setFnBuilds((prev) => {
         const b = prev[fnIdx]; const cur = b?.zoneElements?.[zoneKey]; if (!cur?.[elIdx]) return prev;
-        const arr = [...cur]; arr[elIdx] = { ...arr[elIdx], qty: next.qty, baseQty: next.baseQty };
+        const arr = [...cur]; arr[elIdx] = { ...arr[elIdx], qty: next.qty, baseQty: next.baseQty, wantedQty: undefined };
         return { ...prev, [fnIdx]: { ...b, zoneElements: { ...b.zoneElements, [zoneKey]: arr } } };
       });
     }

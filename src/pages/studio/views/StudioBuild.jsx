@@ -1886,9 +1886,11 @@ export default function StudioBuild({ ctx }) {
    * The base is left fractional on purpose: 5 pieces across a set of 2 IS 2.5 per set, and forcing
    * it to a whole number is what made the qty drift on every subsequent change.
    */
-  const applyQty = (k, el, nextQty) => {
+  const applyQty = (k, el, nextQty, wantedQty) => {
     const s = zoneScaleVal(k);
-    return { ...el, qty: nextQty, baseQty: s > 1 ? nextQty / s : nextQty };
+    // wantedQty: what was asked for when the box was capped at the available stock — kept so the card can
+    // keep saying "short"; any later hand-set quantity (no wantedQty passed) clears it.
+    return { ...el, qty: nextQty, baseQty: s > 1 ? nextQty / s : nextQty, wantedQty };
   };
 
   // ── What is in the Scale box WHILE it is being typed in ──────────────────────────────────────
@@ -4702,6 +4704,7 @@ undefined
                         {showCosts&&<span title={el.swappedFrom?`Swapped within the same category — the original item had none free on this date`:_siblingFns?`Also used in ${_siblingFns.join(", ")} — same venue, same/next day`+(_rateDiscounted?" (Repeat discount applied)":""):_rateDiscounted?"Rate per unit — Repeat/standing-venue discount applied":"Rate per unit"} style={{flexShrink:0,fontSize:11,fontWeight:600,color:(el.swappedFrom||_siblingFns)?"#F97316":_rateDiscounted?"#10B981":textS,whiteSpace:"nowrap"}}>{_effUp>0?`₹${Math.round(_effUp).toLocaleString("en-IN")}/${isTrussSqft?"truss sqft":(invItem?.unit||rc?.unit||el.unit)}`:"₹0"}</span>}
                         {isKit&&<span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(99,102,241,0.15)",color:"#6366F1",fontWeight:700}}>KIT</span>}
                         {!rc&&!el.invId&&!el.patternId&&!el.mandiId&&<span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700}}>NEW</span>}
+                        {el.invId&&(el.wantedQty||0)>(el.qty||0)&&<span title={`Asked for ${el.wantedQty}, only ${el.qty} available for this date — held at ${el.qty}`} style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700}}>⚠ short · {el.wantedQty} asked</span>}
                         {el.invId&&priceInfo.warning&&<span title={priceInfo.warning} style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700}}>{priceInfo.outOfStock?"⚠ out of stock":"⚠ short"}</span>}
                         {(rc||el.invId)&&<span onClick={()=>openAvailModal(k, idx, el, rc)} title={_subcatOpportunity?`Also used in ${[...new Set(_subcatOpportunity.map(o=>o.label))].join(", ")} (${_subcatOpportunity.map(o=>o.name).join(", ")}) — swap to it for the repeat discount`:"Check stock availability & pick an item"} style={{cursor:"pointer",fontSize:12,opacity:_subcatOpportunity?1:0.5,padding:"0 1px",lineHeight:1,color:_subcatOpportunity?"#F97316":undefined}}><IconBox size={12}/></span>}
                         {/* Only when the manually-pinned stock item's name actually differs from
@@ -4892,13 +4895,15 @@ undefined
                             });
                           }} style={{width:26,height:26,borderRadius:6,border:`1px solid ${border}`,background:cardBg,cursor:"pointer",fontSize:14,fontWeight:600,color:textS,display:"flex",alignItems:"center",justifyContent:"center"}}>{"−"}</button>
                           <NumField min={0} value={el.qty||0} onCommit={nextQtyTyped=>{
-                            // An item that can't be produced to cover a shortfall can't be taken past what is
-                            // free for this date — same ceiling as the + button. Typing more lands on the
-                            // ceiling (or is refused when the row is already at/over it); reducing is always fine.
+                            // A quantity can't be taken past what stock can cover on this date — same ceiling as the
+                            // + button. Typing more lands on that ceiling and the card is tagged short (wantedQty);
+                            // a row already ABOVE the ceiling (saved before) refuses a bigger number; reducing is fine.
                             let nextQty = nextQtyTyped;
+                            let wantedQty;
                             if (stockCap != null && nextQty > stockCap && nextQty > (el.qty||0)) {
-                              showMsg(stockCapMsg, "red");
-                              if ((el.qty||0) >= stockCap) return;
+                              if ((el.qty||0) > stockCap) { showMsg(stockCapMsg, "red"); return; }
+                              showMsg(stockCap>0?`Only ${stockCap} available for this date — set to ${stockCap}.`:stockCapMsg, "red");
+                              wantedQty = nextQty;
                               nextQty = stockCap;
                             }
                             // §23 Phase 2.9d — same guard for direct typing
@@ -4916,7 +4921,7 @@ undefined
                             setZoneElements(p=>{
                               const cur=[...(p[k]||[])];
                               if(!cur[idx]) return p;
-                              cur[idx]=applyQty(k,cur[idx],nextQty);
+                              cur[idx]=applyQty(k,cur[idx],nextQty,wantedQty);
                               return {...p,[k]:cur};
                             });
                           }} onFocus={e=>e.target.select()} style={{width:46,padding:"3px 4px",borderRadius:6,border:`1px solid ${border}`,background:cardBg,color:(el.qty||0)>0?textP:textS,fontSize:14,fontWeight:700,textAlign:"center",outline:"none",fontFamily:"inherit",MozAppearance:"textfield"}}/>
