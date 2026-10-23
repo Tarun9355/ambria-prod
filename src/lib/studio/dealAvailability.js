@@ -43,18 +43,8 @@ export function qtyUsedElsewhereInBuild(invId, fns, imsInventory, exclude = {}, 
   return used;
 }
 
-// Build: full scarce-stock allocation for ONE item across the WHOLE booking (same date) — every
-// row that draws on invId (its own qty, or via a kit's component) competes for the same
-// otherEventsAvail units. Smallest-qty rows are granted stock FIRST, so one zone's bulk increase
-// concentrates the shortfall on ITSELF instead of retroactively flagging every other zone's
-// untouched, already-fine row as short too — subtracting each sibling's raw (possibly itself-
-// short) qty double-counted the deficit (a zone with qty 2 against 1 available unit elsewhere
-// looked short there AND made a completely separate 1-unit zone look short again, when only one
-// unit total was ever actually missing). Returns the allocation for the ONE row identified by
-// target = { fnIdx, zoneKey, elIdx } (a specific row, not a whole-zone exclusion — this is only
-// ever called from getElPriceFromInventory's own per-row shortfall pricing).
-export function allocateRowAvailability(invId, fns, imsInventory, target, targetDate, otherEventsAvail) {
-  if (!invId) return { ownedQty: 0, shortQty: 0 };
+// Every row of the booking (on targetDate) that draws on invId — its own qty, or via a kit's component.
+function itemRowsFor(invId, fns, imsInventory, targetDate) {
   const rows = [];
   (fns || []).forEach((fn, fnIdx) => {
     if (targetDate && (fn?.fnDate || "") !== targetDate) return;
@@ -75,6 +65,22 @@ export function allocateRowAvailability(invId, fns, imsInventory, target, target
       });
     });
   });
+  return rows;
+}
+
+// Build: full scarce-stock allocation for ONE item across the WHOLE booking (same date) — every
+// row that draws on invId (its own qty, or via a kit's component) competes for the same
+// otherEventsAvail units. Smallest-qty rows are granted stock FIRST, so one zone's bulk increase
+// concentrates the shortfall on ITSELF instead of retroactively flagging every other zone's
+// untouched, already-fine row as short too — subtracting each sibling's raw (possibly itself-
+// short) qty double-counted the deficit (a zone with qty 2 against 1 available unit elsewhere
+// looked short there AND made a completely separate 1-unit zone look short again, when only one
+// unit total was ever actually missing). Returns the allocation for the ONE row identified by
+// target = { fnIdx, zoneKey, elIdx } (a specific row, not a whole-zone exclusion — this is only
+// ever called from getElPriceFromInventory's own per-row shortfall pricing).
+export function allocateRowAvailability(invId, fns, imsInventory, target, targetDate, otherEventsAvail) {
+  if (!invId) return { ownedQty: 0, shortQty: 0 };
+  const rows = itemRowsFor(invId, fns, imsInventory, targetDate);
   // Array.prototype.sort is stable (spec-guaranteed) — ties keep their original relative order, so
   // the result doesn't reshuffle between renders just because two rows happen to match on qty.
   rows.sort((a, b) => a.qty - b.qty);
@@ -88,6 +94,20 @@ export function allocateRowAvailability(invId, fns, imsInventory, target, target
     }
   }
   return result;
+}
+
+// The most units ONE row can ask for without running short itself AND without taking stock from another row
+// of the booking that draws on the same item: the pool left once every other row has its own quantity.
+// (allocateRowAvailability serves the smallest rows first, so a bigger quantity here would quietly push a
+// sibling row into shortage instead — that is the one thing this cap exists to prevent.) Used to stop a
+// quantity being typed or stepped past what an item that can't be produced can supply.
+export function maxQtyForRow(invId, fns, imsInventory, target, targetDate, otherEventsAvail) {
+  const pool = Math.max(0, Math.floor(Number(otherEventsAvail) || 0));
+  if (!invId) return pool;
+  const othersQty = itemRowsFor(invId, fns, imsInventory, targetDate)
+    .filter((r) => !(r.fnIdx === target.fnIdx && r.zk === target.zoneKey && r.elIdx === target.elIdx))
+    .reduce((s, r) => s + r.qty, 0);
+  return Math.max(0, pool - othersQty);
 }
 
 // Deal Check + Build share one root cause here: once a SOLD deal's own reservation is written into
