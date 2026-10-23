@@ -4592,8 +4592,9 @@ export default function StudioApp() {
       // maxQty: the ceiling on a quantity typed or stepped in Build — what stock can actually cover on this date,
       // for EVERY inventory item (owner ask: ask for 140 of something with 130 and it lands on 130, tagged short).
       // A row already above it (saved earlier) keeps pricing its excess as before. Units reused from the deal's
-      // preceding function count as owned, so they raise the ceiling too.
-      const maxQty = rowMaxQty + crossFnTake;
+      // preceding function count as owned, so they raise the ceiling too. An item the studio owns NONE of (IMS qty 0 —
+      // made-to-order things like a customised ceiling) has no stock to hold a number to, so it is not capped.
+      const maxQty = Number(item.qty) > 0 ? rowMaxQty + crossFnTake : null;
       const warning = shortQty > 0 ? (outOfStock ? `⚠ ${shortQty} of ${qty} out of stock for this date — pick an alternative` : `⚠ ${shortQty} of ${qty} not free in stock for this date — priced at cost%`) : null;
       // `available` here is "how much of THIS row's own qty is real stock" (= ownedQty) — the sole
       // consumer (StudioBuild.jsx's isUnavail badge) only ever checks <= 0, which ownedQty matches
