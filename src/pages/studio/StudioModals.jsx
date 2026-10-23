@@ -266,16 +266,26 @@ export default function StudioModals({ ctx }) {
                 {(() => {
                   if (availModal.onPick || availModal.zoneKey == null || availModal.idx == null) return null;
                   const sub = availModal.subcat;
+                  // The CURRENT item's own "Paintable" checkbox (IMS Inventory → edit item) is
+                  // authoritative when set — a sub-category can mix paintable and non-paintable
+                  // items (e.g. a fibre vs. a plastic variant of "the same" pot), and this button
+                  // is about THIS element's assigned item specifically, not "does anything in this
+                  // subcat take paint". Only an item with no explicit flag (legacy data) falls back
+                  // to the broader subcat-wide/keyword heuristic — same fallback order IMS's own
+                  // Inventory form uses when displaying an item with paintable left unset.
+                  const curItem = availModal.selectedId ? (imsInventory || []).find(i => i.id === availModal.selectedId) : null;
+                  const itemPaintable = curItem && curItem.paintable !== undefined ? !!curItem.paintable : null;
                   const chk = isSubcatPaintable ? isSubcatPaintable(sub, dealCheckData?.inventory || []) : null;
-                  const paintable = (chk === null || chk === undefined)
+                  const subPaintable = (chk === null || chk === undefined)
                     ? (PAINT_TOKENS_FALLBACK || []).some(t => String(sub || "").toLowerCase().includes(t))
                     : chk;
+                  const paintable = itemPaintable !== null ? itemPaintable : subPaintable;
                   // Always shown, so it never looks missing — dimmed (like Split) when this
-                  // sub-category can't be painted, with the reason on hover.
+                  // item/sub-category can't be painted, with the reason on hover.
                   return (
                     <button disabled={!paintable}
                       onClick={() => { if (!paintable) return; const t = { zoneKey: availModal.zoneKey, elIdx: availModal.idx }; closeModal(); setPaintPickerTarget(t); }}
-                      title={paintable ? "Allocate paint colours for this element" : `"${sub || "This sub-category"}" isn't paintable — no item in it has a paint cost set in IMS`}
+                      title={paintable ? "Allocate paint colours for this element" : itemPaintable === false ? `"${curItem?.name || availModal.elName}" is marked not paintable in IMS` : `"${sub || "This sub-category"}" isn't paintable — no item in it has a paint cost set in IMS`}
                       style={{padding:"5px 11px",borderRadius:7,border:`1px solid ${border}`,background:"transparent",color:textS,fontSize:11,fontWeight:700,whiteSpace:"nowrap",display:"inline-flex",alignItems:"center",gap:5,
                         opacity:paintable?1:0.42,cursor:paintable?"pointer":"not-allowed"}}>
                       <IconPalette size={12}/> Paint
