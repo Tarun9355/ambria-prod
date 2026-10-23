@@ -4875,6 +4875,12 @@ undefined
                             });
                           }} style={{width:26,height:26,borderRadius:6,border:`1px solid ${border}`,background:cardBg,cursor:"pointer",fontSize:14,fontWeight:600,color:textS,display:"flex",alignItems:"center",justifyContent:"center"}}>{"−"}</button>
                           <NumField min={0} value={el.qty||0} onCommit={nextQty=>{
+                            // An item that is out of stock for this date (and can't be produced in time) can be
+                            // reduced or swapped, not grown — same rule as the + button.
+                            if (priceInfo.outOfStock && nextQty > (el.qty||0)) {
+                              showMsg(`Out of stock for this date (${priceInfo.available||0} free) — can't go above ${el.qty||0}. Pick another item or reduce the quantity.`, "red");
+                              return;
+                            }
                             // §23 Phase 2.9d — same guard for direct typing
                             const invItem = el.invId ? (dealCheckData?.inventory || []).find(i => i.id === el.invId) : (dealCheckData?.inventory || []).find(i => i.name === el.name);
                             const baseColour = invItem?.baseColour || "Ivory";
@@ -4894,7 +4900,8 @@ undefined
                               return {...p,[k]:cur};
                             });
                           }} onFocus={e=>e.target.select()} style={{width:46,padding:"3px 4px",borderRadius:6,border:`1px solid ${border}`,background:cardBg,color:(el.qty||0)>0?textP:textS,fontSize:14,fontWeight:700,textAlign:"center",outline:"none",fontFamily:"inherit",MozAppearance:"textfield"}}/>
-                          <button onClick={()=>{
+                          <button disabled={!!priceInfo.outOfStock} title={priceInfo.outOfStock?`Out of stock for this date (${priceInfo.available||0} free) — can't add more. Pick another item or reduce the quantity.`:undefined} onClick={()=>{
+                            if (priceInfo.outOfStock) return;
                             // Increment off the committed qty — see the − button's comment (BUG-16).
                             setZoneElements(p=>{
                               const cur=[...(p[k]||[])];
@@ -4902,7 +4909,7 @@ undefined
                               cur[idx]=applyQty(k,cur[idx],(cur[idx].qty||0)+1);
                               return {...p,[k]:cur};
                             });
-                          }} style={{width:26,height:26,borderRadius:6,border:`1px solid ${border}`,background:cardBg,cursor:"pointer",fontSize:14,fontWeight:600,color:textS,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
+                          }} style={{width:26,height:26,borderRadius:6,border:`1px solid ${border}`,background:cardBg,cursor:(priceInfo.outOfStock?"not-allowed":"pointer"),fontSize:14,fontWeight:600,color:textS,opacity:priceInfo.outOfStock?0.4:1,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
                         </>
                       )}
                       </div>
