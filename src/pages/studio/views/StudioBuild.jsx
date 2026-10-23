@@ -2743,6 +2743,15 @@ export default function StudioBuild({ ctx }) {
    The rule beneath is Event Info's: a solid run, a diamond, then a fade, so it does not read as an
    underline that got cut off. */
 .bd-hero-face{font-family:'Cormorant Garamond','Playfair Display',Georgia,serif !important;font-style:italic}
+/* The date's pricing category (King's / Perfect / Filler) as one glowing icon beside the date; the words
+   appear on hover or keyboard focus. --tone is the category colour. */
+.bd-datebadge{position:relative;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;width:24px;height:24px;border-radius:999px;color:var(--tone);background:color-mix(in srgb,var(--tone) 16%,transparent);border:1px solid color-mix(in srgb,var(--tone) 55%,transparent);cursor:help;outline:none;animation:bdDateGlow 2.8s ease-in-out infinite}
+.bd-datebadge svg{filter:drop-shadow(0 0 4px var(--tone))}
+.bd-datebadge:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb,var(--tone) 70%,transparent)}
+.bd-datebadge::after{content:attr(data-tip);position:absolute;top:calc(100% + 8px);left:-4px;z-index:30;width:max-content;max-width:210px;padding:6px 10px;border-radius:8px;background:rgba(14,14,22,0.96);border:1px solid rgba(255,255,255,0.14);color:#F2EEE6;font-size:11.5px;font-weight:600;line-height:1.35;letter-spacing:0;white-space:normal;box-shadow:0 8px 22px rgba(0,0,0,0.45);opacity:0;transform:translateY(-3px);pointer-events:none;transition:opacity .16s cubic-bezier(0.23,1,0.32,1),transform .16s cubic-bezier(0.23,1,0.32,1)}
+.bd-datebadge:hover::after,.bd-datebadge:focus-visible::after{opacity:1;transform:none}
+@keyframes bdDateGlow{0%,100%{box-shadow:0 0 6px color-mix(in srgb,var(--tone) 40%,transparent)}50%{box-shadow:0 0 15px color-mix(in srgb,var(--tone) 85%,transparent)}}
+@media (prefers-reduced-motion: reduce){.bd-datebadge{animation:none;box-shadow:0 0 10px color-mix(in srgb,var(--tone) 60%,transparent)}.bd-datebadge::after{transition:none}}
 .bd-title-rule{display:flex;align-items:center;gap:9px;margin-top:14px;width:100%;max-width:520px}
 .bd-tr-seg{height:2.5px;border-radius:2px;width:80px;flex-shrink:0;background:${isDark?"#D9BE86":"#8A6A2F"}}
 .bd-tr-dia{width:8px;height:8px;flex-shrink:0;transform:rotate(45deg);background:${isDark?"#D9BE86":"#8A6A2F"}}
@@ -3158,22 +3167,22 @@ undefined
                     {row(<IconPalette size={14}/>, `${activeFnMeta.venue || venue} · ${activeFnMeta.type || fn}`)}
                     {/* fnDate, matching the venue/type line directly above — that one already used
                         activeFnMeta and this one didn't, which is the whole bug. */}
-                    {fnDate && row(<IconCalendar size={14}/>, new Date(fnDate+"T00:00:00").toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"}))}
+                    {fnDate && <div style={{display:"flex",alignItems:"center",gap:9}}>
+                      {row(<IconCalendar size={14}/>, new Date(fnDate+"T00:00:00").toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"}))}
+                      {(()=>{
+                        const dp = sharedFloralSettings?.datePricing;
+                        if(!dp) return null;
+                        const dc = getEffectivePricing(1, fnDate, { datePricing: dp });
+                        const meta = dc.category==="heavy_saya" ? { icon:<IconCrown size={13}/>, text:"King's date", tone:"#FBBF24" }
+                          : dc.category==="non_saya" ? { icon:<IconFiller size={13}/>, text:"Filler date", tone:"#38BDF8" }
+                          : { icon:<IconStar size={13}/>, text:"Perfect date", tone:"#34D399" };
+                        const m = Math.round((Number(dc.multiplier)||1)*100)/100;
+                        const lastMin = /last-minute/i.test(dc.reason||"");
+                        const tip = `${meta.text} · ${m!==1?`rentals ×${m}`:"standard rates"}${lastMin?" (last-minute)":""}`;
+                        return <span className="bd-datebadge" tabIndex={0} role="img" aria-label={tip} data-tip={tip} style={{"--tone":meta.tone}}>{meta.icon}</span>;
+                      })()}
+                    </div>}
                   </div>
-                  {/* The date's pricing category — King's / Perfect / Filler — straight from the same
-                      getEffectivePricing the prices use (a last-minute date is priced as Filler, so it
-                      reads as Filler here too), so what the panel says is what the rentals were charged at. */}
-                  {(()=>{
-                    const dp = sharedFloralSettings?.datePricing;
-                    if(!fnDate||!dp) return null;
-                    const dc = getEffectivePricing(1, fnDate, { datePricing: dp });
-                    const meta = dc.category==="heavy_saya" ? { icon:<IconCrown size={14}/>, text:"King's date", tone:"#FBBF24" }
-                      : dc.category==="non_saya" ? { icon:<IconFiller size={14}/>, text:"Filler date", tone:"#38BDF8" }
-                      : { icon:<IconStar size={14}/>, text:"Perfect date", tone:"#34D399" };
-                    const m = Math.round((Number(dc.multiplier)||1)*100)/100;
-                    const lastMin = /last-minute/i.test(dc.reason||"");
-                    return row(meta.icon, `${meta.text} · ${m!==1?`rentals ×${m}`:"standard rates"}${lastMin?" (last-minute)":""}`, meta.tone);
-                  })()}
                   {dd?.isHigh && row(<IconAlert size={14}/>, "High demand", "#F87171")}
                   {dd?.isMod && row(<IconAlert size={14}/>, "Moderate demand", "#FBBF24")}
                   {(()=>{
