@@ -137,7 +137,9 @@ import { prefetchImages, AVAIL_THUMB } from "../../lib/studio/prefetchImages.js"
 // ═══════════════════════════════════════════════════════════════
 const YT_CACHE_TTL = 60 * 60 * 1000; // 1h — YouTube playlist cache TTL
 
-const fmt = (n) => `₹${(n || 0).toLocaleString("en-IN")}`;
+// Whole rupees, like every rate on Build — an Artificial 70% or a guest multiplier leaves paise in a total
+// (₹1,79,112.225). Under ₹100 it is a per-sqft/per-piece rate, so keep up to two decimals there (₹17.5/sqft).
+const fmt = (n) => { const v = n || 0; return `₹${(Math.abs(v) >= 100 ? Math.round(v) : Math.round(v * 100) / 100).toLocaleString("en-IN")}`; };
 
 // ══ TEAM / USERS ══
 const TEAM = { tarun: { name: "Tarun", pw: "ambria@admin", role: "admin" } };
