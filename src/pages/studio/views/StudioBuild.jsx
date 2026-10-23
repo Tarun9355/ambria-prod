@@ -4,7 +4,8 @@ import { makeFilterUI, useRailMaxHeight } from "../../../components/studio/filte
 import { IconClipboard, IconPencil, IconRuler, IconBolt, IconWall, IconPlatform, IconCarpet, IconBulb, IconCheck,
   IconSearch, IconCamera, IconPrinter, IconNote, IconCalendar, IconFlower, IconFactory,
   IconCart, IconCopy, IconRepeat, IconAlert, IconPalette, IconChevron, IconSparkle,
-  IconPlay, IconBox, IconSave, IconSliders, IconStar } from "../../../components/icons.jsx";
+  IconPlay, IconBox, IconSave, IconSliders, IconStar, IconCrown, IconFiller } from "../../../components/icons.jsx";
+import { getEffectivePricing } from "../../../lib/inventory/helpers";
 import {
   ZONE_TYPE_TO_AREA, getCat, taxOr, FUNCTIONS, CATEGORIES, venueTypeLabel,
   maskingOptions, platformOptions, defaultCarpetMatId, CARPET_OFF, TRUSS_MATERIALS, trussBaseArea, trussRateFor,
@@ -3159,6 +3160,20 @@ undefined
                         activeFnMeta and this one didn't, which is the whole bug. */}
                     {fnDate && row(<IconCalendar size={14}/>, new Date(fnDate+"T00:00:00").toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"}))}
                   </div>
+                  {/* The date's pricing category — King's / Perfect / Filler — straight from the same
+                      getEffectivePricing the prices use (a last-minute date is priced as Filler, so it
+                      reads as Filler here too), so what the panel says is what the rentals were charged at. */}
+                  {(()=>{
+                    const dp = sharedFloralSettings?.datePricing;
+                    if(!fnDate||!dp) return null;
+                    const dc = getEffectivePricing(1, fnDate, { datePricing: dp });
+                    const meta = dc.category==="heavy_saya" ? { icon:<IconCrown size={14}/>, text:"King's date", tone:"#FBBF24" }
+                      : dc.category==="non_saya" ? { icon:<IconFiller size={14}/>, text:"Filler date", tone:"#38BDF8" }
+                      : { icon:<IconStar size={14}/>, text:"Perfect date", tone:"#34D399" };
+                    const m = Math.round((Number(dc.multiplier)||1)*100)/100;
+                    const lastMin = /last-minute/i.test(dc.reason||"");
+                    return row(meta.icon, `${meta.text} · ${m!==1?`rentals ×${m}`:"standard rates"}${lastMin?" (last-minute)":""}`, meta.tone);
+                  })()}
                   {dd?.isHigh && row(<IconAlert size={14}/>, "High demand", "#F87171")}
                   {dd?.isMod && row(<IconAlert size={14}/>, "Moderate demand", "#FBBF24")}
                   {(()=>{
