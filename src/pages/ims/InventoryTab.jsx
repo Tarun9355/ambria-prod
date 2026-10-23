@@ -471,7 +471,7 @@ Rules:
       cost: String(it.cost ?? ""),
       breakagePct: it.breakagePct ?? 0,
       oosCostPct: it.oosCostPct ?? "",
-      canBeMade: it.canBeMade !== false,
+      canBeMade: it.canBeMade === true, // shown as it really is: an item nobody ticked is not made
       noRepeatDiscount: !!it.noRepeatDiscount,
       notes: it.notes || "",
       img: it.img || (Array.isArray(it.photoUrls) && it.photoUrls[0]) || "",
@@ -576,7 +576,7 @@ Rules:
         cost: costNum,
         breakagePct: breakNum,
         oosCostPct: oosNum,
-        canBeMade: f.canBeMade !== false,
+        canBeMade: f.canBeMade === true,
         noRepeatDiscount: !!f.noRepeatDiscount,
         notes: f.notes,
         img: f.img,
@@ -1266,13 +1266,13 @@ Rules:
             {/* Can be made — gates whether a shortfall on THIS item bills at the Out of Stock Cost %
                 above at all. Unticked, a short unit never gets a production-cost price: Build/Deal
                 Check instead flag it "Out of stock" and the availability picker won't let it be
-                picked while it's short — see canFulfillShortfall (lib/rateCard.js). Defaults ON so
-                nothing changes for items nobody has reviewed yet. */}
+                picked while it's short — see canFulfillShortfall (lib/rateCard.js). A new item starts
+                ticked; only a ticked item is ever produced. */}
             <div className="col-span-2">
               <label className="flex items-center gap-2 cursor-pointer">
                 <input type="checkbox" checked={form.canBeMade !== false} onChange={(e) => setForm({ ...form, canBeMade: e.target.checked })} className="w-4 h-4 accent-indigo-600" />
                 <span className="text-xs font-medium text-gray-700">🛠️ Can be made in production</span>
-                <span className="text-xs text-gray-400">— unticked, a shortfall shows "Out of stock" instead of pricing at cost%</span>
+                <span className="text-xs text-gray-400">— only a ticked item is ever produced, and only when the event is 10+ days away; otherwise a short unit shows "Out of stock"</span>
               </label>
             </div>
               <div className="col-span-2 flex items-center gap-3">
@@ -1619,12 +1619,12 @@ Rules:
                 {/* Can be made — gates whether a shortfall on THIS item bills at the Out of Stock
                     Cost % above at all. Unticked, Build/Deal Check flag a short unit "Out of stock"
                     instead of a cost% price, and the availability picker won't offer it while
-                    short — see canFulfillShortfall (lib/rateCard.js). Defaults ON. */}
+                    short — see canFulfillShortfall (lib/rateCard.js). Only a ticked item is ever produced. */}
                 <div className="col-span-2">
                   <label className="flex items-center gap-2 cursor-pointer">
-                    <input type="checkbox" checked={editForm.canBeMade !== false} onChange={(e) => setEditForm((f) => ({ ...f, canBeMade: e.target.checked }))} className="w-4 h-4 accent-indigo-600" />
+                    <input type="checkbox" checked={editForm.canBeMade === true} onChange={(e) => setEditForm((f) => ({ ...f, canBeMade: e.target.checked }))} className="w-4 h-4 accent-indigo-600" />
                     <span className="text-xs font-medium text-gray-700">🛠️ Can be made in production</span>
-                    <span className="text-xs text-gray-400">— unticked, a shortfall shows "Out of stock" instead of pricing at cost%</span>
+                    <span className="text-xs text-gray-400">— only a ticked item is ever produced, and only when the event is 10+ days away; otherwise a short unit shows "Out of stock"</span>
                   </label>
                 </div>
               <div className="col-span-2 flex items-center gap-3">
