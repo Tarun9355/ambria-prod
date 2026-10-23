@@ -2744,11 +2744,12 @@ export default function StudioBuild({ ctx }) {
    underline that got cut off. */
 .bd-hero-face{font-family:'Cormorant Garamond','Playfair Display',Georgia,serif !important;font-style:italic}
 /* The date's pricing category (King's / Perfect / Filler) as one glowing icon beside the date; the words
-   appear on hover or keyboard focus. --tone is the category colour. */
+   appear on hover or keyboard focus. --tone is the category colour. The tip hangs off the badge's RIGHT edge and opens
+   leftwards: the badge sits near the panel's right side, and a tip opening rightwards ran under the page sheet beside it. */
 .bd-datebadge{position:relative;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;width:24px;height:24px;border-radius:999px;color:var(--tone);background:color-mix(in srgb,var(--tone) 16%,transparent);border:1px solid color-mix(in srgb,var(--tone) 55%,transparent);cursor:help;outline:none;animation:bdDateGlow 2.8s ease-in-out infinite}
 .bd-datebadge svg{filter:drop-shadow(0 0 4px var(--tone))}
 .bd-datebadge:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb,var(--tone) 70%,transparent)}
-.bd-datebadge::after{content:attr(data-tip);position:absolute;top:calc(100% + 8px);left:-4px;z-index:30;width:max-content;max-width:210px;padding:6px 10px;border-radius:8px;background:rgba(14,14,22,0.96);border:1px solid rgba(255,255,255,0.14);color:#F2EEE6;font-size:11.5px;font-weight:600;line-height:1.35;letter-spacing:0;white-space:normal;box-shadow:0 8px 22px rgba(0,0,0,0.45);opacity:0;transform:translateY(-3px);pointer-events:none;transition:opacity .16s cubic-bezier(0.23,1,0.32,1),transform .16s cubic-bezier(0.23,1,0.32,1)}
+.bd-datebadge::after{content:attr(data-tip);position:absolute;top:calc(100% + 8px);right:-6px;z-index:30;width:max-content;max-width:min(220px,calc(100vw - 80px));text-align:left;padding:6px 10px;border-radius:8px;background:rgba(14,14,22,0.96);border:1px solid rgba(255,255,255,0.14);color:#F2EEE6;font-size:11.5px;font-weight:600;line-height:1.35;letter-spacing:0;white-space:normal;box-shadow:0 8px 22px rgba(0,0,0,0.45);opacity:0;transform:translateY(-3px);pointer-events:none;transition:opacity .16s cubic-bezier(0.23,1,0.32,1),transform .16s cubic-bezier(0.23,1,0.32,1)}
 .bd-datebadge:hover::after,.bd-datebadge:focus-visible::after{opacity:1;transform:none}
 @keyframes bdDateGlow{0%,100%{box-shadow:0 0 6px color-mix(in srgb,var(--tone) 40%,transparent)}50%{box-shadow:0 0 15px color-mix(in srgb,var(--tone) 85%,transparent)}}
 @media (prefers-reduced-motion: reduce){.bd-datebadge{animation:none;box-shadow:0 0 10px color-mix(in srgb,var(--tone) 60%,transparent)}.bd-datebadge::after{transition:none}}
