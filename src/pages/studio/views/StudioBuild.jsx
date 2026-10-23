@@ -492,7 +492,7 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                   </div>}
                   <div style={groupCard} title="Masking panels attach to this truss">
                     <div style={{...rowCap,marginBottom:6}}>Masking</div>
-                    <div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
                       <span style={{display:"inline-flex",alignItems:"center",color:textS}}><IconWall size={12}/></span>
                       {toggle(!!zc.mkOn, ()=>{
                         const turningOn=!zc.mkOn;
@@ -505,12 +505,12 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                           ...(turningOn&&!zc.mkT&&!zc.customMaskingItemId?{mkT:maskOpts[0]?.id||"fabric"}:{}),
                         });
                       })}
-                      {zc.mkOn&&<button type="button" onClick={()=>sZ({mkRep:!maskRepOn})}
+                      {zc.mkOn&&<button type="button" aria-pressed={maskRepOn} onClick={()=>sZ({mkRep:!maskRepOn})}
                         title={maskRepOn?(guestFabricDiscPct>0?`Masking is reused — ${guestFabricDiscPct}% off its price. Tap to remove.`:"Repeat is marked; the discount shows once the client discount toggle is on. Tap to remove."):"Mark the masking as reused (Repeat) — takes the discount off the masking only"}
-                        style={{display:"inline-flex",alignItems:"center",gap:3,fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:999,cursor:"pointer",
-                          border:`1px solid ${maskRepOn?"#10B981":border}`,background:maskRepOn?"rgba(16,185,129,0.12)":"transparent",color:maskRepOn?"#059669":textS}}>♻ Repeat</button>}
-                      {showCosts&&zc.mkOn&&maskingRepOff>0&&<span style={{fontSize:10.5,fontWeight:600,color:"#10B981"}}>− {fmt(maskingRepOff)}</span>}
-                      {showCosts&&zc.mkOn&&<span style={{fontWeight:600,color:textP,fontSize:11}}>{fmt(maskingShown)}</span>}
+                        style={{display:"inline-flex",alignItems:"center",gap:3,fontSize:11,fontWeight:600,padding:"4px 10px",borderRadius:999,cursor:"pointer",
+                          border:`1px solid ${maskRepOn?"#059669":border}`,background:maskRepOn?"rgba(16,185,129,0.12)":"transparent",color:maskRepOn?"#047857":textS}}>♻ Repeat</button>}
+                      {showCosts&&zc.mkOn&&maskingRepOff>0&&<span style={{marginLeft:"auto",fontSize:10.5,fontWeight:600,color:"#047857"}}>♻ − {fmt(maskingRepOff)}</span>}
+                      {showCosts&&zc.mkOn&&<span style={{marginLeft:maskingRepOff>0?0:"auto",fontWeight:600,color:textP,fontSize:11}}>{fmt(maskingShown)}</span>}
                     </div>
                   </div>
               </div>;
