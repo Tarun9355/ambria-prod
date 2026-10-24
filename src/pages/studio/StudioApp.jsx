@@ -10673,9 +10673,23 @@ export default function StudioApp() {
       const orig = (items || []).find(i => i.id === baseInvId);
       const backToOriginal = !!selectedId && selectedId === baseInvId;
       const isSwap = !!(selectedId && pick && baseInvId && !backToOriginal && orig && orig.free <= 0);
+      // The picked item's own unit (pick.unit, sourced straight from IMS — see openAvailModal's own
+      // `unit: it.unit || ""` on each candidate) was never carried over here — the element kept
+      // whatever unit/qty the PREVIOUS item needed. Harmless swapping within the same unit (one
+      // chandelier for another, still "pieces"), but silently wrong across a unit change: a 20kg
+      // fabric swapped for a 1-piece item kept reading "need 20", comparing a quantity meant for an
+      // entirely different scale against the new item's real stock — a false "out of stock"
+      // (confirmed: Fabric Balloon Hanging, 1 piece owned, read as needing 20 of them because the
+      // element it replaced was 20KG of a different, unrelated fabric). When the unit genuinely
+      // changes, qty/baseQty reset to 1 — any number carried over from the old unit has no valid
+      // meaning against the new one, so keeping it is actively misleading rather than merely stale.
+      const newUnit = pick?.unit || elems[idx].unit;
+      const unitChanged = selectedId && pick && newUnit !== elems[idx].unit;
       elems[idx] = (selectedId && pick)
         ? {
             ...elems[idx], invId: selectedId, name: pick.name || elems[idx].name, imsId: selectedId, imsName: pick.name || "", imsPhoto: pick.photo || "",
+            unit: newUnit,
+            ...(unitChanged ? { qty: 1, baseQty: 1 } : null),
             ...(backToOriginal
               ? { swappedFrom: undefined, baseInvId: undefined }
               : { baseInvId, swappedFrom: isSwap ? baseInvId : elems[idx].swappedFrom }),
@@ -10735,11 +10749,18 @@ export default function StudioApp() {
       const scale = Math.max(1, Math.round(Number(zoneConfig[zoneKey]?.scale) || 1));
       const splitEls = allocateSplit(total, pickedIds).map(({ id, qty }) => {
         const pick = (items || []).find((it) => it.id === id);
+        // Same fix as saveAvailPick's own swap, same reason — a split line's picked item can carry
+        // a different real unit than the original (the picker's sub-category scoping doesn't
+        // guarantee matching units), and `qty` here is the original's own quantity divided up, which
+        // has no valid meaning once the unit changes under it.
+        const newUnit = pick?.unit || original.unit;
+        const unitChanged = newUnit !== original.unit;
+        const lineQty = unitChanged ? 1 : qty;
         return {
           ...original,
-          invId: id, imsId: id,
+          invId: id, imsId: id, unit: newUnit,
           name: pick?.name || original.name, imsName: pick?.name || "", imsPhoto: pick?.photo || "",
-          qty, baseQty: scale > 1 ? qty / scale : qty,
+          qty: lineQty, baseQty: unitChanged ? 1 : (scale > 1 ? qty / scale : qty),
         };
       });
       elems.splice(idx, 1, ...splitEls);
