@@ -94,7 +94,7 @@ import { itemImsSubcat, lookupBySubcat, priceForInvItem, itemDimsText, walkKitUn
 import { matchFlowerPattern, floralPatternUnitRates, sizeClassToPatternKey, normalizeSizeClass, kitFloralCompDelta } from "../../lib/ims/flowerHelpers";
 import { rowToRcItem, rcItemToRow, rcIsSMB, getFloralMode, oosCostPctFor, canFulfillShortfall } from "../../lib/rateCard";
 import { todayStr } from "../../lib/ims/attendance";
-import { supabase, fetchAll, upsertRow, deleteRow, subscribeTable, keepaliveUpsert } from "../../lib/supabase";
+import { supabase, fetchAll, upsertRow, deleteRow, subscribeTable, keepaliveUpsert, keepaliveRpc } from "../../lib/supabase";
 import { latestPlanningInputStamp, planningNeedsSync, planningSnapshotOutdated, planningUpcoming, PLANNING_SNAPSHOT_VERSION } from "../../lib/studio/planningSync.js";
 import { guestRepeatLineCost, flaggedUnitRate } from "../../lib/studio/repeatPricing.js";
 import {
@@ -1256,15 +1256,35 @@ async function loadAllSessionRowsFallback() {
   return all;
 }
 
+// client_ledger_light (migration 034) is the same table with dcDraft/dcCards/dcZoneState/
+// dcKitEdits/dcReservedInventory/finalSession stripped out of `data` — together over half of
+// client_ledger's total size, and concentrated in the ~1/3 of clients that have ever opened Deal
+// Check. Those six fields are fetched lazily, once, by fetchClientHeavyFields below, the moment a
+// client actually becomes the active one — so this cuts what every single page load downloads for
+// clients nobody has opened yet, without changing what anything sees once a client IS open.
 async function loadClientRows() {
   const all = []; const SIZE = 1000;
   for (let from = 0; ; from += SIZE) {
-    const { data, error } = await supabase.from("client_ledger").select("*").order("id").range(from, from + SIZE - 1);
+    const { data, error } = await supabase.from("client_ledger_light").select("*").order("id").range(from, from + SIZE - 1);
     if (error) throw error;
     all.push(...(data || []));
     if (!data || data.length < SIZE) break;
   }
   return all;
+}
+// The six heavy keys loadClientRows above deliberately leaves out — fetched for ONE client at a
+// time via PostgREST's own `column->key` path selection (no RPC needed for a single-row read, only
+// the boot-time VIEW needed real jsonb subtraction). Merged into that client's in-memory record by
+// the caller before anything — Deal Check, a booked deal's locked-in total — reads them.
+async function fetchClientHeavyFields(clientId) {
+  if (!clientId) return null;
+  const { data, error } = await supabase
+    .from("client_ledger")
+    .select("dcDraft:data->dcDraft, dcCards:data->dcCards, dcZoneState:data->dcZoneState, dcKitEdits:data->dcKitEdits, dcReservedInventory:data->dcReservedInventory, finalSession:data->finalSession")
+    .eq("id", clientId)
+    .maybeSingle();
+  if (error) throw error;
+  return data || null;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -3674,12 +3694,19 @@ export default function StudioApp() {
       }
       if (changed.length) {
         const rows = changed.map((c) => ({ ...clientToRow(c), updated_at: new Date().toISOString() }));
+        // merge_client_ledger_rows (migration 034), not a plain upsert — a plain upsert REPLACES the
+        // `data` jsonb column outright. That was always safe when every client's full data was loaded
+        // at boot; it stopped being safe the moment client_ledger_light (same migration) started
+        // leaving dcDraft/dcCards/dcZoneState/dcKitEdits/dcReservedInventory out of the boot fetch —
+        // a client whose Deal Check was never opened this session has no copy of those keys in
+        // memory, so `c` here is missing them too, and a bare upsert would silently delete them from
+        // the row. The RPC merges `data` shallowly instead: a key this write doesn't mention survives.
         // Only ever set true from the pagehide/beforeunload handlers below — the page is actually
         // unloading right now, so this write has to survive teardown instead of just being correct.
         if (opts.keepalive) {
-          keepaliveUpsert("client_ledger", rows);
+          keepaliveRpc("merge_client_ledger_rows", { p_rows: rows });
         } else {
-          const { error } = await supabase.from("client_ledger").upsert(rows, { onConflict: "id" });
+          const { error } = await supabase.rpc("merge_client_ledger_rows", { p_rows: rows });
           if (error) throw error;
         }
       }
@@ -3689,6 +3716,31 @@ export default function StudioApp() {
       // silently-failed save. Every existing caller ignores the return value and is unaffected.
       return true;
     } catch (e) { showMsg?.("Client save failed: " + (e?.message || e), "red"); return false; }
+  }, [showMsg]);
+  // client_ledger_light (migration 034) leaves dcDraft/dcCards/dcZoneState/dcKitEdits/
+  // dcReservedInventory out of the boot-time fetch — this is the one place that fetches them back in,
+  // the first time Deal Check is actually opened for a given client (called from openDealCheck,
+  // before it reads anything off the client record). `_heavyFetched` marks a client as checked (even
+  // when it genuinely has none of these — most clients never open Deal Check at all) so repeat opens
+  // never re-fetch. Also advances clientJsonRef's own dirty-check baseline for this client, so simply
+  // loading this data into memory is never mistaken by saveClientLedger for an edit that needs
+  // uploading on the next autosave tick. Returns the MERGED record directly — the caller needs it
+  // synchronously right after awaiting, not via the `clientLedger` closure, which a setState call
+  // inside here cannot update before this function returns.
+  const ensureClientHeavyFieldsLoaded = useCallback(async (clientId) => {
+    const cur = clientLedgerRef.current.find((c) => c.id === clientId);
+    if (!cur || cur._heavyFetched) return cur || null;
+    let heavy = null;
+    try {
+      heavy = await fetchClientHeavyFields(clientId);
+    } catch (e) {
+      showMsg?.("Couldn't load this client's Deal Check draft: " + (e?.message || e), "red");
+      return cur;
+    }
+    const merged = { ...cur, ...(heavy || {}), _heavyFetched: true };
+    setClientLedger((prev) => prev.map((c) => (c.id === clientId ? merged : c)));
+    if (clientJsonRef.current) clientJsonRef.current[clientId] = JSON.stringify(merged);
+    return merged;
   }, [showMsg]);
   // Deleting ONE saved session. Browse removes it from the client's array and saves the ledger; that
   // takes it out of the blob mirror, and this takes out the rows it became in studio_sessions. Both
@@ -10706,7 +10758,12 @@ export default function StudioApp() {
     // clobber-safe), so reopening always shows the last saved state. NOTE: we deliberately do NOT
     // fall back to the legacy whole-blob dc-cache — it's no longer network-persisted, so on a hard
     // refresh it can be stale/empty and would clobber the saved draft (the row is the source of truth).
-    const clientRec = activeClientId ? (clientLedger || []).find(c => c.id === activeClientId) : null;
+    // dcDraft (and dcCards/dcZoneState/dcKitEdits/dcReservedInventory, read further down this file)
+    // are excluded from the boot-time fetch (client_ledger_light, migration 034) — this is the single
+    // gate that fetches them back in, the moment Deal Check actually opens for this client. Every
+    // other Deal Check read of these fields happens strictly after this point (Generate, the restore
+    // effect below, reconcileSoldInventoryBlocks), so this one await is sufficient.
+    const clientRec = activeClientId ? await ensureClientHeavyFieldsLoaded(activeClientId) : null;
     const rowDraft = (clientRec?.dcDraft && typeof clientRec.dcDraft === "object" && !Array.isArray(clientRec.dcDraft)) ? clientRec.dcDraft : null;
     const cachedForThisClient = rowDraft;
     const hasCache = !!cachedForThisClient;
@@ -10922,7 +10979,7 @@ export default function StudioApp() {
       }
     }
     setDcAbortRef(null);
-  }, [collectAllFunctionData, dcPhotoOverrides, photoImsMap, dcCache, activeClientId, clientLedger]);
+  }, [collectAllFunctionData, dcPhotoOverrides, photoImsMap, dcCache, activeClientId, clientLedger, ensureClientHeavyFieldsLoaded]);
 
   // ═══ DEAL CHECK — fire openDealCheck on full-page open — VERBATIM ═══
   useEffect(() => {

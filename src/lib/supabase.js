@@ -98,6 +98,27 @@ export const keepaliveUpsert = async (table, rows) => {
   } catch { /* best-effort — the page is already unloading */ }
 };
 
+// Same keepalive guarantee as keepaliveUpsert, but for a Postgres FUNCTION call instead of a plain
+// table upsert — PostgREST exposes every function at /rest/v1/rpc/<name>, so this is just that same
+// POST shape with the RPC's own named params as the body. Needed for merge_client_ledger_rows
+// (migration 034): a plain table upsert REPLACES the `data` jsonb column outright, which would wipe
+// a client's Deal Check draft (dcDraft/dcCards/…) the moment that client was lazy-loaded partially —
+// the RPC does a shallow merge instead, same as the non-keepalive save path uses via supabase.rpc().
+export const keepaliveRpc = async (fnName, params) => {
+  try {
+    await fetch(`${supabaseUrl}/rest/v1/rpc/${fnName}`, {
+      method: "POST",
+      keepalive: true,
+      headers: {
+        "Content-Type": "application/json",
+        apikey: supabaseAnonKey,
+        Authorization: `Bearer ${supabaseAnonKey}`,
+      },
+      body: JSON.stringify(params || {}),
+    });
+  } catch { /* best-effort — the page is already unloading */ }
+};
+
 /** Subscribe to real-time changes on a table */
 // One channel PER CALLER, not per table. supabase.channel(name) returns the EXISTING channel when
 // the name matches, and postgres_changes callbacks cannot be added to a channel that has already
