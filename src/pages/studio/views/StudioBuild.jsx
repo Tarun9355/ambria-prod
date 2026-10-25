@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { makeFilterUI, useRailMaxHeight } from "../../../components/studio/filterUI.jsx";
 import NumField from "../../../components/ui/NumField.jsx";
 import { applyQtyCeiling } from "../../../lib/studio/qtyCeiling";
+import { unitAllowsDecimal, quantityForUnit } from "../../../lib/studio/qtyUnits";
 import { IconClipboard, IconPencil, IconRuler, IconBolt, IconWall, IconPlatform, IconCarpet, IconBulb, IconCheck,
   IconSearch, IconCamera, IconPrinter, IconNote, IconCalendar, IconFlower, IconFactory,
   IconCart, IconCopy, IconRepeat, IconAlert, IconPalette, IconChevron, IconSparkle,
@@ -4631,6 +4632,9 @@ undefined
                   const isUnavail = !!el.invId && typeof priceInfo.available==="number" && priceInfo.available<=0 && (el.qty||0)>0;
                   // Ceiling on this row's quantity: what stock covers on the date (priceInfo.maxQty; null for an item
                   // the studio owns none of, which is made to order). The message names the real number.
+                  // A count of things (Pieces, Set, pc…) is a whole number — there is no 3.5 WARM LED. Measures (sqft, rft, kg) may be fractional.
+                  const qtyUnit = invItem?.unit||rc?.unit||el.unit;
+                  const qtyWhole = !unitAllowsDecimal(qtyUnit);
                   const stockCap = el.invId && typeof priceInfo.maxQty==="number" ? priceInfo.maxQty : null;
                   const atStockCap = stockCap != null && (el.qty||0) >= stockCap;
                   const stockCapMsg = stockCap == null ? "" : stockCap > 0
@@ -4853,13 +4857,14 @@ undefined
                             setZoneElements(p=>{
                               const cur=[...(p[k]||[])];
                               if(!cur[idx]) return p;
-                              const q=Math.max(0,(cur[idx].qty||0)-1);
+                              const q=Math.max(0,qtyWhole?Math.ceil((cur[idx].qty||0))-1:(cur[idx].qty||0)-1);
                               if(allocTotal>0&&q<allocTotal) return p;   // same guard, re-checked against committed qty
                               cur[idx]=applyQty(k,cur[idx],q);
                               return {...p,[k]:cur};
                             });
                           }} style={{width:26,height:26,borderRadius:6,border:`1px solid ${border}`,background:cardBg,cursor:"pointer",fontSize:14,fontWeight:600,color:textS,display:"flex",alignItems:"center",justifyContent:"center"}}>{"−"}</button>
-                          <NumField min={0} commitOn="blur" value={el.qty||0} onCommit={nextQtyTyped=>{
+                          <NumField min={0} allowDecimal={!qtyWhole} commitOn="blur" value={el.qty||0} onCommit={nextQtyRaw=>{
+                            const nextQtyTyped = quantityForUnit(qtyUnit, nextQtyRaw);
                             // A quantity can't be taken past what stock can cover on this date — same ceiling as the
                             // + button. Typing more lands on that ceiling and the card is tagged short (wantedQty);
                             // a row already ABOVE the ceiling (saved before) refuses a bigger number; reducing is fine.
@@ -4893,7 +4898,7 @@ undefined
                             setZoneElements(p=>{
                               const cur=[...(p[k]||[])];
                               if(!cur[idx]) return p;
-                              cur[idx]=applyQty(k,cur[idx],(cur[idx].qty||0)+1);
+                              cur[idx]=applyQty(k,cur[idx],qtyWhole?Math.floor(cur[idx].qty||0)+1:(cur[idx].qty||0)+1);
                               return {...p,[k]:cur};
                             });
                           }} style={{width:26,height:26,borderRadius:6,border:`1px solid ${border}`,background:cardBg,cursor:(atStockCap?"not-allowed":"pointer"),fontSize:14,fontWeight:600,color:textS,opacity:atStockCap?0.4:1,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
