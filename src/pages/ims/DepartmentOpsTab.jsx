@@ -19,6 +19,7 @@ import { swatchHexFor } from "../../lib/studio/colours";
 import PlanningSyncButton from "./PlanningSyncButton.jsx";
 import FabricBlock from "./FabricBlock.jsx";
 import { buildFabricGroups } from "../../lib/ims/fabricGroups";
+import { buildEventSwap, swappedRecipeFlower } from "../../lib/ims/mandiSwap";
 
 // ── THE OFFICIAL LOGO, READY FOR THE PDF ──
 // ambria-logo.png is a WHITE wordmark with a gold dot and gold "DESIGN & DECOR", on a transparent
@@ -3249,14 +3250,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     // made with the replacement instead, scaled by bought ÷ planned so the piece gets its share.
     // Keyed by the shopping-list name — the mandi flower name the recipe resolves to.
     const floralLines = Array.isArray(sel?.deptOps?.Floral?.mandiLines) ? sel.deptOps.Floral.mandiLines : [];
-    const eventSwap = new Map();
-    floralLines.forEach(r => {
-      if (!r?.swapFor) return;
-      const o = floralLines.find(x => x.name === r.swapFor && x.swappedTo);
-      if (!o) return;
-      const ratio = Number(o.projQty) > 0 ? (Number(r.qty) || 0) / Number(o.projQty) : 1;
-      eventSwap.set(String(r.swapFor).trim().toLowerCase(), { name: r.name, unit: r.unit || "", ratio });
-    });
+    const eventSwap = buildEventSwap(floralLines);
     const placed = new Set();
     const fns = Array.isArray(sel?.functionsDetail) ? sel.functionsDetail : [];
     // ── WHAT STANDS IN THE ZONE: truss, platform, carpet ──
@@ -3448,8 +3442,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
             // This event's own mandi swap, made on the Floral shopping list (eventSwap above): the
             // piece is made with the replacement, in its units. Only the replacement is named — the crew makes the piece with
             // what was bought; the flower it stands in for is on the Mandi list, not here.
-            const es = eventSwap.get(String(mf.name || "").trim().toLowerCase());
-            if (es) return { name: es.name, qty: Math.round(baseQty * es.ratio * 100) / 100, unit: es.unit };
+            const swapped = swappedRecipeFlower(eventSwap, mf.name, baseQty);
+            if (swapped) return swapped;
             return { name: mf.name, qty: baseQty, unit: mf.unit || "" };
           }).filter(f => f && f.qty > 0);
           merged.set(key, { name: inv?.name || el?.name || held?.name || "Item", qty, unit, deptTag, photo: invPhoto(inv, held), dims: invDims(inv), size: elSize, kit: held?.isKit ? (Array.isArray(held.components) ? held.components.length : 0) + (Array.isArray(held.recipeParts) ? held.recipeParts.length : 0) : 0, recipe, paint: addPaint(new Map(), paint) });
