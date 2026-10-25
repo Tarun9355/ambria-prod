@@ -43,10 +43,11 @@ export default function PrintedWallsModal({
       .sort((a, b) => (Number(b.free > 0 && !b.inZone) - Number(a.free > 0 && !a.inZone)) || (Number(b.price > 0) - Number(a.price > 0)) || (a.price - b.price));
   }, [all, q, size]);
 
-  const chip = (on) => ({
-    padding: "4px 10px", borderRadius: 999, cursor: "pointer", fontSize: 11, fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0,
-    border: `1px solid ${on ? accent : border}`, background: on ? `${accent}22` : "transparent", color: on ? accent : textS,
-  });
+  // One look for the search box and the size dropdown, so they sit level with each other.
+  const field = {
+    height: 34, boxSizing: "border-box", padding: "0 10px", borderRadius: 8, border: `1px solid ${border}`,
+    background: isDark ? "#1A1A2E" : "#fff", color: textP, fontSize: 12, fontFamily: "inherit",
+  };
 
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 10500, background: "rgba(10,10,20,0.85)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
@@ -62,18 +63,18 @@ export default function PrintedWallsModal({
           <button onClick={onClose} aria-label="Close" style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${border}`, background: "transparent", color: textS, fontSize: 13, cursor: "pointer" }}>✕</button>
         </div>
 
-        <div style={{ padding: "10px 18px 6px" }}>
-          <input value={q} onChange={(e) => setQ(e.target.value)} autoFocus placeholder="Search designs…"
-            style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: `1px solid ${border}`, background: isDark ? "#1A1A2E" : "#fff", color: textP, fontSize: 12 }} />
+        {/* Search and size filter on one line, same height, aligned. */}
+        <div style={{ padding: "10px 18px 6px", display: "flex", gap: 8, alignItems: "center" }}>
+          <input value={q} onChange={(e) => setQ(e.target.value)} autoFocus placeholder="Search designs…" aria-label="Search designs"
+            style={{ ...field, flex: "1 1 120px", maxWidth: 240, minWidth: 0 }} />
           {sizes.length > 1 && (
-            // one scrolling strip, not a wall of chips: ~24 sizes would otherwise push the designs off a phone screen
-            <div style={{ display: "flex", gap: 6, marginTop: 8, overflowX: "auto", paddingBottom: 6 }}>
-              <button onClick={() => setSize("")} aria-pressed={!size} style={chip(!size)}>All sizes · {all.length}</button>
-              {sizes.map(({ d, n }) => (
-                <button key={d} onClick={() => setSize(size === d ? "" : d)} aria-pressed={size === d} style={chip(size === d)}>📐 {d} · {n}</button>
-              ))}
-            </div>
+            <select value={size} onChange={(e) => setSize(e.target.value)} aria-label="Filter by size"
+              style={{ ...field, flex: "0 1 190px", minWidth: 0, cursor: "pointer" }}>
+              <option value="">All sizes ({all.length})</option>
+              {sizes.map(({ d, n }) => <option key={d} value={d}>{d} ({n})</option>)}
+            </select>
           )}
+          <span style={{ marginLeft: "auto", fontSize: 11, color: textS, whiteSpace: "nowrap" }}>{shown.length} design{shown.length === 1 ? "" : "s"}</span>
         </div>
 
         <div style={{ padding: "6px 18px 16px", overflowY: "auto", flex: 1 }}>
