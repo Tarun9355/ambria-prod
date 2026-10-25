@@ -200,7 +200,7 @@ export default function StudioSummary({ ctx }) {
     isAdmin, clientLedger, saveClientLedger, eventOrders, activeClientId, askConfirm,
     // events / cost sheet
     eventGrandTotal, pricingReady, collectAllFunctionData, calcFunctionBreakdown,
-    buildCombinedCostSheetData, applyCostSheetQty, csData, setCsData, saveSession, showMsg, syncDealValueNow, syncDeptOpsHeadless,
+    buildCombinedCostSheetData, applyCostSheetQty, csData, setCsData, saveSession, showMsg, syncDealValueNow,
     // summary accordion state
     expandedSummaryFnIdx, setExpandedSummaryFnIdx,
     // pricing helpers
@@ -215,7 +215,7 @@ export default function StudioSummary({ ctx }) {
     // build canvas / source
     sourceEvent, dcCustomItems, elNotes, fnBuilds, activeFnIdx, zoneLabelsD,
     // sold flow
-    showSoldConfetti, markSold, unbookDeal,
+    showSoldConfetti, markSold, applyBookedChanges,
     // step + reset. The 48 individual setters that used to be listed here existed only to feed the
     // inline startNew(); that reset is now startNewDeal on ctx, so they came off with it.
     setStep, setActiveClientId, startNewDeal, isFnSwitching,
@@ -357,17 +357,17 @@ export default function StudioSummary({ ctx }) {
   const [deckPdf, setDeckPdf] = useState({ state: "idle", url: "", error: "" });
   useEffect(() => { setDeckPdf({ state: "idle", url: "", error: "" }); }, [canvaEditUrl]);
   // Declared below the deck state on purpose: Apply resets the remembered deck (see inside).
-  const applyPendingDealValue = () => {
-    const newNegotiated = Math.max(0, (Number(activeClient?.negotiatedAmount) || 0) + pendingDelta);
-    saveClientLedger(clientLedger.map(c => c.id === activeClientId ? { ...c, negotiatedAmount: newNegotiated, bookedSystemTotal: eventGrandTotal } : c));
-    syncDealValueNow?.({ amount: Math.round(newNegotiated), pending: 0 });
+  // Pushes the CURRENT build into IMS and folds any price drift into the deal value — the single
+  // "Apply Changes" action for an already-booked deal now that Un-book is gone (StudioApp.jsx's
+  // applyBookedChanges owns the actual sync/out-of-stock gate; this wrapper only resets the local
+  // Canva-deck cache, which lives here, not there).
+  const applyChanges = async () => {
+    const ok = await applyBookedChanges();
+    if (!ok) return; // out-of-stock gate fired, or nothing to save — applyBookedChanges already messaged
     // The remembered Canva deck was made from the deal BEFORE these edits, and Summary would keep
     // reopening it (and its cached PDF) as if it were current. Drop it, so the next Canva press
     // builds the deck from the applied deal.
     forgetDeck(); setCanvaState("idle"); setCanvaEditUrl(""); setCanvaDeckId(""); setCanvaDeckSig(""); setDeckPdf({ state: "idle", url: "", error: "" });
-    // And bring IMS Dept Ops up to the applied deal now, without anyone opening Deal Check.
-    syncDeptOpsHeadless?.();
-    showMsg?.("Deal value updated to " + fmt(newNegotiated) + " — updating IMS", "green");
   };
   // Escape hatch for when the pending figure itself is not trustworthy — most commonly a deal
   // booked before this tracking existed, whose baseline got healed off whatever the build happened
@@ -2841,19 +2841,13 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
               to a secondary line, so nobody loses sight of what the design itself would cost at list price. */}
           {hasNegotiated && <div style={{fontSize:11.5,color:"#a5b4fc",marginTop:9}}>System estimate: <strong style={{color:"#fff",fontWeight:700}}>{fmt(eventGrandTotal)}</strong></div>}
           {/* Build changed after booking (a Production/Buying item added, a swap, etc.) — the
-              negotiated deal value itself never moves on its own; this just makes the drift visible
-              and lets the salesperson choose to fold it in. Same number IMS's Dept Ops sees. */}
+              negotiated deal value itself never moves on its own; this just makes the drift visible.
+              Folding it into the deal value now happens via the single "Apply Changes" button below
+              (which also pushes the build itself to IMS) rather than its own button here. */}
           {isBooked && pendingDelta !== 0 && (
             <div style={{marginTop:11,padding:"9px 14px",borderRadius:10,background:"rgba(245,158,11,0.16)",border:"1px solid rgba(245,158,11,0.4)",display:"inline-block"}}>
               <div style={{fontSize:11.5,color:"#fcd34d",fontWeight:700}}>⚠ Build changed since booking: {pendingDelta > 0 ? "+" : ""}{fmt(pendingDelta)}</div>
               <div style={{marginTop:7,display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
-                <button
-                  type="button"
-                  onClick={applyPendingDealValue}
-                  style={{fontSize:11,fontWeight:700,padding:"6px 14px",borderRadius:8,background:"#f59e0b",color:"#1a1208",border:"none",cursor:"pointer"}}
-                >
-                  Apply to deal value
-                </button>
                 {/* For when this figure isn't a real change to bill/discount for — e.g. an already-
                     booked deal whose tracking only started from whatever the build happened to total
                     the first time this shipped, not the true number at booking. Only moves where
@@ -2883,12 +2877,11 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
         {activeClient?.status==="booked"
           ? /* Inline-flex, not a block — it shrinks to its text and the card's textAlign:center
                keeps it centred, instead of stretching a near-empty bar the full panel width.
-               Clickable — a real button, not the div this used to be — so a booking that fell
-               through (couple cancels, deposit bounces, a fat-fingered Sold) can be walked back
-               without going through Admin. unbookDeal itself carries the confirm + what it does
-               and does not touch (see its own comment in StudioApp.jsx). */
-            <button type="button" onClick={unbookDeal} title="Click to un-book this deal"
-              style={{display:"inline-flex",alignItems:"center",gap:8,padding:"6px 14px 6px 8px",borderRadius:999,background:"rgba(16,185,129,0.10)",border:"1px solid rgba(52,211,153,0.35)",cursor:"pointer",font:"inherit"}}>
+               Owner call (2026-10-25): a booked deal stays booked in both Studio and IMS — there is
+               no more Un-book, so this is a plain status badge now, not a button. Build edits to an
+               already-booked deal go through "Apply Changes" below instead. */
+            <>
+            <div style={{display:"inline-flex",alignItems:"center",gap:8,padding:"6px 14px 6px 8px",borderRadius:999,background:"rgba(16,185,129,0.10)",border:"1px solid rgba(52,211,153,0.35)",font:"inherit"}}>
               {/* A drawn check in a filled disc, not the ✅ emoji — the emoji renders as a green
                   tile on some platforms and a glossy box on others, never matching the pill. */}
               <span aria-hidden="true" style={{width:18,height:18,borderRadius:"50%",background:"#10B981",display:"inline-flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
@@ -2897,7 +2890,16 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
               <span style={{fontSize:10.5,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:"#34D399"}}>Booked</span>
               {activeClient.bookedAt&&<span style={{fontSize:11.5,fontWeight:600,color:"rgba(255,255,255,0.85)"}}>{new Date(activeClient.bookedAt).toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"})}</span>}
               {activeClient.bookedBy&&<span style={{fontSize:11,color:"rgba(255,255,255,0.5)"}}>· {activeClient.bookedBy}</span>}
+            </div>
+            {/* Always available while booked, not just when pendingDelta is non-zero — a swap made to
+                clear an out-of-stock item can net to the same price while still needing IMS's own
+                copy of the build refreshed. Runs the same out-of-stock hard block Sold does; a
+                shortfall opens the same gate modal instead of applying anything. */}
+            <button type="button" onClick={applyChanges} title="Push the current build to IMS and fold any price change into the deal value"
+              style={{display:"block",margin:"8px auto 0",padding:"6px 14px",borderRadius:999,background:"rgba(99,102,241,0.14)",border:"1px solid rgba(129,140,248,0.4)",color:"#A5B4FC",fontSize:10.5,fontWeight:700,letterSpacing:0.6,textTransform:"uppercase",cursor:"pointer",font:"inherit"}}>
+              ↻ Apply Changes
             </button>
+            </>
           : (()=>{const canSold=clientName.trim()&&clientDate&&venue;const missing=[];if(!clientName.trim())missing.push("name");if(!clientDate)missing.push("date");if(!venue)missing.push("venue");return <>
           {/* Enabled state gets its green + shadow from .sh-sold so the :hover rule can override
               them — an inline background would always win over the stylesheet. */}

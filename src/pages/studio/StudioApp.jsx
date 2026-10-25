@@ -4323,7 +4323,7 @@ export default function StudioApp() {
   // guestPriceMultiplier above. Always on (not gated by hideDiscountFromClient — this is market
   // pricing by date desirability, not a discount the client opts into). Reuses getEffectivePricing
   // (lib/inventory/helpers.js) — the SAME function IMS's own Inventory tab/P&L report already read —
-  // so a date's category and its last-minute-booking override resolve identically everywhere.
+  // so a date's category resolves identically everywhere.
   // dealCheckData falls back to studioFloralData so this works before Deal Check has ever been
   // opened, same reasoning as fixedVenues/agencyFeePct above.
   const dateCategoryMultiplierFor = (dateStr) => {
@@ -4378,7 +4378,7 @@ export default function StudioApp() {
   // present. undefined (never touched, the overwhelming majority of elements) falls through to the
   // section default exactly as before this existed.
   // dateFactor (optional, default 1): the date multiplier getElPrice / getElPriceForFn multiply onto
-  // this line afterwards. A date BELOW 1 (Filler, last-minute) is itself a discount, and discounts do
+  // this line afterwards. A date BELOW 1 (Filler) is itself a discount, and discounts do
   // not stack — only the bigger of it and this 25% is taken (innerDiscountFactor, lib/studio/
   // discounts.js): the part applied here shrinks so that, once the date factor is multiplied on,
   // the unit lands on the bigger discount alone. Units with no discount of their own just get the
@@ -8142,6 +8142,157 @@ export default function StudioApp() {
   }, []);
 
   // ── Mark sold (writes Event Order) — VERBATIM ──
+  // Builds the per-function event-order plan from whatever is CURRENTLY in Build and pushes it into
+  // IMS (the `event_orders` table + Dept Ops) — shared by markSold (the first "Confirm booking")
+  // and applyBookedChanges (pushing an edit to an ALREADY-booked deal without touching its booked
+  // status — owner call 2026-10-25: once booked, a deal stays booked in both Studio and IMS;
+  // un-booking was removed, so this is now the only path that keeps IMS's own copy of the build —
+  // zones/elements/pricing, not just the physical inventory holds reconcileSoldInventoryBlocks
+  // already keeps live — in step with whatever Studio shows).
+  // Freezes every element currently in the build to TODAY for the production lead-time gate
+  // (canFulfillShortfall, lib/rateCard.js) — a fresh commitment checkpoint for whatever's currently
+  // in the build, same as the very first confirm, whether this run IS the first confirm or a later
+  // push of an edit.
+  // Returns false only if a duplicate-booking confirm was shown and declined — skipDupeConfirm:true
+  // skips that prompt entirely, since applyBookedChanges always has an existing order by
+  // definition and asking "update the existing booking instead of creating a second one?" on every
+  // single edit would be pure noise.
+  const pushEventOrderPlan = useCallback(async (client, opts = {}) => {
+    const { skipDupeConfirm = false, activityVerb = "Booking confirmed", activityEmoji = "🎉" } = opts;
+    const allFns = collectAllFunctionData();
+    const soldDateStamp = todayStr();
+    const stampZoneElements = (ze) => {
+      const next = {};
+      Object.entries(ze || {}).forEach(([zk, els]) => {
+        next[zk] = (els || []).map(el => (el && el.invId) ? { ...el, addedAt: soldDateStamp } : el);
+      });
+      return next;
+    };
+    const activeFnStamped = allFns.find(f => f.fnIdx === activeFnIdx);
+    if (activeFnStamped) setZoneElements(stampZoneElements(activeFnStamped.zoneElements));
+    const otherFnsStamped = allFns.filter(f => f.fnIdx !== activeFnIdx);
+    if (otherFnsStamped.length) {
+      setFnBuilds(prev => {
+        const next = { ...prev };
+        otherFnsStamped.forEach(fnData => { next[fnData.fnIdx] = { ...(next[fnData.fnIdx] || {}), zoneElements: stampZoneElements(fnData.zoneElements) }; });
+        return next;
+      });
+    }
+    // allFns itself still needs the stamped values for fnEOs (the event-order snapshot) built
+    // below — rebuilt here from the same stampZoneElements() call, not from the live state setters
+    // above (which won't have re-rendered yet).
+    allFns.forEach(fnData => { fnData.zoneElements = stampZoneElements(fnData.zoneElements); });
+    const fnEOs = allFns.map(fnData => {
+      const bd = calcFunctionBreakdown(fnData);
+      return {
+        fnIdx: fnData.fnIdx,
+        type: fnData.fnType || "",
+        date: fnData.fnDate || "",
+        venue: fnData.fnVenue || "",
+        shift: fnData.fnShift || "",
+        pax: fnData.fnPax || "",
+        flowerPalette: fnData.fnFlowerPalette || "",
+        fabricPalette: fnData.fnPalette || "",
+        zones: JSON.parse(JSON.stringify(fnData.zoneConfig || {})),
+        elements: JSON.parse(JSON.stringify(fnData.zoneElements || {})),
+        enabledEls: { ...(fnData.enabledEls || {}) },
+        elTiers: { ...(fnData.elTiers || {}) },
+        elSelectedPhoto: Object.fromEntries(Object.entries(fnData.elSelectedPhoto || {}).map(([k, v]) => [k, { src: v?.src, eventName: v?.eventName, isLibrary: v?.isLibrary, eventId: v?.eventId }])),
+        dims: Object.fromEntries(Object.entries(fnData.zoneConfig || {}).map(([zk, zc]) => [zk, zc?.dims || {}])),
+        zoneNames: Object.fromEntries((fnData.customZones || []).filter(cz => cz && cz.id).map(cz => [cz.id, cz.name || ""])),
+        zoneOrder: Array.isArray(fnData.zoneOrder) ? [...fnData.zoneOrder] : [],
+        decorCost: bd.decorTotal,
+        transportCost: bd.transportTotal,
+        customItemsCost: dcCustomItems.filter(c => c.fnIdx === fnData.fnIdx).reduce((s, c) => s + (c.manualPrice || c.refPrice || 0) * (Number(c.qty) || 1), 0),
+        total: bd.grand + dcCustomItems.filter(c => c.fnIdx === fnData.fnIdx).reduce((s, c) => s + (c.manualPrice || c.refPrice || 0) * (Number(c.qty) || 1), 0),
+        floralRatio: typeof fnData.floralRatio === "number" ? fnData.floralRatio : floralRatio,
+        floralOverrides: fnData.floralOverrides && typeof fnData.floralOverrides === "object"
+          ? { note: fnData.floralOverrides.note || "", rows: Array.isArray(fnData.floralOverrides.rows) ? fnData.floralOverrides.rows : [] }
+          : { note: "", rows: [] },
+        floralColorPrefs: dcFloralColorPrefs[fnData.fnIdx] || {},
+        customItems: dcCustomItems.filter(c => c.fnIdx === fnData.fnIdx),
+        photoOverrides: { ...(dcPhotoOverrides[fnData.fnIdx] || {}) },
+        skipped: [...(dcSkipped[fnData.fnIdx] || [])],
+        productionAccepted: [...(dcProductionAccepted[fnData.fnIdx] || [])],
+        dedupOverrides: { ...(dcDedupOverrides[fnData.fnIdx] || {}) }
+      };
+    });
+    const eventTotal = fnEOs.reduce((s, f) => s + (f.total || 0), 0);
+    const eventDecor = fnEOs.reduce((s, f) => s + (f.decorCost || 0), 0);
+    const eventTransport = fnEOs.reduce((s, f) => s + (f.transportCost || 0), 0);
+    // Snapshot the Deal Check floral MANDI plan (projected) so the IMS Floral head sees the same
+    // breakdown and can enter the actual mandi price later → real P&L flows back here.
+    let floralPlan = { projected: 0, flowers: [] };
+    try {
+      const fbAgg = {};
+      allFns.forEach(fnData => { const r = calcFnFloralSourcingCost(fnData); (r.breakdown || []).forEach(f => {
+        if (!fbAgg[f.name]) fbAgg[f.name] = { name: f.name, qty: 0, cost: 0, unit: f.unit, colorVariant: f.colorVariant || null, colorPrefs: f.colorPrefs || null };
+        fbAgg[f.name].qty += f.qty; fbAgg[f.name].cost += f.cost;
+        if (f.colorVariant && !fbAgg[f.name].colorVariant) fbAgg[f.name].colorVariant = f.colorVariant;
+        if (f.colorPrefs && !fbAgg[f.name].colorPrefs) fbAgg[f.name].colorPrefs = f.colorPrefs;
+      }); });
+      const flowers = Object.values(fbAgg).map(f => ({ ...f, rate: f.qty > 0 ? Math.round((f.cost / f.qty) * 100) / 100 : 0 })).sort((a, b) => b.cost - a.cost);
+      floralPlan = { projected: Math.round(flowers.reduce((s, f) => s + f.cost, 0)), flowers, capturedAt: Date.now() };
+    } catch {}
+    // Snapshot the system manpower plan (counts + how each was derived) so dept heads see it.
+    let manpowerPlan = [];
+    try { manpowerPlan = manpowerPlanForBooking(allFns); } catch {}
+    // Prevent double-booking: one client + date = ONE event order. If an active (non-cancelled) order
+    // already exists for this client+date, update it IN PLACE (reuse id) instead of creating a second
+    // row. Otherwise re-pushing the same deal would spawn a duplicate booking in IMS.
+    const existingActive = eventOrders.find(e => e.clientId === client.id && e.date === clientDate && e.status !== "cancelled");
+    if (existingActive && !skipDupeConfirm && !confirm(`${client.name} is already booked for ${clientDate} (status: ${existingActive.status || "pending"}). Update that existing booking with the latest plan instead of creating a second one?`)) return false;
+    const eoId = existingActive ? existingActive.id : ("eo_" + Date.now().toString(36));
+    const eoCreatedAt = existingActive ? (existingActive.createdAt || Date.now()) : Date.now();
+    // Keep an in-progress IMS status (blocked/final) on re-push; otherwise (re)start the auto-confirm.
+    const eoStatus = (existingActive && (existingActive.status === "blocked" || existingActive.status === "final")) ? existingActive.status : "pending";
+    const eoPlan = {
+      id: eoId,
+      clientId: client.id,
+      clientName: client.name,
+      phone: clientPhone.trim(),
+      lmsLeadId: client.lmsLeadId || null,
+      lmsDept: client.lmsDept || null,
+      lmsPriority: client.lmsPriority || null,
+      lmsStatus: client.lmsStatus || null,
+      date: clientDate,
+      venue,
+      functions: allFns.map(f => f.fnType).filter(Boolean),
+      shift: clientShift || "",
+      brideGroom: clientBrideGroom || "",
+      pax: clientPax || "",
+      zones: JSON.parse(JSON.stringify(zoneConfig)),
+      elements: JSON.parse(JSON.stringify(zoneElements)),
+      enabledEls: { ...enabledEls },
+      elTiers: { ...elTiers },
+      dims: Object.fromEntries(Object.entries(zoneConfig).map(([zk, zc]) => [zk, zc?.dims || {}])),
+      totalCost: eventTotal,
+      decorCost: eventDecor,
+      transportCost: eventTransport,
+      functionsDetail: fnEOs,
+      floralPlan,
+      manpowerPlan,
+      manualItems: [...dcManualItems],
+      floralRatio,
+      salesperson: authUser?.name || "—",
+      createdAt: eoCreatedAt,
+      status: eoStatus
+    };
+    // Re-pushing an existing booking lays the new plan OVER the order, it does not replace it.
+    // Replacing it wiped everything IMS had added since — the department heads' own work (deptOps:
+    // manpower edits, mandi actuals, on-site expenses, trucks, dismantle) and the last department
+    // snapshot — which is the opposite of what persistDeptSnapshot goes out of its way to keep.
+    const eo = existingActive ? { ...existingActive, ...eoPlan } : eoPlan;
+    saveEventOrders(existingActive ? eventOrders.map(e => e.id === eoId ? eo : e) : [...eventOrders, eo]);
+    // Bridge to IMS: SOLD orders also go into the shared `event_orders` TABLE (Studio's own list
+    // is a kv blob; IMS — Events, Planning, Dept Ops — reads the table + realtime).
+    supabase.from("event_orders").upsert({ id: eo.id, client_name: eo.clientName ?? null, event_id: eo.eventId ?? null, fn_id: eo.fnId ?? null, status: eo.status ?? "pending", items: eo.items || [], manual_items: eo.manualItems || [], decisions: eo.decisions || {}, data: eo }, { onConflict: "id" }).then(({ error }) => { if (error) console.warn("[pushEventOrderPlan] event_orders table sync failed:", error.message); }).catch(() => {});
+    logActivity("booking", `${activityEmoji} ${client.name} — ${activityVerb} by ${authUser?.name || "—"}`);
+    // Fill IMS Dept Ops for the booking now, rather than whenever someone next opens Deal Check.
+    syncDeptOpsHeadless();
+    return true;
+  }, [collectAllFunctionData, activeFnIdx, calcFunctionBreakdown, dcCustomItems, floralRatio, dcFloralColorPrefs, dcPhotoOverrides, dcSkipped, dcProductionAccepted, dcDedupOverrides, calcFnFloralSourcingCost, manpowerPlanForBooking, eventOrders, saveEventOrders, clientDate, clientPhone, clientShift, clientBrideGroom, clientPax, zoneConfig, zoneElements, enabledEls, elTiers, dcManualItems, venue, authUser, logActivity, syncDeptOpsHeadless]);
+
   const markSold = useCallback(async () => {
     try {
       if (!clientName.trim()) { showMsg("Client name is required", "red"); return; }
@@ -8181,200 +8332,58 @@ export default function StudioApp() {
       const { client, ledger } = result;
       // bookedSystemTotal is the frozen baseline the Summary hero diffs the live build against to
       // show "pending changes since booking" (owner decision: negotiated deal value stays frozen,
-      // salesperson applies build-driven changes manually — see the hero's pendingDelta banner).
-      // Only set once — a re-confirm of an already-booked deal must not silently rebase it, or a
-      // real pending change made between two re-confirms would vanish unnoticed.
+      // salesperson applies build-driven changes manually via Apply Changes — see Summary's own
+      // pendingDelta banner). Only set once — a re-confirm of an already-booked deal must not
+      // silently rebase it, or a real pending change made between two re-confirms would vanish
+      // unnoticed.
       const updated = ledger.map(c => c.id === client.id ? { ...c, status: "booked", bookedAt: Date.now(), bookedBy: authUser?.name || "—", finalSession: c.sessions?.[0] || null, bookedSystemTotal: (c.bookedSystemTotal != null ? c.bookedSystemTotal : eventGrandTotal) } : c);
       saveClientLedger(updated);
-      const allFns = collectAllFunctionData();
-      // Freeze every element currently in the build to TODAY (the sold date) for the production
-      // lead-time gate (canFulfillShortfall, lib/rateCard.js) — confirming a booking is the moment
-      // ops actually commits to making whatever's flagged "Can be made," so that's when the 10-day
-      // countdown starts, not whenever each item happened to be dragged into a pre-Sold draft that
-      // may have sat around for weeks. A re-confirm of an already-booked deal re-stamps the same
-      // way — it's a fresh commitment checkpoint for whatever's currently in the build, same as the
-      // first confirm. Builds fresh zone/element objects rather than mutating collectAllFunctionData's
-      // own (live, non-cloned) zoneElements in place, same immutability convention every other
-      // zoneElements writer in this file already follows.
-      const soldDateStamp = todayStr();
-      const stampZoneElements = (ze) => {
-        const next = {};
-        Object.entries(ze || {}).forEach(([zk, els]) => {
-          next[zk] = (els || []).map(el => (el && el.invId) ? { ...el, addedAt: soldDateStamp } : el);
-        });
-        return next;
-      };
-      const activeFnStamped = allFns.find(f => f.fnIdx === activeFnIdx);
-      if (activeFnStamped) setZoneElements(stampZoneElements(activeFnStamped.zoneElements));
-      const otherFnsStamped = allFns.filter(f => f.fnIdx !== activeFnIdx);
-      if (otherFnsStamped.length) {
-        setFnBuilds(prev => {
-          const next = { ...prev };
-          otherFnsStamped.forEach(fnData => { next[fnData.fnIdx] = { ...(next[fnData.fnIdx] || {}), zoneElements: stampZoneElements(fnData.zoneElements) }; });
-          return next;
-        });
-      }
-      // allFns itself still needs the stamped values for fnEOs (the event-order snapshot) built
-      // below — rebuilt here from the same stampZoneElements() call, not from the live state setters
-      // above (which won't have re-rendered yet).
-      allFns.forEach(fnData => { fnData.zoneElements = stampZoneElements(fnData.zoneElements); });
-      const fnEOs = allFns.map(fnData => {
-        const bd = calcFunctionBreakdown(fnData);
-        return {
-          fnIdx: fnData.fnIdx,
-          type: fnData.fnType || "",
-          date: fnData.fnDate || "",
-          venue: fnData.fnVenue || "",
-          shift: fnData.fnShift || "",
-          pax: fnData.fnPax || "",
-          // The two palettes picked in Build (fn.fnFlowerPalette / fn.fnPalette) weren't synced to
-          // IMS at all before this — ops had no visibility into what colour scheme a function was
-          // actually built to beyond re-deriving it from the mandi list's own per-flower picks.
-          flowerPalette: fnData.fnFlowerPalette || "",
-          fabricPalette: fnData.fnPalette || "",
-          zones: JSON.parse(JSON.stringify(fnData.zoneConfig || {})),
-          elements: JSON.parse(JSON.stringify(fnData.zoneElements || {})),
-          enabledEls: { ...(fnData.enabledEls || {}) },
-          elTiers: { ...(fnData.elTiers || {}) },
-          elSelectedPhoto: Object.fromEntries(Object.entries(fnData.elSelectedPhoto || {}).map(([k, v]) => [k, { src: v?.src, eventName: v?.eventName, isLibrary: v?.isLibrary, eventId: v?.eventId }])),
-          dims: Object.fromEntries(Object.entries(fnData.zoneConfig || {}).map(([zk, zc]) => [zk, zc?.dims || {}])),
-          zoneNames: Object.fromEntries((fnData.customZones || []).filter(cz => cz && cz.id).map(cz => [cz.id, cz.name || ""])),
-          // The Build page's own zone order (dragged by hand); IMS's PDFs list zones in it.
-          zoneOrder: Array.isArray(fnData.zoneOrder) ? [...fnData.zoneOrder] : [],
-          decorCost: bd.decorTotal,
-          transportCost: bd.transportTotal,
-          customItemsCost: dcCustomItems.filter(c => c.fnIdx === fnData.fnIdx).reduce((s, c) => s + (c.manualPrice || c.refPrice || 0) * (Number(c.qty) || 1), 0),
-          total: bd.grand + dcCustomItems.filter(c => c.fnIdx === fnData.fnIdx).reduce((s, c) => s + (c.manualPrice || c.refPrice || 0) * (Number(c.qty) || 1), 0),
-          floralRatio: typeof fnData.floralRatio === "number" ? fnData.floralRatio : floralRatio,
-          floralOverrides: fnData.floralOverrides && typeof fnData.floralOverrides === "object"
-            ? { note: fnData.floralOverrides.note || "", rows: Array.isArray(fnData.floralOverrides.rows) ? fnData.floralOverrides.rows : [] }
-            : { note: "", rows: [] },
-          floralColorPrefs: dcFloralColorPrefs[fnData.fnIdx] || {},
-          customItems: dcCustomItems.filter(c => c.fnIdx === fnData.fnIdx),
-          photoOverrides: { ...(dcPhotoOverrides[fnData.fnIdx] || {}) },
-          skipped: [...(dcSkipped[fnData.fnIdx] || [])],
-          productionAccepted: [...(dcProductionAccepted[fnData.fnIdx] || [])],
-          dedupOverrides: { ...(dcDedupOverrides[fnData.fnIdx] || {}) }
-        };
-      });
-      const eventTotal = fnEOs.reduce((s, f) => s + (f.total || 0), 0);
-      const eventDecor = fnEOs.reduce((s, f) => s + (f.decorCost || 0), 0);
-      const eventTransport = fnEOs.reduce((s, f) => s + (f.transportCost || 0), 0);
-      // Snapshot the Deal Check floral MANDI plan (projected) so the IMS Floral head sees the same
-      // breakdown and can enter the actual mandi price later → real P&L flows back here.
-      let floralPlan = { projected: 0, flowers: [] };
-      try {
-        const fbAgg = {};
-        // colorVariant/colorPrefs carried through here too (same shape DealCheckOverlay's own
-        // snapshot writer already uses) — this used to only copy name/qty/cost/unit, so a colour
-        // picked in Deal Check's Florals tab before the deal was ever booked was silently dropped
-        // the moment "Confirm booking" ran, even though `f` (from calcFnFloralSourcingCost's own
-        // breakdown) already carried it.
-        // This aggregates ACROSS every function in the booking, keyed by flower name — two
-        // functions sharing a flower species is the normal case (Haldi + Mehendi both using
-        // "carnation himachal"), and whichever function's row happened to be processed FIRST used
-        // to permanently decide the colour for every other function's rows of the same flower too,
-        // even when that first one had no colour picked at all. Prefer a non-null incoming colour
-        // instead of only ever taking the first, same fix as buildMandiBreakdown's own collision case.
-        allFns.forEach(fnData => { const r = calcFnFloralSourcingCost(fnData); (r.breakdown || []).forEach(f => {
-          if (!fbAgg[f.name]) fbAgg[f.name] = { name: f.name, qty: 0, cost: 0, unit: f.unit, colorVariant: f.colorVariant || null, colorPrefs: f.colorPrefs || null };
-          fbAgg[f.name].qty += f.qty; fbAgg[f.name].cost += f.cost;
-          if (f.colorVariant && !fbAgg[f.name].colorVariant) fbAgg[f.name].colorVariant = f.colorVariant;
-          if (f.colorPrefs && !fbAgg[f.name].colorPrefs) fbAgg[f.name].colorPrefs = f.colorPrefs;
-        }); });
-        // rate: the true per-unit price (qty is already whole-unit-respecting from the breakdown
-        // above) — so IMS's mandi list can seed its own ₹/unit field with the real rate instead of
-        // back-deriving one from cost÷qty.
-        const flowers = Object.values(fbAgg).map(f => ({ ...f, rate: f.qty > 0 ? Math.round((f.cost / f.qty) * 100) / 100 : 0 })).sort((a, b) => b.cost - a.cost);
-        floralPlan = { projected: Math.round(flowers.reduce((s, f) => s + f.cost, 0)), flowers, capturedAt: Date.now() };
-      } catch {}
-      // Snapshot the system manpower plan (counts + how each was derived) so dept heads see it.
-      let manpowerPlan = [];
-      try { manpowerPlan = manpowerPlanForBooking(allFns); } catch {}
-      // Prevent double-booking: one client + date = ONE event order. If an active (non-cancelled) order
-      // already exists for this client+date, update it IN PLACE (reuse id) instead of creating a second
-      // row. Otherwise re-confirming the same deal would spawn a duplicate booking in IMS.
-      const existingActive = eventOrders.find(e => e.clientId === client.id && e.date === clientDate && e.status !== "cancelled");
-      if (existingActive && !confirm(`${client.name} is already booked for ${clientDate} (status: ${existingActive.status || "pending"}). Update that existing booking with the latest plan instead of creating a second one?`)) return;
-      const eoId = existingActive ? existingActive.id : ("eo_" + Date.now().toString(36));
-      const eoCreatedAt = existingActive ? (existingActive.createdAt || Date.now()) : Date.now();
-      // Keep an in-progress IMS status (blocked/final) on re-push; otherwise (re)start the auto-confirm.
-      const eoStatus = (existingActive && (existingActive.status === "blocked" || existingActive.status === "final")) ? existingActive.status : "pending";
-      const eoPlan = {
-        id: eoId,
-        clientId: client.id,
-        clientName: client.name,
-        phone: clientPhone.trim(),
-        lmsLeadId: client.lmsLeadId || null,
-        lmsDept: client.lmsDept || null,
-        lmsPriority: client.lmsPriority || null,
-        lmsStatus: client.lmsStatus || null,
-        date: clientDate,
-        venue,
-        functions: allFns.map(f => f.fnType).filter(Boolean),
-        shift: clientShift || "",
-        brideGroom: clientBrideGroom || "",
-        pax: clientPax || "",
-        zones: JSON.parse(JSON.stringify(zoneConfig)),
-        elements: JSON.parse(JSON.stringify(zoneElements)),
-        enabledEls: { ...enabledEls },
-        elTiers: { ...elTiers },
-        dims: Object.fromEntries(Object.entries(zoneConfig).map(([zk, zc]) => [zk, zc?.dims || {}])),
-        totalCost: eventTotal,
-        decorCost: eventDecor,
-        transportCost: eventTransport,
-        functionsDetail: fnEOs,
-        floralPlan,
-        manpowerPlan,
-        manualItems: [...dcManualItems],
-        floralRatio,
-        salesperson: authUser?.name || "—",
-        createdAt: eoCreatedAt,
-        status: eoStatus
-      };
-      // Re-confirming an existing booking lays the new plan OVER the order, it does not replace it.
-      // Replacing it wiped everything IMS had added since — the department heads' own work (deptOps:
-      // manpower edits, mandi actuals, on-site expenses, trucks, dismantle) and the last department
-      // snapshot — which is the opposite of what persistDeptSnapshot goes out of its way to keep.
-      const eo = existingActive ? { ...existingActive, ...eoPlan } : eoPlan;
-      saveEventOrders(existingActive ? eventOrders.map(e => e.id === eoId ? eo : e) : [...eventOrders, eo]);
-      // Bridge to IMS: SOLD orders also go into the shared `event_orders` TABLE (Studio's own list
-      // is a kv blob; IMS — Events, Planning, Dept Ops — reads the table + realtime).
-      supabase.from("event_orders").upsert({ id: eo.id, client_name: eo.clientName ?? null, event_id: eo.eventId ?? null, fn_id: eo.fnId ?? null, status: eo.status ?? "pending", items: eo.items || [], manual_items: eo.manualItems || [], decisions: eo.decisions || {}, data: eo }, { onConflict: "id" }).then(({ error }) => { if (error) console.warn("[markSold] event_orders table sync failed:", error.message); }).catch(() => {});
-      logActivity("booking", `🎉 ${client.name} — Booking confirmed by ${authUser?.name || "—"}`);
-      // Fill IMS Dept Ops for the booking now, rather than whenever someone next opens Deal Check.
-      syncDeptOpsHeadless();
+      const pushed = await pushEventOrderPlan(client);
+      if (!pushed) return;
       setShowSoldConfetti(true);
       setTimeout(() => setShowSoldConfetti(false), 4000);
       showMsg("🎉 Booking confirmed for " + client.name, "green");
     } catch (e) { showMsg("Error: " + (e.message || "unknown"), "red"); }
-  }, [scanOutOfStockElements, saveSession, authUser, saveClientLedger, logActivity, clientName, clientDate, venue, fn, clientPhone, clientShift, clientBrideGroom, clientPax, dateTypes, clientLedger, zoneConfig, zoneElements, enabledEls, elTiers, grandTotal, totalCost, transportCalc, floralRatio, eventOrders, saveEventOrders, collectAllFunctionData, calcFunctionBreakdown, dcPhotoOverrides, dcSkipped, dcProductionAccepted, dcManualItems, dcDedupOverrides, dcCustomItems, dcFloralColorPrefs,
+  }, [scanOutOfStockElements, saveSession, authUser, saveClientLedger, clientName, clientDate, venue, dateTypes, clientLedger,
     // Listed because the ₹0 check above reads it. Without this the callback holds whatever
     // eventGrandTotal was when it was last rebuilt — which could warn "nothing has been built" on a
     // deal that has since been priced, or worse, stay silent on one that has been emptied.
-    eventGrandTotal, askConfirmAsync, syncDeptOpsHeadless]);
+    eventGrandTotal, askConfirmAsync, pushEventOrderPlan, showMsg]);
 
-  // Reverses markSold — for when a booking was confirmed by mistake, or falls through afterward.
-  // Reverts client_ledger's own status/booked* fields back to "ongoing". Deliberately touches
-  // NOTHING else: not the linked IMS event order (owner call — a booking that's merely being
-  // un-booked in Studio is not the same thing as the contract with the client being cancelled, and
-  // this must never be read as one), and not anything already reconciled into IMS's own
-  // `blocks`/`functions`/`projects` tables (reconcileSoldInventoryBlocks) — both of those are Ops'
-  // own calls to make, separately, not something a click here should do on their behalf.
-  const unbookDeal = useCallback(async () => {
+  // Pushes the CURRENT build into IMS for an ALREADY-BOOKED deal without touching its booked status
+  // — owner call (2026-10-25): if a deal is booked, it stays booked in both Studio and IMS; Un-book
+  // (which used to revert a deal to "ongoing" so its build could be edited) is removed. This is now
+  // the only path a salesperson uses to push a post-booking build edit through — same out-of-stock
+  // hard block markSold uses (an edit can introduce a shortfall just as easily as a fresh build
+  // can), and it also folds any price drift since booking into the negotiated deal value, replacing
+  // the old Summary "Apply to deal value" button (which only ever touched the price, never IMS's
+  // own copy of the actual build). Returns true/false so the caller (Summary) knows whether to
+  // treat the deck/cache it keeps alongside the deal as stale.
+  const applyBookedChanges = useCallback(async () => {
     try {
       const client = activeClient;
-      if (!client || client.status !== "booked") return;
-      if (!(await askConfirmAsync(`Un-book ${client.name}'s deal?`, {
-        note: `${client.eventDate || "—"} at ${client.venue || "—"}. Reverts it to an ongoing deal in Studio only — it does not cancel the IMS booking or release inventory held for it; coordinate that with Ops.`,
-        yesLabel: "Un-book",
-      }))) return;
-      const updated = clientLedger.map(c => c.id === client.id ? { ...c, status: "ongoing", bookedAt: null, bookedBy: null, finalSession: null, bookedSystemTotal: null } : c);
-      saveClientLedger(updated);
-      logActivity("booking", `↩️ ${client.name} — Booking un-booked by ${authUser?.name || "—"}`);
-      showMsg(`${client.name}'s deal un-booked`, "green");
-    } catch (e) { showMsg("Error: " + (e.message || "unknown"), "red"); }
-  }, [activeClient, clientLedger, saveClientLedger, logActivity, authUser, showMsg, askConfirmAsync]);
+      if (!client || client.status !== "booked") return false;
+      const oosFlagged = scanOutOfStockElements();
+      if (oosFlagged.length > 0) { setOosGateModal(oosFlagged); return false; }
+      const result = saveSession();
+      if (!result || !result.client) { showMsg("Save a client first", "red"); return false; }
+      const { client: savedClient, ledger } = result;
+      const hasNegotiated = Number(savedClient.negotiatedAmount) > 0;
+      const delta = (hasNegotiated && savedClient.bookedSystemTotal != null) ? Math.round(eventGrandTotal - savedClient.bookedSystemTotal) : 0;
+      let freshClient = savedClient;
+      if (delta !== 0) {
+        const newNegotiated = Math.max(0, (Number(savedClient.negotiatedAmount) || 0) + delta);
+        const updated = ledger.map(c => c.id === savedClient.id ? { ...c, negotiatedAmount: newNegotiated, bookedSystemTotal: eventGrandTotal } : c);
+        saveClientLedger(updated);
+        freshClient = updated.find(c => c.id === savedClient.id);
+      }
+      const pushed = await pushEventOrderPlan(freshClient, { skipDupeConfirm: true, activityVerb: "Booking updated", activityEmoji: "✏️" });
+      if (!pushed) return false;
+      if (delta !== 0) syncDealValueNow({ amount: Math.round(freshClient.negotiatedAmount), pending: 0 });
+      showMsg(`Changes applied for ${freshClient.name}`, "green");
+      return true;
+    } catch (e) { showMsg("Error: " + (e.message || "unknown"), "red"); return false; }
+  }, [activeClient, scanOutOfStockElements, saveSession, showMsg, eventGrandTotal, saveClientLedger, pushEventOrderPlan, syncDealValueNow]);
 
   // ── Load client session — VERBATIM ──
   const loadClientSession = useCallback((client, session, landingStep = 3, opts = {}) => {
@@ -11784,7 +11793,7 @@ export default function StudioApp() {
     loadClientSession, startNewDeal, loadLmsLead, autoPersistCustomVenue, pickAndLoad, pickAndLoadFromVideo,
     loadedClientIdentityRef, confirmClientRename, revertClientNameEdit,
     resumeSavedSession, toggleEl, selectElPhoto, handleZoneUpload, aiTagImage, findTemplate,
-    getLibPhotosForZone, maxRepaintCostInSubcat, saveSession, markSold, unbookDeal, loadEvent,
+    getLibPhotosForZone, maxRepaintCostInSubcat, saveSession, markSold, applyBookedChanges, loadEvent,
     buildZonesForFn, buildCombinedCostSheetData, applyCostSheetQty, logActivity, saveTR,
     normalizePaintAllocation, paintPillLabel, isSubcatPaintable,
     lmsCacheRef,

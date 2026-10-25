@@ -3189,8 +3189,7 @@ undefined
                           : dc.category==="non_saya" ? { icon:<IconFiller size={13}/>, text:"Filler date", tone:"#38BDF8" }
                           : { icon:<IconStar size={13}/>, text:"Perfect date", tone:"#34D399" };
                         const m = Math.round((Number(dc.multiplier)||1)*100)/100;
-                        const lastMin = /last-minute/i.test(dc.reason||"");
-                        const tip = `${meta.text}${m!==1?` · rentals ×${m}`:""}${lastMin?" (last-minute)":""}`;
+                        const tip = `${meta.text}${m!==1?` · rentals ×${m}`:""}`;
                         return <span className="bd-datebadge" tabIndex={0} role="img" aria-label={tip} data-tip={tip} style={{"--tone":meta.tone}}>{meta.icon}</span>;
                       })()}
                     </div>}

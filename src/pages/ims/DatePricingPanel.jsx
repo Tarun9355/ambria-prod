@@ -3,8 +3,11 @@ import { SETTINGS_DEFAULTS, DATE_PRICING_LABELS } from "../../lib/ims/constants"
 
 // Faithful copy of the reference IMS DatePricingPanel (shown in Calendar → Date Pricing Config).
 // Marking individual dates now happens directly on the Calendar tab's main month grid (click a
-// date → pick a pricing override there) — this panel only configures the multipliers + last-minute
-// override and lists/clears whatever's been marked, so there's one calendar to look at, not two.
+// date → pick a pricing override there) — this panel only configures the multipliers and
+// lists/clears whatever's been marked, so there's one calendar to look at, not two.
+// The Last-Minute Booking Override (Filler pricing for any booking within N days, regardless of
+// the date's own category) was removed 2026-10-25 by owner request — a date's price now always
+// comes from its own category, full stop.
 export default function DatePricingPanel({ settings, setSettings }) {
   const dp = settings.datePricing || SETTINGS_DEFAULTS.datePricing;
   const cats = dp.categories || {};
@@ -14,11 +17,40 @@ export default function DatePricingPanel({ settings, setSettings }) {
   function setMultiplier(catKey, val) {
     setSettings((s) => ({ ...s, datePricing: { ...s.datePricing, categories: { ...s.datePricing.categories, [catKey]: { ...s.datePricing.categories[catKey], multiplier: parseFloat(val) || 1 } } } }));
   }
-  function setLastMinDays(val) {
-    setSettings((s) => ({ ...s, datePricing: { ...s.datePricing, lastMinuteDays: parseInt(val) || 10 } }));
+  // Owner ask (2026-10-25): pausing/resuming this silently changes live Studio pricing on every
+  // date it touches, so it's now locked behind a code only the owner sets/knows — anyone else
+  // opening this panel can see the toggle but can't actually flip it without that code. The code
+  // itself lives in plain settings (same as every other admin setting here) — this is a deterrent
+  // against an ops person fat-fingering it, not a cryptographic secret.
+  function requireLockCode(actionLabel) {
+    const current = dp.autoSyncLockCode;
+    if (!current) {
+      const code1 = window.prompt("No lock code is set yet. Set one now to protect pausing/resuming auto-sync (you'll need to enter it every time):");
+      if (!code1 || !code1.trim()) return false;
+      const code2 = window.prompt("Re-enter the code to confirm:");
+      if (code2 !== code1) { alert("Codes didn't match — nothing changed."); return false; }
+      setSettings((s) => ({ ...s, datePricing: { ...s.datePricing, autoSyncLockCode: code1.trim() } }));
+      return true;
+    }
+    const entered = window.prompt(`Enter the code to ${actionLabel}:`);
+    if (entered !== current) { if (entered !== null) alert("Wrong code."); return false; }
+    return true;
   }
   function toggleAutoSyncPaused() {
+    if (!requireLockCode(dp.autoSyncPaused ? "resume auto-sync" : "pause auto-sync")) return;
     setSettings((s) => ({ ...s, datePricing: { ...s.datePricing, autoSyncPaused: !s.datePricing?.autoSyncPaused } }));
+  }
+  function changeLockCode() {
+    const current = dp.autoSyncLockCode;
+    if (current && !requireLockCode("change the lock code")) return;
+    const next = window.prompt(current ? "Enter a new code (leave blank to remove the lock):" : "Set a code to protect pausing/resuming auto-sync:");
+    if (next === null) return;
+    if (!next.trim()) {
+      if (current && !confirm("Remove the lock code? Anyone will be able to pause/resume auto-sync afterward.")) return;
+      setSettings((s) => ({ ...s, datePricing: { ...s.datePricing, autoSyncLockCode: "" } }));
+      return;
+    }
+    setSettings((s) => ({ ...s, datePricing: { ...s.datePricing, autoSyncLockCode: next.trim() } }));
   }
 
   const CAT_DOT = { heavy_saya: "bg-red-500", competition: "bg-yellow-400", non_saya: "bg-green-500" };
@@ -36,10 +68,15 @@ export default function DatePricingPanel({ settings, setSettings }) {
             every date's category exactly as it is right now; manual overrides below are unaffected either way.
           </p>
         </div>
-        <button onClick={toggleAutoSyncPaused}
-          className={"flex-shrink-0 text-sm font-semibold px-4 py-2 rounded-lg border " + (autoSyncPaused ? "bg-red-600 text-white border-red-600" : "bg-gray-100 text-gray-700 border-gray-300 hover:bg-gray-200")}>
-          {autoSyncPaused ? "Paused — click to resume" : "Pause auto-sync"}
-        </button>
+        <div className="flex-shrink-0 flex flex-col items-end gap-1.5">
+          <button onClick={toggleAutoSyncPaused}
+            className={"text-sm font-semibold px-4 py-2 rounded-lg border " + (autoSyncPaused ? "bg-red-600 text-white border-red-600" : "bg-gray-100 text-gray-700 border-gray-300 hover:bg-gray-200")}>
+            🔒 {autoSyncPaused ? "Paused — click to resume" : "Pause auto-sync"}
+          </button>
+          <button onClick={changeLockCode} className="text-[11px] text-gray-400 hover:text-gray-600 underline">
+            {dp.autoSyncLockCode ? "Change lock code" : "Set a lock code"}
+          </button>
+        </div>
       </div>
       <div className="bg-white border rounded-2xl overflow-hidden">
         <div className="px-4 py-3 bg-gray-50 border-b">
@@ -70,26 +107,6 @@ export default function DatePricingPanel({ settings, setSettings }) {
               </div>
             </div>
           ))}
-        </div>
-      </div>
-
-      <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-start gap-4">
-        <span className="text-3xl flex-shrink-0">⚡</span>
-        <div className="flex-1">
-          <p className="font-bold text-amber-800">Last-Minute Booking Override</p>
-          <p className="text-xs text-amber-700 mt-0.5 leading-relaxed">
-            If a project is created within <strong>N days</strong> of the function date, Filler pricing automatically applies — regardless of the date's calendar category.
-          </p>
-          <div className="flex items-center gap-3 mt-3">
-            <span className="text-sm text-amber-800 font-medium">Override window:</span>
-            <input type="number" min="1" max="60" value={dp.lastMinuteDays || 10}
-              onChange={(e) => setLastMinDays(e.target.value)}
-              className="w-20 border border-amber-300 rounded-lg px-3 py-1.5 text-sm font-bold text-center bg-white" />
-            <span className="text-sm text-amber-700">days before the event</span>
-          </div>
-          <p className="text-xs text-amber-600 mt-2">
-            Current: booking ≤ {dp.lastMinuteDays || 10} days from event → Filler ({(cats.non_saya?.multiplier || 0.75) * 100}% of base price)
-          </p>
         </div>
       </div>
 

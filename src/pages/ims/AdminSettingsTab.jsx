@@ -617,7 +617,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                 { key: "heavySaya", label: "🔴 Heavy Saya", desc: "Date is marked Heavy Saya — competition for workers" },
                 { key: "premium", label: "★ Premium Segment", desc: "Outdoor Premium events need higher quality/speed" },
                 { key: "dayPrior", label: "📅 Day-Prior Setup", desc: "Extra time available — can REDUCE workers needed" },
-                { key: "rush", label: "⚡ Rush / Last-Minute", desc: "Booking within " + ((settings.datePricing || {}).lastMinuteDays || 10) + " days — scramble premium" },
+                { key: "rush", label: "⚡ Rush / Last-Minute", desc: "Booking within 10 days — scramble premium" },
               ].map((factor) => {
                 const vals = (settings.situationalMultipliers || {})[factor.key] || SIT_MULT_DEFAULTS[factor.key] || {};
                 const defaults = SIT_MULT_DEFAULTS[factor.key] || {};

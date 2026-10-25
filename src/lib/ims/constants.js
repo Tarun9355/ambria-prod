@@ -152,7 +152,6 @@ export const SETTINGS_DEFAULTS = {
   bufferPct: 5,
   minProfitPct: 30,
   datePricing: {
-    lastMinuteDays: 10,
     categories: {
       heavy_saya: { label: "👑 King's", multiplier: 1.4, color: "red" },
       competition: { label: "✦ Perfect", multiplier: 1.0, color: "yellow" },
@@ -160,6 +159,7 @@ export const SETTINGS_DEFAULTS = {
     },
     markedDates: {},
     autoCategories: {},
+    autoSyncLockCode: "",
   },
   artificialColours: ["Red", "White", "Pastels", "Yellow/Orange", "Purple", "Greens", "Mixed/Other"],
   artificialKgToPieces: 200,

@@ -1,4 +1,4 @@
-// A date can be cheaper (Filler ×0.75, or a last-minute booking) and an item can carry its own
+// A date can be cheaper (Filler ×0.75) and an item can carry its own
 // discount (Fixed-Venue standing stock, a Repeat zone, sub-category reuse). Owner rule: they do not
 // stack — where more than one discount applies, only the BIGGEST one is taken (Filler 25% and a
 // 50% Fixed-Venue discount is 50% off, not 62.5%; Filler 25% and a 10% one is 25%).

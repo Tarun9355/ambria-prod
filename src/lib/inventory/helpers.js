@@ -49,16 +49,6 @@ export function getEffectivePricing(basePrice, functionDate, settings) {
   if (!basePrice || !functionDate || !settings?.datePricing)
     return { effectivePrice: basePrice, multiplier: 1, category: "competition", label: "Standard", reason: "No pricing rules" };
   const dp = settings.datePricing;
-  const fnDate = new Date(functionDate);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const daysUntil = Math.ceil((fnDate - today) / 86400000);
-  const lastMinDays = dp.lastMinuteDays || 10;
-  if (daysUntil >= 0 && daysUntil <= lastMinDays) {
-    const cat = dp.categories.non_saya;
-    const label = DATE_PRICING_LABELS.non_saya;
-    return { effectivePrice: Math.round(basePrice * (cat?.multiplier || 0.75)), multiplier: cat?.multiplier || 0.75, category: "non_saya", label, reason: `Last-minute booking (${daysUntil}d away)` };
-  }
   const catKey = resolveDateCategory(functionDate, settings);
   if (catKey && dp.categories[catKey]) {
     const cat = dp.categories[catKey];
