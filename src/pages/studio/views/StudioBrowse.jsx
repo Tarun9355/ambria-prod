@@ -587,13 +587,14 @@ function StudioBrowse({ ctx }) {
     }) : false;
     const bannerShowCurrent = !!bannerCurrentId && !bannerCurrentInSaved;
     const bannerFmtDate = (ts) => { try { return new Date(ts).toLocaleDateString("en-IN", { day: "2-digit", month: "short" }); } catch { return ""; } };
-    // Last 5 sessions for this client, most-recent first — the raw history, not the pill-aware
+    // Last 10 sessions for this client, most-recent first — the raw history, not the pill-aware
     // dedup bannerSaved does. Collapsed by default (bannerHistoryOpen) since it's a "just in case"
     // list, not something needed on every visit.
-    // slice(1, 6), not slice(0, 5): the newest save is already the full card above, so starting at 0
-    // listed it twice — once as the card and again as the first row underneath. These are the five
-    // BEFORE it.
-    const bannerHistory = (activeClient?.sessions || []).slice(1, 6);
+    // slice(1, 11), not slice(0, 10): the newest save is already the full card above, so starting at
+    // 0 listed it twice — once as the card and again as the first row underneath. These are the ten
+    // BEFORE it (in practice capped at 9, since SESSION_KEEP only ever retains 10 sessions total per
+    // client, the current one included).
+    const bannerHistory = (activeClient?.sessions || []).slice(1, 11);
     // Same "which pill actually has data" logic bannerSaved uses above, applied per history row
     // (which — unlike bannerSaved's entries — never got a _fnIdx computed for it) so Resume lands
     // on the function this particular past session holds, not blindly on whichever pill is active now.
