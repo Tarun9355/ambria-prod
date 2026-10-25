@@ -36,8 +36,8 @@ function ReplaceButton({ action, onDone }) {
 }
 
 // Full-screen photo with the item's details beside it. items: [{ src, name, details: [[label, value], …], action?: { label, onFile },
-// pick?: { label, onClick, disabled?, note? } }] — `pick` is a plain button under the details (e.g. "Add to Stage"); it runs
-// onClick and closes the viewer.
+// pick?: { label, onClick, disabled?, note?, keepOpen? } }] — `pick` is a plain button under the details (e.g. "Add to Stage"); it
+// runs onClick and closes the viewer, unless keepOpen (a toggle the person may press on several photos in a row).
 // ‹ › / arrow keys step through the set; Escape or a click outside closes it — and only it (the picker
 // underneath stays open).
 export function PhotoLightbox({ items, start = 0, onClose }) {
@@ -83,7 +83,7 @@ export function PhotoLightbox({ items, start = 0, onClose }) {
             {cur.action && <ReplaceButton action={cur.action} onDone={onClose} />}
             {cur.pick && (
               <>
-                <button type="button" disabled={!!cur.pick.disabled} onClick={() => { cur.pick.onClick(); onClose(); }}
+                <button type="button" disabled={!!cur.pick.disabled} onClick={() => { cur.pick.onClick(); if (!cur.pick.keepOpen) onClose(); }}
                   style={{ display: "block", width: "100%", marginTop: 14, padding: "10px 12px", borderRadius: 8, border: "none", background: cur.pick.disabled ? "#9ca3af" : "#7C3AED", color: "#fff", fontSize: 13, fontWeight: 700, cursor: cur.pick.disabled ? "not-allowed" : "pointer" }}>
                   {cur.pick.label}
                 </button>

@@ -3048,10 +3048,12 @@ undefined
           imsInventory={imsInventory} rcFactorByKey={rcFactorByKey} freeFor={freeFor} inZoneIds={inZoneIds}
           zoneName={zoneMeta[pk]?.label || pk}
           dateLabel={fnDate ? new Date(fnDate + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : ""}
-          onSelect={(it) => {
-            if (!(zoneElements[pk] || []).find((el) => el.invId === it.id)) {
-              setZoneElements((prev) => ({ ...prev, [pk]: [...(prev[pk] || []), { name: it.name, qty: 1, unit: it.unit, size: "", invId: it.id, addedAt: todayStr() }] }));
-              showMsg(`Added "${String(it.name).trim()}" to ${zoneMeta[pk]?.label || pk}`, "green");
+          onAdd={(items) => {
+            const have = new Set((zoneElements[pk] || []).map((el) => el.invId));
+            const fresh = items.filter((it) => !have.has(it.id));
+            if (fresh.length) {
+              setZoneElements((prev) => ({ ...prev, [pk]: [...(prev[pk] || []), ...fresh.map((it) => ({ name: it.name, qty: 1, unit: it.unit, size: "", invId: it.id, addedAt: todayStr() }))] }));
+              showMsg(fresh.length === 1 ? `Added "${String(fresh[0].name).trim()}" to ${zoneMeta[pk]?.label || pk}` : `Added ${fresh.length} printed walls to ${zoneMeta[pk]?.label || pk}`, "green");
             }
             setPrintedWallPicker(null);
           }}

@@ -7,16 +7,20 @@ import { PhotoLightbox } from "../shared/ClickablePhoto.jsx";
 // printing something new. Each is a ready piece of a fixed size at its own rental rate, so picking one adds it to the
 // zone as an ordinary inventory element: it is priced, stock-checked and listed like any other item, and no print job
 // is needed. Cards show the design, its size, its price, and whether it is free on the event date.
+// Several designs can be ticked in one go; a bar at the bottom then adds them all to the zone together.
 //
 //   freeFor(item)   how many are free on the event date (after other events and the rest of this deal)
 //   inZoneIds       ids already in this zone — shown, but not pickable twice
+//   onAdd(items)    the ticked designs, once the person confirms
 export default function PrintedWallsModal({
   imsInventory, rcFactorByKey, freeFor, inZoneIds, dateLabel, zoneName, multiplier = 1, multiplierNote = "",
-  onSelect, onClose, isDark, border, textP, textS, cardBg, accent = "#0EA5E9",
+  onAdd, onClose, isDark, border, textP, textS, cardBg, accent = "#0EA5E9",
 }) {
   const [q, setQ] = useState("");
   const [size, setSize] = useState("");
   const [viewIdx, setViewIdx] = useState(null);   // index into `viewSet` while the big photo is open
+  const [sel, setSel] = useState([]);              // ids ticked so far, in the order they were ticked
+  const toggle = (id) => setSel((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
 
   const all = useMemo(() => (imsInventory || [])
     .filter((it) => {
@@ -47,9 +51,12 @@ export default function PrintedWallsModal({
       .sort((a, b) => (Number(b.free > 0 && !b.inZone) - Number(a.free > 0 && !a.inZone)) || (Number(b.price > 0) - Number(a.price > 0)) || (a.price - b.price));
   }, [all, q, size]);
 
+  const picked = useMemo(() => sel.map((id) => all.find((r) => r.it.id === id)).filter((r) => r && r.free > 0 && !r.inZone), [sel, all]);
+  const pickedTotal = picked.reduce((s, r) => s + r.price, 0);
   const reasonFor = (r) => (r.inZone ? "Already in this zone" : r.free > 0 ? "" : "Not free on this date");
   const viewSet = useMemo(() => shown.filter((r) => r.it.img || r.it.photoUrls?.[0]).map((r) => {
     const pickable = r.free > 0 && !r.inZone;
+    const on = sel.includes(r.it.id);
     return {
       r,
       item: {
@@ -60,10 +67,10 @@ export default function PrintedWallsModal({
           ["Rate", r.price > 0 ? `₹${Math.round(r.price).toLocaleString("en-IN")}` : "No rate set in IMS"],
           ["Available", r.inZone ? "Already in this zone" : r.free > 0 ? `${r.free} free${dateLabel ? ` on ${dateLabel}` : ""}` : "Not free on this date"],
         ],
-        pick: { label: `＋ Add to ${zoneName || "this zone"}`, disabled: !pickable, note: pickable ? "" : reasonFor(r), onClick: () => onSelect(r.it) },
+        pick: { label: on ? "✓ Selected — tap to remove" : "＋ Select", disabled: !pickable, note: pickable ? "" : reasonFor(r), keepOpen: true, onClick: () => toggle(r.it.id) },
       },
     };
-  }), [shown, dateLabel, zoneName, onSelect]);
+  }), [shown, dateLabel, sel]);
 
   // One look for the search box and the size dropdown, so they sit level with each other.
   const field = {
@@ -80,7 +87,7 @@ export default function PrintedWallsModal({
           <div>
             <div style={{ fontSize: 14, fontWeight: 700, color: textP }}>🖼️ Existing Printed Walls</div>
             <div style={{ fontSize: 11, color: textS, marginTop: 3 }}>
-              Pick a design we already have instead of printing a new one — it is added to {zoneName || "this zone"} at its own rate{dateLabel ? ` · free on ${dateLabel}` : ""}.
+              Tick the designs we already have instead of printing new ones, then add them to {zoneName || "this zone"} — each at its own rate{dateLabel ? ` · free on ${dateLabel}` : ""}.
             </div>
             {multiplierNote && <div style={{ fontSize: 11, color: accent, marginTop: 2, fontWeight: 600 }}>Prices shown include {multiplierNote}.</div>}
           </div>
@@ -113,13 +120,14 @@ export default function PrintedWallsModal({
               {shown.map((r) => {
                 const { it, free, inZone, price, dims } = r;
                 const pickable = free > 0 && !inZone;
+                const on = pickable && sel.includes(it.id);
                 const src = it.img || it.photoUrls?.[0];
                 const at = viewSet.findIndex((v) => v.r.it.id === it.id);
                 const badge = inZone
                   ? { t: "Already in this zone", c: textS }
                   : free > 0 ? { t: `${free} free`, c: "#10B981" } : { t: "Not free on this date", c: "#EF4444" };
                 return (
-                  <div key={it.id} style={{ borderRadius: 10, overflow: "hidden", display: "flex", flexDirection: "column", border: `1px solid ${border}`, background: isDark ? "#12121F" : "#fafafa", color: textP }}>
+                  <div key={it.id} style={{ borderRadius: 10, overflow: "hidden", display: "flex", flexDirection: "column", border: `${on ? 2 : 1}px solid ${on ? "#7C3AED" : border}`, background: isDark ? "#12121F" : "#fafafa", color: textP }}>
                     {/* the picture opens the big view (‹ › walk the other designs); it never adds */}
                     <div role={src ? "button" : undefined} tabIndex={src ? 0 : undefined} aria-label={src ? `View ${it.name}` : undefined}
                       onClick={() => at >= 0 && setViewIdx(at)} onKeyDown={(e) => { if (src && at >= 0 && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); setViewIdx(at); } }}
@@ -136,9 +144,9 @@ export default function PrintedWallsModal({
                       <div style={{ fontSize: 10, fontWeight: 700, color: badge.c, marginTop: 3 }}>{badge.t}</div>
                     </div>
                     <div style={{ padding: "0 9px 9px" }}>
-                      <button type="button" disabled={!pickable} onClick={() => onSelect(it)} title={pickable ? `Add ${it.name}` : badge.t}
-                        style={{ width: "100%", padding: "6px 8px", borderRadius: 7, border: `1px solid ${pickable ? "#7C3AED" : border}`, background: pickable ? "rgba(124,58,237,0.12)" : "transparent", color: pickable ? "#7C3AED" : textS, fontSize: 11.5, fontWeight: 700, cursor: pickable ? "pointer" : "not-allowed" }}>
-                        ＋ Add
+                      <button type="button" disabled={!pickable} onClick={() => toggle(it.id)} aria-pressed={on} title={pickable ? (on ? `Remove ${it.name}` : `Select ${it.name}`) : badge.t}
+                        style={{ width: "100%", padding: "6px 8px", borderRadius: 7, border: `1px solid ${pickable ? "#7C3AED" : border}`, background: on ? "#7C3AED" : pickable ? "rgba(124,58,237,0.12)" : "transparent", color: on ? "#fff" : pickable ? "#7C3AED" : textS, fontSize: 11.5, fontWeight: 700, cursor: pickable ? "pointer" : "not-allowed" }}>
+                        {on ? "✓ Selected" : "＋ Select"}
                       </button>
                     </div>
                   </div>
@@ -147,6 +155,20 @@ export default function PrintedWallsModal({
             </div>
           )}
         </div>
+
+        {/* Appears once something is ticked: what is chosen, and the one button that adds it all. */}
+        {picked.length > 0 && (
+          <div style={{ padding: "10px 18px", borderTop: `1px solid ${border}`, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", background: isDark ? "#12121F" : "#faf8ff" }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: textP }}>{picked.length} selected</span>
+            {pickedTotal > 0 && <span style={{ fontSize: 11, color: textS }}>· ₹{Math.round(pickedTotal).toLocaleString("en-IN")} total</span>}
+            <button type="button" onClick={() => setSel([])}
+              style={{ padding: "6px 10px", borderRadius: 7, border: `1px solid ${border}`, background: "transparent", color: textS, fontSize: 11.5, fontWeight: 600, cursor: "pointer" }}>Clear</button>
+            <button type="button" onClick={() => onAdd(picked.map((r) => r.it))}
+              style={{ marginLeft: "auto", padding: "8px 16px", borderRadius: 8, border: "none", background: "#7C3AED", color: "#fff", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>
+              Add {picked.length} to {zoneName || "this zone"}
+            </button>
+          </div>
+        )}
       </div>
     </div>
     {viewIdx !== null && viewSet[viewIdx] && (
