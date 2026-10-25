@@ -95,7 +95,7 @@ import { itemImsSubcat, lookupBySubcat, priceForInvItem, itemDimsText, walkKitUn
 import { matchFlowerPattern, floralPatternUnitRates, sizeClassToPatternKey, normalizeSizeClass, kitFloralCompDelta } from "../../lib/ims/flowerHelpers";
 import { rowToRcItem, rcItemToRow, rcIsSMB, getFloralMode, oosCostPctFor, canFulfillShortfall } from "../../lib/rateCard";
 import { todayStr } from "../../lib/ims/attendance";
-import { supabase, fetchAll, upsertRow, deleteRow, subscribeTable, keepaliveUpsert } from "../../lib/supabase";
+import { supabase, fetchAll, upsertRow, deleteRow, subscribeTable, keepaliveUpsert, keepaliveRpc } from "../../lib/supabase";
 import { latestPlanningInputStamp, planningNeedsSync, planningSnapshotOutdated, planningUpcoming, PLANNING_SNAPSHOT_VERSION } from "../../lib/studio/planningSync.js";
 import { guestRepeatLineCost, flaggedUnitRate } from "../../lib/studio/repeatPricing.js";
 import {
@@ -1257,15 +1257,35 @@ async function loadAllSessionRowsFallback() {
   return all;
 }
 
+// client_ledger_light (migration 034) is the same table with dcDraft/dcCards/dcZoneState/
+// dcKitEdits/dcReservedInventory/finalSession stripped out of `data` — together over half of
+// client_ledger's total size, and concentrated in the ~1/3 of clients that have ever opened Deal
+// Check. Those six fields are fetched lazily, once, by fetchClientHeavyFields below, the moment a
+// client actually becomes the active one — so this cuts what every single page load downloads for
+// clients nobody has opened yet, without changing what anything sees once a client IS open.
 async function loadClientRows() {
   const all = []; const SIZE = 1000;
   for (let from = 0; ; from += SIZE) {
-    const { data, error } = await supabase.from("client_ledger").select("*").order("id").range(from, from + SIZE - 1);
+    const { data, error } = await supabase.from("client_ledger_light").select("*").order("id").range(from, from + SIZE - 1);
     if (error) throw error;
     all.push(...(data || []));
     if (!data || data.length < SIZE) break;
   }
   return all;
+}
+// The six heavy keys loadClientRows above deliberately leaves out — fetched for ONE client at a
+// time via PostgREST's own `column->key` path selection (no RPC needed for a single-row read, only
+// the boot-time VIEW needed real jsonb subtraction). Merged into that client's in-memory record by
+// the caller before anything — Deal Check, a booked deal's locked-in total — reads them.
+async function fetchClientHeavyFields(clientId) {
+  if (!clientId) return null;
+  const { data, error } = await supabase
+    .from("client_ledger")
+    .select("dcDraft:data->dcDraft, dcCards:data->dcCards, dcZoneState:data->dcZoneState, dcKitEdits:data->dcKitEdits, dcReservedInventory:data->dcReservedInventory, finalSession:data->finalSession")
+    .eq("id", clientId)
+    .maybeSingle();
+  if (error) throw error;
+  return data || null;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -3675,12 +3695,19 @@ export default function StudioApp() {
       }
       if (changed.length) {
         const rows = changed.map((c) => ({ ...clientToRow(c), updated_at: new Date().toISOString() }));
+        // merge_client_ledger_rows (migration 034), not a plain upsert — a plain upsert REPLACES the
+        // `data` jsonb column outright. That was always safe when every client's full data was loaded
+        // at boot; it stopped being safe the moment client_ledger_light (same migration) started
+        // leaving dcDraft/dcCards/dcZoneState/dcKitEdits/dcReservedInventory out of the boot fetch —
+        // a client whose Deal Check was never opened this session has no copy of those keys in
+        // memory, so `c` here is missing them too, and a bare upsert would silently delete them from
+        // the row. The RPC merges `data` shallowly instead: a key this write doesn't mention survives.
         // Only ever set true from the pagehide/beforeunload handlers below — the page is actually
         // unloading right now, so this write has to survive teardown instead of just being correct.
         if (opts.keepalive) {
-          keepaliveUpsert("client_ledger", rows);
+          keepaliveRpc("merge_client_ledger_rows", { p_rows: rows });
         } else {
-          const { error } = await supabase.from("client_ledger").upsert(rows, { onConflict: "id" });
+          const { error } = await supabase.rpc("merge_client_ledger_rows", { p_rows: rows });
           if (error) throw error;
         }
       }
@@ -3690,6 +3717,31 @@ export default function StudioApp() {
       // silently-failed save. Every existing caller ignores the return value and is unaffected.
       return true;
     } catch (e) { showMsg?.("Client save failed: " + (e?.message || e), "red"); return false; }
+  }, [showMsg]);
+  // client_ledger_light (migration 034) leaves dcDraft/dcCards/dcZoneState/dcKitEdits/
+  // dcReservedInventory out of the boot-time fetch — this is the one place that fetches them back in,
+  // the first time Deal Check is actually opened for a given client (called from openDealCheck,
+  // before it reads anything off the client record). `_heavyFetched` marks a client as checked (even
+  // when it genuinely has none of these — most clients never open Deal Check at all) so repeat opens
+  // never re-fetch. Also advances clientJsonRef's own dirty-check baseline for this client, so simply
+  // loading this data into memory is never mistaken by saveClientLedger for an edit that needs
+  // uploading on the next autosave tick. Returns the MERGED record directly — the caller needs it
+  // synchronously right after awaiting, not via the `clientLedger` closure, which a setState call
+  // inside here cannot update before this function returns.
+  const ensureClientHeavyFieldsLoaded = useCallback(async (clientId) => {
+    const cur = clientLedgerRef.current.find((c) => c.id === clientId);
+    if (!cur || cur._heavyFetched) return cur || null;
+    let heavy = null;
+    try {
+      heavy = await fetchClientHeavyFields(clientId);
+    } catch (e) {
+      showMsg?.("Couldn't load this client's Deal Check draft: " + (e?.message || e), "red");
+      return cur;
+    }
+    const merged = { ...cur, ...(heavy || {}), _heavyFetched: true };
+    setClientLedger((prev) => prev.map((c) => (c.id === clientId ? merged : c)));
+    if (clientJsonRef.current) clientJsonRef.current[clientId] = JSON.stringify(merged);
+    return merged;
   }, [showMsg]);
   // Deleting ONE saved session. Browse removes it from the client's array and saves the ledger; that
   // takes it out of the blob mirror, and this takes out the rows it became in studio_sessions. Both
@@ -9673,18 +9725,43 @@ export default function StudioApp() {
   };
 
   // ── Select element photo → load pricing — VERBATIM ──
-  const selectElPhoto = (elKey, photo) => {
+  // opts.skipConfirm — the zone-upload review flow ("Apply to Zone") already IS an explicit,
+  // deliberate confirmation step; asking again right after would just be redundant friction, so that
+  // one call site opts out. Every other caller (browsing the photo strip) gets the warning below.
+  const selectElPhoto = async (elKey, photo, opts = {}) => {
     const currentSel = elSelectedPhoto[elKey];
+    // Has this zone's element list been touched (added to / edited / items removed) since it was
+    // last freshly loaded from a photo pick? `_loadedElements` is the exact list this function
+    // itself stamped onto the selected-photo record at that moment — if the zone's current elements
+    // still match it, nothing has changed since (the common "just browsing photos" case) and there
+    // is nothing to warn about. No stamp at all (a zone picked before this check existed) is treated
+    // as possibly-customized — asking once is safer than silently discarding legacy work.
+    const curEls = zoneElements[elKey] || [];
+    const hasUnsavedWork = curEls.length > 0
+      && (!currentSel?._loadedElements || JSON.stringify(currentSel._loadedElements) !== JSON.stringify(curEls));
     if (currentSel && currentSel.src === photo.src) {
+      if (hasUnsavedWork && !opts.skipConfirm) {
+        const ok = await askConfirmAsync(
+          "This clears everything built for this zone's photo — including anything added or changed since it was picked.",
+          { note: "This can't be undone.", yesLabel: "Clear it" }
+        );
+        if (!ok) return false;
+      }
       setElSelectedPhoto(p => { const n = { ...p }; delete n[elKey]; return n; });
       setZoneElements(p => { const n = { ...p }; delete n[elKey]; return n; });
       // Full deselect means "nothing in this zone" — clear the truss/platform/carpet config too,
       // since it came from this same photo pick. Otherwise the zone reads as empty (no elements,
       // no photo selected) while still silently charging for a structure nobody can see is configured.
       setZoneConfig(p => { const n = { ...p }; delete n[elKey]; return n; });
-      return;
+      return true;
     }
-    setElSelectedPhoto(p => ({ ...p, [elKey]: photo }));
+    if (hasUnsavedWork && !opts.skipConfirm) {
+      const ok = await askConfirmAsync(
+        "Switching to this photo replaces this zone's current element list — including anything added or changed since the current photo was picked.",
+        { note: "This can't be undone.", yesLabel: "Switch anyway" }
+      );
+      if (!ok) return false;
+    }
     // Scale By is a deal-specific "how many of this zone" multiplier (40 tables, say) — it has
     // nothing to do with WHICH reference photo is loaded. Browsing to a different centrepiece photo
     // used to silently drop it: the new photo's elements came in at their own raw (×1) baseQty and
@@ -9692,6 +9769,7 @@ export default function StudioApp() {
     // Scale box kept showing its old number while the actual priced quantities quietly reset to 1×.
     // Carry the CURRENT live scale over onto the incoming photo's elements instead.
     const curScale = Math.max(1, Math.round(Number(zoneConfig[elKey]?.scale) || 1));
+    let finalEls;
     if (photo.isLibrary && (photo.elements || []).length > 0) {
       // Strip any `baseQty` the photo's own saved elements happen to be carrying — "Correct & update
       // master" persists zoneElements verbatim, so a photo corrected while a zone was mid-scale can
@@ -9699,13 +9777,16 @@ export default function StudioApp() {
       // always derives its base from that photo's own qty, never an inherited one, or the very next
       // Scale edit multiplies the WRONG base and lands on a qty nobody asked for.
       const rawEls = JSON.parse(JSON.stringify(photo.elements)).map(({ baseQty: _drop, ...e }) => e);
-      setZoneElements(p => ({ ...p, [elKey]: curScale > 1
+      finalEls = curScale > 1
         ? rawEls.map(e => { const base = Number(e.qty) || 0; return { ...e, baseQty: base, qty: Math.max(0, Math.round(base * curScale)) }; })
-        : rawEls
-      }));
+        : rawEls;
     } else {
-      setZoneElements(p => ({ ...p, [elKey]: [] }));
+      finalEls = [];
     }
+    setZoneElements(p => ({ ...p, [elKey]: finalEls }));
+    // Stamped onto the stored photo record so the NEXT switch/reselect away from this one can tell
+    // whether anything changed in the meantime — see hasUnsavedWork above.
+    setElSelectedPhoto(p => ({ ...p, [elKey]: { ...photo, _loadedElements: finalEls } }));
     const libImg = photo.isLibrary ? libItems.find(i => i.url === photo.src || i.id === photo.eventId) : null;
     const photoDims = photo.dims || libImg?.dims || {};
     let cfg = buildZoneConfig(elKey, photoDims);
@@ -9735,6 +9816,7 @@ export default function StudioApp() {
     }
     setActiveZones([]);
     setCustomMode(p => ({ ...p, [elKey]: false }));
+    return true;
   };
 
   // ── Multi-select element photos — Installations zone ONLY. Every other zone keeps the
@@ -10590,9 +10672,23 @@ export default function StudioApp() {
       const orig = (items || []).find(i => i.id === baseInvId);
       const backToOriginal = !!selectedId && selectedId === baseInvId;
       const isSwap = !!(selectedId && pick && baseInvId && !backToOriginal && orig && orig.free <= 0);
+      // The picked item's own unit (pick.unit, sourced straight from IMS — see openAvailModal's own
+      // `unit: it.unit || ""` on each candidate) was never carried over here — the element kept
+      // whatever unit/qty the PREVIOUS item needed. Harmless swapping within the same unit (one
+      // chandelier for another, still "pieces"), but silently wrong across a unit change: a 20kg
+      // fabric swapped for a 1-piece item kept reading "need 20", comparing a quantity meant for an
+      // entirely different scale against the new item's real stock — a false "out of stock"
+      // (confirmed: Fabric Balloon Hanging, 1 piece owned, read as needing 20 of them because the
+      // element it replaced was 20KG of a different, unrelated fabric). When the unit genuinely
+      // changes, qty/baseQty reset to 1 — any number carried over from the old unit has no valid
+      // meaning against the new one, so keeping it is actively misleading rather than merely stale.
+      const newUnit = pick?.unit || elems[idx].unit;
+      const unitChanged = selectedId && pick && newUnit !== elems[idx].unit;
       elems[idx] = (selectedId && pick)
         ? {
             ...elems[idx], invId: selectedId, name: pick.name || elems[idx].name, imsId: selectedId, imsName: pick.name || "", imsPhoto: pick.photo || "",
+            unit: newUnit,
+            ...(unitChanged ? { qty: 1, baseQty: 1 } : null),
             ...(backToOriginal
               ? { swappedFrom: undefined, baseInvId: undefined }
               : { baseInvId, swappedFrom: isSwap ? baseInvId : elems[idx].swappedFrom }),
@@ -10652,11 +10748,18 @@ export default function StudioApp() {
       const scale = Math.max(1, Math.round(Number(zoneConfig[zoneKey]?.scale) || 1));
       const splitEls = allocateSplit(total, pickedIds).map(({ id, qty }) => {
         const pick = (items || []).find((it) => it.id === id);
+        // Same fix as saveAvailPick's own swap, same reason — a split line's picked item can carry
+        // a different real unit than the original (the picker's sub-category scoping doesn't
+        // guarantee matching units), and `qty` here is the original's own quantity divided up, which
+        // has no valid meaning once the unit changes under it.
+        const newUnit = pick?.unit || original.unit;
+        const unitChanged = newUnit !== original.unit;
+        const lineQty = unitChanged ? 1 : qty;
         return {
           ...original,
-          invId: id, imsId: id,
+          invId: id, imsId: id, unit: newUnit,
           name: pick?.name || original.name, imsName: pick?.name || "", imsPhoto: pick?.photo || "",
-          qty, baseQty: scale > 1 ? qty / scale : qty,
+          qty: lineQty, baseQty: unitChanged ? 1 : (scale > 1 ? qty / scale : qty),
         };
       });
       elems.splice(idx, 1, ...splitEls);
@@ -10675,7 +10778,12 @@ export default function StudioApp() {
     // clobber-safe), so reopening always shows the last saved state. NOTE: we deliberately do NOT
     // fall back to the legacy whole-blob dc-cache — it's no longer network-persisted, so on a hard
     // refresh it can be stale/empty and would clobber the saved draft (the row is the source of truth).
-    const clientRec = activeClientId ? (clientLedger || []).find(c => c.id === activeClientId) : null;
+    // dcDraft (and dcCards/dcZoneState/dcKitEdits/dcReservedInventory, read further down this file)
+    // are excluded from the boot-time fetch (client_ledger_light, migration 034) — this is the single
+    // gate that fetches them back in, the moment Deal Check actually opens for this client. Every
+    // other Deal Check read of these fields happens strictly after this point (Generate, the restore
+    // effect below, reconcileSoldInventoryBlocks), so this one await is sufficient.
+    const clientRec = activeClientId ? await ensureClientHeavyFieldsLoaded(activeClientId) : null;
     const rowDraft = (clientRec?.dcDraft && typeof clientRec.dcDraft === "object" && !Array.isArray(clientRec.dcDraft)) ? clientRec.dcDraft : null;
     const cachedForThisClient = rowDraft;
     const hasCache = !!cachedForThisClient;
@@ -10891,7 +10999,7 @@ export default function StudioApp() {
       }
     }
     setDcAbortRef(null);
-  }, [collectAllFunctionData, dcPhotoOverrides, photoImsMap, dcCache, activeClientId, clientLedger]);
+  }, [collectAllFunctionData, dcPhotoOverrides, photoImsMap, dcCache, activeClientId, clientLedger, ensureClientHeavyFieldsLoaded]);
 
   // ═══ DEAL CHECK — fire openDealCheck on full-page open — VERBATIM ═══
   useEffect(() => {
@@ -11649,7 +11757,9 @@ export default function StudioApp() {
       return;
     }
     const photo = { src: r.url, eventName: libImg.name, isLibrary: true, eventId: libId, elements: libImg.elements, dims: libImg.dims, fn: "", space: "", zones: [] };
-    selectElPhoto(r.elKey, photo);
+    // skipConfirm — reviewing and clicking "Apply to Zone" IS the deliberate confirmation; asking
+    // again right after would just be redundant friction.
+    selectElPhoto(r.elKey, photo, { skipConfirm: true });
     if (r.dims) {
       const cfg = buildZoneConfig(r.elKey, r.dims);
       if (cfg) {

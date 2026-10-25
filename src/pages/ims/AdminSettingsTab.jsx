@@ -923,7 +923,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                   const newVId = "V" + Date.now();
                   setSettings((s) => ({ ...s, mandiCatalogue: [...(s.mandiCatalogue || []), {
                     id: newId, name: "New Flower", flowerCat: "Other", unit: "piece", gattharSize: null,
-                    flowerType: "flower", isGreen: false, artificialBunchesPerUnit: null, currentPrice: 0, priceHistory: [],
+                    flowerType: "flower", isGreen: false, palette: "", artificialBunchesPerUnit: null, currentPrice: 0, priceHistory: [],
                     colorVariants: [{ variantId: newVId, name: "New Variant", photoUrl: null, currentPrice: 0, priceHistory: [] }],
                     _tier21Migrated: true,
                   }] }));
@@ -1005,7 +1005,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
             </div>
             {/* Column header strip */}
             <div className="px-4 py-2 bg-gray-50 border-t border-b border-gray-200 text-[10px] uppercase tracking-wide font-semibold text-gray-500 select-none"
-              style={{ display: "grid", gridTemplateColumns: "16px 56px 140px 110px 80px 70px 110px 70px 84px 70px 110px 64px 40px 20px", gap: "8px", alignItems: "center" }}>
+              style={{ display: "grid", gridTemplateColumns: "16px 56px 140px 110px 80px 70px 110px 80px 70px 84px 70px 110px 64px 40px 20px", gap: "8px", alignItems: "center" }}>
               <span>&nbsp;</span>
               <span className="text-center" title="Parent photo. With variants: shows cheapest variant's photo. Without variants: upload directly.">Photo</span>
               <span>Flower Name</span>
@@ -1013,6 +1013,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
               <span>Unit</span>
               <span className="text-center" title="How many pieces in 1 bundle / gatthar / dozen">Pcs/Unit</span>
               <span className="text-center" title="Flower vs Green vs Real-Only (toggle)">Type</span>
+              <span className="text-center" title="Which Build Flower Palette this flower counts as, for cross-function flower-reuse matching. Shown for every flower — colour variants (below) still drive pricing but no longer affect reuse matching.">Palette</span>
               <span className="text-center" title="Artificial bunches that replace 1 unit of this real flower">Art Bunches/Unit</span>
               <span className="text-center" title={`What 1 unit of this flower costs as artificial = bunches/unit × ₹/bunch (🌹 ₹${artFlowerPerBunch.toFixed(2)} · 🌿 ₹${artGreenPerBunch.toFixed(2)}). Mapping flowers use their mapped inventory item's cost instead. Studio charges this × ${artStudioMarkup} markup.`}>Art ₹/Unit</span>
               <span className="text-center" title="Previous price for trend comparison">Prev Price</span>
@@ -1047,7 +1048,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                 return (
                   <div key={p.id} className="bg-white">
                     <div className="px-4 py-3 hover:bg-gray-50 cursor-pointer"
-                      style={{ display: "grid", gridTemplateColumns: "16px 56px 140px 110px 80px 70px 110px 70px 84px 70px 110px 64px 40px 20px", gap: "8px", alignItems: "center" }}
+                      style={{ display: "grid", gridTemplateColumns: "16px 56px 140px 110px 80px 70px 110px 80px 70px 84px 70px 110px 64px 40px 20px", gap: "8px", alignItems: "center" }}
                       onClick={() => setSMandiExpanded((prev) => { const s = new Set(prev); if (s.has(p.id)) s.delete(p.id); else s.add(p.id); return s; })}>
                       <span className="text-xs text-gray-400 select-none">{expanded ? "▼" : "▶"}</span>
                       {/* Photo */}
@@ -1127,6 +1128,18 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                         title={typeCfg.title} className={"text-xs px-2 py-1 rounded font-medium border w-full " + typeCfg.cls}>
                         {typeCfg.emoji} {typeCfg.label}
                       </button>
+                      {/* Palette — which Build Flower Palette colour this flower counts as for
+                          cross-function flower-reuse matching. Shown for every flower, with or
+                          without colour variants: variants still drive pricing (different variants
+                          can cost differently), but reuse now ONLY ever reads this one fixed tag —
+                          see resolvedFlowerColour in floralCost.js. */}
+                      <select value={p.palette || ""} onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => { const v = e.target.value; setSettings((s) => ({ ...s, mandiCatalogue: s.mandiCatalogue.map((x) => x.id === p.id ? { ...x, palette: v } : x) })); }}
+                        title="Which Build Flower Palette colour this flower counts as, for cross-function flower-reuse matching."
+                        className="border rounded px-1 py-1 text-xs w-full">
+                        <option value="">—</option>
+                        {["White", "Pastel", "Maroon", "Yellow"].map((c) => <option key={c} value={c}>{c}</option>)}
+                      </select>
                       {/* Art Bunches/Unit — or, for a Mapping flower, the inventory picker button */}
                       {type === "mapping" ? (() => {
                         const mapped = p.artificialMapItemId ? (inventory || []).find((i) => i.id === p.artificialMapItemId) : null;

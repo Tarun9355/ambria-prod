@@ -3423,7 +3423,7 @@ undefined
             Stored per function exactly like Fabric Palette: function 1 in clientFlowerPalette, every
             other one as extraFunctions[i].flowerPalette. A fixed short list, so no search box. */}
         {(()=>{
-          const FLOWER_PALETTES = [["White","#F5F3EE"],["Pastel","#F4C6D7"],["Maroon","#7A1F2B"],["Yellow","#F2C230"],["Green","#5E8C4A"]];
+          const FLOWER_PALETTES = [["White","#F5F3EE"],["Pastel","#F4C6D7"],["Maroon","#7A1F2B"],["Yellow","#F2C230"]];
           const curFRaw = isPrimaryFn ? (clientFlowerPalette || "") : (extraFunctions[activeFnIdx - 1]?.flowerPalette || "");
           const curColors = parseFlowerPalette(curFRaw); // [{name,pct}] — empty when nothing chosen
           const setFlowerColors = (colors) => {
@@ -4295,7 +4295,7 @@ undefined
                     // photo you just clicked. Only the strip still pins-and-jumps; the grid leaves
                     // you exactly where you were.
                     markPhotoViewed(ph);
-                    if(multiZone){toggleMultiElPhoto(k,ph);}else{selectElPhoto(k,ph);if(!gridZones[k]){phGoTo(k,0,phPage[k]||0);phScrollTop(k);}}
+                    if(multiZone){toggleMultiElPhoto(k,ph);}else{selectElPhoto(k,ph).then(ok=>{if(ok&&!gridZones[k]){phGoTo(k,0,phPage[k]||0);phScrollTop(k);}});}
                     // Same rule as opening the grid: whatever you actually pick to build with belongs
                     // in the group already, not just whatever happened to be ticked before. Add-only —
                     // never un-ticks anything the checkbox itself didn't touch.

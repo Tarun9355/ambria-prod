@@ -133,6 +133,11 @@ export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, l
           guestName: eo.clientName || "—", functionType: fn.type || "", venue,
           dept: "studio", totalAmt: eo.dealValue?.amount ?? eo.totalCost ?? 0, balance: 0, eoStatus: eo.status || "pending",
           eoId: eo.id,
+          // dealValue/totalCost live on the EVENT ORDER as a whole, not per function — a multi-function
+          // booking (Kua Poojan + Reception, say) used to show the exact same "Total: ₹X" on every one
+          // of its function cards with nothing saying so, which read as N separate ₹X bookings rather
+          // than one ₹X deal covering all of them together.
+          isMultiFn: fnList.length > 1,
         });
       });
     }
@@ -376,7 +381,9 @@ export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, l
                   {e.pax > 0 && <span>👥 {e.pax} pax</span>}
                 </div>
                 <div className="flex gap-4 text-[11px] text-gray-500 mt-2 tabular-nums">
-                  <span>Total: <b className="text-gray-800">{fmtAmt(e.totalAmt)}</b></span>
+                  <span title={e.isMultiFn ? "This deal's total deal value, shared across every function in it — not what this one function alone costs" : undefined}>
+                    {e.isMultiFn ? "Combined total (whole deal): " : "Total: "}<b className="text-gray-800">{fmtAmt(e.totalAmt)}</b>
+                  </span>
                   <span>Bal: <b className={e.balance > 0 ? "text-red-600" : "text-emerald-600"}>{fmtAmt(e.balance)}</b></span>
                   {e.decorLumpsum > 0 && <span>Decor: <b className="text-purple-600">{fmtAmt(e.decorLumpsum)}</b></span>}
                 </div>
