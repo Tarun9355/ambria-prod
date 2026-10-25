@@ -44,7 +44,7 @@ Deno.serve(async (req) => {
   if (department) upstream.searchParams.set("department", department);
 
   try {
-    const r = await fetch(upstream.toString(), { headers: { "x-api-key": key } });
+    const r = await fetch(upstream.toString(), { headers: { Authorization: `Bearer ${key}` } });
     if (!r.ok) return json({ error: "Ops expenses API " + r.status }, 502);
     const data = await r.json();
     return json(data, 200);
