@@ -49,6 +49,7 @@ import LazyYT from "../../../components/studio/LazyYT.jsx";
 import KitComponentsEditor from "../../../components/shared/KitComponentsEditor";
 import ItemHoverThumb from "../../../components/shared/ItemHoverThumb";
 import InventoryItemPickerModal from "../../../components/shared/InventoryItemPickerModal";
+import PrintedWallsModal from "../../../components/studio/PrintedWallsModal.jsx";
 import CopyBuildModal from "../../../components/studio/CopyBuildModal.jsx";
 import { uploadToStorage, STORAGE_FOLDERS } from "../../../lib/storage";
 
@@ -1700,6 +1701,8 @@ export default function StudioBuild({ ctx }) {
   const phSwipedJustNow = () => { const was = phSwipe.current.swiped; phSwipe.current.swiped = false; return was; };
   // Custom Ceiling / Custom Masking — { k: zoneKey, kind: "ceiling" | "masking" } or null
   const [customPicker, setCustomPicker] = useState(null);
+  // "Existing Printed Walls" popup: { k } = the zone it adds to. Picking adds an ordinary inventory element.
+  const [printedWallPicker, setPrintedWallPicker] = useState(null);
   // `rowIdx` addresses an entry of zoneConfig[k].extraTrussRows; undefined means the zone's own
   // row 0. Without it these wrote straight to zoneConfig[k], so picking a Custom Ceiling on the
   // second truss silently set it on the first.
@@ -3027,6 +3030,29 @@ undefined
         <path d={BD_EDGE} fill="none" stroke="url(#bdEdgeGold)" strokeWidth="1.6" vectorEffect="non-scaling-stroke"/>
       </svg>
     </div>}
+    {printedWallPicker && (() => {
+      const pk = printedWallPicker.k;
+      const fnsNow = collectAllFunctionData ? collectAllFunctionData() : [];
+      const inZoneIds = new Set((zoneElements[pk] || []).map((el) => el.invId).filter(Boolean));
+      // free = what other events leave on the event date, minus what the rest of this deal already holds
+      const freeFor = (it) => Math.max(0, getStudioAvailable(it, activeBlocksForDate) - qtyUsedElsewhereInBuild(it.id, fnsNow, imsInventory, {}, fnDate));
+      return (
+        <PrintedWallsModal
+          imsInventory={imsInventory} rcFactorByKey={rcFactorByKey} freeFor={freeFor} inZoneIds={inZoneIds}
+          zoneName={zoneMeta[pk]?.label || pk}
+          dateLabel={fnDate ? new Date(fnDate + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : ""}
+          onSelect={(it) => {
+            if (!(zoneElements[pk] || []).find((el) => el.invId === it.id)) {
+              setZoneElements((prev) => ({ ...prev, [pk]: [...(prev[pk] || []), { name: it.name, qty: 1, unit: it.unit, size: "", invId: it.id, addedAt: todayStr() }] }));
+              showMsg(`Added "${String(it.name).trim()}" to ${zoneMeta[pk]?.label || pk}`, "green");
+            }
+            setPrintedWallPicker(null);
+          }}
+          onClose={() => setPrintedWallPicker(null)}
+          isDark={isDark} border={border} textP={textP} textS={textS} cardBg={cardBg}
+        />
+      );
+    })()}
     {customPicker && (
       <InventoryItemPickerModal
         title={customPicker.kind === "ceiling" ? "Custom Ceiling — Fabric › Ceiling" : "Custom Masking — Fabric › Printed Walls"}
@@ -4972,10 +4998,16 @@ undefined
           {zoneSection[k]==="print"&&<div style={{background:isDark?"#12121F":"#F9F9F6",borderRadius:10,padding:"9px 12px",marginBottom:10,border:`1px solid ${border}`}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
               <div style={{fontSize:11.5,fontWeight:600,color:"#0369A1",display:"flex",alignItems:"center",gap:6}}><IconPrinter size={12}/>Print</div>
-              <button onClick={()=>{
-                const entry={id:"PR"+Date.now()+Math.floor(Math.random()*1000),material:(imsPrintMaterials||[])[0]?.id||"",areaW:0,areaD:0,qty:1,refImageUrl:"",invId:null};
-                setZoneConfig(p=>({...p,[k]:{...(p[k]||{}),prints:[...((p[k]||{}).prints||[]),entry]}}));
-              }} style={{padding:"4px 10px",borderRadius:8,border:"1px solid #0EA5E9",background:"rgba(14,165,233,0.14)",color:"#0EA5E9",fontSize:11.5,fontWeight:600,cursor:"pointer"}}>+ Add Print Row</button>
+              <div style={{display:"flex",gap:6,flexWrap:"wrap",justifyContent:"flex-end"}}>
+                {/* Not a print job: a design we already have in IMS (Fabric › Printed Walls), added to this zone as an ordinary
+                    element at its own rate — so nothing has to be printed. */}
+                <button onClick={()=>setPrintedWallPicker({k})} title="Pick a printed wall design we already have, instead of printing a new one"
+                  style={{padding:"4px 10px",borderRadius:8,border:"1px solid #7C3AED",background:"rgba(124,58,237,0.12)",color:"#7C3AED",fontSize:11.5,fontWeight:600,cursor:"pointer"}}>🖼️ Existing Printed Walls</button>
+                <button onClick={()=>{
+                  const entry={id:"PR"+Date.now()+Math.floor(Math.random()*1000),material:(imsPrintMaterials||[])[0]?.id||"",areaW:0,areaD:0,qty:1,refImageUrl:"",invId:null};
+                  setZoneConfig(p=>({...p,[k]:{...(p[k]||{}),prints:[...((p[k]||{}).prints||[]),entry]}}));
+                }} style={{padding:"4px 10px",borderRadius:8,border:"1px solid #0EA5E9",background:"rgba(14,165,233,0.14)",color:"#0EA5E9",fontSize:11.5,fontWeight:600,cursor:"pointer"}}>+ Add Print Row</button>
+              </div>
             </div>
             {(()=>{
               // Opens with one ready-to-edit blank row instead of a "no prints" empty state — purely
