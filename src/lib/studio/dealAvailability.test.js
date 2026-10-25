@@ -58,3 +58,54 @@ describe("a zone switched OFF in Build does not hold stock", () => {
     expect(maxQtyForRow("pod", none, inventory, { fnIdx: 0, zoneKey: "stage", elIdx: 0 }, "2026-10-15", 227)).toBe(206);
   });
 });
+
+// ── Randomised cross-check of the ceiling against the allocator it is meant to protect ──
+// 3,000 random bookings: several functions on two dates, zones on/off, plain rows and kits holding the item.
+// The contract: at the ceiling the row is fully covered AND no other row of the item is short (whenever the
+// others fit in the pool to begin with); one unit past it, something in the booking is short.
+describe("maxQtyForRow — randomised against allocateRowAvailability", () => {
+  let seed = 12345;
+  // mulberry32 — a small seeded generator with good low bits (a plain LCG mod n repeats badly)
+  const rnd = (n) => { seed = (seed + 0x6D2B79F5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return Math.floor((((t ^ (t >>> 14)) >>> 0) / 4294967296) * n); };
+  const inv = [{ id: "led", name: "LED" }, { id: "kit", name: "Kit", subItems: [{ itemId: "led", qty: 3 }] }];
+  const build = () => {
+    const fns = [];
+    const nFns = 1 + rnd(3);
+    for (let f = 0; f < nFns; f++) {
+      const zones = ["stage", "entry", "lounge"].slice(0, 1 + rnd(3));
+      const enabledEls = {}; const zoneElements = {};
+      zones.forEach((z) => {
+        enabledEls[z] = rnd(4) !== 0;                       // ~25% of zones are switched off
+        zoneElements[z] = Array.from({ length: 1 + rnd(2) }, () => (rnd(3) === 0
+          ? { invId: "kit", qty: 1 + rnd(4) } : { invId: "led", qty: rnd(40) }));
+      });
+      fns.push({ fnDate: rnd(2) ? "2027-01-03" : "2027-01-05", enabledEls, zoneElements });
+    }
+    return fns;
+  };
+  it("holds for 3,000 random bookings", () => {
+    let checked = 0;
+    for (let n = 0; n < 3000; n++) {
+      const fns = build();
+      const pool = rnd(120);
+      // pick a plain-LED row on the target date that sits in an enabled zone
+      const date = "2027-01-03";
+      const cands = [];
+      fns.forEach((fn, fnIdx) => { if (fn.fnDate !== date) return; Object.entries(fn.zoneElements).forEach(([zk, els]) => { if (!fn.enabledEls[zk]) return; els.forEach((el, elIdx) => { if (el.invId === "led") cands.push({ fnIdx, zoneKey: zk, elIdx }); }); }); });
+      if (!cands.length) continue;
+      const t = cands[rnd(cands.length)];
+      const max = maxQtyForRow("led", fns, inv, t, date, pool);
+      const withQty = (q) => fns.map((fn, i) => (i !== t.fnIdx ? fn : { ...fn, zoneElements: { ...fn.zoneElements, [t.zoneKey]: fn.zoneElements[t.zoneKey].map((el, j) => (j === t.elIdx ? { ...el, qty: q } : el)) } }));
+      const totalShort = (f) => {
+        let s = 0;
+        f.forEach((fn, fnIdx) => { if (fn.fnDate !== date) return; Object.entries(fn.zoneElements).forEach(([zk, els]) => { if (!fn.enabledEls[zk]) return; els.forEach((el, elIdx) => { s += allocateRowAvailability("led", f, inv, { fnIdx, zoneKey: zk, elIdx }, date, pool).shortQty; }); }); });  // kit rows too: their LED units compete
+        return s;
+      };
+      // the others must fit the pool for "no one is short at the ceiling" to be demanded
+      const othersAlone = totalShort(withQty(0));
+      if (othersAlone === 0) { expect(totalShort(withQty(max))).toBe(0); expect(totalShort(withQty(max + 1))).toBeGreaterThan(0); checked++; }
+      else expect(max).toBe(0);   // someone is already short without this row: nothing may be added
+    }
+    expect(checked).toBeGreaterThan(300);
+  });
+});
