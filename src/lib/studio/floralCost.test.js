@@ -201,13 +201,44 @@ describe("computeFnFloralCost — colour defaults to the function's own Flower P
     expect(result.elementBreakdown[0].realLines[0].qty).toBe(20);
   });
 
-  it("no default at all when the flower has no colour variants set up in IMS Mandi, even with a matching palette", () => {
-    // `rose` (unlike `roseV`) carries no colorVariants — the real-world case for a species IMS
-    // hasn't photographed/priced by colour yet. The palette alone must never invent a colour.
+  it("no default at all when the flower has no colour variants AND no Mandi Catalogue palette set, even with a matching Build palette", () => {
+    // `rose` (unlike `roseV`) carries no colorVariants and no `.palette` — the real-world case for
+    // a species IMS hasn't photographed/priced by colour, or tagged with a palette, yet. The Build
+    // palette alone must never invent a colour.
     const f1 = fn({ fnIdx: 0, fnShift: "lunch", fnFlowerPalette: "White", zoneElements: { stage: [elRose(10)] }, enabledEls: { stage: true } });
     const f2 = fn({ fnIdx: 1, fnShift: "dinner", fnFlowerPalette: "White", zoneElements: { stage: [elRose(20)] }, enabledEls: { stage: true } });
     const result = computeFnFloralCost(f2, [f1, f2], baseOpts([pRose]));
     expect(result.elementBreakdown[0].realLines[0].qty).toBe(20);
+  });
+
+  // Owner ask (2026-10-25): most mandi items (greens, fillers, single-SKU flowers) never carry
+  // colour variants at all, so they never got a reuse colour even with the 2026-10-20 default above.
+  // IMS Admin → Mandi Catalogue now lets each variant-less flower be tagged with a fixed Palette
+  // (one of the Build's own 4 colours), which stands in for a colour pick exactly like a matching
+  // colour variant would.
+  describe("variant-less flowers fall back to their own fixed Mandi Catalogue palette", () => {
+    const dandela = { id: "dandela", name: "Dandela", unit: "bundle", flowerType: "green", artificialBunchesPerUnit: 3, palette: "Yellow" };
+    const pDandela = patternFor("p_dandela", "dandela");
+    const optsD = (patterns) => ({ ...baseOpts(patterns), mandiCatalogue: [...mandiCatalogue, dandela] });
+
+    it("credits reuse purely from the flower's own palette tag matching the Build palette, with no colour variants and no explicit pick", () => {
+      const f1 = fn({ fnIdx: 0, fnShift: "lunch", fnFlowerPalette: "Yellow", zoneElements: { stage: [{ name: "Dandela", patternId: "p_dandela", qty: 10, realPct: 100 }] }, enabledEls: { stage: true } });
+      const f2 = fn({ fnIdx: 1, fnShift: "dinner", fnFlowerPalette: "Yellow", zoneElements: { stage: [{ name: "Dandela", patternId: "p_dandela", qty: 20, realPct: 100 }] }, enabledEls: { stage: true } });
+      const result = computeFnFloralCost(f2, [f1, f2], optsD([pDandela]));
+      const line = result.elementBreakdown[0].realLines[0];
+      expect(line.qtyFull).toBe(20);
+      expect(line.reuseCredit).toBeCloseTo(10 * FLOWER_REUSE_RATE, 5);
+      expect(line.qty).toBeCloseTo(13, 5);
+    });
+
+    it("no credit when the Build palette doesn't match this flower's own tagged palette", () => {
+      const f1 = fn({ fnIdx: 0, fnShift: "lunch", fnFlowerPalette: "White", zoneElements: { stage: [{ name: "Dandela", patternId: "p_dandela", qty: 10, realPct: 100 }] }, enabledEls: { stage: true } });
+      const f2 = fn({ fnIdx: 1, fnShift: "dinner", fnFlowerPalette: "White", zoneElements: { stage: [{ name: "Dandela", patternId: "p_dandela", qty: 20, realPct: 100 }] }, enabledEls: { stage: true } });
+      // Both functions picked White, but Dandela is tagged Yellow — never assumed reused just
+      // because the zone/species repeats.
+      const result = computeFnFloralCost(f2, [f1, f2], optsD([pDandela]));
+      expect(result.elementBreakdown[0].realLines[0].qty).toBe(20);
+    });
   });
 });
 

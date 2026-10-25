@@ -3458,7 +3458,7 @@ undefined
             Stored per function exactly like Fabric Palette: function 1 in clientFlowerPalette, every
             other one as extraFunctions[i].flowerPalette. A fixed short list, so no search box. */}
         {(()=>{
-          const FLOWER_PALETTES = [["White","#F5F3EE"],["Pastel","#F4C6D7"],["Maroon","#7A1F2B"],["Yellow","#F2C230"],["Green","#5E8C4A"]];
+          const FLOWER_PALETTES = [["White","#F5F3EE"],["Pastel","#F4C6D7"],["Maroon","#7A1F2B"],["Yellow","#F2C230"]];
           const curFRaw = isPrimaryFn ? (clientFlowerPalette || "") : (extraFunctions[activeFnIdx - 1]?.flowerPalette || "");
           const curColors = parseFlowerPalette(curFRaw); // [{name,pct}] — empty when nothing chosen
           const setFlowerColors = (colors) => {

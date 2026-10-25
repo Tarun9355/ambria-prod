@@ -121,12 +121,24 @@ function dominantPaletteColor(fn) {
  * the flowers that should deviate from it. Returns the same ranked-row shape a manual pick
  * stores (so it can stand in for one anywhere that reads it), or null if there's no palette, or
  * this flower has no colour variants at all, or none of them match the dominant colour.
+ *
+ * A flower with NO colour variants at all (most greens/fillers/single-SKU items — they were never
+ * matchable by variant name, so they never got a reuse colour before this) instead falls back to
+ * its own fixed Mandi Catalogue "Palette" assignment (parent.palette, IMS Admin → Mandi Catalogue
+ * — owner ask 2026-10-25). That field only exists for variant-less flowers: a flower WITH variants
+ * keeps using the variant-name match above, since the variants already carry their own colour
+ * identity and a single parent-level palette would be ambiguous across them.
  */
 function defaultColorPref(fn, parent) {
-  const variants = Array.isArray(parent?.colorVariants) ? parent.colorVariants : [];
-  if (!variants.length) return null;
   const dominant = dominantPaletteColor(fn);
   if (!dominant) return null;
+  const variants = Array.isArray(parent?.colorVariants) ? parent.colorVariants : [];
+  if (!variants.length) {
+    if (parent?.palette && fuzzyColourMatch(dominant, parent.palette)) {
+      return [{ variantId: null, label: parent.palette, photoUrl: parent?.photoUrl || null, rate: 0 }];
+    }
+    return null;
+  }
   const match = variants.find((v) => fuzzyColourMatch(dominant, v.name || ""));
   if (!match) return null;
   return [{ variantId: match.variantId, label: match.name || "", photoUrl: match.photoUrl || null, rate: Number(match.currentPrice) || 0 }];
