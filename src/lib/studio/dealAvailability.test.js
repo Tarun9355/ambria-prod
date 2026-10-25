@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { allocateRowAvailability, maxQtyForRow } from "./dealAvailability.js";
+import { allocateRowAvailability, maxQtyForRow, qtyUsedElsewhereInBuild } from "./dealAvailability.js";
 
 const inventory = [{ id: "pod", name: "Round Fibre Podium" }];
 const fnWith = (rows) => [{ fnDate: "2026-10-15", zoneElements: Object.fromEntries(rows.map(([zk, qty]) => [zk, [{ invId: "pod", qty }]])) }];
@@ -34,5 +34,27 @@ describe("maxQtyForRow — the most one row can ask for and still be fully cover
   it("a row on another date does not count", () => {
     const fns = [{ fnDate: "2026-10-15", zoneElements: { stage: [{ invId: "pod", qty: 1 }] } }, { fnDate: "2026-11-01", zoneElements: { stage: [{ invId: "pod", qty: 8 }] } }];
     expect(maxQtyForRow("pod", fns, inventory, T("stage"), "2026-10-15", 3)).toBe(3);
+  });
+});
+
+describe("a zone switched OFF in Build does not hold stock", () => {
+  const fns = [{
+    fnDate: "2026-10-15",
+    enabledEls: { stage: true, entry: false },
+    zoneElements: { stage: [{ invId: "pod", qty: 5 }], entry: [{ invId: "pod", qty: 21 }] },
+  }];
+  it("its quantity is not 'used elsewhere' for the zone that is on", () => {
+    expect(qtyUsedElsewhereInBuild("pod", fns, inventory, { fnIdx: 0, zoneKey: "stage", elIdx: 0 }, "2026-10-15")).toBe(0);
+  });
+  it("and does not shrink the ceiling: the whole pool is available to the zone that is on (227, not 206)", () => {
+    expect(maxQtyForRow("pod", fns, inventory, { fnIdx: 0, zoneKey: "stage", elIdx: 0 }, "2026-10-15", 227)).toBe(227);
+  });
+  it("switch it back on and its 21 count again (227 → 206)", () => {
+    const on = [{ ...fns[0], enabledEls: { stage: true, entry: true } }];
+    expect(maxQtyForRow("pod", on, inventory, { fnIdx: 0, zoneKey: "stage", elIdx: 0 }, "2026-10-15", 227)).toBe(206);
+  });
+  it("a booking that has recorded no enabled zones at all still counts every zone, as before", () => {
+    const none = [{ fnDate: "2026-10-15", zoneElements: fns[0].zoneElements }];
+    expect(maxQtyForRow("pod", none, inventory, { fnIdx: 0, zoneKey: "stage", elIdx: 0 }, "2026-10-15", 227)).toBe(206);
   });
 });

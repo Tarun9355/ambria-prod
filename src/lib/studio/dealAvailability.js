@@ -9,6 +9,14 @@
 
 import { walkKitUnits } from "../ims/helpers";
 
+// A zone that is switched off in Build keeps its element list but is not part of the deal — it is not priced,
+// not on the PDFs, so it must not hold stock either. (enabledEls missing/empty = nothing recorded yet: every
+// zone counts, as before.)
+const zoneIsOff = (fn, zk) => {
+  const en = fn?.enabledEls;
+  return !!en && typeof en === "object" && Object.keys(en).length > 0 && !en[zk];
+};
+
 // Build: sum qty already assigned to invId across all zones of all functions, scoped
 // to targetDate (an item committed on a different calendar day doesn't starve this one —
 // mirrors buildPlatformPlan's per-fnDate bucketing in this same lib).
@@ -22,6 +30,7 @@ export function qtyUsedElsewhereInBuild(invId, fns, imsInventory, exclude = {}, 
   (fns || []).forEach((fn, fnIdx) => {
     if (targetDate && (fn?.fnDate || "") !== targetDate) return;
     Object.entries(fn?.zoneElements || {}).forEach(([zk, elems]) => {
+      if (zoneIsOff(fn, zk)) return;
       (elems || []).forEach((el, elIdx) => {
         const isExcluded = fnIdx === exclude.fnIdx && zk === exclude.zoneKey &&
           (exclude.elIdx == null || elIdx === exclude.elIdx);
@@ -49,6 +58,7 @@ function itemRowsFor(invId, fns, imsInventory, targetDate) {
   (fns || []).forEach((fn, fnIdx) => {
     if (targetDate && (fn?.fnDate || "") !== targetDate) return;
     Object.entries(fn?.zoneElements || {}).forEach(([zk, elems]) => {
+      if (zoneIsOff(fn, zk)) return;
       (elems || []).forEach((el, elIdx) => {
         if (!el?.invId) return;
         const elQty = Number(el.qty) || 0;

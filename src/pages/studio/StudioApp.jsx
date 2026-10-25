@@ -10502,6 +10502,9 @@ export default function StudioApp() {
           elems.forEach((e, ei) => {
             if (!e?.invId) return;
             if (f.fnIdx === activeFnIdx && zk === zoneKey && ei === idx) return;
+            // Stock only competes on the SAME date — a row on another function's date does not hold units
+            // today (it still gets the "used elsewhere" note below, which is about reusing the same piece).
+            const sameDate = !date || (f.fnDate || "") === date;
             // Walk into kit components too — a plain item (e.g. a side table) tied up as a
             // COMPONENT of a kit elsewhere in the deal was invisible here before, so this picker
             // could show it as fully free (overcounting availability) and never flag it with the
@@ -10511,13 +10514,13 @@ export default function StudioApp() {
             const elQty = Number(e.qty) || 0;
             if (topItem && elQty > 0) {
               walkKitUnits(topItem, elQty, imsInventory, e.kitOverrides, (node, nodeQty) => {
-                usedQty[node.id] = (usedQty[node.id] || 0) + nodeQty;
+                if (sameDate) usedQty[node.id] = (usedQty[node.id] || 0) + nodeQty;
                 if (f.fnIdx !== activeFnIdx) {
                   (usedElsewhere[node.id] ||= []).push(`${f.fnType || `Function ${f.fnIdx + 1}`} · ${zk}`);
                 }
               });
             } else {
-              usedQty[e.invId] = (usedQty[e.invId] || 0) + elQty;
+              if (sameDate) usedQty[e.invId] = (usedQty[e.invId] || 0) + elQty;
               if (f.fnIdx !== activeFnIdx) {
                 (usedElsewhere[e.invId] ||= []).push(`${f.fnType || `Function ${f.fnIdx + 1}`} · ${zk}`);
               }
