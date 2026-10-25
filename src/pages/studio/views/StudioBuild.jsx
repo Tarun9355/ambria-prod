@@ -51,7 +51,11 @@ const PANEL_INK = "#F5F1E7";
 // until it blurs, and only resyncs to the real committed value then — exactly how every plain text
 // field already behaves. onCommit still fires on every keystroke that parses to a real number, so
 // existing guards (paint allocation, etc.) run exactly where they used to.
-function NumField({ value, onCommit, min = 0, allowDecimal = true, onFocus, onBlur, ...rest }) {
+// commitOn="blur": nothing is committed while typing — the number is applied on Enter or when the box is left
+// (Escape puts the old value back). Used for a quantity, where "4" and "40" on the way to "400" must never
+// become the deal's quantity, and the box must never show a number the deal does not hold. Ctrl+Z then only
+// steps through what is being typed, never through quantities that were already applied.
+function NumField({ value, onCommit, min = 0, allowDecimal = true, commitOn = "keystroke", onFocus, onBlur, ...rest }) {
   const [text, setText] = useState(() => (value === null || value === undefined ? "" : String(value)));
   const editingRef = useRef(false);
   useEffect(() => { if (!editingRef.current) setText(value === null || value === undefined ? "" : String(value)); }, [value]);
@@ -62,17 +66,31 @@ function NumField({ value, onCommit, min = 0, allowDecimal = true, onFocus, onBl
       inputMode={allowDecimal ? "decimal" : "numeric"}
       value={text}
       onFocus={(e) => { editingRef.current = true; onFocus?.(e); }}
+      onKeyDown={commitOn === "blur" ? (e) => {
+        if (e.key === "Enter") { e.preventDefault(); e.currentTarget.blur(); }
+        else if (e.key === "Escape") { e.preventDefault(); setText(value === null || value === undefined ? "" : String(value)); editingRef.current = false; e.currentTarget.blur(); }
+      } : undefined}
       onChange={(e) => {
         const raw = e.target.value;
         if (raw !== "" && raw !== "-" && !re.test(raw)) return; // reject a keystroke that isn't a valid numeric prefix
         const prevText = text;
         setText(raw);
+        if (commitOn === "blur") return; // applied when the box is left
         const n = parseFloat(raw);
         // A commit handler may refuse the value by returning false (e.g. more carpet than is in
         // stock): the field goes back to what it showed, so the screen never holds an unsaved number.
         if (!Number.isNaN(n) && onCommit(Math.max(min, n)) === false) setText(prevText);
       }}
-      onBlur={(e) => { editingRef.current = false; setText(value === null || value === undefined ? "" : String(value)); onBlur?.(e); }}
+      onBlur={(e) => {
+        const wasEditing = editingRef.current;
+        editingRef.current = false;
+        if (commitOn === "blur" && wasEditing) {
+          const n = parseFloat(text);
+          if (!Number.isNaN(n) && Math.max(min, n) !== Number(value)) onCommit(Math.max(min, n));
+        }
+        setText(value === null || value === undefined ? "" : String(value));
+        onBlur?.(e);
+      }}
       {...rest}
     />
   );
@@ -4894,7 +4912,7 @@ undefined
                               return {...p,[k]:cur};
                             });
                           }} style={{width:26,height:26,borderRadius:6,border:`1px solid ${border}`,background:cardBg,cursor:"pointer",fontSize:14,fontWeight:600,color:textS,display:"flex",alignItems:"center",justifyContent:"center"}}>{"−"}</button>
-                          <NumField min={0} value={el.qty||0} onCommit={nextQtyTyped=>{
+                          <NumField min={0} commitOn="blur" value={el.qty||0} onCommit={nextQtyTyped=>{
                             // A quantity can't be taken past what stock can cover on this date — same ceiling as the
                             // + button. Typing more lands on that ceiling and the card is tagged short (wantedQty);
                             // a row already ABOVE the ceiling (saved before) refuses a bigger number; reducing is fine.
