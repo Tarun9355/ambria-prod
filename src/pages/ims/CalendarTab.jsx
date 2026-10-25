@@ -402,7 +402,7 @@ export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, l
             <span className="flex-1">Date Pricing Config</span>
             <span aria-hidden="true" className={"shrink-0 text-gray-400 text-xs transition-transform " + (showDatePricing ? "rotate-90" : "")}>▸</span>
           </button>
-          {showDatePricing && <div className="px-4 pb-4 border-t border-gray-100 pt-4"><DatePricingPanel settings={settings} setSettings={setSettings} /></div>}
+          {showDatePricing && <div className="px-4 pb-4 border-t border-gray-100 pt-4"><DatePricingPanel settings={settings} setSettings={setSettings} authUser={authUser} /></div>}
         </div>
       )}
     </div>

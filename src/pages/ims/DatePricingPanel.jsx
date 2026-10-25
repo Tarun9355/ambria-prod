@@ -8,11 +8,18 @@ import { SETTINGS_DEFAULTS, DATE_PRICING_LABELS } from "../../lib/ims/constants"
 // The Last-Minute Booking Override (Filler pricing for any booking within N days, regardless of
 // the date's own category) was removed 2026-10-25 by owner request — a date's price now always
 // comes from its own category, full stop.
-export default function DatePricingPanel({ settings, setSettings }) {
+// Tarun's own `users` row id (confirmed 2026-10-25 via `select id from users where name ilike
+// '%tarun%'`) — not a role check. "Admin" is shared by several people; setting/changing the
+// Auto-Sync lock code is restricted to this one specific account by owner request, so another
+// admin can't quietly set or clear a lock Tarun didn't put there himself.
+const OWNER_USER_ID = "U84ED1E8439";
+
+export default function DatePricingPanel({ settings, setSettings, authUser }) {
   const dp = settings.datePricing || SETTINGS_DEFAULTS.datePricing;
   const cats = dp.categories || {};
   const marked = dp.markedDates || {};
   const markedCount = Object.keys(marked).length;
+  const isOwner = authUser?.id === OWNER_USER_ID;
 
   function setMultiplier(catKey, val) {
     setSettings((s) => ({ ...s, datePricing: { ...s.datePricing, categories: { ...s.datePricing.categories, [catKey]: { ...s.datePricing.categories[catKey], multiplier: parseFloat(val) || 1 } } } }));
@@ -21,10 +28,13 @@ export default function DatePricingPanel({ settings, setSettings }) {
   // date it touches, so it's now locked behind a code only the owner sets/knows — anyone else
   // opening this panel can see the toggle but can't actually flip it without that code. The code
   // itself lives in plain settings (same as every other admin setting here) — this is a deterrent
-  // against an ops person fat-fingering it, not a cryptographic secret.
+  // against an ops person fat-fingering it, not a cryptographic secret. Anyone who's been told the
+  // code can USE it to pause/resume; only Tarun (OWNER_USER_ID) can ever SET or CHANGE it — see
+  // changeLockCode and the "no code yet" branch below.
   function requireLockCode(actionLabel) {
     const current = dp.autoSyncLockCode;
     if (!current) {
+      if (!isOwner) { alert("No lock code has been set for this yet — ask Tarun to set one first (Admin → Settings → Date Pricing Config)."); return false; }
       const code1 = window.prompt("No lock code is set yet. Set one now to protect pausing/resuming auto-sync (you'll need to enter it every time):");
       if (!code1 || !code1.trim()) return false;
       const code2 = window.prompt("Re-enter the code to confirm:");
@@ -40,7 +50,10 @@ export default function DatePricingPanel({ settings, setSettings }) {
     if (!requireLockCode(dp.autoSyncPaused ? "resume auto-sync" : "pause auto-sync")) return;
     setSettings((s) => ({ ...s, datePricing: { ...s.datePricing, autoSyncPaused: !s.datePricing?.autoSyncPaused } }));
   }
+  // Owner-only, enforced here too (not just by hiding the button) — a stray call from outside this
+  // component should not be able to change or clear the lock either.
   function changeLockCode() {
+    if (!isOwner) return;
     const current = dp.autoSyncLockCode;
     if (current && !requireLockCode("change the lock code")) return;
     const next = window.prompt(current ? "Enter a new code (leave blank to remove the lock):" : "Set a code to protect pausing/resuming auto-sync:");
@@ -73,9 +86,13 @@ export default function DatePricingPanel({ settings, setSettings }) {
             className={"text-sm font-semibold px-4 py-2 rounded-lg border " + (autoSyncPaused ? "bg-red-600 text-white border-red-600" : "bg-gray-100 text-gray-700 border-gray-300 hover:bg-gray-200")}>
             🔒 {autoSyncPaused ? "Paused — click to resume" : "Pause auto-sync"}
           </button>
-          <button onClick={changeLockCode} className="text-[11px] text-gray-400 hover:text-gray-600 underline">
-            {dp.autoSyncLockCode ? "Change lock code" : "Set a lock code"}
-          </button>
+          {/* Owner-only (OWNER_USER_ID) — anyone else, admin or not, sees the toggle above but not
+              this control at all, so only Tarun can ever set or change the code it requires. */}
+          {isOwner && (
+            <button onClick={changeLockCode} className="text-[11px] text-gray-400 hover:text-gray-600 underline">
+              {dp.autoSyncLockCode ? "Change lock code" : "Set a lock code"}
+            </button>
+          )}
         </div>
       </div>
       <div className="bg-white border rounded-2xl overflow-hidden">
