@@ -5043,16 +5043,20 @@ undefined
                     const src=it.img||it.photoUrls?.[0];
                     const si=set.findIndex(x=>x.src===src);
                     const lc=getElPrice(el,zoneConfig[k],{checkAvailability:true,zoneKey:k,elIdx:idx},aVenue)?.lineCost||0;
-                    return <div key={idx} style={{display:"flex",alignItems:"center",gap:9}}>
+                    return <div key={idx} style={{display:"flex",alignItems:"flex-start",gap:9}}>
                       {src
                         ? <ClickablePhoto src={src} thumbSize={96} alt={it.name} name={String(it.name).trim()} set={set} startIndex={Math.max(0,si)} style={{width:44,height:44,borderRadius:6,objectFit:"cover",flexShrink:0}} details={[["Size",itemDimsText(it)||"Not set"],["Qty",String(el.qty||1)]]}/>
                         : <span style={{width:44,height:44,borderRadius:6,background:isDark?"#1a1a2e":"#eee",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>🖼️</span>}
                       <div style={{flex:1,minWidth:0}}>
-                        <div style={{fontSize:12,fontWeight:600,color:textP,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{String(it.name).trim()}</div>
-                        <div style={{fontSize:10.5,color:textS}}>{itemDimsText(it)?`📐 ${itemDimsText(it)}`:"Size not set"}{(el.qty||1)>1?` · × ${el.qty}`:""}</div>
+                        {/* name ········ price: a dotted leader runs from the end of the name to the price, so each wall reads against its own rate */}
+                        <div style={{display:"flex",alignItems:"flex-end",gap:6,lineHeight:"16px"}}>
+                          <span style={{fontSize:12,fontWeight:600,color:textP,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",minWidth:0,flex:"0 1 auto"}}>{String(it.name).trim()}</span>
+                          {showCosts&&<span aria-hidden="true" style={{flex:"1 1 16px",minWidth:16,height:11,marginBottom:4,borderBottom:`2px dotted ${isDark?"rgba(167,139,250,0.55)":"rgba(124,58,237,0.4)"}`}}/>}
+                        </div>
+                        <div style={{fontSize:10.5,color:textS,marginTop:2}}>{itemDimsText(it)?`📐 ${itemDimsText(it)}`:"Size not set"}{(el.qty||1)>1?` · × ${el.qty}`:""}</div>
                       </div>
-                      {showCosts&&<span style={{fontSize:12,fontWeight:700,color:lc>0?textP:"#D97706",whiteSpace:"nowrap"}}>{lc>0?fmt(lc):"No rate"}</span>}
-                      <span onClick={()=>setZoneElements(p=>({...p,[k]:(p[k]||[]).filter((_,i)=>i!==idx)}))} title="Remove from this zone" style={{cursor:"pointer",color:"#E11D48",fontWeight:700,fontSize:13}}>×</span>
+                      {showCosts&&<span style={{fontSize:12,fontWeight:700,lineHeight:"16px",color:lc>0?textP:"#D97706",whiteSpace:"nowrap"}}>{lc>0?fmt(lc):"No rate"}</span>}
+                      <span onClick={()=>setZoneElements(p=>({...p,[k]:(p[k]||[]).filter((_,i)=>i!==idx)}))} title="Remove from this zone" style={{cursor:"pointer",color:"#E11D48",fontWeight:700,fontSize:13,lineHeight:"16px"}}>×</span>
                     </div>;
                   })}
                 </div>
