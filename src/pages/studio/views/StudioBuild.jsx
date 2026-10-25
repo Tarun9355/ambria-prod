@@ -1140,6 +1140,10 @@ export default function StudioBuild({ ctx }) {
   );
   // Sub-label under each tile's title. Read straight off zoneConfig — no cost maths here, so it
   // cannot drift from the figures inside the panels.
+  // The existing printed walls (IMS Fabric › Printed Walls) sitting in a zone's element list — picked from the Print section's
+  // "Existing Printed Walls" button. Listed there, and their money is on the Print tile.
+  const printedWallsOf = (k) => (zoneElements[k] || []).map((el, idx) => ({ el, idx, it: el.invId ? (imsInventory || []).find(i => i.id === el.invId) : null }))
+    .filter(w => w.it && /fabric/i.test(String(w.it.cat || w.it.category || "")) && /printed wall/i.test(String(w.it.subCat || w.it.subcategory || "")));
   const zoneSectionSub = (k, id) => {
     const zc = zoneConfig[k] || {}, zm = zoneMeta[k] || {}, d = zc.dims || {}, fd = zc.floorDims || {};
     if (id === "elements") { const n = (zoneElements[k] || []).length; return n ? `${n} item${n === 1 ? "" : "s"}` : "No items yet"; }
@@ -1167,7 +1171,8 @@ export default function StudioBuild({ ctx }) {
       if (anySize && rows.some(needsPick)) return `${size || "Floor"} · carpet not picked`;
       return [size, picked[0] ? `📦 ${picked[0]}` : ""].filter(Boolean).join(" · ");
     }
-    const n = (zc.prints || []).length; return n ? `${n} print${n === 1 ? "" : "s"}` : "None";
+    const n = (zc.prints || []).length, w = printedWallsOf(k).length;
+    return [n ? `${n} print${n === 1 ? "" : "s"}` : "", w ? `${w} existing wall${w === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · ") || "None";
   };
   // What this section actually costs — same calc functions the zone header/live total already use,
   // so a tile can never show a number the rest of the page disagrees with. Truss's tile absorbs
@@ -1262,7 +1267,10 @@ export default function StudioBuild({ ctx }) {
     const sc = zoneConfig[k] ? scaleStruct(calcStructCost(k, zoneConfig[k], structRates, structDiscountFor(zoneConfig[k], aVenue))) : null;
     if (id === "truss") return sc ? sc.truss + sc.masking + sc.arches + sc.pillars + sc.glass + sc.fabric : 0;
     if (id === "platform") return sc ? sc.platform + sc.carpet : 0;
-    return sc ? sc.print : 0; // calcStructCost's own print total — same figure zoneTotal() now folds in below
+    // calcStructCost's own print total (same figure zoneTotal() folds in below) plus the existing printed walls, each priced as its own
+    // row in the Print list (those walls are ordinary elements, so zoneTotal already counts them once — this is only the tile's figure).
+    const walls = printedWallsOf(k).reduce((a, w) => a + (getElPrice(w.el, zoneConfig[k], { checkAvailability: true, zoneKey: k, elIdx: w.idx }, aVenue)?.lineCost || 0), 0);
+    return (sc ? sc.print : 0) + walls;
   };
   const sectionTile = (k, sec) => {
     const on = zoneSection[k] === sec.id;
@@ -5021,12 +5029,15 @@ undefined
             {(()=>{
               // The existing printed walls already added to this zone (from "Existing Printed Walls"): shown here, where they
               // were picked, so adding one is visibly done. Each photo opens big, ‹ › walking the zone's other walls.
-              const walls=(zoneElements[k]||[]).map((el,idx)=>({el,idx,it:el.invId?(imsInventory||[]).find(i=>i.id===el.invId):null}))
-                .filter(w=>w.it&&/fabric/i.test(String(w.it.cat||w.it.category||""))&&/printed wall/i.test(String(w.it.subCat||w.it.subcategory||"")));
+              const walls=printedWallsOf(k);
+              const wallsTotal=walls.reduce((a,w)=>a+(getElPrice(w.el,zoneConfig[k],{checkAvailability:true,zoneKey:k,elIdx:w.idx},aVenue)?.lineCost||0),0);
               if(!walls.length) return null;
               const set=walls.filter(w=>w.it.img||w.it.photoUrls?.[0]).map(w=>({src:w.it.img||w.it.photoUrls[0],name:String(w.it.name).trim(),details:[["Size",itemDimsText(w.it)||"Not set"],["Qty",String(w.el.qty||1)]]}));
               return <div style={{marginBottom:10,padding:"8px 10px",borderRadius:8,background:isDark?"rgba(124,58,237,0.08)":"rgba(124,58,237,0.06)",border:"1px solid rgba(124,58,237,0.3)"}}>
-                <div style={{fontSize:11,fontWeight:700,color:"#7C3AED",marginBottom:6}}>🖼️ Existing printed walls in this zone · {walls.length}</div>
+                <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",gap:8,marginBottom:6,fontSize:11,fontWeight:700,color:"#7C3AED"}}>
+                  <span>🖼️ Existing printed walls in this zone · {walls.length}</span>
+                  {showCosts&&wallsTotal>0&&<span style={{fontSize:12,color:textP}}>Total {fmt(wallsTotal)}</span>}
+                </div>
                 <div style={{display:"flex",flexDirection:"column",gap:6}}>
                   {walls.map(({el,idx,it})=>{
                     const src=it.img||it.photoUrls?.[0];
