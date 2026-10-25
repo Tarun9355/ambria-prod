@@ -4323,7 +4323,7 @@ export default function StudioApp() {
   // guestPriceMultiplier above. Always on (not gated by hideDiscountFromClient — this is market
   // pricing by date desirability, not a discount the client opts into). Reuses getEffectivePricing
   // (lib/inventory/helpers.js) — the SAME function IMS's own Inventory tab/P&L report already read —
-  // so a date's category and its last-minute-booking override resolve identically everywhere.
+  // so a date's category resolves identically everywhere.
   // dealCheckData falls back to studioFloralData so this works before Deal Check has ever been
   // opened, same reasoning as fixedVenues/agencyFeePct above.
   const dateCategoryMultiplierFor = (dateStr) => {
@@ -4378,7 +4378,7 @@ export default function StudioApp() {
   // present. undefined (never touched, the overwhelming majority of elements) falls through to the
   // section default exactly as before this existed.
   // dateFactor (optional, default 1): the date multiplier getElPrice / getElPriceForFn multiply onto
-  // this line afterwards. A date BELOW 1 (Filler, last-minute) is itself a discount, and discounts do
+  // this line afterwards. A date BELOW 1 (Filler) is itself a discount, and discounts do
   // not stack — only the bigger of it and this 25% is taken (innerDiscountFactor, lib/studio/
   // discounts.js): the part applied here shrinks so that, once the date factor is multiplied on,
   // the unit lands on the bigger discount alone. Units with no discount of their own just get the
