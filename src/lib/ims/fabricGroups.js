@@ -42,7 +42,9 @@ function applicationText(kind, fab, row) {
   return `${side ? side + " · " : ""}13 ft panels`;
 }
 
-export function buildFabricGroups({ entries = [], lines = [], fabricPlan = null, stock = {}, multiFn = false } = {}) {
+// onlyFi: show one function's zones only. Money is split over ALL functions first (the priced lines name a zone, not
+// a function — a "stage" line is the sum of every function's stage), then the other functions' zones are dropped.
+export function buildFabricGroups({ entries = [], lines = [], fabricPlan = null, stock = {}, multiFn = false, onlyFi = null } = {}) {
   const fabricLines = (lines || []).filter(isFabricLine);
   const groupedLineIds = new Set();
   const groups = [];
@@ -64,11 +66,19 @@ export function buildFabricGroups({ entries = [], lines = [], fabricPlan = null,
       z.tier.add(e.row?.useNewFabric ? "New" : "Old");
       byZone.set(k, z);
     });
-    let zones = [...byZone.values()].map((z) => ({
-      fi: z.fi, zoneKey: z.zoneKey, name: z.name, fnLabel: multiFn ? z.fnLabel : "", photo: z.photo,
-      qty: r2(z.qty), application: z.notes.join(" · "), tier: [...z.tier].join(" + "),
-      amount: Math.round(moneyByZone.get(z.zoneKey) || 0),
-    }));
+    // A priced line is per ZONE NAME, so a zone that exists in two functions ("stage" in Wedding and Mehendi) shares
+    // one line. Each function's zone takes its share of that money by quantity — never the whole line twice.
+    const qtyByZoneKey = new Map();
+    byZone.forEach((z) => qtyByZoneKey.set(z.zoneKey, (qtyByZoneKey.get(z.zoneKey) || 0) + z.qty));
+    let zones = [...byZone.values()].map((z) => {
+      const share = qtyByZoneKey.get(z.zoneKey) > 0 ? z.qty / qtyByZoneKey.get(z.zoneKey) : 0;
+      const exact = (moneyByZone.get(z.zoneKey) || 0) * share;
+      return {
+        fi: z.fi, zoneKey: z.zoneKey, name: z.name, fnLabel: multiFn ? z.fnLabel : "", photo: z.photo,
+        qty: r2(z.qty), application: z.notes.join(" · "), tier: [...z.tier].join(" + "),
+        amount: Math.round(exact), exactAmount: exact,
+      };
+    });
     // Layout not synced yet: fall back to the priced lines themselves, so the fabric still shows.
     if (!zones.length) {
       zones = kindLines.map((l) => ({
@@ -77,9 +87,15 @@ export function buildFabricGroups({ entries = [], lines = [], fabricPlan = null,
       }));
     }
     if (!zones.length) return;
+    // every line of this fabric is folded away, whichever function is being looked at
     kindLines.forEach((l) => groupedLineIds.add(l.id));
+    const allFnAmount = Math.round(kindLines.length ? kindLines.reduce((s, l) => s + (Number(l.total) || 0), 0) : zones.reduce((s, z) => s + (z.exactAmount ?? z.amount), 0));
+    if (onlyFi !== null && onlyFi !== undefined) {
+      zones = zones.filter((z) => z.fi === onlyFi);
+      if (!zones.length) return;
+    }
     const qty = r2(zones.reduce((s, z) => s + z.qty, 0));
-    const amount = Math.round(kindLines.length ? kindLines.reduce((s, l) => s + (Number(l.total) || 0), 0) : zones.reduce((s, z) => s + z.amount, 0));
+    const amount = (onlyFi === null || onlyFi === undefined) ? allFnAmount : Math.round(zones.reduce((s, z) => s + (z.exactAmount ?? z.amount), 0));
     const stockRows = Array.isArray(stock?.[kind.stockKey]) ? stock[kind.stockKey] : [];
     const colours = (Array.isArray(fabricPlan?.[kind.key]) ? fabricPlan[kind.key] : [])
       .map((c) => {
@@ -88,6 +104,7 @@ export function buildFabricGroups({ entries = [], lines = [], fabricPlan = null,
       })
       .sort((a, b) => b.qty - a.qty);
     zones.sort((a, b) => b.qty - a.qty);
+    zones = zones.map(({ exactAmount, ...z }) => z);
     groups.push({
       key: kind.key, label: kind.label, unit: kind.unit, emoji: kind.emoji, qty, amount, zones, colours,
       photo: colours[0]?.photo || "", hex: colours[0]?.hex || "",

@@ -93,3 +93,41 @@ describe("buildFabricGroups — edge cases", () => {
     expect(g.zones.map((z) => [z.fnLabel, z.qty])).toEqual([["Wedding", 8], ["Mehendi", 4]]);
   });
 });
+
+describe("buildFabricGroups — a zone shared by two functions splits its money, it does not repeat it", () => {
+  // The priced lines name a zone, not a function: "stage 13.67 kg · ₹2,283" is Wedding's stage 10.27 kg + Mehendi's 3.4 kg.
+  const mk = (fi, fnLabel, zk, zLabel, kg) => ({ fi, zk, zLabel, fnLabel, photo: "", fab: { lizaKg: kg, lizaWrapKg: kg, lizaCeilingKg: 0 }, row: {} });
+  const entries2 = [mk(0, "Wedding", "stage", "Stage", 10.27), mk(2, "Mehendi", "stage", "Stage", 3.4), mk(1, "Cocktail", "entry", "Entry", 11.72), mk(2, "Mehendi", "entry", "Entry", 1.02)];
+  const lines2 = [
+    { id: "s", name: "Liza Fabric (Old)", qty: 13.67, total: 2283, sub: "kg · stage" },
+    { id: "e", name: "Liza Fabric (Old)", qty: 12.74, total: 2127, sub: "kg · entry" },
+  ];
+  it("the zones add back up to the lines' total (₹4,410), not double it", () => {
+    const g = buildFabricGroups({ entries: entries2, lines: lines2, multiFn: true }).groups[0];
+    expect(g.amount).toBe(4410);
+    expect(g.zones.reduce((s, z) => s + z.amount, 0)).toBeGreaterThanOrEqual(4409);
+    expect(g.zones.reduce((s, z) => s + z.amount, 0)).toBeLessThanOrEqual(4411);
+  });
+  it("each function's stage takes its share of the stage line (Wedding 10.27 of 13.67 kg)", () => {
+    const g = buildFabricGroups({ entries: entries2, lines: lines2, multiFn: true }).groups[0];
+    const wed = g.zones.find((z) => z.fnLabel === "Wedding" && z.zoneKey === "stage");
+    const meh = g.zones.find((z) => z.fnLabel === "Mehendi" && z.zoneKey === "stage");
+    expect(wed.amount).toBe(Math.round(2283 * 10.27 / 13.67));
+    expect(meh.amount).toBe(Math.round(2283 * 3.4 / 13.67));
+    expect(wed.amount).not.toBe(2283);
+  });
+  it("looking at one function shows only its zones, with its own total and share of the money", () => {
+    const g = buildFabricGroups({ entries: entries2, lines: lines2, multiFn: true, onlyFi: 2 }).groups[0];
+    expect(g.zones.map((z) => [z.name, z.qty])).toEqual([["Stage", 3.4], ["Entry", 1.02]]);
+    expect(g.qty).toBe(4.42);
+    expect(g.amount).toBe(Math.round(2283 * 3.4 / 13.67 + 2127 * 1.02 / 12.74));
+  });
+  it("the folded-away lines are the same whichever function is shown", () => {
+    const all = buildFabricGroups({ entries: entries2, lines: lines2, multiFn: true }).groupedLineIds;
+    const one = buildFabricGroups({ entries: entries2, lines: lines2, multiFn: true, onlyFi: 1 }).groupedLineIds;
+    expect([...one].sort()).toEqual([...all].sort());
+  });
+  it("a function that does not use the fabric shows no group", () => {
+    expect(buildFabricGroups({ entries: entries2, lines: lines2, multiFn: true, onlyFi: 7 }).groups).toEqual([]);
+  });
+});
