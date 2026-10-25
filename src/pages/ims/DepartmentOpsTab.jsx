@@ -17,6 +17,8 @@ import { thumbUrl, fitUrl } from "../../lib/studio/thumb.js";
 import { matchFlowerPattern, resolveSizeKey, sizeClassToPatternKey, resolveMandiFlower } from "../../lib/ims/flowerHelpers";
 import { swatchHexFor } from "../../lib/studio/colours";
 import PlanningSyncButton from "./PlanningSyncButton.jsx";
+import FabricBlock from "./FabricBlock.jsx";
+import { buildFabricGroups } from "../../lib/ims/fabricGroups";
 
 // ── THE OFFICIAL LOGO, READY FOR THE PDF ──
 // ambria-logo.png is a WHITE wordmark with a gold dot and gold "DESIGN & DECOR", on a transparent
@@ -2398,6 +2400,21 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     });
     return { ...ft, rows };
   }).filter(f => f.rows.length) : [];
+  // ── THE FABRIC LINES, FOLDED TO THREE FABRICS ──
+  // The blocked-inventory list carried one photo-less row per (zone × fabric × tier). For the Fabric department
+  // they are replaced by one block: Liza / Velvet / Wall Masking with the allocated colour's photo, the total, and
+  // a zone-by-zone breakdown (see lib/ims/fabricGroups.js). Zones come from the event's own layout, scoped to the
+  // chosen function; the money still comes from the priced lines.
+  const fabricGroupInfo = useMemo(() => {
+    if (dept !== "Fabric") return { groups: [], groupedLineIds: new Set() };
+    const fnsF = Array.isArray(sel?.functionsDetail) ? sel.functionsDetail : [];
+    const entries = trussPlanOf().filter((e) => !invScoped || e.fi === invFn).map((e) => ({
+      fi: e.fi, zk: e.zk, zLabel: e.zLabel, fnLabel: e.fn?.type || `Function ${e.fi + 1}`,
+      photo: e.fn?.elSelectedPhoto?.[e.zk]?.src || "", fab: e.fab, row: e.row,
+    }));
+    return buildFabricGroups({ entries, lines: invShown, fabricPlan: sel?.fabricPlan, stock: trussInv, multiFn: fnsF.length > 1 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dept, sel, trussInv, invShown, invScoped, invFn]);
   // All upcoming events scanned for fabric shortfalls (same-day contention included) → order-ahead heads-up.
   const upcomingFabricShort = useMemo(() => {
     if (dept !== "Fabric") return [];
@@ -5639,7 +5656,8 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                    (not translucent) this time — a see-through header over scrolling rows was part of
                    what made the previous attempt look broken. */
                 <div className="p-2.5 space-y-2">
-                  <div className="hidden sm:flex items-center gap-x-3 px-2.5 sticky top-0 z-10 bg-white rounded-lg ring-1 ring-gray-100 py-1.5 -mt-0.5 mb-1">
+                  {fabricGroupInfo.groups.length > 0 && <FabricBlock groups={fabricGroupInfo.groups} fmt={fmt} onZoom={setZoomImg} />}
+                  {invShown.some(it => !fabricGroupInfo.groupedLineIds.has(it.id)) && <div className="hidden sm:flex items-center gap-x-3 px-2.5 sticky top-0 z-10 bg-white rounded-lg ring-1 ring-gray-100 py-1.5 -mt-0.5 mb-1">
                     <span className="flex-1 min-w-0" />
                     <div className="w-full sm:w-auto flex items-start gap-0 sm:pl-1">
                       <div className={"text-right text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400 " + STAT_W.qty}>{qtyHeaderLabel}</div>
@@ -5647,8 +5665,8 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                       <div className={"text-right text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400 " + STAT_W.rate}>Rate</div>
                       <div className={"text-right text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400 " + STAT_W.total}>Total</div>
                     </div>
-                  </div>
-                  {invShown.map(it => {
+                  </div>}
+                  {invShown.filter(it => !fabricGroupInfo.groupedLineIds.has(it.id)).map(it => {
                     // ── TWO DIFFERENT QUANTITIES, ON PURPOSE ──
                     // `qty` ("To load") is the true physical peak: the most this item is ever
                     // needed on-site at once, net of cross-function reuse (two back-to-back
