@@ -99,6 +99,13 @@ export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, l
   const calEvents = useMemo(() => {
     const events = [];
     for (const c of (lmsContracts || [])) {
+      // An id-matched contract (crossReferenceContracts, lib/ims/lms.js — the exact entryNo ↔
+      // lmsLeadId tie, not a name guess) is already shown below via studioEvents, the authoritative
+      // and actionable side. Showing both doubled every booked deal's event count on its date —
+      // confirmed live: a 2-function deal showed as 4 calendar cards. A mere name-based
+      // exact/fuzzy match stays shown as its own card too, same as before — that signal is weaker
+      // (coincidental name overlap), so it's left for a human to see and judge rather than hidden.
+      if (c.matchType === "id") continue;
       for (let fi = 0; fi < (c.functions || []).length; fi++) {
         const fn = c.functions[fi];
         if (fn.functionDate) {

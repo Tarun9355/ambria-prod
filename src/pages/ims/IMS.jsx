@@ -23,7 +23,7 @@ import { fetchMyLabourAccess, labourPunchDepts } from "../../lib/ims/labourAtten
 import AppSwitcher from "../../components/AppSwitcher.jsx";
 import PullToRefresh from "../../components/shared/PullToRefresh.jsx";
 import { useSwipeDrawer } from "../../lib/useSwipeDrawer";
-import { triggerLmsSync, fetchCachedContracts, fetchSeason, buildDateCategories } from "../../lib/ims/lms";
+import { triggerLmsSync, fetchCachedContracts, fetchSeason, buildDateCategories, crossReferenceContracts } from "../../lib/ims/lms";
 import { allocateForDate, buildEventAllocation, eoToFnList, appendTrussAudit, TRUSS_P3_BACKFILLED_SK } from "../../lib/ims/trussEngine";
 import { ensureCdnLibs } from "../../lib/ims/pdf";
 import { kvGet, reliableSave } from "../../lib/ims/kv";
@@ -947,8 +947,15 @@ export default function IMS() {
   }, []);
 
   // Refresh in-memory state from the Supabase cache (instant — no LMS pagination) + season.
+  // Cross-references against Studio's own event_orders here — confirmed live (2026-10-25) this had
+  // never actually run: `lms_contracts` rows are written server-side (supabase/functions/lms) with
+  // matchedEoId/matchType hardcoded null and nothing else ever set them, so every LMS contract's
+  // Calendar card showed unmatched regardless of whether a real Studio booking existed for it —
+  // which is also why a booked deal doubled up as 4 calendar cards instead of 2 (see
+  // CalendarTab.jsx's calEvents, which now skips a contract's own card once it's id-matched).
   const loadLmsFromCache = useCallback(async () => {
-    const { contracts, lastSync } = await fetchCachedContracts();
+    const { contracts: rawContracts, lastSync } = await fetchCachedContracts();
+    const contracts = crossReferenceContracts(rawContracts, eventOrdersRef.current);
     setLmsContracts(contracts);
     const season = await fetchSeason();
     if (season) setStudioLmsCache({ dateCategories: buildDateCategories(season, contracts) });
