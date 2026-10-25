@@ -2408,13 +2408,15 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const fabricGroupInfo = useMemo(() => {
     if (dept !== "Fabric") return { groups: [], groupedLineIds: new Set() };
     const fnsF = Array.isArray(sel?.functionsDetail) ? sel.functionsDetail : [];
-    const entries = trussPlanOf().filter((e) => !invScoped || e.fi === invFn).map((e) => ({
+    const entries = trussPlanOf().map((e) => ({
       fi: e.fi, zk: e.zk, zLabel: e.zLabel, fnLabel: e.fn?.type || `Function ${e.fi + 1}`,
       photo: e.fn?.elSelectedPhoto?.[e.zk]?.src || "", fab: e.fab, row: e.row,
     }));
-    return buildFabricGroups({ entries, lines: invShown, fabricPlan: sel?.fabricPlan, stock: trussInv, multiFn: fnsF.length > 1 });
+    // Money comes from the whole event's priced lines (they name a zone, not a function) and is split by quantity;
+    // only then is the chosen function's share shown.
+    return buildFabricGroups({ entries, lines: blockedItemsGrouped, fabricPlan: sel?.fabricPlan, stock: trussInv, multiFn: fnsF.length > 1, onlyFi: invScoped ? invFn : null });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dept, sel, trussInv, invShown, invScoped, invFn]);
+  }, [dept, sel, trussInv, blockedItemsGrouped, invScoped, invFn]);
   // All upcoming events scanned for fabric shortfalls (same-day contention included) → order-ahead heads-up.
   const upcomingFabricShort = useMemo(() => {
     if (dept !== "Fabric") return [];
