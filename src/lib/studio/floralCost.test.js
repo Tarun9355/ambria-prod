@@ -272,6 +272,16 @@ describe("computeFnFloralCost — core per-element resolution (unaffected by the
     expect(result.elementBreakdown.some((eb) => eb.name === "Round Fibre Pot")).toBe(true);
   });
 
+  it("a kit's flower recipe follows the deal's EDITED parts, not only the master list", () => {
+    // Master: 6 recipes per kit. The deal edited it to 10 — 2 kits must itemise 20, not 12.
+    const kit = { id: "kit1", name: "Tree", cat: "tenting", subItems: [{ patternId: "p_rose", qty: 6 }] };
+    const opts = { ...baseOpts([pRose]), imsInventory: [kit] };
+    const qtyOf = (el) => computeFnFloralCost(fn({ zoneElements: { stage: [el] }, enabledEls: { stage: true } }), [], opts)
+      .elementBreakdown.find((eb) => /recipe/.test(eb.name))?.qty;
+    expect(qtyOf({ name: "Tree", invId: "kit1", qty: 2 })).toBe(12);
+    expect(qtyOf({ name: "Tree", invId: "kit1", qty: 2, kitOverrides: [{ patternId: "p_rose", qty: 10 }] })).toBe(20);
+  });
+
   it("surfaces an unresolvable floral-looking element as uncosted instead of silently dropping it", () => {
     const f = fn({ zoneElements: { stage: [{ name: "Unknown Thing", qty: 1 }] }, enabledEls: { stage: true } });
     const result = computeFnFloralCost(f, [f], baseOpts([]));

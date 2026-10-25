@@ -1106,7 +1106,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       // departments by each part's own category, so a row can be a component of a kit owned by
       // another department. It is the only record of that parent, and the PDF needs it to avoid
       // reporting a bolted-on part as a loose item.
-      const rows = deptInvSnap.map((x, i) => ({ id: x.name + i, invId: x.imsId || null, name: x.name, photo: x.photo || "", qty: x.qty || 0, rentalQty: x.rentalQty != null ? x.rentalQty : (x.qty || 0), byFn: x.byFn || null, calc: x.calc || null, unit: x.unit || 0, total: x.total || 0, sub: x.sub || "", isKit: !!x.isKit, fromKit: x.fromKit || null, components: Array.isArray(x.components) ? x.components : null, shortQty: x.shortQty || 0, shortCost: x.shortCost || 0, outOfStock: !!x.outOfStock, prodOrBuy: x.prodOrBuy || null, isSwapped: swapInfo.has(x.name), swappedFrom: swapInfo.get(x.name)?.swappedFrom || null, qtyUnit: x.qtyUnit || "", parts: Array.isArray(x.parts) ? x.parts : null }));
+      const rows = deptInvSnap.map((x, i) => ({ id: x.name + i, invId: x.imsId || null, name: x.name, photo: x.photo || "", qty: x.qty || 0, rentalQty: x.rentalQty != null ? x.rentalQty : (x.qty || 0), byFn: x.byFn || null, calc: x.calc || null, unit: x.unit || 0, total: x.total || 0, sub: x.sub || "", isKit: !!x.isKit, fromKit: x.fromKit || null, components: Array.isArray(x.components) ? x.components : null, recipeParts: Array.isArray(x.recipeParts) ? x.recipeParts : null, shortQty: x.shortQty || 0, shortCost: x.shortCost || 0, outOfStock: !!x.outOfStock, prodOrBuy: x.prodOrBuy || null, isSwapped: swapInfo.has(x.name), swappedFrom: swapInfo.get(x.name)?.swappedFrom || null, qtyUnit: x.qtyUnit || "", parts: Array.isArray(x.parts) ? x.parts : null }));
       // Short items first (need chasing/ordering), then Production/Buying (not real stock — worth
       // knowing apart from what's actually reserved), then everything else — the order requested
       // for this list. Stable within each group: Array.prototype.sort is stable, so ties keep the
@@ -3145,7 +3145,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       DEPTS.forEach(d => {
         const snap = Array.isArray(sel?.deptInventory?.[d]) ? sel.deptInventory[d] : null;
         if (snap && snap.length) {
-          snap.forEach((x, i) => out.push({ id: `${d}:${x.name}:${i}`, invId: x.imsId || null, name: x.name, photo: x.photo || "", qty: x.qty || 0, unit: x.unit || 0, total: x.total || 0, sub: x.sub || "", isKit: !!x.isKit, fromKit: x.fromKit || null, components: Array.isArray(x.components) ? x.components : null }));
+          snap.forEach((x, i) => out.push({ id: `${d}:${x.name}:${i}`, invId: x.imsId || null, name: x.name, photo: x.photo || "", qty: x.qty || 0, unit: x.unit || 0, total: x.total || 0, sub: x.sub || "", isKit: !!x.isKit, fromKit: x.fromKit || null, components: Array.isArray(x.components) ? x.components : null, recipeParts: Array.isArray(x.recipeParts) ? x.recipeParts : null }));
           return;
         }
         Object.entries(blocks || {}).forEach(([itemId, arr]) => {
@@ -3432,7 +3432,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
             if (es) return { name: `🔁 ${es.name} (for ${mf.name})`, qty: Math.round(baseQty * es.ratio * 100) / 100, unit: es.unit };
             return { name: mf.name, qty: baseQty, unit: mf.unit || "" };
           }).filter(f => f && f.qty > 0);
-          merged.set(key, { name: inv?.name || el?.name || held?.name || "Item", qty, unit, deptTag, photo: invPhoto(inv, held), dims: invDims(inv), size: elSize, kit: (held?.isKit && Array.isArray(held.components)) ? held.components.length : 0, recipe, paint: addPaint(new Map(), paint) });
+          merged.set(key, { name: inv?.name || el?.name || held?.name || "Item", qty, unit, deptTag, photo: invPhoto(inv, held), dims: invDims(inv), size: elSize, kit: held?.isKit ? (Array.isArray(held.components) ? held.components.length : 0) + (Array.isArray(held.recipeParts) ? held.recipeParts.length : 0) : 0, recipe, paint: addPaint(new Map(), paint) });
         });
         const items = [...merged.values()];
         const zPhoto = fn.elSelectedPhoto?.[zk]?.src || "";
@@ -3508,7 +3508,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     const unplaced = blockedItemsGrouped.filter(b => !placed.has(b.id) && b.sub !== "print").map(b => {
       const inv = (b.invId && invById.get(String(b.invId))) || invByName.get(String(b.name || "").trim().toLowerCase()) || null;
       const kitOf = String(b.fromKit || "").trim();
-      return { name: b.name, qty: Number(b.qty) || 0, photo: invPhoto(inv, b), dims: invDims(inv), prodOrBuy: b.prodOrBuy || null, kit: (b.isKit && Array.isArray(b.components)) ? b.components.length : 0, source: b.prodOrBuy === "buying" ? "Buying" : b.prodOrBuy === "production" ? "Production" : kitOf ? "Inside " + kitOf : "" };
+      return { name: b.name, qty: Number(b.qty) || 0, photo: invPhoto(inv, b), dims: invDims(inv), prodOrBuy: b.prodOrBuy || null, kit: b.isKit ? (Array.isArray(b.components) ? b.components.length : 0) + (Array.isArray(b.recipeParts) ? b.recipeParts.length : 0) : 0, source: b.prodOrBuy === "buying" ? "Buying" : b.prodOrBuy === "production" ? "Production" : kitOf ? "Inside " + kitOf : "" };
     });
     // ── TWO PAGES, AND WHY THEY STAY TWO ──
     // Briefly merged into one "From production" page, which was wrong: on pratik test's 29 Aug
@@ -3675,12 +3675,15 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
 
     const kitBlocks = [];
     kitSourceItems.forEach(it => {
-      if (it.isKit && Array.isArray(it.components) && it.components.length) {
+      const hasRecipeParts = Array.isArray(it.recipeParts) && it.recipeParts.length > 0;
+      if (it.isKit && ((Array.isArray(it.components) && it.components.length) || hasRecipeParts)) {
         const kInv = (it.invId && invById.get(String(it.invId))) || invByName.get(String(it.name || "").trim().toLowerCase()) || null;
         // The held quantity is the kit's own count; the parts under it are already totals for all of them.
         // Each part carries its own photo (its inventory item's, else the one Deal Check sent) so the
         // kit's parts list shows what each piece looks like, not just its name.
-        kitBlocks.push({ name: it.name, ours: true, qty: Number(it.qty) || zoneQtyFor(it.name), photo: invPhoto(kInv, it), zones: zonesFor(it.name), parts: it.components.map(c => ({ name: c.name, qty: c.qty, photo: invPhoto(c.imsId ? invById.get(String(c.imsId)) : null, c) })) });
+        kitBlocks.push({ name: it.name, ours: true, qty: Number(it.qty) || zoneQtyFor(it.name), photo: invPhoto(kInv, it), zones: zonesFor(it.name), parts: [...(Array.isArray(it.components) ? it.components : []).map(c => ({ name: c.name, qty: c.qty, photo: invPhoto(c.imsId ? invById.get(String(c.imsId)) : null, c) })),
+          // The flower recipes inside the kit (not inventory, so not components): name and quantity, in the recipe's own unit.
+          ...(hasRecipeParts ? it.recipeParts : []).map(r => ({ name: r.name, qty: r.qty, unit: r.uom || "", photo: r.photo || "" }))] });
       }
     });
     [...partsByKit.values()].forEach(parts => {

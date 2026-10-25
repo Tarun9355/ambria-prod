@@ -232,7 +232,9 @@ export function computeFnRawFlowerUsage(fn, opts) {
       const kitInvItem = findInv(el.invId);
       if (kitInvItem && Array.isArray(kitInvItem.subItems) && kitInvItem.subItems.length > 0) {
         const outerQty = el.qty || 0;
-        (kitInvItem.subItems || []).forEach((si) => {
+        // Same rule as the Florals detail below: the deal's edited kit (el.kitOverrides) when there is one, else the master list.
+        const kitParts = Array.isArray(el.kitOverrides) && el.kitOverrides.length > 0 ? el.kitOverrides : kitInvItem.subItems;
+        kitParts.forEach((si) => {
           const siQty = (Number(si.qty) || 0) * outerQty;
           if (siQty <= 0) return;
           if (si.patternId) { expandedElems.push({ name: `${el.name || kitInvItem.name} · recipe`, patternId: si.patternId, qty: siQty, size: el.size }); return; }
@@ -397,7 +399,10 @@ export function computeFnFloralCost(fn, allFns, opts) {
       const kitInvItem = findInv(el.invId);
       if (kitInvItem && Array.isArray(kitInvItem.subItems) && kitInvItem.subItems.length > 0) {
         const outerQty = el.qty || 0;
-        (kitInvItem.subItems || []).forEach(si => {
+        // The deal's own edit of the kit (Build's "Kit — includes" editor → el.kitOverrides) is what was priced and
+        // what gets made; the master list is only the default when nothing was edited.
+        const kitParts = Array.isArray(el.kitOverrides) && el.kitOverrides.length > 0 ? el.kitOverrides : kitInvItem.subItems;
+        kitParts.forEach(si => {
           const siQty = (Number(si.qty) || 0) * outerQty;
           if (siQty <= 0) return;
           if (si.patternId) { expandedElems.push({ name: `${el.name || kitInvItem.name} · recipe`, patternId: si.patternId, qty: siQty, size: el.size, _kitParent: el.name || kitInvItem.name }); return; }

@@ -103,6 +103,7 @@ import { findCrossFnReuseSource, computeFnInvQty, groupConsecutiveFns } from "..
 import { computePeopleRaw, computePeople, situationalFactorsFor, heavySayaMultFor as sharedHeavySayaMultFor } from "../../../lib/studio/manpowerCount";
 import { dcRentalCost } from "../../../lib/studio/repeatPricing.js";
 import { kitShortfallSplit } from "../../../lib/studio/kitShortfallSplit";
+import { kitRecipeParts } from "../../../lib/studio/kitRecipeParts";
 import { withSetupSlot } from "../../../lib/studio/dihariWindows.js";
 
 // Commission override box (one per venue, Commission tab below) — its OWN local draft state, not
@@ -859,9 +860,14 @@ export default function DealCheckOverlay({ ctx }) {
               // scaled by whatever discount applied to the kit as a whole (proportional to its share
               // of the kit's undiscounted base cost) — the kit's own dD only keeps its own base share.
               let components;
+              // A kit can also hold flower RECIPES (Tree: Flower Trail, Flower Bunch) — not inventory, so they have
+              // no component row (and no money here: Build/floral cost already price them). They are carried on the
+              // kit's row as recipeParts so the Dept PDF's kit page can name them with their quantity.
+              let recipeParts = [];
               if (isKit) {
                 const edited = dcKitEdits[fi]?.[ck];
-                const comps = Array.isArray(edited) ? edited : item.subItems.map(s => ({ itemId: s.itemId, qty: Number(s.qty) || 1 }));
+                const comps = Array.isArray(edited) ? edited : item.subItems.map(s => ({ itemId: s.itemId, patternId: s.patternId, qty: Number(s.qty) || 1 }));
+                recipeParts = kitRecipeParts(comps, dealCheckData?.flowerPatterns, Math.max(0, qty - reusedQty));
                 components = comps.map(cp => {
                   const ci = dcInventoryCache.find(x => x.id === cp.itemId);
                   if (!ci) return null;
@@ -916,7 +922,7 @@ export default function DealCheckOverlay({ ctx }) {
                 // split.reusedQty above (previously only its internal component-level shortfall
                 // accounting saw the reuse credit, so a reused KIT's displayed qty still summed
                 // across its sibling functions instead of showing the true peak).
-                deptInv[dD].push({ name: item.name || c.name || "Item", photo: imsField.photos(item)[0] || "", qty: Math.max(0, qty - reusedQty), rentalQty: qty, unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "", imsId: c.imsId, fnIdx: fi, calc: calcParts(Math.max(0, qty - shortQty), baseR, fn.fnDate, lineRental, shortCost), ...(components && components.length ? { isKit: true, components: components.map(({ci, ...rest}) => ({ ...rest, total: Math.round(rest.total) })) } : {}), ...(shortQty > 0 ? { shortQty, shortCost: Math.round(shortCost), outOfStock: !canFulfillShortfall(item, fn.fnDate) } : {}) });
+                deptInv[dD].push({ name: item.name || c.name || "Item", photo: imsField.photos(item)[0] || "", qty: Math.max(0, qty - reusedQty), rentalQty: qty, unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "", imsId: c.imsId, fnIdx: fi, calc: calcParts(Math.max(0, qty - shortQty), baseR, fn.fnDate, lineRental, shortCost), ...(components && components.length ? { isKit: true, components: components.map(({ci, ...rest}) => ({ ...rest, total: Math.round(rest.total) })) } : {}), ...(recipeParts.length ? { isKit: true, recipeParts } : {}), ...(shortQty > 0 ? { shortQty, shortCost: Math.round(shortCost), outOfStock: !canFulfillShortfall(item, fn.fnDate) } : {}) });
               }
             });
             // Manually-added inventory blocks (dcManualItems) — the salesperson added these directly in
@@ -940,6 +946,7 @@ export default function DealCheckOverlay({ ctx }) {
               rental += lineRental; byFn[fi].rental += lineRental;
               const dD = catToDept(imsField.category(item));
               let miComponents;
+              const miRecipeParts = miIsKit ? kitRecipeParts(item.subItems, dealCheckData?.flowerPatterns, q) : [];
               if (miIsKit) {
                 miComponents = item.subItems.map(s => {
                   const ci = dcInventoryCache.find(x => x.id === s.itemId);
@@ -965,7 +972,7 @@ export default function DealCheckOverlay({ ctx }) {
               } else {
                 addD(dD, "rental", lineRental);
               }
-              if (deptInv[dD]) deptInv[dD].push({ name: item.name || "Item", photo: imsField.photos(item)[0] || "", qty: Math.max(0, q - miReused), rentalQty: q, unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "", imsId: mi.imsId, fnIdx: fi, calc: calcParts(q, baseR, fn.fnDate, lineRental, 0), ...(miComponents && miComponents.length ? { isKit: true, components: miComponents.map(({ci, ...rest}) => ({ ...rest, total: Math.round(rest.total) })) } : {}) });
+              if (deptInv[dD]) deptInv[dD].push({ name: item.name || "Item", photo: imsField.photos(item)[0] || "", qty: Math.max(0, q - miReused), rentalQty: q, unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "", imsId: mi.imsId, fnIdx: fi, calc: calcParts(q, baseR, fn.fnDate, lineRental, 0), ...(miComponents && miComponents.length ? { isKit: true, components: miComponents.map(({ci, ...rest}) => ({ ...rest, total: Math.round(rest.total) })) } : {}), ...(miRecipeParts.length ? { isKit: true, recipeParts: miRecipeParts } : {}) });
             });
             // Advance the GROUP's shared frontier now that this function is done drawing against it —
             // by its own total ACTUAL demand (thisFnDemand, accumulated above from every crossFnTake
