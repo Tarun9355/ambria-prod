@@ -965,17 +965,35 @@ export default function IMS() {
   // datePricing.autoSyncPaused freezes autoCategories at whatever they currently are until someone
   // explicitly turns it back on (Admin → Settings → Date Pricing Config) — manual markedDates
   // overrides are untouched either way.
+  //
+  // Confirmed live (2026-10-25): "untouched either way" was not actually true. This effect fires on
+  // every `studioLmsCache` refresh, independently in EVERY open IMS tab/session — including one that
+  // hasn't yet caught up to a markedDates override another tab just set (realtime lag, or simply a
+  // tab that loaded settings before the override existed). Going through setSettings spread the
+  // WHOLE `s.datePricing` from THAT tab's own (possibly stale) local snapshot and upserted it as one
+  // value — so a background tab's routine autoCategories refresh could silently overwrite someone
+  // else's just-added Filler/King's override with its own outdated copy that never had it. Writing
+  // through a server-side shallow JSONB merge (merge_settings_json) instead means this write can
+  // PHYSICALLY only ever touch the `autoCategories` key inside datePricing — markedDates,
+  // autoSyncPaused, autoSyncLockCode and categories are never part of the patch, so no snapshot
+  // staleness in this effect can ever clobber them again, regardless of which tab's local state is
+  // behind. Bypasses the generic setSettings/settingsWriter path on purpose for this one write —
+  // going through it would still enqueue its own whole-object upsert from local state and reintroduce
+  // the exact race this fixes.
   useEffect(() => {
     if (!settingsLoaded || !studioLmsCache?.dateCategories) return;
     const AUTO_CAT_MAP = { "Heavy Saya": "heavy_saya", "Saya": "competition", "Normal": "non_saya" };
     const autoCategories = {};
     Object.entries(studioLmsCache.dateCategories).forEach(([d, cat]) => { autoCategories[d] = AUTO_CAT_MAP[cat] || "non_saya"; });
-    setSettings((s) => {
-      if (s.datePricing?.autoSyncPaused) return s; // paused — leave autoCategories exactly as-is
-      if (JSON.stringify(s.datePricing?.autoCategories || {}) === JSON.stringify(autoCategories)) return s; // no-op, skip the write
-      return { ...s, datePricing: { ...s.datePricing, autoCategories } };
-    });
-  }, [studioLmsCache, settingsLoaded, setSettings]);
+    const s = settingsRef.current || {};
+    if (s.datePricing?.autoSyncPaused) return; // paused — leave autoCategories exactly as-is
+    if (JSON.stringify(s.datePricing?.autoCategories || {}) === JSON.stringify(autoCategories)) return; // no-op, skip the write
+    const nextSettings = { ...s, datePricing: { ...s.datePricing, autoCategories } };
+    settingsRef.current = nextSettings;
+    setSettingsState(nextSettings);
+    supabase.rpc("merge_settings_json", { p_key: "datePricing", p_patch: { autoCategories } })
+      .then(({ error }) => { if (error) console.warn("[settings] autoCategories merge failed:", error.message); });
+  }, [studioLmsCache, settingsLoaded]);
 
   // Manual "🔄 Sync LMS": Edge Function paginates LMS server-side → DB, then re-read cache.
   const syncLms = useCallback(async () => {

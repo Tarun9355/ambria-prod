@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
 import DatePricingPanel from "./DatePricingPanel.jsx";
 import { resolveDateCategory } from "../../lib/inventory/helpers";
-import { DATE_PRICING_LABELS, SETTINGS_DEFAULTS, hasIMSPerm } from "../../lib/ims/constants";
+import { DATE_PRICING_LABELS, SETTINGS_DEFAULTS, hasIMSPerm, DATE_PRICING_OWNER_ID } from "../../lib/ims/constants";
 import { PRICING_CAT_STYLES } from "../../lib/inventory/constants";
 import { releaseBlocks } from "../../lib/ims/eventAutoConfirm";
 import { useAuth } from "../../lib/AuthContext";
@@ -16,6 +16,13 @@ export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, l
   // own comment below) — the nearest real target for block_release, which has no dedicated
   // per-item "release" UI anywhere in the app.
   const canRelease = hasIMSPerm(authUser, "block_release");
+  // Owner-only (not a role check — "Admin" is shared by several people): manually overriding a
+  // date's pricing category is restricted to Tarun's own account by owner request, confirmed
+  // 2026-10-25 after a reported case of an override appearing to "get cleared" — see setDateCategory's
+  // own comment for the actual root cause (a background sync clobbering the whole datePricing
+  // object from a stale snapshot), fixed separately. This restriction is about WHO can set an
+  // override at all, on top of that fix.
+  const isDatePricingOwner = authUser?.id === DATE_PRICING_OWNER_ID;
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth());
@@ -54,7 +61,10 @@ export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, l
   // Manual pricing overrides live right here now — one calendar to view AND set dates on, instead
   // of a second click-to-mark grid duplicated in Date Pricing Config below.
   const marked = settings?.datePricing?.markedDates || {};
+  // Owner-only, enforced here too (not just by hiding the buttons below) — a stray call from
+  // outside this component should not be able to set or clear an override either.
   function setDateCategory(ds, catKey) {
+    if (!isDatePricingOwner) return;
     setSettings((s) => {
       const m = { ...(s.datePricing?.markedDates || {}) };
       if (catKey == null) delete m[ds]; else m[ds] = catKey;
@@ -314,6 +324,16 @@ export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, l
             const manualKey = marked[selDate];
             const dp = settings.datePricing || SETTINGS_DEFAULTS.datePricing;
             const effectiveKey = resolveDateCategory(selDate, settings);
+            // Owner-only: anyone else sees what this date is actually priced at, but not the
+            // buttons to change it — see isDatePricingOwner's own comment above.
+            if (!isDatePricingOwner) {
+              return (
+                <div className="px-4 py-2.5 bg-gray-50 border-y border-gray-100 flex items-center gap-2 flex-wrap">
+                  <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-gray-500">💰 Pricing</span>
+                  <span className="text-xs text-gray-600">{DATE_PRICING_LABELS[effectiveKey]}{manualKey ? " (manually set)" : " (auto)"}</span>
+                </div>
+              );
+            }
             return (
               <div className="px-4 py-2.5 bg-gray-50 border-y border-gray-100 flex items-center gap-2 flex-wrap">
                 <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-gray-500">💰 Pricing</span>

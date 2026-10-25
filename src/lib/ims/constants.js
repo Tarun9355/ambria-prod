@@ -148,6 +148,13 @@ export const INIT_TRUSS_INV = {
 // label text does not).
 export const DATE_PRICING_LABELS = { heavy_saya: "👑 King's", competition: "✦ Perfect", non_saya: "○ Filler" };
 
+// Tarun's own `users` row id (confirmed 2026-10-25 via `select id from users where name ilike
+// '%tarun%'`) — not a role check. "Admin" is shared by several people; date-pricing overrides
+// (Calendar's per-date picker, DatePricingPanel's Auto-Sync lock code) are restricted to this one
+// specific account by owner request, so another admin can't quietly set a date override or
+// change/clear the lock Tarun didn't put there himself.
+export const DATE_PRICING_OWNER_ID = "U84ED1E8439";
+
 export const SETTINGS_DEFAULTS = {
   bufferPct: 5,
   minProfitPct: 30,
