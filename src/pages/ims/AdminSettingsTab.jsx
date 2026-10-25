@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { thumbUrl, fitUrl } from "../../lib/studio/thumb.js";
 import { supabase } from "../../lib/supabase";
+import { DEFAULT_AGENCY_FEE_PCT } from "../../lib/studio/agencyFee";
 import { RC_SK_CATS } from "../../lib/studio/keys";
 import { Tabs, AddInlineItem, FlowerPicker, Btn, useConfirm, DraftInput } from "../../components/ui";
 import ClickablePhoto from "../../components/shared/ClickablePhoto.jsx";
@@ -694,7 +695,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
             <p className="font-bold text-gray-900 mb-1">💵 Design and Management Fee</p>
             <p className="text-xs text-gray-500 mb-3">Flat % of every deal's client-facing total, billed to the guest on top of decor + transport + power. Applied everywhere the guest sees a total — Build, Summary, the cost sheet exports, and Deal Check's own Commission tab.</p>
             <div className="flex items-center gap-2">
-              <input type="number" min="0" max="100" value={settings.agencyFeePct ?? 20} onChange={(e) => setSettings((s) => ({ ...s, agencyFeePct: parseFloat(e.target.value) || 0 }))} className="w-24 border border-teal-200 rounded-lg px-3 py-2 text-sm font-bold text-teal-700 text-center" />
+              <input type="number" min="0" max="100" value={settings.agencyFeePct ?? DEFAULT_AGENCY_FEE_PCT} onChange={(e) => setSettings((s) => ({ ...s, agencyFeePct: parseFloat(e.target.value) || 0 }))} className="w-24 border border-teal-200 rounded-lg px-3 py-2 text-sm font-bold text-teal-700 text-center" />
               <span className="text-sm text-gray-600">%</span>
             </div>
           </div>

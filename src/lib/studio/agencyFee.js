@@ -2,7 +2,8 @@
 // a salesperson can set a different one for ONE deal, from the Event Information sidebar, anywhere from 0 up to
 // AGENCY_FEE_MAX. Whatever is set there is the fee for every function of that deal, on every screen.
 export const AGENCY_FEE_MAX = 25;
-const FALLBACK_PCT = 20;
+// The house rate when IMS has none set — and what a new deal is billed at until its salesperson changes it.
+export const DEFAULT_AGENCY_FEE_PCT = 25;
 
 // A usable percentage, or null for "nothing set" (blank, missing, junk).
 const asPct = (v) => {
@@ -12,7 +13,7 @@ const asPct = (v) => {
 };
 
 // What the house rate resolves to when IMS has none.
-export const feePctOf = (v) => asPct(v) ?? FALLBACK_PCT;
+export const feePctOf = (v) => asPct(v) ?? DEFAULT_AGENCY_FEE_PCT;
 
 // A typed or tapped value made valid for one deal: never below 0, never above the cap, at most one decimal.
 // Returns null for blank/junk so "clear" and "typed nothing" mean the same thing: back to the house rate.

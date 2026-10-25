@@ -37,7 +37,7 @@ import { ytApi, ytDuration } from "../../lib/youtube";
 import { extractLabeledValue, bestTaxMatch } from "../../lib/studio/videoDescriptionTags";
 import { paletteNames, paletteInList } from "../../lib/studio/colours";
 import { makeS } from "../../lib/studio/styles";
-import { dealAgencyFeePct, feePctOf } from "../../lib/studio/agencyFee";
+import { dealAgencyFeePct, feePctOf, DEFAULT_AGENCY_FEE_PCT } from "../../lib/studio/agencyFee";
 import { findCrossFnReuseSource, computeFnInvQty, findSiblingFnInvUse, findSiblingFnSubcatOpportunity } from "../../lib/studio/crossFnReuse";
 import { computeFnFloralCost, buildMandiBreakdown } from "../../lib/studio/floralCost";
 import { computePeople, shiftToTiming, sizeFromMode, situationalFactorsFor, walkFnElements } from "../../lib/studio/manpowerCount";
@@ -4791,7 +4791,7 @@ export default function StudioApp() {
         // until then, and these totals used to silently fall back to a hardcoded 20% in the meantime,
         // then visibly jump once Deal Check's fetch landed and stayed jumped (dealCheckData persists
         // after Deal Check closes). This lightweight settings-only fetch closes that gap.
-        agencyFeePct: typeof s.agencyFeePct === "number" ? s.agencyFeePct : 20,
+        agencyFeePct: typeof s.agencyFeePct === "number" ? s.agencyFeePct : DEFAULT_AGENCY_FEE_PCT,
         // Same reasoning as agencyFeePct/fixedVenues above — Category Multipliers (IMS → Calendar →
         // Date Pricing Config) must scale the guest-facing rental price before Deal Check has ever
         // been opened too, not just once dealCheckData's own copy has loaded.
@@ -5312,7 +5312,7 @@ export default function StudioApp() {
     // Same studioFloralData/venueParents fallback as eventGrandTotal, for the same reason.
     const fvCfg = { fixedVenues: sharedFloralSettings.fixedVenues, venueParents: venueParents || dealCheckData?.venueParents || {} };
     const discounted = Math.max(0, base - fixedVenueDealDiscount(fvCfg, [{ fnVenue: activeFnMeta?.venue || venue }], () => base, base)); // the ACTIVE function's venue — see transportCalc
-    // Agency fee (Admin → Settings, default 20%) — this is Build's own live "page total" for the
+    // Agency fee (Admin → Settings, default 25%) — this is Build's own live "page total" for the
     // active function, the number a salesperson watches while building. It has to carry the fee too,
     // or it would visibly disagree with eventGrandTotal/Deal Check/the cost sheet, which all do.
     return discounted + agencyFeeAmt;
@@ -5960,7 +5960,7 @@ export default function StudioApp() {
     const fvCfg = { fixedVenues: sharedFloralSettings.fixedVenues, venueParents: venueParents || dealCheckData?.venueParents || {} };
     const discounted = Math.max(0, base - fixedVenueDealDiscount(fvCfg, all, (fn) => calcFunctionCost(fn).grand, base));
     // Agency fee — flat % of the (post-discount) deal, billed to the guest on top of everything else
-    // (Admin → Settings, default 20%). This is the number booking confirmation, Summary's hero,
+    // (Admin → Settings, default 25%). This is the number booking confirmation, Summary's hero,
     // and the negotiated-amount placeholder all read, so the fee has to sit inside it, not beside it.
     const feePct = sharedFloralSettings.agencyFeePct;
     return discounted + Math.round(discounted * feePct / 100);
@@ -10934,7 +10934,7 @@ export default function StudioApp() {
       // GUEST-facing total is computed (eventGrandTotal, the cost sheet, Deal Check's own "Deal
       // amount"/profit figure) — never inside internal cost, department income, or commission's own
       // revenue-share base, so it doesn't inflate what venues/salespeople are paid on.
-      const agencyFeePct = typeof s.agencyFeePct === "number" ? s.agencyFeePct : 20;
+      const agencyFeePct = typeof s.agencyFeePct === "number" ? s.agencyFeePct : DEFAULT_AGENCY_FEE_PCT;
       // Vendors (manpower avg-rate forecast) — match IMS rowToVendor shape (type/name from columns).
       const vendors = Array.isArray(vendorRows)
         ? vendorRows.map(v => ({ ...(v?.data || {}), id: v?.id, name: v?.name ?? v?.data?.name, type: v?.type ?? v?.data?.type }))

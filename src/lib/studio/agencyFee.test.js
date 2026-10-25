@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { AGENCY_FEE_MAX, clampAgencyFeePct, dealAgencyFeePct, feePctOf } from "./agencyFee.js";
+import { AGENCY_FEE_MAX, DEFAULT_AGENCY_FEE_PCT, clampAgencyFeePct, dealAgencyFeePct, feePctOf } from "./agencyFee.js";
 
 describe("clampAgencyFeePct — one deal's own fee, 0 to 25", () => {
   it("passes a valid value through", () => {
@@ -46,9 +46,13 @@ describe("dealAgencyFeePct — the deal's own rate beats the house rate", () => 
   it("a stale over-cap value on a deal is held to 25", () => {
     expect(dealAgencyFeePct(40, 20)).toBe(25);
   });
-  it("no house rate either: 20", () => {
-    expect(dealAgencyFeePct(undefined, undefined)).toBe(20);
-    expect(feePctOf(undefined)).toBe(20);
-    expect(feePctOf("junk")).toBe(20);
+  it("no house rate either: the default, 25%", () => {
+    expect(DEFAULT_AGENCY_FEE_PCT).toBe(25);
+    expect(dealAgencyFeePct(undefined, undefined)).toBe(25);
+    expect(feePctOf(undefined)).toBe(25);
+    expect(feePctOf("junk")).toBe(25);
+  });
+  it("the default is never above the cap a deal can be set to", () => {
+    expect(DEFAULT_AGENCY_FEE_PCT).toBeLessThanOrEqual(AGENCY_FEE_MAX);
   });
 });

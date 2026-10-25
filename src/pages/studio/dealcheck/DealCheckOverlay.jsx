@@ -1760,7 +1760,7 @@ export default function DealCheckOverlay({ ctx }) {
           const venueDiscount = fixedVenueDealDiscount(fvCfgForDiscount, fns, (fn) => calcFunctionCost(fn).grand, clientRevenue);
           const discountedRevenue = Math.max(0, clientRevenue - venueDiscount);
           // Agency fee — flat % of the (post-discount) deal amount, billed to the guest on top of
-          // everything else (Admin → Settings, default 20%). Pure Ambria income, so it always applies
+          // everything else (Admin → Settings, default 25%). Pure Ambria income, so it always applies
           // — negotiated or not — rather than being read as an expense; the owner's own framing is
           // "this is income, not a cost".
           //
