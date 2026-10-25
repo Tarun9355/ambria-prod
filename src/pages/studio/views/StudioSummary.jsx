@@ -13,6 +13,7 @@
 import { useState, useEffect, useRef, useMemo, Fragment } from "react";
 import { IconSparkle, IconExcelMark, IconCanvaMark, IconEye, IconRepeat } from "../../../components/icons.jsx";
 import NumField from "../../../components/ui/NumField.jsx";
+import { feePctOf } from "../../../lib/studio/agencyFee";
 import { LOGO_ASSET, logoCrop } from "../../../lib/studio/brand.js";
 import { getCat, carpetPricingFor, trussRateFor, trussBaseArea } from "../../../lib/studio/taxonomy";
 import { proratedVenueDiscount } from "../../../lib/ims/fixedVenues";
@@ -1003,7 +1004,7 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
       // Each function's share of the Professional Design, Management & Execution fee — on its own
       // total after its own fixed-venue discount (fnObj.discountPct), same as the on-screen preview.
       // One helper so the Event Summary's Grand column and each function tab's fee row agree.
-      const feePctNum = Number(combined.agencyFeePct) || 20;
+      const feePctNum = feePctOf(combined.agencyFeePct);
       const fnFeeOf = (fnObj) => {
         if (!fnObj || fnObj.isEmpty) return 0;
         const keep = Math.max(0, 1 - (Number(fnObj.discountPct) || 0) / 100);
@@ -2951,7 +2952,7 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
         const combinedCs = buildCombinedCostSheetData();
         const csFnByIdx = {};
         (combinedCs?.functions || []).forEach(f => { csFnByIdx[f.fnIdx] = f; });
-        const feePctNum = Number(combinedCs?.agencyFeePct) || 20;
+        const feePctNum = feePctOf(combinedCs?.agencyFeePct);
         const feeOf = (f) => {
           if (!f || f.isEmpty) return 0;
           const keep = Math.max(0, 1 - (Number(f.discountPct) || 0) / 100);
@@ -3245,7 +3246,7 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
         // Re-derive the agency fee off the (post-discount) edited total — d.agencyFeePct was
         // stamped in by buildCombinedCostSheetData when this sheet was first opened; carry it
         // forward rather than silently dropping the fee the moment someone tweaks a quantity.
-        const feePct=Number(d.agencyFeePct)||20;
+        const feePct=feePctOf(d.agencyFeePct);
         d.agencyFee=Math.round(discountedTotal*feePct/100);
         const negotiatedAmount=Number(d.negotiatedAmount)||0;
         d.systemGrandTotal=discountedTotal+d.agencyFee;

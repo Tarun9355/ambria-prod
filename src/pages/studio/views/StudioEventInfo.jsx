@@ -8,6 +8,8 @@ import { findLatestBuild, fnSnapHasBuild, compareClientsByWork } from "../../../
 import { IconClipboard, IconSliders } from "../../../components/icons.jsx";
 import { WASH_BANDS as BANDS } from "../../../lib/studio/pageWash";
 import AppSwitcher from "../../../components/AppSwitcher.jsx";
+import AgencyFeeControl from "../../../components/studio/AgencyFeeControl.jsx";
+import { clampAgencyFeePct } from "../../../lib/studio/agencyFee";
 
 // The brand panel's right edge, in objectBoundingBox units (0–1 on both axes) so it stretches with
 // the panel rather than being fixed to pixels. Full width at top and bottom, drawn in to a waist at
@@ -184,7 +186,7 @@ export default function StudioEventInfo({ ctx }) {
     clientVenueOther, setClientVenueOther, clientPalette, setClientPalette, setClientFlowerPalette, fnBuilds, setFnBuilds, restoreBuildState,
     extraFunctions, setExtraFunctions, expandedFnIdx, setExpandedFnIdx,
     activeFnIdx, setActiveFnIdx, switchActiveFn,
-    clientLedger, saveClientLedger, activeClientId, setActiveClientId, setClientSearch, ledgerReady,
+    clientLedger, saveClientLedger, activeClientId, setActiveClientId, setClientSearch, ledgerReady, houseAgencyFeePct,
     activeClient, loadClientSession, resumeSavedSession, startNewDeal, askConfirm,
     loadedClientIdentityRef, confirmClientRename, revertClientNameEdit,
     lmsLeads, lmsLoading, lmsError, lmsFilling, lmsCacheRef, setLmsRefreshCounter, loadLmsLead,
@@ -265,6 +267,19 @@ export default function StudioEventInfo({ ctx }) {
 
   // Returns whether the client was saved, so the caller can hold the user on this step instead of
   // advancing to Browse against a deal that was never written.
+  // ── THIS DEAL'S AGENCY FEE ── (sidebar icon). On a deal that already exists it is written straight onto the client record, like
+  // any other per-deal setting; on a brand-new one there is no record yet, so it waits here and goes in with the client when
+  // Continue creates it. null = follow the house rate.
+  const [feeDraft, setFeeDraft] = useState(null);
+  const feeClient = clientLedger.find((c) => c && c.id === activeClientId) || null;
+  const dealFeeValue = feeClient ? (clampAgencyFeePct(feeClient.agencyFeePct)) : feeDraft;
+  const setDealFee = (pct) => {
+    if (!feeClient) { setFeeDraft(pct); return; }
+    saveClientLedger(clientLedger.map((c) => (c && c.id === feeClient.id ? { ...c, agencyFeePct: pct } : c)));
+  };
+  // Another deal opened: the waiting value belonged to the one just left.
+  useEffect(() => { setFeeDraft(null); }, [activeClientId]);
+
   const doSaveClient = () => {
     if (!clientName.trim()) return false;
     // ── NO WRITING INTO STATE ──
@@ -332,6 +347,8 @@ export default function StudioEventInfo({ ctx }) {
       ],
       createdBy: base.createdBy || authUser?.name || "—",
       lastContactAt: Date.now(),
+      // A fee picked before the deal existed goes in with it; an existing deal keeps what it has (the spread above).
+      ...(!existing && feeDraft !== null ? { agencyFeePct: feeDraft } : {}),
     };
     // Replace in place for an existing client — map keeps every other client's identity, so React
     // re-renders only the one row that changed. Append for a new one, which is where it went before.
@@ -1019,9 +1036,11 @@ export default function StudioEventInfo({ ctx }) {
   // otherwise govern it. tone="dark" because it lands on the panel's ink.
   // The component renders nothing at all for users granted only one app, so it costs those users
   // nothing.
+  // The agency-fee icon sits under it, in the same sidebar corner (the portrait banner is 170px tall, so it fits there too).
   const APP_SWITCH = (
-    <div style={{position:"fixed",top:16,left:22,zIndex:6}}>
+    <div style={{position:"fixed",top:16,left:22,zIndex:6}} className="flex flex-col items-start gap-2.5">
       <AppSwitcher current="studio" tone="dark" />
+      <AgencyFeeControl value={dealFeeValue} housePct={houseAgencyFeePct} onChange={setDealFee} locked={!!feeClient?.bookedAt} />
     </div>
   );
   // ═══ MANAGE SHORTCUT ═══

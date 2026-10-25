@@ -6,6 +6,7 @@
 // production / buying / transport) are placeholders pending later slices.
 // ═══════════════════════════════════════════════════════════════
 import { useState, useEffect, useRef } from "react";
+import { dealAgencyFeePct } from "../../../lib/studio/agencyFee";
 import DeptPdfButton from "../../../components/studio/DeptPdfButton.jsx";
 import { createPortal } from "react-dom";
 import DCFloralsTab from "./tabs/DCFloralsTab.jsx";
@@ -1771,7 +1772,8 @@ export default function DealCheckOverlay({ ctx }) {
           // (still shown as its own figure below, just not added again), so dealAmount stays exactly
           // what was negotiated.
           const isNegotiated = Number(cli?.negotiatedAmount) > 0;
-          const agencyFeePct = Number(dealCheckData?.agencyFeePct) || 20;
+          // The deal's own fee (Event Information sidebar) when it has one, else the house rate — the same % Build and Summary bill.
+          const agencyFeePct = dealAgencyFeePct(cli?.agencyFeePct, dealCheckData?.agencyFeePct);
           const agencyFee = isNegotiated
             ? Math.round(discountedRevenue - discountedRevenue / (1 + agencyFeePct / 100))
             : Math.round(discountedRevenue * agencyFeePct / 100);

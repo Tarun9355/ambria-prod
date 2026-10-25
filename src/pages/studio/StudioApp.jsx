@@ -37,6 +37,7 @@ import { ytApi, ytDuration } from "../../lib/youtube";
 import { extractLabeledValue, bestTaxMatch } from "../../lib/studio/videoDescriptionTags";
 import { paletteNames, paletteInList } from "../../lib/studio/colours";
 import { makeS } from "../../lib/studio/styles";
+import { dealAgencyFeePct, feePctOf } from "../../lib/studio/agencyFee";
 import { findCrossFnReuseSource, computeFnInvQty, findSiblingFnInvUse, findSiblingFnSubcatOpportunity } from "../../lib/studio/crossFnReuse";
 import { computeFnFloralCost, buildMandiBreakdown } from "../../lib/studio/floralCost";
 import { computePeople, shiftToTiming, sizeFromMode, situationalFactorsFor, walkFnElements } from "../../lib/studio/manpowerCount";
@@ -4165,6 +4166,10 @@ export default function StudioApp() {
   // studioFloralData is therefore preferred here for every field it carries; dealCheckData only
   // fills in what studioFloralData doesn't (it's missing before studioFloralData's own mount fetch
   // has landed, a narrow window Deal Check can't be opened in anyway — no functions/date yet).
+  // The agency fee % this deal is billed at: its own (set from Event Information's sidebar, 0–25%) or, when it has none, the
+  // house rate from IMS. A plain number — so the memo below only recomputes when the % itself changes, not on every ledger save.
+  const houseAgencyFeePct = feePctOf(studioFloralData?.agencyFeePct ?? dealCheckData?.agencyFeePct);
+  const dealFeePct = dealAgencyFeePct(clientLedger.find(c => c.id === activeClientId)?.agencyFeePct, houseAgencyFeePct);
   const sharedFloralSettings = useMemo(() => ({
     flowerPatterns: studioFloralData?.flowerPatterns ?? dealCheckData?.flowerPatterns ?? [],
     mandiCatalogue: studioFloralData?.mandiCatalogue ?? dealCheckData?.mandiCatalogue ?? [],
@@ -4175,14 +4180,14 @@ export default function StudioApp() {
     defaultStudioMarkup: studioFloralData?.defaultStudioMarkup ?? dealCheckData?.defaultStudioMarkup,
     fixedVenues: (studioFloralData?.fixedVenues?.length ? studioFloralData.fixedVenues : dealCheckData?.fixedVenues) || [],
     fixedVenueSubcatDiscount: (studioFloralData?.fixedVenueSubcatDiscount && Object.keys(studioFloralData.fixedVenueSubcatDiscount).length ? studioFloralData.fixedVenueSubcatDiscount : dealCheckData?.fixedVenueSubcatDiscount) || {},
-    agencyFeePct: studioFloralData?.agencyFeePct ?? dealCheckData?.agencyFeePct,
+    agencyFeePct: dealFeePct,
     datePricing: studioFloralData?.datePricing ?? dealCheckData?.datePricing,
     trussInv: studioFloralData?.trussInv ?? dealCheckData?.trussInv,
     // Deal-Check-only concerns below — studioFloralData carries no equivalent, and neither ever fed
     // Build's own guest-facing pricing (only Deal Check's internal florals-sourcing cost does).
     mandiPriceMultipliers: dealCheckData?.mandiPriceMultipliers,
     seasonMap: dealCheckData?.seasonMap,
-  }), [studioFloralData, dealCheckData]);
+  }), [studioFloralData, dealCheckData, dealFeePct]);
   // Flower-recipe patterns addable as their own standalone element (name-searchable alongside
   // inventory items in every "+Add element" box), independent of whether the recipe's sub-category
   // also has real inventory backing or is tag_hidden — a recipe must always be findable/addable by
@@ -5297,7 +5302,7 @@ export default function StudioApp() {
     const base = totalCost() + transportCalc.total;
     const fvCfg = { fixedVenues: sharedFloralSettings.fixedVenues, venueParents: venueParents || dealCheckData?.venueParents || {} };
     const discounted = Math.max(0, base - fixedVenueDealDiscount(fvCfg, [{ fnVenue: activeFnMeta?.venue || venue }], () => base, base)); // the ACTIVE function's venue — see transportCalc
-    const feePct = Number(sharedFloralSettings.agencyFeePct) || 20;
+    const feePct = sharedFloralSettings.agencyFeePct;
     return Math.round(discounted * feePct / 100);
   }, [totalCost, transportCalc, dealCheckData, venue, activeFnMeta, studioFloralData, sharedFloralSettings, venueParents]);
 
@@ -5957,7 +5962,7 @@ export default function StudioApp() {
     // Agency fee — flat % of the (post-discount) deal, billed to the guest on top of everything else
     // (Admin → Settings, default 20%). This is the number booking confirmation, Summary's hero,
     // and the negotiated-amount placeholder all read, so the fee has to sit inside it, not beside it.
-    const feePct = Number(sharedFloralSettings.agencyFeePct) || 20;
+    const feePct = sharedFloralSettings.agencyFeePct;
     return discounted + Math.round(discounted * feePct / 100);
   }, [collectAllFunctionData, calcFunctionCost, dealCheckData, studioFloralData, sharedFloralSettings, venueParents]);
 
@@ -10286,7 +10291,7 @@ export default function StudioApp() {
     // Agency fee — same flat % of the deal as eventGrandTotal (StudioApp's own memo), applied here
     // too so the cost sheet's own grand total agrees with it, plus exposed as its own amount so the
     // sheet can print it as an explicit line rather than folding it silently into the total.
-    const agencyFeePct = Number(sharedFloralSettings.agencyFeePct) || 20;
+    const agencyFeePct = sharedFloralSettings.agencyFeePct;
     const agencyFee = Math.round(discountedTotal * agencyFeePct / 100);
     const systemGrandTotal = discountedTotal + agencyFee;
     // A negotiated amount (Summary's own "Total Estimate" hero shows THIS instead of the system
@@ -11948,7 +11953,7 @@ export default function StudioApp() {
     dcSwapSearch, setDcSwapSearch, dcSwapPicked, setDcSwapPicked, dcSwapMode, setDcSwapMode, dcSwapSplitQty, setDcSwapSplitQty,
     // pricing helpers
     rcIsSMB, buildZoneConfig, getFloralMode, applyFloralRatio, getElPrice, getElPriceForFn, calcElsCost, calcElsCostForFn, rcCostPctForSub,
-    calcPhotoCost, calcStructCost, calcFullEventCost, getFullCost, totalCost, transportCalc, grandTotal, lastSavedFnTotal, agencyFeeAmt, pricingReady,
+    calcPhotoCost, calcStructCost, calcFullEventCost, getFullCost, totalCost, transportCalc, grandTotal, lastSavedFnTotal, agencyFeeAmt, houseAgencyFeePct, pricingReady,
     collectAllFunctionData, calcFunctionCost, calcFnFloralSourcingCost, calcFnFloralDetail, eventGrandTotal, calcFunctionBreakdown, manpowerPlanForBooking, persistDeptSnapshot, syncDealValueNow, floatPending, dcEoActuals, refreshDcEoActuals,
     // deal check orchestration + persistence (overlay)
     openDealCheck, runDealCheckGenerate, getStudioAvailable, loadAvailability, reliableSave, DC_CACHE_SK,
