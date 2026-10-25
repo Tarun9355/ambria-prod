@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { AGENCY_FEE_MAX, clampAgencyFeePct } from "../../lib/studio/agencyFee";
 
-// A small icon for Event Information's dark sidebar: opens a panel where the salesperson sets THIS deal's agency
+// A small, deliberately faint icon for Event Information's dark sidebar (it shows no number and no tooltip value — the client may be
+// looking at this screen; the % only appears inside the panel once it is opened): opens a panel where the salesperson sets THIS deal's agency
 // (Design & Management) fee — 0 to 25% — instead of the house rate from IMS. Whatever is set is the fee for every
 // function of the deal, on every screen.
 //
@@ -44,13 +45,12 @@ export default function AgencyFeeControl({ value, housePct, onChange, locked = f
   return (
     <div ref={wrap} className="relative">
       <button type="button" onClick={toggle} aria-expanded={open} aria-haspopup="dialog"
-        aria-label={`Agency fee: ${shown}%${own ? " (set for this deal)" : " (house rate)"}`}
-        title={`Agency fee ${shown}%${own ? " — set for this deal" : " — house rate"}`}
-        className={"relative inline-flex items-center justify-center w-[34px] h-[34px] rounded-[10px] transition-colors cursor-pointer " + (open ? "bg-white/[0.16] text-white" : "bg-white/[0.06] text-gray-300 hover:text-white hover:bg-white/[0.12]")}>
+        aria-label="Agency fee"
+        title="Agency fee"
+        className={"inline-flex items-center justify-center w-[34px] h-[34px] rounded-[10px] transition-all cursor-pointer focus-visible:opacity-100 " + (open ? "opacity-100 bg-white/[0.16] text-white" : "opacity-[0.22] hover:opacity-100 bg-white/[0.06] text-gray-300 hover:text-white hover:bg-white/[0.12]")}>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <line x1="19" y1="5" x2="5" y2="19" /><circle cx="6.5" cy="6.5" r="2.5" /><circle cx="17.5" cy="17.5" r="2.5" />
         </svg>
-        {own && <span className="absolute -top-1.5 -right-2 min-w-[22px] px-1 rounded-full bg-[#C9A96E] text-[#1a1530] text-[9.5px] font-bold leading-[15px] text-center">{value}%</span>}
       </button>
 
       {open && (
