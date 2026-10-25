@@ -50,6 +50,7 @@ import KitComponentsEditor from "../../../components/shared/KitComponentsEditor"
 import ItemHoverThumb from "../../../components/shared/ItemHoverThumb";
 import InventoryItemPickerModal from "../../../components/shared/InventoryItemPickerModal";
 import PrintedWallsModal from "../../../components/studio/PrintedWallsModal.jsx";
+import ClickablePhoto from "../../../components/shared/ClickablePhoto.jsx";
 import CopyBuildModal from "../../../components/studio/CopyBuildModal.jsx";
 import { uploadToStorage, STORAGE_FOLDERS } from "../../../lib/storage";
 
@@ -5009,6 +5010,35 @@ undefined
                 }} style={{padding:"4px 10px",borderRadius:8,border:"1px solid #0EA5E9",background:"rgba(14,165,233,0.14)",color:"#0EA5E9",fontSize:11.5,fontWeight:600,cursor:"pointer"}}>+ Add Print Row</button>
               </div>
             </div>
+            {(()=>{
+              // The existing printed walls already added to this zone (from "Existing Printed Walls"): shown here, where they
+              // were picked, so adding one is visibly done. Each photo opens big, ‹ › walking the zone's other walls.
+              const walls=(zoneElements[k]||[]).map((el,idx)=>({el,idx,it:el.invId?(imsInventory||[]).find(i=>i.id===el.invId):null}))
+                .filter(w=>w.it&&/fabric/i.test(String(w.it.cat||w.it.category||""))&&/printed wall/i.test(String(w.it.subCat||w.it.subcategory||"")));
+              if(!walls.length) return null;
+              const set=walls.filter(w=>w.it.img||w.it.photoUrls?.[0]).map(w=>({src:w.it.img||w.it.photoUrls[0],name:String(w.it.name).trim(),details:[["Size",itemDimsText(w.it)||"Not set"],["Qty",String(w.el.qty||1)]]}));
+              return <div style={{marginBottom:10,padding:"8px 10px",borderRadius:8,background:isDark?"rgba(124,58,237,0.08)":"rgba(124,58,237,0.06)",border:"1px solid rgba(124,58,237,0.3)"}}>
+                <div style={{fontSize:11,fontWeight:700,color:"#7C3AED",marginBottom:6}}>🖼️ Existing printed walls in this zone · {walls.length}</div>
+                <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                  {walls.map(({el,idx,it})=>{
+                    const src=it.img||it.photoUrls?.[0];
+                    const si=set.findIndex(x=>x.src===src);
+                    const lc=getElPrice(el,zoneConfig[k],{checkAvailability:true,zoneKey:k,elIdx:idx},aVenue)?.lineCost||0;
+                    return <div key={idx} style={{display:"flex",alignItems:"center",gap:9}}>
+                      {src
+                        ? <ClickablePhoto src={src} thumbSize={96} alt={it.name} name={String(it.name).trim()} set={set} startIndex={Math.max(0,si)} style={{width:44,height:44,borderRadius:6,objectFit:"cover",flexShrink:0}} details={[["Size",itemDimsText(it)||"Not set"],["Qty",String(el.qty||1)]]}/>
+                        : <span style={{width:44,height:44,borderRadius:6,background:isDark?"#1a1a2e":"#eee",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>🖼️</span>}
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:12,fontWeight:600,color:textP,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{String(it.name).trim()}</div>
+                        <div style={{fontSize:10.5,color:textS}}>{itemDimsText(it)?`📐 ${itemDimsText(it)}`:"Size not set"}{(el.qty||1)>1?` · × ${el.qty}`:""}</div>
+                      </div>
+                      {showCosts&&<span style={{fontSize:12,fontWeight:700,color:lc>0?textP:"#D97706",whiteSpace:"nowrap"}}>{lc>0?fmt(lc):"No rate"}</span>}
+                      <span onClick={()=>setZoneElements(p=>({...p,[k]:(p[k]||[]).filter((_,i)=>i!==idx)}))} title="Remove from this zone" style={{cursor:"pointer",color:"#E11D48",fontWeight:700,fontSize:13}}>×</span>
+                    </div>;
+                  })}
+                </div>
+              </div>;
+            })()}
             {(()=>{
               // Opens with one ready-to-edit blank row instead of a "no prints" empty state — purely
               // visual (not written to zoneConfig) until the user actually edits it, so leaving it

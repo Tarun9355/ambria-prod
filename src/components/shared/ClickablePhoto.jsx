@@ -35,7 +35,9 @@ function ReplaceButton({ action, onDone }) {
   );
 }
 
-// Full-screen photo with the item's details beside it. items: [{ src, name, details: [[label, value], …], action?: { label, onFile } }].
+// Full-screen photo with the item's details beside it. items: [{ src, name, details: [[label, value], …], action?: { label, onFile },
+// pick?: { label, onClick, disabled?, note? } }] — `pick` is a plain button under the details (e.g. "Add to Stage"); it runs
+// onClick and closes the viewer.
 // ‹ › / arrow keys step through the set; Escape or a click outside closes it — and only it (the picker
 // underneath stays open).
 export function PhotoLightbox({ items, start = 0, onClose }) {
@@ -60,7 +62,7 @@ export function PhotoLightbox({ items, start = 0, onClose }) {
     border: "1px solid rgba(255,255,255,0.25)", background: "rgba(0,0,0,0.45)", color: "#fff", fontSize: 24, lineHeight: 1,
     cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", userSelect: "none",
   });
-  const hasDetails = cur.details?.length > 0 || !!cur.action;
+  const hasDetails = cur.details?.length > 0 || !!cur.action || !!cur.pick;
   return createPortal(
     <div className="ui-overlay-in" onClick={(e) => { e.stopPropagation(); onClose(); }} style={{ position: "fixed", inset: 0, zIndex: 100000, background: "rgba(0,0,0,0.9)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, cursor: "zoom-out" }}>
       <span onClick={onClose} style={{ position: "absolute", top: 16, right: 20, fontSize: 30, lineHeight: 1, color: "#fff", cursor: "pointer", fontWeight: 300 }}>×</span>
@@ -79,6 +81,15 @@ export function PhotoLightbox({ items, start = 0, onClose }) {
               </div>
             ))}
             {cur.action && <ReplaceButton action={cur.action} onDone={onClose} />}
+            {cur.pick && (
+              <>
+                <button type="button" disabled={!!cur.pick.disabled} onClick={() => { cur.pick.onClick(); onClose(); }}
+                  style={{ display: "block", width: "100%", marginTop: 14, padding: "10px 12px", borderRadius: 8, border: "none", background: cur.pick.disabled ? "#9ca3af" : "#7C3AED", color: "#fff", fontSize: 13, fontWeight: 700, cursor: cur.pick.disabled ? "not-allowed" : "pointer" }}>
+                  {cur.pick.label}
+                </button>
+                {cur.pick.note && <div style={{ marginTop: 8, fontSize: 11.5, color: "#8a8aa0", textAlign: "center" }}>{cur.pick.note}</div>}
+              </>
+            )}
           </div>
         )}
       </div>
