@@ -12,6 +12,7 @@
 // ═══════════════════════════════════════════════════════════════
 import { useState, useEffect, useRef, useMemo, Fragment } from "react";
 import { IconSparkle, IconExcelMark, IconCanvaMark, IconEye, IconRepeat } from "../../../components/icons.jsx";
+import NumField from "../../../components/ui/NumField.jsx";
 import { LOGO_ASSET, logoCrop } from "../../../lib/studio/brand.js";
 import { getCat, carpetPricingFor, trussRateFor, trussBaseArea } from "../../../lib/studio/taxonomy";
 import { proratedVenueDiscount } from "../../../lib/ims/fixedVenues";
@@ -3535,7 +3536,7 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
                           <div key={ii} className="sm-costgrid" style={{display:"grid",gridTemplateColumns:"2fr 0.6fr 0.6fr 0.9fr 0.9fr 1fr 1.1fr",gap:0,padding:"6px 0",borderBottom:`1px solid ${isDark?"rgba(255,255,255,0.04)":"#F3EDE4"}`,alignItems:"center",fontSize:12}}>
                             <div style={{fontWeight:500}}>{it.name}</div>
                             <div style={{textAlign:"center",color:textS}}>{it.size||"—"}</div>
-                            <div style={{textAlign:"center"}}><input type="number" min="0" value={it.qty} disabled={!it.src} title={it.src?undefined:"Paint and Deal Check lines are edited in Build / Deal Check"} onChange={e=>csUpdateQty(fi,zi,ii,parseInt(e.target.value)||0)} style={{opacity:it.src?1:0.6,width:48,padding:"4px 6px",borderRadius:6,border:`1px solid ${accentText}40`,background:isDark?"#0A0A14":"#FFFDF7",color:isDark?"#fff":"#1a1a2e",fontSize:13,fontWeight:700,textAlign:"center",outline:"none",fontFamily:"inherit"}}/></div>
+                            <div style={{textAlign:"center"}}><NumField min={0} allowDecimal={false} commitOn="blur" value={it.qty} disabled={!it.src} title={it.src?undefined:"Paint and Deal Check lines are edited in Build / Deal Check"} onCommit={n=>csUpdateQty(fi,zi,ii,Math.round(n))} onFocus={e=>e.target.select()} style={{opacity:it.src?1:0.6,width:48,padding:"4px 6px",borderRadius:6,border:`1px solid ${accentText}40`,background:isDark?"#0A0A14":"#FFFDF7",color:isDark?"#fff":"#1a1a2e",fontSize:13,fontWeight:700,textAlign:"center",outline:"none",fontFamily:"inherit"}}/></div>
                             <div style={{textAlign:"right",color:textS,fontSize:11}}>{fmt(it.rate)}/{it.unit}</div>
                             <div style={{textAlign:"right",fontSize:11,fontWeight:it.hasDiscount?700:400,color:it.hasDiscount?"#15803D":textS}}>{it.hasDiscount?`${fmt(it.discRate)}/${it.unit}`:"—"}</div>
                             <div style={{textAlign:"right",fontSize:11,color:textS,textDecoration:it.hasDiscount?"line-through":"none"}}>{it.hasDiscount?fmt(it.noDiscTotal):"—"}</div>

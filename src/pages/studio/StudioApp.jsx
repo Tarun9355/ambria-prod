@@ -86,6 +86,7 @@ import {
 import { normalizePaintAllocation, maxRepaintCostInSubcat, paintLinesFor, paintTotalFor } from "../../lib/studio/paint";
 import { sheetItemLine } from "../../lib/studio/sheetRounding";
 import { sigHash } from "../../lib/sigHash";
+import { costSheetQtyEdit } from "../../lib/studio/costSheetQtyEdit";
 import { allocateRowAvailability, maxQtyForRow, netOwnReservedBlocksLive } from "../../lib/studio/dealAvailability";
 import { callClaudeStreaming } from "../../lib/ai";
 import { heavyExtraLabour, eventTimingMultFor, SETTINGS_DEFAULTS, SIT_MULT_DEFAULTS } from "../../lib/ims/constants";
@@ -10100,25 +10101,20 @@ export default function StudioApp() {
   // than a different row being edited. Same quantity bookkeeping as Build's own stepper (baseQty follows the
   // zone's Scale), and the same floor Build keeps: not below the units already assigned a paint colour.
   const applyCostSheetQty = useCallback((fnIdx, zoneKey, elIdx, qty, key) => {
-    const q = Math.max(0, Number(qty) || 0);
     const isActive = fnIdx === activeFnIdx;
     const els = isActive ? zoneElements : fnBuilds[fnIdx]?.zoneElements;
     const zc = isActive ? zoneConfig : fnBuilds[fnIdx]?.zoneConfig;
     const el = els?.[zoneKey]?.[elIdx];
-    if (!el) return { ok: false, msg: "The build has changed since this sheet opened — close and reopen the preview." };
-    if (key && (el.invId || el.patternId || el.mandiId || el.name || "") !== key) return { ok: false, msg: "The build has changed since this sheet opened — close and reopen the preview." };
-    const invItem = el.invId ? (paintInv || []).find((i) => i.id === el.invId) : (paintInv || []).find((i) => i.name === el.name);
-    const allocTotal = normalizePaintAllocation(el, invItem?.baseColour || "Ivory").reduce((sum, a) => sum + a.qty, 0);
-    if (allocTotal > 0 && q < allocTotal) return { ok: false, msg: `Cannot set qty below ${allocTotal} — paint allocation is set in Build.` };
-    const scale = Math.max(1, Math.round(Number(zc?.[zoneKey]?.scale) || 1));
-    const next = { ...el, qty: q, baseQty: scale > 1 ? q / scale : q };
-    // (a hand-set quantity ends any "asked for more than was available" note Build was carrying)
+    const invItem = el ? (el.invId ? (paintInv || []).find((i) => i.id === el.invId) : (paintInv || []).find((i) => i.name === el.name)) : null;
+    const r = costSheetQtyEdit(el, { key, qty, scale: zc?.[zoneKey]?.scale, baseColour: invItem?.baseColour });
+    if (!r.ok) return r;
+    const { qty: nq, baseQty, wantedQty } = r.next;
     if (isActive) {
-      setZoneElements((p) => { const cur = [...(p[zoneKey] || [])]; if (!cur[elIdx]) return p; cur[elIdx] = { ...cur[elIdx], qty: next.qty, baseQty: next.baseQty, wantedQty: undefined }; return { ...p, [zoneKey]: cur }; });
+      setZoneElements((p) => { const cur = [...(p[zoneKey] || [])]; if (!cur[elIdx]) return p; cur[elIdx] = { ...cur[elIdx], qty: nq, baseQty, wantedQty }; return { ...p, [zoneKey]: cur }; });
     } else {
       setFnBuilds((prev) => {
         const b = prev[fnIdx]; const cur = b?.zoneElements?.[zoneKey]; if (!cur?.[elIdx]) return prev;
-        const arr = [...cur]; arr[elIdx] = { ...arr[elIdx], qty: next.qty, baseQty: next.baseQty, wantedQty: undefined };
+        const arr = [...cur]; arr[elIdx] = { ...arr[elIdx], qty: nq, baseQty, wantedQty };
         return { ...prev, [fnIdx]: { ...b, zoneElements: { ...b.zoneElements, [zoneKey]: arr } } };
       });
     }
