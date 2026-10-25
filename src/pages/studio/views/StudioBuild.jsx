@@ -3037,8 +3037,14 @@ undefined
       const inZoneIds = new Set((zoneElements[pk] || []).map((el) => el.invId).filter(Boolean));
       // free = what other events leave on the event date, minus what the rest of this deal already holds
       const freeFor = (it) => Math.max(0, getStudioAvailable(it, activeBlocksForDate) - qtyUsedElsewhereInBuild(it.id, fnsNow, imsInventory, {}, fnDate));
+      // What the zone's other elements are multiplied by: the guest-price level, and the event date's category (King's / Filler …).
+      const dp = sharedFloralSettings?.datePricing;
+      const dateMult = fnDate && dp ? (Number(getEffectivePricing(1, fnDate, { datePricing: dp }).multiplier) || 1) : 1;
+      const gMult = Number(guestPriceMultiplier) || 1;
+      const multNote = [gMult !== 1 ? `×${Math.round(gMult * 100) / 100} guest price level` : "", dateMult !== 1 ? `×${Math.round(dateMult * 100) / 100} ${dateMult > 1 ? "King's" : "Filler"} date` : ""].filter(Boolean).join(" · ");
       return (
         <PrintedWallsModal
+          multiplier={gMult * dateMult} multiplierNote={multNote}
           imsInventory={imsInventory} rcFactorByKey={rcFactorByKey} freeFor={freeFor} inZoneIds={inZoneIds}
           zoneName={zoneMeta[pk]?.label || pk}
           dateLabel={fnDate ? new Date(fnDate + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : ""}

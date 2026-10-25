@@ -11,7 +11,7 @@ import { PhotoLightbox } from "../shared/ClickablePhoto.jsx";
 //   freeFor(item)   how many are free on the event date (after other events and the rest of this deal)
 //   inZoneIds       ids already in this zone — shown, but not pickable twice
 export default function PrintedWallsModal({
-  imsInventory, rcFactorByKey, freeFor, inZoneIds, dateLabel, zoneName,
+  imsInventory, rcFactorByKey, freeFor, inZoneIds, dateLabel, zoneName, multiplier = 1, multiplierNote = "",
   onSelect, onClose, isDark, border, textP, textS, cardBg, accent = "#0EA5E9",
 }) {
   const [q, setQ] = useState("");
@@ -27,8 +27,10 @@ export default function PrintedWallsModal({
     .map((it) => {
       const free = Math.max(0, Number(freeFor ? freeFor(it) : 0) || 0);
       const inZone = !!(inZoneIds && inZoneIds.has(it.id));
-      return { it, free, inZone, price: priceForInvItem(it, rcFactorByKey, imsInventory), dims: itemDimsText(it) };
-    }), [imsInventory, rcFactorByKey, freeFor, inZoneIds]);
+      // base rate × the sub-category factor, then the same guest-price level and date category the zone's other elements are
+      // charged at — so the price on the card is what the zone will be billed, not a lower list price.
+      return { it, free, inZone, price: priceForInvItem(it, rcFactorByKey, imsInventory) * (Number(multiplier) || 1), dims: itemDimsText(it) };
+    }), [imsInventory, rcFactorByKey, freeFor, inZoneIds, multiplier]);
 
   // size chips: each distinct size once, the commonest first
   const sizes = useMemo(() => {
@@ -80,6 +82,7 @@ export default function PrintedWallsModal({
             <div style={{ fontSize: 11, color: textS, marginTop: 3 }}>
               Pick a design we already have instead of printing a new one — it is added to {zoneName || "this zone"} at its own rate{dateLabel ? ` · free on ${dateLabel}` : ""}.
             </div>
+            {multiplierNote && <div style={{ fontSize: 11, color: accent, marginTop: 2, fontWeight: 600 }}>Prices shown include {multiplierNote}.</div>}
           </div>
           <button onClick={onClose} aria-label="Close" style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${border}`, background: "transparent", color: textS, fontSize: 13, cursor: "pointer" }}>✕</button>
         </div>
