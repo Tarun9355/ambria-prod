@@ -3446,9 +3446,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
             if (!mf) return null;
             const baseQty = Number(fl.qty) || 0;
             // This event's own mandi swap, made on the Floral shopping list (eventSwap above): the
-            // piece is made with the replacement, in its units, and the line says what it stands in for.
+            // piece is made with the replacement, in its units. Only the replacement is named — the crew makes the piece with
+            // what was bought; the flower it stands in for is on the Mandi list, not here.
             const es = eventSwap.get(String(mf.name || "").trim().toLowerCase());
-            if (es) return { name: `🔁 ${es.name} (for ${mf.name})`, qty: Math.round(baseQty * es.ratio * 100) / 100, unit: es.unit };
+            if (es) return { name: es.name, qty: Math.round(baseQty * es.ratio * 100) / 100, unit: es.unit };
             return { name: mf.name, qty: baseQty, unit: mf.unit || "" };
           }).filter(f => f && f.qty > 0);
           merged.set(key, { name: inv?.name || el?.name || held?.name || "Item", qty, unit, deptTag, photo: invPhoto(inv, held), dims: invDims(inv), size: elSize, kit: held?.isKit ? (Array.isArray(held.components) ? held.components.length : 0) + (Array.isArray(held.recipeParts) ? held.recipeParts.length : 0) : 0, recipe, paint: addPaint(new Map(), paint) });
