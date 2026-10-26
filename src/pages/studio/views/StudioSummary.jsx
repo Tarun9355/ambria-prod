@@ -3133,7 +3133,7 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
                       <div style={{padding:"6px 20px 12px 48px"}}>
                         {breakdown.transport.breakdown.map((bd, bi) => (
                           <div key={bi} style={{display:"flex",justifyContent:"space-between",padding:"3px 0",fontSize:12}}>
-                            <span style={{color:textS}}>{bd.isFloral?"🌸":bd.isBuffer?"🛡️":"🚚"} {bd.label} {bd.isFloral?`(${fmt(bd.qty)} ÷ ${fmt(bd.perTruck)})`:bd.isBuffer?`(${bd.tierLabel})`:bd.qty>0?`(${bd.qty} ÷ ${bd.perTruck}/${bd.unit})`:""}</span>
+                            <span style={{color:textS}}>{bd.isFloral?"🌸":bd.isBuffer?"🛡️":"🚚"} {bd.label} {bd.isFloral?`(${fmt(bd.qty)} ÷ ${fmt(bd.perTruck)})`:bd.isBuffer?`(${bd.tierLabel})`:bd.qty>0&&!bd.flat?`(${bd.qty} ÷ ${bd.perTruck}/${bd.unit})`:""}</span>
                             <span style={{fontWeight:600}}>{bd.flat>0 ? `${fmt(bd.flat)} flat` : `${bd.trucksClient ?? bd.trucks} truck${(bd.trucksClient ?? bd.trucks)!==1?"s":""}`}</span>
                           </div>
                         ))}

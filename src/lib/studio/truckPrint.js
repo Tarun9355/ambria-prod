@@ -1,7 +1,7 @@
 // Print jobs (a zone's zc.prints — Flex / Vinyl / Sunboard… from Build's Print tile) have to be moved like anything else, but they are not
 // inventory items, so no sub-category capacity ever picked them up. Two rules, both owner's:
 //
-//  1. A small print — one that costs less than SMALL_PRINT_LIMIT — does not fill a truck, so it is not counted by area. Instead the function is
+//  1. A small print — one that costs less than SMALL_PRINT_LIMIT (and more than nothing) — does not fill a truck, so it is not counted by area. Instead the function is
 //     charged one flat SMALL_PRINT_CHARGE for transport, however many small prints it has (they travel together).
 //  2. Every other print is trucked by its area: width x depth x quantity, summed, under the truck-capacity row named PRINT_TRUCK_SUB
 //     ("Print", sqft per truck, Manage > Transport — like Platform or Carpet). With no such row set up nothing is trucked for them.
@@ -18,10 +18,10 @@ const jobArea = (p) => {
   return w > 0 && d > 0 ? w * d * Math.max(1, Math.round(Number(p?.qty) || 1)) : 0;
 };
 
-// What a print job costs (rate card of the print material x its area). A job with no material or no rate is worth ₹0, so it is small.
+// What a print job costs, in whole rupees (rate of the print material x its area). A job with no material or no rate is worth ₹0.
 export function printJobPrice(p, printMaterials) {
   const m = (printMaterials || []).find((x) => x.id === p?.material);
-  return jobArea(p) * (Number(m?.ratePerSqft) || 0);
+  return Math.round(jobArea(p) * (Number(m?.ratePerSqft) || 0));
 }
 
 // One zone's prints split into what is trucked by area and what is small. Jobs without a size carry nothing and count as neither.
@@ -30,7 +30,9 @@ export function splitPrints(cfg, printMaterials) {
   (Array.isArray(cfg?.prints) ? cfg.prints : []).forEach((p) => {
     const a = jobArea(p);
     if (!(a > 0)) return;
-    if (printJobPrice(p, printMaterials) < SMALL_PRINT_LIMIT) smallJobs += 1; else bigSqft += a;
+    const price = printJobPrice(p, printMaterials);
+    // a print with no price (no material picked, or a material with no rate) is not billed, so it is not "small" either: it is trucked by area
+    if (price > 0 && price < SMALL_PRINT_LIMIT) smallJobs += 1; else bigSqft += a;
   });
   return { bigSqft, smallJobs };
 }

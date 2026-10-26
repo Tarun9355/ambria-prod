@@ -4263,6 +4263,7 @@ export default function DealCheckOverlay({ ctx }) {
                                 <div className="dc2-grid" style={{padding:"12px 15px 14px"}}>
                                   {deptGroups.map(({dept, rows: gRows}) => {
                                     const groupTrucks = gRows.reduce((s, r) => s + (Number(r.trucks) || 0), 0);
+                                    const groupFlat = gRows.reduce((s, r) => s + (Number(r.flat) || 0), 0);
                                     const groupKey = `transport:${fi}:dept:${dept}`;
                                     // Open by default — the point of this grouping is to see at a glance
                                     // what each department needs, not to hide it behind another click.
@@ -4286,8 +4287,10 @@ export default function DealCheckOverlay({ ctx }) {
                                           </span>
                                           <span style={{flex:"1 1 auto",minWidth:0,fontSize:10.5,fontWeight:700,color:INK,letterSpacing:0.8,textTransform:"uppercase"}}>{dept}</span>
                                           <span style={{...NUMCOL}}>
-                                            <span style={{fontSize:11.5,fontWeight:650,color:INK_2,...NUM}}>{groupTrucks.toFixed(2)}</span>
-                                            <span style={{fontSize:9.5,color:INK_3,marginLeft:3}}>truck{groupTrucks===1?"":"s"}</span>
+                                            {groupFlat > 0 && groupTrucks === 0
+                                              ? <><span style={{fontSize:11.5,fontWeight:650,color:INK_2,...NUM}}>₹{Math.round(groupFlat).toLocaleString("en-IN")}</span><span style={{fontSize:9.5,color:INK_3,marginLeft:3}}>flat</span></>
+                                              : <><span style={{fontSize:11.5,fontWeight:650,color:INK_2,...NUM}}>{groupTrucks.toFixed(2)}</span>
+                                                <span style={{fontSize:9.5,color:INK_3,marginLeft:3}}>truck{groupTrucks===1?"":"s"}</span>{groupFlat > 0 && <span style={{fontSize:9.5,color:INK_3,marginLeft:6,...NUM}}>+ ₹{Math.round(groupFlat).toLocaleString("en-IN")} flat</span>}</>}
                                           </span>
                                           <span aria-hidden="true" style={{fontSize:10,color:INK_3,flexShrink:0,display:"inline-block",transform:groupOpen?"rotate(90deg)":"none",transition:"transform 0.16s ease"}}>▸</span>
                                         </div>

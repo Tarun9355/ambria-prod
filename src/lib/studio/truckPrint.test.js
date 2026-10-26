@@ -14,7 +14,7 @@ describe("printJobPrice", () => {
     expect(printJobPrice(job("vinyl", 10, 20, 1), MATS)).toBe(40000);
     expect(printJobPrice(job("vinyl", 10, 10, 2), MATS)).toBe(40000);
   });
-  it("no material, unknown material, no size: nothing", () => {
+  it("no material, unknown material, no size: nothing (₹0)", () => {
     expect(printJobPrice(job("", 10, 10, 1), MATS)).toBe(0);
     expect(printJobPrice(job("zzz", 10, 10, 1), MATS)).toBe(0);
     expect(printJobPrice(job("vinyl", 0, 10, 1), MATS)).toBe(0);
@@ -35,11 +35,18 @@ describe("splitPrints — small prints are not trucked by area", () => {
     expect(splitPrints({ prints: [job("vinyl", 0, 5, 1), job("vinyl", 3, 3, 2)] }, MATS)).toEqual({ bigSqft: 18, smallJobs: 0 }); // 3x3x2 = 18 sqft = 3600
     expect(splitPrints({ prints: [{ material: "vinyl", areaW: 3, areaD: 3 }] }, MATS)).toEqual({ bigSqft: 0, smallJobs: 1 });     // qty missing = 1 -> 1800
   });
-  it("no prints, no config, a material with no rate", () => {
+  it("no prints, no config", () => {
     expect(splitPrints({}, MATS)).toEqual({ bigSqft: 0, smallJobs: 0 });
     expect(splitPrints(null, MATS)).toEqual({ bigSqft: 0, smallJobs: 0 });
-    expect(splitPrints({ prints: [job("free", 50, 50, 1)] }, MATS)).toEqual({ bigSqft: 0, smallJobs: 1 });
-    expect(splitPrints({ prints: [job("vinyl", 10, 10, 1)] }, undefined)).toEqual({ bigSqft: 0, smallJobs: 1 }); // no rate list loaded: price 0
+  });
+  it("an unpriced print (no material, a material with no rate, no rate list) is not small: it is trucked by area and earns no flat charge", () => {
+    expect(splitPrints({ prints: [job("free", 50, 50, 1)] }, MATS)).toEqual({ bigSqft: 2500, smallJobs: 0 });
+    expect(splitPrints({ prints: [job("", 10, 10, 1)] }, MATS)).toEqual({ bigSqft: 100, smallJobs: 0 });
+    expect(splitPrints({ prints: [job("vinyl", 10, 10, 1)] }, undefined)).toEqual({ bigSqft: 100, smallJobs: 0 });
+  });
+  it("the price is compared in whole rupees", () => {
+    expect(printJobPrice(job("odd", 2.5, 8, 1), [{ id: "odd", ratePerSqft: 99.99 }])).toBe(2000);                  // 1999.8 -> 2000: big
+    expect(splitPrints({ prints: [job("odd", 2.5, 8, 1)] }, [{ id: "odd", ratePerSqft: 99.99 }])).toEqual({ bigSqft: 20, smallJobs: 0 });
   });
   it("printSqftOf is the trucked (big) part only", () => {
     expect(printSqftOf({ prints: [job("sun", 3, 2, 1), job("vinyl", 10, 20, 1)] }, MATS)).toBe(200);

@@ -5393,7 +5393,7 @@ undefined
           transportCalc has always kept truckTotal and gensetCost apart, they were merely being
           summed here. Showing one figure meant a venue's genset charge was invisible. */}
       {rightRailOpen&&<div style={{display:"flex",justifyContent:"space-between",marginBottom:10}}>
-        <span style={{fontSize:12,color:"#a5b4fc"}}>Transport ({transportCalc.trucks} truck{transportCalc.trucks===1?"":"s"})</span>
+        <span style={{fontSize:12,color:"#a5b4fc"}}>Transport ({transportCalc.trucks} truck{transportCalc.trucks===1?"":"s"}{(transportCalc.breakdown||[]).some(b=>b.flat>0)?" + small prints":""})</span>
         <span style={{fontSize:14,fontWeight:600}}>{fmt(transportCalc.truckTotal)}</span>
       </div>}
       {/* Genset count is adjustable here rather than only in Event Info's custom-venue block,
