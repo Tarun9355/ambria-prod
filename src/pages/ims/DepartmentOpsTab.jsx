@@ -3337,7 +3337,34 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       });
     };
     const carpetDecided = (sel?.deptOps?.Tenting && sel.deptOps.Tenting.carpetChoice) || {};
-    const zoneStructOf = (z, fi, zk) => {
+    // ── THE CARPET THAT GOES DOWN, WITH ITS PHOTO ──
+    // A card on the zone's own page (like a print job): the carpet the Tenting head decided in Planning, or — until it is decided —
+    // the three sales ranked, 1st to 3rd, each with its photo, so the crew can see which carpet is meant. One per carpet floor.
+    const carpetCardsOf = (z, fi, zk) => {
+      if (!showStruct || !z) return [];
+      const out = [];
+      [z, ...(Array.isArray(z.extraPlatformRows) ? z.extraPlatformRows : [])].forEach((row, ri) => {
+        if (!row || row.cpT === CARPET_OFF) return;
+        const prefs = prefsOf(row);
+        if (!prefs.length) return;
+        const fd = row.floorDims || {};
+        const area = Math.round((Number(fd.L) || 0) * (Number(fd.W) || 0));
+        const dec = carpetDecided[carpetKey(fi, zk, ri)];
+        const chosen = dec ? prefs.find(p => p.id === dec.id) : null;
+        const lbl = ri === 0 ? "" : ` (floor ${ri + 1})`;
+        const RANK = ["1st", "2nd", "3rd"];
+        (chosen ? [{ p: chosen, role: "To use" + lbl }] : prefs.map((p, i) => ({ p, role: `${RANK[i] || i + 1 + "th"} choice${lbl}` }))).forEach(({ p, role }) => {
+          const inv = invById.get(String(p.id));
+          out.push({
+            name: inv?.name || p.name || "Carpet", qty: area, unit: "sqft", photo: invPhoto(inv, null), dims: invDims(inv), kit: 0, recipe: [],
+            deptTag: combined ? "Tenting" : "",
+            extra: [["Carpet", role], ...(area > 0 ? [["Floor", `${Number(fd.L) || 0} x ${Number(fd.W) || 0} ft`]] : [])],
+          });
+        });
+      });
+      return out;
+    };
+    const zoneStructOf = (z) => {
       if (!z) return [];
       if (!showStruct) return [];
       const floor = ftArea(z.floorDims);
@@ -3359,16 +3386,6 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       ].filter(Boolean);
       if (plats.length) out.push({ k: "Platform", v: plats.join("; ") });
       if (z.cpT) out.push({ k: "Carpet", v: [carpetName(z.cpT), floor].filter(Boolean).join(" · ") });
-      // Which carpet goes down: what the Tenting head decided in Planning, else the three sales asked for, in order.
-      [z, ...extraPl].forEach((row, ri) => {
-        if (!row || row.cpT === CARPET_OFF) return;
-        const prefs = prefsOf(row);
-        if (!prefs.length) return;
-        const dec = carpetDecided[carpetKey(fi, zk, ri)];
-        const decName = dec && prefs.some(p => p.id === dec.id) ? (dec.name || prefs.find(p => p.id === dec.id)?.name || "") : "";
-        const lbl = ri === 0 ? "" : ` (floor ${ri + 1})`;
-        out.push(decName ? { k: "Carpet to use" + lbl, v: decName } : { k: "Carpet choices" + lbl, v: prefs.map((p, i) => `${i + 1}) ${p.name}`).join("   ") });
-      });
       // Masking hangs on a truss — with no sized truss there is nothing to mask (and nothing billed).
       if (z.mkOn && (hasTruss || sizedExtra.length)) out.push({ k: "Masking", v: "Yes" });
       if (!z.plH && !z.cpT && floor) out.push({ k: "Floor", v: floor });
@@ -3507,10 +3524,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           : "Zone";
         // The only zone still worth skipping is one with nothing to put on the page at all: none
         // of our items, no reference photo and no dimensions. That page would be a heading.
-        const zStruct = zoneStructOf(zCfg, fn?.fnIdx ?? fi, zk);
+        const zStruct = zoneStructOf(zCfg);
         // First, not last: a zone with more than six items splits across pages, and a print
         // appended at the end landed on the zone's second page, away from the one the crew opens.
-        items.unshift(...printCardsOf(zCfg));
+        items.unshift(...printCardsOf(zCfg), ...carpetCardsOf(zCfg, fn?.fnIdx ?? fi, zk));
         if (!items.length && !zPhoto && !zDims && !zStruct.length) return;
         zonePages.push({
           zk,
