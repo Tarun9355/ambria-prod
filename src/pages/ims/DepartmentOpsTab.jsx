@@ -4372,7 +4372,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
         const goCarpet = carpetLeft.length > 0 && canCarpet;
         const goItems = !goCarpet && itemsLeft.length > 0 && canItems;
         const carpetHow = canCarpet ? "Pick a carpet for each in Tenting → Carpet plan (if no stock carpet can be used, choose \"Arrange separately\")" : "Ask the Tenting head to choose them in Planning → Tenting → Carpet plan";
-        const itemHow = canItems ? "Pick a design for each in Fabric → Overlay & cushion choices (if none in stock can be used, choose \"Arrange separately\")" : "Ask the Fabric head to choose them in Planning → Fabric → Overlay & cushion choices";
+        const itemHow = canItems ? "Pick a design for each in Fabric → Fabric plan (if none in stock can be used, choose \"Arrange separately\")" : "Ask the Fabric head to choose them in Planning → Fabric → Fabric plan";
         let title, body;
         if (carpetLeft.length && itemsLeft.length) {
           title = "Choices not made";
@@ -4385,9 +4385,9 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
           body = `The PDF was not made. Choose the design for ${itemsLeft.length === 1 ? "this element" : "these elements"} first:\n\n${itemLines}\n\n${itemHow}, then download again.`;
         }
         try {
-          const go = await confirm({ title, body, confirmLabel: goCarpet ? "Open Carpet plan" : goItems ? "Open choices" : "OK", danger: false });
+          const go = await confirm({ title, body, confirmLabel: goCarpet ? "Open Carpet plan" : goItems ? "Open Fabric plan" : "OK", danger: false });
           if (go && goCarpet) { if (dept !== "Tenting") setDept("Tenting"); setOpsView("planning"); setModal("carpet"); }
-          else if (go && goItems) { if (dept !== "Fabric") setDept("Fabric"); setOpsView("planning"); setModal("choices"); }
+          else if (go && goItems) { if (dept !== "Fabric") setDept("Fabric"); setOpsView("planning"); setModal("fabreq"); }
         } finally { carpetGateOpenRef.current = false; }
         return false;
       }
@@ -5595,19 +5595,20 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
               const n = (v, s) => `${v} ${s}${v === 1 ? "" : "s"}`;
               const tiles = [
                 dept === "Fabric" && upcomingFabricShort.length > 0 && { k: "fabshort", icon: "⚠️", title: "Fabric shortfalls", sub: n(upcomingFabricShort.length, "upcoming event"), tone: "bg-red-50", alert: true },
-                dept === "Fabric" && { k: "fabreq", icon: "🧵", title: "Fabric required", sub: fabricReqRows.length ? n(fabricReqRows.length, "fabric type") : "nothing required" },
+                dept === "Fabric" && (() => {
+                  // One "Fabric plan": what fabric is required vs available, and the overlay / cushion cover choices to decide
+                  const rows = elementPlanOf().rows;
+                  const decided = rows.filter(r => r.status === "decided").length;
+                  const bad = rows.filter(r => r.status === "short").length;
+                  const req = fabricReqRows.length ? n(fabricReqRows.length, "fabric type") : "nothing required";
+                  return { k: "fabreq", icon: "🧵", title: "Fabric plan", sub: !rows.length ? req : <>{req} · {bad ? <span className="text-red-600 font-semibold">{bad} choice{bad === 1 ? "" : "s"} need{bad === 1 ? "s" : ""} attention · </span> : null}{decided} of {rows.length} choices decided</>, ...(bad ? { tone: "bg-red-50", alert: true } : {}) };
+                })(),
                 { k: "inv", icon: "📦", title: "Inventory blocked", sub: n(blockedItemsGrouped.length, "item") + " held", value: fmt(rentalIncome) },
                 dept === "Tenting" && carpetPlanOf().rows.length > 0 && (() => {
                   const rows = carpetPlanOf().rows;
                   const decided = rows.filter(r => r.status === "decided").length;
                   const bad = rows.filter(r => r.status === "short" || r.status === "none").length;
                   return { k: "carpet", icon: "🟥", title: "Carpet plan", sub: bad ? <span className="text-red-600 font-semibold">{bad} floor{bad === 1 ? "" : "s"} need{bad === 1 ? "s" : ""} attention · {decided} of {rows.length} decided</span> : `${decided} of ${rows.length} floor${rows.length === 1 ? "" : "s"} decided`, ...(bad ? { tone: "bg-red-50", alert: true } : {}) };
-                })(),
-                dept === "Fabric" && elementPlanOf().rows.length > 0 && (() => {
-                  const rows = elementPlanOf().rows;
-                  const decided = rows.filter(r => r.status === "decided").length;
-                  const bad = rows.filter(r => r.status === "short").length;
-                  return { k: "choices", icon: "🧵", title: "Overlay & cushion choices", sub: bad ? <span className="text-red-600 font-semibold">{bad} need{bad === 1 ? "s" : ""} attention · {decided} of {rows.length} decided</span> : `${decided} of ${rows.length} decided`, ...(bad ? { tone: "bg-red-50", alert: true } : {}) };
                 })(),
                 dept === "Tenting" && trussPlanOf().length > 0 && { k: "truss", icon: "🏗️", title: "Truss plan", sub: n(trussPlanOf().length, "truss") + " · pillars, beams, fabric" },
                 { k: "mp", icon: "👷", title: "Manpower plan", sub: mpChanged ? <span className="text-red-600 font-semibold">⚠ Changed since you last looked · {fmt(Number(mpSeen.cost) || 0)} → {fmt(mpSnapCost)}</span> : mpRows.length ? n(mpRows.length, "crew line") : "no crew assigned", value: fmt(mpCost), ...(mpChanged ? { tone: "bg-red-50", alert: true } : {}) },
@@ -6960,7 +6961,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
               // removed or renumbered in Studio (carpetPlan.validDecision).
               const put = (r, entry) => saveDept({ itemChoice: { ...choiceAll, [r.key]: { ...entry, date: r.date, fnType: r.fnLabel, by: authUser?.name || "—", at: Date.now() } } });
               return (
-                <ElementChoicePlan className={modalCls("choices")} plan={elementPlanOf()} onZoom={setZoomImg}
+                <ElementChoicePlan className={modalCls("fabreq")} plan={elementPlanOf()} onZoom={setZoomImg}
                   stockOf={(r) => elementStockFor(r, inventory, blocks, sel?.id, sel?.functionsDetail, elementPlanOf().rows, choiceAll)}
                   onDecide={(r, o, byHand) => put(r, { id: o.id, name: o.name, ...(byHand ? { manual: true } : {}) })}
                   onOther={(r) => put(r, { other: true, name: "Arranged separately" })}
