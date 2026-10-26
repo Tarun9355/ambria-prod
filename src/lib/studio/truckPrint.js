@@ -49,3 +49,16 @@ export function smallPrintFlat(zoneConfig, enabledEls, printMaterials) {
   });
   return { jobs, charge: jobs > 0 ? SMALL_PRINT_CHARGE : 0 };
 }
+
+// Which small print carries the function's flat charge on screen: the first one, going through the switched-on zones in order. The charge is
+// once per function, so it is shown on that one job only. { zk, index } (index = the job's position in its zone's prints), or null.
+export function firstSmallPrint(zoneConfig, enabledEls, printMaterials) {
+  for (const [zk, cfg] of Object.entries(zoneConfig || {})) {
+    if (!cfg || !enabledEls?.[zk]) continue;
+    const jobs = Array.isArray(cfg.prints) ? cfg.prints : [];
+    for (let index = 0; index < jobs.length; index++) {
+      if (splitPrints({ prints: [jobs[index]] }, printMaterials).smallJobs > 0) return { zk, index };
+    }
+  }
+  return null;
+}

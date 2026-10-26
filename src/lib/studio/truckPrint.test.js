@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { printJobPrice, splitPrints, printSqftOf, smallPrintFlat, PRINT_TRUCK_SUB, SMALL_PRINT_LIMIT, SMALL_PRINT_CHARGE } from "./truckPrint.js";
+import { printJobPrice, splitPrints, printSqftOf, smallPrintFlat, firstSmallPrint, PRINT_TRUCK_SUB, SMALL_PRINT_LIMIT, SMALL_PRINT_CHARGE } from "./truckPrint.js";
 
 const MATS = [{ id: "vinyl", ratePerSqft: 200 }, { id: "sun", ratePerSqft: 75 }, { id: "free", ratePerSqft: 0 }];
 const job = (material, areaW, areaD, qty) => ({ material, areaW, areaD, qty });
@@ -68,5 +68,22 @@ describe("smallPrintFlat — one flat charge per function", () => {
   it("nothing at all", () => {
     expect(smallPrintFlat({}, {}, MATS)).toEqual({ jobs: 0, charge: 0 });
     expect(smallPrintFlat(null, null, MATS)).toEqual({ jobs: 0, charge: 0 });
+  });
+});
+
+describe("firstSmallPrint — the job that shows the flat charge", () => {
+  const big = job("vinyl", 10, 20, 1), small = job("sun", 3, 2, 1);
+  it("the first small job of the first switched-on zone", () => {
+    expect(firstSmallPrint({ stage: { prints: [big, small, small] }, entry: { prints: [small] } }, { stage: true, entry: true }, MATS)).toEqual({ zk: "stage", index: 1 });
+  });
+  it("zones that are off are skipped; no small print: null", () => {
+    expect(firstSmallPrint({ stage: { prints: [small] }, entry: { prints: [small] } }, { stage: false, entry: true }, MATS)).toEqual({ zk: "entry", index: 0 });
+    expect(firstSmallPrint({ stage: { prints: [big] } }, { stage: true }, MATS)).toBe(null);
+    expect(firstSmallPrint({}, {}, MATS)).toBe(null);
+    expect(firstSmallPrint(null, null, MATS)).toBe(null);
+  });
+  it("agrees with smallPrintFlat about whether there is a charge", () => {
+    const zc = { stage: { prints: [big] }, entry: { prints: [small] } };
+    expect(!!firstSmallPrint(zc, { stage: true, entry: true }, MATS)).toBe(smallPrintFlat(zc, { stage: true, entry: true }, MATS).charge > 0);
   });
 });

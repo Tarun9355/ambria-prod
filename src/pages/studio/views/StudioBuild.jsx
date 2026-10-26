@@ -5,7 +5,7 @@ import NumField from "../../../components/ui/NumField.jsx";
 import { applyQtyCeiling } from "../../../lib/studio/qtyCeiling";
 import { unitAllowsDecimal, quantityForUnit } from "../../../lib/studio/qtyUnits";
 import { itemTakesChoices, elementChoices, applyChoicePicks, ELEMENT_PREF_MAX, ELEMENT_PREF_LABELS } from "../../../lib/studio/elementPrefs";
-import { SMALL_PRINT_LIMIT, SMALL_PRINT_CHARGE } from "../../../lib/studio/truckPrint";
+import { SMALL_PRINT_LIMIT, SMALL_PRINT_CHARGE, firstSmallPrint } from "../../../lib/studio/truckPrint";
 import { IconClipboard, IconPencil, IconRuler, IconBolt, IconWall, IconPlatform, IconCarpet, IconBulb, IconCheck,
   IconSearch, IconCamera, IconPrinter, IconNote, IconCalendar, IconFlower, IconFactory,
   IconCart, IconCopy, IconRepeat, IconAlert, IconPalette, IconChevron, IconSparkle,
@@ -5171,6 +5171,10 @@ undefined
                   const rate=mat?.ratePerSqft||0;
                   const qty=Math.max(1,Math.round(Number(p.qty)||1));
                   const cost=sqft*rate*qty;
+                  // the function's flat transport for small prints is shown on ONE job (the first small one), since it is charged once
+                  const smallJob=rate>0&&sqft>0&&Math.round(cost)<SMALL_PRINT_LIMIT;
+                  const _fsp=smallJob&&!isPhantom?firstSmallPrint(zoneConfig,enabledEls,imsPrintMaterials):null;
+                  const carriesFlat=!!_fsp&&_fsp.zk===k&&_fsp.index===pi;
                   const setPrint=(patch)=>{
                     if(isPhantom){setZoneConfig(prev=>({...prev,[k]:{...(prev[k]||{}),prints:[{...p,...patch,id:"PR"+Date.now()+Math.floor(Math.random()*1000)}]}}));return;}
                     setZoneConfig(prev=>({...prev,[k]:{...(prev[k]||{}),prints:(prev[k]?.prints||[]).map((x,i)=>i===pi?{...x,...patch}:x)}}));
@@ -5193,12 +5197,15 @@ undefined
                         const s=zoneScaleVal(k);
                         setPrint({qty:nextQty, qtyBase: s>1?nextQty/s:nextQty});
                       }} title="Qty — how many copies of this same print. Scale By rescales this the same way it rescales elements, Truss Qty and Platform Qty." style={{...S.input,fontSize:11.5,padding:"3px 6px",width:44,marginBottom:0,textAlign:"center"}} />
-                      {showCosts&&<span style={{fontSize:12,fontWeight:700,color:"#0EA5E9",marginLeft:"auto"}}>{rate>0?fmt(cost):"— pick material"}</span>}
+                      {showCosts&&<span style={{marginLeft:"auto",display:"inline-flex",alignItems:"baseline",gap:6,whiteSpace:"nowrap"}}>
+                        <span style={{fontSize:12,fontWeight:700,color:"#0EA5E9"}}>{rate>0?fmt(cost):"— pick material"}</span>
+                        {carriesFlat&&<span title={`A print under ${fmt(SMALL_PRINT_LIMIT)} does not fill a truck: the function pays ${fmt(SMALL_PRINT_CHARGE)} flat transport for its small prints, once`} style={{fontSize:11.5,fontWeight:700,color:"#B45309"}}>+ {fmt(SMALL_PRINT_CHARGE)} transport</span>}
+                      </span>}
                       {!isPhantom&&<span onClick={removePrint} style={{cursor:"pointer",color:"#E11D48",fontWeight:700,fontSize:12.5}}>×</span>}
                     </div>
                     {/* A print under ₹2,000 does not fill a truck, so the function is charged one flat transport amount for its small prints instead
                         (lib/studio/truckPrint.js) — said here, next to the job, so the extra in Transport is not a surprise. */}
-                    {rate>0&&sqft>0&&Math.round(cost)<SMALL_PRINT_LIMIT&&<div style={{marginTop:5,fontSize:11,color:"#B45309"}}>Small print (under {fmt(SMALL_PRINT_LIMIT)}): {fmt(SMALL_PRINT_CHARGE)} flat transport is added to this function — once, however many small prints it has.</div>}
+                    {smallJob&&_fsp&&<div style={{marginTop:5,fontSize:11,color:"#B45309"}}>{carriesFlat?`Small print (under ${fmt(SMALL_PRINT_LIMIT)}): ${fmt(SMALL_PRINT_CHARGE)} flat transport is added to this function — once, however many small prints it has.`:`Small print (under ${fmt(SMALL_PRINT_LIMIT)}): the function's ${fmt(SMALL_PRINT_CHARGE)} flat transport is already counted on another small print.`}</div>}
                     {/* Two OPTIONAL fields side by side — they were stacked full-width, making every print
                         row ~3 rows tall for fields most jobs leave blank. */}
                     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginTop:7,alignItems:"start"}}>
