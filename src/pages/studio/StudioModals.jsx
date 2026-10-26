@@ -205,10 +205,17 @@ export default function StudioModals({ ctx }) {
         // would count toward the cap and then silently vanish on Save. While the list is still loading the ids are kept as they are.
         const multiIds = multi ? (availModal.multiIds || []).filter(id => availModal.loading || (availModal.items || []).some(x => x.id === id)) : [];
         const MULTI_RANK = ["1st", "2nd", "3rd", "4th", "5th"];
+        // How many to pick: a − / + stepper (1 to multi.max). Lowering it below what is already picked drops the lowest-ranked ones.
+        const capOf = (m) => Math.min(m.multi.max, Math.max(1, Number(m.multiCap) || m.multi.max));
+        const cap = multi ? capOf(availModal) : 0;
+        const setCap = (n) => setAvailModal(m => {
+          const c = Math.min(m.multi.max, Math.max(1, n));
+          return { ...m, multiCap: c, multiIds: (m.multiIds || []).slice(0, c), multiNote: "" };
+        });
         const toggleMulti = (it) => setAvailModal(m => {
           const ids = (m.multiIds || []).filter(id => (m.items || []).some(x => x.id === id));
           if (ids.includes(it.id)) return { ...m, multiIds: ids.filter(x => x !== it.id), multiNote: "" };
-          if (ids.length >= m.multi.max) return { ...m, multiNote: `Up to ${m.multi.max} — tap a selected one to remove it first` };
+          if (ids.length >= capOf(m)) return { ...m, multiNote: `Up to ${capOf(m)} — tap a selected one to remove it first, or raise the number with +` };
           return { ...m, multiIds: [...ids, it.id], multiNote: "" };
         });
         // What is saved with each pick is how much of that carpet this floor can actually use on this date: the free stock plus what is already
@@ -262,7 +269,7 @@ export default function StudioModals({ ctx }) {
                 <div style={{fontSize:16,fontWeight:700,color:textP}}><IconBox size={14}/> Availability — {availModal.elName}</div>
                 <div style={{fontSize:11,color:textS,marginTop:2,letterSpacing:0.3}}>
                   {multi
-                    ? <>{availModal.subcat||"—"} · free on {availModal.date||"event date"} · tap up to {multi.max} — the order you tap is the order of choice</>
+                    ? <>{availModal.subcat||"—"} · free on {availModal.date||"event date"} · tap up to {cap} — the order you tap is the order of choice</>
                     : inSplit
                     ? `Splitting ${origQty} × ${availModal.elName} — pick 2 or more items below`
                     : <>{availModal.subcat||"—"} · free on {availModal.date||"event date"} · tap to pick</>}
@@ -280,6 +287,17 @@ export default function StudioModals({ ctx }) {
                     plain qty swap) have nothing extra to say beyond the subtitle above. */}
                 {availModal.neededLabel && (
                   <div style={{fontSize:11,color:accent,marginTop:3,fontWeight:600}}>{availModal.neededLabel}</div>
+                )}
+                {multi && (
+                  <div style={{display:"flex",alignItems:"center",gap:8,marginTop:8}}>
+                    <span style={{fontSize:11.5,color:textS,fontWeight:600}}>How many choices</span>
+                    <div style={{display:"inline-flex",alignItems:"center",borderRadius:8,border:`1px solid ${border}`,overflow:"hidden"}}>
+                      <button type="button" aria-label="Fewer choices" disabled={cap<=1} onClick={()=>setCap(cap-1)} style={{width:30,height:28,border:"none",background:"transparent",color:cap<=1?"#9CA3AF":textP,fontSize:16,fontWeight:700,cursor:cap<=1?"not-allowed":"pointer"}}>−</button>
+                      <span aria-live="polite" style={{minWidth:30,textAlign:"center",fontSize:13,fontWeight:800,color:textP,borderLeft:`1px solid ${border}`,borderRight:`1px solid ${border}`,lineHeight:"28px"}}>{cap}</span>
+                      <button type="button" aria-label="More choices" disabled={cap>=multi.max} onClick={()=>setCap(cap+1)} style={{width:30,height:28,border:"none",background:"transparent",color:cap>=multi.max?"#9CA3AF":textP,fontSize:16,fontWeight:700,cursor:cap>=multi.max?"not-allowed":"pointer"}}>+</button>
+                    </div>
+                    <span style={{fontSize:10.5,color:textS}}>max {multi.max}</span>
+                  </div>
                 )}
               </div>
               <div style={{display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
@@ -418,7 +436,7 @@ export default function StudioModals({ ctx }) {
             <div style={{padding:"12px 20px",borderTop:`1px solid ${border}`,display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,flexWrap:"wrap"}}>
               <span style={{fontSize:10,color:textS}}>
                 {multi
-                  ? <>{multiIds.length} of {multi.max} selected{multi.need > 0 ? ` — ${(/^[aeiou]/i.test(mNoun) ? "an " : "a ") + mNoun} with less free on this date than the ${multi.need} ${mUnit} this ${mNeedNoun} needs is marked short and cannot be picked.${mNoun === "carpet" ? " Orange = already laid at this venue today, so it can be reused" : " Each choice must be able to supply the whole quantity"}` : ""}{availModal.pickHint ? ` — ${availModal.pickHint}` : ""}{availModal.multiNote && <b style={{color:"#B45309",marginLeft:6}}>{availModal.multiNote}</b>}</>
+                  ? <>{multiIds.length} of {cap} selected{multi.need > 0 ? ` — ${(/^[aeiou]/i.test(mNoun) ? "an " : "a ") + mNoun} with less free on this date than the ${multi.need} ${mUnit} this ${mNeedNoun} needs is marked short and cannot be picked.${mNoun === "carpet" ? " Orange = already laid at this venue today, so it can be reused" : " Each choice must be able to supply the whole quantity"}` : ""}{availModal.pickHint ? ` — ${availModal.pickHint}` : ""}{availModal.multiNote && <b style={{color:"#B45309",marginLeft:6}}>{availModal.multiNote}</b>}</>
                   : inSplit
                   ? (splitPreview ? `${splitIds.length} items selected — splits ${origQty} into ${splitPreview}` : "Select 2 or more items to split into")
                   : (availModal.onPick ? (availModal.pickHint || "Pick an item to swap to.") : (availModal.selectedId ? "This item will be booked in Deal Check for this element." : "Pick an item to book it — or clear the current pin."))}
