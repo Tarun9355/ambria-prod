@@ -134,6 +134,10 @@ export const INIT_TRUSS_INV = {
   lizaStock: [],
   maskingStock: [],
   curtainStock: [],
+  // §24 Platform Config — mirrors Truss's own "config, not yet wired to costing" shape. Each row:
+  // { id, label, lengthFt, widthFt, material, stock, ratePerSqft }. sqft/totalSqft are DERIVED
+  // (lengthFt×widthFt, ×stock), never stored, so editing dims never leaves a stale total behind.
+  platforms: [],
   settings: { pillarWidthFt: 0.75, maxSpanFt: 30, defaultBackDepthFt: 4, backDepthRange: [3, 5], untaggedFallback: "half_box", hybridPricingMethod: "simple_avg" },
   lastUpdated: null,
   updatedBy: null,

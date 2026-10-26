@@ -25,6 +25,7 @@ export default function PlanningTab({ projects, functions, setFunctions, invento
     { id: "truss", label: "🏗️ Truss" },
     { id: "paint", label: "🎨 Paint" },
     { id: "trussbatta", label: "🏗️ Truss & Batta Config" },
+    { id: "platformconfig", label: "🛏️ Platform Config" },
     { id: "fabricstock", label: "🧵 Fabric Stock" },
     { id: "truck", label: "🚚 Truck" },
   ];
@@ -63,6 +64,7 @@ export default function PlanningTab({ projects, functions, setFunctions, invento
       {sub === "truss" && <TrussPlanningTab trussAlloc={trussAlloc} setTrussAlloc={setTrussAlloc} trussInv={trussInv} eventOrders={eventOrders} authUser={authUser} />}
       {sub === "paint" && <PaintPlanningTab projects={projects} functions={functions} inventory={inventory} settings={settings} />}
       {sub === "trussbatta" && <AdminSettingsTab mode="trussbatta" settings={settings} setSettings={setSettings} studio={studio} trussInv={trussInv} setTrussInv={setTrussInv} />}
+      {sub === "platformconfig" && <AdminSettingsTab mode="platformconfig" settings={settings} setSettings={setSettings} studio={studio} trussInv={trussInv} setTrussInv={setTrussInv} />}
       {sub === "fabricstock" && <AdminSettingsTab mode="fabricstock" settings={settings} setSettings={setSettings} studio={studio} trussInv={trussInv} setTrussInv={setTrussInv} />}
       {sub === "truck" && <AdminSettingsTab mode="truck" settings={settings} setSettings={setSettings} studio={studio} trussInv={trussInv} setTrussInv={setTrussInv} rateCardCategories={rateCardCategories} rcItems={rcItems} rcCats={rcCats} inventory={inventory} />}
     </div>

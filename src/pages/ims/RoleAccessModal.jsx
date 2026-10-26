@@ -47,6 +47,7 @@ const IMS_SUBTABS = {
     { id: "truss", label: "🏗️ Truss" },
     { id: "paint", label: "🎨 Paint" },
     { id: "trussbatta", label: "🏗️ Truss & Batta Config" },
+    { id: "platformconfig", label: "🛏️ Platform Config" },
     { id: "fabricstock", label: "🧵 Fabric Stock" },
     { id: "truck", label: "🚚 Truck" },
   ],

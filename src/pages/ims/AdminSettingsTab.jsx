@@ -2012,6 +2012,86 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
         </div>
         );
       })()}
+      {activePanel === "platformconfig" && trussInv && (() => {
+        // Config only, for now — not yet wired into Build/Deal Check cost, manpower, or transport
+        // (those still read a zone's own plH/floorDims, same as before this screen existed). This is
+        // step one of consolidating Platform the same way Truss already is: once this catalogue is
+        // real, the structural engine can read FROM here instead of each zone typing its own
+        // material/rate, and the literal "Platform" inventory items can be considered for removal.
+        const platforms = Array.isArray(trussInv.platforms) ? trussInv.platforms : [];
+        const updRow = (id, patch) => setTrussInv((ti) => ({ ...ti, platforms: (ti.platforms || []).map((r) => (r.id === id ? { ...r, ...patch } : r)) }));
+        const addRow = () => setTrussInv((ti) => ({ ...ti, platforms: [...(ti.platforms || []), { id: "plat_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), label: "", material: "Wood", lengthFt: 8, widthFt: 4, stock: 0, ratePerSqft: 0 }] }));
+        const delRow = async (id, label) => {
+          if (!(await confirm({ title: `Remove ${label ? `"${label}"` : "this platform"}?`, body: "It will no longer count towards platform stock." }))) return;
+          setTrussInv((ti) => ({ ...ti, platforms: (ti.platforms || []).filter((r) => r.id !== id) }));
+        };
+        const totalPieces = platforms.reduce((s, r) => s + (Number(r.stock) || 0), 0);
+        const totalSqft = platforms.reduce((s, r) => s + (Number(r.lengthFt) || 0) * (Number(r.widthFt) || 0) * (Number(r.stock) || 0), 0);
+        return (
+          <div className="space-y-4">
+            <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-4">
+              <div className="flex items-start gap-3">
+                <span className="text-2xl">🛏️</span>
+                <div className="flex-1">
+                  <p className="font-bold text-indigo-900">Platform Inventory</p>
+                  <p className="text-xs text-indigo-700 mt-0.5">Each platform module's own dimensions, material, stock, and rental rate — one catalogue instead of typing these per zone.</p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3 mt-4">
+                <div className="bg-white rounded-xl p-3 text-center"><div className="text-2xl font-bold text-indigo-700">{totalPieces}</div><div className="text-xs text-gray-500">Platform pieces</div></div>
+                <div className="bg-white rounded-xl p-3 text-center"><div className="text-2xl font-bold text-indigo-700">{totalSqft.toLocaleString("en-IN")}</div><div className="text-xs text-gray-500">Total sqft</div></div>
+              </div>
+            </div>
+
+            <div className="bg-white border border-indigo-100 rounded-2xl p-5">
+              <div className="flex items-center justify-between mb-3">
+                <div><p className="font-bold text-indigo-800">🛏️ Platforms</p><p className="text-xs text-gray-500">Dimensions × stock give each row's own sqft, used for the total above.</p></div>
+                <button onClick={addRow} className="text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg font-medium">+ Add Platform</button>
+              </div>
+              {platforms.length === 0 ? (
+                <div className="text-xs text-gray-500 italic border border-dashed border-indigo-200 rounded-xl p-4 text-center">No platforms configured yet — add one above.</div>
+              ) : (
+                <div className="overflow-x-auto border border-indigo-100 rounded-xl">
+                  <table className="w-full text-sm min-w-[760px]">
+                    <thead className="bg-indigo-50 text-xs text-indigo-700">
+                      <tr>
+                        <th className="px-3 py-2 text-left font-medium">Label</th>
+                        <th className="px-3 py-2 text-left font-medium">Material</th>
+                        <th className="px-3 py-2 text-center font-medium">Length (ft)</th>
+                        <th className="px-3 py-2 text-center font-medium">Width (ft)</th>
+                        <th className="px-3 py-2 text-center font-medium">Sqft / piece</th>
+                        <th className="px-3 py-2 text-center font-medium">Stock (pieces)</th>
+                        <th className="px-3 py-2 text-right font-medium">Total sqft</th>
+                        <th className="px-3 py-2 text-right font-medium">Rate (₹/sqft)</th>
+                        <th className="px-3 py-2 text-center font-medium w-12"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {platforms.map((r) => {
+                        const sqftPerPiece = (Number(r.lengthFt) || 0) * (Number(r.widthFt) || 0);
+                        const rowTotalSqft = sqftPerPiece * (Number(r.stock) || 0);
+                        return (
+                          <tr key={r.id} className="border-t border-indigo-50">
+                            <td className="px-3 py-2"><input type="text" placeholder="e.g. 8×4 Wood Deck" value={r.label || ""} onChange={(e) => updRow(r.id, { label: e.target.value })} className="w-40 border border-indigo-200 rounded px-2 py-1 text-xs" /></td>
+                            <td className="px-3 py-2"><input type="text" placeholder="Wood, Iron…" value={r.material || ""} onChange={(e) => updRow(r.id, { material: e.target.value })} className="w-28 border border-indigo-200 rounded px-2 py-1 text-xs" /></td>
+                            <td className="px-3 py-2 text-center"><input type="number" min="0" step="0.5" value={r.lengthFt ?? 0} onChange={(e) => updRow(r.id, { lengthFt: parseFloat(e.target.value) || 0 })} className="w-20 border border-indigo-200 rounded px-2 py-1 text-sm text-center font-bold" /></td>
+                            <td className="px-3 py-2 text-center"><input type="number" min="0" step="0.5" value={r.widthFt ?? 0} onChange={(e) => updRow(r.id, { widthFt: parseFloat(e.target.value) || 0 })} className="w-20 border border-indigo-200 rounded px-2 py-1 text-sm text-center font-bold" /></td>
+                            <td className="px-3 py-2 text-center text-gray-500">{sqftPerPiece.toLocaleString("en-IN")}</td>
+                            <td className="px-3 py-2 text-center"><input type="number" min="0" value={r.stock || 0} onChange={(e) => updRow(r.id, { stock: parseInt(e.target.value) || 0 })} className="w-20 border border-indigo-200 rounded px-2 py-1 text-sm text-center font-bold" /></td>
+                            <td className="px-3 py-2 text-right text-gray-500">{rowTotalSqft.toLocaleString("en-IN")}</td>
+                            <td className="px-3 py-2 text-right"><input type="number" min="0" value={r.ratePerSqft || 0} onChange={(e) => updRow(r.id, { ratePerSqft: parseFloat(e.target.value) || 0 })} className="w-24 border border-indigo-200 rounded px-2 py-1 text-sm text-center font-bold" /></td>
+                            <td className="px-3 py-2 text-center"><button onClick={() => delRow(r.id, r.label)} className="text-red-400 hover:text-red-600 text-xs">✕</button></td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
       {activePanel === "fabricstock" && trussInv && (() => {
         const colourCat = (settings.colourCatalogue || []).map((c) => c.name);
         const rates = trussInv.rates || {};
