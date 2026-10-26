@@ -4279,10 +4279,11 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
     if (exporting) return;
     const multi = depts.length > 1;
     // ── NO PDF UNTIL EVERY CARPET FLOOR HAS ITS CARPET ──
-    // The Tenting and Structure books (and the combined book) tell the crew which carpet goes down, so a floor whose carpet Planning has
-    // not decided has nothing to print. Planning's own PDF is refused, and the floors are named so they can be fixed in the Carpet plan.
+    // Carpet is Tenting's work, so the Tenting book and the all-departments book (which carries it) tell the crew which carpet goes down:
+    // a floor whose carpet Planning has not decided has nothing to print, and those two PDFs are refused until it is. Every other
+    // department's PDF is not held up. The floors are named so they can be fixed in the Carpet plan.
     // The PDF started from Deal Check (it lists what sales asked for) and the viewer refreshing itself are not held up by this.
-    if (gate && !pdfAllCarpetsRef.current && (multi || depts.some(d => d === "Tenting" || d === "Structure"))) {
+    if (gate && !pdfAllCarpetsRef.current && (multi || depts.includes("Tenting"))) {
       const undecided = carpetPlanOf().rows.filter(r => r.status !== "decided");
       if (undecided.length) {
         const when = (d) => { try { return d ? new Date(d + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : ""; } catch { return d || ""; } };
