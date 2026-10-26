@@ -5,6 +5,7 @@ import NumField from "../../../components/ui/NumField.jsx";
 import { applyQtyCeiling } from "../../../lib/studio/qtyCeiling";
 import { unitAllowsDecimal, quantityForUnit } from "../../../lib/studio/qtyUnits";
 import { itemTakesChoices, elementChoices, applyChoicePicks, ELEMENT_PREF_MAX, ELEMENT_PREF_LABELS } from "../../../lib/studio/elementPrefs";
+import { SMALL_PRINT_LIMIT, SMALL_PRINT_CHARGE } from "../../../lib/studio/truckPrint";
 import { IconClipboard, IconPencil, IconRuler, IconBolt, IconWall, IconPlatform, IconCarpet, IconBulb, IconCheck,
   IconSearch, IconCamera, IconPrinter, IconNote, IconCalendar, IconFlower, IconFactory,
   IconCart, IconCopy, IconRepeat, IconAlert, IconPalette, IconChevron, IconSparkle,
@@ -5195,6 +5196,9 @@ undefined
                       {showCosts&&<span style={{fontSize:12,fontWeight:700,color:"#0EA5E9",marginLeft:"auto"}}>{rate>0?fmt(cost):"— pick material"}</span>}
                       {!isPhantom&&<span onClick={removePrint} style={{cursor:"pointer",color:"#E11D48",fontWeight:700,fontSize:12.5}}>×</span>}
                     </div>
+                    {/* A print under ₹2,000 does not fill a truck, so the function is charged one flat transport amount for its small prints instead
+                        (lib/studio/truckPrint.js) — said here, next to the job, so the extra in Transport is not a surprise. */}
+                    {rate>0&&sqft>0&&Math.round(cost)<SMALL_PRINT_LIMIT&&<div style={{marginTop:5,fontSize:11,color:"#B45309"}}>Small print (under {fmt(SMALL_PRINT_LIMIT)}): {fmt(SMALL_PRINT_CHARGE)} flat transport is added to this function — once, however many small prints it has.</div>}
                     {/* Two OPTIONAL fields side by side — they were stacked full-width, making every print
                         row ~3 rows tall for fields most jobs leave blank. */}
                     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginTop:7,alignItems:"start"}}>
