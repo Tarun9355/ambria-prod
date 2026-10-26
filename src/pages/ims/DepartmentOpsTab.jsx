@@ -12,6 +12,7 @@ import { fetchOpsExpenses } from "../../lib/ims/opsExpenses";
 import { ZONE_META, trussBaseArea, CARPET_OFF } from "../../lib/studio/taxonomy";
 import { prefsOf } from "../../lib/studio/carpetPrefs";
 import { carpetFloorsOf, planCarpets, carpetKey, carpetStockFor } from "../../lib/ims/carpetPlan";
+import CarpetPickerModal from "./CarpetPickerModal.jsx";
 import { orderZoneKeys } from "../../lib/ims/zoneOrder";
 import { calcZoneTrussPreview, calcZoneFabric, dcFabricMultOf } from "../../lib/studio/pricing";
 import { ZONE_DEF_SK, RC_SK_TR } from "../../lib/studio/keys";
@@ -779,8 +780,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   // and never needs this; on a phone the grid is dates only, so one has to be chosen to list.
   const [pickDay, setPickDay] = useState(null);
   const [selId, setSelId] = useState(null);
-  const [carpetMore, setCarpetMore] = useState(null); // key of the carpet floor whose "choose another carpet" list is open
-  const [carpetQ, setCarpetQ] = useState("");         // search box inside that list
+  const [carpetMore, setCarpetMore] = useState(null); // key of the carpet floor whose carpet picker (modal) is open
   const [zoomImg, setZoomImg] = useState(null); // click-to-enlarge lightbox (ops needs a clear big photo)
   const [opsView, setOpsView] = useState("planning"); // "planning" | "onsite" — split on-site (receiving/dismantle) into its own view
   // The mini calendar that used to sit in this rail is gone — the IMS Calendar tab is the one
@@ -6774,15 +6774,11 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                             })}
                           </div>
                         )}
-                        {/* ── NONE OF SALES' CHOICES AVAILABLE? ── Planning can pick any other carpet in stock by hand. Only carpets with
-                            enough free on this floor's date can be chosen; the pick is kept as the floor's decision like any other. */}
+                        {/* ── NONE OF SALES' CHOICES AVAILABLE? ── Planning can pick any carpet in stock by hand, in the same availability
+                            picker Build uses (free sqft for this floor's date; short ones cannot be picked). */}
                         {(() => {
                           const anyCovers = r.options.some(o => o.enough);
-                          const open = carpetMore === r.key;
-                          const q = carpetQ.trim().toLowerCase();
-                          const stock = open ? carpetStockFor(r, inventory, blocks, sel?.id).filter(o => !r.options.some(x => x.id === o.id) && (!q || String(o.name).toLowerCase().includes(q))) : [];
-                          const photoOf = (it) => (it ? (it.img || (Array.isArray(it.photoUrls) && it.photoUrls[0]) || "") : "");
-                          const mph = r.manual ? photoOf(r.manual.item) : "";
+                          const mph = r.manual && r.manual.item ? (r.manual.item.img || (Array.isArray(r.manual.item.photoUrls) && r.manual.item.photoUrls[0]) || "") : "";
                           return (
                             <div className="mt-3 pt-2.5 border-t border-gray-100">
                               {r.manual && (
@@ -6795,46 +6791,27 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                                   <button type="button" onClick={() => undecide(r.key)} className="shrink-0 text-[12px] font-semibold rounded-md px-2 py-1 bg-emerald-600 text-white hover:bg-emerald-700 cursor-pointer" title="Chosen — tap to undo">✓ Using this · undo</button>
                                 </div>
                               )}
-                              <button type="button" onClick={() => { setCarpetQ(""); setCarpetMore(open ? null : r.key); }} aria-expanded={open}
+                              <button type="button" onClick={() => setCarpetMore(r.key)}
                                 className={"text-[12px] font-semibold rounded-md px-2.5 py-1 ring-1 cursor-pointer " + (!anyCovers && !r.manual ? "ring-red-300 text-red-700 bg-red-50 hover:bg-red-100" : "ring-gray-300 text-gray-700 hover:bg-gray-50")}>
-                                {open ? "Hide other carpets" : !anyCovers && !r.manual && r.options.length ? "None of these is available — choose another carpet…" : r.manual ? "Choose a different carpet…" : "Choose another carpet…"}
+                                {!anyCovers && !r.manual && r.options.length ? "None of these is available — choose another carpet…" : r.manual ? "Choose a different carpet…" : "Choose another carpet…"}
                               </button>
-                              {open && (
-                                <div className="mt-2">
-                                  <input value={carpetQ} onChange={e => setCarpetQ(e.target.value)} placeholder="Search carpets…" aria-label="Search carpets"
-                                    className="w-full sm:w-64 rounded-md ring-1 ring-gray-300 px-2 py-1 text-[12.5px] mb-2" />
-                                  {stock.length === 0 ? <div className="text-xs text-gray-500">No other carpet matches.</div> : (
-                                    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 max-h-80 overflow-y-auto pr-1">
-                                      {stock.map(o => {
-                                        const ph = photoOf(o.item);
-                                        const okPick = o.enough;
-                                        return (
-                                          <div key={o.id} className={"rounded-lg p-2 flex flex-col gap-2 ring-1 ring-gray-200 bg-white " + (okPick ? "" : "opacity-60")}>
-                                            <div className="flex items-center gap-2 min-w-0">
-                                              {ph ? <img src={thumbUrl(ph, 96)} loading="lazy" decoding="async" alt="" onClick={() => setZoomImg(ph)} className="w-12 h-12 rounded-md object-cover border border-gray-200 cursor-zoom-in shrink-0" /> : <span className="w-12 h-12 rounded-md bg-gray-100 shrink-0" />}
-                                              <div className="min-w-0">
-                                                <div className="text-[13px] font-semibold text-gray-900 truncate" title={o.name}>{o.name}</div>
-                                                <div className={"text-[11px] tabular-nums " + (okPick ? "text-emerald-700" : "text-red-600")}>
-                                                  {okPick ? `✓ ${Math.round(o.free)} sqft free · covers it` : `${Math.round(o.free)} sqft free · SHORT ${Math.round(o.short)}`}
-                                                </div>
-                                              </div>
-                                            </div>
-                                            <button type="button" disabled={!okPick} onClick={() => { decide(r.key, o, true); setCarpetMore(null); }}
-                                              title={okPick ? `Use ${o.name} for this floor` : "Not enough free on this date for this floor"}
-                                              className={"text-[12px] font-semibold rounded-md px-2 py-1 ring-1 " + (okPick ? "ring-gray-300 text-gray-800 hover:bg-gray-50 cursor-pointer" : "ring-gray-200 text-gray-400 cursor-not-allowed")}>Use this</button>
-                                          </div>
-                                        );
-                                      })}
-                                    </div>
-                                  )}
-                                </div>
-                              )}
                             </div>
                           );
                         })()}
                       </div>
                     );
                   })}
+                  {carpetMore && (() => {
+                    const r = plan.rows.find(x => x.key === carpetMore);
+                    if (!r) return null;
+                    // every carpet in stock with this floor's date free sqft; sales' own choices carry their rank
+                    const all = carpetStockFor(r, inventory, blocks, sel?.id).map(o => ({ ...o, rank: r.options.find(x => x.id === o.id)?.rank ?? null }));
+                    return (
+                      <CarpetPickerModal floor={r} options={all} selectedId={r.decidedId} dateLabel={dayLbl(r.date)}
+                        onClose={() => setCarpetMore(null)}
+                        onSave={(o) => { decide(r.key, o, o.rank === null); setCarpetMore(null); }} />
+                    );
+                  })()}
                 </div>
               </div>
               );
