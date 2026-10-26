@@ -7,7 +7,7 @@ const A = item("A", "Maroon", 100), B = item("B", "Grey", 300), C = item("C", "B
 const itemsById = { A, B, C };
 const pref = (it) => ({ id: it.id, name: it.name, free: it.qty });
 
-const layout = (zones) => [{ fnIdx: 0, date: "2027-01-03", type: "Wedding", enabledEls: { stage: true, entry: true }, zones }];
+const layout = (zones) => [{ fnIdx: 0, date: "2027-01-03", type: "Wedding", venue: "Aura", enabledEls: { stage: true, entry: true }, zones }];
 
 describe("freeForEvent", () => {
   it("owned minus what OTHER events hold that day, not this event's own hold", () => {
@@ -169,5 +169,79 @@ describe("a carpet Planning picks by hand when none of sales' choices is availab
     // everything that covers comes before everything that does not
     const firstShort = list.findIndex((o) => !o.enough);
     expect(list.slice(firstShort).every((o) => !o.enough)).toBe(true);
+  });
+});
+
+describe("same venue, same date: a carpet already laid for another event is reusable", () => {
+  const T = item("T", "Teal", 300, { subCat: "carpet" });
+  const stock = { ...itemsById, T };
+  const orders = [
+    { id: "eo_other", clientName: "Mr. Sharma", venue: "Aura", functionsDetail: [{ date: "2027-01-03", venue: "Aura", type: "Haldi" }] },
+    { id: "eo_far", clientName: "Ms. Bansal", venue: "Exotica", functionsDetail: [{ date: "2027-01-03", venue: "Exotica", type: "Wedding" }] },
+  ];
+  const floors = carpetFloorsOf(layout({ stage: { cpT: "old", floorDims: { L: 20, W: 10 }, cpPrefs: [pref(T)], cpInvId: "T", cpInvName: "Teal", cpInvFree: 300 } }));
+  const run = (blocks, choice = {}) => planCarpets({ floors, itemsById: stock, blocks, eventId: "eo_me", choice, eventOrders: orders }).rows[0];
+
+  it("another client's event holding the carpet at THIS venue that day does not make it short", () => {
+    // 300 owned, another event at the same venue holds 250 that day: raw free 50, but it stays laid, so 200 sqft is covered
+    const r = run({ T: [{ date: "2027-01-03", eventId: "eo_other", qty: 250 }] });
+    const o = r.options[0];
+    expect(o.free).toBe(50);
+    expect(o.reuse).toMatchObject({ qty: 250, who: ["Mr. Sharma · Haldi"] });
+    expect(o.enough).toBe(true);
+    expect(o.short).toBe(0);
+    expect(r.status).toBe("open");
+  });
+  it("the same hold by an event at a DIFFERENT venue is a real conflict and stays short", () => {
+    const o = run({ T: [{ date: "2027-01-03", eventId: "eo_far", qty: 250 }] }).options[0];
+    expect(o.reuse).toBeNull();
+    expect(o.enough).toBe(false);
+    expect(o.short).toBe(150);
+  });
+  it("reuse never promises more than the studio owns", () => {
+    const o = run({ T: [{ date: "2027-01-03", eventId: "eo_other", qty: 900 }] }).options[0];
+    expect(o.enough).toBe(true); // min(300 owned, 0 free + 900) = 300 >= 200
+    const bigFloor = carpetFloorsOf(layout({ stage: { cpT: "old", floorDims: { L: 30, W: 20 }, cpPrefs: [pref(T)], cpInvId: "T", cpInvName: "Teal", cpInvFree: 300 } }));
+    const r = planCarpets({ floors: bigFloor, itemsById: stock, blocks: { T: [{ date: "2027-01-03", eventId: "eo_other", qty: 900 }] }, eventId: "eo_me", choice: {}, eventOrders: orders }).rows[0];
+    expect(r.options[0].short).toBe(300); // 600 sqft needed, only 300 exist
+  });
+  it("carpetStockFor carries the reuse too", () => {
+    const list = carpetStockFor(floors[0], [{ ...T }], { T: [{ date: "2027-01-03", eventId: "eo_other", qty: 250 }] }, "eo_me", orders, floors, {});
+    expect(list[0].enough).toBe(true);
+    expect(list[0].reuse.qty).toBe(250);
+  });
+
+  describe("another function of the SAME event", () => {
+    const two = carpetFloorsOf([
+      { fnIdx: 0, date: "2027-01-03", type: "Haldi", venue: "Aura", enabledEls: { stage: true }, zones: { stage: { cpT: "old", floorDims: { L: 20, W: 10 }, cpPrefs: [pref(T)], cpInvId: "T", cpInvName: "Teal", cpInvFree: 300 } } },
+      { fnIdx: 1, date: "2027-01-03", type: "Cocktail", venue: "Aura", enabledEls: { stage: true }, zones: { stage: { cpT: "old", floorDims: { L: 20, W: 10 }, cpPrefs: [pref(T)], cpInvId: "T", cpInvName: "Teal", cpInvFree: 300 } } },
+    ]);
+    const choice = { [two[0].key]: { id: "T" }, [two[1].key]: { id: "T" } };
+    it("both functions use the same carpet at one venue on one date: shared, not over-committed", () => {
+      const { rows, over } = planCarpets({ floors: two, itemsById: stock, blocks: {}, eventId: "e", choice, eventOrders: [] });
+      expect(over).toEqual({});
+      expect(rows[0].options[0].reuse.siblings).toEqual(["Cocktail · stage"]);
+      expect(rows[1].options[0].reuse.siblings).toEqual(["Haldi · stage"]);
+    });
+    it("at different venues they add up (200 + 200 > 300)", () => {
+      const apart = two.map((f, i) => (i === 1 ? { ...f, venue: "Exotica" } : f));
+      const { over, rows } = planCarpets({ floors: apart, itemsById: stock, blocks: {}, eventId: "e", choice, eventOrders: [] });
+      expect(over.T).toEqual({ free: 300, committed: 400 });
+      expect(rows[0].options[0].reuse).toBeNull();
+    });
+    it("on different dates they do not compete at all", () => {
+      const days = two.map((f, i) => (i === 1 ? { ...f, date: "2027-01-04" } : f));
+      expect(planCarpets({ floors: days, itemsById: stock, blocks: {}, eventId: "e", choice, eventOrders: [] }).over).toEqual({});
+    });
+    it("two floors of ONE function at one venue still add up (they are different floors)", () => {
+      const sameFn = carpetFloorsOf(layout({
+        stage: { cpT: "old", floorDims: { L: 20, W: 10 }, cpPrefs: [pref(T)], cpInvId: "T", cpInvName: "Teal", cpInvFree: 300 },
+        entry: { cpT: "old", floorDims: { L: 20, W: 10 }, cpPrefs: [pref(T)], cpInvId: "T", cpInvName: "Teal", cpInvFree: 300 },
+      }));
+      const ch = { [sameFn[0].key]: { id: "T" }, [sameFn[1].key]: { id: "T" } };
+      const { over, rows } = planCarpets({ floors: sameFn, itemsById: stock, blocks: {}, eventId: "e", choice: ch, eventOrders: [] });
+      expect(over.T).toEqual({ free: 300, committed: 400 });
+      expect(rows[0].options[0].reuse).toBeNull();
+    });
   });
 });

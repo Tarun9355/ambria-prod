@@ -38,6 +38,7 @@ import { extractLabeledValue, bestTaxMatch } from "../../lib/studio/videoDescrip
 import { paletteNames, paletteInList } from "../../lib/studio/colours";
 import { makeS } from "../../lib/studio/styles";
 import { dealAgencyFeePct, feePctOf, DEFAULT_AGENCY_FEE_PCT } from "../../lib/studio/agencyFee";
+import { sameVenueHolds, siblingCarpetUse } from "../../lib/studio/carpetReuse";
 import { findCrossFnReuseSource, computeFnInvQty, findSiblingFnInvUse, findSiblingFnSubcatOpportunity } from "../../lib/studio/crossFnReuse";
 import { computeFnFloralCost, buildMandiBreakdown } from "../../lib/studio/floralCost";
 import { computePeople, shiftToTiming, sizeFromMode, situationalFactorsFor, walkFnElements } from "../../lib/studio/manpowerCount";
@@ -10540,6 +10541,16 @@ export default function StudioApp() {
           });
         });
       });
+      // Carpet picker only (opts.multi): a carpet already laid for ANOTHER event at this same venue on this same date — another client's, or
+      // another function of this deal — stays down, so it is reusable here and marked orange rather than short.
+      const allFnsForReuse = opts?.multi ? (collectAllFunctionData() || []) : [];
+      const thisFnForReuse = allFnsForReuse.find((f) => f.fnIdx === activeFnIdx);
+      const carpetReuseOf = (it) => {
+        if (!opts?.multi) return null;
+        const holds = sameVenueHolds(blocksDetailForDate?.[it.id], eventOrders, pickerVenue, date, eo?.id);
+        const siblings = siblingCarpetUse(allFnsForReuse, thisFnForReuse, it.id);
+        return holds.qty > 0 || siblings.length ? { qty: holds.qty, who: holds.who.map((w) => w.name), siblings } : null;
+      };
       const items = (inventory || [])
         .filter(it => String(it.subCat || it.subcategory || "").toLowerCase().trim() === target)
         // ── PRICE THE WAY THE CALLER WILL USE IT ── (BUG-15)
@@ -10592,7 +10603,7 @@ export default function StudioApp() {
           const _ownStanding = standingQty(fvCfgForRepeat, pickerVenue, it.id);
           const netBlocksForDate = netOwnReservedBlocksLive(blocksForDate, it.id, blocksDetailForDate, eo?.id);
           const free = Math.max(0, Math.min(getStudioAvailable(it, netBlocksForDate), availableAtVenue(fvCfgForRepeat, pickerVenue, it)) - (usedQty[it.id] || 0));
-          return { id: it.id, name: it.name, photo: (Array.isArray(it.photoUrls) && it.photoUrls[0]) || it.img || "", free, total: Number(it.qty) || 0, usedIn: usedElsewhere[it.id] || [], venueSlack: _slack, ownStanding: _ownStanding, ownVenueName: _ownStanding > 0 ? (fixedVenueFor(fvCfgForRepeat, pickerVenue)?.name || pickerVenue) : null, unit: it.unit || "", photos: Array.isArray(it.photoUrls) ? it.photoUrls : [],
+          return { id: it.id, name: it.name, photo: (Array.isArray(it.photoUrls) && it.photoUrls[0]) || it.img || "", free, total: Number(it.qty) || 0, reuse: carpetReuseOf(it), usedIn: usedElsewhere[it.id] || [], venueSlack: _slack, ownStanding: _ownStanding, ownVenueName: _ownStanding > 0 ? (fixedVenueFor(fvCfgForRepeat, pickerVenue)?.name || pickerVenue) : null, unit: it.unit || "", photos: Array.isArray(it.photoUrls) ? it.photoUrls : [],
             // Out of stock AND can't be made in production (IMS Inventory's "Can be made" checkbox,
             // or not enough production lead time left before `date`) — genuinely unpickable here,
             // not just a cost%-priced shortfall. StudioModals.jsx's picker disables the card instead

@@ -46,12 +46,14 @@ export default function CarpetPickerModal({ floor, options, selectedId, dateLabe
                 const blocked = !o.enough && !on;
                 const ph = photoOf(o.item);
                 const out = !o.known || o.free <= 0;
+                // Same venue, same date: already laid for another event, so it stays down and can be reused here.
+                const reuseNote = o.reuse ? [...(o.reuse.siblings || []), ...(o.reuse.who || [])] : [];
                 return (
                   <div key={o.id} role="button" tabIndex={blocked ? -1 : 0} aria-pressed={on} aria-disabled={blocked}
                     onClick={() => { if (blocked) return; setSel(on ? null : o.id); }}
                     onKeyDown={(e) => { if (!blocked && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); setSel(on ? null : o.id); } }}
                     title={blocked ? `Short for this date — only ${Math.round(o.free ?? 0)} sqft free, this floor needs ${Math.round(floor.area)}` : undefined}
-                    className={"relative rounded-xl overflow-hidden border-2 bg-gray-50 " + (on ? "border-emerald-600" : "border-gray-200") + (blocked ? " opacity-55 cursor-not-allowed" : " cursor-pointer hover:shadow-md")}>
+                    className={"relative rounded-xl overflow-hidden border-2 bg-gray-50 " + (on ? "border-emerald-600" : reuseNote.length ? "border-orange-400" : "border-gray-200") + (blocked ? " opacity-55 cursor-not-allowed" : " cursor-pointer hover:shadow-md")}>
                     {on && <span className="absolute top-1.5 left-1.5 z-10 text-[10.5px] font-bold px-1.5 py-0.5 rounded-md bg-emerald-600 text-white">✓ Chosen</span>}
                     {!on && o.rank !== null && o.rank !== undefined && <span className="absolute top-1.5 left-1.5 z-10 text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-gray-900/85 text-white" title="One of the carpets sales picked">Sales · {RANK[o.rank] || o.rank + 1}</span>}
                     <span className={"absolute top-1.5 right-1.5 z-10 text-xs font-extrabold min-w-[22px] text-center px-1.5 py-0.5 rounded-lg text-white " + (out ? "bg-red-500/90" : "bg-emerald-500/90")} title="Free on the event date">{o.known ? Math.round(o.free) : "?"}</span>
@@ -61,6 +63,7 @@ export default function CarpetPickerModal({ floor, options, selectedId, dateLabe
                       <div className="text-[11px] font-semibold text-gray-900 truncate" title={o.name}>{o.name}</div>
                       {!o.enough && o.known && <div className="text-[9.5px] mt-0.5 font-extrabold text-red-500">SHORT {Math.ceil(o.short)} sqft · needs {Math.round(floor.area)}{on ? " · tap to remove" : ""}</div>}
                       {!o.known && <div className="text-[9.5px] mt-0.5 font-bold text-gray-500">Stock not known</div>}
+                      {reuseNote.length > 0 && <div className="text-[9px] mt-0.5 font-bold text-orange-600" title="Already laid at this venue on this date for another event — it stays down, so it can be reused here">⇄ In use at this venue today: {reuseNote.join(", ")}{o.reuse.qty > 0 ? ` · ${Math.round(o.reuse.qty)} sqft laid` : ""} — reusable</div>}
                       <div className={"text-[9.5px] mt-0.5 font-semibold " + (o.enough ? "text-emerald-700" : "text-emerald-700/60")}>{Math.round(o.item ? (Number(o.item.qty) || 0) : (o.free ?? 0))} sqft total</div>
                     </div>
                   </div>
@@ -72,7 +75,7 @@ export default function CarpetPickerModal({ floor, options, selectedId, dateLabe
 
         <div className="px-5 py-3 border-t border-gray-200 flex items-center justify-between gap-3 flex-wrap">
           <span className="text-[10px] text-gray-500 max-w-[560px]">
-            {chosen ? `${chosen.name} will be laid on this floor.` : "Pick the carpet that goes down on this floor."} A carpet with less free on this date than the {Math.round(floor.area)} sqft floor needs is marked short and cannot be picked.
+            {chosen ? `${chosen.name} will be laid on this floor.` : "Pick the carpet that goes down on this floor."} A carpet with less free on this date than the {Math.round(floor.area)} sqft floor needs is marked short and cannot be picked. Orange = already laid at this venue today for another event, so it can be reused.
           </span>
           <div className="flex gap-2">
             <button type="button" onClick={onClose} className="px-4 py-2 rounded-lg border border-gray-300 text-xs font-semibold text-gray-600 cursor-pointer hover:bg-gray-50">Cancel</button>

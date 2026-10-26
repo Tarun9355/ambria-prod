@@ -896,7 +896,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     const floors = carpetFloorsOf(sel?.functionsDetail, (fn, zk) => fn?.zoneNames?.[zk] || ZONE_META[zk]?.label || String(zk).replace(/[_-]+/g, " ").replace(/\b\w/g, c => c.toUpperCase()));
     const itemsById = {};
     (inventory || []).forEach(i => { if (i?.id != null) itemsById[i.id] = i; });
-    carpetPlanCache = planCarpets({ floors, itemsById, blocks, eventId: sel?.id, choice: sel?.deptOps?.Tenting?.carpetChoice || {} });
+    carpetPlanCache = planCarpets({ floors, itemsById, blocks, eventId: sel?.id, choice: sel?.deptOps?.Tenting?.carpetChoice || {}, eventOrders });
     return carpetPlanCache;
   };
   // ── THE PANEL: inline from sm up, a bottom sheet on a phone ──
@@ -6784,6 +6784,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                                       <div className={"text-[11px] tabular-nums " + (!o.known ? "text-gray-500" : o.enough ? "text-emerald-700" : "text-red-600")}>
                                         {!o.known ? "Stock not known" : o.enough ? `✓ ${Math.round(o.free)} sqft free · covers it` : `${Math.round(o.free)} sqft free · short ${Math.round(o.short)}`}
                                       </div>
+                                      {o.reuse && <div className="text-[10.5px] font-semibold text-orange-600" title="Already laid at this venue on this date for another event — it stays down, so it can be reused here">⇄ In use here: {[...(o.reuse.siblings || []), ...(o.reuse.who || [])].join(", ")}{o.reuse.qty > 0 ? ` · ${Math.round(o.reuse.qty)} sqft laid` : ""} — reusable</div>}
                                       {!on && r.suggestedId === o.id && !r.decidedId && <div className="text-[10.5px] font-semibold text-sky-700">Suggested</div>}
                                     </div>
                                   </div>
@@ -6826,7 +6827,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                     const r = plan.rows.find(x => x.key === carpetMore);
                     if (!r) return null;
                     // every carpet in stock with this floor's date free sqft; sales' own choices carry their rank
-                    const all = carpetStockFor(r, inventory, blocks, sel?.id).map(o => ({ ...o, rank: r.options.find(x => x.id === o.id)?.rank ?? null }));
+                    const all = carpetStockFor(r, inventory, blocks, sel?.id, eventOrders, plan.rows, sel?.deptOps?.Tenting?.carpetChoice || {}).map(o => ({ ...o, rank: r.options.find(x => x.id === o.id)?.rank ?? null }));
                     return (
                       <CarpetPickerModal floor={r} options={all} selectedId={r.decidedId} dateLabel={dayLbl(r.date)}
                         onClose={() => setCarpetMore(null)}
