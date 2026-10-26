@@ -680,6 +680,34 @@ export function TrussStack({ S, customCeilingField, customMaskingField, k, zc, z
 // `nested` marks one of a zone's EXTRA platform footprints: same card, same colours, titled
 // "Platform N" with a remove control in place of the cost, which the first card already totals
 // across every footprint.
+// A print job's reference picture: paste a link, or upload a photo from the device (stored like the other client uploads). Shows a small
+// preview with a remove button. onChange receives the new URL ("" when removed).
+export function PrintRefPhoto({ value, onChange, S, textS, border, accent }) {
+  const [busy, setBusy] = useState(false);
+  const fileRef = useRef(null);
+  const pick = async (file) => {
+    if (!file) return;
+    setBusy(true);
+    try { onChange(await uploadToStorage(file, STORAGE_FOLDERS.CLIENT)); }
+    catch (e) { alert("Photo upload failed: " + (e?.message || e)); }
+    finally { setBusy(false); if (fileRef.current) fileRef.current.value = ""; }
+  };
+  return (
+    <div style={{marginTop:6}}>
+      <div style={{display:"flex",gap:6,alignItems:"center"}}>
+        <input value={value||""} onChange={e=>onChange(e.target.value)} placeholder="Reference image URL (optional)" style={{...S.input,fontSize:11.5,padding:"3px 8px",marginBottom:0,flex:1,minWidth:0}} />
+        <button type="button" onClick={()=>fileRef.current&&fileRef.current.click()} disabled={busy} title="Upload a reference photo from this device"
+          style={{flexShrink:0,padding:"4px 10px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:busy?textS:accent,fontSize:11.5,fontWeight:700,cursor:busy?"default":"pointer",whiteSpace:"nowrap"}}>{busy?"Uploading…":"Upload photo"}</button>
+        <input ref={fileRef} type="file" accept="image/*" style={{display:"none"}} onChange={e=>pick(e.target.files&&e.target.files[0])} />
+      </div>
+      {value&&<div style={{position:"relative",marginTop:6,display:"inline-block",maxWidth:"100%"}}>
+        <img src={fitUrl(value,300)} decoding="async" alt="Reference" style={{display:"block",maxWidth:"100%",maxHeight:110,minWidth:48,minHeight:32,objectFit:"cover",borderRadius:6,background:"rgba(0,0,0,0.05)"}} onError={e=>{ if (e.target.src!==value) { e.target.src=value; } }} />
+        <button type="button" onClick={()=>onChange("")} aria-label="Remove reference photo" title="Remove" style={{position:"absolute",top:3,right:3,width:20,height:20,borderRadius:10,border:"none",background:"rgba(0,0,0,0.6)",color:"#fff",fontSize:12,lineHeight:"20px",padding:0,cursor:"pointer"}}>×</button>
+      </div>}
+    </div>
+  );
+}
+
 export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, imsInventory = [], nested = false, title, onRemove, scale = 1, openAvailModal, zoneKey, rowIdx = 0, onCarpetAll, carpetShortOf, carpetRemainingOf, carpetReuse, guestPriceMultiplier = 1 }) {
   // The picked carpet can only cover so many sqft: a width/depth that would take this floor past
   // what is left of its free stock (minus the other floors using the same carpet) is not saved.
@@ -5171,8 +5199,7 @@ undefined
                         row ~3 rows tall for fields most jobs leave blank. */}
                     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginTop:7,alignItems:"start"}}>
                       <div>
-                    <input value={p.refImageUrl||""} onChange={e=>setPrint({refImageUrl:e.target.value})} placeholder="Reference image URL (optional)" style={{...S.input,fontSize:11.5,padding:"3px 8px",marginTop:6,marginBottom:0,width:"100%"}} />
-                    {p.refImageUrl&&<img src={fitUrl(p.refImageUrl,300)} decoding="async" alt="" style={{marginTop:6,width:"100%",maxHeight:100,objectFit:"cover",borderRadius:6}} onError={e=>{e.target.style.display="none";}} />}
+                    <PrintRefPhoto value={p.refImageUrl} onChange={url=>setPrint({refImageUrl:url})} S={S} textS={textS} border={border} accent={accent} />
                       </div>
                       <div style={{position:"relative"}}>
                     {/* Optional link to an inventory element — for cross-reference only, never required */}
@@ -5854,7 +5881,7 @@ undefined
                             {showCosts&&<span style={{fontSize:12,fontWeight:700,color:"#0EA5E9",marginLeft:"auto"}}>{rate>0?fmt(sqft*rate*pq):"— pick material"}</span>}
                             <span onClick={()=>removePrint(pi)} style={{cursor:"pointer",color:"#E11D48",fontWeight:700,fontSize:12.5,marginLeft:showCosts?0:"auto"}}>×</span>
                           </div>
-                          <input value={p.refImageUrl||""} onChange={e=>setPrint(pi,{refImageUrl:e.target.value})} placeholder="Reference image URL (optional)" style={{...S.input,fontSize:11.5,padding:"3px 8px",marginTop:6,marginBottom:0,width:"100%"}}/>
+                          <PrintRefPhoto value={p.refImageUrl} onChange={url=>setPrint(pi,{refImageUrl:url})} S={S} textS={textS} border={border} accent={accent} />
                         </div>;
                       })}
                     </div>}
