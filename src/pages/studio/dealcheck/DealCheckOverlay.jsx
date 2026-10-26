@@ -3470,16 +3470,24 @@ export default function DealCheckOverlay({ ctx }) {
                                           const decRaw = el.pid ? ((eventOrders || []).find(e => e.clientId === activeClientId)?.deptOps?.Fabric?.itemChoice || {})[`${fnIdx}|${card.zoneKey}|${el.pid}`] : null;
                                           const dec = validDecision(decRaw, { date: fns[fnIdx]?.fnDate, fnLabel: fns[fnIdx]?.fnType }) && (decRaw.other || decRaw.manual || ch.some(p => p.id === decRaw.id)) ? decRaw : null;
                                           return (
-                                            <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:7}}>
-                                              <span className="dc-cap" style={{color:IV.ink2,letterSpacing:1.1}}>Choices</span>
-                                              {ch.map((p, i) => (
-                                                <span key={p.id} title={`${ELEMENT_PREF_LABELS[i]}: ${p.name}${p.free != null ? ` — ${Math.round(p.free)} free when picked` : ""}`}
-                                                  style={{display:"inline-flex",alignItems:"center",gap:5,maxWidth:"100%",padding:"2px 8px 2px 4px",borderRadius:999,border:`1px solid ${IV.border}`,background:IV.tile,color:IV.ink,fontSize:11,fontWeight:600}}>
-                                                  <span style={{flexShrink:0,width:15,height:15,borderRadius:8,background:IV.gold,color:"#fff",fontSize:9.5,fontWeight:800,display:"inline-flex",alignItems:"center",justifyContent:"center"}}>{i+1}</span>
-                                                  <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:150}}>{p.name}</span>
-                                                </span>
-                                              ))}
-                                              <span style={{fontSize:10.5,fontWeight:dec?700:650,color:dec?IV.green:IV.gold}}>{dec ? `✓ Planning chose: ${dec.other ? "arranged separately (not from stock)" : dec.name}` : "Planning decides"}</span>
+                                            <div style={{display:"flex",flexDirection:"column",gap:5,marginBottom:8}}>
+                                              <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                                                <span className="dc-cap" style={{color:IV.ink2,letterSpacing:1.1}}>Choices</span>
+                                                <span style={{fontSize:11,fontWeight:dec?700:650,color:dec?IV.green:IV.gold}}>{dec ? `✓ Planning chose: ${dec.other ? "arranged separately (not from stock)" : dec.name}` : "Planning decides"}</span>
+                                              </div>
+                                              {ch.map((p, i) => {
+                                                const it2 = dcInventoryCache.find(x => x.id === p.id);
+                                                const ph = it2 ? imsField.photos(it2)[0] : null;
+                                                return (
+                                                  <div key={p.id} title={`${ELEMENT_PREF_LABELS[i]}: ${p.name}${p.free != null ? ` — ${Math.round(p.free)} free when picked` : ""}`}
+                                                    style={{display:"flex",alignItems:"center",gap:9,minWidth:0,padding:"5px 10px",borderRadius:8,border:`1px solid ${i===0?IV.green:IV.border}`,background:i===0?"rgba(5,150,105,0.07)":IV.tile,color:i===0?IV.green:IV.ink,fontSize:12.5,fontWeight:i===0?700:550}}>
+                                                    <span style={{flexShrink:0,width:18,height:18,borderRadius:9,background:i===0?IV.green:IV.gold,color:"#fff",fontSize:10.5,fontWeight:800,display:"inline-flex",alignItems:"center",justifyContent:"center"}}>{i+1}</span>
+                                                    {ph ? <HoverZoom src={thumbUrl(ph, 320)}><img loading="lazy" decoding="async" src={thumbUrl(ph, 64)} alt="" style={{width:32,height:32,borderRadius:6,objectFit:"cover",flexShrink:0,background:"#FFFFFF"}}/></HoverZoom>
+                                                      : <span style={{width:32,height:32,borderRadius:6,flexShrink:0,background:IV.chip}}/>}
+                                                    <span style={{flex:1,minWidth:0,overflowWrap:"anywhere",lineHeight:1.3}}>{p.name}</span>
+                                                  </div>
+                                                );
+                                              })}
                                             </div>
                                           );
                                         })()}
