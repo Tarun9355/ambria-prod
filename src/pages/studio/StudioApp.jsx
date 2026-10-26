@@ -2907,7 +2907,7 @@ export default function StudioApp() {
         loadRcRows().catch(() => null),
         fetchAll("rate_card_categories").catch(() => null),
         fetchAll("inventory").catch(() => null),
-        kvGet(RC_SK_CATS).catch(() => null),
+        kvTryGet(RC_SK_CATS).catch(() => ({ ok: false, error: "exception" })),
         kvGet(RC_SK_TR).catch(() => null),
       ]);
       // Events — auto-wrap to multi-function shape (functions[]).
@@ -2956,16 +2956,27 @@ export default function StudioApp() {
         const rows = invRows;
         if (Array.isArray(rows) && !cancelled) setImsInventory(rows.map(rowToItem).filter(Boolean));
       } catch { /* ignore */ }
-      // Rate Card Categories — on first boot (v == null), seed defaults and recover orphaned
-      // category IDs so items still have a group to render under. When a saved blob exists,
-      // skip recovery entirely: the team intentionally manages categories via the editor and
-      // orphan-recovery would silently undo deliberate deletes.
+      // Rate Card Categories — on first boot (the row genuinely doesn't exist yet), seed defaults
+      // and recover orphaned category IDs so items still have a group to render under. When a
+      // saved blob exists, skip recovery entirely: the team intentionally manages categories via
+      // the editor and orphan-recovery would silently undo deliberate deletes.
+      //
+      // Confirmed live (2026-10-26): this used to read via the unsafe kvGet, which collapses "the
+      // row genuinely doesn't exist" and "the read itself failed" into the same null — so any
+      // transient failure of this ONE call was indistinguishable from first boot, re-triggering
+      // reseed-with-defaults AND orphan-recovery, silently re-adding every stale category
+      // (truss/arches/wroughtiron/glass/fixed/masking/ceiling/platform) an admin had deliberately
+      // deleted via the Sub-Categories screen. kvTryGet (lib/ims/kv.js) distinguishes the two —
+      // only `ok:true, missing:true` counts as first boot; `ok:false` (a real read failure) now
+      // falls back to showing RC_CATS_DEFAULT for just this render, with no write at all.
       try {
-        const v = rcCatsVal;
+        const res = rcCatsVal;
+        const isFirstBoot = !!(res?.ok && res.missing);
+        const v = res?.ok ? res.value : null;
         let cats = (v != null) ? (Array.isArray(parse(v)) ? parse(v) : null) : null;
-        if (!cats || !cats.length) { cats = RC_CATS_DEFAULT; if (v == null) reliableSave(RC_SK_CATS, JSON.stringify(RC_CATS_DEFAULT), "Categories").catch(() => {}); }
+        if (!cats || !cats.length) { cats = RC_CATS_DEFAULT; if (isFirstBoot) reliableSave(RC_SK_CATS, JSON.stringify(RC_CATS_DEFAULT), "Categories").catch(() => {}); }
         const items = loadedRcItems || [];
-        if (items.length && v == null) {
+        if (items.length && isFirstBoot) {
           const haveIds = new Set(cats.map(c => c.id));
           const orphanIds = [...new Set(items.map(i => i && i.cat).filter(id => id && !haveIds.has(id)))];
           if (orphanIds.length) {

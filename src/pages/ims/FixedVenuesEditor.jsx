@@ -5,9 +5,8 @@
 //   • Cost — standing items bill at a discount; extras/other venues bill full rate.
 // Match is by SPECIFIC inventory item (design): swap to a different item → full labour + full rental.
 import { useState, useMemo, useEffect } from "react";
-import { supabase } from "../../lib/supabase";
-import { VENUES_SK } from "../../lib/studio/keys";
-import { migrateVenues, normVenueName } from "../../lib/ims/venueProperties";
+import { supabase, fetchAll } from "../../lib/supabase";
+import { assembleVenuesFromRows, normVenueName } from "../../lib/ims/venueProperties";
 import { MANPOWER_TYPES } from "../../lib/ims/constants";
 import { thumbUrl } from "../../lib/studio/thumb";
 import { useConfirm } from "../../components/ui";
@@ -19,34 +18,25 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
   // below must offer ONLY those, not every venue name IMS has ever seen. venueParents (what the
   // dropdown used to be built from) mixes those in with outside venues and bare sub-venue names,
   // with no "is this actually in-house" bit to filter on.
-  // The venues row (`ambria-v13-venues`) is Studio-owned and deliberately stripped out of IMS's
-  // normal settings load (see IMS.jsx's applySettingsRows) — same self-contained fetch
-  // ImsTransportPanel.jsx already does for the same reason, mirrored here rather than widening
-  // that filter and pulling every Studio blob into IMS's shared settings state.
-  // migrateVenues also runs here (not just in VenuesEditor.jsx) so the stable-id property list
-  // this screen links against exists from the FIRST time anyone opens Fixed Venues, without
-  // depending on someone having visited the new Venues panel first — see VENUE_MIGRATION_PLAN.md.
+  // Read-only here, straight from the `venues` TABLE (migration 036) — this screen never edits the
+  // venue catalogue itself, only standing inventory per property, so it has no business writing
+  // venue rows (or, as it used to, independently re-saving the WHOLE legacy settings blob on
+  // every mount — exactly the pattern that caused the venues data-loss incidents VenuesEditor.jsx's
+  // own top comment and migration 036 describe; this file no longer touches that blob at all).
   const [venues, setVenues] = useState({ inhouse: [], outdoor: [], properties: [] });
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
-      const { data } = await supabase.from("settings").select("value").eq("key", VENUES_SK).maybeSingle();
+      const rows = await fetchAll("venues").catch(() => []);
       if (cancelled) return;
-      let raw = data?.value;
-      if (typeof raw === "string") { try { raw = JSON.parse(raw); } catch { raw = null; } }
-      const migrated = migrateVenues(raw || { inhouse: [], outdoor: [] });
-      if (JSON.stringify(migrated) !== JSON.stringify(raw || { inhouse: [], outdoor: [] })) {
-        await supabase.from("settings").upsert({ key: VENUES_SK, value: JSON.stringify(migrated) }, { onConflict: "key" });
-      }
-      setVenues(migrated);
+      setVenues(assembleVenuesFromRows(rows));
     };
     load();
-    // Live: adding/renaming/deleting an in-house venue in Studio → Manage → Settings should show
-    // up here without needing to reload this panel — refetch this one settings row on any change
-    // to it instead of the one-time-fetch-on-mount ImsTransportPanel.jsx uses for the same row.
+    // Live: adding/renaming/deleting an in-house venue in IMS's Venues editor should show up here
+    // without needing to reload this panel.
     const ch = supabase
-      .channel(`realtime:settings:${VENUES_SK}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "settings", filter: `key=eq.${VENUES_SK}` }, load)
+      .channel("realtime:venues:fixed-venues-editor")
+      .on("postgres_changes", { event: "*", schema: "public", table: "venues" }, load)
       .subscribe();
     return () => { cancelled = true; try { supabase.removeChannel(ch); } catch { /* ignore */ } };
   }, []);

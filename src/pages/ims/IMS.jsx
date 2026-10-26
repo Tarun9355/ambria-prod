@@ -323,14 +323,18 @@ export default function IMS() {
     const byCat = {};
     const flat = new Set();
     for (const it of studioRcItems) {
-      // Map a rate-card item's category id → label. If the id isn't in the live cats yet
-      // (orphan / freshly-added before the cats blob synced), surface it under its raw id so its
-      // sub-cats are NEVER dropped — being dynamic means losing nothing. An id shaped like an
-      // auto-generated one ("cat_xxxxx") specifically means its OWN category row was since
-      // deleted/renamed with these items never reassigned — there's no real name left to show, so
-      // it reads as "Uncategorized" (pooling with any other such orphan) rather than leaking a raw
-      // database id into a category picker. Anything else unresolved still surfaces as itself.
-      const label = catById[it.cat] || (/^cat_[a-z0-9]+$/i.test(String(it.cat || "")) ? "Uncategorized" : it.cat);
+      // Map a rate-card item's category id → label. An unresolved id means its OWN category row
+      // was since deleted/renamed (or never existed) with these items never reassigned — there's
+      // no real name left to show, so it pools under "Uncategorized" rather than leaking the raw
+      // id (database-generated or a stale literal word like "truss"/"arches" from an old seed
+      // taxonomy) into the category picker as its own permanent, always-empty-looking bucket. This
+      // used to surface anything that wasn't an auto-generated "cat_xxxxx" id under itself
+      // instead — confirmed live (2026-10-26): that's exactly why deleting one of these from the
+      // Sub-Categories editor never actually got rid of it; the literal rate_card rows still
+      // carrying that old cat value re-derive it fresh on every render regardless of what's in the
+      // admin-managed category list. Pooling loses nothing — these items' sub-categories still
+      // show, just grouped under Uncategorized instead of sprawled across N fake categories.
+      const label = catById[it.cat] || "Uncategorized";
       if (!label) continue;
       pushLabel(label);
       if (!byCat[label]) byCat[label] = new Set();
