@@ -55,6 +55,14 @@ export function prefsPatch(row, slot, pick) {
   return { cpPrefs: list, cpInvId: list[0]?.id || null, cpInvName: list[0]?.name || "", cpInvFree: list[0] ? list[0].free : null };
 }
 
+// The fields for "these picks, in this order, ARE the preferences" — what the picker's Save writes when it lets all three be
+// chosen in one go. Empty or unusable picks clear them. At most three, no repeats.
+export function setPrefsPatch(picks) {
+  const seen = new Set();
+  const list = (Array.isArray(picks) ? picks : []).map(clean).filter((p) => p && !seen.has(p.id) && seen.add(p.id)).slice(0, CARPET_PREF_MAX);
+  return { cpPrefs: list, cpInvId: list[0]?.id || null, cpInvName: list[0]?.name || "", cpInvFree: list[0] ? list[0].free : null };
+}
+
 export const clearPrefsPatch = () => ({ cpPrefs: [], cpInvId: null, cpInvName: "", cpInvFree: null });
 
 export function prefsStatus(row) {

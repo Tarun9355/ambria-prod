@@ -193,7 +193,18 @@ export default function StudioModals({ ctx }) {
         // and only held while CustomItemModal was the sole onPick caller; Deal Check must pass
         // onPick or its pick lands in Build's state, and splits perfectly well. A kit-component
         // swap supplies neither and is still declined outright.
-        const splitCapable = !availModal.onPick || !!availModal.onSplit;
+        const splitCapable = (!availModal.onPick || !!availModal.onSplit) && !availModal.multi;
+        // Multi-select (carpet preferences): tap up to `max` items; the order tapped is their rank. One Save writes them all.
+        const multi = availModal.multi || null;
+        const multiIds = multi ? (availModal.multiIds || []) : [];
+        const MULTI_RANK = ["1st", "2nd", "3rd", "4th", "5th"];
+        const toggleMulti = (it) => setAvailModal(m => {
+          const ids = m.multiIds || [];
+          if (ids.includes(it.id)) return { ...m, multiIds: ids.filter(x => x !== it.id), multiNote: "" };
+          if (ids.length >= m.multi.max) return { ...m, multiNote: `Up to ${m.multi.max} — tap a selected one to remove it first` };
+          return { ...m, multiIds: [...ids, it.id], multiNote: "" };
+        });
+        const multiPicks = () => multiIds.map(id => (availModal.items || []).find(x => x.id === id)).filter(Boolean).map(x => ({ id: x.id, name: x.name, free: x.free }));
         // ELIGIBLE — is there more than one unit to divide?
         // Split is now shown whenever it is CAPABLE, and merely disabled when a single unit means
         // there is nothing to divide. Hiding it on qty 1 read as the feature being missing or
@@ -237,7 +248,9 @@ export default function StudioModals({ ctx }) {
               <div>
                 <div style={{fontSize:16,fontWeight:700,color:textP}}><IconBox size={14}/> Availability — {availModal.elName}</div>
                 <div style={{fontSize:11,color:textS,marginTop:2,letterSpacing:0.3}}>
-                  {inSplit
+                  {multi
+                    ? <>{availModal.subcat||"—"} · free on {availModal.date||"event date"} · tap up to {multi.max} — the order you tap is the order of choice</>
+                    : inSplit
                     ? `Splitting ${origQty} × ${availModal.elName} — pick 2 or more items below`
                     : <>{availModal.subcat||"—"} · free on {availModal.date||"event date"} · tap to pick</>}
                 </div>
@@ -316,7 +329,7 @@ export default function StudioModals({ ctx }) {
               ) : (
                 <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:12}}>
                   {availModal.items.map(it=>{
-                    const sel = inSplit ? splitIds.includes(it.id) : availModal.selectedId===it.id;
+                    const sel = multi ? multiIds.includes(it.id) : inSplit ? splitIds.includes(it.id) : availModal.selectedId===it.id;
                     const out = it.free<=0;
                     // Out of stock AND can't be made in production (IMS Inventory's "Can be made"
                     // checkbox, default on) — genuinely unpickable, not a shortfall Build can price
@@ -329,10 +342,10 @@ export default function StudioModals({ ctx }) {
                     const swap = usedIn.length > 0;
                     const SWAP = "#F97316";
                     return (
-                      <div key={it.id} className="ui-hover-grow" onClick={()=>{ if (unpickable) return; inSplit ? toggleSplitId(it.id) : setAvailModal(m=>({...m,selectedId: sel?null:it.id})); }}
+                      <div key={it.id} className="ui-hover-grow" onClick={()=>{ if (unpickable) return; multi ? toggleMulti(it) : inSplit ? toggleSplitId(it.id) : setAvailModal(m=>({...m,selectedId: sel?null:it.id})); }}
                         title={unpickable ? "Out of stock and can't be made in production — pick a different item" : swap ? `Already used for this guest: ${usedIn.join(" · ")}` : it.venueSlack?.length ? `Allocated to other Fixed Venues (not counted as free): ${it.venueSlack.map(s=>`${s.slack} ${s.name}`).join(" · ")}` : undefined}
                         style={{cursor:unpickable?"not-allowed":"pointer",borderRadius:12,overflow:"hidden",border:`2px solid ${sel?"#059669":swap?SWAP:border}`,background:isDark?"#0F0F1A":"#FAFAFA",position:"relative",opacity:unpickable?0.55:1}}>
-                        {sel&&<span style={{position:"absolute",top:6,left:6,zIndex:2,fontSize:9,fontWeight:700,padding:"2px 7px",borderRadius:6,background:"#059669",color:"#fff"}}>✓</span>}
+                        {sel&&<span style={{position:"absolute",top:6,left:6,zIndex:2,fontSize:multi?10.5:9,fontWeight:700,padding:"2px 7px",borderRadius:6,background:"#059669",color:"#fff"}}>{multi?`${MULTI_RANK[multiIds.indexOf(it.id)]||multiIds.indexOf(it.id)+1} choice`:"✓"}</span>}
                         <div title="Free on the event date" style={{position:"absolute",top:6,right:6,zIndex:2,fontSize:12,fontWeight:800,minWidth:22,textAlign:"center",padding:"2px 7px",borderRadius:8,background:out?"rgba(239,68,68,0.92)":"rgba(16,185,129,0.92)",color:"#fff"}}>{it.free}</div>
                         {it.photo ? <ClickablePhoto src={it.photo} thumbSize={AVAIL_THUMB} name={it.name}
                           style={{width:"100%",height:120,objectFit:"cover",display:"block",opacity:out?0.5:1}}
@@ -377,13 +390,23 @@ export default function StudioModals({ ctx }) {
             </div>
             <div style={{padding:"12px 20px",borderTop:`1px solid ${border}`,display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,flexWrap:"wrap"}}>
               <span style={{fontSize:10,color:textS}}>
-                {inSplit
+                {multi
+                  ? <>{multiIds.length} of {multi.max} selected{availModal.pickHint ? ` — ${availModal.pickHint}` : ""}{availModal.multiNote && <b style={{color:"#B45309",marginLeft:6}}>{availModal.multiNote}</b>}</>
+                  : inSplit
                   ? (splitPreview ? `${splitIds.length} items selected — splits ${origQty} into ${splitPreview}` : "Select 2 or more items to split into")
                   : (availModal.onPick ? (availModal.pickHint || "Pick an item to swap to.") : (availModal.selectedId ? "This item will be booked in Deal Check for this element." : "Pick an item to book it — or clear the current pin."))}
               </span>
               <div style={{display:"flex",gap:8}}>
                 <button onClick={closeModal} style={{padding:"8px 16px",borderRadius:8,border:`1px solid ${border}`,background:"transparent",color:textS,fontSize:12,fontWeight:600,cursor:"pointer"}}>Cancel</button>
-                {inSplit
+                {multi
+                  ? <>
+                    {multi.onSaveAll && <button onClick={()=>{if(!multiIds.length)return;multi.onSaveAll(multiPicks());closeModal();}} disabled={!multiIds.length}
+                      title={multiIds.length?`Use these ${multiIds.length} on every carpeted floor of this function — stock decides which ones show short`:"Pick a carpet first"}
+                      style={{padding:"8px 14px",borderRadius:8,border:"1px solid #059669",background:"transparent",color:multiIds.length?"#059669":"#9CA3AF",fontSize:12,fontWeight:700,cursor:multiIds.length?"pointer":"not-allowed"}}>Save to all</button>}
+                    <button onClick={()=>{if(!multiIds.length)return;multi.onSave&&multi.onSave(multiPicks());closeModal();}} disabled={!multiIds.length}
+                      style={{padding:"8px 18px",borderRadius:8,border:"none",background:multiIds.length?"#059669":"#6B7280",color:"#fff",fontSize:12,fontWeight:700,cursor:multiIds.length?"pointer":"default"}}>Save{multiIds.length?` (${multiIds.length})`:""}</button>
+                  </>
+                  : inSplit
                   ? <button onClick={()=>{saveAvailSplit(splitIds);setAvailSplit(null);}} disabled={splitIds.length<2} style={{padding:"8px 18px",borderRadius:8,border:"none",background:splitIds.length<2?"#6B7280":"#059669",color:"#fff",fontSize:12,fontWeight:700,cursor:splitIds.length<2?"default":"pointer"}}>Save Split{splitIds.length>=2?` (${splitIds.length})`:""}</button>
                   : <>
                     {/* Carpet only (the caller passes onPickAll): the same pick on every carpeted floor

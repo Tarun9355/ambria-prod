@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { prefsOf, prefsPatch, clearPrefsPatch, prefsStatus, assignCarpets, carpetRemainingFor, CARPET_PREF_MAX } from "./carpetPrefs.js";
+import { prefsOf, prefsPatch, setPrefsPatch, clearPrefsPatch, prefsStatus, assignCarpets, carpetRemainingFor, CARPET_PREF_MAX } from "./carpetPrefs.js";
 
 const A = { id: "A", name: "Maroon", free: 100 };
 const B = { id: "B", name: "Grey", free: 300 };
@@ -70,6 +70,31 @@ describe("prefsPatch", () => {
   });
   it("a pick without an id is ignored like a removal", () => {
     expect(prefsPatch({ cpPrefs: [A], cpInvId: "A" }, 0, {}).cpPrefs).toEqual([]);
+  });
+});
+
+describe("setPrefsPatch — all three chosen in one go", () => {
+  it("the picks, in the order given, become the 1st, 2nd and 3rd choice; the 1st is mirrored", () => {
+    const p = setPrefsPatch([B, A, C]);
+    expect(p.cpPrefs.map((x) => x.id)).toEqual(["B", "A", "C"]);
+    expect(p.cpInvId).toBe("B");
+    expect(p.cpInvName).toBe("Grey");
+    expect(p.cpInvFree).toBe(300);
+  });
+  it("more than three keeps the first three; repeats and junk are dropped", () => {
+    expect(setPrefsPatch([A, A, {}, B, C, { id: "D", name: "x", free: 1 }]).cpPrefs.map((x) => x.id)).toEqual(["A", "B", "C"]);
+  });
+  it("one pick is just a 1st choice", () => {
+    expect(setPrefsPatch([C]).cpPrefs).toHaveLength(1);
+  });
+  it("nothing clears the floor's carpet pick", () => {
+    expect(setPrefsPatch([])).toEqual(clearPrefsPatch());
+    expect(setPrefsPatch(undefined)).toEqual(clearPrefsPatch());
+  });
+  it("replaces whatever was there before, rather than merging with it", () => {
+    const row = { cpPrefs: [A, B, C], cpInvId: "A" };
+    const p = setPrefsPatch([C]);
+    expect(prefsOf({ ...row, ...p }).map((x) => x.id)).toEqual(["C"]);
   });
 });
 

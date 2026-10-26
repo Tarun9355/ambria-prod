@@ -16,7 +16,7 @@ import {
 } from "../../../lib/studio/taxonomy";
 import { paletteNames, addPaletteInline } from "../../../lib/studio/colours";
 import PaletteQuickAdd from "../../../components/studio/PaletteQuickAdd.jsx";
-import { prefsOf, prefsPatch, clearPrefsPatch, assignCarpets, carpetRemainingFor, CARPET_PREF_LABELS, CARPET_PREF_MAX } from "../../../lib/studio/carpetPrefs";
+import { prefsOf, prefsPatch, setPrefsPatch, clearPrefsPatch, assignCarpets, carpetRemainingFor, CARPET_PREF_LABELS, CARPET_PREF_MAX } from "../../../lib/studio/carpetPrefs";
 import { trussRowCost, calcZoneFabricCost, guestFabricMultiplier, fabricRepeatDiscount, maskingRepeatOn, maskingGuestCost, zoneTrussStandingDiscountDetail, repeatCatFor, parseFlowerPalette, stringifyFlowerPalette, parseFabricPalette, stringifyFabricPalette, isDirectMandiElement, anchorsForPaletteByMaterial, snapRowDimsForProduction } from "../../../lib/studio/pricing";
 import { paletteSearch, paletteMatches } from "../../../components/studio/filterUI.jsx";
 import { resolveTrussConfig } from "../../../lib/studio/pricing";
@@ -846,31 +846,33 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
                       (stock checks, Deal Check's carpet card) still see as the pick. */}
                   {openAvailModal && zc.cpT!==CARPET_OFF && !isNewCarpet && (()=>{
                     const floorSqft=(Number(fd.L)||0)*(Number(fd.W)||0);
-                    const open=(slot)=>openAvailModal(zoneKey, 0,
-                      {invId:prefs[slot]?.id||null, imsId:prefs[slot]?.id||null, name:prefs[slot]?.name||""},
+                    // One picker for all three: tap up to three carpets in the order wanted (the first tapped is the 1st choice).
+                    // Save writes them to this floor; Save to all writes the same three to every carpeted floor of the function.
+                    const open=()=>openAvailModal(zoneKey, 0,
+                      {invId:null, imsId:null, name:"Carpet"},
                       {sub:"carpet"},
-                      (pick)=>sZ(prefsPatch(zc, slot, pick?{id:pick.id,name:pick.name,free:Number(pick.free)||0}:null)),
-                      {pickHint:`Pick your ${CARPET_PREF_LABELS[slot]} for this floor — Planning decides which of your ${CARPET_PREF_MAX} is used. A stock pick only, it does not change the price.`, priceMode:"rental", hidePrice:true, onPickAll:onCarpetAll?((pick)=>onCarpetAll(pick, zoneKey, rowIdx, slot)):null});
+                      null,
+                      {pickHint:`the first you tap is the 1st choice. Planning decides which of the ${CARPET_PREF_MAX} is used. A stock pick only, it does not change the price.`, priceMode:"rental", hidePrice:true,
+                       multi:{max:CARPET_PREF_MAX, current:prefs.map(p=>p.id), onSave:(picks)=>sZ(setPrefsPatch(picks)), onSaveAll:onCarpetAll?((picks)=>onCarpetAll(picks, zoneKey, rowIdx)):null}});
                     const done=prefs.length>=CARPET_PREF_MAX;
                     return <div style={{marginTop:5}}>
                       <div style={{display:"flex",flexDirection:"column",gap:4}}>
                         {Array.from({length:CARPET_PREF_MAX},(_,slot)=>{
                           const pk=prefs[slot];
                           const lowFree=pk&&pk.free!=null&&floorSqft>0&&pk.free<floorSqft;
-                          const next=slot===prefs.length;
                           return pk ? (
                             <div key={slot} style={{display:"flex",alignItems:"center",gap:6,boxSizing:"border-box",width:"100%",fontSize:11.5,padding:"5px 8px",borderRadius:8,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
                               <span style={{flexShrink:0,width:16,height:16,borderRadius:8,background:accent,color:"#1A1A2E",fontSize:10,fontWeight:800,display:"inline-flex",alignItems:"center",justifyContent:"center"}} title={CARPET_PREF_LABELS[slot]}>{slot+1}</span>
-                              <span onClick={()=>open(slot)} title={`${CARPET_PREF_LABELS[slot]}: ${pk.name} — tap to check availability & change`} style={{flex:1,minWidth:0,cursor:"pointer"}}>
+                              <span onClick={()=>open()} title={`${CARPET_PREF_LABELS[slot]}: ${pk.name} — tap to check availability & change`} style={{flex:1,minWidth:0,cursor:"pointer"}}>
                                 <span style={{display:"block",fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:"#047857"}}>📦 {pk.name}</span>
                                 {pk.free!=null&&<span style={{display:"block",fontSize:10,color:lowFree?"#B45309":"#6B7280"}}>{Math.round(pk.free)} sqft free{lowFree?` · less than this floor (${Math.round(floorSqft)} sqft)`:""}</span>}
                               </span>
                               <span onClick={()=>sZ(prefsPatch(zc, slot, null))} title={`Remove the ${CARPET_PREF_LABELS[slot]}`} style={{cursor:"pointer",color:"#9CA3AF",fontWeight:700,fontSize:13,lineHeight:1}}>×</span>
                             </div>
                           ) : (
-                            <button key={slot} type="button" onClick={()=>open(slot)} disabled={!next} title={next?`Pick your ${CARPET_PREF_LABELS[slot]}`:`Pick the ${CARPET_PREF_LABELS[prefs.length]} first`}
-                              style={{display:"flex",alignItems:"center",gap:6,boxSizing:"border-box",width:"100%",fontSize:11.5,padding:"5px 8px",borderRadius:8,border:`1px dashed ${next?accent:border}`,background:"transparent",color:next?accent:textS,opacity:next?1:0.55,cursor:next?"pointer":"default",textAlign:"left"}}>
-                              <span style={{flexShrink:0,width:16,height:16,borderRadius:8,border:`1px solid ${next?accent:border}`,fontSize:10,fontWeight:800,display:"inline-flex",alignItems:"center",justifyContent:"center"}}>{slot+1}</span>
+                            <button key={slot} type="button" onClick={()=>open()} title={`Pick ${CARPET_PREF_MAX} carpets — your ${CARPET_PREF_LABELS[slot]} and the rest`}
+                              style={{display:"flex",alignItems:"center",gap:6,boxSizing:"border-box",width:"100%",fontSize:11.5,padding:"5px 8px",borderRadius:8,border:`1px dashed ${accent}`,background:"transparent",color:accent,cursor:"pointer",textAlign:"left"}}>
+                              <span style={{flexShrink:0,width:16,height:16,borderRadius:8,border:`1px solid ${accent}`,fontSize:10,fontWeight:800,display:"inline-flex",alignItems:"center",justifyContent:"center"}}>{slot+1}</span>
                               + {CARPET_PREF_LABELS[slot]}
                             </button>
                           );
@@ -1257,9 +1259,9 @@ export default function StudioBuild({ ctx }) {
     return carpetRemainingFor(floors, key);
   };
   // fromK/fromRi: the floor the picker was opened from — always gets the carpet, even with no size.
-  const applyCarpetToAll = (pick, fromK, fromRi, slot = 0) => {
-    if (!pick?.id) return;
-    const free = Number(pick.free) || 0;
+  const applyCarpetToAll = (picks, fromK, fromRi) => {
+    const list = (Array.isArray(picks) ? picks : []).filter(p => p?.id);
+    if (!list.length) return;
     const floors = carpetFloors(true);
     if (fromK != null && !floors.some(f => f.k === fromK && f.ri === (fromRi || 0))) floors.push({ k: fromK, ri: fromRi || 0 });
     setActiveZones([]);
@@ -1269,7 +1271,8 @@ export default function StudioBuild({ ctx }) {
       floors.forEach(f => { (byZone[f.k] = byZone[f.k] || []).push(f.ri); });
       Object.entries(byZone).forEach(([k, ris]) => {
         const z = { ...(next[k] || {}) };
-        const tag = (r) => (r.cpPhoto ? r : ({ ...r, ...prefsPatch(r, slot, { id: pick.id, name: pick.name || "", free }) }));
+        // the same three preferences, in the same order, on every carpeted floor (a floor with its own uploaded photo is left alone)
+        const tag = (r) => (r.cpPhoto ? r : ({ ...r, ...setPrefsPatch(list.map(p => ({ id: p.id, name: p.name || "", free: Number(p.free) || 0 }))) }));
         if (ris.includes(0)) Object.assign(z, tag(z));
         if (Array.isArray(z.extraPlatformRows)) z.extraPlatformRows = z.extraPlatformRows.map((r, i) => ris.includes(i + 1) ? tag(r) : r);
         next[k] = z;

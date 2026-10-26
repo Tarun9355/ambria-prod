@@ -7,7 +7,7 @@
 // ═══════════════════════════════════════════════════════════════
 import { useState, useEffect, useRef } from "react";
 import { dealAgencyFeePct } from "../../../lib/studio/agencyFee";
-import { prefsOf, prefsPatch, clearPrefsPatch, assignCarpets, CARPET_PREF_LABELS, CARPET_PREF_MAX } from "../../../lib/studio/carpetPrefs";
+import { prefsOf, prefsPatch, setPrefsPatch, clearPrefsPatch, assignCarpets, CARPET_PREF_LABELS, CARPET_PREF_MAX } from "../../../lib/studio/carpetPrefs";
 import DeptPdfButton from "../../../components/studio/DeptPdfButton.jsx";
 import { createPortal } from "react-dom";
 import DCFloralsTab from "./tabs/DCFloralsTab.jsx";
@@ -3230,17 +3230,18 @@ export default function DealCheckOverlay({ ctx }) {
                                           three, and can change them — same fields Build writes. */}
                                       {!isSplitActive && (()=>{
                                         const prefs = prefsOf(zc);
-                                        const openSlot = (slot) => openAvailModal?.(
+                                        // One picker for all three (tap in the order wanted); Save replaces this zone's preferences.
+                                        const openSlot = () => openAvailModal?.(
                                           zk, 0,
-                                          { invId: prefs[slot]?.id || null, imsId: prefs[slot]?.id || null, name: prefs[slot]?.name || "" },
+                                          { invId: null, imsId: null, name: "Carpet" },
                                           { sub: carpetSubcatFallback },
-                                          (pick) => {
-                                            const it = pick ? dcInventoryCache.find(x => x.id === pick.id) : null;
-                                            const apply = (z) => ({ ...(z || {}), ...prefsPatch(z, slot, pick ? { id: pick.id, name: it?.name || pick.name || "", free: Number(pick.free) || 0 } : null) });
-                                            if (fnIdx === activeFnIdxCommitted) setZoneConfig(prev => ({ ...prev, [zk]: apply(prev[zk]) }));
-                                            else setFnBuilds(prev => { const snap = prev[fnIdx] || {}; const curZc = snap.zoneConfig || {}; return { ...prev, [fnIdx]: { ...snap, zoneConfig: { ...curZc, [zk]: apply(curZc[zk]) } } }; });
-                                          },
-                                          { pickHint: `Pick the ${CARPET_PREF_LABELS[slot]} for this floor — Planning decides which of the ${CARPET_PREF_MAX} is used.`, priceMode: "rental", hidePrice: true, neededLabel: `${neededSqft} sqft needed for this zone`, unitLabel: "sqft" },
+                                          null,
+                                          { pickHint: `the first you tap is the 1st choice. Planning decides which of the ${CARPET_PREF_MAX} is used.`, priceMode: "rental", hidePrice: true, neededLabel: `${neededSqft} sqft needed for this zone`, unitLabel: "sqft",
+                                            multi: { max: CARPET_PREF_MAX, current: prefs.map(p => p.id), onSave: (picks) => {
+                                              const apply = (z) => ({ ...(z || {}), ...setPrefsPatch(picks.map(p => ({ id: p.id, name: dcInventoryCache.find(x => x.id === p.id)?.name || p.name || "", free: Number(p.free) || 0 }))) });
+                                              if (fnIdx === activeFnIdxCommitted) setZoneConfig(prev => ({ ...prev, [zk]: apply(prev[zk]) }));
+                                              else setFnBuilds(prev => { const snap = prev[fnIdx] || {}; const curZc = snap.zoneConfig || {}; return { ...prev, [fnIdx]: { ...snap, zoneConfig: { ...curZc, [zk]: apply(curZc[zk]) } } }; });
+                                            } } },
                                         );
                                         if (!prefs.length && !carpetOpts.length) return null;
                                         return (
@@ -3255,9 +3256,8 @@ export default function DealCheckOverlay({ ctx }) {
                                                 const it2 = pk ? dcInventoryCache.find(x => x.id === pk.id) : null;
                                                 const ph = it2 ? imsField.photos(it2)[0] : null;
                                                 const low = pk && pk.free != null && neededSqft > 0 && pk.free < neededSqft;
-                                                const next = slot === prefs.length;
                                                 return pk ? (
-                                                  <button key={slot} type="button" onClick={()=>openSlot(slot)} title={`${CARPET_PREF_LABELS[slot]}: ${pk.name} — click to change`}
+                                                  <button key={slot} type="button" onClick={()=>openSlot()} title={`${CARPET_PREF_LABELS[slot]}: ${pk.name} — click to change`}
                                                     style={{display:"inline-flex",alignItems:"center",gap:6,maxWidth:"100%",padding:"4px 9px 4px 5px",borderRadius:999,border:`1px solid ${TILE_BORDER}`,background:TILE_BG,color:INK,cursor:"pointer",fontSize:11.5,fontWeight:600}}>
                                                     <span style={{flexShrink:0,width:17,height:17,borderRadius:9,background:GOLD,color:"#fff",fontSize:10,fontWeight:800,display:"inline-flex",alignItems:"center",justifyContent:"center"}}>{slot+1}</span>
                                                     {ph && <img loading="lazy" decoding="async" src={thumbUrl(ph, 24)} alt="" style={{width:20,height:20,borderRadius:5,objectFit:"cover",flexShrink:0}}/>}
@@ -3265,8 +3265,8 @@ export default function DealCheckOverlay({ ctx }) {
                                                     {pk.free != null && <span style={{fontSize:10.5,fontWeight:500,color:low?GOLD:INK_3,...NUM,whiteSpace:"nowrap"}}>{Math.round(pk.free)} sqft free</span>}
                                                   </button>
                                                 ) : (
-                                                  <button key={slot} type="button" disabled={!next} onClick={()=>openSlot(slot)}
-                                                    style={{display:"inline-flex",alignItems:"center",gap:6,padding:"4px 11px",borderRadius:999,border:`1px dashed ${TILE_BORDER}`,background:"transparent",color:INK_3,cursor:next?"pointer":"default",opacity:next?1:0.5,fontSize:11.5,fontWeight:600}}>
+                                                  <button key={slot} type="button" onClick={()=>openSlot()}
+                                                    style={{display:"inline-flex",alignItems:"center",gap:6,padding:"4px 11px",borderRadius:999,border:`1px dashed ${TILE_BORDER}`,background:"transparent",color:INK_3,cursor:"pointer",fontSize:11.5,fontWeight:600}}>
                                                     + {CARPET_PREF_LABELS[slot]}
                                                   </button>
                                                 );
