@@ -3,7 +3,7 @@
 //   - another EVENT (another client, or the same client's other booking) holding the carpet that day, found from the stock holds;
 //   - another FUNCTION of the same deal at the same venue and date, found from that function's own carpet picks.
 // The match is the same one cross-function reuse uses: venue name equal (case and spaces ignored), date equal.
-import { prefsOf } from "./carpetPrefs.js";
+import { prefsOf, floorSqftOf } from "./carpetPrefs.js";
 import { CARPET_OFF } from "./taxonomy.js";
 
 const norm = (v) => String(v || "").trim().toLowerCase();
@@ -44,7 +44,7 @@ export function siblingCarpetUse(allFns, thisFn, itemId) {
     Object.entries(f.zoneConfig || {}).forEach(([zk, zc]) => {
       if (!zc || !f.enabledEls?.[zk]) return;
       [zc, ...(Array.isArray(zc.extraPlatformRows) ? zc.extraPlatformRows : [])].forEach((row) => {
-        if (!row || row.cpT === CARPET_OFF) return;
+        if (!row || row.cpT === CARPET_OFF || !(floorSqftOf(row) > 0)) return;
         if (prefsOf(row)[0]?.id === itemId) out.push(`${f.fnType || `Function ${(f.fnIdx ?? 0) + 1}`} · ${zk}`);
       });
     });

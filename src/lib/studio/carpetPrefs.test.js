@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { prefsOf, prefsPatch, setPrefsPatch, clearPrefsPatch, prefsStatus, assignCarpets, carpetRemainingFor, CARPET_PREF_MAX } from "./carpetPrefs.js";
+import { floorSqftOf, prefsOf, prefsPatch, setPrefsPatch, clearPrefsPatch, prefsStatus, assignCarpets, carpetRemainingFor, CARPET_PREF_MAX } from "./carpetPrefs.js";
 
 const A = { id: "A", name: "Maroon", free: 100 };
 const D = { id: "D", name: "Teal", free: 80 };
@@ -160,5 +160,20 @@ describe("carpetRemainingFor — how big can this floor be made", () => {
     expect(carpetRemainingFor([{ key: "a", area: 10, prefs: [] }], "a")).toBeNull();
     expect(carpetRemainingFor([{ key: "a", area: 10, prefs: [{ id: "X", free: null }] }], "a")).toBeNull();
     expect(carpetRemainingFor([], "zzz")).toBeNull();
+  });
+});
+
+describe("floorSqftOf — the sqft a floor needs is what it is billed on (footprint × Qty)", () => {
+  it("length × width", () => { expect(floorSqftOf({ floorDims: { L: 20, W: 10 } })).toBe(200); });
+  it("times Qty (identical footprints), at least 1", () => {
+    expect(floorSqftOf({ floorDims: { L: 20, W: 10 }, plQty: 3 })).toBe(600);
+    expect(floorSqftOf({ floorDims: { L: 20, W: 10 }, plQty: 0 })).toBe(200);
+    expect(floorSqftOf({ floorDims: { L: 20, W: 10 }, plQty: "2" })).toBe(400);
+  });
+  it("a square given as one side (S) is that side squared, like the bill", () => { expect(floorSqftOf({ floorDims: { S: 12 } })).toBe(144); });
+  it("no size, no row: 0", () => {
+    expect(floorSqftOf({})).toBe(0);
+    expect(floorSqftOf(undefined)).toBe(0);
+    expect(floorSqftOf({ floorDims: { L: 20 } })).toBe(0);
   });
 });

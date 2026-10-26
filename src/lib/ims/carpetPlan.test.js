@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { carpetKey, freeForEvent, carpetFloorsOf, planCarpets, carpetStockFor } from "./carpetPlan.js";
+import { carpetKey, freeForEvent, carpetFloorsOf, planCarpets, carpetStockFor, validDecision } from "./carpetPlan.js";
 import { CARPET_OFF } from "../studio/taxonomy.js";
 
 const item = (id, name, qty, extra = {}) => ({ id, name, qty, blocked: 0, ...extra });
@@ -98,7 +98,7 @@ describe("planCarpets", () => {
     }));
     const choice = { [fl[0].key]: { id: "A" }, [fl[1].key]: { id: "A" } };
     const { over } = planCarpets({ floors: fl, itemsById, blocks: {}, eventId: "e", choice });
-    expect(over.A).toEqual({ free: 100, committed: 160 });
+    expect(over.A).toMatchObject({ free: 100, committed: 160 });
   });
   it("no over-commit when it fits", () => {
     const fl = carpetFloorsOf(layout({
@@ -147,8 +147,11 @@ describe("a carpet Planning picks by hand when none of sales' choices is availab
     expect(picked.status).toBe("decided");
     expect(picked.decidedId).toBe("D");
   });
-  it("a hand pick for an item that no longer exists is ignored", () => {
-    expect(run({ [k]: { id: "GONE", name: "x", manual: true } }).decidedId).toBeNull();
+  it("a hand pick for an item that has left the inventory (or has not loaded yet) is still a decision, kept by name, with no stock shown", () => {
+    const r = run({ [k]: { id: "GONE", name: "Old rug", manual: true } });
+    expect(r.decidedId).toBe("GONE");
+    expect(r.status).toBe("decided");
+    expect(r.manual).toMatchObject({ id: "GONE", name: "Old rug", known: false });
   });
   it("a hand-picked carpet counts toward over-commit like any other", () => {
     const two = carpetFloorsOf(layout({
@@ -157,7 +160,7 @@ describe("a carpet Planning picks by hand when none of sales' choices is availab
     }));
     const choice = { [two[0].key]: { id: "E", name: "Cream", manual: true }, [two[1].key]: { id: "E", name: "Cream", manual: true } };
     const { over } = planCarpets({ floors: two, itemsById: stock, blocks: {}, eventId: "e", choice });
-    expect(over.E).toEqual({ free: 120, committed: 300 });
+    expect(over.E).toMatchObject({ free: 120, committed: 300 });
   });
   it("carpetStockFor lists every carpet with that day's free sqft, those that cover the floor first, and only carpets", () => {
     const asCarpet = (x) => ({ ...x, subCat: "carpet" });
@@ -226,7 +229,7 @@ describe("same venue, same date: a carpet already laid for another event is reus
     it("at different venues they add up (200 + 200 > 300)", () => {
       const apart = two.map((f, i) => (i === 1 ? { ...f, venue: "Exotica" } : f));
       const { over, rows } = planCarpets({ floors: apart, itemsById: stock, blocks: {}, eventId: "e", choice, eventOrders: [] });
-      expect(over.T).toEqual({ free: 300, committed: 400 });
+      expect(over.T).toMatchObject({ free: 300, committed: 400 });
       expect(rows[0].options[0].reuse).toBeNull();
     });
     it("on different dates they do not compete at all", () => {
@@ -240,8 +243,96 @@ describe("same venue, same date: a carpet already laid for another event is reus
       }));
       const ch = { [sameFn[0].key]: { id: "T" }, [sameFn[1].key]: { id: "T" } };
       const { over, rows } = planCarpets({ floors: sameFn, itemsById: stock, blocks: {}, eventId: "e", choice: ch, eventOrders: [] });
-      expect(over.T).toEqual({ free: 300, committed: 400 });
+      expect(over.T).toMatchObject({ free: 300, committed: 400 });
       expect(rows[0].options[0].reuse).toBeNull();
     });
+  });
+});
+
+describe("floors: what counts and how big", () => {
+  it("a floor needs footprint × Qty, and says so", () => {
+    const f = carpetFloorsOf(layout({ stage: { cpT: "old", floorDims: { L: 20, W: 10 }, plQty: 2 } }));
+    expect(f[0].area).toBe(400);
+    expect(f[0].dims).toBe("20 x 10 ft × 2");
+  });
+  it("a zone counts only when it is switched ON (a leftover config with no switch is not a floor)", () => {
+    const fns = [{ fnIdx: 0, date: "2027-01-03", type: "W", venue: "Aura", enabledEls: { stage: true }, zones: { stage: { cpT: "old", floorDims: { L: 10, W: 10 } }, ghost: { cpT: "old", floorDims: { L: 10, W: 10 } } } }];
+    expect(carpetFloorsOf(fns).map((x) => x.zk)).toEqual(["stage"]);
+  });
+});
+
+describe("validDecision — a saved decision must still belong to its floor", () => {
+  const floor = { date: "2027-01-03", fnLabel: "Wedding" };
+  it("passes when date and function type match (or were never stored)", () => {
+    expect(validDecision({ id: "A", date: "2027-01-03", fnType: "Wedding" }, floor)).not.toBeNull();
+    expect(validDecision({ id: "A" }, floor)).not.toBeNull();
+  });
+  it("is ignored when the date moved or another function took its number", () => {
+    expect(validDecision({ id: "A", date: "2027-01-09" }, floor)).toBeNull();
+    expect(validDecision({ id: "A", fnType: "Haldi" }, floor)).toBeNull();
+  });
+  it("empty or junk is null; an 'arranged separately' decision needs no carpet id", () => {
+    expect(validDecision(undefined, floor)).toBeNull();
+    expect(validDecision({}, floor)).toBeNull();
+    expect(validDecision({ other: true }, floor)).not.toBeNull();
+  });
+  it("planCarpets ignores a decision made for another date, so the floor is undecided again", () => {
+    const fl = carpetFloorsOf(layout({ stage: { cpT: "old", floorDims: { L: 20, W: 10 }, cpPrefs: [pref(B)], cpInvId: "B", cpInvName: "Grey", cpInvFree: 300 } }));
+    const r = planCarpets({ floors: fl, itemsById, blocks: {}, eventId: "e", choice: { [fl[0].key]: { id: "B", date: "2026-12-01", fnType: "Wedding" } }, eventOrders: [] }).rows[0];
+    expect(r.decidedId).toBeNull();
+    expect(r.status).not.toBe("decided");
+  });
+});
+
+describe("'arranged separately' — the way out when no stock carpet can be used", () => {
+  const fl = carpetFloorsOf(layout({ stage: { cpT: "old", floorDims: { L: 100, W: 100 }, cpPrefs: [pref(A)], cpInvId: "A", cpInvName: "Maroon", cpInvFree: 100 } }));
+  const run = (choice) => planCarpets({ floors: fl, itemsById, blocks: {}, eventId: "e", choice, eventOrders: [] }).rows[0];
+  it("a floor bigger than anything owned is 'short' — and decided once Planning arranges the carpet separately", () => {
+    expect(run({}).status).toBe("short");
+    const r = run({ [fl[0].key]: { other: true, name: "Arranged separately" } });
+    expect(r.status).toBe("decided");
+    expect(r.other).toBe(true);
+    expect(r.decidedId).toBeNull();
+  });
+  it("it never takes part in over-commit", () => {
+    const r = planCarpets({ floors: fl, itemsById, blocks: {}, eventId: "e", choice: { [fl[0].key]: { other: true } }, eventOrders: [] });
+    expect(r.over).toEqual({});
+  });
+});
+
+describe("a pointer to another function of the same deal is never shown beside SHORT", () => {
+  const T = item("T", "Teal", 100, { subCat: "carpet" });
+  const fl = carpetFloorsOf([
+    { fnIdx: 0, date: "2027-01-03", type: "Haldi", venue: "Aura", enabledEls: { stage: true }, zones: { stage: { cpT: "old", floorDims: { L: 20, W: 10 }, cpPrefs: [pref(T)], cpInvId: "T", cpInvName: "Teal", cpInvFree: 100 } } },
+    { fnIdx: 1, date: "2027-01-03", type: "Cocktail", venue: "Aura", enabledEls: { stage: true }, zones: { stage: { cpT: "old", floorDims: { L: 20, W: 10 }, cpPrefs: [pref(T)], cpInvId: "T", cpInvName: "Teal", cpInvFree: 100 } } },
+  ]);
+  it("short (100 owned, floor needs 200): no orange pointer", () => {
+    const { rows } = planCarpets({ floors: fl, itemsById: { T }, blocks: {}, eventId: "e", choice: {}, eventOrders: [] });
+    expect(rows[0].options[0].enough).toBe(false);
+    expect(rows[0].options[0].reuse).toBeNull();
+  });
+  it("covers it (300 owned): the pointer is shown", () => {
+    const big = item("T", "Teal", 300, { subCat: "carpet" });
+    const { rows } = planCarpets({ floors: fl, itemsById: { T: big }, blocks: {}, eventId: "e", choice: {}, eventOrders: [] });
+    expect(rows[0].options[0].reuse.siblings).toEqual(["Cocktail · stage"]);
+  });
+  it("a sibling's stale decision (carpet no longer among its choices) is not counted", () => {
+    const big = item("T", "Teal", 300, { subCat: "carpet" });
+    const choice = { [fl[1].key]: { id: "A", date: "2026-01-01" } }; // made for another date -> ignored
+    const { rows } = planCarpets({ floors: fl, itemsById: { T: big }, blocks: {}, eventId: "e", choice, eventOrders: [] });
+    expect(rows[0].options[0].reuse.siblings).toEqual(["Cocktail · stage"]);
+  });
+});
+
+describe("over-commit with no venue recorded", () => {
+  it("functions with no venue do not pretend to share one: their needs add up", () => {
+    const T = item("T", "Teal", 300, { subCat: "carpet" });
+    const fl = carpetFloorsOf([
+      { fnIdx: 0, date: "2027-01-03", type: "Haldi", enabledEls: { stage: true }, zones: { stage: { cpT: "old", floorDims: { L: 20, W: 10 }, cpPrefs: [pref(T)], cpInvId: "T", cpInvName: "Teal", cpInvFree: 300 } } },
+      { fnIdx: 1, date: "2027-01-03", type: "Cocktail", enabledEls: { stage: true }, zones: { stage: { cpT: "old", floorDims: { L: 20, W: 10 }, cpPrefs: [pref(T)], cpInvId: "T", cpInvName: "Teal", cpInvFree: 300 } } },
+    ]);
+    const choice = { [fl[0].key]: { id: "T" }, [fl[1].key]: { id: "T" } };
+    const { over } = planCarpets({ floors: fl, itemsById: { T }, blocks: {}, eventId: "e", choice, eventOrders: [] });
+    expect(over.T).toMatchObject({ free: 300, committed: 400, date: "2027-01-03" });
   });
 });

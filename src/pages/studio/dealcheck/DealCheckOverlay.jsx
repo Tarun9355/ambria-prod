@@ -7,7 +7,8 @@
 // ═══════════════════════════════════════════════════════════════
 import { useState, useEffect, useRef } from "react";
 import { dealAgencyFeePct } from "../../../lib/studio/agencyFee";
-import { prefsOf, prefsPatch, setPrefsPatch, clearPrefsPatch, assignCarpets, CARPET_PREF_LABELS, CARPET_PREF_MAX } from "../../../lib/studio/carpetPrefs";
+import { prefsOf, prefsPatch, setPrefsPatch, clearPrefsPatch, assignCarpets, floorSqftOf, CARPET_PREF_LABELS, CARPET_PREF_MAX } from "../../../lib/studio/carpetPrefs";
+import { validDecision } from "../../../lib/ims/carpetPlan";
 import DeptPdfButton from "../../../components/studio/DeptPdfButton.jsx";
 import { createPortal } from "react-dom";
 import DCFloralsTab from "./tabs/DCFloralsTab.jsx";
@@ -306,7 +307,7 @@ export default function DealCheckOverlay({ ctx }) {
       [z, ...(z.extraPlatformRows || [])].forEach((r, ri) => {
         if (!r || r.cpT === CARPET_OFF) return;
         const f = r.floorDims || {};
-        floors.push({ key: `${k}|${ri}`, zone: k, area: (Number(f.L) || 0) * (Number(f.W) || 0), prefs: prefsOf(r) });
+        floors.push({ key: `${k}|${ri}`, zone: k, area: floorSqftOf(r), prefs: prefsOf(r) });
       });
     });
     const { short } = assignCarpets(floors);
@@ -3070,7 +3071,7 @@ export default function DealCheckOverlay({ ctx }) {
                                   // it. Only the explicit "— None —" pick (CARPET_OFF) should hide this.
                                   if (!zc || zc.cpT === CARPET_OFF) return null;
                                   const fd = zc.floorDims || {}; // no truss-dims fallback — see calcStructCost's own comment (StudioApp.jsx)
-                                  const neededSqft = Math.round((Number(fd.L)||0)*(Number(fd.W)||0));
+                                  const neededSqft = Math.round(floorSqftOf(zc)); // footprint × Qty, the same figure the carpet is billed on
                                   if (neededSqft <= 0) return null;
                                   // Exact match, not .includes("carpet") — that substring match used to
                                   // also pull in items filed under a DIFFERENT sub-category that merely
@@ -3245,13 +3246,14 @@ export default function DealCheckOverlay({ ctx }) {
                                         );
                                         if (!prefs.length) return null; // nothing picked yet: the pick button above is the way in; the three show once a carpet is chosen
                                         const decRaw = ((eventOrders || []).find(e => e.clientId === activeClientId)?.deptOps?.Tenting?.carpetChoice || {})[`${fnIdx}|${zk}|0`];
-                                        const dec = decRaw && (decRaw.manual || prefs.some(p => p.id === decRaw.id)) ? decRaw : null;
+                                        // the decision counts only while it still belongs to this function (same date and type), and is one of the choices, a hand pick, or "arranged separately"
+                                        const dec = validDecision(decRaw, { date: fns[fnIdx]?.fnDate, fnLabel: fns[fnIdx]?.fnType }) && (decRaw.other || decRaw.manual || prefs.some(p => p.id === decRaw.id)) ? decRaw : null;
                                         return (
                                           <div style={{display:"flex",flexDirection:"column",gap:5}}>
                                             <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
                                               <span className="dc-cap" style={{color:INK_2,letterSpacing:1.1}}>Carpet preferences</span>
                                               <span style={{fontSize:10.5,fontWeight:650,color:prefs.length>=CARPET_PREF_MAX?GOOD:GOLD}}>{prefs.length} of {CARPET_PREF_MAX}{dec?"":prefs.length>=CARPET_PREF_MAX?" · Planning decides":" — sales should pick "+CARPET_PREF_MAX}</span>
-                                              {dec && <span style={{fontSize:10.5,fontWeight:700,color:GOOD}}>✓ Planning chose: {dec.name}</span>}
+                                              {dec && <span style={{fontSize:10.5,fontWeight:700,color:GOOD}}>✓ Planning chose: {dec.other ? "arranged separately (not from stock)" : dec.name}</span>}
                                             </div>
                                             <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
                                               {Array.from({length:CARPET_PREF_MAX},(_,slot)=>{

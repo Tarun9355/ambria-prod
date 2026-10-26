@@ -52,7 +52,7 @@ describe("sameVenueHolds — another event holding the carpet at THIS venue that
 
 describe("siblingCarpetUse — another function of the same deal at this venue and date", () => {
   const fn = (idx, type, venue, date, zones) => ({ fnIdx: idx, fnType: type, fnVenue: venue, fnDate: date, enabledEls: Object.fromEntries(Object.keys(zones).map((k) => [k, true])), zoneConfig: zones });
-  const row = (id) => ({ cpT: "old", cpPrefs: [{ id, name: id, free: 100 }], cpInvId: id });
+  const row = (id) => ({ cpT: "old", floorDims: { L: 10, W: 10 }, cpPrefs: [{ id, name: id, free: 100 }], cpInvId: id });
   const me = fn(0, "Cocktail", "Aura", D, { stage: row("A") });
 
   it("names a sibling function (same venue + date) whose 1st-choice carpet is this one", () => {
@@ -68,6 +68,10 @@ describe("siblingCarpetUse — another function of the same deal at this venue a
     const off = fn(1, "Haldi", "Aura", D, { entry: { ...row("A"), cpT: CARPET_OFF } });
     const dis = { ...fn(2, "Sangeet", "Aura", D, { entry: row("A") }), enabledEls: { entry: false } };
     expect(siblingCarpetUse([me, off, dis], me, "A")).toEqual([]);
+  });
+  it("a sibling floor with no size is not really using it", () => {
+    const empty = fn(1, "Haldi", "Aura", D, { entry: { ...row("A"), floorDims: {} } });
+    expect(siblingCarpetUse([me, empty], me, "A")).toEqual([]);
   });
   it("each sibling is listed once", () => {
     const hal = fn(1, "Haldi", "Aura", D, { entry: row("A"), lawn: row("A") });

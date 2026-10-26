@@ -10,8 +10,8 @@ import { IconPrinter } from "../../components/icons";
 import { hasIMSPerm } from "../../lib/ims/constants";
 import { fetchOpsExpenses } from "../../lib/ims/opsExpenses";
 import { ZONE_META, trussBaseArea, CARPET_OFF } from "../../lib/studio/taxonomy";
-import { prefsOf } from "../../lib/studio/carpetPrefs";
-import { carpetFloorsOf, planCarpets, carpetKey, carpetStockFor } from "../../lib/ims/carpetPlan";
+import { prefsOf, floorSqftOf } from "../../lib/studio/carpetPrefs";
+import { carpetFloorsOf, planCarpets, carpetKey, carpetStockFor, validDecision } from "../../lib/ims/carpetPlan";
 import CarpetPickerModal from "./CarpetPickerModal.jsx";
 import { orderZoneKeys } from "../../lib/ims/zoneOrder";
 import { calcZoneTrussPreview, calcZoneFabric, dcFabricMultOf } from "../../lib/studio/pricing";
@@ -780,6 +780,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   // and never needs this; on a phone the grid is dates only, so one has to be chosen to list.
   const [pickDay, setPickDay] = useState(null);
   const [selId, setSelId] = useState(null);
+  // True only while the PDF started from Deal Check is being built: that book shows all three carpets sales picked for a
+  // floor; the PDF made here in Planning shows just the one Planning decided (the three only until it is decided).
+  const pdfAllCarpetsRef = useRef(false);
+  const carpetGateOpenRef = useRef(false); // the "Carpet not selected" message is on screen
   const [carpetMore, setCarpetMore] = useState(null); // key of the carpet floor whose carpet picker (modal) is open
   const [zoomImg, setZoomImg] = useState(null); // click-to-enlarge lightbox (ops needs a clear big photo)
   const [opsView, setOpsView] = useState("planning"); // "planning" | "onsite" — split on-site (receiving/dismantle) into its own view
@@ -3342,16 +3346,26 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     // ── THE CARPET THAT GOES DOWN, WITH ITS PHOTO ──
     // A card on the zone's own page (like a print job): the carpet the Tenting head decided in Planning, or — until it is decided —
     // the three sales ranked, 1st to 3rd, each with its photo, so the crew can see which carpet is meant. One per carpet floor.
-    const carpetCardsOf = (z, fi, zk) => {
+    const carpetCardsOf = (z, fi, zk, fn) => {
       if (!showStruct || !z) return [];
       const out = [];
       [z, ...(Array.isArray(z.extraPlatformRows) ? z.extraPlatformRows : [])].forEach((row, ri) => {
         if (!row || row.cpT === CARPET_OFF) return;
         const prefs = prefsOf(row);
-        if (!prefs.length) return;
         const fd = row.floorDims || {};
-        const area = Math.round((Number(fd.L) || 0) * (Number(fd.W) || 0));
-        const dec = carpetDecided[carpetKey(fi, zk, ri)];
+        const area = Math.round(floorSqftOf(row));
+        if (!(area > 0)) return; // a floor with no size has no carpet to lay
+        // the decision counts only while it still belongs to this function (same date and type)
+        const dec = validDecision(carpetDecided[carpetKey(fi, zk, ri)], { date: fn?.date, fnLabel: fn?.type || fn?.name });
+        const qtyTxt = Math.max(1, Math.round(Number(row.plQty) || 1)) > 1 ? ` × ${Math.max(1, Math.round(Number(row.plQty) || 1))}` : "";
+        const floorTxt = `${Number(fd.L) || Number(fd.S) || 0} x ${Number(fd.W) || Number(fd.S) || 0} ft${qtyTxt}`;
+        if (dec?.other && !pdfAllCarpetsRef.current) {
+          // none of the stock carpets could be used: the carpet is bought or hired outside stock
+          out.push({ name: "Carpet arranged separately", qty: area, unit: "sqft", photo: "", dims: "", kit: 0, recipe: [], deptTag: combined ? "Tenting" : "",
+            extra: [["Carpet", "To use" + (ri === 0 ? "" : ` (floor ${ri + 1})`)], ["Source", "Bought / hired outside stock"], ["Floor", floorTxt]] });
+          return;
+        }
+        if (!prefs.length) return;
         // Deal Check's PDF lists all three sales picked; Planning's lists the decided one (all three until one is decided).
         const chosen = dec && !pdfAllCarpetsRef.current ? (prefs.find(p => p.id === dec.id) || (dec.manual ? { id: dec.id, name: dec.name } : null)) : null;
         const byHand = !!chosen && !prefs.some(p => p.id === chosen.id);
@@ -3362,7 +3376,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           out.push({
             name: inv?.name || p.name || "Carpet", qty: area, unit: "sqft", photo: invPhoto(inv, null), dims: invDims(inv), kit: 0, recipe: [],
             deptTag: combined ? "Tenting" : "",
-            extra: [["Carpet", role], ...(area > 0 ? [["Floor", `${Number(fd.L) || 0} x ${Number(fd.W) || 0} ft`]] : [])],
+            extra: [["Carpet", role], ["Floor", floorTxt]],
           });
         });
       });
@@ -3531,7 +3545,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         const zStruct = zoneStructOf(zCfg);
         // First, not last: a zone with more than six items splits across pages, and a print
         // appended at the end landed on the zone's second page, away from the one the crew opens.
-        items.unshift(...printCardsOf(zCfg), ...carpetCardsOf(zCfg, fn?.fnIdx ?? fi, zk));
+        items.unshift(...printCardsOf(zCfg), ...carpetCardsOf(zCfg, fn?.fnIdx ?? fi, zk, fn));
         if (!items.length && !zPhoto && !zDims && !zStruct.length) return;
         zonePages.push({
           zk,
@@ -4284,18 +4298,28 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
     // department's PDF is not held up. The floors are named so they can be fixed in the Carpet plan.
     // The PDF started from Deal Check (it lists what sales asked for) and the viewer refreshing itself are not held up by this.
     if (gate && !pdfAllCarpetsRef.current && (multi || depts.includes("Tenting"))) {
-      const undecided = carpetPlanOf().rows.filter(r => r.status !== "decided");
+      // A floor whose function date has already passed has nothing left to plan, so history can always be downloaded.
+      const today = new Date().toLocaleDateString("en-CA"); // local YYYY-MM-DD
+      const undecided = carpetPlanOf().rows.filter(r => r.status !== "decided" && !(r.date && r.date < today));
       if (undecided.length) {
+        if (carpetGateOpenRef.current) return false; // the message is already up (a double click)
+        carpetGateOpenRef.current = true;
         const when = (d) => { try { return d ? new Date(d + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : ""; } catch { return d || ""; } };
         const lines = undecided.slice(0, 8).map(r => `• ${r.zoneName}${[r.fnLabel, when(r.date)].filter(Boolean).length ? " — " + [r.fnLabel, when(r.date)].filter(Boolean).join(" · ") : ""}${r.status === "none" ? " (sales picked no carpet)" : ""}`);
         if (undecided.length > 8) lines.push(`…and ${undecided.length - 8} more`);
         // The site's own dialog (not the browser's alert): says what is missing and takes them straight to the Carpet plan.
-        const go = await confirm({
-          title: "Carpet not selected",
-          body: `The PDF was not made. Choose the carpet for ${undecided.length === 1 ? "this floor" : "these floors"} first:\n\n${lines.join("\n")}\n\nPick a carpet for each in Tenting → Carpet plan, then download again.`,
-          confirmLabel: "Open Carpet plan", danger: false,
-        });
-        if (go && (dept === "Tenting" || deptOptions.includes("Tenting"))) { if (dept !== "Tenting") setDept("Tenting"); setModal("carpet"); }
+        // Someone who cannot open Tenting is told who to ask, not sent to a panel they cannot reach.
+        const canPlan = dept === "Tenting" || deptOptions.includes("Tenting");
+        try {
+          const go = await confirm({
+            title: "Carpet not selected",
+            body: `The PDF was not made. Choose the carpet for ${undecided.length === 1 ? "this floor" : "these floors"} first:\n\n${lines.join("\n")}\n\n`
+              + (canPlan ? "Pick a carpet for each in Tenting → Carpet plan (if no stock carpet can be used, choose \"Arrange separately\"), then download again."
+                : "Ask the Tenting head to choose them in Planning → Tenting → Carpet plan, then download again."),
+            confirmLabel: canPlan ? "Open Carpet plan" : "OK", danger: false,
+          });
+          if (go && canPlan) { if (dept !== "Tenting") setDept("Tenting"); setOpsView("planning"); setModal("carpet"); }
+        } finally { carpetGateOpenRef.current = false; }
         return false;
       }
     }
@@ -4659,9 +4683,6 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
   // is not drawn from a half-loaded page. Alerts (a skipped section…) are passed on instead of popping up
   // in a frame nobody can see.
   const autoPdfStartedRef = useRef(false);
-  // True only while the PDF started from Deal Check is being built: that book shows all three carpets sales picked for a
-  // floor; the PDF made here in Planning shows just the one Planning decided (the three only until it is decided).
-  const pdfAllCarpetsRef = useRef(false);
   useEffect(() => {
     if (!autoPdfFor || autoPdfStartedRef.current || selId !== autoPdfFor || !sel) return undefined;
     const t = setTimeout(async () => {
@@ -6733,7 +6754,11 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
             {dept === "Tenting" && carpetPlanOf().rows.length > 0 && (() => {
               const plan = carpetPlanOf();
               const choiceAll = deptData.carpetChoice || {};
-              const decide = (key, o, manual) => saveDept({ carpetChoice: { ...choiceAll, [key]: { id: o.id, name: o.name, ...(manual ? { manual: true } : {}), by: authUser?.name || "—", at: Date.now() } } });
+              // A decision remembers the date and function it was made for, so it can never land on another floor if functions are later
+              // removed or renumbered in Studio (carpetPlan.validDecision).
+              const decide = (r, o, manual) => saveDept({ carpetChoice: { ...choiceAll, [r.key]: { id: o.id, name: o.name, ...(manual ? { manual: true } : {}), date: r.date, fnType: r.fnLabel, by: authUser?.name || "—", at: Date.now() } } });
+              // None of the stock carpets can be used (every one short, or the floor is bigger than anything owned): the carpet is arranged outside stock.
+              const decideOther = (r) => saveDept({ carpetChoice: { ...choiceAll, [r.key]: { other: true, name: "Arranged separately", date: r.date, fnType: r.fnLabel, by: authUser?.name || "—", at: Date.now() } } });
               const undecide = (key) => { const n2 = { ...choiceAll }; delete n2[key]; saveDept({ carpetChoice: n2 }); };
               const dayLbl = (d) => { try { return d ? new Date(d + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : "the event date"; } catch { return d || "the event date"; } };
               const overNames = Object.keys(plan.over).map(id => ({ id, ...plan.over[id], name: plan.rows.flatMap(r => r.options).find(o => o.id === id)?.name || id }));
@@ -6750,12 +6775,12 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                 <div className="p-3 sm:p-4 space-y-3">
                   {overNames.length > 0 && (
                     <div className="rounded-lg bg-red-50 ring-1 ring-red-100 px-3 py-2 text-xs text-red-700">
-                      ⚠ {overNames.map(o => `${o.name}: floors need ${Math.round(o.committed)} sqft together, only ${Math.round(o.free)} free`).join(" · ")}
+                      ⚠ {overNames.map(o => `${o.name}: floors need ${Math.round(o.committed)} sqft together${o.date ? ` on ${dayLbl(o.date)}` : ""}, only ${Math.round(o.free)} free`).join(" · ")}
                     </div>
                   )}
                   {plan.rows.map(r => {
                     const dec = [...r.options, r.manual].filter(Boolean).find(o => o.id === r.decidedId);
-                    const chip = r.status === "decided" ? { t: `✓ Decided: ${dec?.name || ""}${r.manual ? " (picked in Planning)" : ""}`, c: "bg-emerald-50 text-emerald-700 ring-emerald-100" }
+                    const chip = r.status === "decided" ? { t: r.other ? "✓ Decided: arranged separately (not from stock)" : `✓ Decided: ${dec?.name || ""}${r.manual ? " (picked in Planning)" : ""}`, c: "bg-emerald-50 text-emerald-700 ring-emerald-100" }
                       : r.status === "short" ? { t: "None of the choices covers this floor", c: "bg-red-50 text-red-700 ring-red-100" }
                       : r.status === "none" ? { t: "Sales has not picked a carpet", c: "bg-amber-50 text-amber-700 ring-amber-100" }
                       : { t: "Not decided yet", c: "bg-amber-50 text-amber-700 ring-amber-100" };
@@ -6790,7 +6815,9 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                                   </div>
                                   {on
                                     ? <button type="button" onClick={() => undecide(r.key)} className="text-[12px] font-semibold rounded-md px-2 py-1 bg-emerald-600 text-white hover:bg-emerald-700 cursor-pointer" title="Chosen — tap to undo">✓ Using this · undo</button>
-                                    : <button type="button" onClick={() => decide(r.key, o)} className="text-[12px] font-semibold rounded-md px-2 py-1 ring-1 ring-gray-300 text-gray-800 hover:bg-gray-50 cursor-pointer">Use this</button>}
+                                    : <button type="button" disabled={o.known && !o.enough} onClick={() => decide(r, o)}
+                                        title={o.known && !o.enough ? `Short on this date — only ${Math.round(o.free)} sqft free (+${Math.round(o.reuse?.qty || 0)} laid here), the floor needs ${Math.round(r.area)}` : undefined}
+                                        className={"text-[12px] font-semibold rounded-md px-2 py-1 ring-1 " + (o.known && !o.enough ? "ring-gray-200 text-gray-400 cursor-not-allowed" : "ring-gray-300 text-gray-800 hover:bg-gray-50 cursor-pointer")}>Use this</button>}
                                 </div>
                               );
                             })}
@@ -6803,6 +6830,16 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                           const mph = r.manual && r.manual.item ? (r.manual.item.img || (Array.isArray(r.manual.item.photoUrls) && r.manual.item.photoUrls[0]) || "") : "";
                           return (
                             <div className="mt-3 pt-2.5 border-t border-gray-100">
+                              {r.other && (
+                                <div className="mb-2 rounded-lg p-2 flex items-center gap-2 ring-1 ring-emerald-400 bg-emerald-50/60">
+                                  <span className="w-12 h-12 rounded-md bg-gray-100 shrink-0 flex items-center justify-center text-lg" aria-hidden="true">🛒</span>
+                                  <div className="min-w-0 flex-1">
+                                    <div className="text-[13px] font-semibold text-gray-900">Arranged separately</div>
+                                    <div className="text-[11px] text-emerald-700">The carpet for this floor is bought or hired outside stock.</div>
+                                  </div>
+                                  <button type="button" onClick={() => undecide(r.key)} className="shrink-0 text-[12px] font-semibold rounded-md px-2 py-1 bg-emerald-600 text-white hover:bg-emerald-700 cursor-pointer" title="Chosen — tap to undo">✓ Using this · undo</button>
+                                </div>
+                              )}
                               {r.manual && (
                                 <div className="mb-2 rounded-lg p-2 flex items-center gap-2 ring-1 ring-emerald-400 bg-emerald-50/60">
                                   {mph ? <img src={thumbUrl(mph, 96)} loading="lazy" decoding="async" alt="" onClick={() => setZoomImg(mph)} className="w-12 h-12 rounded-md object-cover border border-gray-200 cursor-zoom-in shrink-0" /> : <span className="w-12 h-12 rounded-md bg-gray-100 shrink-0" />}
@@ -6817,6 +6854,10 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                                 className={"text-[12px] font-semibold rounded-md px-2.5 py-1 ring-1 cursor-pointer " + (!anyCovers && !r.manual ? "ring-red-300 text-red-700 bg-red-50 hover:bg-red-100" : "ring-gray-300 text-gray-700 hover:bg-gray-50")}>
                                 {!anyCovers && !r.manual && r.options.length ? "None of these is available — choose another carpet…" : r.manual ? "Choose a different carpet…" : "Choose another carpet…"}
                               </button>
+                              {!r.other && (
+                                <button type="button" onClick={() => decideOther(r)} title="No stock carpet can be used for this floor — the carpet is bought or hired outside stock"
+                                  className="ml-2 text-[12px] font-semibold rounded-md px-2.5 py-1 ring-1 ring-gray-300 text-gray-700 hover:bg-gray-50 cursor-pointer">Arrange separately (not from stock)</button>
+                              )}
                             </div>
                           );
                         })()}
@@ -6831,7 +6872,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                     return (
                       <CarpetPickerModal floor={r} options={all} selectedId={r.decidedId} dateLabel={dayLbl(r.date)}
                         onClose={() => setCarpetMore(null)}
-                        onSave={(o) => { decide(r.key, o, o.rank === null); setCarpetMore(null); }} />
+                        onSave={(o) => { decide(r, o, o.rank === null); setCarpetMore(null); }} />
                     );
                   })()}
                 </div>

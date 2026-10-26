@@ -197,15 +197,23 @@ export default function StudioModals({ ctx }) {
         const splitCapable = (!availModal.onPick || !!availModal.onSplit) && !availModal.multi;
         // Multi-select (carpet preferences): tap up to `max` items; the order tapped is their rank. One Save writes them all.
         const multi = availModal.multi || null;
-        const multiIds = multi ? (availModal.multiIds || []) : [];
+        // Ids that are not in the list that loaded (a carpet since deleted, or filed under another sub-category) are not selectable ghosts: they
+        // would count toward the cap and then silently vanish on Save. While the list is still loading the ids are kept as they are.
+        const multiIds = multi ? (availModal.multiIds || []).filter(id => availModal.loading || (availModal.items || []).some(x => x.id === id)) : [];
         const MULTI_RANK = ["1st", "2nd", "3rd", "4th", "5th"];
         const toggleMulti = (it) => setAvailModal(m => {
-          const ids = m.multiIds || [];
+          const ids = (m.multiIds || []).filter(id => (m.items || []).some(x => x.id === id));
           if (ids.includes(it.id)) return { ...m, multiIds: ids.filter(x => x !== it.id), multiNote: "" };
           if (ids.length >= m.multi.max) return { ...m, multiNote: `Up to ${m.multi.max} — tap a selected one to remove it first` };
           return { ...m, multiIds: [...ids, it.id], multiNote: "" };
         });
-        const multiPicks = () => multiIds.map(id => (availModal.items || []).find(x => x.id === id)).filter(Boolean).map(x => ({ id: x.id, name: x.name, free: x.free }));
+        // What is saved with each pick is how much of that carpet this floor can actually use on this date: the free stock plus what is already
+        // laid at this venue for another event. (Saving the raw free figure made a reusable carpet look short everywhere after the pick.)
+        const multiPicks = () => multiIds.map(id => (availModal.items || []).find(x => x.id === id)).filter(Boolean).map(x => ({ id: x.id, name: x.name, free: reuseAwareAvail(x.free, x.reuse?.qty || 0, x.total, 0).avail }));
+        // Saving is only possible with a loaded list and at least one carpet in it — never while loading or after a failed load, which would
+        // have saved an empty list and cleared the floor's carpets.
+        const multiPickList = multi ? multiPicks() : [];
+        const canSaveMulti = !availModal.loading && multiPickList.length > 0;
         // ELIGIBLE — is there more than one unit to divide?
         // Split is now shown whenever it is CAPABLE, and merely disabled when a single unit means
         // there is nothing to divide. Hiding it on qty 1 read as the feature being missing or
@@ -346,6 +354,9 @@ export default function StudioModals({ ctx }) {
                     const reuseNote = reuse ? [...(reuse.siblings || []), ...(reuse.who || [])] : [];
                     const shortBy = needSqft > 0 ? Math.ceil(reuseAwareAvail(it.free, reuse?.qty || 0, it.total, needSqft).short) : 0;
                     const blockedShort = shortBy > 0 && !sel;
+                    // Another event's hold at this venue adds to what can be used, so it is always worth showing; another function of the same deal
+                    // adds nothing, so it is only a pointer and never sits beside a SHORT.
+                    const reuseShown = reuseNote.length > 0 && ((reuse?.qty || 0) > 0 || shortBy === 0);
                     // Already placed somewhere else for this same guest (another zone/function of
                     // the deal) — picking it here would be a swap of that piece, so flag it orange.
                     const usedIn = it.usedIn || [];
@@ -354,7 +365,7 @@ export default function StudioModals({ ctx }) {
                     return (
                       <div key={it.id} className="ui-hover-grow" onClick={()=>{ if (unpickable || blockedShort) return; multi ? toggleMulti(it) : inSplit ? toggleSplitId(it.id) : setAvailModal(m=>({...m,selectedId: sel?null:it.id})); }}
                         title={blockedShort ? `Short for this date — only ${it.free} ${availModal.unitLabel || "sqft"} free, this floor needs ${needSqft}` : unpickable ? "Out of stock and can't be made in production — pick a different item" : swap ? `Already used for this guest: ${usedIn.join(" · ")}` : it.venueSlack?.length ? `Allocated to other Fixed Venues (not counted as free): ${it.venueSlack.map(s=>`${s.slack} ${s.name}`).join(" · ")}` : undefined}
-                        style={{cursor:(unpickable||blockedShort)?"not-allowed":"pointer",borderRadius:12,overflow:"hidden",border:`2px solid ${sel?"#059669":(swap||reuseNote.length)?SWAP:border}`,background:isDark?"#0F0F1A":"#FAFAFA",position:"relative",opacity:(unpickable||blockedShort)?0.55:1}}>
+                        style={{cursor:(unpickable||blockedShort)?"not-allowed":"pointer",borderRadius:12,overflow:"hidden",border:`2px solid ${sel?"#059669":(swap||reuseShown)?SWAP:border}`,background:isDark?"#0F0F1A":"#FAFAFA",position:"relative",opacity:(unpickable||blockedShort)?0.55:1}}>
                         {sel&&<span style={{position:"absolute",top:6,left:6,zIndex:2,fontSize:multi?10.5:9,fontWeight:700,padding:"2px 7px",borderRadius:6,background:"#059669",color:"#fff"}}>{multi?`${MULTI_RANK[multiIds.indexOf(it.id)]||multiIds.indexOf(it.id)+1} choice`:"✓"}</span>}
                         <div title="Free on the event date" style={{position:"absolute",top:6,right:6,zIndex:2,fontSize:12,fontWeight:800,minWidth:22,textAlign:"center",padding:"2px 7px",borderRadius:8,background:out?"rgba(239,68,68,0.92)":"rgba(16,185,129,0.92)",color:"#fff"}}>{it.free}</div>
                         {it.photo ? <ClickablePhoto src={it.photo} thumbSize={AVAIL_THUMB} name={it.name}
@@ -364,7 +375,7 @@ export default function StudioModals({ ctx }) {
                           <div style={{fontSize:11,fontWeight:600,color:textP,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.name}</div>
                           {unpickable && <div style={{fontSize:8.5,marginTop:1,color:"#EF4444",fontWeight:700}}>Out of stock — can't be made</div>}
                           {shortBy > 0 && <div style={{fontSize:9.5,marginTop:2,color:"#EF4444",fontWeight:800}}>SHORT {shortBy} {availModal.unitLabel || "sqft"} · needs {needSqft}{sel ? " · tap to remove" : ""}</div>}
-                          {reuseNote.length > 0 && <div style={{fontSize:9,marginTop:2,color:SWAP,fontWeight:700}} title="Already laid at this venue on this date for another event — it stays down, so it can be reused here">⇄ In use at this venue today: {reuseNote.join(", ")}{reuse?.qty > 0 ? ` · ${Math.round(reuse.qty)} ${availModal.unitLabel || "sqft"} laid` : ""} — reusable</div>}
+                          {reuseShown && <div style={{fontSize:9,marginTop:2,color:SWAP,fontWeight:700}} title="Already laid at this venue on this date for another event — it stays down, so it can be reused here">⇄ In use at this venue today: {reuseNote.join(", ")}{reuse?.qty > 0 ? ` · ${Math.round(reuse.qty)} ${availModal.unitLabel || "sqft"} laid` : ""} — reusable</div>}
                           {/* The corner badge is deliberately a bare number (no room for a unit in a
                               22px-wide tag) — this line spells it out. availModal.unitLabel is a
                               caller override (Deal Check's carpet picker passes "sqft") for when the
@@ -412,11 +423,11 @@ export default function StudioModals({ ctx }) {
                 <button onClick={closeModal} style={{padding:"8px 16px",borderRadius:8,border:`1px solid ${border}`,background:"transparent",color:textS,fontSize:12,fontWeight:600,cursor:"pointer"}}>Cancel</button>
                 {multi
                   ? <>
-                    {multi.onSaveAll && <button onClick={()=>{if(!multiIds.length)return;multi.onSaveAll(multiPicks());closeModal();}} disabled={!multiIds.length}
-                      title={multiIds.length?`Use these ${multiIds.length} on every carpeted floor of this function — stock decides which ones show short`:"Pick a carpet first"}
-                      style={{padding:"8px 14px",borderRadius:8,border:"1px solid #059669",background:"transparent",color:multiIds.length?"#059669":"#9CA3AF",fontSize:12,fontWeight:700,cursor:multiIds.length?"pointer":"not-allowed"}}>Save to all</button>}
-                    <button onClick={()=>{if(!multiIds.length)return;multi.onSave&&multi.onSave(multiPicks());closeModal();}} disabled={!multiIds.length}
-                      style={{padding:"8px 18px",borderRadius:8,border:"none",background:multiIds.length?"#059669":"#6B7280",color:"#fff",fontSize:12,fontWeight:700,cursor:multiIds.length?"pointer":"default"}}>Save{multiIds.length?` (${multiIds.length})`:""}</button>
+                    {multi.onSaveAll && <button onClick={()=>{if(!canSaveMulti)return;multi.onSaveAll(multiPickList);closeModal();}} disabled={!canSaveMulti}
+                      title={canSaveMulti?`Use these ${multiPickList.length} on every carpeted floor of this function — stock decides which ones show short`:availModal.loading?"Still loading…":"Pick a carpet first"}
+                      style={{padding:"8px 14px",borderRadius:8,border:"1px solid #059669",background:"transparent",color:canSaveMulti?"#059669":"#9CA3AF",fontSize:12,fontWeight:700,cursor:canSaveMulti?"pointer":"not-allowed"}}>Save to all</button>}
+                    <button onClick={()=>{if(!canSaveMulti)return;multi.onSave&&multi.onSave(multiPickList);closeModal();}} disabled={!canSaveMulti}
+                      style={{padding:"8px 18px",borderRadius:8,border:"none",background:canSaveMulti?"#059669":"#6B7280",color:"#fff",fontSize:12,fontWeight:700,cursor:canSaveMulti?"pointer":"default"}}>Save{multiPickList.length?` (${multiPickList.length})`:""}</button>
                   </>
                   : inSplit
                   ? <button onClick={()=>{saveAvailSplit(splitIds);setAvailSplit(null);}} disabled={splitIds.length<2} style={{padding:"8px 18px",borderRadius:8,border:"none",background:splitIds.length<2?"#6B7280":"#059669",color:"#fff",fontSize:12,fontWeight:700,cursor:splitIds.length<2?"default":"pointer"}}>Save Split{splitIds.length>=2?` (${splitIds.length})`:""}</button>

@@ -16,7 +16,7 @@ import {
 } from "../../../lib/studio/taxonomy";
 import { paletteNames, addPaletteInline } from "../../../lib/studio/colours";
 import PaletteQuickAdd from "../../../components/studio/PaletteQuickAdd.jsx";
-import { prefsOf, prefsPatch, setPrefsPatch, clearPrefsPatch, assignCarpets, carpetRemainingFor, CARPET_PREF_LABELS, CARPET_PREF_MAX } from "../../../lib/studio/carpetPrefs";
+import { prefsOf, prefsPatch, setPrefsPatch, clearPrefsPatch, assignCarpets, carpetRemainingFor, floorSqftOf, CARPET_PREF_LABELS, CARPET_PREF_MAX } from "../../../lib/studio/carpetPrefs";
 import { trussRowCost, calcZoneFabricCost, guestFabricMultiplier, fabricRepeatDiscount, maskingRepeatOn, maskingGuestCost, zoneTrussStandingDiscountDetail, repeatCatFor, parseFlowerPalette, stringifyFlowerPalette, parseFabricPalette, stringifyFabricPalette, isDirectMandiElement, anchorsForPaletteByMaterial, snapRowDimsForProduction } from "../../../lib/studio/pricing";
 import { paletteSearch, paletteMatches } from "../../../components/studio/filterUI.jsx";
 import { resolveTrussConfig } from "../../../lib/studio/pricing";
@@ -690,7 +690,7 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
   // One picker for all of the preferences: tap up to CARPET_PREF_MAX carpets in the order wanted (the first tapped is the 1st choice).
   // Save writes them to this floor; Save to all writes the same ones to every carpeted floor of the function. Availability is for the
   // event date, and a carpet with less free than this floor needs is marked short and cannot be picked.
-  const floorSqftNow = (Number(fd.L) || 0) * (Number(fd.W) || 0);
+  const floorSqftNow = floorSqftOf(zc); // footprint × Qty — what the carpet is billed on
   const openCarpetPicker = () => openAvailModal && openAvailModal(zoneKey, 0,
     { invId: null, imsId: null, name: "Carpet" },
     { sub: "carpet" },
@@ -701,7 +701,7 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
     const rem = prefs.length && carpetRemainingOf ? carpetRemainingOf(zoneKey, rowIdx) : null;
     if (rem != null) {
       const L = d === "L" ? n : (Number(fd.L) || 0), W = d === "W" ? n : (Number(fd.W) || 0);
-      const area = L * W;
+      const area = L * W * Math.max(1, Math.round(Number(zc.plQty) || 1));
       if (area > rem) { setCpLimit(`Only ${Math.max(0, Math.floor(rem))} sqft of ${prefs.length > 1 ? "your preferred carpets is" : (prefs[0]?.name || "this carpet") + " is"} available — can't set ${area} sqft`); return false; }
     }
     setCpLimit("");
@@ -1238,7 +1238,7 @@ export default function StudioBuild({ ctx }) {
       [z, ...(z.extraPlatformRows || [])].forEach((r, ri) => {
         if (!r || r.cpT === CARPET_OFF) return;
         const fdz = r.floorDims || {};
-        const area = (Number(fdz.L) || 0) * (Number(fdz.W) || 0);
+        const area = floorSqftOf(r);
         // withEmpty ("Save to all"): also floors with a carpet set but no size yet — they take no
         // stock, but should carry the carpet once their size is typed in.
         if (area > 0 || (withEmpty && r.cpT)) out.push({ k, ri, r, area });
@@ -1249,6 +1249,9 @@ export default function StudioBuild({ ctx }) {
   // Worked out on first use each render (not here): carpetFloors reads orderedZoneKeys, which is
   // declared below, and the cards that call carpetShortOf render after it.
   let carpetShortCache = null;
+  // The reuse map is the same for every zone card on one render, so it is worked out once per render, on first use.
+  let carpetReuseCache = null;
+  const carpetReuseNow = () => (carpetReuseCache ||= (carpetReuseHere ? carpetReuseHere() : {}));
   const carpetShortMapOf = () => {
     if (carpetShortCache) return carpetShortCache;
     // each floor takes its best preference that still has room (lib/studio/carpetPrefs); short only when none does
@@ -1279,8 +1282,10 @@ export default function StudioBuild({ ctx }) {
       floors.forEach(f => { (byZone[f.k] = byZone[f.k] || []).push(f.ri); });
       Object.entries(byZone).forEach(([k, ris]) => {
         const z = { ...(next[k] || {}) };
-        // the same three preferences, in the same order, on every carpeted floor (a floor with its own uploaded photo is left alone)
-        const tag = (r) => (r.cpPhoto ? r : ({ ...r, ...setPrefsPatch(list.map(p => ({ id: p.id, name: p.name || "", free: Number(p.free) || 0 }))) }));
+        // the same preferences, in the same order, on every carpeted floor — except a "Carpet New" floor, which is bought fresh and takes no stock
+        // pick (its pick slots are hidden, so a pick put there could never be seen or cleared)
+        const isNewRow = (r) => /new/i.test(carpetPricingFor(r.cpT, imsCarpetMaterials)?.label || "");
+        const tag = (r) => (isNewRow(r) ? r : ({ ...r, ...setPrefsPatch(list.map(p => ({ id: p.id, name: p.name || "", free: Number(p.free) || 0 }))) }));
         if (ris.includes(0)) Object.assign(z, tag(z));
         if (Array.isArray(z.extraPlatformRows)) z.extraPlatformRows = z.extraPlatformRows.map((r, i) => ris.includes(i + 1) ? tag(r) : r);
         next[k] = z;
@@ -5239,7 +5244,7 @@ undefined
                 customMaskingField={customMaskingField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} scale={zoneScaleVal(k)} guestDiscPct={structDiscountFor(zc,aVenue)?.truss?25:0} guestFabricDiscPct={structDiscountFor(zc,aVenue)?25:0} maskingColours={maskingColours} maskingColourOptions={maskingColourOptions} guestPriceMultiplier={guestPriceMultiplier} trussRepeat={repeatCatFor(zc,"truss")} />}
               {/* ── PLATFORM + CARPET → then floor dims ── */}
               {zoneSection[k]==="platform"&&<FloorStack S={S} zc={zc} zm={zm} st={st} sZ={sZ} sFD={sFD} fd={fd} fmt={fmt} showCosts={showCosts}
-                isDark={isDark} border={border} accent={accent} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} imsInventory={imsInventory} scale={zoneScaleVal(k)} openAvailModal={openAvailModal} zoneKey={k} onCarpetAll={applyCarpetToAll} carpetShortOf={carpetShortOf} carpetRemainingOf={carpetRemainingOf} carpetReuse={carpetReuseHere ? carpetReuseHere() : undefined} guestPriceMultiplier={guestPriceMultiplier} />}
+                isDark={isDark} border={border} accent={accent} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} imsInventory={imsInventory} scale={zoneScaleVal(k)} openAvailModal={openAvailModal} zoneKey={k} onCarpetAll={applyCarpetToAll} carpetShortOf={carpetShortOf} carpetRemainingOf={carpetRemainingOf} carpetReuse={carpetReuseNow()} guestPriceMultiplier={guestPriceMultiplier} />}
             </div>);
           })()}
           </Fragment>}

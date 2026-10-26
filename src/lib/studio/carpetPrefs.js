@@ -63,6 +63,15 @@ export function setPrefsPatch(picks) {
   return { cpPrefs: list, cpInvId: list[0]?.id || null, cpInvName: list[0]?.name || "", cpInvFree: list[0] ? list[0].free : null };
 }
 
+// The sqft a floor row needs: its footprint times its Qty (identical footprints), the same figure the carpet is BILLED on
+// (taxonomy.platformRowCost), so stock checks and the bill can never disagree about how much carpet a floor is.
+export function floorSqftOf(row) {
+  const fd = row?.floorDims || {};
+  const area = (Number(fd.L) || Number(fd.S) || 0) * (Number(fd.W) || Number(fd.S) || 0);
+  const qty = Math.max(1, Math.round(Number(row?.plQty) || 1));
+  return area * qty;
+}
+
 export const clearPrefsPatch = () => ({ cpPrefs: [], cpInvId: null, cpInvName: "", cpInvFree: null });
 
 export function prefsStatus(row) {

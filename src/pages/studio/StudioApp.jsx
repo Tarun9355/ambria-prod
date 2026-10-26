@@ -3623,6 +3623,7 @@ export default function StudioApp() {
   // declared long before collectAllFunctionData exists, so a direct reference would be a TDZ
   // ReferenceError on first render.
   const collectAllFunctionDataRef = useRef(null);
+  const availReqSeq = useRef(0); // numbers each availability-picker open, so a late load can't fill a newer picker
   // Same TDZ reasoning as collectAllFunctionDataRef just above — transportCalc/calcFunctionCost are
   // both declared, and both need to call calcFnFloralSourcingCost for the flower-material truck
   // count, before calcFnFloralSourcingCost itself is declared further down the file.
@@ -10480,7 +10481,8 @@ export default function StudioApp() {
     // Deal Check needs both: it MUST pass onPick (or the pick lands in Build's zoneElements),
     // and onPick was the very flag that used to mean "no split here". So the capability is now
     // declared rather than inferred — the same correction made for priceMode above.
-    setAvailModal({ zoneKey, idx, elName: el?.name || "", subcat, date, loading: true, items: [], selectedId: el?.imsId || el?.invId || null, onPick: onPick || (opts?.multi ? (() => {}) : null), onPickAll: opts?.onPickAll || null, splitQty: Number(opts?.splitQty) || 0, onSplit: opts?.onSplit || null, pickHint: opts?.pickHint || "", neededLabel: opts?.neededLabel || "", unitLabel: opts?.unitLabel || "", hidePrice: !!opts?.hidePrice,
+    const reqId = ++availReqSeq.current;
+    setAvailModal({ reqId, zoneKey, idx, elName: el?.name || "", subcat, date, loading: true, items: [], selectedId: el?.imsId || el?.invId || null, onPick: onPick || (opts?.multi ? (() => {}) : null), onPickAll: opts?.onPickAll || null, splitQty: Number(opts?.splitQty) || 0, onSplit: opts?.onSplit || null, pickHint: opts?.pickHint || "", neededLabel: opts?.neededLabel || "", unitLabel: opts?.unitLabel || "", hidePrice: !!opts?.hidePrice,
       // multi: pick up to N items in one go, ranked in the order tapped (carpet preferences) — { max, current: [ids], onSave(picks), onSaveAll?(picks) }
       multi: opts?.multi ? { max: Number(opts.multi.max) || 3, need: Number(opts.multi.need) || 0, onSave: opts.multi.onSave || null, onSaveAll: opts.multi.onSaveAll || null } : null, multiIds: Array.isArray(opts?.multi?.current) ? opts.multi.current : [], multiNote: "" });
     try {
@@ -10625,8 +10627,8 @@ export default function StudioApp() {
       // Start every card's thumbnail downloading now, in parallel, rather than one by one as the
       // grid paints. Same URL the modal's <img> asks for (AVAIL_THUMB), so these land in its cache.
       prefetchImages(items.map(i => i.photo && thumbUrl(i.photo, AVAIL_THUMB)), { concurrency: 8 });
-      setAvailModal(m => (m && m.zoneKey === zoneKey && m.idx === idx) ? { ...m, loading: false, items } : m);
-    } catch { setAvailModal(m => m ? { ...m, loading: false } : m); }
+      setAvailModal(m => (m && m.reqId === reqId && m.zoneKey === zoneKey && m.idx === idx) ? { ...m, loading: false, items } : m);
+    } catch { setAvailModal(m => (m && m.reqId === reqId) ? { ...m, loading: false } : m); }
   }, [imsInventory, activeFnMeta, clientDate, loadAvailability, getStudioAvailable, rcFactorByKey, zoneConfig, venue, guestPriceMultiplier, hideDiscountFromClient, fvCfgForRepeat, dealCheckData, studioFloralData, collectAllFunctionData, activeFnIdx, eventOrders, activeClientId, clientName]);
   // Opens the availability picker straight from the pre-Sold out-of-stock gate (StudioModals.jsx's
   // oosGateModal), for a flagged row {fnIdx, zoneKey, idx, invId, name} — instead of the old "Go
@@ -10645,7 +10647,7 @@ export default function StudioApp() {
     if (!date || !venueNow) return out;
     const all = collectAllFunctionData() || [];
     const thisFn = all.find((f) => f.fnIdx === activeFnIdx);
-    const eo = (eventOrders || []).find((e) => e.clientId === activeClientId);
+    const eo = (eventOrders || []).find((e) => e.clientId === activeClientId) || (eventOrders || []).find((e) => (e.clientName || "") === (clientName || "").trim());
     (imsInventory || []).forEach((it) => {
       if (String(it.subCat || it.subcategory || "").trim().toLowerCase() !== "carpet") return;
       const holds = sameVenueHolds(activeBlocksDetailForDate?.[it.id], eventOrders, venueNow, date, eo?.id);
