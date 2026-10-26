@@ -2342,6 +2342,13 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     setManTruck(m => { const n = { ...m }; delete n[gk]; return n; });
   };
   // Sold events sorted by date-proximity to this event (for the transfer picker — nearby dates first).
+  // Where an event is held: its own venue, else the distinct venues of its functions (shown beside the date when choosing a transfer site)
+  const venueOfEvent = (e) => {
+    if (!e) return "";
+    const own = String(e.venue || "").trim();
+    if (own) return own;
+    return [...new Set((Array.isArray(e.functionsDetail) ? e.functionsDetail : []).map(f => String(f?.venue || "").trim()).filter(Boolean))].join(", ");
+  };
   const nearbyTransferEvents = useMemo(() => {
     const base = selDateStr ? new Date(selDateStr + "T00:00:00").getTime() : 0;
     return (eventOrders || []).filter(e => e.id !== selId && isLiveEvent(e))
@@ -7162,6 +7169,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                         </svg>
                         <span className="truncate max-w-[220px]">{s.name}</span>
                         {s.date && <span className="font-normal text-sky-500 tabular-nums">{s.date}</span>}
+                        {(() => { const v = venueOfEvent((eventOrders || []).find(x => x.id === s.id)); return v ? <span className="font-normal text-sky-500 truncate max-w-[160px]">· {v}</span> : null; })()}
                         <button onClick={() => removeDismantleSite(s.id)} title={`Remove ${s.name}`} aria-label={`Remove ${s.name}`}
                           className="ml-0.5 w-5 h-5 rounded-md flex items-center justify-center text-sky-300 hover:text-red-600 hover:bg-red-50 transition">×</button>
                       </span>
@@ -7195,7 +7203,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                                     className="w-full text-left px-3 py-2 flex items-center gap-3 hover:bg-blue-50 transition-colors">
                                     <span className="min-w-0 flex-1">
                                       <span className="block text-[13px] font-semibold text-gray-900 truncate">{e.clientName || "Event"}</span>
-                                      <span className="block text-[11px] text-gray-500 tabular-nums">{d || "no date"}</span>
+                                      <span className="block text-[11px] text-gray-500 tabular-nums truncate">{d || "no date"}{venueOfEvent(e) ? <span className="font-sans"> · {venueOfEvent(e)}</span> : null}</span>
                                     </span>
                                     {/* Same-day is called out because it is the tight one — the
                                         truck has to reach the next site the same evening. The
