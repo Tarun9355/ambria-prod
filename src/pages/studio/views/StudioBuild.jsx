@@ -3220,8 +3220,7 @@ undefined
                         const meta = dc.category==="heavy_saya" ? { icon:<IconCrown size={13}/>, text:"King's date", tone:"#FBBF24" }
                           : dc.category==="non_saya" ? { icon:<IconFiller size={13}/>, text:"Filler date", tone:"#38BDF8" }
                           : { icon:<IconStar size={13}/>, text:"Perfect date", tone:"#34D399" };
-                        const m = Math.round((Number(dc.multiplier)||1)*100)/100;
-                        const tip = `${meta.text}${m!==1?` · rentals ×${m}`:""}`;
+                        const tip = meta.text;
                         return <span className="bd-datebadge" tabIndex={0} role="img" aria-label={tip} data-tip={tip} style={{"--tone":meta.tone}}>{meta.icon}</span>;
                       })()}
                     </div>}
@@ -3230,11 +3229,10 @@ undefined
                   {dd?.isMod && row(<IconAlert size={14}/>, "Moderate demand", "#FBBF24")}
                   {(()=>{
                     if(!fnDate||!dd) return null;
-                    const {dt,booked,ongoing}=dd;
+                    const {dt,ongoing}=dd;
                     const dtLabel=dt==="saya"?"Saya Day":dt==="competition"?"Competition Day":"";
                     return <>
                       {dtLabel && row(<IconAlert size={14}/>, dtLabel, dt==="saya"?"#F87171":pTextM)}
-                      {booked>0 && row(<IconCheck size={14}/>, `${booked} booked`, "#34D399")}
                       {ongoing>0 && row(<IconRepeat size={14}/>, `${ongoing} ongoing`, "#FBBF24")}
                     </>;
                   })()}
