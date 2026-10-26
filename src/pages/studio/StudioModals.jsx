@@ -197,6 +197,10 @@ export default function StudioModals({ ctx }) {
         const splitCapable = (!availModal.onPick || !!availModal.onSplit) && !availModal.multi;
         // Multi-select (carpet preferences): tap up to `max` items; the order tapped is their rank. One Save writes them all.
         const multi = availModal.multi || null;
+        // What is being chosen: a carpet for a floor (sqft) by default; an overlay or a cushion cover for an element (pieces) when the caller says so.
+        const mNoun = multi?.noun || "carpet";
+        const mNeedNoun = multi?.needNoun || "floor";
+        const mUnit = availModal.unitLabel || "sqft";
         // Ids that are not in the list that loaded (a carpet since deleted, or filed under another sub-category) are not selectable ghosts: they
         // would count toward the cap and then silently vanish on Save. While the list is still loading the ids are kept as they are.
         const multiIds = multi ? (availModal.multiIds || []).filter(id => availModal.loading || (availModal.items || []).some(x => x.id === id)) : [];
@@ -364,7 +368,7 @@ export default function StudioModals({ ctx }) {
                     const SWAP = "#F97316";
                     return (
                       <div key={it.id} className="ui-hover-grow" onClick={()=>{ if (unpickable || blockedShort) return; multi ? toggleMulti(it) : inSplit ? toggleSplitId(it.id) : setAvailModal(m=>({...m,selectedId: sel?null:it.id})); }}
-                        title={blockedShort ? `Short for this date — only ${it.free} ${availModal.unitLabel || "sqft"} free, this floor needs ${needSqft}` : unpickable ? "Out of stock and can't be made in production — pick a different item" : swap ? `Already used for this guest: ${usedIn.join(" · ")}` : it.venueSlack?.length ? `Allocated to other Fixed Venues (not counted as free): ${it.venueSlack.map(s=>`${s.slack} ${s.name}`).join(" · ")}` : undefined}
+                        title={blockedShort ? `Short for this date — only ${it.free} ${mUnit} free, this ${mNeedNoun} needs ${needSqft}` : unpickable ? "Out of stock and can't be made in production — pick a different item" : swap ? `Already used for this guest: ${usedIn.join(" · ")}` : it.venueSlack?.length ? `Allocated to other Fixed Venues (not counted as free): ${it.venueSlack.map(s=>`${s.slack} ${s.name}`).join(" · ")}` : undefined}
                         style={{cursor:(unpickable||blockedShort)?"not-allowed":"pointer",borderRadius:12,overflow:"hidden",border:`2px solid ${sel?"#059669":(swap||reuseShown)?SWAP:border}`,background:isDark?"#0F0F1A":"#FAFAFA",position:"relative",opacity:(unpickable||blockedShort)?0.55:1}}>
                         {sel&&<span style={{position:"absolute",top:6,left:6,zIndex:2,fontSize:multi?10.5:9,fontWeight:700,padding:"2px 7px",borderRadius:6,background:"#059669",color:"#fff"}}>{multi?`${MULTI_RANK[multiIds.indexOf(it.id)]||multiIds.indexOf(it.id)+1} choice`:"✓"}</span>}
                         <div title="Free on the event date" style={{position:"absolute",top:6,right:6,zIndex:2,fontSize:12,fontWeight:800,minWidth:22,textAlign:"center",padding:"2px 7px",borderRadius:8,background:out?"rgba(239,68,68,0.92)":"rgba(16,185,129,0.92)",color:"#fff"}}>{it.free}</div>
@@ -374,8 +378,8 @@ export default function StudioModals({ ctx }) {
                         <div style={{padding:"8px 10px"}}>
                           <div style={{fontSize:11,fontWeight:600,color:textP,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.name}</div>
                           {unpickable && <div style={{fontSize:8.5,marginTop:1,color:"#EF4444",fontWeight:700}}>Out of stock — can't be made</div>}
-                          {shortBy > 0 && <div style={{fontSize:9.5,marginTop:2,color:"#EF4444",fontWeight:800}}>SHORT {shortBy} {availModal.unitLabel || "sqft"} · needs {needSqft}{sel ? " · tap to remove" : ""}</div>}
-                          {reuseShown && <div style={{fontSize:9,marginTop:2,color:SWAP,fontWeight:700}} title="Already laid at this venue on this date for another event — it stays down, so it can be reused here">⇄ In use at this venue today: {reuseNote.join(", ")}{reuse?.qty > 0 ? ` · ${Math.round(reuse.qty)} ${availModal.unitLabel || "sqft"} laid` : ""} — reusable</div>}
+                          {shortBy > 0 && <div style={{fontSize:9.5,marginTop:2,color:"#EF4444",fontWeight:800}}>SHORT {shortBy} {mUnit} · needs {needSqft}{sel ? " · tap to remove" : ""}</div>}
+                          {reuseShown && <div style={{fontSize:9,marginTop:2,color:SWAP,fontWeight:700}} title="Already laid at this venue on this date for another event — it stays down, so it can be reused here">⇄ In use at this venue today: {reuseNote.join(", ")}{reuse?.qty > 0 ? ` · ${Math.round(reuse.qty)} ${mUnit} laid` : ""} — reusable</div>}
                           {/* The corner badge is deliberately a bare number (no room for a unit in a
                               22px-wide tag) — this line spells it out. availModal.unitLabel is a
                               caller override (Deal Check's carpet picker passes "sqft") for when the
@@ -414,7 +418,7 @@ export default function StudioModals({ ctx }) {
             <div style={{padding:"12px 20px",borderTop:`1px solid ${border}`,display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,flexWrap:"wrap"}}>
               <span style={{fontSize:10,color:textS}}>
                 {multi
-                  ? <>{multiIds.length} of {multi.max} selected{multi.need > 0 ? ` — a carpet with less free on this date than the ${multi.need} sqft floor needs is marked short and cannot be picked. Orange = already laid at this venue today, so it can be reused` : ""}{availModal.pickHint ? ` — ${availModal.pickHint}` : ""}{availModal.multiNote && <b style={{color:"#B45309",marginLeft:6}}>{availModal.multiNote}</b>}</>
+                  ? <>{multiIds.length} of {multi.max} selected{multi.need > 0 ? ` — ${(/^[aeiou]/i.test(mNoun) ? "an " : "a ") + mNoun} with less free on this date than the ${multi.need} ${mUnit} this ${mNeedNoun} needs is marked short and cannot be picked.${mNoun === "carpet" ? " Orange = already laid at this venue today, so it can be reused" : " Each choice must be able to supply the whole quantity"}` : ""}{availModal.pickHint ? ` — ${availModal.pickHint}` : ""}{availModal.multiNote && <b style={{color:"#B45309",marginLeft:6}}>{availModal.multiNote}</b>}</>
                   : inSplit
                   ? (splitPreview ? `${splitIds.length} items selected — splits ${origQty} into ${splitPreview}` : "Select 2 or more items to split into")
                   : (availModal.onPick ? (availModal.pickHint || "Pick an item to swap to.") : (availModal.selectedId ? "This item will be booked in Deal Check for this element." : "Pick an item to book it — or clear the current pin."))}
@@ -424,9 +428,9 @@ export default function StudioModals({ ctx }) {
                 {multi
                   ? <>
                     {multi.onSaveAll && <button onClick={()=>{if(!canSaveMulti)return;multi.onSaveAll(multiPickList);closeModal();}} disabled={!canSaveMulti}
-                      title={canSaveMulti?`Use these ${multiPickList.length} on every carpeted floor of this function — stock decides which ones show short`:availModal.loading?"Still loading…":"Pick a carpet first"}
+                      title={canSaveMulti?`Use these ${multiPickList.length} on every carpeted floor of this function — stock decides which ones show short`:availModal.loading?"Still loading…":`Pick a ${mNoun} first`}
                       style={{padding:"8px 14px",borderRadius:8,border:"1px solid #059669",background:"transparent",color:canSaveMulti?"#059669":"#9CA3AF",fontSize:12,fontWeight:700,cursor:canSaveMulti?"pointer":"not-allowed"}}>Save to all</button>}
-                    <button onClick={()=>{if(!canSaveMulti)return;multi.onSave&&multi.onSave(multiPickList);closeModal();}} disabled={!canSaveMulti}
+                    <button onClick={()=>{if(!canSaveMulti)return;multi.onSave&&multi.onSave(multiPickList, availModal.items);closeModal();}} disabled={!canSaveMulti}
                       style={{padding:"8px 18px",borderRadius:8,border:"none",background:canSaveMulti?"#059669":"#6B7280",color:"#fff",fontSize:12,fontWeight:700,cursor:canSaveMulti?"pointer":"default"}}>Save{multiPickList.length?` (${multiPickList.length})`:""}</button>
                   </>
                   : inSplit

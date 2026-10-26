@@ -13,6 +13,9 @@ import { ZONE_META, trussBaseArea, CARPET_OFF } from "../../lib/studio/taxonomy"
 import { prefsOf, floorSqftOf } from "../../lib/studio/carpetPrefs";
 import { carpetFloorsOf, planCarpets, carpetKey, carpetStockFor, validDecision } from "../../lib/ims/carpetPlan";
 import CarpetPickerModal from "./CarpetPickerModal.jsx";
+import ElementChoicePlan from "./ElementChoicePlan.jsx";
+import { planElements, elementStockFor, elementKey } from "../../lib/ims/elementPlan";
+import { elementChoices } from "../../lib/studio/elementPrefs";
 import { orderZoneKeys } from "../../lib/ims/zoneOrder";
 import { calcZoneTrussPreview, calcZoneFabric, dcFabricMultOf } from "../../lib/studio/pricing";
 import { ZONE_DEF_SK, RC_SK_TR } from "../../lib/studio/keys";
@@ -902,6 +905,17 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     (inventory || []).forEach(i => { if (i?.id != null) itemsById[i.id] = i; });
     carpetPlanCache = planCarpets({ floors, itemsById, blocks, eventId: sel?.id, choice: sel?.deptOps?.Tenting?.carpetChoice || {}, eventOrders });
     return carpetPlanCache;
+  };
+  // ── OVERLAY / CUSHION COVER CHOICES ── the same idea for the Fabric head: sales names up to four designs for an overlay or a cushion
+  // cover; Planning decides the one design used for the whole quantity (deptOps.Fabric.itemChoice, IMS-owned).
+  const zoneLabelFor = (fn, zk) => fn?.zoneNames?.[zk] || ZONE_META[zk]?.label || String(zk).replace(/[_-]+/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+  let elementPlanCache = null;
+  const elementPlanOf = () => {
+    if (elementPlanCache) return elementPlanCache;
+    const itemsById = {};
+    (inventory || []).forEach(i => { if (i?.id != null) itemsById[i.id] = i; });
+    elementPlanCache = planElements({ functionsDetail: sel?.functionsDetail, zoneLabelOf: zoneLabelFor, itemsById, blocks, eventId: sel?.id, choice: sel?.deptOps?.Fabric?.itemChoice || {} });
+    return elementPlanCache;
   };
   // ── THE PANEL: inline from sm up, a bottom sheet on a phone ──
   // Opening in place works on the desktop grid because the tiles sit four to a row and stay in
@@ -3162,9 +3176,19 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     const loadUnits = blockedItems.reduce((a, it) => a + (Number(it.qty) || 0), 0);
     // Deal Check's print row is only a count of jobs — each job is spelt out under it, and a
     // painted item carries its colours, so neither is loaded blind.
+    // An overlay / cushion cover whose 1st choice is held but Planning decided another design (or arranged it separately): the held line still
+    // names the 1st choice, so say what the crew uses instead.
+    const decidedInstead = new Map();
+    if (!pdfAllCarpetsRef.current) elementPlanOf().rows.forEach(r => {
+      if (!r.other && (!r.decidedId || r.decidedId === r.prefs[0]?.id)) return;
+      const nm = r.other ? "arranged separately" : ([...r.options, r.manual].filter(Boolean).find(o => o.id === r.decidedId) || {}).name || "another design";
+      const k = String(r.prefs[0]?.id);
+      decidedInstead.set(k, [...(decidedInstead.get(k) || []), `${nm} × ${r.qty}`]);
+    });
     const loadRows = blockedItems.map(it => {
       const paint = finish.paintFor(it);
       const sub = (it.kitOf ? `<div class="sub">part of ${esc(it.kitOf)}</div>` : "")
+        + (it.invId && decidedInstead.has(String(it.invId)) ? `<div class="sub">Planning chose instead: ${esc(decidedInstead.get(String(it.invId)).join(", "))}</div>` : "")
         + (paint ? `<div class="sub">Paint: ${esc(paint)}</div>` : "")
         + (it.sub === "print" ? finish.prints.map(p => `<div class="sub">${esc(finish.printLine(p))}</div>`).join("") : "");
       return `<tr><td>${esc(it.name)}${sub}</td><td class="n b">${esc(it.qty)}</td></tr>`;
@@ -3432,7 +3456,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       zoneKeys.forEach(zk => {
         if (fn.enabledEls && fn.enabledEls[zk] === false) return;
         const merged = new Map();
-        (Array.isArray(els[zk]) ? els[zk] : []).forEach(el => {
+        (Array.isArray(els[zk]) ? els[zk] : []).forEach((el, ei) => {
           const id = el?.invId || el?.imsId;
           const nm = String(el?.name || "").trim().toLowerCase();
           const inv = (id && invById.get(String(id))) || invByName.get(nm) || null;
@@ -3471,6 +3495,21 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           // Only the parts are ours — the kit shell itself sits on another department's sheet.
           if (!held && kitParts.length) return;
           if (held) placed.add(held.id);
+          // ── OVERLAYS AND CUSHION COVERS WITH CHOICES ──
+          // Planning decides one of sales' designs (or arranges the pieces outside stock). The card shows that design — its own photo and
+          // size — and until it is decided the choices are listed under the 1st. Deal Check's PDF (pdfAllCarpetsRef) lists what sales asked for.
+          const prow = elementPlanOf().rows.find(r => r.fi === (fn?.fnIdx ?? fi) && r.zk === zk && r.ei === ei) || null;
+          let invU = inv, arranged = false, choiceExtra = null, decName = "";
+          if (prow) {
+            const names = prow.options.map((o, i) => `${i + 1} ${String(o.name || "").length > 16 ? String(o.name).slice(0, 15) + "…" : o.name}`).join(" · ");
+            if (pdfAllCarpetsRef.current) choiceExtra = [["Choices", names]];
+            else if (prow.other) { arranged = true; choiceExtra = [["Source", "Bought / hired / made outside stock"]]; }
+            else if (prow.decidedId) {
+              const di = invById.get(String(prow.decidedId));
+              if (di) invU = di; else { invU = null; decName = ([...prow.options, prow.manual].filter(Boolean).find(o => o.id === prow.decidedId) || {}).name || ""; }
+              choiceExtra = [["Design", "Chosen in Planning"]];
+            } else choiceExtra = [["Choices", names + " (not decided)"]];
+          }
           // ── S / M / B ──
           // Florals (and some lighting) are quoted at a size, not just a count: the same
           // arrangement is a different build at Small than at Big, and `el.size` is where the
@@ -3488,7 +3527,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           // tell an unsized item from an unset one, and a wrong size is worse than none.
           const rawSize = String(el?.size || "").trim().toUpperCase();
           const elSize = SMB_LABEL[rawSize] || (!rawSize && el?.patternId ? SMB_LABEL.B : "");
-          const key = (inv ? "i:" + inv.id : "n:" + nm) + (elSize ? "|" + elSize : "");
+          const key = (arranged ? "o:" + (el?.pid || ei) : invU ? "i:" + invU.id : "n:" + (decName || nm)) + (elSize ? "|" + elSize : "");
           const prev = merged.get(key);
           const qty = Number(el?.qty) || 1;
           // Paint the build asked for on this item, carried on its own card so the item's
@@ -3501,7 +3540,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           // A flower recipe with no unit stored falls back to "pc" — the same default Studio gives a
           // recipe element when it is added (recipeOnlyPatterns in StudioApp.jsx).
           const unit = String(el?.unit || inv?.unit || held?.unit || (isPattern ? "pc" : "")).trim();
-          const deptTag = !combined ? "" : isPattern ? "Floral" : inv ? (deptByInvId.get(String(inv.id)) || catToDept(inv.category || inv.cat)) : "";
+          const deptTag = !combined ? "" : isPattern ? "Floral" : invU ? (deptByInvId.get(String(invU.id)) || catToDept(invU.category || invU.cat)) : "";
           // ── WHAT GOES INTO A FLORAL ARRANGEMENT ──
           // A "Flower Reet" is a recipe of several flowers; the crew needs those, not just the
           // count. Recipe found the way Studio prices it — the element's own patternId, else the
@@ -3522,7 +3561,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
             if (swapped) return swapped;
             return { name: mf.name, qty: baseQty, unit: mf.unit || "" };
           }).filter(f => f && f.qty > 0);
-          merged.set(key, { name: inv?.name || el?.name || held?.name || "Item", qty, unit, deptTag, photo: invPhoto(inv, held), dims: invDims(inv), size: elSize, kit: held?.isKit ? (Array.isArray(held.components) ? held.components.length : 0) + (Array.isArray(held.recipeParts) ? held.recipeParts.length : 0) : 0, recipe, paint: addPaint(new Map(), paint) });
+          merged.set(key, { name: arranged ? `${el?.name || inv?.name || "Item"} — arranged separately` : (invU?.name || decName || el?.name || held?.name || "Item"), qty, unit, deptTag, photo: arranged ? "" : invPhoto(invU, invU === inv ? held : null), dims: arranged ? "" : invDims(invU), extra: choiceExtra || undefined, size: elSize, kit: held?.isKit ? (Array.isArray(held.components) ? held.components.length : 0) + (Array.isArray(held.recipeParts) ? held.recipeParts.length : 0) : 0, recipe, paint: addPaint(new Map(), paint) });
         });
         const items = [...merged.values()];
         const zPhoto = fn.elSelectedPhoto?.[zk]?.src || "";
@@ -4292,33 +4331,53 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
   const exportPdf = async (depts, { view = false, cacheKey = "", gate = true } = {}) => {
     if (exporting) return;
     const multi = depts.length > 1;
-    // ── NO PDF UNTIL EVERY CARPET FLOOR HAS ITS CARPET ──
-    // Carpet is Tenting's work, so the Tenting book and the all-departments book (which carries it) tell the crew which carpet goes down:
-    // a floor whose carpet Planning has not decided has nothing to print, and those two PDFs are refused until it is. Every other
-    // department's PDF is not held up. The floors are named so they can be fixed in the Carpet plan.
+    // ── NO PDF UNTIL EVERY CARPET FLOOR AND EVERY OVERLAY / CUSHION COVER WITH CHOICES HAS ITS DESIGN ──
+    // Carpet is Tenting's work, and overlays and cushion covers are Fabric's. The book that carries a decision (Tenting's, Fabric's, and the
+    // all-departments book) tells the crew which design goes where: an unmade decision has nothing to print, so those PDFs are refused until
+    // it is made. Every other department's PDF is not held up. What is missing is named so it can be fixed in the plan.
     // The PDF started from Deal Check (it lists what sales asked for) and the viewer refreshing itself are not held up by this.
-    if (gate && !pdfAllCarpetsRef.current && (multi || depts.includes("Tenting"))) {
-      // A floor whose function date has already passed has nothing left to plan, so history can always be downloaded.
+    const needCarpets = multi || depts.includes("Tenting");
+    const needItems = multi || depts.includes("Fabric");
+    if (gate && !pdfAllCarpetsRef.current && (needCarpets || needItems)) {
+      // Something whose function date has already passed has nothing left to plan, so history can always be downloaded.
       const today = new Date().toLocaleDateString("en-CA"); // local YYYY-MM-DD
-      const undecided = carpetPlanOf().rows.filter(r => r.status !== "decided" && !(r.date && r.date < today));
-      if (undecided.length) {
+      const open = (r) => r.status !== "decided" && !(r.date && r.date < today);
+      const carpetLeft = needCarpets ? carpetPlanOf().rows.filter(open) : [];
+      const itemsLeft = needItems ? elementPlanOf().rows.filter(open) : [];
+      if (carpetLeft.length || itemsLeft.length) {
         if (carpetGateOpenRef.current) return false; // the message is already up (a double click)
         carpetGateOpenRef.current = true;
         const when = (d) => { try { return d ? new Date(d + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : ""; } catch { return d || ""; } };
-        const lines = undecided.slice(0, 8).map(r => `• ${r.zoneName}${[r.fnLabel, when(r.date)].filter(Boolean).length ? " — " + [r.fnLabel, when(r.date)].filter(Boolean).join(" · ") : ""}${r.status === "none" ? " (sales picked no carpet)" : ""}`);
-        if (undecided.length > 8) lines.push(`…and ${undecided.length - 8} more`);
-        // The site's own dialog (not the browser's alert): says what is missing and takes them straight to the Carpet plan.
-        // Someone who cannot open Tenting is told who to ask, not sent to a panel they cannot reach.
-        const canPlan = dept === "Tenting" || deptOptions.includes("Tenting");
+        const listOf = (rows, label, tail) => {
+          const lines = rows.slice(0, 8).map(r => `• ${label(r)}${[r.fnLabel, when(r.date)].filter(Boolean).length ? " — " + [r.fnLabel, when(r.date)].filter(Boolean).join(" · ") : ""}${tail(r)}`);
+          if (rows.length > 8) lines.push(`…and ${rows.length - 8} more`);
+          return lines.join("\n");
+        };
+        const carpetLines = listOf(carpetLeft, r => r.zoneName, r => (r.status === "none" ? " (sales picked no carpet)" : ""));
+        const itemLines = listOf(itemsLeft, r => `${r.zoneName} · ${r.name}`, r => (r.status === "short" ? " (none of the choices covers it)" : ""));
+        // The site's own dialog (not the browser's alert): says what is missing and takes them straight to the plan.
+        // Someone who cannot open that department is told who to ask, not sent to a panel they cannot reach.
+        const canCarpet = dept === "Tenting" || deptOptions.includes("Tenting");
+        const canItems = dept === "Fabric" || deptOptions.includes("Fabric");
+        const goCarpet = carpetLeft.length > 0 && canCarpet;
+        const goItems = !goCarpet && itemsLeft.length > 0 && canItems;
+        const carpetHow = canCarpet ? "Pick a carpet for each in Tenting → Carpet plan (if no stock carpet can be used, choose \"Arrange separately\")" : "Ask the Tenting head to choose them in Planning → Tenting → Carpet plan";
+        const itemHow = canItems ? "Pick a design for each in Fabric → Overlay & cushion choices (if none in stock can be used, choose \"Arrange separately\")" : "Ask the Fabric head to choose them in Planning → Fabric → Overlay & cushion choices";
+        let title, body;
+        if (carpetLeft.length && itemsLeft.length) {
+          title = "Choices not made";
+          body = `The PDF was not made. These still need deciding:\n\nCarpet:\n${carpetLines}\n\nOverlays / cushion covers:\n${itemLines}\n\n${carpetHow}; ${itemHow.charAt(0).toLowerCase() + itemHow.slice(1)}. Then download again.`;
+        } else if (carpetLeft.length) {
+          title = "Carpet not selected";
+          body = `The PDF was not made. Choose the carpet for ${carpetLeft.length === 1 ? "this floor" : "these floors"} first:\n\n${carpetLines}\n\n${carpetHow}, then download again.`;
+        } else {
+          title = "Overlay / cushion cover not chosen";
+          body = `The PDF was not made. Choose the design for ${itemsLeft.length === 1 ? "this element" : "these elements"} first:\n\n${itemLines}\n\n${itemHow}, then download again.`;
+        }
         try {
-          const go = await confirm({
-            title: "Carpet not selected",
-            body: `The PDF was not made. Choose the carpet for ${undecided.length === 1 ? "this floor" : "these floors"} first:\n\n${lines.join("\n")}\n\n`
-              + (canPlan ? "Pick a carpet for each in Tenting → Carpet plan (if no stock carpet can be used, choose \"Arrange separately\"), then download again."
-                : "Ask the Tenting head to choose them in Planning → Tenting → Carpet plan, then download again."),
-            confirmLabel: canPlan ? "Open Carpet plan" : "OK", danger: false,
-          });
-          if (go && canPlan) { if (dept !== "Tenting") setDept("Tenting"); setOpsView("planning"); setModal("carpet"); }
+          const go = await confirm({ title, body, confirmLabel: goCarpet ? "Open Carpet plan" : goItems ? "Open choices" : "OK", danger: false });
+          if (go && goCarpet) { if (dept !== "Tenting") setDept("Tenting"); setOpsView("planning"); setModal("carpet"); }
+          else if (go && goItems) { if (dept !== "Fabric") setDept("Fabric"); setOpsView("planning"); setModal("choices"); }
         } finally { carpetGateOpenRef.current = false; }
         return false;
       }
@@ -5533,6 +5592,12 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                   const decided = rows.filter(r => r.status === "decided").length;
                   const bad = rows.filter(r => r.status === "short" || r.status === "none").length;
                   return { k: "carpet", icon: "🟥", title: "Carpet plan", sub: bad ? <span className="text-red-600 font-semibold">{bad} floor{bad === 1 ? "" : "s"} need{bad === 1 ? "s" : ""} attention · {decided} of {rows.length} decided</span> : `${decided} of ${rows.length} floor${rows.length === 1 ? "" : "s"} decided`, ...(bad ? { tone: "bg-red-50", alert: true } : {}) };
+                })(),
+                dept === "Fabric" && elementPlanOf().rows.length > 0 && (() => {
+                  const rows = elementPlanOf().rows;
+                  const decided = rows.filter(r => r.status === "decided").length;
+                  const bad = rows.filter(r => r.status === "short").length;
+                  return { k: "choices", icon: "🧵", title: "Overlay & cushion choices", sub: bad ? <span className="text-red-600 font-semibold">{bad} need{bad === 1 ? "s" : ""} attention · {decided} of {rows.length} decided</span> : `${decided} of ${rows.length} decided`, ...(bad ? { tone: "bg-red-50", alert: true } : {}) };
                 })(),
                 dept === "Tenting" && trussPlanOf().length > 0 && { k: "truss", icon: "🏗️", title: "Truss plan", sub: n(trussPlanOf().length, "truss") + " · pillars, beams, fabric" },
                 { k: "mp", icon: "👷", title: "Manpower plan", sub: mpChanged ? <span className="text-red-600 font-semibold">⚠ Changed since you last looked · {fmt(Number(mpSeen.cost) || 0)} → {fmt(mpSnapCost)}</span> : mpRows.length ? n(mpRows.length, "crew line") : "no crew assigned", value: fmt(mpCost), ...(mpChanged ? { tone: "bg-red-50", alert: true } : {}) },
@@ -6877,6 +6942,19 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                   })()}
                 </div>
               </div>
+              );
+            })()}
+            {dept === "Fabric" && elementPlanOf().rows.length > 0 && (() => {
+              const choiceAll = deptData.itemChoice || {};
+              // A decision remembers the date and function it was made for, so it can never land on another element if functions are later
+              // removed or renumbered in Studio (carpetPlan.validDecision).
+              const put = (r, entry) => saveDept({ itemChoice: { ...choiceAll, [r.key]: { ...entry, date: r.date, fnType: r.fnLabel, by: authUser?.name || "—", at: Date.now() } } });
+              return (
+                <ElementChoicePlan className={modalCls("choices")} plan={elementPlanOf()} onZoom={setZoomImg}
+                  stockOf={(r) => elementStockFor(r, inventory, blocks, sel?.id, sel?.functionsDetail, elementPlanOf().rows, choiceAll)}
+                  onDecide={(r, o, byHand) => put(r, { id: o.id, name: o.name, ...(byHand ? { manual: true } : {}) })}
+                  onOther={(r) => put(r, { other: true, name: "Arranged separately" })}
+                  onUndo={(key) => { const n2 = { ...choiceAll }; delete n2[key]; saveDept({ itemChoice: n2 }); }} />
               );
             })()}
             {dept === "Tenting" && trussPlanOf().length > 0 && (

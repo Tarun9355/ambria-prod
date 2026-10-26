@@ -60,8 +60,9 @@ export function syncSwapToBuild(zoneElements, parsed, pick, cardKey) {
   const el = elAtIdxIsThisCard(arr, parsed, cardKey);
   if (!el || el.invId === pick.imsId) return zoneElements;
   const nextArr = arr.slice();
+  const { prefs: _choices, ...elRest } = el; // eslint-disable-line no-unused-vars -- swapped to another item: its ranked choices (overlays / cushion covers) no longer apply
   nextArr[parsed.idx] = {
-    ...el, invId: pick.imsId, imsId: pick.imsId,
+    ...elRest, invId: pick.imsId, imsId: pick.imsId,
     name: pick.name || el.name, imsName: pick.name || "", imsPhoto: pick.photo || "",
     _dcSyncedCardKey: cardKey,
   };
@@ -158,7 +159,9 @@ export function syncSplitToBuild(zoneElements, parsed, splitAlloc, groupId, inve
   }
   const nextEntries = splitAlloc.map((a) => {
     const nm = nameFor(a.imsId);
-    return { ...base, invId: a.imsId, imsId: a.imsId, name: nm, imsName: nm, qty: Number(a.qty) || 0, _dcSplitGroup: groupId };
+    // the lines of a split are separate elements: the original's ranked choices (overlays / cushion covers) and their id stay behind
+    const { prefs: _choices, pid: _choicePid, ...baseRest } = base; // eslint-disable-line no-unused-vars
+    return { ...baseRest, invId: a.imsId, imsId: a.imsId, name: nm, imsName: nm, qty: Number(a.qty) || 0, _dcSplitGroup: groupId };
   });
   let nextArr;
   if (memberIdxs.length) {

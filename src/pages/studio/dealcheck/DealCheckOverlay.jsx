@@ -9,6 +9,7 @@ import { useState, useEffect, useRef } from "react";
 import { dealAgencyFeePct } from "../../../lib/studio/agencyFee";
 import { prefsOf, prefsPatch, setPrefsPatch, clearPrefsPatch, assignCarpets, floorSqftOf, CARPET_PREF_LABELS, CARPET_PREF_MAX } from "../../../lib/studio/carpetPrefs";
 import { validDecision } from "../../../lib/ims/carpetPlan";
+import { elementChoices, ELEMENT_PREF_LABELS } from "../../../lib/studio/elementPrefs";
 import DeptPdfButton from "../../../components/studio/DeptPdfButton.jsx";
 import { createPortal } from "react-dom";
 import DCFloralsTab from "./tabs/DCFloralsTab.jsx";
@@ -3460,6 +3461,28 @@ export default function DealCheckOverlay({ ctx }) {
                                         })() : (
                                           <div style={{fontSize:12,color:IV.red,marginBottom:7,fontStyle:"italic"}}>No IMS match — pick from alternatives below or browse subcategory</div>
                                         )}
+                                        {/* ── CHOICES (overlays / cushion covers, from Build) ── sales named up to four designs for this element; Planning decides
+                                            the one design used for the whole quantity. Shown read-only so the deal check sees them all. */}
+                                        {(()=>{
+                                          const el = _repParsed?.idx != null ? fns[fnIdx]?.zoneElements?.[card.zoneKey]?.[_repParsed.idx] : null;
+                                          const ch = elementChoices(el);
+                                          if (ch.length < 2) return null;
+                                          const decRaw = el.pid ? ((eventOrders || []).find(e => e.clientId === activeClientId)?.deptOps?.Fabric?.itemChoice || {})[`${fnIdx}|${card.zoneKey}|${el.pid}`] : null;
+                                          const dec = validDecision(decRaw, { date: fns[fnIdx]?.fnDate, fnLabel: fns[fnIdx]?.fnType }) && (decRaw.other || decRaw.manual || ch.some(p => p.id === decRaw.id)) ? decRaw : null;
+                                          return (
+                                            <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:7}}>
+                                              <span className="dc-cap" style={{color:IV.ink2,letterSpacing:1.1}}>Choices</span>
+                                              {ch.map((p, i) => (
+                                                <span key={p.id} title={`${ELEMENT_PREF_LABELS[i]}: ${p.name}${p.free != null ? ` — ${Math.round(p.free)} free when picked` : ""}`}
+                                                  style={{display:"inline-flex",alignItems:"center",gap:5,maxWidth:"100%",padding:"2px 8px 2px 4px",borderRadius:999,border:`1px solid ${IV.border}`,background:IV.tile,color:IV.ink,fontSize:11,fontWeight:600}}>
+                                                  <span style={{flexShrink:0,width:15,height:15,borderRadius:8,background:IV.gold,color:"#fff",fontSize:9.5,fontWeight:800,display:"inline-flex",alignItems:"center",justifyContent:"center"}}>{i+1}</span>
+                                                  <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:150}}>{p.name}</span>
+                                                </span>
+                                              ))}
+                                              <span style={{fontSize:10.5,fontWeight:dec?700:650,color:dec?IV.green:IV.gold}}>{dec ? `✓ Planning chose: ${dec.other ? "arranged separately (not from stock)" : dec.name}` : "Planning decides"}</span>
+                                            </div>
+                                          );
+                                        })()}
                                         {/* The "Set as correct match for this photo" link stood here, with its "learned for
                                             this photo" counterpart. Removed on request. Worth recording what went with it: this
                                             was the ONLY place a person could correct the knowledge set. saveKnowledgeEntry still

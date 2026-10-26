@@ -4,6 +4,7 @@ import { makeFilterUI, useRailMaxHeight } from "../../../components/studio/filte
 import NumField from "../../../components/ui/NumField.jsx";
 import { applyQtyCeiling } from "../../../lib/studio/qtyCeiling";
 import { unitAllowsDecimal, quantityForUnit } from "../../../lib/studio/qtyUnits";
+import { itemTakesChoices, elementChoices, applyChoicePicks, ELEMENT_PREF_MAX, ELEMENT_PREF_LABELS } from "../../../lib/studio/elementPrefs";
 import { IconClipboard, IconPencil, IconRuler, IconBolt, IconWall, IconPlatform, IconCarpet, IconBulb, IconCheck,
   IconSearch, IconCamera, IconPrinter, IconNote, IconCalendar, IconFlower, IconFactory,
   IconCart, IconCopy, IconRepeat, IconAlert, IconPalette, IconChevron, IconSparkle,
@@ -4788,6 +4789,26 @@ undefined
                         })()}
                       </div>
                       <div style={{display:"flex",alignItems:"center",gap:4,marginTop:2,flexWrap:"wrap"}}>
+                        {/* Overlays and cushion covers can name up to four designs in order of preference; Planning decides which one is used from what is
+                            free on the day. Priced and held as the 1st choice, exactly like a plain element. */}
+                        {openAvailModal&&!isKit&&invItem&&itemTakesChoices(invItem)&&(()=>{
+                          const ch=elementChoices(el);
+                          const noun=/cover/i.test(invItem.name||"")?"cushion cover":"overlay";
+                          const open=()=>openAvailModal(k,idx,el,rc,null,{unitLabel:qtyUnit,hidePrice:true,
+                            pickHint:"The 1st choice is the one priced; Planning decides which is used from what is free on the day",
+                            multi:{max:ELEMENT_PREF_MAX,need:Number(el.qty)||0,current:ch.length?ch.map(c=>c.id):[el.invId],noun,needNoun:"element",noReuse:true,designsOnly:true,
+                              onSave:(picks,all)=>setZoneElements(p=>{
+                                const elems=[...(p[k]||[])]; if(!elems[idx]||!picks.length) return p;
+                                elems[idx]=applyChoicePicks(elems[idx],picks,all);
+                                return {...p,[k]:elems};
+                              })}});
+                          return ch.length>=2
+                            ? <span onClick={open} role="button" tabIndex={0} title={`Choices in order — Planning decides which one is used. Tap to change.`} style={{display:"inline-flex",alignItems:"center",gap:3,flexWrap:"wrap",cursor:"pointer"}}>
+                                {ch.map((c,i)=><span key={c.id} title={`${ELEMENT_PREF_LABELS[i]}: ${c.name}`} style={{display:"inline-flex",alignItems:"center",gap:3,fontSize:10.5,padding:"1px 7px",borderRadius:6,border:`1px solid ${i===0?"#059669":border}`,color:i===0?"#059669":textS,fontWeight:i===0?700:500,maxWidth:130}}>
+                                  <b style={{fontSize:9.5}}>{i+1}</b><span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.name}</span></span>)}
+                              </span>
+                            : <button onClick={open} title={`Name up to ${ELEMENT_PREF_MAX} ${noun} designs in order of preference — Planning decides which one is used`} style={{padding:"1px 7px",borderRadius:6,border:`1px dashed ${border}`,fontSize:10.5,fontWeight:600,cursor:"pointer",background:"transparent",color:accent}}>＋ Choices</button>;
+                        })()}
                         {!!el.mandiId&&(()=>{
                           const mandiCat=(dealCheckData||studioFloralData)?.mandiCatalogue||[];
                           const parent=mandiCat.find(m=>m.id===el.mandiId);

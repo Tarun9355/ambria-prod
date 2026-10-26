@@ -39,6 +39,8 @@ import { paletteNames, paletteInList } from "../../lib/studio/colours";
 import { makeS } from "../../lib/studio/styles";
 import { dealAgencyFeePct, feePctOf, DEFAULT_AGENCY_FEE_PCT } from "../../lib/studio/agencyFee";
 import { sameVenueHolds, siblingCarpetUse } from "../../lib/studio/carpetReuse";
+import { elementAfterPick } from "../../lib/studio/elementPick";
+import { itemTakesChoices } from "../../lib/studio/elementPrefs";
 import { findCrossFnReuseSource, computeFnInvQty, findSiblingFnInvUse, findSiblingFnSubcatOpportunity } from "../../lib/studio/crossFnReuse";
 import { computeFnFloralCost, buildMandiBreakdown } from "../../lib/studio/floralCost";
 import { computePeople, shiftToTiming, sizeFromMode, situationalFactorsFor, walkFnElements } from "../../lib/studio/manpowerCount";
@@ -9792,7 +9794,7 @@ export default function StudioApp() {
       // have a stale baseQty baked in (e.g. 0.5, left over from a long-gone ÷2). A fresh photo pick
       // always derives its base from that photo's own qty, never an inherited one, or the very next
       // Scale edit multiplies the WRONG base and lands on a qty nobody asked for.
-      const rawEls = JSON.parse(JSON.stringify(photo.elements)).map(({ baseQty: _drop, ...e }) => e);
+      const rawEls = JSON.parse(JSON.stringify(photo.elements)).map(({ baseQty: _drop, prefs: _c, pid: _p, ...e }) => e); // eslint-disable-line no-unused-vars
       finalEls = curScale > 1
         ? rawEls.map(e => { const base = Number(e.qty) || 0; return { ...e, baseQty: base, qty: Math.max(0, Math.round(base * curScale)) }; })
         : rawEls;
@@ -9881,7 +9883,7 @@ export default function StudioApp() {
     // Strip any stray baseQty the photo's saved elements carry — see the matching note in
     // selectElPhoto; a photo corrected mid-scale can bake in a leftover ratio that has nothing to do
     // with this build.
-    const tagged = (photo.isLibrary ? (photo.elements || []) : []).map(({ baseQty: _drop, ...it }) => ({ ...JSON.parse(JSON.stringify(it)), _srcPhotoKey: photoKey }));
+    const tagged = (photo.isLibrary ? (photo.elements || []) : []).map(({ baseQty: _drop, prefs: _c, pid: _p, ...it }) => ({ ...JSON.parse(JSON.stringify(it)), _srcPhotoKey: photoKey })); // eslint-disable-line no-unused-vars
     setZoneElements(p => ({ ...p, [elKey]: [...(p[elKey] || []), ...tagged] }));
     if (!current.length) {
       setElSelectedPhoto(p => ({ ...p, [elKey]: photo }));
@@ -10484,7 +10486,7 @@ export default function StudioApp() {
     const reqId = ++availReqSeq.current;
     setAvailModal({ reqId, zoneKey, idx, elName: el?.name || "", subcat, date, loading: true, items: [], selectedId: el?.imsId || el?.invId || null, onPick: onPick || (opts?.multi ? (() => {}) : null), onPickAll: opts?.onPickAll || null, splitQty: Number(opts?.splitQty) || 0, onSplit: opts?.onSplit || null, pickHint: opts?.pickHint || "", neededLabel: opts?.neededLabel || "", unitLabel: opts?.unitLabel || "", hidePrice: !!opts?.hidePrice,
       // multi: pick up to N items in one go, ranked in the order tapped (carpet preferences) — { max, current: [ids], onSave(picks), onSaveAll?(picks) }
-      multi: opts?.multi ? { max: Number(opts.multi.max) || 3, need: Number(opts.multi.need) || 0, onSave: opts.multi.onSave || null, onSaveAll: opts.multi.onSaveAll || null } : null, multiIds: Array.isArray(opts?.multi?.current) ? opts.multi.current : [], multiNote: "" });
+      multi: opts?.multi ? { max: Number(opts.multi.max) || 3, need: Number(opts.multi.need) || 0, onSave: opts.multi.onSave || null, onSaveAll: opts.multi.onSaveAll || null, noun: opts.multi.noun || "", needNoun: opts.multi.needNoun || "" } : null, multiIds: Array.isArray(opts?.multi?.current) ? opts.multi.current : [], multiNote: "" });
     try {
       const { inventory, blocksForDate, blocksDetailForDate } = await loadAvailability(date);
       const target = String(subcat).toLowerCase().trim();
@@ -10545,16 +10547,20 @@ export default function StudioApp() {
       });
       // Carpet picker only (opts.multi): a carpet already laid for ANOTHER event at this same venue on this same date — another client's, or
       // another function of this deal — stays down, so it is reusable here and marked orange rather than short.
-      const allFnsForReuse = opts?.multi ? (collectAllFunctionData() || []) : [];
+      // Only carpets: an overlay or a cushion cover (multi.noReuse) is not laid down and left in place, so nothing is reusable.
+      const reuseOn = !!opts?.multi && !opts.multi.noReuse;
+      const allFnsForReuse = reuseOn ? (collectAllFunctionData() || []) : [];
       const thisFnForReuse = allFnsForReuse.find((f) => f.fnIdx === activeFnIdx);
       const carpetReuseOf = (it) => {
-        if (!opts?.multi) return null;
+        if (!reuseOn) return null;
         const holds = sameVenueHolds(blocksDetailForDate?.[it.id], eventOrders, pickerVenue, date, eo?.id);
         const siblings = siblingCarpetUse(allFnsForReuse, thisFnForReuse, it.id);
         return holds.qty > 0 || siblings.length ? { qty: holds.qty, who: holds.who.map((w) => w.name), siblings } : null;
       };
       const items = (inventory || [])
         .filter(it => String(it.subCat || it.subcategory || "").toLowerCase().trim() === target)
+        // choices for an overlay / cushion cover: only designs (the Cushion sub-category also holds inserts and made-to-order cushions)
+        .filter(it => !opts?.multi?.designsOnly || itemTakesChoices(it))
         // ── PRICE THE WAY THE CALLER WILL USE IT ── (BUG-15)
         // Two callers, two different right answers, and this list only ever gave one. A normal zone
         // element opens this to swap to a different in-stock item, so RENTAL is what it will be
@@ -10696,53 +10702,11 @@ export default function StudioApp() {
     const { zoneKey, idx, selectedId, items, onPick } = availModal;
     const pick = (items || []).find(i => i.id === selectedId);
     if (onPick) { onPick(selectedId && pick ? pick : null); setAvailModal(null); return; }
+    // What the pick does to the element (swap marker, unit change, clearing the pin) is one shared rule: lib/studio/elementPick.js
     setZoneElements(p => {
       const elems = [...(p[zoneKey] || [])];
       if (!elems[idx]) return p;
-      // Swap marker (owner ask): the element's ORIGINAL item — the one it came with, kept across
-      // repeat swaps — had nothing free, so this is a like-for-like swap within the same
-      // sub-category (the picker only ever lists that sub-category). Build shows its price in
-      // orange. Picking the original back, or picking while the original is still free, drops it.
-      //
-      // baseInvId (not just swappedFrom||invId) tracks the TRUE original stably across a VOLUNTARY
-      // swap too — one made while the original still had stock (e.g. swapping on purpose to claim a
-      // cross-function reuse discount), which never sets swappedFrom on its own. Without this, the
-      // old `swappedFrom || invId` fallback silently promoted whatever the CURRENT item happened to
-      // be into "the original" for the NEXT swap's own check — so swapping back from that voluntary
-      // pick (which can legitimately show 0 free, since its one unit is dedicated to the sibling
-      // function it's being reused from/to) read as "the original had nothing free" and wrongly
-      // marked swappedFrom on the item you'd just picked BACK, i.e. the real original itself.
-      // baseInvId is captured once (on the first-ever pick through this picker) and carried forward
-      // untouched on every later pick, so later swaps always check the REAL original's own
-      // availability, not an intermediate stand-in's.
-      const baseInvId = elems[idx].baseInvId || elems[idx].invId;
-      const orig = (items || []).find(i => i.id === baseInvId);
-      const backToOriginal = !!selectedId && selectedId === baseInvId;
-      const isSwap = !!(selectedId && pick && baseInvId && !backToOriginal && orig && orig.free <= 0);
-      // The picked item's own unit (pick.unit, sourced straight from IMS — see openAvailModal's own
-      // `unit: it.unit || ""` on each candidate) was never carried over here — the element kept
-      // whatever unit/qty the PREVIOUS item needed. Harmless swapping within the same unit (one
-      // chandelier for another, still "pieces"), but silently wrong across a unit change: a 20kg
-      // fabric swapped for a 1-piece item kept reading "need 20", comparing a quantity meant for an
-      // entirely different scale against the new item's real stock — a false "out of stock"
-      // (confirmed: Fabric Balloon Hanging, 1 piece owned, read as needing 20 of them because the
-      // element it replaced was 20KG of a different, unrelated fabric). When the unit genuinely
-      // changes, qty/baseQty reset to 1 — any number carried over from the old unit has no valid
-      // meaning against the new one, so keeping it is actively misleading rather than merely stale.
-      const newUnit = pick?.unit || elems[idx].unit;
-      const unitChanged = selectedId && pick && newUnit !== elems[idx].unit;
-      elems[idx] = (selectedId && pick)
-        ? {
-            ...elems[idx], invId: selectedId, name: pick.name || elems[idx].name, imsId: selectedId, imsName: pick.name || "", imsPhoto: pick.photo || "",
-            unit: newUnit,
-            ...(unitChanged ? { qty: 1, baseQty: 1 } : null),
-            ...(backToOriginal
-              ? { swappedFrom: undefined, baseInvId: undefined }
-              : { baseInvId, swappedFrom: isSwap ? baseInvId : elems[idx].swappedFrom }),
-          }
-        : (() => { const e = { ...elems[idx] }; delete e.imsId; delete e.imsName; delete e.imsPhoto; delete e.swappedFrom; delete e.baseInvId; return e; })();
-      if (!elems[idx].swappedFrom) delete elems[idx].swappedFrom;
-      if (!elems[idx].baseInvId) delete elems[idx].baseInvId;
+      elems[idx] = elementAfterPick(elems[idx], selectedId, pick, items);
       return { ...p, [zoneKey]: elems };
     });
     setAvailModal(null);
@@ -10802,8 +10766,10 @@ export default function StudioApp() {
         const newUnit = pick?.unit || original.unit;
         const unitChanged = newUnit !== original.unit;
         const lineQty = unitChanged ? 1 : qty;
+        // The lines of a split are separate elements; the original's ranked choices (overlays / cushion covers) and their id stay behind.
+        const { prefs: _choices, pid: _choicePid, ...originalRest } = original;
         return {
-          ...original,
+          ...originalRest,
           invId: id, imsId: id, unit: newUnit,
           name: pick?.name || original.name, imsName: pick?.name || "", imsPhoto: pick?.photo || "",
           qty: lineQty, baseQty: unitChanged ? 1 : (scale > 1 ? qty / scale : qty),
