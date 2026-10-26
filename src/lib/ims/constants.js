@@ -135,8 +135,8 @@ export const INIT_TRUSS_INV = {
   maskingStock: [],
   curtainStock: [],
   // §24 Platform Config — mirrors Truss's own "config, not yet wired to costing" shape. Each row:
-  // { id, label, lengthFt, widthFt, material, stock, ratePerSqft }. sqft/totalSqft are DERIVED
-  // (lengthFt×widthFt, ×stock), never stored, so editing dims never leaves a stale total behind.
+  // { id, label, lengthFt, widthFt, thicknessIn, material, stock, ratePerSqft }. sqft/totalSqft are
+  // DERIVED (lengthFt×widthFt, ×stock), never stored, so editing dims never leaves a stale total behind.
   platforms: [],
   settings: { pillarWidthFt: 0.75, maxSpanFt: 30, defaultBackDepthFt: 4, backDepthRange: [3, 5], untaggedFallback: "half_box", hybridPricingMethod: "simple_avg" },
   lastUpdated: null,
@@ -253,15 +253,21 @@ export const SETTINGS_DEFAULTS = {
     { upTo: 3600, labour: 12, label: "Up to 3600 sqft (e.g. 60×60)" },
     { upTo: 9999, labour: 16, label: "3600+ sqft" },
   ],
+  // "dismantleSameNight" (lib/studio/dihariWindows.js) is appended ONLY to a multi-shift type here —
+  // "fullday" types (Electricians/Supervisors/Drivers) already model one role covering the whole
+  // day, so an extra overnight shift on top of that would double-count rather than add a real
+  // distinct contribution. Its label deliberately carries no "H AM/PM" time (slotHours finds none),
+  // so IMS's role-based slot defaults (pre/day/night) never try to re-derive its count from a
+  // function's own shift — only the dismantlingPct-based default/override ever sets it.
   dihariSchemes: {
-    "Flowerists": { rate: 1200, windows: [{ id: "day", label: "9 AM – 6 PM" }, { id: "night", label: "6 PM – 2 AM" }] },
+    "Flowerists": { rate: 1200, windows: [{ id: "day", label: "9 AM – 6 PM" }, { id: "night", label: "6 PM – 2 AM" }, { id: "dismantleSameNight", label: "🧹 Dismantle (same night)" }] },
     "Electricians": { rate: 1500, windows: [{ id: "fullday", label: "Full day" }] },
-    "Fabric Bangali": { rate: 650, windows: [{ id: "m", label: "9 AM – 5 PM" }, { id: "e", label: "5 PM – 11 PM" }, { id: "ln", label: "11 PM – 2 AM" }, { id: "pd", label: "2 AM – 6 AM" }, { id: "on", label: "6 PM – 9 AM" }] },
-    "Labours": { rate: 500, windows: [{ id: "m", label: "9 AM – 5 PM" }, { id: "e", label: "5 PM – 11 PM" }, { id: "ln", label: "11 PM – 2 AM" }, { id: "pd", label: "2 AM – 6 AM" }, { id: "on", label: "6 PM – 9 AM" }] },
-    "Carpenters": { rate: 900, windows: [{ id: "m", label: "9 AM – 5 PM" }, { id: "e", label: "5 PM – 11 PM" }, { id: "ln", label: "11 PM – 2 AM" }] },
-    "Painters": { rate: 700, windows: [{ id: "m", label: "9 AM – 5 PM" }, { id: "e", label: "5 PM – 11 PM" }] },
-    "Truss Labour": { rate: 800, windows: [{ id: "m", label: "9 AM – 5 PM" }, { id: "e", label: "5 PM – 11 PM" }, { id: "ln", label: "11 PM – 2 AM" }] },
-    "Helpers": { rate: 400, windows: [{ id: "m", label: "9 AM – 5 PM" }, { id: "e", label: "5 PM – 11 PM" }] },
+    "Fabric Bangali": { rate: 650, windows: [{ id: "m", label: "9 AM – 5 PM" }, { id: "e", label: "5 PM – 11 PM" }, { id: "ln", label: "11 PM – 2 AM" }, { id: "pd", label: "2 AM – 6 AM" }, { id: "on", label: "6 PM – 9 AM" }, { id: "dismantleSameNight", label: "🧹 Dismantle (same night)" }] },
+    "Labours": { rate: 500, windows: [{ id: "m", label: "9 AM – 5 PM" }, { id: "e", label: "5 PM – 11 PM" }, { id: "ln", label: "11 PM – 2 AM" }, { id: "pd", label: "2 AM – 6 AM" }, { id: "on", label: "6 PM – 9 AM" }, { id: "dismantleSameNight", label: "🧹 Dismantle (same night)" }] },
+    "Carpenters": { rate: 900, windows: [{ id: "m", label: "9 AM – 5 PM" }, { id: "e", label: "5 PM – 11 PM" }, { id: "ln", label: "11 PM – 2 AM" }, { id: "dismantleSameNight", label: "🧹 Dismantle (same night)" }] },
+    "Painters": { rate: 700, windows: [{ id: "m", label: "9 AM – 5 PM" }, { id: "e", label: "5 PM – 11 PM" }, { id: "dismantleSameNight", label: "🧹 Dismantle (same night)" }] },
+    "Truss Labour": { rate: 800, windows: [{ id: "m", label: "9 AM – 5 PM" }, { id: "e", label: "5 PM – 11 PM" }, { id: "ln", label: "11 PM – 2 AM" }, { id: "dismantleSameNight", label: "🧹 Dismantle (same night)" }] },
+    "Helpers": { rate: 400, windows: [{ id: "m", label: "9 AM – 5 PM" }, { id: "e", label: "5 PM – 11 PM" }, { id: "dismantleSameNight", label: "🧹 Dismantle (same night)" }] },
     "Supervisors": { rate: 1200, windows: [{ id: "fullday", label: "Full day" }] },
     "Drivers": { rate: 600, windows: [{ id: "fullday", label: "Full day" }] },
   },

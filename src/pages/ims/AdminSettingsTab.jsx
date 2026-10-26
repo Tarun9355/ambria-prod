@@ -2020,7 +2020,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
         // material/rate, and the literal "Platform" inventory items can be considered for removal.
         const platforms = Array.isArray(trussInv.platforms) ? trussInv.platforms : [];
         const updRow = (id, patch) => setTrussInv((ti) => ({ ...ti, platforms: (ti.platforms || []).map((r) => (r.id === id ? { ...r, ...patch } : r)) }));
-        const addRow = () => setTrussInv((ti) => ({ ...ti, platforms: [...(ti.platforms || []), { id: "plat_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), label: "", material: "Wood", lengthFt: 8, widthFt: 4, stock: 0, ratePerSqft: 0 }] }));
+        const addRow = () => setTrussInv((ti) => ({ ...ti, platforms: [...(ti.platforms || []), { id: "plat_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), label: "", material: "Wood", lengthFt: 8, widthFt: 4, thicknessIn: 4, stock: 0, ratePerSqft: 0 }] }));
         const delRow = async (id, label) => {
           if (!(await confirm({ title: `Remove ${label ? `"${label}"` : "this platform"}?`, body: "It will no longer count towards platform stock." }))) return;
           setTrussInv((ti) => ({ ...ti, platforms: (ti.platforms || []).filter((r) => r.id !== id) }));
@@ -2052,13 +2052,14 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                 <div className="text-xs text-gray-500 italic border border-dashed border-indigo-200 rounded-xl p-4 text-center">No platforms configured yet — add one above.</div>
               ) : (
                 <div className="overflow-x-auto border border-indigo-100 rounded-xl">
-                  <table className="w-full text-sm min-w-[760px]">
+                  <table className="w-full text-sm min-w-[860px]">
                     <thead className="bg-indigo-50 text-xs text-indigo-700">
                       <tr>
                         <th className="px-3 py-2 text-left font-medium">Label</th>
                         <th className="px-3 py-2 text-left font-medium">Material</th>
                         <th className="px-3 py-2 text-center font-medium">Length (ft)</th>
                         <th className="px-3 py-2 text-center font-medium">Width (ft)</th>
+                        <th className="px-3 py-2 text-center font-medium">Thickness (in)</th>
                         <th className="px-3 py-2 text-center font-medium">Sqft / piece</th>
                         <th className="px-3 py-2 text-center font-medium">Stock (pieces)</th>
                         <th className="px-3 py-2 text-right font-medium">Total sqft</th>
@@ -2076,6 +2077,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                             <td className="px-3 py-2"><input type="text" placeholder="Wood, Iron…" value={r.material || ""} onChange={(e) => updRow(r.id, { material: e.target.value })} className="w-28 border border-indigo-200 rounded px-2 py-1 text-xs" /></td>
                             <td className="px-3 py-2 text-center"><input type="number" min="0" step="0.5" value={r.lengthFt ?? 0} onChange={(e) => updRow(r.id, { lengthFt: parseFloat(e.target.value) || 0 })} className="w-20 border border-indigo-200 rounded px-2 py-1 text-sm text-center font-bold" /></td>
                             <td className="px-3 py-2 text-center"><input type="number" min="0" step="0.5" value={r.widthFt ?? 0} onChange={(e) => updRow(r.id, { widthFt: parseFloat(e.target.value) || 0 })} className="w-20 border border-indigo-200 rounded px-2 py-1 text-sm text-center font-bold" /></td>
+                            <td className="px-3 py-2 text-center"><input type="number" min="0" step="0.5" value={r.thicknessIn ?? 0} onChange={(e) => updRow(r.id, { thicknessIn: parseFloat(e.target.value) || 0 })} className="w-20 border border-indigo-200 rounded px-2 py-1 text-sm text-center font-bold" /></td>
                             <td className="px-3 py-2 text-center text-gray-500">{sqftPerPiece.toLocaleString("en-IN")}</td>
                             <td className="px-3 py-2 text-center"><input type="number" min="0" value={r.stock || 0} onChange={(e) => updRow(r.id, { stock: parseInt(e.target.value) || 0 })} className="w-20 border border-indigo-200 rounded px-2 py-1 text-sm text-center font-bold" /></td>
                             <td className="px-3 py-2 text-right text-gray-500">{rowTotalSqft.toLocaleString("en-IN")}</td>

@@ -13,7 +13,7 @@ import { itemImsSubcat, lookupBySubcat, walkKitUnits, aggregateEventManpower, ha
 import { matchFlowerPattern } from "../../../../lib/ims/flowerHelpers";
 import { computePeopleRaw, computePeople, heavySayaMultFor as sharedHeavySayaMultFor } from "../../../../lib/studio/manpowerCount";
 import ManpowerFactorPills from "../../../../components/shared/ManpowerFactorPills.jsx";
-import { withSetupSlot } from "../../../../lib/studio/dihariWindows.js";
+import { withSetupSlot, withDismantleSlot, DISMANTLE_WINDOW_ID } from "../../../../lib/studio/dihariWindows.js";
 
 // ═════════════════════════════════════════════════
 // SURFACES
@@ -642,18 +642,22 @@ export default function DCManpowerTab({ ctx }) {
                     else dayList.push({ date: cur, phase: "gap", fns: [] });
                     cur = addDays(cur, 1);
                   }
+                  // Every function whose immediate next calendar day ISN'T itself another function's day
+                  // gets a real dismantle day right after it (dismantlingPct applied), not a flat
+                  // carried-forward "gap" day — a 24/26/28 booking dismantles after EACH of 24 and 26,
+                  // not just once at the very end. Back-to-back functions (next day IS an event, e.g.
+                  // 24/25/26) get no standalone dismantle DAY between them — there is no calendar day to
+                  // put one on — but the crew still strikes the first day's setup before the next one's
+                  // (owner ask, 2026-10-26: same venue across consecutive days still dismantles and
+                  // reassembles). That shows as an extra "dismantleSameNight" shift ADDED to the first
+                  // day's own window list below (withDismantleSlot), not a separate dayList entry.
+                  const eventDates = new Set(dayList.filter(d => d.phase === "event").map(d => d.date));
                   if (dcMpIncludeDismantle) {
-                    // Every function whose immediate next calendar day ISN'T itself another function's
-                    // day gets a real dismantle day right after it (dismantlingPct applied), not a flat
-                    // carried-forward "gap" day — a 24/26/28 booking dismantles after EACH of 24 and 26,
-                    // not just once at the very end. Back-to-back functions (next day IS an event, e.g.
-                    // 24/25/26) never get one in between: the crew flows straight into the next setup.
                     // The last function's dismantle day (latest+1) falls outside the earliest..latest
                     // loop above, so it needs inserting rather than converting an existing gap entry.
-                    const eventDates = new Set(dayList.filter(d => d.phase === "event").map(d => d.date));
                     dayList.filter(d => d.phase === "event").forEach(d => {
                       const nextDate = addDays(d.date, 1);
-                      if (eventDates.has(nextDate)) return; // back-to-back — no dismantle day in between
+                      if (eventDates.has(nextDate)) return; // back-to-back — handled as a same-night shift instead
                       const existing = dayList.find(x => x.date === nextDate);
                       if (existing) existing.phase = "dismantle";
                       else dayList.push({ date: nextDate, phase: "dismantle", fns: [] });
@@ -722,7 +726,8 @@ export default function DCManpowerTab({ ctx }) {
                     if (dcMpOverrides[overrideKey]) return dcMpOverrides[overrideKey];
                     const defs = (defaultWindowsByPhase[type] || {})[phase] || [];
                     if (phase !== "event") return defs;
-                    return withSetupSlot(defs, dihariSchemes[type]?.windows, fns.filter(fn => fn.fnDate === dateISO));
+                    const withSetup = withSetupSlot(defs, dihariSchemes[type]?.windows, fns.filter(fn => fn.fnDate === dateISO));
+                    return withDismantleSlot(withSetup, dcMpIncludeDismantle && eventDates.has(addDays(dateISO, 1)));
                   };
                   const setWindowsForDayType = (dateISO, type, windowIds) => {
                     setDcMpOverrides(prev => ({ ...prev, [`${dateISO}|${type}`]: windowIds }));
@@ -736,7 +741,18 @@ export default function DCManpowerTab({ ctx }) {
                   };
                   // Per-shift (per-dihari) crew count: the ops manager can keep e.g. 2 flowerists in shift 1 but
                   // only 1 in shift 2. Default = the day's computed crew count. Stored in dcMpWinCount.
-                  const winCountFor = (dateISO, type, winId, defPpl) => { const v = dcMpWinCount?.[type]?.[dateISO]?.[winId]; return (v != null && v !== "") ? (Number(v) || 0) : defPpl; };
+                  // A dismantleSameNight shift defaults to dismantlingPct% of the day's own crew (same
+                  // reduction a standalone dismantle day already applies), not the day's full headcount
+                  // every other window defaults to — see withDismantleSlot's own comment for why.
+                  const winCountFor = (dateISO, type, winId, defPpl) => {
+                    const v = dcMpWinCount?.[type]?.[dateISO]?.[winId];
+                    if (v != null && v !== "") return Number(v) || 0;
+                    if (winId === DISMANTLE_WINDOW_ID) {
+                      const pct = (labourTiers[type] || {}).dismantlingPct;
+                      if (typeof pct === "number") return pct > 0 ? Math.ceil(defPpl * pct / 100) : 0;
+                    }
+                    return defPpl;
+                  };
                   const setWinCount = (dateISO, type, winId, val) => setDcMpWinCount(prev => {
                     const n = { ...(prev || {}) };
                     const byType = { ...(n[type] || {}) };

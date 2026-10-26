@@ -41,3 +41,16 @@ export const withSetupSlot = (winIds, windowDefs, dayFns) => {
   });
   return best ? [best.id, ...ids] : ids;
 };
+
+// The window id used for an extra "strike today's setup, build tomorrow's" shift on a function day
+// immediately followed by another function day. Appended to that day's own window list rather than
+// inserted as a standalone dismantle day — there IS no calendar day between two consecutive dates to
+// carry one. Its own crew count defaults to that type's dismantlingPct% of the day's headcount, the
+// same reduction a standalone dismantle day already applies (owner ask, 2026-10-26: even a
+// back-to-back booking at the same venue still strikes and rebuilds in between, not a free carry-over).
+export const DISMANTLE_WINDOW_ID = "dismantleSameNight";
+export const withDismantleSlot = (winIds, isBackToBack) => {
+  const ids = Array.isArray(winIds) ? winIds : [];
+  if (!isBackToBack || ids.includes(DISMANTLE_WINDOW_ID)) return ids;
+  return [...ids, DISMANTLE_WINDOW_ID];
+};
