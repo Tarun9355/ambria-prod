@@ -43,16 +43,19 @@
 //     credit is still looked up by actual species+colour match against the preceding function;
 //     it can never invent a saving for a flower that function never had.
 //
-// ═══ Where "a flower's colour" comes from (2026-10-25 redesign) ═══
-// Originally a flower's colour for the match above came from Deal Check's own per-flower 🎨
-// picker, defaulting (2026-10-20) to a fuzzy match between the Build's dominant palette colour
-// and one of the flower's priced colour VARIANT names. Owner call: a flower's real-world colour
-// doesn't change from one function to the next just because a different variant was picked for
-// sourcing cost that day, so reuse now reads ONE fixed field per flower instead — its Mandi
-// Catalogue "Palette" tag (parent.palette, IMS Admin → Mandi Catalogue, shown for every flower
-// whether or not it also has colour variants). Colour variants still exist and still drive
-// PRICING (see effectiveColorPrefRows/defaultColorPref below) — they just no longer have anything
-// to do with reuse eligibility (see resolvedFlowerColour below).
+// ═══ Where "a flower's colour" comes from (2026-10-25, revised same day) ═══
+// A flower's colour for the match above comes from Deal Check's own per-flower 🎨 picker (an
+// explicit pick always wins), defaulting to this function's own dominant Flower Palette colour
+// when the flower's own Mandi Catalogue colour VARIANT is explicitly tagged as belonging to that
+// palette (IMS Admin → Mandi Catalogue, each variant's own "Palette" multi-select — a variant can
+// belong to more than one, e.g. a blush-peach rose tagged both White and Pastel). Briefly tried a
+// single fixed tag on the PARENT flower instead of its variants (same day) — reverted: a flower's
+// variants are genuinely different physical colours (Rose comes in red/white/peach/yellow/…), so
+// one tag per species couldn't represent that, and the earlier (2026-10-20) fuzzy NAME match
+// ("peach" vs a palette label) was unreliable — this replaces that guess with an explicit,
+// curated tag per variant instead. Variant-level palette tagging only applies to flowerType
+// "flower" rows (IMS Admin UI) — greens/real-only/mapping items have no palette picker at all,
+// so they're simply never reuse-eligible under this mechanism.
 
 import { matchFlowerPattern, sizeClassToPatternKey, normalizeSizeClass } from "../ims/flowerHelpers";
 import { repeatCatFor, parseFlowerPalette, fuzzyColourMatch } from "./pricing";
@@ -125,24 +128,21 @@ function dominantPaletteColor(fn) {
 
 /**
  * A flower with no EXPLICIT colour pick still defaults to this function's own dominant Flower
- * Palette colour, when the flower actually comes in a PRICED colour variant that matches it —
- * owner ask (2026-10-20): a salesperson shouldn't have to open the 🎨 picker on every single
- * flower for its sourcing cost/reference photo to default sensibly; the palette they already
- * picked should apply by default, and the picker is then only for flowers that should deviate
- * from it. Returns the same ranked-row shape a manual pick stores (so it can stand in for one
- * anywhere that reads it), or null if there's no palette, no colour variants at all, or none of
- * them match the dominant colour.
- *
- * NOTE: this is a PRICING/reference-photo default only — it has nothing to do with cross-function
- * reuse eligibility since the 2026-10-25 redesign (see resolvedFlowerColour below), which reads a
- * flower's own fixed Mandi Catalogue Palette tag directly instead.
+ * Palette colour, when one of the flower's priced colour variants is explicitly tagged (IMS
+ * Admin → Mandi Catalogue, each variant's own "Palette" multi-select) as belonging to that
+ * colour — a salesperson shouldn't have to open the 🎨 picker on every single flower for reuse
+ * (or its sourcing cost/reference photo) to work by default; the palette they already picked
+ * should apply to every real flower whose variants are tagged for it, and the picker is then
+ * only for flowers that should deviate from it. Returns the same ranked-row shape a manual pick
+ * stores (so it can stand in for one anywhere that reads it), or null if there's no palette, this
+ * flower has no colour variants at all, or none of them are tagged with the dominant colour.
  */
 function defaultColorPref(fn, parent) {
   const variants = Array.isArray(parent?.colorVariants) ? parent.colorVariants : [];
   if (!variants.length) return null;
   const dominant = dominantPaletteColor(fn);
   if (!dominant) return null;
-  const match = variants.find((v) => fuzzyColourMatch(dominant, v.name || ""));
+  const match = variants.find((v) => Array.isArray(v.palette) && v.palette.some((c) => fuzzyColourMatch(dominant, c)));
   if (!match) return null;
   return [{ variantId: match.variantId, label: match.name || "", photoUrl: match.photoUrl || null, rate: Number(match.currentPrice) || 0 }];
 }
@@ -152,9 +152,7 @@ function defaultColorPref(fn, parent) {
  * explicit pick — or an explicit Clear-all, stored as [] by the 🎨 picker — always wins; only
  * when the key has never been touched at all (colorPrefsForFn[parentId] is undefined) does the
  * palette default above apply. That distinction is what stops the default from silently
- * reasserting itself over a salesperson's deliberate "no colour" clear. Drives PRICING (which
- * variant's rate/photo this flower bills at) — see the note on resolvedFlowerColour below for why
- * this is no longer what reuse eligibility reads.
+ * reasserting itself over a salesperson's deliberate "no colour" clear.
  */
 export function effectiveColorPrefRows(colorPrefsForFn, parentId, fn, parent) {
   const explicit = colorPrefsForFn?.[parentId];
@@ -163,20 +161,19 @@ export function effectiveColorPrefRows(colorPrefsForFn, parentId, fn, parent) {
 }
 
 /**
- * This flower's colour for cross-function REUSE ELIGIBILITY purposes: its own fixed Mandi
- * Catalogue "Palette" tag (parent.palette, IMS Admin → Mandi Catalogue — one of Build's own 4
- * colours), the exact same field whether or not this flower also has priced colour variants.
- *
- * Owner redesign (2026-10-25), replacing the previous variant-based lookup entirely: reuse no
- * longer looks at colour VARIANTS at all — not an explicit per-function pick (colorPrefsForFn /
- * effectiveColorPrefRows, still used for PRICING above), not a manual swap override, not a name
- * match against the Build's dominant colour. A flower's real-world colour doesn't change from one
- * function to the next just because a different variant was picked for sourcing cost that day, so
- * reuse now keys off one fixed admin-set tag per species. Returns null when the flower has no
- * palette tag set at all — never assumed to match anything in that case.
+ * What colour was this specific flower (by its resolved mandi parentId) actually SET to for
+ * this function — an explicit per-flower colour-preference ranking (1st choice), a manual swap
+ * override, or the function's own Flower Palette default (via a tagged colour variant) above.
+ * Returns null when this flower has no resolvable colour at all (no pick, no override, no
+ * matching palette-tagged variant) — never assumed to match anything in that case.
  */
-function resolvedFlowerColour(parent) {
-  return parent?.palette || null;
+function resolvedFlowerColour(parentId, colorPrefsForFn, overrideByParentId, fn, parent) {
+  if (!parentId) return null;
+  const prefArr = effectiveColorPrefRows(colorPrefsForFn, parentId, fn, parent);
+  if (Array.isArray(prefArr) && prefArr.length > 0 && prefArr[0]?.label) return prefArr[0].label;
+  const override = overrideByParentId?.get(parentId);
+  if (override?.colorVariant?.label) return override.colorVariant.label;
+  return null;
 }
 
 /**
@@ -192,7 +189,15 @@ export function computeFnRawFlowerUsage(fn, opts) {
   const {
     flowerPatterns = [], mandiCatalogue = [], rcItems = [], rcFloralModeByKey = {},
     resolveMandiFlower, imsInventory = [], dcInventoryCache = [], floralRatio = 70,
+    // This function's OWN colour preferences (opts.colorPrefsForFn is scoped to whichever `fn` is
+    // actually passed in here by the caller — computeFnFloralCost re-scopes it to the PRECEDING
+    // function's own slice before calling this, since the credit needs to know what colour THAT
+    // function's own flowers were actually picked as, not the later function's).
+    colorPrefsForFn = {},
   } = opts || {};
+  const fnOverrides = fn?.floralOverrides || { rows: [] };
+  const overrideByParentId = new Map();
+  (fnOverrides.rows || []).forEach((r) => { if (r?.flowerId) overrideByParentId.set(r.flowerId, r); });
   const findInv = (id) => (!id ? null : (imsInventory.find((i) => i.id === id) || (dcInventoryCache || []).find((i) => i.id === id)));
   const sizeFromMode = (inhouseMode, elSize) => {
     if (inhouseMode === "smb") { const s = (elSize || "M").toUpperCase(); return s === "S" ? "small" : s === "B" ? "big" : "medium"; }
@@ -220,7 +225,7 @@ export function computeFnRawFlowerUsage(fn, opts) {
     prev.realQty += realQty; prev.artUnits += artUnits;
     if (!prev.parent && parent) prev.parent = parent;
     if (!prev.variant && variant) prev.variant = variant;
-    if (!prev.colour) prev.colour = resolvedFlowerColour(parent);
+    if (!prev.colour) prev.colour = resolvedFlowerColour(parent?.id || flowerId, colorPrefsForFn, overrideByParentId, fn, parent);
     usage.set(flowerId, prev);
   };
 
@@ -302,8 +307,9 @@ export function computeFnRawFlowerUsage(fn, opts) {
  * @param {object[]} opts.imsInventory - boot-time IMS inventory snapshot
  * @param {object[]} opts.dcInventoryCache - Deal Check's freshly-fetched inventory cache
  * @param {object} [opts.colorPrefsForFn] - parentId → ranked colour preference rows, for `fn` itself
- *   — drives PRICING (which colour variant's rate this flower bills at) only; reuse eligibility
- *   reads each flower's own fixed Mandi Catalogue palette tag instead (resolvedFlowerColour).
+ * @param {object} [opts.colorPrefsByFnIdx] - fnIdx → colorPrefsForFn, for every OTHER function —
+ *   needed to look up the PRECEDING function's own colour pick per flower when crediting reuse
+ *   (see computeFnRawFlowerUsage's own `colour` field)
  * @param {number} [opts.artFlowerRatePerKg]
  * @param {number} [opts.artFlowerBunchesPerKg]
  * @param {number} [opts.artGreenRatePerKg]
@@ -320,7 +326,7 @@ export function computeFnFloralCost(fn, allFns, opts) {
   const {
     flowerPatterns = [], mandiCatalogue = [], mandiMults = {}, seasonMap = {},
     floralRatio = 70, rcItems = [], rcFloralModeByKey = {}, resolveMandiFlower,
-    imsInventory = [], dcInventoryCache = [], colorPrefsForFn = {},
+    imsInventory = [], dcInventoryCache = [], colorPrefsForFn = {}, colorPrefsByFnIdx = {},
     artFlowerRatePerKg = 50, artFlowerBunchesPerKg = 16,
     artGreenRatePerKg = 40, artGreenBunchesPerKg = 23,
     resolveRcRate = null, ignoreRepeatCuts = false,
@@ -360,7 +366,10 @@ export function computeFnFloralCost(fn, allFns, opts) {
     precedingFn = findImmediatePrecedingFn(fn, allFns || []);
     if (precedingFn) {
       overlapColors = paletteOverlapColors(fn, precedingFn);
-      precedingUsage = computeFnRawFlowerUsage(precedingFn, opts);
+      // The preceding function's OWN colour picks, not fn's — computeFnRawFlowerUsage resolves
+      // each flower's `colour` field against whichever colorPrefsForFn it's handed.
+      const precedingColorPrefs = colorPrefsByFnIdx?.[precedingFn.fnIdx] || {};
+      precedingUsage = computeFnRawFlowerUsage(precedingFn, { ...opts, colorPrefsForFn: precedingColorPrefs });
     }
   }
 
@@ -506,14 +515,15 @@ export function computeFnFloralCost(fn, allFns, opts) {
           const totalFlowerQtyFull = (fl.qty || 0) * elQty * effectiveRealFrac;
           // Reuse credit: the manual toggle credits by SPECIES identity alone (fl.flowerId found
           // in the preceding function's own raw usage) — see this function's own top comment. The
-          // automatic path additionally requires this flower's own fixed Mandi Catalogue palette
-          // tag (resolvedFlowerColour — a species-level admin tag, not a per-function colour pick)
-          // to be one of the colours the two functions' own Build palettes actually share, so a
-          // flower whose tagged colour isn't even part of what the builds have in common never
-          // gets credited just because the species repeats.
+          // automatic path additionally requires an explicit, MATCHING colour preference on this
+          // exact flower in both functions (resolvedFlowerColour, Deal Check's own per-flower
+          // colour picker, or a matching palette-tagged variant) — never a match against the
+          // species' own catalogue name, which a real build's recipes never carry any colour on at
+          // all (bare species ids throughout), so that comparison could never succeed regardless
+          // of how well the two functions' declared palettes actually overlapped.
           const pUsage = precedingUsage?.get(fl.flowerId) || null;
-          const myColour = resolvedFlowerColour(parent);
-          const colorEligible = manualRepeat || (autoEligible && !!pUsage && !!myColour && overlapColors.some((c) => fuzzyColourMatch(c, myColour)));
+          const myColour = resolvedFlowerColour(parentId, colorPrefsForFn, overrideByParentId, fn, parent);
+          const colorEligible = manualRepeat || (autoEligible && !!pUsage && !!myColour && !!pUsage.colour && fuzzyColourMatch(myColour, pUsage.colour));
           const reuseCredit = (colorEligible && pUsage) ? FLOWER_REUSE_RATE * pUsage.realQty : 0;
           const totalFlowerQty = Math.max(0, totalFlowerQtyFull - reuseCredit);
           const lineCost = totalFlowerQty * unitPrice;
@@ -557,8 +567,8 @@ export function computeFnFloralCost(fn, allFns, opts) {
             return;
           }
           const pUsage = precedingUsage?.get(fl.flowerId) || null;
-          const myColour = resolvedFlowerColour(parent);
-          const colorEligible = manualRepeat || (autoEligible && !!pUsage && !!myColour && overlapColors.some((c) => fuzzyColourMatch(c, myColour)));
+          const myColour = resolvedFlowerColour(parentId, colorPrefsForFn, overrideByParentId, fn, parent);
+          const colorEligible = manualRepeat || (autoEligible && !!pUsage && !!myColour && !!pUsage.colour && fuzzyColourMatch(myColour, pUsage.colour));
           const artReuseCredit = (colorEligible && pUsage) ? FLOWER_REUSE_RATE * pUsage.artUnits : 0;
           if (flowerType === "mapping") {
             const realUnitsReplacedFull = (fl.qty || 0) * elQty * artFrac;
