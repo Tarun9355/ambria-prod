@@ -27,6 +27,7 @@ export default function TruckCapacityEditor({ ctx }) {
     if (s === "liza" || s === "real flowers") return "kg";
     if (s === "artificial flowers") return "bunch";
     if (/truss|platform|carpet|fabric|batta|ceiling/.test(s)) return "sqft";
+    if (s === "print") return "sqft"; // print jobs are trucked by area (exact match: "PRINTED WALLS" are counted in pieces)
     return "pc";
   };
   const upsertSubCap = (sub, field, val) => {
@@ -93,7 +94,7 @@ export default function TruckCapacityEditor({ ctx }) {
     // not real inventory items, so they have no rate_card_categories row of their own.
     const have = new Set(Object.values(groups).flat().map((s) => String(s).toLowerCase().trim()));
     const structLabel = "Structural (by sqft)";
-    ["Truss", "Platform", "Carpet"].forEach((s) => { if (!have.has(s.toLowerCase())) (groups[structLabel] = groups[structLabel] || []).push(s); });
+    ["Truss", "Platform", "Carpet", "Print"].forEach((s) => { if (!have.has(s.toLowerCase())) (groups[structLabel] = groups[structLabel] || []).push(s); });
     // Fabric Allocation (masking/liza/curtains, §23 Phase 2.9f) and floral material (real mandi +
     // artificial) — same reasoning as Truss/Platform/Carpet above: both are computed from zone/
     // recipe config, not real inventory sub-categories, so without a pseudo-sub here they'd have no

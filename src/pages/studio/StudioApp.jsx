@@ -40,6 +40,7 @@ import { makeS } from "../../lib/studio/styles";
 import { dealAgencyFeePct, feePctOf, DEFAULT_AGENCY_FEE_PCT } from "../../lib/studio/agencyFee";
 import { sameVenueHolds, siblingCarpetUse } from "../../lib/studio/carpetReuse";
 import { elementAfterPick } from "../../lib/studio/elementPick";
+import { printSqftOf, PRINT_TRUCK_SUB } from "../../lib/studio/truckPrint";
 import { itemTakesChoices } from "../../lib/studio/elementPrefs";
 import { findCrossFnReuseSource, computeFnInvQty, findSiblingFnInvUse, findSiblingFnSubcatOpportunity } from "../../lib/studio/crossFnReuse";
 import { computeFnFloralCost, buildMandiBreakdown } from "../../lib/studio/floralCost";
@@ -932,7 +933,7 @@ function isSubcatPaintable(rcSub, imsInventory) {
 // preceding function (findCrossFnReuseSource/computeFnInvQty) — drawn down per element exactly as
 // calcFunctionCost/calcFunctionBreakdown do, so Build's Live Estimate stops trucking reused units
 // that the Total Estimate, Summary and the cost sheet already treat as "already there".
-function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckCap, imsInventory, flowerPatterns, trussInv, flowerMaterialQty, fvCfg, venueName, guestDiscountOn, reusePool) {
+export function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckCap, imsInventory, flowerPatterns, trussInv, flowerMaterialQty, fvCfg, venueName, guestDiscountOn, reusePool) {
   const standPool = new Map(); // standing stock is pooled across this function's elements (kitBuiltQty)
   const capBySub = {};
   (truckCap || []).forEach(tc => { if ((Number(tc.perTruck) || 0) > 0) capBySub[String(tc.item || "").toLowerCase().trim()] = tc; });
@@ -1010,6 +1011,8 @@ function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckC
     // cpT truthy AND not the explicit OFF sentinel — an untouched floor (cpT unset) gets no carpet
     // truck-load either, same as it gets no carpet cost (see CARPET_OFF in taxonomy.js).
     if (!skipPlat && sqft > 0) { if (cfg.plH) addSub("Platform", sqft); if (cfg.cpT && cfg.cpT !== CARPET_OFF) addSub("Carpet", sqft); }
+    // Print jobs: trucked by area (never waived as a repeat — a print is made fresh for each event)
+    { const pSqft = printSqftOf(cfg); if (pSqft > 0) addSub(PRINT_TRUCK_SUB, pSqft); }
     // Fabric Allocation (masking/liza/curtains) — never trucked before: it's computed from the truss
     // config, not a zoneElement, so it fell through the element loop above entirely. Same base-row-
     // only scope as Truss/Platform/Carpet; density defaults to "moderate" (see computeFnSubQty).
@@ -5596,6 +5599,7 @@ export default function StudioApp() {
         if (!skipTruss && cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * (cfg.trussQty === 0 ? 0 : Math.max(1, cfg.trussQty || 1)); if (tSqft > 0) addSub("Truss", tSqft); }
         const sqft = (fd.L || 0) * (fd.W || 0);
         if (!skipPlat && sqft > 0) { if (cfg.plH) addSub("Platform", sqft); if (cfg.cpT && cfg.cpT !== CARPET_OFF) addSub("Carpet", sqft); }
+        { const pSqft = printSqftOf(cfg); if (pSqft > 0) addSub(PRINT_TRUCK_SUB, pSqft); } // print jobs, by area — see computeTruckItems
         // Fabric Allocation (masking/liza/curtains) — see computeTruckItems' matching comment.
         const fcTrussInv = sharedFloralSettings.trussInv;
         if (!skipTruss && fcTrussInv) {
@@ -6293,6 +6297,7 @@ export default function StudioApp() {
           if (cfg.plH) addSub("Platform", platRepeat ? 0 : sqft, sqft, zk, "Platform");
           if (cfg.cpT && cfg.cpT !== CARPET_OFF) addSub("Carpet", platRepeat ? 0 : sqft, sqft, zk, "Carpet");
         }
+        { const pSqft = printSqftOf(cfg); if (pSqft > 0) addSub(PRINT_TRUCK_SUB, pSqft, pSqft, zk, "Print jobs"); } // by area, never a repeat — see computeTruckItems
         // Fabric Allocation (masking/liza/curtains) — see computeTruckItems' matching comment.
         if (bdTrussInv) {
           const fab = calcZoneFabric(cfg, bdTrussInv, "moderate");
