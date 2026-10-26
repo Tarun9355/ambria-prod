@@ -3244,11 +3244,14 @@ export default function DealCheckOverlay({ ctx }) {
                                             } } },
                                         );
                                         if (!prefs.length && !carpetOpts.length) return null;
+                                        const decRaw = ((eventOrders || []).find(e => e.clientId === activeClientId)?.deptOps?.Tenting?.carpetChoice || {})[`${fnIdx}|${zk}|0`];
+                                        const dec = decRaw && prefs.some(p => p.id === decRaw.id) ? decRaw : null;
                                         return (
                                           <div style={{display:"flex",flexDirection:"column",gap:5}}>
                                             <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
                                               <span className="dc-cap" style={{color:INK_2,letterSpacing:1.1}}>Carpet preferences</span>
-                                              <span style={{fontSize:10.5,fontWeight:650,color:prefs.length>=CARPET_PREF_MAX?GOOD:GOLD}}>{prefs.length} of {CARPET_PREF_MAX}{prefs.length>=CARPET_PREF_MAX?" · Planning decides":" — sales should pick "+CARPET_PREF_MAX}</span>
+                                              <span style={{fontSize:10.5,fontWeight:650,color:prefs.length>=CARPET_PREF_MAX?GOOD:GOLD}}>{prefs.length} of {CARPET_PREF_MAX}{dec?"":prefs.length>=CARPET_PREF_MAX?" · Planning decides":" — sales should pick "+CARPET_PREF_MAX}</span>
+                                              {dec && <span style={{fontSize:10.5,fontWeight:700,color:GOOD}}>✓ Planning chose: {dec.name}</span>}
                                             </div>
                                             <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
                                               {Array.from({length:CARPET_PREF_MAX},(_,slot)=>{

@@ -8,7 +8,9 @@ import { DEPTS as SHARED_DEPTS, catToDept as sharedCatToDept, userDepartments } 
 import { TabsMenu, useConfirm } from "../../components/ui";
 import { IconPrinter } from "../../components/icons";
 import { hasIMSPerm } from "../../lib/ims/constants";
-import { ZONE_META, trussBaseArea } from "../../lib/studio/taxonomy";
+import { ZONE_META, trussBaseArea, CARPET_OFF } from "../../lib/studio/taxonomy";
+import { prefsOf } from "../../lib/studio/carpetPrefs";
+import { carpetFloorsOf, planCarpets, carpetKey } from "../../lib/ims/carpetPlan";
 import { orderZoneKeys } from "../../lib/ims/zoneOrder";
 import { calcZoneTrussPreview, calcZoneFabric, dcFabricMultOf } from "../../lib/studio/pricing";
 import { ZONE_DEF_SK, RC_SK_TR } from "../../lib/studio/keys";
@@ -881,6 +883,18 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       });
     });
     return out;
+  };
+  // ── CARPET PLAN ── sales ranks up to three stock carpets per floor (Build / Deal Check); here the Tenting head sees each
+  // floor's three with what is actually free on the event date and decides which one is laid. The decision is IMS-owned
+  // (deptOps.Tenting.carpetChoice), so every Studio sync leaves it alone. Read on first use, like the truss plan (`sel` is below).
+  let carpetPlanCache = null;
+  const carpetPlanOf = () => {
+    if (carpetPlanCache) return carpetPlanCache;
+    const floors = carpetFloorsOf(sel?.functionsDetail, (fn, zk) => fn?.zoneNames?.[zk] || ZONE_META[zk]?.label || String(zk).replace(/[_-]+/g, " ").replace(/\b\w/g, c => c.toUpperCase()));
+    const itemsById = {};
+    (inventory || []).forEach(i => { if (i?.id != null) itemsById[i.id] = i; });
+    carpetPlanCache = planCarpets({ floors, itemsById, blocks, eventId: sel?.id, choice: sel?.deptOps?.Tenting?.carpetChoice || {} });
+    return carpetPlanCache;
   };
   // ── THE PANEL: inline from sm up, a bottom sheet on a phone ──
   // Opening in place works on the desktop grid because the tiles sit four to a row and stay in
@@ -3306,7 +3320,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         };
       });
     };
-    const zoneStructOf = (z) => {
+    const carpetDecided = (sel?.deptOps?.Tenting && sel.deptOps.Tenting.carpetChoice) || {};
+    const zoneStructOf = (z, fi, zk) => {
       if (!z) return [];
       if (!showStruct) return [];
       const floor = ftArea(z.floorDims);
@@ -3328,6 +3343,16 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       ].filter(Boolean);
       if (plats.length) out.push({ k: "Platform", v: plats.join("; ") });
       if (z.cpT) out.push({ k: "Carpet", v: [carpetName(z.cpT), floor].filter(Boolean).join(" · ") });
+      // Which carpet goes down: what the Tenting head decided in Planning, else the three sales asked for, in order.
+      [z, ...extraPl].forEach((row, ri) => {
+        if (!row || row.cpT === CARPET_OFF) return;
+        const prefs = prefsOf(row);
+        if (!prefs.length) return;
+        const dec = carpetDecided[carpetKey(fi, zk, ri)];
+        const decName = dec && prefs.some(p => p.id === dec.id) ? (dec.name || prefs.find(p => p.id === dec.id)?.name || "") : "";
+        const lbl = ri === 0 ? "" : ` (floor ${ri + 1})`;
+        out.push(decName ? { k: "Carpet to use" + lbl, v: decName } : { k: "Carpet choices" + lbl, v: prefs.map((p, i) => `${i + 1}) ${p.name}`).join("   ") });
+      });
       // Masking hangs on a truss — with no sized truss there is nothing to mask (and nothing billed).
       if (z.mkOn && (hasTruss || sizedExtra.length)) out.push({ k: "Masking", v: "Yes" });
       if (!z.plH && !z.cpT && floor) out.push({ k: "Floor", v: floor });
@@ -3466,7 +3491,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           : "Zone";
         // The only zone still worth skipping is one with nothing to put on the page at all: none
         // of our items, no reference photo and no dimensions. That page would be a heading.
-        const zStruct = zoneStructOf(zCfg);
+        const zStruct = zoneStructOf(zCfg, fn?.fnIdx ?? fi, zk);
         // First, not last: a zone with more than six items splits across pages, and a print
         // appended at the end landed on the zone's second page, away from the one the crew opens.
         items.unshift(...printCardsOf(zCfg));
@@ -5420,6 +5445,12 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                 dept === "Fabric" && upcomingFabricShort.length > 0 && { k: "fabshort", icon: "⚠️", title: "Fabric shortfalls", sub: n(upcomingFabricShort.length, "upcoming event"), tone: "bg-red-50", alert: true },
                 dept === "Fabric" && { k: "fabreq", icon: "🧵", title: "Fabric required", sub: fabricReqRows.length ? n(fabricReqRows.length, "fabric type") : "nothing required" },
                 { k: "inv", icon: "📦", title: "Inventory blocked", sub: n(blockedItemsGrouped.length, "item") + " held", value: fmt(rentalIncome) },
+                dept === "Tenting" && carpetPlanOf().rows.length > 0 && (() => {
+                  const rows = carpetPlanOf().rows;
+                  const decided = rows.filter(r => r.status === "decided").length;
+                  const bad = rows.filter(r => r.status === "short" || r.status === "none").length;
+                  return { k: "carpet", icon: "🟥", title: "Carpet plan", sub: bad ? <span className="text-red-600 font-semibold">{bad} floor{bad === 1 ? "" : "s"} need attention · {decided} of {rows.length} decided</span> : `${decided} of ${rows.length} floor${rows.length === 1 ? "" : "s"} decided`, ...(bad ? { tone: "bg-red-50", alert: true } : {}) };
+                })(),
                 dept === "Tenting" && trussPlanOf().length > 0 && { k: "truss", icon: "🏗️", title: "Truss plan", sub: n(trussPlanOf().length, "truss") + " · pillars, beams, fabric" },
                 { k: "mp", icon: "👷", title: "Manpower plan", sub: mpChanged ? <span className="text-red-600 font-semibold">⚠ Changed since you last looked · {fmt(Number(mpSeen.cost) || 0)} → {fmt(mpSnapCost)}</span> : mpRows.length ? n(mpRows.length, "crew line") : "no crew assigned", value: fmt(mpCost), ...(mpChanged ? { tone: "bg-red-50", alert: true } : {}) },
                 { k: "actuals", icon: "🧾", title: "Actuals", sub: hasActuals ? "real spend logged" : "nothing logged yet", value: hasActuals ? fmt(actualCost) : null },
@@ -6625,6 +6656,78 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
 
             {/* Dismantle plan — the department head's pre-set; opens under its own tile. On-site's
                 "Dismantle & routing" confirms it at teardown. See SHOW_DISMANTLE_IN_PLANNING. */}
+            {dept === "Tenting" && carpetPlanOf().rows.length > 0 && (() => {
+              const plan = carpetPlanOf();
+              const choiceAll = deptData.carpetChoice || {};
+              const decide = (key, o) => saveDept({ carpetChoice: { ...choiceAll, [key]: { id: o.id, name: o.name, by: authUser?.name || "—", at: Date.now() } } });
+              const undecide = (key) => { const n2 = { ...choiceAll }; delete n2[key]; saveDept({ carpetChoice: n2 }); };
+              const dayLbl = (d) => { try { return d ? new Date(d + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : "the event date"; } catch { return d || "the event date"; } };
+              const overNames = Object.keys(plan.over).map(id => ({ id, ...plan.over[id], name: plan.rows.flatMap(r => r.options).find(o => o.id === id)?.name || id }));
+              const RANK = ["1st", "2nd", "3rd"];
+              return (
+              <div className={"bg-white rounded-xl shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] overflow-hidden" + modalCls("carpet")}>
+                <div className="px-3 sm:px-4 py-3 bg-gray-50 flex items-center gap-3">
+                  <span aria-hidden="true" className="shrink-0 w-9 h-9 rounded-lg bg-white shadow-[0_1px_3px_rgba(15,23,42,0.12),0_4px_10px_-4px_rgba(15,23,42,0.22)] flex items-center justify-center text-base leading-none">🟥</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[15px] font-semibold text-gray-900">Carpet plan</div>
+                    <div className="text-xs text-gray-500">Sales picked up to three carpets for each floor. Check what is free on the day and choose the one that goes down.</div>
+                  </div>
+                </div>
+                <div className="p-3 sm:p-4 space-y-3">
+                  {overNames.length > 0 && (
+                    <div className="rounded-lg bg-red-50 ring-1 ring-red-100 px-3 py-2 text-xs text-red-700">
+                      ⚠ {overNames.map(o => `${o.name}: floors need ${Math.round(o.committed)} sqft together, only ${Math.round(o.free)} free`).join(" · ")}
+                    </div>
+                  )}
+                  {plan.rows.map(r => {
+                    const dec = r.options.find(o => o.id === r.decidedId);
+                    const chip = r.status === "decided" ? { t: `✓ Decided: ${dec?.name || ""}`, c: "bg-emerald-50 text-emerald-700 ring-emerald-100" }
+                      : r.status === "short" ? { t: "None of the three covers this floor", c: "bg-red-50 text-red-700 ring-red-100" }
+                      : r.status === "none" ? { t: "Sales has not picked a carpet", c: "bg-amber-50 text-amber-700 ring-amber-100" }
+                      : { t: "Not decided yet", c: "bg-amber-50 text-amber-700 ring-amber-100" };
+                    return (
+                      <div key={r.key} className="rounded-xl ring-1 ring-gray-200 p-3">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-sm font-semibold text-gray-900">{r.zoneName}</span>
+                          <span className="text-[11px] text-gray-500">{[r.fnLabel, r.date && dayLbl(r.date)].filter(Boolean).join(" · ")}</span>
+                          <span className="text-[11px] text-gray-500 tabular-nums">· {r.dims} = {Math.round(r.area)} sqft</span>
+                          <span className={"ml-auto text-[11px] font-semibold px-2 py-0.5 rounded-full ring-1 " + chip.c}>{chip.t}</span>
+                        </div>
+                        {r.options.length === 0 ? (
+                          <div className="mt-2 text-xs text-gray-500">Nothing to choose from yet — ask sales to pick up to three carpets in Build (Platform → Carpet).</div>
+                        ) : (
+                          <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                            {r.options.map(o => {
+                              const on = o.id === r.decidedId;
+                              const ph = o.item ? (o.item.img || (Array.isArray(o.item.photoUrls) && o.item.photoUrls[0]) || "") : "";
+                              return (
+                                <div key={o.id} className={"rounded-lg p-2 flex flex-col gap-2 ring-1 " + (on ? "ring-emerald-400 bg-emerald-50/60" : "ring-gray-200 bg-white")}>
+                                  <div className="flex items-center gap-2 min-w-0">
+                                    <span className="shrink-0 w-5 h-5 rounded-full bg-gray-900 text-white text-[10px] font-bold flex items-center justify-center" title={RANK[o.rank] + " choice"}>{o.rank + 1}</span>
+                                    {ph ? <img src={thumbUrl(ph, 96)} loading="lazy" decoding="async" alt="" onClick={() => setZoomImg(ph)} className="w-12 h-12 rounded-md object-cover border border-gray-200 cursor-zoom-in shrink-0" /> : <span className="w-12 h-12 rounded-md bg-gray-100 shrink-0" />}
+                                    <div className="min-w-0">
+                                      <div className="text-[13px] font-semibold text-gray-900 truncate" title={o.name}>{o.name}</div>
+                                      <div className={"text-[11px] tabular-nums " + (!o.known ? "text-gray-500" : o.enough ? "text-emerald-700" : "text-red-600")}>
+                                        {!o.known ? "Stock not known" : o.enough ? `✓ ${Math.round(o.free)} sqft free · covers it` : `${Math.round(o.free)} sqft free · short ${Math.round(o.short)}`}
+                                      </div>
+                                      {!on && r.suggestedId === o.id && !r.decidedId && <div className="text-[10.5px] font-semibold text-sky-700">Suggested</div>}
+                                    </div>
+                                  </div>
+                                  {on
+                                    ? <button type="button" onClick={() => undecide(r.key)} className="text-[12px] font-semibold rounded-md px-2 py-1 bg-emerald-600 text-white hover:bg-emerald-700 cursor-pointer" title="Chosen — tap to undo">✓ Using this · undo</button>
+                                    : <button type="button" onClick={() => decide(r.key, o)} className="text-[12px] font-semibold rounded-md px-2 py-1 ring-1 ring-gray-300 text-gray-800 hover:bg-gray-50 cursor-pointer">Use this</button>}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+              );
+            })()}
             {dept === "Tenting" && trussPlanOf().length > 0 && (
               <div className={"bg-white rounded-xl shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] overflow-hidden" + modalCls("truss")}>
                 <div className="px-3 sm:px-4 py-3 bg-gray-50 flex items-center gap-3">

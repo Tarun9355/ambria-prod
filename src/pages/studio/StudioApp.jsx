@@ -4170,6 +4170,12 @@ export default function StudioApp() {
   // house rate from IMS. A plain number — so the memo below only recomputes when the % itself changes, not on every ledger save.
   const houseAgencyFeePct = feePctOf(studioFloralData?.agencyFeePct ?? dealCheckData?.agencyFeePct);
   const dealFeePct = dealAgencyFeePct(clientLedger.find(c => c.id === activeClientId)?.agencyFeePct, houseAgencyFeePct);
+  // Planning's carpet decision for one floor (set in IMS → Dept Ops → Tenting → Carpet plan, stored on the event order):
+  // { id, name } or null. fnIdx|zone|floor is the key Planning writes under.
+  const carpetChoiceOf = useCallback((fnIdx, zk, ri) => {
+    const eo = (eventOrders || []).find(e => e.clientId === activeClientId);
+    return eo?.deptOps?.Tenting?.carpetChoice?.[`${fnIdx}|${zk}|${ri}`] || null;
+  }, [eventOrders, activeClientId]);
   const sharedFloralSettings = useMemo(() => ({
     flowerPatterns: studioFloralData?.flowerPatterns ?? dealCheckData?.flowerPatterns ?? [],
     mandiCatalogue: studioFloralData?.mandiCatalogue ?? dealCheckData?.mandiCatalogue ?? [],
@@ -11955,7 +11961,7 @@ export default function StudioApp() {
     dcSwapSearch, setDcSwapSearch, dcSwapPicked, setDcSwapPicked, dcSwapMode, setDcSwapMode, dcSwapSplitQty, setDcSwapSplitQty,
     // pricing helpers
     rcIsSMB, buildZoneConfig, getFloralMode, applyFloralRatio, getElPrice, getElPriceForFn, calcElsCost, calcElsCostForFn, rcCostPctForSub,
-    calcPhotoCost, calcStructCost, calcFullEventCost, getFullCost, totalCost, transportCalc, grandTotal, lastSavedFnTotal, agencyFeeAmt, houseAgencyFeePct, pricingReady,
+    calcPhotoCost, calcStructCost, calcFullEventCost, getFullCost, totalCost, transportCalc, grandTotal, lastSavedFnTotal, agencyFeeAmt, houseAgencyFeePct, carpetChoiceOf, pricingReady,
     collectAllFunctionData, calcFunctionCost, calcFnFloralSourcingCost, calcFnFloralDetail, eventGrandTotal, calcFunctionBreakdown, manpowerPlanForBooking, persistDeptSnapshot, syncDealValueNow, floatPending, dcEoActuals, refreshDcEoActuals,
     // deal check orchestration + persistence (overlay)
     openDealCheck, runDealCheckGenerate, getStudioAvailable, loadAvailability, reliableSave, DC_CACHE_SK,
