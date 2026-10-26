@@ -643,20 +643,29 @@ export default function DCManpowerTab({ ctx }) {
                     cur = addDays(cur, 1);
                   }
                   if (dcMpIncludeDismantle) {
-                    // Every function whose immediate next calendar day ISN'T itself another function's
-                    // day gets a real dismantle day right after it (dismantlingPct applied), not a flat
-                    // carried-forward "gap" day — a 24/26/28 booking dismantles after EACH of 24 and 26,
-                    // not just once at the very end. Back-to-back functions (next day IS an event, e.g.
-                    // 24/25/26) never get one in between: the crew flows straight into the next setup.
-                    // The last function's dismantle day (latest+1) falls outside the earliest..latest
-                    // loop above, so it needs inserting rather than converting an existing gap entry.
+                    // Every function gets a real dismantle day right after it (dismantlingPct applied),
+                    // not a flat carried-forward "gap" day — a 24/26/28 booking dismantles after EACH of
+                    // 24 and 26, not just once at the very end. The last function's dismantle day
+                    // (latest+1) falls outside the earliest..latest loop above, so it needs inserting
+                    // rather than converting an existing gap entry.
+                    // Back-to-back functions (next day IS itself an event, e.g. 24/25/26) have no real
+                    // calendar day between them to hold one — the crew still strikes the first day's
+                    // setup before the next one's (owner ask, 2026-10-26: same venue across consecutive
+                    // days still dismantles and reassembles), so this inserts a dismantle entry keyed
+                    // `${date}:btwdismantle` instead — a string that is never a real calendar date, but
+                    // sorts correctly between the two (JS string comparison: "2026-10-19" <
+                    // "2026-10-19:btwdismantle" < "2026-10-20", since a date string is always a PREFIX
+                    // of its own suffixed key, and the day-of-month digits alone already decide the
+                    // comparison against any different real date). `afterDate` names the function day it
+                    // belongs to, the same as a real one's — every attribution check below reads THAT,
+                    // never re-deriving "the day after" by parsing `date`, so it works for both.
                     const eventDates = new Set(dayList.filter(d => d.phase === "event").map(d => d.date));
                     dayList.filter(d => d.phase === "event").forEach(d => {
                       const nextDate = addDays(d.date, 1);
-                      if (eventDates.has(nextDate)) return; // back-to-back — no dismantle day in between
+                      if (eventDates.has(nextDate)) { dayList.push({ date: `${d.date}:btwdismantle`, phase: "dismantle", fns: [], afterDate: d.date }); return; }
                       const existing = dayList.find(x => x.date === nextDate);
-                      if (existing) existing.phase = "dismantle";
-                      else dayList.push({ date: nextDate, phase: "dismantle", fns: [] });
+                      if (existing) { existing.phase = "dismantle"; existing.afterDate = d.date; }
+                      else dayList.push({ date: nextDate, phase: "dismantle", fns: [], afterDate: d.date });
                     });
                     dayList.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
                   }
@@ -785,7 +794,7 @@ export default function DCManpowerTab({ ctx }) {
                   // here too, not just under "All functions".
                   const scopedDayList = dayList.filter(d => {
                     if (d.phase === "event") return d.fns.includes(selectedFn);
-                    if (d.phase === "dismantle") return selectedFn && d.date === addDays(selectedFn.fnDate, 1);
+                    if (d.phase === "dismantle") return selectedFn && d.afterDate === selectedFn.fnDate;
                     if (d.phase === "minusOne") return selectedFn && selectedFn.fnDate === earliest;
                     return false;
                   });
@@ -796,7 +805,12 @@ export default function DCManpowerTab({ ctx }) {
                   // ── UI ─────────────────────────────────────────────────────
                   const fmtDateShort = (iso) => {
                     try {
-                      const d = new Date(iso + "T00:00:00Z");
+                      // A back-to-back dismantle entry's own key isn't a real calendar date (it's
+                      // `${date}:btwdismantle`, so two entries can share the date it's attached to
+                      // without colliding) — strip the suffix back to the clean date before parsing.
+                      const clean = String(iso || "").split(":")[0];
+                      const d = new Date(clean + "T00:00:00Z");
+                      if (Number.isNaN(d.getTime())) return clean;
                       return d.toLocaleDateString("en-IN", { weekday:"short", day:"numeric", month:"short", timeZone:"UTC" });
                     } catch { return iso; }
                   };

@@ -1722,6 +1722,7 @@ export default function IMS() {
             categories={categories} setCategories={setCategories}
             settings={settings} studio={studio}
             rateCardCategories={rateCardCategories} authUser={user}
+            eventOrders={eventOrders}
           />
         ) : activeTab === "admin" ? (
           <AdminTab

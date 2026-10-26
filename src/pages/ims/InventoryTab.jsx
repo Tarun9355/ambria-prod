@@ -13,7 +13,7 @@ import { itemDimsText } from "../../lib/ims/helpers";
 import { catToDept, canSeeDept } from "../../lib/ims/deptClassify";
 import ItemHoverThumb from "../../components/shared/ItemHoverThumb";
 
-export default function InventoryTab({ inventory, setInventory, functions, setFunctions, categories, setCategories, settings, studio, rateCardCategories = [], authUser }) {
+export default function InventoryTab({ inventory, setInventory, functions, setFunctions, categories, setCategories, settings, studio, rateCardCategories = [], authUser, eventOrders = [] }) {
   const canAdd = hasIMSPerm(authUser, "inv_add");
   const canDelete = hasIMSPerm(authUser, "inv_delete");
   const canImages = hasIMSPerm(authUser, "inv_images");
@@ -1448,8 +1448,18 @@ Rules:
               ? <p className="text-sm text-gray-400 italic">Not blocked for any function</p>
               : functions.filter((f) => f.items?.some((it) => it.invId === selItem.id)).map((f) => {
                   const it = f.items.find((it) => it.invId === selItem.id);
-                  return <div key={f.id} className="flex items-center gap-3 py-2 border-b text-sm">
+                  // Guest name + venue — read from the linked event_order when there is one (the
+                  // authoritative, always-plain-string copy), since a functions row's own blob carries
+                  // neither reliably (only brideGroom + a {type,name,fullAddress} venue object on some
+                  // creation paths, nothing at all on others).
+                  const eo = f.eventOrderId ? eventOrders.find((e) => e.id === f.eventOrderId) : null;
+                  const guestName = eo?.clientName || f.brideGroom || f.clientName || "";
+                  const venueRaw = eo?.venue ?? f.venue;
+                  const venueName = typeof venueRaw === "string" ? venueRaw : (venueRaw?.name || "");
+                  return <div key={f.id} className="flex items-center gap-3 py-2 border-b text-sm flex-wrap">
                     <span className="font-medium">{f.name}</span><span className="text-gray-500">{f.date}</span>
+                    {guestName && <span className="text-gray-700">{guestName}</span>}
+                    {venueName && <span className="text-gray-500 text-xs">{venueName}</span>}
                     <Badge color="indigo">{it.dept}</Badge><span className="text-gray-500 text-xs">{it.remark}</span>
                     <span className="ml-auto font-medium">×{it.qty}</span>
                   </div>;
