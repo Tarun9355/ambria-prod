@@ -3502,13 +3502,23 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           let invU = inv, arranged = false, choiceExtra = null, decName = "";
           if (prow) {
             const names = prow.options.map((o, i) => `${i + 1} ${String(o.name || "").length > 16 ? String(o.name).slice(0, 15) + "…" : o.name}`).join(" · ");
-            if (pdfAllCarpetsRef.current) choiceExtra = [["Choices", names]];
-            else if (prow.other) { arranged = true; choiceExtra = [["Source", "Bought / hired / made outside stock"]]; }
+            if (prow.other) { arranged = true; choiceExtra = [["Source", "Bought / hired / made outside stock"]]; }
             else if (prow.decidedId) {
               const di = invById.get(String(prow.decidedId));
               if (di) invU = di; else { invU = null; decName = ([...prow.options, prow.manual].filter(Boolean).find(o => o.id === prow.decidedId) || {}).name || ""; }
               choiceExtra = [["Design", "Chosen in Planning"]];
             } else choiceExtra = [["Choices", names + " (not decided)"]];
+          }
+          // Deal Check's PDF lists what sales asked for: every design, 1st to 4th, each as its own card with its photo (like the carpets).
+          if (prow && pdfAllCarpetsRef.current) {
+            const RANKS = ["1st", "2nd", "3rd", "4th"];
+            prow.options.forEach((o, i) => {
+              const ci = invById.get(String(o.id));
+              merged.set(`c:${el?.pid || ei}:${i}`, { name: ci?.name || o.name || "Design", qty: Number(el?.qty) || 1, unit: String(el?.unit || ci?.unit || "").trim(),
+                deptTag: combined ? (deptByInvId.get(String(o.id)) || catToDept(ci?.category || ci?.cat)) : "", photo: invPhoto(ci, null), dims: invDims(ci), size: "", kit: 0, recipe: [],
+                extra: [["Choice", `${RANKS[i] || i + 1 + "th"} choice`]] });
+            });
+            return;
           }
           // ── S / M / B ──
           // Florals (and some lighting) are quoted at a size, not just a count: the same
