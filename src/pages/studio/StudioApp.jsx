@@ -4170,12 +4170,6 @@ export default function StudioApp() {
   // house rate from IMS. A plain number — so the memo below only recomputes when the % itself changes, not on every ledger save.
   const houseAgencyFeePct = feePctOf(studioFloralData?.agencyFeePct ?? dealCheckData?.agencyFeePct);
   const dealFeePct = dealAgencyFeePct(clientLedger.find(c => c.id === activeClientId)?.agencyFeePct, houseAgencyFeePct);
-  // Planning's carpet decision for one floor (set in IMS → Dept Ops → Tenting → Carpet plan, stored on the event order):
-  // { id, name } or null. fnIdx|zone|floor is the key Planning writes under.
-  const carpetChoiceOf = useCallback((fnIdx, zk, ri) => {
-    const eo = (eventOrders || []).find(e => e.clientId === activeClientId);
-    return eo?.deptOps?.Tenting?.carpetChoice?.[`${fnIdx}|${zk}|${ri}`] || null;
-  }, [eventOrders, activeClientId]);
   const sharedFloralSettings = useMemo(() => ({
     flowerPatterns: studioFloralData?.flowerPatterns ?? dealCheckData?.flowerPatterns ?? [],
     mandiCatalogue: studioFloralData?.mandiCatalogue ?? dealCheckData?.mandiCatalogue ?? [],
@@ -10487,7 +10481,7 @@ export default function StudioApp() {
     // declared rather than inferred — the same correction made for priceMode above.
     setAvailModal({ zoneKey, idx, elName: el?.name || "", subcat, date, loading: true, items: [], selectedId: el?.imsId || el?.invId || null, onPick: onPick || (opts?.multi ? (() => {}) : null), onPickAll: opts?.onPickAll || null, splitQty: Number(opts?.splitQty) || 0, onSplit: opts?.onSplit || null, pickHint: opts?.pickHint || "", neededLabel: opts?.neededLabel || "", unitLabel: opts?.unitLabel || "", hidePrice: !!opts?.hidePrice,
       // multi: pick up to N items in one go, ranked in the order tapped (carpet preferences) — { max, current: [ids], onSave(picks), onSaveAll?(picks) }
-      multi: opts?.multi ? { max: Number(opts.multi.max) || 3, onSave: opts.multi.onSave || null, onSaveAll: opts.multi.onSaveAll || null } : null, multiIds: Array.isArray(opts?.multi?.current) ? opts.multi.current : [], multiNote: "" });
+      multi: opts?.multi ? { max: Number(opts.multi.max) || 3, need: Number(opts.multi.need) || 0, onSave: opts.multi.onSave || null, onSaveAll: opts.multi.onSaveAll || null } : null, multiIds: Array.isArray(opts?.multi?.current) ? opts.multi.current : [], multiNote: "" });
     try {
       const { inventory, blocksForDate, blocksDetailForDate } = await loadAvailability(date);
       const target = String(subcat).toLowerCase().trim();
@@ -11961,7 +11955,7 @@ export default function StudioApp() {
     dcSwapSearch, setDcSwapSearch, dcSwapPicked, setDcSwapPicked, dcSwapMode, setDcSwapMode, dcSwapSplitQty, setDcSwapSplitQty,
     // pricing helpers
     rcIsSMB, buildZoneConfig, getFloralMode, applyFloralRatio, getElPrice, getElPriceForFn, calcElsCost, calcElsCostForFn, rcCostPctForSub,
-    calcPhotoCost, calcStructCost, calcFullEventCost, getFullCost, totalCost, transportCalc, grandTotal, lastSavedFnTotal, agencyFeeAmt, houseAgencyFeePct, carpetChoiceOf, pricingReady,
+    calcPhotoCost, calcStructCost, calcFullEventCost, getFullCost, totalCost, transportCalc, grandTotal, lastSavedFnTotal, agencyFeeAmt, houseAgencyFeePct, pricingReady,
     collectAllFunctionData, calcFunctionCost, calcFnFloralSourcingCost, calcFnFloralDetail, eventGrandTotal, calcFunctionBreakdown, manpowerPlanForBooking, persistDeptSnapshot, syncDealValueNow, floatPending, dcEoActuals, refreshDcEoActuals,
     // deal check orchestration + persistence (overlay)
     openDealCheck, runDealCheckGenerate, getStudioAvailable, loadAvailability, reliableSave, DC_CACHE_SK,

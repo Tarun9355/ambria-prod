@@ -678,7 +678,7 @@ export function TrussStack({ S, customCeilingField, customMaskingField, k, zc, z
 // `nested` marks one of a zone's EXTRA platform footprints: same card, same colours, titled
 // "Platform N" with a remove control in place of the cost, which the first card already totals
 // across every footprint.
-export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, imsInventory = [], nested = false, title, onRemove, scale = 1, openAvailModal, zoneKey, rowIdx = 0, onCarpetAll, carpetShortOf, carpetRemainingOf, carpetDecisionOf, guestPriceMultiplier = 1 }) {
+export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, imsInventory = [], nested = false, title, onRemove, scale = 1, openAvailModal, zoneKey, rowIdx = 0, onCarpetAll, carpetShortOf, carpetRemainingOf, guestPriceMultiplier = 1 }) {
   // The picked carpet can only cover so many sqft: a width/depth that would take this floor past
   // what is left of its free stock (minus the other floors using the same carpet) is not saved.
   const [cpLimit, setCpLimit] = useState("");
@@ -852,8 +852,8 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
                       {invId:null, imsId:null, name:"Carpet"},
                       {sub:"carpet"},
                       null,
-                      {pickHint:`the first you tap is the 1st choice. Planning decides which of the ${CARPET_PREF_MAX} is used. A stock pick only, it does not change the price.`, priceMode:"rental", hidePrice:true,
-                       multi:{max:CARPET_PREF_MAX, current:prefs.map(p=>p.id), onSave:(picks)=>sZ(setPrefsPatch(picks)), onSaveAll:onCarpetAll?((picks)=>onCarpetAll(picks, zoneKey, rowIdx)):null}});
+                      {pickHint:`the first you tap is the 1st choice. Planning decides which of the ${CARPET_PREF_MAX} is used. A stock pick only, it does not change the price.`, priceMode:"rental", hidePrice:true, unitLabel:"sqft", neededLabel:floorSqft>0?`${Math.round(floorSqft)} sqft needed for this floor`:"",
+                       multi:{max:CARPET_PREF_MAX, need:Math.round(floorSqft), current:prefs.map(p=>p.id), onSave:(picks)=>sZ(setPrefsPatch(picks)), onSaveAll:onCarpetAll?((picks)=>onCarpetAll(picks, zoneKey, rowIdx)):null}});
                     const done=prefs.length>=CARPET_PREF_MAX;
                     // Nothing picked yet: no empty slots, just the way in. The slots appear once a carpet is chosen.
                     if(!prefs.length) return <button type="button" onClick={()=>open()} title={`Pick up to ${CARPET_PREF_MAX} stock carpets for this floor — Planning decides which is used`}
@@ -879,7 +879,6 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
                         {carpetShort>0?`⚠ Short ${Math.round(carpetShort)} sqft — none of the picks covers this floor`:done?`${CARPET_PREF_MAX} preferences · Planning decides which is used`:`${prefs.length} of ${CARPET_PREF_MAX} picked — pick ${CARPET_PREF_MAX} so Planning has a fallback`}
                         {!done&&<span onClick={()=>open()} style={{marginLeft:6,cursor:"pointer",color:accent,textDecoration:"underline",fontWeight:700}}>Pick more</span>}
                       </div>
-                      {(()=>{const dec=carpetDecisionOf?carpetDecisionOf(zoneKey,rowIdx):null;return dec?<div style={{marginTop:3,fontSize:10.5,fontWeight:700,color:"#047857"}}>✓ Planning chose: {dec.name}</div>:null;})()}
                     </div>;
                   })()}
                   {/* Only when no stock carpet is picked — a picked carpet already has its own photo. */}
@@ -909,12 +908,12 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
 //
 // platformRowCost already runs per row over zc.extraPlatformRows and buildPlatformPlan draws one
 // ops entry each, so the cost and the plan were ready long before there was a way to add one.
-export function FloorStack({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, imsInventory = [], scale = 1, openAvailModal, zoneKey, onCarpetAll, carpetShortOf, carpetRemainingOf, carpetDecisionOf, guestPriceMultiplier = 1 }) {
+export function FloorStack({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, imsInventory = [], scale = 1, openAvailModal, zoneKey, onCarpetAll, carpetShortOf, carpetRemainingOf, guestPriceMultiplier = 1 }) {
   const rows = zc.extraPlatformRows || [];
   const write = (next) => sZ({ extraPlatformRows: next });
   // accent rides in `shared`, so both the first floor and every added row get it from one place —
   // FloorCard needs it for the platform-height control's selected fill.
-  const shared = { S, zm, st, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, imsInventory, scale, openAvailModal, zoneKey, onCarpetAll, carpetShortOf, carpetRemainingOf, carpetDecisionOf, guestPriceMultiplier };
+  const shared = { S, zm, st, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, imsInventory, scale, openAvailModal, zoneKey, onCarpetAll, carpetShortOf, carpetRemainingOf, guestPriceMultiplier };
   return (<>
     <FloorCard {...shared} zc={zc} sZ={sZ} sFD={sFD} fd={fd} title={rows.length ? "Floor 1" : "Floor"} />
     {rows.map((row, ri) => {
@@ -952,7 +951,7 @@ function LightboxPhoto({ src, alt, style }) {
 export default function StudioBuild({ ctx }) {
   const {
     // theme / chrome
-    S, isDark, accent, border, textS: textSRaw, textP, cardBg, fmt, cat, carpetChoiceOf,
+    S, isDark, accent, border, textS: textSRaw, textP, cardBg, fmt, cat,
     // events / library / video sources
     events, libItems, sourceEvent, sourceVideo, ytVideoTags, allVideos,
     getFullCost, findTemplate, templates,
@@ -1247,12 +1246,6 @@ export default function StudioBuild({ ctx }) {
     return carpetShortCache;
   };
   const carpetShortOf = (k, ri) => carpetShortMapOf()[`${k}|${ri}`] || 0;
-  // The carpet Planning decided for this floor — only while it is still one of the floor's preferences.
-  const carpetDecisionOf = (k, ri) => {
-    const row = ri === 0 ? zoneConfig?.[k] : (zoneConfig?.[k]?.extraPlatformRows || [])[ri - 1];
-    const c = carpetChoiceOf ? carpetChoiceOf(activeFnIdx || 0, k, ri) : null;
-    return c && prefsOf(row).some(p => p.id === c.id) ? c : null;
-  };
   // Sqft of a floor's picked carpet still free for IT: the free stock recorded at pick time minus
   // what every OTHER floor using that same carpet already takes. null when nothing is picked.
   const carpetRemainingOf = (k, ri) => {
@@ -5236,7 +5229,7 @@ undefined
                 customMaskingField={customMaskingField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} scale={zoneScaleVal(k)} guestDiscPct={structDiscountFor(zc,aVenue)?.truss?25:0} guestFabricDiscPct={structDiscountFor(zc,aVenue)?25:0} maskingColours={maskingColours} maskingColourOptions={maskingColourOptions} guestPriceMultiplier={guestPriceMultiplier} trussRepeat={repeatCatFor(zc,"truss")} />}
               {/* ── PLATFORM + CARPET → then floor dims ── */}
               {zoneSection[k]==="platform"&&<FloorStack S={S} zc={zc} zm={zm} st={st} sZ={sZ} sFD={sFD} fd={fd} fmt={fmt} showCosts={showCosts}
-                isDark={isDark} border={border} accent={accent} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} imsInventory={imsInventory} scale={zoneScaleVal(k)} openAvailModal={openAvailModal} zoneKey={k} onCarpetAll={applyCarpetToAll} carpetShortOf={carpetShortOf} carpetRemainingOf={carpetRemainingOf} carpetDecisionOf={carpetDecisionOf} guestPriceMultiplier={guestPriceMultiplier} />}
+                isDark={isDark} border={border} accent={accent} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} imsInventory={imsInventory} scale={zoneScaleVal(k)} openAvailModal={openAvailModal} zoneKey={k} onCarpetAll={applyCarpetToAll} carpetShortOf={carpetShortOf} carpetRemainingOf={carpetRemainingOf} guestPriceMultiplier={guestPriceMultiplier} />}
             </div>);
           })()}
           </Fragment>}

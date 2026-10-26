@@ -3237,7 +3237,7 @@ export default function DealCheckOverlay({ ctx }) {
                                           { sub: carpetSubcatFallback },
                                           null,
                                           { pickHint: `the first you tap is the 1st choice. Planning decides which of the ${CARPET_PREF_MAX} is used.`, priceMode: "rental", hidePrice: true, neededLabel: `${neededSqft} sqft needed for this zone`, unitLabel: "sqft",
-                                            multi: { max: CARPET_PREF_MAX, current: prefs.map(p => p.id), onSave: (picks) => {
+                                            multi: { max: CARPET_PREF_MAX, need: neededSqft, current: prefs.map(p => p.id), onSave: (picks) => {
                                               const apply = (z) => ({ ...(z || {}), ...setPrefsPatch(picks.map(p => ({ id: p.id, name: dcInventoryCache.find(x => x.id === p.id)?.name || p.name || "", free: Number(p.free) || 0 }))) });
                                               if (fnIdx === activeFnIdxCommitted) setZoneConfig(prev => ({ ...prev, [zk]: apply(prev[zk]) }));
                                               else setFnBuilds(prev => { const snap = prev[fnIdx] || {}; const curZc = snap.zoneConfig || {}; return { ...prev, [fnIdx]: { ...snap, zoneConfig: { ...curZc, [zk]: apply(curZc[zk]) } } }; });
