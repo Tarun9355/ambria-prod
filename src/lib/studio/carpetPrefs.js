@@ -1,5 +1,5 @@
-// Carpet preferences. A floor's carpet is not one pick any more: the salesperson ranks up to three stock carpets
-// (1st, 2nd, 3rd choice) and Planning decides which one is actually used, from what is free on the event date.
+// Carpet preferences. A floor's carpet is not one pick any more: the salesperson ranks up to four stock carpets
+// (1st to 4th choice) and Planning decides which one is actually used, from what is free on the event date.
 //
 // Stored on the floor row (the zone's own floor, or an entry of extraPlatformRows):
 //   cpPrefs  [{ id, name, free }]   in rank order — `free` is the carpet's free sqft when it was picked
@@ -7,8 +7,8 @@
 // Deal Check's carpet card, the layout pushed to IMS) already looks. Anything that changes a pick goes through
 // prefsPatch, so the two can't disagree.
 
-export const CARPET_PREF_MAX = 3;
-export const CARPET_PREF_LABELS = ["1st choice", "2nd choice", "3rd choice"];
+export const CARPET_PREF_MAX = 4;
+export const CARPET_PREF_LABELS = ["1st choice", "2nd choice", "3rd choice", "4th choice"];
 
 const clean = (p) => {
   if (!p || !p.id) return null;
@@ -55,8 +55,8 @@ export function prefsPatch(row, slot, pick) {
   return { cpPrefs: list, cpInvId: list[0]?.id || null, cpInvName: list[0]?.name || "", cpInvFree: list[0] ? list[0].free : null };
 }
 
-// The fields for "these picks, in this order, ARE the preferences" — what the picker's Save writes when it lets all three be
-// chosen in one go. Empty or unusable picks clear them. At most three, no repeats.
+// The fields for "these picks, in this order, ARE the preferences" — what the picker's Save writes when it lets all of them be
+// chosen in one go. Empty or unusable picks clear them. At most four, no repeats.
 export function setPrefsPatch(picks) {
   const seen = new Set();
   const list = (Array.isArray(picks) ? picks : []).map(clean).filter((p) => p && !seen.has(p.id) && seen.add(p.id)).slice(0, CARPET_PREF_MAX);

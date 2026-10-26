@@ -3353,7 +3353,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         // Deal Check's PDF lists all three sales picked; Planning's lists the decided one (all three until one is decided).
         const chosen = dec && !pdfAllCarpetsRef.current ? prefs.find(p => p.id === dec.id) : null;
         const lbl = ri === 0 ? "" : ` (floor ${ri + 1})`;
-        const RANK = ["1st", "2nd", "3rd"];
+        const RANK = ["1st", "2nd", "3rd", "4th"];
         (chosen ? [{ p: chosen, role: "To use" + lbl }] : prefs.map((p, i) => ({ p, role: `${RANK[i] || i + 1 + "th"} choice${lbl}` }))).forEach(({ p, role }) => {
           const inv = invById.get(String(p.id));
           out.push({
@@ -6713,14 +6713,14 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
               const undecide = (key) => { const n2 = { ...choiceAll }; delete n2[key]; saveDept({ carpetChoice: n2 }); };
               const dayLbl = (d) => { try { return d ? new Date(d + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : "the event date"; } catch { return d || "the event date"; } };
               const overNames = Object.keys(plan.over).map(id => ({ id, ...plan.over[id], name: plan.rows.flatMap(r => r.options).find(o => o.id === id)?.name || id }));
-              const RANK = ["1st", "2nd", "3rd"];
+              const RANK = ["1st", "2nd", "3rd", "4th"];
               return (
               <div className={"bg-white rounded-xl shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] overflow-hidden" + modalCls("carpet")}>
                 <div className="px-3 sm:px-4 py-3 bg-gray-50 flex items-center gap-3">
                   <span aria-hidden="true" className="shrink-0 w-9 h-9 rounded-lg bg-white shadow-[0_1px_3px_rgba(15,23,42,0.12),0_4px_10px_-4px_rgba(15,23,42,0.22)] flex items-center justify-center text-base leading-none">🟥</span>
                   <div className="min-w-0 flex-1">
                     <div className="text-[15px] font-semibold text-gray-900">Carpet plan</div>
-                    <div className="text-xs text-gray-500">Sales picked up to three carpets for each floor. Check what is free on the day and choose the one that goes down.</div>
+                    <div className="text-xs text-gray-500">Sales picked up to four carpets for each floor. Check what is free on the day and choose the one that goes down.</div>
                   </div>
                 </div>
                 <div className="p-3 sm:p-4 space-y-3">
@@ -6732,7 +6732,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                   {plan.rows.map(r => {
                     const dec = r.options.find(o => o.id === r.decidedId);
                     const chip = r.status === "decided" ? { t: `✓ Decided: ${dec?.name || ""}`, c: "bg-emerald-50 text-emerald-700 ring-emerald-100" }
-                      : r.status === "short" ? { t: "None of the three covers this floor", c: "bg-red-50 text-red-700 ring-red-100" }
+                      : r.status === "short" ? { t: "None of the choices covers this floor", c: "bg-red-50 text-red-700 ring-red-100" }
                       : r.status === "none" ? { t: "Sales has not picked a carpet", c: "bg-amber-50 text-amber-700 ring-amber-100" }
                       : { t: "Not decided yet", c: "bg-amber-50 text-amber-700 ring-amber-100" };
                     return (
@@ -6744,9 +6744,9 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                           <span className={"ml-auto text-[11px] font-semibold px-2 py-0.5 rounded-full ring-1 " + chip.c}>{chip.t}</span>
                         </div>
                         {r.options.length === 0 ? (
-                          <div className="mt-2 text-xs text-gray-500">Nothing to choose from yet — ask sales to pick up to three carpets in Build (Platform → Carpet).</div>
+                          <div className="mt-2 text-xs text-gray-500">Nothing to choose from yet — ask sales to pick up to four carpets in Build (Platform → Carpet).</div>
                         ) : (
-                          <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                          <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
                             {r.options.map(o => {
                               const on = o.id === r.decidedId;
                               const ph = o.item ? (o.item.img || (Array.isArray(o.item.photoUrls) && o.item.photoUrls[0]) || "") : "";
