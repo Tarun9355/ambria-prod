@@ -10,7 +10,7 @@
 
 export const PRINT_TRUCK_SUB = "Print";
 export const SMALL_PRINT_LIMIT = 2000;   // a print that costs less than this (₹) is "small"
-export const SMALL_PRINT_CHARGE = 500;   // flat transport charge (₹) for a function that has any small print
+export const SMALL_PRINT_CHARGE = 400;   // flat transport charge (₹) for a function that has any small print
 export const SMALL_PRINT_LABEL = "Small prints (flat)";
 
 const jobArea = (p) => {

@@ -5197,10 +5197,7 @@ undefined
                         const s=zoneScaleVal(k);
                         setPrint({qty:nextQty, qtyBase: s>1?nextQty/s:nextQty});
                       }} title="Qty — how many copies of this same print. Scale By rescales this the same way it rescales elements, Truss Qty and Platform Qty." style={{...S.input,fontSize:11.5,padding:"3px 6px",width:44,marginBottom:0,textAlign:"center"}} />
-                      {showCosts&&<span style={{marginLeft:"auto",display:"inline-flex",alignItems:"baseline",gap:6,whiteSpace:"nowrap"}}>
-                        <span style={{fontSize:12,fontWeight:700,color:"#0EA5E9"}}>{rate>0?fmt(cost):"— pick material"}</span>
-                        {carriesFlat&&<span title={`A print under ${fmt(SMALL_PRINT_LIMIT)} does not fill a truck: the function pays ${fmt(SMALL_PRINT_CHARGE)} flat transport for its small prints, once`} style={{fontSize:11.5,fontWeight:700,color:"#B45309"}}>+ {fmt(SMALL_PRINT_CHARGE)}</span>}
-                      </span>}
+                      {showCosts&&<span title={carriesFlat?`${fmt(cost)} print + ${fmt(SMALL_PRINT_CHARGE)} flat charge for the function's small prints (counted once)`:undefined} style={{fontSize:12,fontWeight:700,color:"#0EA5E9",marginLeft:"auto",whiteSpace:"nowrap"}}>{rate>0?fmt(cost+(carriesFlat?SMALL_PRINT_CHARGE:0)):"— pick material"}</span>}
                       {!isPhantom&&<span onClick={removePrint} style={{cursor:"pointer",color:"#E11D48",fontWeight:700,fontSize:12.5}}>×</span>}
                     </div>
                     {/* A print under ₹2,000 does not fill a truck, so the function is charged one flat transport amount for its small prints instead

@@ -5,7 +5,7 @@ const MATS = [{ id: "vinyl", ratePerSqft: 200 }, { id: "sun", ratePerSqft: 75 },
 const job = (material, areaW, areaD, qty) => ({ material, areaW, areaD, qty });
 
 describe("the rules", () => {
-  it("constants", () => { expect(PRINT_TRUCK_SUB).toBe("Print"); expect(SMALL_PRINT_LIMIT).toBe(2000); expect(SMALL_PRINT_CHARGE).toBe(500); });
+  it("constants", () => { expect(PRINT_TRUCK_SUB).toBe("Print"); expect(SMALL_PRINT_LIMIT).toBe(2000); expect(SMALL_PRINT_CHARGE).toBe(400); });
 });
 
 describe("printJobPrice", () => {
@@ -55,12 +55,12 @@ describe("splitPrints — small prints are not trucked by area", () => {
 
 describe("smallPrintFlat — one flat charge per function", () => {
   const zones = { stage: { prints: [job("sun", 3, 2, 1), job("sun", 2, 2, 1)] }, entry: { prints: [job("sun", 1, 1, 1)] }, btr: { prints: [job("vinyl", 10, 20, 1)] } };
-  it("any small print in a switched-on zone: ₹500, once, however many", () => {
-    expect(smallPrintFlat(zones, { stage: true, entry: true, btr: true }, MATS)).toEqual({ jobs: 3, charge: 500 });
+  it("any small print in a switched-on zone: ₹400, once, however many", () => {
+    expect(smallPrintFlat(zones, { stage: true, entry: true, btr: true }, MATS)).toEqual({ jobs: 3, charge: 400 });
   });
   it("zones that are switched off do not count", () => {
     expect(smallPrintFlat(zones, { stage: false, entry: false, btr: true }, MATS)).toEqual({ jobs: 0, charge: 0 });
-    expect(smallPrintFlat(zones, { stage: true }, MATS)).toEqual({ jobs: 2, charge: 500 });
+    expect(smallPrintFlat(zones, { stage: true }, MATS)).toEqual({ jobs: 2, charge: 400 });
   });
   it("only big prints: no charge", () => {
     expect(smallPrintFlat({ btr: zones.btr }, { btr: true }, MATS)).toEqual({ jobs: 0, charge: 0 });

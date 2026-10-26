@@ -36,29 +36,29 @@ describe("Build's truck count includes print jobs", () => {
     const r = run({ stage: { prints, repeat: true, repeatTruss: true, repeatPlatform: true } }, CAP, { stage: true }, true);
     expect(r.breakdown.find((b) => b.label === "Print")?.qty).toBe(400);
   });
-  it("a small print (under ₹2,000) is not trucked by area: it adds one flat ₹500 line instead", () => {
+  it("a small print (under ₹2,000) is not trucked by area: it adds one flat ₹400 line instead", () => {
     const small = [{ material: "sun", areaW: 3, areaD: 2, qty: 1 }]; // ₹450
     const r = run({ stage: { prints: small } }, CAP);
     expect(r.breakdown.find((b) => b.label === "Print")).toBeUndefined();
     expect(r.itemTrucks).toBe(0);
-    expect(r.flatCharge).toBe(500);
-    expect(r.breakdown.find((b) => b.flat)).toMatchObject({ qty: 1, flat: 500, trucks: 0 });
+    expect(r.flatCharge).toBe(400);
+    expect(r.breakdown.find((b) => b.flat)).toMatchObject({ qty: 1, flat: 400, trucks: 0 });
   });
-  it("several small prints, even across zones, are still one flat ₹500", () => {
+  it("several small prints, even across zones, are still one flat ₹400", () => {
     const small = [{ material: "sun", areaW: 3, areaD: 2, qty: 1 }, { material: "sun", areaW: 2, areaD: 2, qty: 1 }];
     const r = run({ stage: { prints: small }, entry: { prints: small } }, CAP, { stage: true, entry: true });
-    expect(r.flatCharge).toBe(500);
+    expect(r.flatCharge).toBe(400);
     expect(r.breakdown.find((b) => b.flat).qty).toBe(4);
   });
   it("small and big prints together: the big ones are trucked by area, the small ones carry the flat charge", () => {
     const mix = [{ material: "sun", areaW: 3, areaD: 2, qty: 1 }, ...prints];
     const r = run({ stage: { prints: mix } }, CAP);
     expect(r.breakdown.find((b) => b.label === "Print").qty).toBe(400);
-    expect(r.flatCharge).toBe(500);
+    expect(r.flatCharge).toBe(400);
   });
   it("the flat charge does not depend on a Print capacity row being set up", () => {
     const r = run({ stage: { prints: [{ material: "sun", areaW: 3, areaD: 2, qty: 1 }] } }, [{ item: "Platform", perTruck: 1000, unit: "sqft" }]);
-    expect(r.flatCharge).toBe(500);
+    expect(r.flatCharge).toBe(400);
   });
   it("a zone that is switched off carries no flat charge", () => {
     expect(run({ stage: { prints: [{ material: "sun", areaW: 3, areaD: 2, qty: 1 }] } }, CAP, { stage: false }).flatCharge).toBe(0);
