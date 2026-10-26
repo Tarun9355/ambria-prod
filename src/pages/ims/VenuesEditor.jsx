@@ -4,9 +4,23 @@
 // VENUE_MIGRATION_PLAN.md) — same "IMS owns editing, Studio reads" pattern the Rate Card migration
 // already used (RATE_CARD_MIGRATION_PLAN.md).
 //
-// Data lives in Studio-owned settings row `ambria-v13-venues` ({inhouse:[...], outdoor:[...]}),
-// deliberately excluded from IMS's normal settings sync (see IMS.jsx's applySettingsRows) — same
-// self-contained fetch FixedVenuesEditor.jsx/ImsTransportPanel.jsx already use for this exact row.
+// Data lives in the `venues` TABLE (migration 036) — one row per property/sub-venue/outdoor venue,
+// row-level insert/update/delete. This used to be a single Studio-owned settings blob
+// (`ambria-v13-venues`, {inhouse:[...], outdoor:[...], properties:[...]}) that this file AND
+// FixedVenuesEditor.jsx each independently fetched, held in local state, and saved back WHOLE on
+// every edit — a stale tab's own copy (captured before a newer field existed, or before another
+// tab's edit landed) could silently overwrite that newer data the next time it saved anything at
+// all, even something unrelated. Confirmed live twice: a property ("Restro") vanished from the
+// list entirely once, and property-level commission % + outdoor venue type/commission were lost a
+// second time (2026-10-26). Row-level writes close that bug class for good — see migration 036's
+// own comment for the full story.
+//
+// This screen still mirrors the assembled catalogue back into that old settings blob after every
+// edit (see mirrorToBlob below), so every OTHER consumer that reads it (Build, Deal Check,
+// allInhouseGroups, venueParents, transport, min-labour, Browse's venue filter,
+// ImsTransportPanel.jsx…) keeps working completely unchanged — the mirror is always derived FRESH
+// from the table, never from stale local state, so it can't go stale independently of the table
+// the way the old two-editor setup could.
 //
 // Phase 2 (VENUE_MIGRATION_PLAN.md): every rename here (property, sub-venue, or outdoor) also
 // cascades the new name into video tags, the transport tier, and library photo tags — the same
@@ -16,9 +30,9 @@
 // library are real tables, and the transport tier is a settings row ImsTransportPanel.jsx already
 // reads/writes directly from IMS the same way.
 import { useState, useEffect, useMemo } from "react";
-import { supabase } from "../../lib/supabase";
+import { supabase, fetchAll, updateRow, deleteRow } from "../../lib/supabase";
 import { VENUES_SK, RC_SK_TR } from "../../lib/studio/keys";
-import { migrateVenues, genVenueId } from "../../lib/ims/venueProperties";
+import { assembleVenuesFromRows, genVenueId } from "../../lib/ims/venueProperties";
 import { SPACES as VENUE_TYPES, venueTypeLabel } from "../../lib/studio/taxonomy";
 
 // Cascades a venue rename into the three places Studio's own renameVenueEverywhere used to update.
@@ -116,43 +130,59 @@ function CommissionInput({ kind, id, value, commDraft, setCommDraft, commitCommi
 }
 
 export default function VenuesEditor({ settings, setSettings, showMsg }) {
-  const [venues, setVenues] = useState(null); // null = still loading
+  const [rows, setRows] = useState(null); // raw venues-table rows; null = still loading
   const [newPropName, setNewPropName] = useState("");
   const [newSubVenue, setNewSubVenue] = useState({}); // propertyId -> draft name
   const [editing, setEditing] = useState(null); // { kind: "property"|"subvenue"|"outdoor", id, name }
   const [newOd, setNewOd] = useState({ name: "", empanelled: true });
   const [odSearch, setOdSearch] = useState("");
-  // Commission % — a draft per row (keyed "property:id" / "outdoor:name") so typing doesn't write
+  // Commission % — a draft per row (keyed "property:id" / "outdoor:id") so typing doesn't write
   // on every keystroke; committed on blur/Enter, same pattern as every rename input on this screen.
   const [commDraft, setCommDraft] = useState({});
 
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
-      const { data } = await supabase.from("settings").select("value").eq("key", VENUES_SK).maybeSingle();
-      if (cancelled) return;
-      let raw = data?.value;
-      if (typeof raw === "string") { try { raw = JSON.parse(raw); } catch { raw = null; } }
-      const migrated = migrateVenues(raw || { inhouse: [], outdoor: [] });
-      // Only write back if the migration actually changed something (fresh ids/properties on
-      // first run) — re-saving identical data on every load would just be noise.
-      if (JSON.stringify(migrated) !== JSON.stringify(raw || { inhouse: [], outdoor: [] })) {
-        await supabase.from("settings").upsert({ key: VENUES_SK, value: JSON.stringify(migrated) }, { onConflict: "key" });
-      }
-      setVenues(migrated);
+      const r = await fetchAll("venues").catch(() => []);
+      if (!cancelled) setRows(r);
     };
     load();
     const ch = supabase
-      .channel(`realtime:settings:${VENUES_SK}:venues-editor`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "settings", filter: `key=eq.${VENUES_SK}` }, load)
+      .channel("realtime:venues:venues-editor")
+      .on("postgres_changes", { event: "*", schema: "public", table: "venues" }, load)
       .subscribe();
     return () => { cancelled = true; try { supabase.removeChannel(ch); } catch { /* ignore */ } };
   }, []);
 
-  const save = async (next) => {
-    setVenues(next);
-    const { error } = await supabase.from("settings").upsert({ key: VENUES_SK, value: JSON.stringify(next) }, { onConflict: "key" });
-    if (error) showMsg?.("Save failed: " + error.message, "red");
+  const venues = useMemo(() => (rows ? assembleVenuesFromRows(rows) : null), [rows]);
+
+  // Re-derives the legacy {properties, inhouse, outdoor} blob fresh from the CURRENT table rows
+  // (never from this component's own possibly-stale local state) and writes it to the settings row
+  // every other consumer still reads. Fire-and-forget: a failure here never blocks the real
+  // row-level write that already landed, and the next table change re-triggers it anyway.
+  const mirrorToBlob = async () => {
+    try {
+      const r = await fetchAll("venues");
+      await supabase.from("settings").upsert({ key: VENUES_SK, value: JSON.stringify(assembleVenuesFromRows(r)) }, { onConflict: "key" });
+    } catch { /* best-effort — the table write already succeeded, this is just the read-side mirror */ }
+  };
+
+  const writeRow = async (row) => {
+    try {
+      const { error } = await supabase.from("venues").insert(row);
+      if (error) throw error;
+    } catch (e) { showMsg?.("Save failed: " + (e?.message || e), "red"); return; }
+    mirrorToBlob();
+  };
+  const patchRow = async (id, patch) => {
+    try { await updateRow("venues", id, patch); }
+    catch (e) { showMsg?.("Save failed: " + (e?.message || e), "red"); return; }
+    mirrorToBlob();
+  };
+  const removeRow = async (id) => {
+    try { await deleteRow("venues", id); }
+    catch (e) { showMsg?.("Delete failed: " + (e?.message || e), "red"); return; }
+    mirrorToBlob();
   };
 
   const propertiesSorted = useMemo(
@@ -176,46 +206,39 @@ export default function VenuesEditor({ settings, setSettings, showMsg }) {
     [venues, propertyIds],
   );
   const [orphanAssign, setOrphanAssign] = useState({}); // subVenueId -> { propertyId: "__new__"|id, newName }
-  const assignOrphanToExisting = (svId, propertyId) => {
+  const assignOrphanToExisting = async (svId, propertyId) => {
     const property = (venues.properties || []).find((p) => p.id === propertyId);
     if (!property) return;
-    save({ ...venues, inhouse: venues.inhouse.map((sv) => (sv.id === svId ? { ...sv, propertyId: property.id, parent: property.name } : sv)) });
+    await patchRow(svId, { property_id: propertyId });
     setOrphanAssign((s) => { const n = { ...s }; delete n[svId]; return n; });
   };
-  const assignOrphanToNewProperty = (svId, name) => {
+  const assignOrphanToNewProperty = async (svId, name) => {
     const trimmed = (name || "").trim();
     if (!trimmed) return;
     if (venues.properties.some((p) => p.name.toLowerCase() === trimmed.toLowerCase())) { showMsg?.("Property already exists — pick it from the dropdown instead", "red"); return; }
     const id = genVenueId("prop");
-    save({
-      ...venues,
-      properties: [...venues.properties, { id, name: trimmed, manager: "—", icon: "🏛️" }],
-      inhouse: venues.inhouse.map((sv) => (sv.id === svId ? { ...sv, propertyId: id, parent: trimmed } : sv)),
-    });
+    await writeRow({ id, kind: "property", name: trimmed, manager: "—", icon: "🏛️" });
+    await patchRow(svId, { property_id: id });
     setOrphanAssign((s) => { const n = { ...s }; delete n[svId]; return n; });
   };
 
-  const addProperty = () => {
+  const addProperty = async () => {
     const name = newPropName.trim();
     if (!name) return;
     if ((venues.properties || []).some((p) => p.name.toLowerCase() === name.toLowerCase())) { showMsg?.("Property already exists", "red"); return; }
-    save({ ...venues, properties: [...venues.properties, { id: genVenueId("prop"), name, manager: "—", icon: "🏛️" }] });
+    await writeRow({ id: genVenueId("prop"), kind: "property", name, manager: "—", icon: "🏛️" });
     setNewPropName("");
   };
 
-  const renameProperty = (id, newName) => {
+  const renameProperty = async (id, newName) => {
     const name = newName.trim();
     if (!name) return;
     if (venues.properties.some((p) => p.id !== id && p.name.toLowerCase() === name.toLowerCase())) { showMsg?.("Property already exists", "red"); return; }
     const orig = venues.properties.find((p) => p.id === id)?.name || "";
-    // The id stays constant — this is the whole point. Sub-venues reference propertyId, not the
-    // name, so they need no change; only their denormalized `.parent` display string follows, so
-    // Studio's existing (unchanged) code keeps reading the right name.
-    save({
-      ...venues,
-      properties: venues.properties.map((p) => (p.id === id ? { ...p, name } : p)),
-      inhouse: venues.inhouse.map((sv) => (sv.propertyId === id ? { ...sv, parent: name } : sv)),
-    });
+    // The id stays constant — this is the whole point. Sub-venues reference property_id, not the
+    // name, and a sub-venue's `.parent` display string is derived fresh from the property's CURRENT
+    // name at read time (assembleVenuesFromRows), never stored — so nothing else needs touching here.
+    await patchRow(id, { name });
     // Fixed Venues links by propertyId, but the actual billing-time match (fixedVenueFor,
     // lib/ims/fixedVenues.js) still compares by NAME string — so the linked entry's own `.name`
     // has to follow the rename too, not just what this screen displays, or the display would show
@@ -228,88 +251,83 @@ export default function VenuesEditor({ settings, setSettings, showMsg }) {
     cascadeRename(orig, name).then((r) => showMsg?.(`✓ Renamed${cascadeSummary(r)}. Past events keep their original venue name for audit.`, "green"));
   };
 
-  const deleteProperty = (id) => {
+  const deleteProperty = async (id) => {
     const subs = subVenuesOf(id);
     if (subs.length > 0) { showMsg?.(`Remove its ${subs.length} sub-venue${subs.length === 1 ? "" : "s"} first`, "red"); return; }
     if (!window.confirm("Delete this property? This cannot be undone.")) return;
-    save({ ...venues, properties: venues.properties.filter((p) => p.id !== id) });
+    await removeRow(id);
   };
 
-  const addSubVenue = (propertyId) => {
+  const addSubVenue = async (propertyId) => {
     const name = (newSubVenue[propertyId] || "").trim();
     if (!name) return;
     if (venues.inhouse.some((sv) => sv.name.toLowerCase() === name.toLowerCase())) { showMsg?.("Venue already exists", "red"); return; }
-    const property = venues.properties.find((p) => p.id === propertyId);
-    // type starts unset (not hardcoded "Outdoor") — every reader downstream (allVenueData in
+    // venue_type starts unset (not hardcoded "Outdoor") — every reader downstream (allVenueData in
     // StudioApp.jsx, the Build zone-photo-picker's Indoor/Outdoor filter) already treats a falsy
     // type as "Outdoor", so nothing changes for an untagged sub-venue until someone sets a real
     // value below. Leaving it unset is what surfaces the "Not set" pill instead of silently locking
     // every new sub-venue to Outdoor with no way to ever change it — the bug this fixes.
-    save({ ...venues, inhouse: [...venues.inhouse, { id: genVenueId("iv"), name, parent: property?.name || "", propertyId, label: "", type: "", base: 0 }] });
+    await writeRow({ id: genVenueId("iv"), kind: "subvenue", name, property_id: propertyId });
     setNewSubVenue((p) => ({ ...p, [propertyId]: "" }));
   };
-  const setSubVenueType = (id, type) => {
-    save({ ...venues, inhouse: venues.inhouse.map((sv) => (sv.id === id ? { ...sv, type } : sv)) });
-  };
+  const setSubVenueType = async (id, type) => { await patchRow(id, { venue_type: type || null }); };
 
-  const renameSubVenue = (id, newName) => {
+  const renameSubVenue = async (id, newName) => {
     const name = newName.trim();
     if (!name) return;
     if (venues.inhouse.some((sv) => sv.id !== id && sv.name.toLowerCase() === name.toLowerCase())) { showMsg?.("Venue already exists", "red"); return; }
     const orig = venues.inhouse.find((sv) => sv.id === id)?.name || "";
-    save({ ...venues, inhouse: venues.inhouse.map((sv) => (sv.id === id ? { ...sv, name } : sv)) });
+    await patchRow(id, { name });
     setEditing(null);
     showMsg?.("✓ Renamed — updating references…", "green");
     cascadeRename(orig, name).then((r) => showMsg?.(`✓ Renamed${cascadeSummary(r)}.`, "green"));
   };
 
-  const deleteSubVenue = (id, name) => {
+  const deleteSubVenue = async (id, name) => {
     if (!window.confirm(`Delete venue "${name}"? This cannot be undone. Past events keep their original venue name.`)) return;
-    save({ ...venues, inhouse: venues.inhouse.filter((sv) => sv.id !== id) });
+    await removeRow(id);
   };
 
-  // ═══ OUTDOOR VENUES ═══ No stable-id/property linking needed (never Fixed-Venue-eligible), so
-  // this operates directly on venues.outdoor — same shape ({name, empanelled}) Studio always used.
+  // ═══ OUTDOOR VENUES ═══ No property linking needed (never Fixed-Venue-eligible), addressed by
+  // id like everything else on this screen (used to be matched by name — fragile mid-rename).
   const outdoorSorted = useMemo(() => [...(venues?.outdoor || [])].sort((a, b) => a.name.localeCompare(b.name)), [venues]);
-  const addOutdoorVenue = () => {
+  const addOutdoorVenue = async () => {
     const name = newOd.name.trim();
     if (!name) return;
     if (venues.outdoor.some((v) => v.name.toLowerCase() === name.toLowerCase())) { showMsg?.("Venue already exists", "red"); return; }
-    save({ ...venues, outdoor: [...venues.outdoor, { name, empanelled: newOd.empanelled }] });
+    await writeRow({ id: genVenueId("od"), kind: "outdoor", name, empanelled: newOd.empanelled });
     setNewOd({ name: "", empanelled: true });
   };
-  const renameOutdoorVenue = (origName, patch) => {
-    const name = (patch.name ?? origName).trim();
+  const renameOutdoorVenue = async (id, patch) => {
+    const orig = venues.outdoor.find((v) => v.id === id);
+    const name = (patch.name ?? orig?.name ?? "").trim();
     if (!name) return;
-    if (name !== origName && venues.outdoor.some((v) => v.name.toLowerCase() === name.toLowerCase())) { showMsg?.("Venue already exists", "red"); return; }
-    save({ ...venues, outdoor: venues.outdoor.map((v) => (v.name === origName ? { name, empanelled: patch.empanelled ?? v.empanelled } : v)) });
+    if (name !== orig?.name && venues.outdoor.some((v) => v.id !== id && v.name.toLowerCase() === name.toLowerCase())) { showMsg?.("Venue already exists", "red"); return; }
+    await patchRow(id, { name, empanelled: patch.empanelled ?? orig?.empanelled });
     setEditing(null);
-    if (name !== origName) {
+    if (name !== orig?.name) {
       showMsg?.("✓ Renamed — updating references…", "green");
-      cascadeRename(origName, name).then((r) => showMsg?.(`✓ Renamed${cascadeSummary(r)}.`, "green"));
+      cascadeRename(orig.name, name).then((r) => showMsg?.(`✓ Renamed${cascadeSummary(r)}.`, "green"));
     }
   };
-  const deleteOutdoorVenue = (name) => {
+  const deleteOutdoorVenue = async (id, name) => {
     if (!window.confirm(`Delete venue "${name}"? This cannot be undone.`)) return;
-    save({ ...venues, outdoor: venues.outdoor.filter((v) => v.name !== name) });
+    await removeRow(id);
   };
   // Outdoor venues never carried a type at all — every one of them was unconditionally treated as
   // "Outdoor" (StudioBuild.jsx's zone-photo-picker dumps every outdoor venue straight into its
   // Outdoor bucket). Real outside venues that also have an indoor banquet hall need to be able to
   // say so, or picking "Outside + Indoor" in that filter can never return anything.
-  const setOutdoorVenueType = (name, type) => {
-    save({ ...venues, outdoor: venues.outdoor.map((v) => (v.name === name ? { ...v, type } : v)) });
-  };
+  const setOutdoorVenueType = async (id, type) => { await patchRow(id, { venue_type: type || null }); };
 
   // Commission % — one value per in-house PROPERTY (covers all its sub-venues) or per outdoor
   // venue. Deal Check reads this to set aside that % of the deal amount as commission for
   // whichever venue the booking is at; salespeople can still override the computed amount there.
-  const commitCommission = (kind, id) => {
+  const commitCommission = async (kind, id) => {
     const raw = commDraft[commKey(kind, id)];
     if (raw === undefined) return;
-    const n = raw.trim() === "" ? undefined : Math.max(0, Math.min(100, Number(raw) || 0));
-    if (kind === "property") save({ ...venues, properties: venues.properties.map((p) => (p.id === id ? { ...p, commissionPct: n } : p)) });
-    else save({ ...venues, outdoor: venues.outdoor.map((v) => (v.name === id ? { ...v, commissionPct: n } : v)) });
+    const n = raw.trim() === "" ? null : Math.max(0, Math.min(100, Number(raw) || 0));
+    await patchRow(id, { commission_pct: n });
     setCommDraft((d) => { const nd = { ...d }; delete nd[commKey(kind, id)]; return nd; });
   };
 
@@ -435,7 +453,7 @@ export default function VenuesEditor({ settings, setSettings, showMsg }) {
       </div>
 
       {/* ═══ OUTDOOR VENUES ═══ Empanelled partners + venues we've worked at. Never Fixed-Venue-
-          eligible, so no property/id linking here — just name + empanelled, same as Studio always had. */}
+          eligible, so no property linking here — just name + empanelled, same as Studio always had. */}
       <div className="pt-4 border-t">
         <p className="font-bold text-gray-900 mb-1">🌿 Outdoor Venues</p>
         <p className="text-xs text-gray-500 mb-3">Empanelled partners + venues we've worked at</p>
@@ -443,10 +461,10 @@ export default function VenuesEditor({ settings, setSettings, showMsg }) {
         <div className="text-xs font-semibold text-gray-700 mb-2">⭐ Empanelled</div>
         <div className="flex flex-wrap gap-2 mb-4">
           {outdoorSorted.filter((v) => v.empanelled).map((v) => {
-            const isEditingOd = editing?.kind === "outdoor" && editing.id === v.name;
+            const isEditingOd = editing?.kind === "outdoor" && editing.id === v.id;
             if (isEditingOd) {
               return (
-                <div key={v.name} className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
+                <div key={v.id} className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
                   <input autoFocus value={editing.name} onChange={(e) => setEditing((s) => ({ ...s, name: e.target.value }))}
                     className="border rounded px-2 py-0.5 text-xs w-36" />
                   {[true, false].map((emp) => (
@@ -455,18 +473,18 @@ export default function VenuesEditor({ settings, setSettings, showMsg }) {
                       {emp ? "⭐" : "🏢"}
                     </button>
                   ))}
-                  <button onClick={() => renameOutdoorVenue(v.name, { name: editing.name, empanelled: editing.empanelled })} className="text-[11px] text-indigo-600 font-semibold">Save</button>
+                  <button onClick={() => renameOutdoorVenue(v.id, { name: editing.name, empanelled: editing.empanelled })} className="text-[11px] text-indigo-600 font-semibold">Save</button>
                   <button onClick={() => setEditing(null)} className="text-[11px] text-gray-400">Cancel</button>
                 </div>
               );
             }
             return (
-              <span key={v.name} className="inline-flex items-center gap-1.5 bg-white border rounded-lg px-2.5 py-1.5 text-xs text-gray-700">
+              <span key={v.id} className="inline-flex items-center gap-1.5 bg-white border rounded-lg px-2.5 py-1.5 text-xs text-gray-700">
                 {v.name}
-                <TypeSelect value={v.type} onChange={(t) => setOutdoorVenueType(v.name, t)} />
-                <button onClick={() => setEditing({ kind: "outdoor", id: v.name, name: v.name, empanelled: v.empanelled })} className="text-indigo-500" title="Rename">✏️</button>
-                <CommissionInput kind="outdoor" id={v.name} value={v.commissionPct} commDraft={commDraft} setCommDraft={setCommDraft} commitCommission={commitCommission} />
-                <button onClick={() => deleteOutdoorVenue(v.name)} className="text-red-400" title="Delete">✕</button>
+                <TypeSelect value={v.type} onChange={(t) => setOutdoorVenueType(v.id, t)} />
+                <button onClick={() => setEditing({ kind: "outdoor", id: v.id, name: v.name, empanelled: v.empanelled })} className="text-indigo-500" title="Rename">✏️</button>
+                <CommissionInput kind="outdoor" id={v.id} value={v.commissionPct} commDraft={commDraft} setCommDraft={setCommDraft} commitCommission={commitCommission} />
+                <button onClick={() => deleteOutdoorVenue(v.id, v.name)} className="text-red-400" title="Delete">✕</button>
               </span>
             );
           })}
@@ -476,10 +494,10 @@ export default function VenuesEditor({ settings, setSettings, showMsg }) {
         <input value={odSearch} onChange={(e) => setOdSearch(e.target.value)} placeholder="Search other venues…" className="border rounded-lg px-3 py-1.5 text-xs mb-2 w-full max-w-xs" />
         <div className="max-h-52 overflow-y-auto border rounded-xl mb-4">
           {outdoorSorted.filter((v) => !v.empanelled && (!odSearch.trim() || v.name.toLowerCase().includes(odSearch.toLowerCase()))).map((v) => {
-            const isEditingOd = editing?.kind === "outdoor" && editing.id === v.name;
+            const isEditingOd = editing?.kind === "outdoor" && editing.id === v.id;
             if (isEditingOd) {
               return (
-                <div key={v.name} className="flex items-center gap-2 px-3 py-2 border-b bg-amber-50">
+                <div key={v.id} className="flex items-center gap-2 px-3 py-2 border-b bg-amber-50">
                   <input autoFocus value={editing.name} onChange={(e) => setEditing((s) => ({ ...s, name: e.target.value }))} className="border rounded px-2 py-0.5 text-xs flex-1" />
                   {[true, false].map((emp) => (
                     <button key={String(emp)} onClick={() => setEditing((s) => ({ ...s, empanelled: emp }))}
@@ -487,19 +505,19 @@ export default function VenuesEditor({ settings, setSettings, showMsg }) {
                       {emp ? "⭐" : "🏢"}
                     </button>
                   ))}
-                  <button onClick={() => renameOutdoorVenue(v.name, { name: editing.name, empanelled: editing.empanelled })} className="text-[11px] text-indigo-600 font-semibold">Save</button>
+                  <button onClick={() => renameOutdoorVenue(v.id, { name: editing.name, empanelled: editing.empanelled })} className="text-[11px] text-indigo-600 font-semibold">Save</button>
                   <button onClick={() => setEditing(null)} className="text-[11px] text-gray-400">Cancel</button>
                 </div>
               );
             }
             return (
-              <div key={v.name} className="flex items-center justify-between px-3 py-2 border-b last:border-b-0">
+              <div key={v.id} className="flex items-center justify-between px-3 py-2 border-b last:border-b-0">
                 <span className="text-xs text-gray-800">{v.name}</span>
                 <div className="flex items-center gap-3">
-                  <TypeSelect value={v.type} onChange={(t) => setOutdoorVenueType(v.name, t)} />
-                  <CommissionInput kind="outdoor" id={v.name} value={v.commissionPct} commDraft={commDraft} setCommDraft={setCommDraft} commitCommission={commitCommission} />
-                  <button onClick={() => setEditing({ kind: "outdoor", id: v.name, name: v.name, empanelled: v.empanelled })} className="text-[11px] text-indigo-600">✏️ Edit</button>
-                  <button onClick={() => deleteOutdoorVenue(v.name)} className="text-[11px] text-red-400">✕ Remove</button>
+                  <TypeSelect value={v.type} onChange={(t) => setOutdoorVenueType(v.id, t)} />
+                  <CommissionInput kind="outdoor" id={v.id} value={v.commissionPct} commDraft={commDraft} setCommDraft={setCommDraft} commitCommission={commitCommission} />
+                  <button onClick={() => setEditing({ kind: "outdoor", id: v.id, name: v.name, empanelled: v.empanelled })} className="text-[11px] text-indigo-600">✏️ Edit</button>
+                  <button onClick={() => deleteOutdoorVenue(v.id, v.name)} className="text-[11px] text-red-400">✕ Remove</button>
                 </div>
               </div>
             );
