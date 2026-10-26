@@ -147,7 +147,11 @@ const YT_CACHE_TTL = 60 * 60 * 1000; // 1h — YouTube playlist cache TTL
 const fmt = (n) => { const v = n || 0; return `₹${(Math.abs(v) >= 100 ? Math.round(v) : Math.round(v * 100) / 100).toLocaleString("en-IN")}`; };
 
 // ══ TEAM / USERS ══
-const TEAM = { tarun: { name: "Tarun", pw: "ambria@admin", role: "admin" } };
+// No password here. Login is Supabase auth (lib/auth.js); this list only carries names, roles and
+// venue scope. It used to hold a plain-text password that nothing read — but this file ships to
+// every browser, and the list is saved to the public `settings` table, so it published the
+// password to anyone who looked. See the team load below, which strips it from saved data too.
+const TEAM = { tarun: { name: "Tarun", role: "admin" } };
 const ROLES = ["admin", "manager", "sales"];
 const PERM_LABELS = { canViewPricing: "View pricing & costs", canEditEvents: "Add / edit events", canManageTemplates: "Manage templates", canManageLibrary: "Manage library", canExport: "Export data", canManageVenues: "Manage venues", canManageUsers: "Manage users" };
 const ROLE_DEFAULTS = { admin: { canViewPricing: true, canEditEvents: true, canManageTemplates: true, canManageLibrary: true, canExport: true, canManageVenues: true, canManageUsers: true }, manager: { canViewPricing: true, canEditEvents: true, canManageTemplates: false, canManageLibrary: true, canExport: false, canManageVenues: false, canManageUsers: false }, sales: { canViewPricing: false, canEditEvents: false, canManageTemplates: false, canManageLibrary: false, canExport: false, canManageVenues: false, canManageUsers: false } };
@@ -3039,7 +3043,17 @@ export default function StudioApp() {
         (async () => {
           try {
             const v = await kvGet(TEAM_SK);
-            if (v != null) { const tp = parse(v); if (tp && typeof tp === "object" && !Array.isArray(tp) && !cancelled) setTeamData(tp); }
+            if (v != null) {
+              const tp = parse(v);
+              if (tp && typeof tp === "object" && !Array.isArray(tp) && !cancelled) {
+                // A saved list from before still carries a plain-text `pw` (readable by anyone with
+                // the public key). Drop it and save the list back without it — nothing reads it.
+                const hadPw = Object.values(tp).some(u => u && typeof u === "object" && "pw" in u);
+                const clean = hadPw ? Object.fromEntries(Object.entries(tp).map(([id, u]) => { if (!u || typeof u !== "object") return [id, u]; const { pw: _pw, ...rest } = u; return [id, rest]; })) : tp;
+                setTeamData(clean);
+                if (hadPw) reliableSave(TEAM_SK, JSON.stringify(clean), "Team").catch(() => {});
+              }
+            }
             else { reliableSave(TEAM_SK, JSON.stringify(DEFAULT_TEAM), "Team").catch(() => {}); }
           } catch {}
         })(),
