@@ -99,6 +99,24 @@ export default function InventoryTab({ inventory, setInventory, functions, setFu
   // indistinguishable from "cascading just doesn't work" — a category nobody has assigned
   // sub-categories to yet now honestly shows none, with a hint to go assign some.
   const subcatsForCat = (catLabel) => studioSubcatsByCat[catLabel] || [];
+  // ── CATEGORIES THIS USER CAN ADD TO ──
+  // The list only shows the departments a user may see (canSeeDept). An item added under a category of another department (a Tenting head adding a
+  // rug under "Furniture") was saved, then vanished from the adder's own list — it looked like the add had failed, so it was added again and again.
+  // The add forms therefore offer only categories the user can see, and start on the first of them. Unrestricted users see every category.
+  const addCatLabels = (() => {
+    const base = studioCatLabels.length > 0 ? studioCatLabels : INV_CATS;
+    // Categories the items already use but the list above lacks (e.g. "Tenting": carpets, trusses and platforms are filed there, yet it is not in
+    // the standard list — so a Tenting head had no category of their own to add a rug under). A near-duplicate spelling (Florals / Floral,
+    // Structure / Structural) is not added again.
+    const stem = (c) => String(c).toLowerCase().slice(0, 5);
+    const have = new Set(base.map(stem));
+    const extra = [...new Set((inventory || []).map((i) => String(i.cat || "").trim()).filter(Boolean))]
+      .filter((c) => !/^uncategori[sz]ed$/i.test(c) && !have.has(stem(c)));
+    const all = [...base, ...extra];
+    const mine = all.filter((c) => canSeeDept(authUser, catToDept(c, settings?.categoryDepartments)));
+    return mine.length ? mine : all;
+  })();
+  const defaultAddCat = addCatLabels.includes("Florals") ? "Florals" : (addCatLabels[0] || "Florals");
 
   const [subOtherAdd, setSubOtherAdd] = useState(false); // Add modal "Other" mode
   const [search, setSearch] = useState("");
@@ -139,7 +157,7 @@ export default function InventoryTab({ inventory, setInventory, functions, setFu
   const [importMode, setImportMode] = useState("both");
   const [importDone, setImportDone] = useState({ added: 0, updated: 0, skipped: 0 });
 
-  const [form, setForm] = useState({ name: "", cat: "Florals", subCat: "", type: "Budgeted", itemClass: "discrete", qty: "", unit: "Piece", loc: "", price: "", cost: "", breakagePct: 0, notes: "", img: "" });
+  const [form, setForm] = useState({ name: "", cat: defaultAddCat, subCat: "", type: "Budgeted", itemClass: "discrete", qty: "", unit: "Piece", loc: "", price: "", cost: "", breakagePct: 0, notes: "", img: "" });
   const voiceRef = useRef(null);
   const [listening, setListening] = useState(false);
 
@@ -160,7 +178,7 @@ export default function InventoryTab({ inventory, setInventory, functions, setFu
 
   function openPhotoScan() {
     setPhotoImg(null); setPhotoError(""); setPhotoReady(false);
-    setForm({ name: "", cat: "Florals", subCat: "", type: "Budgeted", itemClass: "discrete", qty: "1", unit: "Piece", loc: "", price: "", cost: "", breakagePct: 0, notes: "", img: "" });
+    setForm({ name: "", cat: defaultAddCat, subCat: "", type: "Budgeted", itemClass: "discrete", qty: "1", unit: "Piece", loc: "", price: "", cost: "", breakagePct: 0, notes: "", img: "" });
     setPhotoModal(true);
     setTimeout(() => photoInputRef.current?.click(), 200);
   }
@@ -217,11 +235,13 @@ Rules:
       const text = await callClaudeStreaming({ contentBlocks: photoBlocks, model: "claude-sonnet-4-6", maxTokens: 600 });
       const clean = text.replace(/```json|```/g, "").trim();
       const ai = JSON.parse(clean);
-      const validCats = studioCatLabels.length > 0 ? studioCatLabels : INV_CATS;
+      // The AI's category guess is used only if this user can see that category's department; otherwise the item would be saved and then drop out of
+      // their own list. Fall back to the category the guessed sub-category sits under, then to the user's first category.
+      const catForSub = addCatLabels.find((c) => (studioSubcatsByCat[c] || []).some((sc) => String(sc).toLowerCase() === String(ai.subCat || "").toLowerCase()));
       setForm((f) => ({
         ...f,
         name: ai.name || f.name,
-        cat: validCats.includes(ai.cat) ? ai.cat : (validCats[0] || "Florals"),
+        cat: addCatLabels.includes(ai.cat) ? ai.cat : (catForSub || addCatLabels[0] || "Florals"),
         subCat: ai.subCat || "",
         type: ["Budgeted", "Premium", "In-house"].includes(ai.type) ? ai.type : "Budgeted",
         itemClass: ai.itemClass === "bulk" ? "bulk" : "discrete",
@@ -367,6 +387,12 @@ Rules:
 
   async function addItem() {
     if (!canAdd) return;
+    // An item in another department's category would be saved but never show in this user's list (it looks like the add failed): stop and say so.
+    const addDept = catToDept(form.cat, settings?.categoryDepartments);
+    if (!canSeeDept(authUser, addDept)) {
+      window.alert(`"${form.cat}" belongs to the ${addDept} department, which you can't open, so the item would disappear from your list. Pick a category from your own departments.`);
+      return;
+    }
     let img = form.img || "";
     // Upload base64 to Storage instead of storing raw (prevents 413 payload-too-large)
     if (img && img.startsWith("data:")) {
@@ -429,7 +455,7 @@ Rules:
         photoUrls: img ? [img] : [],
       }];
     });
-    setForm({ name: "", cat: "Florals", subCat: "", type: "Budgeted", itemClass: "discrete", qty: "", unit: "Piece", loc: "Production House", price: "", cost: "", breakagePct: 0, oosCostPct: "", canBeMade: true, noRepeatDiscount: false, dimL: "", dimW: "", dimH: "", dimUnit: "Feet", printL: "", printW: "", printUnit: "Feet", baseColour: "", paintCost: "", notes: "", img: "" });
+    setForm({ name: "", cat: defaultAddCat, subCat: "", type: "Budgeted", itemClass: "discrete", qty: "", unit: "Piece", loc: "Production House", price: "", cost: "", breakagePct: 0, oosCostPct: "", canBeMade: true, noRepeatDiscount: false, dimL: "", dimW: "", dimH: "", dimUnit: "Feet", printL: "", printW: "", printUnit: "Feet", baseColour: "", paintCost: "", notes: "", img: "" });
     setAddModal(false);
     // Reveal the new row: the item is appended at the END, so with active filters or while on
     // page 1 of 20+ it would be off-screen — making a successful save look like "added but not
@@ -796,7 +822,7 @@ Rules:
           <div className="ml-auto flex gap-2">
             <button onClick={() => { setMoveFromSub(""); setMoveToSub(""); setMoveSubcatModal(true); }}
               className="bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 px-4 py-2 rounded-lg text-sm whitespace-nowrap">🔀 Move Sub-Category</button>
-            {canAdd && <button onClick={() => { setPhotoModal(false); setBulkModal(false); setImportModal(false); setForm({ name: "", cat: "Florals", subCat: "", type: "Budgeted", itemClass: "discrete", qty: "", unit: "Piece", loc: "Production House", price: "", cost: "", breakagePct: 0, dimL: "", dimW: "", dimH: "", dimUnit: "Feet", printL: "", printW: "", printUnit: "Feet", baseColour: "", paintCost: "", notes: "", img: "" }); setPhotoImg(null); setPhotoReady(false); setPhotoError(""); setAddModal(true); }} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm whitespace-nowrap">+ Add Item</button>}
+            {canAdd && <button onClick={() => { setPhotoModal(false); setBulkModal(false); setImportModal(false); setForm({ name: "", cat: defaultAddCat, subCat: "", type: "Budgeted", itemClass: "discrete", qty: "", unit: "Piece", loc: "Production House", price: "", cost: "", breakagePct: 0, dimL: "", dimW: "", dimH: "", dimUnit: "Feet", printL: "", printW: "", printUnit: "Feet", baseColour: "", paintCost: "", notes: "", img: "" }); setPhotoImg(null); setPhotoReady(false); setPhotoError(""); setAddModal(true); }} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm whitespace-nowrap">+ Add Item</button>}
           </div>
         </div>
 
@@ -1078,7 +1104,7 @@ Rules:
                     className="mt-1 w-full border-2 border-indigo-300 focus:border-indigo-500 rounded-lg px-3 py-2 text-sm font-medium outline-none"
                     placeholder="e.g. Rose Arch Large" />
                 </div>
-                {[["Category", "cat", "select", (studioCatLabels.length > 0 ? studioCatLabels : INV_CATS)], ["Type", "type", "select", ["Budgeted", "Premium", "In-house"]], ["Class", "itemClass", "select", ["discrete", "bulk"]], ["Unit", "unit", "select", ["Piece", "Set", "Kg", "Metre", "Bundle", "Roll", "Rft", "Sqft"]]].map(([l, k, t, opts]) => (
+                {[["Category", "cat", "select", addCatLabels], ["Type", "type", "select", ["Budgeted", "Premium", "In-house"]], ["Class", "itemClass", "select", ["discrete", "bulk"]], ["Unit", "unit", "select", ["Piece", "Set", "Kg", "Metre", "Bundle", "Roll", "Rft", "Sqft"]]].map(([l, k, t, opts]) => (
                   <div key={k}>
                     <label className="text-xs text-gray-500">{l}</label>
                     <select value={form[k]} onChange={(e) => { setForm({ ...form, [k]: e.target.value, ...(k === "cat" ? { subCat: "" } : {}) }); setSubOtherAdd(false); }}
@@ -1232,7 +1258,7 @@ Rules:
             </div>
 
             {/* Selects */}
-            {[["Category", "cat", "select", (studioCatLabels.length > 0 ? studioCatLabels : INV_CATS)], ["Type", "type", "select", ["Budgeted", "Premium", "In-house"]], ["Class", "itemClass", "select", ["discrete", "bulk"]], ["Unit", "unit", "select", ["Piece", "Set", "Kg", "Metre", "Bundle", "Roll", "Rft", "Sqft"]]].map(([l, k, t, opts]) => (
+            {[["Category", "cat", "select", addCatLabels], ["Type", "type", "select", ["Budgeted", "Premium", "In-house"]], ["Class", "itemClass", "select", ["discrete", "bulk"]], ["Unit", "unit", "select", ["Piece", "Set", "Kg", "Metre", "Bundle", "Roll", "Rft", "Sqft"]]].map(([l, k, t, opts]) => (
               <div key={k}>
                 <label className="text-xs text-gray-500">{l}</label>
                 <select value={form[k]} onChange={(e) => { setForm({ ...form, [k]: e.target.value, ...(k === "cat" ? { subCat: "" } : {}) }); }}
@@ -1450,7 +1476,10 @@ Rules:
           if (orig?._dimUnitMismatch) flags.push({ k: "dim", label: "Dim unit mismatch", color: "orange" });
           if (orig?._needsCatMigration) flags.push({ k: "catmig", label: "Category needs migration", color: "amber" });
           const subOpts = subcatsForCat(editForm.cat);
-          const catOpts = studioCatLabels.length > 0 ? studioCatLabels : (categories || INV_CATS);
+          const catOptsAll = studioCatLabels.length > 0 ? studioCatLabels : (categories || INV_CATS);
+          // only categories this user can see (an item moved to another department's category would drop out of their list), plus the item's own
+          const catOptsMine = catOptsAll.filter((c) => c === editForm.cat || canSeeDept(authUser, catToDept(c, settings?.categoryDepartments)));
+          const catOpts = catOptsMine.length ? catOptsMine : catOptsAll;
           const isLegacy = isLegacyCat(editForm.cat);
           const kitPrice = kitPriceFrom(editForm.subItems, Number(editForm.kitBase) || 0);
           const kitComponentOpts = inventory.filter((i) => i.id !== editForm.id && !(editForm.subItems || []).some((s) => s.itemId === i.id));
