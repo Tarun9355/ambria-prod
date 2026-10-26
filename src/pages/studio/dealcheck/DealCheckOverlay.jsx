@@ -3245,7 +3245,7 @@ export default function DealCheckOverlay({ ctx }) {
                                         );
                                         if (!prefs.length) return null; // nothing picked yet: the pick button above is the way in; the three show once a carpet is chosen
                                         const decRaw = ((eventOrders || []).find(e => e.clientId === activeClientId)?.deptOps?.Tenting?.carpetChoice || {})[`${fnIdx}|${zk}|0`];
-                                        const dec = decRaw && prefs.some(p => p.id === decRaw.id) ? decRaw : null;
+                                        const dec = decRaw && (decRaw.manual || prefs.some(p => p.id === decRaw.id)) ? decRaw : null;
                                         return (
                                           <div style={{display:"flex",flexDirection:"column",gap:5}}>
                                             <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>

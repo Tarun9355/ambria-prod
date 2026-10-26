@@ -11,7 +11,7 @@ import { hasIMSPerm } from "../../lib/ims/constants";
 import { fetchOpsExpenses } from "../../lib/ims/opsExpenses";
 import { ZONE_META, trussBaseArea, CARPET_OFF } from "../../lib/studio/taxonomy";
 import { prefsOf } from "../../lib/studio/carpetPrefs";
-import { carpetFloorsOf, planCarpets, carpetKey } from "../../lib/ims/carpetPlan";
+import { carpetFloorsOf, planCarpets, carpetKey, carpetStockFor } from "../../lib/ims/carpetPlan";
 import { orderZoneKeys } from "../../lib/ims/zoneOrder";
 import { calcZoneTrussPreview, calcZoneFabric, dcFabricMultOf } from "../../lib/studio/pricing";
 import { ZONE_DEF_SK, RC_SK_TR } from "../../lib/studio/keys";
@@ -779,6 +779,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   // and never needs this; on a phone the grid is dates only, so one has to be chosen to list.
   const [pickDay, setPickDay] = useState(null);
   const [selId, setSelId] = useState(null);
+  const [carpetMore, setCarpetMore] = useState(null); // key of the carpet floor whose "choose another carpet" list is open
+  const [carpetQ, setCarpetQ] = useState("");         // search box inside that list
   const [zoomImg, setZoomImg] = useState(null); // click-to-enlarge lightbox (ops needs a clear big photo)
   const [opsView, setOpsView] = useState("planning"); // "planning" | "onsite" — split on-site (receiving/dismantle) into its own view
   // The mini calendar that used to sit in this rail is gone — the IMS Calendar tab is the one
@@ -3351,10 +3353,11 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         const area = Math.round((Number(fd.L) || 0) * (Number(fd.W) || 0));
         const dec = carpetDecided[carpetKey(fi, zk, ri)];
         // Deal Check's PDF lists all three sales picked; Planning's lists the decided one (all three until one is decided).
-        const chosen = dec && !pdfAllCarpetsRef.current ? prefs.find(p => p.id === dec.id) : null;
+        const chosen = dec && !pdfAllCarpetsRef.current ? (prefs.find(p => p.id === dec.id) || (dec.manual ? { id: dec.id, name: dec.name } : null)) : null;
+        const byHand = !!chosen && !prefs.some(p => p.id === chosen.id);
         const lbl = ri === 0 ? "" : ` (floor ${ri + 1})`;
         const RANK = ["1st", "2nd", "3rd", "4th"];
-        (chosen ? [{ p: chosen, role: "To use" + lbl }] : prefs.map((p, i) => ({ p, role: `${RANK[i] || i + 1 + "th"} choice${lbl}` }))).forEach(({ p, role }) => {
+        (chosen ? [{ p: chosen, role: (byHand ? "To use (Planning's pick)" : "To use") + lbl }] : prefs.map((p, i) => ({ p, role: `${RANK[i] || i + 1 + "th"} choice${lbl}` }))).forEach(({ p, role }) => {
           const inv = invById.get(String(p.id));
           out.push({
             name: inv?.name || p.name || "Carpet", qty: area, unit: "sqft", photo: invPhoto(inv, null), dims: invDims(inv), kit: 0, recipe: [],
@@ -5487,7 +5490,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                   const rows = carpetPlanOf().rows;
                   const decided = rows.filter(r => r.status === "decided").length;
                   const bad = rows.filter(r => r.status === "short" || r.status === "none").length;
-                  return { k: "carpet", icon: "🟥", title: "Carpet plan", sub: bad ? <span className="text-red-600 font-semibold">{bad} floor{bad === 1 ? "" : "s"} need attention · {decided} of {rows.length} decided</span> : `${decided} of ${rows.length} floor${rows.length === 1 ? "" : "s"} decided`, ...(bad ? { tone: "bg-red-50", alert: true } : {}) };
+                  return { k: "carpet", icon: "🟥", title: "Carpet plan", sub: bad ? <span className="text-red-600 font-semibold">{bad} floor{bad === 1 ? "" : "s"} need{bad === 1 ? "s" : ""} attention · {decided} of {rows.length} decided</span> : `${decided} of ${rows.length} floor${rows.length === 1 ? "" : "s"} decided`, ...(bad ? { tone: "bg-red-50", alert: true } : {}) };
                 })(),
                 dept === "Tenting" && trussPlanOf().length > 0 && { k: "truss", icon: "🏗️", title: "Truss plan", sub: n(trussPlanOf().length, "truss") + " · pillars, beams, fabric" },
                 { k: "mp", icon: "👷", title: "Manpower plan", sub: mpChanged ? <span className="text-red-600 font-semibold">⚠ Changed since you last looked · {fmt(Number(mpSeen.cost) || 0)} → {fmt(mpSnapCost)}</span> : mpRows.length ? n(mpRows.length, "crew line") : "no crew assigned", value: fmt(mpCost), ...(mpChanged ? { tone: "bg-red-50", alert: true } : {}) },
@@ -6709,7 +6712,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
             {dept === "Tenting" && carpetPlanOf().rows.length > 0 && (() => {
               const plan = carpetPlanOf();
               const choiceAll = deptData.carpetChoice || {};
-              const decide = (key, o) => saveDept({ carpetChoice: { ...choiceAll, [key]: { id: o.id, name: o.name, by: authUser?.name || "—", at: Date.now() } } });
+              const decide = (key, o, manual) => saveDept({ carpetChoice: { ...choiceAll, [key]: { id: o.id, name: o.name, ...(manual ? { manual: true } : {}), by: authUser?.name || "—", at: Date.now() } } });
               const undecide = (key) => { const n2 = { ...choiceAll }; delete n2[key]; saveDept({ carpetChoice: n2 }); };
               const dayLbl = (d) => { try { return d ? new Date(d + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : "the event date"; } catch { return d || "the event date"; } };
               const overNames = Object.keys(plan.over).map(id => ({ id, ...plan.over[id], name: plan.rows.flatMap(r => r.options).find(o => o.id === id)?.name || id }));
@@ -6730,8 +6733,8 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                     </div>
                   )}
                   {plan.rows.map(r => {
-                    const dec = r.options.find(o => o.id === r.decidedId);
-                    const chip = r.status === "decided" ? { t: `✓ Decided: ${dec?.name || ""}`, c: "bg-emerald-50 text-emerald-700 ring-emerald-100" }
+                    const dec = [...r.options, r.manual].filter(Boolean).find(o => o.id === r.decidedId);
+                    const chip = r.status === "decided" ? { t: `✓ Decided: ${dec?.name || ""}${r.manual ? " (picked in Planning)" : ""}`, c: "bg-emerald-50 text-emerald-700 ring-emerald-100" }
                       : r.status === "short" ? { t: "None of the choices covers this floor", c: "bg-red-50 text-red-700 ring-red-100" }
                       : r.status === "none" ? { t: "Sales has not picked a carpet", c: "bg-amber-50 text-amber-700 ring-amber-100" }
                       : { t: "Not decided yet", c: "bg-amber-50 text-amber-700 ring-amber-100" };
@@ -6771,6 +6774,64 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                             })}
                           </div>
                         )}
+                        {/* ── NONE OF SALES' CHOICES AVAILABLE? ── Planning can pick any other carpet in stock by hand. Only carpets with
+                            enough free on this floor's date can be chosen; the pick is kept as the floor's decision like any other. */}
+                        {(() => {
+                          const anyCovers = r.options.some(o => o.enough);
+                          const open = carpetMore === r.key;
+                          const q = carpetQ.trim().toLowerCase();
+                          const stock = open ? carpetStockFor(r, inventory, blocks, sel?.id).filter(o => !r.options.some(x => x.id === o.id) && (!q || String(o.name).toLowerCase().includes(q))) : [];
+                          const photoOf = (it) => (it ? (it.img || (Array.isArray(it.photoUrls) && it.photoUrls[0]) || "") : "");
+                          const mph = r.manual ? photoOf(r.manual.item) : "";
+                          return (
+                            <div className="mt-3 pt-2.5 border-t border-gray-100">
+                              {r.manual && (
+                                <div className="mb-2 rounded-lg p-2 flex items-center gap-2 ring-1 ring-emerald-400 bg-emerald-50/60">
+                                  {mph ? <img src={thumbUrl(mph, 96)} loading="lazy" decoding="async" alt="" onClick={() => setZoomImg(mph)} className="w-12 h-12 rounded-md object-cover border border-gray-200 cursor-zoom-in shrink-0" /> : <span className="w-12 h-12 rounded-md bg-gray-100 shrink-0" />}
+                                  <div className="min-w-0 flex-1">
+                                    <div className="text-[13px] font-semibold text-gray-900 truncate" title={r.manual.name}>{r.manual.name}</div>
+                                    <div className={"text-[11px] tabular-nums " + (r.manual.enough ? "text-emerald-700" : "text-red-600")}>{r.manual.known ? `${Math.round(r.manual.free)} sqft free` : "Stock not known"} · picked in Planning, not one of sales' choices</div>
+                                  </div>
+                                  <button type="button" onClick={() => undecide(r.key)} className="shrink-0 text-[12px] font-semibold rounded-md px-2 py-1 bg-emerald-600 text-white hover:bg-emerald-700 cursor-pointer" title="Chosen — tap to undo">✓ Using this · undo</button>
+                                </div>
+                              )}
+                              <button type="button" onClick={() => { setCarpetQ(""); setCarpetMore(open ? null : r.key); }} aria-expanded={open}
+                                className={"text-[12px] font-semibold rounded-md px-2.5 py-1 ring-1 cursor-pointer " + (!anyCovers && !r.manual ? "ring-red-300 text-red-700 bg-red-50 hover:bg-red-100" : "ring-gray-300 text-gray-700 hover:bg-gray-50")}>
+                                {open ? "Hide other carpets" : !anyCovers && !r.manual && r.options.length ? "None of these is available — choose another carpet…" : r.manual ? "Choose a different carpet…" : "Choose another carpet…"}
+                              </button>
+                              {open && (
+                                <div className="mt-2">
+                                  <input value={carpetQ} onChange={e => setCarpetQ(e.target.value)} placeholder="Search carpets…" aria-label="Search carpets"
+                                    className="w-full sm:w-64 rounded-md ring-1 ring-gray-300 px-2 py-1 text-[12.5px] mb-2" />
+                                  {stock.length === 0 ? <div className="text-xs text-gray-500">No other carpet matches.</div> : (
+                                    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 max-h-80 overflow-y-auto pr-1">
+                                      {stock.map(o => {
+                                        const ph = photoOf(o.item);
+                                        const okPick = o.enough;
+                                        return (
+                                          <div key={o.id} className={"rounded-lg p-2 flex flex-col gap-2 ring-1 ring-gray-200 bg-white " + (okPick ? "" : "opacity-60")}>
+                                            <div className="flex items-center gap-2 min-w-0">
+                                              {ph ? <img src={thumbUrl(ph, 96)} loading="lazy" decoding="async" alt="" onClick={() => setZoomImg(ph)} className="w-12 h-12 rounded-md object-cover border border-gray-200 cursor-zoom-in shrink-0" /> : <span className="w-12 h-12 rounded-md bg-gray-100 shrink-0" />}
+                                              <div className="min-w-0">
+                                                <div className="text-[13px] font-semibold text-gray-900 truncate" title={o.name}>{o.name}</div>
+                                                <div className={"text-[11px] tabular-nums " + (okPick ? "text-emerald-700" : "text-red-600")}>
+                                                  {okPick ? `✓ ${Math.round(o.free)} sqft free · covers it` : `${Math.round(o.free)} sqft free · SHORT ${Math.round(o.short)}`}
+                                                </div>
+                                              </div>
+                                            </div>
+                                            <button type="button" disabled={!okPick} onClick={() => { decide(r.key, o, true); setCarpetMore(null); }}
+                                              title={okPick ? `Use ${o.name} for this floor` : "Not enough free on this date for this floor"}
+                                              className={"text-[12px] font-semibold rounded-md px-2 py-1 ring-1 " + (okPick ? "ring-gray-300 text-gray-800 hover:bg-gray-50 cursor-pointer" : "ring-gray-200 text-gray-400 cursor-not-allowed")}>Use this</button>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </div>
                     );
                   })}

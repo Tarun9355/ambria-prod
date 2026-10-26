@@ -44,24 +44,42 @@ export function carpetFloorsOf(functionsDetail, zoneLabelOf) {
   return out;
 }
 
+// One carpet as the plan shows it on a given day: its free sqft, whether that covers the floor, and by how much it falls short.
+const optionFor = (id, name, item, fallbackFree, blocks, date, eventId, area, rank) => {
+  const free = item ? freeForEvent(item, blocks, date, eventId) : (fallbackFree ?? null);
+  const known = free !== null && free !== undefined;
+  return { id, name: item?.name || name, rank, free, known, enough: known && free >= area, short: known ? Math.max(0, area - free) : null, item };
+};
+
+// Every carpet in stock with what is free for this floor's date, those that cover it first — what Planning picks from when none of
+// sales' choices is available that day. itemsById is the whole inventory; only the carpet sub-category is offered.
+export function carpetStockFor(floor, items, blocks, eventId) {
+  const out = (items || [])
+    .filter((it) => it && String(it.subCat || it.subcategory || "").trim().toLowerCase() === "carpet")
+    .map((it) => optionFor(it.id, it.name, it, null, blocks, floor.date, eventId, floor.area, null));
+  return out.sort((a, b) => (Number(b.enough) - Number(a.enough)) || ((b.free ?? -1) - (a.free ?? -1)) || String(a.name).localeCompare(String(b.name)));
+}
+
 // The plan: for each floor, its preferences with free sqft on the day, which one is suggested (the highest-ranked that covers the
 // whole floor, else the one with most free), and which is decided. A decision for a carpet that is no longer one of the floor's
 // preferences is ignored — the preferences changed under it.
 // itemsById: { [id]: inventory item }, choice: { [key]: { id } }
 export function planCarpets({ floors, itemsById, blocks, eventId, choice }) {
   const rows = (floors || []).map((f) => {
-    const options = f.prefs.map((p, rank) => {
-      const item = itemsById?.[p.id];
-      const free = item ? freeForEvent(item, blocks, f.date, eventId) : (p.free ?? null);
-      return { id: p.id, name: item?.name || p.name, rank, free, known: free !== null && free !== undefined, enough: free !== null && free !== undefined && free >= f.area, short: free !== null && free !== undefined ? Math.max(0, f.area - free) : null, item };
-    });
+    const options = f.prefs.map((p, rank) => optionFor(p.id, p.name, itemsById?.[p.id], p.free, blocks, f.date, eventId, f.area, rank));
     const firstEnough = options.find((o) => o.enough);
     const best = options.filter((o) => o.known).sort((a, b) => b.free - a.free || a.rank - b.rank)[0];
     const suggestedId = (firstEnough || best || options[0])?.id || null;
-    const pickedId = choice?.[f.key]?.id;
-    const decidedId = pickedId && options.some((o) => o.id === pickedId) ? pickedId : null;
+    // A decision is for one of sales' choices, or — when none of them was available that day — a carpet Planning picked by hand
+    // (choice.manual). A hand pick that is also one of sales' choices is just that choice.
+    const picked = choice?.[f.key];
+    const pickedId = picked?.id;
+    const inOptions = !!pickedId && options.some((o) => o.id === pickedId);
+    const manual = picked?.manual && pickedId && !inOptions && itemsById?.[pickedId]
+      ? optionFor(pickedId, picked.name, itemsById[pickedId], null, blocks, f.date, eventId, f.area, null) : null;
+    const decidedId = inOptions ? pickedId : manual ? pickedId : null;
     return {
-      ...f, options, suggestedId, decidedId,
+      ...f, options, manual, suggestedId, decidedId,
       status: !options.length ? "none" : decidedId ? "decided" : firstEnough || !options.some((o) => o.known) ? "open" : "short",
     };
   });
@@ -71,7 +89,7 @@ export function planCarpets({ floors, itemsById, blocks, eventId, choice }) {
   const over = {};
   rows.forEach((r) => {
     if (!r.decidedId) return;
-    const o = r.options.find((x) => x.id === r.decidedId);
+    const o = [...r.options, r.manual].filter(Boolean).find((x) => x.id === r.decidedId);
     if (o?.known && committed[r.decidedId] > o.free) over[r.decidedId] = { free: o.free, committed: committed[r.decidedId] };
   });
   return { rows, over };

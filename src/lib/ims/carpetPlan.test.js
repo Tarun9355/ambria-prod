@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { carpetKey, freeForEvent, carpetFloorsOf, planCarpets } from "./carpetPlan.js";
+import { carpetKey, freeForEvent, carpetFloorsOf, planCarpets, carpetStockFor } from "./carpetPlan.js";
 import { CARPET_OFF } from "../studio/taxonomy.js";
 
 const item = (id, name, qty, extra = {}) => ({ id, name, qty, blocked: 0, ...extra });
@@ -107,5 +107,58 @@ describe("planCarpets", () => {
     }));
     const choice = { [fl[0].key]: { id: "A" }, [fl[1].key]: { id: "A" } };
     expect(planCarpets({ floors: fl, itemsById, blocks: {}, eventId: "e", choice }).over).toEqual({});
+  });
+});
+
+describe("a carpet Planning picks by hand when none of sales' choices is available", () => {
+  const D = item("D", "Teal", 400, { subCat: "carpet" });
+  const E = item("E", "Cream", 120, { subCat: "carpet" });
+  const wall = item("W", "Printed wall", 9, { subCat: "PRINTED WALLS" });
+  const stock = { ...itemsById, D, E };
+  const floors = carpetFloorsOf(layout({
+    stage: { cpT: "old", floorDims: { L: 20, W: 10 }, cpPrefs: [pref(A), pref(C)], cpInvId: "A", cpInvName: "Maroon", cpInvFree: 100 },
+  }));
+  const k = floors[0].key;
+  const run = (choice, blocks = {}) => planCarpets({ floors, itemsById: stock, blocks, eventId: "eo_me", choice }).rows[0];
+
+  it("a hand-picked carpet outside sales' choices is a valid decision, shown as the manual option", () => {
+    const r = run({ [k]: { id: "D", name: "Teal", manual: true } });
+    expect(r.decidedId).toBe("D");
+    expect(r.status).toBe("decided");
+    expect(r.manual).toMatchObject({ id: "D", free: 400, enough: true });
+    expect(r.options.map((o) => o.id)).toEqual(["A", "C"]); // sales' choices are untouched
+  });
+  it("without the manual flag a carpet outside sales' choices is still ignored", () => {
+    const r = run({ [k]: { id: "D", name: "Teal" } });
+    expect(r.decidedId).toBeNull();
+    expect(r.manual).toBeNull();
+  });
+  it("a hand pick that is already one of sales' choices is just that choice", () => {
+    const r = run({ [k]: { id: "C", name: "Beige", manual: true } });
+    expect(r.decidedId).toBe("C");
+    expect(r.manual).toBeNull();
+  });
+  it("a hand pick for an item that no longer exists is ignored", () => {
+    expect(run({ [k]: { id: "GONE", name: "x", manual: true } }).decidedId).toBeNull();
+  });
+  it("a hand-picked carpet counts toward over-commit like any other", () => {
+    const two = carpetFloorsOf(layout({
+      stage: { cpT: "old", floorDims: { L: 20, W: 10 }, cpPrefs: [pref(A)], cpInvId: "A", cpInvName: "Maroon", cpInvFree: 100 },
+      entry: { cpT: "old", floorDims: { L: 10, W: 10 }, cpPrefs: [pref(A)], cpInvId: "A", cpInvName: "Maroon", cpInvFree: 100 },
+    }));
+    const choice = { [two[0].key]: { id: "E", name: "Cream", manual: true }, [two[1].key]: { id: "E", name: "Cream", manual: true } };
+    const { over } = planCarpets({ floors: two, itemsById: stock, blocks: {}, eventId: "e", choice });
+    expect(over.E).toEqual({ free: 120, committed: 300 });
+  });
+  it("carpetStockFor lists every carpet with that day's free sqft, those that cover the floor first, and only carpets", () => {
+    const asCarpet = (x) => ({ ...x, subCat: "carpet" });
+    const list = carpetStockFor(floors[0], [asCarpet(A), asCarpet(B), asCarpet(C), D, E, wall], { B: [{ date: "2027-01-03", eventId: "eo_other", qty: 250 }] }, "eo_me");
+    expect(list.find((o) => o.id === "W")).toBeUndefined();
+    expect(list[0].id).toBe("D");                  // 400 covers the 200 sqft floor
+    expect(list.find((o) => o.id === "B").free).toBe(50);   // another event holds 250 that day
+    expect(list.find((o) => o.id === "B").enough).toBe(false);
+    // everything that covers comes before everything that does not
+    const firstShort = list.findIndex((o) => !o.enough);
+    expect(list.slice(firstShort).every((o) => !o.enough)).toBe(true);
   });
 });
