@@ -855,6 +855,9 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
                       {pickHint:`the first you tap is the 1st choice. Planning decides which of the ${CARPET_PREF_MAX} is used. A stock pick only, it does not change the price.`, priceMode:"rental", hidePrice:true,
                        multi:{max:CARPET_PREF_MAX, current:prefs.map(p=>p.id), onSave:(picks)=>sZ(setPrefsPatch(picks)), onSaveAll:onCarpetAll?((picks)=>onCarpetAll(picks, zoneKey, rowIdx)):null}});
                     const done=prefs.length>=CARPET_PREF_MAX;
+                    // Nothing picked yet: no empty slots, just the way in. The slots appear once a carpet is chosen.
+                    if(!prefs.length) return <button type="button" onClick={()=>open()} title={`Pick up to ${CARPET_PREF_MAX} stock carpets for this floor — Planning decides which is used`}
+                      style={{marginTop:5,display:"inline-flex",alignItems:"center",gap:5,fontSize:11,fontWeight:600,padding:"3px 9px",borderRadius:999,border:`1px dashed ${accent}`,background:"transparent",color:accent,cursor:"pointer"}}><IconBox size={11}/> Pick carpets</button>;
                     return <div style={{marginTop:5}}>
                       <div style={{display:"flex",flexDirection:"column",gap:4}}>
                         {Array.from({length:CARPET_PREF_MAX},(_,slot)=>{
@@ -869,17 +872,12 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
                               </span>
                               <span onClick={()=>sZ(prefsPatch(zc, slot, null))} title={`Remove the ${CARPET_PREF_LABELS[slot]}`} style={{cursor:"pointer",color:"#9CA3AF",fontWeight:700,fontSize:13,lineHeight:1}}>×</span>
                             </div>
-                          ) : (
-                            <button key={slot} type="button" onClick={()=>open()} title={`Pick ${CARPET_PREF_MAX} carpets — your ${CARPET_PREF_LABELS[slot]} and the rest`}
-                              style={{display:"flex",alignItems:"center",gap:6,boxSizing:"border-box",width:"100%",fontSize:11.5,padding:"5px 8px",borderRadius:8,border:`1px dashed ${accent}`,background:"transparent",color:accent,cursor:"pointer",textAlign:"left"}}>
-                              <span style={{flexShrink:0,width:16,height:16,borderRadius:8,border:`1px solid ${accent}`,fontSize:10,fontWeight:800,display:"inline-flex",alignItems:"center",justifyContent:"center"}}>{slot+1}</span>
-                              + {CARPET_PREF_LABELS[slot]}
-                            </button>
-                          );
+                          ) : null;
                         })}
                       </div>
                       <div style={{marginTop:4,fontSize:10.5,lineHeight:1.3,fontWeight:600,color:carpetShort>0?"#EF4444":done?"#047857":"#B45309"}}>
                         {carpetShort>0?`⚠ Short ${Math.round(carpetShort)} sqft — none of the picks covers this floor`:done?`${CARPET_PREF_MAX} preferences · Planning decides which is used`:`${prefs.length} of ${CARPET_PREF_MAX} picked — pick ${CARPET_PREF_MAX} so Planning has a fallback`}
+                        {!done&&<span onClick={()=>open()} style={{marginLeft:6,cursor:"pointer",color:accent,textDecoration:"underline",fontWeight:700}}>Pick more</span>}
                       </div>
                       {(()=>{const dec=carpetDecisionOf?carpetDecisionOf(zoneKey,rowIdx):null;return dec?<div style={{marginTop:3,fontSize:10.5,fontWeight:700,color:"#047857"}}>✓ Planning chose: {dec.name}</div>:null;})()}
                     </div>;

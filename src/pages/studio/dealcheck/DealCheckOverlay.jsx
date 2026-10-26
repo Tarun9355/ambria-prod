@@ -3243,7 +3243,7 @@ export default function DealCheckOverlay({ ctx }) {
                                               else setFnBuilds(prev => { const snap = prev[fnIdx] || {}; const curZc = snap.zoneConfig || {}; return { ...prev, [fnIdx]: { ...snap, zoneConfig: { ...curZc, [zk]: apply(curZc[zk]) } } }; });
                                             } } },
                                         );
-                                        if (!prefs.length && !carpetOpts.length) return null;
+                                        if (!prefs.length) return null; // nothing picked yet: the pick button above is the way in; the three show once a carpet is chosen
                                         const decRaw = ((eventOrders || []).find(e => e.clientId === activeClientId)?.deptOps?.Tenting?.carpetChoice || {})[`${fnIdx}|${zk}|0`];
                                         const dec = decRaw && prefs.some(p => p.id === decRaw.id) ? decRaw : null;
                                         return (
@@ -3267,13 +3267,14 @@ export default function DealCheckOverlay({ ctx }) {
                                                     <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:170}}>{pk.name}</span>
                                                     {pk.free != null && <span style={{fontSize:10.5,fontWeight:500,color:low?GOLD:INK_3,...NUM,whiteSpace:"nowrap"}}>{Math.round(pk.free)} sqft free</span>}
                                                   </button>
-                                                ) : (
-                                                  <button key={slot} type="button" onClick={()=>openSlot()}
-                                                    style={{display:"inline-flex",alignItems:"center",gap:6,padding:"4px 11px",borderRadius:999,border:`1px dashed ${TILE_BORDER}`,background:"transparent",color:INK_3,cursor:"pointer",fontSize:11.5,fontWeight:600}}>
-                                                    + {CARPET_PREF_LABELS[slot]}
-                                                  </button>
-                                                );
+                                                ) : null;
                                               })}
+                                              {prefs.length < CARPET_PREF_MAX && (
+                                                <button type="button" onClick={()=>openSlot()} title="Add more of your three carpet choices"
+                                                  style={{display:"inline-flex",alignItems:"center",gap:6,padding:"4px 11px",borderRadius:999,border:`1px dashed ${TILE_BORDER}`,background:"transparent",color:INK_3,cursor:"pointer",fontSize:11.5,fontWeight:600}}>
+                                                  + Pick more
+                                                </button>
+                                              )}
                                             </div>
                                           </div>
                                         );
