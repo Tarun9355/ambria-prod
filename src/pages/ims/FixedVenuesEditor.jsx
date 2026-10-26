@@ -132,15 +132,20 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
   // One-time backfill (VENUE_MIGRATION_PLAN.md Phase 1): a Fixed Venue saved before properties[]
   // existed only carries a bare .name. Link it to a property by matching that name once properties
   // load — same normalization fixedVenueFor uses for this exact match — so it starts tracking
-  // renames instead of staying a static string forever. Never touches an already-linked entry, and
-  // never guesses when a name can't be matched (it just stays as it is today, same as before).
+  // renames instead of staying a static string forever. Never guesses when a name can't be matched
+  // (it just stays as it is today, same as before).
+  // Also re-links an ORPHANED propertyId — one that no longer matches any current property (e.g.
+  // the property was deleted and re-added in Venues, minting a new id) — not just a missing one.
+  // Sub-venue bifurcation below keys off propertyId, so a stale id silently showed zero sub-venues
+  // for a property that visibly has them in Venues.
   useEffect(() => {
     if (!properties.length) return;
-    const needsLink = fixedVenues.some((v) => !v.propertyId);
+    const liveIds = new Set(properties.map((p) => p.id));
+    const needsLink = fixedVenues.some((v) => !v.propertyId || !liveIds.has(v.propertyId));
     if (!needsLink) return;
     let changed = false;
     const linked = fixedVenues.map((v) => {
-      if (v.propertyId) return v;
+      if (v.propertyId && liveIds.has(v.propertyId)) return v;
       const match = properties.find((p) => normVenueName(p.name) === normVenueName(v.name));
       if (!match) return v;
       changed = true;
@@ -295,7 +300,11 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
 
       <div className="space-y-4">
         {active && [active].map((v) => {
-          const subs = subVenuesOf(v.propertyId);
+          // Resolve by id first; fall back to a name match (same normalization as the backfill
+          // effect above) so a stale/orphaned propertyId still finds today's sub-venues on this
+          // render, without waiting on that effect's save round-trip to land first.
+          const prop = properties.find((p) => p.id === v.propertyId) || properties.find((p) => normVenueName(p.name) === normVenueName(v.name)) || null;
+          const subs = subVenuesOf(prop?.id);
           return (
           <div key={v.id} className="border rounded-xl p-4 bg-gray-50">
             <div className="flex items-center gap-3 flex-wrap mb-3">
