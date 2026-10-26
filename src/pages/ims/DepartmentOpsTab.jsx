@@ -5595,13 +5595,12 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
               const n = (v, s) => `${v} ${s}${v === 1 ? "" : "s"}`;
               const tiles = [
                 dept === "Fabric" && upcomingFabricShort.length > 0 && { k: "fabshort", icon: "⚠️", title: "Fabric shortfalls", sub: n(upcomingFabricShort.length, "upcoming event"), tone: "bg-red-50", alert: true },
-                dept === "Fabric" && (() => {
-                  // One "Fabric plan": what fabric is required vs available, and the overlay / cushion cover choices to decide
+                dept === "Fabric" && elementPlanOf().rows.length > 0 && (() => {
+                  // "Fabric plan": the overlay / cushion cover choices to decide
                   const rows = elementPlanOf().rows;
                   const decided = rows.filter(r => r.status === "decided").length;
                   const bad = rows.filter(r => r.status === "short").length;
-                  const req = fabricReqRows.length ? n(fabricReqRows.length, "fabric type") : "nothing required";
-                  return { k: "fabreq", icon: "🧵", title: "Fabric plan", sub: !rows.length ? req : <>{req} · {bad ? <span className="text-red-600 font-semibold">{bad} choice{bad === 1 ? "" : "s"} need{bad === 1 ? "s" : ""} attention · </span> : null}{decided} of {rows.length} choices decided</>, ...(bad ? { tone: "bg-red-50", alert: true } : {}) };
+                  return { k: "fabreq", icon: "🧵", title: "Fabric plan", sub: bad ? <span className="text-red-600 font-semibold">{bad} need{bad === 1 ? "s" : ""} attention · {decided} of {rows.length} decided</span> : `${decided} of ${rows.length} decided`, ...(bad ? { tone: "bg-red-50", alert: true } : {}) };
                 })(),
                 { k: "inv", icon: "📦", title: "Inventory blocked", sub: n(blockedItemsGrouped.length, "item") + " held", value: fmt(rentalIncome) },
                 dept === "Tenting" && carpetPlanOf().rows.length > 0 && (() => {
@@ -5707,54 +5706,6 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                     <div className="px-4 py-1.5 text-[10px] text-red-500">Total available counts Old + New stock. Update live quantities in Planning → Fabric Stock after each washing cycle.</div>
                   </div>
                 )}
-                {/* This event's requirement vs available */}
-                <div className={"bg-white rounded-xl shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] overflow-hidden" + modalCls("fabreq")}>
-                  <div className="px-4 py-2.5 bg-gray-50 flex items-center justify-between flex-wrap gap-2">
-                    <span className="text-sm font-semibold text-gray-800">🧵 Fabric required vs available <span className="text-xs font-normal text-gray-400">— for this event</span></span>
-                    <span className="text-xs text-gray-400">Available = Old + New stock</span>
-                  </div>
-                  {/* The Fabric Palette picked in Build per function (fn.fnPalette) — synced into
-                      functionsDetail so ops can see the colour scheme the figures above are sourcing
-                      against, without re-deriving it from each resolved fabric type's own colour. */}
-                  {mpFns.some(f => f.fabricPalette) && (
-                    <div className="px-4 py-2 bg-indigo-50/60 border-t border-indigo-100 text-xs text-indigo-800 flex flex-wrap gap-x-4 gap-y-1">
-                      <span className="font-semibold text-indigo-900">🎨 Fabric Palette:</span>
-                      {mpFns.filter(f => f.fabricPalette).map((f, i) => (
-                        <span key={i}><b>{f.type || `Function ${i + 1}`}</b>: {f.fabricPalette}</span>
-                      ))}
-                    </div>
-                  )}
-                  {fabricReqRows.length === 0 ? (
-                    <div className="px-4 py-5 text-center text-xs text-gray-400">{sel?.fabricPlan ? "No fabric required for this event." : "No fabric plan synced yet — open Deal Check for this event in Studio."}</div>
-                  ) : fabricReqRows.map((ft, fti) => (
-                    // Liza / Wall Masking / Velvet Curtains are three genuinely different fabric
-                    // stocks (own stock pool, own unit — kg vs pcs) — a thin tinted label row used
-                    // to be the only thing telling them apart, easy to miss scrolling a long list.
-                    // A real divider + a bolder, uppercase header reads as "new section", not just
-                    // another row.
-                    <div key={ft.key} className={fti > 0 ? "border-t-4 border-gray-100" : ""}>
-                      <div className="px-4 py-2 bg-gray-100 text-xs font-bold text-gray-700 uppercase tracking-wide flex items-center gap-1.5">
-                        <span className="text-sm">{ft.emoji}</span>{ft.label}
-                      </div>
-                      <div className="divide-y divide-gray-50">
-                        {ft.rows.map((r, i) => (
-                          /* Four fixed columns need ~430px. Below sm the colour takes its own
-                             line and need / have / short wrap under it left-aligned — the
-                             right-alignment only earns its keep when the rows line up. */
-                          <div key={i} className="flex flex-wrap sm:grid sm:grid-cols-[1fr_auto_auto_auto] gap-x-3 gap-y-0.5 sm:gap-2 px-4 py-1.5 text-xs items-center">
-                            <span className="w-full sm:w-auto text-gray-800 inline-flex items-center gap-1.5"><Swatch name={r.colour} hex={r.hex} />{r.colour}</span>
-                            <span className="text-gray-500 sm:w-32 sm:text-right">need <b>{r.required} {ft.unit}</b> {(r.qtyOld > 0 && r.qtyNew > 0) ? <span className="text-gray-400">({r.qtyOld} old + {r.qtyNew} new)</span> : r.qtyNew > 0 ? <span className="font-semibold text-violet-600">(New picked)</span> : null}</span>
-                            <span className="text-gray-500 sm:w-40 sm:text-right">have {r.avail} <span className="text-gray-400">({r.old} old + {r.new} new{r.otherDay > 0 ? ` − ${r.otherDay} same-day` : ""})</span></span>
-                            <span className={"sm:w-28 sm:text-right font-bold " + (r.short > 0 ? "text-red-600" : "text-emerald-600")}>
-                              {r.short > 0 ? `short ${r.short} ${ft.unit}` : "✓ ok"}
-                              {(r.shortNew > 0 && r.short <= 0) && <span className="block font-normal text-amber-600">⚠ New short {r.shortNew} — Old stock can't cover a New pick</span>}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
               </div>
             )}
 
