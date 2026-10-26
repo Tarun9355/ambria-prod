@@ -8,7 +8,7 @@ import ClickablePhoto from "../../components/shared/ClickablePhoto.jsx";
 import { canvaAuthUrl, canvaConnectionStatus, canvaClientId } from "../../lib/canva";
 import { uploadToStorage, compressImageForUpload, STORAGE_FOLDERS } from "../../lib/storage";
 import { resolveMandiFlower, computePatternSizeCost, effectiveMarkup, studioUnitLabel } from "../../lib/ims/flowerHelpers";
-import { priceForInvItem, phone10 } from "../../lib/ims/helpers";
+import { priceForInvItem, phone10, flowerPaletteItemsOf } from "../../lib/ims/helpers";
 import { MANPOWER_TYPES, SIT_MULT_DEFAULTS, SIT_MULT_TYPES, DUMPING_LEVELS, EVENT_TIMINGS, eventTimingMultFor, hasIMSPerm } from "../../lib/ims/constants";
 import ImsTransportPanel from "./ImsTransportPanel.jsx";
 import { INV_CATS } from "../../lib/inventory/constants";
@@ -74,6 +74,10 @@ function withPrevPrice(history, price) {
 
 export default function AdminSettingsTab({ settings, setSettings, supervisors, setSupervisors, studio, mode, syncRecipeRatesToStudio, tier15LastSync, tier15Syncing, trussInv, setTrussInv, inventory = [], rateCardCategories = [], onUpdateSubcatFactor, onUpdateSubcatCostPercent, onAddSubcat, onRenameSubcat, onUpdateSubcatCategory, onSyncSubcatsFromInventory, onDeleteSubcat, onUpdateSubcatFloralMode, onUpdateSubcatTagHidden, rcItems = [], rcCats = [], authUser }) {
   const canManageCategories = hasIMSPerm(authUser, "inv_categories");
+  // Same live source as Build's Flower Palette picker (lib/ims/helpers.js) — a new "Artificial
+  // Flower Bunch" colour added in IMS is immediately both pickable in Build AND taggable here on a
+  // Mandi variant, instead of this chip list silently staying frozen on the old 4 names.
+  const flowerPaletteNames = flowerPaletteItemsOf(inventory);
   // The "+ sub-category" quick-add lists below (Manpower's Tier-2 batches, Heavy Element Add-ons)
   // used to suggest from studio.subcats — the LEGACY Rate Card items list — so a sub-category with
   // real inventory but no matching old-style Rate Card row of the same name (Console Table,
@@ -1278,7 +1282,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                                     return (
                                       <td className="px-2 py-1.5">
                                         <div className="flex flex-wrap gap-1">
-                                          {["White", "Pastel", "Maroon", "Yellow"].map((c) => {
+                                          {flowerPaletteNames.map((c) => {
                                             const on = vPalette.includes(c);
                                             return (
                                               <button key={c} type="button" onClick={() => togglePalette(c)}
