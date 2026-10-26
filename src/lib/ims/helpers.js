@@ -104,6 +104,51 @@ export const lookupBySubcat = (map, key) => {
   return hit !== undefined ? map[hit] : undefined;
 };
 
+// Flower Palette's colour list — ONE source now, derived live from whatever's actually in the
+// "Artificial Flower Bunch" inventory sub-category (exact match, not a prefix — "Artificial Flower"
+// is a different sub-cat of generic props and must not leak in here, same distinction
+// DCFloralsTab's manual colour-split modal already draws). Adding a new colour bunch item in IMS
+// Inventory (e.g. "Orange") makes it selectable in Build's Flower Palette and taggable on Mandi
+// Catalogue variants automatically — no code change needed for a new colour, only for a new FEATURE.
+const ARTIFICIAL_BUNCH_SUBCAT = "artificial flower bunch";
+export const flowerPaletteItemsOf = (inventory) => {
+  const seen = new Set();
+  const names = [];
+  (inventory || []).forEach((it) => {
+    if (normSubcat(it?.subCat || it?.subcategory) !== ARTIFICIAL_BUNCH_SUBCAT) return;
+    const name = String(it?.name || "").trim();
+    if (!name) return;
+    const key = name.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    names.push(name);
+  });
+  return names.sort((a, b) => a.localeCompare(b));
+};
+
+// Known swatch colours for the common names — kept exactly matching the old hardcoded palette so
+// nothing visually shifts for White/Pastel/Maroon/Yellow. A name not in this table (a genuinely new
+// colour someone adds in IMS) still gets a real, stable swatch via a deterministic hash — never
+// blank, and the same colour every time for that name — rather than needing this table hand-edited
+// before a new colour can be used.
+const FLOWER_COLOR_HEX = {
+  white: "#F5F3EE", pastel: "#F4C6D7", maroon: "#7A1F2B", yellow: "#F2C230",
+  orange: "#F2994A", green: "#6FA287", red: "#D64545", blue: "#4A90D9",
+  pink: "#F2A9C8", purple: "#8E6FB5", black: "#2B2B2B", gold: "#D4AF37",
+  silver: "#C0C0C0", peach: "#F6C9A0", lavender: "#C9B8E8", ivory: "#F4F0E6",
+};
+const hashHex = (s) => {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return `hsl(${h % 360}, 55%, 65%)`;
+};
+export const flowerPaletteHexFor = (name) => {
+  const key = String(name || "").toLowerCase().trim();
+  return FLOWER_COLOR_HEX[key] || hashHex(key);
+};
+// [name, hex] tuples — the shape Build's own palette picker renders (swatch dot + label).
+export const flowerPaletteTuplesOf = (inventory) => flowerPaletteItemsOf(inventory).map((name) => [name, flowerPaletteHexFor(name)]);
+
 // Display string for an inventory item's physical dimensions, e.g. "3 × 2 × 4 Feet" — prefers the
 // precomputed `item.size` (written whenever the item is saved in IMS), falls back to building one
 // from the raw `dims_LxWxH` object. Empty string when the item has no dims at all.

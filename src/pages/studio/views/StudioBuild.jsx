@@ -47,7 +47,7 @@ const PANEL_BG =
 const PANEL_INK = "#F5F1E7";
 
 import { sizeClassToPatternKey, resolveSizeKey } from "../../../lib/ims/flowerHelpers";
-import { itemDimsText, kitDescendantIds } from "../../../lib/ims/helpers";
+import { itemDimsText, kitDescendantIds, flowerPaletteTuplesOf } from "../../../lib/ims/helpers";
 import LazyYT from "../../../components/studio/LazyYT.jsx";
 import KitComponentsEditor from "../../../components/shared/KitComponentsEditor";
 import ItemHoverThumb from "../../../components/shared/ItemHoverThumb";
@@ -3498,7 +3498,9 @@ undefined
             Stored per function exactly like Fabric Palette: function 1 in clientFlowerPalette, every
             other one as extraFunctions[i].flowerPalette. A fixed short list, so no search box. */}
         {(()=>{
-          const FLOWER_PALETTES = [["White","#F5F3EE"],["Pastel","#F4C6D7"],["Maroon","#7A1F2B"],["Yellow","#F2C230"]];
+          // Live from IMS's "Artificial Flower Bunch" inventory sub-category (lib/ims/helpers.js) —
+          // a new colour bunch added in IMS (e.g. "Orange") shows up here with no code change.
+          const FLOWER_PALETTES = flowerPaletteTuplesOf(imsInventory);
           const curFRaw = isPrimaryFn ? (clientFlowerPalette || "") : (extraFunctions[activeFnIdx - 1]?.flowerPalette || "");
           const curColors = parseFlowerPalette(curFRaw); // [{name,pct}] — empty when nothing chosen
           const setFlowerColors = (colors) => {
