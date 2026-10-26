@@ -5272,7 +5272,18 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                       Inter card and system-font content, so the header read as a third typeface
                       rather than as a title. One face at a heavier weight and slightly tighter
                       tracking does the same job. */}
-                  <div className="text-[16px] sm:text-[20px] font-semibold tracking-[-0.01em] text-gray-900 leading-tight sm:leading-snug truncate">{dept} — {sel.clientName || "Event"}</div>
+                  {/* Fabric shortfalls sit beside the name rather than as a tile among the panels: it is a
+                      warning about OTHER upcoming events, not a part of this one, and up here it is the
+                      first thing seen. Opens the same panel the tile did. */}
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="min-w-0 text-[16px] sm:text-[20px] font-semibold tracking-[-0.01em] text-gray-900 leading-tight sm:leading-snug truncate">{dept} — {sel.clientName || "Event"}</div>
+                    {dept === "Fabric" && upcomingFabricShort.length > 0 && (
+                      <button type="button" onClick={() => setModal("fabshort")} title="Upcoming events short on fabric — order ahead"
+                        className="shrink-0 inline-flex items-center gap-1 rounded-full bg-red-50 ring-1 ring-red-200 hover:bg-red-100 text-red-700 text-[11px] sm:text-[12px] font-semibold px-2.5 py-0.5 cursor-pointer transition-colors">
+                        <span aria-hidden="true">⚠</span>Fabric shortfalls · {upcomingFabricShort.length}
+                      </button>
+                    )}
+                  </div>
                   {/* Wraps to a second line on a phone rather than truncating. Three facts are
                       joined here — date, venue, who touched it last — and a single line at 390px
                       always cut the third one mid-name, which is the one piece you would be
@@ -5525,7 +5536,6 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
             {(() => {
               const n = (v, s) => `${v} ${s}${v === 1 ? "" : "s"}`;
               const tiles = [
-                dept === "Fabric" && upcomingFabricShort.length > 0 && { k: "fabshort", icon: "⚠️", title: "Fabric shortfalls", sub: n(upcomingFabricShort.length, "upcoming event"), tone: "bg-red-50", alert: true },
                 dept === "Fabric" && { k: "fabreq", icon: "🧵", title: "Fabric required", sub: fabricReqRows.length ? n(fabricReqRows.length, "fabric type") : "nothing required" },
                 { k: "inv", icon: "📦", title: "Inventory blocked", sub: n(blockedItemsGrouped.length, "item") + " held", value: fmt(rentalIncome) },
                 dept === "Tenting" && carpetPlanOf().rows.length > 0 && (() => {
