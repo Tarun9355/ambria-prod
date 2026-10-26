@@ -6941,6 +6941,14 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                 <ElementChoicePlan className={modalCls("fabreq")} plan={elementPlanOf()} onZoom={setZoomImg}
                   stockOf={(r) => elementStockFor(r, inventory, blocks, sel?.id, sel?.functionsDetail, elementPlanOf().rows, choiceAll)}
                   onDecide={(r, o, byHand) => put(r, { id: o.id, name: o.name, ...(byHand ? { manual: true } : {}) })}
+                  // The same design on every undecided row that offers it (and is not short there) — the
+                  // overlay / cushion version of the Carpet plan's "Use on all N floors".
+                  onDecideAll={(o) => {
+                    const next = { ...choiceAll };
+                    elementPlanOf().rows.filter(x => x.status !== "decided" && x.options.some(p => p.id === o.id && !(p.known && !p.enough)))
+                      .forEach(x => { next[x.key] = { id: o.id, name: o.name, date: x.date, fnType: x.fnLabel, by: authUser?.name || "—", at: Date.now() }; });
+                    saveDept({ itemChoice: next });
+                  }}
                   onOther={(r) => put(r, { other: true, name: "Arranged separately" })}
                   onUndo={(key) => { const n2 = { ...choiceAll }; delete n2[key]; saveDept({ itemChoice: n2 }); }} />
               );

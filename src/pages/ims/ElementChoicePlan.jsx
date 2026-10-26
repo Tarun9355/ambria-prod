@@ -8,12 +8,16 @@ import { thumbUrl } from "../../lib/studio/thumb.js";
 //   plan        planElements() result: { rows, over }
 //   stockOf(r)  every design of that kind in stock, with this element's date free quantity (for "choose another design…")
 //   onDecide(r, option, byHand) / onOther(r) / onUndo(key)   write the decision (IMS-owned, deptOps.Fabric.itemChoice)
+//   onDecideAll(option)   the same design for every undecided row that has it as a (non-short) choice
 const RANK = ["1st", "2nd", "3rd", "4th"];
 const dayLbl = (d) => { try { return d ? new Date(d + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : "the event date"; } catch { return d || "the event date"; } };
 const photoOf = (it) => (it ? (it.img || (Array.isArray(it.photoUrls) && it.photoUrls[0]) || "") : "");
 const nounOf = (r) => (/cover/i.test(r.options[0]?.name || r.name || "") ? "cushion cover" : "overlay");
 
-export default function ElementChoicePlan({ plan, stockOf, onDecide, onOther, onUndo, onZoom, className = "" }) {
+export default function ElementChoicePlan({ plan, stockOf, onDecide, onDecideAll, onOther, onUndo, onZoom, className = "" }) {
+  // Rows a design could go on in one go — the same filter the parent's onDecideAll applies, so the
+  // count on the button is exactly what the click decides. Decided rows are never touched.
+  const sameDesignRows = (o) => plan.rows.filter((x) => x.status !== "decided" && x.options.some((p) => p.id === o.id && !(p.known && !p.enough)));
   const [more, setMore] = useState(null); // key of the element whose "choose another design" picker is open
   const overNames = Object.keys(plan.over).map((id) => ({ id, ...plan.over[id], name: plan.rows.flatMap((r) => [...r.options, r.manual]).filter(Boolean).find((o) => o.id === id)?.name || id }));
   const unit = (r) => r.unit || "pcs";
@@ -69,6 +73,10 @@ export default function ElementChoicePlan({ plan, stockOf, onDecide, onOther, on
                         : <button type="button" disabled={o.known && !o.enough} onClick={() => onDecide(r, o)}
                             title={o.known && !o.enough ? `Short on this date — only ${Math.round(o.free)} free, the element needs ${r.qty}` : undefined}
                             className={"text-[12px] font-semibold rounded-md px-2 py-1 ring-1 " + (o.known && !o.enough ? "ring-gray-200 text-gray-400 cursor-not-allowed" : "ring-gray-300 text-gray-800 hover:bg-gray-50 cursor-pointer")}>Use this</button>}
+                      {onDecideAll && !on && !(o.known && !o.enough) && (() => { const n = sameDesignRows(o).length; return n > 1 ? (
+                        <button type="button" onClick={() => onDecideAll(o)} title={`Use ${o.name} on every item that has it as a choice and is not decided yet`}
+                          className="text-[12px] font-semibold rounded-md px-2 py-1 bg-gray-900 text-white hover:bg-black cursor-pointer">Use on all {n}</button>
+                      ) : null; })()}
                     </div>
                   );
                 })}
