@@ -10887,12 +10887,29 @@ export default function StudioApp() {
     try {
       // Fetch IMS inventory + per-date blocks via the Supabase-backed fetchIMSData.
       // Settings (one fetch), vendors + truss inventory from their tables, in parallel.
+      // The settings and truss rows carry the labour schemes, truss rules and truss stock — a failed read used to be swallowed into an empty
+      // list, so Deal Check opened with NO manpower and NO truss (and pushed that to IMS). Each is retried, and an answer that still has
+      // nothing in it stops the open with a message instead of showing a plausible-looking blank.
+      const readRetry = async (read, isGood) => {
+        let last = [];
+        for (let i = 0; i < 3; i++) {
+          try { const r = await read(); if (isGood(r)) return r; last = r; } catch { /* try again */ }
+          await new Promise(res => setTimeout(res, 400 * (i + 1)));
+        }
+        return isGood(last) ? last : null;
+      };
       const [invResults, settingsRows, vendorRows, trussInvRows] = await Promise.all([
         Promise.all(uniqueDates.map(d => fetchIMSData(d))),
-        supabase.from("settings").select("key,value").then(r => r.data || []).catch(() => []),
+        readRetry(async () => { const r = await supabase.from("settings").select("key,value"); if (r.error) throw r.error; return r.data || []; }, rows => Array.isArray(rows) && rows.length > 0),
         fetchAll("vendors").catch(() => []),
-        fetchAll("truss_inventory").catch(() => []),
+        readRetry(() => fetchAll("truss_inventory"), rows => Array.isArray(rows) && rows.length > 0),
       ]);
+      if (!settingsRows || !trussInvRows) {
+        setDealCheckError("Settings or truss stock didn't load, so manpower and truss would show as zero. Close Deal Check and open it again.");
+        setDealCheckLoading(false);
+        setDcAbortRef(null);
+        return;
+      }
       if (invResults.some(r => r === null) || invResults[0] === null) {
         setDealCheckError("IMS unavailable — inventory check offline. Close and retry, or proceed with SOLD without inventory verification.");
         setDealCheckLoading(false);

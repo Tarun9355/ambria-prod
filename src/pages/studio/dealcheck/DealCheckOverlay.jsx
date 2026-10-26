@@ -1891,7 +1891,13 @@ export default function DealCheckOverlay({ ctx }) {
             return Object.keys(out).length ? out : null;
           } catch { return null; }
         };
-        const persistWithDetail = (snap) => persistDeptSnapshot(snap && !snap.floralDetail ? { ...snap, floralDetail: floralDetailAll() } : snap);
+        // ── NEVER PUSH A HALF-LOADED DEAL CHECK ──
+        // openDealCheck clears dealCheckData and refetches it on every open, but this overlay renders (and its totals move) all the while. The crew
+        // plan, truss and labour rules all come from that data: pushed before it arrived, the department snapshot had no manpower at all, and
+        // IMS showed ₹0 manpower and no truss for the event until the next push. So nothing goes to IMS until the fetch is done and the
+        // labour schemes are in; the push that follows once they are carries the real figures.
+        const dcDataReady = !!dealCheckData && !ctx.dealCheckLoading && Object.keys(dealCheckData.dihariSchemes || {}).length > 0;
+        const persistWithDetail = (snap) => (dcDataReady ? persistDeptSnapshot(snap && !snap.floralDetail ? { ...snap, floralDetail: floralDetailAll() } : snap) : Promise.resolve(false));
         const buildDeptSnapshot = () => {
           let floralPlan = { projected: 0, flowers: [] };
           try {
@@ -2060,7 +2066,7 @@ export default function DealCheckOverlay({ ctx }) {
             // different artificial-bunch colour mix — which the two lines above wouldn't notice.
             (_deptSnap.floralPlan?.artificial?.colorSplit || []).map(c => `${c.imsId}:${c.qty}`),
           ]);
-          if (deptSyncRef.current !== _sig) { deptSyncRef.current = _sig; setTimeout(() => { try { persistWithDetail(_deptSnap); } catch {} }, 200); }
+          if (dcDataReady && deptSyncRef.current !== _sig) { deptSyncRef.current = _sig; setTimeout(() => { try { persistWithDetail(_deptSnap); } catch {} }, 200); }
         }
 
         return (
@@ -5482,7 +5488,7 @@ export default function DealCheckOverlay({ ctx }) {
                     ["🧵 Fabric / draping", cur.fabric], ["👷 Manpower", cur.manpower], ["🏭 Production", cur.production],
                     ["🛒 Buying", cur.buying], ["🚚 Transport", cur.transport],
                   ].filter(([, v]) => v > 0);
-                  const syncToOps = async () => { await (persistDeptSnapshot && persistWithDetail(buildDeptSnapshot())); showMsg && showMsg("📤 Department breakdown pushed to IMS Dept Ops", "green"); };
+                  const syncToOps = async () => { const r = await (persistDeptSnapshot && persistWithDetail(buildDeptSnapshot())); showMsg && (r === false ? showMsg("Deal Check is still loading — try again in a moment", "orange") : showMsg("📤 Department breakdown pushed to IMS Dept Ops", "green")); };
                   return (
                     <div style={{ padding: "4px" }}>
                       <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
@@ -5527,7 +5533,7 @@ export default function DealCheckOverlay({ ctx }) {
                 ["🧵 Fabric / draping", cur.fabric], ["👷 Manpower", cur.manpower], ["🏭 Production", cur.production],
                 ["🛒 Buying", cur.buying], ["🚚 Transport", cur.transport],
               ].filter(([, v]) => v > 0);
-              const syncToOps = async () => { await (persistDeptSnapshot && persistWithDetail(buildDeptSnapshot())); showMsg && showMsg("📤 Department breakdown pushed to IMS Dept Ops", "green"); };
+              const syncToOps = async () => { const r = await (persistDeptSnapshot && persistWithDetail(buildDeptSnapshot())); showMsg && (r === false ? showMsg("Deal Check is still loading — try again in a moment", "orange") : showMsg("📤 Department breakdown pushed to IMS Dept Ops", "green")); };
               return (
                 <div onClick={()=>setDcDeptModalOpen(false)} style={{position:"fixed",inset:0,zIndex:9100,background:"rgba(10,10,20,0.85)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
                   <div onClick={e=>e.stopPropagation()} style={{width:"min(560px, 100%)",maxHeight:"82vh",background:"#FFFFFF",borderRadius:14,border:`1px solid ${border}`,display:"flex",flexDirection:"column",overflow:"hidden"}}>
