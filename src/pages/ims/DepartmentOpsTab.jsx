@@ -3646,7 +3646,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     const trMine = trPlan?.byDept?.[dept] || null;
     // Transport stays a per-department-only section — not in the combined book (owner call).
     const trRows = (trMine?.rows || []).map(r =>
-      `<tr><td><b>${esc(r.label)}</b>${(fns || []).length > 1 && r.fn ? `<div class="sub">${esc(r.fn)}</div>` : ""}</td><td class="n">${esc(r.qty)}${r.unit ? " " + esc(r.unit) : ""}</td><td class="n">${Number(r.perTruck) > 0 ? esc(r.perTruck) + (r.unit ? " " + esc(r.unit) : "") + " per truck" : "—"}</td><td class="n b">${esc(r.trucks)}</td></tr>`);
+      `<tr><td><b>${esc(r.label)}</b>${(fns || []).length > 1 && r.fn ? `<div class="sub">${esc(r.fn)}</div>` : ""}</td><td class="n">${esc(r.qty)}${r.unit ? " " + esc(r.unit) : ""}</td><td class="n">${Number(r.perTruck) > 0 ? esc(r.perTruck) + (r.unit ? " " + esc(r.unit) : "") + " per truck" : "—"}</td><td class="n b">${Number(r.flat) > 0 ? "₹" + esc(Math.round(r.flat).toLocaleString("en-IN")) + " flat" : esc(r.trucks)}</td></tr>`);
     const trNote = !trMine ? "" : `${esc(dept)} fills ${trMine.trucks} of the ${trPlan.totalTrucks} truck${trPlan.totalTrucks === 1 ? "" : "s"} this event needs${trPlan.tierLabel ? ` · ${esc(trPlan.tierLabel)}` : ""}. A truck is counted by capacity, so a part-truck share is normal — the loads travel together.`;
 
     // Deal Check's one "🖨 Print / signage" row says only how many jobs there are; it is replaced

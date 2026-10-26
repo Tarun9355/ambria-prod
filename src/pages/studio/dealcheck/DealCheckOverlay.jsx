@@ -2041,7 +2041,7 @@ export default function DealCheckOverlay({ ctx }) {
                 const slot = byDept[d] = byDept[d] || { trucks: 0, rows: [] };
                 const t = Number(r.trucks) || 0;
                 slot.trucks += t;
-                slot.rows.push({ fn: fnLabel, label: r.label, qty: Number(r.qty) || 0, unit: r.unit || "", perTruck: Number(r.perTruck) || 0, trucks: Math.round(t * 100) / 100, buffer: !!r.isBuffer });
+                slot.rows.push({ fn: fnLabel, label: r.label, qty: Number(r.qty) || 0, unit: r.unit || "", perTruck: Number(r.perTruck) || 0, trucks: Math.round(t * 100) / 100, buffer: !!r.isBuffer, ...(r.flat > 0 ? { flat: Number(r.flat) } : null) });
               });
             });
             Object.values(byDept).forEach(v => { v.trucks = Math.round(v.trucks * 100) / 100; });
@@ -4325,8 +4325,10 @@ export default function DealCheckOverlay({ ctx }) {
                                                     <span style={{fontSize:9.5,color:INK_3,marginLeft:3}}>{r.unit}</span>
                                                   </span>}
                                                   <span style={{...NUMCOL}}>
-                                                    <span style={{fontSize:12.5,fontWeight:700,color:INK,letterSpacing:-0.2,...NUM}}>{r.trucks.toFixed(2)}</span>
-                                                    <span style={{fontSize:9.5,color:INK_3,marginLeft:3}}>truck{r.trucks===1?"":"s"}</span>
+                                                    {r.flat > 0
+                                                      ? <><span style={{fontSize:12.5,fontWeight:700,color:INK,letterSpacing:-0.2,...NUM}}>₹{Math.round(r.flat).toLocaleString("en-IN")}</span><span style={{fontSize:9.5,color:INK_3,marginLeft:3}}>flat</span></>
+                                                      : <><span style={{fontSize:12.5,fontWeight:700,color:INK,letterSpacing:-0.2,...NUM}}>{r.trucks.toFixed(2)}</span>
+                                                        <span style={{fontSize:9.5,color:INK_3,marginLeft:3}}>truck{r.trucks===1?"":"s"}</span></>}
                                                   </span>
                                                 </div>
                                                 {itemsOpen && nItems > 0 && (

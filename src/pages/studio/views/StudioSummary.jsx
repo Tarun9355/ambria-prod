@@ -558,7 +558,7 @@ ${z.items.map(it => `<tr><td>${it.name}</td><td>${it.size || "—"}</td><td>${it
 ${z.note ? `<tr class="note-row"><td colspan="7">📝 ${z.note}</td></tr>` : ""}
 </table></div>`).join("")}
 ${fnObj.transport ? `<div class="transport"><div class="transport-head"><h3>🚛 Transport &amp; Power</h3><div class="tr-total">${f(fnObj.transport.total)}</div></div><div style="padding:8px 0">
-${(fnObj.transport.breakdown || []).map(bd => `<div class="tr-row"><div class="tr-label">${bd.label} — ${bd.trucks} truck${bd.trucks !== 1 ? "s" : ""}</div><div class="tr-val">${f((bd.trucks || 0) * (fnObj.transport.tripRate || 0) * 2)}</div></div>`).join("")}
+${(fnObj.transport.breakdown || []).map(bd => bd.flat > 0 ? `<div class="tr-row"><div class="tr-label">${bd.label} — flat charge</div><div class="tr-val">${f(bd.flat)}</div></div>` : `<div class="tr-row"><div class="tr-label">${bd.label} — ${bd.trucks} truck${bd.trucks !== 1 ? "s" : ""}</div><div class="tr-val">${f((bd.trucks || 0) * (fnObj.transport.tripRate || 0) * 2)}</div></div>`).join("")}
 <div class="tr-row"><div class="tr-label">Genset (${fnObj.transport.gensets} units × ${f(fnObj.transport.gensetRate)})</div><div class="tr-val">${f(fnObj.transport.gensetCost)}</div></div>
 </div></div>` : ""}
 <div class="fn-total-bar"><div class="fn-tot-label">${fnObj.fnType || "Function"} Total</div><div class="fn-tot-amt">${f(fnObj.grand)}</div></div>
@@ -858,8 +858,8 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
           (fnObj.transport.breakdown || []).forEach(bd => {
             trRows.push([
               { text: bd.label, options: { fontSize: 9, color: dark } },
-              { text: (bd.trucks || 0) + " truck" + ((bd.trucks || 0) !== 1 ? "s" : "") + " × " + f(fnObj.transport.tripRate) + " × 2", options: { fontSize: 9, color: gray } },
-              { text: f((bd.trucks || 0) * (fnObj.transport.tripRate || 0) * 2), options: { fontSize: 9, align: "right", color: dark } }
+              { text: bd.flat > 0 ? "flat charge" : (bd.trucks || 0) + " truck" + ((bd.trucks || 0) !== 1 ? "s" : "") + " × " + f(fnObj.transport.tripRate) + " × 2", options: { fontSize: 9, color: gray } },
+              { text: bd.flat > 0 ? f(bd.flat) : f((bd.trucks || 0) * (fnObj.transport.tripRate || 0) * 2), options: { fontSize: 9, align: "right", color: dark } }
             ]);
           });
           trRows.push([
@@ -1270,11 +1270,14 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
           // Power's per-venue "client scale") rather than the raw cost fields — Deal Check's own
           // Transport tab is the one place that still reads truckTotal/tripRate unscaled.
           const tripRate = Number(fnObj.transport.tripRateClient ?? fnObj.transport.tripRate) || 0;
-          const truckTotal = Number(fnObj.transport.truckTotalClient ?? fnObj.transport.truckTotal) || 0;
+          // The flat charge for small prints is billed on its own line below, so the trucks line is the truck part only
+          const smallPrintFlatAmt = (fnObj.transport.breakdown || []).reduce((sum, b) => sum + (Number(b.flat) || 0), 0);
+          const truckTotal = (Number(fnObj.transport.truckTotalClient ?? fnObj.transport.truckTotal) || 0) - smallPrintFlatAmt;
           // Amount = Trucks × Trip rate × 2 (there and back) — wired only when that reproduces the
           // billed figure, same rule as every item row; otherwise the true figure stays as-is.
           const truckRow = addItemRow(ws, ["Trucks", "Round trip (× 2)", Number(trucks) || 0, tripRate, "—", "truck", "—", truckTotal],
             Math.abs((Number(trucks) || 0) * tripRate * 2 - truckTotal) < 1 ? { tripsX: 2 } : {});
+          if (smallPrintFlatAmt > 0) addItemRow(ws, ["Small prints", "Flat transport charge", (fnObj.transport.breakdown || []).filter(b => b.flat > 0).reduce((sum, b) => sum + (Number(b.qty) || 0), 0), "—", "—", "job", "—", smallPrintFlatAmt]);
           const gensets = Number(fnObj.transport.gensets) || 0;
           const gensetRate = Number(fnObj.transport.gensetRate) || 0;
           const gRow = addItemRow(ws, ["Genset", "Power", gensets, gensetRate, "—", "unit", "—", Number(fnObj.transport.gensetCost) || 0]);
@@ -3131,12 +3134,12 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
                         {breakdown.transport.breakdown.map((bd, bi) => (
                           <div key={bi} style={{display:"flex",justifyContent:"space-between",padding:"3px 0",fontSize:12}}>
                             <span style={{color:textS}}>{bd.isFloral?"🌸":bd.isBuffer?"🛡️":"🚚"} {bd.label} {bd.isFloral?`(${fmt(bd.qty)} ÷ ${fmt(bd.perTruck)})`:bd.isBuffer?`(${bd.tierLabel})`:bd.qty>0?`(${bd.qty} ÷ ${bd.perTruck}/${bd.unit})`:""}</span>
-                            <span style={{fontWeight:600}}>{(bd.trucksClient ?? bd.trucks)} truck{(bd.trucksClient ?? bd.trucks)!==1?"s":""}</span>
+                            <span style={{fontWeight:600}}>{bd.flat>0 ? `${fmt(bd.flat)} flat` : `${bd.trucksClient ?? bd.trucks} truck${(bd.trucksClient ?? bd.trucks)!==1?"s":""}`}</span>
                           </div>
                         ))}
                         <div style={{borderTop:`0.5px solid ${border}`,marginTop:6,paddingTop:8,fontSize:12}}>
                           <div style={{display:"flex",justifyContent:"space-between"}}><span style={{color:textS}}>⚡ Genset × {breakdown.transport.gensets}</span><span>{fmt(breakdown.transport.gensetCost)}</span></div>
-                          <div style={{display:"flex",justifyContent:"space-between",marginTop:2}}><span style={{color:textS}}>🚛 Trucks × {breakdown.transport.trucksClient ?? breakdown.transport.trucks} × 2 trips @ {fmt(breakdown.transport.tripRateClient ?? breakdown.transport.tripRate)}</span><span>{fmt(breakdown.transport.truckTotalClient ?? breakdown.transport.truckTotal)}</span></div>
+                          <div style={{display:"flex",justifyContent:"space-between",marginTop:2}}><span style={{color:textS}}>🚛 Trucks × {breakdown.transport.trucksClient ?? breakdown.transport.trucks} × 2 trips @ {fmt(breakdown.transport.tripRateClient ?? breakdown.transport.tripRate)}</span><span>{fmt((breakdown.transport.truckTotalClient ?? breakdown.transport.truckTotal) - (breakdown.transport.breakdown || []).reduce((sum, b) => sum + (Number(b.flat) || 0), 0))}</span></div>
                         </div>
                       </div>
                       )}

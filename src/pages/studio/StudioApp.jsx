@@ -40,7 +40,7 @@ import { makeS } from "../../lib/studio/styles";
 import { dealAgencyFeePct, feePctOf, DEFAULT_AGENCY_FEE_PCT } from "../../lib/studio/agencyFee";
 import { sameVenueHolds, siblingCarpetUse } from "../../lib/studio/carpetReuse";
 import { elementAfterPick } from "../../lib/studio/elementPick";
-import { printSqftOf, PRINT_TRUCK_SUB } from "../../lib/studio/truckPrint";
+import { printSqftOf, smallPrintFlat, PRINT_TRUCK_SUB, SMALL_PRINT_LABEL } from "../../lib/studio/truckPrint";
 import { itemTakesChoices } from "../../lib/studio/elementPrefs";
 import { findCrossFnReuseSource, computeFnInvQty, findSiblingFnInvUse, findSiblingFnSubcatOpportunity } from "../../lib/studio/crossFnReuse";
 import { computeFnFloralCost, buildMandiBreakdown } from "../../lib/studio/floralCost";
@@ -933,7 +933,7 @@ function isSubcatPaintable(rcSub, imsInventory) {
 // preceding function (findCrossFnReuseSource/computeFnInvQty) — drawn down per element exactly as
 // calcFunctionCost/calcFunctionBreakdown do, so Build's Live Estimate stops trucking reused units
 // that the Total Estimate, Summary and the cost sheet already treat as "already there".
-export function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckCap, imsInventory, flowerPatterns, trussInv, flowerMaterialQty, fvCfg, venueName, guestDiscountOn, reusePool) {
+export function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckCap, imsInventory, flowerPatterns, trussInv, flowerMaterialQty, fvCfg, venueName, guestDiscountOn, reusePool, printMaterials) {
   const standPool = new Map(); // standing stock is pooled across this function's elements (kitBuiltQty)
   const capBySub = {};
   (truckCap || []).forEach(tc => { if ((Number(tc.perTruck) || 0) > 0) capBySub[String(tc.item || "").toLowerCase().trim()] = tc; });
@@ -1012,7 +1012,7 @@ export function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems,
     // truck-load either, same as it gets no carpet cost (see CARPET_OFF in taxonomy.js).
     if (!skipPlat && sqft > 0) { if (cfg.plH) addSub("Platform", sqft); if (cfg.cpT && cfg.cpT !== CARPET_OFF) addSub("Carpet", sqft); }
     // Print jobs: trucked by area (never waived as a repeat — a print is made fresh for each event)
-    { const pSqft = printSqftOf(cfg); if (pSqft > 0) addSub(PRINT_TRUCK_SUB, pSqft); }
+    { const pSqft = printSqftOf(cfg, printMaterials); if (pSqft > 0) addSub(PRINT_TRUCK_SUB, pSqft); }
     // Fabric Allocation (masking/liza/curtains) — never trucked before: it's computed from the truss
     // config, not a zoneElement, so it fell through the element loop above entirely. Same base-row-
     // only scope as Truss/Platform/Carpet; density defaults to "moderate" (see computeFnSubQty).
@@ -1033,7 +1033,10 @@ export function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems,
   if (flowerMaterialQty?.artBunches > 0) addSub("Artificial Flowers", flowerMaterialQty.artBunches);
   let frac = 0; const breakdown = [];
   Object.values(subAgg).forEach(s => { const f = s.perTruck > 0 ? s.qty / s.perTruck : 0; frac += f; breakdown.push({ label: s.label, qty: Math.round(s.qty), perTruck: s.perTruck, unit: s.unit, trucks: f }); });
-  return { itemTrucks: Math.ceil(frac), truckFraction: frac, breakdown };
+  // Small prints (each under ₹2,000) are not trucked by area: the function pays one flat transport charge for them instead (lib/studio/truckPrint.js)
+  const smallPr = smallPrintFlat(zoneConfig, enabledEls, printMaterials);
+  if (smallPr.jobs > 0) breakdown.push({ label: SMALL_PRINT_LABEL, qty: smallPr.jobs, perTruck: 0, unit: "jobs", trucks: 0, flat: smallPr.charge });
+  return { itemTrucks: Math.ceil(frac), truckFraction: frac, breakdown, flatCharge: smallPr.charge };
 }
 function paintPillLabel(el, baseColour) {
   const allocs = normalizePaintAllocation(el, baseColour);
@@ -5295,7 +5298,7 @@ export default function StudioApp() {
     const activeFnData = { ...(allFnsNow.find(f => f.fnIdx === activeFnIdx) || {}), fnIdx: activeFnIdx, fnDate: aDate, fnVenue: aVenue, zoneElements, zoneConfig, enabledEls };
     const crossFnPrev = (!hideDiscountFromClient && !isFillerDateFor(aDate) && allFnsNow.length > 1) ? findCrossFnReuseSource(activeFnData, allFnsNow) : null;
     const reusePool = crossFnPrev ? new Map(Object.entries(computeFnInvQty(crossFnPrev))) : null;
-    const { itemTrucks, breakdown: itemBd } = computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckCap, imsInventory, sharedFloralSettings.flowerPatterns, trussInvHere, flowerMaterialQty, fvCfgForRepeat, aVenue, !hideDiscountFromClient, reusePool);
+    const { itemTrucks, breakdown: itemBd, flatCharge: smallPrintCharge } = computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckCap, imsInventory, sharedFloralSettings.flowerPatterns, trussInvHere, flowerMaterialQty, fvCfgForRepeat, aVenue, !hideDiscountFromClient, reusePool, structRates.printMaterials);
     itemBd.forEach(b => breakdown.push(b));
     const floralTrucks = 0, totalFloralCost = 0; // florals now counted via their sub-category capacity — no separate flower truck
     const bt = bufferTiers.find(b => decor >= b.minBudget && decor < b.maxBudget);
@@ -5311,13 +5314,14 @@ export default function StudioApp() {
     // (25% markup, the owner's requested starting point) for a venue nobody has set it on.
     const rawTruckTotal = allTrucks * tripRate * 2;
     const clientScale = Number(match?.clientScale) > 0 ? Number(match.clientScale) : 1.25;
-    const truckTotal = rawTruckTotal * clientScale * guestPriceMultiplier;
+    // + the flat charge for small prints (a set ₹ amount, so no venue markup or price dial on it)
+    const truckTotal = rawTruckTotal * clientScale * guestPriceMultiplier + (smallPrintCharge || 0);
     // gensetCost is already the GUEST-billed figure (resolveGensetPlan's own gensetCostOurs is the
     // separate, unscaled figure Deal Check's Power tab reads for what we actually pay the vendor).
     const gensetCostForGuest = plan.gensetCost * guestPriceMultiplier;
     const total = truckTotal + gensetCostForGuest;
     return { trucks: allTrucks, tripRate, total, isNew, tier: tierId, tierLabel, breakdown, floralTrucks, bufferTrucks: bufTrucks, itemTrucks, totalFloralCost, gensets: plan.genset125, venueGensets: plan.venueGenset125, venueGenset62: plan.venueGenset62, gensetCost: gensetCostForGuest, gensetRate, gensetRate62, genset62: plan.genset62, truckTotal, clientScale };
-  }, [venue, customTripRate, customGensets, gensetRate, gensetRate62, genset62, trVenues, zoneElements, enabledEls, rcItems, truckCap, floralPerTruck, bufferTiers, totalCost, zoneConfig, imsInventory, dealCheckData, studioFloralData, floralOverrides, floralRatio, activeFnIdx, clientDate, fvCfgForRepeat, venueParents, clientLedger, activeClientId, activeFnMeta, fnBuilds, extraFunctions, hideDiscountFromClient]);
+  }, [structRates, venue, customTripRate, customGensets, gensetRate, gensetRate62, genset62, trVenues, zoneElements, enabledEls, rcItems, truckCap, floralPerTruck, bufferTiers, totalCost, zoneConfig, imsInventory, dealCheckData, studioFloralData, floralOverrides, floralRatio, activeFnIdx, clientDate, fvCfgForRepeat, venueParents, clientLedger, activeClientId, activeFnMeta, fnBuilds, extraFunctions, hideDiscountFromClient]);
 
   // agencyFeeAmt is split out of grandTotal (not just an inline Math.round(grandTotal*pct/(100+pct)))
   // so Build's own Live Estimate rail can show the fee as its own visible line — same "its own line,
@@ -5599,7 +5603,7 @@ export default function StudioApp() {
         if (!skipTruss && cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * (cfg.trussQty === 0 ? 0 : Math.max(1, cfg.trussQty || 1)); if (tSqft > 0) addSub("Truss", tSqft); }
         const sqft = (fd.L || 0) * (fd.W || 0);
         if (!skipPlat && sqft > 0) { if (cfg.plH) addSub("Platform", sqft); if (cfg.cpT && cfg.cpT !== CARPET_OFF) addSub("Carpet", sqft); }
-        { const pSqft = printSqftOf(cfg); if (pSqft > 0) addSub(PRINT_TRUCK_SUB, pSqft); } // print jobs, by area — see computeTruckItems
+        { const pSqft = printSqftOf(cfg, structRates.printMaterials); if (pSqft > 0) addSub(PRINT_TRUCK_SUB, pSqft); } // big print jobs, by area — see computeTruckItems
         // Fabric Allocation (masking/liza/curtains) — see computeTruckItems' matching comment.
         const fcTrussInv = sharedFloralSettings.trussInv;
         if (!skipTruss && fcTrussInv) {
@@ -5630,7 +5634,7 @@ export default function StudioApp() {
       // calcFunctionBreakdown's *Client fields and transportCalc above. Defaults to 1.25 (25%
       // markup, the owner's requested starting point) until a venue's own value is set.
       const clientScale = Number(match?.clientScale) > 0 ? Number(match.clientScale) : 1.25;
-      const truckTotal = rawTruckTotal * clientScale * guestPriceMultiplier;
+      const truckTotal = rawTruckTotal * clientScale * guestPriceMultiplier + smallPrintFlat(fZoneConfig, fEnabledEls, structRates.printMaterials).charge; // + flat charge for small prints
       const gensetCost = resolveGensetPlan(match, fCustomGensets, fCustomGenset62, gensetRate, gensetRate62).gensetCost * guestPriceMultiplier;
       transport = truckTotal + gensetCost;
     }
@@ -6297,7 +6301,7 @@ export default function StudioApp() {
           if (cfg.plH) addSub("Platform", platRepeat ? 0 : sqft, sqft, zk, "Platform");
           if (cfg.cpT && cfg.cpT !== CARPET_OFF) addSub("Carpet", platRepeat ? 0 : sqft, sqft, zk, "Carpet");
         }
-        { const pSqft = printSqftOf(cfg); if (pSqft > 0) addSub(PRINT_TRUCK_SUB, pSqft, pSqft, zk, "Print jobs"); } // by area, never a repeat — see computeTruckItems
+        { const pSqft = printSqftOf(cfg, structRates.printMaterials); if (pSqft > 0) addSub(PRINT_TRUCK_SUB, pSqft, pSqft, zk, "Print jobs"); } // big prints by area, never a repeat — see computeTruckItems
         // Fabric Allocation (masking/liza/curtains) — see computeTruckItems' matching comment.
         if (bdTrussInv) {
           const fab = calcZoneFabric(cfg, bdTrussInv, "moderate");
@@ -6355,7 +6359,10 @@ export default function StudioApp() {
       const allTrucks = itemTrucks + floralTrucks + bufTrucks;
       const allTrucksClient = itemTrucksClient + floralTrucks + bufTrucks;
       const plan = resolveGensetPlan(match, fCustomGensets, fCustomGenset62, gensetRate, gensetRate62, gensetCostRate, gensetCostRate62);
-      const truckTotal = allTrucks * tripRate * 2;
+      // Small prints (each under ₹2,000) are not trucked by area: one flat charge for the function instead, the same on our cost and the guest's bill
+      const smallPr = smallPrintFlat(fZoneConfig, fEnabledEls, structRates.printMaterials);
+      if (smallPr.jobs > 0) breakdown.push({ label: SMALL_PRINT_LABEL, subKey: "print-small", invCat: "Structure", qty: smallPr.jobs, perTruck: 0, unit: "jobs", trucks: 0, trucksClient: 0, flat: smallPr.charge });
+      const truckTotal = allTrucks * tripRate * 2 + smallPr.charge;
       // Guest-facing markup on the venue's own trip cost — Admin → Settings → Transport & Power's
       // per-venue "client scale" field (trVenues[].clientScale). Defaults to 1.25 (25% markup, the
       // owner's requested starting point) until a venue's own value is set. Deliberately scoped to
@@ -6368,7 +6375,7 @@ export default function StudioApp() {
       // same-venue carryover above is an internal-cost optimisation only; the guest is still billed
       // as if every function trucked its own full requirement, exactly as before this existed.
       const clientScale = Number(match?.clientScale) > 0 ? Number(match.clientScale) : 1.25;
-      const truckTotalClient = allTrucksClient * tripRate * 2 * clientScale * guestPriceMultiplier;
+      const truckTotalClient = allTrucksClient * tripRate * 2 * clientScale * guestPriceMultiplier + smallPr.charge;
       // gensetCost (below, in the returned object) is already documented as the GUEST-facing genset
       // figure — "Build/Summary keep showing gensetCost/gensetRate to the guest" — so it's the one
       // guestPriceMultiplier scales; transportTotal here stays built from the raw plan.gensetCost so
