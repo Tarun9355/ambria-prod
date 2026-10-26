@@ -108,7 +108,7 @@ import { computePeopleRaw, computePeople, situationalFactorsFor, heavySayaMultFo
 import { dcRentalCost } from "../../../lib/studio/repeatPricing.js";
 import { kitShortfallSplit } from "../../../lib/studio/kitShortfallSplit";
 import { kitRecipeParts } from "../../../lib/studio/kitRecipeParts";
-import { withSetupSlot } from "../../../lib/studio/dihariWindows.js";
+import { withSetupSlot, withDismantleSlot, DISMANTLE_WINDOW_ID } from "../../../lib/studio/dihariWindows.js";
 
 // Commission override box (one per venue, Commission tab below) — its OWN local draft state, not
 // a slice of DealCheckOverlay's. That component recomputes dcCostRollup (florals, manpower
@@ -1581,13 +1581,16 @@ export default function DealCheckOverlay({ ctx }) {
                 // functions (e.g. dates 24/26/28) silently missed the dismantle days after 24 and 26 —
                 // undercounting the bottom-bar Manpower total against the tab's own "whole booking"
                 // figure on any booking that isn't every function on consecutive calendar days. Two
-                // back-to-back functions (next day IS itself another event) get no dismantle day
-                // between them — the crew flows straight into the next setup.
+                // back-to-back functions (next day IS itself another event) get no standalone dismantle
+                // DAY between them — there's no calendar day to put one on — but the crew still strikes
+                // the first day's setup before the next one's (owner ask, 2026-10-26), via an extra
+                // "dismantleSameNight" shift on the first day's own window list (withDismantleSlot
+                // below), not a separate dayList entry.
+                const eventDatesSet = new Set(dayList.filter(d => d.phase === "event").map(d => d.date));
                 if (dcMpIncludeDismantle) {
-                  const eventDatesSet = new Set(dayList.filter(d => d.phase === "event").map(d => d.date));
                   dayList.filter(d => d.phase === "event").forEach(d => {
                     const nextDate = addDays(d.date, 1);
-                    if (eventDatesSet.has(nextDate)) return;
+                    if (eventDatesSet.has(nextDate)) return; // back-to-back — handled as a same-night shift instead
                     const existing = dayList.find(x => x.date === nextDate);
                     if (existing) existing.phase = "dismantle";
                     else dayList.push({ date: nextDate, phase: "dismantle", fns: [] });
@@ -1617,18 +1620,28 @@ export default function DealCheckOverlay({ ctx }) {
                   labourTypes.forEach(t => {
                     const ppl = running[t] || 0; if (ppl <= 0) return;
                     // Event day: the setup shift before the first function is added to the defaults
-                    // (withSetupSlot) — same as DCManpowerTab's getWindowsForDayType.
+                    // (withSetupSlot), then the same-night dismantle shift if the next calendar day is
+                    // itself another event day (withDismantleSlot) — same as DCManpowerTab's
+                    // getWindowsForDayType. An explicit override list wins outright, same as before.
                     const _defWins = (defaultWindowsByPhase[t]||{})[d.phase] || [];
-                    const wins = dcMpOverrides[`${d.date}|${t}`] || (d.phase === "event" ? withSetupSlot(_defWins, dihariSchemes[t]?.windows, d.fns) : _defWins);
+                    const _withSetup = d.phase === "event" ? withSetupSlot(_defWins, dihariSchemes[t]?.windows, d.fns) : _defWins;
+                    const wins = dcMpOverrides[`${d.date}|${t}`] || (d.phase === "event" ? withDismantleSlot(_withSetup, dcMpIncludeDismantle && eventDatesSet.has(addDays(d.date, 1))) : _withSetup);
                     // Per-shift crew: a worked window uses its own dcMpWinCount ONLY if the ops manager set one,
                     // else the day's crew count. Cost = Σ(perWindowCount) × rate (MUST match the Manpower tab).
                     // Only EXPLICIT per-shift edits go into winCountMap → schedule, so a dept-head day-count edit
                     // in Dept Ops still applies to the untouched shifts (effShift/mpDayCost fall through).
+                    // Exception: dismantleSameNight is never just "the day's crew count" like every other
+                    // window — its OWN default (dismantlingPct% of ppl) must be written into winCountMap
+                    // too, not left to fall back to ppl downstream (MUST match the Manpower tab's winCountFor).
                     const _wc = dcMpWinCount?.[t]?.[d.date] || null;
                     let winCountMap = null, daySlots = 0;
                     wins.forEach(id => {
                       const explicit = _wc && _wc[id] != null && _wc[id] !== "";
-                      const c = explicit ? (Number(_wc[id]) || 0) : ppl;
+                      let c = explicit ? (Number(_wc[id]) || 0) : ppl;
+                      if (!explicit && id === DISMANTLE_WINDOW_ID) {
+                        const pct = (labourTiers[t] || {}).dismantlingPct;
+                        if (typeof pct === "number") { c = pct > 0 ? Math.ceil(ppl * pct / 100) : 0; if (!winCountMap) winCountMap = {}; winCountMap[id] = c; }
+                      }
                       daySlots += c;
                       if (explicit) { if (!winCountMap) winCountMap = {}; winCountMap[id] = c; }
                     });
