@@ -1569,7 +1569,12 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const invShownTotal = invShown.reduce((s, x) => s + (Number(x.total) || 0), 0);
   const inMpFn = (d) => {
     const fd = mpFnDate(mpFns[mpFn]);
-    if (d.phase === "dismantle") return d.date === mpNextDay(fd);
+    // afterDate (not a re-derived "day after" via mpNextDay) — a back-to-back booking's dismantle
+    // entry has no real calendar date of its own (StudioApp/DealCheckOverlay key it
+    // `${date}:btwdismantle`), so matching by date alone would never find it. A snapshot saved
+    // before this field existed has no afterDate at all, so it falls back to the old derivation —
+    // same date math mpNextDay already did, just inline — rather than never matching anything.
+    if (d.phase === "dismantle") return d.afterDate ? d.afterDate === fd : d.date === mpNextDay(fd);
     if (d.phase === "minusOne") return fd === mpFirstDate;
     return (d.phase || "event") === "event" && d.date === fd;
   };

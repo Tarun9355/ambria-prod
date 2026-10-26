@@ -1580,17 +1580,22 @@ export default function DealCheckOverlay({ ctx }) {
                 // to only ever push ONE dismantle day at `latest+1`, so a booking with a gap between
                 // functions (e.g. dates 24/26/28) silently missed the dismantle days after 24 and 26 —
                 // undercounting the bottom-bar Manpower total against the tab's own "whole booking"
-                // figure on any booking that isn't every function on consecutive calendar days. Two
-                // back-to-back functions (next day IS itself another event) get no dismantle day
-                // between them — the crew flows straight into the next setup.
+                // figure on any booking that isn't every function on consecutive calendar days.
+                // Back-to-back functions (next day IS itself another event, e.g. 24/25/26) have no real
+                // calendar day between them for a standalone dismantle day — the crew still strikes the
+                // first day's setup before the next one's (owner ask, 2026-10-26), via a dismantle entry
+                // keyed `${date}:btwdismantle` (a string that is never a real calendar date, but sorts
+                // correctly between the two — see DCManpowerTab's own comment on this same construction
+                // for why). `afterDate` names the function day a dismantle entry belongs to — every
+                // attribution reads THAT, never re-derives "the day after" by parsing `date`.
                 if (dcMpIncludeDismantle) {
                   const eventDatesSet = new Set(dayList.filter(d => d.phase === "event").map(d => d.date));
                   dayList.filter(d => d.phase === "event").forEach(d => {
                     const nextDate = addDays(d.date, 1);
-                    if (eventDatesSet.has(nextDate)) return;
+                    if (eventDatesSet.has(nextDate)) { dayList.push({ date: `${d.date}:btwdismantle`, phase: "dismantle", fns: [], afterDate: d.date }); return; }
                     const existing = dayList.find(x => x.date === nextDate);
-                    if (existing) existing.phase = "dismantle";
-                    else dayList.push({ date: nextDate, phase: "dismantle", fns: [] });
+                    if (existing) { existing.phase = "dismantle"; existing.afterDate = d.date; }
+                    else dayList.push({ date: nextDate, phase: "dismantle", fns: [], afterDate: d.date });
                   });
                   dayList.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
                 }
@@ -1663,7 +1668,7 @@ export default function DealCheckOverlay({ ctx }) {
                       }
                       // winCount → snapshot so Dept Ops + On-Site inherit the same per-shift crew (they fall
                       // back to schedule.winCount until a head overrides it).
-                      mpSchedule[t].push({ date: d.date, phase: d.phase, count: ppl, windows: wins.length, windowIds: wins, winCount: winCountMap, trace, drivenBy });
+                      mpSchedule[t].push({ date: d.date, phase: d.phase, afterDate: d.afterDate || null, count: ppl, windows: wins.length, windowIds: wins, winCount: winCountMap, trace, drivenBy });
                     }
                   });
                 });
