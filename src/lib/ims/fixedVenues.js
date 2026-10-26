@@ -143,6 +143,28 @@ export function availableAtVenue(settings, venueName, item, reservedByVenue) {
   return Math.max(0, total - lockedElsewhere);
 }
 
+// Combines a "today's date-blocks" ceiling (getStudioAvailable/dcAvailable's own view — total minus
+// what's actually reserved for this date) with availableAtVenue's own ceiling (total minus the
+// Fixed-Venue lock) into the TRUE remaining stock.
+//
+// Every call site used to do Math.min(dateAvailable, availableAtVenue(...)) — which is wrong once
+// BOTH reductions are real at the same time: item has 50 total, 40 locked as Fixed Venue standing
+// stock, and a SOLD deal has already blocked 10 of the unlocked remainder for today. dateAvailable =
+// 50-10 = 40; availableAtVenue = 50-40 = 10; Math.min(40,10) = 10 — the system reports 10 still free
+// to a second outdoor deal, when the true remainder (50-40-10) is 0. Math.min picks whichever single
+// reduction is bigger and ignores the other one entirely, because each ceiling was computed
+// independently off the FULL total rather than off what the other reduction already used up.
+// Recovering each ceiling's own reduction against the shared total and subtracting both together
+// fixes this without touching getStudioAvailable/dcAvailable/availableAtVenue themselves (every
+// existing caller of those three keeps working exactly as before — this only recombines their
+// outputs at the handful of sites that compose them).
+export function combineAvailability(total, dateAvailable, venueAvailable) {
+  const t = Number(total) || 0;
+  const blockedByDate = Math.max(0, t - (Number(dateAvailable) || 0));
+  const lockedAtVenue = Math.max(0, t - (Number(venueAvailable) || 0));
+  return Math.max(0, t - blockedByDate - lockedAtVenue);
+}
+
 // Resolves each of `item`'s block entries active on the checked date back to the venue of the
 // event that reserved them (blocks carry only {eventId, qty} — the venue lives on the linked
 // event_orders row), and sums genuinely-reserved qty per Fixed Venue. `blockEntriesForItem` is

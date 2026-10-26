@@ -30,7 +30,7 @@ import StudioSummary from "./views/StudioSummary.jsx";
 import { kvGet, kvTryGet, kvSet, reliableSave } from "../../lib/ims/kv";
 import { makeAmendRequest } from "../../lib/ims/amend";
 import { catToDept } from "../../lib/ims/deptClassify";
-import { availableAtVenue, isStandingAt, rentalSplit, fixedVenueDealDiscount, fixedVenueDiscountPctFor, proratedVenueDiscount, fixedVenueFor, builtQty, kitBuiltQty, venueSlackFor, standingReductionBySubcat, standingQty } from "../../lib/ims/fixedVenues";
+import { availableAtVenue, isStandingAt, rentalSplit, fixedVenueDealDiscount, fixedVenueDiscountPctFor, proratedVenueDiscount, fixedVenueFor, builtQty, kitBuiltQty, venueSlackFor, standingReductionBySubcat, standingQty, combineAvailability } from "../../lib/ims/fixedVenues";
 import { searchLmsLeads, triggerLmsSync, fetchCachedContracts, fetchLmsLeadByEntry } from "../../lib/ims/lms";
 import { uploadToStorage, compressImageForUpload, STORAGE_FOLDERS, listStorage, deleteStorageObjects, deleteStorageFolder } from "../../lib/storage";
 import { ytApi, ytDuration } from "../../lib/youtube";
@@ -4600,7 +4600,12 @@ export default function StudioApp() {
       // outdoor deal that tries to draw past the un-locked remainder falls straight into the
       // existing shortfall/cost% pricing below, exactly like running short on real date-blocked
       // stock — no separate code path needed for it.
-      const otherEventsAvail = Math.min(getStudioAvailable(item, blocksForDate), availableAtVenue(fvCfgForRepeat, opts?.venueName, item));
+      // combineAvailability, not Math.min: the date-block ceiling and the venue-lock ceiling are
+      // each computed independently off the FULL total, so Math.min silently ignored whichever
+      // reduction was smaller — a sold deal that already used up the entire un-locked remainder
+      // still showed the full remainder as free to the next outdoor deal. See combineAvailability's
+      // own comment (lib/ims/fixedVenues.js) for the worked example.
+      const otherEventsAvail = combineAvailability(Number(item?.qty ?? item?.qtyOwned) || 0, getStudioAvailable(item, blocksForDate), availableAtVenue(fvCfgForRepeat, opts?.venueName, item));
       // otherEventsAvail alone still isn't "available for THIS card": it says nothing about a
       // SIBLING zone/function in this SAME unsaved build already drawing on the same item — e.g.
       // 3 used in zone A, then adding 1 more in zone B. dcReservedInventory only reflects the last
@@ -10624,7 +10629,9 @@ export default function StudioApp() {
           // vanished," when it was actually just quietly counted rather than named.
           const _ownStanding = standingQty(fvCfgForRepeat, pickerVenue, it.id);
           const netBlocksForDate = netOwnReservedBlocksLive(blocksForDate, it.id, blocksDetailForDate, eo?.id);
-          const free = Math.max(0, Math.min(getStudioAvailable(it, netBlocksForDate), availableAtVenue(fvCfgForRepeat, pickerVenue, it)) - (usedQty[it.id] || 0));
+          // combineAvailability, not Math.min — see StudioApp.jsx's other getStudioAvailable/
+          // availableAtVenue composition for the worked example this closes.
+          const free = Math.max(0, combineAvailability(Number(it?.qty ?? it?.qtyOwned) || 0, getStudioAvailable(it, netBlocksForDate), availableAtVenue(fvCfgForRepeat, pickerVenue, it)) - (usedQty[it.id] || 0));
           return { id: it.id, name: it.name, photo: (Array.isArray(it.photoUrls) && it.photoUrls[0]) || it.img || "", free, total: Number(it.qty) || 0, reuse: carpetReuseOf(it), usedIn: usedElsewhere[it.id] || [], venueSlack: _slack, ownStanding: _ownStanding, ownVenueName: _ownStanding > 0 ? (fixedVenueFor(fvCfgForRepeat, pickerVenue)?.name || pickerVenue) : null, unit: it.unit || "", photos: Array.isArray(it.photoUrls) ? it.photoUrls : [],
             // Out of stock AND can't be made in production (IMS Inventory's "Can be made" checkbox,
             // or not enough production lead time left before `date`) — genuinely unpickable here,

@@ -1002,6 +1002,28 @@ export default function IMS() {
       .then(({ error }) => { if (error) console.warn("[settings] autoCategories merge failed:", error.message); });
   }, [studioLmsCache, settingsLoaded]);
 
+  // Same reasoning as the autoCategories effect above, generalized: EVERY write to a sub-field of
+  // datePricing (the multiplier inputs, pause/resume, the lock code, clearing overrides, the
+  // Calendar's own per-date override picker) used to go through the generic setSettings — which
+  // spreads THIS TAB's own local s.datePricing and upserts the WHOLE value. A tab whose local
+  // categories (or any other sub-field) is even slightly stale — loaded before someone else's edit
+  // landed, or missed a realtime update — silently re-saves its stale copy the next time it does ANY
+  // unrelated datePricing action. Confirmed live (2026-10-26): an admin's own King's multiplier edit
+  // (categories.heavy_saya.multiplier) kept reverting to the 1.4 default with no edit to that field
+  // at all — some OTHER open tab/action was writing its own stale categories back on top.
+  // mergeDatePricing patches ONLY the sub-field named, via the same server-side shallow JSONB merge
+  // (merge_settings_json) as autoCategories, so a write here can PHYSICALLY only ever touch the keys
+  // passed in patch — every sibling sub-field (including ones a stale tab doesn't know changed) is
+  // left exactly as the database already has it, regardless of this tab's own staleness.
+  const mergeDatePricing = useCallback((patch) => {
+    const s = settingsRef.current || {};
+    const nextSettings = { ...s, datePricing: { ...s.datePricing, ...patch } };
+    settingsRef.current = nextSettings;
+    setSettingsState(nextSettings);
+    supabase.rpc("merge_settings_json", { p_key: "datePricing", p_patch: patch })
+      .then(({ error }) => { if (error) console.warn("[settings] datePricing merge failed:", error.message); });
+  }, []);
+
   // Manual "🔄 Sync LMS": Edge Function paginates LMS server-side → DB, then re-read cache.
   const syncLms = useCallback(async () => {
     setLmsSyncing(true);
@@ -1744,6 +1766,7 @@ export default function IMS() {
           <CalendarTab
             lmsContracts={lmsContracts} studioLmsCache={studioLmsCache}
             onSyncLms={syncLms} lmsSyncing={lmsSyncing} settings={settings} setSettings={setSettings}
+            mergeDatePricing={mergeDatePricing}
             eventOrders={eventOrders} setEventOrders={setEventOrders} saveEventOrders={saveEventOrders}
             blocks={blocks} setBlocks={setBlocks} saveBlocks={saveBlocks}
           />

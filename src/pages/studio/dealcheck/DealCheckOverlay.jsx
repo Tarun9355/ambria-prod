@@ -98,7 +98,7 @@ const IV = {
 const NUM = { fontVariantNumeric: "tabular-nums" };
 import { heavyExtraLabour, eventTimingMultFor, SIT_MULT_DEFAULTS } from "../../../lib/ims/constants";
 import { deptMpReconciled, itemImsSubcat, lookupBySubcat, itemDimsText, walkKitUnits } from "../../../lib/ims/helpers";
-import { rentalSplit, availableAtVenue, isStandingAt, fixedVenueFor, standingReductionBySubcat, fixedVenueDealDiscount, reservedByVenueToday, venueSlackFor } from "../../../lib/ims/fixedVenues";
+import { rentalSplit, availableAtVenue, isStandingAt, fixedVenueFor, standingReductionBySubcat, fixedVenueDealDiscount, reservedByVenueToday, venueSlackFor, combineAvailability } from "../../../lib/ims/fixedVenues";
 import { calcZoneFabric, autoFillFabricAllocation, anchorsForPalette, anchorsForPaletteByMaterial, resolveTrussConfig, zoneTrussStandingDiscountDetail, trussDiscountedCosts, repeatCatFor, freshFnForManpower , dcFabricMultOf } from "../../../lib/studio/pricing";
 import { carpetPricingFor, CARPET_OFF } from "../../../lib/studio/taxonomy";
 import { qtyUsedElsewhereInDealCheck, netOwnReservedBlocksLive } from "../../../lib/studio/dealAvailability";
@@ -807,7 +807,7 @@ export default function DealCheckOverlay({ ctx }) {
                 const split = kitShortfallSplit(item, qty, ck, {
                   inventoryCache: dcInventoryCache,
                   kitEditsFor: (ck2) => dcKitEdits?.[fi]?.[ck2],
-                  availFor: (it) => Math.min(dcAvailable(it, fnBlocks, fi), availableAtVenue(_fvCfg, fn.fnVenue, it)),
+                  availFor: (it) => combineAvailability(Number(it?.qty ?? it?.qtyOwned) || 0, dcAvailable(it, fnBlocks, fi), availableAtVenue(_fvCfg, fn.fnVenue, it)),
                   crossFnTake,
                   costPctFor,
                   repeatAdjustedRentalFn: (it, q, br, cf) => repeatAdjustedRental(_rep, fn.fnVenue, it, q, br, fn.fnDate, cf),
@@ -829,7 +829,10 @@ export default function DealCheckOverlay({ ctx }) {
                 // what's left un-locked falls straight into the existing shortfall/cost% pricing
                 // below — a deal actually AT a fixed venue is exempted from its own venue's lock
                 // (availableAtVenue already excludes "this venue" from what counts as locked).
-                const available = Math.min(dcAvailable(item, fnBlocks, fi), availableAtVenue({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, fn.fnVenue, item));
+                // combineAvailability, not Math.min — see lib/ims/fixedVenues.js's own comment: each
+                // ceiling here is computed independently off the full owned qty, so Math.min silently
+                // ignored whichever reduction (today's date-blocks vs. the venue lock) was smaller.
+                const available = combineAvailability(Number(item?.qty ?? item?.qtyOwned) || 0, dcAvailable(item, fnBlocks, fi), availableAtVenue({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, fn.fnVenue, item));
                 // Cross-function reuse also counts as "not truly short" — that many units are already
                 // physically installed from the deal's own preceding function, so they're priced like
                 // any other owned/reused unit (Repeat/date-category/standing rules all apply
@@ -2880,7 +2883,7 @@ export default function DealCheckOverlay({ ctx }) {
                             const splitP = kitShortfallSplit(it, qty, c._cardKey, {
                               inventoryCache: dcInventoryCache,
                               kitEditsFor: (ck2) => dcKitEdits?.[fnIdx]?.[ck2],
-                              availFor: (x) => Math.min(dcAvailable(x, fnBlocksForChip, fnIdx), availableAtVenue(_fvCfgP, _fnVenueForRepeat, x)),
+                              availFor: (x) => combineAvailability(Number(x?.qty ?? x?.qtyOwned) || 0, dcAvailable(x, fnBlocksForChip, fnIdx), availableAtVenue(_fvCfgP, _fnVenueForRepeat, x)),
                               crossFnTake: _crossFnTakePill,
                               costPctFor: _costPctFor,
                               repeatAdjustedRentalFn: (x, q, br, cf) => repeatAdjustedRental(_rep, _fnVenueForRepeat, x, q, br, _fnDateForRepeat, cf),
@@ -2893,7 +2896,7 @@ export default function DealCheckOverlay({ ctx }) {
                           // Mirrors the main rollup's own fixed-venue standing-stock ceiling AND its
                           // cross-function-reuse/true-shortfall split (see repeatAdjustedRental's own
                           // call site comment) — this pill must agree with it.
-                          const available = Math.min(dcAvailable(it, fnBlocksForChip, fnIdx), availableAtVenue({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, _fnVenueForRepeat, it));
+                          const available = combineAvailability(Number(it?.qty ?? it?.qtyOwned) || 0, dcAvailable(it, fnBlocksForChip, fnIdx), availableAtVenue({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, _fnVenueForRepeat, it));
                           const _crossFnAvail = _crossFnTakePill(it.id, qty);
                           const ownedQty = Math.min(qty, available + _crossFnAvail);
                           const shortQty = Math.max(0, qty - ownedQty);
@@ -3373,7 +3376,7 @@ export default function DealCheckOverlay({ ctx }) {
                                     const splitC = kitShortfallSplit(item, _cardQty, card._cardKey, {
                                       inventoryCache: dcInventoryCache,
                                       kitEditsFor: (ck2) => dcKitEdits?.[fnIdx]?.[ck2],
-                                      availFor: (x) => Math.min(dcAvailable(x, fnBlocksForChip, fnIdx), availableAtVenue(_fvCfgC, _venue, x)),
+                                      availFor: (x) => combineAvailability(Number(x?.qty ?? x?.qtyOwned) || 0, dcAvailable(x, fnBlocksForChip, fnIdx), availableAtVenue(_fvCfgC, _venue, x)),
                                       crossFnTake: _crossFnTakeCards,
                                       costPctFor: _kitCostPctForC,
                                       repeatAdjustedRentalFn: (x, q, br, cf) => repeatAdjustedRental(_rep, _venue, x, q, br, _fnDateForRepeat, cf),
@@ -3382,7 +3385,7 @@ export default function DealCheckOverlay({ ctx }) {
                                     });
                                     _lineTotal = splitC.ownedCost + splitC.shortCost;
                                   } else if (item) {
-                                    const _cardAvail = Math.min(dcAvailable(item, fnBlocksForChip, fnIdx), availableAtVenue({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, _venue, item));
+                                    const _cardAvail = combineAvailability(Number(item?.qty ?? item?.qtyOwned) || 0, dcAvailable(item, fnBlocksForChip, fnIdx), availableAtVenue({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, _venue, item));
                                     const _cardCrossFn = _crossFnTakeCards(item.id, _cardQty);
                                     const _cardOwnedQty = Math.min(_cardQty, _cardAvail + _cardCrossFn);
                                     const _cardShortQty = Math.max(0, _cardQty - _cardOwnedQty);
@@ -3434,7 +3437,7 @@ export default function DealCheckOverlay({ ctx }) {
                                               {_rep ? <IconRepeat size={11}/> : <IconSparkle size={11}/>}
                                             </span>
                                           )}
-                                          {item && (()=>{ const cq=Number(card.qty)||1; const av=Math.min(dcAvailable(item, fnBlocksForChip, fnIdx), availableAtVenue({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, fns[fnIdx]?.fnVenue, item)); if (cq<=av) return null; const canMake = canFulfillShortfall(item, fns[fnIdx]?.fnDate); return <span title={canMake?undefined:"Out of stock and can't be made in production"} style={{fontSize:11,padding:"2px 6px",borderRadius:4,background:"rgba(239,68,68,0.18)",color:"#EF4444",fontWeight:700,letterSpacing:0.4}}>{canMake?`⚠ ${av}`:"⚠ out of stock"}</span>; })()}
+                                          {item && (()=>{ const cq=Number(card.qty)||1; const av=combineAvailability(Number(item?.qty ?? item?.qtyOwned) || 0, dcAvailable(item, fnBlocksForChip, fnIdx), availableAtVenue({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, fns[fnIdx]?.fnVenue, item)); if (cq<=av) return null; const canMake = canFulfillShortfall(item, fns[fnIdx]?.fnDate); return <span title={canMake?undefined:"Out of stock and can't be made in production"} style={{fontSize:11,padding:"2px 6px",borderRadius:4,background:"rgba(239,68,68,0.18)",color:"#EF4444",fontWeight:700,letterSpacing:0.4}}>{canMake?`⚠ ${av}`:"⚠ out of stock"}</span>; })()}
                                           {card.imsId && reuseFnCount[card.imsId]?.size >= 2 && <span style={{fontSize:11,padding:"2px 6px",borderRadius:4,background:"rgba(16,185,129,0.18)",color:"#10B981",fontWeight:700,letterSpacing:0.4}}>♻ {reuseFnCount[card.imsId].size} fns</span>}
                                           <span onClick={()=>setDcCards(prev=>{const fn={...(prev[fnIdx]||{})}; delete fn[card._cardKey]; return {...prev,[fnIdx]:fn};})} title="Remove from Deal Check" style={{marginLeft:"auto",cursor:"pointer",color:"#EF4444",fontSize:15.5,fontWeight:700,padding:"0 4px",lineHeight:1,flexShrink:0,opacity:0.6,transition:"opacity 0.15s"}} onMouseEnter={e=>e.currentTarget.style.opacity=1} onMouseLeave={e=>e.currentTarget.style.opacity=0.6}>×</span>
                                         </div>
@@ -3664,8 +3667,12 @@ export default function DealCheckOverlay({ ctx }) {
                                               <div style={{display:"flex",flexDirection:"column",gap:4}}>
                                                 {split.map((s,si)=>{
                                                   const it2 = dcInventoryCache.find(x=>x.id===s.imsId);
-                                                  const owned = it2?imsField.qtyOwned(it2):0;
-                                                  const q = Number(s.qty)||0; const over = q>owned;
+                                                  // Real venue/date-aware ceiling, not raw owned qty — this used to show "owned"
+                                                  // with no max/clamp at all, so a split line could be typed past what's
+                                                  // actually free (Fixed-Venue lock + today's real blocks) with only a cosmetic
+                                                  // red color, never a hard stop, unlike every other qty input in this overlay.
+                                                  const avail2 = it2 ? combineAvailability(Number(it2?.qty ?? it2?.qtyOwned) || 0, dcAvailable(it2, fnBlocksForChip, fnIdx), availableAtVenue({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, fns[fnIdx]?.fnVenue, it2)) : 0;
+                                                  const q = Number(s.qty)||0; const over = q>avail2;
                                                   const upd=(patch)=>setSplit(split.map((x,i)=>i===si?{...x,...patch}:x));
                                                   return (
                                                     <div key={si} style={{display:"flex",alignItems:"center",gap:6,fontSize:13}}>
@@ -3674,8 +3681,11 @@ export default function DealCheckOverlay({ ctx }) {
                                                         {subItems.map(x=><option key={x.id} value={x.id}>{x.name} ({imsField.qtyOwned(x)})</option>)}
                                                         {!subItems.some(x=>x.id===s.imsId) && it2 && <option value={s.imsId}>{it2.name}</option>}
                                                       </select>
-                                                      <input type="number" min="0" value={q} onChange={e=>upd({qty:Math.max(0,parseInt(e.target.value)||0)})} style={{width:46,fontSize:13,padding:"3px 4px",borderRadius:5,border:`1px solid ${over?"#EF4444":border}`,background:"transparent",color:over?"#EF4444":"#1A1A2E",textAlign:"center"}}/>
-                                                      <span style={{color:over?"#EF4444":"#10B981",fontSize:11,whiteSpace:"nowrap"}}>{owned} avail</span>
+                                                      <input type="number" min="0" max={avail2||undefined} value={q} onChange={e=>{
+                                                        const raw = Math.max(0,parseInt(e.target.value)||0);
+                                                        upd({qty: avail2>0 ? Math.min(raw, avail2) : raw});
+                                                      }} style={{width:46,fontSize:13,padding:"3px 4px",borderRadius:5,border:`1px solid ${over?"#EF4444":border}`,background:"transparent",color:over?"#EF4444":"#1A1A2E",textAlign:"center"}}/>
+                                                      <span style={{color:over?"#EF4444":"#10B981",fontSize:11,whiteSpace:"nowrap"}}>{avail2} avail</span>
                                                       {split.length>1 && <span onClick={()=>setSplit(split.filter((_,i)=>i!==si))} style={{color:"#EF4444",cursor:"pointer",fontSize:14,padding:"0 2px"}}>×</span>}
                                                     </div>
                                                   );
@@ -3925,7 +3935,7 @@ export default function DealCheckOverlay({ ctx }) {
                                   // broken out per venue below instead of vanishing into one opaque number.
                                   const _mReserved = item ? reservedByVenueToday((dealCheckData?.blocksDetailByDate || {})[_fnDateForRepeat]?.[item.id], eventOrders) : {};
                                   const _mSlack = item ? venueSlackFor(_mFvCfg, _vName, item, _mReserved) : [];
-                                  const _avail = item ? Math.max(0, Math.min(dcAvailable(item, fnBlocksForChip, fnIdx), availableAtVenue(_mFvCfg, _vName, item, _mReserved))) : 0;
+                                  const _avail = item ? combineAvailability(Number(item?.qty ?? item?.qtyOwned) || 0, dcAvailable(item, fnBlocksForChip, fnIdx), availableAtVenue(_mFvCfg, _vName, item, _mReserved)) : 0;
                                   return (
                                     <div key={mi.manualId} className="dci-card" style={{padding:"12px 13px",borderRadius:10,boxShadow:IV.shadow,background:IV.card,border:`1px solid rgba(193,154,107,0.30)`,display:"flex",gap:11,alignItems:"flex-start"}}>
                                       {photo ? <HoverZoom src={thumbUrl(photo, 320)}><img loading="lazy" decoding="async" src={thumbUrl(photo, 56)} alt="" style={{width:54,height:54,borderRadius:7,objectFit:"cover",flexShrink:0,background:"#FFFFFF"}}/></HoverZoom> : <div style={{width:54,height:54,borderRadius:7,background:"#FFFFFF",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,color:IV.ink,flexShrink:0}}>?</div>}
@@ -3960,7 +3970,7 @@ export default function DealCheckOverlay({ ctx }) {
                                           const mAlts = dcInventoryCache.filter(x => x.id !== mi.imsId && String(imsField.subcategory(x)||"").toLowerCase().trim() === sub.toLowerCase().trim());
                                           if (!mAlts.length) return null;
                                           const _fvC = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
-                                          const altAvail = (a) => Math.max(0, Math.min(dcAvailable(a, fnBlocksForChip, fnIdx), availableAtVenue(_fvC, _vName, a, reservedByVenueToday((dealCheckData?.blocksDetailByDate || {})[_fnDateForRepeat]?.[a.id], eventOrders))));
+                                          const altAvail = (a) => combineAvailability(Number(a?.qty ?? a?.qtyOwned) || 0, dcAvailable(a, fnBlocksForChip, fnIdx), availableAtVenue(_fvC, _vName, a, reservedByVenueToday((dealCheckData?.blocksDetailByDate || {})[_fnDateForRepeat]?.[a.id], eventOrders)));
                                           return (
                                             <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center",marginTop:6}}>
                                               <span style={{fontSize:11,color:IV.ink,letterSpacing:0.6,textTransform:"uppercase",fontWeight:600}}>Alternatives:</span>
@@ -4746,7 +4756,7 @@ export default function DealCheckOverlay({ ctx }) {
                         // Same fixed-venue standing-stock ceiling as the main rollup — otherwise an
                         // outdoor deal could bill at cost% for a real shortfall while this conflict
                         // scan stayed silent about it.
-                        const available = Math.min(dcAvailable(node, fnBlocks, fi), availableAtVenue({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, fn.fnVenue, node));
+                        const available = combineAvailability(Number(node?.qty ?? node?.qtyOwned) || 0, dcAvailable(node, fnBlocks, fi), availableAtVenue({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, fn.fnVenue, node));
                         const isShort = nodeQty > available;
                         if (!isShort) return;
                         const dedup = `${node.id}::${fnDate}`;
@@ -5590,7 +5600,7 @@ export default function DealCheckOverlay({ ctx }) {
                         const _mUsedElsewhere = qtyUsedElsewhereInDealCheck(it.id, _mFns, dcCards, dcManualItems, dcKitEdits, dcInventoryCache, { fnIdx, ..._mExclude }, (_mFns[fnIdx]||{}).fnDate || clientDate);
                         const _mReservedIt = reservedByVenueToday((dealCheckData?.blocksDetailByDate || {})[_mDate]?.[it.id], eventOrders);
                         const _mSlackIt = venueSlackFor(_mFvC, _mVenue, it, _mReservedIt);
-                        const avail = Math.max(0, Math.min(dcAvailable(it, _mBlocks, fnIdx), availableAtVenue(_mFvC, _mVenue, it, _mReservedIt)) - _mUsedElsewhere);
+                        const avail = Math.max(0, combineAvailability(Number(it?.qty ?? it?.qtyOwned) || 0, dcAvailable(it, _mBlocks, fnIdx), availableAtVenue(_mFvC, _mVenue, it, _mReservedIt)) - _mUsedElsewhere);
                         const isBlocked = !isCurrent && avail <= 0;
                         return (
                           <div key={it.id} onClick={()=>{

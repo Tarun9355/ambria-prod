@@ -25,6 +25,7 @@ import { qtyUsedElsewhereInBuild } from "../../../lib/studio/dealAvailability";
 import { logDiscountToClientToggle } from "../../../lib/studio/userActions";
 import { todayStr } from "../../../lib/ims/attendance";
 import { isHiddenSubcat, canFulfillShortfall } from "../../../lib/rateCard";
+import { availableAtVenue, combineAvailability } from "../../../lib/ims/fixedVenues";
 import { groupIdsForZones } from "../../../lib/studio/zoneGroups";
 import { CUSTOM_ZONE_TAG_PREFIX } from "../../../lib/studio/keys.js";
 import { thumbUrl, fitUrl } from "../../../lib/studio/thumb.js";
@@ -3221,8 +3222,7 @@ undefined
                         const meta = dc.category==="heavy_saya" ? { icon:<IconCrown size={13}/>, text:"King's date", tone:"#FBBF24" }
                           : dc.category==="non_saya" ? { icon:<IconFiller size={13}/>, text:"Filler date", tone:"#38BDF8" }
                           : { icon:<IconStar size={13}/>, text:"Perfect date", tone:"#34D399" };
-                        const m = Math.round((Number(dc.multiplier)||1)*100)/100;
-                        const tip = `${meta.text}${m!==1?` · rentals ×${m}`:""}`;
+                        const tip = meta.text;
                         return <span className="bd-datebadge" tabIndex={0} role="img" aria-label={tip} data-tip={tip} style={{"--tone":meta.tone}}>{meta.icon}</span>;
                       })()}
                     </div>}
@@ -3231,11 +3231,10 @@ undefined
                   {dd?.isMod && row(<IconAlert size={14}/>, "Moderate demand", "#FBBF24")}
                   {(()=>{
                     if(!fnDate||!dd) return null;
-                    const {dt,booked,ongoing}=dd;
+                    const {dt,ongoing}=dd;
                     const dtLabel=dt==="saya"?"Saya Day":dt==="competition"?"Competition Day":"";
                     return <>
                       {dtLabel && row(<IconAlert size={14}/>, dtLabel, dt==="saya"?"#F87171":pTextM)}
-                      {booked>0 && row(<IconCheck size={14}/>, `${booked} booked`, "#34D399")}
                       {ongoing>0 && row(<IconRepeat size={14}/>, `${ongoing} ongoing`, "#FBBF24")}
                     </>;
                   })()}
@@ -4580,7 +4579,12 @@ undefined
                           // badge) after it was already sitting in the zone. Same getStudioAvailable
                           // call remainingForItem already makes, just without that gate, so a genuinely
                           // 0-free item is flagged at the moment it's picked, not after.
-                          const dateFree=getStudioAvailable(it,activeBlocksForDate);
+                          // combineAvailability folds in the Fixed-Venue lock too — this badge used
+                          // to call getStudioAvailable alone, so it could tell a salesperson stock
+                          // was free even when it was entirely locked as standing allocation at
+                          // another venue, only to be capped correctly once the item was actually
+                          // added (StudioApp.jsx's getElPriceFromInventory already applies this cap).
+                          const dateFree=combineAvailability(Number(it?.qty ?? it?.qtyOwned) || 0, getStudioAvailable(it,activeBlocksForDate), availableAtVenue({ fixedVenues: sharedFloralSettings?.fixedVenues || [], venueParents: venueParents || {} }, aVenue, it));
                           const isDateUnavail=dateFree<=0;
                           return <div key={"inv:"+it.id}
                             onClick={()=>{

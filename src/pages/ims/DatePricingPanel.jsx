@@ -8,15 +8,20 @@ import { SETTINGS_DEFAULTS, DATE_PRICING_LABELS, DATE_PRICING_OWNER_ID } from ".
 // The Last-Minute Booking Override (Filler pricing for any booking within N days, regardless of
 // the date's own category) was removed 2026-10-25 by owner request — a date's price now always
 // comes from its own category, full stop.
-export default function DatePricingPanel({ settings, setSettings, authUser }) {
+export default function DatePricingPanel({ settings, mergeDatePricing, authUser }) {
   const dp = settings.datePricing || SETTINGS_DEFAULTS.datePricing;
   const cats = dp.categories || {};
   const marked = dp.markedDates || {};
   const markedCount = Object.keys(marked).length;
   const isOwner = authUser?.id === DATE_PRICING_OWNER_ID;
 
+  // mergeDatePricing (server-side shallow merge into the datePricing settings key), not setSettings
+  // — every write below used to spread THIS TAB's own local s.datePricing and upsert the whole
+  // value, which is only as fresh as this tab's own copy. See IMS.jsx's mergeDatePricing comment:
+  // confirmed live, this is exactly what kept silently reverting an admin's own multiplier edit.
   function setMultiplier(catKey, val) {
-    setSettings((s) => ({ ...s, datePricing: { ...s.datePricing, categories: { ...s.datePricing.categories, [catKey]: { ...s.datePricing.categories[catKey], multiplier: parseFloat(val) || 1 } } } }));
+    const nextCats = { ...dp.categories, [catKey]: { ...dp.categories[catKey], multiplier: parseFloat(val) || 1 } };
+    mergeDatePricing({ categories: nextCats });
   }
   // Owner ask (2026-10-25): pausing/resuming this silently changes live Studio pricing on every
   // date it touches, so it's now locked behind a code only the owner sets/knows — anyone else
@@ -33,7 +38,7 @@ export default function DatePricingPanel({ settings, setSettings, authUser }) {
       if (!code1 || !code1.trim()) return false;
       const code2 = window.prompt("Re-enter the code to confirm:");
       if (code2 !== code1) { alert("Codes didn't match — nothing changed."); return false; }
-      setSettings((s) => ({ ...s, datePricing: { ...s.datePricing, autoSyncLockCode: code1.trim() } }));
+      mergeDatePricing({ autoSyncLockCode: code1.trim() });
       return true;
     }
     const entered = window.prompt(`Enter the code to ${actionLabel}:`);
@@ -42,7 +47,7 @@ export default function DatePricingPanel({ settings, setSettings, authUser }) {
   }
   function toggleAutoSyncPaused() {
     if (!requireLockCode(dp.autoSyncPaused ? "resume auto-sync" : "pause auto-sync")) return;
-    setSettings((s) => ({ ...s, datePricing: { ...s.datePricing, autoSyncPaused: !s.datePricing?.autoSyncPaused } }));
+    mergeDatePricing({ autoSyncPaused: !dp.autoSyncPaused });
   }
   // Owner-only, enforced here too (not just by hiding the button) — a stray call from outside this
   // component should not be able to change or clear the lock either.
@@ -54,10 +59,10 @@ export default function DatePricingPanel({ settings, setSettings, authUser }) {
     if (next === null) return;
     if (!next.trim()) {
       if (current && !confirm("Remove the lock code? Anyone will be able to pause/resume auto-sync afterward.")) return;
-      setSettings((s) => ({ ...s, datePricing: { ...s.datePricing, autoSyncLockCode: "" } }));
+      mergeDatePricing({ autoSyncLockCode: "" });
       return;
     }
-    setSettings((s) => ({ ...s, datePricing: { ...s.datePricing, autoSyncLockCode: next.trim() } }));
+    mergeDatePricing({ autoSyncLockCode: next.trim() });
   }
 
   const CAT_DOT = { heavy_saya: "bg-red-500", competition: "bg-yellow-400", non_saya: "bg-green-500" };
@@ -128,7 +133,7 @@ export default function DatePricingPanel({ settings, setSettings, authUser }) {
             {/* Owner-only, same as setting one on the Calendar tab — clearing an override is just as
                 much "overriding the dates" as setting one. */}
             {isOwner && (
-              <button onClick={() => setSettings((s) => ({ ...s, datePricing: { ...s.datePricing, markedDates: {} } }))}
+              <button onClick={() => mergeDatePricing({ markedDates: {} })}
                 className="text-xs text-red-500 hover:text-red-700 underline">Clear all overrides</button>
             )}
           </div>
@@ -142,7 +147,7 @@ export default function DatePricingPanel({ settings, setSettings, authUser }) {
                   <span className="text-sm text-gray-700 font-medium">{new Date(date + "T00:00:00").toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric" })}</span>
                   <span className="ml-auto text-xs text-gray-400">{cat?.multiplier}×</span>
                   {isOwner && (
-                    <button onClick={() => setSettings((s) => { const m = { ...s.datePricing.markedDates }; delete m[date]; return { ...s, datePricing: { ...s.datePricing, markedDates: m } }; })}
+                    <button onClick={() => { const m = { ...dp.markedDates }; delete m[date]; mergeDatePricing({ markedDates: m }); }}
                       className="text-red-400 hover:text-red-600 text-sm">×</button>
                   )}
                 </div>

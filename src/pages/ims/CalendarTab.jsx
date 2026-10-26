@@ -10,7 +10,7 @@ import { useAuth } from "../../lib/AuthContext";
 // month grid, colour-codes dates by Studio category, and exposes Date Pricing config.
 // Also the one place ops can cancel a Studio-booked event (releasing its held inventory) — the
 // old dedicated IMS "Events" tab is gone; that was its only manual control worth keeping.
-export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, lmsSyncing, settings, setSettings, eventOrders, setEventOrders, saveEventOrders, blocks, setBlocks, saveBlocks }) {
+export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, lmsSyncing, settings, setSettings, mergeDatePricing, eventOrders, setEventOrders, saveEventOrders, blocks, setBlocks, saveBlocks }) {
   const { user: authUser } = useAuth();
   // "Cancel booking" is IMS's only surviving whole-event release control (see cancelStudioEvent's
   // own comment below) — the nearest real target for block_release, which has no dedicated
@@ -65,11 +65,13 @@ export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, l
   // outside this component should not be able to set or clear an override either.
   function setDateCategory(ds, catKey) {
     if (!isDatePricingOwner) return;
-    setSettings((s) => {
-      const m = { ...(s.datePricing?.markedDates || {}) };
-      if (catKey == null) delete m[ds]; else m[ds] = catKey;
-      return { ...s, datePricing: { ...s.datePricing, markedDates: m } };
-    });
+    // mergeDatePricing (server-side shallow merge), not setSettings — a plain setSettings spread
+    // writes this TAB's whole local datePricing back (see IMS.jsx's mergeDatePricing comment): if
+    // this tab's own categories/autoSyncPaused/etc. happened to be stale, clicking a date here would
+    // silently re-save that staleness on top of whatever's actually correct in the database.
+    const m = { ...(settings.datePricing?.markedDates || {}) };
+    if (catKey == null) delete m[ds]; else m[ds] = catKey;
+    mergeDatePricing({ markedDates: m });
   }
 
   const fmtTime = (t) => {
@@ -429,7 +431,7 @@ export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, l
             <span className="flex-1">Date Pricing Config</span>
             <span aria-hidden="true" className={"shrink-0 text-gray-400 text-xs transition-transform " + (showDatePricing ? "rotate-90" : "")}>▸</span>
           </button>
-          {showDatePricing && <div className="px-4 pb-4 border-t border-gray-100 pt-4"><DatePricingPanel settings={settings} setSettings={setSettings} authUser={authUser} /></div>}
+          {showDatePricing && <div className="px-4 pb-4 border-t border-gray-100 pt-4"><DatePricingPanel settings={settings} mergeDatePricing={mergeDatePricing} authUser={authUser} /></div>}
         </div>
       )}
     </div>
