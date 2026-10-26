@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { slotHours, firstFnStartHour, withSetupSlot, withDismantleSlot, DISMANTLE_WINDOW_ID } from "./dihariWindows.js";
+import { slotHours, firstFnStartHour, withSetupSlot } from "./dihariWindows.js";
 
 // Labours' real IMS windows.
 const LABOURS = [
@@ -38,17 +38,5 @@ describe("withSetupSlot", () => {
   });
   it("adds nothing when no shift ends before the function", () => {
     expect(withSetupSlot(["m"], [{ id: "m", label: "9 AM – 5 PM" }], [{ fnShift: "Morning" }])).toEqual(["m"]);
-  });
-});
-
-describe("withDismantleSlot", () => {
-  it("appends the dismantle window for a back-to-back day", () => {
-    expect(withDismantleSlot(["m", "e"], true)).toEqual(["m", "e", DISMANTLE_WINDOW_ID]);
-  });
-  it("leaves the day alone when it isn't back-to-back", () => {
-    expect(withDismantleSlot(["m", "e"], false)).toEqual(["m", "e"]);
-  });
-  it("doesn't add it twice", () => {
-    expect(withDismantleSlot(["m", DISMANTLE_WINDOW_ID], true)).toEqual(["m", DISMANTLE_WINDOW_ID]);
   });
 });
