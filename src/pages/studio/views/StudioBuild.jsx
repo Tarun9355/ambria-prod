@@ -4803,11 +4803,12 @@ undefined
                                 return {...p,[k]:elems};
                               })}});
                           return ch.length>=2
-                            ? <span onClick={open} role="button" tabIndex={0} title={`Choices in order — Planning decides which one is used. Tap to change.`} style={{display:"inline-flex",alignItems:"center",gap:3,flexWrap:"wrap",cursor:"pointer"}}>
-                                {ch.map((c,i)=><span key={c.id} title={`${ELEMENT_PREF_LABELS[i]}: ${c.name}`} style={{display:"inline-flex",alignItems:"center",gap:3,fontSize:10.5,padding:"1px 7px",borderRadius:6,border:`1px solid ${i===0?"#059669":border}`,color:i===0?"#059669":textS,fontWeight:i===0?700:500,maxWidth:130}}>
-                                  <b style={{fontSize:9.5}}>{i+1}</b><span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.name}</span></span>)}
+                            ? <span onClick={open} role="button" tabIndex={0} title="Choices in order — Planning decides which one is used. Tap to change." style={{display:"flex",flexDirection:"column",gap:5,flexBasis:"100%",width:"100%",marginTop:3,cursor:"pointer"}}>
+                                {ch.map((c,i)=><span key={c.id} title={`${ELEMENT_PREF_LABELS[i]}: ${c.name}`} style={{display:"flex",alignItems:"center",gap:8,minWidth:0,fontSize:12.5,padding:"6px 10px",borderRadius:8,border:`1px solid ${i===0?"#059669":border}`,background:i===0?"rgba(5,150,105,0.07)":"transparent",color:i===0?"#059669":textP,fontWeight:i===0?700:500}}>
+                                  <b style={{flexShrink:0,width:18,height:18,borderRadius:9,background:i===0?"#059669":"rgba(0,0,0,0.08)",color:i===0?"#fff":textS,fontSize:10.5,display:"inline-flex",alignItems:"center",justifyContent:"center"}}>{i+1}</b>
+                                  <span style={{flex:1,minWidth:0,overflowWrap:"anywhere",lineHeight:1.3}}>{c.name}</span></span>)}
                               </span>
-                            : <button onClick={open} title={`Name up to ${ELEMENT_PREF_MAX} ${noun} designs in order of preference — Planning decides which one is used`} style={{padding:"1px 7px",borderRadius:6,border:`1px dashed ${border}`,fontSize:10.5,fontWeight:600,cursor:"pointer",background:"transparent",color:accent}}>＋ Choices</button>;
+                            : <button onClick={open} title={`Name up to ${ELEMENT_PREF_MAX} ${noun} designs in order of preference — Planning decides which one is used`} style={{padding:"4px 11px",borderRadius:7,border:`1px dashed ${border}`,fontSize:12,fontWeight:600,cursor:"pointer",background:"transparent",color:accent}}>＋ Choices</button>;
                         })()}
                         {!!el.mandiId&&(()=>{
                           const mandiCat=(dealCheckData||studioFloralData)?.mandiCatalogue||[];
