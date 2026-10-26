@@ -5199,13 +5199,12 @@ undefined
                       }} title="Qty — how many copies of this same print. Scale By rescales this the same way it rescales elements, Truss Qty and Platform Qty." style={{...S.input,fontSize:11.5,padding:"3px 6px",width:44,marginBottom:0,textAlign:"center"}} />
                       {showCosts&&<span style={{marginLeft:"auto",display:"inline-flex",alignItems:"baseline",gap:6,whiteSpace:"nowrap"}}>
                         <span style={{fontSize:12,fontWeight:700,color:"#0EA5E9"}}>{rate>0?fmt(cost):"— pick material"}</span>
-                        {carriesFlat&&<span title={`A print under ${fmt(SMALL_PRINT_LIMIT)} does not fill a truck: the function pays ${fmt(SMALL_PRINT_CHARGE)} flat transport for its small prints, once`} style={{fontSize:11.5,fontWeight:700,color:"#B45309"}}>+ {fmt(SMALL_PRINT_CHARGE)} transport</span>}
+                        {carriesFlat&&<span title={`A print under ${fmt(SMALL_PRINT_LIMIT)} does not fill a truck: the function pays ${fmt(SMALL_PRINT_CHARGE)} flat transport for its small prints, once`} style={{fontSize:11.5,fontWeight:700,color:"#B45309"}}>+ {fmt(SMALL_PRINT_CHARGE)}</span>}
                       </span>}
                       {!isPhantom&&<span onClick={removePrint} style={{cursor:"pointer",color:"#E11D48",fontWeight:700,fontSize:12.5}}>×</span>}
                     </div>
                     {/* A print under ₹2,000 does not fill a truck, so the function is charged one flat transport amount for its small prints instead
                         (lib/studio/truckPrint.js) — said here, next to the job, so the extra in Transport is not a surprise. */}
-                    {smallJob&&_fsp&&<div style={{marginTop:5,fontSize:11,color:"#B45309"}}>{carriesFlat?`Small print (under ${fmt(SMALL_PRINT_LIMIT)}): ${fmt(SMALL_PRINT_CHARGE)} flat transport is added to this function — once, however many small prints it has.`:`Small print (under ${fmt(SMALL_PRINT_LIMIT)}): the function's ${fmt(SMALL_PRINT_CHARGE)} flat transport is already counted on another small print.`}</div>}
                     {/* Two OPTIONAL fields side by side — they were stacked full-width, making every print
                         row ~3 rows tall for fields most jobs leave blank. */}
                     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginTop:7,alignItems:"start"}}>
