@@ -684,6 +684,16 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
   const [cpLimit, setCpLimit] = useState("");
   // The floor's carpet preferences, 1st to 3rd — Planning decides which one is used (lib/studio/carpetPrefs).
   const prefs = prefsOf(zc);
+  // One picker for all of the preferences: tap up to CARPET_PREF_MAX carpets in the order wanted (the first tapped is the 1st choice).
+  // Save writes them to this floor; Save to all writes the same ones to every carpeted floor of the function. Availability is for the
+  // event date, and a carpet with less free than this floor needs is marked short and cannot be picked.
+  const floorSqftNow = (Number(fd.L) || 0) * (Number(fd.W) || 0);
+  const openCarpetPicker = () => openAvailModal && openAvailModal(zoneKey, 0,
+    { invId: null, imsId: null, name: "Carpet" },
+    { sub: "carpet" },
+    null,
+    { pickHint: `the first you tap is the 1st choice. Planning decides which of the ${CARPET_PREF_MAX} is used. A stock pick only, it does not change the price.`, priceMode: "rental", hidePrice: true, unitLabel: "sqft", neededLabel: floorSqftNow > 0 ? `${Math.round(floorSqftNow)} sqft needed for this floor` : "",
+      multi: { max: CARPET_PREF_MAX, need: Math.round(floorSqftNow), current: prefs.map(p => p.id), onSave: (picks) => sZ(setPrefsPatch(picks)), onSaveAll: onCarpetAll ? ((picks) => onCarpetAll(picks, zoneKey, rowIdx)) : null } });
   const guardFd = (d, n) => {
     const rem = prefs.length && carpetRemainingOf ? carpetRemainingOf(zoneKey, rowIdx) : null;
     if (rem != null) {
@@ -820,6 +830,11 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
                 <div style={{flex:1.5,minWidth:150}}>
                   <div style={{fontSize:11.5,color:textS,marginBottom:3,display:"inline-flex",alignItems:"center",gap:5}}>
                     <IconCarpet size={12}/>Carpet
+                    {/* Stock availability for this date: opens the picker where up to four carpets are chosen. */}
+                    {openAvailModal && zc.cpT!==CARPET_OFF && !isNewCarpet && <span onClick={openCarpetPicker} role="button" tabIndex={0}
+                      onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();openCarpetPicker();}}}
+                      title={prefs.length?`${prefs.length} of ${CARPET_PREF_MAX} carpets picked — tap to check availability on the event date & change`:`Check carpet availability on the event date & pick up to ${CARPET_PREF_MAX}`}
+                      style={{cursor:"pointer",display:"inline-flex",opacity:prefs.length?1:0.6}}><IconBox size={12}/></span>}
                   </div>
                   {/* The material dropdown is the billed rate. Once a stock carpet is picked it steps aside for the
                       preferences below (clearing every preference brings it back, to change the rate or turn carpet off). */}
@@ -845,19 +860,11 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
                       is free on the day; Deal Check and Planning show the same three. The 1st choice is also what older readers
                       (stock checks, Deal Check's carpet card) still see as the pick. */}
                   {openAvailModal && zc.cpT!==CARPET_OFF && !isNewCarpet && (()=>{
-                    const floorSqft=(Number(fd.L)||0)*(Number(fd.W)||0);
-                    // One picker for all three: tap up to three carpets in the order wanted (the first tapped is the 1st choice).
-                    // Save writes them to this floor; Save to all writes the same three to every carpeted floor of the function.
-                    const open=()=>openAvailModal(zoneKey, 0,
-                      {invId:null, imsId:null, name:"Carpet"},
-                      {sub:"carpet"},
-                      null,
-                      {pickHint:`the first you tap is the 1st choice. Planning decides which of the ${CARPET_PREF_MAX} is used. A stock pick only, it does not change the price.`, priceMode:"rental", hidePrice:true, unitLabel:"sqft", neededLabel:floorSqft>0?`${Math.round(floorSqft)} sqft needed for this floor`:"",
-                       multi:{max:CARPET_PREF_MAX, need:Math.round(floorSqft), current:prefs.map(p=>p.id), onSave:(picks)=>sZ(setPrefsPatch(picks)), onSaveAll:onCarpetAll?((picks)=>onCarpetAll(picks, zoneKey, rowIdx)):null}});
+                    const floorSqft=floorSqftNow;
+                    const open=openCarpetPicker;
                     const done=prefs.length>=CARPET_PREF_MAX;
-                    // Nothing picked yet: no empty slots, just the way in. The slots appear once a carpet is chosen.
-                    if(!prefs.length) return <button type="button" onClick={()=>open()} title={`Pick up to ${CARPET_PREF_MAX} stock carpets for this floor — Planning decides which is used`}
-                      style={{marginTop:5,display:"inline-flex",alignItems:"center",gap:5,fontSize:11,fontWeight:600,padding:"3px 9px",borderRadius:999,border:`1px dashed ${accent}`,background:"transparent",color:accent,cursor:"pointer"}}><IconBox size={11}/> Pick carpets</button>;
+                    // Nothing picked yet: no empty slots. The icon beside the Carpet label is the way in; the slots appear once a carpet is chosen.
+                    if(!prefs.length) return null;
                     return <div style={{marginTop:5}}>
                       <div style={{display:"flex",flexDirection:"column",gap:4}}>
                         {Array.from({length:CARPET_PREF_MAX},(_,slot)=>{
