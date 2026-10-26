@@ -59,6 +59,12 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
   // displayed/matched name is read live from here, so a rename in IMS's own Venues editor shows up
   // immediately instead of needing a manual re-pick.
   const properties = venues.properties || [];
+  // Sub-venues (halls/rooms) under a property — same lookup VenuesEditor.jsx uses. Standing
+  // inventory itself is still tracked at the PROPERTY level only (fixedVenueFor/standingQty match
+  // by property, not sub-venue — lib/ims/fixedVenues.js), so this never changes labour/cost calc;
+  // it only lets a property with sub-venues record WHICH hall each item's standing qty actually
+  // sits in, for the ops team's own reference.
+  const subVenuesOf = (propertyId) => (venues.inhouse || []).filter((sv) => sv.propertyId === propertyId).sort((a, b) => a.name.localeCompare(b.name));
   // Fixed-venue repeat discount is defined ONCE per sub-category (applies to all fixed venues). A repeat
   // item bills at its sub-category %; a sub-category with no % → full rental. No other fixed-venue formula.
   const subDisc = (settings.fixedVenueSubcatDiscount && typeof settings.fixedVenueSubcatDiscount === "object") ? settings.fixedVenueSubcatDiscount : {};
@@ -288,7 +294,9 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
       )}
 
       <div className="space-y-4">
-        {active && [active].map((v) => (
+        {active && [active].map((v) => {
+          const subs = subVenuesOf(v.propertyId);
+          return (
           <div key={v.id} className="border rounded-xl p-4 bg-gray-50">
             <div className="flex items-center gap-3 flex-wrap mb-3">
               <select value={v.name} onChange={(e) => { const n = e.target.value; const property = properties.find((p) => p.name === n); updVenue(v.id, { name: n, propertyId: property?.id || null }); }} className="border rounded-lg px-3 py-1.5 text-sm font-semibold flex-1 min-w-[160px] bg-white">
@@ -412,6 +420,42 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
                       At the limit — all {stock} in stock are assigned ({heldBy}).
                     </div>
                   )}
+                  {/* Sub-venue bifurcation — only shown when this property actually has sub-venues
+                      (halls/rooms) defined in Venues. Pure record-keeping: which hall each unit of
+                      this item's standing qty sits in. Doesn't feed labour/cost calc (that still
+                      matches by property only), just answers "where exactly is it installed". */}
+                  {subs.length > 0 && (() => {
+                    const bif = (it.bifurcation && typeof it.bifurcation === "object") ? it.bifurcation : {};
+                    const assigned = subs.reduce((s, sv) => s + (Number(bif[sv.id]) || 0), 0);
+                    const remaining = (Number(it.qty) || 0) - assigned;
+                    return (
+                      <div className="basis-full flex items-center gap-1.5 flex-wrap mt-1 pt-1 border-t border-dashed border-gray-200">
+                        <span className="text-[10px] text-gray-400">Bifurcation:</span>
+                        {subs.map((sv) => (
+                          <span key={sv.id} className="inline-flex items-center gap-1 bg-indigo-50 border border-indigo-100 rounded px-1.5 py-0.5">
+                            <span className="text-[10px] text-indigo-700">{sv.name}</span>
+                            <input type="number" min="0"
+                              value={numDraft[draftKey(v.id, it.invId, `bif:${sv.id}`)] ?? (bif[sv.id] ?? "")}
+                              onChange={(e) => {
+                                const raw = e.target.value;
+                                setNumDraft((d) => ({ ...d, [draftKey(v.id, it.invId, `bif:${sv.id}`)]: raw }));
+                                const n = parseInt(raw, 10);
+                                const nextBif = { ...bif };
+                                if (Number.isFinite(n) && n > 0) nextBif[sv.id] = n; else delete nextBif[sv.id];
+                                updItem(v.id, it.invId, { bifurcation: nextBif });
+                              }}
+                              onBlur={() => setNumDraft((d) => { const next = { ...d }; delete next[draftKey(v.id, it.invId, `bif:${sv.id}`)]; return next; })}
+                              placeholder="0" className="w-10 border border-indigo-200 rounded px-1 py-0.5 text-[11px] text-center" />
+                          </span>
+                        ))}
+                        {remaining !== 0 && (
+                          <span className={"text-[10px] " + (remaining > 0 ? "text-amber-600" : "text-red-500")}>
+                            {remaining > 0 ? `${remaining} unassigned` : `${-remaining} over qty`}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
                 );
               })}
@@ -547,7 +591,8 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
               );
             })()}
           </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
