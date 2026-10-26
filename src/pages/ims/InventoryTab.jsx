@@ -117,6 +117,18 @@ export default function InventoryTab({ inventory, setInventory, functions, setFu
     return mine.length ? mine : all;
   })();
   const defaultAddCat = addCatLabels.includes("Florals") ? "Florals" : (addCatLabels[0] || "Florals");
+  // Sub-categories to offer in an add form: the standard list for the category PLUS those the inventory already files under it (the filter chips
+  // list those, e.g. "Rug carpet" under Tenting, but the standard list may not) and the form's current one — so what you can filter by you can add to.
+  const addSubcatsFor = (cat, current) => {
+    const out = [...subcatsForCat(cat)];
+    const seen = new Set(out.map((x) => String(x).toLowerCase().trim()));
+    (inventory || []).forEach((i) => {
+      const sc = String(i.subCat || i.subcategory || "").trim();
+      if (sc && normCat(i.cat) === normCat(cat) && !seen.has(sc.toLowerCase())) { seen.add(sc.toLowerCase()); out.push(sc); }
+    });
+    if (current && !seen.has(String(current).toLowerCase().trim())) out.push(current);
+    return out;
+  };
 
   const [subOtherAdd, setSubOtherAdd] = useState(false); // Add modal "Other" mode
   const [search, setSearch] = useState("");
@@ -460,7 +472,13 @@ Rules:
     // Reveal the new row: the item is appended at the END, so with active filters or while on
     // page 1 of 20+ it would be off-screen — making a successful save look like "added but not
     // shown". Clear filters and jump to the last page (where it lands), then highlight it.
-    setSearch(""); setFilterCat("All"); setFilterSubCat("All"); setFilterType("All"); setFilterNeedsReview(false);
+    // Reset only the filters the new item would not pass; one it passes stays, so adding inside Tenting > Rug carpet keeps you there.
+    const catOk = filterCat === "All" || normCat(form.cat) === normCat(filterCat);
+    if (!catOk) { setFilterCat("All"); setFilterSubCat("All"); }
+    else if (filterSubCat !== "All" && normSub(form.subCat) !== normSub(filterSubCat)) setFilterSubCat("All");
+    if (filterType !== "All" && form.type !== filterType) setFilterType("All");
+    if (search && !String(form.name || "").toLowerCase().includes(String(search).toLowerCase().trim())) setSearch("");
+    setFilterNeedsReview(false);
     setInvPage(Math.max(0, Math.ceil(newTotal / INV_PAGE_SIZE) - 1));
     setJustAddedId(newId);
     setTimeout(() => setJustAddedId((cur) => (cur === newId ? null : cur)), 6000);
@@ -822,7 +840,7 @@ Rules:
           <div className="ml-auto flex gap-2">
             <button onClick={() => { setMoveFromSub(""); setMoveToSub(""); setMoveSubcatModal(true); }}
               className="bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 px-4 py-2 rounded-lg text-sm whitespace-nowrap">🔀 Move Sub-Category</button>
-            {canAdd && <button onClick={() => { setPhotoModal(false); setBulkModal(false); setImportModal(false); setForm({ name: "", cat: defaultAddCat, subCat: "", type: "Budgeted", itemClass: "discrete", qty: "", unit: "Piece", loc: "Production House", price: "", cost: "", breakagePct: 0, dimL: "", dimW: "", dimH: "", dimUnit: "Feet", printL: "", printW: "", printUnit: "Feet", baseColour: "", paintCost: "", notes: "", img: "" }); setPhotoImg(null); setPhotoReady(false); setPhotoError(""); setAddModal(true); }} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm whitespace-nowrap">+ Add Item</button>}
+            {canAdd && <button onClick={() => { setPhotoModal(false); setBulkModal(false); setImportModal(false); { const fc = filterCat !== "All" ? addCatLabels.find((c) => normCat(c) === normCat(filterCat)) : null; setForm({ name: "", cat: fc || defaultAddCat, subCat: fc && filterSubCat !== "All" ? filterSubCat : "", type: "Budgeted", itemClass: "discrete", qty: "", unit: "Piece", loc: "Production House", price: "", cost: "", breakagePct: 0, dimL: "", dimW: "", dimH: "", dimUnit: "Feet", printL: "", printW: "", printUnit: "Feet", baseColour: "", paintCost: "", notes: "", img: "" }); } setPhotoImg(null); setPhotoReady(false); setPhotoError(""); setAddModal(true); }} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm whitespace-nowrap">+ Add Item</button>}
           </div>
         </div>
 
@@ -1125,7 +1143,7 @@ Rules:
                     }}
                     className="mt-1 w-full border rounded-lg px-3 py-2 text-sm bg-white">
                     <option value="">— Select —</option>
-                    {subcatsForCat(form.cat).map((sc) => <option key={sc} value={sc}>{sc}</option>)}
+                    {addSubcatsFor(form.cat, subOtherAdd ? "" : form.subCat).map((sc) => <option key={sc} value={sc}>{sc}</option>)}
                     <option value={SUBCAT_OTHER}>✏️ Other (custom)…</option>
                   </select>
                   {subOtherAdd && (
