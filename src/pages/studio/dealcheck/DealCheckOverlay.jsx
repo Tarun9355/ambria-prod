@@ -3273,7 +3273,7 @@ export default function DealCheckOverlay({ ctx }) {
                                                 ) : null;
                                               })}
                                               {prefs.length < CARPET_PREF_MAX && (
-                                                <button type="button" onClick={()=>openSlot()} title="Add more of your three carpet choices"
+                                                <button type="button" onClick={()=>openSlot()} title={`Add more of your ${CARPET_PREF_MAX} carpet choices`}
                                                   style={{display:"inline-flex",alignItems:"center",gap:6,padding:"4px 11px",borderRadius:999,border:`1px dashed ${TILE_BORDER}`,background:"transparent",color:INK_3,cursor:"pointer",fontSize:11.5,fontWeight:600}}>
                                                   + Pick more
                                                 </button>
