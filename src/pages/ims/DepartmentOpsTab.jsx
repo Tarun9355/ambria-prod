@@ -3350,7 +3350,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         const fd = row.floorDims || {};
         const area = Math.round((Number(fd.L) || 0) * (Number(fd.W) || 0));
         const dec = carpetDecided[carpetKey(fi, zk, ri)];
-        const chosen = dec ? prefs.find(p => p.id === dec.id) : null;
+        // Deal Check's PDF lists all three sales picked; Planning's lists the decided one (all three until one is decided).
+        const chosen = dec && !pdfAllCarpetsRef.current ? prefs.find(p => p.id === dec.id) : null;
         const lbl = ri === 0 ? "" : ` (floor ${ri + 1})`;
         const RANK = ["1st", "2nd", "3rd"];
         (chosen ? [{ p: chosen, role: "To use" + lbl }] : prefs.map((p, i) => ({ p, role: `${RANK[i] || i + 1 + "th"} choice${lbl}` }))).forEach(({ p, role }) => {
@@ -4634,6 +4635,9 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
   // is not drawn from a half-loaded page. Alerts (a skipped section…) are passed on instead of popping up
   // in a frame nobody can see.
   const autoPdfStartedRef = useRef(false);
+  // True only while the PDF started from Deal Check is being built: that book shows all three carpets sales picked for a
+  // floor; the PDF made here in Planning shows just the one Planning decided (the three only until it is decided).
+  const pdfAllCarpetsRef = useRef(false);
   useEffect(() => {
     if (!autoPdfFor || autoPdfStartedRef.current || selId !== autoPdfFor || !sel) return undefined;
     const t = setTimeout(async () => {
@@ -4646,8 +4650,9 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
       let ok = false;
       try {
         if (!deptsWithWork.length) { tell("error", { reason: "No department plan on this event yet — sync it from Deal Check first" }); return; }
+        pdfAllCarpetsRef.current = true;
         ok = await exportPdf(deptsWithWork);
-      } finally { window.alert = realAlert; }
+      } finally { window.alert = realAlert; pdfAllCarpetsRef.current = false; }
       tell(ok ? "done" : "error", { notes });
       onAutoPdfDone?.();
     }, 3000);
