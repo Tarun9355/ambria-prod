@@ -8,6 +8,7 @@ import { DEPTS as SHARED_DEPTS, catToDept as sharedCatToDept, userDepartments } 
 import { TabsMenu, useConfirm } from "../../components/ui";
 import { IconPrinter } from "../../components/icons";
 import { hasIMSPerm } from "../../lib/ims/constants";
+import { fetchOpsExpenses } from "../../lib/ims/opsExpenses";
 import { ZONE_META, trussBaseArea, CARPET_OFF } from "../../lib/studio/taxonomy";
 import { prefsOf } from "../../lib/studio/carpetPrefs";
 import { carpetFloorsOf, planCarpets, carpetKey } from "../../lib/ims/carpetPlan";
@@ -1338,6 +1339,19 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     : (sysPlan.length ? sysPlan.map(p => ({ type: p.type, count: p.count, rate: p.rate || Number(dihari[p.type]?.rate) || 0, basis: p.basis || "", sysCount: p.count, sysRate: p.rate || 0, sysCost: (p.count || 0) * (p.rate || 0), days: 1, _extra: true }))
       : deptTypes.map(t => ({ type: t, count: "", rate: Number(dihari[t]?.rate) || 0, basis: "", sysCount: null, sysRate: 0, sysCost: 0, days: 1, _extra: true })));
   const expenses = Array.isArray(deptData.expenses) ? deptData.expenses : [];
+  // Real on-site expenses logged in the separate Ambria Ops app, pulled in read-only alongside the
+  // manually-typed rows above — see lib/ims/opsExpenses.js for the join (both apps independently
+  // store the same raw LMS entry number). Silently empty for a deal never synced from an LMS lead,
+  // or while Ops hasn't deployed its own endpoint yet — this is a nice-to-have, never a blocker.
+  const [opsExpenses, setOpsExpenses] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    const contractNo = sel?.lmsLeadId;
+    if (!contractNo) { setOpsExpenses([]); return; }
+    fetchOpsExpenses(contractNo, dept).then((rows) => { if (!cancelled) setOpsExpenses(rows); });
+    return () => { cancelled = true; };
+  }, [sel?.id, sel?.lmsLeadId, dept]);
+  const opsExpenseTotal = opsExpenses.reduce((s, e) => s + (Number(e.amount) || 0), 0);
   const realMandi = deptData.realMandi || "";
   // Manual discount the department head grants the salesperson on this deal — a goodwill/incentive
   // figure the head types in directly, unrelated to Deal Check's own venue/repeat pricing discounts
@@ -1588,7 +1602,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     }));
   };
   const mpEdited = Object.keys(mpOverrides).length > 0 || Object.keys(mpDay).length > 0 || Object.keys(mpWin).length > 0 || Object.keys(mpWinCount).length > 0 || (Array.isArray(mpExtra) && mpExtra.length > 0);
-  const expenseTotal = expenses.reduce((s, e) => s + (Number(e.amount) || 0), 0);
+  // Manual rows + whatever's synced from Ops — shown as two separate lists below so a head can see
+  // which is which, not silently merged into one anonymous total.
+  const expenseTotal = expenses.reduce((s, e) => s + (Number(e.amount) || 0), 0) + opsExpenseTotal;
   const realMandiNum = Number(realMandi) || 0;
 
   const setMp = (i, key, val) => {
@@ -6398,8 +6414,20 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                     </div>
                   );
                 })()}
+                {opsExpenses.length > 0 && (
+                  <>
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-gray-500 pt-1">Synced from Ops</div>
+                    {opsExpenses.map((ex, i) => (
+                      <div key={"ops" + i} className="flex items-center gap-2 bg-blue-50/60 rounded-lg px-3 h-9">
+                        <span className="min-w-0 flex-1 truncate text-sm text-gray-700" title={ex.label}>{ex.label || "Expense"}</span>
+                        <span className="shrink-0 text-xs text-gray-400">{ex.date || ""}{ex.loggedBy ? ` · ${ex.loggedBy}` : ""}</span>
+                        <span className="shrink-0 w-24 text-right text-sm font-semibold tabular-nums text-gray-800">{fmt(Number(ex.amount) || 0)}</span>
+                      </div>
+                    ))}
+                  </>
+                )}
                 {expenses.length > 0 && (
-                  <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-gray-500 pt-1">On-site expenses</div>
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-gray-500 pt-1">On-site expenses (manual)</div>
                 )}
                 {expenses.map((ex, i) => (
                   <div key={i} className="flex items-center gap-2">

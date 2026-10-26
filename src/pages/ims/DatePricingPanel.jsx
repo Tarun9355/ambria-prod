@@ -1,5 +1,5 @@
 import { PRICING_CAT_STYLES } from "../../lib/inventory/constants";
-import { SETTINGS_DEFAULTS, DATE_PRICING_LABELS } from "../../lib/ims/constants";
+import { SETTINGS_DEFAULTS, DATE_PRICING_LABELS, DATE_PRICING_OWNER_ID } from "../../lib/ims/constants";
 
 // Faithful copy of the reference IMS DatePricingPanel (shown in Calendar → Date Pricing Config).
 // Marking individual dates now happens directly on the Calendar tab's main month grid (click a
@@ -8,18 +8,12 @@ import { SETTINGS_DEFAULTS, DATE_PRICING_LABELS } from "../../lib/ims/constants"
 // The Last-Minute Booking Override (Filler pricing for any booking within N days, regardless of
 // the date's own category) was removed 2026-10-25 by owner request — a date's price now always
 // comes from its own category, full stop.
-// Tarun's own `users` row id (confirmed 2026-10-25 via `select id from users where name ilike
-// '%tarun%'`) — not a role check. "Admin" is shared by several people; setting/changing the
-// Auto-Sync lock code is restricted to this one specific account by owner request, so another
-// admin can't quietly set or clear a lock Tarun didn't put there himself.
-const OWNER_USER_ID = "U84ED1E8439";
-
 export default function DatePricingPanel({ settings, setSettings, authUser }) {
   const dp = settings.datePricing || SETTINGS_DEFAULTS.datePricing;
   const cats = dp.categories || {};
   const marked = dp.markedDates || {};
   const markedCount = Object.keys(marked).length;
-  const isOwner = authUser?.id === OWNER_USER_ID;
+  const isOwner = authUser?.id === DATE_PRICING_OWNER_ID;
 
   function setMultiplier(catKey, val) {
     setSettings((s) => ({ ...s, datePricing: { ...s.datePricing, categories: { ...s.datePricing.categories, [catKey]: { ...s.datePricing.categories[catKey], multiplier: parseFloat(val) || 1 } } } }));
@@ -131,8 +125,12 @@ export default function DatePricingPanel({ settings, setSettings, authUser }) {
         <div className="bg-white border rounded-2xl overflow-hidden">
           <div className="px-4 py-3 bg-gray-50 border-b flex items-center justify-between flex-wrap gap-2">
             <h4 className="font-bold text-gray-800">📋 Manually Overridden Dates ({markedCount})</h4>
-            <button onClick={() => setSettings((s) => ({ ...s, datePricing: { ...s.datePricing, markedDates: {} } }))}
-              className="text-xs text-red-500 hover:text-red-700 underline">Clear all overrides</button>
+            {/* Owner-only, same as setting one on the Calendar tab — clearing an override is just as
+                much "overriding the dates" as setting one. */}
+            {isOwner && (
+              <button onClick={() => setSettings((s) => ({ ...s, datePricing: { ...s.datePricing, markedDates: {} } }))}
+                className="text-xs text-red-500 hover:text-red-700 underline">Clear all overrides</button>
+            )}
           </div>
           <p className="text-xs text-gray-400 px-4 pt-2">Set from the Calendar tab's main month grid — click any date, then pick a category. Anything not listed here prices off the auto-synced calendar category.</p>
           <div className="divide-y max-h-48 overflow-y-auto">
@@ -143,8 +141,10 @@ export default function DatePricingPanel({ settings, setSettings, authUser }) {
                   <span className={"text-xs px-2 py-0.5 rounded-full font-medium border " + (PRICING_CAT_STYLES[catKey] || "")}>{DATE_PRICING_LABELS[catKey] || cat?.label || catKey}</span>
                   <span className="text-sm text-gray-700 font-medium">{new Date(date + "T00:00:00").toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric" })}</span>
                   <span className="ml-auto text-xs text-gray-400">{cat?.multiplier}×</span>
-                  <button onClick={() => setSettings((s) => { const m = { ...s.datePricing.markedDates }; delete m[date]; return { ...s, datePricing: { ...s.datePricing, markedDates: m } }; })}
-                    className="text-red-400 hover:text-red-600 text-sm">×</button>
+                  {isOwner && (
+                    <button onClick={() => setSettings((s) => { const m = { ...s.datePricing.markedDates }; delete m[date]; return { ...s, datePricing: { ...s.datePricing, markedDates: m } }; })}
+                      className="text-red-400 hover:text-red-600 text-sm">×</button>
+                  )}
                 </div>
               );
             })}

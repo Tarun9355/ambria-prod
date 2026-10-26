@@ -228,8 +228,21 @@ export async function fetchLmsDeptContracts(dept, onProgress) {
 export function crossReferenceContracts(contracts, eventOrders) {
   if (!eventOrders?.length) return contracts;
   const normalize = (s) => String(s || "").trim().toLowerCase().replace(/\s+/g, " ");
+  // Exact-id match first — a contract's own entryNo IS the same raw LMS field Studio stores as
+  // client_ledger.lmsLeadId (carried onto its event_orders row), so this is unambiguous wherever a
+  // deal was actually linked to its LMS lead — no guesswork, unlike the name/date fallback below,
+  // which misses (or could mismatch) whenever a Studio deal's client name doesn't read anything
+  // like the LMS guest name — a company name, an agent, or, confirmed live, a leftover test-client
+  // name left on a real booked deal ("Taj Test Client" linked to LMS lead #00433 / guest "Vicky
+  // Arora" — no name-based signal could ever have caught that).
+  const eoByLmsLeadId = new Map();
+  eventOrders.forEach((eo) => { if (eo.lmsLeadId) eoByLmsLeadId.set(String(eo.lmsLeadId), eo); });
 
   return contracts.map((c) => {
+    if (c.entryNo) {
+      const idMatch = eoByLmsLeadId.get(String(c.entryNo));
+      if (idMatch) return { ...c, matchedEoId: idMatch.id, matchType: "id" };
+    }
     const cName = normalize(c.guestName);
     const cBride = normalize(c.brideName);
     const cGroom = normalize(c.groomName);
