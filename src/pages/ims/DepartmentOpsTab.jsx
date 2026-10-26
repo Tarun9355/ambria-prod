@@ -4288,8 +4288,13 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
         const when = (d) => { try { return d ? new Date(d + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : ""; } catch { return d || ""; } };
         const lines = undecided.slice(0, 8).map(r => `• ${r.zoneName}${[r.fnLabel, when(r.date)].filter(Boolean).length ? " — " + [r.fnLabel, when(r.date)].filter(Boolean).join(" · ") : ""}${r.status === "none" ? " (sales picked no carpet)" : ""}`);
         if (undecided.length > 8) lines.push(`…and ${undecided.length - 8} more`);
-        alert(`Carpet not selected — the PDF was not made.\n\nChoose the carpet for:\n${lines.join("\n")}\n\nOpen Tenting → Carpet plan, pick a carpet for each floor, then download again.`);
-        if (dept === "Tenting") setModal("carpet");
+        // The site's own dialog (not the browser's alert): says what is missing and takes them straight to the Carpet plan.
+        const go = await confirm({
+          title: "Carpet not selected",
+          body: `The PDF was not made. Choose the carpet for ${undecided.length === 1 ? "this floor" : "these floors"} first:\n\n${lines.join("\n")}\n\nPick a carpet for each in Tenting → Carpet plan, then download again.`,
+          confirmLabel: "Open Carpet plan", danger: false,
+        });
+        if (go && (dept === "Tenting" || deptOptions.includes("Tenting"))) { if (dept !== "Tenting") setDept("Tenting"); setModal("carpet"); }
         return false;
       }
     }
