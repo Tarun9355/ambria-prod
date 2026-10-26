@@ -5278,8 +5278,9 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                   <div className="flex items-center gap-2 min-w-0">
                     <div className="min-w-0 text-[16px] sm:text-[20px] font-semibold tracking-[-0.01em] text-gray-900 leading-tight sm:leading-snug truncate">{dept} — {sel.clientName || "Event"}</div>
                     {dept === "Fabric" && upcomingFabricShort.length > 0 && (
-                      <button type="button" onClick={() => setModal("fabshort")} title="Upcoming events short on fabric — order ahead"
-                        className="shrink-0 inline-flex items-center gap-1 rounded-full bg-red-50 ring-1 ring-red-200 hover:bg-red-100 text-red-700 text-[11px] sm:text-[12px] font-semibold px-2.5 py-0.5 cursor-pointer transition-colors">
+                      <button type="button" onClick={() => setModal(m => m === "fabshort" ? null : "fabshort")} aria-pressed={modal === "fabshort"}
+                        title={modal === "fabshort" ? "Close the fabric shortfalls" : "Upcoming events short on fabric — order ahead"}
+                        className={"shrink-0 inline-flex items-center gap-1 rounded-full ring-1 text-[11px] sm:text-[12px] font-semibold px-2.5 py-0.5 cursor-pointer transition-colors " + (modal === "fabshort" ? "bg-red-600 ring-red-600 text-white hover:bg-red-700" : "bg-red-50 ring-red-200 text-red-700 hover:bg-red-100")}>
                         <span aria-hidden="true">⚠</span>Fabric shortfalls · {upcomingFabricShort.length}
                       </button>
                     )}
