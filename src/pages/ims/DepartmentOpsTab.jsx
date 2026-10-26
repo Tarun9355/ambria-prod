@@ -6760,6 +6760,17 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
               // None of the stock carpets can be used (every one short, or the floor is bigger than anything owned): the carpet is arranged outside stock.
               const decideOther = (r) => saveDept({ carpetChoice: { ...choiceAll, [r.key]: { other: true, name: "Arranged separately", date: r.date, fnType: r.fnLabel, by: authUser?.name || "—", at: Date.now() } } });
               const undecide = (key) => { const n2 = { ...choiceAll }; delete n2[key]; saveDept({ carpetChoice: n2 }); };
+              // ── ONE CARPET, EVERY FLOOR THAT OFFERS IT ── the same carpet is often sales' pick on several
+              // floors. Floors not yet decided whose own choices include it (and where it is not short)
+              // take it in one go; a floor already decided is never overwritten. Each floor is checked on
+              // its own figures, so the over-commit warning above still flags floors that together need
+              // more of it on one date than is free.
+              const sameCarpetRows = (o) => plan.rows.filter(x => x.status !== "decided" && x.options.some(p => p.id === o.id && !(p.known && !p.enough)));
+              const decideAll = (o) => {
+                const next = { ...choiceAll };
+                sameCarpetRows(o).forEach(x => { next[x.key] = { id: o.id, name: o.name, date: x.date, fnType: x.fnLabel, by: authUser?.name || "—", at: Date.now() }; });
+                saveDept({ carpetChoice: next });
+              };
               const dayLbl = (d) => { try { return d ? new Date(d + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : "the event date"; } catch { return d || "the event date"; } };
               const overNames = Object.keys(plan.over).map(id => ({ id, ...plan.over[id], name: plan.rows.flatMap(r => r.options).find(o => o.id === id)?.name || id }));
               const RANK = ["1st", "2nd", "3rd", "4th"];
@@ -6818,6 +6829,10 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                                     : <button type="button" disabled={o.known && !o.enough} onClick={() => decide(r, o)}
                                         title={o.known && !o.enough ? `Short on this date — only ${Math.round(o.free)} sqft free (+${Math.round(o.reuse?.qty || 0)} laid here), the floor needs ${Math.round(r.area)}` : undefined}
                                         className={"text-[12px] font-semibold rounded-md px-2 py-1 ring-1 " + (o.known && !o.enough ? "ring-gray-200 text-gray-400 cursor-not-allowed" : "ring-gray-300 text-gray-800 hover:bg-gray-50 cursor-pointer")}>Use this</button>}
+                                  {!on && !(o.known && !o.enough) && (() => { const n = sameCarpetRows(o).length; return n > 1 ? (
+                                    <button type="button" onClick={() => decideAll(o)} title={`Use ${o.name} on every floor that has it as a choice and is not decided yet`}
+                                      className="text-[12px] font-semibold rounded-md px-2 py-1 bg-gray-900 text-white hover:bg-black cursor-pointer">Use on all {n} floors</button>
+                                  ) : null; })()}
                                 </div>
                               );
                             })}
