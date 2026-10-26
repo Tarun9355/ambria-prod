@@ -5349,7 +5349,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                     {dept === "Fabric" && upcomingFabricShort.length > 0 && (
                       <button type="button" onClick={() => setModal(m => m === "fabshort" ? null : "fabshort")} aria-pressed={modal === "fabshort"}
                         title={modal === "fabshort" ? "Close the fabric shortfalls" : "Upcoming events short on fabric — order ahead"}
-                        className={"shrink-0 inline-flex items-center gap-1 rounded-full ring-1 text-[11px] sm:text-[12px] font-semibold px-2.5 py-0.5 cursor-pointer transition-colors " + (modal === "fabshort" ? "bg-red-600 ring-red-600 text-white hover:bg-red-700" : "bg-red-50 ring-red-200 text-red-700 hover:bg-red-100")}>
+                        className={"shrink-0 inline-flex items-center gap-1 whitespace-nowrap rounded-full ring-1 text-[11px] sm:text-[12px] font-semibold px-2.5 py-0.5 cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 " + (modal === "fabshort" ? "bg-red-600 ring-red-600 text-white hover:bg-red-700" : "bg-red-50 ring-red-200 text-red-700 hover:bg-red-100")}>
                         <span aria-hidden="true">⚠</span>Fabric shortfalls · {upcomingFabricShort.length}
                       </button>
                     )}
@@ -6869,7 +6869,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                                         className={"text-[12px] font-semibold rounded-md px-2 py-1 ring-1 " + (o.known && !o.enough ? "ring-gray-200 text-gray-400 cursor-not-allowed" : "ring-gray-300 text-gray-800 hover:bg-gray-50 cursor-pointer")}>Use this</button>}
                                   {!on && !(o.known && !o.enough) && (() => { const n = sameCarpetRows(o).length; return n > 1 ? (
                                     <button type="button" onClick={() => decideAll(o)} title={`Use ${o.name} on every floor that has it as a choice and is not decided yet`}
-                                      className="text-[12px] font-semibold rounded-md px-2 py-1 bg-gray-900 text-white hover:bg-black cursor-pointer">Use on all {n} floors</button>
+                                      className="text-[12px] font-semibold rounded-md px-2 py-1 bg-gray-100 text-gray-800 hover:bg-gray-200 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1">Use on all {n} floors</button>
                                   ) : null; })()}
                                 </div>
                               );

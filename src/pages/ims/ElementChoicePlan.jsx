@@ -75,7 +75,7 @@ export default function ElementChoicePlan({ plan, stockOf, onDecide, onDecideAll
                             className={"text-[12px] font-semibold rounded-md px-2 py-1 ring-1 " + (o.known && !o.enough ? "ring-gray-200 text-gray-400 cursor-not-allowed" : "ring-gray-300 text-gray-800 hover:bg-gray-50 cursor-pointer")}>Use this</button>}
                       {onDecideAll && !on && !(o.known && !o.enough) && (() => { const n = sameDesignRows(o).length; return n > 1 ? (
                         <button type="button" onClick={() => onDecideAll(o)} title={`Use ${o.name} on every item that has it as a choice and is not decided yet`}
-                          className="text-[12px] font-semibold rounded-md px-2 py-1 bg-gray-900 text-white hover:bg-black cursor-pointer">Use on all {n}</button>
+                          className="text-[12px] font-semibold rounded-md px-2 py-1 bg-gray-100 text-gray-800 hover:bg-gray-200 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1">Use on all {n} items</button>
                       ) : null; })()}
                     </div>
                   );
