@@ -10479,7 +10479,7 @@ export default function StudioApp() {
     // Deal Check needs both: it MUST pass onPick (or the pick lands in Build's zoneElements),
     // and onPick was the very flag that used to mean "no split here". So the capability is now
     // declared rather than inferred — the same correction made for priceMode above.
-    setAvailModal({ zoneKey, idx, elName: el?.name || "", subcat, date, loading: true, items: [], selectedId: el?.imsId || el?.invId || null, onPick: onPick || null, onPickAll: opts?.onPickAll || null, splitQty: Number(opts?.splitQty) || 0, onSplit: opts?.onSplit || null, pickHint: opts?.pickHint || "", neededLabel: opts?.neededLabel || "", unitLabel: opts?.unitLabel || "" });
+    setAvailModal({ zoneKey, idx, elName: el?.name || "", subcat, date, loading: true, items: [], selectedId: el?.imsId || el?.invId || null, onPick: onPick || null, onPickAll: opts?.onPickAll || null, splitQty: Number(opts?.splitQty) || 0, onSplit: opts?.onSplit || null, pickHint: opts?.pickHint || "", neededLabel: opts?.neededLabel || "", unitLabel: opts?.unitLabel || "", hidePrice: !!opts?.hidePrice });
     try {
       const { inventory, blocksForDate, blocksDetailForDate } = await loadAvailability(date);
       const target = String(subcat).toLowerCase().trim();

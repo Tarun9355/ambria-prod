@@ -16,6 +16,7 @@ import {
 } from "../../../lib/studio/taxonomy";
 import { paletteNames, addPaletteInline } from "../../../lib/studio/colours";
 import PaletteQuickAdd from "../../../components/studio/PaletteQuickAdd.jsx";
+import { prefsOf, prefsPatch, clearPrefsPatch, assignCarpets, carpetRemainingFor, CARPET_PREF_LABELS, CARPET_PREF_MAX } from "../../../lib/studio/carpetPrefs";
 import { trussRowCost, calcZoneFabricCost, guestFabricMultiplier, fabricRepeatDiscount, maskingRepeatOn, maskingGuestCost, zoneTrussStandingDiscountDetail, repeatCatFor, parseFlowerPalette, stringifyFlowerPalette, parseFabricPalette, stringifyFabricPalette, isDirectMandiElement, anchorsForPaletteByMaterial, snapRowDimsForProduction } from "../../../lib/studio/pricing";
 import { paletteSearch, paletteMatches } from "../../../components/studio/filterUI.jsx";
 import { resolveTrussConfig } from "../../../lib/studio/pricing";
@@ -681,12 +682,14 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
   // The picked carpet can only cover so many sqft: a width/depth that would take this floor past
   // what is left of its free stock (minus the other floors using the same carpet) is not saved.
   const [cpLimit, setCpLimit] = useState("");
+  // The floor's carpet preferences, 1st to 3rd — Planning decides which one is used (lib/studio/carpetPrefs).
+  const prefs = prefsOf(zc);
   const guardFd = (d, n) => {
-    const rem = zc.cpInvId && carpetRemainingOf ? carpetRemainingOf(zoneKey, rowIdx) : null;
+    const rem = prefs.length && carpetRemainingOf ? carpetRemainingOf(zoneKey, rowIdx) : null;
     if (rem != null) {
       const L = d === "L" ? n : (Number(fd.L) || 0), W = d === "W" ? n : (Number(fd.W) || 0);
       const area = L * W;
-      if (area > rem) { setCpLimit(`Only ${Math.max(0, Math.floor(rem))} sqft of ${zc.cpInvName || "this carpet"} is available — can't set ${area} sqft`); return false; }
+      if (area > rem) { setCpLimit(`Only ${Math.max(0, Math.floor(rem))} sqft of ${prefs.length > 1 ? "your preferred carpets is" : (prefs[0]?.name || "this carpet") + " is"} available — can't set ${area} sqft`); return false; }
     }
     setCpLimit("");
     return sFD(d, n);
@@ -719,7 +722,7 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
   const uploadCarpetPhoto = async (file) => {
     if (!file) return;
     setCpUploading(true);
-    try { const url = await uploadToStorage(file, STORAGE_FOLDERS.CLIENT); sZ({ cpPhoto: url, cpInvId: null, cpInvName: "", cpInvFree: null }); }
+    try { const url = await uploadToStorage(file, STORAGE_FOLDERS.CLIENT); sZ({ cpPhoto: url, ...clearPrefsPatch() }); }
     catch (e) { alert("Photo upload failed: " + (e?.message || e)); }
     finally { setCpUploading(false); }
   };
@@ -817,24 +820,10 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
                 <div style={{flex:1.5,minWidth:150}}>
                   <div style={{fontSize:11.5,color:textS,marginBottom:3,display:"inline-flex",alignItems:"center",gap:5}}>
                     <IconCarpet size={12}/>Carpet
-                    {/* Which PHYSICAL carpet to pull — purely a stock pick, separate from the material
-                        dropdown's rate. It never changes rowCost.carpet (still area × the material's
-                        ₹/sqft below); it only tells ops which item to use, read by Deal Check's own
-                        carpet card (falls back to this pick when it has no pick of its own yet) and
-                        carried from there into IMS when the deal is sent. Hidden once carpet is
-                        explicitly turned off — nothing to pick for a floor with none. */}
-                    {openAvailModal && zc.cpT!==CARPET_OFF && <span onClick={()=>openAvailModal(zoneKey, 0,
-                        {invId:zc.cpInvId||null, imsId:zc.cpInvId||null, name:zc.cpInvName||""},
-                        {sub:"carpet"},
-                        (pick)=>sZ({cpInvId:pick?.id||null, cpInvName:pick?.name||"", cpInvFree:pick?Number(pick.free)||0:null}),
-                        {pickHint:"Pick which physical carpet to use for this floor — a stock pick only, it doesn't change the price.", priceMode:"rental", onPickAll:onCarpetAll?((pick)=>onCarpetAll(pick, zoneKey, rowIdx)):null})}
-                      title={zc.cpInvName?`Stock pick: ${zc.cpInvName} — tap to check availability & change`:"Check carpet stock availability & pick an item"}
-                      style={{cursor:"pointer",display:"inline-flex",opacity:zc.cpInvName?1:0.5}}><IconBox size={11}/></span>}
                   </div>
-                  {/* A carpet picked from stock (📦) takes the dropdown's place: the floor shows the
-                      carpet itself, with the rate it is billed at under it. × drops the pick and
-                      brings the material dropdown back (to change the rate or turn carpet off). */}
-                  {zc.cpT!==CARPET_OFF && isNewCarpet && zc.cpPhoto && !zc.cpInvName ? (
+                  {/* The material dropdown is the billed rate. Once a stock carpet is picked it steps aside for the
+                      preferences below (clearing every preference brings it back, to change the rate or turn carpet off). */}
+                  {zc.cpT!==CARPET_OFF && isNewCarpet && zc.cpPhoto && !prefs.length ? (
                     <div style={{display:"flex",alignItems:"center",gap:8,boxSizing:"border-box",width:"100%",fontSize:11.5,padding:"6px 8px",borderRadius:8,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
                       <img src={thumbUrl(zc.cpPhoto, 32)} loading="lazy" decoding="async" alt="" style={{width:32,height:32,borderRadius:6,objectFit:"cover",flexShrink:0}} />
                       <span style={{flex:1,minWidth:0}}>
@@ -842,17 +831,8 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
                         <span style={{display:"block",fontSize:10,color:"#6B7280"}}>{showCosts?`billed at ₹${carpetBilled.rate}/sqft`:""}</span>
                       </span>
                     </div>
-                  ) : zc.cpT!==CARPET_OFF && zc.cpInvName ? (
-                    <div style={{display:"flex",alignItems:"center",gap:6,boxSizing:"border-box",width:"100%",fontSize:11.5,padding:"6px 8px",borderRadius:8,
-                      border:`1px solid ${carpetShort>0?"#EF4444":border}`,borderBottom:carpetShort>0?"3px solid #EF4444":undefined,background:"#fff",color:"#111827"}}>
-                      <span style={{flex:1,minWidth:0}}>
-                        <span style={{display:"block",fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:carpetShort>0?"#EF4444":"#047857"}} title={zc.cpInvName}>📦 {zc.cpInvName}</span>
-                        <span style={{display:"block",fontSize:10,color:carpetShort>0?"#EF4444":"#6B7280"}}>
-                          {carpetShort>0?`short ${Math.round(carpetShort)} sqft · `:""}{showCosts?`billed at ${carpetBilled.label} ₹${carpetBilled.rate}/sqft`:""}
-                        </span>
-                      </span>
-                      <span onClick={()=>sZ({cpInvId:null, cpInvName:"", cpInvFree:null})} title="Remove this carpet pick" style={{cursor:"pointer",color:"#9CA3AF",fontWeight:700,fontSize:13,lineHeight:1}}>×</span>
-                    </div>
+                  ) : zc.cpT!==CARPET_OFF && prefs.length ? (
+                    showCosts&&<div style={{fontSize:10.5,color:textS,marginBottom:4}}>Billed at {carpetBilled.label} ₹{carpetBilled.rate}/sqft</div>
                   ) : (
                   <select value={zc.cpT===CARPET_OFF?"":(zc.cpT||defaultCarpetMatId(imsCarpetMaterials)||"")} onChange={e=>sZ({cpT:e.target.value||CARPET_OFF})}
                     style={{width:"100%",boxSizing:"border-box",fontSize:11.5,padding:"7px 8px",borderRadius:8,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
@@ -860,6 +840,47 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
                     {(imsCarpetMaterials||[]).map(m=><option key={m.id} value={m.id} style={{color:"#111827",background:"#fff"}}>{m.name}{showCosts?` · ₹${m.ratePerSqft}/sqft`:""}</option>)}
                   </select>
                   )}
+                  {/* ── CARPET PREFERENCES ── Which physical carpet is a stock pick only — it never changes the price (that is the
+                      material rate above). Three ranked choices, so Planning has a fallback and decides which one is used from what
+                      is free on the day; Deal Check and Planning show the same three. The 1st choice is also what older readers
+                      (stock checks, Deal Check's carpet card) still see as the pick. */}
+                  {openAvailModal && zc.cpT!==CARPET_OFF && !isNewCarpet && (()=>{
+                    const floorSqft=(Number(fd.L)||0)*(Number(fd.W)||0);
+                    const open=(slot)=>openAvailModal(zoneKey, 0,
+                      {invId:prefs[slot]?.id||null, imsId:prefs[slot]?.id||null, name:prefs[slot]?.name||""},
+                      {sub:"carpet"},
+                      (pick)=>sZ(prefsPatch(zc, slot, pick?{id:pick.id,name:pick.name,free:Number(pick.free)||0}:null)),
+                      {pickHint:`Pick your ${CARPET_PREF_LABELS[slot]} for this floor — Planning decides which of your ${CARPET_PREF_MAX} is used. A stock pick only, it does not change the price.`, priceMode:"rental", hidePrice:true, onPickAll:onCarpetAll?((pick)=>onCarpetAll(pick, zoneKey, rowIdx, slot)):null});
+                    const done=prefs.length>=CARPET_PREF_MAX;
+                    return <div style={{marginTop:5}}>
+                      <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                        {Array.from({length:CARPET_PREF_MAX},(_,slot)=>{
+                          const pk=prefs[slot];
+                          const lowFree=pk&&pk.free!=null&&floorSqft>0&&pk.free<floorSqft;
+                          const next=slot===prefs.length;
+                          return pk ? (
+                            <div key={slot} style={{display:"flex",alignItems:"center",gap:6,boxSizing:"border-box",width:"100%",fontSize:11.5,padding:"5px 8px",borderRadius:8,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
+                              <span style={{flexShrink:0,width:16,height:16,borderRadius:8,background:accent,color:"#1A1A2E",fontSize:10,fontWeight:800,display:"inline-flex",alignItems:"center",justifyContent:"center"}} title={CARPET_PREF_LABELS[slot]}>{slot+1}</span>
+                              <span onClick={()=>open(slot)} title={`${CARPET_PREF_LABELS[slot]}: ${pk.name} — tap to check availability & change`} style={{flex:1,minWidth:0,cursor:"pointer"}}>
+                                <span style={{display:"block",fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:"#047857"}}>📦 {pk.name}</span>
+                                {pk.free!=null&&<span style={{display:"block",fontSize:10,color:lowFree?"#B45309":"#6B7280"}}>{Math.round(pk.free)} sqft free{lowFree?` · less than this floor (${Math.round(floorSqft)} sqft)`:""}</span>}
+                              </span>
+                              <span onClick={()=>sZ(prefsPatch(zc, slot, null))} title={`Remove the ${CARPET_PREF_LABELS[slot]}`} style={{cursor:"pointer",color:"#9CA3AF",fontWeight:700,fontSize:13,lineHeight:1}}>×</span>
+                            </div>
+                          ) : (
+                            <button key={slot} type="button" onClick={()=>open(slot)} disabled={!next} title={next?`Pick your ${CARPET_PREF_LABELS[slot]}`:`Pick the ${CARPET_PREF_LABELS[prefs.length]} first`}
+                              style={{display:"flex",alignItems:"center",gap:6,boxSizing:"border-box",width:"100%",fontSize:11.5,padding:"5px 8px",borderRadius:8,border:`1px dashed ${next?accent:border}`,background:"transparent",color:next?accent:textS,opacity:next?1:0.55,cursor:next?"pointer":"default",textAlign:"left"}}>
+                              <span style={{flexShrink:0,width:16,height:16,borderRadius:8,border:`1px solid ${next?accent:border}`,fontSize:10,fontWeight:800,display:"inline-flex",alignItems:"center",justifyContent:"center"}}>{slot+1}</span>
+                              + {CARPET_PREF_LABELS[slot]}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <div style={{marginTop:4,fontSize:10.5,lineHeight:1.3,fontWeight:600,color:carpetShort>0?"#EF4444":done?"#047857":"#B45309"}}>
+                        {carpetShort>0?`⚠ Short ${Math.round(carpetShort)} sqft — none of the picks covers this floor`:done?`${CARPET_PREF_MAX} preferences · Planning decides which is used`:`${prefs.length} of ${CARPET_PREF_MAX} picked — pick ${CARPET_PREF_MAX} so Planning has a fallback`}
+                      </div>
+                    </div>;
+                  })()}
                   {/* Only when no stock carpet is picked — a picked carpet already has its own photo. */}
                   {zc.cpT!==CARPET_OFF && isNewCarpet && !zc.cpInvId && (
                     <div style={{display:"flex",alignItems:"center",gap:6,marginTop:5}}>
@@ -1220,28 +1241,23 @@ export default function StudioBuild({ ctx }) {
   let carpetShortCache = null;
   const carpetShortMapOf = () => {
     if (carpetShortCache) return carpetShortCache;
-    const used = {}, out = {};
-    carpetFloors().forEach(({ k, ri, r, area }) => {
-      if (!r.cpInvId || r.cpInvFree == null) return;
-      const before = used[r.cpInvId] || 0;
-      used[r.cpInvId] = before + area;
-      const short = Math.min(area, Math.max(0, before + area - (Number(r.cpInvFree) || 0)));
-      if (short > 0) out[`${k}|${ri}`] = short;
-    });
-    carpetShortCache = out;
-    return out;
+    // each floor takes its best preference that still has room (lib/studio/carpetPrefs); short only when none does
+    carpetShortCache = assignCarpets(carpetFloors().map(({ k, ri, r, area }) => ({ key: `${k}|${ri}`, area, prefs: prefsOf(r) }))).short;
+    return carpetShortCache;
   };
   const carpetShortOf = (k, ri) => carpetShortMapOf()[`${k}|${ri}`] || 0;
   // Sqft of a floor's picked carpet still free for IT: the free stock recorded at pick time minus
   // what every OTHER floor using that same carpet already takes. null when nothing is picked.
   const carpetRemainingOf = (k, ri) => {
     const row = ri === 0 ? zoneConfig?.[k] : (zoneConfig?.[k]?.extraPlatformRows || [])[ri - 1];
-    if (!row?.cpInvId || row.cpInvFree == null) return null;
-    const others = carpetFloors().filter(f => !(f.k === k && f.ri === ri) && f.r.cpInvId === row.cpInvId).reduce((a, f) => a + f.area, 0);
-    return (Number(row.cpInvFree) || 0) - others;
+    const mine = prefsOf(row);
+    if (!mine.length) return null;
+    const key = `${k}|${ri}`;
+    const floors = [...carpetFloors().filter(f => !(f.k === k && f.ri === ri)).map(f => ({ key: `${f.k}|${f.ri}`, area: f.area, prefs: prefsOf(f.r) })), { key, area: 0, prefs: mine }];
+    return carpetRemainingFor(floors, key);
   };
   // fromK/fromRi: the floor the picker was opened from — always gets the carpet, even with no size.
-  const applyCarpetToAll = (pick, fromK, fromRi) => {
+  const applyCarpetToAll = (pick, fromK, fromRi, slot = 0) => {
     if (!pick?.id) return;
     const free = Number(pick.free) || 0;
     const floors = carpetFloors(true);
@@ -1253,7 +1269,7 @@ export default function StudioBuild({ ctx }) {
       floors.forEach(f => { (byZone[f.k] = byZone[f.k] || []).push(f.ri); });
       Object.entries(byZone).forEach(([k, ris]) => {
         const z = { ...(next[k] || {}) };
-        const tag = (r) => (r.cpPhoto ? r : ({ ...r, cpInvId: pick.id, cpInvName: pick.name || "", cpInvFree: free }));
+        const tag = (r) => (r.cpPhoto ? r : ({ ...r, ...prefsPatch(r, slot, { id: pick.id, name: pick.name || "", free }) }));
         if (ris.includes(0)) Object.assign(z, tag(z));
         if (Array.isArray(z.extraPlatformRows)) z.extraPlatformRows = z.extraPlatformRows.map((r, i) => ris.includes(i + 1) ? tag(r) : r);
         next[k] = z;

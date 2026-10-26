@@ -7,6 +7,7 @@
 // ═══════════════════════════════════════════════════════════════
 import { useState, useEffect, useRef } from "react";
 import { dealAgencyFeePct } from "../../../lib/studio/agencyFee";
+import { prefsOf, prefsPatch, clearPrefsPatch, assignCarpets, CARPET_PREF_LABELS, CARPET_PREF_MAX } from "../../../lib/studio/carpetPrefs";
 import DeptPdfButton from "../../../components/studio/DeptPdfButton.jsx";
 import { createPortal } from "react-dom";
 import DCFloralsTab from "./tabs/DCFloralsTab.jsx";
@@ -297,20 +298,20 @@ export default function DealCheckOverlay({ ctx }) {
     const zo = Array.isArray(fn?.zoneOrder) ? fn.zoneOrder : [];
     zo.forEach((k, i) => { rank[k] = i - zo.length; });
     const keys = Object.keys(zc).filter(k => en[k] && zc[k]).sort((a, b) => (rank[a] ?? 1e6) - (rank[b] ?? 1e6));
-    const used = {}, out = {};
+    // Each floor takes its best carpet preference that still has room; short only when none of its three does
+    // (lib/studio/carpetPrefs — the same rule Build uses).
+    const floors = [];
     keys.forEach(k => {
       const z = zc[k];
-      [z, ...(z.extraPlatformRows || [])].forEach(r => {
-        if (!r || r.cpT === CARPET_OFF || !r.cpInvId || r.cpInvFree == null) return;
+      [z, ...(z.extraPlatformRows || [])].forEach((r, ri) => {
+        if (!r || r.cpT === CARPET_OFF) return;
         const f = r.floorDims || {};
-        const area = (Number(f.L) || 0) * (Number(f.W) || 0);
-        if (!(area > 0)) return;
-        const before = used[r.cpInvId] || 0;
-        used[r.cpInvId] = before + area;
-        const short = Math.min(area, Math.max(0, before + area - (Number(r.cpInvFree) || 0)));
-        if (short > 0) out[k] = (out[k] || 0) + short;
+        floors.push({ key: `${k}|${ri}`, zone: k, area: (Number(f.L) || 0) * (Number(f.W) || 0), prefs: prefsOf(r) });
       });
     });
+    const { short } = assignCarpets(floors);
+    const out = {};
+    floors.forEach(f => { if (short[f.key] > 0) out[f.zone] = (out[f.zone] || 0) + short[f.key]; });
     return out;
   };
   const effKitRental = (item, fnIdx, cardKey) => {
@@ -3098,9 +3099,11 @@ export default function DealCheckOverlay({ ctx }) {
                                   const cPrice = carpetPricingFor(zc.cpT, imsCarpetMaterials);
                                   const chargedCarpet = neededSqft * (cPrice.rate || 0);
                                   const carpetShort = Math.round(carpetShortByZone(fns[fnIdx])[zk] || 0);
-                                  const setPick = (id)=> {
+                                  // Writes the carpet as the zone's 1st preference (and clears the rest when emptied) — the same
+                                  // fields Build's three preference slots write, so Build and Deal Check always agree.
+                                  const setPick = (id, free)=> {
                                     const it = id ? dcInventoryCache.find(x=>x.id===id) : null;
-                                    const apply = (z) => ({ ...(z || {}), cpInvId: id || null, cpInvName: it?.name || "" });
+                                    const apply = (z) => ({ ...(z || {}), ...(id ? prefsPatch(z, 0, { id, name: it?.name || "", free: free ?? prefsOf(z).find(p => p.id === id)?.free ?? null }) : clearPrefsPatch()) });
                                     // Same live-vs-snapshot split every other Deal Check → Build write uses.
                                     if (fnIdx === activeFnIdxCommitted) setZoneConfig(prev => ({ ...prev, [zk]: apply(prev[zk]) }));
                                     else setFnBuilds(prev => { const snap = prev[fnIdx] || {}; const curZc = snap.zoneConfig || {}; return { ...prev, [fnIdx]: { ...snap, zoneConfig: { ...curZc, [zk]: apply(curZc[zk]) } } }; });
@@ -3148,12 +3151,13 @@ export default function DealCheckOverlay({ ctx }) {
                                     zk, 0,
                                     { invId: pickedId || null, imsId: pickedId || null, name: carpetItem?.name || "" },
                                     { sub: carpetSubcatFallback },
-                                    (pick) => { if (pick) { setPick(pick.id); clearSplit(); } },
+                                    (pick) => { if (pick) { setPick(pick.id, Number(pick.free) || 0); clearSplit(); } },
                                     {
                                       pickHint: neededSqft >= 2
                                         ? "Pick one item to swap this card to — or Split to divide the needed sqft across 2 or more designs."
                                         : "Pick which carpet to reuse — free counts and holds shown below.",
                                       priceMode: "rental",
+                                      hidePrice: true, // the carpet's own rental is Ambria's cost, not something shown on the pick
                                       neededLabel: `${neededSqft} sqft needed for this zone`,
                                       // Carpet items commonly carry a generic inventory `unit` like
                                       // "Piece" (how they're counted on the shelf) even though every
@@ -3221,6 +3225,56 @@ export default function DealCheckOverlay({ ctx }) {
                                           </button>
                                         </div>
                                       )}
+                                      {/* ── CARPET PREFERENCES (from Build) ── the salesperson ranks up to three stock carpets; Planning
+                                          decides which one is used from what is free on the day. Shown here so the deal check sees all
+                                          three, and can change them — same fields Build writes. */}
+                                      {!isSplitActive && (()=>{
+                                        const prefs = prefsOf(zc);
+                                        const openSlot = (slot) => openAvailModal?.(
+                                          zk, 0,
+                                          { invId: prefs[slot]?.id || null, imsId: prefs[slot]?.id || null, name: prefs[slot]?.name || "" },
+                                          { sub: carpetSubcatFallback },
+                                          (pick) => {
+                                            const it = pick ? dcInventoryCache.find(x => x.id === pick.id) : null;
+                                            const apply = (z) => ({ ...(z || {}), ...prefsPatch(z, slot, pick ? { id: pick.id, name: it?.name || pick.name || "", free: Number(pick.free) || 0 } : null) });
+                                            if (fnIdx === activeFnIdxCommitted) setZoneConfig(prev => ({ ...prev, [zk]: apply(prev[zk]) }));
+                                            else setFnBuilds(prev => { const snap = prev[fnIdx] || {}; const curZc = snap.zoneConfig || {}; return { ...prev, [fnIdx]: { ...snap, zoneConfig: { ...curZc, [zk]: apply(curZc[zk]) } } }; });
+                                          },
+                                          { pickHint: `Pick the ${CARPET_PREF_LABELS[slot]} for this floor — Planning decides which of the ${CARPET_PREF_MAX} is used.`, priceMode: "rental", hidePrice: true, neededLabel: `${neededSqft} sqft needed for this zone`, unitLabel: "sqft" },
+                                        );
+                                        if (!prefs.length && !carpetOpts.length) return null;
+                                        return (
+                                          <div style={{display:"flex",flexDirection:"column",gap:5}}>
+                                            <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                                              <span className="dc-cap" style={{color:INK_2,letterSpacing:1.1}}>Carpet preferences</span>
+                                              <span style={{fontSize:10.5,fontWeight:650,color:prefs.length>=CARPET_PREF_MAX?GOOD:GOLD}}>{prefs.length} of {CARPET_PREF_MAX}{prefs.length>=CARPET_PREF_MAX?" · Planning decides":" — sales should pick "+CARPET_PREF_MAX}</span>
+                                            </div>
+                                            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                                              {Array.from({length:CARPET_PREF_MAX},(_,slot)=>{
+                                                const pk = prefs[slot];
+                                                const it2 = pk ? dcInventoryCache.find(x => x.id === pk.id) : null;
+                                                const ph = it2 ? imsField.photos(it2)[0] : null;
+                                                const low = pk && pk.free != null && neededSqft > 0 && pk.free < neededSqft;
+                                                const next = slot === prefs.length;
+                                                return pk ? (
+                                                  <button key={slot} type="button" onClick={()=>openSlot(slot)} title={`${CARPET_PREF_LABELS[slot]}: ${pk.name} — click to change`}
+                                                    style={{display:"inline-flex",alignItems:"center",gap:6,maxWidth:"100%",padding:"4px 9px 4px 5px",borderRadius:999,border:`1px solid ${TILE_BORDER}`,background:TILE_BG,color:INK,cursor:"pointer",fontSize:11.5,fontWeight:600}}>
+                                                    <span style={{flexShrink:0,width:17,height:17,borderRadius:9,background:GOLD,color:"#fff",fontSize:10,fontWeight:800,display:"inline-flex",alignItems:"center",justifyContent:"center"}}>{slot+1}</span>
+                                                    {ph && <img loading="lazy" decoding="async" src={thumbUrl(ph, 24)} alt="" style={{width:20,height:20,borderRadius:5,objectFit:"cover",flexShrink:0}}/>}
+                                                    <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:170}}>{pk.name}</span>
+                                                    {pk.free != null && <span style={{fontSize:10.5,fontWeight:500,color:low?GOLD:INK_3,...NUM,whiteSpace:"nowrap"}}>{Math.round(pk.free)} sqft free</span>}
+                                                  </button>
+                                                ) : (
+                                                  <button key={slot} type="button" disabled={!next} onClick={()=>openSlot(slot)}
+                                                    style={{display:"inline-flex",alignItems:"center",gap:6,padding:"4px 11px",borderRadius:999,border:`1px dashed ${TILE_BORDER}`,background:"transparent",color:INK_3,cursor:next?"pointer":"default",opacity:next?1:0.5,fontSize:11.5,fontWeight:600}}>
+                                                    + {CARPET_PREF_LABELS[slot]}
+                                                  </button>
+                                                );
+                                              })}
+                                            </div>
+                                          </div>
+                                        );
+                                      })()}
                                       {/* ── SPLIT EDITOR ──
                                           Once a split exists it is the only thing that shows what the
                                           sqft was divided into, and the only way to adjust or undo it —

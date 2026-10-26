@@ -226,7 +226,7 @@ export default function StudioModals({ ctx }) {
             ...(x.venueSlack?.length ? [["Held by other fixed venues", x.venueSlack.map(s=>`${s.slack} at ${venueShortCode(s.name)}`).join(", ")]] : []),
             ...(x.dims ? [["Size", x.dims]] : []),
             ...(used.length ? [["In use for this guest", used.join(", ")]] : []),
-            ["Rate", fmt(Math.round(x.price))],
+            ...(availModal.hidePrice ? [] : [["Rate", fmt(Math.round(x.price))]]),
           ];
         };
         const availPhotoSet = (availModal.items || []).filter(x => x.photo).map(x => ({ id: x.id, src: x.photo, name: x.name, details: availDetailsFor(x) }));
@@ -367,7 +367,7 @@ export default function StudioModals({ ctx }) {
                           {swap && (
                             <div style={{fontSize:8.5,marginTop:2,color:SWAP,fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>⇄ In use: {usedIn.join(", ")}</div>
                           )}
-                          <div style={{fontSize:11,fontWeight:700,color:swap?SWAP:accent,marginTop:2}}>{fmt(Math.round(it.price))}</div>
+                          {!availModal.hidePrice && <div style={{fontSize:11,fontWeight:700,color:swap?SWAP:accent,marginTop:2}}>{fmt(Math.round(it.price))}</div>}
                         </div>
                       </div>
                     );
