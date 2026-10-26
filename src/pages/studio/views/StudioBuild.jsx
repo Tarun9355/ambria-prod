@@ -24,6 +24,7 @@ import { qtyUsedElsewhereInBuild } from "../../../lib/studio/dealAvailability";
 import { logDiscountToClientToggle } from "../../../lib/studio/userActions";
 import { todayStr } from "../../../lib/ims/attendance";
 import { isHiddenSubcat, canFulfillShortfall } from "../../../lib/rateCard";
+import { availableAtVenue, combineAvailability } from "../../../lib/ims/fixedVenues";
 import { groupIdsForZones } from "../../../lib/studio/zoneGroups";
 import { CUSTOM_ZONE_TAG_PREFIX } from "../../../lib/studio/keys.js";
 import { thumbUrl, fitUrl } from "../../../lib/studio/thumb.js";
@@ -4577,7 +4578,12 @@ undefined
                           // badge) after it was already sitting in the zone. Same getStudioAvailable
                           // call remainingForItem already makes, just without that gate, so a genuinely
                           // 0-free item is flagged at the moment it's picked, not after.
-                          const dateFree=getStudioAvailable(it,activeBlocksForDate);
+                          // combineAvailability folds in the Fixed-Venue lock too — this badge used
+                          // to call getStudioAvailable alone, so it could tell a salesperson stock
+                          // was free even when it was entirely locked as standing allocation at
+                          // another venue, only to be capped correctly once the item was actually
+                          // added (StudioApp.jsx's getElPriceFromInventory already applies this cap).
+                          const dateFree=combineAvailability(Number(it?.qty ?? it?.qtyOwned) || 0, getStudioAvailable(it,activeBlocksForDate), availableAtVenue({ fixedVenues: sharedFloralSettings?.fixedVenues || [], venueParents: venueParents || {} }, aVenue, it));
                           const isDateUnavail=dateFree<=0;
                           return <div key={"inv:"+it.id}
                             onClick={()=>{

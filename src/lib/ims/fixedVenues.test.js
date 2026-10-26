@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { availableAtVenue, reservedByVenueToday, venueSlackFor } from "./fixedVenues";
+import { availableAtVenue, reservedByVenueToday, venueSlackFor, combineAvailability } from "./fixedVenues";
 
 // Confirmed live bug this covers: an item with 300 total stock, 200 of it configured as standing
 // allocation across two Fixed Venues (Pushpanjali 150, Exotica 50), leaving a 100-unit outdoor pool.
@@ -38,6 +38,27 @@ describe("availableAtVenue", () => {
     // lands on the same 100 as if no reservedByVenue were supplied at all (fully-reserved either way).
     const reserved = { pushpanjali: 9999, exotica: 9999 };
     expect(availableAtVenue(settings, "Some Outdoor Lawn", item, reserved)).toBe(100);
+  });
+});
+
+describe("combineAvailability", () => {
+  // The exact gap this closes: 50 total, 40 locked as Fixed Venue standing stock, 10 already
+  // blocked today by a sold deal drawing on the unlocked remainder. Math.min(dateAvailable=40,
+  // venueAvailable=10) used to report 10 still free; the true remainder is 50-40-10=0.
+  it("composes a date-block reduction and a venue-lock reduction against the same total, instead of taking whichever single ceiling is smaller", () => {
+    expect(combineAvailability(50, 40, 10)).toBe(0);
+  });
+
+  it("with no venue lock, matches the plain date-availability figure", () => {
+    expect(combineAvailability(50, 35, 50)).toBe(35);
+  });
+
+  it("with no date block, matches the plain venue-availability figure", () => {
+    expect(combineAvailability(50, 50, 10)).toBe(10);
+  });
+
+  it("never goes negative when both reductions overlap past zero", () => {
+    expect(combineAvailability(50, 5, 5)).toBe(0);
   });
 });
 
