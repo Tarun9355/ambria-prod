@@ -4275,9 +4275,24 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
   });
 
   // { view: true } shows the finished PDF in the viewer below instead of saving it.
-  const exportPdf = async (depts, { view = false, cacheKey = "" } = {}) => {
+  const exportPdf = async (depts, { view = false, cacheKey = "", gate = true } = {}) => {
     if (exporting) return;
     const multi = depts.length > 1;
+    // ── NO PDF UNTIL EVERY CARPET FLOOR HAS ITS CARPET ──
+    // The Tenting and Structure books (and the combined book) tell the crew which carpet goes down, so a floor whose carpet Planning has
+    // not decided has nothing to print. Planning's own PDF is refused, and the floors are named so they can be fixed in the Carpet plan.
+    // The PDF started from Deal Check (it lists what sales asked for) and the viewer refreshing itself are not held up by this.
+    if (gate && !pdfAllCarpetsRef.current && (multi || depts.some(d => d === "Tenting" || d === "Structure"))) {
+      const undecided = carpetPlanOf().rows.filter(r => r.status !== "decided");
+      if (undecided.length) {
+        const when = (d) => { try { return d ? new Date(d + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : ""; } catch { return d || ""; } };
+        const lines = undecided.slice(0, 8).map(r => `• ${r.zoneName}${[r.fnLabel, when(r.date)].filter(Boolean).length ? " — " + [r.fnLabel, when(r.date)].filter(Boolean).join(" · ") : ""}${r.status === "none" ? " (sales picked no carpet)" : ""}`);
+        if (undecided.length > 8) lines.push(`…and ${undecided.length - 8} more`);
+        alert(`Carpet not selected — the PDF was not made.\n\nChoose the carpet for:\n${lines.join("\n")}\n\nOpen Tenting → Carpet plan, pick a carpet for each floor, then download again.`);
+        if (dept === "Tenting") setModal("carpet");
+        return false;
+      }
+    }
     const startedOn = dept;
     zoneAdminOrderRef.current = null; // read again below (a failed read leaves the built-in order)
     let ok = false; // true once a PDF was produced (the caller of a hidden run reports it)
@@ -4674,7 +4689,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
   const deckKey = deckView ? deckKeyNow() : "";
   useEffect(() => {
     if (!deckView || !deckKey || exporting || deckCacheRef.current?.key === deckKey) return;
-    const t = setTimeout(() => exportPdf([dept], { view: true, cacheKey: deckKey }), 1500);
+    const t = setTimeout(() => exportPdf([dept], { view: true, cacheKey: deckKey, gate: false }), 1500);
     return () => clearTimeout(t);
   }, [deckKey, !!deckView, exporting]);
   const viewDeptPdf = () => {

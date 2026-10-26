@@ -138,6 +138,15 @@ describe("a carpet Planning picks by hand when none of sales' choices is availab
     expect(r.decidedId).toBe("C");
     expect(r.manual).toBeNull();
   });
+  it("a floor sales picked nothing for is decided once Planning picks a carpet by hand", () => {
+    const bare = carpetFloorsOf(layout({ stage: { cpT: "old", floorDims: { L: 20, W: 10 } } }));
+    const k0 = bare[0].key;
+    const none = planCarpets({ floors: bare, itemsById: stock, blocks: {}, eventId: "e", choice: {} }).rows[0];
+    expect(none.status).toBe("none");
+    const picked = planCarpets({ floors: bare, itemsById: stock, blocks: {}, eventId: "e", choice: { [k0]: { id: "D", name: "Teal", manual: true } } }).rows[0];
+    expect(picked.status).toBe("decided");
+    expect(picked.decidedId).toBe("D");
+  });
   it("a hand pick for an item that no longer exists is ignored", () => {
     expect(run({ [k]: { id: "GONE", name: "x", manual: true } }).decidedId).toBeNull();
   });

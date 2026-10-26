@@ -80,7 +80,8 @@ export function planCarpets({ floors, itemsById, blocks, eventId, choice }) {
     const decidedId = inOptions ? pickedId : manual ? pickedId : null;
     return {
       ...f, options, manual, suggestedId, decidedId,
-      status: !options.length ? "none" : decidedId ? "decided" : firstEnough || !options.some((o) => o.known) ? "open" : "short",
+      // decided wins: a floor sales picked nothing for is still decided once Planning picks a carpet by hand
+      status: decidedId ? "decided" : !options.length ? "none" : firstEnough || !options.some((o) => o.known) ? "open" : "short",
     };
   });
   // two floors deciding the same carpet draw on one stock: flag it when together they need more than is free
