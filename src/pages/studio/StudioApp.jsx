@@ -10636,6 +10636,24 @@ export default function StudioApp() {
   // DIFFERENT function must wait for that switch to actually land (next render) before the picker
   // opens, or the pick would be written into the wrong function's build. oosFixPending carries the
   // row across that one-render gap; the effect below fires once activeFnIdx catches up to it.
+  // Carpets already laid at THIS venue on THIS date for another event — another client's, or another function of this deal. They stay
+  // down, so they can be reused here; Build turns the carpet availability icon orange when there is any. { [carpetId]: { name, qty, who, siblings } }.
+  const carpetReuseHere = () => {
+    const out = {};
+    const date = activeFnMeta?.date || clientDate || "";
+    const venueNow = activeFnMeta?.venue || venue || "";
+    if (!date || !venueNow) return out;
+    const all = collectAllFunctionData() || [];
+    const thisFn = all.find((f) => f.fnIdx === activeFnIdx);
+    const eo = (eventOrders || []).find((e) => e.clientId === activeClientId);
+    (imsInventory || []).forEach((it) => {
+      if (String(it.subCat || it.subcategory || "").trim().toLowerCase() !== "carpet") return;
+      const holds = sameVenueHolds(activeBlocksDetailForDate?.[it.id], eventOrders, venueNow, date, eo?.id);
+      const siblings = thisFn ? siblingCarpetUse(all, thisFn, it.id) : [];
+      if (holds.qty > 0 || siblings.length) out[it.id] = { name: it.name, qty: holds.qty, who: holds.who.map((w) => w.name), siblings };
+    });
+    return out;
+  };
   const openOosFix = useCallback((f) => {
     oosGateStashRef.current = oosGateModal;
     setOosGateModal(null);
@@ -11966,7 +11984,7 @@ export default function StudioApp() {
     dcSwapSearch, setDcSwapSearch, dcSwapPicked, setDcSwapPicked, dcSwapMode, setDcSwapMode, dcSwapSplitQty, setDcSwapSplitQty,
     // pricing helpers
     rcIsSMB, buildZoneConfig, getFloralMode, applyFloralRatio, getElPrice, getElPriceForFn, calcElsCost, calcElsCostForFn, rcCostPctForSub,
-    calcPhotoCost, calcStructCost, calcFullEventCost, getFullCost, totalCost, transportCalc, grandTotal, lastSavedFnTotal, agencyFeeAmt, houseAgencyFeePct, pricingReady,
+    calcPhotoCost, calcStructCost, calcFullEventCost, getFullCost, totalCost, transportCalc, grandTotal, lastSavedFnTotal, agencyFeeAmt, houseAgencyFeePct, carpetReuseHere, pricingReady,
     collectAllFunctionData, calcFunctionCost, calcFnFloralSourcingCost, calcFnFloralDetail, eventGrandTotal, calcFunctionBreakdown, manpowerPlanForBooking, persistDeptSnapshot, syncDealValueNow, floatPending, dcEoActuals, refreshDcEoActuals,
     // deal check orchestration + persistence (overlay)
     openDealCheck, runDealCheckGenerate, getStudioAvailable, loadAvailability, reliableSave, DC_CACHE_SK,

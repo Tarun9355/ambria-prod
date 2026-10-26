@@ -678,12 +678,15 @@ export function TrussStack({ S, customCeilingField, customMaskingField, k, zc, z
 // `nested` marks one of a zone's EXTRA platform footprints: same card, same colours, titled
 // "Platform N" with a remove control in place of the cost, which the first card already totals
 // across every footprint.
-export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, imsInventory = [], nested = false, title, onRemove, scale = 1, openAvailModal, zoneKey, rowIdx = 0, onCarpetAll, carpetShortOf, carpetRemainingOf, guestPriceMultiplier = 1 }) {
+export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, imsInventory = [], nested = false, title, onRemove, scale = 1, openAvailModal, zoneKey, rowIdx = 0, onCarpetAll, carpetShortOf, carpetRemainingOf, carpetReuse, guestPriceMultiplier = 1 }) {
   // The picked carpet can only cover so many sqft: a width/depth that would take this floor past
   // what is left of its free stock (minus the other floors using the same carpet) is not saved.
   const [cpLimit, setCpLimit] = useState("");
   // The floor's carpet preferences, 1st to 3rd — Planning decides which one is used (lib/studio/carpetPrefs).
   const prefs = prefsOf(zc);
+  // Carpets already laid at this venue on this date for another event: they stay down, so they can be reused here. Turns the
+  // availability icon orange, like the orange marker on an element another function of the deal already uses.
+  const reuseList = Object.values(carpetReuse || {});
   // One picker for all of the preferences: tap up to CARPET_PREF_MAX carpets in the order wanted (the first tapped is the 1st choice).
   // Save writes them to this floor; Save to all writes the same ones to every carpeted floor of the function. Availability is for the
   // event date, and a carpet with less free than this floor needs is marked short and cannot be picked.
@@ -833,8 +836,8 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
                     {/* Stock availability for this date: opens the picker where up to four carpets are chosen. */}
                     {openAvailModal && zc.cpT!==CARPET_OFF && !isNewCarpet && <span onClick={openCarpetPicker} role="button" tabIndex={0}
                       onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();openCarpetPicker();}}}
-                      title={prefs.length?`${prefs.length} of ${CARPET_PREF_MAX} carpets picked — tap to check availability on the event date & change`:`Check carpet availability on the event date & pick up to ${CARPET_PREF_MAX}`}
-                      style={{cursor:"pointer",display:"inline-flex",opacity:prefs.length?1:0.6}}><IconBox size={12}/></span>}
+                      title={reuseList.length?`Reuse possible here: ${reuseList.map(r=>`${r.name} is already laid at this venue today for ${[...r.siblings,...r.who].join(", ")}`).join(" · ")} — tap to see`:prefs.length?`${prefs.length} of ${CARPET_PREF_MAX} carpets picked — tap to check availability on the event date & change`:`Check carpet availability on the event date & pick up to ${CARPET_PREF_MAX}`}
+                      style={{cursor:"pointer",display:"inline-flex",opacity:(prefs.length||reuseList.length)?1:0.6,color:reuseList.length?"#F97316":undefined}}><IconBox size={12}/></span>}
                   </div>
                   {/* The material dropdown is the billed rate. Once a stock carpet is picked it steps aside for the
                       preferences below (clearing every preference brings it back, to change the rate or turn carpet off). */}
@@ -915,12 +918,12 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
 //
 // platformRowCost already runs per row over zc.extraPlatformRows and buildPlatformPlan draws one
 // ops entry each, so the cost and the plan were ready long before there was a way to add one.
-export function FloorStack({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, imsInventory = [], scale = 1, openAvailModal, zoneKey, onCarpetAll, carpetShortOf, carpetRemainingOf, guestPriceMultiplier = 1 }) {
+export function FloorStack({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, imsInventory = [], scale = 1, openAvailModal, zoneKey, onCarpetAll, carpetShortOf, carpetRemainingOf, carpetReuse, guestPriceMultiplier = 1 }) {
   const rows = zc.extraPlatformRows || [];
   const write = (next) => sZ({ extraPlatformRows: next });
   // accent rides in `shared`, so both the first floor and every added row get it from one place —
   // FloorCard needs it for the platform-height control's selected fill.
-  const shared = { S, zm, st, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, imsInventory, scale, openAvailModal, zoneKey, onCarpetAll, carpetShortOf, carpetRemainingOf, guestPriceMultiplier };
+  const shared = { S, zm, st, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, imsInventory, scale, openAvailModal, zoneKey, onCarpetAll, carpetShortOf, carpetRemainingOf, carpetReuse, guestPriceMultiplier };
   return (<>
     <FloorCard {...shared} zc={zc} sZ={sZ} sFD={sFD} fd={fd} title={rows.length ? "Floor 1" : "Floor"} />
     {rows.map((row, ri) => {
@@ -958,7 +961,7 @@ function LightboxPhoto({ src, alt, style }) {
 export default function StudioBuild({ ctx }) {
   const {
     // theme / chrome
-    S, isDark, accent, border, textS: textSRaw, textP, cardBg, fmt, cat,
+    S, isDark, accent, border, textS: textSRaw, textP, cardBg, fmt, cat, carpetReuseHere,
     // events / library / video sources
     events, libItems, sourceEvent, sourceVideo, ytVideoTags, allVideos,
     getFullCost, findTemplate, templates,
@@ -5236,7 +5239,7 @@ undefined
                 customMaskingField={customMaskingField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} scale={zoneScaleVal(k)} guestDiscPct={structDiscountFor(zc,aVenue)?.truss?25:0} guestFabricDiscPct={structDiscountFor(zc,aVenue)?25:0} maskingColours={maskingColours} maskingColourOptions={maskingColourOptions} guestPriceMultiplier={guestPriceMultiplier} trussRepeat={repeatCatFor(zc,"truss")} />}
               {/* ── PLATFORM + CARPET → then floor dims ── */}
               {zoneSection[k]==="platform"&&<FloorStack S={S} zc={zc} zm={zm} st={st} sZ={sZ} sFD={sFD} fd={fd} fmt={fmt} showCosts={showCosts}
-                isDark={isDark} border={border} accent={accent} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} imsInventory={imsInventory} scale={zoneScaleVal(k)} openAvailModal={openAvailModal} zoneKey={k} onCarpetAll={applyCarpetToAll} carpetShortOf={carpetShortOf} carpetRemainingOf={carpetRemainingOf} guestPriceMultiplier={guestPriceMultiplier} />}
+                isDark={isDark} border={border} accent={accent} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} imsInventory={imsInventory} scale={zoneScaleVal(k)} openAvailModal={openAvailModal} zoneKey={k} onCarpetAll={applyCarpetToAll} carpetShortOf={carpetShortOf} carpetRemainingOf={carpetRemainingOf} carpetReuse={carpetReuseHere ? carpetReuseHere() : undefined} guestPriceMultiplier={guestPriceMultiplier} />}
             </div>);
           })()}
           </Fragment>}
