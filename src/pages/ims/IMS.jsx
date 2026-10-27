@@ -6,6 +6,7 @@ import { rowToItem, itemToRow, diffInventory } from "../../lib/inventory/adapter
 import { computePatternSizeCost, effectiveMarkup, assembleMandiCatalogueFromRows, assembleFlowerPatternsFromRows } from "../../lib/ims/flowerHelpers";
 import { assembleLabourTiersFromRows, assembleDihariSchemesFromRows, assembleDefaultWindowsByPhaseFromRows } from "../../lib/ims/labourTypes";
 import { assembleVenueMinLabourFromRows, assembleVenueDumpingFromRows } from "../../lib/ims/venueLabourConfig";
+import { assemblePrintMaterialsFromRows, assembleCarpetMaterialsFromRows, assemblePlatformRatesFromRows, assembleMaskingRatesFromRows, assembleTrussRatesFromRows } from "../../lib/studio/taxonomy";
 import { createSettingsWriter } from "../../lib/ims/settingsWriter";
 import { SETTINGS_DEFAULTS, INIT_TRUSS_INV } from "../../lib/ims/constants";
 import { RC_CATS_DEFAULT } from "../../lib/studio/constants";
@@ -383,6 +384,12 @@ export default function IMS() {
   const labourTypeRowsRef = useRef([]);
   // Venue labour config rows (migration 042) — same reasoning, feeds venueMinLabour/venueDumping.
   const venueLabourRowsRef = useRef([]);
+  // Rate-list rows (migration 043) — same reasoning, one ref per table (each feeds one settings field).
+  const printMaterialRowsRef = useRef([]);
+  const carpetMaterialRowsRef = useRef([]);
+  const platformRateRowsRef = useRef([]);
+  const maskingRateRowsRef = useRef([]);
+  const trussRateRowsRef = useRef([]);
   // Every setX below updates React state synchronously, then persists to Supabase via a
   // fire-and-forget async IIFE that nothing awaits — a real bug, confirmed by direct DB
   // inspection: a sold deal's auto-confirm engine (executeConfirmBlocks → createProjectFromEO)
@@ -499,6 +506,12 @@ export default function IMS() {
     // Same reasoning for venue labour config — `venue_labour_config` TABLE (migration 042).
     settingsObj.venueMinLabour = assembleVenueMinLabourFromRows(venueLabourRowsRef.current);
     settingsObj.venueDumping = assembleVenueDumpingFromRows(venueLabourRowsRef.current);
+    // Same reasoning for the five rate lists — each its own TABLE (migration 043).
+    settingsObj.printMaterials = assemblePrintMaterialsFromRows(printMaterialRowsRef.current);
+    settingsObj.carpetMaterials = assembleCarpetMaterialsFromRows(carpetMaterialRowsRef.current);
+    settingsObj.platformRates = assemblePlatformRatesFromRows(platformRateRowsRef.current);
+    settingsObj.maskingRates = assembleMaskingRatesFromRows(maskingRateRowsRef.current);
+    settingsObj.trussRates = assembleTrussRatesFromRows(trussRateRowsRef.current);
     settingsRef.current = settingsObj;
     setSettingsState(settingsObj);
     setSettingsLoaded(true);
@@ -544,6 +557,39 @@ export default function IMS() {
     };
     settingsRef.current = { ...(settingsRef.current || {}), ...patch };
     setSettingsState((prev) => ({ ...(prev || {}), ...patch }));
+  }, []);
+
+  // Rate-list rows -> one settings field each. Same reasoning/shape as applyMandiRows, one table
+  // per field this time instead of one table feeding several.
+  const applyPrintMaterialRows = useCallback((rows) => {
+    printMaterialRowsRef.current = rows;
+    const v = assemblePrintMaterialsFromRows(rows);
+    settingsRef.current = { ...(settingsRef.current || {}), printMaterials: v };
+    setSettingsState((prev) => ({ ...(prev || {}), printMaterials: v }));
+  }, []);
+  const applyCarpetMaterialRows = useCallback((rows) => {
+    carpetMaterialRowsRef.current = rows;
+    const v = assembleCarpetMaterialsFromRows(rows);
+    settingsRef.current = { ...(settingsRef.current || {}), carpetMaterials: v };
+    setSettingsState((prev) => ({ ...(prev || {}), carpetMaterials: v }));
+  }, []);
+  const applyPlatformRateRows = useCallback((rows) => {
+    platformRateRowsRef.current = rows;
+    const v = assemblePlatformRatesFromRows(rows);
+    settingsRef.current = { ...(settingsRef.current || {}), platformRates: v };
+    setSettingsState((prev) => ({ ...(prev || {}), platformRates: v }));
+  }, []);
+  const applyMaskingRateRows = useCallback((rows) => {
+    maskingRateRowsRef.current = rows;
+    const v = assembleMaskingRatesFromRows(rows);
+    settingsRef.current = { ...(settingsRef.current || {}), maskingRates: v };
+    setSettingsState((prev) => ({ ...(prev || {}), maskingRates: v }));
+  }, []);
+  const applyTrussRateRows = useCallback((rows) => {
+    trussRateRowsRef.current = rows;
+    const v = assembleTrussRatesFromRows(rows);
+    settingsRef.current = { ...(settingsRef.current || {}), trussRates: v };
+    setSettingsState((prev) => ({ ...(prev || {}), trussRates: v }));
   }, []);
 
   // ── Recipe → Studio rate sync (Tier 1.5) ───────────────────────────────────
@@ -856,7 +902,7 @@ export default function IMS() {
     let active = true;
     (async () => {
       try {
-        const [invRows, fnRows, projRows, venRows, poRows, ohRows, supRows, userRows, prodRows, eoRows, allocRows, rcRows, trussRows, catRows, setRows, blockRows, rcCatRows, mandiRows, patternRows, labourTypeRows, venueLabourRows] = await Promise.all([
+        const [invRows, fnRows, projRows, venRows, poRows, ohRows, supRows, userRows, prodRows, eoRows, allocRows, rcRows, trussRows, catRows, setRows, blockRows, rcCatRows, mandiRows, patternRows, labourTypeRows, venueLabourRows, printMaterialRows, carpetMaterialRows, platformRateRows, maskingRateRows, trussRateRows] = await Promise.all([
           fetchAll("inventory"),
           fetchAll("functions").catch(() => []),
           fetchAll("projects").catch(() => []),
@@ -878,6 +924,11 @@ export default function IMS() {
           fetchAll("flower_patterns").catch(() => []),
           fetchAll("labour_types").catch(() => []),
           fetchAll("venue_labour_config").catch(() => []),
+          fetchAll("print_materials").catch(() => []),
+          fetchAll("carpet_materials").catch(() => []),
+          fetchAll("platform_rates").catch(() => []),
+          fetchAll("masking_rates").catch(() => []),
+          fetchAll("truss_rates").catch(() => []),
         ]);
         if (!active) return;
         { const bm = blocksRowsToMap(blockRows); blocksRef.current = bm; setBlocksState(bm); }
@@ -909,6 +960,12 @@ export default function IMS() {
         applyLabourTypeRows(labourTypeRows);
         // Venue labour config — the `venue_labour_config` TABLE (migration 042), same reasoning.
         applyVenueLabourRows(venueLabourRows);
+        // Rate lists — the five TABLEs (migration 043), same reasoning.
+        applyPrintMaterialRows(printMaterialRows);
+        applyCarpetMaterialRows(carpetMaterialRows);
+        applyPlatformRateRows(platformRateRows);
+        applyMaskingRateRows(maskingRateRows);
+        applyTrussRateRows(trussRateRows);
         // blocks blob, Studio rate-card mirror, and the settings object — applied via the
         // shared helper (also used by the settings Realtime subscription below).
         applySettingsRows(setRows);
@@ -975,6 +1032,11 @@ export default function IMS() {
     liveTable("flower_patterns", (rows) => applyFlowerPatternRows(rows));
     liveTable("labour_types", (rows) => applyLabourTypeRows(rows));
     liveTable("venue_labour_config", (rows) => applyVenueLabourRows(rows));
+    liveTable("print_materials", (rows) => applyPrintMaterialRows(rows));
+    liveTable("carpet_materials", (rows) => applyCarpetMaterialRows(rows));
+    liveTable("platform_rates", (rows) => applyPlatformRateRows(rows));
+    liveTable("masking_rates", (rows) => applyMaskingRateRows(rows));
+    liveTable("truss_rates", (rows) => applyTrussRateRows(rows));
     // blocks gets its own channel too, same reason as event_orders below: Build reconciles this
     // table's reservation rows on every qty-affecting edit to a sold deal (reconcileSoldInventoryBlocks
     // in StudioApp.jsx), so it changes constantly, and the table holds one row per inventory item

@@ -124,14 +124,14 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
   const addPrintMaterial = () => {
     const name = printMatNew.trim();
     if (!name) return;
-    setSettings((s) => ({ ...s, printMaterials: [...(s.printMaterials || []), { id: "PM" + Date.now(), name, ratePerSqft: 0 }] }));
+    supabase.from("print_materials").insert({ id: "PM" + Date.now(), name, rate_per_sqft: 0 }).then(() => {}, () => {});
     setPrintMatNew("");
   };
   const [carpetMatNew, setCarpetMatNew] = useState("");
   const addCarpetMaterial = () => {
     const name = carpetMatNew.trim();
     if (!name) return;
-    setSettings((s) => ({ ...s, carpetMaterials: [...(s.carpetMaterials || []), { id: "CM" + Date.now(), name, ratePerSqft: 0 }] }));
+    supabase.from("carpet_materials").insert({ id: "CM" + Date.now(), name, rate_per_sqft: 0 }).then(() => {}, () => {});
     setCarpetMatNew("");
   };
   // ── Platform heights (same panel as carpet — both price off the zone's floor area) ──
@@ -149,10 +149,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
     if (!name) return;
     // A generated key, never a guessable one: "4in" is special-cased in the platform geometry
     // (fatta sits flush, no stands), so a new height must not accidentally claim that meaning.
-    setSettings((s) => ({
-      ...s,
-      platformRates: [...platformRateRows, { key: "PL" + Date.now().toString(36), name, ratePerSqft: 0 }],
-    }));
+    supabase.from("platform_rates").insert({ key: "PL" + Date.now().toString(36), name, rate_per_sqft: 0 }).then(() => {}, () => {});
     setPlatRateNew("");
   };
   // One-time migration: a zone's carpet (`cpT`) used to be picked from Print Materials by
@@ -161,15 +158,18 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
   const importCarpetFromPrintMaterials = () => {
     const fromPrint = (settings.printMaterials || []).filter((m) => String(m.name || "").toLowerCase().includes("carpet"));
     if (!fromPrint.length) return;
-    setSettings((s) => ({ ...s, carpetMaterials: [...(s.carpetMaterials || []), ...fromPrint.map((m) => ({ id: m.id, name: m.name, ratePerSqft: m.ratePerSqft || 0 }))] }));
+    supabase.from("carpet_materials").upsert(
+      fromPrint.map((m) => ({ id: m.id, name: m.name, rate_per_sqft: m.ratePerSqft || 0 })),
+      { onConflict: "id", ignoreDuplicates: true },
+    ).then(() => {}, () => {});
   };
   // TRUSS rates are a fixed grid — one row per (shape × material × density), all three lists live in
   // code because the truss geometry / wall-area formulas index into them. Rows can't be added or
   // removed here, only re-rated or reset. Seed from the code defaults until an admin actually
   // customizes one, so the panel never shows blank rows.
+  const TRUSS_RATE_COLS = { ratePerSqft: "rate_per_sqft", ceilingRatePerSqft: "ceiling_rate_per_sqft", oversizeThresholdSqft: "oversize_threshold_sqft", oversizeRatePerSqft: "oversize_rate_per_sqft" };
   const updateTrussRate = (shape, material, density, field, value) => {
-    const current = (settings.trussRates && settings.trussRates.length) ? settings.trussRates : DEFAULT_TRUSS_RATES;
-    setSettings((s) => ({ ...s, trussRates: current.map((r) => (r.shape === shape && r.material === material && r.density === density) ? { ...r, [field]: value } : r) }));
+    supabase.from("truss_rates").upsert({ shape, material, density, [TRUSS_RATE_COLS[field]]: value }, { onConflict: "shape,material,density" }).then(() => {}, () => {});
   };
   // "Delete" on a truss row can only mean reset: drop the row and both the table and trussRateFor()
   // fall straight back to DEFAULT_TRUSS_RATES, so it would reappear at its seed rate anyway. Doing
@@ -177,8 +177,11 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
   const resetTrussRate = (shape, material, density) => {
     const def = DEFAULT_TRUSS_RATES.find((r) => r.shape === shape && r.material === material && r.density === density);
     if (!def) return;
-    const current = (settings.trussRates && settings.trussRates.length) ? settings.trussRates : DEFAULT_TRUSS_RATES;
-    setSettings((s) => ({ ...s, trussRates: current.map((r) => (r.shape === shape && r.material === material && r.density === density) ? { ...def } : r) }));
+    supabase.from("truss_rates").upsert({
+      shape, material, density,
+      rate_per_sqft: def.ratePerSqft, ceiling_rate_per_sqft: def.ceilingRatePerSqft ?? 0,
+      oversize_threshold_sqft: null, oversize_rate_per_sqft: null,
+    }, { onConflict: "shape,material,density" }).then(() => {}, () => {});
   };
   const trussRateIsCustom = (row, shape, material, density) => {
     const def = DEFAULT_TRUSS_RATES.find((r) => r.shape === shape && r.material === material && r.density === density);
@@ -191,12 +194,10 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
   // circulation everywhere. Zones already priced against a removed type keep resolving through
   // maskingRateFor()'s default fallback rather than silently dropping to ₹0 — see taxonomy.js.
   const updateMaskingRate = (key, ratePerSqft) => {
-    const current = (settings.maskingRates && settings.maskingRates.length) ? settings.maskingRates : DEFAULT_MASKING_RATES;
-    setSettings((s) => ({ ...s, maskingRates: current.map((r) => (r.key === key ? { ...r, ratePerSqft } : r)) }));
+    supabase.from("masking_rates").upsert({ key, rate_per_sqft: ratePerSqft }, { onConflict: "key" }).then(() => {}, () => {});
   };
   const updateMaskingName = (key, name) => {
-    const current = (settings.maskingRates && settings.maskingRates.length) ? settings.maskingRates : DEFAULT_MASKING_RATES;
-    setSettings((s) => ({ ...s, maskingRates: current.map((r) => (r.key === key ? { ...r, name } : r)) }));
+    supabase.from("masking_rates").upsert({ key, name }, { onConflict: "key" }).then(() => {}, () => {});
   };
   const deleteMaskingRate = (key) => {
     const current = (settings.maskingRates && settings.maskingRates.length) ? settings.maskingRates : DEFAULT_MASKING_RATES;
@@ -207,7 +208,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
       `It disappears from the Studio pickers, so no new zone can choose it. Zones already priced ` +
       `against it keep costing ${isSeed ? "the built-in default rate" : "₹0"} — this does not re-price live deals.`
     )) return;
-    setSettings((s) => ({ ...s, maskingRates: current.filter((r) => r.key !== key) }));
+    supabase.from("masking_rates").delete().eq("key", key).then(() => {}, () => {});
   };
   const [newMaskingName, setNewMaskingName] = useState("");
   const addMaskingRate = () => {
@@ -220,7 +221,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
     const taken = new Set([...current.map((r) => r.key), ...DEFAULT_MASKING_RATES.map((r) => r.key)]);
     let key = base, n = 2;
     while (taken.has(key)) key = `${base}-${n++}`;
-    setSettings((s) => ({ ...s, maskingRates: [...current, { key, name, ratePerSqft: 0 }] }));
+    supabase.from("masking_rates").insert({ key, name, rate_per_sqft: 0 }).then(() => {}, () => {});
     setNewMaskingName("");
   };
   // Labour type config — `labour_types` TABLE (migration 041), one row per manpower type. Shared by
@@ -2621,15 +2622,15 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
           <div className="space-y-2">
             {(settings.printMaterials || []).map((m) => (
               <div key={m.id} className="flex items-center gap-3 bg-white border rounded-lg px-3 py-2">
-                <input value={m.name} onChange={(e) => setSettings((s) => ({ ...s, printMaterials: s.printMaterials.map((x) => (x.id === m.id ? { ...x, name: e.target.value } : x)) }))}
+                <input value={m.name} onChange={(e) => updateRow("print_materials", m.id, { name: e.target.value }).catch(() => {})}
                   className="flex-1 border rounded-lg px-2 py-1 text-sm font-medium" />
                 <div className="flex items-center gap-1">
                   <span className="text-xs text-gray-400">₹</span>
-                  <input type="number" min="0" value={m.ratePerSqft ?? 0} onChange={(e) => setSettings((s) => ({ ...s, printMaterials: s.printMaterials.map((x) => (x.id === m.id ? { ...x, ratePerSqft: parseFloat(e.target.value) || 0 } : x)) }))}
+                  <input type="number" min="0" value={m.ratePerSqft ?? 0} onChange={(e) => updateRow("print_materials", m.id, { rate_per_sqft: parseFloat(e.target.value) || 0 }).catch(() => {})}
                     className="w-20 border rounded-lg px-2 py-1 text-sm text-center font-semibold" />
                   <span className="text-xs text-gray-400">/sqft</span>
                 </div>
-                <button onClick={async () => { if (!(await confirm({ title: `Delete "${m.name}"?`, body: "Removes it from the Print Materials list. Anything already priced with it keeps its price." }))) return; setSettings((s) => ({ ...s, printMaterials: s.printMaterials.filter((x) => x.id !== m.id) })); }}
+                <button onClick={async () => { if (!(await confirm({ title: `Delete "${m.name}"?`, body: "Removes it from the Print Materials list. Anything already priced with it keeps its price." }))) return; deleteRow("print_materials", m.id).catch(() => {}); }}
                   className="text-gray-300 hover:text-red-500 text-sm">🗑</button>
               </div>
             ))}
@@ -2660,15 +2661,15 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
           <div className="space-y-2">
             {(settings.carpetMaterials || []).map((m) => (
               <div key={m.id} className="flex items-center gap-3 bg-white border rounded-lg px-3 py-2">
-                <input value={m.name} onChange={(e) => setSettings((s) => ({ ...s, carpetMaterials: s.carpetMaterials.map((x) => (x.id === m.id ? { ...x, name: e.target.value } : x)) }))}
+                <input value={m.name} onChange={(e) => updateRow("carpet_materials", m.id, { name: e.target.value }).catch(() => {})}
                   className="flex-1 border rounded-lg px-2 py-1 text-sm font-medium" />
                 <div className="flex items-center gap-1">
                   <span className="text-xs text-gray-400">₹</span>
-                  <input type="number" min="0" value={m.ratePerSqft ?? 0} onChange={(e) => setSettings((s) => ({ ...s, carpetMaterials: s.carpetMaterials.map((x) => (x.id === m.id ? { ...x, ratePerSqft: parseFloat(e.target.value) || 0 } : x)) }))}
+                  <input type="number" min="0" value={m.ratePerSqft ?? 0} onChange={(e) => updateRow("carpet_materials", m.id, { rate_per_sqft: parseFloat(e.target.value) || 0 }).catch(() => {})}
                     className="w-20 border rounded-lg px-2 py-1 text-sm text-center font-semibold" />
                   <span className="text-xs text-gray-400">/sqft</span>
                 </div>
-                <button onClick={async () => { if (!(await confirm({ title: `Delete "${m.name}"?`, body: "Zones already using this carpet keep their current price — it just stops being offered." }))) return; setSettings((s) => ({ ...s, carpetMaterials: s.carpetMaterials.filter((x) => x.id !== m.id) })); }}
+                <button onClick={async () => { if (!(await confirm({ title: `Delete "${m.name}"?`, body: "Zones already using this carpet keep their current price — it just stops being offered." }))) return; deleteRow("carpet_materials", m.id).catch(() => {}); }}
                   className="text-gray-300 hover:text-red-500 text-sm">🗑</button>
               </div>
             ))}
@@ -2703,10 +2704,12 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                 // `key` is never edited — computePlatformComponents zeroes the stand count for
                 // "4in" specifically, and zoneConfig.plH on every saved quote holds these keys.
                 // Only the label and the rate change.
-                const patch = (fields) => setSettings((s) => ({
-                  ...s,
-                  platformRates: platformRateRows.map((r) => (r.key === row.key ? { ...r, ...fields } : r)),
-                }));
+                const patch = (fields) => {
+                  const row2 = {};
+                  if ("name" in fields) row2.name = fields.name;
+                  if ("ratePerSqft" in fields) row2.rate_per_sqft = fields.ratePerSqft;
+                  supabase.from("platform_rates").upsert({ key: row.key, ...row2 }, { onConflict: "key" }).then(() => {}, () => {});
+                };
                 return (
                   <div key={row.key} className="flex items-center gap-3 bg-white border rounded-lg px-3 py-2">
                     <input value={row.name} onChange={(e) => patch({ name: e.target.value })}
@@ -2727,7 +2730,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                           title: `Delete "${row.name}"?`,
                           body: "Zones already saved with this height keep their current price — it just stops being offered.",
                         }))) return;
-                        setSettings((s) => ({ ...s, platformRates: platformRateRows.filter((r) => r.key !== row.key) }));
+                        supabase.from("platform_rates").delete().eq("key", row.key).then(() => {}, () => {});
                       }}
                       className="text-gray-300 hover:text-red-500 text-sm">🗑</button>
                   </div>

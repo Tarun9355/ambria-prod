@@ -78,6 +78,7 @@ import {
   getCat, taxOr, FUNCTIONS, CATEGORIES, SHIFT_LETTER,
   carpetPricingFor, CARPET_OFF, trussRateFor, maskingRateFor, platformRateFor, platformRowCost, billedCarpetSqft, trussBaseArea, TRUSS_MATERIALS, DRAPE_DENSITIES,
   resolveVenueGensets,
+  assemblePrintMaterialsFromRows, assembleCarpetMaterialsFromRows, assemblePlatformRatesFromRows, assembleMaskingRatesFromRows, assembleTrussRatesFromRows,
 } from "../../lib/studio/taxonomy";
 
 import { RC_D, RC_CATS_DEFAULT } from "../../lib/studio/constants";
@@ -3116,14 +3117,14 @@ export default function StudioApp() {
         // AI Synonym Dictionary — IMS persists each settings field as its OWN row keyed by field name
         // (IMS.jsx's setSettings), not nested under IMS_SETTINGS_SK, so it's fetched by its own key.
         (async () => { try { const synv = await kvGet("synonymDictionary"); if (synv != null) { const sd = parse(synv); if (Array.isArray(sd) && !cancelled) setImsSynonymDictionary(sd); } } catch {} })(),
-        // Print Materials — same per-field kv row pattern as synonymDictionary above.
-        (async () => { try { const pmv = await kvGet("printMaterials"); if (pmv != null) { const pm = parse(pmv); if (Array.isArray(pm) && !cancelled) setImsPrintMaterials(pm); } } catch {} })(),
-        (async () => { try { const cmv = await kvGet("carpetMaterials"); if (cmv != null) { const cm = parse(cmv); if (Array.isArray(cm) && !cancelled) setImsCarpetMaterials(cm); } } catch {} })(),
-        // Truss & Masking Rates (IMS Admin → Settings → 🏗️) — same per-field kv row pattern.
-        (async () => { try { const trv = await kvGet("trussRates"); if (trv != null) { const tr = parse(trv); if (Array.isArray(tr) && !cancelled) setImsTrussRates(tr); } } catch {} })(),
-        (async () => { try { const mrv = await kvGet("maskingRates"); if (mrv != null) { const mr = parse(mrv); if (Array.isArray(mr) && !cancelled) setImsMaskingRates(mr); } } catch {} })(),
+        // Print/Carpet Materials, Truss & Masking Rates, Platform Rates (IMS Admin → Settings) — now
+        // their own TABLES (migration 043), not settings rows — fetched directly instead of via kv.
+        (async () => { try { const rows = await fetchAll("print_materials"); if (!cancelled) setImsPrintMaterials(assemblePrintMaterialsFromRows(rows)); } catch {} })(),
+        (async () => { try { const rows = await fetchAll("carpet_materials"); if (!cancelled) setImsCarpetMaterials(assembleCarpetMaterialsFromRows(rows)); } catch {} })(),
+        (async () => { try { const rows = await fetchAll("truss_rates"); if (!cancelled) setImsTrussRates(assembleTrussRatesFromRows(rows)); } catch {} })(),
+        (async () => { try { const rows = await fetchAll("masking_rates"); if (!cancelled) setImsMaskingRates(assembleMaskingRatesFromRows(rows)); } catch {} })(),
         (async () => { try { const fmv = await kvGet("fabricMultiplier"); if (fmv != null && !cancelled) setImsFabricMultiplier(parse(fmv)); } catch {} })(),
-        (async () => { try { const prv = await kvGet("platformRates"); if (prv != null) { const pr = parse(prv); if (Array.isArray(pr) && !cancelled) setImsPlatformRates(pr); } } catch {} })(),
+        (async () => { try { const rows = await fetchAll("platform_rates"); if (!cancelled) setImsPlatformRates(assemblePlatformRatesFromRows(rows)); } catch {} })(),
       ]);
       // Every input the estimate reads has now landed: the rate card and its scaling factors,
       // inventory, the transport settings, and all five structure-rate tables above. Anything loaded
@@ -3223,12 +3224,7 @@ export default function StudioApp() {
           if (key === RC_SK_CATS) { const a = pj(await kvGet(RC_SK_CATS)); if (Array.isArray(a)) setRcCats(a); }
           else if (key === RC_SK_TR) { const td = pj(await kvGet(RC_SK_TR)); if (td && typeof td === "object") { if (td.venues) setTrVenues(td.venues); if (td.truckCap) setTruckCap(td.truckCap); if (td.floralPerTruck) setFloralPerTruck(td.floralPerTruck); if (td.bufferTiers) setBufferTiers(td.bufferTiers); if (td.gensetRate !== undefined) setGensetRate(td.gensetRate); if (td.gensetRate62 !== undefined) setGensetRate62(td.gensetRate62); if (td.gensetCostRate !== undefined) setGensetCostRate(td.gensetCostRate); if (td.gensetCostRate62 !== undefined) setGensetCostRate62(td.gensetCostRate62); } trSettingsLoadedRef.current = true; }
           else if (key === PALETTE_SK) { const p = pj(await kvGet(PALETTE_SK)); if (p && typeof p === "object") { if (Array.isArray(p.colourCatalogue)) setImsColourCatalogue(p.colourCatalogue); if (Array.isArray(p.paletteCatalogue)) setImsPaletteCatalogue(p.paletteCatalogue); } }
-          else if (key === "printMaterials") { const pm = pj(await kvGet("printMaterials")); if (Array.isArray(pm)) setImsPrintMaterials(pm); }
-          else if (key === "carpetMaterials") { const cm = pj(await kvGet("carpetMaterials")); if (Array.isArray(cm)) setImsCarpetMaterials(cm); }
-          else if (key === "trussRates") { const tr = pj(await kvGet("trussRates")); if (Array.isArray(tr)) setImsTrussRates(tr); }
-          else if (key === "maskingRates") { const mr = pj(await kvGet("maskingRates")); if (Array.isArray(mr)) setImsMaskingRates(mr); }
           else if (key === "fabricMultiplier") { setImsFabricMultiplier(pj(await kvGet("fabricMultiplier"))); }
-          else if (key === "platformRates") { const pr = pj(await kvGet("platformRates")); if (Array.isArray(pr)) setImsPlatformRates(pr); }
           // YT_TAG_SK is deliberately NOT handled here any more. Video tags have their own row-level
           // subscription on the `video_tags` table now, and the blob is a write-only mirror during the
           // transition. Rebuilding the whole map from that mirror could push a stale blob (the mirror
@@ -3276,6 +3272,20 @@ export default function StudioApp() {
     const ch = subscribeTable("flower_patterns", () => { refreshStudioFloralData(); });
     return () => { try { supabase.removeChannel(ch); } catch { /* ignore */ } };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // ── Realtime: the five structure rate lists (migration 043) — each its own table now, not a
+  // settings row, so each gets its own re-fetch-and-set subscription instead of the generic
+  // "studio:settings" key-watch channel above. ──
+  useEffect(() => {
+    const specs = [
+      ["print_materials", () => fetchAll("print_materials").then((rows) => setImsPrintMaterials(assemblePrintMaterialsFromRows(rows)))],
+      ["carpet_materials", () => fetchAll("carpet_materials").then((rows) => setImsCarpetMaterials(assembleCarpetMaterialsFromRows(rows)))],
+      ["truss_rates", () => fetchAll("truss_rates").then((rows) => setImsTrussRates(assembleTrussRatesFromRows(rows)))],
+      ["masking_rates", () => fetchAll("masking_rates").then((rows) => setImsMaskingRates(assembleMaskingRatesFromRows(rows)))],
+      ["platform_rates", () => fetchAll("platform_rates").then((rows) => setImsPlatformRates(assemblePlatformRatesFromRows(rows)))],
+    ];
+    const channels = specs.map(([table, reload]) => subscribeTable(table, () => { reload().catch(() => {}); }));
+    return () => { channels.forEach((ch) => { try { supabase.removeChannel(ch); } catch { /* ignore */ } }); };
+  }, []);
   // ── Realtime: library is a TABLE — patch row-level UPDATE/DELETE live for whatever's already
   // cached (echoes of our own writes are idempotent). Since `libItems` is now a lazy cache rather
   // than the whole table, an INSERT for an id we've never queried is deliberately IGNORED here —
