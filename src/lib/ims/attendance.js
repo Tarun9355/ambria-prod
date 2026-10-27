@@ -33,6 +33,20 @@ export function distanceMeters(lat1, lng1, lat2, lng2) {
   return 2 * R * Math.asin(Math.sqrt(Math.min(1, a)));
 }
 
+// Row <-> object translation (migration 045: attendance_locations/attendance_training TABLES
+// replacing the attendanceLocations/attendanceTrainingByDept settings keys). Give back the exact
+// shapes resolvePunchLocation (above) and QuizSetupPanel.jsx already expect.
+export function assembleAttendanceLocationsFromRows(rows) {
+  return (Array.isArray(rows) ? rows : []).map((r) => ({ id: r.id, name: r.name, lat: Number(r.lat), lng: Number(r.lng) }));
+}
+export function assembleAttendanceTrainingByDeptFromRows(rows) {
+  const out = {};
+  (Array.isArray(rows) ? rows : []).forEach((r) => {
+    out[r.dept] = { videoUrl: r.video_url || "", questions: Array.isArray(r.questions) ? r.questions : [] };
+  });
+  return out;
+}
+
 /**
  * The nearest admin-configured location within PUNCH_LOCATION_RADIUS_M of a captured position, or
  * null if none is close enough (or no coordinates were captured at all) — the caller shows

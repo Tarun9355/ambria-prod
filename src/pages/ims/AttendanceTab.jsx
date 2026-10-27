@@ -397,10 +397,10 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
             className="flex items-center gap-1.5 text-sm font-semibold text-gray-500 bg-white ring-1 ring-gray-200 shadow-sm rounded-xl px-3 py-1.5 mb-3 hover:bg-gray-50 hover:text-gray-700 transition">
             ← Back to Attendance
           </button>
-          {adminView === "quiz" && <QuizSetupPanel settings={settings} setSettings={setSettings} />}
+          {adminView === "quiz" && <QuizSetupPanel settings={settings} />}
           {adminView === "log" && <AttendanceAdminLog users={users} />}
           {adminView === "labourlog" && <LabourAdminLog />}
-          {adminView === "location" && <AttendanceLocationsPanel settings={settings} setSettings={setSettings} />}
+          {adminView === "location" && <AttendanceLocationsPanel settings={settings} />}
           {adminView === "labour" && (
             <LabourPunchPanel authUser={authUser} users={users} settings={settings} myAccess={myLabourAccess} onAccessChanged={reloadLabourAccess} />
           )}

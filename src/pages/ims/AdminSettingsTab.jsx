@@ -2565,7 +2565,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                     const words = synNewWords.split(",").map((w) => w.trim()).filter(Boolean);
                     if (words.length < 2) { alert("Need at least 2 words in a synonym group"); return; }
                     const id = "SYN" + Date.now();
-                    setSettings((s) => ({ ...s, synonymDictionary: [...(s.synonymDictionary || []), { id, words }] }));
+                    supabase.from("synonym_groups").insert({ id, words }).then(() => {}, () => {});
                     setSynNewWords("");
                   }
                 }} />
@@ -2574,7 +2574,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
               const words = synNewWords.split(",").map((w) => w.trim()).filter(Boolean);
               if (words.length < 2) { alert("Need at least 2 words in a synonym group"); return; }
               const id = "SYN" + Date.now();
-              setSettings((s) => ({ ...s, synonymDictionary: [...(s.synonymDictionary || []), { id, words }] }));
+              supabase.from("synonym_groups").insert({ id, words }).then(() => {}, () => {});
               setSynNewWords("");
             }} className="bg-violet-600 hover:bg-violet-700 text-white text-sm px-4 py-2 rounded-lg font-medium whitespace-nowrap">+ Add Group</button>
           </div>
@@ -2588,7 +2588,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                       {w}
                       <button onClick={() => {
                         if (group.words.length <= 2) { alert("Synonym group must have at least 2 words. Delete the group instead."); return; }
-                        setSettings((s) => ({ ...s, synonymDictionary: s.synonymDictionary.map((g) => g.id === group.id ? { ...g, words: g.words.filter((_, i) => i !== wi) } : g) }));
+                        supabase.from("synonym_groups").update({ words: group.words.filter((_, i) => i !== wi) }).eq("id", group.id).then(() => {}, () => {});
                       }} className="text-violet-400 hover:text-red-500 text-xs leading-none">×</button>
                     </span>
                   ))}
@@ -2596,12 +2596,12 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                     onKeyDown={(e) => {
                       if (e.key === "Enter" && e.target.value.trim()) {
                         const nw = e.target.value.trim();
-                        setSettings((s) => ({ ...s, synonymDictionary: s.synonymDictionary.map((g) => g.id === group.id ? { ...g, words: [...g.words, nw] } : g) }));
+                        supabase.from("synonym_groups").update({ words: [...group.words, nw] }).eq("id", group.id).then(() => {}, () => {});
                         e.target.value = "";
                       }
                     }} />
                 </div>
-                <button onClick={() => setSettings((s) => ({ ...s, synonymDictionary: s.synonymDictionary.filter((g) => g.id !== group.id) }))}
+                <button onClick={() => { deleteRow("synonym_groups", group.id).catch(() => {}); }}
                   className="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity text-sm">🗑</button>
               </div>
             ))}
