@@ -96,6 +96,7 @@ function FabricDetail({ cur, fmt, onZoom, dates = [], dateOf = () => "" }) {
                   </div>
                   <div className="text-[12px] text-gray-500 mt-0.5">{z.application || "—"}</div>
                   {z.dims && <div className="text-[12px] text-gray-700 mt-0.5 tabular-nums"><span className="text-gray-400">Truss </span>{z.dims}</div>}
+                  {!z.colours?.length && cur.colours.length > 1 && z.fi != null && <div className="text-[12px] text-gray-400 mt-0.5">Colour: not recorded for this zone yet - sync the event from Deal Check</div>}
                   {/* the colour(s) this zone's fabric goes in: a square of the colour's own photo (tap to see it large), its name and how much */}
                   {z.colours?.length > 0 && (
                     <div className="flex flex-wrap gap-x-3 gap-y-1.5 mt-1.5">
