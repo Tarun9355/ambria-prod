@@ -30,7 +30,7 @@ import StudioSummary from "./views/StudioSummary.jsx";
 import { kvGet, kvTryGet, kvSet, reliableSave } from "../../lib/ims/kv";
 import { makeAmendRequest } from "../../lib/ims/amend";
 import { catToDept } from "../../lib/ims/deptClassify";
-import { availableAtVenue, isStandingAt, rentalSplit, fixedVenueDealDiscount, fixedVenueDiscountPctFor, proratedVenueDiscount, fixedVenueFor, builtQty, kitBuiltQty, venueSlackFor, standingReductionBySubcat, standingQty, combineAvailability } from "../../lib/ims/fixedVenues";
+import { availableAtVenue, isStandingAt, rentalSplit, fixedVenueDealDiscount, fixedVenueDiscountPctFor, proratedVenueDiscount, fixedVenueFor, builtQty, kitBuiltQty, venueSlackFor, standingReductionBySubcat, standingQty, combineAvailability, assembleFixedVenuesFromRows } from "../../lib/ims/fixedVenues";
 import { searchLmsLeads, triggerLmsSync, fetchCachedContracts, fetchLmsLeadByEntry } from "../../lib/ims/lms";
 import { uploadToStorage, compressImageForUpload, STORAGE_FOLDERS, listStorage, deleteStorageObjects, deleteStorageFolder } from "../../lib/storage";
 import { ytApi, ytDuration } from "../../lib/youtube";
@@ -109,7 +109,7 @@ import {
   fetchVerifiedLibraryPhotos, checkExistingLibraryUrls, TAG_SOURCE,
 } from "../../lib/studio/libraryQueries";
 import { rowToItem } from "../../lib/inventory/adapter";
-import { VENUE_MIG_SK, LEGACY_VENUE_SEED } from "../../lib/studio/venues";
+import { assembleVenuesFromRows, genVenueId } from "../../lib/ims/venueProperties";
 import {
   STORAGE_KEY, AMBRIA_PLAYLIST_ID, CLD_CLOUD,
   YT_SK, YT_TAG_SK, MANUAL_VID_SK, HIDDEN_VID_SK, FAV_VID_SK, FAV_PHOTO_SK,
@@ -1444,12 +1444,8 @@ export default function StudioApp() {
   const [customInhouse, setCustomInhouse] = useState([]);
   const [customOutdoor, setCustomOutdoor] = useState([]);
   // In-house properties (id/name/manager/icon/commissionPct) — IMS-owned (VenuesEditor.jsx), Studio
-  // only reads this to resolve commission % in Deal Check. Kept in a ref (below) purely so saveVenues
-  // can round-trip it unchanged whenever Studio itself writes this row (auto-persisting a brand-new
-  // custom outdoor venue) — Studio never edits a property's own fields.
+  // only reads this to resolve commission % in Deal Check. Studio never edits a property's own fields.
   const [customProperties, setCustomProperties] = useState([]);
-  const customPropertiesRef = useRef([]);
-  useEffect(() => { customPropertiesRef.current = customProperties; }, [customProperties]);
 
   // ═══ STUDIO STATE ═══
   const [step, setStep] = useState(0);
@@ -2899,11 +2895,10 @@ export default function StudioApp() {
       // slow/broken read still lets every other one's state update land, matching the original
       // per-block try/catch isolation exactly.
       const [
-        eventsVal, venuesVal, venueMigFlag, rcRows, rcSubcatRows, invRows, rcCatsVal, trVal,
+        eventsVal, venueRows, rcRows, rcSubcatRows, invRows, rcCatsVal, trVal,
       ] = await Promise.all([
         kvGet(STORAGE_KEY).catch(() => null),
-        kvGet(STORAGE_KEY + "-venues").catch(() => null),
-        kvGet(VENUE_MIG_SK).catch(() => null),
+        fetchAll("venues").catch(() => []),
         loadRcRows().catch(() => null),
         fetchAll("rate_card_categories").catch(() => null),
         fetchAll("inventory").catch(() => null),
@@ -2920,19 +2915,14 @@ export default function StudioApp() {
           if (!cancelled && wrapped.length) setEvents(wrapped);
         }
       } catch {}
-      // Venues
+      // Venues — the `venues` TABLE (migration 036) is the sole source of truth now, no more
+      // settings-blob read/migrate/save-back here. assembleVenuesFromRows gives back the exact
+      // {properties, inhouse, outdoor} shape this component's state already expects, so every
+      // downstream consumer (allInhouseVenues, venueParents, Build/Deal Check pickers, …) needs no
+      // changes at all.
       try {
-        const v = venuesVal;
-        let inhouseArr = [], outdoorArr = [], propertiesArr = [];
-        if (v != null) { const vd = parse(v); if (vd && Array.isArray(vd.inhouse)) inhouseArr = vd.inhouse; if (vd && Array.isArray(vd.outdoor)) outdoorArr = vd.outdoor; if (vd && Array.isArray(vd.properties)) propertiesArr = vd.properties; }
-        if (!venueMigFlag) {
-          LEGACY_VENUE_SEED.inhouse.forEach(s => { if (!inhouseArr.some(x => x.name === s.name)) inhouseArr.push(s); });
-          LEGACY_VENUE_SEED.outdoor.forEach(s => { if (!outdoorArr.some(x => x.name === s.name)) outdoorArr.push(s); });
-          const payload = JSON.stringify({ inhouse: inhouseArr, outdoor: outdoorArr, properties: propertiesArr });
-          reliableSave(STORAGE_KEY + "-venues", payload, "Venues").catch(() => {});
-          kvSet(VENUE_MIG_SK, "1").catch(() => {});
-        }
-        if (!cancelled) { setCustomInhouse(inhouseArr); setCustomOutdoor(outdoorArr); setCustomProperties(propertiesArr); }
+        const assembled = assembleVenuesFromRows(venueRows);
+        if (!cancelled) { setCustomInhouse(assembled.inhouse); setCustomOutdoor(assembled.outdoor); setCustomProperties(assembled.properties); }
       } catch {}
       // Rate Card — now row-per-item in the `rate_card` TABLE (off the settings blob; shared with IMS).
       let loadedRcItems = null;
@@ -3172,10 +3162,13 @@ export default function StudioApp() {
   // direct optimistic set + reliableSave under the kv shim, per the persistence transform.)
   // ═══════════════════════════════════════════════════════════════
   const save = useCallback(async (evs) => { setEvents(evs); await reliableSave(STORAGE_KEY, JSON.stringify(evs), "Events"); }, []);
-  // properties[] (IMS-owned — id/name/manager/icon/commissionPct) is never touched here; it's
-  // round-tripped from customPropertiesRef so a Studio-side write (e.g. auto-persisting a brand-new
-  // custom outdoor venue) can't silently wipe out IMS's property catalogue in this same settings row.
-  const saveVenues = useCallback(async (ih, od) => { setCustomInhouse(ih); setCustomOutdoor(od); await reliableSave(STORAGE_KEY + "-venues", JSON.stringify({ inhouse: ih, outdoor: od, properties: customPropertiesRef.current || [] }), "Venues"); }, []);
+  // Adds ONE new outdoor venue as a row in the `venues` table (kind="outdoor") — the only write
+  // Studio itself ever makes to the venue catalogue (auto-persisting a brand-new venue a salesperson
+  // typed in Event Info). The realtime subscription above re-fetches and updates customOutdoor, so
+  // no local setState here.
+  const addOutdoorVenue = useCallback(async (name, empanelled) => {
+    await supabase.from("venues").insert({ id: genVenueId("od"), kind: "outdoor", name, empanelled: !!empanelled });
+  }, []);
   // Sub-venue → parent map (Aura → Exotica) so fixed-venue rules match across sub-venues.
   // Persisted to settings so IMS reads it too.
   //
@@ -3261,6 +3254,14 @@ export default function StudioApp() {
       .subscribe();
     return () => { supabase.removeChannel(ch); };
   }, []);
+  // ── Realtime: fixed_venues is its own TABLE now (migration 038), not a settings row — the
+  // key-watch channel above can't see it. Same reaction as any other FLORAL_DATA_KEYS change: a
+  // full refreshStudioFloralData, since Build/Summary need the real standing-inventory discount
+  // before Deal Check has ever been opened too. ──
+  useEffect(() => {
+    const ch = subscribeTable("fixed_venues", () => { refreshStudioFloralData(); });
+    return () => { try { supabase.removeChannel(ch); } catch { /* ignore */ } };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   // ── Realtime: library is a TABLE — patch row-level UPDATE/DELETE live for whatever's already
   // cached (echoes of our own writes are idempotent). Since `libItems` is now a lazy cache rather
   // than the whole table, an INSERT for an id we've never queried is deliberately IGNORED here —
@@ -3315,6 +3316,19 @@ export default function StudioApp() {
           setYtVideoTags((prev) => ({ ...prev, [id]: tag }));
         }
       } catch { /* ignore */ }
+    });
+    return () => { try { supabase.removeChannel(ch); } catch { /* ignore */ } };
+  }, []);
+  // ── Realtime: venues (properties/sub-venues/outdoor) — the `venues` TABLE (migration 036) is the
+  // sole source of truth; any change anywhere (Master Data → Venues, Fixed Venues, or Studio's own
+  // addOutdoorVenue below) re-fetches the whole (small) table and reassembles, since a property
+  // rename/delete changes the derived `parent` on every one of its sub-venues too. ──
+  useEffect(() => {
+    const ch = subscribeTable("venues", () => {
+      fetchAll("venues").then((rows) => {
+        const assembled = assembleVenuesFromRows(rows);
+        setCustomInhouse(assembled.inhouse); setCustomOutdoor(assembled.outdoor); setCustomProperties(assembled.properties);
+      }).catch(() => {});
     });
     return () => { try { supabase.removeChannel(ch); } catch { /* ignore */ } };
   }, []);
@@ -4793,7 +4807,7 @@ export default function StudioApp() {
   const FLORAL_DATA_KEYS = [
     "flowerPatterns", "mandiCatalogue", "artificialFlowerRatePerKg", "artificialFlowerBunchesPerKg",
     "artificialGreenRatePerKg", "artificialGreenBunchesPerKg", "defaultStudioMarkup",
-    "fixedVenues", "fixedVenueSubcatDiscount", "agencyFeePct", "datePricing",
+    "fixedVenueSubcatDiscount", "agencyFeePct", "datePricing",
   ];
   const refreshStudioFloralData = useCallback(async () => {
     try {
@@ -4803,10 +4817,12 @@ export default function StudioApp() {
       // Check has ever been opened — dealCheckData?.trussInv used to be the only source, so Build's/
       // Summary's own total silently omitted this discount (showing a HIGHER total) until Deal Check
       // loaded it, then stayed lower afterward — the other half of the "total changes after opening
-      // Deal Check" bug, alongside the agencyFeePct/fixedVenues gap fixed above.
-      const [{ data }, trussInvRows] = await Promise.all([
+      // Deal Check" bug, alongside the agencyFeePct/fixedVenues gap fixed above. fixedVenues itself
+      // comes from the `fixed_venues` TABLE (migration 038), not this settings-keys fetch.
+      const [{ data }, trussInvRows, fixedVenueRows] = await Promise.all([
         supabase.from("settings").select("key,value").in("key", FLORAL_DATA_KEYS),
         fetchAll("truss_inventory").catch(() => []),
+        fetchAll("fixed_venues").catch(() => []),
       ]);
       const s = {};
       (data || []).forEach(r => { let v = r?.value; for (let i = 0; i < 2; i++) { if (typeof v === "string") { try { v = JSON.parse(v); } catch { break; } } } s[r.key] = v; });
@@ -4823,7 +4839,7 @@ export default function StudioApp() {
         artificialGreenRatePerKg: typeof s.artificialGreenRatePerKg === "number" ? s.artificialGreenRatePerKg : 40,
         artificialGreenBunchesPerKg: (typeof s.artificialGreenBunchesPerKg === "number" && s.artificialGreenBunchesPerKg > 0) ? s.artificialGreenBunchesPerKg : 23,
         defaultStudioMarkup: Number(s.defaultStudioMarkup ?? 3) || 3,
-        fixedVenues: Array.isArray(s.fixedVenues) ? s.fixedVenues : [],
+        fixedVenues: assembleFixedVenuesFromRows(fixedVenueRows),
         fixedVenueSubcatDiscount: (s.fixedVenueSubcatDiscount && typeof s.fixedVenueSubcatDiscount === "object") ? s.fixedVenueSubcatDiscount : {},
         // Same reason fixedVenues lives here and not only in dealCheckData: eventGrandTotal/grandTotal/
         // buildCombinedCostSheetData (Build's own live total, Summary's hero, the cost sheet) all need
@@ -7249,11 +7265,10 @@ export default function StudioApp() {
       newTR = [...trVenues, { id, tier: "other", name, rate, genset125, genset62: 0 }];
     }
     const existingOut = customOutdoor.find(o => (o.name || "").toLowerCase() === lcName);
-    const newOut = existingOut ? customOutdoor : [...customOutdoor, { name, empanelled: false }];
     saveTR(newTR, null);
-    if (newOut !== customOutdoor) saveVenues(customInhouse, newOut);
+    if (!existingOut) addOutdoorVenue(name, false);
     showMsg(`✓ Saved ${name} (₹${rate}/trip, ${genset125} × 125 KVA genset)`, "green");
-  }, [clientVenueOther, customTripRate, customGensets, trVenues, customOutdoor, customInhouse, allInhouseVenues, saveTR, saveVenues]);
+  }, [clientVenueOther, customTripRate, customGensets, trVenues, customOutdoor, customInhouse, allInhouseVenues, saveTR, addOutdoorVenue]);
 
   // ── Outdoor venue list (DB + events) — VERBATIM ──
   const outdoorVenueList = useMemo(() => {
@@ -10916,11 +10931,12 @@ export default function StudioApp() {
         }
         return isGood(last) ? last : null;
       };
-      const [invResults, settingsRows, vendorRows, trussInvRows] = await Promise.all([
+      const [invResults, settingsRows, vendorRows, trussInvRows, fixedVenueRows] = await Promise.all([
         Promise.all(uniqueDates.map(d => fetchIMSData(d))),
         readRetry(async () => { const r = await supabase.from("settings").select("key,value"); if (r.error) throw r.error; return r.data || []; }, rows => Array.isArray(rows) && rows.length > 0),
         fetchAll("vendors").catch(() => []),
         readRetry(() => fetchAll("truss_inventory"), rows => Array.isArray(rows) && rows.length > 0),
+        fetchAll("fixed_venues").catch(() => []),
       ]);
       if (!settingsRows || !trussInvRows) {
         setDealCheckError("Settings or truss stock didn't load, so manpower and truss would show as zero. Close Deal Check and open it again.");
@@ -11007,16 +11023,13 @@ export default function StudioApp() {
       if (tv && typeof tv === "object" && tv.pillars) trussInv = tv;
       // Venue commission % (IMS → Admin → Master Data → Venues) — one row per in-house PROPERTY
       // (covers all its sub-venues, keyed by parent name via venueParents) and one per outdoor
-      // venue, keyed by name directly. Same settings row Studio already reads for customInhouse/
-      // customOutdoor (STORAGE_KEY + "-venues"), already included in this unconditional `settings`
-      // fetch — no extra round trip.
-      let venuesRaw = s[STORAGE_KEY + "-venues"];
-      if (typeof venuesRaw === "string") { try { venuesRaw = JSON.parse(venuesRaw); } catch { venuesRaw = null; } }
+      // venue, keyed by name directly. customProperties/customOutdoor are this component's own live
+      // state off the `venues` TABLE (migration 036) — no separate blob read needed here.
       const venueCommission = {};
-      (Array.isArray(venuesRaw?.properties) ? venuesRaw.properties : []).forEach(p => { if (p?.name && typeof p.commissionPct === "number") venueCommission[p.name] = p.commissionPct; });
-      (Array.isArray(venuesRaw?.outdoor) ? venuesRaw.outdoor : []).forEach(v => { if (v?.name && typeof v.commissionPct === "number") venueCommission[v.name] = v.commissionPct; });
+      (customProperties || []).forEach(p => { if (p?.name && typeof p.commissionPct === "number") venueCommission[p.name] = p.commissionPct; });
+      (customOutdoor || []).forEach(v => { if (v?.name && typeof v.commissionPct === "number") venueCommission[v.name] = v.commissionPct; });
 
-      setDealCheckData({ inventory, blocksByDate, blocksDetailByDate, fetchedDates: uniqueDates, flowerPatterns, mandiCatalogue, mandiPriceMultipliers, seasonMap, electricianProductivity, artificialMixRatePerKg, artificialFlowerRatePerKg, artificialFlowerBunchesPerKg, artificialGreenRatePerKg, artificialGreenBunchesPerKg, flowerRecipeSubcats, dihariSchemes, defaultWindowsByPhase, labourTiers, venueMinLabour, defaultMinLabour, eventTypeMultipliers, eventTimingMultipliers, sayaMultiplier, datePricing, situationalMultipliers, situationalMultiplierCap, heavyElementRanges, fabricBangaliRanges, trussLabourRanges, fabricRftPerWorker, vendors, trussInv, colourCatalogue, paletteCatalogue, paintableCategories, defaultPaintCostPerItem, carpetFreshMarkup, agencyFeePct, defaultStudioMarkup: Number(s.defaultStudioMarkup ?? 3) || 3, fixedVenues: Array.isArray(s.fixedVenues) ? s.fixedVenues : [], fixedVenueSubcatDiscount: (s.fixedVenueSubcatDiscount && typeof s.fixedVenueSubcatDiscount === "object") ? s.fixedVenueSubcatDiscount : {}, venueParents, venueCommission, venueDumping: (s.venueDumping && typeof s.venueDumping === "object") ? s.venueDumping : {}, categoryDepartments: (catDeptMap && Object.keys(catDeptMap).length) ? catDeptMap : ((s.categoryDepartments && typeof s.categoryDepartments === "object") ? s.categoryDepartments : {}) });
+      setDealCheckData({ inventory, blocksByDate, blocksDetailByDate, fetchedDates: uniqueDates, flowerPatterns, mandiCatalogue, mandiPriceMultipliers, seasonMap, electricianProductivity, artificialMixRatePerKg, artificialFlowerRatePerKg, artificialFlowerBunchesPerKg, artificialGreenRatePerKg, artificialGreenBunchesPerKg, flowerRecipeSubcats, dihariSchemes, defaultWindowsByPhase, labourTiers, venueMinLabour, defaultMinLabour, eventTypeMultipliers, eventTimingMultipliers, sayaMultiplier, datePricing, situationalMultipliers, situationalMultiplierCap, heavyElementRanges, fabricBangaliRanges, trussLabourRanges, fabricRftPerWorker, vendors, trussInv, colourCatalogue, paletteCatalogue, paintableCategories, defaultPaintCostPerItem, carpetFreshMarkup, agencyFeePct, defaultStudioMarkup: Number(s.defaultStudioMarkup ?? 3) || 3, fixedVenues: assembleFixedVenuesFromRows(fixedVenueRows), fixedVenueSubcatDiscount: (s.fixedVenueSubcatDiscount && typeof s.fixedVenueSubcatDiscount === "object") ? s.fixedVenueSubcatDiscount : {}, venueParents, venueCommission, venueDumping: (s.venueDumping && typeof s.venueDumping === "object") ? s.venueDumping : {}, categoryDepartments: (catDeptMap && Object.keys(catDeptMap).length) ? catDeptMap : ((s.categoryDepartments && typeof s.categoryDepartments === "object") ? s.categoryDepartments : {}) });
       setDealCheckLoading(false);
       if (inventory.length === 0) {
         setDcAbortRef(null);
@@ -11073,7 +11086,7 @@ export default function StudioApp() {
       }
     }
     setDcAbortRef(null);
-  }, [collectAllFunctionData, dcPhotoOverrides, photoImsMap, dcCache, activeClientId, clientLedger, ensureClientHeavyFieldsLoaded]);
+  }, [collectAllFunctionData, dcPhotoOverrides, photoImsMap, dcCache, activeClientId, clientLedger, ensureClientHeavyFieldsLoaded, customProperties, customOutdoor]);
 
   // ═══ DEAL CHECK — fire openDealCheck on full-page open — VERBATIM ═══
   useEffect(() => {
@@ -11886,7 +11899,7 @@ export default function StudioApp() {
     taxEditCat, setTaxEditCat, taxNewTag, setTaxNewTag, taxNewCat, setTaxNewCat, libElSearch, setLibElSearch,
     addTagWithAreaZoneSync, addZoneWithAreaSync,
     // venues
-    customInhouse, setCustomInhouse, customOutdoor, setCustomOutdoor, saveVenues,
+    customInhouse, setCustomInhouse, customOutdoor, setCustomOutdoor, addOutdoorVenue,
     newIH, setNewIH, newOD, setNewOD, adminOdSearch, setAdminOdSearch, editIH, setEditIH, editOD, setEditOD,
     // studio build state
     venueGroup, setVenueGroup, outsideSub, setOutsideSub, browseVenues, setBrowseVenues, odSearch, setOdSearch, showMoreOutside, setShowMoreOutside,

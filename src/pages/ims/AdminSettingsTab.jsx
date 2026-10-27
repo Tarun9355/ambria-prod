@@ -703,7 +703,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
               <span className="text-sm text-gray-600">%</span>
             </div>
           </div>
-          <VenuesEditor settings={settings} setSettings={setSettings} />
+          <VenuesEditor />
         </div>
       )}
       {activePanel === "venuemin" && (

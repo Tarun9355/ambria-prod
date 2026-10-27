@@ -1,16 +1,17 @@
-// Shared by src/pages/ims/VenuesEditor.jsx and src/pages/ims/FixedVenuesEditor.jsx.
+// Shared by every venue-catalogue consumer: src/pages/ims/VenuesEditor.jsx,
+// src/pages/ims/FixedVenuesEditor.jsx, src/pages/ims/ImsTransportPanel.jsx, and
+// src/pages/studio/StudioApp.jsx.
 //
-// The venue catalogue now lives in the `venues` TABLE (migration 036) — one row per property,
-// sub-venue, or outdoor venue — instead of the single `ambria-v13-venues` settings blob both
-// editors used to independently fetch, modify, and save back WHOLE. That whole-blob-save pattern
+// The venue catalogue lives in the `venues` TABLE (migration 036) — one row per property,
+// sub-venue, or outdoor venue — instead of the single `ambria-v13-venues` settings blob every one
+// of those used to independently fetch, modify, and save back WHOLE. That whole-blob-save pattern
 // is exactly what caused two confirmed data-loss incidents (a property vanishing entirely; later,
 // commission %/venue type silently reset) — see migration 036's own comment. Row-level
-// insert/update/delete on `venues` closes that bug class; this file now only assembles that
-// table's rows back into the LEGACY `{properties, inhouse, outdoor}` shape, so every OTHER
-// consumer that still reads the settings-blob mirror (Build, Deal Check, allInhouseGroups,
-// venueParents, transport, min-labour, Browse's venue filter, ImsTransportPanel.jsx…) keeps
-// working completely unchanged — VenuesEditor.jsx re-derives and re-writes that mirror fresh from
-// the table after every edit, so it can never go stale independently of the table again.
+// insert/update/delete on `venues`, read directly everywhere (no settings-blob mirror at all any
+// more), closes that bug class. assembleVenuesFromRows turns the table's rows into the LEGACY
+// `{properties, inhouse, outdoor}` shape every consumer's existing code already expects, so none of
+// their own downstream logic (allInhouseGroups, venueParents, transport, min-labour, Browse's venue
+// filter, …) needed to change.
 export const genVenueId = (prefix) => `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
 
 // venues-table rows -> the legacy blob shape. `parent` (a sub-venue's property NAME, the field

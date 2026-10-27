@@ -5,14 +5,33 @@
 //   • Cost — standing items bill at a discount; extras/other venues bill full rate.
 // Match is by SPECIFIC inventory item (design): swap to a different item → full labour + full rental.
 import { useState, useMemo, useEffect } from "react";
-import { supabase, fetchAll } from "../../lib/supabase";
+import { supabase, fetchAll, updateRow, deleteRow } from "../../lib/supabase";
 import { assembleVenuesFromRows, normVenueName } from "../../lib/ims/venueProperties";
+import { genFixedVenueId, assembleFixedVenuesFromRows, fixedVenuePatchToRow } from "../../lib/ims/fixedVenues";
 import { MANPOWER_TYPES } from "../../lib/ims/constants";
 import { thumbUrl } from "../../lib/studio/thumb";
 import { useConfirm } from "../../components/ui";
 
 export default function FixedVenuesEditor({ settings, setSettings, inventory = [], trussInv = null }) {
   const [confirm, confirmDialog] = useConfirm();
+  // Standing inventory per fixed venue — the `fixed_venues` TABLE (migration 038), one row per
+  // venue, replacing the single `fixedVenues` settings-blob row this screen used to read whole and
+  // save back whole on every edit (see migration 038's own comment for why that was risky).
+  const [fvRows, setFvRows] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      const rows = await fetchAll("fixed_venues").catch(() => []);
+      if (!cancelled) setFvRows(rows);
+    };
+    load();
+    const ch = supabase
+      .channel("realtime:fixed_venues:fixed-venues-editor")
+      .on("postgres_changes", { event: "*", schema: "public", table: "fixed_venues" }, load)
+      .subscribe();
+    return () => { cancelled = true; try { supabase.removeChannel(ch); } catch { /* ignore */ } };
+  }, []);
+  const fixedVenues = useMemo(() => assembleFixedVenuesFromRows(fvRows), [fvRows]);
   // In-house venue catalogue — this whole screen only ever applies to Ambria-owned properties (a
   // client's own outside venue can't have Ambria structure standing there), so the venue picker
   // below must offer ONLY those, not every venue name IMS has ever seen. venueParents (what the
@@ -87,8 +106,6 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
   }, [inventory, settings.categoryDepartments]);
   const pillarSizes = Object.keys(trussInv?.pillars || {}).sort((a, b) => Number(b) - Number(a));
   const beamSizes = Object.keys(trussInv?.beams || {}).sort((a, b) => Number(b) - Number(a));
-  const fixedVenues = settings.fixedVenues || [];
-  const save = (next) => setSettings((s) => ({ ...s, fixedVenues: next }));
   const [activeId, setActiveId] = useState(null);
   // Raw text of whichever number field is mid-edit, keyed "<venueId>:<invId>:<field>".
   // The inputs used to normalise on every keystroke — `parseInt(v) || 1` meant backspacing to empty
@@ -109,16 +126,16 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
   ].filter(Boolean))].sort((a, b) => a.localeCompare(b));
   const addable = venueOptions.filter((n) => !fixedVenues.some((v) => v.name === n));
 
-  const addVenue = (name) => {
+  const addVenue = async (name) => {
     if (!name || fixedVenues.some((v) => v.name === name)) return;
     const cfg = settings.venueMinLabour?.[name];
     const min = (cfg && typeof cfg === "object" ? cfg.min : (typeof cfg === "number" ? cfg : null)) || 4;
-    const id = "fv_" + Date.now().toString(36).slice(-6);
+    const id = genFixedVenueId();
     const property = properties.find((p) => p.name === name);
-    save([...fixedVenues, { id, name, propertyId: property?.id || null, minLabour: min, items: [] }]);
+    await supabase.from("fixed_venues").insert({ id, name, property_id: property?.id || null, min_labour: min, items: [] });
     setActiveId(id); // jump to the new venue's tab
   };
-  const updVenue = (id, patch) => save(fixedVenues.map((v) => (v.id === id ? { ...v, ...patch } : v)));
+  const updVenue = (id, patch) => updateRow("fixed_venues", id, fixedVenuePatchToRow(patch)).catch(() => {});
   // One-time backfill (VENUE_MIGRATION_PLAN.md Phase 1): a Fixed Venue saved before properties[]
   // existed only carries a bare .name. Link it to a property by matching that name once properties
   // load — same normalization fixedVenueFor uses for this exact match — so it starts tracking
@@ -131,21 +148,15 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
   useEffect(() => {
     if (!properties.length) return;
     const liveIds = new Set(properties.map((p) => p.id));
-    const needsLink = fixedVenues.some((v) => !v.propertyId || !liveIds.has(v.propertyId));
-    if (!needsLink) return;
-    let changed = false;
-    const linked = fixedVenues.map((v) => {
-      if (v.propertyId && liveIds.has(v.propertyId)) return v;
+    fixedVenues.forEach((v) => {
+      if (v.propertyId && liveIds.has(v.propertyId)) return;
       const match = properties.find((p) => normVenueName(p.name) === normVenueName(v.name));
-      if (!match) return v;
-      changed = true;
-      return { ...v, propertyId: match.id, name: match.name };
+      if (!match) return;
+      updateRow("fixed_venues", v.id, { property_id: match.id, name: match.name }).catch(() => {});
     });
-    if (changed) save(linked);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [properties]);
+  }, [properties, fixedVenues]);
   const updCrew = (vid, type, val) => { const v = fixedVenues.find((x) => x.id === vid); updVenue(vid, { fixedCrew: { ...(v.fixedCrew || {}), [type]: Math.max(0, parseInt(val) || 0) } }); };
-  const delVenue = (id) => { const v = fixedVenues.find((x) => x.id === id); if (!window.confirm(`Remove fixed venue "${v?.name}"? Its standing inventory config is deleted.`)) return; if (activeId === id) setActiveId(null); save(fixedVenues.filter((x) => x.id !== id)); };
+  const delVenue = (id) => { const v = fixedVenues.find((x) => x.id === id); if (!window.confirm(`Remove fixed venue "${v?.name}"? Its standing inventory config is deleted.`)) return; if (activeId === id) setActiveId(null); deleteRow("fixed_venues", id).catch(() => {}); };
 
   const addItem = (vid, inv) => {
     if (!inv) return;

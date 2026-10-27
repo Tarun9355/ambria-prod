@@ -18,6 +18,40 @@ import { walkKitUnits, kitDescendantIds } from "./helpers";
 // won't match), just tolerant of stray end-of-string punctuation.
 function normVenue(s) { return String(s || "").toLowerCase().replace(/^ambria\s+/, "").trim().replace(/[.,;:]+$/, "").trim(); }
 
+// Shared by FixedVenuesEditor.jsx (the sole writer) and every loader that used to read this array
+// out of the `fixedVenues` settings-blob row (IMS.jsx, StudioApp.jsx) — the `fixed_venues` TABLE
+// (migration 038) is the source of truth now, one row per fixed venue. These two just translate
+// between that row shape and the plain-object shape every function in this file already expects,
+// so none of that matching/availability logic had to change.
+export const genFixedVenueId = () => "fv_" + Date.now().toString(36).slice(-6) + Math.random().toString(36).slice(2, 5);
+
+export function rowToFixedVenue(r) {
+  return {
+    id: r.id, name: r.name, propertyId: r.property_id || null,
+    minLabour: r.min_labour != null ? Number(r.min_labour) : null,
+    fixedCrew: (r.fixed_crew && typeof r.fixed_crew === "object") ? r.fixed_crew : {},
+    truss: (r.truss && typeof r.truss === "object") ? r.truss : {},
+    items: Array.isArray(r.items) ? r.items : [],
+  };
+}
+
+export function assembleFixedVenuesFromRows(rows) {
+  return (Array.isArray(rows) ? rows : []).map(rowToFixedVenue);
+}
+
+// Legacy-shaped partial patch (as every FixedVenuesEditor.jsx call site already builds it) -> the
+// DB columns it actually touches, for a plain row-level UPDATE.
+export function fixedVenuePatchToRow(patch) {
+  const row = {};
+  if ("name" in patch) row.name = patch.name;
+  if ("propertyId" in patch) row.property_id = patch.propertyId;
+  if ("minLabour" in patch) row.min_labour = patch.minLabour;
+  if ("fixedCrew" in patch) row.fixed_crew = patch.fixedCrew;
+  if ("truss" in patch) row.truss = patch.truss;
+  if ("items" in patch) row.items = patch.items;
+  return row;
+}
+
 // Sub-venue → parent map (e.g. Aura → Exotica). Stored by Studio; may be a JSON string.
 function parentMap(settings) {
   let p = settings?.venueParents || {};

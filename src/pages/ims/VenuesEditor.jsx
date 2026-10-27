@@ -15,12 +15,10 @@
 // second time (2026-10-26). Row-level writes close that bug class for good — see migration 036's
 // own comment for the full story.
 //
-// This screen still mirrors the assembled catalogue back into that old settings blob after every
-// edit (see mirrorToBlob below), so every OTHER consumer that reads it (Build, Deal Check,
-// allInhouseGroups, venueParents, transport, min-labour, Browse's venue filter,
-// ImsTransportPanel.jsx…) keeps working completely unchanged — the mirror is always derived FRESH
-// from the table, never from stale local state, so it can't go stale independently of the table
-// the way the old two-editor setup could.
+// Every other consumer (Build, Deal Check, allInhouseGroups, venueParents, transport, min-labour,
+// Browse's venue filter, ImsTransportPanel.jsx…) now reads the `venues` table directly too (plus a
+// realtime subscription), so the old settings-blob mirror this screen used to write after every
+// edit is gone — there's no longer anything left reading `ambria-v13-venues` at all.
 //
 // Phase 2 (VENUE_MIGRATION_PLAN.md): every rename here (property, sub-venue, or outdoor) also
 // cascades the new name into video tags, the transport tier, and library photo tags — the same
@@ -31,7 +29,7 @@
 // reads/writes directly from IMS the same way.
 import { useState, useEffect, useMemo } from "react";
 import { supabase, fetchAll, updateRow, deleteRow } from "../../lib/supabase";
-import { VENUES_SK, RC_SK_TR } from "../../lib/studio/keys";
+import { RC_SK_TR } from "../../lib/studio/keys";
 import { assembleVenuesFromRows, genVenueId } from "../../lib/ims/venueProperties";
 import { SPACES as VENUE_TYPES, venueTypeLabel } from "../../lib/studio/taxonomy";
 
@@ -129,7 +127,7 @@ function CommissionInput({ kind, id, value, commDraft, setCommDraft, commitCommi
   );
 }
 
-export default function VenuesEditor({ settings, setSettings, showMsg }) {
+export default function VenuesEditor({ showMsg }) {
   const [rows, setRows] = useState(null); // raw venues-table rows; null = still loading
   const [newPropName, setNewPropName] = useState("");
   const [newSubVenue, setNewSubVenue] = useState({}); // propertyId -> draft name
@@ -156,33 +154,19 @@ export default function VenuesEditor({ settings, setSettings, showMsg }) {
 
   const venues = useMemo(() => (rows ? assembleVenuesFromRows(rows) : null), [rows]);
 
-  // Re-derives the legacy {properties, inhouse, outdoor} blob fresh from the CURRENT table rows
-  // (never from this component's own possibly-stale local state) and writes it to the settings row
-  // every other consumer still reads. Fire-and-forget: a failure here never blocks the real
-  // row-level write that already landed, and the next table change re-triggers it anyway.
-  const mirrorToBlob = async () => {
-    try {
-      const r = await fetchAll("venues");
-      await supabase.from("settings").upsert({ key: VENUES_SK, value: JSON.stringify(assembleVenuesFromRows(r)) }, { onConflict: "key" });
-    } catch { /* best-effort — the table write already succeeded, this is just the read-side mirror */ }
-  };
-
   const writeRow = async (row) => {
     try {
       const { error } = await supabase.from("venues").insert(row);
       if (error) throw error;
-    } catch (e) { showMsg?.("Save failed: " + (e?.message || e), "red"); return; }
-    mirrorToBlob();
+    } catch (e) { showMsg?.("Save failed: " + (e?.message || e), "red"); }
   };
   const patchRow = async (id, patch) => {
     try { await updateRow("venues", id, patch); }
-    catch (e) { showMsg?.("Save failed: " + (e?.message || e), "red"); return; }
-    mirrorToBlob();
+    catch (e) { showMsg?.("Save failed: " + (e?.message || e), "red"); }
   };
   const removeRow = async (id) => {
     try { await deleteRow("venues", id); }
-    catch (e) { showMsg?.("Delete failed: " + (e?.message || e), "red"); return; }
-    mirrorToBlob();
+    catch (e) { showMsg?.("Delete failed: " + (e?.message || e), "red"); }
   };
 
   const propertiesSorted = useMemo(
@@ -242,10 +226,9 @@ export default function VenuesEditor({ settings, setSettings, showMsg }) {
     // Fixed Venues links by propertyId, but the actual billing-time match (fixedVenueFor,
     // lib/ims/fixedVenues.js) still compares by NAME string — so the linked entry's own `.name`
     // has to follow the rename too, not just what this screen displays, or the display would show
-    // the new name while billing kept matching the old one.
-    if (setSettings && (settings?.fixedVenues || []).some((fv) => fv.propertyId === id)) {
-      setSettings((s) => ({ ...s, fixedVenues: (s.fixedVenues || []).map((fv) => (fv.propertyId === id ? { ...fv, name } : fv)) }));
-    }
+    // the new name while billing kept matching the old one. Row-level (fixed_venues table, 038),
+    // not the old settings blob.
+    await supabase.from("fixed_venues").update({ name }).eq("property_id", id);
     setEditing(null);
     showMsg?.("✓ Renamed — updating references…", "green");
     cascadeRename(orig, name).then((r) => showMsg?.(`✓ Renamed${cascadeSummary(r)}. Past events keep their original venue name for audit.`, "green"));
