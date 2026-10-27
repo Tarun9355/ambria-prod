@@ -9,6 +9,13 @@ if (!supabaseUrl || !supabaseAnonKey) {
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
+// Mirrors the current session's access token in memory so keepaliveUpsert/keepaliveRpc (below) can
+// read it synchronously at pagehide/beforeunload time, with no await standing between the unload
+// event and the fetch call. Hydrated once on load and kept current via onAuthStateChange.
+let cachedAccessToken = null;
+supabase.auth.getSession().then(({ data }) => { cachedAccessToken = data?.session?.access_token || null; });
+supabase.auth.onAuthStateChange((_event, session) => { cachedAccessToken = session?.access_token || null; });
+
 // ─── Helpers ───────────────────────────────────────────
 
 /** Fetch all rows from a table */
@@ -76,11 +83,12 @@ export const deleteRow = async (table, id) => {
 // is the browser's own guarantee that a small POST like this is still delivered even after the page
 // is gone — the purpose-built fix for this, vs. hoping a regular request survives.
 // Same REST semantics `.upsert(rows, {onConflict:"id"})` uses under the hood (the on_conflict query
-// param + Prefer: resolution=merge-duplicates), and the same auth every other call in this app uses
-// (the anon key — this app never establishes a per-user Supabase Auth session, so there is no JWT to
-// swap in here). Subject to the browser's keepalive payload cap (~64KB across all in-flight keepalive
-// requests) — best-effort on top of the normal save attempt that already fires alongside it, not a
-// replacement for it.
+// param + Prefer: resolution=merge-duplicates). `apikey` identifies the project (always the anon
+// key); `Authorization` carries the signed-in user's own JWT via cachedAccessToken so this still
+// writes under their real session post-RLS-cutover — not the anon key, which no longer has table
+// access on its own. Subject to the browser's keepalive payload cap (~64KB across all in-flight
+// keepalive requests) — best-effort on top of the normal save attempt that already fires alongside
+// it, not a replacement for it.
 export const keepaliveUpsert = async (table, rows) => {
   if (!rows || !rows.length) return;
   try {
@@ -90,7 +98,7 @@ export const keepaliveUpsert = async (table, rows) => {
       headers: {
         "Content-Type": "application/json",
         apikey: supabaseAnonKey,
-        Authorization: `Bearer ${supabaseAnonKey}`,
+        Authorization: `Bearer ${cachedAccessToken || supabaseAnonKey}`,
         Prefer: "resolution=merge-duplicates,return=minimal",
       },
       body: JSON.stringify(rows),
@@ -112,7 +120,7 @@ export const keepaliveRpc = async (fnName, params) => {
       headers: {
         "Content-Type": "application/json",
         apikey: supabaseAnonKey,
-        Authorization: `Bearer ${supabaseAnonKey}`,
+        Authorization: `Bearer ${cachedAccessToken || supabaseAnonKey}`,
       },
       body: JSON.stringify(params || {}),
     });

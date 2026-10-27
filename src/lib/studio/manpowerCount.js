@@ -310,8 +310,15 @@ export function computePeopleRaw(fn, type, ctx) {
  */
 export function computePeople(fn, type, ctx) {
   const raw = computePeopleRaw(fn, type, ctx);
-  if (type === "Supervisors" || type === "Drivers" || !(raw > 0)) return raw;
-  const m = situationalMultFor(fn, type, ctx);
-  // 1e-9: 5 × 1.2 is 6.000000000000001 in floating point, and ceil would call that 7 people.
-  return m > 1 ? Math.ceil(raw * m - 1e-9) : raw;
+  return raw;
+  // Situational multiplier (King's date / shift timing / venue dumping) disabled 2026-10-27, owner
+  // ask — Deal Check's manpower plan should come straight from Workforce's item-qty batch sizes,
+  // rounded up (computePeopleRaw), while a Labours mismatch between Deal Check and the IMS Dept Ops
+  // Manpower plan is being verified. situationalFactorsFor/heavySayaMultFor themselves are untouched
+  // (still exported, still used by DCManpowerTab/DealCheckOverlay/StudioApp for the "how" trace text),
+  // only THIS multiplication of the headcount is turned off. Restore by reverting to:
+  // if (type === "Supervisors" || type === "Drivers" || !(raw > 0)) return raw;
+  // const m = situationalMultFor(fn, type, ctx);
+  // // 1e-9: 5 × 1.2 is 6.000000000000001 in floating point, and ceil would call that 7 people.
+  // return m > 1 ? Math.ceil(raw * m - 1e-9) : raw;
 }

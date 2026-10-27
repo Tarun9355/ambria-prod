@@ -447,6 +447,11 @@ export default function DCManpowerTab({ ctx }) {
                     if (!dcMpIncludeMinusOne) {
                       situationalMult = Math.min(situMultCap, Math.max(dumpingMult, sayaMult, timingMult, 1.0));
                     }
+                    // Situational multiplier disabled 2026-10-27 (see manpowerCount.js's computePeople,
+                    // same owner ask) — this trace explains the headline count, which no longer applies
+                    // it, so neither does this. dumpMult/sayaMult/timingMult/sitMax stay visible below
+                    // for reference; they just no longer move `total`.
+                    situationalMult = 1.0;
                     const adjusted = Math.ceil(base * situationalMult); // venue-min floor (with situational)
                     const subCounts = {};
                     walkFnElements(fn, ({ rc, qty }) => { const s = itemImsSubcat(rc); subCounts[s] = (subCounts[s] || 0) + qty; });
@@ -672,7 +677,11 @@ export default function DCManpowerTab({ ctx }) {
 
                   // ── People count per fn × labour type ─────────────────────
                   // For each labour type present in dihariSchemes, compute people count for each fn.
-                  const labourTypes = Object.keys(dihariSchemes);
+                  // Supervisors removed entirely 2026-10-27 (owner ask) — never costed, never shown,
+                  // here or in IMS Dept Ops' Manpower plan. "Fixed" config stays in dihariSchemes
+                  // (orphaned, harmless) rather than deleting data; this filter is what actually
+                  // suppresses it everywhere it would otherwise appear.
+                  const labourTypes = Object.keys(dihariSchemes).filter((t) => t !== "Supervisors");
                   const peopleByFn = {}; // { [labourType]: { [fnIdx]: count } }
                   labourTypes.forEach(type => {
                     peopleByFn[type] = {};

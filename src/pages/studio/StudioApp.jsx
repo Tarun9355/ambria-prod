@@ -5846,7 +5846,10 @@ export default function StudioApp() {
     const fps = d.flowerPatterns || [];
     const elecProd = d.electricianProductivity || {};
     const seasonMap = d.seasonMap || {};
-    const types = Object.keys(dihari);
+    // Supervisors removed entirely 2026-10-27 (owner ask) — never costed, never shown, here or in
+    // Deal Check's Manpower tab / IMS Dept Ops' Manpower plan. See DCManpowerTab.jsx's matching
+    // filter for the full note.
+    const types = Object.keys(dihari).filter((t) => t !== "Supervisors");
     if (!types.length || !(allFns || []).length) return [];
     const situMultCap = d.situationalMultiplierCap || 1.8;
     const sitMults = d.situationalMultipliers || SIT_MULT_DEFAULTS;
@@ -5925,7 +5928,11 @@ export default function StudioApp() {
         // The same factors the engine multiplies the crew by (situationalFactorsFor) — kept with the
         // trace so Dept Ops can say which one applied and what it did to the crew.
         const sit = situationalFactorsFor(fn, "Labours", mpCtxFor(fn));
-        const sm = sit.mult;
+        // Situational multiplier disabled 2026-10-27 (see manpowerCount.js's computePeople, same
+        // owner ask) — this trace explains the headline count above (already computePeople-driven,
+        // unmultiplied), so neither does this. sit.mult/winner/parts stay available for reference in
+        // the returned `situational` object below; they just no longer move `adj`/`result`.
+        const sm = 1.0;
         const adj = Math.ceil(base * sm);
         const sc = {}; walkFnElements(fn, imsInventory, ({ rc, qty }) => { const s = itemImsSubcat(rc); sc[s] = (sc[s] || 0) + qty; });
         const reduction = standingReductionBySubcat(fvCfgMP, venueName, (dcCards || {})[fn.fnIdx], d.inventory || []);

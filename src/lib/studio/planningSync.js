@@ -27,8 +27,11 @@ export function planningUpcoming(eo, now = Date.now()) {
 // recording something Dept Ops reads (v2: each labour usage row carries the department it was charged
 // to; v3: crew counts carry the situational multiplier — King's date / shift timing), and every order
 // synced under an older shape counts as stale until it is synced again. v4: rental totals take only the
-// biggest of the date discount and the Fixed-Venue / reuse discount, so every figure moves.
-export const PLANNING_SNAPSHOT_VERSION = 4;
+// biggest of the date discount and the Fixed-Venue / reuse discount, so every figure moves. v5: the
+// situational multiplier no longer applies to crew counts at all (temporarily disabled), Supervisors
+// is no longer costed/shown anywhere, and Furniture's/Fabric's Labours share now pools into
+// Structure's/Tenting's instead of its own — every manpower figure moves again.
+export const PLANNING_SNAPSHOT_VERSION = 5;
 const PLANNING_SNAPSHOT_SHIPPED_AT = Date.parse("2026-10-22T06:15:00Z");
 export const planningSnapshotOutdated = (eo) => (Number(eo?.deptSnapVer) || 1) < PLANNING_SNAPSHOT_VERSION;
 
