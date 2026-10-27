@@ -1991,6 +1991,22 @@ export default function StudioBuild({ ctx }) {
   // Hover-to-zoom on an element's thumbnail — same fixed-position enlarged-preview pattern as
   // ManageLibrary.jsx's elHoverImg. Keyed by "zoneKey:idx" since two near-duplicate element-list
   // blocks in this file can both be on screen at once.
+  // Overlays and cushion covers name up to four designs in order of preference (Planning decides which one is used from what is free on the day). The stock
+  // icon on the element opens that picker for them - no separate "Choices" button - and any other element keeps the plain one-item picker.
+  // Returns the opener for this element, or null when it takes no choices.
+  const choiceOpenerFor = (k, idx, el, rc, invItem, qtyUnit) => {
+    if (!openAvailModal || !invItem || !itemTakesChoices(invItem)) return null;
+    const ch = elementChoices(el);
+    const noun = /cover/i.test(invItem.name || "") ? "cushion cover" : "overlay";
+    return () => openAvailModal(k, idx, el, rc, null, { unitLabel: qtyUnit, hidePrice: true,
+      pickHint: "The 1st choice is the one priced; Planning decides which is used from what is free on the day",
+      multi: { max: ELEMENT_PREF_MAX, need: Number(el.qty) || 0, current: ch.length ? ch.map(c => c.id) : [el.invId], noun, needNoun: "element", noReuse: true, designsOnly: true,
+        onSave: (picks, all) => setZoneElements(p => {
+          const elems = [...(p[k] || [])]; if (!elems[idx] || !picks.length) return p;
+          elems[idx] = applyChoicePicks(elems[idx], picks, all);
+          return { ...p, [k]: elems };
+        }) } });
+  };
   const [elThumbHover, setElThumbHover] = useState(null); // { key, top, bottom, left }
   // "+ Add element…" search results dropdown, keyed by zone key. Same escape-the-clipped-ancestor
   // reason as elThumbHover above — .zone-row is overflow:hidden for its rounded corners, so an
@@ -4779,7 +4795,7 @@ undefined
                         {!rc&&!el.invId&&!el.patternId&&!el.mandiId&&<span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700}}>NEW</span>}
                         {el.invId&&(el.wantedQty||0)>(el.qty||0)&&<span title={`Asked for ${el.wantedQty}, only ${el.qty} available for this date — held at ${el.qty}`} style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700}}>⚠ short · {el.wantedQty} asked</span>}
                         {el.invId&&priceInfo.warning&&<span title={priceInfo.warning} style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700}}>{priceInfo.outOfStock?"⚠ out of stock":"⚠ short"}</span>}
-                        {(rc||el.invId)&&<span onClick={()=>openAvailModal(k, idx, el, rc)} title={_subcatOpportunity?`Also used in ${[...new Set(_subcatOpportunity.map(o=>o.label))].join(", ")} (${_subcatOpportunity.map(o=>o.name).join(", ")}) — swap to it for the repeat discount`:"Check stock availability & pick an item"} style={{cursor:"pointer",fontSize:12,opacity:_subcatOpportunity?1:0.5,padding:"0 1px",lineHeight:1,color:_subcatOpportunity?"#F97316":undefined}}><IconBox size={12}/></span>}
+                        {(rc||el.invId)&&<span onClick={()=>((!isKit&&choiceOpenerFor(k,idx,el,rc,invItem,qtyUnit))||(()=>openAvailModal(k, idx, el, rc)))()} title={(!isKit&&choiceOpenerFor(k,idx,el,rc,invItem,qtyUnit))?`Check what is free and name up to ${ELEMENT_PREF_MAX} ${/cover/i.test(invItem?.name||"")?"cushion cover":"overlay"} designs in order of preference - Planning decides which one is used`:_subcatOpportunity?`Also used in ${[...new Set(_subcatOpportunity.map(o=>o.label))].join(", ")} (${_subcatOpportunity.map(o=>o.name).join(", ")}) — swap to it for the repeat discount`:"Check stock availability & pick an item"} style={{cursor:"pointer",fontSize:12,opacity:_subcatOpportunity?1:0.5,padding:"0 1px",lineHeight:1,color:_subcatOpportunity?"#F97316":undefined}}><IconBox size={12}/></span>}
                         {/* Only when the manually-pinned stock item's name actually differs from
                             what's already shown above (invItem?.name || el.name) — the box icon
                             right before this already opens the same "tap to change" picker, so a
@@ -4820,27 +4836,18 @@ undefined
                       <div style={{display:"flex",alignItems:"center",gap:4,marginTop:2,flexWrap:"wrap"}}>
                         {/* Overlays and cushion covers can name up to four designs in order of preference; Planning decides which one is used from what is
                             free on the day. Priced and held as the 1st choice, exactly like a plain element. */}
-                        {openAvailModal&&!isKit&&invItem&&itemTakesChoices(invItem)&&(()=>{
+                        {!isKit&&(()=>{
+                          const open=choiceOpenerFor(k,idx,el,rc,invItem,qtyUnit);
                           const ch=elementChoices(el);
-                          const noun=/cover/i.test(invItem.name||"")?"cushion cover":"overlay";
-                          const open=()=>openAvailModal(k,idx,el,rc,null,{unitLabel:qtyUnit,hidePrice:true,
-                            pickHint:"The 1st choice is the one priced; Planning decides which is used from what is free on the day",
-                            multi:{max:ELEMENT_PREF_MAX,need:Number(el.qty)||0,current:ch.length?ch.map(c=>c.id):[el.invId],noun,needNoun:"element",noReuse:true,designsOnly:true,
-                              onSave:(picks,all)=>setZoneElements(p=>{
-                                const elems=[...(p[k]||[])]; if(!elems[idx]||!picks.length) return p;
-                                elems[idx]=applyChoicePicks(elems[idx],picks,all);
-                                return {...p,[k]:elems};
-                              })}});
-                          return ch.length>=2
-                            ? <span onClick={open} role="button" tabIndex={0} title="Choices in order — Planning decides which one is used. Tap to change." style={{display:"flex",flexDirection:"column",gap:5,flexBasis:"100%",width:"100%",marginTop:3,cursor:"pointer"}}>
+                          if(!open||ch.length<2) return null; // with fewer than two designs the stock icon above is the way in
+                          return <span onClick={open} role="button" tabIndex={0} title="Choices in order — Planning decides which one is used. Tap to change." style={{display:"flex",flexDirection:"column",gap:5,flexBasis:"100%",width:"100%",marginTop:3,cursor:"pointer"}}>
                                 {ch.map((c,i)=><span key={c.id} title={`${ELEMENT_PREF_LABELS[i]}: ${c.name}`} style={{display:"flex",alignItems:"center",gap:8,minWidth:0,fontSize:12.5,padding:"5px 10px",borderRadius:8,border:`1px solid ${i===0?"#059669":border}`,background:i===0?"rgba(5,150,105,0.07)":"transparent",color:i===0?"#059669":textP,fontWeight:i===0?700:500}}>
                                   <b style={{flexShrink:0,width:18,height:18,borderRadius:9,background:i===0?"#059669":"rgba(0,0,0,0.08)",color:i===0?"#fff":textS,fontSize:10.5,display:"inline-flex",alignItems:"center",justifyContent:"center"}}>{i+1}</b>
                                   {(()=>{const it=(imsInventory||[]).find(x=>x.id===c.id);const ph=it?(it.img||(Array.isArray(it.photoUrls)&&it.photoUrls[0])||""):"";
                                     return ph?<img src={thumbUrl(ph,64)} loading="lazy" decoding="async" alt="" style={{width:32,height:32,borderRadius:6,objectFit:"cover",flexShrink:0}}/>
                                       :<span style={{width:32,height:32,borderRadius:6,flexShrink:0,background:isDark?"rgba(255,255,255,0.06)":"rgba(0,0,0,0.05)",display:"inline-flex",alignItems:"center",justifyContent:"center"}}><IconBox size={14}/></span>;})()}
                                   <span style={{flex:1,minWidth:0,overflowWrap:"anywhere",lineHeight:1.3}}>{c.name}</span></span>)}
-                              </span>
-                            : <button onClick={open} title={`Name up to ${ELEMENT_PREF_MAX} ${noun} designs in order of preference — Planning decides which one is used`} style={{padding:"4px 11px",borderRadius:7,border:`1px dashed ${border}`,fontSize:12,fontWeight:600,cursor:"pointer",background:"transparent",color:accent}}>＋ Choices</button>;
+                              </span>;
                         })()}
                         {!!el.mandiId&&(()=>{
                           const mandiCat=(dealCheckData||studioFloralData)?.mandiCatalogue||[];
