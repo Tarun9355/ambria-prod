@@ -6128,6 +6128,13 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                                   name they describe. */}
                               <div className="text-xs text-gray-500 mt-0.5">
                                 <div className="truncate" title={it.sub || ""}>{it.sub || "—"}</div>
+                                {/* A truss pillar or beam is named by its length ("Truss pillar 12ft"): say how long each is and how much running length all of them make, which is what a Tenting head loads */}
+                                {(() => {
+                                  const m = /(pillar|beam)/i.test(String(it.name || "")) ? /(\d+(?:\.\d+)?)\s*(?:ft|feet|')/i.exec(String(it.name || "")) : null;
+                                  const len = m ? Number(m[1]) : 0, n = Number(it.qty) || 0;
+                                  if (!(len > 0) || !(n > 0)) return null;
+                                  return <div className="text-gray-700 mt-0.5 tabular-nums">{/pillar/i.test(it.name) ? "Height" : "Length"} <b>{len} ft</b> each · {n} × {len} = <b>{Math.round(n * len * 100) / 100} ft</b> in all</div>;
+                                })()}
                                 {it.shortQty > 0 && (it.outOfStock
                                   ? <div className="text-red-600 mt-0.5">{it.shortQty} out of stock — can't be made in production, pick an alternative in Build</div>
                                   : <div className="text-amber-600 mt-0.5">{it.shortQty} short of stock — priced at cost, chase or produce</div>)}
