@@ -1657,7 +1657,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           }
         }
         const total = it.byFn ? Math.round((Number(fnRow?.total) || 0) + kitPartsValue) : Math.round((Number(it.total) || 0) * ((Number(it.qty) || 0) > 0 ? q / Number(it.qty) : 1));
-        return { ...it, qty: q, rentalQty: q, total, shortQty: Math.min(Number(it.shortQty) || 0, q), calc: fnRow ? (fnRow.calc || null) : null };
+        return { ...it, src: it, qty: q, rentalQty: q, total, shortQty: Math.min(Number(it.shortQty) || 0, q), calc: fnRow ? (fnRow.calc || null) : null };
       }).filter(Boolean)
     : blockedItemsGrouped;
   const invWholeOnly = invScoped ? blockedItemsGrouped.length - invShown.length : 0;
@@ -6022,6 +6022,18 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                                   ? <div className="text-red-600 mt-0.5">{it.shortQty} out of stock — can't be made in production, pick an alternative in Build</div>
                                   : <div className="text-amber-600 mt-0.5">{it.shortQty} short of stock — priced at cost, chase or produce</div>)}
                                 {it.isSwapped && <div className="text-sky-600 mt-0.5">swapped in for {it.swappedFrom}</div>}
+                                {/* One function's view shows what it NEEDS on site (181 on the 20th). Pieces already standing from the day before are not
+                                    loaded again, so say how many of them are already there when the date column holds fewer (137 to load). */}
+                                {invScoped && it.src && (() => {
+                                  const fnDate = String(mpFns[invFn]?.date || "").slice(0, 10);
+                                  const col = dateCols.find(c => c.date === fnDate);
+                                  if (!col) return null;
+                                  const load = qtyOnDate(col, it.src);
+                                  const needs = rowNeeds(it.src);
+                                  const dayMax = Math.max(0, ...col.venueChains.flatMap(days => days.filter(d => d.date === fnDate).flatMap(d => d.maps)).map(m => needs.get(m.key) || 0));
+                                  if (!(load < it.qty) || it.qty < dayMax) return null;
+                                  return <div className="text-blue-600 mt-0.5">{it.qty - load} already at the venue from the day before — {load} to load on {col.label}</div>;
+                                })()}
                                 {invFinish.paintFor(it) && <div className="text-pink-700 mt-0.5">🎨 Paint: {invFinish.paintFor(it)}</div>}
                               </div>
                             </div>
