@@ -9,10 +9,12 @@
 // calcZoneFabric Deal Check uses), so the figures are the current plan; the dept `lines` only supply money
 // and are the fallback for an event whose layout has not synced.
 
+import { trussBaseArea } from "../studio/taxonomy.js";
+
 export const FABRIC_KINDS = [
-  { key: "liza", label: "Liza Fabric", lineName: "Liza Fabric", unit: "kg", stockKey: "lizaStock", emoji: "🧣", qtyOf: (f) => f.lizaKg },
-  { key: "curtain", label: "Velvet Curtains", lineName: "Velvet Curtains", unit: "pcs", stockKey: "curtainStock", emoji: "🎀", qtyOf: (f) => f.curtainPieces },
-  { key: "masking", label: "Wall Masking", lineName: "Wall Masking", unit: "pcs", stockKey: "maskingStock", emoji: "🧱", qtyOf: (f) => f.maskingPieces },
+  { key: "liza", label: "Liza Fabric", lineName: "Liza Fabric", unit: "kg", stockKey: "lizaStock", allocField: "lizaAllocation", emoji: "🧣", qtyOf: (f) => f.lizaKg },
+  { key: "curtain", label: "Velvet Curtains", lineName: "Velvet Curtains", unit: "pcs", stockKey: "curtainStock", allocField: "curtainAllocation", emoji: "🎀", qtyOf: (f) => f.curtainPieces },
+  { key: "masking", label: "Wall Masking", lineName: "Wall Masking", unit: "pcs", stockKey: "maskingStock", allocField: "maskingAllocation", emoji: "🧱", qtyOf: (f) => f.maskingPieces },
 ];
 
 const LINE_RE = /^(Liza Fabric|Velvet Curtains|Wall Masking) \((Old|New)\)$/;
@@ -22,6 +24,32 @@ const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 const pretty = (zk) => String(zk || "").replace(/[_-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 // "kg · entry" -> "entry"
 const zoneOfLine = (line) => String(line?.sub || "").split("·").slice(1).join("·").trim();
+
+const num = (v) => Number(v) || 0;
+const colourKey = (c) => String(c || "").trim().replace(/\s+/g, " ").toLowerCase();
+
+// "16 × 12 ft U truss" / "16 × 16 × 12 ft box truss" - the truss row's own dimensions, the way Build charges them (see trussBaseArea).
+export function trussDimsText(row) {
+  if (!row) return "";
+  const d = row.dims || {};
+  const base = trussBaseArea(row);
+  if (!(base.area > 0)) return "";
+  const ft = (n) => String(Math.round(n * 100) / 100);
+  const text = base.mode === "box"
+    ? `${ft(num(d.L))} × ${ft(num(d.W || d.S))} × ${ft(num(d.H))} ft box truss`
+    : `${ft(base.a)} × ${ft(base.b)} ft U truss`;
+  const mat = String(row.trussMaterial || "").trim();
+  return mat ? `${text} · ${mat.charAt(0).toUpperCase()}${mat.slice(1)}` : text;
+}
+
+// The colour(s) one truss row's fabric of this kind went to: the row's own allocation when it has one, else what Deal Check recorded for that row
+// when the event was synced (fabricPlan.rows). [] when neither exists (an event synced before this was recorded).
+function rowColours(kind, entry, fabricPlan) {
+  const own = Array.isArray(entry.row?.[kind.allocField]) ? entry.row[kind.allocField].filter((a) => a && (Number(a.qty) || 0) > 0) : [];
+  if (own.length) return own.map((a) => ({ colour: a.colour || "(unassigned)", qty: num(a.qty) }));
+  const rec = Array.isArray(fabricPlan?.rows) ? fabricPlan.rows : [];
+  return rec.filter((r) => r.kind === kind.key && r.fi === entry.fi && r.zk === entry.zk && (r.ri || 0) === (entry.ri || 0)).map((r) => ({ colour: r.colour, qty: num(r.qty) }));
+}
 
 function applicationText(kind, fab, row) {
   if (!fab) return "";
@@ -59,8 +87,11 @@ export function buildFabricGroups({ entries = [], lines = [], fabricPlan = null,
       const q = Number(kind.qtyOf(e.fab || {})) || 0;
       if (!(q > 0)) return;
       const k = `${e.fi}|${e.zk}`;
-      const z = byZone.get(k) || { fi: e.fi, zoneKey: e.zk, name: e.zLabel, fnLabel: e.fnLabel || "", photo: e.photo || "", qty: 0, notes: [], tier: new Set() };
+      const z = byZone.get(k) || { fi: e.fi, zoneKey: e.zk, name: e.zLabel, fnLabel: e.fnLabel || "", photo: e.photo || "", qty: 0, notes: [], tier: new Set(), dims: [], colours: new Map() };
       z.qty += q;
+      const dt = trussDimsText(e.row);
+      if (dt && !z.dims.includes(dt)) z.dims.push(dt);
+      rowColours(kind, e, fabricPlan).forEach((c) => { const ck = colourKey(c.colour); const cur = z.colours.get(ck) || { colour: c.colour, qty: 0 }; cur.qty += c.qty; z.colours.set(ck, cur); });
       const note = applicationText(kind, e.fab, e.row);
       if (note) z.notes.push(note);
       z.tier.add(e.row?.useNewFabric ? "New" : "Old");
@@ -76,13 +107,14 @@ export function buildFabricGroups({ entries = [], lines = [], fabricPlan = null,
       return {
         fi: z.fi, zoneKey: z.zoneKey, name: z.name, fnLabel: multiFn ? z.fnLabel : "", photo: z.photo,
         qty: r2(z.qty), application: z.notes.join(" · "), tier: [...z.tier].join(" + "),
+        dims: z.dims.join(" + "), colours: [...z.colours.values()].map((c) => ({ colour: c.colour, qty: r2(c.qty) })).sort((a, b) => b.qty - a.qty),
         amount: Math.round(exact), exactAmount: exact,
       };
     });
     // Layout not synced yet: fall back to the priced lines themselves, so the fabric still shows.
     if (!zones.length) {
       zones = kindLines.map((l) => ({
-        fi: null, zoneKey: zoneOfLine(l), name: pretty(zoneOfLine(l)) || "Zone", fnLabel: "", photo: "",
+        fi: null, zoneKey: zoneOfLine(l), name: pretty(zoneOfLine(l)) || "Zone", fnLabel: "", photo: "", dims: "", colours: [],
         qty: r2(l.qty), application: "", tier: (String(l.name).match(LINE_RE) || [])[2] || "", amount: Math.round(Number(l.total) || 0),
       }));
     }
@@ -97,12 +129,18 @@ export function buildFabricGroups({ entries = [], lines = [], fabricPlan = null,
     const qty = r2(zones.reduce((s, z) => s + z.qty, 0));
     const amount = (onlyFi === null || onlyFi === undefined) ? allFnAmount : Math.round(zones.reduce((s, z) => s + (z.exactAmount ?? z.amount), 0));
     const stockRows = Array.isArray(stock?.[kind.stockKey]) ? stock[kind.stockKey] : [];
+    const stockOf = (name) => stockRows.find((r) => r && colourKey(r.colour) === colourKey(name)) || {};
     const colours = (Array.isArray(fabricPlan?.[kind.key]) ? fabricPlan[kind.key] : [])
       .map((c) => {
-        const s = stockRows.find((r) => r && r.colour === c.colour) || {};
+        const s = stockOf(c.colour);
         return { colour: c.colour || "(unassigned)", qty: r2(c.qty), qtyOld: r2(c.qtyOld), qtyNew: r2(c.qtyNew), photo: s.photo || "", hex: s.hex || "" };
       })
       .sort((a, b) => b.qty - a.qty);
+    // each zone's colours with the colour's own stock photo; an event without per-zone colours yet shows its one colour when the fabric has just one
+    zones = zones.map((z) => {
+      const list = (z.colours && z.colours.length) ? z.colours : (colours.length === 1 && z.fi != null ? [{ colour: colours[0].colour, qty: z.qty }] : []);
+      return { ...z, colours: list.map((c) => { const s = stockOf(c.colour); return { ...c, photo: s.photo || "", hex: s.hex || "" }; }) };
+    });
     zones.sort((a, b) => b.qty - a.qty);
     zones = zones.map(({ exactAmount, ...z }) => z);
     groups.push({

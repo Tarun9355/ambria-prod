@@ -2596,7 +2596,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     if (dept !== "Fabric") return { groups: [], groupedLineIds: new Set() };
     const fnsF = Array.isArray(sel?.functionsDetail) ? sel.functionsDetail : [];
     const entries = trussPlanOf().map((e) => ({
-      fi: e.fi, zk: e.zk, zLabel: e.zLabel, fnLabel: e.fn?.type || `Function ${e.fi + 1}`,
+      fi: e.fi, zk: e.zk, ri: e.ri, zLabel: e.zLabel, fnLabel: e.fn?.type || `Function ${e.fi + 1}`,
       photo: e.fn?.elSelectedPhoto?.[e.zk]?.src || "", fab: e.fab, row: e.row,
     }));
     // Money comes from the whole event's priced lines (they name a zone, not a function) and is split by quantity;

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildFabricGroups, isFabricLine } from "./fabricGroups.js";
+import { buildFabricGroups, isFabricLine, trussDimsText } from "./fabricGroups.js";
 
 // bhaskar-test, Function 1: the lines Deal Check priced, the event's own zone layout, the colour allocation.
 const lines = [
@@ -129,5 +129,48 @@ describe("buildFabricGroups — a zone shared by two functions splits its money,
   });
   it("a function that does not use the fabric shows no group", () => {
     expect(buildFabricGroups({ entries: entries2, lines: lines2, multiFn: true, onlyFi: 7 }).groups).toEqual([]);
+  });
+});
+
+describe("trussDimsText — the truss row's dimensions in words", () => {
+  it("a single U: width x height", () => { expect(trussDimsText({ trT: "singleU", dims: { W: 16, H: 12 } })).toBe("16 × 12 ft U truss"); });
+  it("a box: length x width x height, with the material", () => {
+    expect(trussDimsText({ trT: "box", dims: { L: 20, W: 16, H: 12 }, trussMaterial: "iron" })).toBe("20 × 16 × 12 ft box truss · Iron");
+  });
+  it("a box missing a dimension is a single U, as it is billed", () => { expect(trussDimsText({ trT: "box", dims: { W: 16, H: 12 } })).toBe("16 × 12 ft U truss"); });
+  it("nothing to say when there are no dimensions", () => { expect(trussDimsText({ trT: "singleU", dims: {} })).toBe(""); expect(trussDimsText(null)).toBe(""); });
+});
+
+describe("buildFabricGroups — each zone's truss dimensions and fabric colour", () => {
+  const row = (extra = {}) => ({ trT: "singleU", dims: { W: 16, H: 12 }, ...extra });
+  const mk = (zk, zLabel, kg, r, fi = 0, ri = 0) => ({ fi, ri, zk, zLabel, fnLabel: "Wedding", photo: "", fab: { lizaKg: kg, lizaWrapKg: kg, lizaCeilingKg: 0 }, row: r });
+  const stockC = { lizaStock: [{ colour: "Ivory", photo: "ivory.jpg" }, { colour: "Rani", photo: "rani.jpg" }] };
+  it("a zone carries its truss dimensions", () => {
+    const g = buildFabricGroups({ entries: [mk("stage", "Stage", 5, row())], lines: [], stock: stockC }).groups[0];
+    expect(g.zones[0].dims).toBe("16 × 12 ft U truss");
+  });
+  it("the colour comes from the row's own allocation, with the colour's stock photo", () => {
+    const r = row({ lizaAllocation: [{ colour: "Ivory", qty: 3 }, { colour: "rani", qty: 2 }] });
+    const z = buildFabricGroups({ entries: [mk("stage", "Stage", 5, r)], lines: [], stock: stockC }).groups[0].zones[0];
+    expect(z.colours.map((c) => [c.colour, c.qty, c.photo])).toEqual([["Ivory", 3, "ivory.jpg"], ["rani", 2, "rani.jpg"]]);
+  });
+  it("else from what Deal Check recorded for that row at sync (fabricPlan.rows), matched by function, zone and truss row", () => {
+    const plan = { liza: [{ colour: "Ivory", qty: 4 }, { colour: "Rani", qty: 6 }], rows: [
+      { fi: 0, zk: "stage", ri: 0, kind: "liza", colour: "Ivory", qty: 4 }, { fi: 0, zk: "entry", ri: 0, kind: "liza", colour: "Rani", qty: 6 }, { fi: 0, zk: "stage", ri: 0, kind: "curtain", colour: "Rani", qty: 1 } ] };
+    const g = buildFabricGroups({ entries: [mk("stage", "Stage", 4, row()), mk("entry", "Entry", 6, row())], lines: [], fabricPlan: plan, stock: stockC }).groups[0];
+    expect(g.zones.find((z) => z.name === "Stage").colours.map((c) => c.colour)).toEqual(["Ivory"]);
+    expect(g.zones.find((z) => z.name === "Entry").colours.map((c) => [c.colour, c.photo])).toEqual([["Rani", "rani.jpg"]]);
+  });
+  it("an event synced before the colours were recorded: one colour for the fabric is every zone's colour; several are left unsaid", () => {
+    const one = buildFabricGroups({ entries: [mk("stage", "Stage", 5, row())], lines: [], fabricPlan: { liza: [{ colour: "Ivory", qty: 5 }] }, stock: stockC }).groups[0];
+    expect(one.zones[0].colours.map((c) => c.colour)).toEqual(["Ivory"]);
+    const many = buildFabricGroups({ entries: [mk("stage", "Stage", 5, row())], lines: [], fabricPlan: { liza: [{ colour: "Ivory", qty: 3 }, { colour: "Rani", qty: 2 }] }, stock: stockC }).groups[0];
+    expect(many.zones[0].colours).toEqual([]);
+  });
+  it("two trusses in one zone: both dimensions, colours added together", () => {
+    const entries3 = [mk("stage", "Stage", 3, row({ lizaAllocation: [{ colour: "Ivory", qty: 3 }] })), mk("stage", "Stage", 2, row({ dims: { W: 8, H: 10 }, lizaAllocation: [{ colour: "Ivory", qty: 2 }] }), 0, 1)];
+    const z = buildFabricGroups({ entries: entries3, lines: [], stock: stockC }).groups[0].zones[0];
+    expect(z.dims).toBe("16 × 12 ft U truss + 8 × 10 ft U truss");
+    expect(z.colours.map((c) => [c.colour, c.qty])).toEqual([["Ivory", 5]]);
   });
 });

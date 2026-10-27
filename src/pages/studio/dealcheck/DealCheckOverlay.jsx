@@ -1982,7 +1982,8 @@ export default function DealCheckOverlay({ ctx }) {
             const tInv = dealCheckData?.trussInv;
             if (tInv) {
               const agg = { liza: {}, masking: {}, curtain: {} };
-              (dcCostRollup.fns || []).forEach(fn => {
+              const byRow = []; // per truss row: which colour its fabric went to ({ fi, zk, ri, kind, colour, qty, tier }) - IMS Fabric block shows it per zone
+              (dcCostRollup.fns || []).forEach((fn, fnI) => {
                 const zc = fn.zoneConfig || {}, en = fn.enabledEls || {};
                 const fnPaletteForAnchors = fn.fnPalette || "Custom";
                 Object.keys(zc).forEach(zk => {
@@ -1995,7 +1996,7 @@ export default function DealCheckOverlay({ ctx }) {
                   const photoUrl = (fn.elSelectedPhoto || {})[zk];
                   if (photoUrl) { const li = (libItems || []).find(l => l.url === photoUrl); if (li?.dims?.drapeDensity) density = li.dims.drapeDensity; }
                   // A zone can carry more than one truss row — each row's own allocation (or auto-fill).
-                  [zc[zk], ...(zc[zk].extraTrussRows || [])].forEach(row => {
+                  [zc[zk], ...(zc[zk].extraTrussRows || [])].forEach((row, ri) => {
                     const fab = calcZoneFabric(row, tInv, row.drapeDensity || density);
                     // Owner ask (2026-10-15): the Fabric dept needs to know WHICH tier a requirement is
                     // for, not just a colour+qty total — row.useNewFabric (the salesperson's own Build
@@ -2011,8 +2012,8 @@ export default function DealCheckOverlay({ ctx }) {
                       // salesperson picked regardless of which fabric they meant it for.
                       const allocs = (Array.isArray(existing) && existing.length > 0) ? existing : autoFillFabricAllocation(Math.ceil(totalQty), anchorsForPaletteByMaterial(imsPaletteCatalogue, fnPaletteForAnchors, key), stockArr, qtyField);
                       const bump = (c, qty) => { if (!agg[key][c]) agg[key][c] = { old: 0, new: 0 }; agg[key][c][tier] += qty; };
-                      if (allocs.length) allocs.forEach(a => bump(a.colour || "(unassigned)", Number(a.qty) || 0));
-                      else bump("(unassigned)", Math.ceil(totalQty));
+                      if (allocs.length) allocs.forEach(a => { bump(a.colour || "(unassigned)", Number(a.qty) || 0); byRow.push({ fi: fnI, zk, ri, kind: key, colour: a.colour || "(unassigned)", qty: Number(a.qty) || 0, tier }); });
+                      else { bump("(unassigned)", Math.ceil(totalQty)); byRow.push({ fi: fnI, zk, ri, kind: key, colour: "(unassigned)", qty: Math.ceil(totalQty), tier }); }
                     };
                     add("masking", fab.maskingPieces, tInv.maskingStock, "stockPieces", "maskingAllocation");
                     add("liza", fab.lizaKg, tInv.lizaStock, "stockKg", "lizaAllocation");
@@ -2021,7 +2022,7 @@ export default function DealCheckOverlay({ ctx }) {
                 });
               });
               const toRows = (o) => Object.entries(o).map(([colour, t]) => ({ colour, qty: Math.ceil((t.old||0)+(t.new||0)), qtyOld: Math.ceil(t.old||0), qtyNew: Math.ceil(t.new||0) })).filter(r => r.qty > 0);
-              fabricPlan = { liza: toRows(agg.liza), masking: toRows(agg.masking), curtain: toRows(agg.curtain) };
+              fabricPlan = { liza: toRows(agg.liza), masking: toRows(agg.masking), curtain: toRows(agg.curtain), rows: byRow };
             }
           } catch {}
           // Deal value: the negotiated amount stays frozen once booked (owner decision — no silent
