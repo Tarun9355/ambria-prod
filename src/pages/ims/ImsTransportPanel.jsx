@@ -5,20 +5,19 @@
 // is a data + theme adapter, nothing more — one ctx builder, no second copy of the fetch/save path
 // to keep in step, even though the two editors it can mount now live on separate screens.
 //
-// Two things make an adapter necessary rather than a plain import:
+// Venue names come from the `venues` TABLE (migration 036) directly now — read-only here, same as
+// FixedVenuesEditor.jsx and VenuesEditor.jsx.
 //
-//  1. The data lives in Studio-owned settings rows (`ambria-transport-v3`, `ambria-v13-venues`)
-//     and IMS strips every `ambria-` key out of its own settings object on purpose
-//     (see applySettingsRows in IMS.jsx). So this fetches those two rows itself instead of
-//     widening that filter and pulling every Studio blob into IMS state.
-//
-//  2. Both rows are stored as JSON *strings*, not objects. Studio's loader does JSON.parse on
-//     them, so writing an object here would leave Studio unable to read its own transport
-//     config — every quote would silently fall back to default rates. Saves re-stringify.
+// The transport blob itself (`ambria-transport-v3`) is still a Studio-owned settings row, and IMS
+// strips every `ambria-` key out of its own settings object on purpose (see applySettingsRows in
+// IMS.jsx), so this fetches that one row itself instead of widening that filter. It's stored as a
+// JSON *string*, not an object — Studio's loader does JSON.parse on it, so writing an object here
+// would leave Studio unable to read its own transport config. Saves re-stringify.
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { supabase } from "../../lib/supabase";
+import { supabase, fetchAll, subscribeTable } from "../../lib/supabase";
 import { makeS } from "../../lib/studio/styles";
-import { RC_SK_TR, VENUES_SK, TR_TIERS, TC_UNITS } from "../../lib/studio/keys";
+import { RC_SK_TR, TR_TIERS, TC_UNITS } from "../../lib/studio/keys";
+import { assembleVenuesFromRows } from "../../lib/ims/venueProperties";
 import TransportEditor from "../studio/TransportEditor.jsx";
 import TruckCapacityEditor from "../studio/TruckCapacityEditor.jsx";
 
@@ -39,15 +38,22 @@ export default function ImsTransportPanel({ rcItems = [], rcCats = [], rateCardC
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const { data, error } = await supabase.from("settings").select("key,value").in("key", [RC_SK_TR, VENUES_SK]);
+      const { data, error } = await supabase.from("settings").select("key,value").eq("key", RC_SK_TR);
       if (cancelled) return;
       if (error) { setErr(error.message); setLoading(false); return; }
       const byKey = Object.fromEntries((data || []).map((r) => [r.key, r.value]));
       setTr(parseRow(byKey[RC_SK_TR], { venues: [], truckCap: [], floralPerTruck: 50000, bufferTiers: [], gensetRate: 28000, gensetRate62: 18000, gensetCostRate: 0, gensetCostRate62: 0 }));
-      setVenues(parseRow(byKey[VENUES_SK], { inhouse: [], outdoor: [] }));
       setLoading(false);
     })();
     return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => fetchAll("venues").then((rows) => { if (!cancelled) setVenues(assembleVenuesFromRows(rows)); }).catch(() => {});
+    load();
+    const ch = subscribeTable("venues", load);
+    return () => { cancelled = true; try { supabase.removeChannel(ch); } catch { /* ignore */ } };
   }, []);
 
   // Same positional signature as Studio's saveTR, because TransportEditor calls it that way:

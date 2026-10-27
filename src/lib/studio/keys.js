@@ -106,9 +106,6 @@ export const TR_TIERS = [
   { id: "repeat", label: "Tier 3 — Repeat Venues", icon: "🔄", desc: "Auto-pulled rates from past event data" },
   { id: "new", label: "Tier 4 — New Venues", icon: "🆕", desc: "Manual entry for first-time venues" },
 ];
-// The Studio-owned settings rows the IMS panel has to read directly: IMS strips every "ambria-"
-// key out of its own settings object on purpose, so these two are fetched by the panel itself.
-export const VENUES_SK = STORAGE_KEY + "-venues";
 
 // ═══ CUSTOM ZONE PHOTO MATCHING ═══
 // A standard zone's photo strip matches library photos by a shared, admin-curated NAME
