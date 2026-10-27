@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { Badge, Modal, Tabs, Field, Input, Sel, Btn } from "../../components/ui";
-import { resolveMandiFlower, resolveSizeKey, studioUnitLabel } from "../../lib/ims/flowerHelpers";
+import { resolveMandiFlower, resolveSizeKey, studioUnitLabel, genMandiFlowerId, mandiFlowerToRow } from "../../lib/ims/flowerHelpers";
 import { resolveDateCategory } from "../../lib/inventory/helpers";
+import { supabase, updateRow } from "../../lib/supabase";
 
 function fmt(n){ return "₹"+(Number(n)||0).toLocaleString("en-IN"); }
 
@@ -64,7 +65,11 @@ export default function FlowerMandiTab({ settings, setSettings, functions, setFu
 
   function updatePrice(flowerId){
     const price=parseFloat(newPrice); if(!price) return;
-    setSettings(s=>({...s,mandiCatalogue:s.mandiCatalogue.map(f=>f.id===flowerId?{...f,currentPrice:price,priceHistory:[{price:f.currentPrice,date:new Date().toISOString().slice(0,10)},...(f.priceHistory||[])]}:f)}));
+    const f=catalogue.find(x=>x.id===flowerId); if(!f) return;
+    updateRow("mandi_flowers", flowerId, {
+      current_price: price,
+      price_history: [{price:f.currentPrice,date:new Date().toISOString().slice(0,10)},...(f.priceHistory||[])],
+    }).catch(()=>{});
     setEditPrice(null); setNewPrice("");
   }
 
@@ -234,12 +239,12 @@ export default function FlowerMandiTab({ settings, setSettings, functions, setFu
             </div>
             <Btn onClick={()=>{
               if(!newFlower.name||!newFlower.currentPrice) return;
-              const id="F"+String(Date.now()).slice(-6);
-              setSettings(s=>({...s,mandiCatalogue:[...(s.mandiCatalogue||[]),{
+              const id=genMandiFlowerId();
+              supabase.from("mandi_flowers").insert(mandiFlowerToRow({
                 id, name:newFlower.name, flowerCat:newFlower.flowerCat, unit:newFlower.unit,
                 gattharSize:newFlower.gattharSize?parseInt(newFlower.gattharSize):null,
                 currentPrice:parseFloat(newFlower.currentPrice), priceHistory:[]
-              }]}));
+              })).then(()=>{},()=>{});
               setAddFlowerModal(false);
             }} color="green">Add Flower</Btn>
           </div>

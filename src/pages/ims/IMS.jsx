@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../lib/AuthContext";
 import { supabase, fetchAll, updateRow } from "../../lib/supabase";
 import { rowToItem, itemToRow, diffInventory } from "../../lib/inventory/adapter";
-import { computePatternSizeCost, effectiveMarkup } from "../../lib/ims/flowerHelpers";
+import { computePatternSizeCost, effectiveMarkup, assembleMandiCatalogueFromRows } from "../../lib/ims/flowerHelpers";
 import { createSettingsWriter } from "../../lib/ims/settingsWriter";
 import { SETTINGS_DEFAULTS, INIT_TRUSS_INV } from "../../lib/ims/constants";
 import { RC_CATS_DEFAULT } from "../../lib/studio/constants";
@@ -370,6 +370,10 @@ export default function IMS() {
   const trussPromotedRef = useRef(new Set());
   const trussBackfilledRef = useRef(false);
   const settingsRef = useRef(SETTINGS_DEFAULTS);
+  // Mandi flower catalogue rows (migration 039) — read by applySettingsRows below so its own full
+  // settingsObj rebuilds (triggered by ANY unrelated settings-table change) never lose the catalogue
+  // this ref already holds.
+  const mandiRowsRef = useRef([]);
   // Every setX below updates React state synchronously, then persists to Supabase via a
   // fire-and-forget async IIFE that nothing awaits — a real bug, confirmed by direct DB
   // inspection: a sold deal's auto-confirm engine (executeConfirmBlocks → createProjectFromEO)
@@ -472,9 +476,23 @@ export default function IMS() {
       const staleRow = writer && r.key in prevLocal && (fetchMark == null ? writer.isDirty(r.key) : writer.isStaleFor(r.key, fetchMark));
       settingsObj[r.key] = staleRow ? prevLocal[r.key] : r.value;
     }
+    // Mandi flower catalogue comes from the `mandi_flowers` TABLE (migration 039), not a settings
+    // row any more — re-applied here on every rebuild (this function also runs on every unrelated
+    // settings-table change, via the live("settings", ...) subscription below) so it's never lost.
+    settingsObj.mandiCatalogue = assembleMandiCatalogueFromRows(mandiRowsRef.current);
     settingsRef.current = settingsObj;
     setSettingsState(settingsObj);
     setSettingsLoaded(true);
+  }, []);
+
+  // Mandi flower catalogue rows -> settings.mandiCatalogue. Called on boot and by the mandi_flowers
+  // realtime subscription below; applySettingsRows also re-reads mandiRowsRef so a LATER unrelated
+  // settings change can't silently drop the catalogue out of the merged settings object.
+  const applyMandiRows = useCallback((rows) => {
+    mandiRowsRef.current = rows;
+    const mc = assembleMandiCatalogueFromRows(rows);
+    settingsRef.current = { ...(settingsRef.current || {}), mandiCatalogue: mc };
+    setSettingsState((prev) => ({ ...(prev || {}), mandiCatalogue: mc }));
   }, []);
 
   // ── Recipe → Studio rate sync (Tier 1.5) ───────────────────────────────────
@@ -793,7 +811,7 @@ export default function IMS() {
     let active = true;
     (async () => {
       try {
-        const [invRows, fnRows, projRows, venRows, poRows, ohRows, supRows, userRows, prodRows, eoRows, allocRows, rcRows, trussRows, catRows, setRows, blockRows, rcCatRows] = await Promise.all([
+        const [invRows, fnRows, projRows, venRows, poRows, ohRows, supRows, userRows, prodRows, eoRows, allocRows, rcRows, trussRows, catRows, setRows, blockRows, rcCatRows, mandiRows] = await Promise.all([
           fetchAll("inventory"),
           fetchAll("functions").catch(() => []),
           fetchAll("projects").catch(() => []),
@@ -811,6 +829,7 @@ export default function IMS() {
           fetchAll("settings").catch(() => []),
           fetchAll("blocks").catch(() => []),
           fetchAll("rate_card_categories").catch(() => []),
+          fetchAll("mandi_flowers").catch(() => []),
         ]);
         if (!active) return;
         { const bm = blocksRowsToMap(blockRows); blocksRef.current = bm; setBlocksState(bm); }
@@ -830,6 +849,12 @@ export default function IMS() {
         const trussRow = trussRows.find((r) => r.key === "main") || trussRows[0];
         if (trussRow?.data) setTrussInvState(trussRow.data);
         setCats(catRows.map((c) => c.name).filter(Boolean));
+        // Mandi flower catalogue — the `mandi_flowers` TABLE (migration 039), not the
+        // `mandiCatalogue` settings-blob key; merged into the same settings object everything else
+        // reads, via its own fetch + realtime (see the effect below), same reasoning fixed_venues
+        // (038) already uses in StudioApp.jsx. Populates mandiRowsRef BEFORE applySettingsRows runs,
+        // so that rebuild's own re-merge (below) picks up the real catalogue, not an empty one.
+        applyMandiRows(mandiRows);
         // blocks blob, Studio rate-card mirror, and the settings object — applied via the
         // shared helper (also used by the settings Realtime subscription below).
         applySettingsRows(setRows);
@@ -892,6 +917,7 @@ export default function IMS() {
     liveTable("settings", (rows, fetchMark) => applySettingsRows(rows, fetchMark));
     liveTable("rate_card", (rows) => setStudioRcItems(rows.map(rowToRcItem).filter(Boolean)));
     liveTable("rate_card_categories", (rows) => setRateCardCategories(rows));
+    liveTable("mandi_flowers", (rows) => applyMandiRows(rows));
     // blocks gets its own channel too, same reason as event_orders below: Build reconciles this
     // table's reservation rows on every qty-affecting edit to a sold deal (reconcileSoldInventoryBlocks
     // in StudioApp.jsx), so it changes constantly, and the table holds one row per inventory item
