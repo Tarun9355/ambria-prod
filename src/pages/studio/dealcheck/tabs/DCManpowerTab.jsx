@@ -677,7 +677,11 @@ export default function DCManpowerTab({ ctx }) {
 
                   // ── People count per fn × labour type ─────────────────────
                   // For each labour type present in dihariSchemes, compute people count for each fn.
-                  const labourTypes = Object.keys(dihariSchemes);
+                  // Supervisors removed entirely 2026-10-27 (owner ask) — never costed, never shown,
+                  // here or in IMS Dept Ops' Manpower plan. "Fixed" config stays in dihariSchemes
+                  // (orphaned, harmless) rather than deleting data; this filter is what actually
+                  // suppresses it everywhere it would otherwise appear.
+                  const labourTypes = Object.keys(dihariSchemes).filter((t) => t !== "Supervisors");
                   const peopleByFn = {}; // { [labourType]: { [fnIdx]: count } }
                   labourTypes.forEach(type => {
                     peopleByFn[type] = {};

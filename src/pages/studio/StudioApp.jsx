@@ -5839,7 +5839,10 @@ export default function StudioApp() {
     const fps = d.flowerPatterns || [];
     const elecProd = d.electricianProductivity || {};
     const seasonMap = d.seasonMap || {};
-    const types = Object.keys(dihari);
+    // Supervisors removed entirely 2026-10-27 (owner ask) — never costed, never shown, here or in
+    // Deal Check's Manpower tab / IMS Dept Ops' Manpower plan. See DCManpowerTab.jsx's matching
+    // filter for the full note.
+    const types = Object.keys(dihari).filter((t) => t !== "Supervisors");
     if (!types.length || !(allFns || []).length) return [];
     const situMultCap = d.situationalMultiplierCap || 1.8;
     const sitMults = d.situationalMultipliers || SIT_MULT_DEFAULTS;

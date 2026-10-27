@@ -391,14 +391,18 @@ function VoiceRecorder({ value, onSave, compact = false, label = "voice note" })
 const DEPTS = SHARED_DEPTS;
 const DEPT_ICON = { Furniture: "🛋️", Floral: "🌸", Structure: "🏛️", Tenting: "⛺", Transport: "🚚", Lighting: "💡", Fabric: "🧵" };
 // Primary manpower types per department (for the editable crew plan).
+// Furniture/Fabric carry no Labours row of their own (owner ask, 2026-10-27) — the same person runs
+// Furniture+Structure and Fabric+Tenting, so that shared crew's cost/usage pools into Structure's
+// and Tenting's rows instead (see DealCheckOverlay.jsx's poolLabourDept). Furniture/Fabric keep
+// tracking their own direct income (rental, production, buying) — only the crew row moved.
 const DEPT_MP = {
   Floral: ["Flowerists", "Labours"],
   Structure: ["Carpenters", "Labours"],
   Tenting: ["Painters", "Truss Labour", "Fabric Bangali", "Labours"],
-  Fabric: ["Labours"],
+  Fabric: [],
   Lighting: ["Electricians", "Labours"],
   Transport: ["Drivers"],
-  Furniture: ["Labours"],
+  Furniture: [],
 };
 
 // Suggested essential tools per department — one-tap to add to the reusable template.

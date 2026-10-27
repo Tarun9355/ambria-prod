@@ -684,6 +684,15 @@ export default function DealCheckOverlay({ ctx }) {
           // (Settings → Departments); else keyword matching. Sub-cat already implies its category.
           const catDeptCfg = dealCheckData?.categoryDepartments || {};
           const catToDept = (cat) => sharedCatToDept(cat, catDeptCfg);
+          // Owner ask (2026-10-27): Furniture and Structure are run by the same person, as are
+          // Tenting and Fabric — so the shared Labours crew's cost/usage share no longer splits
+          // separately between each pair. Only the Labours split is pooled (below, at its one call
+          // site); Furniture's/Fabric's own direct income (rental, production, buying — catToDept
+          // used elsewhere in this file) is untouched, so those tabs keep tracking their own
+          // inventory, they just stop carrying their own Labours row — it folds into Structure's/
+          // Tenting's instead. IMS Dept Ops' DEPT_MP no longer lists "Labours" under Furniture/
+          // Fabric, matching this.
+          const poolLabourDept = (d) => (d === "Furniture" ? "Structure" : d === "Fabric" ? "Tenting" : d);
           // Fixed-venue "Repeat" rental — see repeatAdjustedRental above for the actual formula
           // (venue-specific standing qty + that item's own IMS discount, falling back to the
           // sub-category default at any other venue). This just says WHICH zones are Repeat.
@@ -1297,7 +1306,10 @@ export default function DealCheckOverlay({ ctx }) {
             const situMultCap = dealCheckData?.situationalMultiplierCap || 1.8;
             const sitMultsMP = dealCheckData?.situationalMultipliers || SIT_MULT_DEFAULTS;
             const heavySayaMultFor = (fn, type) => sharedHeavySayaMultFor(fn, type, seasonMapMP, sitMultsMP, dealCheckData?.datePricing);
-            const labourTypes = Object.keys(dihariSchemes);
+            // Supervisors removed entirely 2026-10-27 (owner ask) — never costed, never shown, here
+            // or in the Manpower tab / IMS Dept Ops' Manpower plan. See DCManpowerTab.jsx's matching
+            // filter for the full note.
+            const labourTypes = Object.keys(dihariSchemes).filter((t) => t !== "Supervisors");
             if (labourTypes.length && fns.length) {
               // Rate per type MUST match the Manpower tab exactly (else the bottom bar diverges from the tab):
               // fixed Manpower-Contractor vendors matched by labourType (storedRate), else the house rate.
@@ -1561,7 +1573,7 @@ export default function DealCheckOverlay({ ctx }) {
                   if (!b) return;
                   const need = (Number(qty) || 0) / b;
                   if (need <= 0) return;
-                  const dp = catToDept(rc.cat);
+                  const dp = poolLabourDept(catToDept(rc.cat));
                   byDept[dp] = (byDept[dp] || 0) + need; total += need;
                   const key = rc.name || sub;
                   // dept: the department Deal Check actually charged this item's labour to (by the item's own category), so Dept Ops lists the row under the same one.

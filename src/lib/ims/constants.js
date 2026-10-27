@@ -68,8 +68,13 @@ export const PROD_DEPTS = ["Floral", "Fabric", "Structural", "Lighting", "Painte
 export const DIM_UNITS = ["ft", "cm", "inches", "metres"];
 export const VENDOR_TYPES = ["Manpower Contractor", "Transport", "Inventory Supplier", "Printing", "Flower Supplier", "Rental", "Service"];
 export const OVERHEAD_CATS = ["Godown Rent", "Fixed Staff Salaries", "Utilities", "Vehicle EMI/Maintenance", "Equipment Maintenance", "Subscriptions/Software", "Other"];
-export const MANPOWER_TYPES = ["Flowerists", "Labours", "Fabric Bangali", "Carpenters", "Painters", "Electricians", "Truss Labour", "Drivers", "Supervisors"];
-export const DEFAULT_RATES = { Flowerists: 800, Labours: 500, "Fabric Bangali": 600, Carpenters: 900, Painters: 700, Electricians: 1000, "Truss Labour": 800, Drivers: 600, Supervisors: 1200 };
+// Supervisors removed entirely 2026-10-27 (owner ask) — never costed, never shown, anywhere crew
+// types are listed (Workforce config, Fixed Venues' per-type floor, Situational Multipliers,
+// Deal Check's Manpower tab, IMS Dept Ops' Manpower plan). dihariSchemes/defaultWindowsByPhase may
+// still carry an orphaned "Supervisors" entry in old settings data — harmless, since every
+// consumption site derives its type list from this array (or filters the key explicitly).
+export const MANPOWER_TYPES = ["Flowerists", "Labours", "Fabric Bangali", "Carpenters", "Painters", "Electricians", "Truss Labour", "Drivers"];
+export const DEFAULT_RATES = { Flowerists: 800, Labours: 500, "Fabric Bangali": 600, Carpenters: 900, Painters: 700, Electricians: 1000, "Truss Labour": 800, Drivers: 600 };
 export const DUMPING_LEVELS = [{ id: "nearby", label: "📍 Nearby", mult: 1.0 }, { id: "medium", label: "🚶 Medium", mult: 1.1 }, { id: "far", label: "🚛 Far", mult: 1.2 }];
 export const EVENT_TIMINGS = [
   { id: "brunch", label: "🌅 Brunch", mult: 1.3, beforeHour: 11, setupWindow: "~5 hrs" },
@@ -85,9 +90,9 @@ export const SIT_MULT_DEFAULTS = {
   rush: { Labours: 1.3, Helpers: 1.3, Carpenters: 1.25, "Fabric Bangali": 1.2, Painters: 1.2, Electricians: 1.15, Flowerists: 1.1, "Truss Labour": 1.15 },
 };
 
-// Manpower types that can carry per-type situational/timing ratios (excludes Drivers/Supervisors,
-// which are fixed and never multiplied).
-export const SIT_MULT_TYPES = MANPOWER_TYPES.filter((t) => t !== "Drivers" && t !== "Supervisors");
+// Manpower types that can carry per-type situational/timing ratios (excludes Drivers, which is
+// fixed and never multiplied; Supervisors no longer appears in MANPOWER_TYPES at all).
+export const SIT_MULT_TYPES = MANPOWER_TYPES.filter((t) => t !== "Drivers");
 
 // Event-timing multipliers are now PER-TYPE (like heavySaya) instead of one scalar applied to all.
 // Defaults broadcast each timing's old scalar across every type, so behaviour is unchanged until a

@@ -646,7 +646,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                       <button onClick={() => setSettings((s) => ({ ...s, situationalMultipliers: { ...s.situationalMultipliers, [factor.key]: { ...defaults } } }))} className="text-xs text-amber-600 hover:text-amber-800">↩ Reset defaults</button>
                     </div>
                     <div className="flex flex-wrap gap-2">
-                      {MANPOWER_TYPES.filter((t) => t !== "Drivers" && t !== "Supervisors").map((type) => {
+                      {MANPOWER_TYPES.filter((t) => t !== "Drivers").map((type) => {
                         const val = vals[type] || defaults[type] || 1.0;
                         const isDefault = val === (defaults[type] || 1.0);
                         const isReduction = val < 1;
