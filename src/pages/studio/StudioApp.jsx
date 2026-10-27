@@ -30,7 +30,7 @@ import StudioSummary from "./views/StudioSummary.jsx";
 import { kvGet, kvTryGet, kvSet, reliableSave } from "../../lib/ims/kv";
 import { makeAmendRequest } from "../../lib/ims/amend";
 import { catToDept } from "../../lib/ims/deptClassify";
-import { availableAtVenue, isStandingAt, rentalSplit, fixedVenueDealDiscount, fixedVenueDiscountPctFor, proratedVenueDiscount, fixedVenueFor, builtQty, kitBuiltQty, venueSlackFor, standingReductionBySubcat, standingQty, combineAvailability } from "../../lib/ims/fixedVenues";
+import { availableAtVenue, isStandingAt, rentalSplit, fixedVenueDealDiscount, fixedVenueDiscountPctFor, proratedVenueDiscount, fixedVenueFor, builtQty, kitBuiltQty, venueSlackFor, standingReductionBySubcat, standingQty, combineAvailability, assembleFixedVenuesFromRows } from "../../lib/ims/fixedVenues";
 import { searchLmsLeads, triggerLmsSync, fetchCachedContracts, fetchLmsLeadByEntry } from "../../lib/ims/lms";
 import { uploadToStorage, compressImageForUpload, STORAGE_FOLDERS, listStorage, deleteStorageObjects, deleteStorageFolder } from "../../lib/storage";
 import { ytApi, ytDuration } from "../../lib/youtube";
@@ -3254,6 +3254,14 @@ export default function StudioApp() {
       .subscribe();
     return () => { supabase.removeChannel(ch); };
   }, []);
+  // ── Realtime: fixed_venues is its own TABLE now (migration 038), not a settings row — the
+  // key-watch channel above can't see it. Same reaction as any other FLORAL_DATA_KEYS change: a
+  // full refreshStudioFloralData, since Build/Summary need the real standing-inventory discount
+  // before Deal Check has ever been opened too. ──
+  useEffect(() => {
+    const ch = subscribeTable("fixed_venues", () => { refreshStudioFloralData(); });
+    return () => { try { supabase.removeChannel(ch); } catch { /* ignore */ } };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   // ── Realtime: library is a TABLE — patch row-level UPDATE/DELETE live for whatever's already
   // cached (echoes of our own writes are idempotent). Since `libItems` is now a lazy cache rather
   // than the whole table, an INSERT for an id we've never queried is deliberately IGNORED here —
@@ -4799,7 +4807,7 @@ export default function StudioApp() {
   const FLORAL_DATA_KEYS = [
     "flowerPatterns", "mandiCatalogue", "artificialFlowerRatePerKg", "artificialFlowerBunchesPerKg",
     "artificialGreenRatePerKg", "artificialGreenBunchesPerKg", "defaultStudioMarkup",
-    "fixedVenues", "fixedVenueSubcatDiscount", "agencyFeePct", "datePricing",
+    "fixedVenueSubcatDiscount", "agencyFeePct", "datePricing",
   ];
   const refreshStudioFloralData = useCallback(async () => {
     try {
@@ -4809,10 +4817,12 @@ export default function StudioApp() {
       // Check has ever been opened — dealCheckData?.trussInv used to be the only source, so Build's/
       // Summary's own total silently omitted this discount (showing a HIGHER total) until Deal Check
       // loaded it, then stayed lower afterward — the other half of the "total changes after opening
-      // Deal Check" bug, alongside the agencyFeePct/fixedVenues gap fixed above.
-      const [{ data }, trussInvRows] = await Promise.all([
+      // Deal Check" bug, alongside the agencyFeePct/fixedVenues gap fixed above. fixedVenues itself
+      // comes from the `fixed_venues` TABLE (migration 038), not this settings-keys fetch.
+      const [{ data }, trussInvRows, fixedVenueRows] = await Promise.all([
         supabase.from("settings").select("key,value").in("key", FLORAL_DATA_KEYS),
         fetchAll("truss_inventory").catch(() => []),
+        fetchAll("fixed_venues").catch(() => []),
       ]);
       const s = {};
       (data || []).forEach(r => { let v = r?.value; for (let i = 0; i < 2; i++) { if (typeof v === "string") { try { v = JSON.parse(v); } catch { break; } } } s[r.key] = v; });
@@ -4829,7 +4839,7 @@ export default function StudioApp() {
         artificialGreenRatePerKg: typeof s.artificialGreenRatePerKg === "number" ? s.artificialGreenRatePerKg : 40,
         artificialGreenBunchesPerKg: (typeof s.artificialGreenBunchesPerKg === "number" && s.artificialGreenBunchesPerKg > 0) ? s.artificialGreenBunchesPerKg : 23,
         defaultStudioMarkup: Number(s.defaultStudioMarkup ?? 3) || 3,
-        fixedVenues: Array.isArray(s.fixedVenues) ? s.fixedVenues : [],
+        fixedVenues: assembleFixedVenuesFromRows(fixedVenueRows),
         fixedVenueSubcatDiscount: (s.fixedVenueSubcatDiscount && typeof s.fixedVenueSubcatDiscount === "object") ? s.fixedVenueSubcatDiscount : {},
         // Same reason fixedVenues lives here and not only in dealCheckData: eventGrandTotal/grandTotal/
         // buildCombinedCostSheetData (Build's own live total, Summary's hero, the cost sheet) all need
@@ -10921,11 +10931,12 @@ export default function StudioApp() {
         }
         return isGood(last) ? last : null;
       };
-      const [invResults, settingsRows, vendorRows, trussInvRows] = await Promise.all([
+      const [invResults, settingsRows, vendorRows, trussInvRows, fixedVenueRows] = await Promise.all([
         Promise.all(uniqueDates.map(d => fetchIMSData(d))),
         readRetry(async () => { const r = await supabase.from("settings").select("key,value"); if (r.error) throw r.error; return r.data || []; }, rows => Array.isArray(rows) && rows.length > 0),
         fetchAll("vendors").catch(() => []),
         readRetry(() => fetchAll("truss_inventory"), rows => Array.isArray(rows) && rows.length > 0),
+        fetchAll("fixed_venues").catch(() => []),
       ]);
       if (!settingsRows || !trussInvRows) {
         setDealCheckError("Settings or truss stock didn't load, so manpower and truss would show as zero. Close Deal Check and open it again.");
@@ -11018,7 +11029,7 @@ export default function StudioApp() {
       (customProperties || []).forEach(p => { if (p?.name && typeof p.commissionPct === "number") venueCommission[p.name] = p.commissionPct; });
       (customOutdoor || []).forEach(v => { if (v?.name && typeof v.commissionPct === "number") venueCommission[v.name] = v.commissionPct; });
 
-      setDealCheckData({ inventory, blocksByDate, blocksDetailByDate, fetchedDates: uniqueDates, flowerPatterns, mandiCatalogue, mandiPriceMultipliers, seasonMap, electricianProductivity, artificialMixRatePerKg, artificialFlowerRatePerKg, artificialFlowerBunchesPerKg, artificialGreenRatePerKg, artificialGreenBunchesPerKg, flowerRecipeSubcats, dihariSchemes, defaultWindowsByPhase, labourTiers, venueMinLabour, defaultMinLabour, eventTypeMultipliers, eventTimingMultipliers, sayaMultiplier, datePricing, situationalMultipliers, situationalMultiplierCap, heavyElementRanges, fabricBangaliRanges, trussLabourRanges, fabricRftPerWorker, vendors, trussInv, colourCatalogue, paletteCatalogue, paintableCategories, defaultPaintCostPerItem, carpetFreshMarkup, agencyFeePct, defaultStudioMarkup: Number(s.defaultStudioMarkup ?? 3) || 3, fixedVenues: Array.isArray(s.fixedVenues) ? s.fixedVenues : [], fixedVenueSubcatDiscount: (s.fixedVenueSubcatDiscount && typeof s.fixedVenueSubcatDiscount === "object") ? s.fixedVenueSubcatDiscount : {}, venueParents, venueCommission, venueDumping: (s.venueDumping && typeof s.venueDumping === "object") ? s.venueDumping : {}, categoryDepartments: (catDeptMap && Object.keys(catDeptMap).length) ? catDeptMap : ((s.categoryDepartments && typeof s.categoryDepartments === "object") ? s.categoryDepartments : {}) });
+      setDealCheckData({ inventory, blocksByDate, blocksDetailByDate, fetchedDates: uniqueDates, flowerPatterns, mandiCatalogue, mandiPriceMultipliers, seasonMap, electricianProductivity, artificialMixRatePerKg, artificialFlowerRatePerKg, artificialFlowerBunchesPerKg, artificialGreenRatePerKg, artificialGreenBunchesPerKg, flowerRecipeSubcats, dihariSchemes, defaultWindowsByPhase, labourTiers, venueMinLabour, defaultMinLabour, eventTypeMultipliers, eventTimingMultipliers, sayaMultiplier, datePricing, situationalMultipliers, situationalMultiplierCap, heavyElementRanges, fabricBangaliRanges, trussLabourRanges, fabricRftPerWorker, vendors, trussInv, colourCatalogue, paletteCatalogue, paintableCategories, defaultPaintCostPerItem, carpetFreshMarkup, agencyFeePct, defaultStudioMarkup: Number(s.defaultStudioMarkup ?? 3) || 3, fixedVenues: assembleFixedVenuesFromRows(fixedVenueRows), fixedVenueSubcatDiscount: (s.fixedVenueSubcatDiscount && typeof s.fixedVenueSubcatDiscount === "object") ? s.fixedVenueSubcatDiscount : {}, venueParents, venueCommission, venueDumping: (s.venueDumping && typeof s.venueDumping === "object") ? s.venueDumping : {}, categoryDepartments: (catDeptMap && Object.keys(catDeptMap).length) ? catDeptMap : ((s.categoryDepartments && typeof s.categoryDepartments === "object") ? s.categoryDepartments : {}) });
       setDealCheckLoading(false);
       if (inventory.length === 0) {
         setDcAbortRef(null);

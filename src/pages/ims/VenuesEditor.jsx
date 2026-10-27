@@ -127,7 +127,7 @@ function CommissionInput({ kind, id, value, commDraft, setCommDraft, commitCommi
   );
 }
 
-export default function VenuesEditor({ settings, setSettings, showMsg }) {
+export default function VenuesEditor({ showMsg }) {
   const [rows, setRows] = useState(null); // raw venues-table rows; null = still loading
   const [newPropName, setNewPropName] = useState("");
   const [newSubVenue, setNewSubVenue] = useState({}); // propertyId -> draft name
@@ -226,10 +226,9 @@ export default function VenuesEditor({ settings, setSettings, showMsg }) {
     // Fixed Venues links by propertyId, but the actual billing-time match (fixedVenueFor,
     // lib/ims/fixedVenues.js) still compares by NAME string — so the linked entry's own `.name`
     // has to follow the rename too, not just what this screen displays, or the display would show
-    // the new name while billing kept matching the old one.
-    if (setSettings && (settings?.fixedVenues || []).some((fv) => fv.propertyId === id)) {
-      setSettings((s) => ({ ...s, fixedVenues: (s.fixedVenues || []).map((fv) => (fv.propertyId === id ? { ...fv, name } : fv)) }));
-    }
+    // the new name while billing kept matching the old one. Row-level (fixed_venues table, 038),
+    // not the old settings blob.
+    await supabase.from("fixed_venues").update({ name }).eq("property_id", id);
     setEditing(null);
     showMsg?.("✓ Renamed — updating references…", "green");
     cascadeRename(orig, name).then((r) => showMsg?.(`✓ Renamed${cascadeSummary(r)}. Past events keep their original venue name for audit.`, "green"));
