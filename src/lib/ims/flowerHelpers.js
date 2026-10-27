@@ -139,6 +139,40 @@ export const effectiveMarkup = (pat, settings) => {
   return 3;
 };
 
+// Shared by AdminSettingsTab.jsx's Recipes panel (the sole writer), IMS.jsx, and StudioApp.jsx's
+// two independent settings-fetch sites. The `flower_patterns` TABLE (migration 040) is the source
+// of truth now, one row per recipe — these translate between that row shape and the plain-object
+// array every function in this file already expects (matchFlowerPattern, computePatternSizeCost,
+// effectiveMarkup, …), so none of that cost-calc/matching logic had to change. The JS field is
+// called `mode`/`studioMarkup`; the DB columns (named back in 001) are `flat_or_smb`/`markup`.
+export const genFlowerPatternId = () => "FP" + Date.now() + Math.floor(Math.random() * 1000);
+
+export function rowToFlowerPattern(r) {
+  return {
+    id: r.id, name: r.name, mode: r.flat_or_smb === "smb" ? "smb" : "flat",
+    sub: r.sub || "", unit: r.unit || "pc", unitBasis: "per piece",
+    artificialIncluded: !!r.artificial_included,
+    ...(r.markup != null ? { studioMarkup: Number(r.markup) } : {}),
+    sizes: (r.sizes && typeof r.sizes === "object") ? r.sizes : {},
+  };
+}
+
+export function assembleFlowerPatternsFromRows(rows) {
+  return (Array.isArray(rows) ? rows : []).map(rowToFlowerPattern);
+}
+
+// Full-object -> row, for writing back whatever a recipe-editing mutator function produced (it
+// always returns a complete pattern object, never a sparse patch).
+export function flowerPatternToRow(p) {
+  return {
+    id: p.id, name: p.name, flat_or_smb: p.mode === "smb" ? "smb" : "flat",
+    sub: p.sub || null, unit: p.unit || "pc",
+    artificial_included: !!p.artificialIncluded,
+    markup: p.studioMarkup ?? null,
+    sizes: p.sizes || {},
+  };
+}
+
 // Matches an INVENTORY ITEM to a flower recipe pattern. A pattern is created per SUB-CATEGORY
 // (AdminSettingsTab.jsx's Recipes panel stamps `pattern.sub` from the Rate Card item it was
 // provisioned from — e.g. "Flower Pot Small" applies to every differently-named physical item in

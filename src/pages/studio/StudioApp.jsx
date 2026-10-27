@@ -97,7 +97,7 @@ import { callClaudeStreaming } from "../../lib/ai";
 import { heavyExtraLabour, eventTimingMultFor, SETTINGS_DEFAULTS, SIT_MULT_DEFAULTS } from "../../lib/ims/constants";
 import { resolveDateCategory, getEffectivePricing } from "../../lib/inventory/helpers";
 import { itemImsSubcat, lookupBySubcat, priceForInvItem, itemDimsText, walkKitUnits, kitDescendantIds } from "../../lib/ims/helpers";
-import { matchFlowerPattern, floralPatternUnitRates, sizeClassToPatternKey, normalizeSizeClass, kitFloralCompDelta, assembleMandiCatalogueFromRows } from "../../lib/ims/flowerHelpers";
+import { matchFlowerPattern, floralPatternUnitRates, sizeClassToPatternKey, normalizeSizeClass, kitFloralCompDelta, assembleMandiCatalogueFromRows, assembleFlowerPatternsFromRows } from "../../lib/ims/flowerHelpers";
 import { rowToRcItem, rcItemToRow, rcIsSMB, getFloralMode, oosCostPctFor, canFulfillShortfall } from "../../lib/rateCard";
 import { todayStr } from "../../lib/ims/attendance";
 import { supabase, fetchAll, upsertRow, deleteRow, subscribeTable, keepaliveUpsert, keepaliveRpc } from "../../lib/supabase";
@@ -3268,6 +3268,12 @@ export default function StudioApp() {
     const ch = subscribeTable("mandi_flowers", () => { refreshStudioFloralData(); });
     return () => { try { supabase.removeChannel(ch); } catch { /* ignore */ } };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // ── Realtime: flower_patterns is its own TABLE now (migration 040), not a settings row — same
+  // reaction as fixed_venues/mandi_flowers above. ──
+  useEffect(() => {
+    const ch = subscribeTable("flower_patterns", () => { refreshStudioFloralData(); });
+    return () => { try { supabase.removeChannel(ch); } catch { /* ignore */ } };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   // ── Realtime: library is a TABLE — patch row-level UPDATE/DELETE live for whatever's already
   // cached (echoes of our own writes are idempotent). Since `libItems` is now a lazy cache rather
   // than the whole table, an INSERT for an id we've never queried is deliberately IGNORED here —
@@ -4811,7 +4817,7 @@ export default function StudioApp() {
   // just on next reload, same as inventory item edits already do (see the "inventory" table
   // subscription below).
   const FLORAL_DATA_KEYS = [
-    "flowerPatterns", "artificialFlowerRatePerKg", "artificialFlowerBunchesPerKg",
+    "artificialFlowerRatePerKg", "artificialFlowerBunchesPerKg",
     "artificialGreenRatePerKg", "artificialGreenBunchesPerKg", "defaultStudioMarkup",
     "fixedVenueSubcatDiscount", "agencyFeePct", "datePricing",
   ];
@@ -4824,13 +4830,15 @@ export default function StudioApp() {
       // Summary's own total silently omitted this discount (showing a HIGHER total) until Deal Check
       // loaded it, then stayed lower afterward — the other half of the "total changes after opening
       // Deal Check" bug, alongside the agencyFeePct/fixedVenues gap fixed above. fixedVenues itself
-      // comes from the `fixed_venues` TABLE (migration 038), and mandiCatalogue from `mandi_flowers`
-      // (migration 039) — neither is this settings-keys fetch any more.
-      const [{ data }, trussInvRows, fixedVenueRows, mandiRows] = await Promise.all([
+      // comes from the `fixed_venues` TABLE (migration 038), mandiCatalogue from `mandi_flowers`
+      // (migration 039), and flowerPatterns from `flower_patterns` (migration 040) — none of them
+      // are this settings-keys fetch any more.
+      const [{ data }, trussInvRows, fixedVenueRows, mandiRows, patternRows] = await Promise.all([
         supabase.from("settings").select("key,value").in("key", FLORAL_DATA_KEYS),
         fetchAll("truss_inventory").catch(() => []),
         fetchAll("fixed_venues").catch(() => []),
         fetchAll("mandi_flowers").catch(() => []),
+        fetchAll("flower_patterns").catch(() => []),
       ]);
       const s = {};
       (data || []).forEach(r => { let v = r?.value; for (let i = 0; i < 2; i++) { if (typeof v === "string") { try { v = JSON.parse(v); } catch { break; } } } s[r.key] = v; });
@@ -4840,7 +4848,7 @@ export default function StudioApp() {
       for (let i = 0; i < 2; i++) { if (typeof tv === "string") { try { tv = JSON.parse(tv); } catch { break; } } }
       if (tv && typeof tv === "object" && tv.pillars) trussInv = tv;
       setStudioFloralData({
-        flowerPatterns: Array.isArray(s.flowerPatterns) ? s.flowerPatterns : [],
+        flowerPatterns: assembleFlowerPatternsFromRows(patternRows),
         mandiCatalogue: assembleMandiCatalogueFromRows(mandiRows),
         artificialFlowerRatePerKg: typeof s.artificialFlowerRatePerKg === "number" ? s.artificialFlowerRatePerKg : 50,
         artificialFlowerBunchesPerKg: (typeof s.artificialFlowerBunchesPerKg === "number" && s.artificialFlowerBunchesPerKg > 0) ? s.artificialFlowerBunchesPerKg : 16,
@@ -10939,13 +10947,14 @@ export default function StudioApp() {
         }
         return isGood(last) ? last : null;
       };
-      const [invResults, settingsRows, vendorRows, trussInvRows, fixedVenueRows, mandiRows] = await Promise.all([
+      const [invResults, settingsRows, vendorRows, trussInvRows, fixedVenueRows, mandiRows, patternRows] = await Promise.all([
         Promise.all(uniqueDates.map(d => fetchIMSData(d))),
         readRetry(async () => { const r = await supabase.from("settings").select("key,value"); if (r.error) throw r.error; return r.data || []; }, rows => Array.isArray(rows) && rows.length > 0),
         fetchAll("vendors").catch(() => []),
         readRetry(() => fetchAll("truss_inventory"), rows => Array.isArray(rows) && rows.length > 0),
         fetchAll("fixed_venues").catch(() => []),
         fetchAll("mandi_flowers").catch(() => []),
+        fetchAll("flower_patterns").catch(() => []),
       ]);
       if (!settingsRows || !trussInvRows) {
         setDealCheckError("Settings or truss stock didn't load, so manpower and truss would show as zero. Close Deal Check and open it again.");
@@ -10979,7 +10988,7 @@ export default function StudioApp() {
       let mandiPriceMultipliers = { heavy_saya:1.4, competition:1.0, non_saya:0.85 };
       let eventTypeMultipliers = { outdoor_premium:1.5, outdoor_budgeted:1.0, inhouse:0.75 };
       let eventTimingMultipliers = { brunch:1.3, lunch:1.15, sundowner:1.05, dinner:1.0, latenight:1.0 };
-      const flowerPatterns = Array.isArray(s.flowerPatterns) ? s.flowerPatterns : [];
+      const flowerPatterns = assembleFlowerPatternsFromRows(patternRows);
       const mandiCatalogue = assembleMandiCatalogueFromRows(mandiRows);
       if (s.mandiPriceMultipliers) mandiPriceMultipliers = s.mandiPriceMultipliers;
       const seasonMap = (s.seasonMap && typeof s.seasonMap === "object") ? s.seasonMap : {};

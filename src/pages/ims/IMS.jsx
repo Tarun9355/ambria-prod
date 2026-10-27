@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../lib/AuthContext";
 import { supabase, fetchAll, updateRow } from "../../lib/supabase";
 import { rowToItem, itemToRow, diffInventory } from "../../lib/inventory/adapter";
-import { computePatternSizeCost, effectiveMarkup, assembleMandiCatalogueFromRows } from "../../lib/ims/flowerHelpers";
+import { computePatternSizeCost, effectiveMarkup, assembleMandiCatalogueFromRows, assembleFlowerPatternsFromRows } from "../../lib/ims/flowerHelpers";
 import { createSettingsWriter } from "../../lib/ims/settingsWriter";
 import { SETTINGS_DEFAULTS, INIT_TRUSS_INV } from "../../lib/ims/constants";
 import { RC_CATS_DEFAULT } from "../../lib/studio/constants";
@@ -374,6 +374,8 @@ export default function IMS() {
   // settingsObj rebuilds (triggered by ANY unrelated settings-table change) never lose the catalogue
   // this ref already holds.
   const mandiRowsRef = useRef([]);
+  // Flower recipe pattern rows (migration 040) — same reasoning as mandiRowsRef above.
+  const patternRowsRef = useRef([]);
   // Every setX below updates React state synchronously, then persists to Supabase via a
   // fire-and-forget async IIFE that nothing awaits — a real bug, confirmed by direct DB
   // inspection: a sold deal's auto-confirm engine (executeConfirmBlocks → createProjectFromEO)
@@ -480,6 +482,8 @@ export default function IMS() {
     // row any more — re-applied here on every rebuild (this function also runs on every unrelated
     // settings-table change, via the live("settings", ...) subscription below) so it's never lost.
     settingsObj.mandiCatalogue = assembleMandiCatalogueFromRows(mandiRowsRef.current);
+    // Same reasoning for flower recipe patterns — `flower_patterns` TABLE (migration 040).
+    settingsObj.flowerPatterns = assembleFlowerPatternsFromRows(patternRowsRef.current);
     settingsRef.current = settingsObj;
     setSettingsState(settingsObj);
     setSettingsLoaded(true);
@@ -493,6 +497,14 @@ export default function IMS() {
     const mc = assembleMandiCatalogueFromRows(rows);
     settingsRef.current = { ...(settingsRef.current || {}), mandiCatalogue: mc };
     setSettingsState((prev) => ({ ...(prev || {}), mandiCatalogue: mc }));
+  }, []);
+
+  // Flower recipe pattern rows -> settings.flowerPatterns. Same reasoning/shape as applyMandiRows.
+  const applyFlowerPatternRows = useCallback((rows) => {
+    patternRowsRef.current = rows;
+    const fp = assembleFlowerPatternsFromRows(rows);
+    settingsRef.current = { ...(settingsRef.current || {}), flowerPatterns: fp };
+    setSettingsState((prev) => ({ ...(prev || {}), flowerPatterns: fp }));
   }, []);
 
   // ── Recipe → Studio rate sync (Tier 1.5) ───────────────────────────────────
@@ -757,18 +769,13 @@ export default function IMS() {
         }
         return her;
       });
-      // Recipes (flowerPatterns) link to items by `.sub` (matchFlowerPattern). Rename it too so a
-      // sub-category rename keeps the recipe↔item match intact — otherwise the recipe stops applying
-      // to its items and every tagged photo using those items loses its recipe pricing.
-      const flowerPatterns = (s.flowerPatterns || []).map((p) => {
-        if (String(p.sub || "").trim().toLowerCase() === oldId && p.sub !== trimmed) {
-          changed = true;
-          return { ...p, sub: trimmed };
-        }
-        return p;
-      });
-      return changed ? { ...s, labourTiers, heavyElementRanges, flowerPatterns } : s;
+      return changed ? { ...s, labourTiers, heavyElementRanges } : s;
     });
+    // Recipes (flowerPatterns) link to items by `.sub` (matchFlowerPattern). Rename it too so a
+    // sub-category rename keeps the recipe↔item match intact — otherwise the recipe stops applying
+    // to its items and every tagged photo using those items loses its recipe pricing. Row-level
+    // (flower_patterns table, 040), not the settings blob the rest of this cascade used to share.
+    supabase.from("flower_patterns").update({ sub: trimmed }).ilike("sub", oldId).then(() => {}, () => {});
   }, []);
 
   // Rate Card → IMS migration Phase 3: Rate Card admin authority moves from Studio to IMS. Same
@@ -811,7 +818,7 @@ export default function IMS() {
     let active = true;
     (async () => {
       try {
-        const [invRows, fnRows, projRows, venRows, poRows, ohRows, supRows, userRows, prodRows, eoRows, allocRows, rcRows, trussRows, catRows, setRows, blockRows, rcCatRows, mandiRows] = await Promise.all([
+        const [invRows, fnRows, projRows, venRows, poRows, ohRows, supRows, userRows, prodRows, eoRows, allocRows, rcRows, trussRows, catRows, setRows, blockRows, rcCatRows, mandiRows, patternRows] = await Promise.all([
           fetchAll("inventory"),
           fetchAll("functions").catch(() => []),
           fetchAll("projects").catch(() => []),
@@ -830,6 +837,7 @@ export default function IMS() {
           fetchAll("blocks").catch(() => []),
           fetchAll("rate_card_categories").catch(() => []),
           fetchAll("mandi_flowers").catch(() => []),
+          fetchAll("flower_patterns").catch(() => []),
         ]);
         if (!active) return;
         { const bm = blocksRowsToMap(blockRows); blocksRef.current = bm; setBlocksState(bm); }
@@ -855,6 +863,8 @@ export default function IMS() {
         // (038) already uses in StudioApp.jsx. Populates mandiRowsRef BEFORE applySettingsRows runs,
         // so that rebuild's own re-merge (below) picks up the real catalogue, not an empty one.
         applyMandiRows(mandiRows);
+        // Flower recipe patterns — the `flower_patterns` TABLE (migration 040), same reasoning.
+        applyFlowerPatternRows(patternRows);
         // blocks blob, Studio rate-card mirror, and the settings object — applied via the
         // shared helper (also used by the settings Realtime subscription below).
         applySettingsRows(setRows);
@@ -918,6 +928,7 @@ export default function IMS() {
     liveTable("rate_card", (rows) => setStudioRcItems(rows.map(rowToRcItem).filter(Boolean)));
     liveTable("rate_card_categories", (rows) => setRateCardCategories(rows));
     liveTable("mandi_flowers", (rows) => applyMandiRows(rows));
+    liveTable("flower_patterns", (rows) => applyFlowerPatternRows(rows));
     // blocks gets its own channel too, same reason as event_orders below: Build reconciles this
     // table's reservation rows on every qty-affecting edit to a sold deal (reconcileSoldInventoryBlocks
     // in StudioApp.jsx), so it changes constantly, and the table holds one row per inventory item

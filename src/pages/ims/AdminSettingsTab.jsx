@@ -7,7 +7,7 @@ import { Tabs, AddInlineItem, FlowerPicker, Btn, useConfirm, DraftInput } from "
 import ClickablePhoto from "../../components/shared/ClickablePhoto.jsx";
 import { canvaAuthUrl, canvaConnectionStatus, canvaClientId } from "../../lib/canva";
 import { uploadToStorage, compressImageForUpload, STORAGE_FOLDERS } from "../../lib/storage";
-import { resolveMandiFlower, computePatternSizeCost, effectiveMarkup, studioUnitLabel, genMandiFlowerId, mandiFlowerToRow, mandiFlowerPatchToRow } from "../../lib/ims/flowerHelpers";
+import { resolveMandiFlower, computePatternSizeCost, effectiveMarkup, studioUnitLabel, genMandiFlowerId, mandiFlowerToRow, mandiFlowerPatchToRow, genFlowerPatternId, flowerPatternToRow } from "../../lib/ims/flowerHelpers";
 import { priceForInvItem, phone10, flowerPaletteItemsOf } from "../../lib/ims/helpers";
 import { MANPOWER_TYPES, SIT_MULT_DEFAULTS, SIT_MULT_TYPES, DUMPING_LEVELS, EVENT_TIMINGS, eventTimingMultFor, hasIMSPerm } from "../../lib/ims/constants";
 import ImsTransportPanel from "./ImsTransportPanel.jsx";
@@ -1431,17 +1431,18 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
           setSettings((s) => { const cur = s.flowerRecipeSubcats || []; const next = cur.includes(sub) ? cur.filter((x) => x !== sub) : [...cur, sub]; return { ...s, flowerRecipeSubcats: next.sort((a, b) => a.localeCompare(b)) }; });
         };
         const mutatePattern = (studioItem, mutator) => {
-          setSettings((s) => {
-            const norm = (x) => (x || "").toLowerCase().trim();
-            const targetName = studioItem.name;
-            const existing = (s.flowerPatterns || []).find((p) => norm(p.name) === norm(targetName));
-            const m = existing?.mode === "smb" ? "smb" : existing?.mode === "flat" ? "flat" : (studioItem.inhouseMode === "smb" ? "smb" : "flat");
-            const sizeKeys = m === "smb" ? ["small", "medium", "big"] : ["medium"];
-            const emptyTemplate = sizeKeys.reduce((a, k) => ({ ...a, [k]: { flowers: [], totalPieces: 0 } }), {});
-            if (existing) return { ...s, flowerPatterns: s.flowerPatterns.map((p) => (p.id === existing.id ? mutator(p) : p)) };
-            const fresh = mutator({ id: "FP" + Date.now() + Math.floor(Math.random() * 1000), name: targetName, mode: m, sub: (studioItem.sub || "").trim(), unit: studioItem.unit || "pc", unitBasis: "per piece", sizes: emptyTemplate });
-            return { ...s, flowerPatterns: [...(s.flowerPatterns || []), fresh] };
-          });
+          const norm = (x) => (x || "").toLowerCase().trim();
+          const targetName = studioItem.name;
+          const existing = (settings.flowerPatterns || []).find((p) => norm(p.name) === norm(targetName));
+          const m = existing?.mode === "smb" ? "smb" : existing?.mode === "flat" ? "flat" : (studioItem.inhouseMode === "smb" ? "smb" : "flat");
+          const sizeKeys = m === "smb" ? ["small", "medium", "big"] : ["medium"];
+          const emptyTemplate = sizeKeys.reduce((a, k) => ({ ...a, [k]: { flowers: [], totalPieces: 0 } }), {});
+          if (existing) {
+            updateRow("flower_patterns", existing.id, flowerPatternToRow(mutator(existing))).catch(() => {});
+            return;
+          }
+          const fresh = mutator({ id: genFlowerPatternId(), name: targetName, mode: m, sub: (studioItem.sub || "").trim(), unit: studioItem.unit || "pc", unitBasis: "per piece", sizes: emptyTemplate });
+          supabase.from("flower_patterns").insert(flowerPatternToRow(fresh)).then(() => {}, () => {});
         };
         const renderSizeColumn = (studioItem, sz, sizeLabel, sizeEmoji) => {
           const pat = (settings.flowerPatterns || []).find((p) => (p.name || "").toLowerCase().trim() === (studioItem.name || "").toLowerCase().trim());
@@ -1652,8 +1653,8 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
           const nm = (recipeAddForm.name || "").trim();
           if (!nm) { alert("Item needs a name"); return; }
           if ((settings.flowerPatterns || []).some((p) => norm(p.name) === norm(nm))) { alert(`An item named "${nm}" already exists.`); return; }
-          const fresh = { id: "FP" + Date.now() + Math.floor(Math.random() * 1000), name: nm, mode: "flat", sub, unit: recipeAddForm.unit || "pc", unitBasis: "per piece", sizes: { medium: { flowers: [], totalPieces: 0 } } };
-          setSettings((s) => ({ ...s, flowerPatterns: [...(s.flowerPatterns || []), fresh] }));
+          const fresh = { id: genFlowerPatternId(), name: nm, mode: "flat", sub, unit: recipeAddForm.unit || "pc", unitBasis: "per piece", sizes: { medium: { flowers: [], totalPieces: 0 } } };
+          supabase.from("flower_patterns").insert(flowerPatternToRow(fresh)).then(() => {}, () => {});
           setRecipeItemOpen((s) => ({ ...s, [fresh.id]: true }));
           setRecipeAddSub(null);
           setRecipeAddForm({ name: "", unit: "pc" });
@@ -1662,12 +1663,12 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
           const nn = (newName || "").trim();
           if (!nn || nn === studioItem.name) { setRecipeRenameId(null); return; }
           if ((settings.flowerPatterns || []).some((p) => p.id !== studioItem.id && norm(p.name) === norm(nn))) { alert(`An item named "${nn}" already exists.`); return; }
-          setSettings((s) => ({ ...s, flowerPatterns: (s.flowerPatterns || []).map((p) => (p.id === studioItem.id ? { ...p, name: nn } : p)) }));
+          updateRow("flower_patterns", studioItem.id, { name: nn }).catch(() => {});
           setRecipeRenameId(null);
         };
         const deleteRecipeItem = (studioItem) => {
           if (!window.confirm(`Delete "${studioItem.name}" and its flower recipe? This cannot be undone.`)) return;
-          setSettings((s) => ({ ...s, flowerPatterns: (s.flowerPatterns || []).filter((p) => p.id !== studioItem.id) }));
+          deleteRow("flower_patterns", studioItem.id).catch(() => {});
         };
 
         return (
