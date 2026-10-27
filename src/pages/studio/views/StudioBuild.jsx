@@ -5197,16 +5197,12 @@ undefined
                         const s=zoneScaleVal(k);
                         setPrint({qty:nextQty, qtyBase: s>1?nextQty/s:nextQty});
                       }} title="Qty — how many copies of this same print. Scale By rescales this the same way it rescales elements, Truss Qty and Platform Qty." style={{...S.input,fontSize:11.5,padding:"3px 6px",width:44,marginBottom:0,textAlign:"center"}} />
-                      {showCosts&&<span style={{fontSize:12,fontWeight:700,color:"#0EA5E9",marginLeft:"auto",whiteSpace:"nowrap"}}>{rate>0?fmt(cost):"— pick material"}</span>}
+                      {showCosts&&<span style={{fontSize:12,fontWeight:700,color:"#0EA5E9",marginLeft:"auto",whiteSpace:"nowrap"}}>{rate>0?(carriesFlat?`${fmt(cost)} + ${fmt(SMALL_PRINT_CHARGE)}`:fmt(cost)):"— pick material"}</span>}
                       {!isPhantom&&<span onClick={removePrint} style={{cursor:"pointer",color:"#E11D48",fontWeight:700,fontSize:12.5}}>×</span>}
                     </div>
                     {/* A print under ₹2,000 does not fill a truck, so the function is charged one flat amount for its small prints instead
-                        (lib/studio/truckPrint.js; it is billed in the function's transport). Shown as its own line under the job that carries it —
+                        (lib/studio/truckPrint.js; it is billed in the function's transport). Shown as "₹150 + ₹400" on the job that carries it —
                         once per function — without naming what it is for. */}
-                    {showCosts&&carriesFlat&&<div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",gap:8,marginTop:5,paddingTop:5,borderTop:"1px dashed rgba(14,165,233,0.35)"}}>
-                      <span style={{fontSize:11.5,color:textS}}>Small print charge</span>
-                      <span style={{fontSize:12,fontWeight:700,color:"#0EA5E9"}}>{fmt(SMALL_PRINT_CHARGE)}</span>
-                    </div>}
                     {/* Two OPTIONAL fields side by side — they were stacked full-width, making every print
                         row ~3 rows tall for fields most jobs leave blank. */}
                     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginTop:7,alignItems:"start"}}>
