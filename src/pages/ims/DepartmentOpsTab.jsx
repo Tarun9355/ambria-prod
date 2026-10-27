@@ -1613,7 +1613,22 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         // platform/print/custom items never claim cross-function reuse, so the estimate is exact
         // for them) or an event synced before this field existed.
         const fnRow = it.byFn && it.byFn[invFn];
-        const total = fnRow ? Math.round(fnRow.total) : Math.round((Number(it.total) || 0) * ((Number(it.qty) || 0) > 0 ? q / Number(it.qty) : 1));
+        // The count above reads the function's zone lists, which include the parts of its kits (a Crystal Vedi's 12 WARM LED); Deal Check files those
+        // under the row with no function of their own, so byFn's total does not hold them. Priced here at the rate of the part of the line byFn does not
+        // cover, so qty × rate agrees with the total (181 × ₹75, not 181 shown against the money for 169).
+        let kitPartsValue = 0;
+        if (fnRow) {
+          const fnRental = Number(fnRow.rentalQty ?? fnRow.qty) || 0;
+          const extraQty = Math.max(0, q - fnRental);
+          if (extraQty > 0) {
+            const rows = Object.values(it.byFn);
+            const unQty = (Number(it.rentalQty ?? it.qty) || 0) - rows.reduce((sum, r) => sum + (Number(r.rentalQty ?? r.qty) || 0), 0);
+            const unTotal = (Number(it.total) || 0) - rows.reduce((sum, r) => sum + (Number(r.total) || 0), 0);
+            const rate = unQty > 0 && unTotal > 0 ? unTotal / unQty : (fnRental > 0 ? (Number(fnRow.total) || 0) / fnRental : 0);
+            kitPartsValue = extraQty * rate;
+          }
+        }
+        const total = fnRow ? Math.round((Number(fnRow.total) || 0) + kitPartsValue) : Math.round((Number(it.total) || 0) * ((Number(it.qty) || 0) > 0 ? q / Number(it.qty) : 1));
         return { ...it, qty: q, rentalQty: q, total, shortQty: Math.min(Number(it.shortQty) || 0, q), calc: fnRow ? (fnRow.calc || null) : null };
       }).filter(Boolean)
     : blockedItemsGrouped;
