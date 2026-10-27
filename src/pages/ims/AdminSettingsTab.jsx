@@ -8,6 +8,7 @@ import ClickablePhoto from "../../components/shared/ClickablePhoto.jsx";
 import { canvaAuthUrl, canvaConnectionStatus, canvaClientId } from "../../lib/canva";
 import { uploadToStorage, compressImageForUpload, STORAGE_FOLDERS } from "../../lib/storage";
 import { resolveMandiFlower, computePatternSizeCost, effectiveMarkup, studioUnitLabel, genMandiFlowerId, mandiFlowerToRow, mandiFlowerPatchToRow, genFlowerPatternId, flowerPatternToRow } from "../../lib/ims/flowerHelpers";
+import { labourTypePatchToRow } from "../../lib/ims/labourTypes";
 import { priceForInvItem, phone10, flowerPaletteItemsOf } from "../../lib/ims/helpers";
 import { MANPOWER_TYPES, SIT_MULT_DEFAULTS, SIT_MULT_TYPES, DUMPING_LEVELS, EVENT_TIMINGS, eventTimingMultFor, hasIMSPerm } from "../../lib/ims/constants";
 import ImsTransportPanel from "./ImsTransportPanel.jsx";
@@ -221,6 +222,13 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
     while (taken.has(key)) key = `${base}-${n++}`;
     setSettings((s) => ({ ...s, maskingRates: [...current, { key, name, ratePerSqft: 0 }] }));
     setNewMaskingName("");
+  };
+  // Labour type config — `labour_types` TABLE (migration 041), one row per manpower type. Shared by
+  // this panel (tier/minimum/dismantlingPct/subCatBatches) and DihariTimingsPanel.jsx
+  // (rate/windows/defaultWindows) — a plain UPSERT works for both since a type not yet in the table
+  // (one only ever configured on the other panel) just gets a fresh row.
+  const upsertLabourType = (type, patch) => {
+    supabase.from("labour_types").upsert({ type_name: type, ...labourTypePatchToRow(patch) }, { onConflict: "type_name" }).then(() => {}, () => {});
   };
   const [newVenueInput, setNewVenueInput] = useState("");
   const addVenueMin = () => {
@@ -450,7 +458,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                   <div key={type} className="bg-gray-50 border rounded-xl p-3">
                     <div className="flex items-center gap-3 flex-wrap">
                       <span className="font-medium text-gray-800 text-sm w-32">{type}</span>
-                      <select value={cfg.tier} onChange={(e) => { const val = e.target.value; const tier = (val === "fixed" || val === "pillar-range" || val === "sqft-range") ? val : parseInt(val); setSettings((s) => ({ ...s, labourTiers: { ...s.labourTiers, [type]: { ...cfg, tier } } })); }} className="border rounded-lg px-2 py-1.5 text-xs bg-white w-44">
+                      <select value={cfg.tier} onChange={(e) => { const val = e.target.value; const tier = (val === "fixed" || val === "pillar-range" || val === "sqft-range") ? val : parseInt(val); upsertLabourType(type, { tier }); }} className="border rounded-lg px-2 py-1.5 text-xs bg-white w-44">
                         <option value={1}>⚡ Tier 1 — Element-driven</option>
                         <option value={2}>📊 Tier 2 — Min + Scaling</option>
                         <option value={3}>🏢 Tier 3 — Venue + Event</option>
@@ -466,13 +474,13 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                               back to 1 — 0 is a valid minimum (some sub-categories need no floor crew
                               at all), so both need an explicit numeric check instead of falsy-coalescing. */}
                           <input type="number" min="0" max="20" value={typeof cfg.minimum === "number" ? cfg.minimum : 1}
-                            onChange={(e) => { const n = parseInt(e.target.value, 10); setSettings((s) => ({ ...s, labourTiers: { ...s.labourTiers, [type]: { ...cfg, minimum: Number.isFinite(n) ? Math.max(0, n) : 1 } } })); }}
+                            onChange={(e) => { const n = parseInt(e.target.value, 10); upsertLabourType(type, { minimum: Number.isFinite(n) ? Math.max(0, n) : 1 }); }}
                             className="w-14 border rounded px-2 py-1 text-xs" />
                         </div>
                       )}
                       <div className="flex items-center gap-1 ml-auto">
                         <span className="text-xs text-gray-500">Dismantle:</span>
-                        <input type="number" min="0" max="100" value={cfg.dismantlingPct ?? ""} onChange={(e) => { const v = e.target.value; const n = v === "" ? undefined : (parseInt(v) || 0); setSettings((s) => ({ ...s, labourTiers: { ...s.labourTiers, [type]: { ...cfg, dismantlingPct: n } } })); }} placeholder="—" className="w-14 border rounded px-2 py-1 text-xs text-center" />
+                        <input type="number" min="0" max="100" value={cfg.dismantlingPct ?? ""} onChange={(e) => { const v = e.target.value; const n = v === "" ? null : (parseInt(v) || 0); upsertLabourType(type, { dismantlingPct: n }); }} placeholder="—" className="w-14 border rounded px-2 py-1 text-xs text-center" />
                         <span className="text-xs text-gray-400">%</span>
                       </div>
                     </div>
@@ -484,14 +492,14 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                             <div key={sc} className="inline-flex items-center gap-1 bg-indigo-50 border border-indigo-200 rounded-lg px-2 py-1">
                               <span className="text-xs text-indigo-700 font-medium">{sc}</span>
                               <span className="text-xs text-gray-400">→ 1:</span>
-                              <input type="number" min="1" max="50" value={batch} onChange={(e) => { const nb = { ...(cfg.subCatBatches || {}), [sc]: parseInt(e.target.value) || 1 }; setSettings((s) => ({ ...s, labourTiers: { ...s.labourTiers, [type]: { ...cfg, subCatBatches: nb } } })); }} className="w-10 border rounded px-1 py-0.5 text-xs text-center" />
-                              <button onClick={() => { const nb = { ...(cfg.subCatBatches || {}) }; delete nb[sc]; setSettings((s) => ({ ...s, labourTiers: { ...s.labourTiers, [type]: { ...cfg, subCatBatches: nb } } })); }} className="text-red-400 hover:text-red-600 text-xs ml-0.5">×</button>
+                              <input type="number" min="1" max="50" value={batch} onChange={(e) => { const nb = { ...(cfg.subCatBatches || {}), [sc]: parseInt(e.target.value) || 1 }; upsertLabourType(type, { subCatBatches: nb }); }} className="w-10 border rounded px-1 py-0.5 text-xs text-center" />
+                              <button onClick={() => { const nb = { ...(cfg.subCatBatches || {}) }; delete nb[sc]; upsertLabourType(type, { subCatBatches: nb }); }} className="text-red-400 hover:text-red-600 text-xs ml-0.5">×</button>
                             </div>
                           ))}
                         </div>
                         <div className="flex flex-wrap gap-1">
                           {allSubcatLabels.filter((sc) => !(cfg.subCatBatches || {})[sc]).map((sc) => (
-                            <button key={sc} onClick={() => { const nb = { ...(cfg.subCatBatches || {}), [sc]: 3 }; setSettings((s) => ({ ...s, labourTiers: { ...s.labourTiers, [type]: { ...cfg, subCatBatches: nb } } })); }} className="text-xs px-2 py-0.5 rounded-full border bg-white border-gray-200 text-gray-500 hover:border-indigo-200 hover:text-indigo-600 transition-all">+ {sc}</button>
+                            <button key={sc} onClick={() => { const nb = { ...(cfg.subCatBatches || {}), [sc]: 3 }; upsertLabourType(type, { subCatBatches: nb }); }} className="text-xs px-2 py-0.5 rounded-full border bg-white border-gray-200 text-gray-500 hover:border-indigo-200 hover:text-indigo-600 transition-all">+ {sc}</button>
                           ))}
                         </div>
                       </div>
@@ -732,7 +740,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
           </div>
         </div>
       )}
-      {activePanel === "dihari" && <DihariTimingsPanel settings={settings} setSettings={setSettings} />}
+      {activePanel === "dihari" && <DihariTimingsPanel settings={settings} />}
       {activePanel === "mandi" && (
         <div className="space-y-5">
           {/* Artificial Flower Colours */}

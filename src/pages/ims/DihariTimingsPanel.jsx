@@ -1,7 +1,12 @@
 import { useState } from "react";
+import { supabase } from "../../lib/supabase";
 
 // Faithful copy of the reference IMS DihariTimingsPanel (Admin → Settings → Dihari Timings).
-export default function DihariTimingsPanel({ settings, setSettings }) {
+// Writes go to the `labour_types` TABLE (migration 041) now — one row per manpower type, shared
+// with the Labour Tiers panel (AdminSettingsTab.jsx) which owns that same row's tier/minimum/
+// subCatBatches columns. Row-level upserts here only ever touch the dihari_rate/dihari_windows/
+// default_windows columns, so they never clobber that other panel's config for the same type.
+export default function DihariTimingsPanel({ settings }) {
   const schemes = settings.dihariSchemes || {};
   const defaults = settings.defaultWindowsByPhase || {};
   const types = Object.keys(schemes);
@@ -16,19 +21,17 @@ export default function DihariTimingsPanel({ settings, setSettings }) {
     { id: "dismantle", label: "Dismantle Day", emoji: "🧹" },
   ];
 
+  const upsertType = (type, row) => {
+    supabase.from("labour_types").upsert({ type_name: type, ...row }, { onConflict: "type_name" }).then(() => {}, () => {});
+  };
   const updScheme = (type, mutator) => {
-    setSettings((s) => {
-      const cur = s.dihariSchemes || {};
-      const ex = cur[type] || { rate: 500, windows: [] };
-      return { ...s, dihariSchemes: { ...cur, [type]: mutator({ ...ex, windows: [...(ex.windows || [])] }) } };
-    });
+    const ex = schemes[type] || { rate: 500, windows: [] };
+    const next = mutator({ ...ex, windows: [...(ex.windows || [])] });
+    upsertType(type, { dihari_rate: next.rate, dihari_windows: next.windows });
   };
   const updDefault = (type, phase, windowIds) => {
-    setSettings((s) => {
-      const cur = s.defaultWindowsByPhase || {};
-      const ex = cur[type] || { minusOne: [], event: [], dismantle: [] };
-      return { ...s, defaultWindowsByPhase: { ...cur, [type]: { ...ex, [phase]: windowIds } } };
-    });
+    const ex = defaults[type] || { minusOne: [], event: [], dismantle: [] };
+    upsertType(type, { default_windows: { ...ex, [phase]: windowIds } });
   };
   const togglePhaseWindow = (type, phase, winId) => {
     const cur = (defaults[type] || {})[phase] || [];
@@ -38,19 +41,17 @@ export default function DihariTimingsPanel({ settings, setSettings }) {
     const clean = (newTypeName || "").trim();
     if (!clean) return;
     if (schemes[clean]) { setNewTypeName(""); return; }
-    setSettings((s) => ({
-      ...s,
-      dihariSchemes: { ...(s.dihariSchemes || {}), [clean]: { rate: 500, windows: [{ id: "m", label: "9 AM – 5 PM" }] } },
-      defaultWindowsByPhase: { ...(s.defaultWindowsByPhase || {}), [clean]: { minusOne: [], event: ["m"], dismantle: [] } },
-    }));
+    upsertType(clean, {
+      dihari_rate: 500, dihari_windows: [{ id: "m", label: "9 AM – 5 PM" }],
+      default_windows: { minusOne: [], event: ["m"], dismantle: [] },
+    });
     setNewTypeName("");
   };
   const removeLabourType = (type) => {
-    setSettings((s) => {
-      const cs = { ...(s.dihariSchemes || {}) }; delete cs[type];
-      const cd = { ...(s.defaultWindowsByPhase || {}) }; delete cd[type];
-      return { ...s, dihariSchemes: cs, defaultWindowsByPhase: cd };
-    });
+    // Clears only the dihari-side columns — a type can still hold labourTiers config (tier/
+    // minimum/subCatBatches, the OTHER admin panel's columns on this same row), so this must never
+    // delete the row outright.
+    supabase.from("labour_types").update({ dihari_rate: null, dihari_windows: null, default_windows: null }).eq("type_name", type).then(() => {}, () => {});
     setConfirmRemove("");
   };
   const addWindowForType = (type) => {

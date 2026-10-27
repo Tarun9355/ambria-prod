@@ -4,6 +4,7 @@ import { useAuth } from "../../lib/AuthContext";
 import { supabase, fetchAll, updateRow } from "../../lib/supabase";
 import { rowToItem, itemToRow, diffInventory } from "../../lib/inventory/adapter";
 import { computePatternSizeCost, effectiveMarkup, assembleMandiCatalogueFromRows, assembleFlowerPatternsFromRows } from "../../lib/ims/flowerHelpers";
+import { assembleLabourTiersFromRows, assembleDihariSchemesFromRows, assembleDefaultWindowsByPhaseFromRows } from "../../lib/ims/labourTypes";
 import { createSettingsWriter } from "../../lib/ims/settingsWriter";
 import { SETTINGS_DEFAULTS, INIT_TRUSS_INV } from "../../lib/ims/constants";
 import { RC_CATS_DEFAULT } from "../../lib/studio/constants";
@@ -376,6 +377,9 @@ export default function IMS() {
   const mandiRowsRef = useRef([]);
   // Flower recipe pattern rows (migration 040) — same reasoning as mandiRowsRef above.
   const patternRowsRef = useRef([]);
+  // Labour type rows (migration 041) — same reasoning, feeds THREE settings fields at once
+  // (labourTiers/dihariSchemes/defaultWindowsByPhase).
+  const labourTypeRowsRef = useRef([]);
   // Every setX below updates React state synchronously, then persists to Supabase via a
   // fire-and-forget async IIFE that nothing awaits — a real bug, confirmed by direct DB
   // inspection: a sold deal's auto-confirm engine (executeConfirmBlocks → createProjectFromEO)
@@ -484,6 +488,11 @@ export default function IMS() {
     settingsObj.mandiCatalogue = assembleMandiCatalogueFromRows(mandiRowsRef.current);
     // Same reasoning for flower recipe patterns — `flower_patterns` TABLE (migration 040).
     settingsObj.flowerPatterns = assembleFlowerPatternsFromRows(patternRowsRef.current);
+    // Same reasoning for labour type config — `labour_types` TABLE (migration 041), one table
+    // feeding three independently-keyed settings fields.
+    settingsObj.labourTiers = assembleLabourTiersFromRows(labourTypeRowsRef.current);
+    settingsObj.dihariSchemes = assembleDihariSchemesFromRows(labourTypeRowsRef.current);
+    settingsObj.defaultWindowsByPhase = assembleDefaultWindowsByPhaseFromRows(labourTypeRowsRef.current);
     settingsRef.current = settingsObj;
     setSettingsState(settingsObj);
     setSettingsLoaded(true);
@@ -505,6 +514,19 @@ export default function IMS() {
     const fp = assembleFlowerPatternsFromRows(rows);
     settingsRef.current = { ...(settingsRef.current || {}), flowerPatterns: fp };
     setSettingsState((prev) => ({ ...(prev || {}), flowerPatterns: fp }));
+  }, []);
+
+  // Labour type rows -> settings.labourTiers/dihariSchemes/defaultWindowsByPhase. Same
+  // reasoning/shape as applyMandiRows, feeding three fields from one table.
+  const applyLabourTypeRows = useCallback((rows) => {
+    labourTypeRowsRef.current = rows;
+    const patch = {
+      labourTiers: assembleLabourTiersFromRows(rows),
+      dihariSchemes: assembleDihariSchemesFromRows(rows),
+      defaultWindowsByPhase: assembleDefaultWindowsByPhaseFromRows(rows),
+    };
+    settingsRef.current = { ...(settingsRef.current || {}), ...patch };
+    setSettingsState((prev) => ({ ...(prev || {}), ...patch }));
   }, []);
 
   // ── Recipe → Studio rate sync (Tier 1.5) ───────────────────────────────────
@@ -746,22 +768,21 @@ export default function IMS() {
     });
     saveRateCardItems(nextRcItems);
 
+    // labourTiers[type].subCatBatches is now a column on the `labour_types` TABLE (migration 041) —
+    // row-level per affected type, not folded into the settings blob merge below.
+    Object.entries(settings.labourTiers || {}).forEach(([type, cfg]) => {
+      const batches = cfg?.subCatBatches;
+      if (!batches) return;
+      const matchKey = Object.keys(batches).find((k) => String(k).trim().toLowerCase() === oldId);
+      if (matchKey && matchKey !== trimmed) {
+        const nb = { ...batches };
+        nb[trimmed] = nb[matchKey];
+        delete nb[matchKey];
+        supabase.from("labour_types").update({ sub_cat_batches: nb }).eq("type_name", type).then(() => {}, () => {});
+      }
+    });
     setSettings((s) => {
       let changed = false;
-      const labourTiers = { ...(s.labourTiers || {}) };
-      for (const type of Object.keys(labourTiers)) {
-        const cfg = labourTiers[type];
-        const batches = cfg?.subCatBatches;
-        if (!batches) continue;
-        const matchKey = Object.keys(batches).find((k) => String(k).trim().toLowerCase() === oldId);
-        if (matchKey && matchKey !== trimmed) {
-          const nb = { ...batches };
-          nb[trimmed] = nb[matchKey];
-          delete nb[matchKey];
-          labourTiers[type] = { ...cfg, subCatBatches: nb };
-          changed = true;
-        }
-      }
       const heavyElementRanges = (s.heavyElementRanges || []).map((her) => {
         if (String(her.subCat || "").trim().toLowerCase() === oldId && her.subCat !== trimmed) {
           changed = true;
@@ -769,7 +790,7 @@ export default function IMS() {
         }
         return her;
       });
-      return changed ? { ...s, labourTiers, heavyElementRanges } : s;
+      return changed ? { ...s, heavyElementRanges } : s;
     });
     // Recipes (flowerPatterns) link to items by `.sub` (matchFlowerPattern). Rename it too so a
     // sub-category rename keeps the recipe↔item match intact — otherwise the recipe stops applying
@@ -818,7 +839,7 @@ export default function IMS() {
     let active = true;
     (async () => {
       try {
-        const [invRows, fnRows, projRows, venRows, poRows, ohRows, supRows, userRows, prodRows, eoRows, allocRows, rcRows, trussRows, catRows, setRows, blockRows, rcCatRows, mandiRows, patternRows] = await Promise.all([
+        const [invRows, fnRows, projRows, venRows, poRows, ohRows, supRows, userRows, prodRows, eoRows, allocRows, rcRows, trussRows, catRows, setRows, blockRows, rcCatRows, mandiRows, patternRows, labourTypeRows] = await Promise.all([
           fetchAll("inventory"),
           fetchAll("functions").catch(() => []),
           fetchAll("projects").catch(() => []),
@@ -838,6 +859,7 @@ export default function IMS() {
           fetchAll("rate_card_categories").catch(() => []),
           fetchAll("mandi_flowers").catch(() => []),
           fetchAll("flower_patterns").catch(() => []),
+          fetchAll("labour_types").catch(() => []),
         ]);
         if (!active) return;
         { const bm = blocksRowsToMap(blockRows); blocksRef.current = bm; setBlocksState(bm); }
@@ -865,6 +887,8 @@ export default function IMS() {
         applyMandiRows(mandiRows);
         // Flower recipe patterns — the `flower_patterns` TABLE (migration 040), same reasoning.
         applyFlowerPatternRows(patternRows);
+        // Labour type config — the `labour_types` TABLE (migration 041), same reasoning.
+        applyLabourTypeRows(labourTypeRows);
         // blocks blob, Studio rate-card mirror, and the settings object — applied via the
         // shared helper (also used by the settings Realtime subscription below).
         applySettingsRows(setRows);
@@ -929,6 +953,7 @@ export default function IMS() {
     liveTable("rate_card_categories", (rows) => setRateCardCategories(rows));
     liveTable("mandi_flowers", (rows) => applyMandiRows(rows));
     liveTable("flower_patterns", (rows) => applyFlowerPatternRows(rows));
+    liveTable("labour_types", (rows) => applyLabourTypeRows(rows));
     // blocks gets its own channel too, same reason as event_orders below: Build reconciles this
     // table's reservation rows on every qty-affecting edit to a sold deal (reconcileSoldInventoryBlocks
     // in StudioApp.jsx), so it changes constantly, and the table holds one row per inventory item

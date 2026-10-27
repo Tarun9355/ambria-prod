@@ -98,6 +98,7 @@ import { heavyExtraLabour, eventTimingMultFor, SETTINGS_DEFAULTS, SIT_MULT_DEFAU
 import { resolveDateCategory, getEffectivePricing } from "../../lib/inventory/helpers";
 import { itemImsSubcat, lookupBySubcat, priceForInvItem, itemDimsText, walkKitUnits, kitDescendantIds } from "../../lib/ims/helpers";
 import { matchFlowerPattern, floralPatternUnitRates, sizeClassToPatternKey, normalizeSizeClass, kitFloralCompDelta, assembleMandiCatalogueFromRows, assembleFlowerPatternsFromRows } from "../../lib/ims/flowerHelpers";
+import { assembleLabourTiersFromRows, assembleDihariSchemesFromRows, assembleDefaultWindowsByPhaseFromRows } from "../../lib/ims/labourTypes";
 import { rowToRcItem, rcItemToRow, rcIsSMB, getFloralMode, oosCostPctFor, canFulfillShortfall } from "../../lib/rateCard";
 import { todayStr } from "../../lib/ims/attendance";
 import { supabase, fetchAll, upsertRow, deleteRow, subscribeTable, keepaliveUpsert, keepaliveRpc } from "../../lib/supabase";
@@ -10947,7 +10948,7 @@ export default function StudioApp() {
         }
         return isGood(last) ? last : null;
       };
-      const [invResults, settingsRows, vendorRows, trussInvRows, fixedVenueRows, mandiRows, patternRows] = await Promise.all([
+      const [invResults, settingsRows, vendorRows, trussInvRows, fixedVenueRows, mandiRows, patternRows, labourTypeRows] = await Promise.all([
         Promise.all(uniqueDates.map(d => fetchIMSData(d))),
         readRetry(async () => { const r = await supabase.from("settings").select("key,value"); if (r.error) throw r.error; return r.data || []; }, rows => Array.isArray(rows) && rows.length > 0),
         fetchAll("vendors").catch(() => []),
@@ -10955,6 +10956,7 @@ export default function StudioApp() {
         fetchAll("fixed_venues").catch(() => []),
         fetchAll("mandi_flowers").catch(() => []),
         fetchAll("flower_patterns").catch(() => []),
+        fetchAll("labour_types").catch(() => []),
       ]);
       if (!settingsRows || !trussInvRows) {
         setDealCheckError("Settings or truss stock didn't load, so manpower and truss would show as zero. Close Deal Check and open it again.");
@@ -10999,9 +11001,9 @@ export default function StudioApp() {
       const artificialGreenRatePerKg = typeof s.artificialGreenRatePerKg === "number" ? s.artificialGreenRatePerKg : 40;
       const artificialGreenBunchesPerKg = (typeof s.artificialGreenBunchesPerKg === "number" && s.artificialGreenBunchesPerKg > 0) ? s.artificialGreenBunchesPerKg : 23;
       const flowerRecipeSubcats = (Array.isArray(s.flowerRecipeSubcats) && s.flowerRecipeSubcats.length > 0) ? s.flowerRecipeSubcats : ["Flower Pattern"];
-      const dihariSchemes = (s.dihariSchemes && typeof s.dihariSchemes === "object") ? s.dihariSchemes : {};
-      const defaultWindowsByPhase = (s.defaultWindowsByPhase && typeof s.defaultWindowsByPhase === "object") ? s.defaultWindowsByPhase : {};
-      const labourTiers = (s.labourTiers && typeof s.labourTiers === "object") ? s.labourTiers : {};
+      const dihariSchemes = assembleDihariSchemesFromRows(labourTypeRows);
+      const defaultWindowsByPhase = assembleDefaultWindowsByPhaseFromRows(labourTypeRows);
+      const labourTiers = assembleLabourTiersFromRows(labourTypeRows);
       const venueMinLabour = (s.venueMinLabour && typeof s.venueMinLabour === "object") ? s.venueMinLabour : {};
       const defaultMinLabour = typeof s.defaultMinLabour === "number" ? s.defaultMinLabour : 4;
       if (s.eventTypeMultipliers && typeof s.eventTypeMultipliers === "object") eventTypeMultipliers = s.eventTypeMultipliers;
