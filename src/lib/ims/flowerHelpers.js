@@ -1,5 +1,69 @@
 // Flower recipe/cost helpers (faithful to the reference IMS app).
 
+// Shared by every mandi-catalogue consumer: FlowerMandiTab.jsx, AdminSettingsTab.jsx, IMS.jsx, and
+// StudioApp.jsx's two independent settings-fetch sites. The `mandi_flowers` TABLE (migration 039) is
+// the source of truth now, one row per flower — these translate between that row shape and the
+// plain-object array every function in this file already expects (resolveMandiFlower,
+// computePatternSizeCost, …), so none of that cost-calc logic had to change.
+export const genMandiFlowerId = () => "F" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+
+export function rowToMandiFlower(r) {
+  return {
+    id: r.id, name: r.name, flowerCat: r.flower_cat || "Other", unit: r.unit || "bundle",
+    gattharSize: r.gatthar_size != null ? Number(r.gatthar_size) : null,
+    flowerType: r.flower_type || null, isGreen: !!r.is_green,
+    artificialBunchesPerUnit: r.artificial_bunches_per_unit != null ? Number(r.artificial_bunches_per_unit) : null,
+    artificialMapItemId: r.artificial_map_item_id || null,
+    artificialMapName: r.artificial_map_name || null,
+    artificialMapPrice: r.artificial_map_price != null ? Number(r.artificial_map_price) : null,
+    artificialMapCost: r.artificial_map_cost != null ? Number(r.artificial_map_cost) : null,
+    markup: r.markup != null ? Number(r.markup) : null,
+    currentPrice: Number(r.current_price) || 0,
+    priceHistory: Array.isArray(r.price_history) ? r.price_history : [],
+    photoUrl: r.photo_url || null,
+    colorVariants: Array.isArray(r.color_variants) ? r.color_variants : [],
+  };
+}
+
+export function assembleMandiCatalogueFromRows(rows) {
+  return (Array.isArray(rows) ? rows : []).map(rowToMandiFlower);
+}
+
+// Legacy-shaped partial patch (as every mandi-catalogue editor call site already builds it) -> the
+// DB columns it actually touches, for a plain row-level UPDATE.
+export function mandiFlowerPatchToRow(patch) {
+  const row = {};
+  if ("name" in patch) row.name = patch.name;
+  if ("flowerCat" in patch) row.flower_cat = patch.flowerCat;
+  if ("unit" in patch) row.unit = patch.unit;
+  if ("gattharSize" in patch) row.gatthar_size = patch.gattharSize;
+  if ("flowerType" in patch) row.flower_type = patch.flowerType;
+  if ("isGreen" in patch) row.is_green = patch.isGreen;
+  if ("artificialBunchesPerUnit" in patch) row.artificial_bunches_per_unit = patch.artificialBunchesPerUnit;
+  if ("artificialMapItemId" in patch) row.artificial_map_item_id = patch.artificialMapItemId;
+  if ("artificialMapName" in patch) row.artificial_map_name = patch.artificialMapName;
+  if ("artificialMapPrice" in patch) row.artificial_map_price = patch.artificialMapPrice;
+  if ("artificialMapCost" in patch) row.artificial_map_cost = patch.artificialMapCost;
+  if ("markup" in patch) row.markup = patch.markup;
+  if ("currentPrice" in patch) row.current_price = patch.currentPrice;
+  if ("priceHistory" in patch) row.price_history = patch.priceHistory;
+  if ("photoUrl" in patch) row.photo_url = patch.photoUrl;
+  if ("colorVariants" in patch) row.color_variants = patch.colorVariants;
+  return row;
+}
+
+// Row shape for a brand-new flower insert (name, flowerCat, unit, gattharSize, flowerType, isGreen,
+// artificialBunchesPerUnit, currentPrice, priceHistory, colorVariants — whichever the caller sets).
+export function mandiFlowerToRow(f) {
+  return {
+    id: f.id, name: f.name, flower_cat: f.flowerCat || "Other", unit: f.unit || "bundle",
+    gatthar_size: f.gattharSize ?? null, flower_type: f.flowerType ?? null, is_green: !!f.isGreen,
+    artificial_bunches_per_unit: f.artificialBunchesPerUnit ?? null,
+    current_price: Number(f.currentPrice) || 0, price_history: f.priceHistory || [],
+    color_variants: f.colorVariants || [],
+  };
+}
+
 // Resolve a requested recipe size against a pattern's sizes object (with legacy aliases).
 export const resolveSizeKey = (sizesObj, requestedSize) => {
   if (!sizesObj) return null;
@@ -74,6 +138,40 @@ export const effectiveMarkup = (pat, settings) => {
   if (globalDef > 0) return globalDef;
   return 3;
 };
+
+// Shared by AdminSettingsTab.jsx's Recipes panel (the sole writer), IMS.jsx, and StudioApp.jsx's
+// two independent settings-fetch sites. The `flower_patterns` TABLE (migration 040) is the source
+// of truth now, one row per recipe — these translate between that row shape and the plain-object
+// array every function in this file already expects (matchFlowerPattern, computePatternSizeCost,
+// effectiveMarkup, …), so none of that cost-calc/matching logic had to change. The JS field is
+// called `mode`/`studioMarkup`; the DB columns (named back in 001) are `flat_or_smb`/`markup`.
+export const genFlowerPatternId = () => "FP" + Date.now() + Math.floor(Math.random() * 1000);
+
+export function rowToFlowerPattern(r) {
+  return {
+    id: r.id, name: r.name, mode: r.flat_or_smb === "smb" ? "smb" : "flat",
+    sub: r.sub || "", unit: r.unit || "pc", unitBasis: "per piece",
+    artificialIncluded: !!r.artificial_included,
+    ...(r.markup != null ? { studioMarkup: Number(r.markup) } : {}),
+    sizes: (r.sizes && typeof r.sizes === "object") ? r.sizes : {},
+  };
+}
+
+export function assembleFlowerPatternsFromRows(rows) {
+  return (Array.isArray(rows) ? rows : []).map(rowToFlowerPattern);
+}
+
+// Full-object -> row, for writing back whatever a recipe-editing mutator function produced (it
+// always returns a complete pattern object, never a sparse patch).
+export function flowerPatternToRow(p) {
+  return {
+    id: p.id, name: p.name, flat_or_smb: p.mode === "smb" ? "smb" : "flat",
+    sub: p.sub || null, unit: p.unit || "pc",
+    artificial_included: !!p.artificialIncluded,
+    markup: p.studioMarkup ?? null,
+    sizes: p.sizes || {},
+  };
+}
 
 // Matches an INVENTORY ITEM to a flower recipe pattern. A pattern is created per SUB-CATEGORY
 // (AdminSettingsTab.jsx's Recipes panel stamps `pattern.sub` from the Rate Card item it was

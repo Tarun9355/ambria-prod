@@ -1,13 +1,13 @@
 import { useState, useEffect } from "react";
 import { thumbUrl, fitUrl } from "../../lib/studio/thumb.js";
-import { supabase } from "../../lib/supabase";
+import { supabase, updateRow, deleteRow } from "../../lib/supabase";
 import { DEFAULT_AGENCY_FEE_PCT } from "../../lib/studio/agencyFee";
 import { RC_SK_CATS } from "../../lib/studio/keys";
 import { Tabs, AddInlineItem, FlowerPicker, Btn, useConfirm, DraftInput } from "../../components/ui";
 import ClickablePhoto from "../../components/shared/ClickablePhoto.jsx";
 import { canvaAuthUrl, canvaConnectionStatus, canvaClientId } from "../../lib/canva";
 import { uploadToStorage, compressImageForUpload, STORAGE_FOLDERS } from "../../lib/storage";
-import { resolveMandiFlower, computePatternSizeCost, effectiveMarkup, studioUnitLabel } from "../../lib/ims/flowerHelpers";
+import { resolveMandiFlower, computePatternSizeCost, effectiveMarkup, studioUnitLabel, genMandiFlowerId, mandiFlowerToRow, mandiFlowerPatchToRow, genFlowerPatternId, flowerPatternToRow } from "../../lib/ims/flowerHelpers";
 import { priceForInvItem, phone10, flowerPaletteItemsOf } from "../../lib/ims/helpers";
 import { MANPOWER_TYPES, SIT_MULT_DEFAULTS, SIT_MULT_TYPES, DUMPING_LEVELS, EVENT_TIMINGS, eventTimingMultFor, hasIMSPerm } from "../../lib/ims/constants";
 import ImsTransportPanel from "./ImsTransportPanel.jsx";
@@ -867,7 +867,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
             const pick = (it) => {
               const price = it ? (Number(it.price ?? it.rentalCost) || 0) : 0;   // client-facing rental → Studio artificial price
               const cost = it ? (Number(it.cost) || price) : 0;                    // purchase cost → Deal Check sourcing cost
-              setSettings((s) => ({ ...s, mandiCatalogue: s.mandiCatalogue.map((x) => x.id === sMandiMapPicker.flowerId ? { ...x, artificialMapItemId: it ? it.id : null, artificialMapName: it ? it.name : null, artificialMapPrice: price, artificialMapCost: cost } : x) }));
+              updateRow("mandi_flowers", sMandiMapPicker.flowerId, mandiFlowerPatchToRow({ artificialMapItemId: it ? it.id : null, artificialMapName: it ? it.name : null, artificialMapPrice: price, artificialMapCost: cost })).catch(() => {});
               setSMandiMapPicker(null);
             };
             return (
@@ -924,14 +924,13 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                   })()}
                 </div>
                 <button onClick={() => {
-                  const newId = "F" + Date.now();
+                  const newId = genMandiFlowerId();
                   const newVId = "V" + Date.now();
-                  setSettings((s) => ({ ...s, mandiCatalogue: [...(s.mandiCatalogue || []), {
+                  supabase.from("mandi_flowers").insert(mandiFlowerToRow({
                     id: newId, name: "New Flower", flowerCat: "Other", unit: "piece", gattharSize: null,
                     flowerType: "flower", isGreen: false, artificialBunchesPerUnit: null, currentPrice: 0, priceHistory: [],
                     colorVariants: [{ variantId: newVId, name: "New Variant", photoUrl: null, currentPrice: 0, priceHistory: [] }],
-                    _tier21Migrated: true,
-                  }] }));
+                  })).then(() => {}, () => {});
                   setSMandiExpanded((prev) => { const s = new Set(prev); s.add(newId); return s; });
                 }} className="bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-sm">+ Add Flower</button>
               </div>
@@ -980,7 +979,8 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                           {!isOther && (
                             <button onClick={async () => {
                               if (inUse > 0 && !(await confirm({ title: `Delete category "${c}"?`, body: `${inUse} flower${inUse === 1 ? " uses" : "s use"} it — they will move to "Other".` }))) return;
-                              setSettings((s) => ({ ...s, flowerCategories: (s.flowerCategories || []).filter((x) => x !== c), mandiCatalogue: (s.mandiCatalogue || []).map((f) => (f.flowerCat || "Other") === c ? { ...f, flowerCat: "Other" } : f) }));
+                              setSettings((s) => ({ ...s, flowerCategories: (s.flowerCategories || []).filter((x) => x !== c) }));
+                              supabase.from("mandi_flowers").update({ flower_cat: "Other" }).eq("flower_cat", c).then(() => {}, () => {});
                               if (sMandiCat === c) setSMandiCat("All");
                             }} className="text-red-400 hover:text-red-600 leading-none ml-0.5">×</button>
                           )}
@@ -1081,7 +1081,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                           try {
                             const compressed = await compressImageForUpload(file);
                             const url = await uploadToStorage(compressed, STORAGE_FOLDERS.MANDI);
-                            setSettings((s) => ({ ...s, mandiCatalogue: s.mandiCatalogue.map((x) => x.id === p.id ? { ...x, photoUrl: url } : x) }));
+                            updateRow("mandi_flowers", p.id, { photo_url: url }).catch(() => {});
                           } catch (err) { alert("Photo upload failed: " + (err?.message || err)); }
                           finally { setSMandiUploading((prev) => { const np = { ...prev }; delete np[parentUploadKey]; return np; }); }
                         };
@@ -1107,28 +1107,28 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                       })()}
                       {/* Name */}
                       <DraftInput value={p.name} onClick={(e) => e.stopPropagation()}
-                        onCommit={(v) => { setSettings((s) => ({ ...s, mandiCatalogue: s.mandiCatalogue.map((x) => x.id === p.id ? { ...x, name: v } : x) })); }}
+                        onCommit={(v) => { updateRow("mandi_flowers", p.id, { name: v }).catch(() => {}); }}
                         className="border rounded px-2 py-1 text-sm w-full font-semibold" />
                       {/* Category */}
                       <select value={p.flowerCat || "Other"} onClick={(e) => e.stopPropagation()}
-                        onChange={(e) => { const v = e.target.value; setSettings((s) => ({ ...s, mandiCatalogue: s.mandiCatalogue.map((x) => x.id === p.id ? { ...x, flowerCat: v } : x) })); }}
+                        onChange={(e) => { const v = e.target.value; updateRow("mandi_flowers", p.id, { flower_cat: v }).catch(() => {}); }}
                         className="border rounded px-1 py-1 text-xs w-full">
                         {(settings.flowerCategories || ["Other"]).map((c) => <option key={c}>{c}</option>)}
                       </select>
                       {/* Unit */}
                       <select value={p.unit} onClick={(e) => e.stopPropagation()}
-                        onChange={(e) => { const v = e.target.value; setSettings((s) => ({ ...s, mandiCatalogue: s.mandiCatalogue.map((x) => x.id === p.id ? { ...x, unit: v } : x) })); }}
+                        onChange={(e) => { const v = e.target.value; updateRow("mandi_flowers", p.id, { unit: v }).catch(() => {}); }}
                         className="border rounded px-2 py-1 text-xs w-full">
                         {["piece", "bundle", "gatthar", "kg", "dozen", "kodi", "pair"].map((u) => <option key={u}>{u}</option>)}
                       </select>
                       {/* Pcs/Unit */}
                       {p.unit !== "piece" ? (
                         <DraftInput type="number" min="1" value={p.gattharSize || ""} placeholder={"pcs/" + p.unit} onClick={(e) => e.stopPropagation()}
-                          onCommit={(raw) => { const v = parseInt(raw) || null; setSettings((s) => ({ ...s, mandiCatalogue: s.mandiCatalogue.map((x) => x.id === p.id ? { ...x, gattharSize: v } : x) })); }}
+                          onCommit={(raw) => { const v = parseInt(raw) || null; updateRow("mandi_flowers", p.id, { gatthar_size: v }).catch(() => {}); }}
                           className="border rounded px-2 py-1 text-xs text-center w-full" />
                       ) : <span className="text-center text-gray-300">—</span>}
                       {/* Type */}
-                      <button onClick={(e) => { e.stopPropagation(); setSettings((s) => ({ ...s, mandiCatalogue: s.mandiCatalogue.map((x) => x.id === p.id ? { ...x, flowerType: nextType, isGreen: nextType === "green" } : x) })); }}
+                      <button onClick={(e) => { e.stopPropagation(); updateRow("mandi_flowers", p.id, { flower_type: nextType, is_green: nextType === "green" }).catch(() => {}); }}
                         title={typeCfg.title} className={"text-xs px-2 py-1 rounded font-medium border w-full " + typeCfg.cls}>
                         {typeCfg.emoji} {typeCfg.label}
                       </button>
@@ -1144,7 +1144,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                         );
                       })() : type !== "real_only" ? (
                         <DraftInput type="number" min="0" step="0.01" value={p.artificialBunchesPerUnit ?? ""} onClick={(e) => e.stopPropagation()} placeholder="art b/u"
-                          onCommit={(raw) => { const v = parseFloat(raw); setSettings((s) => ({ ...s, mandiCatalogue: s.mandiCatalogue.map((x) => x.id === p.id ? { ...x, artificialBunchesPerUnit: isNaN(v) ? null : v } : x) })); }}
+                          onCommit={(raw) => { const v = parseFloat(raw); updateRow("mandi_flowers", p.id, { artificial_bunches_per_unit: isNaN(v) ? null : v }).catch(() => {}); }}
                           title={`How many artificial ${type === "green" ? "green" : "flower"} bunches replace 1 ${p.unit} of ${p.name}`}
                           className="border rounded px-2 py-1 text-xs text-center w-full" />
                       ) : <span className="text-center text-gray-300">—</span>}
@@ -1191,17 +1191,14 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                                 onCommit={(raw) => {
                                   if (hasVariants) return;
                                   const nv = parseFloat(raw) || 0;
-                                  setSettings((s) => ({ ...s, mandiCatalogue: s.mandiCatalogue.map((x) => {
-                                    if (x.id !== p.id) return x;
-                                    return { ...x, priceHistory: withPrevPrice(x.priceHistory, x.currentPrice), currentPrice: nv };
-                                  }) }));
+                                  updateRow("mandi_flowers", p.id, { price_history: withPrevPrice(p.priceHistory, p.currentPrice), current_price: nv }).catch(() => {});
                                 }}
                                 className={"border rounded px-2 py-1 text-xs text-center w-20 font-semibold " + (hasVariants ? "bg-gray-100 text-gray-500 cursor-not-allowed" : "bg-white")} />
                             </div>
                             <div className="flex items-center justify-center gap-0.5" onClick={(e) => e.stopPropagation()}
                               title="Selling markup % over mandi price. Give this a value to make the flower directly addable in Build (same as Loose Petals) — billed at mandi price × (1 + markup%). Leave blank for recipe-only flowers.">
                               <DraftInput type="number" min="0" step="1" value={p.markup ?? ""} placeholder="0"
-                                onCommit={(raw) => { const v = parseFloat(raw); setSettings((s) => ({ ...s, mandiCatalogue: s.mandiCatalogue.map((x) => x.id === p.id ? { ...x, markup: isNaN(v) ? null : v } : x) })); }}
+                                onCommit={(raw) => { const v = parseFloat(raw); updateRow("mandi_flowers", p.id, { markup: isNaN(v) ? null : v }).catch(() => {}); }}
                                 className="border rounded px-1.5 py-1 text-xs text-center w-12" />
                               <span className="text-gray-400 text-[10px]">%</span>
                             </div>
@@ -1214,7 +1211,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                       {/* Delete */}
                         <button onClick={async (e) => { e.stopPropagation();
                           if (!(await confirm({ title: `Delete "${p.name}"?`, body: `Removes it and its ${variantCount} variant${variantCount === 1 ? "" : "s"} from the mandi catalogue. Recipes that use this flower will no longer be costed.` }))) return;
-                          setSettings((s) => ({ ...s, mandiCatalogue: s.mandiCatalogue.filter((x) => x.id !== p.id) }));
+                          deleteRow("mandi_flowers", p.id).catch(() => {});
                         }} className="text-red-400 hover:text-red-600 text-base">×</button>
                     </div>
                     {/* Expanded variants */}
@@ -1246,7 +1243,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                                 try {
                                   const compressed = await compressImageForUpload(file);
                                   const url = await uploadToStorage(compressed, STORAGE_FOLDERS.MANDI);
-                                  setSettings((s) => ({ ...s, mandiCatalogue: s.mandiCatalogue.map((x) => x.id === p.id ? { ...x, colorVariants: (x.colorVariants || []).map((cv) => cv.variantId === v.variantId ? { ...cv, photoUrl: url } : cv) } : x) }));
+                                  updateRow("mandi_flowers", p.id, { color_variants: (p.colorVariants || []).map((cv) => cv.variantId === v.variantId ? { ...cv, photoUrl: url } : cv) }).catch(() => {});
                                 } catch (err) { alert("Photo upload failed: " + (err?.message || err)); }
                                 finally { setSMandiUploading((prev) => { const np = { ...prev }; delete np[uploadKey]; return np; }); }
                               };
@@ -1270,14 +1267,14 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                                   </td>
                                   <td className="px-2 py-1.5">
                                     <DraftInput value={v.name}
-                                      onCommit={(nv) => { setSettings((s) => ({ ...s, mandiCatalogue: s.mandiCatalogue.map((x) => x.id === p.id ? { ...x, colorVariants: (x.colorVariants || []).map((cv) => cv.variantId === v.variantId ? { ...cv, name: nv } : cv) } : x) })); }}
+                                      onCommit={(nv) => { updateRow("mandi_flowers", p.id, { color_variants: (p.colorVariants || []).map((cv) => cv.variantId === v.variantId ? { ...cv, name: nv } : cv) }).catch(() => {}); }}
                                       className="border rounded px-2 py-1 text-xs w-44" />
                                   </td>
                                   {type === "flower" && (() => {
                                     const vPalette = Array.isArray(v.palette) ? v.palette : [];
                                     const togglePalette = (c) => {
                                       const next = vPalette.includes(c) ? vPalette.filter((x) => x !== c) : [...vPalette, c];
-                                      setSettings((s) => ({ ...s, mandiCatalogue: s.mandiCatalogue.map((x) => x.id === p.id ? { ...x, colorVariants: (x.colorVariants || []).map((cv) => cv.variantId === v.variantId ? { ...cv, palette: next } : cv) } : x) }));
+                                      updateRow("mandi_flowers", p.id, { color_variants: (p.colorVariants || []).map((cv) => cv.variantId === v.variantId ? { ...cv, palette: next } : cv) }).catch(() => {});
                                     };
                                     return (
                                       <td className="px-2 py-1.5">
@@ -1302,11 +1299,8 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                                       <span className="text-gray-500">₹</span>
                                       <DraftInput type="number" min="0" value={v.currentPrice}
                                         onCommit={(raw) => { const nv = parseFloat(raw) || 0;
-                                          setSettings((s) => ({ ...s, mandiCatalogue: s.mandiCatalogue.map((x) => {
-                                            if (x.id !== p.id) return x;
-                                            const newVariants = (x.colorVariants || []).map((cv) => cv.variantId === v.variantId ? { ...cv, priceHistory: withPrevPrice(cv.priceHistory, cv.currentPrice), currentPrice: nv } : cv);
-                                            return { ...x, colorVariants: newVariants, currentPrice: recalcParentLowest(newVariants) };
-                                          }) }));
+                                          const newVariants = (p.colorVariants || []).map((cv) => cv.variantId === v.variantId ? { ...cv, priceHistory: withPrevPrice(cv.priceHistory, cv.currentPrice), currentPrice: nv } : cv);
+                                          updateRow("mandi_flowers", p.id, { color_variants: newVariants, current_price: recalcParentLowest(newVariants) }).catch(() => {});
                                         }}
                                         className="border rounded px-2 py-1 text-xs text-center w-16 font-semibold" />
                                     </div>
@@ -1316,11 +1310,8 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                                     <button onClick={async () => {
                                       if (variantCount === 1) { alert(`Cannot delete the last variant of "${p.name}". Delete the whole flower instead.`); return; }
                                       if (await confirm({ title: `Delete variant "${v.name}"?`, body: `Removes this colour variant from "${p.name}". The flower's price becomes its cheapest remaining variant.` })) {
-                                        setSettings((s) => ({ ...s, mandiCatalogue: s.mandiCatalogue.map((x) => {
-                                          if (x.id !== p.id) return x;
-                                          const newVariants = (x.colorVariants || []).filter((cv) => cv.variantId !== v.variantId);
-                                          return { ...x, colorVariants: newVariants, currentPrice: recalcParentLowest(newVariants) };
-                                        }) }));
+                                        const newVariants = (p.colorVariants || []).filter((cv) => cv.variantId !== v.variantId);
+                                        updateRow("mandi_flowers", p.id, { color_variants: newVariants, current_price: recalcParentLowest(newVariants) }).catch(() => {});
                                       }
                                     }} className="text-red-300 hover:text-red-500">×</button>
                                   </td>
@@ -1331,7 +1322,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                         </table>
                         <button onClick={() => {
                           const newVId = "V" + Date.now();
-                          setSettings((s) => ({ ...s, mandiCatalogue: s.mandiCatalogue.map((x) => x.id === p.id ? { ...x, colorVariants: [...(x.colorVariants || []), { variantId: newVId, name: p.name + " New", photoUrl: null, currentPrice: 0, priceHistory: [] }] } : x) }));
+                          updateRow("mandi_flowers", p.id, { color_variants: [...(p.colorVariants || []), { variantId: newVId, name: p.name + " New", photoUrl: null, currentPrice: 0, priceHistory: [] }] }).catch(() => {});
                         }} className="mt-2 text-xs px-3 py-1 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded border border-indigo-200">+ Add Variant</button>
                       </div>
                     )}
@@ -1440,17 +1431,18 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
           setSettings((s) => { const cur = s.flowerRecipeSubcats || []; const next = cur.includes(sub) ? cur.filter((x) => x !== sub) : [...cur, sub]; return { ...s, flowerRecipeSubcats: next.sort((a, b) => a.localeCompare(b)) }; });
         };
         const mutatePattern = (studioItem, mutator) => {
-          setSettings((s) => {
-            const norm = (x) => (x || "").toLowerCase().trim();
-            const targetName = studioItem.name;
-            const existing = (s.flowerPatterns || []).find((p) => norm(p.name) === norm(targetName));
-            const m = existing?.mode === "smb" ? "smb" : existing?.mode === "flat" ? "flat" : (studioItem.inhouseMode === "smb" ? "smb" : "flat");
-            const sizeKeys = m === "smb" ? ["small", "medium", "big"] : ["medium"];
-            const emptyTemplate = sizeKeys.reduce((a, k) => ({ ...a, [k]: { flowers: [], totalPieces: 0 } }), {});
-            if (existing) return { ...s, flowerPatterns: s.flowerPatterns.map((p) => (p.id === existing.id ? mutator(p) : p)) };
-            const fresh = mutator({ id: "FP" + Date.now() + Math.floor(Math.random() * 1000), name: targetName, mode: m, sub: (studioItem.sub || "").trim(), unit: studioItem.unit || "pc", unitBasis: "per piece", sizes: emptyTemplate });
-            return { ...s, flowerPatterns: [...(s.flowerPatterns || []), fresh] };
-          });
+          const norm = (x) => (x || "").toLowerCase().trim();
+          const targetName = studioItem.name;
+          const existing = (settings.flowerPatterns || []).find((p) => norm(p.name) === norm(targetName));
+          const m = existing?.mode === "smb" ? "smb" : existing?.mode === "flat" ? "flat" : (studioItem.inhouseMode === "smb" ? "smb" : "flat");
+          const sizeKeys = m === "smb" ? ["small", "medium", "big"] : ["medium"];
+          const emptyTemplate = sizeKeys.reduce((a, k) => ({ ...a, [k]: { flowers: [], totalPieces: 0 } }), {});
+          if (existing) {
+            updateRow("flower_patterns", existing.id, flowerPatternToRow(mutator(existing))).catch(() => {});
+            return;
+          }
+          const fresh = mutator({ id: genFlowerPatternId(), name: targetName, mode: m, sub: (studioItem.sub || "").trim(), unit: studioItem.unit || "pc", unitBasis: "per piece", sizes: emptyTemplate });
+          supabase.from("flower_patterns").insert(flowerPatternToRow(fresh)).then(() => {}, () => {});
         };
         const renderSizeColumn = (studioItem, sz, sizeLabel, sizeEmoji) => {
           const pat = (settings.flowerPatterns || []).find((p) => (p.name || "").toLowerCase().trim() === (studioItem.name || "").toLowerCase().trim());
@@ -1661,8 +1653,8 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
           const nm = (recipeAddForm.name || "").trim();
           if (!nm) { alert("Item needs a name"); return; }
           if ((settings.flowerPatterns || []).some((p) => norm(p.name) === norm(nm))) { alert(`An item named "${nm}" already exists.`); return; }
-          const fresh = { id: "FP" + Date.now() + Math.floor(Math.random() * 1000), name: nm, mode: "flat", sub, unit: recipeAddForm.unit || "pc", unitBasis: "per piece", sizes: { medium: { flowers: [], totalPieces: 0 } } };
-          setSettings((s) => ({ ...s, flowerPatterns: [...(s.flowerPatterns || []), fresh] }));
+          const fresh = { id: genFlowerPatternId(), name: nm, mode: "flat", sub, unit: recipeAddForm.unit || "pc", unitBasis: "per piece", sizes: { medium: { flowers: [], totalPieces: 0 } } };
+          supabase.from("flower_patterns").insert(flowerPatternToRow(fresh)).then(() => {}, () => {});
           setRecipeItemOpen((s) => ({ ...s, [fresh.id]: true }));
           setRecipeAddSub(null);
           setRecipeAddForm({ name: "", unit: "pc" });
@@ -1671,12 +1663,12 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
           const nn = (newName || "").trim();
           if (!nn || nn === studioItem.name) { setRecipeRenameId(null); return; }
           if ((settings.flowerPatterns || []).some((p) => p.id !== studioItem.id && norm(p.name) === norm(nn))) { alert(`An item named "${nn}" already exists.`); return; }
-          setSettings((s) => ({ ...s, flowerPatterns: (s.flowerPatterns || []).map((p) => (p.id === studioItem.id ? { ...p, name: nn } : p)) }));
+          updateRow("flower_patterns", studioItem.id, { name: nn }).catch(() => {});
           setRecipeRenameId(null);
         };
         const deleteRecipeItem = (studioItem) => {
           if (!window.confirm(`Delete "${studioItem.name}" and its flower recipe? This cannot be undone.`)) return;
-          setSettings((s) => ({ ...s, flowerPatterns: (s.flowerPatterns || []).filter((p) => p.id !== studioItem.id) }));
+          deleteRow("flower_patterns", studioItem.id).catch(() => {});
         };
 
         return (
