@@ -1,5 +1,6 @@
 import { PRICING_CAT_STYLES } from "../../lib/inventory/constants";
 import { SETTINGS_DEFAULTS, DATE_PRICING_LABELS, DATE_PRICING_OWNER_ID } from "../../lib/ims/constants";
+import { supabase } from "../../lib/supabase";
 
 // Faithful copy of the reference IMS DatePricingPanel (shown in Calendar → Date Pricing Config).
 // Marking individual dates now happens directly on the Calendar tab's main month grid (click a
@@ -133,7 +134,7 @@ export default function DatePricingPanel({ settings, mergeDatePricing, authUser 
             {/* Owner-only, same as setting one on the Calendar tab — clearing an override is just as
                 much "overriding the dates" as setting one. */}
             {isOwner && (
-              <button onClick={() => mergeDatePricing({ markedDates: {} })}
+              <button onClick={() => { supabase.from("date_pricing_overrides").delete().not("date_str", "is", null).then(() => {}, () => {}); }}
                 className="text-xs text-red-500 hover:text-red-700 underline">Clear all overrides</button>
             )}
           </div>
@@ -147,7 +148,7 @@ export default function DatePricingPanel({ settings, mergeDatePricing, authUser 
                   <span className="text-sm text-gray-700 font-medium">{new Date(date + "T00:00:00").toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric" })}</span>
                   <span className="ml-auto text-xs text-gray-400">{cat?.multiplier}×</span>
                   {isOwner && (
-                    <button onClick={() => { const m = { ...dp.markedDates }; delete m[date]; mergeDatePricing({ markedDates: m }); }}
+                    <button onClick={() => { supabase.from("date_pricing_overrides").delete().eq("date_str", date).then(() => {}, () => {}); }}
                       className="text-red-400 hover:text-red-600 text-sm">×</button>
                   )}
                 </div>
