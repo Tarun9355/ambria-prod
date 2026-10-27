@@ -151,3 +151,29 @@ export function buildFabricGroups({ entries = [], lines = [], fabricPlan = null,
   });
   return { groups, groupedLineIds };
 }
+
+// The flat load list (Truck planning, loading checklist, receiving) carries the same per-zone fabric lines ("Liza Fabric (Old) · stage", "· entry" ...)
+// with no photo, and trucks key them by name, so the zones of one fabric share one load. Fold them into what is physically loaded: one line per fabric
+// colour ("Liza Fabric - Powder Blue", 112 kg, with the colour's photo), or one line for the fabric when no colour is picked yet.
+// `flat` is the list, `groups` come from buildFabricGroups (whole event). Lines that are not fabric lines keep their place; the folded lines go where the
+// first fabric line was.
+export function foldFabricLines(flat, groups) {
+  const list = Array.isArray(flat) ? flat : [];
+  if (!list.some((l) => isFabricLine(l)) || !Array.isArray(groups) || !groups.length) return list;
+  const folded = [];
+  groups.forEach((g) => {
+    const colours = (g.colours || []).filter((c) => c.qty > 0);
+    const sum = colours.reduce((s, c) => s + c.qty, 0);
+    if (colours.length) {
+      colours.forEach((c) => folded.push({ id: `fabric:${g.key}:${c.colour}`, invId: null, name: `${g.label} - ${c.colour}`, photo: c.photo || "", hex: c.hex || "", qty: c.qty, qtyUnit: g.unit, unit: 0,
+        total: sum > 0 ? Math.round((g.amount * c.qty) / sum) : 0, sub: `${g.unit} · fabric`, prodOrBuy: null, byFn: null }));
+    } else folded.push({ id: `fabric:${g.key}`, invId: null, name: g.label, photo: "", hex: "", qty: g.qty, qtyUnit: g.unit, unit: 0, total: g.amount, sub: `${g.unit} · fabric`, prodOrBuy: null, byFn: null });
+  });
+  const out = [];
+  let placed = false;
+  list.forEach((l) => {
+    if (!isFabricLine(l)) { out.push(l); return; }
+    if (!placed) { out.push(...folded); placed = true; }
+  });
+  return out;
+}

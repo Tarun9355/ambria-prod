@@ -174,3 +174,39 @@ describe("buildFabricGroups — each zone's truss dimensions and fabric colour",
     expect(z.colours.map((c) => [c.colour, c.qty])).toEqual([["Ivory", 5]]);
   });
 });
+
+import { foldFabricLines } from "./fabricGroups.js";
+describe("foldFabricLines — one load line per fabric colour, not one per zone", () => {
+  const flat = [
+    { id: "x1", name: "Cushion Cover Black Shimmer", qty: 3, sub: "Cushion" },
+    ...lines.filter((l) => /^(Liza|Velvet|Wall)/.test(l.name)),
+    { id: "x2", name: "Chair", qty: 4, sub: "chair" },
+  ];
+  const plan = { liza: [{ colour: "Ivory", qty: 20 }, { colour: "Rani", qty: 15 }], curtain: [{ colour: "Ivory", qty: 58 }], masking: [] };
+  const st = { lizaStock: [{ colour: "Ivory", photo: "ivory.jpg" }, { colour: "Rani", photo: "rani.jpg" }], curtainStock: [{ colour: "Ivory", photo: "iv2.jpg" }] };
+  const { groups } = buildFabricGroups({ entries, lines, fabricPlan: plan, stock: st });
+  const out = foldFabricLines(flat, groups);
+  it("the per-zone fabric lines are gone, the others keep their order", () => {
+    expect(out.some((l) => /\(Old\)/.test(l.name))).toBe(false);
+    expect(out[0].id).toBe("x1");
+    expect(out[out.length - 1].id).toBe("x2");
+  });
+  it("a line per colour with its quantity, unit and photo", () => {
+    const l = out.filter((x) => /^Liza Fabric - /.test(x.name));
+    expect(l.map((x) => [x.name, x.qty, x.qtyUnit, x.photo])).toEqual([["Liza Fabric - Ivory", 20, "kg", "ivory.jpg"], ["Liza Fabric - Rani", 15, "kg", "rani.jpg"]]);
+    expect(out.find((x) => x.name === "Velvet Curtains - Ivory")).toMatchObject({ qty: 58, photo: "iv2.jpg" });
+  });
+  it("no colour picked: one line for the fabric", () => {
+    const g2 = buildFabricGroups({ entries, lines, fabricPlan: null, stock: st }).groups;
+    const o2 = foldFabricLines(flat, g2);
+    expect(o2.filter((x) => x.name === "Liza Fabric")).toHaveLength(1);
+    expect(o2.find((x) => x.name === "Wall Masking").qty).toBe(3);
+  });
+  it("each line has its own key, so zones no longer share one load", () => {
+    expect(new Set(out.map((x) => x.id)).size).toBe(out.length);
+  });
+  it("nothing to fold: the list is returned as it is", () => {
+    const plain = [{ id: "a", name: "Chair", qty: 1 }];
+    expect(foldFabricLines(plain, groups)).toBe(plain);
+  });
+});

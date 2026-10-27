@@ -26,7 +26,7 @@ import { matchFlowerPattern, resolveSizeKey, sizeClassToPatternKey, resolveMandi
 import { swatchHexFor } from "../../lib/studio/colours";
 import PlanningSyncButton from "./PlanningSyncButton.jsx";
 import FabricBlock from "./FabricBlock.jsx";
-import { buildFabricGroups } from "../../lib/ims/fabricGroups";
+import { buildFabricGroups, foldFabricLines } from "../../lib/ims/fabricGroups";
 import { buildEventSwap, swappedRecipeFlower } from "../../lib/ims/mandiSwap";
 
 // ── THE OFFICIAL LOGO, READY FOR THE PDF ──
@@ -899,6 +899,11 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     });
     return out;
   };
+  // The truss rows as the Fabric block reads them (one entry per truss row: function, zone, its photo, the fabric it needs).
+  const fabricEntriesOf = () => trussPlanOf().map((e) => ({
+    fi: e.fi, zk: e.zk, ri: e.ri, zLabel: e.zLabel, fnLabel: e.fn?.type || `Function ${e.fi + 1}`,
+    photo: e.fn?.elSelectedPhoto?.[e.zk]?.src || "", fab: e.fab, row: e.row,
+  }));
   // ── CARPET PLAN ── sales ranks up to three stock carpets per floor (Build / Deal Check); here the Tenting head sees each
   // floor's three with what is actually free on the event date and decides which one is laid. The decision is IMS-owned
   // (deptOps.Tenting.carpetChoice), so every Studio sync leaves it alone. Read on first use, like the truss plan (`sel` is below).
@@ -1181,8 +1186,17 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         it.components.forEach((cp, ci) => out.push({ id: it.id + "__c" + ci, invId: cp.imsId || null, name: cp.name, photo: cp.photo || "", qty: Number(cp.qty) || 0, unit: cp.unit || 0, total: Number(cp.total) || 0, sub: cp.sub || "", kitOf: it.name }));
       } else out.push(it);
     });
+    // Fabric: the per-zone Liza / Velvet / Masking lines become one load line per fabric colour (with the colour's photo), so Truck planning, the loading
+    // checklist and receiving name what is physically loaded instead of the same fabric once per zone with no photo.
+    if (dept === "Fabric" && sel) {
+      try {
+        const g = buildFabricGroups({ entries: fabricEntriesOf(), lines: blockedItemsGrouped, fabricPlan: sel?.fabricPlan, stock: trussInv, multiFn: false }).groups;
+        return foldFabricLines(out, g);
+      } catch { return out; }
+    }
     return out;
-  }, [blockedItemsGrouped]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [blockedItemsGrouped, dept, sel, trussInv]);
   const rentalIncome = blockedItemsGrouped.reduce((s, x) => s + x.total, 0);
 
   // ── Department-saved data on the event order ──
@@ -2605,10 +2619,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const fabricGroupInfo = useMemo(() => {
     if (dept !== "Fabric") return { groups: [], groupedLineIds: new Set() };
     const fnsF = Array.isArray(sel?.functionsDetail) ? sel.functionsDetail : [];
-    const entries = trussPlanOf().map((e) => ({
-      fi: e.fi, zk: e.zk, ri: e.ri, zLabel: e.zLabel, fnLabel: e.fn?.type || `Function ${e.fi + 1}`,
-      photo: e.fn?.elSelectedPhoto?.[e.zk]?.src || "", fab: e.fab, row: e.row,
-    }));
+    const entries = fabricEntriesOf();
     // Money comes from the whole event's priced lines (they name a zone, not a function) and is split by quantity;
     // only then is the chosen function's share shown.
     return buildFabricGroups({ entries, lines: blockedItemsGrouped, fabricPlan: sel?.fabricPlan, stock: trussInv, multiFn: fnsF.length > 1, onlyFi: invScoped ? invFn : null });
@@ -6938,7 +6949,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                         <div className="rounded-lg bg-gray-50 divide-y divide-gray-100">
                           {blockedItems.map(it => { const k = "inv:" + it.id; const onThis = Number(t.items?.[k]) || 0; const totalLoaded = truckLoadedQty(k); const extraHere = Number(t.extras?.[k]) || 0; const extraAll = truckExtraQty(k); const maxHere = Math.max(onThis, (Number(it.qty) || 0) - (totalLoaded - onThis)); const matchCls = totalLoaded === it.qty ? "text-emerald-600" : totalLoaded > it.qty ? "text-red-600" : totalLoaded > 0 ? "text-amber-600" : "text-gray-400"; return (
                             <div key={k} className="flex items-center gap-2.5 px-2.5 py-2">
-                              {(() => { const cv = choiceViewAll.get(it.id); const ph = cv?.name ? cv.photo : it.photo; return ph ? <img src={thumbUrl(ph, 32)} loading="lazy" decoding="async" alt="" onClick={() => setZoomImg(ph)} className="w-8 h-8 rounded-lg object-cover cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-xs shrink-0">📦</div>; })()}
+                              {(() => { const cv = choiceViewAll.get(it.id); const ph = cv?.name ? cv.photo : it.photo; return ph ? <img src={thumbUrl(ph, 32)} loading="lazy" decoding="async" alt="" onClick={() => setZoomImg(ph)} className="w-8 h-8 rounded-lg object-cover cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} /> : it.hex ? <div aria-hidden="true" className="w-8 h-8 rounded-lg ring-1 ring-black/10 shrink-0" style={{ background: it.hex }} /> : <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-xs shrink-0">📦</div>; })()}
                               <div className="min-w-0 flex-1">
                                 <div className="text-xs font-medium text-gray-800 leading-snug line-clamp-2" title={choiceViewAll.get(it.id)?.name || it.name}>{choiceViewAll.get(it.id)?.name || it.name}</div>
                                 <div className={"mt-0.5 text-[11px] font-semibold tabular-nums " + matchCls}>{totalLoaded} of {it.qty} loaded{totalLoaded > it.qty ? " · too many" : totalLoaded === it.qty ? " ✓" : ""}{extraAll > 0 && <span className="text-amber-600"> · +{extraAll} extra</span>}</div>
