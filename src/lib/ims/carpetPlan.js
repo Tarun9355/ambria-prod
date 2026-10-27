@@ -154,3 +154,53 @@ export function planCarpets({ floors, itemsById, blocks, eventId, choice, eventO
   });
   return { rows, over };
 }
+
+// What the Inventory blocked list says about the carpet lines. Deal Check files each floor's carpet under the carpet IT picked (sales' pick), with the floors
+// that make up the line in `parts` ({ zone, fn, dims, qty }); once Planning decides a floor the card says which carpet is really laid. `rows` are the list's
+// lines, `planRows` come from planCarpets, `onlyFn` (a function's type) limits the parts to one function's. Returns Map<line id, { name, photo, notes }> -
+// `name` and `photo` only when every floor of the line was decided, by Planning, to the same other carpet; else the decisions are told in notes. Floors left
+// on sales' 1st choice by default say nothing; floors still to decide are counted.
+export function carpetNotesForRows(rows, planRows, onlyFn = "") {
+  const out = new Map();
+  const split = (text, re) => { const m = String(text || "").match(re); return { base: norm(m ? m[1] : text), n: m && m[2] ? Number(m[2]) : 1 }; };
+  const floorFor = (part) => {
+    const z = split(part.zone, /^(.*?)(?: · floor (\d+))?$/);
+    return (planRows || []).find((r) => {
+      const pz = split(r.zoneName, /^(.*?)(?: \(floor (\d+)\))?$/);
+      return pz.base === z.base && pz.n === z.n && Math.round(Number(r.area) || 0) === Math.round(Number(part.qty) || 0) && (!part.fn || norm(part.fn) === norm(r.fnLabel));
+    }) || null;
+  };
+  const photoOf = (it) => (Array.isArray(it?.photoUrls) && it.photoUrls[0]) || it?.img || "";
+  (rows || []).forEach((line) => {
+    if (!line || !Array.isArray(line.parts) || !line.parts.length || !/carpet/i.test(String(line.sub || ""))) return;
+    const parts = line.parts.filter((p) => !onlyFn || !p.fn || norm(p.fn) === norm(onlyFn));
+    const decided = new Map(); // carpet name -> { sqft, photo, id }
+    let same = 0, other = 0, waiting = 0, matched = 0, otherName = "";
+    parts.forEach((p) => {
+      const r = floorFor(p);
+      if (!r) return;
+      matched += 1;
+      const sq = Math.round(Number(p.qty) || 0);
+      if (r.other) { other += sq; return; }
+      if (r.decidedId && !r.byDefault) {
+        const dec = [...(r.options || []), r.manual].filter(Boolean).find((o) => String(o.id) === String(r.decidedId));
+        if (String(r.decidedId) === String(line.invId)) { same += sq; return; }
+        const cur = decided.get(String(r.decidedId)) || { sqft: 0, name: dec?.name || "carpet", photo: photoOf(dec?.item) };
+        cur.sqft += sq; decided.set(String(r.decidedId), cur); otherName = cur.name;
+        return;
+      }
+      if (!r.decidedId) waiting += sq;
+    });
+    if (!matched) return;
+    const notes = [];
+    decided.forEach((d) => notes.push({ text: `${d.sqft} sqft laid with ${d.name} (chosen in Planning, Deal Check had ${line.name})`, tone: "ok" }));
+    if (same) notes.push({ text: `${same} sqft confirmed in Planning`, tone: "ok" });
+    if (other) notes.push({ text: `${other} sqft arranged separately - not from stock`, tone: "ok" });
+    if (waiting) notes.push({ text: `${waiting} sqft not decided yet - sales' 1st choice holds`, tone: "wait" });
+    if (!notes.length) return;
+    const allMoved = decided.size === 1 && !same && !other && !waiting && matched === parts.length;
+    const only = allMoved ? [...decided.values()][0] : null;
+    out.set(line.id, { ...(only ? { name: only.name, photo: only.photo } : {}), notes: only ? [{ text: `Chosen in Planning - Deal Check had ${line.name}`, tone: "ok" }] : notes });
+  });
+  return out;
+}

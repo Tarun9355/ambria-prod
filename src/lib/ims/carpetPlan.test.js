@@ -339,3 +339,34 @@ describe("over-commit with no venue recorded", () => {
     expect(over.T).toMatchObject({ free: 300, committed: 400, date: "2027-01-03" });
   });
 });
+
+import { carpetNotesForRows } from "./carpetPlan.js";
+describe("carpetNotesForRows — the Inventory blocked list follows the carpet plan", () => {
+  const opt = (id, name, photo) => ({ id, name, item: photo ? { id, name, img: photo } : null });
+  const floor = (over = {}) => ({ key: "0|stage|0", zoneName: "Stage", fnLabel: "Wedding", area: 512, options: [opt("A", "Polka Runner", "a.jpg"), opt("B", "Green Rug", "b.jpg")], decidedId: "A", byDefault: true, other: false, manual: null, ...over });
+  const line = (over = {}) => ({ id: "L", invId: "A", name: "Polka Runner", sub: "carpet", parts: [{ zone: "Stage", fn: "Wedding", dims: "16 × 32", qty: 512 }], ...over });
+  it("a floor left on sales' 1st choice by default says nothing", () => { expect(carpetNotesForRows([line()], [floor()]).size).toBe(0); });
+  it("a floor decided to another carpet replaces the whole line when it is the only floor", () => {
+    const g = carpetNotesForRows([line()], [floor({ decidedId: "B", byDefault: false })]).get("L");
+    expect(g).toMatchObject({ name: "Green Rug", photo: "b.jpg" });
+  });
+  it("with several floors, each decision is told and the line keeps its name", () => {
+    const l = line({ parts: [{ zone: "Stage · floor 1", fn: "Wedding", dims: "16 × 32", qty: 512 }, { zone: "Stage · floor 2", fn: "Wedding", dims: "8 × 12", qty: 96 }] });
+    const plan = [floor({ zoneName: "Stage", decidedId: "B", byDefault: false }), floor({ key: "k2", zoneName: "Stage (floor 2)", area: 96, decidedId: "A", byDefault: false })];
+    const g = carpetNotesForRows([l], plan).get("L");
+    expect(g.name).toBeUndefined();
+    expect(g.notes.map((n) => n.text)).toEqual(["512 sqft laid with Green Rug (chosen in Planning, Deal Check had Polka Runner)", "96 sqft confirmed in Planning"]);
+  });
+  it("arranged separately and not-yet-decided floors are counted in sqft", () => {
+    const l = line({ parts: [{ zone: "Stage", fn: "Wedding", qty: 512 }, { zone: "Entry", fn: "Wedding", qty: 100 }] });
+    const plan = [floor({ other: true, decidedId: null, byDefault: false }), floor({ key: "k2", zoneName: "Entry", area: 100, decidedId: null, byDefault: false })];
+    expect(carpetNotesForRows([l], plan).get("L").notes.map((n) => [n.text, n.tone])).toEqual([["512 sqft arranged separately - not from stock", "ok"], ["100 sqft not decided yet - sales' 1st choice holds", "wait"]]);
+  });
+  it("only the shown function's parts count, and lines that are not carpet are left alone", () => {
+    const l = line({ parts: [{ zone: "Stage", fn: "Wedding", qty: 512 }, { zone: "Stage", fn: "Haldi", qty: 512 }] });
+    const plan = [floor({ decidedId: "B", byDefault: false })];
+    expect(carpetNotesForRows([l], plan, "Haldi").size).toBe(0);
+    expect(carpetNotesForRows([l], plan, "Wedding").size).toBe(1);
+    expect(carpetNotesForRows([{ ...l, sub: "overlay" }], plan).size).toBe(0);
+  });
+});

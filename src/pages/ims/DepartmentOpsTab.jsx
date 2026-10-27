@@ -11,7 +11,7 @@ import { hasIMSPerm } from "../../lib/ims/constants";
 import { fetchOpsExpenses } from "../../lib/ims/opsExpenses";
 import { ZONE_META, trussBaseArea, CARPET_OFF } from "../../lib/studio/taxonomy";
 import { prefsOf, floorSqftOf } from "../../lib/studio/carpetPrefs";
-import { carpetFloorsOf, planCarpets, carpetKey, carpetStockFor, validDecision } from "../../lib/ims/carpetPlan";
+import { carpetFloorsOf, planCarpets, carpetKey, carpetStockFor, validDecision, carpetNotesForRows } from "../../lib/ims/carpetPlan";
 import CarpetPickerModal from "./CarpetPickerModal.jsx";
 import ElementChoicePlan from "./ElementChoicePlan.jsx";
 import { planElements, elementStockFor, elementKey, choiceNotesForRows } from "../../lib/ims/elementPlan";
@@ -1685,7 +1685,14 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const invWholeOnly = invScoped ? blockedItemsGrouped.length - invShown.length : 0;
   // Overlays and cushion covers with choices: the list is filed under sales' 1st design, so what Planning decided (Fabric plan) is shown on the card - live,
   // since it reads the same decisions the Fabric plan saves. Display only: the line's own quantity, price and id are untouched.
-  const choiceView = (dept === "Fabric" && sel) ? choiceNotesForRows(invShown, elementPlanOf().rows.filter(r => !invScoped || r.fi === (mpFns[invFn]?.fnIdx ?? invFn))) : new Map();
+  const choiceView = (dept === "Fabric" && sel) ? choiceNotesForRows(invShown, elementPlanOf().rows.filter(r => !invScoped || r.fi === (mpFns[invFn]?.fnIdx ?? invFn)))
+    : (dept === "Tenting" && sel) ? carpetNotesForRows(invShown, carpetPlanOf().rows.filter(r => !invScoped || r.fi === (mpFns[invFn]?.fnIdx ?? invFn)), invScoped ? (mpFns[invFn]?.type || "") : "")
+    : new Map();
+  // The same for the whole event's flat list (kit parts as their own lines) - what Truck planning loads, so it names the design Planning chose, not sales' 1st.
+  const choiceViewAll = (dept === "Fabric" && sel) ? choiceNotesForRows(blockedItems, elementPlanOf().rows)
+    : (dept === "Tenting" && sel) ? carpetNotesForRows(blockedItems, carpetPlanOf().rows)
+    : new Map();
+  const shownName = (it) => choiceViewAll.get(it.id)?.name || it.name; // the design Planning chose, else the line's own name (truck challans, loading sheet)
   const showDates = !invScoped && dateCols.length > 0;
   const anyOther = showDates && invShown.some(it => otherQty(it) > 0);
   const dateSpacers = showDates ? dateCols.length + (anyOther ? 1 : 0) - 1 : 0; // keeps the expanded sub-rows' qty/rate/total under their headers
@@ -2103,7 +2110,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     const w = window.open("", "_blank");
     if (!w) return;
     const rows = blockedItems.filter(it => (Number(truck.items?.["inv:" + it.id]) || 0) > 0 || (Number(truck.extras?.["inv:" + it.id]) || 0) > 0)
-      .map(it => { const x = Number(truck.extras?.["inv:" + it.id]) || 0; return `<tr><td>${it.name}</td><td>${it.sub || "—"}</td><td style="text-align:center">${Number(truck.items?.["inv:" + it.id]) || 0} of ${it.qty}${x ? ` + ${x} extra` : ""}</td></tr>`; }).join("");
+      .map(it => { const x = Number(truck.extras?.["inv:" + it.id]) || 0; return `<tr><td>${shownName(it)}</td><td>${it.sub || "—"}</td><td style="text-align:center">${Number(truck.items?.["inv:" + it.id]) || 0} of ${it.qty}${x ? ` + ${x} extra` : ""}</td></tr>`; }).join("");
     const toolRows = deptTools.map(t => `<tr><td>🛠️ ${t.name}</td><td>essential / tool</td><td style="text-align:center">${t.qty || 1}</td></tr>`).join("");
     w.document.write(`<html><head><title>Challan — ${dept} — Truck ${n}</title><style>body{font-family:Arial;padding:24px;color:#111}table{width:100%;border-collapse:collapse;margin-top:8px}th,td{border:1px solid #ddd;padding:8px;font-size:13px}th{background:#f3f4f6;text-align:left}h2{color:#4f46e5;margin-bottom:2px}h4{margin:14px 0 0}@media print{button{display:none}}</style></head><body>
       <h2>${DEPT_ICON[dept]} Ambria — ${dept} Challan · Truck ${n}</h2>
@@ -2157,7 +2164,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       pdf.setFont("helvetica", "bold"); pdf.text("Inventory on this truck", M, y); y += 16;
       header();
       const items = blockedItems.filter(it => (Number(truck.items?.["inv:" + it.id]) || 0) > 0 || (Number(truck.extras?.["inv:" + it.id]) || 0) > 0);
-      if (items.length) items.forEach(it => { const x = Number(truck.extras?.["inv:" + it.id]) || 0; row([[it.name, cx.name], [it.sub || "-", cx.type], [`${Number(truck.items?.["inv:" + it.id]) || 0} of ${it.qty}${x ? ` + ${x} extra` : ""}`, cx.qty, "right"]]); });
+      if (items.length) items.forEach(it => { const x = Number(truck.extras?.["inv:" + it.id]) || 0; row([[shownName(it), cx.name], [it.sub || "-", cx.type], [`${Number(truck.items?.["inv:" + it.id]) || 0} of ${it.qty}${x ? ` + ${x} extra` : ""}`, cx.qty, "right"]]); });
       else row([["No items assigned to this truck", cx.name]]);
       if (deptTools.length) {
         y += 12; room(36);
@@ -2323,7 +2330,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     const w = window.open("", "_blank");
     if (!w) return;
     const rows = [
-      ...blockedItems.map(it => `<tr><td>${loaded["inv:" + it.id] ? "☑" : "☐"}</td><td>${it.name}</td><td>${it.sub || "—"}</td><td style="text-align:center">${it.qty}</td></tr>`),
+      ...blockedItems.map(it => `<tr><td>${loaded["inv:" + it.id] ? "☑" : "☐"}</td><td>${shownName(it)}</td><td>${it.sub || "—"}</td><td style="text-align:center">${it.qty}</td></tr>`),
       ...deptTools.map(t => `<tr><td>${loaded["tool:" + t.name] ? "☑" : "☐"}</td><td>🛠️ ${t.name}</td><td>essential / tool</td><td style="text-align:center">${t.qty || 1}</td></tr>`),
     ].join("");
     w.document.write(`<html><head><title>Challan — ${dept}</title><style>body{font-family:Arial;padding:24px;color:#111}table{width:100%;border-collapse:collapse;margin-top:12px}th,td{border:1px solid #ddd;padding:8px;font-size:13px}th{background:#f3f4f6;text-align:left}h2{color:#4f46e5;margin-bottom:2px}@media print{button{display:none}}</style></head><body>
@@ -6931,9 +6938,10 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                         <div className="rounded-lg bg-gray-50 divide-y divide-gray-100">
                           {blockedItems.map(it => { const k = "inv:" + it.id; const onThis = Number(t.items?.[k]) || 0; const totalLoaded = truckLoadedQty(k); const extraHere = Number(t.extras?.[k]) || 0; const extraAll = truckExtraQty(k); const maxHere = Math.max(onThis, (Number(it.qty) || 0) - (totalLoaded - onThis)); const matchCls = totalLoaded === it.qty ? "text-emerald-600" : totalLoaded > it.qty ? "text-red-600" : totalLoaded > 0 ? "text-amber-600" : "text-gray-400"; return (
                             <div key={k} className="flex items-center gap-2.5 px-2.5 py-2">
-                              {it.photo ? <img src={thumbUrl(it.photo, 32)} loading="lazy" decoding="async" alt="" onClick={() => setZoomImg(it.photo)} className="w-8 h-8 rounded-lg object-cover cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-xs shrink-0">📦</div>}
+                              {(() => { const cv = choiceViewAll.get(it.id); const ph = cv?.name ? cv.photo : it.photo; return ph ? <img src={thumbUrl(ph, 32)} loading="lazy" decoding="async" alt="" onClick={() => setZoomImg(ph)} className="w-8 h-8 rounded-lg object-cover cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-xs shrink-0">📦</div>; })()}
                               <div className="min-w-0 flex-1">
-                                <div className="text-xs font-medium text-gray-800 leading-snug line-clamp-2" title={it.name}>{it.name}</div>
+                                <div className="text-xs font-medium text-gray-800 leading-snug line-clamp-2" title={choiceViewAll.get(it.id)?.name || it.name}>{choiceViewAll.get(it.id)?.name || it.name}</div>
+                                {(choiceViewAll.get(it.id)?.notes || []).map((n, ni) => <div key={ni} className={"text-[10px] leading-snug " + (n.tone === "wait" ? "text-amber-600" : "text-emerald-700")}>{n.tone === "wait" ? "" : "✓ "}{n.text}</div>)}
                                 <div className={"mt-0.5 text-[11px] font-semibold tabular-nums " + matchCls}>{totalLoaded} of {it.qty} loaded{totalLoaded > it.qty ? " · too many" : totalLoaded === it.qty ? " ✓" : ""}{extraAll > 0 && <span className="text-amber-600"> · +{extraAll} extra</span>}</div>
                                 {/* This item's share of the truck, and how many more of it the space left takes. */}
                                 {(() => {
