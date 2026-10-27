@@ -147,6 +147,22 @@ export function findLatestBuild(sessions, preferFnIdx = 0) {
 }
 
 /**
+ * What a refresh / Studio-IMS switch brings back for a deal that was open: the newest session that actually carries a build (findLatestBuild), and the
+ * function to land on. The newest session overall is NOT the answer - auto-save mints one on a timer whether or not anything was built, so the top of
+ * the list can be an empty draft sitting on the real build, and restoring that showed every zone "Not included" and the deal looked gone. When no
+ * session has a build at all (a deal nothing was built on yet) it is the newest session, or none, on the function that was open.
+ *
+ * @param {Array} sessions     the client's sessions, newest first
+ * @param {number} preferFnIdx the function that was open before the refresh
+ * @returns {{session: object|null, fnIdx: number}}
+ */
+export function restoreTarget(sessions, preferFnIdx = 0) {
+  const latest = findLatestBuild(sessions, preferFnIdx);
+  if (latest) return latest;
+  return { session: (Array.isArray(sessions) && sessions[0]) || null, fnIdx: preferFnIdx };
+}
+
+/**
  * A whole session — any function carrying data, or the legacy flat fields for sessions written
  * before fnSnapshots existed.
  */

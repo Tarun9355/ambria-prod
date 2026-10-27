@@ -221,3 +221,25 @@ describe("sessionToRows — custom items", () => {
     expect(sessionToRows("client_1", s)[0].build).toEqual(withZones);
   });
 });
+
+import { restoreTarget } from "./sessionData";
+describe("restoreTarget — a refresh brings back the real build, not an empty draft on top of it", () => {
+  const built = { id: "B", savedAt: 1, fnSnapshots: { 0: { zoneElements: { stage: [{ name: "x" }] }, enabledEls: { stage: true } } } };
+  const blank = { id: "E", savedAt: 2, auto: true, fnSnapshots: { 0: { zoneElements: {}, enabledEls: {} } } };
+  it("skips a newer empty auto-draft and restores the build under it", () => {
+    expect(restoreTarget([blank, blank, built], 0)).toMatchObject({ session: built, fnIdx: 0 });
+  });
+  it("the newest session when it has a build", () => {
+    expect(restoreTarget([built, blank], 0).session).toBe(built);
+  });
+  it("lands on the function that was open when it has a build, else the one that does", () => {
+    const two = { id: "T", fnSnapshots: { 0: { zoneElements: {}, enabledEls: {} }, 1: { zoneElements: { stage: [{ name: "x" }] }, enabledEls: {} } } };
+    expect(restoreTarget([two], 1).fnIdx).toBe(1);
+    expect(restoreTarget([two], 0).fnIdx).toBe(1);
+  });
+  it("nothing built anywhere: the newest session as it is, on the open function; no sessions: none", () => {
+    expect(restoreTarget([blank], 2)).toEqual({ session: blank, fnIdx: 2 });
+    expect(restoreTarget([], 0)).toEqual({ session: null, fnIdx: 0 });
+    expect(restoreTarget(undefined, 0)).toEqual({ session: null, fnIdx: 0 });
+  });
+});

@@ -134,7 +134,7 @@ import { logPhotoCorrection, fetchPhotoCorrections } from "../../lib/studio/phot
 import { createMatcher, normalize, STRUCT_KW, STRUCTURAL_CATS as RAW_SCAFFOLD_CATS, MATCH, assembleSynonymDictionaryFromRows } from "../../lib/studio/tagging/matcher.js";
 // One place that merges an aiTagImage() result onto a library photo (spec §9-B / §12.2).
 import { applyAiTagResult } from "../../lib/studio/tagging/applyResult.js";
-import { fnSnapHasData as fnSnapHasDataPure, fnSnapHasBuild, autoSaveWouldDestroy, snapshotContentEqual, sessionToRows, findLatestBuild } from "../../lib/studio/sessionData.js";
+import { fnSnapHasData as fnSnapHasDataPure, fnSnapHasBuild, autoSaveWouldDestroy, snapshotContentEqual, sessionToRows, findLatestBuild, restoreTarget } from "../../lib/studio/sessionData.js";
 import { LOGO_ASSET, logoCrop } from "../../lib/studio/brand.js";
 import { registerFlushBeforeReload, unregisterFlushBeforeReload, flushBeforeReload } from "../../lib/pendingSaveRegistry.js";
 import { thumbUrl } from "../../lib/studio/thumb.js";
@@ -8733,7 +8733,10 @@ export default function StudioApp() {
     // the date or venue) and refreshing there abandoned the whole deal for no reason, even though
     // every bit of it was safely saved server-side. Restoring here now, same as Browse/Build/Summary.
     const client = clientLedger.find(c => c.id === savedId);
-    const session = client && Array.isArray(client.sessions) ? client.sessions[0] : null;
+    // The newest session WITH a build, not simply the newest: an empty auto-draft sitting on top of the real build restored a blank canvas (every zone "Not
+    // included") on every refresh and Studio<->IMS switch, so the deal looked gone. restoreTarget walks down to the real one (and the function it holds).
+    const target = client ? restoreTarget(client.sessions, restoreRef.current?.fn || 0) : { session: null, fnIdx: 0 };
+    const session = target.session;
     buildRestoredRef.current = true;
     restoreSettledRef.current = true;
     setRestoring(false);
@@ -8744,7 +8747,7 @@ export default function StudioApp() {
     // build state stays empty, which is all there was to restore anyway.
     if (!client) return;
     const savedStep = restoreRef.current?.step ?? null;
-    const savedFn = restoreRef.current?.fn || 0;
+    const savedFn = target.fnIdx;
     // With a session and no usable stored step, Summary stays the default as before. Without one
     // there is nothing to summarise, so fall back to Event Info instead.
     const landingStep = (savedStep !== null && savedStep >= 1) ? savedStep : (session ? 3 : 0);
