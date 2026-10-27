@@ -3472,7 +3472,11 @@ undefined
             color:on?accent:textP}}>
             <span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:13,height:13,borderRadius:4,flexShrink:0,border:`1px solid ${on?accent:border}`,background:on?accent:"transparent",color:"#fff"}}>{on&&<IconCheck size={9}/>}</span>
             {info?.photo ? <img src={thumbUrl(info.photo, 16)} loading="lazy" decoding="async" alt="" onClick={e=>{e.stopPropagation();setLightbox({idx:0,items:[{src:info.photo,name:v}]});}} style={{width:16,height:16,borderRadius:3,objectFit:"cover",flexShrink:0,cursor:"zoom-in"}}/> : null}
-            <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{v}</span>
+            <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,minWidth:0}}>{v}</span>
+            {/* which of the three fabrics this colour is available for: a struck, faded icon = not available */}
+            <span style={{display:"inline-flex",gap:2,flexShrink:0}}>
+              {FABRIC_MATERIAL_ICONS.map(([m, icon]) => { const has = !!info?.in.has(m); return <span key={m} title={`${m[0].toUpperCase()}${m.slice(1)} — ${has?"available":"not available"}`} style={{fontSize:10,lineHeight:1,opacity:has?1:0.22,filter:has?undefined:"grayscale(1)",textDecoration:has?undefined:"line-through"}}>{icon}</span>; })}
+            </span>
           </div>
         );
       };
@@ -3513,8 +3517,8 @@ undefined
                     {FABRIC_MATERIAL_ICONS.map(([m, icon]) => {
                       const off = fabricColourInfo.has(c.name) && !fabricColourInfo.get(c.name).in.has(m); // switched off in IMS for this fabric
                       const on = mats.includes(m) && !off;
-                      return <span key={m} onClick={(e)=>{e.stopPropagation(); if (!off) toggleMaterial(c.name,m);}} title={off ? `${m[0].toUpperCase()}${m.slice(1)} — switched off for ${c.name} in IMS` : `${m[0].toUpperCase()}${m.slice(1)} — ${on?"used":"not used"} for ${c.name}`}
-                        style={{fontSize:11,width:18,height:18,display:"flex",alignItems:"center",justifyContent:"center",borderRadius:4,cursor:off?"not-allowed":"pointer",opacity:on?1:off?0.12:0.25,background:on?`${accent}18`:"transparent"}}>{icon}</span>;
+                      return <span key={m} onClick={(e)=>{e.stopPropagation(); if (!off) toggleMaterial(c.name,m);}} title={off ? `${m[0].toUpperCase()}${m.slice(1)} — not available for ${c.name} (switched off, or no stock row, in IMS → Fabric Stock)` : `${m[0].toUpperCase()}${m.slice(1)} — ${on?"used":"not used"} for ${c.name}`}
+                        style={{fontSize:11,width:18,height:18,display:"flex",alignItems:"center",justifyContent:"center",borderRadius:4,cursor:off?"not-allowed":"pointer",opacity:on?1:off?0.4:0.25,background:on?`${accent}18`:"transparent",position:"relative",filter:off?"grayscale(1)":undefined}}>{icon}{off&&<span aria-hidden="true" style={{position:"absolute",left:2,right:2,top:"50%",height:1.5,background:"#d33",transform:"rotate(-35deg)",borderRadius:1}}/>}</span>;
                     })}
                   </div>
                 );
