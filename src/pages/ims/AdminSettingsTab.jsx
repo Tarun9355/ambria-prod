@@ -511,20 +511,24 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                         <div className="flex flex-wrap gap-1.5 mb-2">
                           {(settings.heavyElementRanges || []).map((her, hi) => {
                             const per = her.perCount ?? 10;
-                            const upd = (patch) => { const ranges = [...(settings.heavyElementRanges || [])]; const cur = { ...ranges[hi], ...patch }; delete cur.ranges; delete cur.freeUpTo; ranges[hi] = cur; setSettings((s) => ({ ...s, heavyElementRanges: ranges })); };
+                            const upd = (patch) => {
+                              const row = { sub_cat: her.subCat, free_up_to: null, legacy_ranges: null };
+                              if ("perCount" in patch) row.per_count = patch.perCount;
+                              supabase.from("heavy_element_ranges").upsert(row, { onConflict: "sub_cat" }).then(() => {}, () => {});
+                            };
                             return (
                               <div key={hi} className="inline-flex items-center gap-1 bg-indigo-50 border border-indigo-200 rounded-lg px-2 py-1">
                                 <span className="text-xs text-indigo-700 font-medium">{her.subCat || "(pick)"}</span>
                                 <span className="text-xs text-gray-400">→ 1:</span>
                                 <input type="number" min="1" value={per} onChange={(e) => upd({ perCount: parseInt(e.target.value) || 0 })} className="w-10 border rounded px-1 py-0.5 text-xs text-center" />
-                                <button onClick={() => setSettings((s) => ({ ...s, heavyElementRanges: (s.heavyElementRanges || []).filter((_, j) => j !== hi) }))} className="text-red-400 hover:text-red-600 text-xs ml-0.5">×</button>
+                                <button onClick={() => { supabase.from("heavy_element_ranges").delete().eq("sub_cat", her.subCat).then(() => {}, () => {}); }} className="text-red-400 hover:text-red-600 text-xs ml-0.5">×</button>
                               </div>
                             );
                           })}
                         </div>
                         <div className="flex flex-wrap gap-1">
                           {allSubcatLabels.filter((sc) => !(settings.heavyElementRanges || []).some((h) => h.subCat === sc)).map((sc) => (
-                            <button key={sc} onClick={() => setSettings((s) => ({ ...s, heavyElementRanges: [...(s.heavyElementRanges || []), { subCat: sc, perCount: 10 }] }))} className="text-xs px-2 py-0.5 rounded-full border bg-white border-gray-200 text-gray-500 hover:border-indigo-200 hover:text-indigo-600 transition-all">+ {sc}</button>
+                            <button key={sc} onClick={() => { supabase.from("heavy_element_ranges").insert({ sub_cat: sc, per_count: 10 }).then(() => {}, () => {}); }} className="text-xs px-2 py-0.5 rounded-full border bg-white border-gray-200 text-gray-500 hover:border-indigo-200 hover:text-indigo-600 transition-all">+ {sc}</button>
                           ))}
                         </div>
                       </div>
@@ -535,7 +539,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                       <div className="mt-2 pt-2 border-t border-gray-200">
                         <div className="flex items-center justify-between mb-1.5">
                           <p className="text-xs text-gray-500">🔩 Pillar Range Table <span className="text-gray-400">(truss labours by total pillar count — set in the Manpower tab)</span></p>
-                          <button onClick={() => { const ranges = [...(settings.trussLabourRanges || [])]; const lastUpTo = ranges.length > 0 ? ranges[ranges.length - 1].upTo : 0; ranges.push({ upTo: lastUpTo + 20, labour: (ranges[ranges.length - 1]?.labour || 6) + 2, label: "+20 pillars" }); setSettings((s) => ({ ...s, trussLabourRanges: ranges })); }} className="text-xs bg-teal-600 hover:bg-teal-700 text-white px-2.5 py-1 rounded-lg font-medium">+ Add Range</button>
+                          <button onClick={() => { const ranges = settings.trussLabourRanges || []; const lastUpTo = ranges.length > 0 ? ranges[ranges.length - 1].upTo : 0; supabase.from("truss_labour_ranges").insert({ up_to: lastUpTo + 20, labour: (ranges[ranges.length - 1]?.labour || 6) + 2, label: "+20 pillars" }).then(() => {}, () => {}); }} className="text-xs bg-teal-600 hover:bg-teal-700 text-white px-2.5 py-1 rounded-lg font-medium">+ Add Range</button>
                         </div>
                         <div className="bg-white rounded-lg border border-teal-200 overflow-hidden">
                           <table className="w-full text-sm">
@@ -546,9 +550,9 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                                 return (
                                   <tr key={i} className="border-t border-teal-100">
                                     <td className="px-3 py-2 text-gray-600 text-xs">{prevMax} – {r.upTo > 9000 ? "∞" : r.upTo} pillars</td>
-                                    <td className="px-3 py-2 text-center"><input type="number" min={i > 0 ? settings.trussLabourRanges[i - 1].upTo + 1 : 1} value={r.upTo > 9000 ? "" : r.upTo} placeholder="∞" onChange={(e) => { const ranges = [...(settings.trussLabourRanges || [])]; ranges[i] = { ...ranges[i], upTo: parseInt(e.target.value) || 9999 }; setSettings((s) => ({ ...s, trussLabourRanges: ranges })); }} className="w-20 border border-teal-200 rounded px-2 py-1 text-xs text-center" /></td>
-                                    <td className="px-3 py-2 text-center"><input type="number" min="1" value={r.labour} onChange={(e) => { const ranges = [...(settings.trussLabourRanges || [])]; ranges[i] = { ...ranges[i], labour: parseInt(e.target.value) || 1 }; setSettings((s) => ({ ...s, trussLabourRanges: ranges })); }} className="w-16 border border-teal-200 rounded px-2 py-1 text-xs text-center font-bold" /></td>
-                                    <td className="px-3 py-2 text-center">{(settings.trussLabourRanges || []).length > 1 && (<button onClick={() => { const ranges = (settings.trussLabourRanges || []).filter((_, j) => j !== i); setSettings((s) => ({ ...s, trussLabourRanges: ranges })); }} className="text-red-400 hover:text-red-600 text-xs">✕</button>)}</td>
+                                    <td className="px-3 py-2 text-center"><input type="number" min={i > 0 ? settings.trussLabourRanges[i - 1].upTo + 1 : 1} value={r.upTo > 9000 ? "" : r.upTo} placeholder="∞" onChange={(e) => { const v = parseInt(e.target.value) || 9999; supabase.from("truss_labour_ranges").update({ up_to: v }).eq("up_to", r.upTo).then(() => {}, () => {}); }} className="w-20 border border-teal-200 rounded px-2 py-1 text-xs text-center" /></td>
+                                    <td className="px-3 py-2 text-center"><input type="number" min="1" value={r.labour} onChange={(e) => { const v = parseInt(e.target.value) || 1; supabase.from("truss_labour_ranges").update({ labour: v }).eq("up_to", r.upTo).then(() => {}, () => {}); }} className="w-16 border border-teal-200 rounded px-2 py-1 text-xs text-center font-bold" /></td>
+                                    <td className="px-3 py-2 text-center">{(settings.trussLabourRanges || []).length > 1 && (<button onClick={() => { supabase.from("truss_labour_ranges").delete().eq("up_to", r.upTo).then(() => {}, () => {}); }} className="text-red-400 hover:text-red-600 text-xs">✕</button>)}</td>
                                   </tr>
                                 );
                               })}
@@ -564,7 +568,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                         <div>
                           <div className="flex items-center justify-between mb-1.5">
                             <p className="text-xs text-gray-500">📐 Box Truss SqFt Range Table <span className="text-gray-400">(sqft = L × W; height doesn't change fabric labour)</span></p>
-                            <button onClick={() => { const ranges = [...(settings.fabricBangaliRanges || [])]; const lastUpTo = ranges.length > 0 ? ranges[ranges.length - 1].upTo : 0; ranges.push({ upTo: lastUpTo + 1000, labour: (ranges[ranges.length - 1]?.labour || 3) + 4, label: "" }); setSettings((s) => ({ ...s, fabricBangaliRanges: ranges })); }} className="text-xs bg-orange-600 hover:bg-orange-700 text-white px-2.5 py-1 rounded-lg font-medium">+ Add Range</button>
+                            <button onClick={() => { const ranges = settings.fabricBangaliRanges || []; const lastUpTo = ranges.length > 0 ? ranges[ranges.length - 1].upTo : 0; supabase.from("fabric_bangali_ranges").insert({ up_to: lastUpTo + 1000, labour: (ranges[ranges.length - 1]?.labour || 3) + 4, label: "" }).then(() => {}, () => {}); }} className="text-xs bg-orange-600 hover:bg-orange-700 text-white px-2.5 py-1 rounded-lg font-medium">+ Add Range</button>
                           </div>
                           <div className="bg-white rounded-lg border border-orange-200 overflow-hidden">
                             <table className="w-full text-sm">
@@ -576,10 +580,10 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                                   return (
                                     <tr key={i} className="border-t border-orange-100">
                                       <td className="px-3 py-2 text-gray-600 text-xs">{prevMax} – {r.upTo > 9000 ? "∞" : r.upTo} sqft</td>
-                                      <td className="px-3 py-2 text-center"><input type="number" min={i > 0 ? settings.fabricBangaliRanges[i - 1].upTo + 1 : 1} value={r.upTo > 9000 ? "" : r.upTo} placeholder="∞" onChange={(e) => { const ranges = [...(settings.fabricBangaliRanges || [])]; ranges[i] = { ...ranges[i], upTo: parseInt(e.target.value) || 9999 }; setSettings((s) => ({ ...s, fabricBangaliRanges: ranges })); }} className="w-20 border border-orange-200 rounded px-2 py-1 text-xs text-center" /></td>
-                                      <td className="px-3 py-2 text-center"><input type="number" min="1" value={r.labour} onChange={(e) => { const ranges = [...(settings.fabricBangaliRanges || [])]; ranges[i] = { ...ranges[i], labour: parseInt(e.target.value) || 1 }; setSettings((s) => ({ ...s, fabricBangaliRanges: ranges })); }} className="w-16 border border-orange-200 rounded px-2 py-1 text-xs text-center font-bold" /></td>
+                                      <td className="px-3 py-2 text-center"><input type="number" min={i > 0 ? settings.fabricBangaliRanges[i - 1].upTo + 1 : 1} value={r.upTo > 9000 ? "" : r.upTo} placeholder="∞" onChange={(e) => { const v = parseInt(e.target.value) || 9999; supabase.from("fabric_bangali_ranges").update({ up_to: v }).eq("up_to", r.upTo).then(() => {}, () => {}); }} className="w-20 border border-orange-200 rounded px-2 py-1 text-xs text-center" /></td>
+                                      <td className="px-3 py-2 text-center"><input type="number" min="1" value={r.labour} onChange={(e) => { const v = parseInt(e.target.value) || 1; supabase.from("fabric_bangali_ranges").update({ labour: v }).eq("up_to", r.upTo).then(() => {}, () => {}); }} className="w-16 border border-orange-200 rounded px-2 py-1 text-xs text-center font-bold" /></td>
                                       <td className="px-3 py-2 text-xs text-gray-400 italic">~{side}×{side}ft</td>
-                                      <td className="px-3 py-2 text-center">{(settings.fabricBangaliRanges || []).length > 1 && (<button onClick={() => { const ranges = (settings.fabricBangaliRanges || []).filter((_, j) => j !== i); setSettings((s) => ({ ...s, fabricBangaliRanges: ranges })); }} className="text-red-400 hover:text-red-600 text-xs">✕</button>)}</td>
+                                      <td className="px-3 py-2 text-center">{(settings.fabricBangaliRanges || []).length > 1 && (<button onClick={() => { supabase.from("fabric_bangali_ranges").delete().eq("up_to", r.upTo).then(() => {}, () => {}); }} className="text-red-400 hover:text-red-600 text-xs">✕</button>)}</td>
                                     </tr>
                                   );
                                 })}

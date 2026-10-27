@@ -398,3 +398,28 @@ export function heavyExtraLabour(her, count) {
   for (const r of (her.ranges || [])) { if (count <= r.upTo) return r.extra || 0; }
   return 0;
 }
+
+// Row <-> object translation (migration 044: heavy_element_ranges/truss_labour_ranges/
+// fabric_bangali_ranges TABLES replacing the heavyElementRanges/trussLabourRanges/
+// fabricBangaliRanges settings keys). Threshold-ladder rows come back sorted by up_to ascending —
+// the shape every consumer (heavyExtraLabour above, manpowerCount.js) already expects.
+export function assembleHeavyElementRangesFromRows(rows) {
+  return (Array.isArray(rows) ? rows : []).map((r) => ({
+    subCat: r.sub_cat,
+    ...(r.free_up_to != null ? { freeUpTo: Number(r.free_up_to) } : {}),
+    ...(r.per_count != null ? { perCount: Number(r.per_count) } : {}),
+    ...(r.legacy_ranges != null ? { ranges: r.legacy_ranges } : {}),
+  }));
+}
+export function assembleTrussLabourRangesFromRows(rows) {
+  return (Array.isArray(rows) ? rows : [])
+    .slice()
+    .sort((a, b) => Number(a.up_to) - Number(b.up_to))
+    .map((r) => ({ upTo: Number(r.up_to), labour: Number(r.labour) || 0, label: r.label || "" }));
+}
+export function assembleFabricBangaliRangesFromRows(rows) {
+  return (Array.isArray(rows) ? rows : [])
+    .slice()
+    .sort((a, b) => Number(a.up_to) - Number(b.up_to))
+    .map((r) => ({ upTo: Number(r.up_to), labour: Number(r.labour) || 0, label: r.label || "" }));
+}

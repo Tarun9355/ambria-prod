@@ -95,7 +95,7 @@ import { sigHash } from "../../lib/sigHash";
 import { costSheetQtyEdit } from "../../lib/studio/costSheetQtyEdit";
 import { allocateRowAvailability, maxQtyForRow, netOwnReservedBlocksLive } from "../../lib/studio/dealAvailability";
 import { callClaudeStreaming } from "../../lib/ai";
-import { heavyExtraLabour, eventTimingMultFor, SETTINGS_DEFAULTS, SIT_MULT_DEFAULTS } from "../../lib/ims/constants";
+import { heavyExtraLabour, eventTimingMultFor, SETTINGS_DEFAULTS, SIT_MULT_DEFAULTS, assembleHeavyElementRangesFromRows, assembleTrussLabourRangesFromRows, assembleFabricBangaliRangesFromRows } from "../../lib/ims/constants";
 import { resolveDateCategory, getEffectivePricing } from "../../lib/inventory/helpers";
 import { itemImsSubcat, lookupBySubcat, priceForInvItem, itemDimsText, walkKitUnits, kitDescendantIds } from "../../lib/ims/helpers";
 import { matchFlowerPattern, floralPatternUnitRates, sizeClassToPatternKey, normalizeSizeClass, kitFloralCompDelta, assembleMandiCatalogueFromRows, assembleFlowerPatternsFromRows } from "../../lib/ims/flowerHelpers";
@@ -10959,7 +10959,7 @@ export default function StudioApp() {
         }
         return isGood(last) ? last : null;
       };
-      const [invResults, settingsRows, vendorRows, trussInvRows, fixedVenueRows, mandiRows, patternRows, labourTypeRows, venueLabourRows] = await Promise.all([
+      const [invResults, settingsRows, vendorRows, trussInvRows, fixedVenueRows, mandiRows, patternRows, labourTypeRows, venueLabourRows, heavyElementRangeRows, trussLabourRangeRows, fabricBangaliRangeRows] = await Promise.all([
         Promise.all(uniqueDates.map(d => fetchIMSData(d))),
         readRetry(async () => { const r = await supabase.from("settings").select("key,value"); if (r.error) throw r.error; return r.data || []; }, rows => Array.isArray(rows) && rows.length > 0),
         fetchAll("vendors").catch(() => []),
@@ -10969,6 +10969,9 @@ export default function StudioApp() {
         fetchAll("flower_patterns").catch(() => []),
         fetchAll("labour_types").catch(() => []),
         fetchAll("venue_labour_config").catch(() => []),
+        fetchAll("heavy_element_ranges").catch(() => []),
+        fetchAll("truss_labour_ranges").catch(() => []),
+        fetchAll("fabric_bangali_ranges").catch(() => []),
       ]);
       if (!settingsRows || !trussInvRows) {
         setDealCheckError("Settings or truss stock didn't load, so manpower and truss would show as zero. Close Deal Check and open it again.");
@@ -11029,9 +11032,9 @@ export default function StudioApp() {
       const datePricing = (s.datePricing && typeof s.datePricing === "object") ? s.datePricing : SETTINGS_DEFAULTS.datePricing;
       const situationalMultipliers = (s.situationalMultipliers && typeof s.situationalMultipliers === "object") ? s.situationalMultipliers : SIT_MULT_DEFAULTS;
       const situationalMultiplierCap = typeof s.situationalMultiplierCap === "number" ? s.situationalMultiplierCap : 1.8;
-      const heavyElementRanges = Array.isArray(s.heavyElementRanges) ? s.heavyElementRanges : [];
-      const fabricBangaliRanges = Array.isArray(s.fabricBangaliRanges) ? s.fabricBangaliRanges : [];
-      const trussLabourRanges = Array.isArray(s.trussLabourRanges) ? s.trussLabourRanges : [];
+      const heavyElementRanges = assembleHeavyElementRangesFromRows(heavyElementRangeRows);
+      const fabricBangaliRanges = assembleFabricBangaliRangesFromRows(fabricBangaliRangeRows);
+      const trussLabourRanges = assembleTrussLabourRangesFromRows(trussLabourRangeRows);
       const fabricRftPerWorker = (typeof s.fabricRftPerWorker === "number" && s.fabricRftPerWorker > 0) ? s.fabricRftPerWorker : 100;
       const colourCatalogue = Array.isArray(s.colourCatalogue) ? s.colourCatalogue : [];
       const paletteCatalogue = Array.isArray(s.paletteCatalogue) ? s.paletteCatalogue : [];

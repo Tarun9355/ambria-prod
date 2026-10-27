@@ -8,7 +8,7 @@ import { assembleLabourTiersFromRows, assembleDihariSchemesFromRows, assembleDef
 import { assembleVenueMinLabourFromRows, assembleVenueDumpingFromRows } from "../../lib/ims/venueLabourConfig";
 import { assemblePrintMaterialsFromRows, assembleCarpetMaterialsFromRows, assemblePlatformRatesFromRows, assembleMaskingRatesFromRows, assembleTrussRatesFromRows } from "../../lib/studio/taxonomy";
 import { createSettingsWriter } from "../../lib/ims/settingsWriter";
-import { SETTINGS_DEFAULTS, INIT_TRUSS_INV } from "../../lib/ims/constants";
+import { SETTINGS_DEFAULTS, INIT_TRUSS_INV, assembleHeavyElementRangesFromRows, assembleTrussLabourRangesFromRows, assembleFabricBangaliRangesFromRows } from "../../lib/ims/constants";
 import { RC_CATS_DEFAULT } from "../../lib/studio/constants";
 import InventoryTab from "./InventoryTab.jsx";
 import AttendanceTab from "./AttendanceTab.jsx";
@@ -390,6 +390,10 @@ export default function IMS() {
   const platformRateRowsRef = useRef([]);
   const maskingRateRowsRef = useRef([]);
   const trussRateRowsRef = useRef([]);
+  // Manpower range-ladder rows (migration 044) — same reasoning.
+  const heavyElementRangeRowsRef = useRef([]);
+  const trussLabourRangeRowsRef = useRef([]);
+  const fabricBangaliRangeRowsRef = useRef([]);
   // Every setX below updates React state synchronously, then persists to Supabase via a
   // fire-and-forget async IIFE that nothing awaits — a real bug, confirmed by direct DB
   // inspection: a sold deal's auto-confirm engine (executeConfirmBlocks → createProjectFromEO)
@@ -512,6 +516,10 @@ export default function IMS() {
     settingsObj.platformRates = assemblePlatformRatesFromRows(platformRateRowsRef.current);
     settingsObj.maskingRates = assembleMaskingRatesFromRows(maskingRateRowsRef.current);
     settingsObj.trussRates = assembleTrussRatesFromRows(trussRateRowsRef.current);
+    // Same reasoning for the manpower range ladders — each its own TABLE (migration 044).
+    settingsObj.heavyElementRanges = assembleHeavyElementRangesFromRows(heavyElementRangeRowsRef.current);
+    settingsObj.trussLabourRanges = assembleTrussLabourRangesFromRows(trussLabourRangeRowsRef.current);
+    settingsObj.fabricBangaliRanges = assembleFabricBangaliRangesFromRows(fabricBangaliRangeRowsRef.current);
     settingsRef.current = settingsObj;
     setSettingsState(settingsObj);
     setSettingsLoaded(true);
@@ -590,6 +598,26 @@ export default function IMS() {
     const v = assembleTrussRatesFromRows(rows);
     settingsRef.current = { ...(settingsRef.current || {}), trussRates: v };
     setSettingsState((prev) => ({ ...(prev || {}), trussRates: v }));
+  }, []);
+
+  // Manpower range-ladder rows -> one settings field each. Same reasoning/shape.
+  const applyHeavyElementRangeRows = useCallback((rows) => {
+    heavyElementRangeRowsRef.current = rows;
+    const v = assembleHeavyElementRangesFromRows(rows);
+    settingsRef.current = { ...(settingsRef.current || {}), heavyElementRanges: v };
+    setSettingsState((prev) => ({ ...(prev || {}), heavyElementRanges: v }));
+  }, []);
+  const applyTrussLabourRangeRows = useCallback((rows) => {
+    trussLabourRangeRowsRef.current = rows;
+    const v = assembleTrussLabourRangesFromRows(rows);
+    settingsRef.current = { ...(settingsRef.current || {}), trussLabourRanges: v };
+    setSettingsState((prev) => ({ ...(prev || {}), trussLabourRanges: v }));
+  }, []);
+  const applyFabricBangaliRangeRows = useCallback((rows) => {
+    fabricBangaliRangeRowsRef.current = rows;
+    const v = assembleFabricBangaliRangesFromRows(rows);
+    settingsRef.current = { ...(settingsRef.current || {}), fabricBangaliRanges: v };
+    setSettingsState((prev) => ({ ...(prev || {}), fabricBangaliRanges: v }));
   }, []);
 
   // ── Recipe → Studio rate sync (Tier 1.5) ───────────────────────────────────
@@ -844,16 +872,12 @@ export default function IMS() {
         supabase.from("labour_types").update({ sub_cat_batches: nb }).eq("type_name", type).then(() => {}, () => {});
       }
     });
-    setSettings((s) => {
-      let changed = false;
-      const heavyElementRanges = (s.heavyElementRanges || []).map((her) => {
-        if (String(her.subCat || "").trim().toLowerCase() === oldId && her.subCat !== trimmed) {
-          changed = true;
-          return { ...her, subCat: trimmed };
-        }
-        return her;
-      });
-      return changed ? { ...s, heavyElementRanges } : s;
+    // heavyElementRanges[].subCat is now the primary key of the `heavy_element_ranges` TABLE
+    // (migration 044) — a rename is a row-level UPDATE of that key, not a settings blob merge.
+    (settings.heavyElementRanges || []).forEach((her) => {
+      if (String(her.subCat || "").trim().toLowerCase() === oldId && her.subCat !== trimmed) {
+        supabase.from("heavy_element_ranges").update({ sub_cat: trimmed }).eq("sub_cat", her.subCat).then(() => {}, () => {});
+      }
     });
     // Recipes (flowerPatterns) link to items by `.sub` (matchFlowerPattern). Rename it too so a
     // sub-category rename keeps the recipe↔item match intact — otherwise the recipe stops applying
@@ -902,7 +926,7 @@ export default function IMS() {
     let active = true;
     (async () => {
       try {
-        const [invRows, fnRows, projRows, venRows, poRows, ohRows, supRows, userRows, prodRows, eoRows, allocRows, rcRows, trussRows, catRows, setRows, blockRows, rcCatRows, mandiRows, patternRows, labourTypeRows, venueLabourRows, printMaterialRows, carpetMaterialRows, platformRateRows, maskingRateRows, trussRateRows] = await Promise.all([
+        const [invRows, fnRows, projRows, venRows, poRows, ohRows, supRows, userRows, prodRows, eoRows, allocRows, rcRows, trussRows, catRows, setRows, blockRows, rcCatRows, mandiRows, patternRows, labourTypeRows, venueLabourRows, printMaterialRows, carpetMaterialRows, platformRateRows, maskingRateRows, trussRateRows, heavyElementRangeRows, trussLabourRangeRows, fabricBangaliRangeRows] = await Promise.all([
           fetchAll("inventory"),
           fetchAll("functions").catch(() => []),
           fetchAll("projects").catch(() => []),
@@ -929,6 +953,9 @@ export default function IMS() {
           fetchAll("platform_rates").catch(() => []),
           fetchAll("masking_rates").catch(() => []),
           fetchAll("truss_rates").catch(() => []),
+          fetchAll("heavy_element_ranges").catch(() => []),
+          fetchAll("truss_labour_ranges").catch(() => []),
+          fetchAll("fabric_bangali_ranges").catch(() => []),
         ]);
         if (!active) return;
         { const bm = blocksRowsToMap(blockRows); blocksRef.current = bm; setBlocksState(bm); }
@@ -966,6 +993,10 @@ export default function IMS() {
         applyPlatformRateRows(platformRateRows);
         applyMaskingRateRows(maskingRateRows);
         applyTrussRateRows(trussRateRows);
+        // Manpower range ladders — the three TABLEs (migration 044), same reasoning.
+        applyHeavyElementRangeRows(heavyElementRangeRows);
+        applyTrussLabourRangeRows(trussLabourRangeRows);
+        applyFabricBangaliRangeRows(fabricBangaliRangeRows);
         // blocks blob, Studio rate-card mirror, and the settings object — applied via the
         // shared helper (also used by the settings Realtime subscription below).
         applySettingsRows(setRows);
@@ -1037,6 +1068,9 @@ export default function IMS() {
     liveTable("platform_rates", (rows) => applyPlatformRateRows(rows));
     liveTable("masking_rates", (rows) => applyMaskingRateRows(rows));
     liveTable("truss_rates", (rows) => applyTrussRateRows(rows));
+    liveTable("heavy_element_ranges", (rows) => applyHeavyElementRangeRows(rows));
+    liveTable("truss_labour_ranges", (rows) => applyTrussLabourRangeRows(rows));
+    liveTable("fabric_bangali_ranges", (rows) => applyFabricBangaliRangeRows(rows));
     // blocks gets its own channel too, same reason as event_orders below: Build reconciles this
     // table's reservation rows on every qty-affecting edit to a sold deal (reconcileSoldInventoryBlocks
     // in StudioApp.jsx), so it changes constantly, and the table holds one row per inventory item
