@@ -1657,7 +1657,22 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           }
         }
         const total = it.byFn ? Math.round((Number(fnRow?.total) || 0) + kitPartsValue) : Math.round((Number(it.total) || 0) * ((Number(it.qty) || 0) > 0 ? q / Number(it.qty) : 1));
-        return { ...it, src: it, qty: q, rentalQty: q, total, shortQty: Math.min(Number(it.shortQty) || 0, q), calc: fnRow ? (fnRow.calc || null) : null };
+        // What this function LOADS: its need less the pieces already standing at the venue from the day before (the date columns' rule). Functions of one
+        // date at one venue share the pieces, so the one with the largest need carries that day's load and the others load nothing new.
+        let load = q;
+        const fnKey = String(mpFns[invFn]?.fnIdx ?? invFn);
+        const fnDate = String(mpFns[invFn]?.date || "").slice(0, 10);
+        const dcol = dateCols.find(c => c.date === fnDate);
+        if (dcol) {
+          const chain = dcol.venueChains.find(days => days.some(d => d.date === fnDate && d.maps.some(m => m.key === fnKey)));
+          if (chain) {
+            const needs = rowNeeds(it);
+            const day = chain.find(d => d.date === fnDate);
+            const top = day.maps.reduce((best, m) => ((needs.get(m.key) || 0) > (needs.get(best.key) || 0) ? m : best), day.maps[0]);
+            load = top.key === fnKey ? Math.min(q, loadOnDate([chain], fnDate, needOfFn(it))) : 0;
+          }
+        }
+        return { ...it, src: it, qty: load, rentalQty: q, total, shortQty: Math.min(Number(it.shortQty) || 0, q), calc: fnRow ? (fnRow.calc || null) : null };
       }).filter(Boolean)
     : blockedItemsGrouped;
   const invWholeOnly = invScoped ? blockedItemsGrouped.length - invShown.length : 0;
@@ -5906,7 +5921,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                    header row instead, labeling the column once no matter how far down the list
                    you've scrolled. */
                 (() => {
-                  const anyRentalQty = !invScoped && invShown.some(it => Number(it.rentalQty ?? it.qty) !== (Number(it.qty) || 0));
+                  const anyRentalQty = invShown.some(it => Number(it.rentalQty ?? it.qty) !== (Number(it.qty) || 0));
                   const qtyHeaderLabel = anyRentalQty ? "To load" : "Qty";
                   return (
                 /* Two earlier attempts at pinning this: a plain `sticky` while the card still had
@@ -5947,7 +5962,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                     // a Repeat-discounted reuse and a fresh unit can bill at different rates within
                     // the same merged line.
                     const rentalQty = Number(it.rentalQty ?? it.qty) || 0;
-                    const showRentalQty = !invScoped && rentalQty !== (Number(it.qty) || 0);
+                    const showRentalQty = rentalQty !== (Number(it.qty) || 0);
                     const avgRate = rentalQty > 0 ? Math.round((Number(it.total) || 0) / rentalQty) : (Number(it.unit) || 0);
                     // ── WHY THE TOTAL IS NOT ALWAYS RATE × QTY ──
                     // On rows pushed from Deal Check, `unit` and `total` are independent fields:
@@ -6024,15 +6039,11 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                                 {it.isSwapped && <div className="text-sky-600 mt-0.5">swapped in for {it.swappedFrom}</div>}
                                 {/* One function's view shows what it NEEDS on site (181 on the 20th). Pieces already standing from the day before are not
                                     loaded again, so say how many of them are already there when the date column holds fewer (137 to load). */}
-                                {invScoped && it.src && (() => {
-                                  const fnDate = String(mpFns[invFn]?.date || "").slice(0, 10);
-                                  const col = dateCols.find(c => c.date === fnDate);
-                                  if (!col) return null;
-                                  const load = qtyOnDate(col, it.src);
-                                  const needs = rowNeeds(it.src);
-                                  const dayMax = Math.max(0, ...col.venueChains.flatMap(days => days.filter(d => d.date === fnDate).flatMap(d => d.maps)).map(m => needs.get(m.key) || 0));
-                                  if (!(load < it.qty) || it.qty < dayMax) return null;
-                                  return <div className="text-blue-600 mt-0.5">{it.qty - load} already at the venue from the day before — {load} to load on {col.label}</div>;
+                                {invScoped && it.src && it.qty < it.rentalQty && (() => {
+                                  const dl = (() => { try { return new Date(String(mpFns[invFn]?.date || "").slice(0, 10) + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short" }); } catch { return ""; } })();
+                                  return <div className="text-blue-600 mt-0.5">{it.qty > 0
+                                    ? `${it.rentalQty - it.qty} already at the venue from the day before — ${it.qty} to load${dl ? " on " + dl : ""}`
+                                    : "Nothing new to load: these pieces are already at the venue (standing from the day before, or shared with the largest function that day)"}</div>;
                                 })()}
                                 {invFinish.paintFor(it) && <div className="text-pink-700 mt-0.5">🎨 Paint: {invFinish.paintFor(it)}</div>}
                               </div>
