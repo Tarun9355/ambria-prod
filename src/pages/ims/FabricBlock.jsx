@@ -2,7 +2,7 @@ import { useState } from "react";
 import { thumbUrl } from "../../lib/studio/thumb.js";
 
 // The Fabric department's inventory block, folded to what a planner reads: three fabrics (Liza, Velvet,
-// Wall Masking), each with its image and total, collapsed by default. Opening one (any number can be open) shows the colour(s)
+// Wall Masking), each with its image and total, collapsed by default. Opening one (the one that was open closes) shows the colour(s)
 // allocated and a zone-by-zone breakdown — how many units each zone takes, how the fabric is applied there, and the zone's own photo.
 // Data comes from lib/ims/fabricGroups.js. When the booking's functions fall on two or more dates (fnDates[fi] = the date of function fi), each
 // fabric also shows how much of it is used on each date - a total per date on its card, and one column per date beside every zone.
@@ -120,13 +120,13 @@ const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 const dayLabel = (d) => { try { return new Date(d + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short" }); } catch { return d; } };
 
 export default function FabricBlock({ groups, fmt, onZoom, fnDates }) {
-  // The fabrics whose detail is open — none at first; each card toggles its own, so any number can be open at once.
+  // The fabric whose detail is open — none at first; opening one closes the one that was open, and tapping the open one closes it.
   const [open, setOpen] = useState(() => new Set());
   if (!groups || !groups.length) return null;
   // the dates fabric is used on (only worth showing from two dates up), and a zone's date through its function
   const dateOf = (z) => (z.fi != null && fnDates ? String(fnDates[z.fi] || "").slice(0, 10) : "");
   const dates = [...new Set(groups.flatMap((g) => g.zones.map(dateOf)).filter(Boolean))].sort();
-  const toggle = (key) => setOpen((prev) => { const next = new Set(prev); if (next.has(key)) next.delete(key); else next.add(key); return next; });
+  const toggle = (key) => setOpen((prev) => (prev.has(key) ? new Set() : new Set([key])));
 
   return (
     <div className="rounded-xl bg-white ring-1 ring-gray-100 shadow-[0_1px_2px_rgba(16,24,40,0.05)] p-2.5 space-y-3">

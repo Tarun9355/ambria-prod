@@ -20,6 +20,7 @@ import { getFloralMode } from "../../lib/rateCard";
 import { RC_UNITS } from "../../lib/studio/constants";
 import { DEFAULT_TRUSS_RATES, DEFAULT_MASKING_RATES, DEFAULT_PLATFORM_RATES, TRUSS_SHAPES, TRUSS_MATERIALS, DRAPE_DENSITIES } from "../../lib/studio/taxonomy";
 import { GUEST_FABRIC_MULTIPLIER, guestFabricMultiplier } from "../../lib/studio/pricing";
+import { paletteMatches } from "../../components/studio/filterUI.jsx";
 
 // Same canonical unit list as the Mandi Prices panel's own flower-unit dropdown (below), plus two
 // descriptive fallbacks ("pcs"/"made") that recipe ingredient rows have always defaulted their
@@ -64,6 +65,42 @@ function mandiPhotoDetails(flower, v) {
     ...(prev != null ? [["Previous price", `₹${Number(prev).toLocaleString("en-IN")}`]] : []),
     ...(markup > 0 ? [["Markup", `${markup}% → Studio rate ₹${Math.round(price * (1 + markup / 100)).toLocaleString("en-IN")}`]] : []),
   ];
+}
+
+// The catalogue spelling of a typed colour: same letters in any case or spacing give back the catalogue's own name ("rose gold" -> "Rose Gold"); anything
+// else gives "" (not a catalogue colour).
+const catalogueColour = (typed, names) => {
+  const key = String(typed || "").trim().replace(/\s+/g, " ").toLowerCase();
+  return key ? (names.find((n) => String(n).trim().replace(/\s+/g, " ").toLowerCase() === key) || "") : "";
+};
+
+// A colour box that only ever hands back a colour from the Colour Catalogue. Picking from the dropdown commits at once; typing is checked when the field
+// is left (or Enter): a different case of a catalogue colour is replaced by the catalogue's own spelling, anything not in the catalogue is refused and the
+// box goes back to what it held, with a note why. A colour already in the row that is not in the catalogue is left alone until the person changes it.
+function CatalogueColourInput({ value, names, listId, className, onCommit }) {
+  const [draft, setDraft] = useState(null);
+  const [err, setErr] = useState("");
+  const settle = (raw) => {
+    const typed = String(raw ?? "").trim();
+    if (typed === String(value ?? "").trim()) { setDraft(null); setErr(""); return; }
+    if (!typed) { setDraft(null); setErr(""); return; }
+    if (!names.length) { onCommit(typed); setDraft(null); return; } // no catalogue to check against
+    const canon = catalogueColour(typed, names);
+    if (canon) { onCommit(canon); setDraft(null); setErr(""); return; }
+    setDraft(null);
+    setErr(`"${typed}" is not in the Colour Catalogue - pick one from the list (a colour that is not in the list has to be added to the colour catalogue first).`);
+    setTimeout(() => setErr(""), 7000);
+  };
+  return (
+    <>
+      <input type="text" value={draft !== null ? draft : (value || "")} list={listId} placeholder="Type or pick a colour…" className={className}
+        aria-invalid={err ? true : undefined}
+        onChange={(e) => { const v = e.target.value; setDraft(v); setErr(""); if (names.includes(v)) settle(v); }}
+        onBlur={(e) => settle(e.target.value)}
+        onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); settle(e.currentTarget.value); } else if (e.key === "Escape") { setDraft(null); setErr(""); } }} />
+      {err && <p role="alert" className="mt-0.5 text-[10px] leading-snug text-red-600">{err}</p>}
+    </>
+  );
 }
 
 function withPrevPrice(history, price) {
@@ -254,6 +291,8 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
   // mobile has no single file input that reliably offers both, so the "+" button opens this tiny
   // 2-option menu instead of a bare <input type=file>.
   const [fabricPhotoMenuOpen, setFabricPhotoMenuOpen] = useState(null);
+  const [addColourErr, setAddColourErr] = useState("");
+  const [fabricSearch, setFabricSearch] = useState({}); // per fabric table: { lizaStock: "ivo", ... }
   const [sMandiMapPicker, setSMandiMapPicker] = useState(null); // { flowerId } — inventory picker for a "Mapping" flower
   const [sMandiMapSearch, setSMandiMapSearch] = useState("");
 
@@ -2105,6 +2144,39 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
         const updateRates = (key, val) => setTrussInv((ti) => ({ ...ti, rates: { ...(ti.rates || {}), [key]: parseFloat(val) || 0 } }));
         const updateStock = (which, idx, key, val) => setTrussInv((ti) => { const next = [...(ti[which] || [])]; next[idx] = { ...next[idx], [key]: (key === "colour" || key === "grade" || key === "hex" || key === "photo") ? val : (parseFloat(val) || 0) }; return { ...ti, [which]: next }; });
         const addStockRow = (which, qtyField) => setTrussInv((ti) => ({ ...ti, [which]: [...(ti[which] || []), { colour: colourCat[0] || "White", [qtyField]: 0, [`${qtyField}New`]: 0 }] }));
+        // One colour into all three fabrics at once: Liza (kg), Wall Masking and Velvet Curtains (pieces) share the same colour list, so a colour picked here
+        // gets a row (0 old / 0 new) in each table that does not have it yet, with the reference photo of whichever table already has it.
+        const FABRIC_TABLES = [["lizaStock", "stockKg"], ["maskingStock", "stockPieces"], ["curtainStock", "stockPieces"]];
+        const sameColour = (a, b) => String(a || "").trim().toLowerCase() === String(b || "").trim().toLowerCase();
+        const hasColour = (which, name) => (Array.isArray(trussInv[which]) ? trussInv[which] : []).some((r) => sameColour(r.colour, name));
+        const inAllThree = (name) => FABRIC_TABLES.every(([which]) => hasColour(which, name));
+        const addColourToAll = (rawName) => {
+          const typed = String(rawName || "").trim();
+          if (!typed) return;
+          const name = colourCat.length ? catalogueColour(typed, colourCat) : typed;
+          if (!name) { setAddColourErr(`"${typed}" is not in the Colour Catalogue - pick one from the chips above (a colour that is not in the list has to be added to the colour catalogue first).`); return; }
+          setAddColourErr("");
+          setTrussInv((ti) => {
+            const photo = FABRIC_TABLES.map(([w]) => (ti[w] || []).find((r) => sameColour(r.colour, name) && r.photo)?.photo).find(Boolean);
+            const next = { ...ti };
+            FABRIC_TABLES.forEach(([which, qtyField]) => {
+              const rows = Array.isArray(ti[which]) ? ti[which] : [];
+              if (rows.some((r) => sameColour(r.colour, name))) return;
+              next[which] = [...rows, { colour: name, [qtyField]: 0, [`${qtyField}New`]: 0, ...(photo ? { photo } : {}) }];
+            });
+            return next;
+          });
+        };
+        // Tapping a colour that is already in all three takes it out of all three again. Rows that hold stock are not dropped silently.
+        const removeColourFromAll = async (name) => {
+          const holding = FABRIC_TABLES.flatMap(([which, qtyField]) => (trussInv[which] || []).filter((r) => sameColour(r.colour, name) && ((Number(r[qtyField]) || 0) + (Number(r[`${qtyField}New`]) || 0)) > 0));
+          if (holding.length && !(await confirm({ title: `Remove ${name} from all three fabrics?`, body: `${holding.length === 1 ? "One of its rows still holds" : "Some of its rows still hold"} stock; that stock will be gone from the count.` }))) return;
+          setTrussInv((ti) => {
+            const next = { ...ti };
+            FABRIC_TABLES.forEach(([which]) => { next[which] = (ti[which] || []).filter((r) => !sameColour(r.colour, name)); });
+            return next;
+          });
+        };
         const removeStockRow = async (which, idx) => {
           if (!(await confirm({ title: "Remove this stock row?", body: "It will no longer count towards the truss / fabric stock." }))) return;
           setTrussInv((ti) => ({ ...ti, [which]: (ti[which] || []).filter((_, j) => j !== idx) }));
@@ -2115,6 +2187,9 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
         // third purchase/markup tier was redundant on top of it.
         const renderFabric = (title, emoji, themeColor, which, qtyField, qtyLabel, rentalKey, rentalKeyNew) => {
           const stock = Array.isArray(trussInv[which]) ? trussInv[which] : [];
+          // Smart search over the colour names (same matcher as Build's Fabric Palette): order-free, case- and punctuation-free, so "gold rose" finds "Rose Gold dark".
+          const q = (fabricSearch[which] || "").trim();
+          const matchCount = q ? stock.filter((r) => paletteMatches(r.colour, q)).length : stock.length;
           return (
             <div className={`bg-${themeColor}-50 border border-${themeColor}-200 rounded-2xl p-5 space-y-3`}>
               <div><p className={`font-bold text-${themeColor}-900`}>{emoji} {title}</p><p className={`text-xs text-${themeColor}-700 mt-0.5`}>Per-colour Old + New stock quantities + their two rental rates. Update the live quantities after each washing cycle.</p></div>
@@ -2125,7 +2200,14 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
               <p className={`text-[10px] text-${themeColor}-600`}>Deal Check's own per-colour view still consumes Old stock first, then New — anything beyond both also bills at the New rate. Build itself skips this and just bills whichever tier the salesperson picked, flat.</p>
               <div className={`bg-white border border-${themeColor}-100 rounded-lg overflow-hidden`}>
                 <div className={`flex items-center justify-between px-3 py-2 bg-${themeColor}-100`}>
-                  <p className={`text-xs font-bold text-${themeColor}-800`}>Per-colour Stock</p>
+                  <p className={`text-xs font-bold text-${themeColor}-800 shrink-0`}>Per-colour Stock{q && <span className="ml-1.5 font-medium text-gray-500">{matchCount} of {stock.length}</span>}</p>
+                  {stock.length > 0 && (
+                    <div className="relative flex-1 min-w-0 max-w-xs mx-3">
+                      <input type="search" value={fabricSearch[which] || ""} onChange={(e) => setFabricSearch((p) => ({ ...p, [which]: e.target.value }))} placeholder="Search colours…" aria-label={`Search ${title} colours`}
+                        className={`w-full border border-${themeColor}-200 rounded-lg bg-white pl-7 pr-2 py-1 text-xs placeholder:text-gray-400`} />
+                      <span aria-hidden="true" className="absolute left-2 top-1/2 -translate-y-1/2 text-[11px] text-gray-400">🔍</span>
+                    </div>
+                  )}
                   <button onClick={() => addStockRow(which, qtyField)} className={`text-xs bg-${themeColor}-600 hover:bg-${themeColor}-700 text-white px-2.5 py-1 rounded font-medium`}>+ Add Colour</button>
                 </div>
                 {stock.length === 0 ? (
@@ -2137,11 +2219,13 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                   // to actually type a name. Scrolling sideways on a min-width table (same fix as
                   // the Floral mandi shopping list) keeps every column a real, usable size instead.
                   <div className="overflow-x-auto">
-                  <table className="w-full text-xs min-w-[560px]">
+                  <table className="w-full text-xs min-w-[620px]">
                     <datalist id={`${which}-colours`}>{colourCat.map((cn) => <option key={cn} value={cn} />)}</datalist>
-                    <thead className="text-gray-500"><tr><th className="px-2 py-1.5 text-left w-14">Photo</th><th className="px-2 py-1.5 text-left">Colour</th><th className="px-2 py-1.5 text-center w-20">Old ({qtyLabel})</th><th className={`px-2 py-1.5 text-center text-${themeColor}-700 w-20`}>New ({qtyLabel})</th><th className="px-2 py-1.5 text-center w-16">Total</th><th className="px-2 py-1.5 w-10"></th></tr></thead>
+                    <thead className="text-gray-500"><tr><th className="px-2 py-1.5 text-left w-14">Photo</th><th className="px-2 py-1.5 text-left">Colour</th><th className="px-2 py-1.5 text-center w-20" title="Off = this colour is not offered for this fabric in Build's Fabric Palette">In Build</th><th className="px-2 py-1.5 text-center w-20">Old ({qtyLabel})</th><th className={`px-2 py-1.5 text-center text-${themeColor}-700 w-20`}>New ({qtyLabel})</th><th className="px-2 py-1.5 text-center w-16">Total</th><th className="px-2 py-1.5 w-10"></th></tr></thead>
                     <tbody>
+                      {q && matchCount === 0 && <tr><td colSpan={7} className="px-3 py-4 text-center text-xs text-gray-400 italic">No colour matches "{q}"</td></tr>}
                       {stock.map((row, i) => {
+                        if (q && !paletteMatches(row.colour, q)) return null;
                         const oldQ = Number(row[qtyField]) || 0;
                         const newQ = Number(row[`${qtyField}New`]) || 0;
                         const photoKey = `${which}:${i}`;
@@ -2192,7 +2276,16 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                               })()}
                             </td>
                             <td className="px-2 py-1.5">
-                              <input type="text" value={row.colour || ""} list={`${which}-colours`} placeholder="Type or pick a colour…" onChange={(e) => updateStock(which, i, "colour", e.target.value)} className={`w-full border border-${themeColor}-200 rounded px-2 py-1 text-xs`} />
+                              <CatalogueColourInput value={row.colour || ""} names={colourCat} listId={`${which}-colours`} onCommit={(v) => updateStock(which, i, "colour", v)} className={`w-full border border-${themeColor}-200 rounded px-2 py-1 text-xs`} />
+                            </td>
+                            <td className="px-2 py-1.5 text-center">
+                              {/* Availability, per fabric: off keeps the row (stock, photo) but Build's Fabric Palette stops offering this colour for this fabric. */}
+                              <button type="button" role="switch" aria-checked={!row.hideInBuild} aria-label={`${row.colour || "Colour"} available in Build`} onClick={() => setTrussInv((ti) => { const next = [...(ti[which] || [])]; next[i] = { ...next[i], hideInBuild: !next[i].hideInBuild }; return { ...ti, [which]: next }; })}
+                                title={row.hideInBuild ? "Hidden in Build — tap to show" : "Shown in Build — tap to hide"}
+                                className={"relative inline-flex h-5 w-9 items-center rounded-full transition-colors " + (row.hideInBuild ? "bg-gray-300" : `bg-${themeColor}-600`)}>
+                                <span className={"inline-block h-4 w-4 rounded-full bg-white shadow transition-transform " + (row.hideInBuild ? "translate-x-0.5" : "translate-x-[18px]")} />
+                              </button>
+                              <div className={"text-[9px] mt-0.5 " + (row.hideInBuild ? "text-gray-400" : "text-gray-500")}>{row.hideInBuild ? "Hidden" : "Shown"}</div>
                             </td>
                             <td className="px-2 py-1.5 text-center"><input type="number" min="0" step="1" value={row[qtyField] || 0} onChange={(e) => updateStock(which, i, qtyField, e.target.value)} className={`w-20 border border-gray-300 rounded px-2 py-1 text-xs font-bold text-center`} title="Old fabric in stock" /></td>
                             <td className="px-2 py-1.5 text-center"><input type="number" min="0" step="1" value={row[`${qtyField}New`] || 0} onChange={(e) => updateStock(which, i, `${qtyField}New`, e.target.value)} className={`w-20 border border-${themeColor}-300 rounded px-2 py-1 text-xs font-bold text-center text-${themeColor}-800`} title="New fabric in stock" /></td>
@@ -2233,6 +2326,34 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                   </div>
                 </div>
               </div>
+            </div>
+            <div className="bg-white border border-indigo-200 rounded-2xl p-4 space-y-2.5">
+              <div>
+                <p className="font-bold text-indigo-900">🎨 Add a colour to all three fabrics</p>
+                <p className="text-xs text-gray-500 mt-0.5">Tap a colour and it gets a row (0 old / 0 new) in Liza Fabric, Wall Masking Panels and Velvet Curtains together. A colour already in a table is left as it is. Tap a ticked colour to take it out of all three again.</p>
+              </div>
+              {colourCat.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {(settings.colourCatalogue || []).map((c) => {
+                    const done = inAllThree(c.name);
+                    const partial = !done && FABRIC_TABLES.some(([which]) => hasColour(which, c.name));
+                    return (
+                      <button key={c.name} type="button" onClick={() => (done ? removeColourFromAll(c.name) : addColourToAll(c.name))}
+                        title={done ? "In all three fabrics — tap to remove from all three" : partial ? "In some of the three — tap to add to the rest" : "Add to all three fabrics"}
+                        className={"inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium " + (done ? "border-indigo-300 bg-indigo-50 text-indigo-800 hover:bg-red-50 hover:border-red-300 hover:text-red-700" : partial ? "border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100" : "border-indigo-200 bg-white text-indigo-800 hover:bg-indigo-50")}>
+                        {c.hex && <span className="h-3 w-3 rounded-full border border-black/10" style={{ background: c.hex }} />}
+                        {c.name}{done && <span aria-hidden="true"> ✓</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              <form className="flex items-center gap-2" onSubmit={(e) => { e.preventDefault(); const f = e.currentTarget; addColourToAll(f.elements.colourName.value); f.reset(); }}>
+                <input name="colourName" type="text" list="all-three-colours" placeholder="Type a colour from the catalogue…" onChange={() => addColourErr && setAddColourErr("")} className="flex-1 min-w-0 border border-gray-300 rounded-lg px-3 py-1.5 text-sm" />
+                <datalist id="all-three-colours">{colourCat.map((cn) => <option key={cn} value={cn} />)}</datalist>
+                <button type="submit" className="shrink-0 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 text-xs font-semibold">+ Add to all three</button>
+              </form>
+              {addColourErr && <p role="alert" className="text-[11px] text-red-600">{addColourErr}</p>}
             </div>
             {renderFabric("Liza Fabric", "🧣", "rose", "lizaStock", "stockKg", "kg", "lizaKgRate", "lizaKgRateNew")}
             {renderFabric("Wall Masking Panels", "🧱", "orange", "maskingStock", "stockPieces", "pcs", "maskingPieceRate", "maskingPieceRateNew")}
