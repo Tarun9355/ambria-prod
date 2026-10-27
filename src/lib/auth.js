@@ -19,34 +19,21 @@ export async function fetchProfile() {
 }
 
 /**
- * Authenticate a staff member.
- *
- * Dual-mode for a zero-downtime migration:
- *   1. Try Supabase Auth (the secure target — hashed passwords, real per-user JWT, RLS).
- *   2. If that fails (account not migrated yet, or RLS not yet enabled), fall back to the legacy
- *      `users`-table check so nobody is locked out mid-rollout.
- * Once every account is migrated and RLS is enabled, the legacy path simply stops working (the anon
- * key can no longer read `users`) and only Supabase Auth succeeds — the intended end state.
+ * Authenticate a staff member via Supabase Auth — hashed password, real per-user JWT, subject to
+ * RLS on every subsequent request. The old dual-mode fallback (a plaintext check against
+ * `users.password`) is gone for good: that column was dropped in migration 005, so the fallback was
+ * already dead code, not a live second path — removed here instead of left as a trap.
  */
 export async function login(username, password) {
-  // 1) Supabase Auth path
-  try {
-    const { error } = await supabase.auth.signInWithPassword({ email: usernameToEmail(username), password });
-    if (!error) {
-      const profile = await fetchProfile();
-      if (profile && profile.active !== false) { localStorage.setItem(STORAGE_KEY, JSON.stringify(profile)); return profile; }
-      await supabase.auth.signOut(); // signed in but no/inactive profile → don't leave a half-session
-    }
-  } catch { /* fall through to legacy */ }
-
-  // 2) Legacy fallback (works only while RLS is still OFF; removed after cutover)
-  const { data, error } = await supabase
-    .from("users").select("*").eq("username", username).eq("active", true).maybeSingle();
-  if (error) throw error;
-  if (!data || data.password !== password) throw new Error("Invalid username or password");
-  const { password: _pw, ...safeUser } = data;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(safeUser));
-  return safeUser;
+  const { error } = await supabase.auth.signInWithPassword({ email: usernameToEmail(username), password });
+  if (error) throw new Error("Invalid username or password");
+  const profile = await fetchProfile();
+  if (!profile || profile.active === false) {
+    await supabase.auth.signOut(); // signed in but no/inactive profile → don't leave a half-session
+    throw new Error("Invalid username or password");
+  }
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(profile));
+  return profile;
 }
 
 export async function logout() {
