@@ -3280,9 +3280,14 @@ export default function StudioApp() {
   // ── Realtime: truss_inventory (one row, key "main") — the Liza / Wall Masking / Velvet Curtain colour stock. IMS → Planning → Fabric Stock edits it (a colour
   // switched off for Build, a new colour, stock counts), and Build's Fabric Palette reads it through studioFloralData.trussInv, so a change reaches an open
   // Studio tab without a reload. ──
+  // Coming back to this tab (from IMS in another tab or window) re-reads it too, so the colour list is fresh even where the realtime feed is not running.
   useEffect(() => {
     const ch = subscribeTable("truss_inventory", () => { refreshStudioFloralData(); });
-    return () => { try { supabase.removeChannel(ch); } catch { /* ignore */ } };
+    let last = 0;
+    const onBack = () => { if (document.visibilityState === "hidden" || Date.now() - last < 4000) return; last = Date.now(); refreshStudioFloralData(); };
+    document.addEventListener("visibilitychange", onBack);
+    window.addEventListener("focus", onBack);
+    return () => { try { supabase.removeChannel(ch); } catch { /* ignore */ } document.removeEventListener("visibilitychange", onBack); window.removeEventListener("focus", onBack); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   // ── Realtime: the five structure rate lists (migration 043) — each its own table now, not a
   // settings row, so each gets its own re-fetch-and-set subscription instead of the generic
