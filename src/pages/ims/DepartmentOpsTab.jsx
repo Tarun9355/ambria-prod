@@ -1580,14 +1580,42 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       return { date, label, names, venueChains, entries };
     });
   }, [sel, inventory]);
-  // how many of this row one function needs: Deal Check's per-function need, else the function's zone lists (production/buying lines: none)
-  // The zone lists count kit parts too (a Crystal Vedi carries 12 WARM LED), which Deal Check files as lines with no function of their own; so the
-  // need is the larger of Deal Check's per-function figure and what the function's zone lists use.
-  const needOfFn = (it) => (m) => {
-    const zone = it.prodOrBuy ? 0 : ((it.invId && m.maps.byId.get(String(it.invId))) || m.maps.byName.get(String(it.name || "").trim().toLowerCase()) || 0);
-    if (it.byFn) { const r = it.byFn[m.key]; return Math.max(Number(r?.rentalQty ?? r?.qty) || 0, zone); }
-    return zone;
+  // How many of this row each function needs, by function key. Deal Check's per-function figure (byFn[function].rentalQty) is the base; the function's
+  // zone lists also count the parts of its kits (a Crystal Vedi carries 12 WARM LED), which Deal Check files under the row with no function of its
+  // own. Those extra parts are added to the function that has them, but never beyond what Deal Check says the row holds that byFn does not
+  // (rentalQty minus the sum of byFn) - the zone lists can run ahead of what was billed (kit parts edited in Deal Check, skipped cards), and the
+  // total must not. A row with no byFn is read from the zone lists alone; production/buying lines have no per-function need.
+  const allFnMaps = useMemo(() => mpFns.map((fd, fi) => ({ key: String(fd?.fnIdx ?? fi), maps: qtyMapsOfFn(fd) })), [sel, inventory]);
+  const needsCache = useMemo(() => new WeakMap(), [allFnMaps]);
+  // scales whole numbers down so they add up to exactly `target` (largest remainders get the leftover units)
+  const scaleInts = (list, target) => {
+    const sum = list.reduce((a, x) => a + x.n, 0);
+    if (!(sum > target) || sum <= 0) return list.map(x => ({ ...x }));
+    const raw = list.map(x => ({ ...x, exact: (x.n * target) / sum }));
+    const out = raw.map(x => ({ ...x, n: Math.floor(x.exact) }));
+    let left = target - out.reduce((a, x) => a + x.n, 0);
+    [...out].sort((a, b) => (b.exact - Math.floor(b.exact)) - (a.exact - Math.floor(a.exact))).forEach(x => { if (left > 0 && x.exact - Math.floor(x.exact) > 0) { x.n += 1; left -= 1; } });
+    return out;
   };
+  const rowNeeds = (it) => {
+    if (needsCache.has(it)) return needsCache.get(it);
+    const zoneOf = (m) => (it.prodOrBuy ? 0 : ((it.invId && m.maps.byId.get(String(it.invId))) || m.maps.byName.get(String(it.name || "").trim().toLowerCase()) || 0));
+    const out = new Map();
+    if (it.byFn) {
+      const baseOf = (k) => Number(it.byFn[k]?.rentalQty ?? it.byFn[k]?.qty) || 0;
+      const baseAll = Object.keys(it.byFn).reduce((sum, k) => sum + baseOf(k), 0);
+      const unattributed = Math.max(0, (Number(it.rentalQty ?? it.qty) || 0) - baseAll);
+      const extras = scaleInts(allFnMaps.map(m => ({ key: m.key, n: Math.max(0, zoneOf(m) - baseOf(m.key)) })), unattributed);
+      allFnMaps.forEach(m => out.set(m.key, baseOf(m.key) + (extras.find(e => e.key === m.key)?.n || 0)));
+    } else {
+      // no per-function record: the zone lists, scaled down if they add up to more than the line holds (they can run ahead of what was billed)
+      const cap = Number(it.rentalQty ?? it.qty) || 0;
+      scaleInts(allFnMaps.map(m => ({ key: m.key, n: zoneOf(m) })), cap).forEach(z => out.set(z.key, z.n));
+    }
+    needsCache.set(it, out);
+    return out;
+  };
+  const needOfFn = (it) => { const needs = rowNeeds(it); return (m) => needs.get(m.key) || 0; };
   const qtyOnDate = (col, it) => loadOnDate(col.venueChains, col.date, needOfFn(it));
   // the part of a row that no date column holds
   const otherQty = (it) => {
@@ -1601,7 +1629,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   };
   const invShown = invScoped
     ? blockedItemsGrouped.map(it => {
-        const q = (it.invId && invFnQty.byId.get(String(it.invId))) || invFnQty.byName.get(String(it.name || "").trim().toLowerCase()) || 0;
+        const q = rowNeeds(it).get(String(mpFns[invFn]?.fnIdx ?? invFn)) || 0;
         if (!q) return null;
         // byFn[invFn] (Deal Check's own per-function record, dealcheck/DealCheckOverlay.jsx's cost
         // rollup) is this function's REAL billed total — read it directly rather than estimating a
@@ -1617,18 +1645,18 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         // under the row with no function of their own, so byFn's total does not hold them. Priced here at the rate of the part of the line byFn does not
         // cover, so qty × rate agrees with the total (181 × ₹75, not 181 shown against the money for 169).
         let kitPartsValue = 0;
-        if (fnRow) {
-          const fnRental = Number(fnRow.rentalQty ?? fnRow.qty) || 0;
+        if (it.byFn) {
+          const fnRental = fnRow ? (Number(fnRow.rentalQty ?? fnRow.qty) || 0) : 0;
           const extraQty = Math.max(0, q - fnRental);
           if (extraQty > 0) {
             const rows = Object.values(it.byFn);
             const unQty = (Number(it.rentalQty ?? it.qty) || 0) - rows.reduce((sum, r) => sum + (Number(r.rentalQty ?? r.qty) || 0), 0);
             const unTotal = (Number(it.total) || 0) - rows.reduce((sum, r) => sum + (Number(r.total) || 0), 0);
-            const rate = unQty > 0 && unTotal > 0 ? unTotal / unQty : (fnRental > 0 ? (Number(fnRow.total) || 0) / fnRental : 0);
+            const rate = unQty > 0 && unTotal > 0 ? unTotal / unQty : (fnRental > 0 ? (Number(fnRow.total) || 0) / fnRental : (Number(it.total) || 0) / Math.max(1, Number(it.rentalQty ?? it.qty) || 1));
             kitPartsValue = extraQty * rate;
           }
         }
-        const total = fnRow ? Math.round((Number(fnRow.total) || 0) + kitPartsValue) : Math.round((Number(it.total) || 0) * ((Number(it.qty) || 0) > 0 ? q / Number(it.qty) : 1));
+        const total = it.byFn ? Math.round((Number(fnRow?.total) || 0) + kitPartsValue) : Math.round((Number(it.total) || 0) * ((Number(it.qty) || 0) > 0 ? q / Number(it.qty) : 1));
         return { ...it, qty: q, rentalQty: q, total, shortQty: Math.min(Number(it.shortQty) || 0, q), calc: fnRow ? (fnRow.calc || null) : null };
       }).filter(Boolean)
     : blockedItemsGrouped;
