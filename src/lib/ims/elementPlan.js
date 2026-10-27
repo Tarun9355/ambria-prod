@@ -132,3 +132,36 @@ export function planElements({ functionsDetail, zoneLabelOf, itemsById, blocks, 
   });
   return { rows, over };
 }
+
+// What the Inventory blocked list says about the lines that have choices. The list is Deal Check's snapshot, so a line is filed under sales' 1st design;
+// once Planning decides, the card shows what is actually going out. `rows` are the list's lines ({ id, invId, name, photo, qty, rentalQty, prodOrBuy }),
+// `planRows` come from planElements. Returns Map<line id, { name, photo, notes: [{ text, tone: "ok" | "wait" }] }> - `name` and `photo` only when the
+// decided design replaces the whole line (one decision, covering all of its quantity), else the decisions are told in notes and the line is left as it is.
+export function choiceNotesForRows(rows, planRows) {
+  const out = new Map();
+  const lineOf = (firstId) => (rows || []).find((x) => x && !x.prodOrBuy && x.invId != null && String(x.invId) === String(firstId));
+  const photoOf = (it) => (Array.isArray(it?.photoUrls) && it.photoUrls[0]) || it?.img || "";
+  const byLine = new Map();
+  (planRows || []).forEach((r) => {
+    const line = lineOf(r.prefs?.[0]?.id);
+    if (!line) return;
+    if (!byLine.has(line.id)) byLine.set(line.id, { line, plan: [] });
+    byLine.get(line.id).plan.push(r);
+  });
+  byLine.forEach(({ line, plan }) => {
+    const firstName = String(line.name || plan[0].prefs[0].name || "").trim();
+    const notes = [];
+    let swap = null;
+    plan.forEach((r) => {
+      const dec = r.decidedId ? [...(r.options || []), r.manual].filter(Boolean).find((o) => String(o.id) === String(r.decidedId)) : null;
+      if (r.other) notes.push({ text: `${r.qty} arranged separately - not from stock`, tone: "ok" });
+      else if (dec && String(dec.id) !== String(r.prefs[0].id)) {
+        notes.push({ text: `${r.qty} × ${dec.name} chosen in Planning (sales' 1st choice: ${firstName})`, tone: "ok" });
+        if (plan.length === 1 && r.qty >= (Number(line.rentalQty ?? line.qty) || 0)) swap = { name: dec.name, photo: photoOf(dec.item) };
+      } else if (dec) notes.push({ text: `${r.qty} × ${dec.name} confirmed in Planning`, tone: "ok" });
+      else notes.push({ text: `${r.qty} not decided yet: ${(r.options || []).map((o, i) => `${i + 1} ${o.name}`).join(" · ")}`, tone: "wait" });
+    });
+    out.set(line.id, { ...(swap ? { name: swap.name, photo: swap.photo } : {}), notes: swap ? [{ text: `Chosen in Planning - sales' 1st choice was ${firstName}`, tone: "ok" }] : notes });
+  });
+  return out;
+}

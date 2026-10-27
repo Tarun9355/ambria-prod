@@ -148,3 +148,43 @@ describe("planElements — a decision that no longer applies holds nothing", () 
   });
 });
 
+
+import { choiceNotesForRows } from "./elementPlan.js";
+describe("choiceNotesForRows — the Inventory blocked list follows Planning's decisions", () => {
+  const opt = (id, name, photo) => ({ id, name, item: photo ? { id, name, img: photo } : null });
+  const row = (over = {}) => ({ key: "0|stage|p1", prefs: [{ id: "A", name: "Maroon Hack Jack" }, { id: "B", name: "Sona Gold Print" }], qty: 1, options: [opt("A", "Maroon Hack Jack", "a.jpg"), opt("B", "Sona Gold Print", "b.jpg")], decidedId: null, other: false, manual: null, ...over });
+  const lines = [{ id: "L1", invId: "A", name: "Cushion Cover Maroon Hack Jack", photo: "a.jpg", qty: 1, rentalQty: 1 }, { id: "L2", invId: "Z", name: "Chair", qty: 4 }];
+  it("a decided design replaces the whole line's name and photo", () => {
+    const m = choiceNotesForRows(lines, [row({ decidedId: "B" })]);
+    expect(m.get("L1")).toMatchObject({ name: "Sona Gold Print", photo: "b.jpg" });
+    expect(m.get("L1").notes[0].text).toMatch(/1st choice was Cushion Cover Maroon Hack Jack/);
+    expect(m.has("L2")).toBe(false);
+  });
+  it("deciding the 1st design confirms it and changes nothing", () => {
+    const g = choiceNotesForRows(lines, [row({ decidedId: "A" })]).get("L1");
+    expect(g.name).toBeUndefined();
+    expect(g.notes).toEqual([{ text: "1 × Maroon Hack Jack confirmed in Planning", tone: "ok" }]);
+  });
+  it("not decided: lists the choices, line untouched", () => {
+    const g = choiceNotesForRows(lines, [row()]).get("L1");
+    expect(g.name).toBeUndefined();
+    expect(g.notes[0]).toMatchObject({ tone: "wait" });
+    expect(g.notes[0].text).toMatch(/1 Maroon Hack Jack · 2 Sona Gold Print/);
+  });
+  it("arranged separately is said as such", () => {
+    expect(choiceNotesForRows(lines, [row({ other: true })]).get("L1").notes[0].text).toBe("1 arranged separately - not from stock");
+  });
+  it("a line shared by two elements keeps its name and tells each decision", () => {
+    const l2 = [{ ...lines[0], qty: 3, rentalQty: 3 }];
+    const g = choiceNotesForRows(l2, [row({ decidedId: "B" }), row({ key: "k2", qty: 2, decidedId: "A" })]).get("L1");
+    expect(g.name).toBeUndefined();
+    expect(g.notes.map((n) => n.tone)).toEqual(["ok", "ok"]);
+  });
+  it("a decision covering only part of the line leaves the line as it is", () => {
+    const l3 = [{ ...lines[0], qty: 3, rentalQty: 3 }];
+    expect(choiceNotesForRows(l3, [row({ decidedId: "B", qty: 1 })]).get("L1").name).toBeUndefined();
+  });
+  it("production and buying lines are never matched", () => {
+    expect(choiceNotesForRows([{ id: "P", invId: "A", name: "x", prodOrBuy: "production", qty: 1 }], [row()]).size).toBe(0);
+  });
+});

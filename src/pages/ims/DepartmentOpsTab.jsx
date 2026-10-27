@@ -14,7 +14,7 @@ import { prefsOf, floorSqftOf } from "../../lib/studio/carpetPrefs";
 import { carpetFloorsOf, planCarpets, carpetKey, carpetStockFor, validDecision } from "../../lib/ims/carpetPlan";
 import CarpetPickerModal from "./CarpetPickerModal.jsx";
 import ElementChoicePlan from "./ElementChoicePlan.jsx";
-import { planElements, elementStockFor, elementKey } from "../../lib/ims/elementPlan";
+import { planElements, elementStockFor, elementKey, choiceNotesForRows } from "../../lib/ims/elementPlan";
 import { loadOnDate } from "../../lib/ims/loadByDate";
 import { elementChoices } from "../../lib/studio/elementPrefs";
 import { orderZoneKeys } from "../../lib/ims/zoneOrder";
@@ -1683,6 +1683,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       }).filter(Boolean)
     : blockedItemsGrouped;
   const invWholeOnly = invScoped ? blockedItemsGrouped.length - invShown.length : 0;
+  // Overlays and cushion covers with choices: the list is filed under sales' 1st design, so what Planning decided (Fabric plan) is shown on the card - live,
+  // since it reads the same decisions the Fabric plan saves. Display only: the line's own quantity, price and id are untouched.
+  const choiceView = (dept === "Fabric" && sel) ? choiceNotesForRows(invShown, elementPlanOf().rows.filter(r => !invScoped || r.fi === (mpFns[invFn]?.fnIdx ?? invFn))) : new Map();
   const showDates = !invScoped && dateCols.length > 0;
   const anyOther = showDates && invShown.some(it => otherQty(it) > 0);
   const dateSpacers = showDates ? dateCols.length + (anyOther ? 1 : 0) - 1 : 0; // keeps the expanded sub-rows' qty/rate/total under their headers
@@ -6043,9 +6046,9 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                           layouts. */}
                       <div className="p-2.5 flex flex-wrap items-center gap-x-3 gap-y-2">
                           <div className="flex items-center gap-3 min-w-0 flex-1">
-                            {it.photo ? <img src={thumbUrl(it.photo, 48)} loading="lazy" decoding="async" alt="" onClick={() => setZoomImg(it.photo)} className="w-12 h-12 rounded-lg object-cover border cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-12 h-12 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-lg shrink-0">📦</div>}
+                            {(choiceView.get(it.id)?.name ? choiceView.get(it.id).photo : it.photo) ? <img src={thumbUrl(choiceView.get(it.id)?.name ? choiceView.get(it.id).photo : it.photo, 48)} loading="lazy" decoding="async" alt="" onClick={() => setZoomImg(choiceView.get(it.id)?.name ? choiceView.get(it.id).photo : it.photo)} className="w-12 h-12 rounded-lg object-cover border cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-12 h-12 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-lg shrink-0">📦</div>}
                             <div className="min-w-0">
-                              <div className="text-sm font-semibold text-gray-900 truncate">{it.name}</div>
+                              <div className="text-sm font-semibold text-gray-900 truncate">{choiceView.get(it.id)?.name || it.name}</div>
                               {/* Every status badge the flat-list version carried, kept as a
                                   wrapping row under the name instead of trailing off the end of
                                   it — in a fixed-width ITEM column four inline badges pushed the
@@ -6095,6 +6098,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                                   ? <div className="text-red-600 mt-0.5">{it.shortQty} out of stock — can't be made in production, pick an alternative in Build</div>
                                   : <div className="text-amber-600 mt-0.5">{it.shortQty} short of stock — priced at cost, chase or produce</div>)}
                                 {it.isSwapped && <div className="text-sky-600 mt-0.5">swapped in for {it.swappedFrom}</div>}
+                                {(choiceView.get(it.id)?.notes || []).map((n, ni) => <div key={ni} className={(n.tone === "wait" ? "text-amber-600" : "text-emerald-700") + " mt-0.5"}>{n.tone === "wait" ? "" : "✓ "}{n.text}</div>)}
                                 {/* One function's view shows what it NEEDS on site (181 on the 20th). Pieces already standing from the day before are not
                                     loaded again, so say how many of them are already there when the date column holds fewer (137 to load). */}
                                 {invScoped && it.src && it.qty < it.rentalQty && (() => {
