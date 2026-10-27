@@ -6941,7 +6941,6 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                               {(() => { const cv = choiceViewAll.get(it.id); const ph = cv?.name ? cv.photo : it.photo; return ph ? <img src={thumbUrl(ph, 32)} loading="lazy" decoding="async" alt="" onClick={() => setZoomImg(ph)} className="w-8 h-8 rounded-lg object-cover cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-xs shrink-0">📦</div>; })()}
                               <div className="min-w-0 flex-1">
                                 <div className="text-xs font-medium text-gray-800 leading-snug line-clamp-2" title={choiceViewAll.get(it.id)?.name || it.name}>{choiceViewAll.get(it.id)?.name || it.name}</div>
-                                {(choiceViewAll.get(it.id)?.notes || []).map((n, ni) => <div key={ni} className={"text-[10px] leading-snug " + (n.tone === "wait" ? "text-amber-600" : "text-emerald-700")}>{n.tone === "wait" ? "" : "✓ "}{n.text}</div>)}
                                 <div className={"mt-0.5 text-[11px] font-semibold tabular-nums " + matchCls}>{totalLoaded} of {it.qty} loaded{totalLoaded > it.qty ? " · too many" : totalLoaded === it.qty ? " ✓" : ""}{extraAll > 0 && <span className="text-amber-600"> · +{extraAll} extra</span>}</div>
                                 {/* This item's share of the truck, and how many more of it the space left takes. */}
                                 {(() => {
