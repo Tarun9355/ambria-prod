@@ -1549,13 +1549,16 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   // A booking whose functions fall on different dates (the same guest on the 19th and the 20th) is loaded on different days, so the whole-event
   // list must not run them together. From two dates up, All functions gets a column per date saying how many of each item are LOADED that day.
   // Pieces already standing at the venue from the day before are reused, not loaded again: 8 sofas needed on the 19th and 12 on the 20th load 8,
-  // then 4 — so the columns add up to the most ever needed at once. That holds for the same venue on consecutive days; after a day with no event
-  // there the pieces have gone back and the next date loads in full. Functions on one date at one venue share the pieces (the largest need counts);
-  // different venues are separate. A function's need is what its zone lists use (the same count the single-function view makes). Rows no zone
-  // names (production, fabric and the like) show a dash.
+  // then 4 - so the columns add up to the most ever needed at once (lib/ims/loadByDate.js). That holds for the same venue on consecutive days;
+  // after a day with no event there the pieces have gone back and the next date loads in full. Functions on one date at one venue share the
+  // pieces (the largest need counts); different venues are separate. The rule is run here, in DATE order from the functions' current dates, on
+  // what each function NEEDS: Deal Check's per-function record where it has one (byFn[function].rentalQty - the raw need, not the units it
+  // happened to bring in, which depend on the order the functions were entered in), else the function's zone lists. Production and buying lines
+  // have no per-function need. Whatever cannot be tied to a date - kit parts, truss, platform, carpet, print, production lines, a function with
+  // no date - shows in an "Other" column (only when some row has any) instead of disappearing.
   const dateCols = useMemo(() => {
     const dates = new Set();
-    // per venue: its dates in order, each with the quantity maps of the functions held there that day
+    // per venue: its dates in order, each with an entry per function held there that day
     const chains = new Map();
     mpFns.forEach((fd, fi) => {
       const d = String(fd?.date || "").slice(0, 10);
@@ -1565,18 +1568,34 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       if (!chains.has(vk)) chains.set(vk, new Map());
       const days = chains.get(vk);
       if (!days.has(d)) days.set(d, []);
-      days.get(d).push(qtyMapsOfFn(fd));
+      days.get(d).push({ key: String(fd?.fnIdx ?? fi), maps: qtyMapsOfFn(fd) });
     });
     if (dates.size < 2) return [];
     const venueChains = [...chains.values()].map(days => [...days.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([date, maps]) => ({ date, maps })));
+    const datedKeys = new Set(venueChains.flat().flatMap(day => day.maps.map(m => m.key)));
     return [...dates].sort().map(date => {
       let label = date;
       try { label = new Date(date + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short" }); } catch { /* keep the ISO date */ }
       const names = mpFns.filter(f => String(f?.date || "").slice(0, 10) === date).map((f, k) => f?.type || `Function ${k + 1}`).join(", ");
-      return { date, label, names, venueChains };
+      return { date, label, names, venueChains, datedKeys };
     });
   }, [sel, inventory]);
-  const qtyOnDate = (col, it) => loadOnDate(col.venueChains, col.date, (m) => (it.invId && m.byId.get(String(it.invId))) || m.byName.get(String(it.name || "").trim().toLowerCase()) || 0);
+  // how many of this row one function needs: Deal Check's per-function need, else the function's zone lists (production/buying lines: none)
+  const needOfFn = (it) => (m) => {
+    if (it.byFn) { const r = it.byFn[m.key]; return Number(r?.rentalQty ?? r?.qty) || 0; }
+    if (it.prodOrBuy) return 0;
+    return (it.invId && m.maps.byId.get(String(it.invId))) || m.maps.byName.get(String(it.name || "").trim().toLowerCase()) || 0;
+  };
+  const qtyOnDate = (col, it) => loadOnDate(col.venueChains, col.date, needOfFn(it));
+  // the part of a row that no date column holds
+  const otherQty = (it) => {
+    if (!dateCols.length) return 0;
+    if (it.byFn) {
+      const dated = [...dateCols[0].datedKeys].reduce((sum, k) => sum + (Number(it.byFn[k]?.rentalQty ?? it.byFn[k]?.qty) || 0), 0);
+      return Math.max(0, (Number(it.rentalQty ?? it.qty) || 0) - dated);
+    }
+    return Math.max(0, (Number(it.qty) || 0) - dateCols.reduce((sum, c) => sum + qtyOnDate(c, it), 0));
+  };
   const invShown = invScoped
     ? blockedItemsGrouped.map(it => {
         const q = (it.invId && invFnQty.byId.get(String(it.invId))) || invFnQty.byName.get(String(it.name || "").trim().toLowerCase()) || 0;
@@ -1596,6 +1615,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       }).filter(Boolean)
     : blockedItemsGrouped;
   const invWholeOnly = invScoped ? blockedItemsGrouped.length - invShown.length : 0;
+  const showDates = !invScoped && dateCols.length > 0;
+  const anyOther = showDates && invShown.some(it => otherQty(it) > 0);
+  const dateSpacers = showDates ? dateCols.length + (anyOther ? 1 : 0) - 1 : 0; // keeps the expanded sub-rows' qty/rate/total under their headers
   // Paint colours and print jobs for the rows on screen — scoped to one function when the list is.
   const invFinish = useMemo(
     () => buildFinish(invScoped ? [sel?.functionsDetail?.[invFn]] : sel?.functionsDetail, inventory, settings?.printMaterials),
@@ -5855,8 +5877,9 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                   {invShown.some(it => !fabricGroupInfo.groupedLineIds.has(it.id)) && <div className="hidden sm:flex items-center gap-x-3 px-2.5 sticky top-0 z-10 bg-white rounded-lg ring-1 ring-gray-100 py-1.5 -mt-0.5 mb-1">
                     <span className="flex-1 min-w-0" />
                     <div className="w-full sm:w-auto flex items-start gap-0 sm:pl-1">
-                      {!invScoped && dateCols.map(c => <div key={c.date} title={c.names} className={"text-right text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400 " + STAT_W.qty}>{c.label}</div>)}
-                      {!(!invScoped && dateCols.length > 0) && <div className={"text-right text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400 " + STAT_W.qty}>{qtyHeaderLabel}</div>}
+                      {showDates && dateCols.map(c => <div key={c.date} title={c.names} className={"text-right text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400 " + STAT_W.qty}>{c.label}</div>)}
+                      {anyOther && <div title="Not tied to one date: kit parts, truss, platform, carpet, print, production and buying lines, or a function with no date" className={"text-right text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400 " + STAT_W.qty}>Other</div>}
+                      {!showDates && <div className={"text-right text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400 " + STAT_W.qty}>{qtyHeaderLabel}</div>}
                       {anyRentalQty && <div className={"text-right text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400 " + STAT_W.rentalQty}>Rental qty</div>}
                       <div className={"text-right text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400 " + STAT_W.rate}>Rate</div>
                       <div className={"text-right text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400 " + STAT_W.total}>Total</div>
@@ -5961,15 +5984,22 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                               figures read as three columns rather than one run of digits. */}
                           <div className="w-full sm:w-auto flex items-start gap-0 divide-x divide-gray-100 sm:border-l sm:border-gray-100 sm:pl-1">
                             {/* one column per event date (see dateCols): what loads on that day */}
-                            {!invScoped && dateCols.map(c => { const q = qtyOnDate(c, it); return (
+                            {showDates && dateCols.map(c => { const q = qtyOnDate(c, it); return (
                               <StatCell key={c.date} label={c.label} w={STAT_W.qty}>
                                 {q > 0
-                                  ? <span className="text-sm font-semibold text-gray-700 tabular-nums" title={`Loaded on ${c.label} (${c.names}) — what is not already standing at the venue from the day before`}>×{q}</span>
+                                  ? <span className="text-sm font-semibold text-gray-700 tabular-nums" title={`Loaded on ${c.label} (${c.names}) — what is not already standing at the venue from the day before`}>×{q}{it.qtyUnit ? <span className="ml-0.5 text-xs font-normal text-gray-400">{it.qtyUnit}</span> : null}</span>
                                   : <span className="text-sm text-gray-300 tabular-nums" title={`Nothing new to load on ${c.label}`}>—</span>}
                               </StatCell>
                             ); })}
+                            {anyOther && (() => { const o = otherQty(it); return (
+                              <StatCell label="Other" w={STAT_W.qty}>
+                                {o > 0
+                                  ? <span className="text-sm font-semibold text-gray-700 tabular-nums" title="Not tied to one date (kit parts, truss, platform, carpet, print, production or buying lines, or a function with no date)">×{o}{it.qtyUnit ? <span className="ml-0.5 text-xs font-normal text-gray-400">{it.qtyUnit}</span> : null}</span>
+                                  : <span className="text-sm text-gray-300 tabular-nums">—</span>}
+                              </StatCell>
+                            ); })()}
                             {/* with a column per date the single To load figure is left out: each date says what loads on it */}
-                            {!(!invScoped && dateCols.length > 0) && (<StatCell label={showRentalQty ? "To load" : "Qty"} w={STAT_W.qty}>
+                            {!showDates && (<StatCell label={showRentalQty ? "To load" : "Qty"} w={STAT_W.qty}>
                               <span className="text-sm font-semibold text-gray-700 tabular-nums">×{it.qty}{it.qtyUnit ? <span className="ml-0.5 text-xs font-normal text-gray-400">{it.qtyUnit}</span> : null}</span>
                             </StatCell>)}
                             {/* Reserved whenever ANY row in this list needs it (anyRentalQty), not just
@@ -6031,6 +6061,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                             <div key={"p" + pi} className="flex items-center gap-2">
                               <span aria-hidden="true" className="text-gray-300 shrink-0">└</span>
                               <span className="text-gray-700 truncate flex-1 min-w-0">{pt.zone}{pt.fn ? <span className="text-gray-400"> · {pt.fn}</span> : null}{pt.dims ? <span className="text-gray-400"> · {pt.dims} ft</span> : null}</span>
+                              {Array.from({ length: dateSpacers }, (_, si) => <span key={"sp" + si} className={"hidden sm:block shrink-0 " + STAT_W.qty} />)}
                               <span className={"shrink-0 font-medium text-gray-500 text-right tabular-nums " + STAT_W.qty}>{pt.qty}{it.qtyUnit ? " " + it.qtyUnit : ""}</span>
                               <span className={"shrink-0 text-gray-500 text-right tabular-nums " + STAT_W.rate}>× {fmt(pt.rate)}</span>
                               <span className={"shrink-0 font-semibold text-gray-700 text-right tabular-nums " + STAT_W.total}>{fmt(pt.total)}</span>
@@ -6038,6 +6069,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                           ))}
                           <div className="flex items-center gap-2 border-t border-gray-200 pt-1">
                             <span className="flex-1 text-gray-600 font-semibold">Total</span>
+                            {Array.from({ length: dateSpacers }, (_, si) => <span key={"sp" + si} className={"hidden sm:block shrink-0 " + STAT_W.qty} />)}
                             <span className={"shrink-0 font-semibold text-gray-700 text-right tabular-nums " + STAT_W.qty}>{it.parts.reduce((a, pt) => a + (Number(pt.qty) || 0), 0)}{it.qtyUnit ? " " + it.qtyUnit : ""}</span>
                             <span className={"shrink-0 " + STAT_W.rate} />
                             <span className={"shrink-0 font-bold text-gray-900 text-right tabular-nums " + STAT_W.total}>{fmt(it.parts.reduce((a, pt) => a + (Number(pt.total) || 0), 0))}</span>
@@ -6051,6 +6083,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                               <span aria-hidden="true" className="text-blue-300 shrink-0 text-xs">└</span>
                               {cp.photo ? <img src={thumbUrl(cp.photo, 24)} loading="lazy" decoding="async" alt="" onClick={() => setZoomImg(cp.photo)} className="w-6 h-6 rounded object-cover border cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-6 h-6 rounded bg-gray-100 flex items-center justify-center text-gray-300 text-[10px] shrink-0">🌸</div>}
                               <span className="text-xs text-gray-700 truncate flex-1 min-w-0" title={cp.sub || ""}>{cp.name}</span>
+                              {Array.from({ length: dateSpacers }, (_, si) => <span key={"sp" + si} className={"hidden sm:block shrink-0 " + STAT_W.qty} />)}
                               <span className={"shrink-0 text-xs font-medium text-gray-500 text-right tabular-nums " + STAT_W.qty}>×{cp.qty}</span>
                               <span className={"shrink-0 text-xs text-gray-500 text-right tabular-nums " + STAT_W.rate}>{fmt(cp.unit)}</span>
                               <span className={"shrink-0 text-xs font-semibold text-gray-700 text-right tabular-nums " + STAT_W.total}>{fmt(cp.total)}</span>
