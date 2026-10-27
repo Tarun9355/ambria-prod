@@ -65,6 +65,13 @@ end $$;
 -- BACKFILL from the `fixedVenues` settings row — one-time, idempotent (ON CONFLICT DO NOTHING, safe
 -- to re-run). Same JSONB-string unwrap migration 036 needed: `value` holds a JSON-encoded STRING,
 -- not a native JSONB array (the app always JSON.stringify()s before upserting a settings row).
+--
+-- propertyId can point at a property id that no longer exists in `venues` (confirmed live: one
+-- fixed venue's propertyId had gone stale this way already, same as the orphaned-propertyId case
+-- FixedVenuesEditor.jsx's own re-link effect already handles at the app level). A straight insert
+-- of that id would violate the FK and abort the whole backfill, so it's dropped to NULL here
+-- instead — the app's existing re-link effect re-matches it to the live property by NAME the moment
+-- this loads in the browser, same as it already does for any other orphaned propertyId.
 -- ═══════════════════════════════════════════════════════════════════════════
 with fv_raw as (
   select (s.value #>> '{}')::jsonb as v from public.settings s where s.key = 'fixedVenues'
@@ -73,7 +80,8 @@ insert into public.fixed_venues (id, name, property_id, min_labour, fixed_crew, 
 select
   coalesce(nullif(fv->>'id', ''), 'fv_' || md5(coalesce(fv->>'name', '') || fv::text)),
   fv->>'name',
-  nullif(fv->>'propertyId', ''),
+  case when exists (select 1 from public.venues pv where pv.id = fv->>'propertyId')
+       then fv->>'propertyId' else null end,
   nullif(fv->>'minLabour', '')::int,
   coalesce(fv->'fixedCrew', '{}'::jsonb),
   coalesce(fv->'truss', '{}'::jsonb),
