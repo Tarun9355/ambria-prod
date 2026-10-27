@@ -95,9 +95,12 @@ describe("planElements — decisions", () => {
     const r = run([f], { choice: { "0|stage|p1": dec("B") } }).rows[0];
     expect(r.status).toBe("decided"); expect(r.decidedId).toBe("B");
   });
-  it("a decision made for another date or function no longer applies", () => {
-    expect(run([f], { choice: { "0|stage|p1": dec("B", { date: "2027-02-01" }) } }).rows[0].status).toBe("open");
-    expect(run([f], { choice: { "0|stage|p1": dec("B", { fnType: "Mehendi" }) } }).rows[0].status).toBe("open");
+  it("a decision made for another date or function no longer applies — the row falls back to its 1st-choice default", () => {
+    [dec("B", { date: "2027-02-01" }), dec("B", { fnType: "Mehendi" })].forEach((d) => {
+      const r = run([f], { choice: { "0|stage|p1": d } }).rows[0];
+      expect(r.decidedId).not.toBe("B");
+      expect(r.decidedId === r.options[0].id ? r.byDefault : r.status !== "decided").toBe(true);
+    });
   });
   it("a hand pick that is not one of the choices counts as decided, with its stock", () => {
     const r = run([f], { choice: { "0|stage|p1": dec("D", { manual: true }) } }).rows[0];
@@ -105,7 +108,10 @@ describe("planElements — decisions", () => {
     expect(r.manual).toMatchObject({ id: "D", known: true, enough: false });
   });
   it("a decision for a design that is not a choice and was not picked by hand is ignored", () => {
-    expect(run([f], { choice: { "0|stage|p1": dec("D") } }).rows[0].status).toBe("open");
+    // D is not used; the row falls back to sales' 1st choice by default
+    const r = run([f], { choice: { "0|stage|p1": dec("D") } }).rows[0];
+    expect(r.decidedId).not.toBe("D");
+    expect(r.decidedId === r.options[0].id ? r.byDefault : r.status !== "decided").toBe(true);
   });
   it("a hand pick for an item that has left the inventory still decides, without stock", () => {
     const r = run([f], { choice: { "0|stage|p1": dec("GONE", { manual: true, name: "Old design" }) } }).rows[0];
@@ -143,7 +149,9 @@ describe("planElements — a decision that no longer applies holds nothing", () 
   it("E1 was decided B but sales changed its choices to [A, C]: B is free again for E2", () => {
     const f = fn({ stage: [el("p1", [P("A"), P("C")], 10), el("p2", [P("B"), P("E")], 15)] });
     const r = run([f], { choice: { "0|stage|p1": dec("B") } });
-    expect(r.rows[0].status).toBe("open");
+    // the stale B is not used — p1 falls back to its own 1st choice (A) by default — and B is free again for p2
+    expect(r.rows[0].decidedId).not.toBe("B");
+    expect(r.rows[0].byDefault).toBe(true);
     expect(r.rows[1].options[0].free).toBe(50);
   });
 });

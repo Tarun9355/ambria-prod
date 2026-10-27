@@ -7019,7 +7019,8 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
               // take it in one go; a floor already decided is never overwritten. Each floor is checked on
               // its own figures, so the over-commit warning above still flags floors that together need
               // more of it on one date than is free.
-              const sameCarpetRows = (o) => plan.rows.filter(x => x.status !== "decided" && x.options.some(p => p.id === o.id && !(p.known && !p.enough)));
+              // A floor still on its default (sales' 1st choice) is not a decision yet, so "Use on all" may move it.
+              const sameCarpetRows = (o) => plan.rows.filter(x => (x.status !== "decided" || x.byDefault) && x.options.some(p => p.id === o.id && !(p.known && !p.enough)));
               const decideAll = (o) => {
                 const next = { ...choiceAll };
                 sameCarpetRows(o).forEach(x => { next[x.key] = { id: o.id, name: o.name, date: x.date, fnType: x.fnLabel, by: authUser?.name || "—", at: Date.now() }; });
@@ -7045,7 +7046,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                   )}
                   {plan.rows.map(r => {
                     const dec = [...r.options, r.manual].filter(Boolean).find(o => o.id === r.decidedId);
-                    const chip = r.status === "decided" ? { t: r.other ? "✓ Decided: arranged separately (not from stock)" : `✓ Decided: ${dec?.name || ""}${r.manual ? " (picked in Planning)" : ""}`, c: "bg-emerald-50 text-emerald-700 ring-emerald-100" }
+                    const chip = r.status === "decided" ? { t: r.other ? "✓ Decided: arranged separately (not from stock)" : r.byDefault ? `✓ 1st choice (default): ${dec?.name || ""}` : `✓ Decided: ${dec?.name || ""}${r.manual ? " (picked in Planning)" : ""}`, c: "bg-emerald-50 text-emerald-700 ring-emerald-100" }
                       : r.status === "short" ? { t: "None of the choices covers this floor", c: "bg-red-50 text-red-700 ring-red-100" }
                       : r.status === "none" ? { t: "Sales has not picked a carpet", c: "bg-amber-50 text-amber-700 ring-amber-100" }
                       : { t: "Not decided yet", c: "bg-amber-50 text-amber-700 ring-amber-100" };
@@ -7078,7 +7079,9 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                                       {!on && r.suggestedId === o.id && !r.decidedId && <div className="text-[10.5px] font-semibold text-sky-700">Suggested</div>}
                                     </div>
                                   </div>
-                                  {on
+                                  {on && r.byDefault
+                                    ? <div className="text-[12px] font-semibold rounded-md px-2 py-1 bg-emerald-50 text-emerald-700 ring-1 ring-emerald-300 text-center" title="Sales' 1st choice is used unless you choose another carpet below">✓ 1st choice · default</div>
+                                    : on
                                     ? <button type="button" onClick={() => undecide(r.key)} className="text-[12px] font-semibold rounded-md px-2 py-1 bg-emerald-600 text-white hover:bg-emerald-700 cursor-pointer" title="Chosen — tap to undo">✓ Using this · undo</button>
                                     : <button type="button" disabled={o.known && !o.enough} onClick={() => decide(r, o)}
                                         title={o.known && !o.enough ? `Short on this date — only ${Math.round(o.free)} sqft free (+${Math.round(o.reuse?.qty || 0)} laid here), the floor needs ${Math.round(r.area)}` : undefined}
@@ -7161,7 +7164,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                   // overlay / cushion version of the Carpet plan's "Use on all N floors".
                   onDecideAll={(o) => {
                     const next = { ...choiceAll };
-                    elementPlanOf().rows.filter(x => x.status !== "decided" && x.options.some(p => p.id === o.id && !(p.known && !p.enough)))
+                    elementPlanOf().rows.filter(x => (x.status !== "decided" || x.byDefault) && x.options.some(p => p.id === o.id && !(p.known && !p.enough)))
                       .forEach(x => { next[x.key] = { id: o.id, name: o.name, date: x.date, fnType: x.fnLabel, by: authUser?.name || "—", at: Date.now() }; });
                     saveDept({ itemChoice: next });
                   }}

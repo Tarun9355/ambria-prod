@@ -110,9 +110,16 @@ export function planElements({ functionsDetail, zoneLabelOf, itemsById, blocks, 
     const inOptions = !other && !!pickedId && options.some((o) => o.id === pickedId);
     const manual = !other && picked?.manual && pickedId && !inOptions
       ? optionFor(pickedId, picked.name, itemsById?.[pickedId], null, blocks, f.date, eventId, f.qty, null, usedBy(pickedId, f.date, f.key)) : null;
-    const decidedId = inOptions ? pickedId : manual ? pickedId : null;
+    // ── SALES' 1ST CHOICE IS THE DEFAULT ── (owner ask) Until Planning decides, the 1st choice counts as chosen — it is also
+    // what the deal is priced on and holds. Not when it is short that day: a default that cannot be laid would read "decided" over
+    // a real gap, so that row stays open for Planning. Stock not known yet is not a gap, so it defaults.
+    const first = options[0];
+    // "no decision" means no decision that APPLIES — one saved for a design that is no longer a choice (and not a hand pick) is
+    // ignored above, and the default steps in for it just the same.
+    const byDefault = !other && !inOptions && !manual && !!first && (first.enough || !first.known);
+    const decidedId = inOptions ? pickedId : manual ? pickedId : byDefault ? first.id : null;
     return {
-      ...f, options, manual, other, suggestedId, decidedId,
+      ...f, options, manual, other, suggestedId, decidedId, byDefault,
       status: decidedId || other ? "decided" : firstEnough || !options.some((o) => o.known) ? "open" : "short",
     };
   });

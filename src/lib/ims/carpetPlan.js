@@ -119,9 +119,16 @@ export function planCarpets({ floors, itemsById, blocks, eventId, choice, eventO
     // A hand pick is decided even if the item has since left the inventory list (or it has not loaded yet): it keeps its name and shows no stock.
     const manual = !other && picked?.manual && pickedId && !inOptions
       ? optionFor(pickedId, picked.name, itemsById?.[pickedId], null, blocks, f.date, eventId, f.area, null, ex(pickedId)) : null;
-    const decidedId = inOptions ? pickedId : manual ? pickedId : null;
+    // ── SALES' 1ST CHOICE IS THE DEFAULT ── (owner ask) Until Planning decides, the 1st choice counts as chosen — it is also
+    // what the deal is priced on and holds. Not when it is short that day: a default that cannot be laid would read "decided" over
+    // a real gap, so that row stays open for Planning. Stock not known yet is not a gap, so it defaults.
+    const first = options[0];
+    // "no decision" means no decision that APPLIES — one saved for a design that is no longer a choice (and not a hand pick) is
+    // ignored above, and the default steps in for it just the same.
+    const byDefault = !other && !inOptions && !manual && !!first && (first.enough || !first.known);
+    const decidedId = inOptions ? pickedId : manual ? pickedId : byDefault ? first.id : null;
     return {
-      ...f, options, manual, other, suggestedId, decidedId,
+      ...f, options, manual, other, suggestedId, decidedId, byDefault,
       // decided wins: a floor sales picked nothing for is still decided once Planning picks a carpet by hand (or arranges one separately)
       status: decidedId || other ? "decided" : !options.length ? "none" : firstEnough || !options.some((o) => o.known) ? "open" : "short",
     };
