@@ -5934,7 +5934,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                    (not translucent) this time — a see-through header over scrolling rows was part of
                    what made the previous attempt look broken. */
                 <div className="p-2.5 space-y-2">
-                  {fabricGroupInfo.groups.length > 0 && <FabricBlock groups={fabricGroupInfo.groups} fmt={fmt} onZoom={setZoomImg} />}
+                  {fabricGroupInfo.groups.length > 0 && <FabricBlock groups={fabricGroupInfo.groups} fmt={fmt} onZoom={setZoomImg} fnDates={mpFns.map(f => String(f?.date || "").slice(0, 10))} />}
                   {invShown.some(it => !fabricGroupInfo.groupedLineIds.has(it.id)) && <div className="hidden sm:flex items-center gap-x-3 px-2.5 sticky top-0 z-10 bg-white rounded-lg ring-1 ring-gray-100 py-1.5 -mt-0.5 mb-1">
                     <span className="flex-1 min-w-0" />
                     <div className="w-full sm:w-auto flex items-start gap-0 sm:pl-1">
