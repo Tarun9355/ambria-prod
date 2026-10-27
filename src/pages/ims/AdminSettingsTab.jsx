@@ -234,7 +234,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
   const addVenueMin = () => {
     const name = newVenueInput.trim();
     if (!name) return;
-    setSettings((s) => ({ ...s, venueMinLabour: { ...(s.venueMinLabour || {}), [name]: { min: 4, dumpingLevel: "nearby" } } }));
+    supabase.from("venue_labour_config").upsert({ venue_name: name, min_labour: 4 }, { onConflict: "venue_name" }).then(() => {}, () => {});
     setNewVenueInput("");
   };
   // Mandi panel state
@@ -730,7 +730,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                 <div key={venue} className="flex items-center gap-3 bg-gray-50 border rounded-lg px-3 py-2.5 flex-wrap">
                   <span className="flex-1 text-sm font-medium text-gray-800 min-w-[140px]">{venue}</span>
                   <span className="text-xs text-gray-500">🚛 Dump:</span>
-                  <select value={level} onChange={(e) => setSettings((s) => ({ ...s, venueDumping: { ...(s.venueDumping || {}), [venue]: e.target.value } }))} className="border rounded px-2 py-1.5 text-xs bg-white">
+                  <select value={level} onChange={(e) => { supabase.from("venue_labour_config").upsert({ venue_name: venue, dumping_level: e.target.value }, { onConflict: "venue_name" }).then(() => {}, () => {}); }} className="border rounded px-2 py-1.5 text-xs bg-white">
                     {DUMPING_LEVELS.map((d) => <option key={d.id} value={d.id}>{d.label} (×{d.mult})</option>)}
                   </select>
                 </div>

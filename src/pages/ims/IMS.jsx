@@ -5,6 +5,7 @@ import { supabase, fetchAll, updateRow } from "../../lib/supabase";
 import { rowToItem, itemToRow, diffInventory } from "../../lib/inventory/adapter";
 import { computePatternSizeCost, effectiveMarkup, assembleMandiCatalogueFromRows, assembleFlowerPatternsFromRows } from "../../lib/ims/flowerHelpers";
 import { assembleLabourTiersFromRows, assembleDihariSchemesFromRows, assembleDefaultWindowsByPhaseFromRows } from "../../lib/ims/labourTypes";
+import { assembleVenueMinLabourFromRows, assembleVenueDumpingFromRows } from "../../lib/ims/venueLabourConfig";
 import { createSettingsWriter } from "../../lib/ims/settingsWriter";
 import { SETTINGS_DEFAULTS, INIT_TRUSS_INV } from "../../lib/ims/constants";
 import { RC_CATS_DEFAULT } from "../../lib/studio/constants";
@@ -380,6 +381,8 @@ export default function IMS() {
   // Labour type rows (migration 041) — same reasoning, feeds THREE settings fields at once
   // (labourTiers/dihariSchemes/defaultWindowsByPhase).
   const labourTypeRowsRef = useRef([]);
+  // Venue labour config rows (migration 042) — same reasoning, feeds venueMinLabour/venueDumping.
+  const venueLabourRowsRef = useRef([]);
   // Every setX below updates React state synchronously, then persists to Supabase via a
   // fire-and-forget async IIFE that nothing awaits — a real bug, confirmed by direct DB
   // inspection: a sold deal's auto-confirm engine (executeConfirmBlocks → createProjectFromEO)
@@ -493,6 +496,9 @@ export default function IMS() {
     settingsObj.labourTiers = assembleLabourTiersFromRows(labourTypeRowsRef.current);
     settingsObj.dihariSchemes = assembleDihariSchemesFromRows(labourTypeRowsRef.current);
     settingsObj.defaultWindowsByPhase = assembleDefaultWindowsByPhaseFromRows(labourTypeRowsRef.current);
+    // Same reasoning for venue labour config — `venue_labour_config` TABLE (migration 042).
+    settingsObj.venueMinLabour = assembleVenueMinLabourFromRows(venueLabourRowsRef.current);
+    settingsObj.venueDumping = assembleVenueDumpingFromRows(venueLabourRowsRef.current);
     settingsRef.current = settingsObj;
     setSettingsState(settingsObj);
     setSettingsLoaded(true);
@@ -524,6 +530,17 @@ export default function IMS() {
       labourTiers: assembleLabourTiersFromRows(rows),
       dihariSchemes: assembleDihariSchemesFromRows(rows),
       defaultWindowsByPhase: assembleDefaultWindowsByPhaseFromRows(rows),
+    };
+    settingsRef.current = { ...(settingsRef.current || {}), ...patch };
+    setSettingsState((prev) => ({ ...(prev || {}), ...patch }));
+  }, []);
+
+  // Venue labour config rows -> settings.venueMinLabour/venueDumping. Same reasoning/shape.
+  const applyVenueLabourRows = useCallback((rows) => {
+    venueLabourRowsRef.current = rows;
+    const patch = {
+      venueMinLabour: assembleVenueMinLabourFromRows(rows),
+      venueDumping: assembleVenueDumpingFromRows(rows),
     };
     settingsRef.current = { ...(settingsRef.current || {}), ...patch };
     setSettingsState((prev) => ({ ...(prev || {}), ...patch }));
@@ -839,7 +856,7 @@ export default function IMS() {
     let active = true;
     (async () => {
       try {
-        const [invRows, fnRows, projRows, venRows, poRows, ohRows, supRows, userRows, prodRows, eoRows, allocRows, rcRows, trussRows, catRows, setRows, blockRows, rcCatRows, mandiRows, patternRows, labourTypeRows] = await Promise.all([
+        const [invRows, fnRows, projRows, venRows, poRows, ohRows, supRows, userRows, prodRows, eoRows, allocRows, rcRows, trussRows, catRows, setRows, blockRows, rcCatRows, mandiRows, patternRows, labourTypeRows, venueLabourRows] = await Promise.all([
           fetchAll("inventory"),
           fetchAll("functions").catch(() => []),
           fetchAll("projects").catch(() => []),
@@ -860,6 +877,7 @@ export default function IMS() {
           fetchAll("mandi_flowers").catch(() => []),
           fetchAll("flower_patterns").catch(() => []),
           fetchAll("labour_types").catch(() => []),
+          fetchAll("venue_labour_config").catch(() => []),
         ]);
         if (!active) return;
         { const bm = blocksRowsToMap(blockRows); blocksRef.current = bm; setBlocksState(bm); }
@@ -889,6 +907,8 @@ export default function IMS() {
         applyFlowerPatternRows(patternRows);
         // Labour type config — the `labour_types` TABLE (migration 041), same reasoning.
         applyLabourTypeRows(labourTypeRows);
+        // Venue labour config — the `venue_labour_config` TABLE (migration 042), same reasoning.
+        applyVenueLabourRows(venueLabourRows);
         // blocks blob, Studio rate-card mirror, and the settings object — applied via the
         // shared helper (also used by the settings Realtime subscription below).
         applySettingsRows(setRows);
@@ -954,6 +974,7 @@ export default function IMS() {
     liveTable("mandi_flowers", (rows) => applyMandiRows(rows));
     liveTable("flower_patterns", (rows) => applyFlowerPatternRows(rows));
     liveTable("labour_types", (rows) => applyLabourTypeRows(rows));
+    liveTable("venue_labour_config", (rows) => applyVenueLabourRows(rows));
     // blocks gets its own channel too, same reason as event_orders below: Build reconciles this
     // table's reservation rows on every qty-affecting edit to a sold deal (reconcileSoldInventoryBlocks
     // in StudioApp.jsx), so it changes constantly, and the table holds one row per inventory item

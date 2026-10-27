@@ -99,6 +99,7 @@ import { resolveDateCategory, getEffectivePricing } from "../../lib/inventory/he
 import { itemImsSubcat, lookupBySubcat, priceForInvItem, itemDimsText, walkKitUnits, kitDescendantIds } from "../../lib/ims/helpers";
 import { matchFlowerPattern, floralPatternUnitRates, sizeClassToPatternKey, normalizeSizeClass, kitFloralCompDelta, assembleMandiCatalogueFromRows, assembleFlowerPatternsFromRows } from "../../lib/ims/flowerHelpers";
 import { assembleLabourTiersFromRows, assembleDihariSchemesFromRows, assembleDefaultWindowsByPhaseFromRows } from "../../lib/ims/labourTypes";
+import { assembleVenueMinLabourFromRows, assembleVenueDumpingFromRows } from "../../lib/ims/venueLabourConfig";
 import { rowToRcItem, rcItemToRow, rcIsSMB, getFloralMode, oosCostPctFor, canFulfillShortfall } from "../../lib/rateCard";
 import { todayStr } from "../../lib/ims/attendance";
 import { supabase, fetchAll, upsertRow, deleteRow, subscribeTable, keepaliveUpsert, keepaliveRpc } from "../../lib/supabase";
@@ -10948,7 +10949,7 @@ export default function StudioApp() {
         }
         return isGood(last) ? last : null;
       };
-      const [invResults, settingsRows, vendorRows, trussInvRows, fixedVenueRows, mandiRows, patternRows, labourTypeRows] = await Promise.all([
+      const [invResults, settingsRows, vendorRows, trussInvRows, fixedVenueRows, mandiRows, patternRows, labourTypeRows, venueLabourRows] = await Promise.all([
         Promise.all(uniqueDates.map(d => fetchIMSData(d))),
         readRetry(async () => { const r = await supabase.from("settings").select("key,value"); if (r.error) throw r.error; return r.data || []; }, rows => Array.isArray(rows) && rows.length > 0),
         fetchAll("vendors").catch(() => []),
@@ -10957,6 +10958,7 @@ export default function StudioApp() {
         fetchAll("mandi_flowers").catch(() => []),
         fetchAll("flower_patterns").catch(() => []),
         fetchAll("labour_types").catch(() => []),
+        fetchAll("venue_labour_config").catch(() => []),
       ]);
       if (!settingsRows || !trussInvRows) {
         setDealCheckError("Settings or truss stock didn't load, so manpower and truss would show as zero. Close Deal Check and open it again.");
@@ -11004,7 +11006,8 @@ export default function StudioApp() {
       const dihariSchemes = assembleDihariSchemesFromRows(labourTypeRows);
       const defaultWindowsByPhase = assembleDefaultWindowsByPhaseFromRows(labourTypeRows);
       const labourTiers = assembleLabourTiersFromRows(labourTypeRows);
-      const venueMinLabour = (s.venueMinLabour && typeof s.venueMinLabour === "object") ? s.venueMinLabour : {};
+      const venueMinLabour = assembleVenueMinLabourFromRows(venueLabourRows);
+      const venueDumpingFromTable = assembleVenueDumpingFromRows(venueLabourRows);
       const defaultMinLabour = typeof s.defaultMinLabour === "number" ? s.defaultMinLabour : 4;
       if (s.eventTypeMultipliers && typeof s.eventTypeMultipliers === "object") eventTypeMultipliers = s.eventTypeMultipliers;
       if (s.eventTimingMultipliers && typeof s.eventTimingMultipliers === "object") eventTimingMultipliers = s.eventTimingMultipliers;
@@ -11049,7 +11052,7 @@ export default function StudioApp() {
       (customProperties || []).forEach(p => { if (p?.name && typeof p.commissionPct === "number") venueCommission[p.name] = p.commissionPct; });
       (customOutdoor || []).forEach(v => { if (v?.name && typeof v.commissionPct === "number") venueCommission[v.name] = v.commissionPct; });
 
-      setDealCheckData({ inventory, blocksByDate, blocksDetailByDate, fetchedDates: uniqueDates, flowerPatterns, mandiCatalogue, mandiPriceMultipliers, seasonMap, electricianProductivity, artificialMixRatePerKg, artificialFlowerRatePerKg, artificialFlowerBunchesPerKg, artificialGreenRatePerKg, artificialGreenBunchesPerKg, flowerRecipeSubcats, dihariSchemes, defaultWindowsByPhase, labourTiers, venueMinLabour, defaultMinLabour, eventTypeMultipliers, eventTimingMultipliers, sayaMultiplier, datePricing, situationalMultipliers, situationalMultiplierCap, heavyElementRanges, fabricBangaliRanges, trussLabourRanges, fabricRftPerWorker, vendors, trussInv, colourCatalogue, paletteCatalogue, paintableCategories, defaultPaintCostPerItem, carpetFreshMarkup, agencyFeePct, defaultStudioMarkup: Number(s.defaultStudioMarkup ?? 3) || 3, fixedVenues: assembleFixedVenuesFromRows(fixedVenueRows), fixedVenueSubcatDiscount: (s.fixedVenueSubcatDiscount && typeof s.fixedVenueSubcatDiscount === "object") ? s.fixedVenueSubcatDiscount : {}, venueParents, venueCommission, venueDumping: (s.venueDumping && typeof s.venueDumping === "object") ? s.venueDumping : {}, categoryDepartments: (catDeptMap && Object.keys(catDeptMap).length) ? catDeptMap : ((s.categoryDepartments && typeof s.categoryDepartments === "object") ? s.categoryDepartments : {}) });
+      setDealCheckData({ inventory, blocksByDate, blocksDetailByDate, fetchedDates: uniqueDates, flowerPatterns, mandiCatalogue, mandiPriceMultipliers, seasonMap, electricianProductivity, artificialMixRatePerKg, artificialFlowerRatePerKg, artificialFlowerBunchesPerKg, artificialGreenRatePerKg, artificialGreenBunchesPerKg, flowerRecipeSubcats, dihariSchemes, defaultWindowsByPhase, labourTiers, venueMinLabour, defaultMinLabour, eventTypeMultipliers, eventTimingMultipliers, sayaMultiplier, datePricing, situationalMultipliers, situationalMultiplierCap, heavyElementRanges, fabricBangaliRanges, trussLabourRanges, fabricRftPerWorker, vendors, trussInv, colourCatalogue, paletteCatalogue, paintableCategories, defaultPaintCostPerItem, carpetFreshMarkup, agencyFeePct, defaultStudioMarkup: Number(s.defaultStudioMarkup ?? 3) || 3, fixedVenues: assembleFixedVenuesFromRows(fixedVenueRows), fixedVenueSubcatDiscount: (s.fixedVenueSubcatDiscount && typeof s.fixedVenueSubcatDiscount === "object") ? s.fixedVenueSubcatDiscount : {}, venueParents, venueCommission, venueDumping: venueDumpingFromTable, categoryDepartments: (catDeptMap && Object.keys(catDeptMap).length) ? catDeptMap : ((s.categoryDepartments && typeof s.categoryDepartments === "object") ? s.categoryDepartments : {}) });
       setDealCheckLoading(false);
       if (inventory.length === 0) {
         setDcAbortRef(null);
