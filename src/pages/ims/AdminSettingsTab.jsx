@@ -2105,6 +2105,26 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
         const updateRates = (key, val) => setTrussInv((ti) => ({ ...ti, rates: { ...(ti.rates || {}), [key]: parseFloat(val) || 0 } }));
         const updateStock = (which, idx, key, val) => setTrussInv((ti) => { const next = [...(ti[which] || [])]; next[idx] = { ...next[idx], [key]: (key === "colour" || key === "grade" || key === "hex" || key === "photo") ? val : (parseFloat(val) || 0) }; return { ...ti, [which]: next }; });
         const addStockRow = (which, qtyField) => setTrussInv((ti) => ({ ...ti, [which]: [...(ti[which] || []), { colour: colourCat[0] || "White", [qtyField]: 0, [`${qtyField}New`]: 0 }] }));
+        // One colour into all three fabrics at once: Liza (kg), Wall Masking and Velvet Curtains (pieces) share the same colour list, so a colour picked here
+        // gets a row (0 old / 0 new) in each table that does not have it yet, with the reference photo of whichever table already has it.
+        const FABRIC_TABLES = [["lizaStock", "stockKg"], ["maskingStock", "stockPieces"], ["curtainStock", "stockPieces"]];
+        const sameColour = (a, b) => String(a || "").trim().toLowerCase() === String(b || "").trim().toLowerCase();
+        const hasColour = (which, name) => (Array.isArray(trussInv[which]) ? trussInv[which] : []).some((r) => sameColour(r.colour, name));
+        const inAllThree = (name) => FABRIC_TABLES.every(([which]) => hasColour(which, name));
+        const addColourToAll = (rawName) => {
+          const name = String(rawName || "").trim();
+          if (!name) return;
+          setTrussInv((ti) => {
+            const photo = FABRIC_TABLES.map(([w]) => (ti[w] || []).find((r) => sameColour(r.colour, name) && r.photo)?.photo).find(Boolean);
+            const next = { ...ti };
+            FABRIC_TABLES.forEach(([which, qtyField]) => {
+              const rows = Array.isArray(ti[which]) ? ti[which] : [];
+              if (rows.some((r) => sameColour(r.colour, name))) return;
+              next[which] = [...rows, { colour: name, [qtyField]: 0, [`${qtyField}New`]: 0, ...(photo ? { photo } : {}) }];
+            });
+            return next;
+          });
+        };
         const removeStockRow = async (which, idx) => {
           if (!(await confirm({ title: "Remove this stock row?", body: "It will no longer count towards the truss / fabric stock." }))) return;
           setTrussInv((ti) => ({ ...ti, [which]: (ti[which] || []).filter((_, j) => j !== idx) }));
@@ -2233,6 +2253,32 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                   </div>
                 </div>
               </div>
+            </div>
+            <div className="bg-white border border-indigo-200 rounded-2xl p-4 space-y-2.5">
+              <div>
+                <p className="font-bold text-indigo-900">🎨 Add a colour to all three fabrics</p>
+                <p className="text-xs text-gray-500 mt-0.5">Tap a colour and it gets a row (0 old / 0 new) in Liza Fabric, Wall Masking Panels and Velvet Curtains together. A colour already in a table is left as it is.</p>
+              </div>
+              {colourCat.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {(settings.colourCatalogue || []).map((c) => {
+                    const done = inAllThree(c.name);
+                    const partial = !done && FABRIC_TABLES.some(([which]) => hasColour(which, c.name));
+                    return (
+                      <button key={c.name} type="button" disabled={done} onClick={() => addColourToAll(c.name)}
+                        title={done ? "Already in all three fabrics" : partial ? "In some of the three — tap to add to the rest" : "Add to all three fabrics"}
+                        className={"inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium " + (done ? "border-gray-200 bg-gray-50 text-gray-400 cursor-default" : partial ? "border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100" : "border-indigo-200 bg-white text-indigo-800 hover:bg-indigo-50")}>
+                        {c.hex && <span className="h-3 w-3 rounded-full border border-black/10" style={{ background: c.hex }} />}
+                        {c.name}{done && <span aria-hidden="true"> ✓</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              <form className="flex items-center gap-2" onSubmit={(e) => { e.preventDefault(); const f = e.currentTarget; addColourToAll(f.elements.colourName.value); f.reset(); }}>
+                <input name="colourName" type="text" placeholder="Another colour not listed above…" className="flex-1 min-w-0 border border-gray-300 rounded-lg px-3 py-1.5 text-sm" />
+                <button type="submit" className="shrink-0 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 text-xs font-semibold">+ Add to all three</button>
+              </form>
             </div>
             {renderFabric("Liza Fabric", "🧣", "rose", "lizaStock", "stockKg", "kg", "lizaKgRate", "lizaKgRateNew")}
             {renderFabric("Wall Masking Panels", "🧱", "orange", "maskingStock", "stockPieces", "pcs", "maskingPieceRate", "maskingPieceRateNew")}
