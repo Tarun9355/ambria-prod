@@ -7230,7 +7230,9 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                         // every sync) wins over Deal Check's allocation.
                         const ek = `${z.key}|${f.part}`;
                         const own = deptData.trussFabric && Array.isArray(deptData.trussFabric[ek]) ? deptData.trussFabric[ek] : null;
-                        return { ...f, ek, need: `${f.needN}${f.unit}`, allocs: own || f.allocs, own: !!own };
+                        // else what Deal Check recorded for this truss row at the last sync (it weighs a saved colour against the Fabric Palette), else the row's saved colour
+                        const rec = (Array.isArray(sel?.fabricPlan?.rows) ? sel.fabricPlan.rows : []).filter(r => r.kind === f.part && r.fi === z.fi && r.zk === z.zk && (r.ri || 0) === (z.ri || 0)).map(r => ({ colour: r.colour, qty: r.qty }));
+                        return { ...f, ek, need: `${f.needN}${f.unit}`, allocs: own || (rec.length ? rec : f.allocs), own: !!own };
                       }) : [];
                       // ── THE DEPARTMENT'S OWN EDITS ── deptOps.trussPlan[key]: demand / footprint sizes,
                       // pillar + beam groups, batta. IMS-owned, so every Studio sync leaves them alone;

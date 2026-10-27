@@ -114,3 +114,18 @@ describe("resolveFabricAllocation — the Fabric Palette decides over a leftover
     expect(resolveFabricAllocation(saved, 5, ["Rose Gold"], stock, "stockKg")).toBe(saved);
   });
 });
+
+import { anchorsForPaletteByMaterial } from "./pricing.js";
+describe("the palette 'Ivory, Rose Gold (curtain only)' end to end", () => {
+  const palette = "Ivory, Rose Gold:C";
+  const liza = [{ colour: "Ivory", stockKg: 40 }, { colour: "Rose Gold dark", stockKg: 100 }];
+  const curtain = [{ colour: "Ivory", stockPieces: 80 }, { colour: "Rose Gold", stockPieces: 3 }];
+  it("Liza is Ivory even with Rose Gold dark still saved on the row", () => {
+    const a = resolveFabricAllocation([{ colour: "Rose Gold dark", qty: 81 }], 84, anchorsForPaletteByMaterial([], palette, "liza"), liza, "stockKg");
+    expect(a).toEqual([{ qty: 84, colour: "Ivory" }]);
+  });
+  it("Velvet curtains may use Rose Gold, and a saved Rose Gold stands", () => {
+    const saved = [{ colour: "Rose Gold", qty: 44 }];
+    expect(resolveFabricAllocation(saved, 56, anchorsForPaletteByMaterial([], palette, "curtain"), curtain, "stockPieces")).toBe(saved);
+  });
+});
