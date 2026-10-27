@@ -193,7 +193,9 @@ describe("same venue, same date: a carpet already laid for another event is reus
     expect(o.reuse).toMatchObject({ qty: 250, who: ["Mr. Sharma · Haldi"] });
     expect(o.enough).toBe(true);
     expect(o.short).toBe(0);
-    expect(r.status).toBe("open");
+    // it covers the floor, so sales' 1st choice is chosen by default
+    expect(r.status).toBe("decided");
+    expect(r.byDefault).toBe(true);
   });
   it("the same hold by an event at a DIFFERENT venue is a real conflict and stays short", () => {
     const o = run({ T: [{ date: "2027-01-03", eventId: "eo_far", qty: 250 }] }).options[0];
@@ -276,11 +278,12 @@ describe("validDecision — a saved decision must still belong to its floor", ()
     expect(validDecision({}, floor)).toBeNull();
     expect(validDecision({ other: true }, floor)).not.toBeNull();
   });
-  it("planCarpets ignores a decision made for another date, so the floor is undecided again", () => {
+  it("planCarpets ignores a decision made for another date — the floor falls back to the 1st-choice default", () => {
     const fl = carpetFloorsOf(layout({ stage: { cpT: "old", floorDims: { L: 20, W: 10 }, cpPrefs: [pref(B)], cpInvId: "B", cpInvName: "Grey", cpInvFree: 300 } }));
     const r = planCarpets({ floors: fl, itemsById, blocks: {}, eventId: "e", choice: { [fl[0].key]: { id: "B", date: "2026-12-01", fnType: "Wedding" } }, eventOrders: [] }).rows[0];
-    expect(r.decidedId).toBeNull();
-    expect(r.status).not.toBe("decided");
+    // the stale decision is not used; what decides it is the default (sales' 1st choice), not Planning
+    expect(r.byDefault).toBe(true);
+    expect(r.decidedId).toBe(r.options[0].id);
   });
 });
 

@@ -110,9 +110,16 @@ export function planElements({ functionsDetail, zoneLabelOf, itemsById, blocks, 
     const inOptions = !other && !!pickedId && options.some((o) => o.id === pickedId);
     const manual = !other && picked?.manual && pickedId && !inOptions
       ? optionFor(pickedId, picked.name, itemsById?.[pickedId], null, blocks, f.date, eventId, f.qty, null, usedBy(pickedId, f.date, f.key)) : null;
-    const decidedId = inOptions ? pickedId : manual ? pickedId : null;
+    // ── SALES' 1ST CHOICE IS THE DEFAULT ── (owner ask) Until Planning decides, the 1st choice counts as chosen — it is also
+    // what the deal is priced on and holds. Not when it is short that day: a default that cannot be laid would read "decided" over
+    // a real gap, so that row stays open for Planning. Stock not known yet is not a gap, so it defaults.
+    const first = options[0];
+    // "no decision" means no decision that APPLIES — one saved for a design that is no longer a choice (and not a hand pick) is
+    // ignored above, and the default steps in for it just the same.
+    const byDefault = !other && !inOptions && !manual && !!first && (first.enough || !first.known);
+    const decidedId = inOptions ? pickedId : manual ? pickedId : byDefault ? first.id : null;
     return {
-      ...f, options, manual, other, suggestedId, decidedId,
+      ...f, options, manual, other, suggestedId, decidedId, byDefault,
       status: decidedId || other ? "decided" : firstEnough || !options.some((o) => o.known) ? "open" : "short",
     };
   });
@@ -158,7 +165,8 @@ export function choiceNotesForRows(rows, planRows) {
       else if (dec && String(dec.id) !== String(r.prefs[0].id)) {
         notes.push({ text: `${r.qty} × ${dec.name} chosen in Planning (sales' 1st choice: ${firstName})`, tone: "ok" });
         if (plan.length === 1 && r.qty >= (Number(line.rentalQty ?? line.qty) || 0)) swap = { name: dec.name, photo: photoOf(dec.item) };
-      } else if (dec) notes.push({ text: `${r.qty} × ${dec.name} confirmed in Planning`, tone: "ok" });
+      } else if (dec && r.byDefault) notes.push({ text: `${r.qty} × ${dec.name} - sales' 1st choice (default, not changed in Planning)`, tone: "ok" });
+      else if (dec) notes.push({ text: `${r.qty} × ${dec.name} confirmed in Planning`, tone: "ok" });
       else notes.push({ text: `${r.qty} not decided yet: ${(r.options || []).map((o, i) => `${i + 1} ${o.name}`).join(" · ")}`, tone: "wait" });
     });
     out.set(line.id, { ...(swap ? { name: swap.name, photo: swap.photo } : {}), notes: swap ? [{ text: `Chosen in Planning - sales' 1st choice was ${firstName}`, tone: "ok" }] : notes });
