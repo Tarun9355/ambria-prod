@@ -67,6 +67,42 @@ function mandiPhotoDetails(flower, v) {
   ];
 }
 
+// The catalogue spelling of a typed colour: same letters in any case or spacing give back the catalogue's own name ("rose gold" -> "Rose Gold"); anything
+// else gives "" (not a catalogue colour).
+const catalogueColour = (typed, names) => {
+  const key = String(typed || "").trim().replace(/\s+/g, " ").toLowerCase();
+  return key ? (names.find((n) => String(n).trim().replace(/\s+/g, " ").toLowerCase() === key) || "") : "";
+};
+
+// A colour box that only ever hands back a colour from the Colour Catalogue. Picking from the dropdown commits at once; typing is checked when the field
+// is left (or Enter): a different case of a catalogue colour is replaced by the catalogue's own spelling, anything not in the catalogue is refused and the
+// box goes back to what it held, with a note why. A colour already in the row that is not in the catalogue is left alone until the person changes it.
+function CatalogueColourInput({ value, names, listId, className, onCommit }) {
+  const [draft, setDraft] = useState(null);
+  const [err, setErr] = useState("");
+  const settle = (raw) => {
+    const typed = String(raw ?? "").trim();
+    if (typed === String(value ?? "").trim()) { setDraft(null); setErr(""); return; }
+    if (!typed) { setDraft(null); setErr(""); return; }
+    if (!names.length) { onCommit(typed); setDraft(null); return; } // no catalogue to check against
+    const canon = catalogueColour(typed, names);
+    if (canon) { onCommit(canon); setDraft(null); setErr(""); return; }
+    setDraft(null);
+    setErr(`"${typed}" is not in the Colour Catalogue - pick one from the list (new colours are added in Studio > Manage > Library > Colour Catalogue).`);
+    setTimeout(() => setErr(""), 7000);
+  };
+  return (
+    <>
+      <input type="text" value={draft !== null ? draft : (value || "")} list={listId} placeholder="Type or pick a colour…" className={className}
+        aria-invalid={err ? true : undefined}
+        onChange={(e) => { const v = e.target.value; setDraft(v); setErr(""); if (names.includes(v)) settle(v); }}
+        onBlur={(e) => settle(e.target.value)}
+        onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); settle(e.currentTarget.value); } else if (e.key === "Escape") { setDraft(null); setErr(""); } }} />
+      {err && <p role="alert" className="mt-0.5 text-[10px] leading-snug text-red-600">{err}</p>}
+    </>
+  );
+}
+
 function withPrevPrice(history, price) {
   const h = Array.isArray(history) ? history : [];
   const today = new Date().toISOString().split("T")[0];
@@ -255,6 +291,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
   // mobile has no single file input that reliably offers both, so the "+" button opens this tiny
   // 2-option menu instead of a bare <input type=file>.
   const [fabricPhotoMenuOpen, setFabricPhotoMenuOpen] = useState(null);
+  const [addColourErr, setAddColourErr] = useState("");
   const [fabricSearch, setFabricSearch] = useState({}); // per fabric table: { lizaStock: "ivo", ... }
   const [sMandiMapPicker, setSMandiMapPicker] = useState(null); // { flowerId } — inventory picker for a "Mapping" flower
   const [sMandiMapSearch, setSMandiMapSearch] = useState("");
@@ -2114,8 +2151,11 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
         const hasColour = (which, name) => (Array.isArray(trussInv[which]) ? trussInv[which] : []).some((r) => sameColour(r.colour, name));
         const inAllThree = (name) => FABRIC_TABLES.every(([which]) => hasColour(which, name));
         const addColourToAll = (rawName) => {
-          const name = String(rawName || "").trim();
-          if (!name) return;
+          const typed = String(rawName || "").trim();
+          if (!typed) return;
+          const name = colourCat.length ? catalogueColour(typed, colourCat) : typed;
+          if (!name) { setAddColourErr(`"${typed}" is not in the Colour Catalogue - pick one from the chips above (new colours are added in Studio > Manage > Library > Colour Catalogue).`); return; }
+          setAddColourErr("");
           setTrussInv((ti) => {
             const photo = FABRIC_TABLES.map(([w]) => (ti[w] || []).find((r) => sameColour(r.colour, name) && r.photo)?.photo).find(Boolean);
             const next = { ...ti };
@@ -2236,7 +2276,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                               })()}
                             </td>
                             <td className="px-2 py-1.5">
-                              <input type="text" value={row.colour || ""} list={`${which}-colours`} placeholder="Type or pick a colour…" onChange={(e) => updateStock(which, i, "colour", e.target.value)} className={`w-full border border-${themeColor}-200 rounded px-2 py-1 text-xs`} />
+                              <CatalogueColourInput value={row.colour || ""} names={colourCat} listId={`${which}-colours`} onCommit={(v) => updateStock(which, i, "colour", v)} className={`w-full border border-${themeColor}-200 rounded px-2 py-1 text-xs`} />
                             </td>
                             <td className="px-2 py-1.5 text-center">
                               {/* Availability, per fabric: off keeps the row (stock, photo) but Build's Fabric Palette stops offering this colour for this fabric. */}
@@ -2309,9 +2349,11 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                 </div>
               )}
               <form className="flex items-center gap-2" onSubmit={(e) => { e.preventDefault(); const f = e.currentTarget; addColourToAll(f.elements.colourName.value); f.reset(); }}>
-                <input name="colourName" type="text" placeholder="Another colour not listed above…" className="flex-1 min-w-0 border border-gray-300 rounded-lg px-3 py-1.5 text-sm" />
+                <input name="colourName" type="text" list="all-three-colours" placeholder="Type a colour from the catalogue…" onChange={() => addColourErr && setAddColourErr("")} className="flex-1 min-w-0 border border-gray-300 rounded-lg px-3 py-1.5 text-sm" />
+                <datalist id="all-three-colours">{colourCat.map((cn) => <option key={cn} value={cn} />)}</datalist>
                 <button type="submit" className="shrink-0 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 text-xs font-semibold">+ Add to all three</button>
               </form>
+              {addColourErr && <p role="alert" className="text-[11px] text-red-600">{addColourErr}</p>}
             </div>
             {renderFabric("Liza Fabric", "🧣", "rose", "lizaStock", "stockKg", "kg", "lizaKgRate", "lizaKgRateNew")}
             {renderFabric("Wall Masking Panels", "🧱", "orange", "maskingStock", "stockPieces", "pcs", "maskingPieceRate", "maskingPieceRateNew")}
