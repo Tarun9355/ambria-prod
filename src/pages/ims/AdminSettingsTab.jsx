@@ -2285,7 +2285,6 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                                 className={"relative inline-flex h-5 w-9 items-center rounded-full transition-colors " + (row.hideInBuild ? "bg-gray-300" : `bg-${themeColor}-600`)}>
                                 <span className={"inline-block h-4 w-4 rounded-full bg-white shadow transition-transform " + (row.hideInBuild ? "translate-x-0.5" : "translate-x-[18px]")} />
                               </button>
-                              <div className={"text-[9px] mt-0.5 " + (row.hideInBuild ? "text-gray-400" : "text-gray-500")}>{row.hideInBuild ? "Hidden" : "Shown"}</div>
                             </td>
                             <td className="px-2 py-1.5 text-center"><input type="number" min="0" step="1" value={row[qtyField] || 0} onChange={(e) => updateStock(which, i, qtyField, e.target.value)} className={`w-20 border border-gray-300 rounded px-2 py-1 text-xs font-bold text-center`} title="Old fabric in stock" /></td>
                             <td className="px-2 py-1.5 text-center"><input type="number" min="0" step="1" value={row[`${qtyField}New`] || 0} onChange={(e) => updateStock(which, i, `${qtyField}New`, e.target.value)} className={`w-20 border border-${themeColor}-300 rounded px-2 py-1 text-xs font-bold text-center text-${themeColor}-800`} title="New fabric in stock" /></td>
