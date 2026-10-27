@@ -1572,26 +1572,29 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     });
     if (dates.size < 2) return [];
     const venueChains = [...chains.values()].map(days => [...days.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([date, maps]) => ({ date, maps })));
-    const datedKeys = new Set(venueChains.flat().flatMap(day => day.maps.map(m => m.key)));
+    const entries = venueChains.flat().flatMap(day => day.maps); // every dated function, once
     return [...dates].sort().map(date => {
       let label = date;
       try { label = new Date(date + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short" }); } catch { /* keep the ISO date */ }
       const names = mpFns.filter(f => String(f?.date || "").slice(0, 10) === date).map((f, k) => f?.type || `Function ${k + 1}`).join(", ");
-      return { date, label, names, venueChains, datedKeys };
+      return { date, label, names, venueChains, entries };
     });
   }, [sel, inventory]);
   // how many of this row one function needs: Deal Check's per-function need, else the function's zone lists (production/buying lines: none)
+  // The zone lists count kit parts too (a Crystal Vedi carries 12 WARM LED), which Deal Check files as lines with no function of their own; so the
+  // need is the larger of Deal Check's per-function figure and what the function's zone lists use.
   const needOfFn = (it) => (m) => {
-    if (it.byFn) { const r = it.byFn[m.key]; return Number(r?.rentalQty ?? r?.qty) || 0; }
-    if (it.prodOrBuy) return 0;
-    return (it.invId && m.maps.byId.get(String(it.invId))) || m.maps.byName.get(String(it.name || "").trim().toLowerCase()) || 0;
+    const zone = it.prodOrBuy ? 0 : ((it.invId && m.maps.byId.get(String(it.invId))) || m.maps.byName.get(String(it.name || "").trim().toLowerCase()) || 0);
+    if (it.byFn) { const r = it.byFn[m.key]; return Math.max(Number(r?.rentalQty ?? r?.qty) || 0, zone); }
+    return zone;
   };
   const qtyOnDate = (col, it) => loadOnDate(col.venueChains, col.date, needOfFn(it));
   // the part of a row that no date column holds
   const otherQty = (it) => {
     if (!dateCols.length) return 0;
     if (it.byFn) {
-      const dated = [...dateCols[0].datedKeys].reduce((sum, k) => sum + (Number(it.byFn[k]?.rentalQty ?? it.byFn[k]?.qty) || 0), 0);
+      const need = needOfFn(it);
+      const dated = dateCols[0].entries.reduce((sum, m) => sum + need(m), 0);
       return Math.max(0, (Number(it.rentalQty ?? it.qty) || 0) - dated);
     }
     return Math.max(0, (Number(it.qty) || 0) - dateCols.reduce((sum, c) => sum + qtyOnDate(c, it), 0));
