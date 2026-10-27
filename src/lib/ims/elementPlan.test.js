@@ -196,3 +196,25 @@ describe("choiceNotesForRows — the Inventory blocked list follows Planning's d
     expect(choiceNotesForRows([{ id: "P", invId: "A", name: "x", prodOrBuy: "production", qty: 1 }], [row()]).size).toBe(0);
   });
 });
+
+describe("choices for a part inside a kit", () => {
+  const part = (over = {}) => ({ itemId: "B", qty: 2, pid: "pk1", prefs: [{ id: "B", name: "Cover B", free: 50 }, { id: "C", name: "Cover C", free: 50 }], ...over });
+  const fnWith = (kitOverrides, kitQty = 3) => [{ fnIdx: 0, date: "2027-02-03", venue: "Aura", type: "Wedding", enabledEls: { stage: true }, elements: { stage: [{ invId: "K", name: "Ivory Sofa", qty: kitQty, unit: "Pieces", kitOverrides }] } }];
+  it("a kit part with choices is a row of its own: parts per kit x kits", () => {
+    const rows = choiceElementsOf(fnWith([part(), { itemId: "X", qty: 1 }]), () => "Stage");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ fi: 0, zk: "stage", ei: 0, part: 0, qty: 6, name: "Cover B (in Ivory Sofa)" });
+    expect(rows[0].prefs.map((p) => p.id)).toEqual(["B", "C"]);
+  });
+  it("a part without choices, or without a pid, is not a row; the kit itself is not either", () => {
+    expect(choiceElementsOf(fnWith([{ itemId: "B", qty: 2 }]), () => "Stage")).toEqual([]);
+    expect(choiceElementsOf(fnWith([part({ pid: undefined })]), () => "Stage")).toEqual([]);
+  });
+  it("the plan decides a part like an element, and a decided part holds its design for the day", () => {
+    const fns = fnWith([part()]);
+    const items = { B: { id: "B", name: "Cover B", qty: 100, subCat: "Cushion" }, C: { id: "C", name: "Cover C", qty: 100, subCat: "Cushion" } };
+    const key = choiceElementsOf(fns, () => "Stage")[0].key;
+    const plan = planElements({ functionsDetail: fns, zoneLabelOf: () => "Stage", itemsById: items, blocks: {}, eventId: "E", choice: { [key]: { id: "C" } } });
+    expect(plan.rows[0]).toMatchObject({ decidedId: "C", status: "decided", part: 0 });
+  });
+});

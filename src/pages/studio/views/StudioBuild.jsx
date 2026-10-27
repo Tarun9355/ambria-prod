@@ -4,7 +4,7 @@ import { makeFilterUI, useRailMaxHeight } from "../../../components/studio/filte
 import NumField from "../../../components/ui/NumField.jsx";
 import { applyQtyCeiling } from "../../../lib/studio/qtyCeiling";
 import { unitAllowsDecimal, quantityForUnit } from "../../../lib/studio/qtyUnits";
-import { itemTakesChoices, elementChoices, applyChoicePicks, ELEMENT_PREF_MAX, ELEMENT_PREF_LABELS } from "../../../lib/studio/elementPrefs";
+import { itemTakesChoices, elementChoices, partChoices, applyChoicePicks, ELEMENT_PREF_MAX, ELEMENT_PREF_LABELS } from "../../../lib/studio/elementPrefs";
 import { SMALL_PRINT_LIMIT, SMALL_PRINT_CHARGE, firstSmallPrint } from "../../../lib/studio/truckPrint";
 import { IconClipboard, IconPencil, IconRuler, IconBolt, IconWall, IconPlatform, IconCarpet, IconBulb, IconCheck,
   IconSearch, IconCamera, IconPrinter, IconNote, IconCalendar, IconFlower, IconFactory,
@@ -5072,6 +5072,14 @@ undefined
                       // so the picker shows that same guest-facing rate (its default mode). It used to pass
                       // priceMode "cost" with the custom-item picker's wording, so a part renting at ₹70 was
                       // listed at its ₹500 purchase cost — a figure the kit never charges.
+                      onCheckChoices={(cItem,part,onSave,o)=>{
+                        const ch=partChoices(part);
+                        const noun=/cover/i.test(cItem.name||"")?"cushion cover":"overlay";
+                        openAvailModal(null,null,{invId:cItem.id,name:cItem.name},null,null,{unitLabel:qtyUnit,hidePrice:true,
+                          pickHint:"The 1st choice is the one priced; Planning decides which is used from what is free on the day",
+                          multi:{max:ELEMENT_PREF_MAX,need:Number(o?.need)||0,current:ch.length?ch.map(c=>c.id):[part.itemId],noun,needNoun:"part",noReuse:true,designsOnly:true,
+                            onSave:(picks)=>onSave(picks)}});
+                      }}
                       onCheckAvailability={(cItem,onPick,opts)=>openAvailModal(null,null,{invId:cItem.id,name:cItem.name},null,onPick,{pickHint:"Pick the item to use for this part of the kit — shown at its rental price.",splitQty:opts?.splitQty,onSplit:opts?.onSplit})}
                       rcSubcatFactors={rcSubcatFactors}
                       rcFactorByKey={rcFactorByKey}

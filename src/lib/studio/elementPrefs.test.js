@@ -114,3 +114,31 @@ describe("applyChoicePicks — what saving the choices picker does", () => {
     expect(again.pid).toBe("pid1");
   });
 });
+
+import { partChoices, applyPartChoicePicks } from "./elementPrefs";
+describe("choices for a part inside a kit", () => {
+  const mk = () => "pNEW";
+  it("picks become the part's choices; the 1st is its item and it gets a pid", () => {
+    const part = applyPartChoicePicks({ itemId: "A", qty: 2 }, [P("B"), P("C")], mk);
+    expect(part).toMatchObject({ itemId: "B", qty: 2, pid: "pNEW" });
+    expect(partChoices(part).map((c) => c.id)).toEqual(["B", "C"]);
+  });
+  it("keeps an existing pid so a saved decision stays valid", () => {
+    const part = applyPartChoicePicks({ itemId: "A", qty: 1, pid: "pOLD" }, [P("A"), P("D")], mk);
+    expect(part.pid).toBe("pOLD");
+  });
+  it("one pick is an ordinary swap: no choices, item changed", () => {
+    const part = applyPartChoicePicks({ itemId: "A", qty: 1, prefs: [P("A"), P("B")], pid: "pX" }, [P("C")], mk);
+    expect(part.itemId).toBe("C");
+    expect(part.prefs).toBeUndefined();
+    expect(partChoices(part)).toEqual([]);
+  });
+  it("swapping the part's item by hand (prefs no longer led by it) drops the choices", () => {
+    expect(partChoices({ itemId: "Z", prefs: [P("A"), P("B")] })).toEqual([]);
+    expect(partChoices(null)).toEqual([]);
+  });
+  it("no picks: the part is returned as it is", () => {
+    const part = { itemId: "A", qty: 1 };
+    expect(applyPartChoicePicks(part, [], mk)).toBe(part);
+  });
+});

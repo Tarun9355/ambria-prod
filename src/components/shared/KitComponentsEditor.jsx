@@ -6,6 +6,7 @@ import { studioUnitLabel, matchFlowerPattern, floralPatternUnitRates, kitFloralC
 import { kitTotalFromInventory, itemDimsText, priceForInvItem } from "../../lib/ims/helpers";
 import ItemHoverThumb from "./ItemHoverThumb";
 import { thumbUrl } from "../../lib/studio/thumb.js";
+import { itemTakesChoices, partChoices, applyPartChoicePicks, ELEMENT_PREF_LABELS } from "../../lib/studio/elementPrefs.js";
 
 // Shared "expand a kit element to its components, with editable per-instance counts" block —
 // used by Library's Element Breakdown (ManageLibrary.jsx) and the Build page (StudioBuild.jsx) so
@@ -27,7 +28,7 @@ import { thumbUrl } from "../../lib/studio/thumb.js";
 // same "swap to ONE item" / "split across 2+ items" choice a top-level element already has, instead
 // of being swap-only. Omit the prop (as Library does — it has no client/event-date context to check
 // availability against) and the icon simply never renders; nothing else about the component changes.
-export default function KitComponentsEditor({ item, overrides, onChange, imsInventory, flowerPatterns, qtyMultiplier = 1, dealAwareness, onCheckAvailability, rcSubcatFactors, rcFactorByKey, mandiCatalogue = [], studioMarkup = 3, elSize, floralRatio = 0, rcFloralModeByKey = {}, floralSettings = null, targetUnitPrice, textP, textS, border, cardBg, accent, isDark, fmt }) {
+export default function KitComponentsEditor({ item, overrides, onChange, imsInventory, flowerPatterns, qtyMultiplier = 1, dealAwareness, onCheckAvailability, onCheckChoices, rcSubcatFactors, rcFactorByKey, mandiCatalogue = [], studioMarkup = 3, elSize, floralRatio = 0, rcFloralModeByKey = {}, floralSettings = null, targetUnitPrice, textP, textS, border, cardBg, accent, isDark, fmt }) {
   // rcFactorByKey = { subcatLower: scaling_factor } — the pricing multiplier map (priceForInvItem needs
   // this, NOT the rcSubcatFactors array which is for isHiddenSubcat). Fall back to {} so pricing is 1×.
   const _factorMap = (rcFactorByKey && typeof rcFactorByKey === "object" && !Array.isArray(rcFactorByKey)) ? rcFactorByKey : {};
@@ -267,7 +268,13 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
                 <span style={{ color: cItem ? textP : "#EF4444", fontWeight: 600, flex: "1 1 auto", minWidth: 104, whiteSpace: "normal", overflowWrap: "break-word", display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
                   <span style={{ whiteSpace: "normal", overflowWrap: "break-word" }}>{cItem ? cItem.name : `⚠ ${c.itemId} not in IMS`}</span>
                   {cItemIsKit && <span style={{ color: indigo, fontWeight: 700, display: "flex" }}><IconBox size={11}/></span>}
-                  {cItem && onCheckAvailability && (
+                  {cItem && onCheckChoices && itemTakesChoices(cItem) && (
+                    // An overlay or a cushion cover inside the kit: the stock icon names up to four designs in order of preference (Planning decides which one is used),
+                    // exactly as it does on an element of its own.
+                    <span onClick={() => onCheckChoices(cItem, c, (picks) => setComps(comps.map((x, i) => (i === ci ? applyPartChoicePicks(x, picks) : x))), { need: qtyEach * qtyMultiplier })}
+                      title="Check what is free and name up to 4 designs for this part in order of preference - Planning decides which one is used" style={{ cursor: "pointer", fontSize: 12, opacity: 0.5, padding: "0 1px", lineHeight: 1 }}><IconBox size={12}/></span>
+                  )}
+                  {cItem && onCheckAvailability && !(onCheckChoices && itemTakesChoices(cItem)) && (
                     <span onClick={() => onCheckAvailability(cItem, (picked) => { if (picked) setComps(comps.map((x, i) => i === ci ? { ...x, itemId: picked.id } : x)); }, {
                         splitQty: qtyEach,
                         // Replaces THIS ONE component row with one row per picked item — the split's
@@ -291,6 +298,23 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
                 {cItem ? (() => { const marked = Math.round(cRate * scale); return <span style={{ color: textS, whiteSpace: "nowrap", opacity: 0.85, textAlign: "right" }} title="client price (rental + margin, all-in)"><b style={{ color: indigo }}>₹{(marked * qtyEach).toLocaleString("en-IN")}</b></span>; })() : <span/>}
                 <span onClick={() => setComps(comps.filter((_, i) => i !== ci))} style={{ color: "#EF4444", cursor: "pointer", fontSize: 14, padding: "0 2px" }} title="Remove component">×</span>
               </div>
+              {/* The part's named designs, in order - the 1st is the one priced and held. Tapping them reopens the picker. */}
+              {cItem && onCheckChoices && partChoices(c).length >= 2 && (
+                <div role="button" tabIndex={0} onClick={() => onCheckChoices(cItem, c, (picks) => setComps(comps.map((x, i) => (i === ci ? applyPartChoicePicks(x, picks) : x))), { need: qtyEach * qtyMultiplier })}
+                  title="Choices in order - Planning decides which one is used. Tap to change." style={{ display: "flex", flexDirection: "column", gap: 3, margin: "2px 0 4px 28px", cursor: "pointer" }}>
+                  {partChoices(c).map((ch, i) => {
+                    const it = (imsInventory || []).find((x) => x.id === ch.id);
+                    const ph = it ? (it.img || (Array.isArray(it.photoUrls) && it.photoUrls[0]) || "") : "";
+                    return (
+                      <span key={ch.id} title={`${ELEMENT_PREF_LABELS[i]}: ${ch.name}`} style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0, fontSize: 11.5, padding: "3px 8px", borderRadius: 7, border: `1px solid ${i === 0 ? "#059669" : border}`, background: i === 0 ? "rgba(5,150,105,0.07)" : "transparent", color: i === 0 ? "#059669" : textP, fontWeight: i === 0 ? 700 : 500 }}>
+                        <b style={{ flexShrink: 0, width: 16, height: 16, borderRadius: 8, background: i === 0 ? "#059669" : "rgba(0,0,0,0.08)", color: i === 0 ? "#fff" : textS, fontSize: 10, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>{i + 1}</b>
+                        {ph ? <img src={thumbUrl(ph, 48)} loading="lazy" decoding="async" alt="" style={{ width: 24, height: 24, borderRadius: 5, objectFit: "cover", flexShrink: 0 }} /> : null}
+                        <span style={{ flex: 1, minWidth: 0, overflowWrap: "anywhere", lineHeight: 1.3 }}>{ch.name}</span>
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
               {/* Kit-inside-a-kit → fully editable, PER THIS PARENT INSTANCE. Edits are stored in this
                   component's `subOverrides`, so the master sub-kit and every other kit/photo using it
                   stay untouched. Recursively renders this same editor for the nested kit.
@@ -315,6 +339,7 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
                     flowerPatterns={flowerPatterns}
                     qtyMultiplier={qtyEach * qtyMultiplier}
                     onCheckAvailability={onCheckAvailability}
+                    onCheckChoices={onCheckChoices}
                     rcSubcatFactors={rcSubcatFactors}
                     rcFactorByKey={rcFactorByKey}
                     mandiCatalogue={mandiCatalogue}

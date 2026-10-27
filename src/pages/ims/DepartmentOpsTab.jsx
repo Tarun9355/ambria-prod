@@ -3697,8 +3697,16 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           kitParts.forEach(p => {
             if (placed.has(p.id)) return; // one physical part, on the first zone that claims it
             placed.add(p.id);
-            const pInv = (p.invId && invById.get(String(p.invId))) || invByName.get(String(p.name || "").trim().toLowerCase()) || null;
-            merged.set("p:" + p.id, { name: p.name, qty: Number(p.qty) || 0, unit: String(pInv?.unit || p?.unit || "").trim(), photo: invPhoto(pInv, p), dims: invDims(pInv), source: "Inside " + kitLabel });
+            let pInv = (p.invId && invById.get(String(p.invId))) || invByName.get(String(p.name || "").trim().toLowerCase()) || null;
+            // a part that named designs of its own (cushion cover / overlay): the design Planning decided is the one that goes out
+            let partName = p.name;
+            const prt = elementPlanOf().rows.find(r => r.fi === (fn?.fnIdx ?? fi) && r.zk === zk && r.ei === ei && r.part !== undefined && String(r.prefs[0]?.id) === String(p.invId));
+            if (prt && prt.decidedId && String(prt.decidedId) !== String(p.invId)) {
+              const di = invById.get(String(prt.decidedId));
+              if (di) { pInv = di; partName = di.name; }
+              else partName = ([...prt.options, prt.manual].filter(Boolean).find(o => o.id === prt.decidedId) || {}).name || partName;
+            }
+            merged.set("p:" + p.id, { name: partName, qty: Number(p.qty) || 0, unit: String(pInv?.unit || p?.unit || "").trim(), photo: invPhoto(pInv, p), dims: invDims(pInv), source: "Inside " + kitLabel });
           });
           // Only the parts are ours — the kit shell itself sits on another department's sheet.
           if (!held && kitParts.length) return;
@@ -3706,7 +3714,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           // ── OVERLAYS AND CUSHION COVERS WITH CHOICES ──
           // Planning decides one of sales' designs (or arranges the pieces outside stock). The card shows that design — its own photo and
           // size — and until it is decided the choices are listed under the 1st. Deal Check's PDF (pdfAllCarpetsRef) lists what sales asked for.
-          const prow = elementPlanOf().rows.find(r => r.fi === (fn?.fnIdx ?? fi) && r.zk === zk && r.ei === ei) || null;
+          const prow = elementPlanOf().rows.find(r => r.fi === (fn?.fnIdx ?? fi) && r.zk === zk && r.ei === ei && r.part === undefined) || null;
           let invU = inv, arranged = false, choiceExtra = null, decName = "";
           if (prow) {
             const names = prow.options.map((o, i) => `${i + 1} ${String(o.name || "").length > 16 ? String(o.name).slice(0, 15) + "…" : o.name}`).join(" · ");
