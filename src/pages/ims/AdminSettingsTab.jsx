@@ -88,7 +88,7 @@ function CatalogueColourInput({ value, names, listId, className, onCommit }) {
     const canon = catalogueColour(typed, names);
     if (canon) { onCommit(canon); setDraft(null); setErr(""); return; }
     setDraft(null);
-    setErr(`"${typed}" is not in the Colour Catalogue - pick one from the list (new colours are added in Studio > Manage > Library > Colour Catalogue).`);
+    setErr(`"${typed}" is not in the Colour Catalogue - pick one from the list (a colour that is not in the list has to be added to the colour catalogue first).`);
     setTimeout(() => setErr(""), 7000);
   };
   return (
@@ -2154,7 +2154,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
           const typed = String(rawName || "").trim();
           if (!typed) return;
           const name = colourCat.length ? catalogueColour(typed, colourCat) : typed;
-          if (!name) { setAddColourErr(`"${typed}" is not in the Colour Catalogue - pick one from the chips above (new colours are added in Studio > Manage > Library > Colour Catalogue).`); return; }
+          if (!name) { setAddColourErr(`"${typed}" is not in the Colour Catalogue - pick one from the chips above (a colour that is not in the list has to be added to the colour catalogue first).`); return; }
           setAddColourErr("");
           setTrussInv((ti) => {
             const photo = FABRIC_TABLES.map(([w]) => (ti[w] || []).find((r) => sameColour(r.colour, name) && r.photo)?.photo).find(Boolean);
