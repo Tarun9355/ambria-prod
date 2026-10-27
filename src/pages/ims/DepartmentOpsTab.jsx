@@ -5832,7 +5832,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                    you've scrolled. */
                 (() => {
                   const anyRentalQty = !invScoped && invShown.some(it => Number(it.rentalQty ?? it.qty) !== (Number(it.qty) || 0));
-                  const qtyHeaderLabel = (anyRentalQty || (!invScoped && dateCols.length > 0)) ? "To load" : "Qty";
+                  const qtyHeaderLabel = anyRentalQty ? "To load" : "Qty";
                   return (
                 /* Two earlier attempts at pinning this: a plain `sticky` while the card still had
                    overflow-hidden (never attached to the real scroll — overflow-hidden makes an
@@ -5849,7 +5849,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                     <span className="flex-1 min-w-0" />
                     <div className="w-full sm:w-auto flex items-start gap-0 sm:pl-1">
                       {!invScoped && dateCols.map(c => <div key={c.date} title={c.names} className={"text-right text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400 " + STAT_W.qty}>{c.label}</div>)}
-                      <div className={"text-right text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400 " + STAT_W.qty}>{qtyHeaderLabel}</div>
+                      {!(!invScoped && dateCols.length > 0) && <div className={"text-right text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400 " + STAT_W.qty}>{qtyHeaderLabel}</div>}
                       {anyRentalQty && <div className={"text-right text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400 " + STAT_W.rentalQty}>Rental qty</div>}
                       <div className={"text-right text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400 " + STAT_W.rate}>Rate</div>
                       <div className={"text-right text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400 " + STAT_W.total}>Total</div>
@@ -5961,9 +5961,10 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                                   : <span className="text-sm text-gray-300 tabular-nums" title={`Not used on ${c.label}`}>—</span>}
                               </StatCell>
                             ); })}
-                            <StatCell label={(showRentalQty || (!invScoped && dateCols.length > 0)) ? "To load" : "Qty"} w={STAT_W.qty}>
+                            {/* with a column per date the single To load figure is left out: each date says what loads on it */}
+                            {!(!invScoped && dateCols.length > 0) && (<StatCell label={showRentalQty ? "To load" : "Qty"} w={STAT_W.qty}>
                               <span className="text-sm font-semibold text-gray-700 tabular-nums">×{it.qty}{it.qtyUnit ? <span className="ml-0.5 text-xs font-normal text-gray-400">{it.qtyUnit}</span> : null}</span>
-                            </StatCell>
+                            </StatCell>)}
                             {/* Reserved whenever ANY row in this list needs it (anyRentalQty), not just
                                 this one (showRentalQty) — so every row's Rate/Total lands under the
                                 same header column instead of shifting left on rows with nothing to
