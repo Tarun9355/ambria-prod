@@ -1514,9 +1514,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   // carries its components, so it is scaled rather than recomputed as rate × qty). Rows no
   // function's zones name — production, fabric and the like — stay under All functions.
   const invScoped = invFn !== "all" && !!mpFns[invFn];
-  const invFnQty = useMemo(() => {
+  // How many of each item one function's zone lists use — by inventory id and by name (kit components walked into).
+  const qtyMapsOfFn = (fd) => {
     const byId = new Map(), byName = new Map();
-    const fd = invScoped ? mpFns[invFn] : null;
     Object.entries(fd?.elements || {}).forEach(([zk, els]) => {
       if (fd.enabledEls && fd.enabledEls[zk] === false) return;
       (Array.isArray(els) ? els : []).forEach(el => {
@@ -1542,7 +1542,34 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       });
     });
     return { byId, byName };
-  }, [sel, invFn, inventory]);
+  };
+  const invFnQty = useMemo(() => qtyMapsOfFn(invScoped ? mpFns[invFn] : null), [sel, invFn, inventory]);
+  // ── ONE COLUMN PER EVENT DATE ──
+  // A booking whose functions fall on different dates (the same guest on the 19th and the 20th) is loaded on different days, so the whole-event
+  // list must not run them together. From two dates up, All functions gets a column per date holding how many of each item that date's functions
+  // use (their zone lists, the same count the single-function view makes). Functions on one date share its column: at one venue the same
+  // pieces are moved between them, so the day loads the LARGEST of their needs (what the To load column already does across the event);
+  // functions at different venues on the same date add up. Rows no zone names (production, fabric and the like) show a dash.
+  const dateCols = useMemo(() => {
+    const byDate = new Map();
+    mpFns.forEach((fd, fi) => {
+      const d = String(fd?.date || "").slice(0, 10);
+      if (!d) return;
+      if (!byDate.has(d)) byDate.set(d, []);
+      byDate.get(d).push(fi);
+    });
+    if (byDate.size < 2) return [];
+    return [...byDate.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([date, fis]) => {
+      // one group of quantity maps per venue (a function with no venue recorded stands alone)
+      const byVenue = new Map();
+      fis.forEach(fi => { const vk = String(mpFns[fi]?.venue || "").trim().toLowerCase() || `fn:${fi}`; if (!byVenue.has(vk)) byVenue.set(vk, []); byVenue.get(vk).push(qtyMapsOfFn(mpFns[fi])); });
+      const groups = [...byVenue.values()];
+      let label = date;
+      try { label = new Date(date + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short" }); } catch { /* keep the ISO date */ }
+      return { date, label, names: fis.map(fi => mpFns[fi]?.type || `Function ${fi + 1}`).join(", "), groups };
+    });
+  }, [sel, inventory]);
+  const qtyOnDate = (col, it) => col.groups.reduce((sum, maps) => sum + Math.max(0, ...maps.map(m => (it.invId && m.byId.get(String(it.invId))) || m.byName.get(String(it.name || "").trim().toLowerCase()) || 0)), 0);
   const invShown = invScoped
     ? blockedItemsGrouped.map(it => {
         const q = (it.invId && invFnQty.byId.get(String(it.invId))) || invFnQty.byName.get(String(it.name || "").trim().toLowerCase()) || 0;
@@ -5805,7 +5832,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                    you've scrolled. */
                 (() => {
                   const anyRentalQty = !invScoped && invShown.some(it => Number(it.rentalQty ?? it.qty) !== (Number(it.qty) || 0));
-                  const qtyHeaderLabel = anyRentalQty ? "To load" : "Qty";
+                  const qtyHeaderLabel = (anyRentalQty || (!invScoped && dateCols.length > 0)) ? "To load" : "Qty";
                   return (
                 /* Two earlier attempts at pinning this: a plain `sticky` while the card still had
                    overflow-hidden (never attached to the real scroll — overflow-hidden makes an
@@ -5821,6 +5848,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                   {invShown.some(it => !fabricGroupInfo.groupedLineIds.has(it.id)) && <div className="hidden sm:flex items-center gap-x-3 px-2.5 sticky top-0 z-10 bg-white rounded-lg ring-1 ring-gray-100 py-1.5 -mt-0.5 mb-1">
                     <span className="flex-1 min-w-0" />
                     <div className="w-full sm:w-auto flex items-start gap-0 sm:pl-1">
+                      {!invScoped && dateCols.map(c => <div key={c.date} title={c.names} className={"text-right text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400 " + STAT_W.qty}>{c.label}</div>)}
                       <div className={"text-right text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400 " + STAT_W.qty}>{qtyHeaderLabel}</div>
                       {anyRentalQty && <div className={"text-right text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400 " + STAT_W.rentalQty}>Rental qty</div>}
                       <div className={"text-right text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400 " + STAT_W.rate}>Rate</div>
@@ -5925,7 +5953,15 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                           {/* Divided from the name and from each other, so three right-aligned
                               figures read as three columns rather than one run of digits. */}
                           <div className="w-full sm:w-auto flex items-start gap-0 divide-x divide-gray-100 sm:border-l sm:border-gray-100 sm:pl-1">
-                            <StatCell label={showRentalQty ? "To load" : "Qty"} w={STAT_W.qty}>
+                            {/* one column per event date (see dateCols): what loads on that day */}
+                            {!invScoped && dateCols.map(c => { const q = qtyOnDate(c, it); return (
+                              <StatCell key={c.date} label={c.label} w={STAT_W.qty}>
+                                {q > 0
+                                  ? <span className="text-sm font-semibold text-gray-700 tabular-nums" title={`${c.label} · ${c.names}`}>×{q}</span>
+                                  : <span className="text-sm text-gray-300 tabular-nums" title={`Not used on ${c.label}`}>—</span>}
+                              </StatCell>
+                            ); })}
+                            <StatCell label={(showRentalQty || (!invScoped && dateCols.length > 0)) ? "To load" : "Qty"} w={STAT_W.qty}>
                               <span className="text-sm font-semibold text-gray-700 tabular-nums">×{it.qty}{it.qtyUnit ? <span className="ml-0.5 text-xs font-normal text-gray-400">{it.qtyUnit}</span> : null}</span>
                             </StatCell>
                             {/* Reserved whenever ANY row in this list needs it (anyRentalQty), not just
