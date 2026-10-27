@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { supabase } from "../../lib/supabase";
 import DatePricingPanel from "./DatePricingPanel.jsx";
 import { resolveDateCategory } from "../../lib/inventory/helpers";
 import { DATE_PRICING_LABELS, SETTINGS_DEFAULTS, hasIMSPerm, DATE_PRICING_OWNER_ID } from "../../lib/ims/constants";
@@ -65,13 +66,11 @@ export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, l
   // outside this component should not be able to set or clear an override either.
   function setDateCategory(ds, catKey) {
     if (!isDatePricingOwner) return;
-    // mergeDatePricing (server-side shallow merge), not setSettings — a plain setSettings spread
-    // writes this TAB's whole local datePricing back (see IMS.jsx's mergeDatePricing comment): if
-    // this tab's own categories/autoSyncPaused/etc. happened to be stale, clicking a date here would
-    // silently re-save that staleness on top of whatever's actually correct in the database.
-    const m = { ...(settings.datePricing?.markedDates || {}) };
-    if (catKey == null) delete m[ds]; else m[ds] = catKey;
-    mergeDatePricing({ markedDates: m });
+    // Row-level against date_pricing_overrides (migration 046) — not mergeDatePricing/setSettings,
+    // and not even a read-then-write of the current map: this touches ONLY the one date's own row,
+    // so it can't race or clobber any other date another tab just set.
+    if (catKey == null) supabase.from("date_pricing_overrides").delete().eq("date_str", ds).then(() => {}, () => {});
+    else supabase.from("date_pricing_overrides").upsert({ date_str: ds, category: catKey }, { onConflict: "date_str" }).then(() => {}, () => {});
   }
 
   const fmtTime = (t) => {

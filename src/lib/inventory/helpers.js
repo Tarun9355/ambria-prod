@@ -35,6 +35,16 @@ export function findAlternatives(targetItem, inventory, neededQty = 1, excludeId
     .slice(0, 3);
 }
 
+// Row -> object translation (migration 046: date_pricing_overrides TABLE replacing
+// datePricing.markedDates). Gives back the exact {dateStr: categoryKey} map resolveDateCategory/
+// getEffectivePricing below already expect — merged onto datePricing by the loader (IMS.jsx,
+// StudioApp.jsx), not read from the settings blob any more.
+export function assembleMarkedDatesFromRows(rows) {
+  const out = {};
+  (Array.isArray(rows) ? rows : []).forEach((r) => { out[r.date_str] = r.category; });
+  return out;
+}
+
 // Effective date-pricing category: manual override (markedDates) wins, else the auto-synced
 // LMS category (datePricing.autoCategories, kept in sync from the Calendar's LMS/season data),
 // else Filler (non_saya) — the single source of truth every date-pricing consumer should share.

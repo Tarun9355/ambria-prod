@@ -11,6 +11,7 @@ import { createSettingsWriter } from "../../lib/ims/settingsWriter";
 import { SETTINGS_DEFAULTS, INIT_TRUSS_INV, assembleHeavyElementRangesFromRows, assembleTrussLabourRangesFromRows, assembleFabricBangaliRangesFromRows } from "../../lib/ims/constants";
 import { assembleAttendanceLocationsFromRows, assembleAttendanceTrainingByDeptFromRows } from "../../lib/ims/attendance";
 import { assembleSynonymDictionaryFromRows } from "../../lib/studio/tagging/matcher";
+import { assembleMarkedDatesFromRows } from "../../lib/inventory/helpers";
 import { RC_CATS_DEFAULT } from "../../lib/studio/constants";
 import InventoryTab from "./InventoryTab.jsx";
 import AttendanceTab from "./AttendanceTab.jsx";
@@ -400,6 +401,10 @@ export default function IMS() {
   const attendanceLocationRowsRef = useRef([]);
   const attendanceTrainingRowsRef = useRef([]);
   const synonymGroupRowsRef = useRef([]);
+  // datePricing.markedDates rows (migration 046) — same reasoning, merged as a SUB-FIELD of
+  // datePricing (not a whole top-level settings field) since categories/autoCategories/etc. stay
+  // in the settings blob, protected by merge_settings_json.
+  const markedDateRowsRef = useRef([]);
   // Every setX below updates React state synchronously, then persists to Supabase via a
   // fire-and-forget async IIFE that nothing awaits — a real bug, confirmed by direct DB
   // inspection: a sold deal's auto-confirm engine (executeConfirmBlocks → createProjectFromEO)
@@ -530,6 +535,11 @@ export default function IMS() {
     settingsObj.attendanceLocations = assembleAttendanceLocationsFromRows(attendanceLocationRowsRef.current);
     settingsObj.attendanceTrainingByDept = assembleAttendanceTrainingByDeptFromRows(attendanceTrainingRowsRef.current);
     settingsObj.synonymDictionary = assembleSynonymDictionaryFromRows(synonymGroupRowsRef.current);
+    // datePricing.markedDates is now the `date_pricing_overrides` TABLE (migration 046) — a sub-field
+    // merge into whatever the generic loop above already set datePricing to (categories/
+    // autoCategories/autoSyncPaused/autoSyncLockCode stay exactly as that settings key holds them;
+    // see merge_settings_json's own comment on mergeDatePricing for why only markedDates moved).
+    settingsObj.datePricing = { ...settingsObj.datePricing, markedDates: assembleMarkedDatesFromRows(markedDateRowsRef.current) };
     settingsRef.current = settingsObj;
     setSettingsState(settingsObj);
     setSettingsLoaded(true);
@@ -648,6 +658,15 @@ export default function IMS() {
     const v = assembleSynonymDictionaryFromRows(rows);
     settingsRef.current = { ...(settingsRef.current || {}), synonymDictionary: v };
     setSettingsState((prev) => ({ ...(prev || {}), synonymDictionary: v }));
+  }, []);
+
+  // datePricing.markedDates rows -> a sub-field merge into settings.datePricing (not a whole
+  // top-level field — see the comment on applySettingsRows' own markedDates line).
+  const applyMarkedDateRows = useCallback((rows) => {
+    markedDateRowsRef.current = rows;
+    const markedDates = assembleMarkedDatesFromRows(rows);
+    settingsRef.current = { ...(settingsRef.current || {}), datePricing: { ...(settingsRef.current || {}).datePricing, markedDates } };
+    setSettingsState((prev) => ({ ...(prev || {}), datePricing: { ...(prev || {}).datePricing, markedDates } }));
   }, []);
 
   // ── Recipe → Studio rate sync (Tier 1.5) ───────────────────────────────────
@@ -956,7 +975,7 @@ export default function IMS() {
     let active = true;
     (async () => {
       try {
-        const [invRows, fnRows, projRows, venRows, poRows, ohRows, supRows, userRows, prodRows, eoRows, allocRows, rcRows, trussRows, catRows, setRows, blockRows, rcCatRows, mandiRows, patternRows, labourTypeRows, venueLabourRows, printMaterialRows, carpetMaterialRows, platformRateRows, maskingRateRows, trussRateRows, heavyElementRangeRows, trussLabourRangeRows, fabricBangaliRangeRows, attendanceLocationRows, attendanceTrainingRows, synonymGroupRows] = await Promise.all([
+        const [invRows, fnRows, projRows, venRows, poRows, ohRows, supRows, userRows, prodRows, eoRows, allocRows, rcRows, trussRows, catRows, setRows, blockRows, rcCatRows, mandiRows, patternRows, labourTypeRows, venueLabourRows, printMaterialRows, carpetMaterialRows, platformRateRows, maskingRateRows, trussRateRows, heavyElementRangeRows, trussLabourRangeRows, fabricBangaliRangeRows, attendanceLocationRows, attendanceTrainingRows, synonymGroupRows, markedDateRows] = await Promise.all([
           fetchAll("inventory"),
           fetchAll("functions").catch(() => []),
           fetchAll("projects").catch(() => []),
@@ -989,6 +1008,7 @@ export default function IMS() {
           fetchAll("attendance_locations").catch(() => []),
           fetchAll("attendance_training").catch(() => []),
           fetchAll("synonym_groups").catch(() => []),
+          fetchAll("date_pricing_overrides").catch(() => []),
         ]);
         if (!active) return;
         { const bm = blocksRowsToMap(blockRows); blocksRef.current = bm; setBlocksState(bm); }
@@ -1034,6 +1054,9 @@ export default function IMS() {
         applyAttendanceLocationRows(attendanceLocationRows);
         applyAttendanceTrainingRows(attendanceTrainingRows);
         applySynonymGroupRows(synonymGroupRows);
+        // datePricing.markedDates — the `date_pricing_overrides` TABLE (migration 046). Populates
+        // markedDateRowsRef BEFORE applySettingsRows runs, same reasoning as every other ref above.
+        applyMarkedDateRows(markedDateRows);
         // blocks blob, Studio rate-card mirror, and the settings object — applied via the
         // shared helper (also used by the settings Realtime subscription below).
         applySettingsRows(setRows);
@@ -1111,6 +1134,7 @@ export default function IMS() {
     liveTable("attendance_locations", (rows) => applyAttendanceLocationRows(rows));
     liveTable("attendance_training", (rows) => applyAttendanceTrainingRows(rows));
     liveTable("synonym_groups", (rows) => applySynonymGroupRows(rows));
+    liveTable("date_pricing_overrides", (rows) => applyMarkedDateRows(rows));
     // blocks gets its own channel too, same reason as event_orders below: Build reconciles this
     // table's reservation rows on every qty-affecting edit to a sold deal (reconcileSoldInventoryBlocks
     // in StudioApp.jsx), so it changes constantly, and the table holds one row per inventory item

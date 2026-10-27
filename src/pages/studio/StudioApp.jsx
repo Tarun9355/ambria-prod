@@ -96,7 +96,7 @@ import { costSheetQtyEdit } from "../../lib/studio/costSheetQtyEdit";
 import { allocateRowAvailability, maxQtyForRow, netOwnReservedBlocksLive } from "../../lib/studio/dealAvailability";
 import { callClaudeStreaming } from "../../lib/ai";
 import { heavyExtraLabour, eventTimingMultFor, SETTINGS_DEFAULTS, SIT_MULT_DEFAULTS, assembleHeavyElementRangesFromRows, assembleTrussLabourRangesFromRows, assembleFabricBangaliRangesFromRows } from "../../lib/ims/constants";
-import { resolveDateCategory, getEffectivePricing } from "../../lib/inventory/helpers";
+import { resolveDateCategory, getEffectivePricing, assembleMarkedDatesFromRows } from "../../lib/inventory/helpers";
 import { itemImsSubcat, lookupBySubcat, priceForInvItem, itemDimsText, walkKitUnits, kitDescendantIds } from "../../lib/ims/helpers";
 import { matchFlowerPattern, floralPatternUnitRates, sizeClassToPatternKey, normalizeSizeClass, kitFloralCompDelta, assembleMandiCatalogueFromRows, assembleFlowerPatternsFromRows } from "../../lib/ims/flowerHelpers";
 import { assembleLabourTiersFromRows, assembleDihariSchemesFromRows, assembleDefaultWindowsByPhaseFromRows } from "../../lib/ims/labourTypes";
@@ -3271,6 +3271,12 @@ export default function StudioApp() {
     const ch = subscribeTable("flower_patterns", () => { refreshStudioFloralData(); });
     return () => { try { supabase.removeChannel(ch); } catch { /* ignore */ } };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // ── Realtime: date_pricing_overrides is its own TABLE now (migration 046) — datePricing.
+  // markedDates no longer changes via the "studio:settings" key-watch channel above. ──
+  useEffect(() => {
+    const ch = subscribeTable("date_pricing_overrides", () => { refreshStudioFloralData(); });
+    return () => { try { supabase.removeChannel(ch); } catch { /* ignore */ } };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   // ── Realtime: the five structure rate lists (migration 043) — each its own table now, not a
   // settings row, so each gets its own re-fetch-and-set subscription instead of the generic
   // "studio:settings" key-watch channel above. ──
@@ -4845,12 +4851,13 @@ export default function StudioApp() {
       // comes from the `fixed_venues` TABLE (migration 038), mandiCatalogue from `mandi_flowers`
       // (migration 039), and flowerPatterns from `flower_patterns` (migration 040) — none of them
       // are this settings-keys fetch any more.
-      const [{ data }, trussInvRows, fixedVenueRows, mandiRows, patternRows] = await Promise.all([
+      const [{ data }, trussInvRows, fixedVenueRows, mandiRows, patternRows, markedDateRows] = await Promise.all([
         supabase.from("settings").select("key,value").in("key", FLORAL_DATA_KEYS),
         fetchAll("truss_inventory").catch(() => []),
         fetchAll("fixed_venues").catch(() => []),
         fetchAll("mandi_flowers").catch(() => []),
         fetchAll("flower_patterns").catch(() => []),
+        fetchAll("date_pricing_overrides").catch(() => []),
       ]);
       const s = {};
       (data || []).forEach(r => { let v = r?.value; for (let i = 0; i < 2; i++) { if (typeof v === "string") { try { v = JSON.parse(v); } catch { break; } } } s[r.key] = v; });
@@ -4879,7 +4886,9 @@ export default function StudioApp() {
         // Same reasoning as agencyFeePct/fixedVenues above — Category Multipliers (IMS → Calendar →
         // Date Pricing Config) must scale the guest-facing rental price before Deal Check has ever
         // been opened too, not just once dealCheckData's own copy has loaded.
-        datePricing: (s.datePricing && typeof s.datePricing === "object") ? s.datePricing : SETTINGS_DEFAULTS.datePricing,
+        // markedDates is the `date_pricing_overrides` TABLE (migration 046) now — a sub-field merge
+        // on top, same reasoning as fixedVenues/mandiCatalogue/flowerPatterns above.
+        datePricing: { ...((s.datePricing && typeof s.datePricing === "object") ? s.datePricing : SETTINGS_DEFAULTS.datePricing), markedDates: assembleMarkedDatesFromRows(markedDateRows) },
         trussInv,
       });
     } catch { /* ignore — floral auto-derive falls back to flat rate */ }
@@ -10959,7 +10968,7 @@ export default function StudioApp() {
         }
         return isGood(last) ? last : null;
       };
-      const [invResults, settingsRows, vendorRows, trussInvRows, fixedVenueRows, mandiRows, patternRows, labourTypeRows, venueLabourRows, heavyElementRangeRows, trussLabourRangeRows, fabricBangaliRangeRows] = await Promise.all([
+      const [invResults, settingsRows, vendorRows, trussInvRows, fixedVenueRows, mandiRows, patternRows, labourTypeRows, venueLabourRows, heavyElementRangeRows, trussLabourRangeRows, fabricBangaliRangeRows, markedDateRows] = await Promise.all([
         Promise.all(uniqueDates.map(d => fetchIMSData(d))),
         readRetry(async () => { const r = await supabase.from("settings").select("key,value"); if (r.error) throw r.error; return r.data || []; }, rows => Array.isArray(rows) && rows.length > 0),
         fetchAll("vendors").catch(() => []),
@@ -10972,6 +10981,7 @@ export default function StudioApp() {
         fetchAll("heavy_element_ranges").catch(() => []),
         fetchAll("truss_labour_ranges").catch(() => []),
         fetchAll("fabric_bangali_ranges").catch(() => []),
+        fetchAll("date_pricing_overrides").catch(() => []),
       ]);
       if (!settingsRows || !trussInvRows) {
         setDealCheckError("Settings or truss stock didn't load, so manpower and truss would show as zero. Close Deal Check and open it again.");
@@ -11029,7 +11039,7 @@ export default function StudioApp() {
       // IMS → Admin → Calendar → Date Pricing Config. Both were persisted settings with nothing
       // reading them; now wired into repeatAdjustedLineCost-adjacent pricing and manpowerPlanForBooking/
       // DCManpowerTab's crew counts respectively — see dateCategoryMultiplierFor/heavySayaMultFor.
-      const datePricing = (s.datePricing && typeof s.datePricing === "object") ? s.datePricing : SETTINGS_DEFAULTS.datePricing;
+      const datePricing = { ...((s.datePricing && typeof s.datePricing === "object") ? s.datePricing : SETTINGS_DEFAULTS.datePricing), markedDates: assembleMarkedDatesFromRows(markedDateRows) };
       const situationalMultipliers = (s.situationalMultipliers && typeof s.situationalMultipliers === "object") ? s.situationalMultipliers : SIT_MULT_DEFAULTS;
       const situationalMultiplierCap = typeof s.situationalMultiplierCap === "number" ? s.situationalMultiplierCap : 1.8;
       const heavyElementRanges = assembleHeavyElementRangesFromRows(heavyElementRangeRows);
