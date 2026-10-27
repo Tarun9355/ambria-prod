@@ -161,6 +161,33 @@ export const DEFAULT_TRUSS_RATES = TRUSS_SHAPES.flatMap((shape) => TRUSS_MATERIA
   ratePerSqft: shape.key === "box" ? 50 : 30, ceilingRatePerSqft: 0,
 }))));
 export const DEFAULT_MASKING_RATES=[{key:"fabric",name:"Fabric",ratePerSqft:20},{key:"acrylic",name:"Acrylic",ratePerSqft:100},{key:"flex",name:"Flex",ratePerSqft:45},{key:"vinyl",name:"Vinyl",ratePerSqft:90}];
+
+// Rate-list row -> object translation (migration 043: print_materials/carpet_materials/
+// platform_rates/masking_rates/truss_rates TABLES replacing the printMaterials/carpetMaterials/
+// platformRates/maskingRates/trussRates settings keys). The four free-form lists share the same
+// {id-or-key, name, ratePerSqft} shape; truss_rates is the fixed (shape,material,density) grid with
+// no name field. These give back the exact array shape every *RateFor/*Options function above
+// already expects — no pricing/lookup logic anywhere changed.
+export function assemblePrintMaterialsFromRows(rows) {
+  return (Array.isArray(rows) ? rows : []).map((r) => ({ id: r.id, name: r.name, ratePerSqft: Number(r.rate_per_sqft) || 0 }));
+}
+export function assembleCarpetMaterialsFromRows(rows) {
+  return (Array.isArray(rows) ? rows : []).map((r) => ({ id: r.id, name: r.name, ratePerSqft: Number(r.rate_per_sqft) || 0 }));
+}
+export function assemblePlatformRatesFromRows(rows) {
+  return (Array.isArray(rows) ? rows : []).map((r) => ({ key: r.key, name: r.name, ratePerSqft: Number(r.rate_per_sqft) || 0 }));
+}
+export function assembleMaskingRatesFromRows(rows) {
+  return (Array.isArray(rows) ? rows : []).map((r) => ({ key: r.key, name: r.name, ratePerSqft: Number(r.rate_per_sqft) || 0 }));
+}
+export function assembleTrussRatesFromRows(rows) {
+  return (Array.isArray(rows) ? rows : []).map((r) => ({
+    shape: r.shape, material: r.material, density: r.density,
+    ratePerSqft: Number(r.rate_per_sqft) || 0, ceilingRatePerSqft: Number(r.ceiling_rate_per_sqft) || 0,
+    ...(r.oversize_threshold_sqft != null ? { oversizeThresholdSqft: Number(r.oversize_threshold_sqft) } : {}),
+    ...(r.oversize_rate_per_sqft != null ? { oversizeRatePerSqft: Number(r.oversize_rate_per_sqft) } : {}),
+  }));
+}
 // `material`/`density` default to "iron"/"moderate" when a row hasn't set them yet (e.g. zones or
 // tagged photos saved before this model existed) — Iron is the house-standard default truss material.
 // `area` (sqft) is optional — omitting it (existing callers that have no figure to pass yet)

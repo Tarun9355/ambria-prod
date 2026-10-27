@@ -78,6 +78,7 @@ import {
   getCat, taxOr, FUNCTIONS, CATEGORIES, SHIFT_LETTER,
   carpetPricingFor, CARPET_OFF, trussRateFor, maskingRateFor, platformRateFor, platformRowCost, billedCarpetSqft, trussBaseArea, TRUSS_MATERIALS, DRAPE_DENSITIES,
   resolveVenueGensets,
+  assemblePrintMaterialsFromRows, assembleCarpetMaterialsFromRows, assemblePlatformRatesFromRows, assembleMaskingRatesFromRows, assembleTrussRatesFromRows,
 } from "../../lib/studio/taxonomy";
 
 import { RC_D, RC_CATS_DEFAULT } from "../../lib/studio/constants";
@@ -94,11 +95,12 @@ import { sigHash } from "../../lib/sigHash";
 import { costSheetQtyEdit } from "../../lib/studio/costSheetQtyEdit";
 import { allocateRowAvailability, maxQtyForRow, netOwnReservedBlocksLive } from "../../lib/studio/dealAvailability";
 import { callClaudeStreaming } from "../../lib/ai";
-import { heavyExtraLabour, eventTimingMultFor, SETTINGS_DEFAULTS, SIT_MULT_DEFAULTS } from "../../lib/ims/constants";
+import { heavyExtraLabour, eventTimingMultFor, SETTINGS_DEFAULTS, SIT_MULT_DEFAULTS, assembleHeavyElementRangesFromRows, assembleTrussLabourRangesFromRows, assembleFabricBangaliRangesFromRows } from "../../lib/ims/constants";
 import { resolveDateCategory, getEffectivePricing } from "../../lib/inventory/helpers";
 import { itemImsSubcat, lookupBySubcat, priceForInvItem, itemDimsText, walkKitUnits, kitDescendantIds } from "../../lib/ims/helpers";
 import { matchFlowerPattern, floralPatternUnitRates, sizeClassToPatternKey, normalizeSizeClass, kitFloralCompDelta, assembleMandiCatalogueFromRows, assembleFlowerPatternsFromRows } from "../../lib/ims/flowerHelpers";
 import { assembleLabourTiersFromRows, assembleDihariSchemesFromRows, assembleDefaultWindowsByPhaseFromRows } from "../../lib/ims/labourTypes";
+import { assembleVenueMinLabourFromRows, assembleVenueDumpingFromRows } from "../../lib/ims/venueLabourConfig";
 import { rowToRcItem, rcItemToRow, rcIsSMB, getFloralMode, oosCostPctFor, canFulfillShortfall } from "../../lib/rateCard";
 import { todayStr } from "../../lib/ims/attendance";
 import { supabase, fetchAll, upsertRow, deleteRow, subscribeTable, keepaliveUpsert, keepaliveRpc } from "../../lib/supabase";
@@ -3115,14 +3117,14 @@ export default function StudioApp() {
         // AI Synonym Dictionary — IMS persists each settings field as its OWN row keyed by field name
         // (IMS.jsx's setSettings), not nested under IMS_SETTINGS_SK, so it's fetched by its own key.
         (async () => { try { const synv = await kvGet("synonymDictionary"); if (synv != null) { const sd = parse(synv); if (Array.isArray(sd) && !cancelled) setImsSynonymDictionary(sd); } } catch {} })(),
-        // Print Materials — same per-field kv row pattern as synonymDictionary above.
-        (async () => { try { const pmv = await kvGet("printMaterials"); if (pmv != null) { const pm = parse(pmv); if (Array.isArray(pm) && !cancelled) setImsPrintMaterials(pm); } } catch {} })(),
-        (async () => { try { const cmv = await kvGet("carpetMaterials"); if (cmv != null) { const cm = parse(cmv); if (Array.isArray(cm) && !cancelled) setImsCarpetMaterials(cm); } } catch {} })(),
-        // Truss & Masking Rates (IMS Admin → Settings → 🏗️) — same per-field kv row pattern.
-        (async () => { try { const trv = await kvGet("trussRates"); if (trv != null) { const tr = parse(trv); if (Array.isArray(tr) && !cancelled) setImsTrussRates(tr); } } catch {} })(),
-        (async () => { try { const mrv = await kvGet("maskingRates"); if (mrv != null) { const mr = parse(mrv); if (Array.isArray(mr) && !cancelled) setImsMaskingRates(mr); } } catch {} })(),
+        // Print/Carpet Materials, Truss & Masking Rates, Platform Rates (IMS Admin → Settings) — now
+        // their own TABLES (migration 043), not settings rows — fetched directly instead of via kv.
+        (async () => { try { const rows = await fetchAll("print_materials"); if (!cancelled) setImsPrintMaterials(assemblePrintMaterialsFromRows(rows)); } catch {} })(),
+        (async () => { try { const rows = await fetchAll("carpet_materials"); if (!cancelled) setImsCarpetMaterials(assembleCarpetMaterialsFromRows(rows)); } catch {} })(),
+        (async () => { try { const rows = await fetchAll("truss_rates"); if (!cancelled) setImsTrussRates(assembleTrussRatesFromRows(rows)); } catch {} })(),
+        (async () => { try { const rows = await fetchAll("masking_rates"); if (!cancelled) setImsMaskingRates(assembleMaskingRatesFromRows(rows)); } catch {} })(),
         (async () => { try { const fmv = await kvGet("fabricMultiplier"); if (fmv != null && !cancelled) setImsFabricMultiplier(parse(fmv)); } catch {} })(),
-        (async () => { try { const prv = await kvGet("platformRates"); if (prv != null) { const pr = parse(prv); if (Array.isArray(pr) && !cancelled) setImsPlatformRates(pr); } } catch {} })(),
+        (async () => { try { const rows = await fetchAll("platform_rates"); if (!cancelled) setImsPlatformRates(assemblePlatformRatesFromRows(rows)); } catch {} })(),
       ]);
       // Every input the estimate reads has now landed: the rate card and its scaling factors,
       // inventory, the transport settings, and all five structure-rate tables above. Anything loaded
@@ -3222,12 +3224,7 @@ export default function StudioApp() {
           if (key === RC_SK_CATS) { const a = pj(await kvGet(RC_SK_CATS)); if (Array.isArray(a)) setRcCats(a); }
           else if (key === RC_SK_TR) { const td = pj(await kvGet(RC_SK_TR)); if (td && typeof td === "object") { if (td.venues) setTrVenues(td.venues); if (td.truckCap) setTruckCap(td.truckCap); if (td.floralPerTruck) setFloralPerTruck(td.floralPerTruck); if (td.bufferTiers) setBufferTiers(td.bufferTiers); if (td.gensetRate !== undefined) setGensetRate(td.gensetRate); if (td.gensetRate62 !== undefined) setGensetRate62(td.gensetRate62); if (td.gensetCostRate !== undefined) setGensetCostRate(td.gensetCostRate); if (td.gensetCostRate62 !== undefined) setGensetCostRate62(td.gensetCostRate62); } trSettingsLoadedRef.current = true; }
           else if (key === PALETTE_SK) { const p = pj(await kvGet(PALETTE_SK)); if (p && typeof p === "object") { if (Array.isArray(p.colourCatalogue)) setImsColourCatalogue(p.colourCatalogue); if (Array.isArray(p.paletteCatalogue)) setImsPaletteCatalogue(p.paletteCatalogue); } }
-          else if (key === "printMaterials") { const pm = pj(await kvGet("printMaterials")); if (Array.isArray(pm)) setImsPrintMaterials(pm); }
-          else if (key === "carpetMaterials") { const cm = pj(await kvGet("carpetMaterials")); if (Array.isArray(cm)) setImsCarpetMaterials(cm); }
-          else if (key === "trussRates") { const tr = pj(await kvGet("trussRates")); if (Array.isArray(tr)) setImsTrussRates(tr); }
-          else if (key === "maskingRates") { const mr = pj(await kvGet("maskingRates")); if (Array.isArray(mr)) setImsMaskingRates(mr); }
           else if (key === "fabricMultiplier") { setImsFabricMultiplier(pj(await kvGet("fabricMultiplier"))); }
-          else if (key === "platformRates") { const pr = pj(await kvGet("platformRates")); if (Array.isArray(pr)) setImsPlatformRates(pr); }
           // YT_TAG_SK is deliberately NOT handled here any more. Video tags have their own row-level
           // subscription on the `video_tags` table now, and the blob is a write-only mirror during the
           // transition. Rebuilding the whole map from that mirror could push a stale blob (the mirror
@@ -3275,6 +3272,20 @@ export default function StudioApp() {
     const ch = subscribeTable("flower_patterns", () => { refreshStudioFloralData(); });
     return () => { try { supabase.removeChannel(ch); } catch { /* ignore */ } };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // ── Realtime: the five structure rate lists (migration 043) — each its own table now, not a
+  // settings row, so each gets its own re-fetch-and-set subscription instead of the generic
+  // "studio:settings" key-watch channel above. ──
+  useEffect(() => {
+    const specs = [
+      ["print_materials", () => fetchAll("print_materials").then((rows) => setImsPrintMaterials(assemblePrintMaterialsFromRows(rows)))],
+      ["carpet_materials", () => fetchAll("carpet_materials").then((rows) => setImsCarpetMaterials(assembleCarpetMaterialsFromRows(rows)))],
+      ["truss_rates", () => fetchAll("truss_rates").then((rows) => setImsTrussRates(assembleTrussRatesFromRows(rows)))],
+      ["masking_rates", () => fetchAll("masking_rates").then((rows) => setImsMaskingRates(assembleMaskingRatesFromRows(rows)))],
+      ["platform_rates", () => fetchAll("platform_rates").then((rows) => setImsPlatformRates(assemblePlatformRatesFromRows(rows)))],
+    ];
+    const channels = specs.map(([table, reload]) => subscribeTable(table, () => { reload().catch(() => {}); }));
+    return () => { channels.forEach((ch) => { try { supabase.removeChannel(ch); } catch { /* ignore */ } }); };
+  }, []);
   // ── Realtime: library is a TABLE — patch row-level UPDATE/DELETE live for whatever's already
   // cached (echoes of our own writes are idempotent). Since `libItems` is now a lazy cache rather
   // than the whole table, an INSERT for an id we've never queried is deliberately IGNORED here —
@@ -10948,7 +10959,7 @@ export default function StudioApp() {
         }
         return isGood(last) ? last : null;
       };
-      const [invResults, settingsRows, vendorRows, trussInvRows, fixedVenueRows, mandiRows, patternRows, labourTypeRows] = await Promise.all([
+      const [invResults, settingsRows, vendorRows, trussInvRows, fixedVenueRows, mandiRows, patternRows, labourTypeRows, venueLabourRows, heavyElementRangeRows, trussLabourRangeRows, fabricBangaliRangeRows] = await Promise.all([
         Promise.all(uniqueDates.map(d => fetchIMSData(d))),
         readRetry(async () => { const r = await supabase.from("settings").select("key,value"); if (r.error) throw r.error; return r.data || []; }, rows => Array.isArray(rows) && rows.length > 0),
         fetchAll("vendors").catch(() => []),
@@ -10957,6 +10968,10 @@ export default function StudioApp() {
         fetchAll("mandi_flowers").catch(() => []),
         fetchAll("flower_patterns").catch(() => []),
         fetchAll("labour_types").catch(() => []),
+        fetchAll("venue_labour_config").catch(() => []),
+        fetchAll("heavy_element_ranges").catch(() => []),
+        fetchAll("truss_labour_ranges").catch(() => []),
+        fetchAll("fabric_bangali_ranges").catch(() => []),
       ]);
       if (!settingsRows || !trussInvRows) {
         setDealCheckError("Settings or truss stock didn't load, so manpower and truss would show as zero. Close Deal Check and open it again.");
@@ -11004,7 +11019,8 @@ export default function StudioApp() {
       const dihariSchemes = assembleDihariSchemesFromRows(labourTypeRows);
       const defaultWindowsByPhase = assembleDefaultWindowsByPhaseFromRows(labourTypeRows);
       const labourTiers = assembleLabourTiersFromRows(labourTypeRows);
-      const venueMinLabour = (s.venueMinLabour && typeof s.venueMinLabour === "object") ? s.venueMinLabour : {};
+      const venueMinLabour = assembleVenueMinLabourFromRows(venueLabourRows);
+      const venueDumpingFromTable = assembleVenueDumpingFromRows(venueLabourRows);
       const defaultMinLabour = typeof s.defaultMinLabour === "number" ? s.defaultMinLabour : 4;
       if (s.eventTypeMultipliers && typeof s.eventTypeMultipliers === "object") eventTypeMultipliers = s.eventTypeMultipliers;
       if (s.eventTimingMultipliers && typeof s.eventTimingMultipliers === "object") eventTimingMultipliers = s.eventTimingMultipliers;
@@ -11016,9 +11032,9 @@ export default function StudioApp() {
       const datePricing = (s.datePricing && typeof s.datePricing === "object") ? s.datePricing : SETTINGS_DEFAULTS.datePricing;
       const situationalMultipliers = (s.situationalMultipliers && typeof s.situationalMultipliers === "object") ? s.situationalMultipliers : SIT_MULT_DEFAULTS;
       const situationalMultiplierCap = typeof s.situationalMultiplierCap === "number" ? s.situationalMultiplierCap : 1.8;
-      const heavyElementRanges = Array.isArray(s.heavyElementRanges) ? s.heavyElementRanges : [];
-      const fabricBangaliRanges = Array.isArray(s.fabricBangaliRanges) ? s.fabricBangaliRanges : [];
-      const trussLabourRanges = Array.isArray(s.trussLabourRanges) ? s.trussLabourRanges : [];
+      const heavyElementRanges = assembleHeavyElementRangesFromRows(heavyElementRangeRows);
+      const fabricBangaliRanges = assembleFabricBangaliRangesFromRows(fabricBangaliRangeRows);
+      const trussLabourRanges = assembleTrussLabourRangesFromRows(trussLabourRangeRows);
       const fabricRftPerWorker = (typeof s.fabricRftPerWorker === "number" && s.fabricRftPerWorker > 0) ? s.fabricRftPerWorker : 100;
       const colourCatalogue = Array.isArray(s.colourCatalogue) ? s.colourCatalogue : [];
       const paletteCatalogue = Array.isArray(s.paletteCatalogue) ? s.paletteCatalogue : [];
@@ -11049,7 +11065,7 @@ export default function StudioApp() {
       (customProperties || []).forEach(p => { if (p?.name && typeof p.commissionPct === "number") venueCommission[p.name] = p.commissionPct; });
       (customOutdoor || []).forEach(v => { if (v?.name && typeof v.commissionPct === "number") venueCommission[v.name] = v.commissionPct; });
 
-      setDealCheckData({ inventory, blocksByDate, blocksDetailByDate, fetchedDates: uniqueDates, flowerPatterns, mandiCatalogue, mandiPriceMultipliers, seasonMap, electricianProductivity, artificialMixRatePerKg, artificialFlowerRatePerKg, artificialFlowerBunchesPerKg, artificialGreenRatePerKg, artificialGreenBunchesPerKg, flowerRecipeSubcats, dihariSchemes, defaultWindowsByPhase, labourTiers, venueMinLabour, defaultMinLabour, eventTypeMultipliers, eventTimingMultipliers, sayaMultiplier, datePricing, situationalMultipliers, situationalMultiplierCap, heavyElementRanges, fabricBangaliRanges, trussLabourRanges, fabricRftPerWorker, vendors, trussInv, colourCatalogue, paletteCatalogue, paintableCategories, defaultPaintCostPerItem, carpetFreshMarkup, agencyFeePct, defaultStudioMarkup: Number(s.defaultStudioMarkup ?? 3) || 3, fixedVenues: assembleFixedVenuesFromRows(fixedVenueRows), fixedVenueSubcatDiscount: (s.fixedVenueSubcatDiscount && typeof s.fixedVenueSubcatDiscount === "object") ? s.fixedVenueSubcatDiscount : {}, venueParents, venueCommission, venueDumping: (s.venueDumping && typeof s.venueDumping === "object") ? s.venueDumping : {}, categoryDepartments: (catDeptMap && Object.keys(catDeptMap).length) ? catDeptMap : ((s.categoryDepartments && typeof s.categoryDepartments === "object") ? s.categoryDepartments : {}) });
+      setDealCheckData({ inventory, blocksByDate, blocksDetailByDate, fetchedDates: uniqueDates, flowerPatterns, mandiCatalogue, mandiPriceMultipliers, seasonMap, electricianProductivity, artificialMixRatePerKg, artificialFlowerRatePerKg, artificialFlowerBunchesPerKg, artificialGreenRatePerKg, artificialGreenBunchesPerKg, flowerRecipeSubcats, dihariSchemes, defaultWindowsByPhase, labourTiers, venueMinLabour, defaultMinLabour, eventTypeMultipliers, eventTimingMultipliers, sayaMultiplier, datePricing, situationalMultipliers, situationalMultiplierCap, heavyElementRanges, fabricBangaliRanges, trussLabourRanges, fabricRftPerWorker, vendors, trussInv, colourCatalogue, paletteCatalogue, paintableCategories, defaultPaintCostPerItem, carpetFreshMarkup, agencyFeePct, defaultStudioMarkup: Number(s.defaultStudioMarkup ?? 3) || 3, fixedVenues: assembleFixedVenuesFromRows(fixedVenueRows), fixedVenueSubcatDiscount: (s.fixedVenueSubcatDiscount && typeof s.fixedVenueSubcatDiscount === "object") ? s.fixedVenueSubcatDiscount : {}, venueParents, venueCommission, venueDumping: venueDumpingFromTable, categoryDepartments: (catDeptMap && Object.keys(catDeptMap).length) ? catDeptMap : ((s.categoryDepartments && typeof s.categoryDepartments === "object") ? s.categoryDepartments : {}) });
       setDealCheckLoading(false);
       if (inventory.length === 0) {
         setDcAbortRef(null);
