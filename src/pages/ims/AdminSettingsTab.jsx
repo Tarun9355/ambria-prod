@@ -20,6 +20,7 @@ import { getFloralMode } from "../../lib/rateCard";
 import { RC_UNITS } from "../../lib/studio/constants";
 import { DEFAULT_TRUSS_RATES, DEFAULT_MASKING_RATES, DEFAULT_PLATFORM_RATES, TRUSS_SHAPES, TRUSS_MATERIALS, DRAPE_DENSITIES } from "../../lib/studio/taxonomy";
 import { GUEST_FABRIC_MULTIPLIER, guestFabricMultiplier } from "../../lib/studio/pricing";
+import { paletteMatches } from "../../components/studio/filterUI.jsx";
 
 // Same canonical unit list as the Mandi Prices panel's own flower-unit dropdown (below), plus two
 // descriptive fallbacks ("pcs"/"made") that recipe ingredient rows have always defaulted their
@@ -254,6 +255,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
   // mobile has no single file input that reliably offers both, so the "+" button opens this tiny
   // 2-option menu instead of a bare <input type=file>.
   const [fabricPhotoMenuOpen, setFabricPhotoMenuOpen] = useState(null);
+  const [fabricSearch, setFabricSearch] = useState({}); // per fabric table: { lizaStock: "ivo", ... }
   const [sMandiMapPicker, setSMandiMapPicker] = useState(null); // { flowerId } — inventory picker for a "Mapping" flower
   const [sMandiMapSearch, setSMandiMapSearch] = useState("");
 
@@ -2145,6 +2147,9 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
         // third purchase/markup tier was redundant on top of it.
         const renderFabric = (title, emoji, themeColor, which, qtyField, qtyLabel, rentalKey, rentalKeyNew) => {
           const stock = Array.isArray(trussInv[which]) ? trussInv[which] : [];
+          // Smart search over the colour names (same matcher as Build's Fabric Palette): order-free, case- and punctuation-free, so "gold rose" finds "Rose Gold dark".
+          const q = (fabricSearch[which] || "").trim();
+          const matchCount = q ? stock.filter((r) => paletteMatches(r.colour, q)).length : stock.length;
           return (
             <div className={`bg-${themeColor}-50 border border-${themeColor}-200 rounded-2xl p-5 space-y-3`}>
               <div><p className={`font-bold text-${themeColor}-900`}>{emoji} {title}</p><p className={`text-xs text-${themeColor}-700 mt-0.5`}>Per-colour Old + New stock quantities + their two rental rates. Update the live quantities after each washing cycle.</p></div>
@@ -2155,7 +2160,14 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
               <p className={`text-[10px] text-${themeColor}-600`}>Deal Check's own per-colour view still consumes Old stock first, then New — anything beyond both also bills at the New rate. Build itself skips this and just bills whichever tier the salesperson picked, flat.</p>
               <div className={`bg-white border border-${themeColor}-100 rounded-lg overflow-hidden`}>
                 <div className={`flex items-center justify-between px-3 py-2 bg-${themeColor}-100`}>
-                  <p className={`text-xs font-bold text-${themeColor}-800`}>Per-colour Stock</p>
+                  <p className={`text-xs font-bold text-${themeColor}-800 shrink-0`}>Per-colour Stock{q && <span className="ml-1.5 font-medium text-gray-500">{matchCount} of {stock.length}</span>}</p>
+                  {stock.length > 0 && (
+                    <div className="relative flex-1 min-w-0 max-w-xs mx-3">
+                      <input type="search" value={fabricSearch[which] || ""} onChange={(e) => setFabricSearch((p) => ({ ...p, [which]: e.target.value }))} placeholder="Search colours…" aria-label={`Search ${title} colours`}
+                        className={`w-full border border-${themeColor}-200 rounded-lg bg-white pl-7 pr-2 py-1 text-xs placeholder:text-gray-400`} />
+                      <span aria-hidden="true" className="absolute left-2 top-1/2 -translate-y-1/2 text-[11px] text-gray-400">🔍</span>
+                    </div>
+                  )}
                   <button onClick={() => addStockRow(which, qtyField)} className={`text-xs bg-${themeColor}-600 hover:bg-${themeColor}-700 text-white px-2.5 py-1 rounded font-medium`}>+ Add Colour</button>
                 </div>
                 {stock.length === 0 ? (
@@ -2171,7 +2183,9 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                     <datalist id={`${which}-colours`}>{colourCat.map((cn) => <option key={cn} value={cn} />)}</datalist>
                     <thead className="text-gray-500"><tr><th className="px-2 py-1.5 text-left w-14">Photo</th><th className="px-2 py-1.5 text-left">Colour</th><th className="px-2 py-1.5 text-center w-20" title="Off = this colour is not offered for this fabric in Build's Fabric Palette">In Build</th><th className="px-2 py-1.5 text-center w-20">Old ({qtyLabel})</th><th className={`px-2 py-1.5 text-center text-${themeColor}-700 w-20`}>New ({qtyLabel})</th><th className="px-2 py-1.5 text-center w-16">Total</th><th className="px-2 py-1.5 w-10"></th></tr></thead>
                     <tbody>
+                      {q && matchCount === 0 && <tr><td colSpan={7} className="px-3 py-4 text-center text-xs text-gray-400 italic">No colour matches "{q}"</td></tr>}
                       {stock.map((row, i) => {
+                        if (q && !paletteMatches(row.colour, q)) return null;
                         const oldQ = Number(row[qtyField]) || 0;
                         const newQ = Number(row[`${qtyField}New`]) || 0;
                         const photoKey = `${which}:${i}`;
