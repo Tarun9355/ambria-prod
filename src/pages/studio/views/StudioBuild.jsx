@@ -1209,7 +1209,21 @@ export default function StudioBuild({ ctx }) {
     .filter(w => w.it && /fabric/i.test(String(w.it.cat || w.it.category || "")) && /printed wall/i.test(String(w.it.subCat || w.it.subcategory || "")));
   const zoneSectionSub = (k, id) => {
     const zc = zoneConfig[k] || {}, zm = zoneMeta[k] || {}, d = zc.dims || {}, fd = zc.floorDims || {};
-    if (id === "elements") { const n = (zoneElements[k] || []).length; return n ? `${n} item${n === 1 ? "" : "s"}` : "No items yet"; }
+    if (id === "elements") {
+      const els = zoneElements[k] || [], n = els.length;
+      if (!n) return "No items yet";
+      // Anything short or out of stock on this date is said on the tile itself, in red like a short carpet - so it shows without opening the card.
+      // Same two signals the element card's own "⚠ short" badge reads: the held qty below the asked one, and the price check's stock warning.
+      const pool = crossFnPool();
+      const shortN = els.reduce((a, el, idx) => {
+        if (!el?.invId) return a;
+        const asked = (Number(el.wantedQty) || 0) > (Number(el.qty) || 0);
+        let warned = false;
+        try { warned = !!getElPrice(el, zoneConfig[k], { checkAvailability: true, zoneKey: k, elIdx: idx, crossFnReusePool: pool }, aVenue)?.warning; } catch { /* price check failed: not counted */ }
+        return a + (asked || warned ? 1 : 0);
+      }, 0);
+      return `${n} item${n === 1 ? "" : "s"}${shortN ? ` · ⚠ ${shortN} short` : ""}`;
+    }
     // Empty rather than "Not set" — the tile already reads as untouched, and the words added a
     // line of noise to every zone on first open. sectionTile skips the sub-label row when blank.
     // "· masking" only when masking is actually on — mkT (the material) stays set after the toggle is
@@ -1355,7 +1369,7 @@ export default function StudioBuild({ ctx }) {
       <div style={{flex:1,minWidth:0}}>
         <div style={{fontSize:12.5,fontWeight:700,color:on?accent:textP}}>{sec.label}</div>
         {/* Red for a carpet problem on the Platform tile: short, none selected, or not picked. */}
-        {sub&&(()=>{const warn=sec.id==="platform"&&/^⚠|No carpet|carpet not picked/.test(String(sub));return <div style={{fontSize:10.5,color:warn?"#EF4444":textS,fontWeight:warn?700:undefined,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sub}</div>;})()}
+        {sub&&(()=>{const warn=(sec.id==="platform"&&/^⚠|No carpet|carpet not picked/.test(String(sub)))||(sec.id==="elements"&&/⚠/.test(String(sub)));return <div style={{fontSize:10.5,color:warn?"#EF4444":textS,fontWeight:warn?700:undefined,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sub}</div>;})()}
       </div>
       {/* Per-chip Repeat override — defaults to the zone's own ✨Fresh/♻️Repeat toggle (repeatCatFor)
           until flipped here specifically for this one category. Icon-only: the tile is already
