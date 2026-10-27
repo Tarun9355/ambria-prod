@@ -826,6 +826,19 @@ export const autoFillFabricAllocation = (totalQty, paletteAnchors, stockArray, q
   return [];
 };
 
+// The colour(s) a truss row's fabric of one material really goes in. A colour saved on the row (picked by hand in Deal Check) is kept - but only while it still
+// agrees with the function's Fabric Palette: a saved allocation naming a colour that none of the palette's anchors for this material allows is a leftover from
+// an earlier palette (Build's Fabric Palette was changed since) and is ignored, so the palette decides. With no palette picked (no anchors), a saved allocation
+// stands as it always did. `existing` is row[allocField].
+export const resolveFabricAllocation = (existing, totalQty, paletteAnchors, stockArray, qtyField) => {
+  const anchors = Array.isArray(paletteAnchors) ? paletteAnchors : [];
+  if (Array.isArray(existing) && existing.length > 0) {
+    const agrees = anchors.length === 0 || existing.every((a) => anchors.some((an) => fuzzyColourMatch(an, a?.colour)));
+    if (agrees) return existing;
+  }
+  return autoFillFabricAllocation(totalQty, anchors, stockArray, qtyField);
+};
+
 // ═══ Direct-add mandi elements (owner ask, 2026-10-17) ═══ A raw mandi commodity is normally only
 // ever priced through a recipe/blend — never added to a build as its own element. "Loose Petals"
 // was the one named exception (by the kg, variant picked afterward on the card). Generalized here:

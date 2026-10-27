@@ -42,13 +42,15 @@ export function trussDimsText(row) {
   return mat ? `${text} · ${mat.charAt(0).toUpperCase()}${mat.slice(1)}` : text;
 }
 
-// The colour(s) one truss row's fabric of this kind went to: the row's own allocation when it has one, else what Deal Check recorded for that row
-// when the event was synced (fabricPlan.rows). [] when neither exists (an event synced before this was recorded).
+// The colour(s) one truss row's fabric of this kind went to: what Deal Check recorded for that row when the event was synced (fabricPlan.rows), else the
+// row's own saved allocation. [] when neither exists (an event synced before this was recorded).
 function rowColours(kind, entry, fabricPlan) {
-  const own = Array.isArray(entry.row?.[kind.allocField]) ? entry.row[kind.allocField].filter((a) => a && (Number(a.qty) || 0) > 0) : [];
-  if (own.length) return own.map((a) => ({ colour: a.colour || "(unassigned)", qty: num(a.qty) }));
+  // what Deal Check worked out for this row when the event was synced (it weighs the saved colour against the Fabric Palette), else the row's own saved colour
   const rec = Array.isArray(fabricPlan?.rows) ? fabricPlan.rows : [];
-  return rec.filter((r) => r.kind === kind.key && r.fi === entry.fi && r.zk === entry.zk && (r.ri || 0) === (entry.ri || 0)).map((r) => ({ colour: r.colour, qty: num(r.qty) }));
+  const recorded = rec.filter((r) => r.kind === kind.key && r.fi === entry.fi && r.zk === entry.zk && (r.ri || 0) === (entry.ri || 0)).map((r) => ({ colour: r.colour, qty: num(r.qty) }));
+  if (recorded.length) return recorded;
+  const own = Array.isArray(entry.row?.[kind.allocField]) ? entry.row[kind.allocField].filter((a) => a && (Number(a.qty) || 0) > 0) : [];
+  return own.map((a) => ({ colour: a.colour || "(unassigned)", qty: num(a.qty) }));
 }
 
 function applicationText(kind, fab, row) {

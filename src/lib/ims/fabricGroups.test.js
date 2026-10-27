@@ -161,6 +161,12 @@ describe("buildFabricGroups — each zone's truss dimensions and fabric colour",
     expect(g.zones.find((z) => z.name === "Stage").colours.map((c) => c.colour)).toEqual(["Ivory"]);
     expect(g.zones.find((z) => z.name === "Entry").colours.map((c) => [c.colour, c.photo])).toEqual([["Rani", "rani.jpg"]]);
   });
+  it("what Deal Check recorded wins over a colour still saved on the row (the palette overruled it)", () => {
+    const r = row({ lizaAllocation: [{ colour: "Rani", qty: 5 }] });
+    const plan = { liza: [{ colour: "Ivory", qty: 5 }], rows: [{ fi: 0, zk: "stage", ri: 0, kind: "liza", colour: "Ivory", qty: 5 }] };
+    const z = buildFabricGroups({ entries: [mk("stage", "Stage", 5, r)], lines: [], fabricPlan: plan, stock: stockC }).groups[0].zones[0];
+    expect(z.colours.map((c) => c.colour)).toEqual(["Ivory"]);
+  });
   it("an event synced before the colours were recorded: one colour for the fabric is every zone's colour; several are left unsaid", () => {
     const one = buildFabricGroups({ entries: [mk("stage", "Stage", 5, row())], lines: [], fabricPlan: { liza: [{ colour: "Ivory", qty: 5 }] }, stock: stockC }).groups[0];
     expect(one.zones[0].colours.map((c) => c.colour)).toEqual(["Ivory"]);

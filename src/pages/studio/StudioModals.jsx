@@ -16,7 +16,7 @@ import ClickablePhoto from "../../components/shared/ClickablePhoto.jsx";
 import InventoryItemPickerModal from "../../components/shared/InventoryItemPickerModal.jsx";
 import PhotoTagFields from "../../components/studio/PhotoTagFields.jsx";
 import { getCat, carpetPricingFor, defaultCarpetMatId, CARPET_OFF, trussRateFor, maskingRateFor, maskingOptions, TRUSS_MATERIALS } from "../../lib/studio/taxonomy";
-import { calcZoneFabric, autoFillFabricAllocation, anchorsForPaletteByMaterial } from "../../lib/studio/pricing";
+import { calcZoneFabric, resolveFabricAllocation, anchorsForPaletteByMaterial } from "../../lib/studio/pricing";
 import { qtyUsedElsewhereInBuild } from "../../lib/studio/dealAvailability";
 import { isHiddenSubcat } from "../../lib/rateCard";
 import { itemDimsText, priceForInvItem, kitDescendantIds } from "../../lib/ims/helpers";
@@ -1408,9 +1408,7 @@ export default function StudioModals({ ctx }) {
         // auto-fill this picker, matching DCTrussTab's own FabricRow resolveAlloc.
         const anchors = anchorsForPaletteByMaterial(imsPaletteCatalogue, fnPalette, fabricType);
         const existingAlloc = row[cfg.allocField];
-        const initial = (Array.isArray(existingAlloc) && existingAlloc.length > 0)
-          ? existingAlloc
-          : autoFillFabricAllocation(cfg.totalQty, anchors, cfg.stockArr, cfg.qtyField);
+        const initial = resolveFabricAllocation(existingAlloc, cfg.totalQty, anchors, cfg.stockArr, cfg.qtyField);
         // Filter colour catalogue to only colours that exist in this fabric's stock array
         const stockColours = new Set((cfg.stockArr || []).map(s => s.colour));
         const filteredCat = (imsColourCatalogue || []).filter(c => stockColours.has(c.name));
