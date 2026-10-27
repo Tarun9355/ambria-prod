@@ -140,7 +140,12 @@ describe("computePeopleRaw — generic tier-2/tier-3 and default types", () => {
 });
 
 describe("computePeople — heavySaya wrap", () => {
-  it("applies the King's-date pressure factor to a non-Labours type", () => {
+  // Situational multiplier disabled 2026-10-27 (owner ask — see manpowerCount.js's computePeople):
+  // Deal Check's manpower plan should come straight from Workforce's item-qty batch sizes, rounded
+  // up, while a Labours mismatch between Deal Check and IMS Dept Ops' Manpower plan is verified.
+  // These 4 assert the multiplier actually being applied, so they're skipped (not deleted) until
+  // it's re-enabled — un-skip them at the same time computePeople's wrap is restored.
+  it.skip("applies the King's-date pressure factor to a non-Labours type", () => {
     const f = fn({ zoneElements: { stage: [{ name: "Warm LED", invId: "led1", qty: 10 }] } });
     const ctx = {
       ...baseCtx(), dcInventoryCache: [{ id: "led1", name: "Warm LED", cat: "lighting", subCat: "LED String" }],
@@ -151,7 +156,7 @@ describe("computePeople — heavySaya wrap", () => {
     expect(computePeople(f, "Electricians", ctx)).toBe(2);
   });
 
-  it("multiplies Labours' count once, by the biggest situational factor, capped", () => {
+  it.skip("multiplies Labours' count once, by the biggest situational factor, capped", () => {
     const heavyElementRanges = [{ subCat: "Sofa", perCount: 2, labour: 1 }];
     const f = fn({ zoneElements: { stage: [{ name: "Sofa", invId: "sofa1", qty: 2 }] } });
     const ctx = {
@@ -163,7 +168,7 @@ describe("computePeople — heavySaya wrap", () => {
     expect(computePeople(f, "Labours", ctx)).toBe(2);
   });
 
-  it("a date the Calendar marks King's counts even though the legacy seasonMap is empty", () => {
+  it.skip("a date the Calendar marks King's counts even though the legacy seasonMap is empty", () => {
     const f = fn({ zoneElements: { stage: [{ name: "Warm LED", invId: "led1", qty: 10 }] } });
     const ctx = {
       ...baseCtx(), dcInventoryCache: [{ id: "led1", name: "Warm LED", cat: "lighting", subCat: "LED String" }],
@@ -174,7 +179,7 @@ describe("computePeople — heavySaya wrap", () => {
     expect(computePeople(f, "Electricians", { ...ctx, datePricing: { autoCategories: { "2026-10-19": "non_saya" } } })).toBe(1);
   });
 
-  it("applies the shift-timing factor to every type, not only Labours", () => {
+  it.skip("applies the shift-timing factor to every type, not only Labours", () => {
     const f = fn({ fnShift: "Lunch", zoneElements: { stage: [{ name: "Warm LED", invId: "led1", qty: 10 }] } });
     const ctx = {
       ...baseCtx(), dcInventoryCache: [{ id: "led1", name: "Warm LED", cat: "lighting", subCat: "LED String" }],
@@ -184,7 +189,7 @@ describe("computePeople — heavySaya wrap", () => {
     expect(computePeople(fn({ ...f, fnShift: "Night" }), "Electricians", ctx)).toBe(1); // dinner = no factor
   });
 
-  it("does not stack the factors: the biggest one wins", () => {
+  it.skip("does not stack the factors: the biggest one wins", () => {
     const f = fn({ fnShift: "Lunch", zoneElements: { stage: [{ name: "Warm LED", invId: "led1", qty: 50 }] } });
     const ctx = {
       ...baseCtx(), dcInventoryCache: [{ id: "led1", name: "Warm LED", cat: "lighting", subCat: "LED String" }],

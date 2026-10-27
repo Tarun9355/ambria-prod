@@ -1456,7 +1456,12 @@ export default function DealCheckOverlay({ ctx }) {
                   const em = eventTypeMultipliers["outdoor_budgeted"] || 1; const base = Math.ceil(vm * em);
                   // The same factors the engine multiplies the crew by — see StudioApp's manpowerPlanForBooking trace.
                   const sit = situationalFactorsFor(fn, "Labours", mpCtxFor(fn));
-                  const sm = sit.mult;
+                  // Situational multiplier disabled 2026-10-27 (see manpowerCount.js's computePeople,
+                  // same owner ask) — this trace explains calcPpl's headline count, which no longer
+                  // applies it, so neither does this. sit.mult/winner/parts stay available for
+                  // reference in the returned `situational` object below; they just no longer move
+                  // `adj`/`result`.
+                  const sm = 1.0;
                   const adj = Math.ceil(base * sm); const sc = {}; walkFn(fn, ({ rc, qty }) => { const _s = itemImsSubcat(rc); sc[_s] = (sc[_s] || 0) + qty; });
                   const reduction = standingReductionBySubcat(fvCfg, venueName, (dcCards || {})[fns.indexOf(fn)], dealCheckData?.inventory || []);
                   // Per-sub-category rows for the heavy-element add-on, same as manpowerPlanForBooking's

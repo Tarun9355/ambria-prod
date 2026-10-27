@@ -5918,7 +5918,11 @@ export default function StudioApp() {
         // The same factors the engine multiplies the crew by (situationalFactorsFor) — kept with the
         // trace so Dept Ops can say which one applied and what it did to the crew.
         const sit = situationalFactorsFor(fn, "Labours", mpCtxFor(fn));
-        const sm = sit.mult;
+        // Situational multiplier disabled 2026-10-27 (see manpowerCount.js's computePeople, same
+        // owner ask) — this trace explains the headline count above (already computePeople-driven,
+        // unmultiplied), so neither does this. sit.mult/winner/parts stay available for reference in
+        // the returned `situational` object below; they just no longer move `adj`/`result`.
+        const sm = 1.0;
         const adj = Math.ceil(base * sm);
         const sc = {}; walkFnElements(fn, imsInventory, ({ rc, qty }) => { const s = itemImsSubcat(rc); sc[s] = (sc[s] || 0) + qty; });
         const reduction = standingReductionBySubcat(fvCfgMP, venueName, (dcCards || {})[fn.fnIdx], d.inventory || []);

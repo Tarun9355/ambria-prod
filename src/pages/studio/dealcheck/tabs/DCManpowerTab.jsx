@@ -447,6 +447,11 @@ export default function DCManpowerTab({ ctx }) {
                     if (!dcMpIncludeMinusOne) {
                       situationalMult = Math.min(situMultCap, Math.max(dumpingMult, sayaMult, timingMult, 1.0));
                     }
+                    // Situational multiplier disabled 2026-10-27 (see manpowerCount.js's computePeople,
+                    // same owner ask) — this trace explains the headline count, which no longer applies
+                    // it, so neither does this. dumpMult/sayaMult/timingMult/sitMax stay visible below
+                    // for reference; they just no longer move `total`.
+                    situationalMult = 1.0;
                     const adjusted = Math.ceil(base * situationalMult); // venue-min floor (with situational)
                     const subCounts = {};
                     walkFnElements(fn, ({ rc, qty }) => { const s = itemImsSubcat(rc); subCounts[s] = (subCounts[s] || 0) + qty; });
