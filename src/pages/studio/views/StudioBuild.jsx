@@ -22,6 +22,7 @@ import { prefsOf, prefsPatch, setPrefsPatch, clearPrefsPatch, assignCarpets, car
 import { trussRowCost, calcZoneFabricCost, guestFabricMultiplier, fabricRepeatDiscount, maskingRepeatOn, maskingGuestCost, zoneTrussStandingDiscountDetail, repeatCatFor, parseFlowerPalette, stringifyFlowerPalette, parseFabricPalette, stringifyFabricPalette, isDirectMandiElement, anchorsForPaletteByMaterial, snapRowDimsForProduction } from "../../../lib/studio/pricing";
 import { paletteSearch, paletteMatches } from "../../../components/studio/filterUI.jsx";
 import { resolveTrussConfig } from "../../../lib/studio/pricing";
+import { fabricColourOptions } from "../../../lib/studio/fabricColourOptions";
 import { qtyUsedElsewhereInBuild } from "../../../lib/studio/dealAvailability";
 import { logDiscountToClientToggle } from "../../../lib/studio/userActions";
 import { todayStr } from "../../../lib/ims/attendance";
@@ -3425,23 +3426,9 @@ undefined
       // actually matches used to silently fall back to whichever colour had the most stock, with no
       // way to tell. Every option listed now is guaranteed to be a real, matchable fabric colour.
       // Also carries each colour's own reference photo (if the admin uploaded one) and which of the
-      // 3 stocks it actually appears in, so toggling a material icon for a colour that was never
-      // even in Curtain stock can't silently claim it is.
-      const fabricColourInfo = (() => {
-        const tInv = structRates?.trussInv;
-        const map = new Map();
-        // A stock row switched off for Build (IMS → Fabric Stock → "In Build") is not offered for that fabric; a colour already picked stays listed so it can still be un-picked.
-        const scan = (arr, material) => (arr || []).forEach(s => {
-          const n = String(s?.colour || "").trim(); if (!n) return;
-          if (s?.hideInBuild && !curColors.some(c => c.name === n)) return;
-          if (!map.has(n)) map.set(n, { name: n, photo: "", in: new Set() });
-          const e = map.get(n);
-          if (!s?.hideInBuild) e.in.add(material);
-          if (!e.photo && s.photo) e.photo = s.photo;
-        });
-        scan(tInv?.lizaStock, "liza"); scan(tInv?.maskingStock, "masking"); scan(tInv?.curtainStock, "curtain");
-        return map;
-      })();
+      // 3 stocks it actually has stock in, so toggling a material icon for a colour that was never
+      // even in Curtain stock can't silently claim it is. Only colours with something in stock are listed (lib/studio/fabricColourOptions.js).
+      const fabricColourInfo = fabricColourOptions(structRates?.trussInv, curColors.map(c => c.name));
       const opts = azSort([...fabricColourInfo.keys()]);
       const matched = fabricPaletteQ.trim() ? paletteSearch(opts, fabricPaletteQ) : opts;
       // Multiple colours (owner ask): widen the acceptable set rather than pin one — Deal Check's
