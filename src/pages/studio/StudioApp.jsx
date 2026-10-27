@@ -3930,6 +3930,10 @@ export default function StudioApp() {
           zoneNames: Object.fromEntries((fd.customZones || []).filter(cz => cz && cz.id).map(cz => [cz.id, cz.name || ""])),
           // The Build page's own zone order (dragged by hand); IMS's PDFs list zones in it.
           zoneOrder: Array.isArray(fd.zoneOrder) ? [...fd.zoneOrder] : [],
+          // The function's Fabric Palette as Build has it right now, so IMS's Fabric block follows a palette change at once (it works the colours out from this
+          // and the live fabric stock) instead of waiting for the next Deal Check sync. fabricPaletteLive marks the field as kept live (a constant, not a time, so it never changes the layout fingerprint).
+          fabricPalette: fd.fnPalette || "",
+          fabricPaletteLive: true,
           // Which function, when and where. Set once at booking and never refreshed, so a date moved
           // in Studio after the deal was booked never reached IMS — the event stayed on its old date
           // in the planning calendar and on every report. Only written when Studio has a value.
@@ -4017,6 +4021,10 @@ export default function StudioApp() {
           zoneNames: Object.fromEntries((fd.customZones || []).filter(cz => cz && cz.id).map(cz => [cz.id, cz.name || ""])),
           // The Build page's own zone order (dragged by hand); IMS's PDFs list zones in it.
           zoneOrder: Array.isArray(fd.zoneOrder) ? [...fd.zoneOrder] : [],
+          // The function's Fabric Palette as Build has it right now, so IMS's Fabric block follows a palette change at once (it works the colours out from this
+          // and the live fabric stock) instead of waiting for the next Deal Check sync. fabricPaletteLive marks the field as kept live (a constant, not a time, so it never changes the layout fingerprint).
+          fabricPalette: fd.fnPalette || "",
+          fabricPaletteLive: true,
         });
       });
     } catch { return; }
@@ -8175,7 +8183,7 @@ export default function StudioApp() {
     // unsavedEditRef never flipped true — no beforeunload warning either. The item only survived a
     // refresh if the 15s periodic fallback happened to land first or some unrelated edit rode along;
     // add-then-immediately-refresh lost it every time, in Build and in Deal Check (same session field).
-  }, [activeClientId, clientName, clientDate, venue, fn, clientShift, clientPax, clientBrideGroom, extraFunctions,
+  }, [activeClientId, clientName, clientDate, venue, fn, clientShift, clientPax, clientBrideGroom, extraFunctions, clientPalette, clientFlowerPalette,
       zoneElements, elSelectedPhoto, elTiers, zoneConfig, enabledEls, elNotes, floralRatio, itemQty, itemGrades,
       customZones, customMode, activeFnIdx, fnBuilds, dcCustomItems, autoSaveBuild]);
   // 2) Periodic fallback + 3) save on tab hide / refresh.

@@ -216,3 +216,34 @@ describe("foldFabricLines — one load line per fabric colour, not one per zone"
     expect(foldFabricLines(plain, groups)).toBe(plain);
   });
 });
+
+describe("buildFabricGroups — colours worked out live from the function's Fabric Palette", () => {
+  const mk = (zk, zLabel, kg, row = {}, over = {}) => ({ fi: 0, ri: 0, zk, zLabel, fnLabel: "Wedding", photo: "", fab: { lizaKg: kg, lizaWrapKg: kg, lizaCeilingKg: 0, curtainPieces: 4 }, row, ...over });
+  const stock = { lizaStock: [{ colour: "Ivory", stockKg: 40, photo: "iv.jpg" }, { colour: "Rose Gold dark", stockKg: 100 }], curtainStock: [{ colour: "Ivory", stockPieces: 80 }, { colour: "Rose Gold", stockPieces: 3, photo: "rg.jpg" }] };
+  const stalePlan = { liza: [{ colour: "Rose Gold dark", qty: 81 }], curtain: [] };
+  const build = (palette, entries2, extra = {}) => buildFabricGroups({ entries: entries2, lines: [], fabricPlan: stalePlan, stock, fnPalettes: palette === null ? null : { 0: palette }, ...extra }).groups;
+  it("Liza follows the palette (Ivory) whatever Deal Check last recorded, a saved Rose Gold dark is ignored", () => {
+    const g = build("Ivory, Rose Gold:C", [mk("stage", "Stage", 10.2, { lizaAllocation: [{ colour: "Rose Gold dark", qty: 11 }] }), mk("entry", "Entry", 5.5)]);
+    const liza = g.find((x) => x.key === "liza");
+    expect(liza.colours.map((c) => [c.colour, c.qty, c.photo])).toEqual([["Ivory", 17, "iv.jpg"]]); // ceil(10.2) + ceil(5.5)
+    expect(liza.zones.find((z) => z.name === "Stage").colours.map((c) => c.colour)).toEqual(["Ivory"]);
+  });
+  it("changing the palette changes the colours at once (Rose Gold for Velvet only)", () => {
+    const e = [mk("stage", "Stage", 10)];
+    expect(build("Ivory, Rose Gold:C", e).find((x) => x.key === "curtain").colours.map((c) => c.colour)).toEqual(["Ivory"]); // Ivory has more stock than Rose Gold
+    expect(build("Rose Gold:C", e).find((x) => x.key === "curtain").colours.map((c) => c.colour)).toEqual(["Rose Gold"]);
+  });
+  it("Old and New stock rows are split by the row's own tier", () => {
+    const g = build("Ivory", [mk("stage", "Stage", 10, { useNewFabric: true }), mk("entry", "Entry", 5)]).find((x) => x.key === "liza");
+    expect(g.colours[0]).toMatchObject({ colour: "Ivory", qty: 15, qtyOld: 5, qtyNew: 10 });
+  });
+  it("a repeat zone takes no new fabric, so adds no colour", () => {
+    const g = build("Ivory", [mk("stage", "Stage", 10), mk("entry", "Entry", 5, {}, { repeat: true })]).find((x) => x.key === "liza");
+    expect(g.colours[0].qty).toBe(10);
+    expect(g.zones.find((z) => z.name === "Entry").qty).toBe(5); // its quantity is still listed
+  });
+  it("no palette entry for the function: what Deal Check recorded is kept", () => {
+    const g = build(null, [mk("stage", "Stage", 10)]).find((x) => x.key === "liza");
+    expect(g.colours.map((c) => c.colour)).toEqual(["Rose Gold dark"]);
+  });
+});

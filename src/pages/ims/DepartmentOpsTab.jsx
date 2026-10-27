@@ -18,7 +18,7 @@ import { planElements, elementStockFor, elementKey, choiceNotesForRows } from ".
 import { loadOnDate } from "../../lib/ims/loadByDate";
 import { elementChoices } from "../../lib/studio/elementPrefs";
 import { orderZoneKeys } from "../../lib/ims/zoneOrder";
-import { calcZoneTrussPreview, calcZoneFabric, dcFabricMultOf } from "../../lib/studio/pricing";
+import { calcZoneTrussPreview, calcZoneFabric, dcFabricMultOf, repeatCatFor } from "../../lib/studio/pricing";
 import { ZONE_DEF_SK, RC_SK_TR } from "../../lib/studio/keys";
 import { LOGO_ASSET, LOGO_BOX } from "../../lib/studio/brand.js";
 import { thumbUrl, fitUrl } from "../../lib/studio/thumb.js";
@@ -903,7 +903,15 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const fabricEntriesOf = () => trussPlanOf().map((e) => ({
     fi: e.fi, zk: e.zk, ri: e.ri, zLabel: e.zLabel, fnLabel: e.fn?.type || `Function ${e.fi + 1}`,
     photo: e.fn?.elSelectedPhoto?.[e.zk]?.src || "", fab: e.fab, row: e.row,
+    repeat: !!repeatCatFor(e.fn?.zones?.[e.zk], "truss"), // a repeat zone reuses standing fabric: no new colour is worked out for it
   }));
+  // Each function's Fabric Palette as Build last synced it (only functions where Build keeps it live): the Fabric block works the colours out from it, so a
+  // palette change in Build shows here without a Deal Check sync.
+  const fabricPalettesOf = () => {
+    const out = {};
+    (Array.isArray(sel?.functionsDetail) ? sel.functionsDetail : []).forEach((fn, i) => { if (fn?.fabricPaletteLive) out[i] = String(fn.fabricPalette || ""); });
+    return Object.keys(out).length ? out : null;
+  };
   // ── CARPET PLAN ── sales ranks up to three stock carpets per floor (Build / Deal Check); here the Tenting head sees each
   // floor's three with what is actually free on the event date and decides which one is laid. The decision is IMS-owned
   // (deptOps.Tenting.carpetChoice), so every Studio sync leaves it alone. Read on first use, like the truss plan (`sel` is below).
@@ -1190,7 +1198,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     // checklist and receiving name what is physically loaded instead of the same fabric once per zone with no photo.
     if (dept === "Fabric" && sel) {
       try {
-        const g = buildFabricGroups({ entries: fabricEntriesOf(), lines: blockedItemsGrouped, fabricPlan: sel?.fabricPlan, stock: trussInv, multiFn: false }).groups;
+        const g = buildFabricGroups({ entries: fabricEntriesOf(), lines: blockedItemsGrouped, fabricPlan: sel?.fabricPlan, stock: trussInv, multiFn: false, fnPalettes: fabricPalettesOf() }).groups;
         return foldFabricLines(out, g);
       } catch { return out; }
     }
@@ -2622,7 +2630,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     const entries = fabricEntriesOf();
     // Money comes from the whole event's priced lines (they name a zone, not a function) and is split by quantity;
     // only then is the chosen function's share shown.
-    return buildFabricGroups({ entries, lines: blockedItemsGrouped, fabricPlan: sel?.fabricPlan, stock: trussInv, multiFn: fnsF.length > 1, onlyFi: invScoped ? invFn : null });
+    return buildFabricGroups({ entries, lines: blockedItemsGrouped, fabricPlan: sel?.fabricPlan, stock: trussInv, multiFn: fnsF.length > 1, onlyFi: invScoped ? invFn : null, fnPalettes: fabricPalettesOf() });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dept, sel, trussInv, blockedItemsGrouped, invScoped, invFn]);
   // All upcoming events scanned for fabric shortfalls (same-day contention included) → order-ahead heads-up.

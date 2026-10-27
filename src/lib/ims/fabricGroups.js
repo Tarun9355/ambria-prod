@@ -10,11 +10,12 @@
 // and are the fallback for an event whose layout has not synced.
 
 import { trussBaseArea } from "../studio/taxonomy.js";
+import { anchorsForPaletteByMaterial, resolveFabricAllocation } from "../studio/pricing.js";
 
 export const FABRIC_KINDS = [
-  { key: "liza", label: "Liza Fabric", lineName: "Liza Fabric", unit: "kg", stockKey: "lizaStock", allocField: "lizaAllocation", emoji: "🧣", qtyOf: (f) => f.lizaKg },
-  { key: "curtain", label: "Velvet Curtains", lineName: "Velvet Curtains", unit: "pcs", stockKey: "curtainStock", allocField: "curtainAllocation", emoji: "🎀", qtyOf: (f) => f.curtainPieces },
-  { key: "masking", label: "Wall Masking", lineName: "Wall Masking", unit: "pcs", stockKey: "maskingStock", allocField: "maskingAllocation", emoji: "🧱", qtyOf: (f) => f.maskingPieces },
+  { key: "liza", label: "Liza Fabric", lineName: "Liza Fabric", unit: "kg", stockKey: "lizaStock", qtyField: "stockKg", allocField: "lizaAllocation", emoji: "🧣", qtyOf: (f) => f.lizaKg },
+  { key: "curtain", label: "Velvet Curtains", lineName: "Velvet Curtains", unit: "pcs", stockKey: "curtainStock", qtyField: "stockPieces", allocField: "curtainAllocation", emoji: "🎀", qtyOf: (f) => f.curtainPieces },
+  { key: "masking", label: "Wall Masking", lineName: "Wall Masking", unit: "pcs", stockKey: "maskingStock", qtyField: "stockPieces", allocField: "maskingAllocation", emoji: "🧱", qtyOf: (f) => f.maskingPieces },
 ];
 
 const LINE_RE = /^(Liza Fabric|Velvet Curtains|Wall Masking) \((Old|New)\)$/;
@@ -74,7 +75,11 @@ function applicationText(kind, fab, row) {
 
 // onlyFi: show one function's zones only. Money is split over ALL functions first (the priced lines name a zone, not
 // a function — a "stage" line is the sum of every function's stage), then the other functions' zones are dropped.
-export function buildFabricGroups({ entries = [], lines = [], fabricPlan = null, stock = {}, multiFn = false, onlyFi = null } = {}) {
+// fnPalettes ({ [function index]: the function's Fabric Palette string }) makes the colours live: each truss row's colour is worked out here from its palette
+// and the current fabric stock - the same rule Deal Check applies (resolveFabricAllocation) - so a palette change made in Build shows at once, without a Deal
+// Check sync. A function with no palette entry (an event not touched since this was added) keeps the colours Deal Check recorded. An entry's `repeat` (a zone
+// reusing standing fabric) takes no new fabric, so it adds no colour, as in Deal Check's fabric plan.
+export function buildFabricGroups({ entries = [], lines = [], fabricPlan = null, stock = {}, multiFn = false, onlyFi = null, fnPalettes = null } = {}) {
   const fabricLines = (lines || []).filter(isFabricLine);
   const groupedLineIds = new Set();
   const groups = [];
@@ -85,15 +90,33 @@ export function buildFabricGroups({ entries = [], lines = [], fabricPlan = null,
     kindLines.forEach((l) => { const z = zoneOfLine(l); moneyByZone.set(z, (moneyByZone.get(z) || 0) + (Number(l.total) || 0)); });
     // zones from the event's own layout: one per (function, zone), extra trusses in a zone added together
     const byZone = new Map();
+    const liveStock = Array.isArray(stock?.[kind.stockKey]) ? stock[kind.stockKey] : [];
+    const liveGroup = new Map(); // colour -> { colour, old, new } over the event, from the live rule
+    let allLive = true, anyEntry = false;
     entries.forEach((e) => {
       const q = Number(kind.qtyOf(e.fab || {})) || 0;
       if (!(q > 0)) return;
+      anyEntry = true;
+      const isLive = !!fnPalettes && typeof fnPalettes[e.fi] === "string";
+      if (!isLive) allLive = false;
       const k = `${e.fi}|${e.zk}`;
       const z = byZone.get(k) || { fi: e.fi, zoneKey: e.zk, name: e.zLabel, fnLabel: e.fnLabel || "", photo: e.photo || "", qty: 0, notes: [], tier: new Set(), dims: [], colours: new Map() };
       z.qty += q;
       const dt = trussDimsText(e.row);
       if (dt && !z.dims.includes(dt)) z.dims.push(dt);
-      rowColours(kind, e, fabricPlan).forEach((c) => { const ck = colourKey(c.colour); const cur = z.colours.get(ck) || { colour: c.colour, qty: 0 }; cur.qty += c.qty; z.colours.set(ck, cur); });
+      let rowCols;
+      if (isLive) {
+        // the colour this row's fabric goes in under the function's palette (a repeat zone takes no new fabric)
+        rowCols = e.repeat ? [] : resolveFabricAllocation(e.row?.[kind.allocField], Math.ceil(q), anchorsForPaletteByMaterial([], fnPalettes[e.fi], kind.key), liveStock, kind.qtyField)
+          .map((a) => ({ colour: a.colour || "(unassigned)", qty: num(a.qty) }));
+        rowCols.forEach((c) => {
+          const ck = colourKey(c.colour);
+          const g = liveGroup.get(ck) || { colour: c.colour, old: 0, new: 0 };
+          g[e.row?.useNewFabric ? "new" : "old"] += c.qty;
+          liveGroup.set(ck, g);
+        });
+      } else rowCols = rowColours(kind, e, fabricPlan);
+      rowCols.forEach((c) => { const ck = colourKey(c.colour); const cur = z.colours.get(ck) || { colour: c.colour, qty: 0 }; cur.qty += c.qty; z.colours.set(ck, cur); });
       const note = applicationText(kind, e.fab, e.row);
       if (note) z.notes.push(note);
       z.tier.add(e.row?.useNewFabric ? "New" : "Old");
@@ -132,7 +155,11 @@ export function buildFabricGroups({ entries = [], lines = [], fabricPlan = null,
     const amount = (onlyFi === null || onlyFi === undefined) ? allFnAmount : Math.round(zones.reduce((s, z) => s + (z.exactAmount ?? z.amount), 0));
     const stockRows = Array.isArray(stock?.[kind.stockKey]) ? stock[kind.stockKey] : [];
     const stockOf = (name) => stockRows.find((r) => r && colourKey(r.colour) === colourKey(name)) || {};
-    const colours = (Array.isArray(fabricPlan?.[kind.key]) ? fabricPlan[kind.key] : [])
+    // the colours of the whole fabric: worked out live when every row of it belongs to a function with a palette, else what Deal Check recorded
+    const planColours = (anyEntry && allLive)
+      ? [...liveGroup.values()].map((g) => ({ colour: g.colour, qty: Math.ceil(g.old + g.new), qtyOld: Math.ceil(g.old), qtyNew: Math.ceil(g.new) })).filter((c) => c.qty > 0)
+      : (Array.isArray(fabricPlan?.[kind.key]) ? fabricPlan[kind.key] : []);
+    const colours = planColours
       .map((c) => {
         const s = stockOf(c.colour);
         return { colour: c.colour || "(unassigned)", qty: r2(c.qty), qtyOld: r2(c.qtyOld), qtyNew: r2(c.qtyNew), photo: s.photo || "", hex: s.hex || "" };
