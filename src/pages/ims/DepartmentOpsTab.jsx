@@ -4,7 +4,7 @@ import { withSetupSlot } from "../../lib/studio/dihariWindows.js";
 import { fmt } from "../../lib/format";
 import { mpDayWise, mpBaseDay, mpEffDay, mpEffWindows, mpLineCost, mpDayCost, mpDayDihari, aggregateEventManpower, isLiveEventOrder, phone10, walkKitUnits } from "../../lib/ims/helpers";
 import { uploadAudioToStorage } from "../../lib/storage";
-import { DEPTS as SHARED_DEPTS, catToDept as sharedCatToDept, userDepartments } from "../../lib/ims/deptClassify";
+import { DEPTS as SHARED_DEPTS, catToDept as sharedCatToDept, userDepartments, poolLabourDept, poolLabourDeptLabel } from "../../lib/ims/deptClassify";
 import { TabsMenu, useConfirm } from "../../components/ui";
 import { IconPrinter } from "../../components/icons";
 import { hasIMSPerm } from "../../lib/ims/constants";
@@ -2719,10 +2719,19 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   // small fractions separately can only ever round UP more than ceiling their sum once.
   // Summed to the hundredth before the ceiling: 0.25 + 0.30 + … that is exactly 2.00 on paper comes
   // out as 2.0000000000000004 in floating point, and Math.ceil turned that into 3.
-  const deptNeedForFn = (c) => {
-    const rows = Array.isArray(c?.trace?.usageRows) ? c.trace.usageRows.filter(ur => usageDept(ur) === dept) : [];
+  // Same formula, generalized to any department — not just this screen's own — so the "how" panel
+  // can also show what every OTHER department is using this same function's shared crew for.
+  const needForFnDept = (c, d2) => {
+    const rows = Array.isArray(c?.trace?.usageRows) ? c.trace.usageRows.filter(ur => usageDept(ur) === d2) : [];
     return Math.round(rows.reduce((s, ur) => s + (Number(ur.need) || 0), 0) * 100) / 100;
   };
+  const deptNeedForFn = (c) => needForFnDept(c, dept);
+  // Every OTHER canonical department (skips Furniture/Fabric standalone — pooled into Structure's/
+  // Tenting's — and skips `dept` itself) with a nonzero need for this one function.
+  const otherDeptNeedsForFn = (c) => DEPTS
+    .filter((d2) => poolLabourDept(d2) !== dept && poolLabourDept(d2) === d2)
+    .map((d2) => ({ dept: d2, need: needForFnDept(c, d2) }))
+    .filter((x) => x.need > 0.001);
   // A Labours day whose order carries no per-function trace (synced before Deal Check sent
   // trace.byFn, or nothing per function to show): the same facts the old prose box gave — whole-event
   // need, venue minimum, this department's own items, the carry-over and this department's share —
@@ -2824,8 +2833,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
               </div>
             ))}
             <div className="contents">
-              <span className="px-2 py-1 bg-gray-50 text-[13px] text-gray-600 flex items-center gap-1.5" title={t.kind === "labours" ? `${dept}'s own slice of each function's shared crew — the plain sum of its rows, not a dedicated headcount` : undefined}>
-                {t.kind === "labours" ? `${dept}'s share per function` : "Crew per function"}
+              <span className="px-2 py-1 bg-gray-50 text-[13px] text-gray-600 flex items-center gap-1.5" title={t.kind === "labours" ? `${poolLabourDeptLabel(dept)}'s own slice of each function's shared crew — the plain sum of its rows, not a dedicated headcount` : undefined}>
+                {t.kind === "labours" ? `${poolLabourDeptLabel(dept)}'s share per function` : "Crew per function"}
                 <button type="button" onClick={() => setLaboursHow(p => ({ ...p, [labHowKey]: !p[labHowKey] }))} className="text-[12px] font-semibold text-blue-600 hover:underline">{laboursHow[labHowKey] ? "hide" : "how?"}</button>
               </span>
               {cols.map((c, ci) => <span key={ci} className="px-2 py-1 bg-gray-50 text-[13px] text-center border-l border-gray-100 text-gray-900 font-semibold whitespace-nowrap">{t.kind === "labours" ? deptNeedForFn(c).toFixed(2) : c.result}</span>)}
@@ -2843,12 +2852,29 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
               <div className="text-[12.5px] text-gray-500">How each row reads: <b className="text-gray-700">12 ÷ 40 = 0.30</b> — 12 of the item, one labourer handles 40, so it needs 0.30 of a labourer. <b className="text-gray-700">×46 → +1</b> — 46 of a heavy item add 1 extra labourer to the whole event's crew.</div>
               {cols.map((c, ci) => {
                 const need = deptNeedForFn(c);
-                const heavy = (c.trace?.heavyRows || []).filter(hr => catToDept(hr.sub) === dept);
+                const heavy = (c.trace?.heavyRows || []).filter(hr => poolLabourDept(catToDept(hr.sub)) === dept);
                 return (
                   <div key={ci}>
-                    <b className="text-gray-900">{c.fn}</b>: {dept}'s items add up to <b className="text-gray-900">{need.toFixed(2)}</b> labourer{need === 1 ? "" : "s"}.
+                    <b className="text-gray-900">{c.fn}</b>: {poolLabourDeptLabel(dept)}'s items add up to <b className="text-gray-900">{need.toFixed(2)}</b> labourer{need === 1 ? "" : "s"}.
                     {heavy.length > 0 && <> Heavy items ({heavy.map(hr => `${hr.sub} ×${hr.count} → +${hr.extra}`).join(", ")}) add to the whole event's crew, not to this share.</>}
                     {" "}The whole event needs <b>{c.result}</b> for {c.fn} (all departments).
+                    {(() => {
+                      // The rest of this function's pooled need, broken down by every other
+                      // department using it — same usageRows, filtered to each dept in turn.
+                      const others = otherDeptNeedsForFn(c);
+                      if (!others.length) return null;
+                      return (
+                        <div className="text-gray-500">
+                          Rest of {c.fn}'s heavy décor:{" "}
+                          {others.map((o, i) => (
+                            <span key={o.dept}>
+                              {i > 0 ? " · " : ""}
+                              <b className="text-gray-700">{poolLabourDeptLabel(o.dept)}</b> {o.need.toFixed(2)}
+                            </span>
+                          ))}
+                        </div>
+                      );
+                    })()}
                     {(() => {
                       // How the situation multiplier applied to that whole-event crew, and what it did.
                       const sit = c.trace?.situational;
@@ -3174,9 +3200,34 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
                   )}
                   {hasShare && (
                     <div className="mt-1 text-[13px] text-gray-600">
-                      <b>{dept}</b>'s share today: <b className="text-gray-900">{Math.round(effDay(r, d))}</b> of the {d.count} {r.type.toLowerCase()} ({Math.round((Number(d.share) || 0) * 100)}% of today's heavy décor belongs to {dept})
+                      <b>{poolLabourDeptLabel(dept)}</b>'s share today: <b className="text-gray-900">{Math.round(effDay(r, d))}</b> of the {d.count} {r.type.toLowerCase()} ({Math.round((Number(d.share) || 0) * 100)}% of today's heavy décor belongs to {poolLabourDeptLabel(dept)})
                     </div>
                   )}
+                  {/* The rest of this shared crew, broken down by every OTHER department using it
+                      that day — d.shareByDept carries every department's own fraction (not just this
+                      one's), added 2026-10-27 so a head can see where the remaining crew is going,
+                      not just their own slice. Furniture/Fabric never appear on their own — their
+                      share is already folded into Structure's/Tenting's (poolLabourDept), so only a
+                      canonical pooled-target or standalone department shows up here. */}
+                  {hasShare && d.shareByDept && (() => {
+                    const others = DEPTS
+                      .filter((d2) => poolLabourDept(d2) !== dept && poolLabourDept(d2) === d2)
+                      .map((d2) => ({ dept: d2, share: Number(d.shareByDept[d2]) || 0 }))
+                      .filter((x) => x.share > 0.001)
+                      .sort((a, b) => b.share - a.share);
+                    if (!others.length) return null;
+                    return (
+                      <div className="mt-0.5 text-[13px] text-gray-500">
+                        Rest of today's heavy décor:{" "}
+                        {others.map((o, i) => (
+                          <span key={o.dept}>
+                            {i > 0 ? " · " : ""}
+                            <b className="text-gray-700">{poolLabourDeptLabel(o.dept)}</b> {(o.share * d.count).toFixed(2)} ({Math.round(o.share * 100)}%)
+                          </span>
+                        ))}
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
             </div>

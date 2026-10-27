@@ -22,7 +22,7 @@ import DCTrussTab from "./tabs/DCTrussTab.jsx";
 import { CARD_SHADOW, CARD_BG, CARD_BORDER, HAIRLINE, TILE_BG, TILE_BORDER, CHIP_BG, INK, INK_2, INK_3, GOLD, GOLD_SOFT, BAD, BAD_SOFT, GOOD, GOOD_SOFT, DC_CSS, deptAccent } from "../../../lib/studio/dcTokens";
 import { thumbUrl } from "../../../lib/studio/thumb";
 import { matchFlowerPattern } from "../../../lib/ims/flowerHelpers";
-import { DEPTS as OPS_DEPTS, catToDept as sharedCatToDept } from "../../../lib/ims/deptClassify";
+import { DEPTS as OPS_DEPTS, catToDept as sharedCatToDept, poolLabourDept } from "../../../lib/ims/deptClassify";
 import ItemHoverThumb from "../../../components/shared/ItemHoverThumb.jsx";
 import { WASH_BANDS, GRAIN_URL } from "../../../lib/studio/pageWash";
 import { newSplitGroupId, reconcileDealCheckIntoBuild } from "../../../lib/studio/dealCheckSync.js";
@@ -684,15 +684,10 @@ export default function DealCheckOverlay({ ctx }) {
           // (Settings → Departments); else keyword matching. Sub-cat already implies its category.
           const catDeptCfg = dealCheckData?.categoryDepartments || {};
           const catToDept = (cat) => sharedCatToDept(cat, catDeptCfg);
-          // Owner ask (2026-10-27): Furniture and Structure are run by the same person, as are
-          // Tenting and Fabric — so the shared Labours crew's cost/usage share no longer splits
-          // separately between each pair. Only the Labours split is pooled (below, at its one call
-          // site); Furniture's/Fabric's own direct income (rental, production, buying — catToDept
-          // used elsewhere in this file) is untouched, so those tabs keep tracking their own
-          // inventory, they just stop carrying their own Labours row — it folds into Structure's/
-          // Tenting's instead. IMS Dept Ops' DEPT_MP no longer lists "Labours" under Furniture/
-          // Fabric, matching this.
-          const poolLabourDept = (d) => (d === "Furniture" ? "Structure" : d === "Fabric" ? "Tenting" : d);
+          // poolLabourDept (shared, lib/ims/deptClassify.js): Furniture's/Fabric's Labours usage
+          // pools into Structure's/Tenting's — applied below, at its one call site. Furniture's/
+          // Fabric's own direct income (rental, production, buying — catToDept used elsewhere in
+          // this file) is untouched.
           // Fixed-venue "Repeat" rental — see repeatAdjustedRental above for the actual formula
           // (venue-specific standing qty + that item's own IMS discount, falling back to the
           // sub-category default at any other venue). This just says WHICH zones are Repeat.
@@ -1741,8 +1736,11 @@ export default function DealCheckOverlay({ ctx }) {
               : { total: Math.round(mpSharedTotals[type] || 0), deptDirect: Math.round(deptDirectMap[d] || 0), directTotal: Math.round(directTotal || 0) }) : null;
             // For usage-mode Labours, stamp each day with THIS dept's per-day share so Dept Ops can show
             // the day-by-day bifurcation (count × share) and reconcile cost = Σ(count × share × shifts × rate).
+            // shareByDept carries the FULL per-department map for that day (every dept, not just this
+            // one) so Dept Ops can also show what every OTHER department is using that same shared
+            // crew for, not only this dept's own slice.
             const sched = mpSchedule[type] || null;
-            const schedule = (usageMode && Array.isArray(sched)) ? sched.map(s => ({ ...s, share: (labourShareByDayDept[s.date] && labourShareByDayDept[s.date][d] != null) ? labourShareByDayDept[s.date][d] : ((labourUsageTotal > 0) ? (labourUsageByDept[d] || 0) / labourUsageTotal : 0) })) : sched;
+            const schedule = (usageMode && Array.isArray(sched)) ? sched.map(s => ({ ...s, share: (labourShareByDayDept[s.date] && labourShareByDayDept[s.date][d] != null) ? labourShareByDayDept[s.date][d] : ((labourUsageTotal > 0) ? (labourUsageByDept[d] || 0) / labourUsageTotal : 0), shareByDept: labourShareByDayDept[s.date] || null })) : sched;
             return { type, cost: Math.round(cost), count: shared ? null : (pl?.count || 0), rate, basis: pl?.basis || "", shared, trace: pl?.trace || null, splitInfo, schedule };
           }); });
           // ── ACTUALS overlay (entered by dept heads in IMS) → exact cost. Real mandi replaces the

@@ -30,8 +30,10 @@ export function planningUpcoming(eo, now = Date.now()) {
 // biggest of the date discount and the Fixed-Venue / reuse discount, so every figure moves. v5: the
 // situational multiplier no longer applies to crew counts at all (temporarily disabled), Supervisors
 // is no longer costed/shown anywhere, and Furniture's/Fabric's Labours share now pools into
-// Structure's/Tenting's instead of its own — every manpower figure moves again.
-export const PLANNING_SNAPSHOT_VERSION = 5;
+// Structure's/Tenting's instead of its own — every manpower figure moves again. v6: each shared-crew
+// day's schedule entry also carries shareByDept (every department's own share that day, not just
+// this one's), so Dept Ops can show the full cross-department bifurcation, not only "mine".
+export const PLANNING_SNAPSHOT_VERSION = 6;
 const PLANNING_SNAPSHOT_SHIPPED_AT = Date.parse("2026-10-22T06:15:00Z");
 export const planningSnapshotOutdated = (eo) => (Number(eo?.deptSnapVer) || 1) < PLANNING_SNAPSHOT_VERSION;
 
