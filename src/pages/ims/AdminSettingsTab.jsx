@@ -2125,6 +2125,16 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
             return next;
           });
         };
+        // Tapping a colour that is already in all three takes it out of all three again. Rows that hold stock are not dropped silently.
+        const removeColourFromAll = async (name) => {
+          const holding = FABRIC_TABLES.flatMap(([which, qtyField]) => (trussInv[which] || []).filter((r) => sameColour(r.colour, name) && ((Number(r[qtyField]) || 0) + (Number(r[`${qtyField}New`]) || 0)) > 0));
+          if (holding.length && !(await confirm({ title: `Remove ${name} from all three fabrics?`, body: `${holding.length === 1 ? "One of its rows still holds" : "Some of its rows still hold"} stock; that stock will be gone from the count.` }))) return;
+          setTrussInv((ti) => {
+            const next = { ...ti };
+            FABRIC_TABLES.forEach(([which]) => { next[which] = (ti[which] || []).filter((r) => !sameColour(r.colour, name)); });
+            return next;
+          });
+        };
         const removeStockRow = async (which, idx) => {
           if (!(await confirm({ title: "Remove this stock row?", body: "It will no longer count towards the truss / fabric stock." }))) return;
           setTrussInv((ti) => ({ ...ti, [which]: (ti[which] || []).filter((_, j) => j !== idx) }));
@@ -2257,7 +2267,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
             <div className="bg-white border border-indigo-200 rounded-2xl p-4 space-y-2.5">
               <div>
                 <p className="font-bold text-indigo-900">🎨 Add a colour to all three fabrics</p>
-                <p className="text-xs text-gray-500 mt-0.5">Tap a colour and it gets a row (0 old / 0 new) in Liza Fabric, Wall Masking Panels and Velvet Curtains together. A colour already in a table is left as it is.</p>
+                <p className="text-xs text-gray-500 mt-0.5">Tap a colour and it gets a row (0 old / 0 new) in Liza Fabric, Wall Masking Panels and Velvet Curtains together. A colour already in a table is left as it is. Tap a ticked colour to take it out of all three again.</p>
               </div>
               {colourCat.length > 0 && (
                 <div className="flex flex-wrap gap-1.5">
@@ -2265,9 +2275,9 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                     const done = inAllThree(c.name);
                     const partial = !done && FABRIC_TABLES.some(([which]) => hasColour(which, c.name));
                     return (
-                      <button key={c.name} type="button" disabled={done} onClick={() => addColourToAll(c.name)}
-                        title={done ? "Already in all three fabrics" : partial ? "In some of the three — tap to add to the rest" : "Add to all three fabrics"}
-                        className={"inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium " + (done ? "border-gray-200 bg-gray-50 text-gray-400 cursor-default" : partial ? "border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100" : "border-indigo-200 bg-white text-indigo-800 hover:bg-indigo-50")}>
+                      <button key={c.name} type="button" onClick={() => (done ? removeColourFromAll(c.name) : addColourToAll(c.name))}
+                        title={done ? "In all three fabrics — tap to remove from all three" : partial ? "In some of the three — tap to add to the rest" : "Add to all three fabrics"}
+                        className={"inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium " + (done ? "border-indigo-300 bg-indigo-50 text-indigo-800 hover:bg-red-50 hover:border-red-300 hover:text-red-700" : partial ? "border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100" : "border-indigo-200 bg-white text-indigo-800 hover:bg-indigo-50")}>
                         {c.hex && <span className="h-3 w-3 rounded-full border border-black/10" style={{ background: c.hex }} />}
                         {c.name}{done && <span aria-hidden="true"> ✓</span>}
                       </button>
