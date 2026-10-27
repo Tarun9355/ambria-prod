@@ -15,6 +15,7 @@ import { carpetFloorsOf, planCarpets, carpetKey, carpetStockFor, validDecision }
 import CarpetPickerModal from "./CarpetPickerModal.jsx";
 import ElementChoicePlan from "./ElementChoicePlan.jsx";
 import { planElements, elementStockFor, elementKey } from "../../lib/ims/elementPlan";
+import { loadOnDate } from "../../lib/ims/loadByDate";
 import { elementChoices } from "../../lib/studio/elementPrefs";
 import { orderZoneKeys } from "../../lib/ims/zoneOrder";
 import { calcZoneTrussPreview, calcZoneFabric, dcFabricMultOf } from "../../lib/studio/pricing";
@@ -1546,30 +1547,36 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const invFnQty = useMemo(() => qtyMapsOfFn(invScoped ? mpFns[invFn] : null), [sel, invFn, inventory]);
   // ── ONE COLUMN PER EVENT DATE ──
   // A booking whose functions fall on different dates (the same guest on the 19th and the 20th) is loaded on different days, so the whole-event
-  // list must not run them together. From two dates up, All functions gets a column per date holding how many of each item that date's functions
-  // use (their zone lists, the same count the single-function view makes). Functions on one date share its column: at one venue the same
-  // pieces are moved between them, so the day loads the LARGEST of their needs (what the To load column already does across the event);
-  // functions at different venues on the same date add up. Rows no zone names (production, fabric and the like) show a dash.
+  // list must not run them together. From two dates up, All functions gets a column per date saying how many of each item are LOADED that day.
+  // Pieces already standing at the venue from the day before are reused, not loaded again: 8 sofas needed on the 19th and 12 on the 20th load 8,
+  // then 4 — so the columns add up to the most ever needed at once. That holds for the same venue on consecutive days; after a day with no event
+  // there the pieces have gone back and the next date loads in full. Functions on one date at one venue share the pieces (the largest need counts);
+  // different venues are separate. A function's need is what its zone lists use (the same count the single-function view makes). Rows no zone
+  // names (production, fabric and the like) show a dash.
   const dateCols = useMemo(() => {
-    const byDate = new Map();
+    const dates = new Set();
+    // per venue: its dates in order, each with the quantity maps of the functions held there that day
+    const chains = new Map();
     mpFns.forEach((fd, fi) => {
       const d = String(fd?.date || "").slice(0, 10);
       if (!d) return;
-      if (!byDate.has(d)) byDate.set(d, []);
-      byDate.get(d).push(fi);
+      dates.add(d);
+      const vk = String(fd?.venue || "").trim().toLowerCase() || `fn:${fi}`; // a function with no venue recorded stands alone
+      if (!chains.has(vk)) chains.set(vk, new Map());
+      const days = chains.get(vk);
+      if (!days.has(d)) days.set(d, []);
+      days.get(d).push(qtyMapsOfFn(fd));
     });
-    if (byDate.size < 2) return [];
-    return [...byDate.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([date, fis]) => {
-      // one group of quantity maps per venue (a function with no venue recorded stands alone)
-      const byVenue = new Map();
-      fis.forEach(fi => { const vk = String(mpFns[fi]?.venue || "").trim().toLowerCase() || `fn:${fi}`; if (!byVenue.has(vk)) byVenue.set(vk, []); byVenue.get(vk).push(qtyMapsOfFn(mpFns[fi])); });
-      const groups = [...byVenue.values()];
+    if (dates.size < 2) return [];
+    const venueChains = [...chains.values()].map(days => [...days.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([date, maps]) => ({ date, maps })));
+    return [...dates].sort().map(date => {
       let label = date;
       try { label = new Date(date + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short" }); } catch { /* keep the ISO date */ }
-      return { date, label, names: fis.map(fi => mpFns[fi]?.type || `Function ${fi + 1}`).join(", "), groups };
+      const names = mpFns.filter(f => String(f?.date || "").slice(0, 10) === date).map((f, k) => f?.type || `Function ${k + 1}`).join(", ");
+      return { date, label, names, venueChains };
     });
   }, [sel, inventory]);
-  const qtyOnDate = (col, it) => col.groups.reduce((sum, maps) => sum + Math.max(0, ...maps.map(m => (it.invId && m.byId.get(String(it.invId))) || m.byName.get(String(it.name || "").trim().toLowerCase()) || 0)), 0);
+  const qtyOnDate = (col, it) => loadOnDate(col.venueChains, col.date, (m) => (it.invId && m.byId.get(String(it.invId))) || m.byName.get(String(it.name || "").trim().toLowerCase()) || 0);
   const invShown = invScoped
     ? blockedItemsGrouped.map(it => {
         const q = (it.invId && invFnQty.byId.get(String(it.invId))) || invFnQty.byName.get(String(it.name || "").trim().toLowerCase()) || 0;
@@ -5957,8 +5964,8 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                             {!invScoped && dateCols.map(c => { const q = qtyOnDate(c, it); return (
                               <StatCell key={c.date} label={c.label} w={STAT_W.qty}>
                                 {q > 0
-                                  ? <span className="text-sm font-semibold text-gray-700 tabular-nums" title={`${c.label} · ${c.names}`}>×{q}</span>
-                                  : <span className="text-sm text-gray-300 tabular-nums" title={`Not used on ${c.label}`}>—</span>}
+                                  ? <span className="text-sm font-semibold text-gray-700 tabular-nums" title={`Loaded on ${c.label} (${c.names}) — what is not already standing at the venue from the day before`}>×{q}</span>
+                                  : <span className="text-sm text-gray-300 tabular-nums" title={`Nothing new to load on ${c.label}`}>—</span>}
                               </StatCell>
                             ); })}
                             {/* with a column per date the single To load figure is left out: each date says what loads on it */}
