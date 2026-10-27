@@ -131,7 +131,7 @@ import { fetchRecentCorrections, renderCorrectionsText } from "../../lib/studio/
 import { logPhotoCorrection, fetchPhotoCorrections } from "../../lib/studio/photoCorrections.js";
 // AI-tagging matcher core — extracted from the inline copy that used to live in aiTagImage so the
 // scoring/thresholds sit in one testable module (spec §9-A / §12.1).
-import { createMatcher, normalize, STRUCT_KW, STRUCTURAL_CATS as RAW_SCAFFOLD_CATS, MATCH } from "../../lib/studio/tagging/matcher.js";
+import { createMatcher, normalize, STRUCT_KW, STRUCTURAL_CATS as RAW_SCAFFOLD_CATS, MATCH, assembleSynonymDictionaryFromRows } from "../../lib/studio/tagging/matcher.js";
 // One place that merges an aiTagImage() result onto a library photo (spec §9-B / §12.2).
 import { applyAiTagResult } from "../../lib/studio/tagging/applyResult.js";
 import { fnSnapHasData as fnSnapHasDataPure, fnSnapHasBuild, autoSaveWouldDestroy, snapshotContentEqual, sessionToRows, findLatestBuild } from "../../lib/studio/sessionData.js";
@@ -3114,9 +3114,8 @@ export default function StudioApp() {
             if (sv != null) { const s = parse(sv); if (s && typeof s === "object" && !cancelled) { if (Array.isArray(s.paintableCategories) && s.paintableCategories.length) setImsPaintableCategories(s.paintableCategories); if (typeof s.defaultPaintCostPerItem === "number") setImsDefaultPaintCost(s.defaultPaintCostPerItem); } }
           } catch {}
         })(),
-        // AI Synonym Dictionary — IMS persists each settings field as its OWN row keyed by field name
-        // (IMS.jsx's setSettings), not nested under IMS_SETTINGS_SK, so it's fetched by its own key.
-        (async () => { try { const synv = await kvGet("synonymDictionary"); if (synv != null) { const sd = parse(synv); if (Array.isArray(sd) && !cancelled) setImsSynonymDictionary(sd); } } catch {} })(),
+        // AI Synonym Dictionary — the `synonym_groups` TABLE (migration 045), not a settings row.
+        (async () => { try { const rows = await fetchAll("synonym_groups"); if (!cancelled) setImsSynonymDictionary(assembleSynonymDictionaryFromRows(rows)); } catch {} })(),
         // Print/Carpet Materials, Truss & Masking Rates, Platform Rates (IMS Admin → Settings) — now
         // their own TABLES (migration 043), not settings rows — fetched directly instead of via kv.
         (async () => { try { const rows = await fetchAll("print_materials"); if (!cancelled) setImsPrintMaterials(assemblePrintMaterialsFromRows(rows)); } catch {} })(),
@@ -3282,6 +3281,7 @@ export default function StudioApp() {
       ["truss_rates", () => fetchAll("truss_rates").then((rows) => setImsTrussRates(assembleTrussRatesFromRows(rows)))],
       ["masking_rates", () => fetchAll("masking_rates").then((rows) => setImsMaskingRates(assembleMaskingRatesFromRows(rows)))],
       ["platform_rates", () => fetchAll("platform_rates").then((rows) => setImsPlatformRates(assemblePlatformRatesFromRows(rows)))],
+      ["synonym_groups", () => fetchAll("synonym_groups").then((rows) => setImsSynonymDictionary(assembleSynonymDictionaryFromRows(rows)))],
     ];
     const channels = specs.map(([table, reload]) => subscribeTable(table, () => { reload().catch(() => {}); }));
     return () => { channels.forEach((ch) => { try { supabase.removeChannel(ch); } catch { /* ignore */ } }); };

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Tabs, useConfirm } from "../../components/ui";
 import { ATTENDANCE_QUIZ_DEPTS, ATTENDANCE_QUIZ_DEPT_ICON } from "../../lib/ims/attendance";
+import { supabase } from "../../lib/supabase";
 import { translateToHindi } from "../../lib/ims/translateHindi";
 import { IconYoutubeMark, IconLink, IconTrash, IconInfo, IconPlusCircle, IconSave, IconX, IconPlay } from "../../components/icons.jsx";
 import { extractYouTubeId } from "./AttendanceVideoPlayer.jsx";
@@ -31,7 +32,7 @@ import { extractYouTubeId } from "./AttendanceVideoPlayer.jsx";
 
 const letterFor = (i) => String.fromCharCode(65 + i);
 
-export default function QuizSetupPanel({ settings, setSettings }) {
+export default function QuizSetupPanel({ settings }) {
   const [dept, setDept] = useState(ATTENDANCE_QUIZ_DEPTS[0]);
 
   return (
@@ -43,12 +44,12 @@ export default function QuizSetupPanel({ settings, setSettings }) {
       />
       {/* Keyed on dept so each department gets a fresh draft/flash state instead of one editor
           instance quietly carrying stale local state across a department switch. */}
-      <DeptQuizEditor key={dept} dept={dept} settings={settings} setSettings={setSettings} />
+      <DeptQuizEditor key={dept} dept={dept} settings={settings} />
     </div>
   );
 }
 
-function DeptQuizEditor({ dept, settings, setSettings }) {
+function DeptQuizEditor({ dept, settings }) {
   const saved = settings?.attendanceTrainingByDept?.[dept] || { videoUrl: "", questions: [] };
   const [draft, setDraft] = useState(saved);
   const [confirm, confirmDialog] = useConfirm();
@@ -157,7 +158,7 @@ function DeptQuizEditor({ dept, settings, setSettings }) {
     // Drop fully-blank questions rather than persisting scratch rows an admin started and abandoned.
     const hasContent = (q) => q.text.trim() || q.options?.some((o) => o.trim()) || q.acceptedAnswers?.some((a) => a.trim());
     const cleaned = { ...draft, questions: draft.questions.filter(hasContent) };
-    setSettings((s) => ({ ...s, attendanceTrainingByDept: { ...(s.attendanceTrainingByDept || {}), [dept]: cleaned } }));
+    supabase.from("attendance_training").upsert({ dept, video_url: cleaned.videoUrl, questions: cleaned.questions }, { onConflict: "dept" }).then(() => {}, () => {});
     setFlash(true);
     setTimeout(() => setFlash(false), 2000);
   }

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { IconPin, IconX } from "../../components/icons.jsx";
 import { useConfirm } from "../../components/ui";
+import { supabase, deleteRow } from "../../lib/supabase";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // MANAGE LOCATIONS — admin-editable list of named punch-in locations (Ambria Exotica, Manaktala,
@@ -12,7 +13,7 @@ import { useConfirm } from "../../components/ui";
 // right here — stand at the real place, tap it, name it, save. That's also how a location added
 // later (the godown, a new venue) gets set up — no address or map lookup required from anyone.
 // ═══════════════════════════════════════════════════════════════════════════
-export default function AttendanceLocationsPanel({ settings, setSettings }) {
+export default function AttendanceLocationsPanel({ settings }) {
   const locations = settings?.attendanceLocations || [];
   const [confirm, confirmDialog] = useConfirm();
   const [name, setName] = useState("");
@@ -36,17 +37,14 @@ export default function AttendanceLocationsPanel({ settings, setSettings }) {
     const la = parseFloat(lat), ln = parseFloat(lng);
     if (!name.trim()) { setError("Give it a name first."); return; }
     if (!Number.isFinite(la) || !Number.isFinite(ln)) { setError("Capture your current position, or enter both coordinates, first."); return; }
-    setSettings((s) => ({
-      ...s,
-      attendanceLocations: [...(s.attendanceLocations || []), { id: "loc" + Date.now(), name: name.trim(), lat: la, lng: ln }],
-    }));
+    supabase.from("attendance_locations").insert({ id: "loc" + Date.now(), name: name.trim(), lat: la, lng: ln }).then(() => {}, () => {});
     setName(""); setLat(""); setLng(""); setError("");
   }
 
   async function removeLocation(id) {
     const loc = locations.find((l) => l.id === id);
     if (!(await confirm({ title: `Remove ${loc?.name ? `"${loc.name}"` : "this location"}?`, body: "Staff will no longer be able to punch in at this location." }))) return;
-    setSettings((s) => ({ ...s, attendanceLocations: (s.attendanceLocations || []).filter((l) => l.id !== id) }));
+    deleteRow("attendance_locations", id).catch(() => {});
   }
 
   // Google Maps' own "copy coordinates" gives one string like "28.6139, 77.2090" — pasting that

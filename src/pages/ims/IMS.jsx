@@ -9,6 +9,8 @@ import { assembleVenueMinLabourFromRows, assembleVenueDumpingFromRows } from "..
 import { assemblePrintMaterialsFromRows, assembleCarpetMaterialsFromRows, assemblePlatformRatesFromRows, assembleMaskingRatesFromRows, assembleTrussRatesFromRows } from "../../lib/studio/taxonomy";
 import { createSettingsWriter } from "../../lib/ims/settingsWriter";
 import { SETTINGS_DEFAULTS, INIT_TRUSS_INV, assembleHeavyElementRangesFromRows, assembleTrussLabourRangesFromRows, assembleFabricBangaliRangesFromRows } from "../../lib/ims/constants";
+import { assembleAttendanceLocationsFromRows, assembleAttendanceTrainingByDeptFromRows } from "../../lib/ims/attendance";
+import { assembleSynonymDictionaryFromRows } from "../../lib/studio/tagging/matcher";
 import { RC_CATS_DEFAULT } from "../../lib/studio/constants";
 import InventoryTab from "./InventoryTab.jsx";
 import AttendanceTab from "./AttendanceTab.jsx";
@@ -394,6 +396,10 @@ export default function IMS() {
   const heavyElementRangeRowsRef = useRef([]);
   const trussLabourRangeRowsRef = useRef([]);
   const fabricBangaliRangeRowsRef = useRef([]);
+  // Attendance locations/training + synonym dictionary rows (migration 045) — same reasoning.
+  const attendanceLocationRowsRef = useRef([]);
+  const attendanceTrainingRowsRef = useRef([]);
+  const synonymGroupRowsRef = useRef([]);
   // Every setX below updates React state synchronously, then persists to Supabase via a
   // fire-and-forget async IIFE that nothing awaits — a real bug, confirmed by direct DB
   // inspection: a sold deal's auto-confirm engine (executeConfirmBlocks → createProjectFromEO)
@@ -520,6 +526,10 @@ export default function IMS() {
     settingsObj.heavyElementRanges = assembleHeavyElementRangesFromRows(heavyElementRangeRowsRef.current);
     settingsObj.trussLabourRanges = assembleTrussLabourRangesFromRows(trussLabourRangeRowsRef.current);
     settingsObj.fabricBangaliRanges = assembleFabricBangaliRangesFromRows(fabricBangaliRangeRowsRef.current);
+    // Same reasoning for attendance locations/training + the synonym dictionary (migration 045).
+    settingsObj.attendanceLocations = assembleAttendanceLocationsFromRows(attendanceLocationRowsRef.current);
+    settingsObj.attendanceTrainingByDept = assembleAttendanceTrainingByDeptFromRows(attendanceTrainingRowsRef.current);
+    settingsObj.synonymDictionary = assembleSynonymDictionaryFromRows(synonymGroupRowsRef.current);
     settingsRef.current = settingsObj;
     setSettingsState(settingsObj);
     setSettingsLoaded(true);
@@ -618,6 +628,26 @@ export default function IMS() {
     const v = assembleFabricBangaliRangesFromRows(rows);
     settingsRef.current = { ...(settingsRef.current || {}), fabricBangaliRanges: v };
     setSettingsState((prev) => ({ ...(prev || {}), fabricBangaliRanges: v }));
+  }, []);
+
+  // Attendance locations/training + synonym dictionary rows -> one settings field each.
+  const applyAttendanceLocationRows = useCallback((rows) => {
+    attendanceLocationRowsRef.current = rows;
+    const v = assembleAttendanceLocationsFromRows(rows);
+    settingsRef.current = { ...(settingsRef.current || {}), attendanceLocations: v };
+    setSettingsState((prev) => ({ ...(prev || {}), attendanceLocations: v }));
+  }, []);
+  const applyAttendanceTrainingRows = useCallback((rows) => {
+    attendanceTrainingRowsRef.current = rows;
+    const v = assembleAttendanceTrainingByDeptFromRows(rows);
+    settingsRef.current = { ...(settingsRef.current || {}), attendanceTrainingByDept: v };
+    setSettingsState((prev) => ({ ...(prev || {}), attendanceTrainingByDept: v }));
+  }, []);
+  const applySynonymGroupRows = useCallback((rows) => {
+    synonymGroupRowsRef.current = rows;
+    const v = assembleSynonymDictionaryFromRows(rows);
+    settingsRef.current = { ...(settingsRef.current || {}), synonymDictionary: v };
+    setSettingsState((prev) => ({ ...(prev || {}), synonymDictionary: v }));
   }, []);
 
   // ── Recipe → Studio rate sync (Tier 1.5) ───────────────────────────────────
@@ -926,7 +956,7 @@ export default function IMS() {
     let active = true;
     (async () => {
       try {
-        const [invRows, fnRows, projRows, venRows, poRows, ohRows, supRows, userRows, prodRows, eoRows, allocRows, rcRows, trussRows, catRows, setRows, blockRows, rcCatRows, mandiRows, patternRows, labourTypeRows, venueLabourRows, printMaterialRows, carpetMaterialRows, platformRateRows, maskingRateRows, trussRateRows, heavyElementRangeRows, trussLabourRangeRows, fabricBangaliRangeRows] = await Promise.all([
+        const [invRows, fnRows, projRows, venRows, poRows, ohRows, supRows, userRows, prodRows, eoRows, allocRows, rcRows, trussRows, catRows, setRows, blockRows, rcCatRows, mandiRows, patternRows, labourTypeRows, venueLabourRows, printMaterialRows, carpetMaterialRows, platformRateRows, maskingRateRows, trussRateRows, heavyElementRangeRows, trussLabourRangeRows, fabricBangaliRangeRows, attendanceLocationRows, attendanceTrainingRows, synonymGroupRows] = await Promise.all([
           fetchAll("inventory"),
           fetchAll("functions").catch(() => []),
           fetchAll("projects").catch(() => []),
@@ -956,6 +986,9 @@ export default function IMS() {
           fetchAll("heavy_element_ranges").catch(() => []),
           fetchAll("truss_labour_ranges").catch(() => []),
           fetchAll("fabric_bangali_ranges").catch(() => []),
+          fetchAll("attendance_locations").catch(() => []),
+          fetchAll("attendance_training").catch(() => []),
+          fetchAll("synonym_groups").catch(() => []),
         ]);
         if (!active) return;
         { const bm = blocksRowsToMap(blockRows); blocksRef.current = bm; setBlocksState(bm); }
@@ -997,6 +1030,10 @@ export default function IMS() {
         applyHeavyElementRangeRows(heavyElementRangeRows);
         applyTrussLabourRangeRows(trussLabourRangeRows);
         applyFabricBangaliRangeRows(fabricBangaliRangeRows);
+        // Attendance locations/training + synonym dictionary — the three TABLEs (migration 045).
+        applyAttendanceLocationRows(attendanceLocationRows);
+        applyAttendanceTrainingRows(attendanceTrainingRows);
+        applySynonymGroupRows(synonymGroupRows);
         // blocks blob, Studio rate-card mirror, and the settings object — applied via the
         // shared helper (also used by the settings Realtime subscription below).
         applySettingsRows(setRows);
@@ -1071,6 +1108,9 @@ export default function IMS() {
     liveTable("heavy_element_ranges", (rows) => applyHeavyElementRangeRows(rows));
     liveTable("truss_labour_ranges", (rows) => applyTrussLabourRangeRows(rows));
     liveTable("fabric_bangali_ranges", (rows) => applyFabricBangaliRangeRows(rows));
+    liveTable("attendance_locations", (rows) => applyAttendanceLocationRows(rows));
+    liveTable("attendance_training", (rows) => applyAttendanceTrainingRows(rows));
+    liveTable("synonym_groups", (rows) => applySynonymGroupRows(rows));
     // blocks gets its own channel too, same reason as event_orders below: Build reconciles this
     // table's reservation rows on every qty-affecting edit to a sold deal (reconcileSoldInventoryBlocks
     // in StudioApp.jsx), so it changes constantly, and the table holds one row per inventory item

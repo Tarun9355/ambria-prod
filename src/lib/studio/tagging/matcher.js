@@ -70,6 +70,12 @@ export function buildSynonymOf(synonymDictionary) {
  * ("iron Jali", 2 kw) fully contained in a wordy AI description shouldn't be penalized for the
  * AI's verbosity. Returns { item, method, score } so callers can flag weak overlap-only matches.
  */
+// Row -> object translation (migration 045: synonym_groups TABLE replacing the synonymDictionary
+// settings key). Gives back the exact {id, words} array shape createMatcher (below) already expects.
+export function assembleSynonymDictionaryFromRows(rows) {
+  return (Array.isArray(rows) ? rows : []).map((r) => ({ id: r.id, words: Array.isArray(r.words) ? r.words : [] }));
+}
+
 export function createMatcher(synonymDictionary) {
   const synonymOf = buildSynonymOf(synonymDictionary);
   const canonWord = (w) => synonymOf[w] || w;
