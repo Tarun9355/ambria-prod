@@ -5,7 +5,7 @@ import NumField from "../../../components/ui/NumField.jsx";
 import { applyQtyCeiling } from "../../../lib/studio/qtyCeiling";
 import { unitAllowsDecimal, quantityForUnit } from "../../../lib/studio/qtyUnits";
 import { itemTakesChoices, elementChoices, partChoices, applyChoicePicks, ELEMENT_PREF_MAX, ELEMENT_PREF_LABELS } from "../../../lib/studio/elementPrefs";
-import { SMALL_PRINT_LIMIT, SMALL_PRINT_CHARGE, firstSmallPrint } from "../../../lib/studio/truckPrint";
+import { SMALL_PRINT_LIMIT, SMALL_PRINT_CHARGE, firstSmallPrint, printFlatForZone } from "../../../lib/studio/truckPrint";
 import { IconClipboard, IconPencil, IconRuler, IconBolt, IconWall, IconPlatform, IconCarpet, IconBulb, IconCheck,
   IconSearch, IconCamera, IconPrinter, IconNote, IconCalendar, IconFlower, IconFactory,
   IconCart, IconCopy, IconRepeat, IconAlert, IconPalette, IconChevron, IconSparkle,
@@ -1207,6 +1207,12 @@ export default function StudioBuild({ ctx }) {
   // "Existing Printed Walls" button. Listed there, and their money is on the Print tile.
   const printedWallsOf = (k) => (zoneElements[k] || []).map((el, idx) => ({ el, idx, it: el.invId ? (imsInventory || []).find(i => i.id === el.invId) : null }))
     .filter(w => w.it && /fabric/i.test(String(w.it.cat || w.it.category || "")) && /printed wall/i.test(String(w.it.subCat || w.it.subcategory || "")));
+  // The function's flat small-print charge sits in the Print cost of the zone that carries it (lib/studio/truckPrint.js printFlatForZone), added after the
+  // guest-price scaling like every other total that reads the zone's struct figures (StudioApp's withPrintFlat) - tile, zone header and zone total all agree.
+  const withPrintFlat = (sc, k) => {
+    const flat = sc ? printFlatForZone(zoneConfig, enabledEls, imsPrintMaterials, k) : 0;
+    return flat > 0 ? { ...sc, print: (sc.print || 0) + flat, total: (sc.total || 0) + flat, printFlat: flat } : sc;
+  };
   const zoneSectionSub = (k, id) => {
     const zc = zoneConfig[k] || {}, zm = zoneMeta[k] || {}, d = zc.dims || {}, fd = zc.floorDims || {};
     if (id === "elements") {
@@ -1342,7 +1348,7 @@ export default function StudioBuild({ ctx }) {
   const sectionCost = (k, id) => {
     if (!showCosts) return 0;
     if (id === "elements") return calcElsCost(zoneElements[k], true, zoneConfig[k], {checkAvailability:true, crossFnReusePool: crossFnPool(), zoneKey: k}, aVenue);
-    const sc = zoneConfig[k] ? scaleStruct(calcStructCost(k, zoneConfig[k], structRates, structDiscountFor(zoneConfig[k], aVenue))) : null;
+    const sc = zoneConfig[k] ? withPrintFlat(scaleStruct(calcStructCost(k, zoneConfig[k], structRates, structDiscountFor(zoneConfig[k], aVenue))), k) : null;
     if (id === "truss") return sc ? sc.truss + sc.masking + sc.arches + sc.pillars + sc.glass + sc.fabric : 0;
     if (id === "platform") return sc ? sc.platform + sc.carpet : 0;
     // calcStructCost's own print total (same figure zoneTotal() folds in below) plus the existing printed walls, each priced as its own
@@ -1420,7 +1426,7 @@ export default function StudioBuild({ ctx }) {
   // (shortfall-adjusted), so "By zone" + "Zones subtotal" quietly failed to add up to the number
   // above them. Same reasoning as calcFunctionCost's — this is what makes Build's own totals agree
   // with themselves, and with Summary/Deal Check's.
-  const zoneTotal = (k) => calcElsCost(zoneElements[k],true,zoneConfig[k],{checkAvailability:true, crossFnReusePool: crossFnPool(), zoneKey: k},aVenue)+(zoneConfig[k]?scaleStruct(calcStructCost(k,zoneConfig[k],structRates,structDiscountFor(zoneConfig[k],aVenue))).total:0)+dcCustomItems.filter(c=>c.fnIdx===(activeFnIdx||0)&&c.zoneKey===k).reduce((acc,c)=>acc+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0);
+  const zoneTotal = (k) => calcElsCost(zoneElements[k],true,zoneConfig[k],{checkAvailability:true, crossFnReusePool: crossFnPool(), zoneKey: k},aVenue)+(zoneConfig[k]?withPrintFlat(scaleStruct(calcStructCost(k,zoneConfig[k],structRates,structDiscountFor(zoneConfig[k],aVenue))),k).total:0)+dcCustomItems.filter(c=>c.fnIdx===(activeFnIdx||0)&&c.zoneKey===k).reduce((acc,c)=>acc+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0);
   void textSRaw;
 
   // Photo-filter pill. Was 9px in a 2px-tall chip with `textS` (~3.1:1) when inactive — too small
@@ -5288,7 +5294,7 @@ undefined
               create the entry on the first keystroke — calcStructCost already returns all-zero for
               an untouched config, and every field reads through `|| {}`. */}
           {(zoneSection[k]==="truss"||zoneSection[k]==="platform")&&(()=>{
-            const zm=zoneMeta[k],zc=zoneConfig[k]||{},st=scaleStruct(calcStructCost(k,zc,structRates,structDiscountFor(zc,aVenue)));
+            const zm=zoneMeta[k],zc=zoneConfig[k]||{},st=withPrintFlat(scaleStruct(calcStructCost(k,zc,structRates,structDiscountFor(zc,aVenue))),k);
             const dl={L:"Depth",W:"Width",H:"Height",S:"Size"};
             const sZ=u=>{setActiveZones([]);setZoneConfig(p=>({...p,[k]:{...p[k],...u}}));};
             const sD=(d,v)=>{setActiveZones([]);setZoneConfig(p=>{const cur=p[k]||{};const dims={...(cur.dims||{}),[d]:parseFloat(v)||0};
@@ -5790,7 +5796,7 @@ undefined
                 else setCorrectPhoto(p=>({...p,draft:{...p.draft,cfg:fn(p.draft?.cfg||{}),cfgDirty:true}}));};
               const writeEls=(fn)=>{if(ownsLive)setZoneElements(p=>({...p,[zk]:fn(p[zk]||[])}));
                 else setCorrectPhoto(p=>({...p,draft:{...p.draft,elements:fn(p.draft?.elements||[]),elsDirty:true}}));};
-              const zm=zoneMeta[zk],st=scaleStruct(calcStructCost(zk,cfgCur,structRates,structDiscountFor(cfgCur,aVenue)));
+              const zm=zoneMeta[zk],st=withPrintFlat(scaleStruct(calcStructCost(zk,cfgCur,structRates,structDiscountFor(cfgCur,aVenue))),zk);
               const sZ=u=>writeCfg(cur=>({...cur,...u}));
               const sD=(d,v)=>writeCfg(cur=>{const dims={...(cur.dims||{}),[d]:parseFloat(v)||0};
                 const n=[dims.W||dims.S,dims.L,dims.H].filter(x=>(Number(x)||0)>0).length;const trT=n>=3?"box":n===2?"singleU":cur.trT;

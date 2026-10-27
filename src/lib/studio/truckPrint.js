@@ -62,3 +62,10 @@ export function firstSmallPrint(zoneConfig, enabledEls, printMaterials) {
   }
   return null;
 }
+
+// The flat charge sits in ONE zone's Print cost: the one that carries the first small print (see firstSmallPrint), so the Print tile, the zone's total, the
+// function's decor and every export count it exactly once. Returns the charge for that zone, 0 for every other zone.
+export function printFlatForZone(zoneConfig, enabledEls, printMaterials, zk) {
+  const first = firstSmallPrint(zoneConfig, enabledEls, printMaterials);
+  return first && first.zk === zk ? SMALL_PRINT_CHARGE : 0;
+}

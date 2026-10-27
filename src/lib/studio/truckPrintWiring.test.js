@@ -36,19 +36,18 @@ describe("Build's truck count includes print jobs", () => {
     const r = run({ stage: { prints, repeat: true, repeatTruss: true, repeatPlatform: true } }, CAP, { stage: true }, true);
     expect(r.breakdown.find((b) => b.label === "Print")?.qty).toBe(400);
   });
-  it("a small print (under ₹2,000) is not trucked by area: it adds one flat ₹400 line instead", () => {
+  it("a small print (under ₹2,000) is not trucked by area: the function carries one flat ₹400 (billed in Print, not as a transport line)", () => {
     const small = [{ material: "sun", areaW: 3, areaD: 2, qty: 1 }]; // ₹450
     const r = run({ stage: { prints: small } }, CAP);
     expect(r.breakdown.find((b) => b.label === "Print")).toBeUndefined();
     expect(r.itemTrucks).toBe(0);
     expect(r.flatCharge).toBe(400);
-    expect(r.breakdown.find((b) => b.flat)).toMatchObject({ qty: 1, flat: 400, trucks: 0 });
+    expect(r.breakdown.find((b) => b.flat)).toBeUndefined(); // no transport row: the charge is in the Print cost
   });
   it("several small prints, even across zones, are still one flat ₹400", () => {
     const small = [{ material: "sun", areaW: 3, areaD: 2, qty: 1 }, { material: "sun", areaW: 2, areaD: 2, qty: 1 }];
     const r = run({ stage: { prints: small }, entry: { prints: small } }, CAP, { stage: true, entry: true });
     expect(r.flatCharge).toBe(400);
-    expect(r.breakdown.find((b) => b.flat).qty).toBe(4);
   });
   it("small and big prints together: the big ones are trucked by area, the small ones carry the flat charge", () => {
     const mix = [{ material: "sun", areaW: 3, areaD: 2, qty: 1 }, ...prints];
@@ -77,9 +76,10 @@ describe("every truck total counts prints", () => {
     const src = readFileSync(new URL("../../pages/studio/StudioApp.jsx", import.meta.url), "utf8");
     expect(src.match(/printSqftOf\(cfg, /g)?.length).toBe(3);
     expect(src.match(/addSub\(PRINT_TRUCK_SUB/g)?.length).toBe(3);
-    // and each of the three money totals adds the flat small-print charge
-    expect(src.match(/smallPrintFlat\(/g)?.length).toBeGreaterThanOrEqual(3);
-    expect(src.match(/\+ \(smallPrintCharge \|\| 0\)/g)?.length).toBe(1);
-    expect(src.match(/\+ smallPr\.charge/g)?.length).toBe(2);
+    // the flat small-print charge is no longer in any truck total ...
+    expect(src.match(/\+ \(smallPrintCharge \|\| 0\)/g)).toBeNull();
+    expect(src.match(/\+ smallPr\.charge/g)).toBeNull();
+    // ... it is in the Print cost of the zone that carries it, in every place the zone's struct figures are totalled
+    expect(src.match(/withPrintFlat\(scaleStruct\(/g)?.length).toBe(4);
   });
 });
