@@ -1617,16 +1617,19 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   };
   const needOfFn = (it) => { const needs = rowNeeds(it); return (m) => needs.get(m.key) || 0; };
   const qtyOnDate = (col, it) => loadOnDate(col.venueChains, col.date, needOfFn(it));
-  // the part of a row that no date column holds
+  // The part of a row no function claims (truss, platform, carpet, print, or a line the zone lists do not mention): what is billed less what the
+  // functions need. Pieces a date does not load because they are already standing from the day before are NOT "other" - they are reuse - so this
+  // is read from the needs, not from the loads.
   const otherQty = (it) => {
     if (!dateCols.length) return 0;
-    if (it.byFn) {
-      const need = needOfFn(it);
-      const dated = dateCols[0].entries.reduce((sum, m) => sum + need(m), 0);
-      return Math.max(0, (Number(it.rentalQty ?? it.qty) || 0) - dated);
-    }
-    return Math.max(0, (Number(it.qty) || 0) - dateCols.reduce((sum, c) => sum + qtyOnDate(c, it), 0));
+    const need = needOfFn(it);
+    const dated = dateCols[0].entries.reduce((sum, m) => sum + need(m), 0);
+    return Math.max(0, (Number(it.rentalQty ?? it.qty) || 0) - dated);
   };
+  // With date columns, the Rental qty column also shows when the dates' loads and Other do not add up to the billed quantity (the difference is
+  // pieces already standing from the day before), so the columns never look like they lost a quantity.
+  const rentalDiffers = (it) => Number(it.rentalQty ?? it.qty) !== (Number(it.qty) || 0)
+    || (dateCols.length > 0 && !invScoped && dateCols.reduce((sum, c) => sum + qtyOnDate(c, it), 0) + otherQty(it) !== (Number(it.rentalQty ?? it.qty) || 0));
   const invShown = invScoped
     ? blockedItemsGrouped.map(it => {
         const q = rowNeeds(it).get(String(mpFns[invFn]?.fnIdx ?? invFn)) || 0;
@@ -5921,7 +5924,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                    header row instead, labeling the column once no matter how far down the list
                    you've scrolled. */
                 (() => {
-                  const anyRentalQty = invShown.some(it => Number(it.rentalQty ?? it.qty) !== (Number(it.qty) || 0));
+                  const anyRentalQty = invShown.some(rentalDiffers);
                   const qtyHeaderLabel = anyRentalQty ? "To load" : "Qty";
                   return (
                 /* Two earlier attempts at pinning this: a plain `sticky` while the card still had
@@ -5934,7 +5937,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                    (not translucent) this time — a see-through header over scrolling rows was part of
                    what made the previous attempt look broken. */
                 <div className="p-2.5 space-y-2">
-                  {fabricGroupInfo.groups.length > 0 && <FabricBlock groups={fabricGroupInfo.groups} fmt={fmt} onZoom={setZoomImg} />}
+                  {fabricGroupInfo.groups.length > 0 && <FabricBlock groups={fabricGroupInfo.groups} fmt={fmt} onZoom={setZoomImg} fnDates={mpFns.map(f => String(f?.date || "").slice(0, 10))} />}
                   {invShown.some(it => !fabricGroupInfo.groupedLineIds.has(it.id)) && <div className="hidden sm:flex items-center gap-x-3 px-2.5 sticky top-0 z-10 bg-white rounded-lg ring-1 ring-gray-100 py-1.5 -mt-0.5 mb-1">
                     <span className="flex-1 min-w-0" />
                     <div className="w-full sm:w-auto flex items-start gap-0 sm:pl-1">
@@ -5962,7 +5965,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                     // a Repeat-discounted reuse and a fresh unit can bill at different rates within
                     // the same merged line.
                     const rentalQty = Number(it.rentalQty ?? it.qty) || 0;
-                    const showRentalQty = rentalQty !== (Number(it.qty) || 0);
+                    const showRentalQty = rentalDiffers(it);
                     const avgRate = rentalQty > 0 ? Math.round((Number(it.total) || 0) / rentalQty) : (Number(it.unit) || 0);
                     // ── WHY THE TOTAL IS NOT ALWAYS RATE × QTY ──
                     // On rows pushed from Deal Check, `unit` and `total` are independent fields:
