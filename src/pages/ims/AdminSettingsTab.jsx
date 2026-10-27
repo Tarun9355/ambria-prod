@@ -2167,9 +2167,9 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                   // to actually type a name. Scrolling sideways on a min-width table (same fix as
                   // the Floral mandi shopping list) keeps every column a real, usable size instead.
                   <div className="overflow-x-auto">
-                  <table className="w-full text-xs min-w-[560px]">
+                  <table className="w-full text-xs min-w-[620px]">
                     <datalist id={`${which}-colours`}>{colourCat.map((cn) => <option key={cn} value={cn} />)}</datalist>
-                    <thead className="text-gray-500"><tr><th className="px-2 py-1.5 text-left w-14">Photo</th><th className="px-2 py-1.5 text-left">Colour</th><th className="px-2 py-1.5 text-center w-20">Old ({qtyLabel})</th><th className={`px-2 py-1.5 text-center text-${themeColor}-700 w-20`}>New ({qtyLabel})</th><th className="px-2 py-1.5 text-center w-16">Total</th><th className="px-2 py-1.5 w-10"></th></tr></thead>
+                    <thead className="text-gray-500"><tr><th className="px-2 py-1.5 text-left w-14">Photo</th><th className="px-2 py-1.5 text-left">Colour</th><th className="px-2 py-1.5 text-center w-20" title="Off = this colour is not offered for this fabric in Build's Fabric Palette">In Build</th><th className="px-2 py-1.5 text-center w-20">Old ({qtyLabel})</th><th className={`px-2 py-1.5 text-center text-${themeColor}-700 w-20`}>New ({qtyLabel})</th><th className="px-2 py-1.5 text-center w-16">Total</th><th className="px-2 py-1.5 w-10"></th></tr></thead>
                     <tbody>
                       {stock.map((row, i) => {
                         const oldQ = Number(row[qtyField]) || 0;
@@ -2223,6 +2223,15 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                             </td>
                             <td className="px-2 py-1.5">
                               <input type="text" value={row.colour || ""} list={`${which}-colours`} placeholder="Type or pick a colour…" onChange={(e) => updateStock(which, i, "colour", e.target.value)} className={`w-full border border-${themeColor}-200 rounded px-2 py-1 text-xs`} />
+                            </td>
+                            <td className="px-2 py-1.5 text-center">
+                              {/* Availability, per fabric: off keeps the row (stock, photo) but Build's Fabric Palette stops offering this colour for this fabric. */}
+                              <button type="button" role="switch" aria-checked={!row.hideInBuild} aria-label={`${row.colour || "Colour"} available in Build`} onClick={() => setTrussInv((ti) => { const next = [...(ti[which] || [])]; next[i] = { ...next[i], hideInBuild: !next[i].hideInBuild }; return { ...ti, [which]: next }; })}
+                                title={row.hideInBuild ? "Hidden in Build — tap to show" : "Shown in Build — tap to hide"}
+                                className={"relative inline-flex h-5 w-9 items-center rounded-full transition-colors " + (row.hideInBuild ? "bg-gray-300" : `bg-${themeColor}-600`)}>
+                                <span className={"inline-block h-4 w-4 rounded-full bg-white shadow transition-transform " + (row.hideInBuild ? "translate-x-0.5" : "translate-x-[18px]")} />
+                              </button>
+                              <div className={"text-[9px] mt-0.5 " + (row.hideInBuild ? "text-gray-400" : "text-gray-500")}>{row.hideInBuild ? "Hidden" : "Shown"}</div>
                             </td>
                             <td className="px-2 py-1.5 text-center"><input type="number" min="0" step="1" value={row[qtyField] || 0} onChange={(e) => updateStock(which, i, qtyField, e.target.value)} className={`w-20 border border-gray-300 rounded px-2 py-1 text-xs font-bold text-center`} title="Old fabric in stock" /></td>
                             <td className="px-2 py-1.5 text-center"><input type="number" min="0" step="1" value={row[`${qtyField}New`] || 0} onChange={(e) => updateStock(which, i, `${qtyField}New`, e.target.value)} className={`w-20 border border-${themeColor}-300 rounded px-2 py-1 text-xs font-bold text-center text-${themeColor}-800`} title="New fabric in stock" /></td>
