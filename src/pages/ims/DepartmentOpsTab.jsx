@@ -6794,10 +6794,13 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                   <>
                     <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-gray-500 pt-1">Synced from Ops</div>
                     {opsExpenses.map((ex, i) => (
-                      <div key={"ops" + i} className="flex items-center gap-2 bg-blue-50/60 rounded-lg px-3 h-9">
-                        <span className="min-w-0 flex-1 truncate text-sm text-gray-700" title={ex.label}>{ex.label || "Expense"}</span>
-                        <span className="shrink-0 text-xs text-gray-400">{ex.date || ""}{ex.loggedBy ? ` · ${ex.loggedBy}` : ""}</span>
-                        <span className="shrink-0 w-24 text-right text-sm font-semibold tabular-nums text-gray-800">{fmt(Number(ex.amount) || 0)}</span>
+                      <div key={"ops" + i} className="bg-blue-50/60 rounded-lg px-3 py-2 flex flex-col gap-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="shrink-0 max-w-[70%] truncate text-[11px] font-semibold text-blue-700 bg-blue-100 rounded px-2 py-0.5" title={ex.category || ""}>{ex.category || "Expense"}</span>
+                          <span className="shrink-0 text-sm font-semibold tabular-nums text-gray-800">{fmt(Number(ex.amount) || 0)}</span>
+                        </div>
+                        {ex.remarks && <div className="text-sm text-gray-700 truncate" title={ex.remarks}>{ex.remarks}</div>}
+                        <div className="text-xs text-gray-400">{ex.date || ""}{ex.loggedBy ? ` · ${ex.loggedBy}` : ""}</div>
                       </div>
                     ))}
                   </>
