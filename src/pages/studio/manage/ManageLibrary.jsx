@@ -3028,9 +3028,13 @@ export default function ManageLibrary({ ctx }) {
               const tag=ytVideoTags[v.id];
               // Selecting a property (e.g. "Restro") also matches any of its own rooms, plus any
               // video tagged ambiguously at just the property level — same rollup as Browse.
+              // Compared loosely (trim + drop a trailing "." + casefold): a sub-venue named just
+              // "Pushpanjali." under property "Pushpanjali" must still match either chip — a bare
+              // string Set.has() would silently exclude it over nothing but that trailing dot.
               if(ytFilterVenue!=="all"){
-                const okVenues=new Set([ytFilterVenue,...(subVenuesOfParent[ytFilterVenue]||[])]);
-                if(!tag?.venue||!okVenues.has(tag.venue)) return false;
+                const normVenue=(s)=>String(s||"").trim().replace(/\.+$/,"").toLowerCase();
+                const okVenues=new Set([ytFilterVenue,...(subVenuesOfParent[ytFilterVenue]||[])].map(normVenue));
+                if(!tag?.venue||!okVenues.has(normVenue(tag.venue))) return false;
               }
               if(ytFilterFn!=="all"&&!(tag?.fn||[]).includes?.(ytFilterFn)&&tag?.fn!==ytFilterFn) return false;
               if(ytFilterTier!=="all"&&tag?.tier!==ytFilterTier) return false;
