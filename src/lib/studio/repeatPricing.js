@@ -49,15 +49,20 @@ export function flaggedUnitRate(item, priceFor, inventory, overrideSubItems, _se
 // function take the sub-category's % (subcatPct), and in a Repeat zone everything else takes
 // subcatPct too. dateMult (Filler / King's / Perfect) multiplies throughout; when it is below 1 it
 // competes with each unit's discount instead of stacking. Units never get two of them.
-export function dcRentalCost({ qty, baseRentalIn, dateMult = 1, hasItem = true, noDiscount = false, isRepeatZone = false, standingUnits = 0, freshUnits = qty, discountPct = 0, subcatPct = 0, crossFnReuseQty = 0 }) {
+// fullStandingUnits: a Fixed Venue's own "no discount" standing bucket (FixedVenuesEditor.jsx) —
+// physically installed, so it never needs rebuild labour, but the venue owner has designated it to
+// bill at full rate regardless. Billed at `baseRental` with no discount, same as trulyFresh, but
+// kept out of the crossFnReuseQty pool below so a sibling function's reuse can't quietly discount a
+// unit the venue was specifically set up to NOT discount.
+export function dcRentalCost({ qty, baseRentalIn, dateMult = 1, hasItem = true, noDiscount = false, isRepeatZone = false, standingUnits = 0, fullStandingUnits = 0, freshUnits = qty, discountPct = 0, subcatPct = 0, crossFnReuseQty = 0 }) {
   const baseRental = baseRentalIn * dateMult;
   const full = qty * baseRental;
   if (!hasItem || noDiscount) return full;
   const disc = (pct) => innerDiscountFactor(dateMult, pct);
   const crossFnEligible = Math.max(0, Math.min(freshUnits, crossFnReuseQty));
-  if (standingUnits > 0 || crossFnEligible > 0) {
+  if (standingUnits > 0 || fullStandingUnits > 0 || crossFnEligible > 0) {
     const trulyFresh = freshUnits - crossFnEligible;
-    return standingUnits * baseRental * disc(discountPct) + crossFnEligible * baseRental * disc(subcatPct) + trulyFresh * baseRental;
+    return standingUnits * baseRental * disc(discountPct) + fullStandingUnits * baseRental + crossFnEligible * baseRental * disc(subcatPct) + trulyFresh * baseRental;
   }
   if (!isRepeatZone) return full;
   return full * disc(subcatPct);

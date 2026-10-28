@@ -386,14 +386,14 @@ export default function DealCheckOverlay({ ctx }) {
     // venue whether or not the salesperson happened to flag this zone "Repeat". Gating it behind
     // isRepeatZone used to mean the exact same standing bench billed full rate in a zone nobody
     // marked Repeat, and only got its real discount if they also (redundantly) flagged Repeat.
-    const { standingUnits, freshUnits, discountPct } = rentalSplit(fvCfg, venueName, item.id, qty, dcInventoryCache);
+    const { discUnits, fullStandingUnits, freshUnits, discountPct } = rentalSplit(fvCfg, venueName, item.id, qty, dcInventoryCache);
     const key = String(imsField.subcategory(item) || "").toLowerCase().trim();
     const sc = key ? Number((dealCheckData?.fixedVenueSubcatDiscount || {})[key]) : NaN;
     const subcatPct = Number.isFinite(sc) && sc > 0 ? sc : 0;
     // Not a specifically-registered standing item, so there's nothing "always there" about it — the
     // sub-category-level Repeat discount only makes sense when THIS event's own setup is being
     // reused across days, which is exactly what isRepeatZone means (dcRentalCost keeps it gated on it).
-    return dcRentalCost({ qty, baseRentalIn, dateMult, noDiscount: item.noRepeatDiscount === true, isRepeatZone, standingUnits, freshUnits, discountPct, subcatPct, crossFnReuseQty });
+    return dcRentalCost({ qty, baseRentalIn, dateMult, noDiscount: item.noRepeatDiscount === true, isRepeatZone, standingUnits: discUnits, fullStandingUnits, freshUnits, discountPct, subcatPct, crossFnReuseQty });
   };
 
   // One function's print jobs (Flex/Vinyl/Sunboard etc., zoneConfig[zk].prints) priced out — the

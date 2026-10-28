@@ -109,6 +109,20 @@ describe("Deal Check rental — switch OFF (normal)", () => {
   it("King's (a markup) multiplies on top of the venue discount", () => {
     expect(dcRentalCost({ qty: 10, baseRentalIn: 100, dateMult: 1.2, standingUnits: 10, freshUnits: 0, discountPct: 50 })).toBeCloseTo(600, 5);
   });
+  // Fixed Venue's own "full qty" bucket (FixedVenuesEditor.jsx): standing (no rebuild labour) but
+  // the venue owner designated it to never discount. Billed at date-adjusted full rate like
+  // trulyFresh, but — unlike freshUnits — never eligible for a crossFnReuseQty discount either.
+  it("fullStandingUnits bills at (date-adjusted) full rate, same as fresh, alongside a discounted standing bucket", () => {
+    // 6 discounted units: 50% beats Filler's 25%, so the bigger single discount wins outright — 100 × 0.5 = 50/unit.
+    // 4 full-rate units: no discount of their own, just the date-adjusted rate — 100 × 0.75 = 75/unit.
+    expect(dcRentalCost({ qty: 10, baseRentalIn: 100, dateMult: 0.75, standingUnits: 6, fullStandingUnits: 4, freshUnits: 0, discountPct: 50 })).toBeCloseTo(6 * 50 + 4 * 75, 5);
+  });
+  it("fullStandingUnits alone (no discounted bucket at all) still bills at full rate, not treated as a no-op", () => {
+    expect(dcRentalCost({ qty: 10, baseRentalIn: 100, dateMult: 1, standingUnits: 0, fullStandingUnits: 10, freshUnits: 0, discountPct: 50 })).toBe(1000);
+  });
+  it("fullStandingUnits is never pulled into the crossFnReuseQty pool — only freshUnits is", () => {
+    expect(dcRentalCost({ qty: 10, baseRentalIn: 100, dateMult: 1, fullStandingUnits: 4, freshUnits: 6, subcatPct: 50, crossFnReuseQty: 10 })).toBeCloseTo(4 * 100 + 6 * 50, 5);
+  });
 });
 
 describe("Deal Check rental — 'No repeat discount' ON for the item", () => {

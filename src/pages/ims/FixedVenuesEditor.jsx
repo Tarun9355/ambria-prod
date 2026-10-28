@@ -169,9 +169,15 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
     // item got permanently pinned to whatever the table said the moment it was added, then never
     // looked at the table again. An explicit per-item override is still possible — it's just typed
     // in below, not defaulted on add.
-    updVenue(vid, { items: [...v.items, { invId: inv.id, name: inv.name, qty: 1 }] });
+    // qty (discount-eligible) starts at 1, fullQty (bills full rate, still no rebuild labour) at 0 —
+    // same effective behavior as before this split existed.
+    updVenue(vid, { items: [...v.items, { invId: inv.id, name: inv.name, qty: 1, fullQty: 0 }] });
   };
   const updItem = (vid, invId, patch) => { const v = fixedVenues.find((x) => x.id === vid); updVenue(vid, { items: v.items.map((it) => (it.invId === invId ? { ...it, ...patch } : it)) }); };
+  // Both standing buckets combined — an item installed under either one is physically there, so
+  // either counts toward stock locked up / no rebuild labour. See lib/ims/fixedVenues.js's own
+  // totalQtyOf, which this mirrors for the parts of this screen that read raw item rows directly.
+  const itemQty = (it) => (Number(it?.qty) || 0) + (Number(it?.fullQty) || 0);
   const delItem = async (vid, invId) => {
     const v = fixedVenues.find((x) => x.id === vid);
     const it = inventory.find((i) => i.id === invId);
@@ -187,14 +193,14 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
   const invAvail = (invId, vid) => {
     const inv = inventory.find((i) => i.id === invId);
     const stock = Number(inv?.qty ?? inv?.qtyOwned) || 0;
-    const otherStanding = fixedVenues.filter((x) => x.id !== vid).reduce((s, x) => s + (Number((x.items || []).find((it) => it.invId === invId)?.qty) || 0), 0);
+    const otherStanding = fixedVenues.filter((x) => x.id !== vid).reduce((s, x) => s + itemQty((x.items || []).find((it) => it.invId === invId)), 0);
     return Math.max(0, stock - otherStanding);
   };
   // Which OTHER fixed venues already hold this item standing. The cap on its own just refuses the
   // keystroke; naming who holds the rest turns "why won't it save 10?" into something actionable.
   const standingElsewhere = (invId, vid) => fixedVenues
     .filter((x) => x.id !== vid)
-    .map((x) => ({ name: x.name || x.id, qty: Number((x.items || []).find((it) => it.invId === invId)?.qty) || 0 }))
+    .map((x) => ({ name: x.name || x.id, qty: itemQty((x.items || []).find((it) => it.invId === invId)) }))
     .filter((r) => r.qty > 0);
   const stockOf = (invId) => {
     const inv = inventory.find((i) => i.id === invId);
@@ -352,9 +358,17 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
                 // stock figure printed next to the name. Explain that rather than silently clamping.
                 const elsewhere = standingElsewhere(it.invId, v.id);
                 const stock = stockOf(it.invId);
-                const typedQty = parseInt(numDraft[draftKey(v.id, it.invId, "qty")] ?? it.qty, 10);
-                const overCap = Number.isFinite(typedQty) && typedQty > avail;
-                const atCap = !overCap && avail > 0 && (Number(it.qty) || 0) >= avail && elsewhere.length > 0;
+                // Two buckets, same cap: qty (discount-eligible) + fullQty (bills full rate, still
+                // standing/no rebuild labour) must together stay within `avail` — avail already nets
+                // out what other venues hold, not this venue's own split between the two.
+                const fullQtyVal = Number(it.fullQty) || 0;
+                const discQtyVal = Number(it.qty) || 0;
+                const combinedQty = discQtyVal + fullQtyVal;
+                const typedDisc = parseInt(numDraft[draftKey(v.id, it.invId, "qty")] ?? it.qty, 10);
+                const typedFull = parseInt(numDraft[draftKey(v.id, it.invId, "fullQty")] ?? it.fullQty ?? 0, 10);
+                const typedCombined = (Number.isFinite(typedDisc) ? typedDisc : discQtyVal) + (Number.isFinite(typedFull) ? typedFull : fullQtyVal);
+                const overCap = typedCombined > avail;
+                const atCap = !overCap && avail > 0 && combinedQty >= avail && elsewhere.length > 0;
                 const heldBy = elsewhere.map((r) => `${r.qty} at ${r.name}`).join(", ");
                 return (
                 <div key={it.invId} className="flex items-center gap-2 bg-white border rounded-lg px-2.5 py-1.5 flex-wrap">
@@ -365,24 +379,46 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
                     <div className="text-sm text-gray-800">{it.name}</div>
                     <div className="text-[10px] text-gray-400">{dims ? `📐 ${dims}` : "no dimensions"}{inv?.qty != null ? ` · stock ${inv.qty}` : ""}</div>
                   </div>
-                  <span className="text-xs text-gray-400">qty</span>
-                  <input type="number" min="1" max={avail || undefined}
-                    value={numDraft[draftKey(v.id, it.invId, "qty")] ?? it.qty}
+                  {/* Two buckets, not one: both are physically standing (no rebuild labour either
+                      way), but only the "disc" bucket gets this venue's own discount — "full" bills
+                      at full rental rate regardless, e.g. units outside whatever arrangement earns
+                      the discount. Together they must stay within `avail`, not each on its own. */}
+                  <span className="text-xs text-gray-400" title="Standing here, but always bills at full rental rate">full</span>
+                  <input type="number" min="0" max={Math.max(0, avail - discQtyVal) || undefined}
+                    value={numDraft[draftKey(v.id, it.invId, "fullQty")] ?? fullQtyVal}
+                    title="No discount — bills at full rental rate"
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      setNumDraft((d) => ({ ...d, [draftKey(v.id, it.invId, "fullQty")]: raw }));
+                      const n = parseInt(raw, 10);
+                      if (Number.isFinite(n) && n >= 0) updItem(v.id, it.invId, { fullQty: n });
+                    }}
+                    onBlur={(e) => {
+                      const n = parseInt(e.target.value, 10);
+                      const safe = Number.isFinite(n) && n >= 0 ? (avail > 0 ? Math.min(n, Math.max(0, avail - discQtyVal)) : n) : 0;
+                      updItem(v.id, it.invId, { fullQty: safe });
+                      setNumDraft((d) => { const next = { ...d }; delete next[draftKey(v.id, it.invId, "fullQty")]; return next; });
+                    }}
+                    className="w-14 border rounded px-2 py-1 text-sm text-center font-bold" />
+                  <span className="text-xs text-gray-400" title="Standing here, gets this venue's own discount below">disc</span>
+                  <input type="number" min="0" max={Math.max(0, avail - fullQtyVal) || undefined}
+                    value={numDraft[draftKey(v.id, it.invId, "qty")] ?? discQtyVal}
+                    title="Gets this venue's standing discount"
                     onChange={(e) => {
                       const raw = e.target.value;
                       setNumDraft((d) => ({ ...d, [draftKey(v.id, it.invId, "qty")]: raw }));
                       // Commit only a usable number as you type; empty or partial input just sits in
                       // the draft, so the field never fights the cursor.
                       const n = parseInt(raw, 10);
-                      if (Number.isFinite(n) && n > 0) updItem(v.id, it.invId, { qty: n });
+                      if (Number.isFinite(n) && n >= 0) updItem(v.id, it.invId, { qty: n });
                     }}
                     onBlur={(e) => {
                       const n = parseInt(e.target.value, 10);
-                      const safe = Number.isFinite(n) && n > 0 ? (avail > 0 ? Math.min(n, avail) : n) : 1;
+                      const safe = Number.isFinite(n) && n >= 0 ? (avail > 0 ? Math.min(n, Math.max(0, avail - fullQtyVal)) : n) : 0;
                       updItem(v.id, it.invId, { qty: safe });
                       setNumDraft((d) => { const next = { ...d }; delete next[draftKey(v.id, it.invId, "qty")]; return next; });
                     }}
-                    className={"w-16 border rounded px-2 py-1 text-sm text-center font-bold " + (it.qty >= avail && avail > 0 ? "border-amber-400" : "")} />
+                    className={"w-14 border rounded px-2 py-1 text-sm text-center font-bold " + (combinedQty >= avail && avail > 0 ? "border-amber-400" : "")} />
                   <span className="text-[10px] text-gray-400">/{avail}</span>
                   <span className="text-xs text-gray-400">rent @</span>
                   <input type="number" min="0" max="100"
@@ -437,7 +473,7 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
                   {subs.length > 0 && (() => {
                     const bif = (it.bifurcation && typeof it.bifurcation === "object") ? it.bifurcation : {};
                     const assigned = subs.reduce((s, sv) => s + (Number(bif[sv.id]) || 0), 0);
-                    const remaining = (Number(it.qty) || 0) - assigned;
+                    const remaining = combinedQty - assigned;
                     return (
                       <div className="basis-full flex items-center gap-1.5 flex-wrap mt-1 pt-1 border-t border-dashed border-gray-200">
                         <span className="text-[10px] text-gray-400">Bifurcation:</span>

@@ -4499,13 +4499,16 @@ export default function StudioApp() {
   const repeatAdjustedLineCost = (item, qty, unitRate, zc, venueName, crossFnReuseQty = 0, repeatOverride, dateFactor = 1, kitOverrides) => {
     if (!item) return qty * unitRate;
     const isRepeat = typeof repeatOverride === "boolean" ? repeatOverride : repeatCatFor(zc, "elements");
-    const { standingUnits } = isRepeat ? { standingUnits: 0 } : rentalSplit(fvCfgForRepeat, venueName, item.id, qty, imsInventory);
+    // Only the discount-eligible bucket (Fixed Venue's "disc qty", not its "full qty" — see
+    // FixedVenuesEditor.jsx) counts as eligible here, so the client never sees a Repeat markdown on
+    // units the venue specifically designated to bill at full rate.
+    const { discUnits } = isRepeat ? { discUnits: 0 } : rentalSplit(fvCfgForRepeat, venueName, item.id, qty, imsInventory);
     return guestRepeatLineCost({
       qty, unitRate,
       // a kit with switched-off components: their share of the kit's price is never discounted
       flaggedUnitRate: flaggedUnitRate(item, (it, ov) => priceForInvItem(it, rcFactorByKey, imsInventory, ov), imsInventory, kitOverrides),
       noDiscount: item.noRepeatDiscount === true, hidden: hideDiscountFromClient,
-      isRepeat, standingUnits, crossFnReuseQty, dateFactor, pct: GUEST_DISCOUNT_PCT,
+      isRepeat, standingUnits: discUnits, crossFnReuseQty, dateFactor, pct: GUEST_DISCOUNT_PCT,
     });
   };
   // The date factor getElPrice / getElPriceForFn will multiply onto this element's line — 1 for a
