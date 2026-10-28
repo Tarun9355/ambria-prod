@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computePeople, computePeopleRaw, shiftToTiming, heavySayaMultFor, situationalFactorsFor } from "./manpowerCount";
+import { computePeople, computePeopleRaw, shiftToTiming, heavySayaMultFor, situationalFactorsFor, tentingZoneUsage } from "./manpowerCount";
 
 const computeRaw = (f, ctx) => computePeopleRaw(f, "Labours", ctx);
 
@@ -119,6 +119,51 @@ describe("computePeopleRaw — Truss Labour", () => {
     // A generous single range covers whatever pillar count the real truss engine resolves to.
     const ctx = { ...baseCtx(), trussInv, trussLabourRanges: [{ upTo: 1000, labour: 6 }] };
     expect(computePeopleRaw(fn({ zoneConfig }), "Truss Labour", ctx)).toBe(6);
+  });
+});
+
+describe("tentingZoneUsage — Truss pillar count / Platform piece count for the Labours usage split", () => {
+  const trussInv = { settings: { pillarWidthFt: 0.75, maxSpanFt: 30, defaultBackDepthFt: 4, backDepthRange: [3, 5] }, rates: {}, batta: { bufferPct: 10 } };
+
+  it("returns 0/0 with no zone config at all", () => {
+    expect(tentingZoneUsage(fn(), baseCtx())).toEqual({ truss: 0, platform: 0 });
+  });
+
+  it("truss: 0 with no truss inventory loaded, even with real truss dims", () => {
+    const zoneConfig = { stage: { dims: { L: 10, W: 10, H: 10 } } };
+    expect(tentingZoneUsage(fn({ zoneConfig }), baseCtx()).truss).toBe(0);
+  });
+
+  it("truss: a positive pillar count once real truss inventory resolves the zone", () => {
+    const zoneConfig = { stage: { dims: { L: 10, W: 10, H: 10 } } };
+    const ctx = { ...baseCtx(), trussInv };
+    expect(tentingZoneUsage(fn({ zoneConfig }), ctx).truss).toBeGreaterThan(0);
+  });
+
+  it("platform: counts the configured piece qty (plQty), not sqft or a material count", () => {
+    const zoneConfig = { stage: { plH: 3, floorDims: { L: 10, W: 8 }, plQty: 3 } };
+    expect(tentingZoneUsage(fn({ zoneConfig }), baseCtx()).platform).toBe(3);
+  });
+
+  it("platform: extraPlatformRows add their own qty on top of row 0", () => {
+    const zoneConfig = { stage: { plH: 3, floorDims: { L: 10, W: 8 }, plQty: 1, extraPlatformRows: [{ plH: 3, floorDims: { L: 6, W: 4 }, plQty: 2 }] } };
+    expect(tentingZoneUsage(fn({ zoneConfig }), baseCtx()).platform).toBe(3);
+  });
+
+  it("platform: a row with no height (plH) or no floor dims doesn't count", () => {
+    const zoneConfig = { stage: { plQty: 5 } }; // no plH at all
+    expect(tentingZoneUsage(fn({ zoneConfig }), baseCtx()).platform).toBe(0);
+  });
+
+  it("a zone the function hasn't enabled contributes nothing", () => {
+    const zoneConfig = { stage: { plH: 3, floorDims: { L: 10, W: 8 }, plQty: 3 } };
+    expect(tentingZoneUsage(fn({ zoneConfig, enabledEls: { stage: false } }), baseCtx()).platform).toBe(0);
+  });
+
+  it("feeds computePeopleRaw's Labours usage floor via heavyElementRanges (the actual bug fixed) — Platform alone, with no walkable element at all, still produces a positive need", () => {
+    const zoneConfig = { stage: { plH: 3, floorDims: { L: 10, W: 8 }, plQty: 40 } }; // 40 ÷ 20 = 2
+    const ctx = { ...baseCtx(), heavyElementRanges: [{ subCat: "Platform", perCount: 20 }] };
+    expect(computePeopleRaw(fn({ zoneConfig }), "Labours", ctx)).toBe(2);
   });
 });
 

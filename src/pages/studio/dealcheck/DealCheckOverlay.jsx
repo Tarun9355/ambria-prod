@@ -104,7 +104,7 @@ import { carpetPricingFor, CARPET_OFF } from "../../../lib/studio/taxonomy";
 import { qtyUsedElsewhereInDealCheck, netOwnReservedBlocksLive } from "../../../lib/studio/dealAvailability";
 import { isHiddenSubcat, oosCostPctFor, canFulfillShortfall } from "../../../lib/rateCard";
 import { findCrossFnReuseSource, computeFnInvQty, groupConsecutiveFns } from "../../../lib/studio/crossFnReuse";
-import { computePeopleRaw, computePeople, situationalFactorsFor, heavySayaMultFor as sharedHeavySayaMultFor } from "../../../lib/studio/manpowerCount";
+import { computePeopleRaw, computePeople, situationalFactorsFor, heavySayaMultFor as sharedHeavySayaMultFor, tentingZoneUsage } from "../../../lib/studio/manpowerCount";
 import { dcRentalCost } from "../../../lib/studio/repeatPricing.js";
 import { kitShortfallSplit } from "../../../lib/studio/kitShortfallSplit";
 import { kitRecipeParts } from "../../../lib/studio/kitRecipeParts";
@@ -1470,6 +1470,13 @@ export default function DealCheckOverlay({ ctx }) {
                   // `adj`/`result`.
                   const sm = 1.0;
                   const adj = Math.ceil(base * sm); const sc = {}; walkFn(fn, ({ rc, qty }) => { const _s = itemImsSubcat(rc); sc[_s] = (sc[_s] || 0) + qty; });
+                  // Truss pillar count / Platform piece count — never a zone element, so the walk
+                  // above can never find them (tentingZoneUsage's own comment, manpowerCount.js).
+                  // Added here so the "Heavy items (...)" aside below can name them too. fn here
+                  // (not freshFnMP(fn)) to match walkFn(fn, ...) just above.
+                  const _tuFn = tentingZoneUsage(fn, mpCtxFor(fn));
+                  if (_tuFn.truss > 0) sc["Truss"] = (sc["Truss"] || 0) + _tuFn.truss;
+                  if (_tuFn.platform > 0) sc["Platform"] = (sc["Platform"] || 0) + _tuFn.platform;
                   const reduction = standingReductionBySubcat(fvCfg, venueName, (dcCards || {})[fns.indexOf(fn)], dealCheckData?.inventory || []);
                   // Per-sub-category rows for the heavy-element add-on, same as manpowerPlanForBooking's
                   // heavyRows — the base figure above stays a flat venue-min line (nothing item-level to
@@ -1583,6 +1590,21 @@ export default function DealCheckOverlay({ ctx }) {
                   if (!itemAgg[key]) itemAgg[key] = { name: rc.name || sub, sub, dept: dp, qty: 0, per: b, need: 0 };
                   itemAgg[key].qty += Number(qty) || 0; itemAgg[key].need += need;
                 });
+                // Truss pillar count / Platform piece count — never a zone element, so the walkFn
+                // above can never find them (tentingZoneUsage's own comment, manpowerCount.js).
+                // Always Tenting's (poolLabourDept is a no-op for it) — added here so the department
+                // split and the engine's own usage floor (computePeopleRaw) always agree.
+                if (labourUsageMode) {
+                  const tu = tentingZoneUsage(freshFnMP(fn), mpCtxFor(fn));
+                  [["Truss", tu.truss], ["Platform", tu.platform]].forEach(([sub, count]) => {
+                    const b = lookupBySubcat(_labBatches, sub);
+                    if (!b || !(count > 0)) return;
+                    const need = count / b;
+                    const dp = poolLabourDept(catToDept(sub));
+                    byDept[dp] = (byDept[dp] || 0) + need; total += need;
+                    itemAgg[sub] = { name: sub, sub, dept: dp, qty: count, per: b, need };
+                  });
+                }
                 labourUsageByFn[fi] = { byDept, total, items: Object.values(itemAgg) };
                 Object.entries(byDept).forEach(([dp, n]) => { labourUsageByDept[dp] = (labourUsageByDept[dp] || 0) + n; });
                 labourUsageTotal += total;

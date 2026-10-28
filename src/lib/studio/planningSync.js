@@ -38,8 +38,11 @@ export function planningUpcoming(eo, now = Date.now()) {
 // the colour per zone - orders synced before still show the old colours until synced again. v8: a heavy
 // item's department (for the Labours usage split) is classified by its own sub-category, not its broad
 // top-level category — fixes Carpet (and anything else filed under a category name that doesn't itself
-// contain the matching keyword) never crediting Tenting.
-export const PLANNING_SNAPSHOT_VERSION = 8;
+// contain the matching keyword) never crediting Tenting. v9: Truss's pillar count and Platform's
+// piece count now feed the Labours usage floor too (tentingZoneUsage) — neither is ever a zone
+// element, so they were invisible to the split before this, even though both were configured in
+// Heavy Element Add-ons; Tenting's Labours share can finally be nonzero.
+export const PLANNING_SNAPSHOT_VERSION = 9;
 const PLANNING_SNAPSHOT_SHIPPED_AT = Date.parse("2026-10-27T11:50:00Z");
 export const planningSnapshotOutdated = (eo) => (Number(eo?.deptSnapVer) || 1) < PLANNING_SNAPSHOT_VERSION;
 

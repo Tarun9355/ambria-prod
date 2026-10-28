@@ -44,7 +44,7 @@ import { printSqftOf, smallPrintFlat, printFlatForZone, PRINT_TRUCK_SUB } from "
 import { itemTakesChoices } from "../../lib/studio/elementPrefs";
 import { findCrossFnReuseSource, computeFnInvQty, findSiblingFnInvUse, findSiblingFnSubcatOpportunity } from "../../lib/studio/crossFnReuse";
 import { computeFnFloralCost, buildMandiBreakdown } from "../../lib/studio/floralCost";
-import { computePeople, shiftToTiming, sizeFromMode, situationalFactorsFor, walkFnElements } from "../../lib/studio/manpowerCount";
+import { computePeople, shiftToTiming, sizeFromMode, situationalFactorsFor, walkFnElements, tentingZoneUsage } from "../../lib/studio/manpowerCount";
 
 // ═══ HEADER TYPE + CHIP SCALE ═══
 // The header used to mix 8/9/10/11/12/13px in a single row. It now has exactly two tiers:
@@ -5981,6 +5981,18 @@ export default function StudioApp() {
             const key = rc.name || sub;
             if (!itemAgg[key]) itemAgg[key] = { name: rc.name || sub, sub, qty: 0, per, need: 0 };
             itemAgg[key].qty += Number(qty) || 0; itemAgg[key].need += need;
+          });
+          // Truss pillar count / Platform piece count — never a zone element, so the walk above can
+          // never find them (tentingZoneUsage's own comment, manpowerCount.js). Always Tenting's
+          // — added here so this trace's own result matches the engine's (computePeople, which
+          // already includes them via peopleTier3Labours).
+          const tu = tentingZoneUsage(fn, mpCtxFor(fn));
+          [["Truss", tu.truss], ["Platform", tu.platform]].forEach(([sub, count]) => {
+            const per = lookupBySubcat(labBatches, sub);
+            if (!per || !(count > 0)) return;
+            const need = count / per;
+            fnUsageTotal += need;
+            itemAgg[sub] = { name: sub, sub, qty: count, per, need };
           });
         }
         const usageRows = Object.values(itemAgg);

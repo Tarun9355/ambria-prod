@@ -1032,12 +1032,19 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const [newVeh, setNewVeh] = useState({ vehicle: "", driver: "", phone: "" }); // new fleet entry
   const mandiCatalogue = useMemo(() => (Array.isArray(settings?.mandiCatalogue) ? settings.mandiCatalogue : []), [settings]);
   // A mandi row's photo: the colour picked in Deal Check first, else the catalogue item's own
-  // photo, else its first variant with one — so a flower nobody picked a colour for still shows
-  // a picture instead of a blank box. Shared by the shopping-list print sheet and its on-screen row.
+  // photo, else its first variant with one, else — when the catalogue item is itself mapped to a
+  // real IMS inventory item (artificialMapItemId, set in the Mandi tab for pricing the artificial
+  // substitute) — that inventory item's own photo, so a real-only flower/green with no mandi photo
+  // of its own (e.g. Rajnigandh, Dandela) still shows a picture instead of a blank box. Shared by
+  // the shopping-list print sheet and its on-screen row.
   const mandiPhotoOf = (r) => {
     if (r.colorVariant?.photoUrl) return r.colorVariant.photoUrl;
     const c = mandiCatalogue.find(x => String(x.name || "").trim().toLowerCase() === String(r.name || "").trim().toLowerCase());
-    return c?.photoUrl || (c?.colorVariants || []).find(v => v.photoUrl)?.photoUrl || "";
+    if (c?.photoUrl) return c.photoUrl;
+    const variantPhoto = (c?.colorVariants || []).find(v => v.photoUrl)?.photoUrl;
+    if (variantPhoto) return variantPhoto;
+    const mapped = c?.artificialMapItemId ? (inventory || []).find(i => i.id === c.artificialMapItemId) : null;
+    return (Array.isArray(mapped?.photoUrls) && mapped.photoUrls[0]) || mapped?.img || "";
   };
   const flowerPatterns = useMemo(() => (Array.isArray(settings?.flowerPatterns) ? settings.flowerPatterns : []), [settings]);
 
