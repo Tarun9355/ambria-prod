@@ -1568,10 +1568,18 @@ export default function DealCheckOverlay({ ctx }) {
                   if (!b) return;
                   const need = (Number(qty) || 0) / b;
                   if (need <= 0) return;
-                  const dp = poolLabourDept(catToDept(rc.cat));
+                  // Classify by the SUB-category that just matched this heavy-element batch (Carpet,
+                  // Sofa, Truss, …), not the item's broad top-level category — catToDept(rc.cat) was
+                  // the bug: most categories (Furniture, Lighting, Florals) happen to contain their
+                  // own keyword so it looked right, but a Carpet item filed under a generic category
+                  // name (e.g. "Flooring") never matched "carpet" and silently fell to the Structure
+                  // catch-all, so Tenting never got credit for it. Matches the pattern every other
+                  // heavy-item dept lookup in this app already uses (usageDept, DepartmentOpsTab's
+                  // heavy-rows filters) — classify by .sub, not .cat.
+                  const dp = poolLabourDept(catToDept(sub));
                   byDept[dp] = (byDept[dp] || 0) + need; total += need;
                   const key = rc.name || sub;
-                  // dept: the department Deal Check actually charged this item's labour to (by the item's own category), so Dept Ops lists the row under the same one.
+                  // dept: the department Deal Check actually charged this item's labour to (by the item's own SUB-category), so Dept Ops lists the row under the same one.
                   if (!itemAgg[key]) itemAgg[key] = { name: rc.name || sub, sub, dept: dp, qty: 0, per: b, need: 0 };
                   itemAgg[key].qty += Number(qty) || 0; itemAgg[key].need += need;
                 });
