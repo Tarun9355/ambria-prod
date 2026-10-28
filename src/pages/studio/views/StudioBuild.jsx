@@ -4,8 +4,8 @@ import { makeFilterUI, useRailMaxHeight } from "../../../components/studio/filte
 import NumField from "../../../components/ui/NumField.jsx";
 import { applyQtyCeiling } from "../../../lib/studio/qtyCeiling";
 import { unitAllowsDecimal, quantityForUnit } from "../../../lib/studio/qtyUnits";
-import { itemTakesChoices, elementChoices, applyChoicePicks, ELEMENT_PREF_MAX, ELEMENT_PREF_LABELS } from "../../../lib/studio/elementPrefs";
-import { SMALL_PRINT_LIMIT, SMALL_PRINT_CHARGE, firstSmallPrint } from "../../../lib/studio/truckPrint";
+import { itemTakesChoices, elementChoices, partChoices, applyChoicePicks, ELEMENT_PREF_MAX, ELEMENT_PREF_LABELS } from "../../../lib/studio/elementPrefs";
+import { SMALL_PRINT_LIMIT, SMALL_PRINT_CHARGE, firstSmallPrint, printFlatForZone } from "../../../lib/studio/truckPrint";
 import { IconClipboard, IconPencil, IconRuler, IconBolt, IconWall, IconPlatform, IconCarpet, IconBulb, IconCheck,
   IconSearch, IconCamera, IconPrinter, IconNote, IconCalendar, IconFlower, IconFactory,
   IconCart, IconCopy, IconRepeat, IconAlert, IconPalette, IconChevron, IconSparkle,
@@ -22,6 +22,7 @@ import { prefsOf, prefsPatch, setPrefsPatch, clearPrefsPatch, assignCarpets, car
 import { trussRowCost, calcZoneFabricCost, guestFabricMultiplier, fabricRepeatDiscount, maskingRepeatOn, maskingGuestCost, zoneTrussStandingDiscountDetail, repeatCatFor, parseFlowerPalette, stringifyFlowerPalette, parseFabricPalette, stringifyFabricPalette, isDirectMandiElement, anchorsForPaletteByMaterial, snapRowDimsForProduction } from "../../../lib/studio/pricing";
 import { paletteSearch, paletteMatches } from "../../../components/studio/filterUI.jsx";
 import { resolveTrussConfig } from "../../../lib/studio/pricing";
+import { fabricColourOptions } from "../../../lib/studio/fabricColourOptions";
 import { qtyUsedElsewhereInBuild } from "../../../lib/studio/dealAvailability";
 import { logDiscountToClientToggle } from "../../../lib/studio/userActions";
 import { todayStr } from "../../../lib/ims/attendance";
@@ -1206,9 +1207,29 @@ export default function StudioBuild({ ctx }) {
   // "Existing Printed Walls" button. Listed there, and their money is on the Print tile.
   const printedWallsOf = (k) => (zoneElements[k] || []).map((el, idx) => ({ el, idx, it: el.invId ? (imsInventory || []).find(i => i.id === el.invId) : null }))
     .filter(w => w.it && /fabric/i.test(String(w.it.cat || w.it.category || "")) && /printed wall/i.test(String(w.it.subCat || w.it.subcategory || "")));
+  // The function's flat small-print charge sits in the Print cost of the zone that carries it (lib/studio/truckPrint.js printFlatForZone), added after the
+  // guest-price scaling like every other total that reads the zone's struct figures (StudioApp's withPrintFlat) - tile, zone header and zone total all agree.
+  const withPrintFlat = (sc, k) => {
+    const flat = sc ? printFlatForZone(zoneConfig, enabledEls, imsPrintMaterials, k) : 0;
+    return flat > 0 ? { ...sc, print: (sc.print || 0) + flat, total: (sc.total || 0) + flat, printFlat: flat } : sc;
+  };
   const zoneSectionSub = (k, id) => {
     const zc = zoneConfig[k] || {}, zm = zoneMeta[k] || {}, d = zc.dims || {}, fd = zc.floorDims || {};
-    if (id === "elements") { const n = (zoneElements[k] || []).length; return n ? `${n} item${n === 1 ? "" : "s"}` : "No items yet"; }
+    if (id === "elements") {
+      const els = zoneElements[k] || [], n = els.length;
+      if (!n) return "No items yet";
+      // Anything short or out of stock on this date is said on the tile itself, in red like a short carpet - so it shows without opening the card.
+      // Same two signals the element card's own "⚠ short" badge reads: the held qty below the asked one, and the price check's stock warning.
+      const pool = crossFnPool();
+      const shortN = els.reduce((a, el, idx) => {
+        if (!el?.invId) return a;
+        const asked = (Number(el.wantedQty) || 0) > (Number(el.qty) || 0);
+        let warned = false;
+        try { warned = !!getElPrice(el, zoneConfig[k], { checkAvailability: true, zoneKey: k, elIdx: idx, crossFnReusePool: pool }, aVenue)?.warning; } catch { /* price check failed: not counted */ }
+        return a + (asked || warned ? 1 : 0);
+      }, 0);
+      return `${n} item${n === 1 ? "" : "s"}${shortN ? ` · ⚠ ${shortN} short` : ""}`;
+    }
     // Empty rather than "Not set" — the tile already reads as untouched, and the words added a
     // line of noise to every zone on first open. sectionTile skips the sub-label row when blank.
     // "· masking" only when masking is actually on — mkT (the material) stays set after the toggle is
@@ -1327,7 +1348,7 @@ export default function StudioBuild({ ctx }) {
   const sectionCost = (k, id) => {
     if (!showCosts) return 0;
     if (id === "elements") return calcElsCost(zoneElements[k], true, zoneConfig[k], {checkAvailability:true, crossFnReusePool: crossFnPool(), zoneKey: k}, aVenue);
-    const sc = zoneConfig[k] ? scaleStruct(calcStructCost(k, zoneConfig[k], structRates, structDiscountFor(zoneConfig[k], aVenue))) : null;
+    const sc = zoneConfig[k] ? withPrintFlat(scaleStruct(calcStructCost(k, zoneConfig[k], structRates, structDiscountFor(zoneConfig[k], aVenue))), k) : null;
     if (id === "truss") return sc ? sc.truss + sc.masking + sc.arches + sc.pillars + sc.glass + sc.fabric : 0;
     if (id === "platform") return sc ? sc.platform + sc.carpet : 0;
     // calcStructCost's own print total (same figure zoneTotal() folds in below) plus the existing printed walls, each priced as its own
@@ -1354,7 +1375,7 @@ export default function StudioBuild({ ctx }) {
       <div style={{flex:1,minWidth:0}}>
         <div style={{fontSize:12.5,fontWeight:700,color:on?accent:textP}}>{sec.label}</div>
         {/* Red for a carpet problem on the Platform tile: short, none selected, or not picked. */}
-        {sub&&(()=>{const warn=sec.id==="platform"&&/^⚠|No carpet|carpet not picked/.test(String(sub));return <div style={{fontSize:10.5,color:warn?"#EF4444":textS,fontWeight:warn?700:undefined,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sub}</div>;})()}
+        {sub&&(()=>{const warn=(sec.id==="platform"&&/^⚠|No carpet|carpet not picked/.test(String(sub)))||(sec.id==="elements"&&/⚠/.test(String(sub)));return <div style={{fontSize:10.5,color:warn?"#EF4444":textS,fontWeight:warn?700:undefined,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sub}</div>;})()}
       </div>
       {/* Per-chip Repeat override — defaults to the zone's own ✨Fresh/♻️Repeat toggle (repeatCatFor)
           until flipped here specifically for this one category. Icon-only: the tile is already
@@ -1405,7 +1426,7 @@ export default function StudioBuild({ ctx }) {
   // (shortfall-adjusted), so "By zone" + "Zones subtotal" quietly failed to add up to the number
   // above them. Same reasoning as calcFunctionCost's — this is what makes Build's own totals agree
   // with themselves, and with Summary/Deal Check's.
-  const zoneTotal = (k) => calcElsCost(zoneElements[k],true,zoneConfig[k],{checkAvailability:true, crossFnReusePool: crossFnPool(), zoneKey: k},aVenue)+(zoneConfig[k]?scaleStruct(calcStructCost(k,zoneConfig[k],structRates,structDiscountFor(zoneConfig[k],aVenue))).total:0)+dcCustomItems.filter(c=>c.fnIdx===(activeFnIdx||0)&&c.zoneKey===k).reduce((acc,c)=>acc+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0);
+  const zoneTotal = (k) => calcElsCost(zoneElements[k],true,zoneConfig[k],{checkAvailability:true, crossFnReusePool: crossFnPool(), zoneKey: k},aVenue)+(zoneConfig[k]?withPrintFlat(scaleStruct(calcStructCost(k,zoneConfig[k],structRates,structDiscountFor(zoneConfig[k],aVenue))),k).total:0)+dcCustomItems.filter(c=>c.fnIdx===(activeFnIdx||0)&&c.zoneKey===k).reduce((acc,c)=>acc+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0);
   void textSRaw;
 
   // Photo-filter pill. Was 9px in a 2px-tall chip with `textS` (~3.1:1) when inactive — too small
@@ -1990,6 +2011,22 @@ export default function StudioBuild({ ctx }) {
   // Hover-to-zoom on an element's thumbnail — same fixed-position enlarged-preview pattern as
   // ManageLibrary.jsx's elHoverImg. Keyed by "zoneKey:idx" since two near-duplicate element-list
   // blocks in this file can both be on screen at once.
+  // Overlays and cushion covers name up to four designs in order of preference (Planning decides which one is used from what is free on the day). The stock
+  // icon on the element opens that picker for them - no separate "Choices" button - and any other element keeps the plain one-item picker.
+  // Returns the opener for this element, or null when it takes no choices.
+  const choiceOpenerFor = (k, idx, el, rc, invItem, qtyUnit) => {
+    if (!openAvailModal || !invItem || !itemTakesChoices(invItem)) return null;
+    const ch = elementChoices(el);
+    const noun = /cover/i.test(invItem.name || "") ? "cushion cover" : "overlay";
+    return () => openAvailModal(k, idx, el, rc, null, { unitLabel: qtyUnit, hidePrice: true,
+      pickHint: "The 1st choice is the one priced; Planning decides which is used from what is free on the day",
+      multi: { max: ELEMENT_PREF_MAX, need: Number(el.qty) || 0, current: ch.length ? ch.map(c => c.id) : [el.invId], noun, needNoun: "element", noReuse: true, designsOnly: true,
+        onSave: (picks, all) => setZoneElements(p => {
+          const elems = [...(p[k] || [])]; if (!elems[idx] || !picks.length) return p;
+          elems[idx] = applyChoicePicks(elems[idx], picks, all);
+          return { ...p, [k]: elems };
+        }) } });
+  };
   const [elThumbHover, setElThumbHover] = useState(null); // { key, top, bottom, left }
   // "+ Add element…" search results dropdown, keyed by zone key. Same escape-the-clipped-ancestor
   // reason as elThumbHover above — .zone-row is overflow:hidden for its rounded corners, so an
@@ -3425,23 +3462,9 @@ undefined
       // actually matches used to silently fall back to whichever colour had the most stock, with no
       // way to tell. Every option listed now is guaranteed to be a real, matchable fabric colour.
       // Also carries each colour's own reference photo (if the admin uploaded one) and which of the
-      // 3 stocks it actually appears in, so toggling a material icon for a colour that was never
-      // even in Curtain stock can't silently claim it is.
-      const fabricColourInfo = (() => {
-        const tInv = structRates?.trussInv;
-        const map = new Map();
-        // A stock row switched off for Build (IMS → Fabric Stock → "In Build") is not offered for that fabric; a colour already picked stays listed so it can still be un-picked.
-        const scan = (arr, material) => (arr || []).forEach(s => {
-          const n = String(s?.colour || "").trim(); if (!n) return;
-          if (s?.hideInBuild && !curColors.some(c => c.name === n)) return;
-          if (!map.has(n)) map.set(n, { name: n, photo: "", in: new Set() });
-          const e = map.get(n);
-          if (!s?.hideInBuild) e.in.add(material);
-          if (!e.photo && s.photo) e.photo = s.photo;
-        });
-        scan(tInv?.lizaStock, "liza"); scan(tInv?.maskingStock, "masking"); scan(tInv?.curtainStock, "curtain");
-        return map;
-      })();
+      // 3 stocks it actually has stock in, so toggling a material icon for a colour that was never
+      // even in Curtain stock can't silently claim it is. Only colours with something in stock are listed (lib/studio/fabricColourOptions.js).
+      const fabricColourInfo = fabricColourOptions(structRates?.trussInv, curColors.map(c => c.name));
       const opts = azSort([...fabricColourInfo.keys()]);
       const matched = fabricPaletteQ.trim() ? paletteSearch(opts, fabricPaletteQ) : opts;
       // Multiple colours (owner ask): widen the acceptable set rather than pin one — Deal Check's
@@ -4792,7 +4815,7 @@ undefined
                         {!rc&&!el.invId&&!el.patternId&&!el.mandiId&&<span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700}}>NEW</span>}
                         {el.invId&&(el.wantedQty||0)>(el.qty||0)&&<span title={`Asked for ${el.wantedQty}, only ${el.qty} available for this date — held at ${el.qty}`} style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700}}>⚠ short · {el.wantedQty} asked</span>}
                         {el.invId&&priceInfo.warning&&<span title={priceInfo.warning} style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700}}>{priceInfo.outOfStock?"⚠ out of stock":"⚠ short"}</span>}
-                        {(rc||el.invId)&&<span onClick={()=>openAvailModal(k, idx, el, rc)} title={_subcatOpportunity?`Also used in ${[...new Set(_subcatOpportunity.map(o=>o.label))].join(", ")} (${_subcatOpportunity.map(o=>o.name).join(", ")}) — swap to it for the repeat discount`:"Check stock availability & pick an item"} style={{cursor:"pointer",fontSize:12,opacity:_subcatOpportunity?1:0.5,padding:"0 1px",lineHeight:1,color:_subcatOpportunity?"#F97316":undefined}}><IconBox size={12}/></span>}
+                        {(rc||el.invId)&&<span onClick={()=>((!isKit&&choiceOpenerFor(k,idx,el,rc,invItem,qtyUnit))||(()=>openAvailModal(k, idx, el, rc)))()} title={(!isKit&&choiceOpenerFor(k,idx,el,rc,invItem,qtyUnit))?`Check what is free and name up to ${ELEMENT_PREF_MAX} ${/cover/i.test(invItem?.name||"")?"cushion cover":"overlay"} designs in order of preference - Planning decides which one is used`:_subcatOpportunity?`Also used in ${[...new Set(_subcatOpportunity.map(o=>o.label))].join(", ")} (${_subcatOpportunity.map(o=>o.name).join(", ")}) — swap to it for the repeat discount`:"Check stock availability & pick an item"} style={{cursor:"pointer",fontSize:12,opacity:_subcatOpportunity?1:0.5,padding:"0 1px",lineHeight:1,color:_subcatOpportunity?"#F97316":undefined}}><IconBox size={12}/></span>}
                         {/* Only when the manually-pinned stock item's name actually differs from
                             what's already shown above (invItem?.name || el.name) — the box icon
                             right before this already opens the same "tap to change" picker, so a
@@ -4833,27 +4856,18 @@ undefined
                       <div style={{display:"flex",alignItems:"center",gap:4,marginTop:2,flexWrap:"wrap"}}>
                         {/* Overlays and cushion covers can name up to four designs in order of preference; Planning decides which one is used from what is
                             free on the day. Priced and held as the 1st choice, exactly like a plain element. */}
-                        {openAvailModal&&!isKit&&invItem&&itemTakesChoices(invItem)&&(()=>{
+                        {!isKit&&(()=>{
+                          const open=choiceOpenerFor(k,idx,el,rc,invItem,qtyUnit);
                           const ch=elementChoices(el);
-                          const noun=/cover/i.test(invItem.name||"")?"cushion cover":"overlay";
-                          const open=()=>openAvailModal(k,idx,el,rc,null,{unitLabel:qtyUnit,hidePrice:true,
-                            pickHint:"The 1st choice is the one priced; Planning decides which is used from what is free on the day",
-                            multi:{max:ELEMENT_PREF_MAX,need:Number(el.qty)||0,current:ch.length?ch.map(c=>c.id):[el.invId],noun,needNoun:"element",noReuse:true,designsOnly:true,
-                              onSave:(picks,all)=>setZoneElements(p=>{
-                                const elems=[...(p[k]||[])]; if(!elems[idx]||!picks.length) return p;
-                                elems[idx]=applyChoicePicks(elems[idx],picks,all);
-                                return {...p,[k]:elems};
-                              })}});
-                          return ch.length>=2
-                            ? <span onClick={open} role="button" tabIndex={0} title="Choices in order — Planning decides which one is used. Tap to change." style={{display:"flex",flexDirection:"column",gap:5,flexBasis:"100%",width:"100%",marginTop:3,cursor:"pointer"}}>
+                          if(!open||ch.length<2) return null; // with fewer than two designs the stock icon above is the way in
+                          return <span onClick={open} role="button" tabIndex={0} title="Choices in order — Planning decides which one is used. Tap to change." style={{display:"flex",flexDirection:"column",gap:5,flexBasis:"100%",width:"100%",marginTop:3,cursor:"pointer"}}>
                                 {ch.map((c,i)=><span key={c.id} title={`${ELEMENT_PREF_LABELS[i]}: ${c.name}`} style={{display:"flex",alignItems:"center",gap:8,minWidth:0,fontSize:12.5,padding:"5px 10px",borderRadius:8,border:`1px solid ${i===0?"#059669":border}`,background:i===0?"rgba(5,150,105,0.07)":"transparent",color:i===0?"#059669":textP,fontWeight:i===0?700:500}}>
                                   <b style={{flexShrink:0,width:18,height:18,borderRadius:9,background:i===0?"#059669":"rgba(0,0,0,0.08)",color:i===0?"#fff":textS,fontSize:10.5,display:"inline-flex",alignItems:"center",justifyContent:"center"}}>{i+1}</b>
                                   {(()=>{const it=(imsInventory||[]).find(x=>x.id===c.id);const ph=it?(it.img||(Array.isArray(it.photoUrls)&&it.photoUrls[0])||""):"";
                                     return ph?<img src={thumbUrl(ph,64)} loading="lazy" decoding="async" alt="" style={{width:32,height:32,borderRadius:6,objectFit:"cover",flexShrink:0}}/>
                                       :<span style={{width:32,height:32,borderRadius:6,flexShrink:0,background:isDark?"rgba(255,255,255,0.06)":"rgba(0,0,0,0.05)",display:"inline-flex",alignItems:"center",justifyContent:"center"}}><IconBox size={14}/></span>;})()}
                                   <span style={{flex:1,minWidth:0,overflowWrap:"anywhere",lineHeight:1.3}}>{c.name}</span></span>)}
-                              </span>
-                            : <button onClick={open} title={`Name up to ${ELEMENT_PREF_MAX} ${noun} designs in order of preference — Planning decides which one is used`} style={{padding:"4px 11px",borderRadius:7,border:`1px dashed ${border}`,fontSize:12,fontWeight:600,cursor:"pointer",background:"transparent",color:accent}}>＋ Choices</button>;
+                              </span>;
                         })()}
                         {!!el.mandiId&&(()=>{
                           const mandiCat=(dealCheckData||studioFloralData)?.mandiCatalogue||[];
@@ -5078,6 +5092,14 @@ undefined
                       // so the picker shows that same guest-facing rate (its default mode). It used to pass
                       // priceMode "cost" with the custom-item picker's wording, so a part renting at ₹70 was
                       // listed at its ₹500 purchase cost — a figure the kit never charges.
+                      onCheckChoices={(cItem,part,onSave,o)=>{
+                        const ch=partChoices(part);
+                        const noun=/cover/i.test(cItem.name||"")?"cushion cover":"overlay";
+                        openAvailModal(null,null,{invId:cItem.id,name:cItem.name},null,null,{unitLabel:qtyUnit,hidePrice:true,
+                          pickHint:"The 1st choice is the one priced; Planning decides which is used from what is free on the day",
+                          multi:{max:ELEMENT_PREF_MAX,need:Number(o?.need)||0,current:ch.length?ch.map(c=>c.id):[part.itemId],noun,needNoun:"part",noReuse:true,designsOnly:true,
+                            onSave:(picks)=>onSave(picks)}});
+                      }}
                       onCheckAvailability={(cItem,onPick,opts)=>openAvailModal(null,null,{invId:cItem.id,name:cItem.name},null,onPick,{pickHint:"Pick the item to use for this part of the kit — shown at its rental price.",splitQty:opts?.splitQty,onSplit:opts?.onSplit})}
                       rcSubcatFactors={rcSubcatFactors}
                       rcFactorByKey={rcFactorByKey}
@@ -5272,7 +5294,7 @@ undefined
               create the entry on the first keystroke — calcStructCost already returns all-zero for
               an untouched config, and every field reads through `|| {}`. */}
           {(zoneSection[k]==="truss"||zoneSection[k]==="platform")&&(()=>{
-            const zm=zoneMeta[k],zc=zoneConfig[k]||{},st=scaleStruct(calcStructCost(k,zc,structRates,structDiscountFor(zc,aVenue)));
+            const zm=zoneMeta[k],zc=zoneConfig[k]||{},st=withPrintFlat(scaleStruct(calcStructCost(k,zc,structRates,structDiscountFor(zc,aVenue))),k);
             const dl={L:"Depth",W:"Width",H:"Height",S:"Size"};
             const sZ=u=>{setActiveZones([]);setZoneConfig(p=>({...p,[k]:{...p[k],...u}}));};
             const sD=(d,v)=>{setActiveZones([]);setZoneConfig(p=>{const cur=p[k]||{};const dims={...(cur.dims||{}),[d]:parseFloat(v)||0};
@@ -5774,7 +5796,7 @@ undefined
                 else setCorrectPhoto(p=>({...p,draft:{...p.draft,cfg:fn(p.draft?.cfg||{}),cfgDirty:true}}));};
               const writeEls=(fn)=>{if(ownsLive)setZoneElements(p=>({...p,[zk]:fn(p[zk]||[])}));
                 else setCorrectPhoto(p=>({...p,draft:{...p.draft,elements:fn(p.draft?.elements||[]),elsDirty:true}}));};
-              const zm=zoneMeta[zk],st=scaleStruct(calcStructCost(zk,cfgCur,structRates,structDiscountFor(cfgCur,aVenue)));
+              const zm=zoneMeta[zk],st=withPrintFlat(scaleStruct(calcStructCost(zk,cfgCur,structRates,structDiscountFor(cfgCur,aVenue))),zk);
               const sZ=u=>writeCfg(cur=>({...cur,...u}));
               const sD=(d,v)=>writeCfg(cur=>{const dims={...(cur.dims||{}),[d]:parseFloat(v)||0};
                 const n=[dims.W||dims.S,dims.L,dims.H].filter(x=>(Number(x)||0)>0).length;const trT=n>=3?"box":n===2?"singleU":cur.trT;

@@ -87,3 +87,24 @@ describe("firstSmallPrint — the job that shows the flat charge", () => {
     expect(!!firstSmallPrint(zc, { stage: true, entry: true }, MATS)).toBe(smallPrintFlat(zc, { stage: true, entry: true }, MATS).charge > 0);
   });
 });
+
+import { printFlatForZone } from "./truckPrint.js";
+describe("printFlatForZone — the flat charge sits in one zone's Print cost", () => {
+  const mats = [{ id: "sun", ratePerSqft: 75 }, { id: "vinyl", ratePerSqft: 200 }];
+  const small = { prints: [{ material: "sun", areaW: 3, areaD: 2, qty: 1 }] };
+  it("only the zone carrying the first small print gets the ₹400", () => {
+    const cfg = { stage: small, entry: small };
+    const on = { stage: true, entry: true };
+    expect(printFlatForZone(cfg, on, mats, "stage")).toBe(400);
+    expect(printFlatForZone(cfg, on, mats, "entry")).toBe(0);
+  });
+  it("a switched-off zone does not carry it; the next switched-on one does", () => {
+    const cfg = { stage: small, entry: small };
+    expect(printFlatForZone(cfg, { stage: false, entry: true }, mats, "stage")).toBe(0);
+    expect(printFlatForZone(cfg, { stage: false, entry: true }, mats, "entry")).toBe(400);
+  });
+  it("no small print (or only big ones): nothing", () => {
+    expect(printFlatForZone({ stage: { prints: [{ material: "vinyl", areaW: 20, areaD: 10, qty: 1 }] } }, { stage: true }, mats, "stage")).toBe(0);
+    expect(printFlatForZone({}, {}, mats, "stage")).toBe(0);
+  });
+});

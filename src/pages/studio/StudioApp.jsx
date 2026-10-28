@@ -40,7 +40,7 @@ import { makeS } from "../../lib/studio/styles";
 import { dealAgencyFeePct, feePctOf, DEFAULT_AGENCY_FEE_PCT } from "../../lib/studio/agencyFee";
 import { sameVenueHolds, siblingCarpetUse } from "../../lib/studio/carpetReuse";
 import { elementAfterPick } from "../../lib/studio/elementPick";
-import { printSqftOf, smallPrintFlat, PRINT_TRUCK_SUB, SMALL_PRINT_LABEL } from "../../lib/studio/truckPrint";
+import { printSqftOf, smallPrintFlat, printFlatForZone, PRINT_TRUCK_SUB } from "../../lib/studio/truckPrint";
 import { itemTakesChoices } from "../../lib/studio/elementPrefs";
 import { findCrossFnReuseSource, computeFnInvQty, findSiblingFnInvUse, findSiblingFnSubcatOpportunity } from "../../lib/studio/crossFnReuse";
 import { computeFnFloralCost, buildMandiBreakdown } from "../../lib/studio/floralCost";
@@ -134,7 +134,7 @@ import { logPhotoCorrection, fetchPhotoCorrections } from "../../lib/studio/phot
 import { createMatcher, normalize, STRUCT_KW, STRUCTURAL_CATS as RAW_SCAFFOLD_CATS, MATCH, assembleSynonymDictionaryFromRows } from "../../lib/studio/tagging/matcher.js";
 // One place that merges an aiTagImage() result onto a library photo (spec §9-B / §12.2).
 import { applyAiTagResult } from "../../lib/studio/tagging/applyResult.js";
-import { fnSnapHasData as fnSnapHasDataPure, fnSnapHasBuild, autoSaveWouldDestroy, snapshotContentEqual, sessionToRows, findLatestBuild } from "../../lib/studio/sessionData.js";
+import { fnSnapHasData as fnSnapHasDataPure, fnSnapHasBuild, autoSaveWouldDestroy, snapshotContentEqual, sessionToRows, findLatestBuild, restoreTarget } from "../../lib/studio/sessionData.js";
 import { LOGO_ASSET, logoCrop } from "../../lib/studio/brand.js";
 import { registerFlushBeforeReload, unregisterFlushBeforeReload, flushBeforeReload } from "../../lib/pendingSaveRegistry.js";
 import { thumbUrl } from "../../lib/studio/thumb.js";
@@ -1036,9 +1036,9 @@ export function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems,
   if (flowerMaterialQty?.artBunches > 0) addSub("Artificial Flowers", flowerMaterialQty.artBunches);
   let frac = 0; const breakdown = [];
   Object.values(subAgg).forEach(s => { const f = s.perTruck > 0 ? s.qty / s.perTruck : 0; frac += f; breakdown.push({ label: s.label, qty: Math.round(s.qty), perTruck: s.perTruck, unit: s.unit, trucks: f }); });
-  // Small prints (each under ₹2,000) are not trucked by area: the function pays one flat transport charge for them instead (lib/studio/truckPrint.js)
+  // Small prints (each under ₹2,000) are not trucked by area: the function pays one flat charge for them instead (lib/studio/truckPrint.js). It is billed in the
+  // Print cost of the zone that carries it (printFlatForZone), not in transport, so it is returned here only for reference.
   const smallPr = smallPrintFlat(zoneConfig, enabledEls, printMaterials);
-  if (smallPr.jobs > 0) breakdown.push({ label: SMALL_PRINT_LABEL, qty: smallPr.jobs, perTruck: 0, unit: "jobs", trucks: 0, flat: smallPr.charge });
   return { itemTrucks: Math.ceil(frac), truckFraction: frac, breakdown, flatCharge: smallPr.charge };
 }
 function paintPillLabel(el, baseColour) {
@@ -3280,9 +3280,14 @@ export default function StudioApp() {
   // ── Realtime: truss_inventory (one row, key "main") — the Liza / Wall Masking / Velvet Curtain colour stock. IMS → Planning → Fabric Stock edits it (a colour
   // switched off for Build, a new colour, stock counts), and Build's Fabric Palette reads it through studioFloralData.trussInv, so a change reaches an open
   // Studio tab without a reload. ──
+  // Coming back to this tab (from IMS in another tab or window) re-reads it too, so the colour list is fresh even where the realtime feed is not running.
   useEffect(() => {
     const ch = subscribeTable("truss_inventory", () => { refreshStudioFloralData(); });
-    return () => { try { supabase.removeChannel(ch); } catch { /* ignore */ } };
+    let last = 0;
+    const onBack = () => { if (document.visibilityState === "hidden" || Date.now() - last < 4000) return; last = Date.now(); refreshStudioFloralData(); };
+    document.addEventListener("visibilitychange", onBack);
+    window.addEventListener("focus", onBack);
+    return () => { try { supabase.removeChannel(ch); } catch { /* ignore */ } document.removeEventListener("visibilitychange", onBack); window.removeEventListener("focus", onBack); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   // ── Realtime: the five structure rate lists (migration 043) — each its own table now, not a
   // settings row, so each gets its own re-fetch-and-set subscription instead of the generic
@@ -3925,6 +3930,10 @@ export default function StudioApp() {
           zoneNames: Object.fromEntries((fd.customZones || []).filter(cz => cz && cz.id).map(cz => [cz.id, cz.name || ""])),
           // The Build page's own zone order (dragged by hand); IMS's PDFs list zones in it.
           zoneOrder: Array.isArray(fd.zoneOrder) ? [...fd.zoneOrder] : [],
+          // The function's Fabric Palette as Build has it right now, so IMS's Fabric block follows a palette change at once (it works the colours out from this
+          // and the live fabric stock) instead of waiting for the next Deal Check sync. fabricPaletteLive marks the field as kept live (a constant, not a time, so it never changes the layout fingerprint).
+          fabricPalette: fd.fnPalette || "",
+          fabricPaletteLive: true,
           // Which function, when and where. Set once at booking and never refreshed, so a date moved
           // in Studio after the deal was booked never reached IMS — the event stayed on its old date
           // in the planning calendar and on every report. Only written when Studio has a value.
@@ -4012,6 +4021,10 @@ export default function StudioApp() {
           zoneNames: Object.fromEntries((fd.customZones || []).filter(cz => cz && cz.id).map(cz => [cz.id, cz.name || ""])),
           // The Build page's own zone order (dragged by hand); IMS's PDFs list zones in it.
           zoneOrder: Array.isArray(fd.zoneOrder) ? [...fd.zoneOrder] : [],
+          // The function's Fabric Palette as Build has it right now, so IMS's Fabric block follows a palette change at once (it works the colours out from this
+          // and the live fabric stock) instead of waiting for the next Deal Check sync. fabricPaletteLive marks the field as kept live (a constant, not a time, so it never changes the layout fingerprint).
+          fabricPalette: fd.fnPalette || "",
+          fabricPaletteLive: true,
         });
       });
     } catch { return; }
@@ -4443,6 +4456,12 @@ export default function StudioApp() {
       if (typeof s[k] === "number") s[k] = s[k] * guestPriceMultiplier;
     });
     return s;
+  };
+  // A function's flat small-print charge (₹400, once, however many small prints) is part of the Print cost of the zone that carries it: added after the guest-price
+  // scaling (a set amount, no dial on it) to that zone's struct figures, so every total that reads them counts it once and transport no longer does.
+  const withPrintFlat = (sc, zk, zoneCfg, enabledMap) => {
+    const flat = sc ? printFlatForZone(zoneCfg, enabledMap, structRates.printMaterials, zk) : 0;
+    return flat > 0 ? { ...sc, print: (sc.print || 0) + flat, total: (sc.total || 0) + flat, printFlat: flat } : sc;
   };
   // Repeat-billed line cost for `qty` units of `item` at `unitRate` (the full guest-facing,
   // already-marked-up rate). Owner decision: Deal Check's own config — the Fixed Venues screen's
@@ -5300,7 +5319,7 @@ export default function StudioApp() {
     const zones = Object.entries(zoneConfig).filter(([zk, cfg]) => enabledEls[zk] && cfg).map(([zk, cfg]) => ({ id: zk, type: zk, name: zk, config: cfg }));
     // structDiscountFor is per-zone (zc.repeat varies per zone), unlike the old venue-only truss
     // discount this replaced.
-    zones.forEach(z => { c += scaleStruct(calcStructCost(z.type, z.config, structRates, structDiscountFor(z.config, activeFnMeta?.venue || venue))).total; }); // the ACTIVE function's venue, not function 1's
+    zones.forEach(z => { c += withPrintFlat(scaleStruct(calcStructCost(z.type, z.config, structRates, structDiscountFor(z.config, activeFnMeta?.venue || venue))), z.type, zoneConfig, enabledEls).total; }); // the ACTIVE function's venue, not function 1's
     // Cross-function reuse (guest-facing) — same eligibility activeCrossFnReuseQty already computes
     // for StudioBuild.jsx's own per-card display (see its own declaration comment for the full
     // history): this total used to have NO mechanism for it at all, so a function with a same-venue,
@@ -5369,7 +5388,7 @@ export default function StudioApp() {
     const activeFnData = { ...(allFnsNow.find(f => f.fnIdx === activeFnIdx) || {}), fnIdx: activeFnIdx, fnDate: aDate, fnVenue: aVenue, zoneElements, zoneConfig, enabledEls };
     const crossFnPrev = (!hideDiscountFromClient && !isFillerDateFor(aDate) && allFnsNow.length > 1) ? findCrossFnReuseSource(activeFnData, allFnsNow) : null;
     const reusePool = crossFnPrev ? new Map(Object.entries(computeFnInvQty(crossFnPrev))) : null;
-    const { itemTrucks, breakdown: itemBd, flatCharge: smallPrintCharge } = computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckCap, imsInventory, sharedFloralSettings.flowerPatterns, trussInvHere, flowerMaterialQty, fvCfgForRepeat, aVenue, !hideDiscountFromClient, reusePool, structRates.printMaterials);
+    const { itemTrucks, breakdown: itemBd } = computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckCap, imsInventory, sharedFloralSettings.flowerPatterns, trussInvHere, flowerMaterialQty, fvCfgForRepeat, aVenue, !hideDiscountFromClient, reusePool, structRates.printMaterials);
     itemBd.forEach(b => breakdown.push(b));
     const floralTrucks = 0, totalFloralCost = 0; // florals now counted via their sub-category capacity — no separate flower truck
     const bt = bufferTiers.find(b => decor >= b.minBudget && decor < b.maxBudget);
@@ -5385,8 +5404,7 @@ export default function StudioApp() {
     // (25% markup, the owner's requested starting point) for a venue nobody has set it on.
     const rawTruckTotal = allTrucks * tripRate * 2;
     const clientScale = Number(match?.clientScale) > 0 ? Number(match.clientScale) : 1.25;
-    // + the flat charge for small prints (a set ₹ amount, so no venue markup or price dial on it)
-    const truckTotal = rawTruckTotal * clientScale * guestPriceMultiplier + (smallPrintCharge || 0);
+    const truckTotal = rawTruckTotal * clientScale * guestPriceMultiplier;
     // gensetCost is already the GUEST-billed figure (resolveGensetPlan's own gensetCostOurs is the
     // separate, unscaled figure Deal Check's Power tab reads for what we actually pay the vendor).
     const gensetCostForGuest = plan.gensetCost * guestPriceMultiplier;
@@ -5586,7 +5604,7 @@ export default function StudioApp() {
     // which was already emptied out elsewhere, so the loop never actually added any cost;
     // removing it just retires visibly-dead code, it doesn't change any computed total.
     const zones = Object.entries(fZoneConfig).filter(([zk, cfg]) => fEnabledEls[zk] && cfg).map(([zk, cfg]) => ({ id: zk, type: zk, name: zk, config: cfg }));
-    zones.forEach(z => { decor += scaleStruct(calcStructCost(z.type, z.config, structRates, structDiscountFor(z.config, fVenue))).total; });
+    zones.forEach(z => { decor += withPrintFlat(scaleStruct(calcStructCost(z.type, z.config, structRates, structDiscountFor(z.config, fVenue))), z.type, fZoneConfig, fEnabledEls).total; });
     // Availability-shortfall pricing now runs for EVERY function, each against its OWN date's
     // blocks (blocksByDate — warmed for every function's date, not just the active one). It used to
     // only run for whichever function was the active Build tab (activeBlocksForDate has no other
@@ -5705,7 +5723,7 @@ export default function StudioApp() {
       // calcFunctionBreakdown's *Client fields and transportCalc above. Defaults to 1.25 (25%
       // markup, the owner's requested starting point) until a venue's own value is set.
       const clientScale = Number(match?.clientScale) > 0 ? Number(match.clientScale) : 1.25;
-      const truckTotal = rawTruckTotal * clientScale * guestPriceMultiplier + smallPrintFlat(fZoneConfig, fEnabledEls, structRates.printMaterials).charge; // + flat charge for small prints
+      const truckTotal = rawTruckTotal * clientScale * guestPriceMultiplier;
       const gensetCost = resolveGensetPlan(match, fCustomGensets, fCustomGenset62, gensetRate, gensetRate62).gensetCost * guestPriceMultiplier;
       transport = truckTotal + gensetCost;
     }
@@ -6210,7 +6228,7 @@ export default function StudioApp() {
           itemCount += (el2.qty || 0);
         });
       }
-      const zl = fZoneConfig[k] ? scaleStruct(calcStructCost(k, fZoneConfig[k], structRates, structDiscountFor(fZoneConfig[k], fVenue))) : { truss: 0, masking: 0, platform: 0, carpet: 0, total: 0 };
+      const zl = fZoneConfig[k] ? withPrintFlat(scaleStruct(calcStructCost(k, fZoneConfig[k], structRates, structDiscountFor(fZoneConfig[k], fVenue))), k, fZoneConfig, fEnabledEls) : { truss: 0, masking: 0, platform: 0, carpet: 0, total: 0 };
       const customCost = dcCustomItems
         .filter(c => c.fnIdx === fnData.fnIdx && c.zoneKey === k)
         .reduce((s, c) => s + (c.manualPrice || c.refPrice || 0) * (Number(c.qty) || 1), 0);
@@ -6437,10 +6455,7 @@ export default function StudioApp() {
       const allTrucks = itemTrucks + floralTrucks + bufTrucks;
       const allTrucksClient = itemTrucksClient + floralTrucks + bufTrucks;
       const plan = resolveGensetPlan(match, fCustomGensets, fCustomGenset62, gensetRate, gensetRate62, gensetCostRate, gensetCostRate62);
-      // Small prints (each under ₹2,000) are not trucked by area: one flat charge for the function instead, the same on our cost and the guest's bill
-      const smallPr = smallPrintFlat(fZoneConfig, fEnabledEls, structRates.printMaterials);
-      if (smallPr.jobs > 0) breakdown.push({ label: SMALL_PRINT_LABEL, subKey: "print-small", invCat: "Structure", qty: smallPr.jobs, perTruck: 0, unit: "jobs", trucks: 0, trucksClient: 0, flat: smallPr.charge });
-      const truckTotal = allTrucks * tripRate * 2 + smallPr.charge;
+      const truckTotal = allTrucks * tripRate * 2;
       // Guest-facing markup on the venue's own trip cost — Admin → Settings → Transport & Power's
       // per-venue "client scale" field (trVenues[].clientScale). Defaults to 1.25 (25% markup, the
       // owner's requested starting point) until a venue's own value is set. Deliberately scoped to
@@ -6453,7 +6468,7 @@ export default function StudioApp() {
       // same-venue carryover above is an internal-cost optimisation only; the guest is still billed
       // as if every function trucked its own full requirement, exactly as before this existed.
       const clientScale = Number(match?.clientScale) > 0 ? Number(match.clientScale) : 1.25;
-      const truckTotalClient = allTrucksClient * tripRate * 2 * clientScale * guestPriceMultiplier + smallPr.charge;
+      const truckTotalClient = allTrucksClient * tripRate * 2 * clientScale * guestPriceMultiplier;
       // gensetCost (below, in the returned object) is already documented as the GUEST-facing genset
       // figure — "Build/Summary keep showing gensetCost/gensetRate to the guest" — so it's the one
       // guestPriceMultiplier scales; transportTotal here stays built from the raw plan.gensetCost so
@@ -8170,7 +8185,7 @@ export default function StudioApp() {
     // unsavedEditRef never flipped true — no beforeunload warning either. The item only survived a
     // refresh if the 15s periodic fallback happened to land first or some unrelated edit rode along;
     // add-then-immediately-refresh lost it every time, in Build and in Deal Check (same session field).
-  }, [activeClientId, clientName, clientDate, venue, fn, clientShift, clientPax, clientBrideGroom, extraFunctions,
+  }, [activeClientId, clientName, clientDate, venue, fn, clientShift, clientPax, clientBrideGroom, extraFunctions, clientPalette, clientFlowerPalette,
       zoneElements, elSelectedPhoto, elTiers, zoneConfig, enabledEls, elNotes, floralRatio, itemQty, itemGrades,
       customZones, customMode, activeFnIdx, fnBuilds, dcCustomItems, autoSaveBuild]);
   // 2) Periodic fallback + 3) save on tab hide / refresh.
@@ -8728,7 +8743,10 @@ export default function StudioApp() {
     // the date or venue) and refreshing there abandoned the whole deal for no reason, even though
     // every bit of it was safely saved server-side. Restoring here now, same as Browse/Build/Summary.
     const client = clientLedger.find(c => c.id === savedId);
-    const session = client && Array.isArray(client.sessions) ? client.sessions[0] : null;
+    // The newest session WITH a build, not simply the newest: an empty auto-draft sitting on top of the real build restored a blank canvas (every zone "Not
+    // included") on every refresh and Studio<->IMS switch, so the deal looked gone. restoreTarget walks down to the real one (and the function it holds).
+    const target = client ? restoreTarget(client.sessions, restoreRef.current?.fn || 0) : { session: null, fnIdx: 0 };
+    const session = target.session;
     buildRestoredRef.current = true;
     restoreSettledRef.current = true;
     setRestoring(false);
@@ -8739,7 +8757,7 @@ export default function StudioApp() {
     // build state stays empty, which is all there was to restore anyway.
     if (!client) return;
     const savedStep = restoreRef.current?.step ?? null;
-    const savedFn = restoreRef.current?.fn || 0;
+    const savedFn = target.fnIdx;
     // With a session and no usable stored step, Summary stays the default as before. Without one
     // there is nothing to summarise, so fall back to Event Info instead.
     const landingStep = (savedStep !== null && savedStep >= 1) ? savedStep : (session ? 3 : 0);
@@ -10110,7 +10128,7 @@ export default function StudioApp() {
           });
         });
       }
-      const zl = fZoneConfig[k] ? scaleStruct(calcStructCost(k, fZoneConfig[k], structRates, structDiscountFor(fZoneConfig[k], fVenue))) : { truss: 0, masking: 0, platform: 0, carpet: 0, total: 0, arches: 0, pillars: 0, glass: 0 };
+      const zl = fZoneConfig[k] ? withPrintFlat(scaleStruct(calcStructCost(k, fZoneConfig[k], structRates, structDiscountFor(fZoneConfig[k], fVenue))), k, fZoneConfig, fEnabledEls) : { truss: 0, masking: 0, platform: 0, carpet: 0, total: 0, arches: 0, pillars: 0, glass: 0 };
       const structItems = [];
       const zc = fZoneConfig[k] || {};
       const zm = zoneMeta[k];
@@ -10293,6 +10311,8 @@ export default function StudioApp() {
           total: pTotal,
         });
       });
+      // the function's flat charge for its small prints sits in the Print cost of this zone (withPrintFlat) - one line, so the lines still add up to the zone's total
+      if (zl.printFlat > 0) structItems.push({ name: "🖨 Print — flat charge for small prints", size: "", qty: 1, rate: zl.printFlat, unit: "flat", total: zl.printFlat });
       dcCustomItems.filter(c => c.fnIdx === fnData.fnIdx && c.zoneKey === k).forEach(ci => {
         const isP = ci.type === "production";
         const unitCost = ci.manualPrice || ci.refPrice || 0;

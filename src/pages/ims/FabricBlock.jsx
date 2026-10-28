@@ -28,6 +28,9 @@ function Thumb({ photo, hex, emoji, size = 48, onZoom, label }) {
   );
 }
 
+const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+const dayLabel = (d) => { try { return new Date(d + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short" }); } catch { return d; } };
+
 // One fabric's opened detail: its colours, then where it goes zone by zone.
 function FabricDetail({ cur, fmt, onZoom, dates = [], dateOf = () => "" }) {
   const showDates = dates.length > 1;
@@ -61,6 +64,9 @@ function FabricDetail({ cur, fmt, onZoom, dates = [], dateOf = () => "" }) {
         <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400 mb-1.5">
           {cur.qty} {cur.unit} across {zoneCount} zone{zoneCount === 1 ? "" : "s"}
         </div>
+        {cur.colours.length > 1 && cur.zones.some((z) => !(z.colours?.length)) && (
+          <p className="text-[11px] text-gray-400 mb-1.5">Which colour goes in which zone shows once this event is synced again from Deal Check.</p>
+        )}
         <div className="flex h-2.5 rounded-full overflow-hidden bg-gray-100" role="img"
           aria-label={cur.zones.map((z) => `${z.name} ${z.qty} ${cur.unit}`).join(", ")}>
           {cur.zones.map((z, i) => (
@@ -89,6 +95,19 @@ function FabricDetail({ cur, fmt, onZoom, dates = [], dateOf = () => "" }) {
                     {z.tier && <span className="shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">{z.tier} stock</span>}
                   </div>
                   <div className="text-[12px] text-gray-500 mt-0.5">{z.application || "—"}</div>
+                  {z.dims && <div className="text-[12px] text-gray-700 mt-0.5 tabular-nums"><span className="text-gray-400">Truss </span>{z.dims}</div>}
+                  {!z.colours?.length && cur.colours.length > 1 && z.fi != null && <div className="text-[12px] text-gray-400 mt-0.5">Colour: not recorded for this zone yet - sync the event from Deal Check</div>}
+                  {/* the colour(s) this zone's fabric goes in: a square of the colour's own photo (tap to see it large), its name and how much */}
+                  {z.colours?.length > 0 && (
+                    <div className="flex flex-wrap gap-x-3 gap-y-1.5 mt-1.5">
+                      {z.colours.map((c) => (
+                        <div key={c.colour} className="flex items-center gap-1.5 min-w-0">
+                          <Thumb photo={c.photo} hex={c.hex} emoji={cur.emoji} size={28} onZoom={onZoom} label={`${c.colour} ${cur.label}`} />
+                          <span className="text-[12px] text-gray-700 truncate"><span className="font-semibold">{c.colour}</span><span className="text-gray-400 tabular-nums"> · {r2(c.qty)} {cur.unit}</span></span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 {showDates && dates.map((d) => (
                   <div key={d} className="hidden sm:block shrink-0 w-16 text-right tabular-nums" title={`${dayLabel(d)}${z.fnLabel ? " · " + z.fnLabel : ""}`}>
@@ -115,9 +134,6 @@ function FabricDetail({ cur, fmt, onZoom, dates = [], dateOf = () => "" }) {
     </div>
   );
 }
-
-const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
-const dayLabel = (d) => { try { return new Date(d + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short" }); } catch { return d; } };
 
 export default function FabricBlock({ groups, fmt, onZoom, fnDates }) {
   // The fabric whose detail is open — none at first; opening one closes the one that was open, and tapping the open one closes it.

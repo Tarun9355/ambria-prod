@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildFabricGroups, isFabricLine } from "./fabricGroups.js";
+import { buildFabricGroups, isFabricLine, trussDimsText } from "./fabricGroups.js";
 
 // bhaskar-test, Function 1: the lines Deal Check priced, the event's own zone layout, the colour allocation.
 const lines = [
@@ -129,5 +129,121 @@ describe("buildFabricGroups — a zone shared by two functions splits its money,
   });
   it("a function that does not use the fabric shows no group", () => {
     expect(buildFabricGroups({ entries: entries2, lines: lines2, multiFn: true, onlyFi: 7 }).groups).toEqual([]);
+  });
+});
+
+describe("trussDimsText — the truss row's dimensions in words", () => {
+  it("a single U: width x height", () => { expect(trussDimsText({ trT: "singleU", dims: { W: 16, H: 12 } })).toBe("16 × 12 ft U truss"); });
+  it("a box: length x width x height, with the material", () => {
+    expect(trussDimsText({ trT: "box", dims: { L: 20, W: 16, H: 12 }, trussMaterial: "iron" })).toBe("20 × 16 × 12 ft box truss · Iron");
+  });
+  it("a box missing a dimension is a single U, as it is billed", () => { expect(trussDimsText({ trT: "box", dims: { W: 16, H: 12 } })).toBe("16 × 12 ft U truss"); });
+  it("nothing to say when there are no dimensions", () => { expect(trussDimsText({ trT: "singleU", dims: {} })).toBe(""); expect(trussDimsText(null)).toBe(""); });
+});
+
+describe("buildFabricGroups — each zone's truss dimensions and fabric colour", () => {
+  const row = (extra = {}) => ({ trT: "singleU", dims: { W: 16, H: 12 }, ...extra });
+  const mk = (zk, zLabel, kg, r, fi = 0, ri = 0) => ({ fi, ri, zk, zLabel, fnLabel: "Wedding", photo: "", fab: { lizaKg: kg, lizaWrapKg: kg, lizaCeilingKg: 0 }, row: r });
+  const stockC = { lizaStock: [{ colour: "Ivory", photo: "ivory.jpg" }, { colour: "Rani", photo: "rani.jpg" }] };
+  it("a zone carries its truss dimensions", () => {
+    const g = buildFabricGroups({ entries: [mk("stage", "Stage", 5, row())], lines: [], stock: stockC }).groups[0];
+    expect(g.zones[0].dims).toBe("16 × 12 ft U truss");
+  });
+  it("the colour comes from the row's own allocation, with the colour's stock photo", () => {
+    const r = row({ lizaAllocation: [{ colour: "Ivory", qty: 3 }, { colour: "rani", qty: 2 }] });
+    const z = buildFabricGroups({ entries: [mk("stage", "Stage", 5, r)], lines: [], stock: stockC }).groups[0].zones[0];
+    expect(z.colours.map((c) => [c.colour, c.qty, c.photo])).toEqual([["Ivory", 3, "ivory.jpg"], ["rani", 2, "rani.jpg"]]);
+  });
+  it("else from what Deal Check recorded for that row at sync (fabricPlan.rows), matched by function, zone and truss row", () => {
+    const plan = { liza: [{ colour: "Ivory", qty: 4 }, { colour: "Rani", qty: 6 }], rows: [
+      { fi: 0, zk: "stage", ri: 0, kind: "liza", colour: "Ivory", qty: 4 }, { fi: 0, zk: "entry", ri: 0, kind: "liza", colour: "Rani", qty: 6 }, { fi: 0, zk: "stage", ri: 0, kind: "curtain", colour: "Rani", qty: 1 } ] };
+    const g = buildFabricGroups({ entries: [mk("stage", "Stage", 4, row()), mk("entry", "Entry", 6, row())], lines: [], fabricPlan: plan, stock: stockC }).groups[0];
+    expect(g.zones.find((z) => z.name === "Stage").colours.map((c) => c.colour)).toEqual(["Ivory"]);
+    expect(g.zones.find((z) => z.name === "Entry").colours.map((c) => [c.colour, c.photo])).toEqual([["Rani", "rani.jpg"]]);
+  });
+  it("what Deal Check recorded wins over a colour still saved on the row (the palette overruled it)", () => {
+    const r = row({ lizaAllocation: [{ colour: "Rani", qty: 5 }] });
+    const plan = { liza: [{ colour: "Ivory", qty: 5 }], rows: [{ fi: 0, zk: "stage", ri: 0, kind: "liza", colour: "Ivory", qty: 5 }] };
+    const z = buildFabricGroups({ entries: [mk("stage", "Stage", 5, r)], lines: [], fabricPlan: plan, stock: stockC }).groups[0].zones[0];
+    expect(z.colours.map((c) => c.colour)).toEqual(["Ivory"]);
+  });
+  it("an event synced before the colours were recorded: one colour for the fabric is every zone's colour; several are left unsaid", () => {
+    const one = buildFabricGroups({ entries: [mk("stage", "Stage", 5, row())], lines: [], fabricPlan: { liza: [{ colour: "Ivory", qty: 5 }] }, stock: stockC }).groups[0];
+    expect(one.zones[0].colours.map((c) => c.colour)).toEqual(["Ivory"]);
+    const many = buildFabricGroups({ entries: [mk("stage", "Stage", 5, row())], lines: [], fabricPlan: { liza: [{ colour: "Ivory", qty: 3 }, { colour: "Rani", qty: 2 }] }, stock: stockC }).groups[0];
+    expect(many.zones[0].colours).toEqual([]);
+  });
+  it("two trusses in one zone: both dimensions, colours added together", () => {
+    const entries3 = [mk("stage", "Stage", 3, row({ lizaAllocation: [{ colour: "Ivory", qty: 3 }] })), mk("stage", "Stage", 2, row({ dims: { W: 8, H: 10 }, lizaAllocation: [{ colour: "Ivory", qty: 2 }] }), 0, 1)];
+    const z = buildFabricGroups({ entries: entries3, lines: [], stock: stockC }).groups[0].zones[0];
+    expect(z.dims).toBe("16 × 12 ft U truss + 8 × 10 ft U truss");
+    expect(z.colours.map((c) => [c.colour, c.qty])).toEqual([["Ivory", 5]]);
+  });
+});
+
+import { foldFabricLines } from "./fabricGroups.js";
+describe("foldFabricLines — one load line per fabric colour, not one per zone", () => {
+  const flat = [
+    { id: "x1", name: "Cushion Cover Black Shimmer", qty: 3, sub: "Cushion" },
+    ...lines.filter((l) => /^(Liza|Velvet|Wall)/.test(l.name)),
+    { id: "x2", name: "Chair", qty: 4, sub: "chair" },
+  ];
+  const plan = { liza: [{ colour: "Ivory", qty: 20 }, { colour: "Rani", qty: 15 }], curtain: [{ colour: "Ivory", qty: 58 }], masking: [] };
+  const st = { lizaStock: [{ colour: "Ivory", photo: "ivory.jpg" }, { colour: "Rani", photo: "rani.jpg" }], curtainStock: [{ colour: "Ivory", photo: "iv2.jpg" }] };
+  const { groups } = buildFabricGroups({ entries, lines, fabricPlan: plan, stock: st });
+  const out = foldFabricLines(flat, groups);
+  it("the per-zone fabric lines are gone, the others keep their order", () => {
+    expect(out.some((l) => /\(Old\)/.test(l.name))).toBe(false);
+    expect(out[0].id).toBe("x1");
+    expect(out[out.length - 1].id).toBe("x2");
+  });
+  it("a line per colour with its quantity, unit and photo", () => {
+    const l = out.filter((x) => /^Liza Fabric - /.test(x.name));
+    expect(l.map((x) => [x.name, x.qty, x.qtyUnit, x.photo])).toEqual([["Liza Fabric - Ivory", 20, "kg", "ivory.jpg"], ["Liza Fabric - Rani", 15, "kg", "rani.jpg"]]);
+    expect(out.find((x) => x.name === "Velvet Curtains - Ivory")).toMatchObject({ qty: 58, photo: "iv2.jpg" });
+  });
+  it("no colour picked: one line for the fabric", () => {
+    const g2 = buildFabricGroups({ entries, lines, fabricPlan: null, stock: st }).groups;
+    const o2 = foldFabricLines(flat, g2);
+    expect(o2.filter((x) => x.name === "Liza Fabric")).toHaveLength(1);
+    expect(o2.find((x) => x.name === "Wall Masking").qty).toBe(3);
+  });
+  it("each line has its own key, so zones no longer share one load", () => {
+    expect(new Set(out.map((x) => x.id)).size).toBe(out.length);
+  });
+  it("nothing to fold: the list is returned as it is", () => {
+    const plain = [{ id: "a", name: "Chair", qty: 1 }];
+    expect(foldFabricLines(plain, groups)).toBe(plain);
+  });
+});
+
+describe("buildFabricGroups — colours worked out live from the function's Fabric Palette", () => {
+  const mk = (zk, zLabel, kg, row = {}, over = {}) => ({ fi: 0, ri: 0, zk, zLabel, fnLabel: "Wedding", photo: "", fab: { lizaKg: kg, lizaWrapKg: kg, lizaCeilingKg: 0, curtainPieces: 4 }, row, ...over });
+  const stock = { lizaStock: [{ colour: "Ivory", stockKg: 40, photo: "iv.jpg" }, { colour: "Rose Gold dark", stockKg: 100 }], curtainStock: [{ colour: "Ivory", stockPieces: 80 }, { colour: "Rose Gold", stockPieces: 3, photo: "rg.jpg" }] };
+  const stalePlan = { liza: [{ colour: "Rose Gold dark", qty: 81 }], curtain: [] };
+  const build = (palette, entries2, extra = {}) => buildFabricGroups({ entries: entries2, lines: [], fabricPlan: stalePlan, stock, fnPalettes: palette === null ? null : { 0: palette }, ...extra }).groups;
+  it("Liza follows the palette (Ivory) whatever Deal Check last recorded, a saved Rose Gold dark is ignored", () => {
+    const g = build("Ivory, Rose Gold:C", [mk("stage", "Stage", 10.2, { lizaAllocation: [{ colour: "Rose Gold dark", qty: 11 }] }), mk("entry", "Entry", 5.5)]);
+    const liza = g.find((x) => x.key === "liza");
+    expect(liza.colours.map((c) => [c.colour, c.qty, c.photo])).toEqual([["Ivory", 17, "iv.jpg"]]); // ceil(10.2) + ceil(5.5)
+    expect(liza.zones.find((z) => z.name === "Stage").colours.map((c) => c.colour)).toEqual(["Ivory"]);
+  });
+  it("changing the palette changes the colours at once (Rose Gold for Velvet only)", () => {
+    const e = [mk("stage", "Stage", 10)];
+    expect(build("Ivory, Rose Gold:C", e).find((x) => x.key === "curtain").colours.map((c) => c.colour)).toEqual(["Ivory"]); // Ivory has more stock than Rose Gold
+    expect(build("Rose Gold:C", e).find((x) => x.key === "curtain").colours.map((c) => c.colour)).toEqual(["Rose Gold"]);
+  });
+  it("Old and New stock rows are split by the row's own tier", () => {
+    const g = build("Ivory", [mk("stage", "Stage", 10, { useNewFabric: true }), mk("entry", "Entry", 5)]).find((x) => x.key === "liza");
+    expect(g.colours[0]).toMatchObject({ colour: "Ivory", qty: 15, qtyOld: 5, qtyNew: 10 });
+  });
+  it("a repeat zone takes no new fabric, so adds no colour", () => {
+    const g = build("Ivory", [mk("stage", "Stage", 10), mk("entry", "Entry", 5, {}, { repeat: true })]).find((x) => x.key === "liza");
+    expect(g.colours[0].qty).toBe(10);
+    expect(g.zones.find((z) => z.name === "Entry").qty).toBe(5); // its quantity is still listed
+  });
+  it("no palette entry for the function: what Deal Check recorded is kept", () => {
+    const g = build(null, [mk("stage", "Stage", 10)]).find((x) => x.key === "liza");
+    expect(g.colours.map((c) => c.colour)).toEqual(["Rose Gold dark"]);
   });
 });

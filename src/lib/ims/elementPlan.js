@@ -3,7 +3,7 @@
 // The decision is IMS-owned (deptOps.Fabric.itemChoice[key]), so every Studio sync leaves it alone. Same shape as the carpet plan
 // (carpetPlan.js), minus everything about laying a carpet: nothing here stays down between events, so there is no same-venue reuse.
 
-import { elementChoices, itemTakesChoices } from "../studio/elementPrefs.js";
+import { elementChoices, itemTakesChoices, partChoices } from "../studio/elementPrefs.js";
 import { freeForEvent, validDecision } from "./carpetPlan.js";
 
 const norm = (v) => String(v || "").trim().toLowerCase();
@@ -22,17 +22,30 @@ export function choiceElementsOf(functionsDetail, zoneLabelOf) {
       if (!en[zk] || !Array.isArray(list)) return; // the same rule Build uses: only a zone that is switched on has anything to plan
       const seen = {};
       list.forEach((el, ei) => {
+        const zoneName = typeof zoneLabelOf === "function" ? zoneLabelOf(fn, zk) : zk;
         const prefs = elementChoices(el);
-        if (prefs.length < 2 || !el.pid) return;
         const qty = Number(el.qty) || 0;
-        if (!(qty > 0)) return;
-        seen[el.pid] = (seen[el.pid] || 0) + 1;
-        const pid = seen[el.pid] > 1 ? `${el.pid}~${seen[el.pid]}` : String(el.pid);
-        out.push({
-          key: elementKey(fi, zk, pid), fi, zk, ei, pid, date: fn?.date || "", venue: fn?.venue || "",
-          zoneName: typeof zoneLabelOf === "function" ? zoneLabelOf(fn, zk) : zk,
-          fnLabel: fn?.type || fn?.name || "", name: el.name || prefs[0].name, qty, unit: el.unit || "", prefs,
-        });
+        if (prefs.length >= 2 && el.pid && qty > 0) {
+          seen[el.pid] = (seen[el.pid] || 0) + 1;
+          const pid = seen[el.pid] > 1 ? `${el.pid}~${seen[el.pid]}` : String(el.pid);
+          out.push({
+            key: elementKey(fi, zk, pid), fi, zk, ei, pid, date: fn?.date || "", venue: fn?.venue || "",
+            zoneName, fnLabel: fn?.type || fn?.name || "", name: el.name || prefs[0].name, qty, unit: el.unit || "", prefs,
+          });
+        }
+        // The parts of a kit that name designs of their own (an overlay or a cushion cover inside a sofa kit): each is a choice to decide, for its
+        // quantity per kit times the kits. Only the kit's own part list is read (kitOverrides), where Build saves them.
+        if (qty > 0 && Array.isArray(el.kitOverrides)) {
+          el.kitOverrides.forEach((c, part) => {
+            const pp = partChoices(c);
+            const partQty = (Number(c?.qty) || 0) * qty;
+            if (pp.length < 2 || !c.pid || !(partQty > 0)) return;
+            out.push({
+              key: elementKey(fi, zk, "k:" + c.pid), fi, zk, ei, part, pid: "k:" + c.pid, date: fn?.date || "", venue: fn?.venue || "",
+              zoneName, fnLabel: fn?.type || fn?.name || "", name: `${pp[0].name} (in ${el.name || "kit"})`, qty: partQty, unit: "", prefs: pp, kitName: el.name || "",
+            });
+          });
+        }
       });
     });
   });
@@ -52,7 +65,14 @@ function useByDateItem(functionsDetail, rows, choice) {
       list.forEach((el, ei) => {
         const qty = Number(el?.qty) || 0;
         if (!(qty > 0) || !el?.invId) return;
-        const row = rows.find((r) => r.fi === fi && r.zk === zk && r.ei === ei);
+        // a kit's parts that carry choices count by the design decided for them (an undecided part holds nothing yet), like an element of their own
+        if (Array.isArray(el?.kitOverrides)) {
+          rows.filter((r) => r.fi === fi && r.zk === zk && r.ei === ei && r.part !== undefined).forEach((pr) => {
+            const d = validDecision(choice?.[pr.key], pr);
+            if (d?.id && (d.manual || pr.prefs.some((p) => p.id === String(d.id)))) use.push({ date: fn?.date || "", id: String(d.id), qty: pr.qty, key: pr.key });
+          });
+        }
+        const row = rows.find((r) => r.fi === fi && r.zk === zk && r.ei === ei && r.part === undefined);
         if (row) {
           const d = validDecision(choice?.[row.key], row);
           // the same test planElements applies: one of the element's choices, or a hand pick
@@ -110,9 +130,16 @@ export function planElements({ functionsDetail, zoneLabelOf, itemsById, blocks, 
     const inOptions = !other && !!pickedId && options.some((o) => o.id === pickedId);
     const manual = !other && picked?.manual && pickedId && !inOptions
       ? optionFor(pickedId, picked.name, itemsById?.[pickedId], null, blocks, f.date, eventId, f.qty, null, usedBy(pickedId, f.date, f.key)) : null;
-    const decidedId = inOptions ? pickedId : manual ? pickedId : null;
+    // ── SALES' 1ST CHOICE IS THE DEFAULT ── (owner ask) Until Planning decides, the 1st choice counts as chosen — it is also
+    // what the deal is priced on and holds. Not when it is short that day: a default that cannot be laid would read "decided" over
+    // a real gap, so that row stays open for Planning. Stock not known yet is not a gap, so it defaults.
+    const first = options[0];
+    // "no decision" means no decision that APPLIES — one saved for a design that is no longer a choice (and not a hand pick) is
+    // ignored above, and the default steps in for it just the same.
+    const byDefault = !other && !inOptions && !manual && !!first && (first.enough || !first.known);
+    const decidedId = inOptions ? pickedId : manual ? pickedId : byDefault ? first.id : null;
     return {
-      ...f, options, manual, other, suggestedId, decidedId,
+      ...f, options, manual, other, suggestedId, decidedId, byDefault,
       status: decidedId || other ? "decided" : firstEnough || !options.some((o) => o.known) ? "open" : "short",
     };
   });
@@ -131,4 +158,38 @@ export function planElements({ functionsDetail, zoneLabelOf, itemsById, blocks, 
     if (committed > o.rawFree && !over[r.decidedId]) over[r.decidedId] = { free: o.rawFree, committed, date: r.date };
   });
   return { rows, over };
+}
+
+// What the Inventory blocked list says about the lines that have choices. The list is Deal Check's snapshot, so a line is filed under sales' 1st design;
+// once Planning decides, the card shows what is actually going out. `rows` are the list's lines ({ id, invId, name, photo, qty, rentalQty, prodOrBuy }),
+// `planRows` come from planElements. Returns Map<line id, { name, photo, notes: [{ text, tone: "ok" | "wait" }] }> - `name` and `photo` only when the
+// decided design replaces the whole line (one decision, covering all of its quantity), else the decisions are told in notes and the line is left as it is.
+export function choiceNotesForRows(rows, planRows) {
+  const out = new Map();
+  const lineOf = (firstId) => (rows || []).find((x) => x && !x.prodOrBuy && x.invId != null && String(x.invId) === String(firstId));
+  const photoOf = (it) => (Array.isArray(it?.photoUrls) && it.photoUrls[0]) || it?.img || "";
+  const byLine = new Map();
+  (planRows || []).forEach((r) => {
+    const line = lineOf(r.prefs?.[0]?.id);
+    if (!line) return;
+    if (!byLine.has(line.id)) byLine.set(line.id, { line, plan: [] });
+    byLine.get(line.id).plan.push(r);
+  });
+  byLine.forEach(({ line, plan }) => {
+    const firstName = String(line.name || plan[0].prefs[0].name || "").trim();
+    const notes = [];
+    let swap = null;
+    plan.forEach((r) => {
+      const dec = r.decidedId ? [...(r.options || []), r.manual].filter(Boolean).find((o) => String(o.id) === String(r.decidedId)) : null;
+      if (r.other) notes.push({ text: `${r.qty} arranged separately - not from stock`, tone: "ok" });
+      else if (dec && String(dec.id) !== String(r.prefs[0].id)) {
+        notes.push({ text: `${r.qty} × ${dec.name} chosen in Planning (sales' 1st choice: ${firstName})`, tone: "ok" });
+        if (plan.length === 1 && r.qty >= (Number(line.rentalQty ?? line.qty) || 0)) swap = { name: dec.name, photo: photoOf(dec.item) };
+      } else if (dec && r.byDefault) notes.push({ text: `${r.qty} × ${dec.name} - sales' 1st choice (default, not changed in Planning)`, tone: "ok" });
+      else if (dec) notes.push({ text: `${r.qty} × ${dec.name} confirmed in Planning`, tone: "ok" });
+      else notes.push({ text: `${r.qty} not decided yet: ${(r.options || []).map((o, i) => `${i + 1} ${o.name}`).join(" · ")}`, tone: "wait" });
+    });
+    out.set(line.id, { ...(swap ? { name: swap.name, photo: swap.photo } : {}), notes: swap ? [{ text: `Chosen in Planning - sales' 1st choice was ${firstName}`, tone: "ok" }] : notes });
+  });
+  return out;
 }

@@ -85,3 +85,47 @@ describe("trussRowCost / calcZoneTrussPreview — bill off the snapped span, not
     expect(previewRaw.spanFt).toBe(22.5);
   });
 });
+
+import { resolveFabricAllocation } from "./pricing.js";
+describe("resolveFabricAllocation — the Fabric Palette decides over a leftover saved colour", () => {
+  const stock = [{ colour: "Ivory", stockKg: 40 }, { colour: "Rose Gold dark", stockKg: 100 }, { colour: "Yellow", stockKg: 38 }];
+  it("a saved colour that the palette's anchors allow is kept as saved", () => {
+    const saved = [{ colour: "Ivory", qty: 30 }];
+    expect(resolveFabricAllocation(saved, 84, ["Ivory", "Yellow"], stock, "stockKg")).toBe(saved);
+  });
+  it("a saved colour that no anchor allows is a leftover from an earlier palette: auto-fill from the palette instead", () => {
+    const saved = [{ colour: "Rose Gold dark", qty: 81 }];
+    expect(resolveFabricAllocation(saved, 84, ["Ivory"], stock, "stockKg")).toEqual([{ qty: 84, colour: "Ivory" }]);
+  });
+  it("a saved allocation with one colour outside the palette is dropped whole", () => {
+    const saved = [{ colour: "Ivory", qty: 40 }, { colour: "Rose Gold dark", qty: 44 }];
+    expect(resolveFabricAllocation(saved, 84, ["Ivory"], stock, "stockKg")).toEqual([{ qty: 84, colour: "Ivory" }]);
+  });
+  it("with no palette picked a saved colour stands", () => {
+    const saved = [{ colour: "Rose Gold dark", qty: 81 }];
+    expect(resolveFabricAllocation(saved, 84, [], stock, "stockKg")).toBe(saved);
+  });
+  it("nothing saved: the plain auto-fill (palette match, else highest stock)", () => {
+    expect(resolveFabricAllocation(undefined, 10, ["Yellow"], stock, "stockKg")).toEqual([{ qty: 10, colour: "Yellow" }]);
+    expect(resolveFabricAllocation([], 10, [], stock, "stockKg")).toEqual([{ qty: 10, colour: "Rose Gold dark" }]);
+  });
+  it("matching is the same loose matcher as auto-fill (Rose Gold covers Rose Gold dark)", () => {
+    const saved = [{ colour: "Rose Gold dark", qty: 5 }];
+    expect(resolveFabricAllocation(saved, 5, ["Rose Gold"], stock, "stockKg")).toBe(saved);
+  });
+});
+
+import { anchorsForPaletteByMaterial } from "./pricing.js";
+describe("the palette 'Ivory, Rose Gold (curtain only)' end to end", () => {
+  const palette = "Ivory, Rose Gold:C";
+  const liza = [{ colour: "Ivory", stockKg: 40 }, { colour: "Rose Gold dark", stockKg: 100 }];
+  const curtain = [{ colour: "Ivory", stockPieces: 80 }, { colour: "Rose Gold", stockPieces: 3 }];
+  it("Liza is Ivory even with Rose Gold dark still saved on the row", () => {
+    const a = resolveFabricAllocation([{ colour: "Rose Gold dark", qty: 81 }], 84, anchorsForPaletteByMaterial([], palette, "liza"), liza, "stockKg");
+    expect(a).toEqual([{ qty: 84, colour: "Ivory" }]);
+  });
+  it("Velvet curtains may use Rose Gold, and a saved Rose Gold stands", () => {
+    const saved = [{ colour: "Rose Gold", qty: 44 }];
+    expect(resolveFabricAllocation(saved, 56, anchorsForPaletteByMaterial([], palette, "curtain"), curtain, "stockPieces")).toBe(saved);
+  });
+});

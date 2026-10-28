@@ -32,9 +32,12 @@ export function planningUpcoming(eo, now = Date.now()) {
 // is no longer costed/shown anywhere, and Furniture's/Fabric's Labours share now pools into
 // Structure's/Tenting's instead of its own — every manpower figure moves again. v6: each shared-crew
 // day's schedule entry also carries shareByDept (every department's own share that day, not just
-// this one's), so Dept Ops can show the full cross-department bifurcation, not only "mine".
-export const PLANNING_SNAPSHOT_VERSION = 6;
-const PLANNING_SNAPSHOT_SHIPPED_AT = Date.parse("2026-10-22T06:15:00Z");
+// this one's), so Dept Ops can show the full cross-department bifurcation, not only "mine". v7: the
+// fabric colour follows the function's Fabric Palette (a colour saved on a truss row that the palette no
+// longer allows is ignored) and each truss row's colour is recorded (fabricPlan.rows), so Dept Ops shows
+// the colour per zone - orders synced before still show the old colours until synced again.
+export const PLANNING_SNAPSHOT_VERSION = 7;
+const PLANNING_SNAPSHOT_SHIPPED_AT = Date.parse("2026-10-27T11:50:00Z");
 export const planningSnapshotOutdated = (eo) => (Number(eo?.deptSnapVer) || 1) < PLANNING_SNAPSHOT_VERSION;
 
 // Synced before, and a planning input changed after that sync (a minute of slack: the sync's own write

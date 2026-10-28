@@ -95,9 +95,12 @@ describe("planElements — decisions", () => {
     const r = run([f], { choice: { "0|stage|p1": dec("B") } }).rows[0];
     expect(r.status).toBe("decided"); expect(r.decidedId).toBe("B");
   });
-  it("a decision made for another date or function no longer applies", () => {
-    expect(run([f], { choice: { "0|stage|p1": dec("B", { date: "2027-02-01" }) } }).rows[0].status).toBe("open");
-    expect(run([f], { choice: { "0|stage|p1": dec("B", { fnType: "Mehendi" }) } }).rows[0].status).toBe("open");
+  it("a decision made for another date or function no longer applies — the row falls back to its 1st-choice default", () => {
+    [dec("B", { date: "2027-02-01" }), dec("B", { fnType: "Mehendi" })].forEach((d) => {
+      const r = run([f], { choice: { "0|stage|p1": d } }).rows[0];
+      expect(r.decidedId).not.toBe("B");
+      expect(r.decidedId === r.options[0].id ? r.byDefault : r.status !== "decided").toBe(true);
+    });
   });
   it("a hand pick that is not one of the choices counts as decided, with its stock", () => {
     const r = run([f], { choice: { "0|stage|p1": dec("D", { manual: true }) } }).rows[0];
@@ -105,7 +108,10 @@ describe("planElements — decisions", () => {
     expect(r.manual).toMatchObject({ id: "D", known: true, enough: false });
   });
   it("a decision for a design that is not a choice and was not picked by hand is ignored", () => {
-    expect(run([f], { choice: { "0|stage|p1": dec("D") } }).rows[0].status).toBe("open");
+    // D is not used; the row falls back to sales' 1st choice by default
+    const r = run([f], { choice: { "0|stage|p1": dec("D") } }).rows[0];
+    expect(r.decidedId).not.toBe("D");
+    expect(r.decidedId === r.options[0].id ? r.byDefault : r.status !== "decided").toBe(true);
   });
   it("a hand pick for an item that has left the inventory still decides, without stock", () => {
     const r = run([f], { choice: { "0|stage|p1": dec("GONE", { manual: true, name: "Old design" }) } }).rows[0];
@@ -143,8 +149,72 @@ describe("planElements — a decision that no longer applies holds nothing", () 
   it("E1 was decided B but sales changed its choices to [A, C]: B is free again for E2", () => {
     const f = fn({ stage: [el("p1", [P("A"), P("C")], 10), el("p2", [P("B"), P("E")], 15)] });
     const r = run([f], { choice: { "0|stage|p1": dec("B") } });
-    expect(r.rows[0].status).toBe("open");
+    // the stale B is not used — p1 falls back to its own 1st choice (A) by default — and B is free again for p2
+    expect(r.rows[0].decidedId).not.toBe("B");
+    expect(r.rows[0].byDefault).toBe(true);
     expect(r.rows[1].options[0].free).toBe(50);
   });
 });
 
+
+import { choiceNotesForRows } from "./elementPlan.js";
+describe("choiceNotesForRows — the Inventory blocked list follows Planning's decisions", () => {
+  const opt = (id, name, photo) => ({ id, name, item: photo ? { id, name, img: photo } : null });
+  const row = (over = {}) => ({ key: "0|stage|p1", prefs: [{ id: "A", name: "Maroon Hack Jack" }, { id: "B", name: "Sona Gold Print" }], qty: 1, options: [opt("A", "Maroon Hack Jack", "a.jpg"), opt("B", "Sona Gold Print", "b.jpg")], decidedId: null, other: false, manual: null, ...over });
+  const lines = [{ id: "L1", invId: "A", name: "Cushion Cover Maroon Hack Jack", photo: "a.jpg", qty: 1, rentalQty: 1 }, { id: "L2", invId: "Z", name: "Chair", qty: 4 }];
+  it("a decided design replaces the whole line's name and photo", () => {
+    const m = choiceNotesForRows(lines, [row({ decidedId: "B" })]);
+    expect(m.get("L1")).toMatchObject({ name: "Sona Gold Print", photo: "b.jpg" });
+    expect(m.get("L1").notes[0].text).toMatch(/1st choice was Cushion Cover Maroon Hack Jack/);
+    expect(m.has("L2")).toBe(false);
+  });
+  it("deciding the 1st design confirms it and changes nothing", () => {
+    const g = choiceNotesForRows(lines, [row({ decidedId: "A" })]).get("L1");
+    expect(g.name).toBeUndefined();
+    expect(g.notes).toEqual([{ text: "1 × Maroon Hack Jack confirmed in Planning", tone: "ok" }]);
+  });
+  it("not decided: lists the choices, line untouched", () => {
+    const g = choiceNotesForRows(lines, [row()]).get("L1");
+    expect(g.name).toBeUndefined();
+    expect(g.notes[0]).toMatchObject({ tone: "wait" });
+    expect(g.notes[0].text).toMatch(/1 Maroon Hack Jack · 2 Sona Gold Print/);
+  });
+  it("arranged separately is said as such", () => {
+    expect(choiceNotesForRows(lines, [row({ other: true })]).get("L1").notes[0].text).toBe("1 arranged separately - not from stock");
+  });
+  it("a line shared by two elements keeps its name and tells each decision", () => {
+    const l2 = [{ ...lines[0], qty: 3, rentalQty: 3 }];
+    const g = choiceNotesForRows(l2, [row({ decidedId: "B" }), row({ key: "k2", qty: 2, decidedId: "A" })]).get("L1");
+    expect(g.name).toBeUndefined();
+    expect(g.notes.map((n) => n.tone)).toEqual(["ok", "ok"]);
+  });
+  it("a decision covering only part of the line leaves the line as it is", () => {
+    const l3 = [{ ...lines[0], qty: 3, rentalQty: 3 }];
+    expect(choiceNotesForRows(l3, [row({ decidedId: "B", qty: 1 })]).get("L1").name).toBeUndefined();
+  });
+  it("production and buying lines are never matched", () => {
+    expect(choiceNotesForRows([{ id: "P", invId: "A", name: "x", prodOrBuy: "production", qty: 1 }], [row()]).size).toBe(0);
+  });
+});
+
+describe("choices for a part inside a kit", () => {
+  const part = (over = {}) => ({ itemId: "B", qty: 2, pid: "pk1", prefs: [{ id: "B", name: "Cover B", free: 50 }, { id: "C", name: "Cover C", free: 50 }], ...over });
+  const fnWith = (kitOverrides, kitQty = 3) => [{ fnIdx: 0, date: "2027-02-03", venue: "Aura", type: "Wedding", enabledEls: { stage: true }, elements: { stage: [{ invId: "K", name: "Ivory Sofa", qty: kitQty, unit: "Pieces", kitOverrides }] } }];
+  it("a kit part with choices is a row of its own: parts per kit x kits", () => {
+    const rows = choiceElementsOf(fnWith([part(), { itemId: "X", qty: 1 }]), () => "Stage");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ fi: 0, zk: "stage", ei: 0, part: 0, qty: 6, name: "Cover B (in Ivory Sofa)" });
+    expect(rows[0].prefs.map((p) => p.id)).toEqual(["B", "C"]);
+  });
+  it("a part without choices, or without a pid, is not a row; the kit itself is not either", () => {
+    expect(choiceElementsOf(fnWith([{ itemId: "B", qty: 2 }]), () => "Stage")).toEqual([]);
+    expect(choiceElementsOf(fnWith([part({ pid: undefined })]), () => "Stage")).toEqual([]);
+  });
+  it("the plan decides a part like an element, and a decided part holds its design for the day", () => {
+    const fns = fnWith([part()]);
+    const items = { B: { id: "B", name: "Cover B", qty: 100, subCat: "Cushion" }, C: { id: "C", name: "Cover C", qty: 100, subCat: "Cushion" } };
+    const key = choiceElementsOf(fns, () => "Stage")[0].key;
+    const plan = planElements({ functionsDetail: fns, zoneLabelOf: () => "Stage", itemsById: items, blocks: {}, eventId: "E", choice: { [key]: { id: "C" } } });
+    expect(plan.rows[0]).toMatchObject({ decidedId: "C", status: "decided", part: 0 });
+  });
+});

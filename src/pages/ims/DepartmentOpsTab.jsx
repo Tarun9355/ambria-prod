@@ -11,14 +11,14 @@ import { hasIMSPerm } from "../../lib/ims/constants";
 import { fetchOpsExpenses } from "../../lib/ims/opsExpenses";
 import { ZONE_META, trussBaseArea, CARPET_OFF } from "../../lib/studio/taxonomy";
 import { prefsOf, floorSqftOf } from "../../lib/studio/carpetPrefs";
-import { carpetFloorsOf, planCarpets, carpetKey, carpetStockFor, validDecision } from "../../lib/ims/carpetPlan";
+import { carpetFloorsOf, planCarpets, carpetKey, carpetStockFor, validDecision, carpetNotesForRows } from "../../lib/ims/carpetPlan";
 import CarpetPickerModal from "./CarpetPickerModal.jsx";
 import ElementChoicePlan from "./ElementChoicePlan.jsx";
-import { planElements, elementStockFor, elementKey } from "../../lib/ims/elementPlan";
+import { planElements, elementStockFor, elementKey, choiceNotesForRows } from "../../lib/ims/elementPlan";
 import { loadOnDate } from "../../lib/ims/loadByDate";
 import { elementChoices } from "../../lib/studio/elementPrefs";
 import { orderZoneKeys } from "../../lib/ims/zoneOrder";
-import { calcZoneTrussPreview, calcZoneFabric, dcFabricMultOf } from "../../lib/studio/pricing";
+import { calcZoneTrussPreview, calcZoneFabric, dcFabricMultOf, repeatCatFor } from "../../lib/studio/pricing";
 import { ZONE_DEF_SK, RC_SK_TR } from "../../lib/studio/keys";
 import { LOGO_ASSET, LOGO_BOX } from "../../lib/studio/brand.js";
 import { thumbUrl, fitUrl } from "../../lib/studio/thumb.js";
@@ -26,7 +26,7 @@ import { matchFlowerPattern, resolveSizeKey, sizeClassToPatternKey, resolveMandi
 import { swatchHexFor } from "../../lib/studio/colours";
 import PlanningSyncButton from "./PlanningSyncButton.jsx";
 import FabricBlock from "./FabricBlock.jsx";
-import { buildFabricGroups } from "../../lib/ims/fabricGroups";
+import { buildFabricGroups, foldFabricLines } from "../../lib/ims/fabricGroups";
 import { buildEventSwap, swappedRecipeFlower } from "../../lib/ims/mandiSwap";
 
 // ── THE OFFICIAL LOGO, READY FOR THE PDF ──
@@ -899,6 +899,19 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     });
     return out;
   };
+  // The truss rows as the Fabric block reads them (one entry per truss row: function, zone, its photo, the fabric it needs).
+  const fabricEntriesOf = () => trussPlanOf().map((e) => ({
+    fi: e.fi, zk: e.zk, ri: e.ri, zLabel: e.zLabel, fnLabel: e.fn?.type || `Function ${e.fi + 1}`,
+    photo: e.fn?.elSelectedPhoto?.[e.zk]?.src || "", fab: e.fab, row: e.row,
+    repeat: !!repeatCatFor(e.fn?.zones?.[e.zk], "truss"), // a repeat zone reuses standing fabric: no new colour is worked out for it
+  }));
+  // Each function's Fabric Palette as Build last synced it (only functions where Build keeps it live): the Fabric block works the colours out from it, so a
+  // palette change in Build shows here without a Deal Check sync.
+  const fabricPalettesOf = () => {
+    const out = {};
+    (Array.isArray(sel?.functionsDetail) ? sel.functionsDetail : []).forEach((fn, i) => { if (fn?.fabricPaletteLive) out[i] = String(fn.fabricPalette || ""); });
+    return Object.keys(out).length ? out : null;
+  };
   // ── CARPET PLAN ── sales ranks up to three stock carpets per floor (Build / Deal Check); here the Tenting head sees each
   // floor's three with what is actually free on the event date and decides which one is laid. The decision is IMS-owned
   // (deptOps.Tenting.carpetChoice), so every Studio sync leaves it alone. Read on first use, like the truss plan (`sel` is below).
@@ -1189,8 +1202,17 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         it.components.forEach((cp, ci) => out.push({ id: it.id + "__c" + ci, invId: cp.imsId || null, name: cp.name, photo: cp.photo || "", qty: Number(cp.qty) || 0, unit: cp.unit || 0, total: Number(cp.total) || 0, sub: cp.sub || "", kitOf: it.name }));
       } else out.push(it);
     });
+    // Fabric: the per-zone Liza / Velvet / Masking lines become one load line per fabric colour (with the colour's photo), so Truck planning, the loading
+    // checklist and receiving name what is physically loaded instead of the same fabric once per zone with no photo.
+    if (dept === "Fabric" && sel) {
+      try {
+        const g = buildFabricGroups({ entries: fabricEntriesOf(), lines: blockedItemsGrouped, fabricPlan: sel?.fabricPlan, stock: trussInv, multiFn: false, fnPalettes: fabricPalettesOf() }).groups;
+        return foldFabricLines(out, g);
+      } catch { return out; }
+    }
     return out;
-  }, [blockedItemsGrouped]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [blockedItemsGrouped, dept, sel, trussInv]);
   const rentalIncome = blockedItemsGrouped.reduce((s, x) => s + x.total, 0);
 
   // ── Department-saved data on the event order ──
@@ -1691,6 +1713,16 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       }).filter(Boolean)
     : blockedItemsGrouped;
   const invWholeOnly = invScoped ? blockedItemsGrouped.length - invShown.length : 0;
+  // Overlays and cushion covers with choices: the list is filed under sales' 1st design, so what Planning decided (Fabric plan) is shown on the card - live,
+  // since it reads the same decisions the Fabric plan saves. Display only: the line's own quantity, price and id are untouched.
+  const choiceView = (dept === "Fabric" && sel) ? choiceNotesForRows(invShown, elementPlanOf().rows.filter(r => !invScoped || r.fi === (mpFns[invFn]?.fnIdx ?? invFn)))
+    : (dept === "Tenting" && sel) ? carpetNotesForRows(invShown, carpetPlanOf().rows.filter(r => !invScoped || r.fi === (mpFns[invFn]?.fnIdx ?? invFn)), invScoped ? (mpFns[invFn]?.type || "") : "")
+    : new Map();
+  // The same for the whole event's flat list (kit parts as their own lines) - what Truck planning loads, so it names the design Planning chose, not sales' 1st.
+  const choiceViewAll = (dept === "Fabric" && sel) ? choiceNotesForRows(blockedItems, elementPlanOf().rows)
+    : (dept === "Tenting" && sel) ? carpetNotesForRows(blockedItems, carpetPlanOf().rows)
+    : new Map();
+  const shownName = (it) => choiceViewAll.get(it.id)?.name || it.name; // the design Planning chose, else the line's own name (truck challans, loading sheet)
   const showDates = !invScoped && dateCols.length > 0;
   const anyOther = showDates && invShown.some(it => otherQty(it) > 0);
   const dateSpacers = showDates ? dateCols.length + (anyOther ? 1 : 0) - 1 : 0; // keeps the expanded sub-rows' qty/rate/total under their headers
@@ -2103,7 +2135,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     const w = window.open("", "_blank");
     if (!w) return;
     const rows = blockedItems.filter(it => (Number(truck.items?.["inv:" + it.id]) || 0) > 0 || (Number(truck.extras?.["inv:" + it.id]) || 0) > 0)
-      .map(it => { const x = Number(truck.extras?.["inv:" + it.id]) || 0; return `<tr><td>${it.name}</td><td>${it.sub || "—"}</td><td style="text-align:center">${Number(truck.items?.["inv:" + it.id]) || 0} of ${it.qty}${x ? ` + ${x} extra` : ""}</td></tr>`; }).join("");
+      .map(it => { const x = Number(truck.extras?.["inv:" + it.id]) || 0; return `<tr><td>${shownName(it)}</td><td>${it.sub || "—"}</td><td style="text-align:center">${Number(truck.items?.["inv:" + it.id]) || 0} of ${it.qty}${x ? ` + ${x} extra` : ""}</td></tr>`; }).join("");
     const toolRows = deptTools.map(t => `<tr><td>🛠️ ${t.name}</td><td>essential / tool</td><td style="text-align:center">${t.qty || 1}</td></tr>`).join("");
     w.document.write(`<html><head><title>Challan — ${dept} — Truck ${n}</title><style>body{font-family:Arial;padding:24px;color:#111}table{width:100%;border-collapse:collapse;margin-top:8px}th,td{border:1px solid #ddd;padding:8px;font-size:13px}th{background:#f3f4f6;text-align:left}h2{color:#4f46e5;margin-bottom:2px}h4{margin:14px 0 0}@media print{button{display:none}}</style></head><body>
       <h2>${DEPT_ICON[dept]} Ambria — ${dept} Challan · Truck ${n}</h2>
@@ -2157,7 +2189,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       pdf.setFont("helvetica", "bold"); pdf.text("Inventory on this truck", M, y); y += 16;
       header();
       const items = blockedItems.filter(it => (Number(truck.items?.["inv:" + it.id]) || 0) > 0 || (Number(truck.extras?.["inv:" + it.id]) || 0) > 0);
-      if (items.length) items.forEach(it => { const x = Number(truck.extras?.["inv:" + it.id]) || 0; row([[it.name, cx.name], [it.sub || "-", cx.type], [`${Number(truck.items?.["inv:" + it.id]) || 0} of ${it.qty}${x ? ` + ${x} extra` : ""}`, cx.qty, "right"]]); });
+      if (items.length) items.forEach(it => { const x = Number(truck.extras?.["inv:" + it.id]) || 0; row([[shownName(it), cx.name], [it.sub || "-", cx.type], [`${Number(truck.items?.["inv:" + it.id]) || 0} of ${it.qty}${x ? ` + ${x} extra` : ""}`, cx.qty, "right"]]); });
       else row([["No items assigned to this truck", cx.name]]);
       if (deptTools.length) {
         y += 12; room(36);
@@ -2323,7 +2355,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     const w = window.open("", "_blank");
     if (!w) return;
     const rows = [
-      ...blockedItems.map(it => `<tr><td>${loaded["inv:" + it.id] ? "☑" : "☐"}</td><td>${it.name}</td><td>${it.sub || "—"}</td><td style="text-align:center">${it.qty}</td></tr>`),
+      ...blockedItems.map(it => `<tr><td>${loaded["inv:" + it.id] ? "☑" : "☐"}</td><td>${shownName(it)}</td><td>${it.sub || "—"}</td><td style="text-align:center">${it.qty}</td></tr>`),
       ...deptTools.map(t => `<tr><td>${loaded["tool:" + t.name] ? "☑" : "☐"}</td><td>🛠️ ${t.name}</td><td>essential / tool</td><td style="text-align:center">${t.qty || 1}</td></tr>`),
     ].join("");
     w.document.write(`<html><head><title>Challan — ${dept}</title><style>body{font-family:Arial;padding:24px;color:#111}table{width:100%;border-collapse:collapse;margin-top:12px}th,td{border:1px solid #ddd;padding:8px;font-size:13px}th{background:#f3f4f6;text-align:left}h2{color:#4f46e5;margin-bottom:2px}@media print{button{display:none}}</style></head><body>
@@ -2598,13 +2630,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const fabricGroupInfo = useMemo(() => {
     if (dept !== "Fabric") return { groups: [], groupedLineIds: new Set() };
     const fnsF = Array.isArray(sel?.functionsDetail) ? sel.functionsDetail : [];
-    const entries = trussPlanOf().map((e) => ({
-      fi: e.fi, zk: e.zk, zLabel: e.zLabel, fnLabel: e.fn?.type || `Function ${e.fi + 1}`,
-      photo: e.fn?.elSelectedPhoto?.[e.zk]?.src || "", fab: e.fab, row: e.row,
-    }));
+    const entries = fabricEntriesOf();
     // Money comes from the whole event's priced lines (they name a zone, not a function) and is split by quantity;
     // only then is the chosen function's share shown.
-    return buildFabricGroups({ entries, lines: blockedItemsGrouped, fabricPlan: sel?.fabricPlan, stock: trussInv, multiFn: fnsF.length > 1, onlyFi: invScoped ? invFn : null });
+    return buildFabricGroups({ entries, lines: blockedItemsGrouped, fabricPlan: sel?.fabricPlan, stock: trussInv, multiFn: fnsF.length > 1, onlyFi: invScoped ? invFn : null, fnPalettes: fabricPalettesOf() });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dept, sel, trussInv, blockedItemsGrouped, invScoped, invFn]);
   // All upcoming events scanned for fabric shortfalls (same-day contention included) → order-ahead heads-up.
@@ -3679,8 +3708,16 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           kitParts.forEach(p => {
             if (placed.has(p.id)) return; // one physical part, on the first zone that claims it
             placed.add(p.id);
-            const pInv = (p.invId && invById.get(String(p.invId))) || invByName.get(String(p.name || "").trim().toLowerCase()) || null;
-            merged.set("p:" + p.id, { name: p.name, qty: Number(p.qty) || 0, unit: String(pInv?.unit || p?.unit || "").trim(), photo: invPhoto(pInv, p), dims: invDims(pInv), source: "Inside " + kitLabel });
+            let pInv = (p.invId && invById.get(String(p.invId))) || invByName.get(String(p.name || "").trim().toLowerCase()) || null;
+            // a part that named designs of its own (cushion cover / overlay): the design Planning decided is the one that goes out
+            let partName = p.name;
+            const prt = elementPlanOf().rows.find(r => r.fi === (fn?.fnIdx ?? fi) && r.zk === zk && r.ei === ei && r.part !== undefined && String(r.prefs[0]?.id) === String(p.invId));
+            if (prt && prt.decidedId && String(prt.decidedId) !== String(p.invId)) {
+              const di = invById.get(String(prt.decidedId));
+              if (di) { pInv = di; partName = di.name; }
+              else partName = ([...prt.options, prt.manual].filter(Boolean).find(o => o.id === prt.decidedId) || {}).name || partName;
+            }
+            merged.set("p:" + p.id, { name: partName, qty: Number(p.qty) || 0, unit: String(pInv?.unit || p?.unit || "").trim(), photo: invPhoto(pInv, p), dims: invDims(pInv), source: "Inside " + kitLabel });
           });
           // Only the parts are ours — the kit shell itself sits on another department's sheet.
           if (!held && kitParts.length) return;
@@ -3688,7 +3725,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           // ── OVERLAYS AND CUSHION COVERS WITH CHOICES ──
           // Planning decides one of sales' designs (or arranges the pieces outside stock). The card shows that design — its own photo and
           // size — and until it is decided the choices are listed under the 1st. Deal Check's PDF (pdfAllCarpetsRef) lists what sales asked for.
-          const prow = elementPlanOf().rows.find(r => r.fi === (fn?.fnIdx ?? fi) && r.zk === zk && r.ei === ei) || null;
+          const prow = elementPlanOf().rows.find(r => r.fi === (fn?.fnIdx ?? fi) && r.zk === zk && r.ei === ei && r.part === undefined) || null;
           let invU = inv, arranged = false, choiceExtra = null, decName = "";
           if (prow) {
             const names = prow.options.map((o, i) => `${i + 1} ${String(o.name || "").length > 16 ? String(o.name).slice(0, 15) + "…" : o.name}`).join(" · ");
@@ -6046,9 +6083,9 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                           layouts. */}
                       <div className="p-2.5 flex flex-wrap items-center gap-x-3 gap-y-2">
                           <div className="flex items-center gap-3 min-w-0 flex-1">
-                            {it.photo ? <img src={thumbUrl(it.photo, 48)} loading="lazy" decoding="async" alt="" onClick={() => setZoomImg(it.photo)} className="w-12 h-12 rounded-lg object-cover border cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-12 h-12 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-lg shrink-0">📦</div>}
+                            {(choiceView.get(it.id)?.name ? choiceView.get(it.id).photo : it.photo) ? <img src={thumbUrl(choiceView.get(it.id)?.name ? choiceView.get(it.id).photo : it.photo, 48)} loading="lazy" decoding="async" alt="" onClick={() => setZoomImg(choiceView.get(it.id)?.name ? choiceView.get(it.id).photo : it.photo)} className="w-12 h-12 rounded-lg object-cover border cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-12 h-12 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-lg shrink-0">📦</div>}
                             <div className="min-w-0">
-                              <div className="text-sm font-semibold text-gray-900 truncate">{it.name}</div>
+                              <div className="text-sm font-semibold text-gray-900 truncate">{choiceView.get(it.id)?.name || it.name}</div>
                               {/* Every status badge the flat-list version carried, kept as a
                                   wrapping row under the name instead of trailing off the end of
                                   it — in a fixed-width ITEM column four inline badges pushed the
@@ -6094,10 +6131,18 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                                   name they describe. */}
                               <div className="text-xs text-gray-500 mt-0.5">
                                 <div className="truncate" title={it.sub || ""}>{it.sub || "—"}</div>
+                                {/* A truss pillar or beam is named by its length ("Truss pillar 12ft"): say how long each is and how much running length all of them make, which is what a Tenting head loads */}
+                                {(() => {
+                                  const m = /(pillar|beam)/i.test(String(it.name || "")) ? /(\d+(?:\.\d+)?)\s*(?:ft|feet|')/i.exec(String(it.name || "")) : null;
+                                  const len = m ? Number(m[1]) : 0, n = Number(it.qty) || 0;
+                                  if (!(len > 0) || !(n > 0)) return null;
+                                  return <div className="text-gray-700 mt-0.5 tabular-nums">{/pillar/i.test(it.name) ? "Height" : "Length"} <b>{len} ft</b> each · {n} × {len} = <b>{Math.round(n * len * 100) / 100} ft</b> in all</div>;
+                                })()}
                                 {it.shortQty > 0 && (it.outOfStock
                                   ? <div className="text-red-600 mt-0.5">{it.shortQty} out of stock — can't be made in production, pick an alternative in Build</div>
                                   : <div className="text-amber-600 mt-0.5">{it.shortQty} short of stock — priced at cost, chase or produce</div>)}
                                 {it.isSwapped && <div className="text-sky-600 mt-0.5">swapped in for {it.swappedFrom}</div>}
+                                {(choiceView.get(it.id)?.notes || []).map((n, ni) => <div key={ni} className={(n.tone === "wait" ? "text-amber-600" : "text-emerald-700") + " mt-0.5"}>{n.tone === "wait" ? "" : "✓ "}{n.text}</div>)}
                                 {/* One function's view shows what it NEEDS on site (181 on the 20th). Pieces already standing from the day before are not
                                     loaded again, so say how many of them are already there when the date column holds fewer (137 to load). */}
                                 {invScoped && it.src && it.qty < it.rentalQty && (() => {
@@ -6930,9 +6975,9 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                         <div className="rounded-lg bg-gray-50 divide-y divide-gray-100">
                           {blockedItems.map(it => { const k = "inv:" + it.id; const onThis = Number(t.items?.[k]) || 0; const totalLoaded = truckLoadedQty(k); const extraHere = Number(t.extras?.[k]) || 0; const extraAll = truckExtraQty(k); const maxHere = Math.max(onThis, (Number(it.qty) || 0) - (totalLoaded - onThis)); const matchCls = totalLoaded === it.qty ? "text-emerald-600" : totalLoaded > it.qty ? "text-red-600" : totalLoaded > 0 ? "text-amber-600" : "text-gray-400"; return (
                             <div key={k} className="flex items-center gap-2.5 px-2.5 py-2">
-                              {it.photo ? <img src={thumbUrl(it.photo, 32)} loading="lazy" decoding="async" alt="" onClick={() => setZoomImg(it.photo)} className="w-8 h-8 rounded-lg object-cover cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-xs shrink-0">📦</div>}
+                              {(() => { const cv = choiceViewAll.get(it.id); const ph = cv?.name ? cv.photo : it.photo; return ph ? <img src={thumbUrl(ph, 32)} loading="lazy" decoding="async" alt="" onClick={() => setZoomImg(ph)} className="w-8 h-8 rounded-lg object-cover cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} /> : it.hex ? <div aria-hidden="true" className="w-8 h-8 rounded-lg ring-1 ring-black/10 shrink-0" style={{ background: it.hex }} /> : <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-xs shrink-0">📦</div>; })()}
                               <div className="min-w-0 flex-1">
-                                <div className="text-xs font-medium text-gray-800 leading-snug line-clamp-2" title={it.name}>{it.name}</div>
+                                <div className="text-xs font-medium text-gray-800 leading-snug line-clamp-2" title={choiceViewAll.get(it.id)?.name || it.name}>{choiceViewAll.get(it.id)?.name || it.name}</div>
                                 <div className={"mt-0.5 text-[11px] font-semibold tabular-nums " + matchCls}>{totalLoaded} of {it.qty} loaded{totalLoaded > it.qty ? " · too many" : totalLoaded === it.qty ? " ✓" : ""}{extraAll > 0 && <span className="text-amber-600"> · +{extraAll} extra</span>}</div>
                                 {/* This item's share of the truck, and how many more of it the space left takes. */}
                                 {(() => {
@@ -7022,7 +7067,8 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
               // take it in one go; a floor already decided is never overwritten. Each floor is checked on
               // its own figures, so the over-commit warning above still flags floors that together need
               // more of it on one date than is free.
-              const sameCarpetRows = (o) => plan.rows.filter(x => x.status !== "decided" && x.options.some(p => p.id === o.id && !(p.known && !p.enough)));
+              // A floor still on its default (sales' 1st choice) is not a decision yet, so "Use on all" may move it.
+              const sameCarpetRows = (o) => plan.rows.filter(x => (x.status !== "decided" || x.byDefault) && x.options.some(p => p.id === o.id && !(p.known && !p.enough)));
               const decideAll = (o) => {
                 const next = { ...choiceAll };
                 sameCarpetRows(o).forEach(x => { next[x.key] = { id: o.id, name: o.name, date: x.date, fnType: x.fnLabel, by: authUser?.name || "—", at: Date.now() }; });
@@ -7048,7 +7094,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                   )}
                   {plan.rows.map(r => {
                     const dec = [...r.options, r.manual].filter(Boolean).find(o => o.id === r.decidedId);
-                    const chip = r.status === "decided" ? { t: r.other ? "✓ Decided: arranged separately (not from stock)" : `✓ Decided: ${dec?.name || ""}${r.manual ? " (picked in Planning)" : ""}`, c: "bg-emerald-50 text-emerald-700 ring-emerald-100" }
+                    const chip = r.status === "decided" ? { t: r.other ? "✓ Decided: arranged separately (not from stock)" : r.byDefault ? `✓ 1st choice (default): ${dec?.name || ""}` : `✓ Decided: ${dec?.name || ""}${r.manual ? " (picked in Planning)" : ""}`, c: "bg-emerald-50 text-emerald-700 ring-emerald-100" }
                       : r.status === "short" ? { t: "None of the choices covers this floor", c: "bg-red-50 text-red-700 ring-red-100" }
                       : r.status === "none" ? { t: "Sales has not picked a carpet", c: "bg-amber-50 text-amber-700 ring-amber-100" }
                       : { t: "Not decided yet", c: "bg-amber-50 text-amber-700 ring-amber-100" };
@@ -7081,7 +7127,9 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                                       {!on && r.suggestedId === o.id && !r.decidedId && <div className="text-[10.5px] font-semibold text-sky-700">Suggested</div>}
                                     </div>
                                   </div>
-                                  {on
+                                  {on && r.byDefault
+                                    ? <div className="text-[12px] font-semibold rounded-md px-2 py-1 bg-emerald-50 text-emerald-700 ring-1 ring-emerald-300 text-center" title="Sales' 1st choice is used unless you choose another carpet below">✓ 1st choice · default</div>
+                                    : on
                                     ? <button type="button" onClick={() => undecide(r.key)} className="text-[12px] font-semibold rounded-md px-2 py-1 bg-emerald-600 text-white hover:bg-emerald-700 cursor-pointer" title="Chosen — tap to undo">✓ Using this · undo</button>
                                     : <button type="button" disabled={o.known && !o.enough} onClick={() => decide(r, o)}
                                         title={o.known && !o.enough ? `Short on this date — only ${Math.round(o.free)} sqft free (+${Math.round(o.reuse?.qty || 0)} laid here), the floor needs ${Math.round(r.area)}` : undefined}
@@ -7164,7 +7212,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                   // overlay / cushion version of the Carpet plan's "Use on all N floors".
                   onDecideAll={(o) => {
                     const next = { ...choiceAll };
-                    elementPlanOf().rows.filter(x => x.status !== "decided" && x.options.some(p => p.id === o.id && !(p.known && !p.enough)))
+                    elementPlanOf().rows.filter(x => (x.status !== "decided" || x.byDefault) && x.options.some(p => p.id === o.id && !(p.known && !p.enough)))
                       .forEach(x => { next[x.key] = { id: o.id, name: o.name, date: x.date, fnType: x.fnLabel, by: authUser?.name || "—", at: Date.now() }; });
                     saveDept({ itemChoice: next });
                   }}
@@ -7208,7 +7256,9 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                         // every sync) wins over Deal Check's allocation.
                         const ek = `${z.key}|${f.part}`;
                         const own = deptData.trussFabric && Array.isArray(deptData.trussFabric[ek]) ? deptData.trussFabric[ek] : null;
-                        return { ...f, ek, need: `${f.needN}${f.unit}`, allocs: own || f.allocs, own: !!own };
+                        // else what Deal Check recorded for this truss row at the last sync (it weighs a saved colour against the Fabric Palette), else the row's saved colour
+                        const rec = (Array.isArray(sel?.fabricPlan?.rows) ? sel.fabricPlan.rows : []).filter(r => r.kind === f.part && r.fi === z.fi && r.zk === z.zk && (r.ri || 0) === (z.ri || 0)).map(r => ({ colour: r.colour, qty: r.qty }));
+                        return { ...f, ek, need: `${f.needN}${f.unit}`, allocs: own || (rec.length ? rec : f.allocs), own: !!own };
                       }) : [];
                       // ── THE DEPARTMENT'S OWN EDITS ── deptOps.trussPlan[key]: demand / footprint sizes,
                       // pillar + beam groups, batta. IMS-owned, so every Studio sync leaves them alone;

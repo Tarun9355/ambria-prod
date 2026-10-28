@@ -17,7 +17,8 @@ const nounOf = (r) => (/cover/i.test(r.options[0]?.name || r.name || "") ? "cush
 export default function ElementChoicePlan({ plan, stockOf, onDecide, onDecideAll, onOther, onUndo, onZoom, className = "" }) {
   // Rows a design could go on in one go — the same filter the parent's onDecideAll applies, so the
   // count on the button is exactly what the click decides. Decided rows are never touched.
-  const sameDesignRows = (o) => plan.rows.filter((x) => x.status !== "decided" && x.options.some((p) => p.id === o.id && !(p.known && !p.enough)));
+  // A row still on its default (sales' 1st choice) is not a decision yet, so "Use on all" may move it.
+  const sameDesignRows = (o) => plan.rows.filter((x) => (x.status !== "decided" || x.byDefault) && x.options.some((p) => p.id === o.id && !(p.known && !p.enough)));
   const [more, setMore] = useState(null); // key of the element whose "choose another design" picker is open
   const overNames = Object.keys(plan.over).map((id) => ({ id, ...plan.over[id], name: plan.rows.flatMap((r) => [...r.options, r.manual]).filter(Boolean).find((o) => o.id === id)?.name || id }));
   const unit = (r) => r.unit || "pcs";
@@ -38,7 +39,7 @@ export default function ElementChoicePlan({ plan, stockOf, onDecide, onDecideAll
         )}
         {plan.rows.map((r) => {
           const dec = [...r.options, r.manual].filter(Boolean).find((o) => o.id === r.decidedId);
-          const chip = r.status === "decided" ? { t: r.other ? "✓ Decided: arranged separately (not from stock)" : `✓ Decided: ${dec?.name || ""}${r.manual ? " (picked in Planning)" : ""}`, c: "bg-emerald-50 text-emerald-700 ring-emerald-100" }
+          const chip = r.status === "decided" ? { t: r.other ? "✓ Decided: arranged separately (not from stock)" : r.byDefault ? `✓ 1st choice (default): ${dec?.name || ""}` : `✓ Decided: ${dec?.name || ""}${r.manual ? " (picked in Planning)" : ""}`, c: "bg-emerald-50 text-emerald-700 ring-emerald-100" }
             : r.status === "short" ? { t: "None of the choices covers it", c: "bg-red-50 text-red-700 ring-red-100" }
             : { t: "Not decided yet", c: "bg-amber-50 text-amber-700 ring-amber-100" };
           const anyCovers = r.options.some((o) => o.enough);
@@ -68,7 +69,9 @@ export default function ElementChoicePlan({ plan, stockOf, onDecide, onDecideAll
                           {!on && r.suggestedId === o.id && !r.decidedId && <div className="text-[10.5px] font-semibold text-sky-700">Suggested</div>}
                         </div>
                       </div>
-                      {on
+                      {on && r.byDefault
+                        ? <div className="text-[12px] font-semibold rounded-md px-2 py-1 bg-emerald-50 text-emerald-700 ring-1 ring-emerald-300 text-center" title="Sales' 1st choice is used unless you choose another design">✓ 1st choice · default</div>
+                        : on
                         ? <button type="button" onClick={() => onUndo(r.key)} className="text-[12px] font-semibold rounded-md px-2 py-1 bg-emerald-600 text-white hover:bg-emerald-700 cursor-pointer" title="Chosen — tap to undo">✓ Using this · undo</button>
                         : <button type="button" disabled={o.known && !o.enough} onClick={() => onDecide(r, o)}
                             title={o.known && !o.enough ? `Short on this date — only ${Math.round(o.free)} free, the element needs ${r.qty}` : undefined}

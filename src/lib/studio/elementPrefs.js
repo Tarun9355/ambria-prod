@@ -68,3 +68,21 @@ export function applyChoicePicks(el, picks, items, makeId) {
   if (String(e.invId) !== String(list[0].id)) e = elementAfterPick(e, list[0].id, all.find((i) => i.id === list[0].id), all);
   return withChoices(e, list, makeId);
 }
+
+// ── CHOICES FOR A PART INSIDE A KIT ──
+// A kit element lists its parts ({ itemId, qty }, in el.kitOverrides once edited); a part that is an overlay or a cushion cover can name up to four designs
+// the same way an element can. The part's own item (itemId) is the 1st choice - what is priced and held - and `prefs` / `pid` sit on the part.
+export function partChoices(part) {
+  return elementChoices(part ? { invId: part.itemId, prefs: part.prefs } : null);
+}
+
+// What saving the choices picker does to a kit part: the 1st pick becomes the part's item, the picks become its choices (fewer than two = none, the
+// part keeps its pid so a decision saved for it stays valid).
+export function applyPartChoicePicks(part, picks, makeId) {
+  const list = Array.isArray(picks) ? picks.filter((p) => p && p.id) : [];
+  if (!part || !list.length) return part;
+  const next = { ...part, itemId: list[0].id };
+  const w = withChoices({ invId: list[0].id, pid: part.pid }, list, makeId);
+  if (w.prefs) { next.prefs = w.prefs; next.pid = w.pid; } else { delete next.prefs; }
+  return next;
+}

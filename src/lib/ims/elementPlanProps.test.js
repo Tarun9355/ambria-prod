@@ -69,14 +69,23 @@ describe("elementPlan invariants (randomized)", () => {
         if (row.status === "short") expect(row.options.some((o) => o.enough)).toBe(false);
         // decided means: one of the choices, a hand pick, or arranged separately — never a stale or foreign decision
         const d = w.choice[row.key];
-        if (row.status === "decided") {
+        const first = row.options[0];
+        const firstUsable = !!first && (first.enough || !first.known);
+        if (row.status === "decided" && row.byDefault) {
+          // no valid decision was saved: sales' 1st choice stands, and only when it is usable that day
+          expect(row.decidedId).toBe(first.id);
+          expect(firstUsable).toBe(true);
+          if (d && d.date === row.date && d.id && (d.other || d.manual || row.options.some((o) => o.id === d.id))) throw new Error("a valid decision was overridden by the default");
+        } else if (row.status === "decided") {
           expect(!!d).toBe(true);
           expect(d.date).toBe(row.date);
           if (row.other) expect(row.decidedId).toBe(null);
           else if (row.options.some((o) => o.id === row.decidedId)) expect(d.id).toBe(row.decidedId);
           else { expect(d.manual).toBe(true); expect(row.manual?.id).toBe(row.decidedId); }
-        } else if (d && d.date === row.date && d.id && (d.other || d.manual || row.options.some((o) => o.id === d.id))) {
-          throw new Error("a valid decision was ignored");
+        } else {
+          if (d && d.date === row.date && d.id && (d.other || d.manual || row.options.some((o) => o.id === d.id))) throw new Error("a valid decision was ignored");
+          // undecided only when the 1st choice cannot be used by default
+          expect(firstUsable).toBe(false);
         }
       });
       // over-commit is flagged exactly when the decided elements (and plain elements) on one date need more than is free
