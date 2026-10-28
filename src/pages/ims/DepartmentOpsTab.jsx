@@ -1018,6 +1018,14 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const [showFleet, setShowFleet] = useState(false); // toggle the own-fleet manager
   const [newVeh, setNewVeh] = useState({ vehicle: "", driver: "", phone: "" }); // new fleet entry
   const mandiCatalogue = useMemo(() => (Array.isArray(settings?.mandiCatalogue) ? settings.mandiCatalogue : []), [settings]);
+  // A mandi row's photo: the colour picked in Deal Check first, else the catalogue item's own
+  // photo, else its first variant with one — so a flower nobody picked a colour for still shows
+  // a picture instead of a blank box. Shared by the shopping-list print sheet and its on-screen row.
+  const mandiPhotoOf = (r) => {
+    if (r.colorVariant?.photoUrl) return r.colorVariant.photoUrl;
+    const c = mandiCatalogue.find(x => String(x.name || "").trim().toLowerCase() === String(r.name || "").trim().toLowerCase());
+    return c?.photoUrl || (c?.colorVariants || []).find(v => v.photoUrl)?.photoUrl || "";
+  };
   const flowerPatterns = useMemo(() => (Array.isArray(settings?.flowerPatterns) ? settings.flowerPatterns : []), [settings]);
 
   const eventDate = (eo) => eo?.functionsDetail?.[0]?.date || eo?.date || eo?.eventDate || "";
@@ -1877,13 +1885,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     if (!w) return;
     const esc = (v) => String(v ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
     const num = (v) => { const n = Number(v) || 0; return String(Math.round(n * 100) / 100); };
-    // Each flower with its photo, so the shopper can match it at the stall: the colour picked in
-    // Deal Check first, else the catalogue's own photo (or its first variant's).
-    const photoOf = (r) => {
-      if (r.colorVariant?.photoUrl) return r.colorVariant.photoUrl;
-      const c = mandiCatalogue.find(x => String(x.name || "").trim().toLowerCase() === String(r.name || "").trim().toLowerCase());
-      return c?.photoUrl || (c?.colorVariants || []).find(v => v.photoUrl)?.photoUrl || "";
-    };
+    // Each flower with its photo, so the shopper can match it at the stall (mandiPhotoOf above).
+    const photoOf = mandiPhotoOf;
     const rows = mandiRows.map((r, i) => {
       const sub = [
         r.colorVariant?.label ? `🎨 ${esc(r.colorVariant.label)}` : "",
@@ -6667,7 +6670,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                                         instead of the full row, so the line stopped well short of the
                                         numbers instead of reaching them. */}
                                     <div className="flex items-center gap-2 min-w-0">
-                                      {r.colorVariant?.photoUrl && <img src={thumbUrl(r.colorVariant.photoUrl, 28)} loading="lazy" decoding="async" alt={r.colorVariant.label || ""} onClick={() => setZoomImg(r.colorVariant.photoUrl)} className="w-7 h-7 rounded object-cover border border-gray-200 shrink-0 cursor-zoom-in" title={r.colorVariant.label || ""} />}
+                                      {(() => { const photo = mandiPhotoOf(r); return photo && <img src={thumbUrl(photo, 28)} loading="lazy" decoding="async" alt={r.colorVariant?.label || r.name || ""} onClick={() => setZoomImg(photo)} className="w-7 h-7 rounded object-cover border border-gray-200 shrink-0 cursor-zoom-in" title={r.colorVariant?.label || r.name || ""} />; })()}
                                       <span className="text-xs font-medium text-gray-800 truncate">{r.name}{r.colorVariant?.label && <span className="ml-1.5 font-normal text-[10px] text-purple-600">🎨 {r.colorVariant.label}</span>}</span>
                                       <span aria-hidden="true" className="flex-1 min-w-2 border-b border-dotted border-gray-300 mb-[3px]" />
                                     </div>
