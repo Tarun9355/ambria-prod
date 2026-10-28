@@ -541,7 +541,8 @@ export default function StudioEventInfo({ ctx }) {
   // Date asterisk in the function card.
   const missing = [
     !clientName.trim() && "Guest name",
-    !phoneOk && "Phone",
+    // Say what is wrong with it: a number typed one digit short read as "Missing - Phone" although the field was filled in.
+    !phoneOk && (phoneDigits.length ? `Phone (${phoneDigits.length} of 10 digits)` : "Phone"),
     !fn && "Event type",
     !clientDate && "Event date",
     // Venue and Shift join the gate. Both are load-bearing downstream, which is why asking for them
