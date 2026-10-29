@@ -264,7 +264,6 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                           : <> × {fmt((zc.noFabric?r.noFabricRate:r.rate)*gpm)}/sqft{zc.noFabric?" (no fabric)":""}</>}
                         {qty>1?` × ${qty}`:""}
                         {rowDiscount>0&&<span style={{color:"#10B981",fontWeight:600}}> − {fmt(rowDiscount)} venue discount</span>}
-                        {guestDisc>0&&<span style={{color:"#10B981",fontWeight:600}}> − {fmt(guestDisc)} ({guestDiscPct}% repeat discount)</span>}
                       </span>;
                     })()}
                   </div>
@@ -456,9 +455,6 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                           impossible to tell apart from a legitimately-zero one without opening devtools. */}
                       {showCosts&&<span style={{marginLeft:"auto",fontSize:12,fontWeight:600,color:textP}} title={`Liza + velvet curtains${wallPanelCost>0?` + wall fabric pieces ${fmt(wallPanelCost)}`:""} for a ${zc.drapeDensity||"moderate"} drape, ${zc.useNewFabric?"New":"Old"} stock${ceilingShown>0?" (the ceiling panel's own cost is on the Drape card)":""}`}>{fmt(fabricShown)}</span>}
                     </div>
-                    {showCosts&&fabricRepOff>0&&<div style={{fontSize:10.5,color:textS,marginTop:4}}>
-                      <span style={{color:"#10B981",fontWeight:600}}> − {fmt(fabricRepOff)} ({guestFabricDiscPct}% repeat discount)</span>
-                    </div>}
                     {/* A bare frame: the truss bills at IMS's "Without fabric" rate and no Liza,
                         curtains or masking pieces are counted (see calcZoneFabric/trussRowCost). */}
                     <span onClick={()=>sZ({noFabric:!zc.noFabric})} style={{...optPill(!!zc.noFabric),marginTop:6,display:"inline-flex"}}
