@@ -3944,6 +3944,8 @@ export default function StudioApp() {
           // The Flower Palette too — set at booking and never refreshed, so a palette changed after the deal was
           // booked never reached the Floral book. Written as it stands (an emptied palette clears it).
           flowerPalette: fd.fnFlowerPalette || "",
+          // and the real/artificial floral slider (floralRatio = the artificial share), likewise set at booking only until now.
+          ...(typeof fd.floralRatio === "number" ? { floralRatio: fd.floralRatio } : {}),
         });
       });
     } catch { /* layout refresh is best-effort — the money snapshot still goes */ }
