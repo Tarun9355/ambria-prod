@@ -4102,7 +4102,11 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         }
         if (it.kit > 0) {
           const kb = kitBlocksByName.get(String(it.name || "").trim().toLowerCase());
-          if (kb) blocks.push({ h: detailH(kb.parts), html: detailCard("📦", it.name, kb.qty, "", kb.parts) });
+          // kb holds the whole EVENT's kits (its parts are totals for all of them) — the zone's page needs this zone's own
+          // count and its share of the parts (Stage with 2 consoles printed "Qty 3" and 3 kits' parts when Mehendi had the 3rd).
+          const zq = Number(it.qty) || 0, tq = Number(kb?.qty) || 0;
+          const parts = !kb ? [] : zq > 0 && tq > 0 && zq !== tq ? kb.parts.map(p => ({ ...p, qty: Math.round((Number(p.qty) || 0) * zq / tq * 100) / 100 })) : kb.parts;
+          if (kb) blocks.push({ h: detailH(parts), html: detailCard("📦", it.name, zq > 0 && tq > 0 ? zq : kb.qty, "", parts) });
         }
       });
       if (!blocks.length) return [];
