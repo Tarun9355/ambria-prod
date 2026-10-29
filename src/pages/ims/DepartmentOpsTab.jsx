@@ -3868,6 +3868,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         zonePages.push({
           zk,
           fi,
+          fnIdx: fn?.fnIdx ?? fi,
           fnType: fn.type || `Function ${fi + 1}`,
           fnDate: fn.date || "",
           title: zoneName(zk, fn),
@@ -4151,6 +4152,21 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           if (kb) blocks.push({ h: detailH(parts), html: detailCard("📦", it.name, zq > 0 && tq > 0 ? zq : kb.qty, "", parts) });
         }
       });
+      // This zone's artificial bunches (Floral book): per arrangement, then the zone's totals worked to kilos (bunches ÷ bunches per kg).
+      const zArt = artPlan ? (sel?.floralDetail?.[pg.fnIdx]?.artZones || []).filter(a => a.zone === pg.zk) : [];
+      if (zArt.length) {
+        const rd = (n) => Math.round(n * 100) / 100;
+        const fB = zArt.reduce((s, a) => s + (a.flower || 0), 0), gB = zArt.reduce((s, a) => s + (a.green || 0), 0);
+        const parts = [
+          ...zArt.flatMap(a => [
+            ...(a.flower > 0 ? [{ name: `${a.el}${a.qty > 1 ? ` ×${a.qty}` : ""} — flowers`, qty: a.flower, unit: "bunches" }] : []),
+            ...(a.green > 0 ? [{ name: `${a.el}${a.qty > 1 ? ` ×${a.qty}` : ""} — greens`, qty: a.green, unit: "bunches" }] : []),
+          ]),
+          ...(fB > 0 && artPlan.flowerBPK > 0 ? [{ name: `Flower bunches ${rd(fB)} ÷ ${artPlan.flowerBPK} per kg`, qty: rd(fB / artPlan.flowerBPK), unit: "kg" }] : []),
+          ...(gB > 0 && artPlan.greenBPK > 0 ? [{ name: `Green bunches ${rd(gB)} ÷ ${artPlan.greenBPK} per kg`, qty: rd(gB / artPlan.greenBPK), unit: "kg" }] : []),
+        ];
+        blocks.push({ h: detailH(parts), html: detailCard("🌺", "Artificial flowers & greens", "", "", parts) });
+      }
       if (!blocks.length) return [];
       const dChunks = [];
       blocks.forEach(b => {

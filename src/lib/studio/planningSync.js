@@ -41,8 +41,9 @@ export function planningUpcoming(eo, now = Date.now()) {
 // contain the matching keyword) never crediting Tenting. v9: Truss's pillar count and Platform's
 // piece count now feed the Labours usage floor too (tentingZoneUsage) — neither is ever a zone
 // element, so they were invisible to the split before this, even though both were configured in
-// Heavy Element Add-ons; Tenting's Labours share can finally be nonzero.
-export const PLANNING_SNAPSHOT_VERSION = 9;
+// Heavy Element Add-ons; Tenting's Labours share can finally be nonzero. v10: the Florals detail
+// also lists the artificial bunches per zone (floralDetail[fn].artZones), for the Dept Ops PDF's zone pages.
+export const PLANNING_SNAPSHOT_VERSION = 10;
 const PLANNING_SNAPSHOT_SHIPPED_AT = Date.parse("2026-10-27T11:50:00Z");
 export const planningSnapshotOutdated = (eo) => (Number(eo?.deptSnapVer) || 1) < PLANNING_SNAPSHOT_VERSION;
 
