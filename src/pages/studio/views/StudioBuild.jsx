@@ -1003,7 +1003,7 @@ export default function StudioBuild({ ctx }) {
     studioFloralData, sharedFloralSettings, venueParents, loadAvailability, getStudioAvailable, activeBlocksForDate, openAvailModal,
     activeFnIdx, collectAllFunctionData, rcSubcatFactors, rcFactorByKey, rcFloralModeByKey,
     // Build's kit edits also land in Deal Check's own per-card copy (see the kit editor below).
-    setDcKitEdits, buildElCardKey,
+    setDcKitEdits, persistDcKitEditsNow, buildElCardKey,
     // palette / colour catalogues
     imsPaletteCatalogue, imsColourCatalogue, setImsPaletteCatalogue, savePaletteData,
     // venues (for named-venue correction + the zone-photo Venue pill filter)
@@ -5076,7 +5076,7 @@ undefined
                         // dept head, and could be undone the next time Deal Check opened. The edit is
                         // copied across the moment it is made; a reset (undefined) clears it to null,
                         // Deal Check's "back to the kit's default" marker.
-                        if(setDcKitEdits&&buildElCardKey&&el.invId){const ck=buildElCardKey(k,el.name||"",idx);const fi=activeFnIdx||0;setDcKitEdits(prev=>({...prev,[fi]:{...(prev?.[fi]||{}),[ck]:Array.isArray(next)?next:null}}));}}}
+                        if(setDcKitEdits&&buildElCardKey&&el.invId){const ck=buildElCardKey(k,el.name||"",idx);const fi=activeFnIdx||0;setDcKitEdits(prev=>({...prev,[fi]:{...(prev?.[fi]||{}),[ck]:Array.isArray(next)?next:null}}));persistDcKitEditsNow?.(fi,ck,next);}}}
                       imsInventory={imsInventory}
                       // sharedFloralSettings (StudioApp.jsx), not the raw dealCheckData||studioFloralData
                       // fallback — that older pattern prefers dealCheckData the instant Deal Check has

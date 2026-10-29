@@ -41,6 +41,7 @@ import { dealAgencyFeePct, feePctOf, DEFAULT_AGENCY_FEE_PCT } from "../../lib/st
 import { sameVenueHolds, siblingCarpetUse } from "../../lib/studio/carpetReuse";
 import { elementAfterPick } from "../../lib/studio/elementPick";
 import { printSqftOf, smallPrintFlat, printFlatForZone, PRINT_TRUCK_SUB } from "../../lib/studio/truckPrint";
+import { withKitEdit } from "../../lib/studio/dealCheckSync";
 import { itemTakesChoices } from "../../lib/studio/elementPrefs";
 import { findCrossFnReuseSource, computeFnInvQty, findSiblingFnInvUse, findSiblingFnSubcatOpportunity } from "../../lib/studio/crossFnReuse";
 import { computeFnFloralCost, buildMandiBreakdown } from "../../lib/studio/floralCost";
@@ -8165,6 +8166,20 @@ export default function StudioApp() {
     setDcCustomItems(updater);
     setTimeout(() => autoSaveBuild({ edited: true }), 0);
   }, [autoSaveBuild]);
+  // A kit's parts changed in Build (a swapped part, a count, a named design) are copied into Deal Check's own per-card copy (dcKitEdits) - and that copy has to
+  // reach the database NOW. Deal Check's autosave only writes it while Deal Check has run in this visit, so a swap made in Build on a reopened deal stayed in
+  // memory only: the next reopen restored the OLD dcKitEdits from the client row and the kit came back with its old parts (and Deal Check's sync writes that
+  // copy over Build's). Writes just this field, from the freshest copy (Deal Check's live state, else the row), through the same ledger save Deal Check uses.
+  const persistDcKitEditsNow = useCallback((fnIdx, cardKey, comps) => {
+    const id = activeClientIdRef.current;
+    const cur = clientLedgerRef.current || [];
+    const c = cur.find((x) => x.id === id);
+    if (!c) return;
+    const live = dcStateRef.current?.dcKitEdits;
+    const base = (live && Object.keys(live).length) ? live : c.dcKitEdits;
+    const next = withKitEdit(base, fnIdx, cardKey, comps);
+    try { saveClientLedger(cur.map((x) => (x.id === id ? { ...x, dcKitEdits: next } : x))); } catch { /* best effort: Deal Check's own autosave still carries it */ }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   // 1) Debounced on edits.
   useEffect(() => {
     if (!buildHasDataRef.current) return;
@@ -12090,7 +12105,7 @@ export default function StudioApp() {
     dcPhotoOverrides, setDcPhotoOverrides, dcSkipped, setDcSkipped, dcProductionAccepted, setDcProductionAccepted, dcManualItems, setDcManualItems,
     dcManualSearch, setDcManualSearch, dcDedupOverrides, setDcDedupOverrides, dcBlockedFnOpen, setDcBlockedFnOpen, dcBlockedSubOpen, setDcBlockedSubOpen,
     dcFloralExpanded, setDcFloralExpanded, dcFloralUnmatchedExpanded, setDcFloralUnmatchedExpanded, dcResolved, setDcResolved, dcResolving, setDcResolving, dcAbortRef, setDcAbortRef,
-    dcFullPageOpen, setDcFullPageOpen, closeDealCheck, syncDeptOpsHeadless, finishDcHeadless, dcCards, setDcCards, dcZoneState, setDcZoneState, dcKitEdits, setDcKitEdits, buildElCardKey, dcCarpetPick, setDcCarpetPick, dcCarpetSplit, setDcCarpetSplit,
+    dcFullPageOpen, setDcFullPageOpen, closeDealCheck, syncDeptOpsHeadless, finishDcHeadless, dcCards, setDcCards, dcZoneState, setDcZoneState, dcKitEdits, setDcKitEdits, persistDcKitEditsNow, buildElCardKey, dcCarpetPick, setDcCarpetPick, dcCarpetSplit, setDcCarpetSplit,
     dcCarpetSearch, setDcCarpetSearch, dcDesiredMargin, setDcDesiredMargin, dcRunCounter, setDcRunCounter, dcCache, setDcCache, dcGenerating, setDcGenerating,
     dcSaveBaselineRef, dcConflictWarnedAtRef, dcStateReadyForClientRef,
     dcGenStatus, setDcGenStatus, dcActiveTab, setDcActiveTab, dcShowAllFns, setDcShowAllFns, dcCollapsedFnBlocks, setDcCollapsedFnBlocks, dcMpOverrides, setDcMpOverrides, dcMpWinCount, setDcMpWinCount, dcMpIncludeMinusOne, setDcMpIncludeMinusOne,

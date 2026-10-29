@@ -100,6 +100,13 @@ export function syncKitOverridesToBuild(zoneElements, parsed, comps, cardKey) {
   return cloneZone(zoneElements, parsed.zoneKey, nextArr);
 }
 
+// Deal Check's per-card kit edits ({ [fnIdx]: { [cardKey]: comps } }) with one card's parts set from Build. An array sets them; anything else is the
+// "back to the kit's default" marker (null). Pure: the same shape Build already writes into Deal Check's state (StudioBuild's kit editor).
+export function withKitEdit(allEdits, fnIdx, cardKey, comps) {
+  const base = (allEdits && typeof allEdits === "object" && !Array.isArray(allEdits)) ? allEdits : {};
+  return { ...base, [fnIdx]: { ...(base[fnIdx] || {}), [cardKey]: Array.isArray(comps) ? comps : null } };
+}
+
 // A manual item is OWNED by Deal Check — it has no independent life in Build, so this both
 // creates it there (tagged _dcManualId for idempotent re-sync) and keeps it updated.
 export function syncManualItemToBuild(zoneElements, zoneKey, manualItem, pickItem) {
