@@ -4113,13 +4113,13 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       const dChunks = [];
       blocks.forEach(b => {
         const last = dChunks[dChunks.length - 1];
-        if (!last || last.h + b.h > PAGE_PX - HEAD_PX) dChunks.push({ h: b.h, list: [b] });
+        if (!last || last.h + b.h > PAGE_PX - CONT_HEAD_PX) dChunks.push({ h: b.h, list: [b] });
         else { last.h += b.h; last.list.push(b); }
       });
-      return dChunks.map((pgk, i, all) => `<section data-block data-page class="zp"><div class="pc tl"></div><div class="pc tr"></div>
-          <div class="zh"><div><div class="zk"><b>Mandi &amp; Kits</b>${all.length > 1 ? ` · Part ${i + 1} of ${all.length}` : ""}</div><h2>${esc(pg.title)}</h2>
-            <div class="orn l"><i></i><b></b><i></i></div>
-            <div class="zm">${pg.fnLabel ? esc(pg.fnLabel) + " — " : ""}Full flower list for each recipe and full parts list for each kit in this zone</div></div></div>
+      // No header: these pages follow their own zone's page, which already names the zone, function and date —
+      // like a zone's later pages, just clear space under the corner brackets (owner ask: nothing repeats).
+      return dChunks.map(pgk => `<section data-block data-page class="zp"><div class="pc tl"></div><div class="pc tr"></div>
+          <div style="height:${CONT_GAP}px"></div>
           ${pgk.list.map(b => b.html).join("")}
         </section>`);
     };
