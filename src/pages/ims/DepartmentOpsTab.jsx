@@ -3675,10 +3675,12 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         ...extraPl.map(r => [platLbl(r?.plH, r?.plHft), ftArea(r?.floorDims)].filter(Boolean).join(" · ")),
       ].filter(Boolean);
       if (plats.length) out.push({ k: "Platform", v: plats.join("; ") });
-      if (z.cpT) out.push({ k: "Carpet", v: [carpetName(z.cpT), floor].filter(Boolean).join(" · ") });
+      // "— None —" is stored as the CARPET_OFF sentinel: no carpet, so no Carpet chip (it printed "Carpet __off__")
+      const hasCarpet = !!z.cpT && z.cpT !== CARPET_OFF;
+      if (hasCarpet) out.push({ k: "Carpet", v: [carpetName(z.cpT), floor].filter(Boolean).join(" · ") });
       // Masking hangs on a truss — with no sized truss there is nothing to mask (and nothing billed).
       if (z.mkOn && (hasTruss || sizedExtra.length)) out.push({ k: "Masking", v: "Yes" });
-      if (!z.plH && !z.cpT && floor) out.push({ k: "Floor", v: floor });
+      if (!z.plH && !hasCarpet && floor) out.push({ k: "Floor", v: floor });
       return out;
     };
     fns.forEach((fn, fi) => {
