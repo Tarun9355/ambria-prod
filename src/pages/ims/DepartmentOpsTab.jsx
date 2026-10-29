@@ -4093,6 +4093,17 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     </div>`; };
     // One page (or more, if a zone's own recipes+kits don't fit one sheet) per zone, built right
     // after that zone's card pages in the loop below — never bundled with any OTHER zone's.
+    // Every zone card holding this kit, in book order, with its count.
+    const kitHolders = (key) => zonePages.flatMap(zp => (zp.items || []).filter(x => x.kit > 0 && String(x.name || "").trim().toLowerCase() === key).map(x => ({ it: x, q: Number(x.qty) || 0 })));
+    // Splits a whole-piece total across zones by their kit counts, in whole pieces that still add up to the total
+    // (largest remainder): 2 cushion covers over 2 + 1 consoles → 1 and 1, not 1.33 and 0.67.
+    const wholeShares = (total, qs) => {
+      const sum = qs.reduce((s, q) => s + q, 0);
+      const raw = qs.map(q => total * q / sum), out = raw.map(Math.floor);
+      let left = total - out.reduce((s, v) => s + v, 0);
+      raw.map((r, i) => [r - out[i], i]).sort((a, b) => b[0] - a[0]).forEach(([, i]) => { if (left > 0) { out[i]++; left--; } });
+      return out;
+    };
     const zoneDetailPages = (pg) => {
       const blocks = [];
       (pg.items || []).forEach(it => {
@@ -4101,11 +4112,20 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           blocks.push({ h: detailH(parts), html: detailCard("🌸", it.name, it.qty, it.unit, parts) });
         }
         if (it.kit > 0) {
-          const kb = kitBlocksByName.get(String(it.name || "").trim().toLowerCase());
+          const key = String(it.name || "").trim().toLowerCase();
+          const kb = kitBlocksByName.get(key);
           // kb holds the whole EVENT's kits (its parts are totals for all of them) — the zone's page needs this zone's own
           // count and its share of the parts (Stage with 2 consoles printed "Qty 3" and 3 kits' parts when Mehendi had the 3rd).
+          // Pieces split in whole numbers when the zones account for every kit; a part in a unit (flowers) splits exactly.
           const zq = Number(it.qty) || 0, tq = Number(kb?.qty) || 0;
-          const parts = !kb ? [] : zq > 0 && tq > 0 && zq !== tq ? kb.parts.map(p => ({ ...p, qty: Math.round((Number(p.qty) || 0) * zq / tq * 100) / 100 })) : kb.parts;
+          const holders = kitHolders(key), at = holders.findIndex(h => h.it === it);
+          const whole = at >= 0 && holders.reduce((s, h) => s + h.q, 0) === tq;
+          const share = (p) => {
+            const t = Number(p.qty) || 0;
+            if (whole && !p.unit && Number.isInteger(t)) return wholeShares(t, holders.map(h => h.q))[at];
+            return Math.round(t * zq / tq * 100) / 100;
+          };
+          const parts = !kb ? [] : zq > 0 && tq > 0 && zq !== tq ? kb.parts.map(p => ({ ...p, qty: share(p) })).filter(p => p.qty > 0) : kb.parts;
           if (kb) blocks.push({ h: detailH(parts), html: detailCard("📦", it.name, zq > 0 && tq > 0 ? zq : kb.qty, "", parts) });
         }
       });
