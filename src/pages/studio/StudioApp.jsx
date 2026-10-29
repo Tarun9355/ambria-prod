@@ -3941,6 +3941,9 @@ export default function StudioApp() {
           ...(fd.fnType ? { type: fd.fnType } : {}),
           ...(fd.fnDate ? { date: fd.fnDate } : {}),
           ...(fd.fnVenue ? { venue: fd.fnVenue } : {}),
+          // The Flower Palette too — set at booking and never refreshed, so a palette changed after the deal was
+          // booked never reached the Floral book. Written as it stands (an emptied palette clears it).
+          flowerPalette: fd.fnFlowerPalette || "",
         });
       });
     } catch { /* layout refresh is best-effort — the money snapshot still goes */ }

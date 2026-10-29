@@ -2,7 +2,8 @@ import { useState, useMemo, useEffect, useRef, Fragment } from "react";
 import { createPortal } from "react-dom";
 import { withSetupSlot } from "../../lib/studio/dihariWindows.js";
 import { fmt } from "../../lib/format";
-import { mpDayWise, mpBaseDay, mpEffDay, mpEffWindows, mpLineCost, mpDayCost, mpDayDihari, aggregateEventManpower, isLiveEventOrder, phone10, walkKitUnits } from "../../lib/ims/helpers";
+import { mpDayWise, mpBaseDay, mpEffDay, mpEffWindows, mpLineCost, mpDayCost, mpDayDihari, aggregateEventManpower, isLiveEventOrder, phone10, walkKitUnits, flowerPaletteHexFor } from "../../lib/ims/helpers";
+import { parseFlowerPalette } from "../../lib/studio/pricing";
 import { uploadAudioToStorage } from "../../lib/storage";
 import { DEPTS as SHARED_DEPTS, catToDept as sharedCatToDept, userDepartments, poolLabourDept, poolLabourDeptLabel } from "../../lib/ims/deptClassify";
 import { TabsMenu, useConfirm } from "../../components/ui";
@@ -3826,6 +3827,12 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         // The only zone still worth skipping is one with nothing to put on the page at all: none
         // of our items, no reference photo and no dimensions. That page would be a heading.
         const zStruct = zoneStructOf(zCfg);
+        // ── THE FLOWER PALETTE ── what Build set for this function's flowers ("Maroon:60, White:40"), on every zone page of the
+        // Floral book (and the combined one), each colour as a dot with its share — the colours the florists are building in.
+        if ((dept === "Floral" || combined) && fn?.flowerPalette) {
+          const cols = parseFlowerPalette(fn.flowerPalette);
+          if (cols.length) zStruct.push({ k: "Flower palette", html: cols.map(c => `<b class="fpc"><i style="background:${esc(flowerPaletteHexFor(c.name))}"></i>${esc(c.name)} ${esc(c.pct)}%</b>`).join("") });
+        }
         // First, not last: a zone with more than six items splits across pages, and a print
         // appended at the end landed on the zone's second page, away from the one the crew opens.
         items.unshift(...printCardsOf(zCfg), ...carpetCardsOf(zCfg, fn?.fnIdx ?? fi, zk, fn));
@@ -4001,7 +4008,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
             <div class="zm">${esc(pg.fnLabel || selDateStr || "")}</div></div>
           <div class="zt">${pg.zoneDims ? `<span><i class="zl">${esc(pg.dimsOf)}</i>${esc(pg.zoneDims)}</span>` : ""}<span>${zoneCountText(pg)}</span></div>
         </div>`}
-        ${(pg.struct || []).length ? `<div class="zst">${pg.struct.map(c => `<span><i class="zl">${esc(c.k)}</i>${esc(c.v)}</span>`).join("")}</div>` : ""}
+        ${(pg.struct || []).length ? `<div class="zst">${pg.struct.map(c => `<span><i class="zl">${esc(c.k)}</i>${c.html != null ? c.html : esc(c.v)}</span>`).join("")}</div>` : ""}
         <div class="zs" style="height:${stageH}px">
           <div class="zphoto" style="top:${photoTop}px;height:${PHOTO_H}px;${bgCss(pg.photo)}" ${bgData(pg.photo)}>${pg.photo ? "" : "<span>No zone photo</span>"}</div>
           ${cards}
@@ -4392,6 +4399,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   .zst{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 12px}
   .zst span{box-sizing:border-box;height:30px;line-height:30px;padding:0 12px;font-size:12px;font-weight:700;color:#1A1A1A;background:#EFE9DC;border:1px solid #DDD4C2;border-radius:8px;white-space:nowrap}
   .zst .zl{font-style:normal;font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#7A7263;margin-right:7px}
+  /* Flower palette colours: a dot in the colour, then its name and share. */
+  .zst .fpc{font-weight:700;margin-right:10px}
+  .zst .fpc:last-child{margin-right:0}
+  .zst .fpc i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;vertical-align:-1px;border:1px solid rgba(0,0,0,.18)}
   .zt .zl{font-style:normal;font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#7A7263;margin-right:7px}
   .zs{position:relative;width:706px}
   /* The zone photo is mounted like a print: a white mat and a gold hairline, lifted off the
