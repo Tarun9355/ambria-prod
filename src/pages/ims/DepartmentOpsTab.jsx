@@ -3919,6 +3919,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     // HEAD_PX covers the section's own padding plus the header card (eyebrow, title, ornament,
     // date) and the gap under it — so header + card rows + photo add up to exactly one page.
     const CARD_W = 224, COL_GAP = 17, ROW_H = 300, ARROW = 40, PAGE_PX = 1020, HEAD_PX = 186;
+    // A zone that runs over more than one page names itself on its FIRST page only (header: "Zone 03 · Part 1 of 3", the name, the date, the counts); the later
+    // pages of the same zone have no header, just a little clear space under the corner brackets, and the photo takes the height the header gave up.
+    const CONT_GAP = 34, CONT_HEAD_PX = 20 + CONT_GAP;
     const colX = (i, n) => { const span = n * CARD_W + (n - 1) * COL_GAP; return (706 - span) / 2 + i * (CARD_W + COL_GAP); };
     // No photo → no empty "No photo" box, just the details (owner ask). The card then sizes to its
     // text (np); nb makes room at the top for the size/kit tags the photo used to sit under.
@@ -3977,7 +3980,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       const rows = bot.length ? 2 : 1;
       // The structure strip under the header takes its height out of the photo, so the page still
       // adds up to exactly one sheet.
-      const headPx = HEAD_PX + ((pg.struct || []).length ? 44 : 0);
+      const cont = part > 1; // a later page of a zone that is already named
+      const headPx = (cont ? CONT_HEAD_PX : HEAD_PX) + ((pg.struct || []).length ? 44 : 0);
       const PHOTO_H = bare ? PAGE_PX - headPx : Math.max(260, PAGE_PX - headPx - rows * (ROW_H + ARROW));
       const photoTop = bare ? 0 : ROW_H + ARROW;
       const botTop = photoTop + PHOTO_H + ARROW;
@@ -3991,12 +3995,12 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           <div class="za up" style="left:${x + CARD_W / 2 - 1}px;top:${photoTop + PHOTO_H}px;height:${ARROW}px"></div>`; }),
       ].join("");
       return `<section data-block data-page class="zp"><div class="pc tl"></div><div class="pc tr"></div>
-        <div class="zh">
+        ${cont ? `<div style="height:${CONT_GAP}px"></div>` : `<div class="zh">
           <div><div class="zk"><b>Zone ${String(zoneNo).padStart(2, "0")}</b>${parts > 1 ? ` · Part ${part} of ${parts}` : ""}</div><h2>${esc(pg.title)}</h2>
             <div class="orn l"><i></i><b></b><i></i></div>
             <div class="zm">${esc(pg.fnLabel || selDateStr || "")}</div></div>
           <div class="zt">${pg.zoneDims ? `<span><i class="zl">${esc(pg.dimsOf)}</i>${esc(pg.zoneDims)}</span>` : ""}<span>${zoneCountText(pg)}</span></div>
-        </div>
+        </div>`}
         ${(pg.struct || []).length ? `<div class="zst">${pg.struct.map(c => `<span><i class="zl">${esc(c.k)}</i>${esc(c.v)}</span>`).join("")}</div>` : ""}
         <div class="zs" style="height:${stageH}px">
           <div class="zphoto" style="top:${photoTop}px;height:${PHOTO_H}px;${bgCss(pg.photo)}" ${bgData(pg.photo)}>${pg.photo ? "" : "<span>No zone photo</span>"}</div>
