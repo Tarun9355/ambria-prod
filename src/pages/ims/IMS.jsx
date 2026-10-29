@@ -1970,6 +1970,7 @@ export default function IMS() {
             settings={settings} studio={studio}
             rateCardCategories={rateCardCategories} authUser={user}
             eventOrders={eventOrders}
+            blocks={blocks} setBlocks={setBlocks} saveBlocks={saveBlocks}
           />
         ) : activeTab === "admin" ? (
           <AdminTab

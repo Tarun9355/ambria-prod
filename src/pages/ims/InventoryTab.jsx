@@ -12,8 +12,9 @@ import { studioUnitLabel } from "../../lib/ims/flowerHelpers";
 import { itemDimsText } from "../../lib/ims/helpers";
 import { catToDept, canSeeDept } from "../../lib/ims/deptClassify";
 import ItemHoverThumb from "../../components/shared/ItemHoverThumb";
+import { addBlock, getAvailableQty } from "../../lib/ims/eventAutoConfirm";
 
-export default function InventoryTab({ inventory, setInventory, functions, setFunctions, categories, setCategories, settings, studio, rateCardCategories = [], authUser, eventOrders = [] }) {
+export default function InventoryTab({ inventory, setInventory, functions, setFunctions, categories, setCategories, settings, studio, rateCardCategories = [], authUser, eventOrders = [], blocks, setBlocks, saveBlocks }) {
   const canAdd = hasIMSPerm(authUser, "inv_add");
   const canDelete = hasIMSPerm(authUser, "inv_delete");
   const canImages = hasIMSPerm(authUser, "inv_images");
@@ -653,14 +654,25 @@ Rules:
     setEditForm({});
   }
 
+  // Blocks the item for the SELECTED FUNCTION'S OWN DATE only, via the real dated `blocks` table —
+  // not the flat `inventory.blocked` counter. `blocked` has no date and nothing ever decrements it
+  // (see getAvailableQty/getStudioAvailable, which subtract it unconditionally on every date,
+  // forever), so a block made here for one function used to sit there reducing availability for
+  // every OTHER date too, with no way to release it short of editing the row directly. Writing a
+  // dated entry instead makes this indistinguishable from any other reservation (confirmed/held,
+  // same table Studio/Deal Check/Calendar already read) — scoped to this one date, and releasable
+  // the same way (releaseBlocks, or the block's own status flipping to "released").
   function blockItem() {
     if (!canBlock) return;
     const inv = inventory.find((i) => i.id === blockModal);
-    if (!inv || !blockForm.fnId) return;
+    const fn = functions.find((f) => f.id === blockForm.fnId);
+    if (!inv || !fn) return;
     const qty = parseInt(blockForm.qty) || 1;
-    if (qty > (inv.qty - (inv.blocked || 0))) { alert("Insufficient available qty"); return; }
+    if (qty > getAvailableQty(inv, blocks, fn.date)) { alert("Insufficient available qty for this function's date"); return; }
     const sizeClass = String(blockForm.sizeClass || "M").toUpperCase();
-    setInventory((prev) => prev.map((i) => i.id === blockModal ? { ...i, blocked: (i.blocked || 0) + qty } : i));
+    const newBlocks = addBlock(blocks, blockModal, fn.date, fn.eventOrderId || fn.id, qty, "confirmed");
+    setBlocks(newBlocks);
+    saveBlocks?.(newBlocks);
     setFunctions((prev) => prev.map((f) => f.id === blockForm.fnId ? { ...f, items: [...f.items, { invId: blockModal, qty, dept: blockForm.dept, remark: blockForm.remark, sizeClass }] } : f));
     setBlockModal(null);
     setBlockForm({ fnId: "", qty: 1, dept: "Flower", remark: "", sizeClass: "M" });
@@ -677,14 +689,20 @@ Rules:
   }
   function updateBulkItem(id, field, val) { setBulkSel((prev) => ({ ...prev, [id]: { ...prev[id], [field]: val } })); }
 
+  // Same fix as blockItem above — dated `blocks` entries for bulkFnId's own date, not the
+  // permanent, date-less `inventory.blocked` counter.
   function submitBulk() {
     if (!bulkFnId) return;
+    const fn = functions.find((f) => f.id === bulkFnId);
+    if (!fn) return;
     const entries = Object.entries(bulkSel);
     if (!entries.length) return;
-    setInventory((prev) => prev.map((i) => {
-      const entry = bulkSel[i.id];
-      return entry ? { ...i, blocked: (i.blocked || 0) + parseInt(entry.qty || 1) } : i;
-    }));
+    let newBlocks = blocks;
+    entries.forEach(([invId, e]) => {
+      newBlocks = addBlock(newBlocks, invId, fn.date, fn.eventOrderId || fn.id, parseInt(e.qty || 1), "confirmed");
+    });
+    setBlocks(newBlocks);
+    saveBlocks?.(newBlocks);
     setFunctions((prev) => prev.map((f) => f.id === bulkFnId ? { ...f, items: [...f.items, ...entries.map(([invId, e]) => ({ invId, qty: parseInt(e.qty || 1), dept: e.dept, remark: e.remark }))] } : f));
     setBulkModal(false); setBulkFnId(""); setBulkSel({}); setBulkSearch("");
   }
@@ -1981,12 +1999,15 @@ Rules:
       <Modal open={!!blockModal} onClose={() => setBlockModal(null)} title={`🔒 Block — ${blockInv?.name || ""}`}>
         <div className="space-y-3">
           {(() => {
-            const avail = blockInv ? (blockInv.qty - (blockInv.blocked || 0)) : 0;
+            const selFn = blockForm.fnId ? functions.find((f) => f.id === blockForm.fnId) : null;
+            // Date-aware — not blockInv.qty - blocked. Before a function is picked there's no date
+            // to check yet, so this falls back to the item's un-dated baseline (whole stock minus
+            // only the permanent, date-less `blocked` count) as a neutral preview.
+            const avail = blockInv ? getAvailableQty(blockInv, blocks, selFn?.date || "") : 0;
             const needed = parseInt(blockForm.qty) || 1;
             const isShort = avail < needed;
-            const isZero = avail === 0;
+            const isZero = avail <= 0;
             const alts = blockInv ? findAlternatives(blockInv, inventory, needed, blockInv.id) : [];
-            const selFn = blockForm.fnId ? functions.find((f) => f.id === blockForm.fnId) : null;
             const pricing = blockInv && selFn ? getEffectivePricing(blockInv.price || 0, selFn.date, settings) : null;
             return (<>
               {/* Stock status */}

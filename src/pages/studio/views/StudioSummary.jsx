@@ -215,6 +215,9 @@ export default function StudioSummary({ ctx }) {
     imsInventory, imsColourCatalogue, imsPaletteCatalogue,
     // build canvas / source
     sourceEvent, dcCustomItems, elNotes, fnBuilds, activeFnIdx, zoneLabelsD,
+    // video master (a deck made for a deal whose build came from a video also gets attached to the
+    // video itself — see sendToCanva's success branch below)
+    sourceVideo, saveYtTags, ytVideoTags,
     // sold flow
     showSoldConfetti, markSold, applyBookedChanges,
     // step + reset. The 48 individual setters that used to be listed here existed only to feed the
@@ -2299,7 +2302,20 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
       for (let i = 0; i < 24; i++) {
         await new Promise((r) => setTimeout(r, 2500));
         const res = await canvaPollImport(jobId);
-        if (res.status === "success") { setCanvaEditUrl(res.editUrl); setCanvaState("ready"); setCanvaDeckId(res.designId || ""); setCanvaDeckSig(deckSig); setDeckGlow(true); rememberDeck(res.editUrl, res.thumbnailUrl, res.designId, deckSig); return; }
+        if (res.status === "success") {
+          setCanvaEditUrl(res.editUrl); setCanvaState("ready"); setCanvaDeckId(res.designId || ""); setCanvaDeckSig(deckSig); setDeckGlow(true); rememberDeck(res.editUrl, res.thumbnailUrl, res.designId, deckSig);
+          // This deal's active function was built from a video that already has a saved master (see
+          // Build's "Save to Video Master") — the deck just made for this deal doubles as that
+          // video's own deck too, so the next person who customizes it can open the same PPT
+          // instead of generating a fresh one. Only ever an attach, never required — a deal with no
+          // video source, or a video with no master yet, just skips this silently.
+          if (sourceVideo?.id && ytVideoTags[sourceVideo.id]?.masterBuild) {
+            saveYtTags({
+              [sourceVideo.id]: (prev) => ({ ...(prev || {}), canvaEditUrl: res.editUrl, canvaDesignId: res.designId || "", canvaDeckSig: deckSig }),
+            });
+          }
+          return;
+        }
         if (res.status === "failed") { setCanvaState("error"); setCanvaError(res.error || "Canva import failed"); return; }
       }
       setCanvaState("error"); setCanvaError("Timed out waiting for Canva — try again");

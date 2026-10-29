@@ -7626,7 +7626,18 @@ export default function StudioApp() {
       tags: [...(tag.styles || []), ...(tag.colors || [])].slice(0, 3)
     };
     pickAndLoad(synthEv, targetStep, synthEv.video);
-  }, [ytVideoTags, allVideos, pickAndLoad]);
+    // A saved video master (see Build's "Save to Video Master") carries the FULL build this video
+    // was last built as — every zone/element/photo/quantity, not just the venue/fn placeholder
+    // above. Restored AFTER pickAndLoad/loadEvent (layered on top, not instead of) so their venue/
+    // fn/palette scaffolding still runs; sourceVideo/sourceEvent are then re-applied since the
+    // master's own copies (frozen whenever it was last saved) would otherwise stomp the fresh ones
+    // pickAndLoad just set.
+    if (tag.masterBuild) {
+      restoreBuildState(tag.masterBuild);
+      setSourceVideo({ id: videoId, title: vid?.title || synthEv.name, tags: tag });
+      setSourceEvent(synthEv);
+    }
+  }, [ytVideoTags, allVideos, pickAndLoad, restoreBuildState, setSourceVideo, setSourceEvent]);
 
   // ── Save session — VERBATIM ──
   const saveSession = useCallback((opts = {}) => {
@@ -8389,17 +8400,48 @@ export default function StudioApp() {
     const eventTransport = fnEOs.reduce((s, f) => s + (f.transportCost || 0), 0);
     // Snapshot the Deal Check floral MANDI plan (projected) so the IMS Floral head sees the same
     // breakdown and can enter the actual mandi price later → real P&L flows back here.
+    //
+    // Also carries `artificial` (bunches→kg→₹, the same derivation DCFloralsTab.jsx's own
+    // "Artificial Bunches" card shows) and `income` (real/artificial billed split) — this used to
+    // be the ONE place that built floralPlan without them, since DealCheckOverlay.jsx's own
+    // buildDeptSnapshot (persistDeptSnapshot, which runs every time Deal Check is open on an
+    // already-booked deal) grew both later and only ever patched its own copy. A deal sold and
+    // never subsequently opened in Deal Check kept whatever THIS push wrote forever — IMS's
+    // Planning → Actuals showing "Artificial flowers ₹0" with the real total parked entirely under
+    // "Real flowers (mandi)" is that exact gap, not a sync failure. Mirrors buildDeptSnapshot's own
+    // math (bunches/rates from sharedFloralSettings here instead of dealCheckData, since Deal Check
+    // data isn't necessarily loaded yet at this point) so the two paths stop being able to drift.
     let floralPlan = { projected: 0, flowers: [] };
     try {
+      const afBPK = Number(sharedFloralSettings.artificialFlowerBunchesPerKg ?? 16) || 16;
+      const agBPK = Number(sharedFloralSettings.artificialGreenBunchesPerKg ?? 23) || 23;
+      const afRate = Number(sharedFloralSettings.artificialFlowerRatePerKg ?? 50);
+      const agRate = Number(sharedFloralSettings.artificialGreenRatePerKg ?? 40);
       const fbAgg = {};
-      allFns.forEach(fnData => { const r = calcFnFloralSourcingCost(fnData); (r.breakdown || []).forEach(f => {
-        if (!fbAgg[f.name]) fbAgg[f.name] = { name: f.name, qty: 0, cost: 0, unit: f.unit, colorVariant: f.colorVariant || null, colorPrefs: f.colorPrefs || null };
-        fbAgg[f.name].qty += f.qty; fbAgg[f.name].cost += f.cost;
-        if (f.colorVariant && !fbAgg[f.name].colorVariant) fbAgg[f.name].colorVariant = f.colorVariant;
-        if (f.colorPrefs && !fbAgg[f.name].colorPrefs) fbAgg[f.name].colorPrefs = f.colorPrefs;
-      }); });
+      let artTotal = 0, afBunches = 0, agBunches = 0, incReal = 0, incArt = 0;
+      allFns.forEach(fnData => {
+        const r = calcFnFloralSourcingCost(fnData);
+        artTotal += r.totalArtificial || 0;
+        afBunches += r.artFlowerBunches || 0; agBunches += r.artGreenBunches || 0;
+        incReal += r.income?.real || 0; incArt += r.income?.art || 0;
+        (r.breakdown || []).forEach(f => {
+          if (!fbAgg[f.name]) fbAgg[f.name] = { name: f.name, qty: 0, cost: 0, unit: f.unit, colorVariant: f.colorVariant || null, colorPrefs: f.colorPrefs || null };
+          fbAgg[f.name].qty += f.qty; fbAgg[f.name].cost += f.cost;
+          if (f.colorVariant && !fbAgg[f.name].colorVariant) fbAgg[f.name].colorVariant = f.colorVariant;
+          if (f.colorPrefs && !fbAgg[f.name].colorPrefs) fbAgg[f.name].colorPrefs = f.colorPrefs;
+        });
+      });
       const flowers = Object.values(fbAgg).map(f => ({ ...f, rate: f.qty > 0 ? Math.round((f.cost / f.qty) * 100) / 100 : 0 })).sort((a, b) => b.cost - a.cost);
-      floralPlan = { projected: Math.round(flowers.reduce((s, f) => s + f.cost, 0)), flowers, capturedAt: Date.now() };
+      const flowerKg = afBunches / afBPK, greenKg = agBunches / agBPK;
+      const artificial = (afBunches + agBunches) > 0 ? {
+        flowerBunches: Math.round(afBunches), greenBunches: Math.round(agBunches),
+        flowerBPK: afBPK, greenBPK: agBPK, flowerRate: afRate, greenRate: agRate,
+        flowerKg: Math.round(flowerKg * 100) / 100, greenKg: Math.round(greenKg * 100) / 100,
+        flowerCost: Math.round(flowerKg * afRate), greenCost: Math.round(greenKg * agRate),
+        total: Math.round(artTotal),
+      } : null;
+      const income = { real: Math.round(incReal), artificial: Math.round(incArt), total: Math.round(incReal + incArt) };
+      floralPlan = { projected: Math.round(flowers.reduce((s, f) => s + f.cost, 0)), flowers, artificial, income, capturedAt: Date.now() };
     } catch {}
     // Snapshot the system manpower plan (counts + how each was derived) so dept heads see it.
     let manpowerPlan = [];

@@ -26,6 +26,12 @@ export function rowToVideoTag(row) {
   if (Array.isArray(row.colors) && row.colors.length) t.colors = row.colors;
   if (row.zone_photos && Object.keys(row.zone_photos).length) t.zonePhotos = row.zone_photos;
   if (Array.isArray(row.linked_events) && row.linked_events.length) t.linkedEvents = row.linked_events;
+  if (row.master_build && typeof row.master_build === "object") t.masterBuild = row.master_build;
+  put(t, "_masterBuildBy", row.master_build_by);
+  put(t, "_masterBuildAt", row.master_build_at == null ? null : Number(row.master_build_at));
+  put(t, "canvaEditUrl", row.canva_edit_url);
+  put(t, "canvaDesignId", row.canva_design_id);
+  put(t, "canvaDeckSig", row.canva_deck_sig);
   if (row.ai_tagged) t._aiTagged = true;
   if (row.verified) t._verified = true;
   put(t, "_verifiedBy", row.verified_by);
@@ -55,6 +61,12 @@ export function videoTagToRow(videoId, tag) {
     colors: arr(t.colors),
     zone_photos: t.zonePhotos && typeof t.zonePhotos === "object" ? t.zonePhotos : {},
     linked_events: arr(t.linkedEvents),
+    master_build: t.masterBuild && typeof t.masterBuild === "object" ? t.masterBuild : null,
+    master_build_by: t._masterBuildBy ?? null,
+    master_build_at: t._masterBuildAt ?? null,
+    canva_edit_url: t.canvaEditUrl ?? null,
+    canva_design_id: t.canvaDesignId ?? null,
+    canva_deck_sig: t.canvaDeckSig ?? null,
     ai_tagged: !!t._aiTagged,
     verified: !!t._verified,
     verified_by: t._verifiedBy ?? null,
