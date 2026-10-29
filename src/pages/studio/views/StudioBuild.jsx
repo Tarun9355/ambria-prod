@@ -1009,7 +1009,7 @@ export default function StudioBuild({ ctx }) {
     // theme / chrome
     S, isDark, accent, border, textS: textSRaw, textP, cardBg, fmt, cat, carpetReuseHere,
     // events / library / video sources
-    events, libItems, sourceEvent, sourceVideo, ytVideoTags, allVideos,
+    events, libItems, sourceEvent, sourceVideo, setSourceVideo, ytVideoTags, allVideos,
     getFullCost, findTemplate, templates,
     // client / function meta
     clientName, clientDate, activeFnMeta, venue, fn, extraFunctions, setExtraFunctions, copyBuildsFromClient,
@@ -1088,6 +1088,27 @@ export default function StudioBuild({ ctx }) {
   // needing a per-video map: only one such card is ever on screen at a time (the active function's
   // own reference card).
   const [videoDeckPdf, setVideoDeckPdf] = useState({ state: "idle", url: "" });
+  // Attaching an EXISTING build (no sourceVideo — built from scratch, or from a plain library
+  // reference) to a video as its master, for the first time. Search-and-pick over allVideos; once
+  // one is chosen, the same save path as the direct "Save to Video Master" button runs, and
+  // sourceVideo is set afterward so the button above becomes the direct one from then on.
+  const [videoAttachOpen, setVideoAttachOpen] = useState(false);
+  const [videoAttachQuery, setVideoAttachQuery] = useState("");
+  const attachToVideo = (v) => {
+    setVideoAttachOpen(false);
+    askConfirm(
+      `Save this build as "${v.title||"this video"}"'s master? Everyone who customizes this video from now on will start from exactly what's on screen.`,
+      async () => {
+        const snap = snapshotBuildState();
+        const res = await saveYtTags({
+          [v.id]: (prev) => ({ ...(prev || {}), masterBuild: snap, _masterBuildBy: authUser?.name || "—", _masterBuildAt: Date.now() }),
+        });
+        if (res?.ok !== false) setSourceVideo({ id: v.id, title: v.title || "", tags: ytVideoTags[v.id] || {} });
+        showMsg(res?.ok === false ? "Couldn't save the video master — try again" : `✓ Saved as "${v.title || "this video"}"'s master build`, res?.ok === false ? "red" : "green");
+      },
+      { yesLabel: "Save" }
+    );
+  };
   const [zoneCollapsed, setZoneCollapsed] = useState({});
   // Grid view's "Recently viewed" section, per zone — collapsed by default (it's the same handful of
   // photos every time you open this zone, not worth scrolling past on every page) and keyed by zone
@@ -3227,6 +3248,43 @@ undefined
         onClose={() => setCopyBuildModalOpen(false)}
       />
     )}
+    {/* Search-and-pick over allVideos for "Attach to a video" (see videoMasterControls above) —
+        the no-sourceVideo path into saving a video's master, for a build that didn't start from
+        Customize. Plain inline overlay, same shape as the in-app confirm toast, not a separate
+        component — this is the only place it's needed. */}
+    {videoAttachOpen && (() => {
+      const q = videoAttachQuery.trim().toLowerCase();
+      const matches = (allVideos || [])
+        .filter(v => !q || String(v.title || "").toLowerCase().includes(q))
+        .slice(0, 60);
+      return (
+        <div onClick={() => setVideoAttachOpen(false)} style={{position:"fixed",inset:0,zIndex:10500,background:"rgba(10,10,20,0.85)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+          <div onClick={e=>e.stopPropagation()} style={{width:"min(520px, 100%)",maxHeight:"80vh",background:isDark?"#0F0F1A":"#fff",borderRadius:14,border:`1px solid ${border}`,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+            <div style={{padding:"14px 18px",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
+              <div style={{fontSize:14,fontWeight:700,color:textP}}>🎬 Attach this build to a video</div>
+              <button onClick={()=>setVideoAttachOpen(false)} style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:textS,fontSize:13,cursor:"pointer"}}>✕</button>
+            </div>
+            <div style={{padding:"10px 18px"}}>
+              <input value={videoAttachQuery} onChange={e=>setVideoAttachQuery(e.target.value)} autoFocus placeholder="Search videos by title…"
+                style={{width:"100%",padding:"8px 10px",borderRadius:8,border:`1px solid ${border}`,background:isDark?"#1A1A2E":"#fff",color:textP,fontSize:12}}/>
+            </div>
+            <div style={{padding:"0 18px 16px",overflowY:"auto",flex:1}}>
+              {matches.length===0 ? (
+                <div style={{padding:"24px 10px",textAlign:"center",color:textS,fontSize:11,borderRadius:8,border:`1px dashed ${border}`}}>No matching videos.</div>
+              ) : matches.map(v => (
+                <div key={v.id} onClick={()=>attachToVideo(v)}
+                  style={{padding:"8px 10px",borderRadius:9,cursor:"pointer",border:`1px solid ${border}`,marginBottom:7,display:"flex",alignItems:"center",gap:10}}
+                  onMouseEnter={e=>{e.currentTarget.style.borderColor=accent;}} onMouseLeave={e=>{e.currentTarget.style.borderColor=border;}}>
+                  {v.thumb ? <img src={thumbUrl(v.thumb,40)} alt="" loading="lazy" style={{width:40,height:40,borderRadius:7,objectFit:"cover",flexShrink:0}}/>
+                    : <div style={{width:40,height:40,borderRadius:7,flexShrink:0,background:isDark?"#1A1A2E":"#f3f3f3"}}/>}
+                  <div style={{fontSize:12.5,fontWeight:600,color:textP,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{v.title||"Untitled video"}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      );
+    })()}
     {/* The event block that used to live here — greeting, venue, date, demand — has moved INTO the
         panel (see YOUR_EVENT, rendered at the top of the rail). It is what the panel is for: whose
         event this is. Out here it was a page heading pushing the zone list down, and it had to be
@@ -3391,7 +3449,11 @@ undefined
           showMsg("Couldn't open the deck — " + (e.message || "try again"), "red");
         }
       };
-      const videoMasterControls = sourceVideo && (
+      // sourceVideo set — direct Save/View Deck, same as before. No sourceVideo yet (a from-scratch
+      // build, or one built off a plain library reference with no video) — "Attach to a video"
+      // instead, opening the search picker below, so an EXISTING build can still become a video's
+      // master without having started from Customize.
+      const videoMasterControls = sourceVideo ? (
         <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:6}}>
           {!!vTag.canvaEditUrl&&<button onClick={viewVideoDeck} disabled={videoDeckPdf.state==="loading"}
             title="Open this video's own design deck (made the last time a deal built from it was sent to Canva)"
@@ -3401,6 +3463,13 @@ undefined
           <button onClick={saveToVideoMaster} title="Save the whole build on screen as this video's master — the next person who customizes this video starts from exactly this (permanent, for everyone)"
             style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:9.5,padding:"3px 9px",borderRadius:8,border:`1px solid ${accent}`,background:"transparent",color:accent,fontWeight:600,cursor:"pointer"}}>
             <IconPencil size={10}/>Save to Video Master
+          </button>
+        </div>
+      ) : (
+        <div style={{marginLeft:"auto"}}>
+          <button onClick={()=>setVideoAttachOpen(true)} title="Pick a video and save this build as its master"
+            style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:9.5,padding:"3px 9px",borderRadius:8,border:`1px solid ${accent}`,background:"transparent",color:accent,fontWeight:600,cursor:"pointer"}}>
+            🎬 Attach to a video
           </button>
         </div>
       );
@@ -3489,6 +3558,14 @@ undefined
         </div>
       </div>;
     })()}
+    {/* ═══ NO REFERENCE AT ALL ═══ A from-scratch build (no video, no library reference) still
+        needs a way to become a video's master — the "Attach to a video" control above only ever
+        renders inside one of the two banner cards, both gated on having SOME reference. This is
+        just that same control, on its own, for when neither banner exists to carry it. */}
+    {!sourceEvent&&!sourceVideo&&<div className="sb-rcard" style={{...S.card,marginBottom:0,flexShrink:0,padding:"10px 12px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
+      <span style={{fontSize:11,color:textS}}>No reference for this build</span>
+      {videoMasterControls}
+    </div>}
       </>;
     })()}
     {/* ═══ UPLOAD, ALWAYS ═══
