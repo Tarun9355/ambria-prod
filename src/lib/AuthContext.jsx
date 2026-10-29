@@ -5,14 +5,19 @@ import { supabase, subscribeRow } from "./supabase";
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
-  // Start from the cached profile (instant, no login flash). The Supabase session is then validated
-  // below: a live session refreshes the profile; signing out clears it. During the migration a cached
-  // legacy user (no Supabase session) still works because RLS is off until cutover.
+  // Start from the cached profile (instant, no login flash) — but it is provisional. Migration 048
+  // (2026-10-27) cut the anon key off from reading ANY table: only a live Supabase Auth session
+  // (the `authenticated` role) can read data now, and a row-security filter doesn't throw when it
+  // blocks a read — it just returns zero rows. So a browser tab left open from before that cutover
+  // (cached profile, dead/no Supabase session) used to "still work" per the old comment here; now it
+  // renders the whole app normally — sidebar, tabs, everything — while every fetchAll(...) in
+  // IMS.jsx/StudioApp.jsx silently comes back empty, with no error anywhere. The fix: no live
+  // session means logged out, full stop — no legacy fallback left to trust.
   const [user, setUser] = useState(() => getStoredUser());
 
   useEffect(() => {
     let active = true;
-    // Rehydrate from a live Supabase session on load (post-migration source of truth).
+    // Rehydrate from a live Supabase session on load (the only source of truth now).
     supabase.auth.getSession().then(async ({ data }) => {
       if (!active) return;
       if (data?.session) {
@@ -20,17 +25,11 @@ export function AuthProvider({ children }) {
         if (active && profile) setUser(profile);
         return;
       }
-      // No live Supabase session — still on the legacy cached-login path (see login() in auth.js),
-      // which has nothing that re-derives this profile on its own. A cached id from before some
-      // past `users` change (a reseed, an id scheme migration, the row itself being removed) would
-      // otherwise sit unnoticed in localStorage indefinitely — fine for reads, since nothing here
-      // enforces referential integrity, but a hard failure the moment it hits something that does
-      // (a foreign key, e.g. attendance.user_id). Confirm it's still a real, active row and drop
-      // the session if not, rather than let every write from a dead-end id fail one at a time.
-      const cached = getStoredUser();
-      if (!cached?.id) return;
-      const { data: row } = await supabase.from("users").select("id, active").eq("id", cached.id).maybeSingle();
-      if (active && (!row || row.active === false)) { await doLogout(); setUser(null); }
+      // No live Supabase session — the cached profile (if any) can't actually read the database
+      // post-048, so it is not a valid login anymore. Drop it and send them back to a real login
+      // instead of silently rendering an app that will fetch nothing.
+      if (getStoredUser()) { await doLogout(); }
+      if (active) setUser(null);
     });
     // React to auth changes (token refresh, sign-out, sign-in from another tab).
     // ── NEVER AWAIT SUPABASE INSIDE THIS CALLBACK ──

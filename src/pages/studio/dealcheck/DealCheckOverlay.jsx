@@ -104,7 +104,7 @@ import { carpetPricingFor, CARPET_OFF } from "../../../lib/studio/taxonomy";
 import { qtyUsedElsewhereInDealCheck, netOwnReservedBlocksLive } from "../../../lib/studio/dealAvailability";
 import { isHiddenSubcat, oosCostPctFor, canFulfillShortfall } from "../../../lib/rateCard";
 import { findCrossFnReuseSource, computeFnInvQty, groupConsecutiveFns } from "../../../lib/studio/crossFnReuse";
-import { computePeopleRaw, computePeople, situationalFactorsFor, heavySayaMultFor as sharedHeavySayaMultFor } from "../../../lib/studio/manpowerCount";
+import { computePeopleRaw, computePeople, situationalFactorsFor, heavySayaMultFor as sharedHeavySayaMultFor, tentingZoneUsage } from "../../../lib/studio/manpowerCount";
 import { dcRentalCost } from "../../../lib/studio/repeatPricing.js";
 import { kitShortfallSplit } from "../../../lib/studio/kitShortfallSplit";
 import { kitRecipeParts } from "../../../lib/studio/kitRecipeParts";
@@ -386,14 +386,14 @@ export default function DealCheckOverlay({ ctx }) {
     // venue whether or not the salesperson happened to flag this zone "Repeat". Gating it behind
     // isRepeatZone used to mean the exact same standing bench billed full rate in a zone nobody
     // marked Repeat, and only got its real discount if they also (redundantly) flagged Repeat.
-    const { standingUnits, freshUnits, discountPct } = rentalSplit(fvCfg, venueName, item.id, qty, dcInventoryCache);
+    const { discUnits, fullStandingUnits, freshUnits, discountPct } = rentalSplit(fvCfg, venueName, item.id, qty, dcInventoryCache);
     const key = String(imsField.subcategory(item) || "").toLowerCase().trim();
     const sc = key ? Number((dealCheckData?.fixedVenueSubcatDiscount || {})[key]) : NaN;
     const subcatPct = Number.isFinite(sc) && sc > 0 ? sc : 0;
     // Not a specifically-registered standing item, so there's nothing "always there" about it — the
     // sub-category-level Repeat discount only makes sense when THIS event's own setup is being
     // reused across days, which is exactly what isRepeatZone means (dcRentalCost keeps it gated on it).
-    return dcRentalCost({ qty, baseRentalIn, dateMult, noDiscount: item.noRepeatDiscount === true, isRepeatZone, standingUnits, freshUnits, discountPct, subcatPct, crossFnReuseQty });
+    return dcRentalCost({ qty, baseRentalIn, dateMult, noDiscount: item.noRepeatDiscount === true, isRepeatZone, standingUnits: discUnits, fullStandingUnits, freshUnits, discountPct, subcatPct, crossFnReuseQty });
   };
 
   // One function's print jobs (Flex/Vinyl/Sunboard etc., zoneConfig[zk].prints) priced out — the
@@ -1470,6 +1470,13 @@ export default function DealCheckOverlay({ ctx }) {
                   // `adj`/`result`.
                   const sm = 1.0;
                   const adj = Math.ceil(base * sm); const sc = {}; walkFn(fn, ({ rc, qty }) => { const _s = itemImsSubcat(rc); sc[_s] = (sc[_s] || 0) + qty; });
+                  // Truss pillar count / Platform piece count — never a zone element, so the walk
+                  // above can never find them (tentingZoneUsage's own comment, manpowerCount.js).
+                  // Added here so the "Heavy items (...)" aside below can name them too. fn here
+                  // (not freshFnMP(fn)) to match walkFn(fn, ...) just above.
+                  const _tuFn = tentingZoneUsage(fn, mpCtxFor(fn));
+                  if (_tuFn.truss > 0) sc["Truss"] = (sc["Truss"] || 0) + _tuFn.truss;
+                  if (_tuFn.platform > 0) sc["Platform"] = (sc["Platform"] || 0) + _tuFn.platform;
                   const reduction = standingReductionBySubcat(fvCfg, venueName, (dcCards || {})[fns.indexOf(fn)], dealCheckData?.inventory || []);
                   // Per-sub-category rows for the heavy-element add-on, same as manpowerPlanForBooking's
                   // heavyRows — the base figure above stays a flat venue-min line (nothing item-level to
@@ -1568,13 +1575,36 @@ export default function DealCheckOverlay({ ctx }) {
                   if (!b) return;
                   const need = (Number(qty) || 0) / b;
                   if (need <= 0) return;
-                  const dp = poolLabourDept(catToDept(rc.cat));
+                  // Classify by the SUB-category that just matched this heavy-element batch (Carpet,
+                  // Sofa, Truss, …), not the item's broad top-level category — catToDept(rc.cat) was
+                  // the bug: most categories (Furniture, Lighting, Florals) happen to contain their
+                  // own keyword so it looked right, but a Carpet item filed under a generic category
+                  // name (e.g. "Flooring") never matched "carpet" and silently fell to the Structure
+                  // catch-all, so Tenting never got credit for it. Matches the pattern every other
+                  // heavy-item dept lookup in this app already uses (usageDept, DepartmentOpsTab's
+                  // heavy-rows filters) — classify by .sub, not .cat.
+                  const dp = poolLabourDept(catToDept(sub));
                   byDept[dp] = (byDept[dp] || 0) + need; total += need;
                   const key = rc.name || sub;
-                  // dept: the department Deal Check actually charged this item's labour to (by the item's own category), so Dept Ops lists the row under the same one.
+                  // dept: the department Deal Check actually charged this item's labour to (by the item's own SUB-category), so Dept Ops lists the row under the same one.
                   if (!itemAgg[key]) itemAgg[key] = { name: rc.name || sub, sub, dept: dp, qty: 0, per: b, need: 0 };
                   itemAgg[key].qty += Number(qty) || 0; itemAgg[key].need += need;
                 });
+                // Truss pillar count / Platform piece count — never a zone element, so the walkFn
+                // above can never find them (tentingZoneUsage's own comment, manpowerCount.js).
+                // Always Tenting's (poolLabourDept is a no-op for it) — added here so the department
+                // split and the engine's own usage floor (computePeopleRaw) always agree.
+                if (labourUsageMode) {
+                  const tu = tentingZoneUsage(freshFnMP(fn), mpCtxFor(fn));
+                  [["Truss", tu.truss], ["Platform", tu.platform]].forEach(([sub, count]) => {
+                    const b = lookupBySubcat(_labBatches, sub);
+                    if (!b || !(count > 0)) return;
+                    const need = count / b;
+                    const dp = poolLabourDept(catToDept(sub));
+                    byDept[dp] = (byDept[dp] || 0) + need; total += need;
+                    itemAgg[sub] = { name: sub, sub, dept: dp, qty: count, per: b, need };
+                  });
+                }
                 labourUsageByFn[fi] = { byDept, total, items: Object.values(itemAgg) };
                 Object.entries(byDept).forEach(([dp, n]) => { labourUsageByDept[dp] = (labourUsageByDept[dp] || 0) + n; });
                 labourUsageTotal += total;

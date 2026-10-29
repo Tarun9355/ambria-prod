@@ -35,8 +35,14 @@ export function planningUpcoming(eo, now = Date.now()) {
 // this one's), so Dept Ops can show the full cross-department bifurcation, not only "mine". v7: the
 // fabric colour follows the function's Fabric Palette (a colour saved on a truss row that the palette no
 // longer allows is ignored) and each truss row's colour is recorded (fabricPlan.rows), so Dept Ops shows
-// the colour per zone - orders synced before still show the old colours until synced again.
-export const PLANNING_SNAPSHOT_VERSION = 7;
+// the colour per zone - orders synced before still show the old colours until synced again. v8: a heavy
+// item's department (for the Labours usage split) is classified by its own sub-category, not its broad
+// top-level category — fixes Carpet (and anything else filed under a category name that doesn't itself
+// contain the matching keyword) never crediting Tenting. v9: Truss's pillar count and Platform's
+// piece count now feed the Labours usage floor too (tentingZoneUsage) — neither is ever a zone
+// element, so they were invisible to the split before this, even though both were configured in
+// Heavy Element Add-ons; Tenting's Labours share can finally be nonzero.
+export const PLANNING_SNAPSHOT_VERSION = 9;
 const PLANNING_SNAPSHOT_SHIPPED_AT = Date.parse("2026-10-27T11:50:00Z");
 export const planningSnapshotOutdated = (eo) => (Number(eo?.deptSnapVer) || 1) < PLANNING_SNAPSHOT_VERSION;
 

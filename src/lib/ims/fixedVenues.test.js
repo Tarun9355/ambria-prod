@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { availableAtVenue, reservedByVenueToday, venueSlackFor, combineAvailability } from "./fixedVenues";
+import { availableAtVenue, reservedByVenueToday, venueSlackFor, combineAvailability, standingQty, standingDiscQty, rentalSplit } from "./fixedVenues";
 
 // Confirmed live bug this covers: an item with 300 total stock, 200 of it configured as standing
 // allocation across two Fixed Venues (Pushpanjali 150, Exotica 50), leaving a 100-unit outdoor pool.
@@ -101,5 +101,53 @@ describe("venueSlackFor", () => {
   it("a fully-reserved venue contributes no slack", () => {
     const reserved = { pushpanjali: 150, exotica: 50 };
     expect(venueSlackFor(settings, "Some Outdoor Lawn", item, reserved)).toEqual([]);
+  });
+});
+
+// A standing item's two buckets (FixedVenuesEditor.jsx): `qty` gets the venue's own discountPct,
+// `fullQty` is also physically standing (no rebuild labour) but always bills full rate. `fullQty`
+// is opt-in — an item with none set keeps its exact pre-split behavior (100% of its qty discounted).
+describe("standing item split — qty (discounted) + fullQty (full rate, still standing)", () => {
+  const splitSettings = {
+    fixedVenues: [
+      { name: "Pushpanjali", items: [{ invId: "ITEM_B", qty: 6, fullQty: 4 }] },
+      { name: "Legacy Venue", items: [{ invId: "ITEM_B", qty: 10 }] }, // no fullQty at all
+    ],
+  };
+
+  it("standingQty is the TWO buckets combined — either one means no rebuild labour", () => {
+    expect(standingQty(splitSettings, "Pushpanjali", "ITEM_B")).toBe(10);
+    expect(standingQty(splitSettings, "Legacy Venue", "ITEM_B")).toBe(10);
+  });
+
+  it("standingDiscQty is only the discount-eligible bucket", () => {
+    expect(standingDiscQty(splitSettings, "Pushpanjali", "ITEM_B")).toBe(6);
+    expect(standingDiscQty(splitSettings, "Legacy Venue", "ITEM_B")).toBe(10); // no fullQty → all of it discounted, as before
+  });
+
+  it("rentalSplit divides a function's usage into discUnits, fullStandingUnits and freshUnits in that priority order", () => {
+    // Uses 8 of the 10 standing (6 disc + 4 full, capped at 10 standing) — fills the 6-unit disc
+    // bucket first, the remaining 2 fall into the full-rate standing bucket, 0 genuinely fresh.
+    expect(rentalSplit(splitSettings, "Pushpanjali", "ITEM_B", 8)).toEqual({
+      standingUnits: 8, discUnits: 6, fullStandingUnits: 2, freshUnits: 0, discountPct: 0,
+    });
+  });
+
+  it("using MORE than the combined standing total spills into freshUnits, on top of a full disc+full split", () => {
+    expect(rentalSplit(splitSettings, "Pushpanjali", "ITEM_B", 13)).toEqual({
+      standingUnits: 10, discUnits: 6, fullStandingUnits: 4, freshUnits: 3, discountPct: 0,
+    });
+  });
+
+  it("using fewer than the disc bucket never touches the full-rate bucket at all", () => {
+    expect(rentalSplit(splitSettings, "Pushpanjali", "ITEM_B", 4)).toEqual({
+      standingUnits: 4, discUnits: 4, fullStandingUnits: 0, freshUnits: 0, discountPct: 0,
+    });
+  });
+
+  it("a legacy item with no fullQty set discounts its entire usage, exactly as before this split existed", () => {
+    expect(rentalSplit(splitSettings, "Legacy Venue", "ITEM_B", 8)).toEqual({
+      standingUnits: 8, discUnits: 8, fullStandingUnits: 0, freshUnits: 0, discountPct: 0,
+    });
   });
 });

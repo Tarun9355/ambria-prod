@@ -14,8 +14,12 @@ const OPS_EXPENSES_FN_URL = `${SUPABASE_URL}/functions/v1/ops-expenses`;
 // Real expenses logged in Ambria Ops for one booked deal, optionally scoped to one department.
 // contractNo is the deal's own LMS entry number (event_orders' own `lmsLeadId` field) — a deal
 // never synced from an LMS lead has none, and this simply returns []. Returns
-// [{department, amount, label, date, loggedBy}], or [] on any failure — this is a nice-to-have
-// alongside the manual expense rows, not a blocking dependency, so it never throws.
+// [{department, amount, date, loggedBy, category, remarks, ...}], or [] on any failure — this is
+// a nice-to-have alongside the manual expense rows, not a blocking dependency, so it never throws.
+// `label` no longer exists (breaking change on the Ops side) — it's now `category` (resolved
+// sub-type name) and `remarks` (raw free-text, null if none typed), unmerged. The endpoint also
+// passes through the full expense/expense-allocation record (ids, vendor, approval/payment trail,
+// receipt paths, etc.) — only category/remarks are consumed here so far.
 export async function fetchOpsExpenses(contractNo, department) {
   if (!contractNo) return [];
   try {

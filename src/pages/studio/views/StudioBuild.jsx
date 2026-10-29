@@ -739,6 +739,9 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
     setCpLimit("");
     return sFD(d, n);
   };
+  // Either dimension missing means this footprint has no area yet — Qty greys out and sFD/setFd
+  // already force cpT back to CARPET_OFF the moment a dimension is cleared.
+  const dimsCleared = !(Number(fd.W) > 0) || !(Number(fd.L) > 0);
   // Sqft of this floor the picked carpet can't cover (stock runs out in an earlier floor first).
   const carpetShort = carpetShortOf ? carpetShortOf(zoneKey, rowIdx) : 0;
   // What THIS footprint costs, via the same function the cost engine sums over every row.
@@ -851,17 +854,23 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
                 <div style={{flex:1,minWidth:96}}><div style={{fontSize:11.5,color:textS,marginBottom:3}}>Floor Width (ft)</div>
                   {/* Placeholder no longer previews the truss's own dims — owner ask: a Platform/
                       Carpet floor size must never silently follow the truss's footprint, so nothing
-                      here should suggest it still does. A blank field really does mean 0 sqft now. */}
-                  <NumField value={fd.W||""} onCommit={n=>guardFd("W",n)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}} placeholder="—"/></div>
+                      here should suggest it still does. A blank field really does mean 0 sqft now.
+                      blankCommit: backspacing it clear actually commits 0 on blur instead of the
+                      field just snapping back to its old value. */}
+                  <NumField value={fd.W||""} onCommit={n=>guardFd("W",n)} blankCommit style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}} placeholder="—"/></div>
                 <div style={{flex:1,minWidth:96}}><div style={{fontSize:11.5,color:textS,marginBottom:3}}>Floor Depth (ft)</div>
-                  <NumField value={fd.L||""} onCommit={n=>guardFd("L",n)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}} placeholder="—"/></div>
+                  <NumField value={fd.L||""} onCommit={n=>guardFd("L",n)} blankCommit style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}} placeholder="—"/></div>
                 {/* How many identical footprints this one row is — Scale By (the zone header's "set
                     of N" multiplier) rescales this the same way it rescales Truss Qty and a print
-                    row's own qty, keeping a per-set base across changes (see setZoneScale). */}
+                    row's own qty, keeping a per-set base across changes (see setZoneScale).
+                    Greyed out once either dimension is cleared — a 0×anything footprint has no area
+                    for "how many of them" to multiply, and sFD/setFd already forced cpT to
+                    CARPET_OFF the moment that happened, so this mirrors that same "no floor yet"
+                    state rather than leaving a live-looking qty box for a floor that isn't there. */}
                 <div style={{flex:"0 0 64px"}}><div style={{fontSize:11.5,color:textS,marginBottom:3}}>Qty</div>
-                  <NumField min={1} allowDecimal={false} value={zc.plQty||1} onCommit={nextQty=>{
+                  <NumField min={1} allowDecimal={false} disabled={dimsCleared} title={dimsCleared?"Set a floor width & depth first":undefined} value={zc.plQty||1} onCommit={nextQty=>{
                     sZ({plQty:nextQty, plQtyBase: scale>1?nextQty/scale:nextQty});
-                  }} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}}/></div>
+                  }} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center",...(dimsCleared?{opacity:0.45,cursor:"not-allowed",background:isDark?"rgba(255,255,255,0.03)":"#F3F4F6"}:{})}}/></div>
                 <div style={{flex:1.5,minWidth:150}}>
                   <div style={{fontSize:11.5,color:textS,marginBottom:3,display:"inline-flex",alignItems:"center",gap:5}}>
                     <IconCarpet size={12}/>Carpet
@@ -962,7 +971,11 @@ export function FloorStack({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark,
       const setRow = (patch) => write(rows.map((x, i) => (i === ri ? { ...x, ...patch } : x)));
       // Same carpet default-on-first-dimension as the primary floor's sFD above — an extra
       // platform footprint gets it too, only while its own cpT is still unset.
-      const setFd = (d, v) => setRow({ cpT: row.cpT || defaultCarpetMatId(imsCarpetMaterials), floorDims: { ...(rows[ri]?.floorDims || {}), [d]: parseFloat(v) || 0 } });
+      const setFd = (d, v) => {
+        const nextDims = { ...(rows[ri]?.floorDims || {}), [d]: parseFloat(v) || 0 };
+        const cleared = !(Number(nextDims.W) > 0) || !(Number(nextDims.L) > 0);
+        setRow({ cpT: cleared ? CARPET_OFF : (row.cpT || defaultCarpetMatId(imsCarpetMaterials)), floorDims: nextDims });
+      };
       return <FloorCard key={row.id || ri} {...shared} rowIdx={ri + 1} zc={row} sZ={setRow} sFD={setFd} fd={row.floorDims || {}}
         nested title={`Platform ${ri + 2}`} onRemove={() => write(rows.filter((_, i) => i !== ri))} />;
     })}
@@ -5311,7 +5324,10 @@ undefined
             // being measured for carpet was quietly pricing none at all. The moment a real floor
             // dimension is entered, default cpT to Carpet Old — but only while cpT is still unset, so
             // an explicit "— None —" pick (or any other material) is never overwritten.
-            const sFD=(d,v)=>{setActiveZones([]);setZoneConfig(p=>{const cur=p[k]||{};return {...p,[k]:{...cur,cpT:cur.cpT||defaultCarpetMatId(imsCarpetMaterials),floorDims:{...(cur.floorDims||{}),[d]:parseFloat(v)||0}}};});};
+            const sFD=(d,v)=>{setActiveZones([]);setZoneConfig(p=>{const cur=p[k]||{};
+              const nextDims={...(cur.floorDims||{}),[d]:parseFloat(v)||0};
+              const cleared=!(Number(nextDims.W)>0)||!(Number(nextDims.L)>0);
+              return {...p,[k]:{...cur,cpT:cleared?CARPET_OFF:(cur.cpT||defaultCarpetMatId(imsCarpetMaterials)),floorDims:nextDims}};});};
             const fd=zc.floorDims||{};
             // The Fabric Palette's own "Use for" tagging (masking 🧱) says which colour(s) masking
             // is in play for this function — shown as a hint next to the default rate (unchanged).
@@ -5801,7 +5817,11 @@ undefined
               const sD=(d,v)=>writeCfg(cur=>{const dims={...(cur.dims||{}),[d]:parseFloat(v)||0};
                 const n=[dims.W||dims.S,dims.L,dims.H].filter(x=>(Number(x)||0)>0).length;const trT=n>=3?"box":n===2?"singleU":cur.trT;
                 return {...cur,dims,trT};});
-              const sFD=(d,v)=>writeCfg(cur=>({...cur,cpT:cur.cpT||defaultCarpetMatId(imsCarpetMaterials),floorDims:{...(cur.floorDims||{}),[d]:parseFloat(v)||0}}));
+              const sFD=(d,v)=>writeCfg(cur=>{
+                const nextDims={...(cur.floorDims||{}),[d]:parseFloat(v)||0};
+                const cleared=!(Number(nextDims.W)>0)||!(Number(nextDims.L)>0);
+                return {...cur,cpT:cleared?CARPET_OFF:(cur.cpT||defaultCarpetMatId(imsCarpetMaterials)),floorDims:nextDims};
+              });
               const fd=cfgCur.floorDims||{};
               const scaleFor=ownsLive?zoneScaleVal(zk):1;
               // Custom Ceiling / Masking pickers write straight to the LIVE zone (patchTrussRow), so a draft

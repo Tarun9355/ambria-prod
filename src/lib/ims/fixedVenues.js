@@ -18,6 +18,14 @@ import { walkKitUnits, kitDescendantIds } from "./helpers";
 // won't match), just tolerant of stray end-of-string punctuation.
 function normVenue(s) { return String(s || "").toLowerCase().replace(/^ambria\s+/, "").trim().replace(/[.,;:]+$/, "").trim(); }
 
+// A standing item can carry TWO buckets of qty: `qty` (gets this venue's own discountPct) and
+// `fullQty` (also physically standing — no rebuild labour either — but always bills at the item's
+// full rental rate, never discounted). `fullQty` is opt-in: an item added before this existed, or
+// never given one, has fullQty 0 and keeps its exact old behavior (100% of its qty discounted).
+const discQtyOf = (it) => Number(it?.qty) || 0;
+const fullQtyOf = (it) => Number(it?.fullQty) || 0;
+const totalQtyOf = (it) => discQtyOf(it) + fullQtyOf(it);
+
 // Shared by FixedVenuesEditor.jsx (the sole writer) and every loader that used to read this array
 // out of the `fixedVenues` settings-blob row (IMS.jsx, StudioApp.jsx) — the `fixed_venues` TABLE
 // (migration 038) is the source of truth now, one row per fixed venue. These two just translate
@@ -73,13 +81,25 @@ export function fixedVenueFor(settings, venueName) {
   return fvs.find((v) => candNorms.includes(normVenue(v.name))) || null;
 }
 
-// Standing qty of a specific inventory item at a venue (0 if venue isn't fixed or item isn't standing).
+// Standing qty of a specific inventory item at a venue (0 if venue isn't fixed or item isn't standing)
+// — BOTH buckets combined (qty + fullQty): either one means the unit is already installed, so
+// neither needs rebuild labour. Use standingDiscQty below for just the discount-eligible bucket.
 export function standingQty(settings, venueName, invId) {
   if (!invId) return 0;
   const fv = fixedVenueFor(settings, venueName);
   if (!fv) return 0;
   const it = (fv.items || []).find((i) => i.invId === invId);
-  return it ? Number(it.qty) || 0 : 0;
+  return it ? totalQtyOf(it) : 0;
+}
+
+// Just the discount-ELIGIBLE bucket of a standing item (its `fullQty` sibling always bills full
+// rate — see rentalSplit). 0 if the venue/item isn't standing at all.
+export function standingDiscQty(settings, venueName, invId) {
+  if (!invId) return 0;
+  const fv = fixedVenueFor(settings, venueName);
+  if (!fv) return 0;
+  const it = (fv.items || []).find((i) => i.invId === invId);
+  return it ? discQtyOf(it) : 0;
 }
 
 // Discount % for a standing item (per-item override → global sub-category default → 0). The
@@ -140,12 +160,18 @@ export function kitBuiltQty(pool, settings, venueName, top, topQty, node, nodeQt
   return Math.min(ownFresh, q * ratio);
 }
 
-// Split a line's qty into { standingUnits, freshUnits } for rental pricing at a venue.
+// Split a line's qty into { standingUnits, discUnits, fullStandingUnits, freshUnits } for rental
+// pricing at a venue. standingUnits (both buckets) stays for callers that only ever cared whether
+// ANY of this item is standing; discUnits is the slice of it that actually gets discountPct,
+// fullStandingUnits the slice that's standing (no rebuild labour) but bills at full rate.
 export function rentalSplit(settings, venueName, invId, qty, inventory) {
   const total = Number(qty) || 0;
   const sQty = standingQty(settings, venueName, invId);
+  const sDisc = standingDiscQty(settings, venueName, invId);
   const standingUnits = Math.min(total, sQty);
-  return { standingUnits, freshUnits: total - standingUnits, discountPct: standingDiscountPct(settings, venueName, invId, inventory) };
+  const discUnits = Math.min(standingUnits, sDisc);
+  const fullStandingUnits = standingUnits - discUnits;
+  return { standingUnits, discUnits, fullStandingUnits, freshUnits: total - standingUnits, discountPct: standingDiscountPct(settings, venueName, invId, inventory) };
 }
 
 // Units of an item AVAILABLE to an event at `venueName` = total minus units that are
@@ -171,7 +197,7 @@ export function availableAtVenue(settings, venueName, item, reservedByVenue) {
     if (own && v === own) return; // own venue → its standing stock is available here
     const it = (v.items || []).find((i) => i.invId === item?.id);
     if (!it) return;
-    const standing = Number(it.qty) || 0;
+    const standing = totalQtyOf(it);
     lockedElsewhere += reservedByVenue ? Math.min(standing, Number(reservedByVenue[normVenue(v.name)]) || 0) : standing;
   });
   return Math.max(0, total - lockedElsewhere);
@@ -229,7 +255,7 @@ export function venueSlackFor(settings, venueName, item, reservedByVenue) {
   (settings?.fixedVenues || []).forEach((v) => {
     if (own && v === own) return;
     const it = (v.items || []).find((i) => i.invId === item?.id);
-    const standing = it ? Number(it.qty) || 0 : 0;
+    const standing = it ? totalQtyOf(it) : 0;
     if (standing <= 0) return;
     const reserved = Number((reservedByVenue || {})[normVenue(v.name)]) || 0;
     const slack = Math.max(0, standing - reserved);
@@ -260,7 +286,7 @@ export function locationBreakdown(settings, item) {
   let allocated = 0;
   (settings?.fixedVenues || []).forEach((v) => {
     const it = (v.items || []).find((i) => i.invId === item?.id);
-    const want = it ? Number(it.qty) || 0 : 0;
+    const want = it ? totalQtyOf(it) : 0;
     if (want <= 0) return;
     const q = Math.min(want, Math.max(0, total - allocated));
     if (q > 0) { out.push({ loc: v.name, qty: q, fixed: true }); allocated += q; }

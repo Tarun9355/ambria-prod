@@ -45,7 +45,7 @@ import { withKitEdit } from "../../lib/studio/dealCheckSync";
 import { itemTakesChoices } from "../../lib/studio/elementPrefs";
 import { findCrossFnReuseSource, computeFnInvQty, findSiblingFnInvUse, findSiblingFnSubcatOpportunity } from "../../lib/studio/crossFnReuse";
 import { computeFnFloralCost, buildMandiBreakdown } from "../../lib/studio/floralCost";
-import { computePeople, shiftToTiming, sizeFromMode, situationalFactorsFor, walkFnElements } from "../../lib/studio/manpowerCount";
+import { computePeople, shiftToTiming, sizeFromMode, situationalFactorsFor, walkFnElements, tentingZoneUsage } from "../../lib/studio/manpowerCount";
 
 // ═══ HEADER TYPE + CHIP SCALE ═══
 // The header used to mix 8/9/10/11/12/13px in a single row. It now has exactly two tiers:
@@ -4500,13 +4500,16 @@ export default function StudioApp() {
   const repeatAdjustedLineCost = (item, qty, unitRate, zc, venueName, crossFnReuseQty = 0, repeatOverride, dateFactor = 1, kitOverrides) => {
     if (!item) return qty * unitRate;
     const isRepeat = typeof repeatOverride === "boolean" ? repeatOverride : repeatCatFor(zc, "elements");
-    const { standingUnits } = isRepeat ? { standingUnits: 0 } : rentalSplit(fvCfgForRepeat, venueName, item.id, qty, imsInventory);
+    // Only the discount-eligible bucket (Fixed Venue's "disc qty", not its "full qty" — see
+    // FixedVenuesEditor.jsx) counts as eligible here, so the client never sees a Repeat markdown on
+    // units the venue specifically designated to bill at full rate.
+    const { discUnits } = isRepeat ? { discUnits: 0 } : rentalSplit(fvCfgForRepeat, venueName, item.id, qty, imsInventory);
     return guestRepeatLineCost({
       qty, unitRate,
       // a kit with switched-off components: their share of the kit's price is never discounted
       flaggedUnitRate: flaggedUnitRate(item, (it, ov) => priceForInvItem(it, rcFactorByKey, imsInventory, ov), imsInventory, kitOverrides),
       noDiscount: item.noRepeatDiscount === true, hidden: hideDiscountFromClient,
-      isRepeat, standingUnits, crossFnReuseQty, dateFactor, pct: GUEST_DISCOUNT_PCT,
+      isRepeat, standingUnits: discUnits, crossFnReuseQty, dateFactor, pct: GUEST_DISCOUNT_PCT,
     });
   };
   // The date factor getElPrice / getElPriceForFn will multiply onto this element's line — 1 for a
@@ -5982,6 +5985,18 @@ export default function StudioApp() {
             const key = rc.name || sub;
             if (!itemAgg[key]) itemAgg[key] = { name: rc.name || sub, sub, qty: 0, per, need: 0 };
             itemAgg[key].qty += Number(qty) || 0; itemAgg[key].need += need;
+          });
+          // Truss pillar count / Platform piece count — never a zone element, so the walk above can
+          // never find them (tentingZoneUsage's own comment, manpowerCount.js). Always Tenting's
+          // — added here so this trace's own result matches the engine's (computePeople, which
+          // already includes them via peopleTier3Labours).
+          const tu = tentingZoneUsage(fn, mpCtxFor(fn));
+          [["Truss", tu.truss], ["Platform", tu.platform]].forEach(([sub, count]) => {
+            const per = lookupBySubcat(labBatches, sub);
+            if (!per || !(count > 0)) return;
+            const need = count / per;
+            fnUsageTotal += need;
+            itemAgg[sub] = { name: sub, sub, qty: count, per, need };
           });
         }
         const usageRows = Object.values(itemAgg);
