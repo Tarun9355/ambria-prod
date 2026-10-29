@@ -3943,23 +3943,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     // flowers) always ran out of room and showed a bare "+3 more" with nowhere to actually see
     // them. Every recipe's FULL ingredient list now lives on its own dedicated page (recipePages
     // below); the card just points there, one line, regardless of how many flowers are in it.
-    // The flowers themselves get a card of their own next to the item (flowerCard below, slotted in
-    // by withFlowerCards) — names only, so the crew sees what goes in without turning the page;
-    // quantities stay on the recipe page.
+    // A separate "🌸 Flowers" card (names only) used to sit next to each recipe item — the same
+    // flowers the zone's Mandi & Kits page lists right after, with quantities. Nothing in the book
+    // prints twice (owner ask), so the zone page shows the item only.
     const flowerRows = () => "";
-    const FL_MAX = 8;
-    const flowerCard = (it) => {
-      const names = (it.recipe || []).map(f => String(f.name || "").trim()).filter(Boolean);
-      const shown = names.length > FL_MAX ? names.slice(0, FL_MAX - 1) : names;
-      return `<div class="zc-b">
-        <div class="zc-n">🌸 Flowers<div class="zc-fs">${esc(it.name)}</div></div>
-        ${shown.map(n => `<div class="zc-r f"><span>• ${esc(n)}</span><b></b></div>`).join("")}
-        ${names.length > shown.length ? `<div class="zc-r f"><span>+${names.length - shown.length} more</span><b></b></div>` : ""}
-        <div class="zc-r f"><span>📖 Qty: Mandi &amp; Kits page</span><b></b></div>
-      </div>`;
-    };
-    // Each recipe item followed by its flower card, for laying out a zone page's card slots.
-    const withFlowerCards = (items) => items.flatMap(it => (it.recipe || []).length ? [it, { flowerCard: true, name: it.name, recipe: it.recipe }] : [it]);
     // The paint line takes its 20px out of the photo.
     const flLines = (it) => (it.paint?.size ? 1 : 0) + (it.extra || []).length;
     const card = (it, zone, num) => `
@@ -4002,9 +3989,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       // No item numbers (removed by request) — each card's arrow alone ties it to the photo.
       // A top-row card without a photo is shorter, so it is pinned by its BOTTOM to keep sitting on its arrow.
       const cards = [
-        ...top.map((it, i) => { const x = colX(i, top.length); return `<div class="zc${npCls(it)}" style="left:${x}px;${it.photo ? "top:0" : `bottom:${stageH - ROW_H}px`}">${it.flowerCard ? flowerCard(it) : card(it, pg.title)}</div>
+        ...top.map((it, i) => { const x = colX(i, top.length); return `<div class="zc${npCls(it)}" style="left:${x}px;${it.photo ? "top:0" : `bottom:${stageH - ROW_H}px`}">${card(it, pg.title)}</div>
           <div class="za down" style="left:${x + CARD_W / 2 - 1}px;top:${ROW_H}px;height:${ARROW}px"></div>`; }),
-        ...bot.map((it, i) => { const x = colX(i, bot.length); return `<div class="zc${npCls(it)}" style="left:${x}px;top:${botTop}px">${it.flowerCard ? flowerCard(it) : card(it, pg.title)}</div>
+        ...bot.map((it, i) => { const x = colX(i, bot.length); return `<div class="zc${npCls(it)}" style="left:${x}px;top:${botTop}px">${card(it, pg.title)}</div>
           <div class="za up" style="left:${x + CARD_W / 2 - 1}px;top:${photoTop + PHOTO_H}px;height:${ARROW}px"></div>`; }),
       ].join("");
       return `<section data-block data-page class="zp"><div class="pc tl"></div><div class="pc tr"></div>
@@ -4152,7 +4139,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         lastFi = pg.fi;
         zonePageHtml.push(fnDivider(pg.fi + 1, pg.fnType, pg.fnDate));
       }
-      const cs = pg.items.length ? chunks(withFlowerCards(pg.items), 6) : [[]];
+      const cs = pg.items.length ? chunks(pg.items, 6) : [[]];
       cs.forEach((c, i) => zonePageHtml.push(zoneSection(pg, c, i + 1, cs.length, zi + 1, i * 6)));
       // Right after THIS zone's own card page(s) — a zone's recipe/kit detail never shares a page
       // with another zone's, and never lands in a single combined reference page at the book's end.
@@ -4430,7 +4417,6 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   .zc-r span{color:#6B6B6B;text-transform:uppercase;letter-spacing:.1em;font-size:9.5px;font-weight:700;flex-shrink:0}
   .zc-r b{color:#1A1A1A;font-size:11px;font-weight:700;text-align:right}
   /* Flower lines: names read as names, not as the uppercase field labels above them. */
-  .zc-fs{font-family:"Inter",Arial,sans-serif;font-size:10px;font-weight:600;color:#8A8270;margin-top:1px}
   .zc-r.f span{text-transform:none;letter-spacing:0;font-size:10.5px;font-weight:600;flex-shrink:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   /* The arrow: a gold shaft with a drawn head at the photo end and a dot at the card end. */
   .za{position:absolute;width:1.5px;background:#1A1A1A}
