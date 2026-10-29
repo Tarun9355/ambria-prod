@@ -15,7 +15,7 @@ import { useState, useRef, useEffect } from "react";
 // (Escape puts the old value back). Used for a quantity, where "4" and "40" on the way to "400" must never
 // become the deal's quantity, and the box must never show a number the deal does not hold. Ctrl+Z then only
 // steps through what is being typed, never through quantities that were already applied.
-export default function NumField({ value, onCommit, min = 0, allowDecimal = true, commitOn = "keystroke", onFocus, onBlur, ...rest }) {
+export default function NumField({ value, onCommit, min = 0, allowDecimal = true, commitOn = "keystroke", blankCommit = false, onFocus, onBlur, ...rest }) {
   const [text, setText] = useState(() => (value === null || value === undefined ? "" : String(value)));
   const editingRef = useRef(false);
   useEffect(() => { if (!editingRef.current) setText(value === null || value === undefined ? "" : String(value)); }, [value]);
@@ -44,7 +44,12 @@ export default function NumField({ value, onCommit, min = 0, allowDecimal = true
       onBlur={(e) => {
         const wasEditing = editingRef.current;
         editingRef.current = false;
-        if (commitOn === "blur" && wasEditing) {
+        // blankCommit: a field left empty on blur commits `min` instead of snapping back to
+        // whatever it held before — lets a value actually be cleared via backspace rather than
+        // the backspace getting silently undone the moment the field loses focus.
+        if (wasEditing && text === "" && blankCommit) {
+          onCommit(min);
+        } else if (commitOn === "blur" && wasEditing) {
           const n = parseFloat(text);
           if (!Number.isNaN(n) && Math.max(min, n) !== Number(value)) onCommit(Math.max(min, n));
         }
