@@ -3429,6 +3429,25 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     const fabRows = dept === "Fabric" ? fabricReqRows.flatMap(ft => ft.rows.map(r =>
       `<tr><td>${esc(ft.label)} · ${r.colour && r.colour !== "(unassigned)" ? `<span style="display:inline-block;width:9px;height:9px;border-radius:2px;border:1px solid rgba(0,0,0,.18);background:${esc(r.hex)};margin-right:5px;vertical-align:middle"></span>` : ""}${esc(r.colour)}</td><td class="n">${esc(r.required)} ${esc(ft.unit)}</td><td class="n">${esc(r.avail)} ${esc(ft.unit)}</td><td class="n ${r.short > 0 ? "bad" : "ok"}">${r.short > 0 ? `short ${esc(r.short)} ${esc(ft.unit)}` : "ok"}</td></tr>`)) : [];
 
+    // ── ARTIFICIAL FLOWERS & GREENS ── the bunches the Floral book sends out, worked to kilos the way Deal Check does it (bunches ÷ bunches per kg),
+    // and the specific colours to pull. Per function when the event has more than one (floralDetail), then the whole event. No rupees: this book is for the crew.
+    const artPlan = (dept === "Floral" || combined) ? sel?.floralPlan?.artificial : null;
+    const artRows = [], artColourRows = [];
+    if (artPlan && ((Number(artPlan.flowerBunches) || 0) > 0 || (Number(artPlan.greenBunches) || 0) > 0)) {
+      const artRow = (label, bunches, bpk, kg) => `<tr><td>${esc(label)}</td><td class="n">${esc(bunches)}</td><td class="n">${esc(bpk)}</td><td class="n">${esc(kg)} kg</td></tr>`;
+      const fd = sel?.floralDetail && typeof sel.floralDetail === "object" ? sel.floralDetail : {};
+      const fdKeys = Object.keys(fd).sort((a, b) => Number(a) - Number(b));
+      const multi = fdKeys.filter(k => (fd[k]?.art?.flower?.bunches > 0) || (fd[k]?.art?.green?.bunches > 0)).length > 1;
+      if (multi) fdKeys.forEach(k => {
+        const f = fd[k] || {}, tag = [f.fnType || `Function ${Number(k) + 1}`, f.fnDate].filter(Boolean).join(" · ");
+        if (f.art?.flower?.bunches > 0) artRows.push(artRow(`${tag} — Flower bunches`, f.art.flower.bunches, `${artPlan.flowerBPK} / kg`, f.art.flower.kg));
+        if (f.art?.green?.bunches > 0) artRows.push(artRow(`${tag} — Green bunches`, f.art.green.bunches, `${artPlan.greenBPK} / kg`, f.art.green.kg));
+      });
+      if (artPlan.flowerBunches > 0) artRows.push(artRow(multi ? "All functions — Flower bunches" : "Flower bunches", artPlan.flowerBunches, `${artPlan.flowerBPK} / kg`, artPlan.flowerKg));
+      if (artPlan.greenBunches > 0) artRows.push(artRow(multi ? "All functions — Green bunches" : "Green bunches", artPlan.greenBunches, `${artPlan.greenBPK} / kg`, artPlan.greenKg));
+      (Array.isArray(artPlan.colorSplit) ? artPlan.colorSplit : []).forEach(c => artColourRows.push(`<tr><td>${esc(c.name || "Artificial bunch")}</td><td class="n">${esc(c.qty)}</td></tr>`));
+    }
+
     /* ── ZONE LAYOUT PAGES ──
        One page per zone of the event: the zone's reference photo in the middle band, and this
        department's items that go into that zone as cards above and below it, each with an arrow
@@ -4567,6 +4586,8 @@ ${combined ? "" : (truckRows.length || loadRows.length) ? sect("Loading & dispat
   (truckRows.length ? table(["#", "Vehicle", "Driver", "Phone", "Status"], truckRows, ["12%", "26%", "24%", "20%", "18%"]) : "")
   + (loadRows.length ? `<p class="meta">Everything going to site — ${blockedItems.length} item${blockedItems.length === 1 ? "" : "s"}, ${loadUnits} piece${loadUnits === 1 ? "" : "s"} in total.</p>`
     + table(["Item", "Qty"], loadRows, ["80%", "20%"]) : "")) : ""}
+${artRows.length ? sect("Artificial flowers & greens", table(["Item", "Bunches", "Bunches per kg", "Weight"], artRows, ["46%", "16%", "20%", "18%"])
+  + (artColourRows.length ? `<p class="meta">Pull these specific bunches</p>` + table(["Colour", "Bunches"], artColourRows, ["80%", "20%"]) : "")) : ""}
 ${!combined && trRows.length ? sect("Transport", table(["Load", "Quantity", "Fits per truck", "Trucks"], trRows, ["46%", "20%", "22%", "12%"]) + `<p class="note">${trNote}</p>`) : ""}
 ${!combined && moveRows.length ? sect("Dismantle routing", table(["Item", "Goes to", "Qty", "Logged by"], moveRows, ["38%", "32%", "12%", "18%"])) : ""}
 ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour", "Required", "Available", "Status"], fabRows, ["40%", "20%", "20%", "20%"])) : ""}
