@@ -28,6 +28,7 @@ import { swatchHexFor } from "../../lib/studio/colours";
 import PlanningSyncButton from "./PlanningSyncButton.jsx";
 import FabricBlock from "./FabricBlock.jsx";
 import { buildFabricGroups, foldFabricLines } from "../../lib/ims/fabricGroups";
+import { mandiHow } from "../../lib/ims/floralHow";
 import { buildEventSwap, swappedRecipeFlower } from "../../lib/ims/mandiSwap";
 
 // ── THE OFFICIAL LOGO, READY FOR THE PDF ──
@@ -801,6 +802,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   // date-filter state went with it; the search box still narrows the list.
   const [mandiQuery, setMandiQuery] = useState(""); // autocomplete text for adding a mandi flower
   const [artHowOpen, setArtHowOpen] = useState(false); // expand the artificial-flower "how derived" box
+  const [mandiHowOpen, setMandiHowOpen] = useState(null); // the shopping-list flower whose "how" breakdown is open (one at a time)
   const [newTool, setNewTool] = useState(""); // text for adding an essential tool to the template
   // The activity log opens from the bell in the event header. It is a notification, not a
   // section of the page: a permanent panel meant an event with two edits pushed everything
@@ -6765,7 +6767,35 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                                     )}
                                     {r.swappedTo && <div className="text-[10px] font-semibold text-amber-700">🔁 Not in the mandi — swapped with {r.swappedTo}{r.swapNote ? ` · ${r.swapNote}` : ""}</div>}
                                     {r.swapFor && <div className="text-[10px] font-semibold text-amber-700">🔁 Bought instead of {r.swapFor}{r.swapNote ? ` · ${r.swapNote}` : ""}</div>}
-                                    {r.projQty > 0 && <div className="text-[10px] text-gray-400">{r.projQty} {r.unit} planned</div>}
+                                    {r.projQty > 0 && (() => {
+                                      // How the planned quantity builds up - Deal Check's own per-arrangement figures (floralDetail), in the flower's mandi unit.
+                                      const how = mandiHow(sel?.floralDetail, r.name);
+                                      const open = how && mandiHowOpen === r.name;
+                                      return (
+                                        <>
+                                          <div className="text-[10px] text-gray-400 flex items-center gap-1.5">{r.projQty} {r.unit} planned
+                                            {how && <button onClick={() => setMandiHowOpen(open ? null : r.name)} className="text-[10px] font-semibold text-blue-500 hover:text-blue-700 border border-blue-200 rounded px-1 leading-tight" title="How this quantity builds up">{open ? "▾" : "▸"} how</button>}
+                                          </div>
+                                          {open && (
+                                            <div className="mt-1 bg-gray-50 border rounded-lg p-2 text-[10px] text-gray-600 space-y-1.5">
+                                              {how.groups.map((g, gi) => (
+                                                <div key={gi}>
+                                                  {how.groups.length > 1 && <div className="font-semibold text-gray-700">{g.label}</div>}
+                                                  {g.rows.map((c, ci) => (
+                                                    <div key={ci} className="flex justify-between gap-3 py-0.5">
+                                                      <span className="min-w-0">{c.el}{c.zone && <span className="text-gray-400"> · {c.zone}</span>}{c.size && <span className="text-gray-400"> · {c.size}</span>}</span>
+                                                      <span className="shrink-0 tabular-nums">×{c.elQty} × {c.per}{c.realFrac < 1 ? ` × ${Math.round(c.realFrac * 100)}% real` : ""} = <b className="text-gray-900">{c.qty} {g.unit}</b></span>
+                                                    </div>
+                                                  ))}
+                                                  {how.groups.length > 1 && <div className="text-right text-gray-500">{g.label}: <b className="text-gray-900">{g.need} {g.unit}</b></div>}
+                                                </div>
+                                              ))}
+                                              <div className="pt-1 border-t border-gray-200 text-right">Exact need <b className="text-gray-900">{how.need} {how.unit}</b> → planned as <b className="text-gray-900">{r.projQty} whole {how.unit}{r.projQty === 1 ? "" : "s"}</b></div>
+                                            </div>
+                                          )}
+                                        </>
+                                      );
+                                    })()}
                                   </div>
                                   <div className="text-right w-28 text-xs text-gray-400">{r.projCost > 0 ? fmt(r.projCost) : <span className="text-amber-500">extra</span>}</div>
                                   <div className="flex items-center justify-end gap-1 w-[264px]">
