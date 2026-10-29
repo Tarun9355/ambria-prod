@@ -7626,7 +7626,18 @@ export default function StudioApp() {
       tags: [...(tag.styles || []), ...(tag.colors || [])].slice(0, 3)
     };
     pickAndLoad(synthEv, targetStep, synthEv.video);
-  }, [ytVideoTags, allVideos, pickAndLoad]);
+    // A saved video master (see Build's "Save to Video Master") carries the FULL build this video
+    // was last built as — every zone/element/photo/quantity, not just the venue/fn placeholder
+    // above. Restored AFTER pickAndLoad/loadEvent (layered on top, not instead of) so their venue/
+    // fn/palette scaffolding still runs; sourceVideo/sourceEvent are then re-applied since the
+    // master's own copies (frozen whenever it was last saved) would otherwise stomp the fresh ones
+    // pickAndLoad just set.
+    if (tag.masterBuild) {
+      restoreBuildState(tag.masterBuild);
+      setSourceVideo({ id: videoId, title: vid?.title || synthEv.name, tags: tag });
+      setSourceEvent(synthEv);
+    }
+  }, [ytVideoTags, allVideos, pickAndLoad, restoreBuildState, setSourceVideo, setSourceEvent]);
 
   // ── Save session — VERBATIM ──
   const saveSession = useCallback((opts = {}) => {

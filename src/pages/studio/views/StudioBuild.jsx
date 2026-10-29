@@ -34,6 +34,7 @@ import { thumbUrl, fitUrl } from "../../../lib/studio/thumb.js";
 import { prefetchImages } from "../../../lib/studio/prefetchImages.js";
 import { makeS } from "../../../lib/studio/styles";
 import { WASH_BANDS, GRAIN_URL } from "../../../lib/studio/pageWash";
+import { canvaExportPdfUrl } from "../../../lib/canva";
 
 // ═══ THE PANEL SHELL ═══
 // Browse's left column, brought to Build so the two steps of the same flow are one product. Every
@@ -1074,6 +1075,7 @@ export default function StudioBuild({ ctx }) {
     setVideoModal, setVideoPlaying,
     // misc
     showMsg, askConfirm, saveLib, authUser, logVerificationEvent,
+    saveYtTags, snapshotBuildState,
     // point-lookup safety net (lazy library cache — see StudioApp.jsx)
     ensureLibItems,
     favPhotos, saveFavPhotos,
@@ -1082,6 +1084,10 @@ export default function StudioBuild({ ctx }) {
   // independently collapsable via zoneCollapsed — collapsed = header + total only; expanded = full body.
   const showCosts = true;
   const [copyBuildModalOpen, setCopyBuildModalOpen] = useState(false);
+  // "View Deck" (video master's own Canva deck) — idle | loading | error, keyed loosely by not
+  // needing a per-video map: only one such card is ever on screen at a time (the active function's
+  // own reference card).
+  const [videoDeckPdf, setVideoDeckPdf] = useState({ state: "idle", url: "" });
   const [zoneCollapsed, setZoneCollapsed] = useState({});
   // Grid view's "Recently viewed" section, per zone — collapsed by default (it's the same handful of
   // photos every time you open this zone, not worth scrolling past on every page) and keyed by zone
@@ -3336,6 +3342,74 @@ undefined
           {/* Reference banner — moved out of the main column into the rail, under the filters, so
               the zones start at the top of the page instead of below a full-width header. Restacked
               for the 258px column: media on top, details beneath. */}
+    {/* Hoisted above BOTH banners below: loadEvent (StudioApp.jsx) always sets sourceEvent, video or
+        not, so a Customize-from-video session has sourceVideo AND sourceEvent both truthy — meaning
+        the SOURCE EVENT banner is what actually renders for the mainstream case, never the "sourceVideo
+        && !sourceEvent" one. Save to Video Master / View Deck have to work from whichever banner is
+        actually on screen, so the controls (and the vTag/title they read) are computed once here and
+        reused by both, gated on sourceVideo alone — not on which banner wins. */}
+    {(()=>{
+      const vTag=sourceVideo?(ytVideoTags[sourceVideo.id]||{}):{};
+      const vidForTitle=sourceVideo?allVideos.find(v=>v.id===sourceVideo.id):null;
+      const vTitle=sourceVideo?(sourceVideo.title||vidForTitle?.title||"this video"):"";
+      // Saves the WHOLE current function's build (every zone/element/photo/quantity) back onto this
+      // video, full overwrite — any salesperson can do this, same trust level as the per-photo
+      // "Update master" correction below. The next person who hits Customize on this video gets this
+      // exact build restored instead of today's bare venue/fn placeholder (see pickAndLoadFromVideo).
+      const saveToVideoMaster = () => {
+        if (!sourceVideo?.id) return;
+        askConfirm(
+          `Save this build as "${vTitle}"'s master? Everyone who customizes this video from now on will start from exactly what's on screen — this replaces whatever master it had before.`,
+          async () => {
+            const snap = snapshotBuildState();
+            const res = await saveYtTags({
+              [sourceVideo.id]: (prev) => ({
+                ...(prev || {}),
+                masterBuild: snap,
+                _masterBuildBy: authUser?.name || "—",
+                _masterBuildAt: Date.now(),
+              }),
+            });
+            showMsg(res?.ok === false ? "Couldn't save the video master — try again" : "✓ Saved as this video's master build", res?.ok === false ? "red" : "green");
+          },
+          { yesLabel: "Save" }
+        );
+      };
+      // Opens the video's own Canva deck (attached automatically the first time a deal built from
+      // this video, with a master already saved, got its own deck made in Summary — see
+      // StudioSummary.jsx's sendToCanva). Exports fresh each time, same as Summary's own View Deck —
+      // Canva's export URLs are signed/time-limited, so nothing is cached here.
+      const viewVideoDeck = async () => {
+        if (!vTag.canvaEditUrl) return;
+        setVideoDeckPdf({ state: "loading", url: "" });
+        try {
+          const url = await canvaExportPdfUrl(vTag.canvaEditUrl, { designId: vTag.canvaDesignId });
+          setVideoDeckPdf({ state: "idle", url: "" });
+          window.open(url, "_blank", "noopener");
+        } catch (e) {
+          setVideoDeckPdf({ state: "idle", url: "" });
+          showMsg("Couldn't open the deck — " + (e.message || "try again"), "red");
+        }
+      };
+      const videoMasterControls = sourceVideo && (
+        <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:6}}>
+          {!!vTag.canvaEditUrl&&<button onClick={viewVideoDeck} disabled={videoDeckPdf.state==="loading"}
+            title="Open this video's own design deck (made the last time a deal built from it was sent to Canva)"
+            style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:9.5,padding:"3px 9px",borderRadius:8,border:"1px solid #7C3AED",background:"transparent",color:"#7C3AED",fontWeight:600,cursor:videoDeckPdf.state==="loading"?"default":"pointer",opacity:videoDeckPdf.state==="loading"?0.6:1}}>
+            {videoDeckPdf.state==="loading"?"⏳ Opening…":"📄 View Deck"}
+          </button>}
+          <button onClick={saveToVideoMaster} title="Save the whole build on screen as this video's master — the next person who customizes this video starts from exactly this (permanent, for everyone)"
+            style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:9.5,padding:"3px 9px",borderRadius:8,border:`1px solid ${accent}`,background:"transparent",color:accent,fontWeight:600,cursor:"pointer"}}>
+            <IconPencil size={10}/>Save to Video Master
+          </button>
+        </div>
+      );
+      const videoMasterNote = !!vTag.masterBuild && (
+        <div style={{fontSize:9.5,color:textS,marginTop:2}}>
+          ✓ Has a master build{vTag._masterBuildBy?` · saved by ${vTag._masterBuildBy}`:""}
+        </div>
+      );
+      return <>
     {/* ═══ SOURCE EVENT BANNER ═══ */}
     {sourceEvent&&<div className="sb-rcard" style={{...S.card,marginBottom:0,overflow:"hidden",flexShrink:0}}>
       <div style={{display:"flex",flexDirection:"column",gap:0}}>
@@ -3363,7 +3437,9 @@ undefined
                 should not be inside the card describing the reference. */}
             {showCosts&&<div style={{display:"flex",alignItems:"center",gap:8,flexBasis:"100%",width:"100%"}}>
               <span style={{fontSize:9.5,padding:"2px 8px",borderRadius:8,background:cat.bg,color:cat.color,fontWeight:600}}>{cat.label}</span>
+              {videoMasterControls}
             </div>}
+            {videoMasterNote}
           </div>
           {/* Description and tag chips dropped, matching the Browse cards. In a 258px rail they were
               three more stacked rows under a title that already names the reference, and they pushed
@@ -3384,10 +3460,7 @@ undefined
         fallback, click-to-play-inline, a fullscreen expand button and its own copy-link footer bar —
         reusing it gives this banner the same reliability, not just the same look. */}
     {sourceVideo&&!sourceEvent&&(()=>{
-      const vTag=ytVideoTags[sourceVideo.id]||{};
-      const vid=allVideos.find(v=>v.id===sourceVideo.id);
       const embedUrl=sourceVideo.id?`https://www.youtube.com/embed/${sourceVideo.id}`:null;
-      const title=sourceVideo.title||vid?.title||"Video";
       // Mirrors the reference banner's subtitle line (venue · fn · space) with whatever the
       // video's own tags give us, instead of the old full tag-chip wall (tier + every color +
       // every style + io) that made this card read as a tagging summary rather than a source card.
@@ -3395,24 +3468,28 @@ undefined
       return <div className="sb-rcard" style={{...S.card,marginBottom:0,overflow:"hidden",flexShrink:0}}>
         <div style={{display:"flex",flexDirection:"column",gap:0}}>
           <div style={{width:"100%",height:140,flexShrink:0,position:"relative",background:"linear-gradient(135deg,#1a1a2e,#C9A96E)",overflow:"hidden"}}>
-            <LazyYT src={embedUrl} gradient="linear-gradient(135deg,#1a1a2e,#C9A96E)" poster={vid?.thumb} title={title} style={{position:"absolute",inset:0}}/>
+            <LazyYT src={embedUrl} gradient="linear-gradient(135deg,#1a1a2e,#C9A96E)" poster={vidForTitle?.thumb} title={vTitle} style={{position:"absolute",inset:0}}/>
           </div>
           <div style={{flex:1,padding:"10px 12px",display:"flex",flexDirection:"column",justifyContent:"center"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:6,marginBottom:6}}>
               <div>
                 <div style={{fontSize:9,color:textS,textTransform:"uppercase",letterSpacing:1,fontWeight:600,marginBottom:3}}>Building from video</div>
-                <div title={title} style={{fontSize:12.5,fontWeight:700,lineHeight:1.4,
-                  whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{title}</div>
+                <div title={vTitle} style={{fontSize:12.5,fontWeight:700,lineHeight:1.4,
+                  whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{vTitle}</div>
                 {subLine&&<div style={{fontSize:11,color:textS,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{subLine}</div>}
               </div>
-              {/* Tier chip only — Upload moved out of the card, see UPLOAD, ALWAYS below. */}
+              {/* Tier chip + Save to Video Master — Upload moved out of the card, see UPLOAD, ALWAYS below. */}
               {showCosts&&<div style={{display:"flex",alignItems:"center",gap:8,flexBasis:"100%",width:"100%"}}>
                 <span style={{fontSize:9.5,padding:"2px 8px",borderRadius:8,background:cat.bg,color:cat.color,fontWeight:600}}>{cat.label}</span>
+                {videoMasterControls}
               </div>}
+              {videoMasterNote}
             </div>
           </div>
         </div>
       </div>;
+    })()}
+      </>;
     })()}
     {/* ═══ UPLOAD, ALWAYS ═══
         Upload lives HERE, below the reference card, and nowhere else.
