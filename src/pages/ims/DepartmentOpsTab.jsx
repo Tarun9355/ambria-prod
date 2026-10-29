@@ -3981,7 +3981,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       // The structure strip under the header takes its height out of the photo, so the page still
       // adds up to exactly one sheet.
       const cont = part > 1; // a later page of a zone that is already named
-      const headPx = (cont ? CONT_HEAD_PX : HEAD_PX) + ((pg.struct || []).length ? 44 : 0);
+      // The strip (structure, floral mix, palette) prints on the zone's first page only — nothing repeats (owner ask).
+      const strip = !cont && (pg.struct || []).length > 0;
+      const headPx = (cont ? CONT_HEAD_PX : HEAD_PX) + (strip ? 44 : 0);
       const PHOTO_H = bare ? PAGE_PX - headPx : Math.max(260, PAGE_PX - headPx - rows * (ROW_H + ARROW));
       const photoTop = bare ? 0 : ROW_H + ARROW;
       const botTop = photoTop + PHOTO_H + ARROW;
@@ -4001,7 +4003,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
             <div class="zm">${esc(pg.fnLabel || selDateStr || "")}</div></div>
           <div class="zt">${pg.zoneDims ? `<span><i class="zl">${esc(pg.dimsOf)}</i>${esc(pg.zoneDims)}</span>` : ""}<span>${zoneCountText(pg)}</span></div>
         </div>`}
-        ${(pg.struct || []).length ? `<div class="zst">${pg.struct.map(c => `<span><i class="zl">${esc(c.k)}</i>${c.html != null ? c.html : esc(c.v)}</span>`).join("")}</div>` : ""}
+        ${strip ? `<div class="zst">${pg.struct.map(c => `<span><i class="zl">${esc(c.k)}</i>${c.html != null ? c.html : esc(c.v)}</span>`).join("")}</div>` : ""}
         <div class="zs" style="height:${stageH}px">
           <div class="zphoto" style="top:${photoTop}px;height:${PHOTO_H}px;${bgCss(pg.photo)}" ${bgData(pg.photo)}>${pg.photo ? "" : "<span>No zone photo</span>"}</div>
           ${cards}
