@@ -3599,13 +3599,19 @@ undefined
           onChange={e=>{
             const v=e.target.checked;
             const client=clientLedger.find(c=>c.id===activeClientId);
+            e.target.blur();
+            // Asked first: one stray click on this unlabelled 11px box moved the whole deal's price (Pushpanjali STD jumped
+            // between Rs 6.41L and Rs 5.79L 20+ times in ten minutes) and reached every tab that had the deal open.
+            askConfirm(
+              v ? "Apply the fixed-venue / repeat discount to this client's price?" : "Remove the discount from this client's price?",
+              ()=>{
             // who flipped it and when ride along, so every tab can say so - another person's click reaches this screen live and
             // otherwise looks like the price changing by itself
             saveClientLedger(clientLedger.map(c=>c.id===activeClientId?{...c,applyDiscountToClient:v,applyDiscountBy:authUser?.name||"—",applyDiscountAt:Date.now()}:c));
             logDiscountToClientToggle(authUser, client, v);
-            // let go of focus: a focused checkbox flips on the Space key, so pressing Space to scroll the page afterwards
-            // silently toggled the client discount (Pushpanjali STD: 20+ flips in 10 minutes nobody meant to make)
-            e.target.blur();
+              },
+              { yesLabel: v ? "Apply discount" : "Remove discount", note: "This changes the price everyone working on this deal sees." }
+            );
           }}
           onKeyDown={e=>{ if(e.key===" "||e.key==="Enter") e.preventDefault(); }}
           style={{width:11,height:11,cursor:activeClientId?"pointer":"not-allowed",accentColor:accent}}/>
