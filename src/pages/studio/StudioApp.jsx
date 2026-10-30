@@ -4396,6 +4396,18 @@ export default function StudioApp() {
   // either way (the ✨Fresh/♻️Repeat toggle stays available and still flows to Deal Check as before)
   // — only what that flag PRICES for the client depends on this.
   const hideDiscountFromClient = !clientLedger.find(c => c.id === activeClientId)?.applyDiscountToClient;
+  // The checkbox flipped by someone else (their click reaches this tab live through the client_ledger subscription): say who,
+  // or the price here just jumps by itself every time a colleague on the same deal clicks it.
+  const discountSeenRef = useRef({ id: null, on: null });
+  useEffect(() => {
+    const c = clientLedger.find(x => x.id === activeClientId);
+    const on = !!c?.applyDiscountToClient;
+    const seen = discountSeenRef.current;
+    discountSeenRef.current = { id: activeClientId, on };
+    if (seen.id !== activeClientId || seen.on === null || seen.on === on) return;
+    const by = c?.applyDiscountBy;
+    if (by && by !== (authUser?.name || "—")) showMsg?.(`${by} turned the client discount ${on ? "ON" : "OFF"} on this deal — the price has changed`);
+  }, [clientLedger, activeClientId, authUser, showMsg]);
   // Feeds calcStructCost's flat 25% (see its own comment) — same eligibility rule
   // repeatAdjustedLineCost uses for elements: the toggle is on AND (this category is Repeat OR the
   // venue itself is one of Deal Check's registered Fixed Venues — checked at the venue level here

@@ -3599,11 +3599,16 @@ undefined
           onChange={e=>{
             const v=e.target.checked;
             const client=clientLedger.find(c=>c.id===activeClientId);
-            saveClientLedger(clientLedger.map(c=>c.id===activeClientId?{...c,applyDiscountToClient:v}:c));
+            // who flipped it and when ride along, so every tab can say so - another person's click reaches this screen live and
+            // otherwise looks like the price changing by itself
+            saveClientLedger(clientLedger.map(c=>c.id===activeClientId?{...c,applyDiscountToClient:v,applyDiscountBy:authUser?.name||"—",applyDiscountAt:Date.now()}:c));
             logDiscountToClientToggle(authUser, client, v);
           }}
           style={{width:11,height:11,cursor:activeClientId?"pointer":"not-allowed",accentColor:accent}}/>
       </label>
+      {(()=>{ const c=clientLedger.find(x=>x.id===activeClientId); if(!c?.applyDiscountBy||!c?.applyDiscountAt) return null;
+        const t=new Date(c.applyDiscountAt).toLocaleTimeString("en-IN",{hour:"numeric",minute:"2-digit"});
+        return <span title="Who last changed the client discount checkbox" style={{fontSize:10,color:textS,whiteSpace:"nowrap"}}>Discount {c.applyDiscountToClient?"on":"off"} · {c.applyDiscountBy} · {t}</span>; })()}
       {BANNER_UPLOAD}
     </div>
             </div>{/* .bd-rail-scroll */}
