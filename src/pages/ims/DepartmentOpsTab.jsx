@@ -6245,6 +6245,8 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                                   name they describe. */}
                               <div className="text-xs text-gray-500 mt-0.5">
                                 <div className="truncate" title={it.sub || ""}>{it.sub || "—"}</div>
+                                {/* A part of a kit another department owns (Deal Check files it here by its own category): say which kit */}
+                                {it.fromKit && <div className="truncate text-gray-400" title={`Part of ${it.fromKit}`}>part of {it.fromKit}</div>}
                                 {/* A truss pillar or beam is named by its length ("Truss pillar 12ft"): say how long each is and how much running length all of them make, which is what a Tenting head loads */}
                                 {(() => {
                                   const m = /(pillar|beam)/i.test(String(it.name || "")) ? /(\d+(?:\.\d+)?)\s*(?:ft|feet|')/i.exec(String(it.name || "")) : null;
