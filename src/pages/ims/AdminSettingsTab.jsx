@@ -1560,11 +1560,20 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                   <div key={fi} className="flex items-center gap-1.5 mb-1.5">
                     <FlowerPicker value={fl.flowerId} valueSource="mandi" catalogue={settings.mandiCatalogue || []}
                       inventory={pat?.artificialIncluded ? inventory : undefined}
-                      onChange={(cand) => setRow(cand.source === "inventory" ? { invItemId: cand.id, flowerId: undefined, qty: 0 } : { flowerId: cand.id, invItemId: undefined })} />
+                      onChange={(cand) => setRow(cand.source === "inventory" ? { invItemId: cand.id, flowerId: undefined, qty: 0, gsSnap: undefined } : { flowerId: cand.id, invItemId: undefined, gsSnap: undefined })} />
                     {(() => {
-                      const effGS = flower?.unit === "piece" ? 1 : (Number(flower?.gattharSize) || 0);
+                      // gsSnap freezes this ROW's pieces/mandi-unit ratio at the moment its quantity
+                      // was last typed in pieces here — a pcs/unit correction made later in the Mandi
+                      // Catalogue (a different screen, meant to fix that flower's real packaging/
+                      // pricing) no longer silently reinterprets what this recipe already says it
+                      // needs; the stored mandi-unit qty (and so the cost math) never moved either
+                      // way, only this "how many pieces is that" readout used to. A row with no
+                      // snapshot yet (added before this fix, or never edited since) falls back to
+                      // the live catalogue value, same as before.
+                      const liveGS = flower?.unit === "piece" ? 1 : (Number(flower?.gattharSize) || 0);
+                      const effGS = flower?.unit === "piece" ? 1 : (fl.gsSnap != null ? (Number(fl.gsSnap) || 0) : liveGS);
                       const isVariable = effGS === 0;
-                      const setQty = (newStored) => setRow({ qty: newStored });
+                      const setQty = (newStored) => setRow({ qty: newStored, gsSnap: flower?.unit === "piece" ? undefined : liveGS });
                       const fmtN = (n) => (n > 0 ? (n % 1 === 0 ? n.toString() : n.toFixed(1)) : "");
                       if (!isVariable) {
                         const pieces = (Number(fl.qty) || 0) * effGS;
@@ -1572,7 +1581,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                           <>
                             <input type="number" min="0" step="1" value={fmtN(pieces)} placeholder="pcs"
                               onChange={(e) => { const p = parseFloat(e.target.value) || 0; setQty(effGS > 0 ? p / effGS : 0); }}
-                              className="w-14 border rounded px-1 py-1 text-xs text-center" title={`Stored: ${(Number(fl.qty) || 0).toFixed(3)} ${flower?.unit || ""}`} />
+                              className="w-14 border rounded px-1 py-1 text-xs text-center" title={`Stored: ${(Number(fl.qty) || 0).toFixed(3)} ${flower?.unit || ""}${fl.gsSnap != null && liveGS > 0 && Number(fl.gsSnap) !== liveGS ? ` — pcs/unit was ${fl.gsSnap} when last set here; catalogue now says ${liveGS}` : ""}`} />
                             <select value={fl.unitLabel ?? "pcs"} onChange={(e) => setRow({ unitLabel: e.target.value })}
                               title={(effGS > 1 ? `${effGS} pcs/${flower?.unit} — ` : "per-piece flower — ") + "unit label is cosmetic only, doesn't change the qty or cost math"}
                               className="w-16 border rounded px-1 py-1 text-[10px] text-gray-500 text-center">
