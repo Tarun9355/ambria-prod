@@ -1430,9 +1430,7 @@ export default function StudioEventInfo({ ctx }) {
                   };
                   const rawLmsLeads = (lmsLeads || []).filter(l => !lmsDealAlreadyInStudio(l));
                   const dupLmsCount = (lmsLeads || []).length - rawLmsLeads.length;
-                  // A lead LMS carries no salesperson for (entryByName empty) is nobody's, so it shows for everyone —
-                  // matched against `mine` it was hidden from every rep until "Show all" (Yash, 01370, 22 Nov).
-                  const visibleLmsLeads = showAllReps ? rawLmsLeads : rawLmsLeads.filter(l => !String(l.entryByName || "").trim() || mine(l.entryByName));
+                  const visibleLmsLeads = showAllReps ? rawLmsLeads : rawLmsLeads.filter(l => mine(l.entryByName));
                   const hiddenLmsCount = rawLmsLeads.length - visibleLmsLeads.length;
                   const timeAgo = (ts) => {
                     const ms = Date.now() - ts;
