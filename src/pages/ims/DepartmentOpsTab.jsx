@@ -1180,7 +1180,20 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       // departments by each part's own category, so a row can be a component of a kit owned by
       // another department. It is the only record of that parent, and the PDF needs it to avoid
       // reporting a bolted-on part as a loose item.
-      const rows = deptInvSnap.map((x, i) => ({ id: x.name + i, invId: x.imsId || null, name: x.name, photo: x.photo || "", qty: x.qty || 0, rentalQty: x.rentalQty != null ? x.rentalQty : (x.qty || 0), byFn: x.byFn || null, calc: x.calc || null, unit: x.unit || 0, total: x.total || 0, sub: x.sub || "", isKit: !!x.isKit, fromKit: x.fromKit || null, components: Array.isArray(x.components) ? x.components : null, recipeParts: Array.isArray(x.recipeParts) ? x.recipeParts : null, shortQty: x.shortQty || 0, shortCost: x.shortCost || 0, outOfStock: !!x.outOfStock, prodOrBuy: x.prodOrBuy || null, isSwapped: swapInfo.has(x.name), swappedFrom: swapInfo.get(x.name)?.swappedFrom || null, qtyUnit: x.qtyUnit || "", parts: Array.isArray(x.parts) ? x.parts : null }));
+      // A kit's row carries ALL of its parts, but each part belongs to a department of its own (and Deal Check already files it
+      // there as a `fromKit` row). So this department's kit lists only the parts that are this department's: a part whose department
+      // cannot be told stays, and so does one no other department holds as its own row (never lost from every list).
+      // kitPartsTotal keeps the value of the whole parts list for the kit-shell sum in the flat view below.
+      const partOfThisDept = (cp, kitName) => {
+        const ci = cp?.imsId ? (inventory || []).find(i => String(i.id) === String(cp.imsId)) : null;
+        const d = catToDept((ci && (ci.cat || ci.category)) || cp?.sub || "");
+        if (!d || d === dept) return true;
+        const kn = String(kitName || "").trim().toLowerCase(), pn = String(cp?.name || "").trim().toLowerCase();
+        const heldElsewhere = (Array.isArray(sel?.deptInventory?.[d]) ? sel.deptInventory[d] : []).some(r => String(r?.fromKit || "").trim().toLowerCase() === kn
+          && ((cp?.imsId && r?.imsId && String(r.imsId) === String(cp.imsId)) || String(r?.name || "").trim().toLowerCase() === pn));
+        return !heldElsewhere;
+      };
+      const rows = deptInvSnap.map((x, i) => ({ id: x.name + i, invId: x.imsId || null, name: x.name, photo: x.photo || "", qty: x.qty || 0, rentalQty: x.rentalQty != null ? x.rentalQty : (x.qty || 0), byFn: x.byFn || null, calc: x.calc || null, unit: x.unit || 0, total: x.total || 0, sub: x.sub || "", isKit: !!x.isKit, fromKit: x.fromKit || null, components: Array.isArray(x.components) ? x.components.filter(cp => partOfThisDept(cp, x.name)) : null, kitPartsTotal: Array.isArray(x.components) ? x.components.reduce((t, c) => t + (Number(c.total) || 0), 0) : 0, recipeParts: Array.isArray(x.recipeParts) ? x.recipeParts : null, shortQty: x.shortQty || 0, shortCost: x.shortCost || 0, outOfStock: !!x.outOfStock, prodOrBuy: x.prodOrBuy || null, isSwapped: swapInfo.has(x.name), swappedFrom: swapInfo.get(x.name)?.swappedFrom || null, qtyUnit: x.qtyUnit || "", parts: Array.isArray(x.parts) ? x.parts : null }));
       // Short items first (need chasing/ordering), then Production/Buying (not real stock — worth
       // knowing apart from what's actually reserved), then everything else — the order requested
       // for this list. Stable within each group: Array.prototype.sort is stable, so ties keep the
@@ -1207,7 +1220,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     const out = [];
     blockedItemsGrouped.forEach(it => {
       if (it.isKit && Array.isArray(it.components) && it.components.length) {
-        const partsSum = it.components.reduce((s, c) => s + (Number(c.total) || 0), 0);
+        const partsSum = it.kitPartsTotal != null ? it.kitPartsTotal : it.components.reduce((s, c) => s + (Number(c.total) || 0), 0);
         out.push({ ...it, isKit: false, components: null, total: Math.max(0, (Number(it.total) || 0) - partsSum) }); // kit shell (its own base value)
         it.components.forEach((cp, ci) => out.push({ id: it.id + "__c" + ci, invId: cp.imsId || null, name: cp.name, photo: cp.photo || "", qty: Number(cp.qty) || 0, unit: cp.unit || 0, total: Number(cp.total) || 0, sub: cp.sub || "", kitOf: it.name }));
       } else out.push(it);
@@ -3852,14 +3865,14 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         // of our items, no reference photo and no dimensions. That page would be a heading.
         const zStruct = zoneStructOf(zCfg);
         // ── THE FLOWER PALETTE ── what Build set for this function's flowers ("Maroon:60, White:40"), on every zone page of the
-        // Floral book (and the combined one), each colour as a dot with its share — the colours the florists are building in.
+        // Floral book only (not the all-departments book — owner ask), each colour as a dot with its share — the colours the florists are building in.
         // ── THE FLORAL MIX ── Build's floral slider for this function: floralRatio is the ARTIFICIAL share, real is the rest
         // (the function's default; a single element can still be set to its own %).
-        if ((dept === "Floral" || combined) && typeof fn?.floralRatio === "number") {
+        if (!combined && dept === "Floral" && typeof fn?.floralRatio === "number") {
           const art = Math.max(0, Math.min(100, Math.round(fn.floralRatio)));
           zStruct.push({ k: "Floral mix", v: `Real ${100 - art}% · Artificial ${art}%` });
         }
-        if ((dept === "Floral" || combined) && fn?.flowerPalette) {
+        if (!combined && dept === "Floral" && fn?.flowerPalette) {
           const cols = parseFlowerPalette(fn.flowerPalette);
           if (cols.length) zStruct.push({ k: "Flower palette", html: cols.map(c => `<b class="fpc"><i style="background:${esc(flowerPaletteHexFor(c.name))}"></i>${esc(c.name)} ${esc(c.pct)}%</b>`).join("") });
         }
