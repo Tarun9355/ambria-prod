@@ -3603,7 +3603,11 @@ undefined
             // otherwise looks like the price changing by itself
             saveClientLedger(clientLedger.map(c=>c.id===activeClientId?{...c,applyDiscountToClient:v,applyDiscountBy:authUser?.name||"—",applyDiscountAt:Date.now()}:c));
             logDiscountToClientToggle(authUser, client, v);
+            // let go of focus: a focused checkbox flips on the Space key, so pressing Space to scroll the page afterwards
+            // silently toggled the client discount (Pushpanjali STD: 20+ flips in 10 minutes nobody meant to make)
+            e.target.blur();
           }}
+          onKeyDown={e=>{ if(e.key===" "||e.key==="Enter") e.preventDefault(); }}
           style={{width:11,height:11,cursor:activeClientId?"pointer":"not-allowed",accentColor:accent}}/>
       </label>
       {(()=>{ const c=clientLedger.find(x=>x.id===activeClientId); if(!c?.applyDiscountBy||!c?.applyDiscountAt) return null;
