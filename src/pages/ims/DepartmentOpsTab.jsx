@@ -2749,7 +2749,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     if (!tr) return [];
     if (tr.kind === "pillars") return (tr.rows || []).map(r => ({ label: r.sub, value: `${r.count} pillar${r.count === 1 ? "" : "s"}` }));
     if (tr.kind === "range") return (tr.rows || []).map(r => ({ label: r.sub, value: `${Number(r.sqft || 0).toFixed(0)} ${tr.unit || ""}`.trim() }));
-    if (tr.kind === "fabricBangali") return (tr.zones || []).map(z => ({ label: z.zone, value: [z.topLabour > 0 ? `canopy ${z.topLabour}` : "", z.rft > 0 ? `wrap ${z.rft} ft` : ""].filter(Boolean).join(" · ") || "—" }));
+    // canopy is people (the zone's top area looked up in the range table), wrap is running feet - said in its unit so the two are not read as one count
+    if (tr.kind === "fabricBangali") return (tr.zones || []).map(z => ({ label: z.zone, value: [z.topLabour > 0 ? `canopy ${z.topLabour} ${z.topLabour === 1 ? "person" : "people"}` : "", z.rft > 0 ? `wrap ${z.rft} ft` : ""].filter(Boolean).join(" · ") || "—" }));
     if (tr.kind === "labours") return [
       // Venue minimum is a flat booking-wide floor, not owned by any one department's items, so
       // every department sees it. Each heavy row IS owned by whichever department its own
@@ -2902,7 +2903,25 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           {t.kind !== "labours" && laboursHow[labHowKey] && (
             <div className="border-t px-2 py-1.5 text-[13px] text-gray-700 space-y-1">
               <div className="text-[12.5px] text-gray-500">Each function's crew comes from the rows above (Deal Check's rule for this crew type). The day keeps the busiest function's crew, since the same people cover every function that day.</div>
-              {cols.map((c, ci) => <div key={ci}><b className="text-gray-900">{c.fn}</b> ({timeLabel(c)}): <b>{c.result}</b></div>)}
+              {cols.map((c, ci) => {
+                const tr = c.trace;
+                // Fabric Bangali: canopy people per zone added up, plus every zone's wrap feet added up FIRST and divided by the ft one person wraps, rounded up once
+                if (tr?.kind === "fabricBangali") {
+                  const zs = tr.zones || [];
+                  const tops = zs.filter(z => z.topLabour > 0).map(z => z.topLabour);
+                  const rfts = zs.filter(z => z.rft > 0).map(z => z.rft);
+                  const per = Number(tr.rftPerWorker) || 0;
+                  return (
+                    <div key={ci} className="space-y-0.5">
+                      <div><b className="text-gray-900">{c.fn}</b> ({timeLabel(c)})</div>
+                      <div className="pl-3">Canopy: {tops.length ? <>{tops.join(" + ")} = <b>{tr.topTotal}</b></> : <b>0</b>} {tr.topTotal === 1 ? "person" : "people"} <span className="text-gray-400">(each zone's top area from the range table)</span></div>
+                      <div className="pl-3">Wrap: {rfts.length ? <>{rfts.join(" + ")} = {tr.rftTotal} ft</> : "0 ft"}{per > 0 && tr.rftTotal > 0 ? <> ÷ {per} ft per person = {(tr.rftTotal / per).toFixed(2)} → rounded up <b>{tr.rftLabour}</b></> : <> → <b>{tr.rftLabour || 0}</b></>} {tr.rftLabour === 1 ? "person" : "people"}</div>
+                      <div className="pl-3">Crew = {tr.topTotal} + {tr.rftLabour || 0} = <b className="text-gray-900">{c.result}</b></div>
+                    </div>
+                  );
+                }
+                return <div key={ci}><b className="text-gray-900">{c.fn}</b> ({timeLabel(c)}): <b>{c.result}</b></div>;
+              })}
               <div>Today = busiest function = <b className="text-gray-900">{Math.max(0, ...cols.map(c => Number(c.result) || 0))}</b></div>
             </div>
           )}
