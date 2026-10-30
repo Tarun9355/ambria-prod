@@ -3250,9 +3250,6 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
                 <div className="mt-1.5 ml-7 bg-slate-50 ring-1 ring-slate-200 rounded-lg p-2">
                   {d.trace ? renderMpTrace(d.trace, d.drivenBy, d, r.type)
                     : <div className="text-[13px] text-gray-500">{d.phase === "minusOne" ? "⏮️ −1 setup — full crew staged early (peak of all functions)." : d.phase === "dismantle" ? "🧹 dismantle day — crew carried from the event." : "⏸️ gap day — crew carried from the previous day."}</div>}
-                  {d.trace && Number(d.trace.result) > 0 && Number(d.trace.result) < Number(d.count) && (
-                    <div className="text-[13px] text-amber-600 mt-1">🔼 Today only needs {d.trace.result}, but crew is kept at {d.count} — carried over from a busier earlier day (crew never drops mid-event, only grows).</div>
-                  )}
                   {/* Plain per-department headcount for today's shared crew — just "Dept: N" for
                       every department drawing on it, nothing about percentages or fractional shares
                       (those read as confusing and nobody using this screen needed the "why", just
