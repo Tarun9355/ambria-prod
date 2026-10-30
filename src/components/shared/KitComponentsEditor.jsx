@@ -315,6 +315,14 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
                   })}
                 </div>
               )}
+              {/* An overlay / cushion cover part with no alternative designs named: no preference yet - in red; tapping it opens the same picker. */}
+              {cItem && onCheckChoices && itemTakesChoices(cItem) && partChoices(c).length < 2 && (
+                <div style={{ margin: "2px 0 4px 28px" }}>
+                  <span role="button" tabIndex={0} onClick={() => onCheckChoices(cItem, c, (picks) => setComps(comps.map((x, i) => (i === ci ? applyPartChoicePicks(x, picks) : x))), { need: qtyEach * qtyMultiplier })}
+                    title="No alternative designs named - tap to pick up to 4 in order of preference. Planning decides which one is used."
+                    style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 700, color: "#EF4444", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.35)", borderRadius: 6, padding: "2px 8px", cursor: "pointer" }}>● Not selected preference</span>
+                </div>
+              )}
               {/* Kit-inside-a-kit → fully editable, PER THIS PARENT INSTANCE. Edits are stored in this
                   component's `subOverrides`, so the master sub-kit and every other kit/photo using it
                   stay untouched. Recursively renders this same editor for the nested kit.
