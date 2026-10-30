@@ -1264,7 +1264,16 @@ export default function StudioBuild({ ctx }) {
         try { warned = !!getElPrice(el, zoneConfig[k], { checkAvailability: true, zoneKey: k, elIdx: idx, crossFnReusePool: pool }, aVenue)?.warning; } catch { /* price check failed: not counted */ }
         return a + (asked || warned ? 1 : 0);
       }, 0);
-      return `${n} item${n === 1 ? "" : "s"}${shortN ? ` · ⚠ ${shortN} short` : ""}`;
+      // Overlays and cushion covers (also as parts of a kit) with no alternative designs named: said on the tile too, in red, so it shows without opening the card.
+      const prefN = els.reduce((a, el) => {
+        if (!el?.invId) return a;
+        const it = (imsInventory || []).find(i => i.id === el.invId);
+        if (!it) return a;
+        if (itemTakesChoices(it)) return a + (elementChoices(el).length < 2 ? 1 : 0);
+        const parts = Array.isArray(el.kitOverrides) ? el.kitOverrides : (Array.isArray(it.subItems) ? it.subItems : []);
+        return a + parts.filter(pt => { const pi = pt?.itemId ? (imsInventory || []).find(i => i.id === pt.itemId) : null; return pi && itemTakesChoices(pi) && partChoices(pt).length < 2; }).length;
+      }, 0);
+      return `${n} item${n === 1 ? "" : "s"}${shortN ? ` · ⚠ ${shortN} short` : ""}${prefN ? ` · ⚠ ${prefN > 1 ? `${prefN} ` : ""}${prefN > 1 ? "not selected preference" : "Not selected preference"}` : ""}`;
     }
     // Empty rather than "Not set" — the tile already reads as untouched, and the words added a
     // line of noise to every zone on first open. sectionTile skips the sub-label row when blank.
@@ -1288,6 +1297,8 @@ export default function StudioBuild({ ctx }) {
       // Carpet New is bought fresh — no stock carpet to pick (a photo is attached instead).
       const needsPick = (r) => r?.cpT !== CARPET_OFF && !r?.cpInvId && !/new/i.test(carpetPricingFor(r?.cpT, imsCarpetMaterials)?.label || "");
       if (anySize && rows.some(needsPick)) return `${size || "Floor"} · carpet not picked`;
+      // a stock carpet is picked but fewer than two are ranked: no preference named yet
+      if (anySize && rows.some(r => r?.cpT !== CARPET_OFF && r?.cpInvId && !/new/i.test(carpetPricingFor(r?.cpT, imsCarpetMaterials)?.label || "") && prefsOf(r).length < 2)) return `${size || "Floor"} · ⚠ Not selected preference`;
       return [size, picked[0] ? `📦 ${picked[0]}` : ""].filter(Boolean).join(" · ");
     }
     const n = (zc.prints || []).length, w = printedWallsOf(k).length;
@@ -1411,7 +1422,7 @@ export default function StudioBuild({ ctx }) {
       <div style={{flex:1,minWidth:0}}>
         <div style={{fontSize:12.5,fontWeight:700,color:on?accent:textP}}>{sec.label}</div>
         {/* Red for a carpet problem on the Platform tile: short, none selected, or not picked. */}
-        {sub&&(()=>{const warn=(sec.id==="platform"&&/^⚠|No carpet|carpet not picked/.test(String(sub)))||(sec.id==="elements"&&/⚠/.test(String(sub)));return <div style={{fontSize:10.5,color:warn?"#EF4444":textS,fontWeight:warn?700:undefined,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sub}</div>;})()}
+        {sub&&(()=>{const warn=(sec.id==="platform"&&/^⚠|No carpet|carpet not picked|Not selected preference/.test(String(sub)))||(sec.id==="elements"&&/⚠/.test(String(sub)));return <div style={{fontSize:10.5,color:warn?"#EF4444":textS,fontWeight:warn?700:undefined,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sub}</div>;})()}
       </div>
       {/* Per-chip Repeat override — defaults to the zone's own ✨Fresh/♻️Repeat toggle (repeatCatFor)
           until flipped here specifically for this one category. Icon-only: the tile is already
