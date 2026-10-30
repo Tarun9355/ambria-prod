@@ -1171,6 +1171,18 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     return map;
   }, [amendRequests, sel, dept]);
 
+  // A kit's row carries ALL of its parts, but each part belongs to a department of its own (and Deal Check already files it there as a
+  // `fromKit` row). So a department's kit lists only the parts that are that department's: a part whose department cannot be told stays,
+  // and so does one no other department holds as its own row (never lost from every list).
+  const kitPartOfDept = (cp, kitName, d0) => {
+    const ci = cp?.imsId ? (inventory || []).find(i => String(i.id) === String(cp.imsId)) : null;
+    const d = catToDept((ci && (ci.cat || ci.category)) || cp?.sub || "");
+    if (!d || d === d0) return true;
+    const kn = String(kitName || "").trim().toLowerCase(), pn = String(cp?.name || "").trim().toLowerCase();
+    const heldElsewhere = (Array.isArray(sel?.deptInventory?.[d]) ? sel.deptInventory[d] : []).some(r => String(r?.fromKit || "").trim().toLowerCase() === kn
+      && ((cp?.imsId && r?.imsId && String(r.imsId) === String(cp.imsId)) || String(r?.name || "").trim().toLowerCase() === pn));
+    return !heldElsewhere;
+  };
   // ── Blocked inventory: prefer the Deal Check snapshot; fall back to IMS blocks if not synced ──
   // GROUPED view (kit as one line + its components) — used for the inventory/income display.
   const blockedItemsGrouped = useMemo(() => {
@@ -1180,20 +1192,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       // departments by each part's own category, so a row can be a component of a kit owned by
       // another department. It is the only record of that parent, and the PDF needs it to avoid
       // reporting a bolted-on part as a loose item.
-      // A kit's row carries ALL of its parts, but each part belongs to a department of its own (and Deal Check already files it
-      // there as a `fromKit` row). So this department's kit lists only the parts that are this department's: a part whose department
-      // cannot be told stays, and so does one no other department holds as its own row (never lost from every list).
-      // kitPartsTotal keeps the value of the whole parts list for the kit-shell sum in the flat view below.
-      const partOfThisDept = (cp, kitName) => {
-        const ci = cp?.imsId ? (inventory || []).find(i => String(i.id) === String(cp.imsId)) : null;
-        const d = catToDept((ci && (ci.cat || ci.category)) || cp?.sub || "");
-        if (!d || d === dept) return true;
-        const kn = String(kitName || "").trim().toLowerCase(), pn = String(cp?.name || "").trim().toLowerCase();
-        const heldElsewhere = (Array.isArray(sel?.deptInventory?.[d]) ? sel.deptInventory[d] : []).some(r => String(r?.fromKit || "").trim().toLowerCase() === kn
-          && ((cp?.imsId && r?.imsId && String(r.imsId) === String(cp.imsId)) || String(r?.name || "").trim().toLowerCase() === pn));
-        return !heldElsewhere;
-      };
-      const rows = deptInvSnap.map((x, i) => ({ id: x.name + i, invId: x.imsId || null, name: x.name, photo: x.photo || "", qty: x.qty || 0, rentalQty: x.rentalQty != null ? x.rentalQty : (x.qty || 0), byFn: x.byFn || null, calc: x.calc || null, unit: x.unit || 0, total: x.total || 0, sub: x.sub || "", isKit: !!x.isKit, fromKit: x.fromKit || null, components: Array.isArray(x.components) ? x.components.filter(cp => partOfThisDept(cp, x.name)) : null, kitPartsTotal: Array.isArray(x.components) ? x.components.reduce((t, c) => t + (Number(c.total) || 0), 0) : 0, recipeParts: Array.isArray(x.recipeParts) ? x.recipeParts : null, shortQty: x.shortQty || 0, shortCost: x.shortCost || 0, outOfStock: !!x.outOfStock, prodOrBuy: x.prodOrBuy || null, isSwapped: swapInfo.has(x.name), swappedFrom: swapInfo.get(x.name)?.swappedFrom || null, qtyUnit: x.qtyUnit || "", parts: Array.isArray(x.parts) ? x.parts : null }));
+      const rows = deptInvSnap.map((x, i) => ({ id: x.name + i, invId: x.imsId || null, name: x.name, photo: x.photo || "", qty: x.qty || 0, rentalQty: x.rentalQty != null ? x.rentalQty : (x.qty || 0), byFn: x.byFn || null, calc: x.calc || null, unit: x.unit || 0, total: x.total || 0, sub: x.sub || "", isKit: !!x.isKit, fromKit: x.fromKit || null, components: Array.isArray(x.components) ? x.components.filter(cp => kitPartOfDept(cp, x.name, dept)) : null, kitPartsTotal: Array.isArray(x.components) ? x.components.reduce((t, c) => t + (Number(c.total) || 0), 0) : 0, recipeParts: Array.isArray(x.recipeParts) ? x.recipeParts : null, shortQty: x.shortQty || 0, shortCost: x.shortCost || 0, outOfStock: !!x.outOfStock, prodOrBuy: x.prodOrBuy || null, isSwapped: swapInfo.has(x.name), swappedFrom: swapInfo.get(x.name)?.swappedFrom || null, qtyUnit: x.qtyUnit || "", parts: Array.isArray(x.parts) ? x.parts : null }));
       // Short items first (need chasing/ordering), then Production/Buying (not real stock — worth
       // knowing apart from what's actually reserved), then everything else — the order requested
       // for this list. Stable within each group: Array.prototype.sort is stable, so ties keep the
@@ -2045,7 +2044,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     (Array.isArray(sel?.deptInventory?.[d]) ? sel.deptInventory[d] : []).forEach((x, i) => {
       const base = { id: x.name + i, invId: x.imsId || null, name: x.name, qty: Number(x.qty) || 0, sub: x.sub || "" };
       out.push(base);
-      if (x.isKit && Array.isArray(x.components)) x.components.forEach((cp, ci) => out.push({ id: base.id + "__c" + ci, invId: cp.imsId || null, name: cp.name, qty: Number(cp.qty) || 0, sub: cp.sub || "", kitOf: x.name }));
+      if (x.isKit && Array.isArray(x.components)) x.components.filter(cp => kitPartOfDept(cp, x.name, d)).forEach((cp, ci) => out.push({ id: base.id + "__c" + ci, invId: cp.imsId || null, name: cp.name, qty: Number(cp.qty) || 0, sub: cp.sub || "", kitOf: x.name }));
     });
     return out;
   };
