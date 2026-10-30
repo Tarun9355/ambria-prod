@@ -3247,28 +3247,27 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
                       today's crew; Furniture/Fabric never appear on their own since their share is
                       already folded into Structure's/Tenting's (poolLabourDept), so only a canonical
                       pooled-target or standalone department shows up here.
-                      Largest-remainder apportionment, not an independent Math.round per department —
-                      rounding each fractional share on its own (1.92, 1.01, 0.56, 0.53 → 2, 1, 1, 1)
-                      summed to 5 against a 4-person day, which is exactly the "4 labours but depts
-                      add up to 5" mismatch reported 2026-10-30. This guarantees the per-department
-                      counts shown always sum to the same total crew figure shown above. */}
+                      Each department's own share rounds UP independently (owner ask, 2026-10-30: a
+                      department with real, nonzero work — even 0.43 of a labourer — needs a WHOLE
+                      person on site, not zero) rather than the largest-remainder split tried first,
+                      which hid a small-but-real department (Floral at 0.43) behind a 0 so the figures
+                      would add up to the day's total. The total shown is now the SUM of these rounded-
+                      up department counts instead — it can run higher than the day's own planned crew
+                      (one department's rounding-up can legitimately mean one more body than the system
+                      plan assumed), and that is the correct, honest number now, not a mismatch to fix. */}
                   {hasShare && d.shareByDept && (() => {
-                    const total = Math.round(Number(d.count) || 0);
+                    const base = Number(d.count) || 0;
                     const entries = DEPTS
                       .filter((d2) => poolLabourDept(d2) === d2)
-                      .map((d2) => ({ dept: d2, exact: (Number(d.shareByDept[d2]) || 0) * total }))
-                      .filter((x) => x.exact > 0.001);
+                      .map((d2) => ({ dept: d2, count: Math.ceil((Number(d.shareByDept[d2]) || 0) * base) }))
+                      .filter((x) => x.count > 0)
+                      .sort((a, b) => b.count - a.count);
                     if (!entries.length) return null;
-                    const floored = entries.map((e) => ({ ...e, base: Math.floor(e.exact), rem: e.exact - Math.floor(e.exact) }));
-                    let leftover = total - floored.reduce((s, e) => s + e.base, 0);
-                    const byRemainder = [...floored].sort((a, b) => b.rem - a.rem);
-                    const alloc = new Map(floored.map((e) => [e.dept, e.base]));
-                    for (let i = 0; i < byRemainder.length && leftover > 0; i++, leftover--) alloc.set(byRemainder[i].dept, alloc.get(byRemainder[i].dept) + 1);
-                    const shown = entries.map((e) => ({ dept: e.dept, count: alloc.get(e.dept) })).sort((a, b) => b.count - a.count);
+                    const total = entries.reduce((s, e) => s + e.count, 0);
                     return (
                       <div className="mt-1 text-[13px] text-gray-600">
                         Today's {total} {r.type.toLowerCase()}:{" "}
-                        {shown.map((o, i) => (
+                        {entries.map((o, i) => (
                           <span key={o.dept}>
                             {i > 0 ? " · " : ""}
                             <b className={o.dept === dept ? "text-gray-900" : "text-gray-700"}>{poolLabourDeptLabel(o.dept)}</b> {o.count}
