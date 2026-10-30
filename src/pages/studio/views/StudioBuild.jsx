@@ -27,7 +27,7 @@ import { qtyUsedElsewhereInBuild } from "../../../lib/studio/dealAvailability";
 import { logDiscountToClientToggle } from "../../../lib/studio/userActions";
 import { todayStr } from "../../../lib/ims/attendance";
 import { isHiddenSubcat, canFulfillShortfall } from "../../../lib/rateCard";
-import { availableAtVenue, combineAvailability, fixedVenueFor } from "../../../lib/ims/fixedVenues";
+import { availableAtVenue, combineAvailability } from "../../../lib/ims/fixedVenues";
 import { groupIdsForZones } from "../../../lib/studio/zoneGroups";
 import { CUSTOM_ZONE_TAG_PREFIX } from "../../../lib/studio/keys.js";
 import { thumbUrl, fitUrl } from "../../../lib/studio/thumb.js";
@@ -1879,12 +1879,11 @@ export default function StudioBuild({ ctx }) {
     </span>;
     return <button onClick={() => setCustomPicker({ k, kind: "masking", rowIdx, wallId, wallMatSnapshot: zc.mkWallMat })} style={{ padding: dense ? "2px 7px" : "3px 9px", borderRadius: 5, fontSize: fs, border: `1px dashed ${border}`, background: "transparent", color: textS, cursor: "pointer" }}><IconCamera size={11}/> Custom Masking</button>;
   };
-  // Same rule as StudioApp.jsx's structDiscountFor: a Fixed Venue (or its sub-venue) switches the structure
-  // discount on by itself, Fresh chip or not; elsewhere it follows the Repeat chips.
-  const structDiscountFor = (zc, venueName) => {
+  // Repeat chips only — a Fixed Venue no longer switches the structure discount on by itself (owner
+  // ask 2026-10-18; see StudioApp.jsx's structDiscountFor).
+  const structDiscountFor = (zc) => {
     if (hideDiscountFromClient) return false;
-    const fv = !!fixedVenueFor({ fixedVenues: sharedFloralSettings?.fixedVenues || [], venueParents: venueParents || {} }, venueName);
-    return { truss: fv || repeatCatFor(zc, "truss"), platform: fv || repeatCatFor(zc, "platform"), print: fv || repeatCatFor(zc, "print") };
+    return { truss: repeatCatFor(zc, "truss"), platform: repeatCatFor(zc, "platform"), print: repeatCatFor(zc, "print") };
   };
   // Same scaleStruct StudioApp.jsx uses for its own guest-facing calcStructCost calls (getElPrice/
   // getElPriceForFn already fold guestPriceMultiplier in there) — Build's own local truss/masking/
@@ -5516,7 +5515,7 @@ undefined
                   DCTrussTab still shows that detailed breakdown for its own purposes, unaffected. */}
               {zoneSection[k]==="truss"&&<TrussStack S={S} customCeilingField={customCeilingField} k={k} zc={zc} zm={zm} st={st} sZ={sZ} sD={sD} fmt={fmt} showCosts={showCosts}
                 isDark={isDark} border={border} textP={textP} textS={textS} accent={accent}
-                customMaskingField={customMaskingField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} scale={zoneScaleVal(k)} guestDiscPct={structDiscountFor(zc,aVenue)?.truss?25:0} guestFabricDiscPct={structDiscountFor(zc,aVenue)?25:0} maskingColours={maskingColours} maskingColourOptions={maskingColourOptions} guestPriceMultiplier={guestPriceMultiplier} trussRepeat={repeatCatFor(zc,"truss")||!!structDiscountFor(zc,aVenue)?.truss} />}
+                customMaskingField={customMaskingField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} scale={zoneScaleVal(k)} guestDiscPct={structDiscountFor(zc,aVenue)?.truss?25:0} guestFabricDiscPct={structDiscountFor(zc,aVenue)?25:0} maskingColours={maskingColours} maskingColourOptions={maskingColourOptions} guestPriceMultiplier={guestPriceMultiplier} trussRepeat={repeatCatFor(zc,"truss")} />}
               {/* ── PLATFORM + CARPET → then floor dims ── */}
               {zoneSection[k]==="platform"&&<FloorStack S={S} zc={zc} zm={zm} st={st} sZ={sZ} sFD={sFD} fd={fd} fmt={fmt} showCosts={showCosts}
                 isDark={isDark} border={border} accent={accent} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} imsInventory={imsInventory} scale={zoneScaleVal(k)} openAvailModal={openAvailModal} zoneKey={k} onCarpetAll={applyCarpetToAll} carpetShortOf={carpetShortOf} carpetRemainingOf={carpetRemainingOf} carpetReuse={carpetReuseNow()} guestPriceMultiplier={guestPriceMultiplier} />}
@@ -6031,7 +6030,7 @@ undefined
                   {secHead(<IconRuler size={14}/>,"Zone Dimensions","#C9A96E")}
                   <TrussStack S={S} customCeilingField={ownsLive?customCeilingField:noCustomField} k={zk} zc={cfgCur} zm={zm} st={st} sZ={sZ} sD={sD} fmt={fmt} showCosts={showCosts}
                     isDark={isDark} border={border} textP={textP} textS={textS} accent={accent}
-                    customMaskingField={ownsLive?customMaskingField:noCustomField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} scale={scaleFor} guestDiscPct={structDiscountFor(cfgCur,aVenue)?.truss?25:0} guestFabricDiscPct={structDiscountFor(cfgCur,aVenue)?25:0} maskingColours={maskingColours} maskingColourOptions={maskingColourOptions} guestPriceMultiplier={guestPriceMultiplier} trussRepeat={repeatCatFor(cfgCur,"truss")||!!structDiscountFor(cfgCur,aVenue)?.truss} />
+                    customMaskingField={ownsLive?customMaskingField:noCustomField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} scale={scaleFor} guestDiscPct={structDiscountFor(cfgCur,aVenue)?.truss?25:0} guestFabricDiscPct={structDiscountFor(cfgCur,aVenue)?25:0} maskingColours={maskingColours} maskingColourOptions={maskingColourOptions} guestPriceMultiplier={guestPriceMultiplier} trussRepeat={repeatCatFor(cfgCur,"truss")} />
                   <FloorStack S={S} zc={cfgCur} zm={zm} st={st} sZ={sZ} sFD={sFD} fd={fd} fmt={fmt} showCosts={showCosts}
                     isDark={isDark} border={border} accent={accent} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} scale={scaleFor} openAvailModal={ownsLive?openAvailModal:undefined} zoneKey={zk} guestPriceMultiplier={guestPriceMultiplier} />
                 </div>
