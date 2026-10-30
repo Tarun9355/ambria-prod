@@ -3462,7 +3462,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
 
     // ── ARTIFICIAL FLOWERS & GREENS ── the bunches the Floral book sends out, worked to kilos the way Deal Check does it (bunches ÷ bunches per kg),
     // and the specific colours to pull. Per function when the event has more than one (floralDetail), then the whole event. No rupees: this book is for the crew.
-    const artPlan = (dept === "Floral" || combined) ? sel?.floralPlan?.artificial : null;
+    // Floral book only: the all-departments book carries no flower sections (owner ask) - its Mandi & Kits pages list kits only.
+    const artPlan = !combined && dept === "Floral" ? sel?.floralPlan?.artificial : null;
     const artRows = [], artColourRows = [];
     if (artPlan && ((Number(artPlan.flowerBunches) || 0) > 0 || (Number(artPlan.greenBunches) || 0) > 0)) {
       const artRow = (label, bunches, bpk, kg) => `<tr><td>${esc(label)}</td><td class="n">${esc(bunches)}</td><td class="n">${esc(bpk)}</td><td class="n">${esc(kg)} kg</td></tr>`;
@@ -4163,7 +4164,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     const zoneDetailPages = (pg) => {
       const blocks = [];
       (pg.items || []).forEach(it => {
-        if (Array.isArray(it.recipe) && it.recipe.length) {
+        if (!combined && Array.isArray(it.recipe) && it.recipe.length) {
           const parts = it.recipe.map(f => ({ name: f.name, qty: Math.round((Number(f.qty) || 0) * (Number(it.qty) || 0) * 100) / 100, unit: f.unit }));
           blocks.push({ h: detailH(parts), html: detailCard("🌸", it.name, it.qty, it.unit, parts) });
         }
