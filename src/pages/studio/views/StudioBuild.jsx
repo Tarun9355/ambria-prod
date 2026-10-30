@@ -3610,9 +3610,6 @@ undefined
           onKeyDown={e=>{ if(e.key===" "||e.key==="Enter") e.preventDefault(); }}
           style={{width:11,height:11,cursor:activeClientId?"pointer":"not-allowed",accentColor:accent}}/>
       </label>
-      {(()=>{ const c=clientLedger.find(x=>x.id===activeClientId); if(!c?.applyDiscountBy||!c?.applyDiscountAt) return null;
-        const t=new Date(c.applyDiscountAt).toLocaleTimeString("en-IN",{hour:"numeric",minute:"2-digit"});
-        return <span title="Who last changed the client discount checkbox" style={{fontSize:10,color:textS,whiteSpace:"nowrap"}}>Discount {c.applyDiscountToClient?"on":"off"} · {c.applyDiscountBy} · {t}</span>; })()}
       {BANNER_UPLOAD}
     </div>
             </div>{/* .bd-rail-scroll */}
