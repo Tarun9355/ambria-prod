@@ -3256,7 +3256,17 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
                       (one department's rounding-up can legitimately mean one more body than the system
                       plan assumed), and that is the correct, honest number now, not a mismatch to fix. */}
                   {hasShare && d.shareByDept && (() => {
-                    const base = Number(d.count) || 0;
+                    // d.count is the crew being KEPT today — it can be carried forward from a busier
+                    // earlier day and run higher than what today's own work actually needs (see the
+                    // 🔼 banner above). d.shareByDept's fractions were computed against TODAY's OWN
+                    // usage total, not the carried-forward number, so multiplying them by d.count
+                    // scales every department UP by however inflated the carry-forward is — a
+                    // department whose own per-function need rounds to 1 (0.82) showed as 2 on a day
+                    // the crew was being kept high for an unrelated reason. d.trace.result is that
+                    // real, un-inflated today's-own total; it's the correct base to split by
+                    // department, and only falls back to d.count when there's no trace to read (no
+                    // carry-forward is possible there anyway).
+                    const base = Number(d.trace?.result ?? d.count) || 0;
                     const entries = DEPTS
                       .filter((d2) => poolLabourDept(d2) === d2)
                       .map((d2) => ({ dept: d2, count: Math.ceil((Number(d.shareByDept[d2]) || 0) * base) }))
