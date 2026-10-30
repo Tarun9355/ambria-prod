@@ -73,9 +73,19 @@ describe("autoSaveWouldDestroy", () => {
     expect(autoSaveWouldDestroy({ fnSnapshots: {} }, prev, false)).toBe(false);
   });
 
-  it("does not block when the leading session is a manual save (it is prepended, not replaced)", () => {
+  // Prepending is not harmless: the empty save still becomes the newest build, the one every screen
+  // opens. Confirmed incident (Hanumat, 30 Oct): a restored manual save was buried by empty auto-saves.
+  it("blocks an empty auto-save from landing above a manual save that holds work", () => {
     const prev = { auto: false, fnSnapshots: { 0: withVideo } };
-    expect(autoSaveWouldDestroy({ fnSnapshots: {} }, prev, true)).toBe(false);
+    expect(autoSaveWouldDestroy({ fnSnapshots: {} }, prev, true)).toBe(true);
+  });
+  it("blocks a Rs 0 auto-save above someone else's priced manual save", () => {
+    const prev = { auto: false, savedBy: "salim", total: 245529, fnSnapshots: { 0: withZones } };
+    expect(autoSaveWouldDestroy({ total: 0, fnSnapshots: { 0: { zoneElements: { stage: [] } } } }, prev, true)).toBe(true);
+  });
+  it("still lets an auto-save with real work land above a manual save", () => {
+    const prev = { auto: false, total: 245529, fnSnapshots: { 0: withZones } };
+    expect(autoSaveWouldDestroy({ total: 250000, fnSnapshots: { 0: withZones } }, prev, true)).toBe(false);
   });
 
   it("does not block on the very first save, with nothing to replace", () => {

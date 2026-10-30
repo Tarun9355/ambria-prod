@@ -176,18 +176,24 @@ export function sessionHasData(session) {
 }
 
 /**
- * May this auto-save overwrite the rolling draft it is about to replace?
+ * May this auto-save become the deal's newest build, over the one that is newest now?
  *
- * Only the AUTO path replaces in place, and only an empty snapshot landing on a draft that holds
- * work is destructive — every other combination is a normal update. A manual save always writes.
+ * Only an empty snapshot landing on a build that holds work is destructive — every other combination
+ * is a normal update. A manual save always writes.
+ *
+ * Whether the auto-save would REPLACE the newest draft in place or be PREPENDED above it does not
+ * matter: either way it becomes sessions[0], the build every screen opens. This used to return early
+ * when the newest session was a manual save (or someone else's), on the idea that prepending is
+ * harmless - it is not: on 30 Oct a restored manual save (Hanumat, Rs 2.45L) was buried within a
+ * minute by two empty auto-saves from another tab, so the next open loaded an empty Build.
  *
  * @param {object} next      the snapshot about to be written
- * @param {object|null} prev the session it would replace (the leading rolling draft), or null
+ * @param {object|null} prev the deal's newest session (the one this save would sit on), or null
  * @param {boolean} isAuto   true for the background save, false for a manual Save Draft
  */
 export function autoSaveWouldDestroy(next, prev, isAuto) {
   if (!isAuto) return false;
-  if (!prev || !prev.auto) return false;          // nothing being replaced in place
+  if (!prev) return false;                        // the very first save: nothing to bury
   // Checked independently of (and BEFORE) the structural check below: a real priced draft
   // dropping to nothing is destructive on its own, whatever sessionHasData(next) concludes about
   // shape. This is deliberately a second, independent signal rather than a replacement for the
