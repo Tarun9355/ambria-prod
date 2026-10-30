@@ -2911,6 +2911,20 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
               {activeClient.bookedAt&&<span style={{fontSize:11.5,fontWeight:600,color:"rgba(255,255,255,0.85)"}}>{new Date(activeClient.bookedAt).toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"})}</span>}
               {activeClient.bookedBy&&<span style={{fontSize:11,color:"rgba(255,255,255,0.5)"}}>· {activeClient.bookedBy}</span>}
             </div>
+            {/* Site Supervisor — assigned by IMS's Dept Ops (Planning tab), read-only here. Read
+                straight off the event order (siteSupervisorName/Phone), which Dept Ops denormalizes
+                onto the row itself rather than just an id, so Studio can show who's assigned without
+                fetching the supervisor roster. */}
+            {(() => {
+              const eo = (eventOrders || []).find((e) => e.clientId === activeClientId) || (eventOrders || []).find((e) => (e.clientName || "") === (clientName || "").trim());
+              if (!eo?.siteSupervisorName) return null;
+              return (
+                <div style={{marginTop:6,fontSize:11,color:"rgba(255,255,255,0.6)"}}>
+                  👷 Site Supervisor: <span style={{color:"rgba(255,255,255,0.9)",fontWeight:600}}>{eo.siteSupervisorName}</span>
+                  {eo.siteSupervisorPhone ? ` · ${eo.siteSupervisorPhone}` : ""}
+                </div>
+              );
+            })()}
             {/* Always available while booked, not just when pendingDelta is non-zero — a swap made to
                 clear an out-of-stock item can net to the same price while still needing IMS's own
                 copy of the build refreshed. Runs the same out-of-stock hard block Sold does; a

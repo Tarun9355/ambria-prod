@@ -2004,6 +2004,7 @@ export default function IMS() {
             autoPdfFor={autoPdfFor} onAutoPdfDone={finishAutoPdf}
             onGoToCalendar={canSeeCalendar ? goToCalendar : undefined}
             rateCardCategories={rateCardCategories} rcItems={studioRcItems} rcCats={studioRcCats}
+            supervisors={supervisors}
           />
         ) : activeTab === "finance" ? (
           <FinanceTab

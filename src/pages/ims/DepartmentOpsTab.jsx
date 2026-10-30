@@ -751,7 +751,7 @@ function DeptIncomeModal({ eo, depts, startDept, onClose }) {
   );
 }
 
-export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEventOrders, inventory, setInventory, blocks, settings, setSettings, trussInv, setTrussInv, authUser, amendRequests, focusEventId, focusSearch, focusLeadEntry, onFocusHandled, onGoToCalendar, autoPdfFor, onAutoPdfDone }) {
+export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEventOrders, inventory, setInventory, blocks, settings, setSettings, trussInv, setTrussInv, authUser, amendRequests, focusEventId, focusSearch, focusLeadEntry, onFocusHandled, onGoToCalendar, autoPdfFor, onAutoPdfDone, supervisors = [] }) {
   const catDeptCfg = (settings && settings.categoryDepartments && typeof settings.categoryDepartments === "object") ? settings.categoryDepartments : {};
   const catToDept = (cat) => sharedCatToDept(cat, catDeptCfg);
   // A labour usage row belongs to the department Deal Check charged it to (ur.dept — the item's own
@@ -5699,6 +5699,28 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                       taller than the tiles it sits above; from sm there is room for one line and
                       it truncates as before. */}
                   <div className="text-[12px] sm:text-sm text-gray-500 leading-snug line-clamp-2 sm:truncate">{selDateStr || "no date"} · {sel.functionsDetail?.[0]?.venue || sel.venue || "—"}{sel.salesperson ? ` · booked by ${sel.salesperson}` : ""}{deptData.updatedBy ? ` · last edited by ${deptData.updatedBy}` : ""}</div>
+                  {/* Site Supervisor — one per event (not per department, since the same person
+                      oversees the whole booking onsite), assignable by anyone with this tab open
+                      (same access as everything else here, no extra gate). Denormalized onto the
+                      event order (siteSupervisorId/Name/Phone) rather than just an id, so Studio
+                      can show who's assigned without fetching the supervisor roster itself. */}
+                  <div className="mt-1 flex items-center gap-1.5 text-xs">
+                    <span className="text-gray-500 shrink-0">👷 Site Supervisor</span>
+                    <select
+                      value={sel.siteSupervisorId || ""}
+                      onChange={(e) => {
+                        const id = e.target.value;
+                        const sup = supervisors.find((s) => s.id === id);
+                        setEventOrders((prev) => prev.map((ev) => ev.id === sel.id ? { ...ev, siteSupervisorId: id || null, siteSupervisorName: sup?.name || null, siteSupervisorPhone: sup?.phone || null } : ev));
+                      }}
+                      className="min-w-0 border border-gray-200 rounded-md px-1.5 py-0.5 text-xs font-medium text-gray-700 bg-white cursor-pointer"
+                    >
+                      <option value="">— unassigned —</option>
+                      {supervisors.filter((s) => s.active !== false || s.id === sel.siteSupervisorId).map((s) => (
+                        <option key={s.id} value={s.id}>{s.name}{s.active === false ? " (inactive)" : ""}</option>
+                      ))}
+                    </select>
+                  </div>
                   {/* Deal value — read-only mirror of Studio's negotiated amount (client_ledger),
                       written whenever Deal Check syncs. It stays frozen once booked by owner decision;
                       "pending" is the live build's drift since booking, shown here so ops sees the same
