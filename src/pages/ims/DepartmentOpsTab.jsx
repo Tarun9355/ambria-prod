@@ -2875,11 +2875,11 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
               </div>
             ))}
             <div className="contents">
-              <span className="px-2 py-1 bg-gray-50 text-[13px] text-gray-600 flex items-center gap-1.5" title={t.kind === "labours" ? `${poolLabourDeptLabel(dept)}'s own slice of each function's shared crew — the plain sum of its rows, not a dedicated headcount` : undefined}>
+              <span className="px-2 py-1 bg-gray-50 text-[13px] text-gray-600 flex items-center gap-1.5" title={t.kind === "labours" ? `${poolLabourDeptLabel(dept)}'s own slice of each function's shared crew, rounded up to a whole person — any real, nonzero need still means one body on site, same policy the engine itself now uses (2026-10-30)` : undefined}>
                 {t.kind === "labours" ? `${poolLabourDeptLabel(dept)}'s share per function` : "Crew per function"}
                 <button type="button" onClick={() => setLaboursHow(p => ({ ...p, [labHowKey]: !p[labHowKey] }))} className="text-[12px] font-semibold text-blue-600 hover:underline">{laboursHow[labHowKey] ? "hide" : "how?"}</button>
               </span>
-              {cols.map((c, ci) => <span key={ci} className="px-2 py-1 bg-gray-50 text-[13px] text-center border-l border-gray-100 text-gray-900 font-semibold whitespace-nowrap">{t.kind === "labours" ? deptNeedForFn(c).toFixed(2) : c.result}</span>)}
+              {cols.map((c, ci) => <span key={ci} className="px-2 py-1 bg-gray-50 text-[13px] text-center border-l border-gray-100 text-gray-900 font-semibold whitespace-nowrap">{t.kind === "labours" ? (deptNeedForFn(c) > 0 ? Math.ceil(deptNeedForFn(c)) : 0) : c.result}</span>)}
             </div>
           </div>
           {t.kind !== "labours" && laboursHow[labHowKey] && (

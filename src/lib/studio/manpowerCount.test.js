@@ -71,6 +71,29 @@ describe("computePeopleRaw — Labours (Tier 3)", () => {
     expect(computePeopleRaw(smallFn, "Labours", ctx)).toBe(1);
   });
 
+  // Owner-reported live bug, 2026-10-30: pooling every department's fractional usage into one total
+  // before ceiling once can round DOWN below what a real, department-by-department crew needs —
+  // each department's own share still needs a WHOLE person on site, not a fraction borrowed from
+  // another department's headroom.
+  it("ceils each department's own usage separately, then sums — not the pooled fractional total ceiled once", () => {
+    const heavyElementRanges = [{ subCat: "Sofa", perCount: 10 }, { subCat: "LED String", perCount: 40 }];
+    const f = fn({ zoneElements: { stage: [
+      { name: "Sofa", invId: "sofa1", qty: 11 },   // Structure: 11/10 = 1.1 -> ceil 2
+      { name: "Led", invId: "led1", qty: 12 },     // Lighting: 12/40 = 0.3 -> ceil 1
+    ] } });
+    const ctx = {
+      ...baseCtx(),
+      dcInventoryCache: [
+        { id: "sofa1", name: "Sofa", cat: "furniture", subCat: "Sofa" },
+        { id: "led1", name: "LED String", cat: "lighting", subCat: "LED String" },
+      ],
+      heavyElementRanges,
+    };
+    // Pooled-then-ceiled would give ceil(1.1 + 0.3) = ceil(1.4) = 2 — one short of the 2 + 1 = 3 a
+    // real Structure crew member plus a real Lighting crew member actually requires.
+    expect(computePeopleRaw(f, "Labours", ctx)).toBe(3);
+  });
+
   it("the heavy-element add-on nets out standing stock already at a fixed venue", () => {
     const heavyElementRanges = [{ subCat: "Sofa", perCount: 2, labour: 1 }];
     const f = fn({ zoneElements: { stage: [{ name: "Sofa", invId: "sofa1", qty: 4 }] } }); // raw need 2
