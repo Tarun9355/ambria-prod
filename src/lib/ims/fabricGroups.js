@@ -78,7 +78,8 @@ function applicationText(kind, fab, row) {
 // fnPalettes ({ [function index]: the function's Fabric Palette string }) makes the colours live: each truss row's colour is worked out here from its palette
 // and the current fabric stock - the same rule Deal Check applies (resolveFabricAllocation) - so a palette change made in Build shows at once, without a Deal
 // Check sync. A function with no palette entry (an event not touched since this was added) keeps the colours Deal Check recorded. An entry's `repeat` (a zone
-// reusing standing fabric) takes no new fabric, so it adds no colour, as in Deal Check's fabric plan.
+// reusing standing fabric) takes no new fabric, so it adds nothing to the fabric's colours to pull, as in Deal Check's fabric plan - but the zone still shows
+// the colour its standing fabric is in (the palette's), marked `standing`; it used to show none, so an event whose zones were all Repeat read "No colour picked".
 export function buildFabricGroups({ entries = [], lines = [], fabricPlan = null, stock = {}, multiFn = false, onlyFi = null, fnPalettes = null } = {}) {
   const fabricLines = (lines || []).filter(isFabricLine);
   const groupedLineIds = new Set();
@@ -100,16 +101,18 @@ export function buildFabricGroups({ entries = [], lines = [], fabricPlan = null,
       const isLive = !!fnPalettes && typeof fnPalettes[e.fi] === "string";
       if (!isLive) allLive = false;
       const k = `${e.fi}|${e.zk}`;
-      const z = byZone.get(k) || { fi: e.fi, zoneKey: e.zk, name: e.zLabel, fnLabel: e.fnLabel || "", photo: e.photo || "", qty: 0, notes: [], tier: new Set(), dims: [], colours: new Map() };
+      const z = byZone.get(k) || { fi: e.fi, zoneKey: e.zk, name: e.zLabel, fnLabel: e.fnLabel || "", photo: e.photo || "", qty: 0, notes: [], tier: new Set(), dims: [], colours: new Map(), standing: true };
       z.qty += q;
+      if (!e.repeat) z.standing = false;
       const dt = trussDimsText(e.row);
       if (dt && !z.dims.includes(dt)) z.dims.push(dt);
       let rowCols;
       if (isLive) {
-        // the colour this row's fabric goes in under the function's palette (a repeat zone takes no new fabric)
-        rowCols = e.repeat ? [] : resolveFabricAllocation(e.row?.[kind.allocField], Math.ceil(q), anchorsForPaletteByMaterial([], fnPalettes[e.fi], kind.key), liveStock, kind.qtyField)
+        // the colour this row's fabric goes in under the function's palette - a repeat zone's standing fabric too
+        rowCols = resolveFabricAllocation(e.row?.[kind.allocField], Math.ceil(q), anchorsForPaletteByMaterial([], fnPalettes[e.fi], kind.key), liveStock, kind.qtyField)
           .map((a) => ({ colour: a.colour || "(unassigned)", qty: num(a.qty) }));
-        rowCols.forEach((c) => {
+        // only new fabric counts towards what is pulled from stock; a repeat zone's is already standing
+        if (!e.repeat) rowCols.forEach((c) => {
           const ck = colourKey(c.colour);
           const g = liveGroup.get(ck) || { colour: c.colour, old: 0, new: 0 };
           g[e.row?.useNewFabric ? "new" : "old"] += c.qty;
@@ -132,7 +135,7 @@ export function buildFabricGroups({ entries = [], lines = [], fabricPlan = null,
       return {
         fi: z.fi, zoneKey: z.zoneKey, name: z.name, fnLabel: multiFn ? z.fnLabel : "", photo: z.photo,
         qty: r2(z.qty), application: z.notes.join(" · "), tier: [...z.tier].join(" + "),
-        dims: z.dims.join(" + "), colours: [...z.colours.values()].map((c) => ({ colour: c.colour, qty: r2(c.qty) })).sort((a, b) => b.qty - a.qty),
+        dims: z.dims.join(" + "), colours: [...z.colours.values()].map((c) => ({ colour: c.colour, qty: r2(c.qty) })).sort((a, b) => b.qty - a.qty), standing: z.standing,
         amount: Math.round(exact), exactAmount: exact,
       };
     });
@@ -172,10 +175,15 @@ export function buildFabricGroups({ entries = [], lines = [], fabricPlan = null,
     });
     zones.sort((a, b) => b.qty - a.qty);
     zones = zones.map(({ exactAmount, ...z }) => z);
+    // every zone of this fabric is on Repeat: nothing new to pull, so no colours to pull - which is not the same as no colour picked
+    const standingOnly = zones.length > 0 && zones.every((z) => z.standing);
+    const standingCols = standingOnly ? [...new Set(zones.flatMap((z) => (z.colours || []).map((c) => c.colour)))] : [];
+    const firstStanding = standingOnly ? zones.flatMap((z) => z.colours || [])[0] : null;
     groups.push({
-      key: kind.key, label: kind.label, unit: kind.unit, emoji: kind.emoji, qty, amount, zones, colours,
-      photo: colours[0]?.photo || "", hex: colours[0]?.hex || "",
-      colourText: colours.length ? colours.map((c) => `${c.colour} ${c.qty} ${kind.unit}`).join(" · ") : "No colour picked yet",
+      key: kind.key, label: kind.label, unit: kind.unit, emoji: kind.emoji, qty, amount, zones, colours, standingOnly,
+      photo: colours[0]?.photo || firstStanding?.photo || "", hex: colours[0]?.hex || firstStanding?.hex || "",
+      colourText: colours.length ? colours.map((c) => `${c.colour} ${c.qty} ${kind.unit}`).join(" · ")
+        : standingOnly ? `♻ Repeat · standing${standingCols.length ? " " + standingCols.join(", ") : ""}` : "No colour picked yet",
     });
   });
   return { groups, groupedLineIds };

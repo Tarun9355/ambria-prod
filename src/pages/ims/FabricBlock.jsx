@@ -54,6 +54,8 @@ function FabricDetail({ cur, fmt, onZoom, dates = [], dateOf = () => "" }) {
               </div>
             ))}
           </div>
+        ) : cur.standingOnly ? (
+          <div className="text-[12px] text-gray-500">Every zone is on ♻ Repeat — this fabric is already standing, so nothing new is pulled from stock. Each zone's colour is below.</div>
         ) : (
           <div className="text-[12px] text-gray-500">No colour has been picked for this fabric yet — it is chosen in Deal Check, under Fabric allocation.</div>
         )}
@@ -93,6 +95,7 @@ function FabricDetail({ cur, fmt, onZoom, dates = [], dateOf = () => "" }) {
                     <span className="text-sm font-semibold text-gray-900 truncate">{z.name}</span>
                     {z.fnLabel && <span className="text-[11px] text-gray-400 truncate">· {z.fnLabel}</span>}
                     {z.tier && <span className="shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">{z.tier} stock</span>}
+                    {z.standing && <span className="shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700" title="Repeat zone: this fabric is already standing - nothing new is pulled from stock">♻ Repeat · standing</span>}
                   </div>
                   <div className="text-[12px] text-gray-500 mt-0.5">{z.application || "—"}</div>
                   {z.dims && <div className="text-[12px] text-gray-700 mt-0.5 tabular-nums"><span className="text-gray-400">Truss </span>{z.dims}</div>}

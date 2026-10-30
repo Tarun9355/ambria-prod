@@ -242,6 +242,24 @@ describe("buildFabricGroups — colours worked out live from the function's Fabr
     expect(g.colours[0].qty).toBe(10);
     expect(g.zones.find((z) => z.name === "Entry").qty).toBe(5); // its quantity is still listed
   });
+  it("a repeat zone still shows the colour its standing fabric is in, marked standing", () => {
+    const g = build("Ivory", [mk("stage", "Stage", 10), mk("entry", "Entry", 5, {}, { repeat: true })]).find((x) => x.key === "liza");
+    const entry = g.zones.find((z) => z.name === "Entry");
+    expect(entry.colours.map((c) => c.colour)).toEqual(["Ivory"]);
+    expect(entry.standing).toBe(true);
+    expect(g.zones.find((z) => z.name === "Stage").standing).toBe(false);
+    expect(g.standingOnly).toBe(false);
+  });
+  it("every zone on Repeat (Karan Bansal, Aura): each zone keeps its palette colour, and the fabric says standing, not 'No colour picked'", () => {
+    const e = [mk("bar", "Bar", 6, {}, { repeat: true }), mk("entry", "Entry", 5, {}, { repeat: true })];
+    const g = build("Ivory:L, Rose Gold:C", e);
+    const liza = g.find((x) => x.key === "liza"), curtain = g.find((x) => x.key === "curtain");
+    expect(liza.colours).toEqual([]); // nothing new to pull
+    expect(liza.standingOnly).toBe(true);
+    expect(liza.zones.every((z) => z.colours.map((c) => c.colour).join() === "Ivory")).toBe(true);
+    expect(liza.colourText).toBe("♻ Repeat · standing Ivory");
+    expect(curtain.zones[0].colours.map((c) => c.colour)).toEqual(["Rose Gold"]);
+  });
   it("no palette entry for the function: what Deal Check recorded is kept", () => {
     const g = build(null, [mk("stage", "Stage", 10)]).find((x) => x.key === "liza");
     expect(g.colours.map((c) => c.colour)).toEqual(["Rose Gold dark"]);
