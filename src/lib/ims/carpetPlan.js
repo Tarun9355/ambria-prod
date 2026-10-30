@@ -160,16 +160,44 @@ export function planCarpets({ floors, itemsById, blocks, eventId, choice, eventO
 // lines, `planRows` come from planCarpets, `onlyFn` (a function's type) limits the parts to one function's. Returns Map<line id, { name, photo, notes }> -
 // `name` and `photo` only when every floor of the line was decided, by Planning, to the same other carpet; else the decisions are told in notes. Floors left
 // on sales' 1st choice by default say nothing; floors still to decide are counted.
+// The plan floor a line's part (one zone's floor of that carpet) stands for: same zone and floor number, same sqft, same function.
+const carpetSplit = (text, re) => { const m = String(text || "").match(re); return { base: norm(m ? m[1] : text), n: m && m[2] ? Number(m[2]) : 1 }; };
+const floorMatcher = (planRows) => (part) => {
+  const z = carpetSplit(part.zone, /^(.*?)(?: · floor (\d+))?$/);
+  return (planRows || []).find((r) => {
+    const pz = carpetSplit(r.zoneName, /^(.*?)(?: \(floor (\d+)\))?$/);
+    return pz.base === z.base && pz.n === z.n && Math.round(Number(r.area) || 0) === Math.round(Number(part.qty) || 0) && (!part.fn || norm(part.fn) === norm(r.fnLabel));
+  }) || null;
+};
+
+// The preference side of the carpet lines: what sales ranked for a floor ("Preference: 1 A · 2 B"), or - in red - that sales named none. A floor has a
+// preference once it has two or more ranked carpets; one pick (or none) is nothing to choose between. Counted in sqft, per line. Lines with no matching
+// floor are left alone.
+export function carpetPrefNotesForRows(rows, planRows, onlyFn = "") {
+  const out = new Map();
+  const floorFor = floorMatcher(planRows);
+  (rows || []).forEach((line) => {
+    if (!line || !Array.isArray(line.parts) || !line.parts.length || !/carpet/i.test(String(line.sub || ""))) return;
+    const prefs = new Set();
+    let missing = 0, matched = 0;
+    line.parts.filter((p) => !onlyFn || !p.fn || norm(p.fn) === norm(onlyFn)).forEach((p) => {
+      const r = floorFor(p);
+      if (!r) return;
+      matched += 1;
+      if (Array.isArray(r.prefs) && r.prefs.length >= 2) prefs.add("Preference: " + r.prefs.map((x, i) => `${i + 1} ${x.name}`).join(" · "));
+      else missing += Math.round(Number(p.qty) || 0);
+    });
+    if (!matched) return;
+    const notes = [...prefs].map((text) => ({ text, tone: "pref" }));
+    if (missing) notes.push({ text: `${missing} sqft not selected preference`, tone: "missing" });
+    if (notes.length) out.set(line.id, { notes });
+  });
+  return out;
+}
+
 export function carpetNotesForRows(rows, planRows, onlyFn = "") {
   const out = new Map();
-  const split = (text, re) => { const m = String(text || "").match(re); return { base: norm(m ? m[1] : text), n: m && m[2] ? Number(m[2]) : 1 }; };
-  const floorFor = (part) => {
-    const z = split(part.zone, /^(.*?)(?: · floor (\d+))?$/);
-    return (planRows || []).find((r) => {
-      const pz = split(r.zoneName, /^(.*?)(?: \(floor (\d+)\))?$/);
-      return pz.base === z.base && pz.n === z.n && Math.round(Number(r.area) || 0) === Math.round(Number(part.qty) || 0) && (!part.fn || norm(part.fn) === norm(r.fnLabel));
-    }) || null;
-  };
+  const floorFor = floorMatcher(planRows);
   const photoOf = (it) => (Array.isArray(it?.photoUrls) && it.photoUrls[0]) || it?.img || "";
   (rows || []).forEach((line) => {
     if (!line || !Array.isArray(line.parts) || !line.parts.length || !/carpet/i.test(String(line.sub || ""))) return;

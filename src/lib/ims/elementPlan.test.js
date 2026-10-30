@@ -157,7 +157,7 @@ describe("planElements — a decision that no longer applies holds nothing", () 
 });
 
 
-import { choiceNotesForRows } from "./elementPlan.js";
+import { choiceNotesForRows, preferenceNotesForRows } from "./elementPlan.js";
 describe("choiceNotesForRows — the Inventory blocked list follows Planning's decisions", () => {
   const opt = (id, name, photo) => ({ id, name, item: photo ? { id, name, img: photo } : null });
   const row = (over = {}) => ({ key: "0|stage|p1", prefs: [{ id: "A", name: "Maroon Hack Jack" }, { id: "B", name: "Sona Gold Print" }], qty: 1, options: [opt("A", "Maroon Hack Jack", "a.jpg"), opt("B", "Sona Gold Print", "b.jpg")], decidedId: null, other: false, manual: null, ...over });
@@ -216,5 +216,39 @@ describe("choices for a part inside a kit", () => {
     const key = choiceElementsOf(fns, () => "Stage")[0].key;
     const plan = planElements({ functionsDetail: fns, zoneLabelOf: () => "Stage", itemsById: items, blocks: {}, eventId: "E", choice: { [key]: { id: "C" } } });
     expect(plan.rows[0]).toMatchObject({ decidedId: "C", status: "decided", part: 0 });
+  });
+});
+
+describe("preferenceNotesForRows - which overlay / cushion cover lines have a preference", () => {
+  const items = { A: { id: "A", subCat: "Overlays", name: "Teal Velvet" }, C: { id: "C", subCat: "Cushion", name: "Cushion Cover Grey" }, X: { id: "X", subCat: "Cushion", name: "Cushion Insert" }, Z: { id: "Z", subCat: "Chair", name: "Chair" } };
+  const row = (over = {}) => ({ key: "0|stage|p1", prefs: [{ id: "A", name: "Teal Velvet" }, { id: "B", name: "Pink Velvet" }], qty: 8, ...over });
+  const line = (over = {}) => ({ id: "L1", invId: "A", name: "Teal Velvet", qty: 8, rentalQty: 8, ...over });
+  it("an overlay line with no choices says, in red terms, that no preference was selected", () => {
+    expect(preferenceNotesForRows([line()], [], items).get("L1").notes).toEqual([{ text: "Not selected preference", tone: "missing" }]);
+  });
+  it("a line whose element ranked designs lists them and has no gap", () => {
+    expect(preferenceNotesForRows([line()], [row()], items).get("L1").notes).toEqual([{ text: "Preference: 1 Teal Velvet · 2 Pink Velvet", tone: "pref" }]);
+  });
+  it("choices that cover only part of the line leave the rest without a preference", () => {
+    const n = preferenceNotesForRows([line()], [row({ qty: 5 })], items).get("L1").notes;
+    expect(n.map((x) => x.tone)).toEqual(["pref", "missing"]);
+    expect(n[1].text).toBe("3 not selected preference");
+  });
+  it("only items that can take choices are looked at, and a cushion insert is not a design", () => {
+    const lines = [line({ id: "L2", invId: "Z" }), line({ id: "L3", invId: "X" }), line({ id: "L4", invId: "C" })];
+    const m = preferenceNotesForRows(lines, [], items);
+    expect([...m.keys()]).toEqual(["L4"]);
+  });
+  it("production and buying lines, and lines with no item, are never matched", () => {
+    expect(preferenceNotesForRows([line({ prodOrBuy: "production" }), line({ id: "L9", invId: null })], [], items).size).toBe(0);
+  });
+  it("two lines of one item are counted together and the note sits on the first", () => {
+    const lines = [line(), line({ id: "L2", qty: 4, rentalQty: 4 })];
+    const m = preferenceNotesForRows(lines, [row({ qty: 12 })], items);
+    expect(m.get("L1").notes.map((x) => x.tone)).toEqual(["pref"]);
+    expect(m.has("L2")).toBe(false);
+  });
+  it("works with a Map of items too", () => {
+    expect(preferenceNotesForRows([line()], [], new Map(Object.entries(items))).size).toBe(1);
   });
 });

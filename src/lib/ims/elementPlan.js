@@ -160,6 +160,42 @@ export function planElements({ functionsDetail, zoneLabelOf, itemsById, blocks, 
   return { rows, over };
 }
 
+// The preference side of the overlay / cushion cover lines: what sales ranked ("Preference: 1 A · 2 B"), or - in red - that sales named no alternatives.
+// Only lines whose item can carry choices are looked at (itemTakesChoices); `itemsById` is a Map or a plain object. Lines of one item are counted together:
+// the choices of the elements that use it cover that many pieces, and the rest has no preference. Production / buying lines are never matched.
+export function preferenceNotesForRows(rows, planRows, itemsById) {
+  const out = new Map();
+  const itemOf = (id) => (itemsById instanceof Map ? itemsById.get(id) : itemsById?.[id]);
+  const byInv = new Map();
+  (rows || []).forEach((l) => {
+    if (!l || l.prodOrBuy || l.invId == null || !itemTakesChoices(itemOf(l.invId))) return;
+    const k = String(l.invId);
+    if (!byInv.has(k)) byInv.set(k, []);
+    byInv.get(k).push(l);
+  });
+  const planOf = new Map();
+  (planRows || []).forEach((r) => {
+    const k = String(r.prefs?.[0]?.id);
+    if (!planOf.has(k)) planOf.set(k, []);
+    planOf.get(k).push(r);
+  });
+  byInv.forEach((lines, k) => {
+    const plan = planOf.get(k) || [];
+    if (!plan.length) { lines.forEach((l) => out.set(l.id, { notes: [{ text: "Not selected preference", tone: "missing" }] })); return; }
+    const notes = [];
+    const seen = new Set();
+    plan.forEach((r) => {
+      const text = "Preference: " + (r.prefs || []).map((p, i) => `${i + 1} ${p.name}`).join(" · ");
+      if (!seen.has(text)) { seen.add(text); notes.push({ text, tone: "pref" }); }
+    });
+    const have = lines.reduce((s, l) => s + (Number(l.rentalQty ?? l.qty) || 0), 0);
+    const rest = have - plan.reduce((s, r) => s + (Number(r.qty) || 0), 0);
+    if (rest > 0) notes.push({ text: `${rest} not selected preference`, tone: "missing" });
+    out.set(lines[0].id, { notes });
+  });
+  return out;
+}
+
 // What the Inventory blocked list says about the lines that have choices. The list is Deal Check's snapshot, so a line is filed under sales' 1st design;
 // once Planning decides, the card shows what is actually going out. `rows` are the list's lines ({ id, invId, name, photo, qty, rentalQty, prodOrBuy }),
 // `planRows` come from planElements. Returns Map<line id, { name, photo, notes: [{ text, tone: "ok" | "wait" }] }> - `name` and `photo` only when the

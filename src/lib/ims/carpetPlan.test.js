@@ -340,7 +340,7 @@ describe("over-commit with no venue recorded", () => {
   });
 });
 
-import { carpetNotesForRows } from "./carpetPlan.js";
+import { carpetNotesForRows, carpetPrefNotesForRows } from "./carpetPlan.js";
 describe("carpetNotesForRows — the Inventory blocked list follows the carpet plan", () => {
   const opt = (id, name, photo) => ({ id, name, item: photo ? { id, name, img: photo } : null });
   const floor = (over = {}) => ({ key: "0|stage|0", zoneName: "Stage", fnLabel: "Wedding", area: 512, options: [opt("A", "Polka Runner", "a.jpg"), opt("B", "Green Rug", "b.jpg")], decidedId: "A", byDefault: true, other: false, manual: null, ...over });
@@ -368,5 +368,28 @@ describe("carpetNotesForRows — the Inventory blocked list follows the carpet p
     expect(carpetNotesForRows([l], plan, "Haldi").size).toBe(0);
     expect(carpetNotesForRows([l], plan, "Wedding").size).toBe(1);
     expect(carpetNotesForRows([{ ...l, sub: "overlay" }], plan).size).toBe(0);
+  });
+});
+
+describe("carpetPrefNotesForRows - which carpet floors have a preference", () => {
+  const floor = (over = {}) => ({ zoneName: "Stage", area: 300, fnLabel: "Wedding", prefs: [{ id: "A", name: "Maroon" }, { id: "B", name: "Ivory" }], ...over });
+  const line = (over = {}) => ({ id: "L", sub: "Carpet", name: "Carpet Maroon", parts: [{ zone: "Stage", fn: "Wedding", qty: 300 }], ...over });
+  it("a floor with ranked carpets lists them", () => {
+    expect(carpetPrefNotesForRows([line()], [floor()]).get("L").notes).toEqual([{ text: "Preference: 1 Maroon · 2 Ivory", tone: "pref" }]);
+  });
+  it("a floor with one carpet or none has no preference, counted in sqft", () => {
+    expect(carpetPrefNotesForRows([line()], [floor({ prefs: [{ id: "A", name: "Maroon" }] })]).get("L").notes).toEqual([{ text: "300 sqft not selected preference", tone: "missing" }]);
+    expect(carpetPrefNotesForRows([line()], [floor({ prefs: [] })]).get("L").notes[0].tone).toBe("missing");
+  });
+  it("floors of one line are split between the two", () => {
+    const l = line({ parts: [{ zone: "Stage", fn: "Wedding", qty: 300 }, { zone: "Entry", fn: "Wedding", qty: 120 }] });
+    const n = carpetPrefNotesForRows([l], [floor(), floor({ zoneName: "Entry", area: 120, prefs: [] })]).get("L").notes;
+    expect(n.map((x) => x.tone)).toEqual(["pref", "missing"]);
+    expect(n[1].text).toBe("120 sqft not selected preference");
+  });
+  it("a line with no matching floor, a non-carpet line, or another function's floor is left alone", () => {
+    expect(carpetPrefNotesForRows([line()], [floor({ zoneName: "Other" })]).size).toBe(0);
+    expect(carpetPrefNotesForRows([line({ sub: "overlay" })], [floor()]).size).toBe(0);
+    expect(carpetPrefNotesForRows([line()], [floor()], "Haldi").size).toBe(0);
   });
 });

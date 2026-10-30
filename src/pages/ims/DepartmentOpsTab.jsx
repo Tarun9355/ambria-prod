@@ -12,10 +12,10 @@ import { hasIMSPerm } from "../../lib/ims/constants";
 import { fetchOpsExpenses } from "../../lib/ims/opsExpenses";
 import { ZONE_META, trussBaseArea, CARPET_OFF } from "../../lib/studio/taxonomy";
 import { prefsOf, floorSqftOf } from "../../lib/studio/carpetPrefs";
-import { carpetFloorsOf, planCarpets, carpetKey, carpetStockFor, validDecision, carpetNotesForRows } from "../../lib/ims/carpetPlan";
+import { carpetFloorsOf, planCarpets, carpetKey, carpetStockFor, validDecision, carpetNotesForRows, carpetPrefNotesForRows } from "../../lib/ims/carpetPlan";
 import CarpetPickerModal from "./CarpetPickerModal.jsx";
 import ElementChoicePlan from "./ElementChoicePlan.jsx";
-import { planElements, elementStockFor, elementKey, choiceNotesForRows } from "../../lib/ims/elementPlan";
+import { planElements, elementStockFor, elementKey, choiceNotesForRows, preferenceNotesForRows } from "../../lib/ims/elementPlan";
 import { loadOnDate } from "../../lib/ims/loadByDate";
 import { elementChoices } from "../../lib/studio/elementPrefs";
 import { orderZoneKeys } from "../../lib/ims/zoneOrder";
@@ -1739,6 +1739,11 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   // since it reads the same decisions the Fabric plan saves. Display only: the line's own quantity, price and id are untouched.
   const choiceView = (dept === "Fabric" && sel) ? choiceNotesForRows(invShown, elementPlanOf().rows.filter(r => !invScoped || r.fi === (mpFns[invFn]?.fnIdx ?? invFn)))
     : (dept === "Tenting" && sel) ? carpetNotesForRows(invShown, carpetPlanOf().rows.filter(r => !invScoped || r.fi === (mpFns[invFn]?.fnIdx ?? invFn)), invScoped ? (mpFns[invFn]?.type || "") : "")
+    : new Map();
+  // Whether sales named a preference: the ranked choices where they did, and in red "Not selected preference" where they did not - an overlay, a cushion cover
+  // or a carpet floor, on every booked event (an event booked before preferences existed has none). Display only, like the notes above.
+  const prefView = (dept === "Fabric" && sel) ? preferenceNotesForRows(invShown, elementPlanOf().rows.filter(r => !invScoped || r.fi === (mpFns[invFn]?.fnIdx ?? invFn)), invByIdMp)
+    : (dept === "Tenting" && sel) ? carpetPrefNotesForRows(invShown, carpetPlanOf().rows.filter(r => !invScoped || r.fi === (mpFns[invFn]?.fnIdx ?? invFn)), invScoped ? (mpFns[invFn]?.type || "") : "")
     : new Map();
   // The same for the whole event's flat list (kit parts as their own lines) - what Truck planning loads, so it names the design Planning chose, not sales' 1st.
   const choiceViewAll = (dept === "Fabric" && sel) ? choiceNotesForRows(blockedItems, elementPlanOf().rows)
@@ -6255,6 +6260,8 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                                   : <div className="text-amber-600 mt-0.5">{it.shortQty} short of stock — priced at cost, chase or produce</div>)}
                                 {it.isSwapped && <div className="text-sky-600 mt-0.5">swapped in for {it.swappedFrom}</div>}
                                 {(choiceView.get(it.id)?.notes || []).map((n, ni) => <div key={ni} className={(n.tone === "wait" ? "text-amber-600" : "text-emerald-700") + " mt-0.5"}>{n.tone === "wait" ? "" : "✓ "}{n.text}</div>)}
+                                {/* sales' ranked preference (already spelled out by a "not decided yet" note above, so not twice), or red when none was selected */}
+                                {(prefView.get(it.id)?.notes || []).filter(n => n.tone !== "pref" || !(choiceView.get(it.id)?.notes || []).some(c => c.tone === "wait")).map((n, ni) => <div key={"p" + ni} className={(n.tone === "missing" ? "text-red-600 font-semibold" : "text-gray-500") + " mt-0.5"}>{n.tone === "missing" ? "● " : ""}{n.text}</div>)}
                                 {/* One function's view shows what it NEEDS on site (181 on the 20th). Pieces already standing from the day before are not
                                     loaded again, so say how many of them are already there when the date column holds fewer (137 to load). */}
                                 {invScoped && it.src && it.qty < it.rentalQty && (() => {
