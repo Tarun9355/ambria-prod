@@ -95,7 +95,7 @@ function FabricDetail({ cur, fmt, onZoom, dates = [], dateOf = () => "" }) {
                     <span className="text-sm font-semibold text-gray-900 truncate">{z.name}</span>
                     {z.fnLabel && <span className="text-[11px] text-gray-400 truncate">· {z.fnLabel}</span>}
                     {z.tier && <span className="shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">{z.tier} stock</span>}
-                    {z.standing && <span className="shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700" title="Repeat zone: this fabric is already standing - nothing new is pulled from stock">♻ Repeat · standing</span>}
+                    {z.standing && <span className="shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700" title="Repeat zone: this fabric is already standing - nothing new is pulled from stock">♻ Repeat<span className="hidden sm:inline"> · standing</span></span>}
                   </div>
                   <div className="text-[12px] text-gray-500 mt-0.5">{z.application || "—"}</div>
                   {z.dims && <div className="text-[12px] text-gray-700 mt-0.5 tabular-nums"><span className="text-gray-400">Truss </span>{z.dims}</div>}
