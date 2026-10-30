@@ -665,6 +665,13 @@ export default function DealCheckOverlay({ ctx }) {
           // the per-day fraction so Dept Ops can show each day's bifurcation + this dept's share.
           const labourDeptCost = {}; DEPTS.forEach(d => { labourDeptCost[d] = 0; });
           const labourShareByDayDept = {};
+          // Per-day ABSOLUTE department need (not normalized to a fraction) — Dept Ops ceils each
+          // department's own number directly (same as the per-function row), instead of multiplying
+          // a fraction-of-raw-total by the day's crew count. That reconstruction broke once the day's
+          // crew count became a SUM of independently-ceiled department counts (owner ask, 2026-10-30):
+          // a fraction built from raw (pre-ceil) shares, multiplied by that now-inflated sum, could
+          // push a department over an integer boundary it never actually crossed on its own.
+          const labourAbsByDayDept = {};
           const addD = (d, key, amt) => { if (!d || !dept[d] || !amt || !(amt > 0)) return; dept[d][key] += amt; };
           // How a rental line's total is reached, as parts that ADD UP to it (so lines can be summed across
           // functions and zones): base rent of the units we own, the date category's effect on it (Filler ×0.75,
@@ -1658,7 +1665,7 @@ export default function DealCheckOverlay({ ctx }) {
                   if (labourUsageMode && labourUsageTotal > 0 && d.phase === "event") {
                     const byDept = {}; let total = 0;
                     d.fns.forEach(fn => { const u = labourUsageByFn[fns.indexOf(fn)]; if (!u) return; Object.entries(u.byDept).forEach(([dp, n]) => { byDept[dp] = (byDept[dp] || 0) + n; }); total += u.total; });
-                    if (total > 0) { dayFrac = {}; DEPTS.forEach(dp => { dayFrac[dp] = (byDept[dp] || 0) / total; }); _lastFrac = dayFrac; }
+                    if (total > 0) { dayFrac = {}; DEPTS.forEach(dp => { dayFrac[dp] = (byDept[dp] || 0) / total; }); _lastFrac = dayFrac; labourAbsByDayDept[d.date] = byDept; }
                   }
                   if (dayFrac) labourShareByDayDept[d.date] = dayFrac;
                   labourTypes.forEach(t => {
@@ -1770,7 +1777,7 @@ export default function DealCheckOverlay({ ctx }) {
             // one) so Dept Ops can also show what every OTHER department is using that same shared
             // crew for, not only this dept's own slice.
             const sched = mpSchedule[type] || null;
-            const schedule = (usageMode && Array.isArray(sched)) ? sched.map(s => ({ ...s, share: (labourShareByDayDept[s.date] && labourShareByDayDept[s.date][d] != null) ? labourShareByDayDept[s.date][d] : ((labourUsageTotal > 0) ? (labourUsageByDept[d] || 0) / labourUsageTotal : 0), shareByDept: labourShareByDayDept[s.date] || null })) : sched;
+            const schedule = (usageMode && Array.isArray(sched)) ? sched.map(s => ({ ...s, share: (labourShareByDayDept[s.date] && labourShareByDayDept[s.date][d] != null) ? labourShareByDayDept[s.date][d] : ((labourUsageTotal > 0) ? (labourUsageByDept[d] || 0) / labourUsageTotal : 0), shareByDept: labourShareByDayDept[s.date] || null, shareAbsByDept: labourAbsByDayDept[s.date] || null })) : sched;
             return { type, cost: Math.round(cost), count: shared ? null : (pl?.count || 0), rate, basis: pl?.basis || "", shared, trace: pl?.trace || null, splitInfo, schedule };
           }); });
           // ── ACTUALS overlay (entered by dept heads in IMS) → exact cost. Real mandi replaces the

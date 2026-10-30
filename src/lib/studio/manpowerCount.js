@@ -29,6 +29,7 @@ import { heavyExtraLabour, eventTimingMultFor } from "../ims/constants";
 import { standingReductionBySubcat } from "../ims/fixedVenues";
 import { itemImsSubcat, lookupBySubcat, walkKitUnits } from "../ims/helpers";
 import { resolveDateCategory } from "../inventory/helpers";
+import { catToDept, poolLabourDept } from "../ims/deptClassify";
 
 // Tenting's own zone-driven quantities for the Labours usage split (Heavy Element Add-ons' "Truss"
 // and "Platform" sub-categories, 2026-10-28 owner ask). Unlike every other heavy sub-category,
@@ -230,8 +231,25 @@ function peopleTier3Labours(fn, ctx) {
   const labBatches = {};
   (ctx.heavyElementRanges || []).forEach((her) => { if (her?.subCat && Number(her.perCount) > 0) labBatches[her.subCat] = Number(her.perCount); });
   const labourUsageMode = Object.keys(labBatches).length > 0;
-  if (labourUsageMode) Object.keys(subCounts).forEach((sub) => { const b = lookupBySubcat(labBatches, sub); if (b) fnUsageTotal += (subCounts[sub] || 0) / b; });
-  return labourUsageMode ? Math.max(adjusted + heavyExtra, Math.ceil(fnUsageTotal)) : (adjusted + heavyExtra);
+  // Each department's own fractional usage is ceiled SEPARATELY, then summed — not pooled into one
+  // fractional total and ceiled once. Pooling under-counts: owner-reported 2026-10-30, a function
+  // whose Lighting needs 0.82 of a labourer and whose Structure needs ~1.1 pooled to ~1.92 and
+  // ceiled once to 2 — one fewer than the 1 (Lighting) + 2 (Structure) = 3 a real department-by-
+  // department crew actually needs, since each department's own share still needs a WHOLE person on
+  // site, not a fraction borrowed from someone else's headroom. Grouped the same way DealCheckOverlay
+  // .jsx's own per-function department split already does (poolLabourDept(catToDept(sub))), so the
+  // two stay consistent instead of silently disagreeing on the same function's total.
+  if (labourUsageMode) {
+    const byDept = {};
+    Object.keys(subCounts).forEach((sub) => {
+      const b = lookupBySubcat(labBatches, sub);
+      if (!b) return;
+      const dp = poolLabourDept(catToDept(sub));
+      byDept[dp] = (byDept[dp] || 0) + (subCounts[sub] || 0) / b;
+    });
+    fnUsageTotal = Object.values(byDept).reduce((s, v) => s + Math.ceil(v), 0);
+  }
+  return labourUsageMode ? Math.max(adjusted + heavyExtra, fnUsageTotal) : (adjusted + heavyExtra);
 }
 
 // Top sqft is a per-zone range-table lookup (a canopy is a physical panel, one zone's

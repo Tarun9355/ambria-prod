@@ -43,7 +43,11 @@ export function planningUpcoming(eo, now = Date.now()) {
 // element, so they were invisible to the split before this, even though both were configured in
 // Heavy Element Add-ons; Tenting's Labours share can finally be nonzero. v10: the Florals detail
 // also lists the artificial bunches per zone (floralDetail[fn].artZones), for the Dept Ops PDF's zone pages.
-export const PLANNING_SNAPSHOT_VERSION = 10;
+// v11: each shared-crew day's schedule entry also carries shareAbsByDept (every department's own
+// RAW, un-normalized need that day) — Dept Ops now ceils that directly instead of multiplying the
+// shareByDept FRACTION by the day's crew count, which over-counted once that count became a sum of
+// independently-ceiled department counts rather than a single raw total.
+export const PLANNING_SNAPSHOT_VERSION = 11;
 const PLANNING_SNAPSHOT_SHIPPED_AT = Date.parse("2026-10-27T11:50:00Z");
 export const planningSnapshotOutdated = (eo) => (Number(eo?.deptSnapVer) || 1) < PLANNING_SNAPSHOT_VERSION;
 

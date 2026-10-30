@@ -8434,6 +8434,12 @@ export default function StudioApp() {
         });
       });
       const flowers = Object.values(fbAgg).map(f => ({ ...f, rate: f.qty > 0 ? Math.round((f.cost / f.qty) * 100) / 100 : 0 })).sort((a, b) => b.cost - a.cost);
+      // Same flagged placeholder row buildDeptSnapshot pushes — IMS's own artificialProj (fallback
+      // when fp.artificial itself isn't read) sums `flowers` filtered by `.artificial`, so leaving
+      // this out is exactly the kind of gap that left the two builders disagreeing in the first
+      // place: `fp.artificial.total` would read right, but the Actuals card's own "Floral cost to
+      // source" total (mandiActualReal + artificialProj) would still silently exclude it.
+      if (artTotal >= 1) flowers.push({ name: "Artificial flowers / greens", qty: 0, cost: Math.round(artTotal), unit: "per kg", artificial: true });
       const flowerKg = afBunches / afBPK, greenKg = agBunches / agBPK;
       const artificial = (afBunches + agBunches) > 0 ? {
         flowerBunches: Math.round(afBunches), greenBunches: Math.round(agBunches),
