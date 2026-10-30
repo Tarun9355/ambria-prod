@@ -2875,11 +2875,11 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
               </div>
             ))}
             <div className="contents">
-              <span className="px-2 py-1 bg-gray-50 text-[13px] text-gray-600 flex items-center gap-1.5" title={t.kind === "labours" ? `${poolLabourDeptLabel(dept)}'s own slice of each function's shared crew, rounded up to a whole person — any real, nonzero need still means one body on site, same policy the engine itself now uses (2026-10-30)` : undefined}>
+              <span className="px-2 py-1 bg-gray-50 text-[13px] text-gray-600 flex items-center gap-1.5" title={t.kind === "labours" ? `${poolLabourDeptLabel(dept)}'s own raw slice of each function's shared crew — not yet rounded; the day's "Today's N labours" line below rounds each department's own total UP to a whole person` : undefined}>
                 {t.kind === "labours" ? `${poolLabourDeptLabel(dept)}'s share per function` : "Crew per function"}
                 <button type="button" onClick={() => setLaboursHow(p => ({ ...p, [labHowKey]: !p[labHowKey] }))} className="text-[12px] font-semibold text-blue-600 hover:underline">{laboursHow[labHowKey] ? "hide" : "how?"}</button>
               </span>
-              {cols.map((c, ci) => <span key={ci} className="px-2 py-1 bg-gray-50 text-[13px] text-center border-l border-gray-100 text-gray-900 font-semibold whitespace-nowrap">{t.kind === "labours" ? (deptNeedForFn(c) > 0 ? Math.ceil(deptNeedForFn(c)) : 0) : c.result}</span>)}
+              {cols.map((c, ci) => <span key={ci} className="px-2 py-1 bg-gray-50 text-[13px] text-center border-l border-gray-100 text-gray-900 font-semibold whitespace-nowrap">{t.kind === "labours" ? deptNeedForFn(c).toFixed(2) : c.result}</span>)}
             </div>
           </div>
           {t.kind !== "labours" && laboursHow[labHowKey] && (
@@ -3243,33 +3243,35 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
                   {/* Plain per-department headcount for today's shared crew — just "Dept: N" for
                       every department drawing on it, nothing about percentages or fractional shares
                       (those read as confusing and nobody using this screen needed the "why", just
-                      the "how many"). d.shareByDept carries every department's own fraction of
-                      today's crew; Furniture/Fabric never appear on their own since their share is
+                      the "how many"). d.shareAbsByDept carries every department's own RAW (un-ceiled)
+                      need that day; Furniture/Fabric never appear on their own since their share is
                       already folded into Structure's/Tenting's (poolLabourDept), so only a canonical
                       pooled-target or standalone department shows up here.
-                      Each department's own share rounds UP independently (owner ask, 2026-10-30: a
+                      Each department's own number rounds UP independently (owner ask, 2026-10-30: a
                       department with real, nonzero work — even 0.43 of a labourer — needs a WHOLE
                       person on site, not zero) rather than the largest-remainder split tried first,
                       which hid a small-but-real department (Floral at 0.43) behind a 0 so the figures
                       would add up to the day's total. The total shown is now the SUM of these rounded-
                       up department counts instead — it can run higher than the day's own planned crew
                       (one department's rounding-up can legitimately mean one more body than the system
-                      plan assumed), and that is the correct, honest number now, not a mismatch to fix. */}
-                  {hasShare && d.shareByDept && (() => {
-                    // d.count is the crew being KEPT today — it can be carried forward from a busier
-                    // earlier day and run higher than what today's own work actually needs (see the
-                    // 🔼 banner above). d.shareByDept's fractions were computed against TODAY's OWN
-                    // usage total, not the carried-forward number, so multiplying them by d.count
-                    // scales every department UP by however inflated the carry-forward is — a
-                    // department whose own per-function need rounds to 1 (0.82) showed as 2 on a day
-                    // the crew was being kept high for an unrelated reason. d.trace.result is that
-                    // real, un-inflated today's-own total; it's the correct base to split by
-                    // department, and only falls back to d.count when there's no trace to read (no
-                    // carry-forward is possible there anyway).
+                      plan assumed), and that is the correct, honest number now, not a mismatch to fix.
+                      This reads d.shareAbsByDept (each dept's own raw number) directly, NOT a fraction
+                      multiplied back out by a day total — multiplying d.shareByDept's FRACTION (built
+                      from the day's raw, pre-ceil total) by d.trace.result (which is now itself a SUM
+                      of independently-ceiled department counts, always ≥ the raw total) over-counted:
+                      a department whose own raw need rounds to 1 (e.g. 0.82) could cross another
+                      integer boundary purely because the total it was being rescaled against had
+                      already been inflated by every OTHER department's own rounding up. */}
+                  {hasShare && (d.shareAbsByDept || d.shareByDept) && (() => {
+                    // Carried-forward days (dismantle / gap / minusOne) never get a fresh
+                    // shareAbsByDept of their own (no new element usage that day) — only an event day
+                    // computes one. There, fall back to the last known fraction scaled by the crew
+                    // actually kept that day (d.count), same as before this fix.
+                    const abs = d.shareAbsByDept;
                     const base = Number(d.trace?.result ?? d.count) || 0;
                     const entries = DEPTS
                       .filter((d2) => poolLabourDept(d2) === d2)
-                      .map((d2) => ({ dept: d2, count: Math.ceil((Number(d.shareByDept[d2]) || 0) * base) }))
+                      .map((d2) => ({ dept: d2, count: Math.ceil(abs ? (Number(abs[d2]) || 0) : (Number(d.shareByDept?.[d2]) || 0) * base) }))
                       .filter((x) => x.count > 0)
                       .sort((a, b) => b.count - a.count);
                     if (!entries.length) return null;
