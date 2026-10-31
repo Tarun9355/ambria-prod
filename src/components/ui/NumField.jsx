@@ -47,13 +47,20 @@ export default function NumField({ value, onCommit, min = 0, allowDecimal = true
         // blankCommit: a field left empty on blur commits `min` instead of snapping back to
         // whatever it held before — lets a value actually be cleared via backspace rather than
         // the backspace getting silently undone the moment the field loses focus.
+        // `value` is still the old prop here — the parent's state update lands on the next render.
+        // Showing it flashed the previous number (a cleared box showed "1" for a moment, then went
+        // blank), so after a commit the box keeps what was just committed and the effect above
+        // resyncs once the new value arrives.
         if (wasEditing && text === "" && blankCommit) {
           onCommit(min);
-        } else if (commitOn === "blur" && wasEditing) {
-          const n = parseFloat(text);
-          if (!Number.isNaN(n) && Math.max(min, n) !== Number(value)) onCommit(Math.max(min, n));
+          setText(min ? String(min) : "");
+        } else if (commitOn === "blur" && wasEditing && !Number.isNaN(parseFloat(text))) {
+          const n = Math.max(min, parseFloat(text));
+          const refused = n !== Number(value) && onCommit(n) === false;
+          setText(refused ? (value === null || value === undefined ? "" : String(value)) : String(n));
+        } else {
+          setText(value === null || value === undefined ? "" : String(value));
         }
-        setText(value === null || value === undefined ? "" : String(value));
         onBlur?.(e);
       }}
       {...rest}
