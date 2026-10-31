@@ -129,3 +129,20 @@ describe("the palette 'Ivory, Rose Gold (curtain only)' end to end", () => {
     expect(resolveFabricAllocation(saved, 56, anchorsForPaletteByMaterial([], palette, "curtain"), curtain, "stockPieces")).toBe(saved);
   });
 });
+
+describe("trussRowCost — a custom ceiling is charged even with Truss Qty 0", () => {
+  const panel = { id: "C1", name: "Wave ceiling Pattern Passage", subCat: "Ceiling", price: 4000 };
+  const rates = { imsInventory: [panel], rcFactorByKey: { ceiling: 1.5 } };
+  it("Truss Qty 0, no dims, custom ceiling picked: the panel is priced (one, at its rental × factor)", () => {
+    const r = trussRowCost({ dims: {}, trT: "box", trussQty: 0, customCeilingItemId: "C1" }, rates);
+    expect(r.ceiling).toBe(6000);
+    expect(r.truss).toBe(6000);
+    expect(r.masking).toBe(0);
+  });
+  it("uses the count picked with it", () => {
+    expect(trussRowCost({ dims: {}, trussQty: 0, customCeilingItemId: "C1", customCeilingQty: 3 }, rates).ceiling).toBe(18000);
+  });
+  it("Truss Qty 0 and no custom ceiling is still nothing", () => {
+    expect(trussRowCost({ dims: { W: 10, L: 10, H: 10 }, trussQty: 0 }, rates)).toEqual({ truss: 0, masking: 0, ceiling: 0 });
+  });
+});

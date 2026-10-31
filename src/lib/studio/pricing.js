@@ -1141,6 +1141,18 @@ export function buildPlatformPlan(fns, dealCheckData) {
 }
 
 
+// A truss row's custom ceiling panel (an IMS item picked in Build's Custom Ceiling picker, row.customCeilingItemId): its
+// rental (× its sub-category's scaling factor) × how many - the count picked with it (row.customCeilingQty, owner ask
+// 2026-10-31), else one per truss in the row, one when the row's Truss Qty is 0. The same count Deal Check and the IMS
+// book use. 0 with no ceiling picked or the item not found.
+function customCeilingCharge(row, rates) {
+  if (!row?.customCeilingItemId) return 0;
+  const ceilingItem = (rates?.imsInventory || []).find((i) => i.id === row.customCeilingItemId);
+  if (!ceilingItem) return 0;
+  const ceilingQty = Number(row.customCeilingQty) > 0 ? Number(row.customCeilingQty) : Math.max(1, row.trussQty || 1);
+  return priceForInvItem(ceilingItem, rates?.rcFactorByKey, rates?.imsInventory) * ceilingQty;
+}
+
 // ═══ ONE TRUSS STRUCTURE'S COST ═══
 // Moved out of StudioApp so the zone editor can price each truss card individually. It cannot
 // import it from there: StudioApp imports StudioBuild, and the other direction would be a cycle.
@@ -1160,7 +1172,13 @@ export function trussRowCost(row, rates) {
   // `rowCost.ceiling` silently poisoned that sum to NaN, which fmt() then quietly displayed as "₹0" —
   // a real, non-zero Liza/curtain figure made invisible by one missing key on a 0-qty row, the exact
   // case the dims-only/no-truss-billed design is meant to still bill fabric for.
-  if (row.trussQty === 0) return { truss: 0, masking: 0, ceiling: 0 };
+  // Truss Qty 0 = no truss structure billed (dims only) - but a custom ceiling picked on the row is its own panel with its
+  // own count, so it is still charged (it priced ₹0 here while Deal Check and the IMS book both carried it: owner ask
+  // 2026-10-31). Same count rule as below: the picker's count, else one.
+  if (row.trussQty === 0) {
+    const ceiling = customCeilingCharge(row, rates);
+    return { truss: ceiling, masking: 0, ceiling };
+  }
   // Owner ask (2026-10-22): billing/build now uses the minimum-joints CLEAN SPAN, not necessarily
   // what was typed — see snapRowDimsForProduction's own comment, which used to scope this to Deal
   // Check's reference display only. Reassigning `row` here (not mutating the saved zone) means
@@ -1202,14 +1220,8 @@ export function trussRowCost(row, rates) {
   truss *= Math.max(1, row.trussQty || 1);
   // `ceiling` is the custom ceiling panel's share of `truss` (already included in it), returned on
   // its own so Build's Fabric card can show it next to the drape it replaces.
-  let ceiling = 0;
-  if (hasCustomCeiling) {
-    const ceilingItem = (rates?.imsInventory || []).find((i) => i.id === row.customCeilingItemId);
-    // How many panels: the count picked with it in the Custom Ceiling picker (row.customCeilingQty, owner ask 2026-10-31),
-    // else one per truss in the row, as before.
-    const ceilingQty = Number(row.customCeilingQty) > 0 ? Number(row.customCeilingQty) : Math.max(1, row.trussQty || 1);
-    if (ceilingItem) { ceiling = priceForInvItem(ceilingItem, rates?.rcFactorByKey, rates?.imsInventory) * ceilingQty; truss += ceiling; }
-  }
+  const ceiling = hasCustomCeiling ? customCeilingCharge(row, rates) : 0;
+  truss += ceiling;
   // Custom masking — same idea as custom ceiling: a specific IMS inventory item (e.g. a printed
   // wall panel) replaces the flat sqft × material-rate masking cost for this row's masked walls.
   // Per-wall override: row.mkWallMat = {back:{matKey}|{customItemId}, left:..., right:...} lets
