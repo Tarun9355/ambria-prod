@@ -3908,8 +3908,24 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
             if (swapped) return swapped;
             return { name: mf.name, qty: baseQty, unit: mf.unit || "" };
           }).filter(f => f && f.qty > 0);
+          // ── THE KIT'S PARTS AS BUILD HAS THEM NOW ──
+          // The parts list below the zone came only from Deal Check's snapshot (deptInventory), so a part added to the kit in
+          // Build after that never reached the book until Deal Check was opened again (owner ask 2026-10-31). The element's own
+          // part list (kitOverrides - an edited kit - else the kit's master list) rides with the layout on every Build save,
+          // so it is read here, per kit; zoneDetailPages adds whatever part the snapshot does not have yet.
+          const kitInv = invU && Array.isArray(invU.subItems) && invU.subItems.length ? invU : null;
+          const liveKit = !kitInv ? [] : (Array.isArray(el?.kitOverrides) ? el.kitOverrides : kitInv.subItems).map(si => {
+            if (si?.patternId) {
+              const pt = flowerPatterns.find(fp => fp?.id === si.patternId);
+              return pt ? { name: pt.name || "Flower recipe", per: Number(si.qty) || 0, unit: pt.unit || "", dept: "Floral" } : null;
+            }
+            const ci = invById.get(String(si?.itemId));
+            if (!ci) return null;
+            return { name: ci.name, per: Number(si.qty) || 0, unit: String(ci.unit || "").trim(), photo: invPhoto(ci, null),
+              dept: heldByInv.has(String(ci.id)) ? dept : catToDept(ci.category || ci.cat) };
+          }).filter(x => x && x.per > 0);
           // a recipe with no inventory item shows the picture of its size, as Build does (photo below)
-          merged.set(key, { name: arranged ? `${el?.name || inv?.name || "Item"} — arranged separately` : (invU?.name || decName || el?.name || held?.name || "Item"), qty, unit, deptTag, photo: arranged ? "" : (invPhoto(invU, invU === inv ? held : null) || (!invU && sizeData?.img) || ""), dims: arranged ? "" : invDims(invU), extra: (choiceExtra || floralMix) ? [...(choiceExtra || []), ...(floralMix ? [["Flowers", floralMix]] : [])] : undefined, mix: floralMix, size: elSize, kit: held?.isKit ? (Array.isArray(held.components) ? held.components.length : 0) + (Array.isArray(held.recipeParts) ? held.recipeParts.length : 0) : 0, recipe, paint: addPaint(new Map(), paint) });
+          merged.set(key, { name: arranged ? `${el?.name || inv?.name || "Item"} — arranged separately` : (invU?.name || decName || el?.name || held?.name || "Item"), qty, unit, deptTag, photo: arranged ? "" : (invPhoto(invU, invU === inv ? held : null) || (!invU && sizeData?.img) || ""), dims: arranged ? "" : invDims(invU), extra: (choiceExtra || floralMix) ? [...(choiceExtra || []), ...(floralMix ? [["Flowers", floralMix]] : [])] : undefined, mix: floralMix, size: elSize, kit: held?.isKit ? (Array.isArray(held.components) ? held.components.length : 0) + (Array.isArray(held.recipeParts) ? held.recipeParts.length : 0) : liveKit.length, liveKit, recipe, paint: addPaint(new Map(), paint) });
         });
         const items = [...merged.values()];
         const zPhoto = fn.elSelectedPhoto?.[zk]?.src || "";
@@ -4259,8 +4275,17 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
             if (whole && !p.unit && Number.isInteger(t)) return wholeShares(t, holders.map(h => h.q))[at];
             return Math.round(t * zq / tq * 100) / 100;
           };
-          const parts = !kb ? [] : zq > 0 && tq > 0 && zq !== tq ? kb.parts.map(p => ({ ...p, qty: share(p) })).filter(p => p.qty > 0) : kb.parts;
-          if (kb) blocks.push({ h: detailH(parts), html: detailCard("📦", it.name, zq > 0 && tq > 0 ? zq : kb.qty, "", parts) });
+          const parts = !kb ? [] : zq > 0 && tq > 0 && zq !== tq ? kb.parts.map(p => ({ ...p, qty: share(p) })).filter(p => p.qty > 0) : [...kb.parts];
+          // A part added to the kit in Build since Deal Check last ran (it.liveKit): listed too, at this zone's count. Only this
+          // department's own parts in a single-department book, like the snapshot's; every part in the combined one.
+          const partKey = (n) => String(n || "").trim().toLowerCase();
+          const have = new Set(parts.map(p => partKey(p.name)));
+          (it.liveKit || []).forEach(p => {
+            if (have.has(partKey(p.name)) || (!combined && p.dept !== dept)) return;
+            have.add(partKey(p.name));
+            parts.push({ name: p.name, qty: Math.round(p.per * (zq || 1) * 100) / 100, unit: p.unit, photo: p.photo || "" });
+          });
+          if (parts.length) blocks.push({ h: detailH(parts), html: detailCard("📦", it.name, zq > 0 && tq > 0 ? zq : (kb?.qty || zq), "", parts) });
         }
       });
       // An arrangement whose name matched no card on this page (renamed since, or on another department's sheet) still gets
