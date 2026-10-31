@@ -3320,6 +3320,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
                     const entries = edited
                       ? splitCrewByDept(raw, setCrew)
                       : raw.map((x) => ({ dept: x.dept, count: Math.ceil(x.raw) })).filter((x) => x.count > 0).sort((a, b) => b.count - a.count);
+                    // Crew set to 0 for the day: still said, so the line does not just vanish (it did - 0 people split to nothing).
+                    if (edited && !entries.length && raw.some((x) => x.raw > 0)) return (
+                      <div className="mt-1 text-[13px] text-gray-600">Today's 0 {r.type.toLowerCase()} — no crew set for this day</div>
+                    );
                     if (!entries.length) return null;
                     const total = entries.reduce((s, e) => s + e.count, 0);
                     return (
