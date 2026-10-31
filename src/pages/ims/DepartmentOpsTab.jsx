@@ -3895,7 +3895,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
             return { name: mf.name, qty: baseQty, unit: mf.unit || "" };
           }).filter(f => f && f.qty > 0);
           // a recipe with no inventory item shows the picture of its size, as Build does (photo below)
-          merged.set(key, { name: arranged ? `${el?.name || inv?.name || "Item"} — arranged separately` : (invU?.name || decName || el?.name || held?.name || "Item"), qty, unit, deptTag, photo: arranged ? "" : (invPhoto(invU, invU === inv ? held : null) || (!invU && sizeData?.img) || ""), dims: arranged ? "" : invDims(invU), extra: (choiceExtra || floralMix) ? [...(choiceExtra || []), ...(floralMix ? [["Flowers", floralMix]] : [])] : undefined, size: elSize, kit: held?.isKit ? (Array.isArray(held.components) ? held.components.length : 0) + (Array.isArray(held.recipeParts) ? held.recipeParts.length : 0) : 0, recipe, paint: addPaint(new Map(), paint) });
+          merged.set(key, { name: arranged ? `${el?.name || inv?.name || "Item"} — arranged separately` : (invU?.name || decName || el?.name || held?.name || "Item"), qty, unit, deptTag, photo: arranged ? "" : (invPhoto(invU, invU === inv ? held : null) || (!invU && sizeData?.img) || ""), dims: arranged ? "" : invDims(invU), extra: (choiceExtra || floralMix) ? [...(choiceExtra || []), ...(floralMix ? [["Flowers", floralMix]] : [])] : undefined, mix: floralMix, size: elSize, kit: held?.isKit ? (Array.isArray(held.components) ? held.components.length : 0) + (Array.isArray(held.recipeParts) ? held.recipeParts.length : 0) : 0, recipe, paint: addPaint(new Map(), paint) });
         });
         const items = [...merged.values()];
         const zPhoto = fn.elSelectedPhoto?.[zk]?.src || "";
@@ -4183,14 +4183,17 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     // (by name — a zone-card item only ever carries a component COUNT, not the parts themselves).
     const kitBlocksByName = new Map(kitBlocks.map(k => [String(k.name || "").trim().toLowerCase(), k]));
     const detailCols = (parts) => (parts.length >= 4 ? 2 : 1);
-    const detailLongNames = (parts, cols) => { const per = cols === 2 ? 44 : 100; return parts.filter(p => String(p.name || "").trim().length > per).length; };
+    const detailLongNames = (parts, cols) => { const per = cols === 2 ? 44 : 100; return parts.filter(p => String(p.name || "").trim().length + (p.tag ? p.tag.length + 1 : 0) > per).length; };
     const detailH = (parts) => { const cols = detailCols(parts); return 68 + (Math.ceil(parts.length / cols) + Math.ceil(detailLongNames(parts, cols) / cols)) * 24 + 14; };
-    const detailCard = (icon, name, qty, unit, parts) => { const cols = detailCols(parts); return `<div class="kb">
+    // mix: a flower piece's real / artificial make-up (zone card's "Flowers" line) - in the header, and as a tag on every
+    // flower line so whoever pulls a flower knows whether it is the real one or the artificial one (owner ask).
+    const detailCard = (icon, name, qty, unit, parts, mix) => { const cols = detailCols(parts); return `<div class="kb">
       <div class="kb-h">
         <div class="kb-t"><div class="kb-nm">${icon} ${esc(name)}</div></div>
+        ${mix ? `<div class="kb-z kb-q"><div class="kb-zk">Flowers</div><div class="kb-zv">${esc(mix)}</div></div>` : ""}
         ${qty ? `<div class="kb-z kb-q"><div class="kb-zk">Qty</div><div class="kb-zv">${esc(qty)}${unit ? " " + esc(unit) : ""}</div></div>` : ""}
       </div>
-      <ul class="kb-l${cols === 1 ? " one" : ""}">${parts.map(p => `<li><i class="kb-x"></i>${p.photo ? `<i class="kb-p" style="${bgCss(p.photo, 40)}" ${bgData(p.photo, 40)}></i>` : ""}<span>${esc(p.name)}</span><i class="kb-d"></i><b>${esc(p.qty)}${p.unit ? ` ${esc(p.unit)}` : ""}</b></li>`).join("")}</ul>
+      <ul class="kb-l${cols === 1 ? " one" : ""}">${parts.map(p => `<li><i class="kb-x"></i>${p.photo ? `<i class="kb-p" style="${bgCss(p.photo, 40)}" ${bgData(p.photo, 40)}></i>` : ""}<span>${esc(p.name)}${p.tag ? ` <em class="kb-tg">${esc(p.tag)}</em>` : ""}</span><i class="kb-d"></i><b>${esc(p.qty)}${p.unit ? ` ${esc(p.unit)}` : ""}</b></li>`).join("")}</ul>
     </div>`; };
     // One page (or more, if a zone's own recipes+kits don't fit one sheet) per zone, built right
     // after that zone's card pages in the loop below — never bundled with any OTHER zone's.
@@ -4209,8 +4212,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       const blocks = [];
       (pg.items || []).forEach(it => {
         if (!combined && Array.isArray(it.recipe) && it.recipe.length) {
-          const parts = it.recipe.map(f => ({ name: f.name, qty: Math.round((Number(f.qty) || 0) * (Number(it.qty) || 0) * 100) / 100, unit: f.unit }));
-          blocks.push({ h: detailH(parts), html: detailCard("🌸", it.name, it.qty, it.unit, parts) });
+          // "Artificial 70% · Real 30%" is too long to repeat on every line - the lines say "Art 70%", the header has both.
+          const tag = !it.mix ? "" : it.mix === "Real" || it.mix === "Artificial" ? it.mix : `Art ${(it.mix.match(/\d+/) || [""])[0]}%`;
+          const parts = it.recipe.map(f => ({ name: f.name, qty: Math.round((Number(f.qty) || 0) * (Number(it.qty) || 0) * 100) / 100, unit: f.unit, tag }));
+          blocks.push({ h: detailH(parts), html: detailCard("🌸", it.name, it.qty, it.unit, parts, it.mix) });
         }
         if (it.kit > 0) {
           const key = String(it.name || "").trim().toLowerCase();
@@ -4608,6 +4613,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   .kb-l.one{grid-template-columns:1fr}
   .kb-l li{display:flex;align-items:baseline;gap:8px;line-height:2;font-size:11.5px;color:#1A1A1A}
   .kb-l li span{flex-shrink:1;min-width:0}
+  .kb-tg{font-style:normal;font-size:8.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#9A8F76;margin-left:3px}
   .kb-l li b{flex-shrink:0;font-size:11.5px;font-weight:700;font-variant-numeric:tabular-nums}
   .kb-d{flex:1 1 auto;min-width:12px;border-bottom:1px dotted #C7BFAC;transform:translateY(-3px)}
   .kb-x{width:11px;height:11px;border:1.5px solid #1A1A1A;border-radius:3px;flex-shrink:0;background:#fff;align-self:center}
