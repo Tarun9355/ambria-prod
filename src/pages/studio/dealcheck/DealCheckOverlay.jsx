@@ -100,7 +100,7 @@ import { heavyExtraLabour, eventTimingMultFor, SIT_MULT_DEFAULTS } from "../../.
 import { deptMpReconciled, itemImsSubcat, lookupBySubcat, itemDimsText, walkKitUnits } from "../../../lib/ims/helpers";
 import { rentalSplit, availableAtVenue, isStandingAt, fixedVenueFor, standingReductionBySubcat, fixedVenueDealDiscount, reservedByVenueToday, venueSlackFor, combineAvailability } from "../../../lib/ims/fixedVenues";
 import { calcZoneFabric, resolveFabricAllocation, anchorsForPalette, anchorsForPaletteByMaterial, resolveTrussConfig, zoneTrussStandingDiscountDetail, trussDiscountedCosts, repeatCatFor, freshFnForManpower , dcFabricMultOf } from "../../../lib/studio/pricing";
-import { carpetPricingFor, CARPET_OFF } from "../../../lib/studio/taxonomy";
+import { carpetPricingFor, CARPET_OFF, carpetTakesStockPick } from "../../../lib/studio/taxonomy";
 import { qtyUsedElsewhereInDealCheck, netOwnReservedBlocksLive } from "../../../lib/studio/dealAvailability";
 import { isHiddenSubcat, oosCostPctFor, canFulfillShortfall } from "../../../lib/rateCard";
 import { findCrossFnReuseSource, computeFnInvQty, groupConsecutiveFns } from "../../../lib/studio/crossFnReuse";
@@ -3312,7 +3312,7 @@ export default function DealCheckOverlay({ ctx }) {
                                       {/* ── CARPET PREFERENCES (from Build) ── the salesperson ranks up to three stock carpets; Planning
                                           decides which one is used from what is free on the day. Shown here so the deal check sees all
                                           three, and can change them — same fields Build writes. */}
-                                      {!isSplitActive && (()=>{
+                                      {!isSplitActive && carpetTakesStockPick(carpetPricingFor(zc.cpT, imsCarpetMaterials).label) && (()=>{
                                         const prefs = prefsOf(zc);
                                         // One picker for all three (tap in the order wanted); Save replaces this zone's preferences.
                                         const openSlot = () => openAvailModal?.(

@@ -921,7 +921,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   let carpetPlanCache = null;
   const carpetPlanOf = () => {
     if (carpetPlanCache) return carpetPlanCache;
-    const floors = carpetFloorsOf(sel?.functionsDetail, (fn, zk) => fn?.zoneNames?.[zk] || ZONE_META[zk]?.label || String(zk).replace(/[_-]+/g, " ").replace(/\b\w/g, c => c.toUpperCase()));
+    const floors = carpetFloorsOf(sel?.functionsDetail, (fn, zk) => fn?.zoneNames?.[zk] || ZONE_META[zk]?.label || String(zk).replace(/[_-]+/g, " ").replace(/\b\w/g, c => c.toUpperCase()), Array.isArray(settings?.carpetMaterials) && settings.carpetMaterials.length ? settings.carpetMaterials : undefined);
     const itemsById = {};
     (inventory || []).forEach(i => { if (i?.id != null) itemsById[i.id] = i; });
     carpetPlanCache = planCarpets({ floors, itemsById, blocks, eventId: sel?.id, choice: sel?.deptOps?.Tenting?.carpetChoice || {}, eventOrders });

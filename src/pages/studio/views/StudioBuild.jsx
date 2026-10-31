@@ -15,7 +15,7 @@ import { getEffectivePricing, resolveDateCategory } from "../../../lib/inventory
 import {
   ZONE_TYPE_TO_AREA, getCat, taxOr, FUNCTIONS, CATEGORIES, venueTypeLabel,
   maskingOptions, platformOptions, defaultCarpetMatId, CARPET_OFF, TRUSS_MATERIALS, trussBaseArea, trussRateFor,
-  platformRowCost, liveAreaElementOptions, carpetPricingFor,
+  platformRowCost, liveAreaElementOptions, carpetPricingFor, carpetTakesStockPick,
 } from "../../../lib/studio/taxonomy";
 import { paletteNames, addPaletteInline } from "../../../lib/studio/colours";
 import PaletteQuickAdd from "../../../components/studio/PaletteQuickAdd.jsx";
@@ -763,6 +763,7 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
   const carpetBilledRaw = carpetPricingFor(zc.cpT, imsCarpetMaterials);
   const carpetBilled = { ...carpetBilledRaw, rate: Math.round((carpetBilledRaw.rate || 0) * guestPriceMultiplier * 100) / 100 };
   const isNewCarpet = /new/i.test(carpetBilled.label || "");
+  const isStockCarpet = carpetTakesStockPick(carpetBilled.label);
   const [cpUploading, setCpUploading] = useState(false);
   // Carpet New is bought fresh, so there is no stock photo to pick — the salesperson attaches one.
   const uploadCarpetPhoto = async (file) => {
@@ -873,7 +874,7 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
                   <div style={{fontSize:11.5,color:textS,marginBottom:3,display:"inline-flex",alignItems:"center",gap:5}}>
                     <IconCarpet size={12}/>Carpet
                     {/* Stock availability for this date: opens the picker where up to four carpets are chosen. */}
-                    {openAvailModal && zc.cpT!==CARPET_OFF && !isNewCarpet && <span onClick={openCarpetPicker} role="button" tabIndex={0}
+                    {openAvailModal && zc.cpT!==CARPET_OFF && isStockCarpet && <span onClick={openCarpetPicker} role="button" tabIndex={0}
                       onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();openCarpetPicker();}}}
                       title={reuseList.length?`Reuse possible here: ${reuseList.map(r=>`${r.name} is already laid at this venue today for ${[...r.siblings,...r.who].join(", ")}`).join(" · ")} — tap to see`:prefs.length?`${prefs.length} of ${CARPET_PREF_MAX} carpets picked — tap to check availability on the event date & change`:`Check carpet availability on the event date & pick up to ${CARPET_PREF_MAX}`}
                       style={{cursor:"pointer",display:"inline-flex",opacity:(prefs.length||reuseList.length)?1:0.6,color:reuseList.length?"#F97316":undefined}}><IconBox size={12}/></span>}
@@ -901,7 +902,7 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
                       material rate above). Three ranked choices, so Planning has a fallback and decides which one is used from what
                       is free on the day; Deal Check and Planning show the same three. The 1st choice is also what older readers
                       (stock checks, Deal Check's carpet card) still see as the pick. */}
-                  {openAvailModal && zc.cpT!==CARPET_OFF && !isNewCarpet && (()=>{
+                  {openAvailModal && zc.cpT!==CARPET_OFF && isStockCarpet && (()=>{
                     const floorSqft=floorSqftNow;
                     const open=openCarpetPicker;
                     const done=prefs.length>=CARPET_PREF_MAX;
@@ -1304,10 +1305,10 @@ export default function StudioBuild({ ctx }) {
       if (!anySize) return size;
       if (allOff) return size;
       // Carpet New is bought fresh — no stock carpet to pick (a photo is attached instead).
-      const needsPick = (r) => r?.cpT !== CARPET_OFF && !r?.cpInvId && !/new/i.test(carpetPricingFor(r?.cpT, imsCarpetMaterials)?.label || "");
+      const needsPick = (r) => r?.cpT !== CARPET_OFF && !r?.cpInvId && carpetTakesStockPick(carpetPricingFor(r?.cpT, imsCarpetMaterials)?.label);
       if (anySize && rows.some(needsPick)) return `${size || "Floor"} · carpet not picked`;
       // a stock carpet is picked but fewer than two are ranked: no preference named yet
-      if (anySize && rows.some(r => r?.cpT !== CARPET_OFF && r?.cpInvId && !/new/i.test(carpetPricingFor(r?.cpT, imsCarpetMaterials)?.label || "") && prefsOf(r).length < 2)) return `${size || "Floor"} · ⚠ Not selected preference`;
+      if (anySize && rows.some(r => r?.cpT !== CARPET_OFF && r?.cpInvId && carpetTakesStockPick(carpetPricingFor(r?.cpT, imsCarpetMaterials)?.label) && prefsOf(r).length < 2)) return `${size || "Floor"} · ⚠ Not selected preference`;
       return [size, picked[0] ? `📦 ${picked[0]}` : ""].filter(Boolean).join(" · ");
     }
     const n = (zc.prints || []).length, w = printedWallsOf(k).length;
@@ -1392,7 +1393,7 @@ export default function StudioBuild({ ctx }) {
         const z = { ...(next[k] || {}) };
         // the same preferences, in the same order, on every carpeted floor — except a "Carpet New" floor, which is bought fresh and takes no stock
         // pick (its pick slots are hidden, so a pick put there could never be seen or cleared)
-        const isNewRow = (r) => /new/i.test(carpetPricingFor(r.cpT, imsCarpetMaterials)?.label || "");
+        const isNewRow = (r) => !carpetTakesStockPick(carpetPricingFor(r.cpT, imsCarpetMaterials)?.label);
         const tag = (r) => (isNewRow(r) ? r : ({ ...r, ...setPrefsPatch(list.map(p => ({ id: p.id, name: p.name || "", free: Number(p.free) || 0 }))) }));
         if (ris.includes(0)) Object.assign(z, tag(z));
         if (Array.isArray(z.extraPlatformRows)) z.extraPlatformRows = z.extraPlatformRows.map((r, i) => ris.includes(i + 1) ? tag(r) : r);

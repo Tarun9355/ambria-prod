@@ -348,6 +348,11 @@ export function carpetPricingFor(cpT, carpetMaterials) {
   const fallbackRate = cpT === "old" ? 7 : cpT === "new" ? 15 : 0;
   return { rate: fallbackRate, label: cpT === "old" ? "Old" : cpT === "new" ? "New" : cpT };
 }
+// Only Carpet Old is a physical carpet taken from stock, so only it gets the ranked preferences
+// (1st-3rd choice) and Planning's "which carpet goes down" decision. Carpet New is bought fresh and
+// Flex (or any other material) is not a stock carpet either - owner, 2026-10-31. Pass the label
+// carpetPricingFor resolves, so a legacy "old" enum and a materials-row id both work.
+export const carpetTakesStockPick = (label) => /old/i.test(label || "");
 // Whatever a floor's carpet should default to — "Carpet Old" by name if that material exists, else
 // any material with "carpet" in its name, else none (no default available). Two consumers: (1)
 // carpetPricingFor itself, for a floor whose cpT was never explicitly set; (2) sFD/setFd

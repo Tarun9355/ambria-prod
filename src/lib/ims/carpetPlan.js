@@ -3,7 +3,7 @@
 // The decision is IMS-owned (deptOps.Tenting.carpetChoice[key]) so every Studio sync leaves it alone.
 
 import { prefsOf, floorSqftOf } from "../studio/carpetPrefs.js";
-import { CARPET_OFF } from "../studio/taxonomy.js";
+import { CARPET_OFF, carpetPricingFor, carpetTakesStockPick } from "../studio/taxonomy.js";
 import { sameVenueHolds, reuseAwareAvail } from "../studio/carpetReuse.js";
 
 const norm = (v) => String(v || "").trim().toLowerCase();
@@ -23,7 +23,8 @@ export function freeForEvent(item, blocks, date, eventId) {
 }
 
 // Every carpet floor of the event, from its saved layout (functionsDetail): zones that are switched on, with carpet on and a size.
-export function carpetFloorsOf(functionsDetail, zoneLabelOf) {
+// With carpetMaterials, a floor whose material is not a stock carpet (Carpet New, Flex) is left out - nothing to pick from stock.
+export function carpetFloorsOf(functionsDetail, zoneLabelOf, carpetMaterials) {
   const out = [];
   (Array.isArray(functionsDetail) ? functionsDetail : []).forEach((fn, i) => {
     const fi = fn?.fnIdx ?? i;
@@ -33,6 +34,7 @@ export function carpetFloorsOf(functionsDetail, zoneLabelOf) {
       [zc, ...(Array.isArray(zc.extraPlatformRows) ? zc.extraPlatformRows : [])].forEach((row, ri) => {
         // carpet explicitly turned off = nothing to plan; an unset material still bills the default carpet, so it is planned
         if (!row || row.cpT === CARPET_OFF) return;
+        if (carpetMaterials && !carpetTakesStockPick(carpetPricingFor(row.cpT, carpetMaterials).label)) return;
         const fd = row.floorDims || {};
         const qty = Math.max(1, Math.round(Number(row.plQty) || 1));
         const area = floorSqftOf(row);
