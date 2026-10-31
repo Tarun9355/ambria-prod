@@ -86,3 +86,32 @@ export function applyPartChoicePicks(part, picks, makeId) {
   if (w.prefs) { next.prefs = w.prefs; next.pid = w.pid; } else { delete next.prefs; }
   return next;
 }
+
+// ── SAVE TO ALL ──
+// "overlay" or "cushion cover" for an item that takes choices, else null. Save to all only ever crosses between elements of the same kind.
+export function choiceKind(item) {
+  if (!itemTakesChoices(item)) return null;
+  return norm(item.subCat || item.subcategory) === "overlays" ? "overlay" : "cushion cover";
+}
+
+// The choices picker's "Save to all": the same picks, in the same order, on every element of that kind in the given zones (the function's
+// switched-on zones) — like Save to all on a carpet. Each element keeps its own qty; the 1st pick becomes its item, as a single Save does.
+// Kit parts are left alone (they are set per kit). Returns { next, count } — next is a new zoneElements map; zones it does not touch are reused.
+export function applyChoicesToAll(zoneElements, zoneKeys, picks, items, inventory, kind, makeId) {
+  const byId = new Map((Array.isArray(inventory) ? inventory : []).map((i) => [String(i.id), i]));
+  const next = { ...(zoneElements || {}) };
+  let count = 0;
+  if (!kind || !(Array.isArray(picks) && picks.some((p) => p && p.id))) return { next, count };
+  (Array.isArray(zoneKeys) ? zoneKeys : []).forEach((k) => {
+    const els = next[k];
+    if (!Array.isArray(els)) return;
+    let changed = false;
+    const out = els.map((el) => {
+      if (!el?.invId || choiceKind(byId.get(String(el.invId))) !== kind) return el;
+      changed = true; count++;
+      return applyChoicePicks(el, picks, items, makeId);
+    });
+    if (changed) next[k] = out;
+  });
+  return { next, count };
+}

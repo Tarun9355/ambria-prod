@@ -428,8 +428,8 @@ export default function StudioModals({ ctx }) {
                 <button onClick={closeModal} style={{padding:"8px 16px",borderRadius:8,border:`1px solid ${border}`,background:"transparent",color:textS,fontSize:12,fontWeight:600,cursor:"pointer"}}>Cancel</button>
                 {multi
                   ? <>
-                    {multi.onSaveAll && <button onClick={()=>{if(!canSaveMulti)return;multi.onSaveAll(multiPickList);closeModal();}} disabled={!canSaveMulti}
-                      title={canSaveMulti?`Use these ${multiPickList.length} on every carpeted floor of this function — stock decides which ones show short`:availModal.loading?"Still loading…":`Pick a ${mNoun} first`}
+                    {multi.onSaveAll && <button onClick={()=>{if(!canSaveMulti)return;multi.onSaveAll(multiPickList, availModal.items);closeModal();}} disabled={!canSaveMulti}
+                      title={canSaveMulti?(multi.saveAllTitle||`Use these ${multiPickList.length} on every carpeted floor of this function — stock decides which ones show short`):availModal.loading?"Still loading…":`Pick a ${mNoun} first`}
                       style={{padding:"8px 14px",borderRadius:8,border:"1px solid #059669",background:"transparent",color:canSaveMulti?"#059669":"#9CA3AF",fontSize:12,fontWeight:700,cursor:canSaveMulti?"pointer":"not-allowed"}}>Save to all</button>}
                     <button onClick={()=>{if(!canSaveMulti)return;multi.onSave&&multi.onSave(multiPickList, availModal.items);closeModal();}} disabled={!canSaveMulti}
                       style={{padding:"8px 18px",borderRadius:8,border:"none",background:canSaveMulti?"#059669":"#6B7280",color:"#fff",fontSize:12,fontWeight:700,cursor:canSaveMulti?"pointer":"default"}}>Save{multiPickList.length?` (${multiPickList.length})`:""}</button>

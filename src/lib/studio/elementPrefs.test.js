@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { itemTakesChoices, elementChoices, hasChoices, withChoices, withoutChoices, applyChoicePicks, ELEMENT_PREF_MAX } from "./elementPrefs.js";
+import { itemTakesChoices, elementChoices, hasChoices, withChoices, withoutChoices, applyChoicePicks, applyChoicesToAll, ELEMENT_PREF_MAX } from "./elementPrefs.js";
 
 const P = (id, free = 100) => ({ id, name: "n" + id, free });
 
@@ -140,5 +140,50 @@ describe("choices for a part inside a kit", () => {
   it("no picks: the part is returned as it is", () => {
     const part = { itemId: "A", qty: 1 };
     expect(applyPartChoicePicks(part, [], mk)).toBe(part);
+  });
+});
+
+describe("applyChoicesToAll — Save to all for overlays / cushion covers", () => {
+  const inv = [
+    { id: "O1", name: "Overlay Gold", subCat: "Overlays" },
+    { id: "O2", name: "Overlay Red", subCat: "Overlays" },
+    { id: "O3", name: "Overlay Ivory", subCat: "Overlays" },
+    { id: "C1", name: "Cushion Cover Pink", subCat: "Cushion" },
+    { id: "C2", name: "Cushion Cover Blue", subCat: "Cushion" },
+    { id: "CI", name: "Cushion Insert", subCat: "Cushion" },
+    { id: "T1", name: "Table", subCat: "Tables" },
+  ];
+  const picks = [{ id: "O2", name: "Overlay Red", free: 50 }, { id: "O3", name: "Overlay Ivory", free: 40 }];
+  const mk = () => "pX";
+  const ze = {
+    stage: [{ invId: "O1", name: "Overlay Gold", qty: 4 }, { invId: "T1", name: "Table", qty: 2 }, { invId: "C1", name: "Cushion Cover Pink", qty: 10 }],
+    lounge: [{ invId: "O1", name: "Overlay Gold", qty: 8 }, { invId: "CI", name: "Cushion Insert", qty: 6 }],
+    off: [{ invId: "O1", name: "Overlay Gold", qty: 1 }],
+  };
+  it("every overlay in the given zones gets the picks, keeps its own qty; nothing else changes", () => {
+    const { next, count } = applyChoicesToAll(ze, ["stage", "lounge"], picks, inv, inv, "overlay", mk);
+    expect(count).toBe(2);
+    expect(next.stage[0]).toMatchObject({ invId: "O2", qty: 4, pid: "pX" });
+    expect(next.stage[0].prefs.map((p) => p.id)).toEqual(["O2", "O3"]);
+    expect(next.lounge[0]).toMatchObject({ invId: "O2", qty: 8 });
+    expect(next.stage[1]).toBe(ze.stage[1]);
+    expect(next.stage[2]).toBe(ze.stage[2]);
+    expect(next.lounge[1]).toBe(ze.lounge[1]);
+  });
+  it("a zone not passed in (switched off) is left alone", () => {
+    const { next } = applyChoicesToAll(ze, ["stage", "lounge"], picks, inv, inv, "overlay", mk);
+    expect(next.off).toBe(ze.off);
+  });
+  it("cushion covers only cross to cushion covers — not inserts, not overlays", () => {
+    const cp = [{ id: "C2", name: "Cushion Cover Blue", free: 30 }, { id: "C1", name: "Cushion Cover Pink", free: 30 }];
+    const { next, count } = applyChoicesToAll(ze, ["stage", "lounge"], cp, inv, inv, "cushion cover", mk);
+    expect(count).toBe(1);
+    expect(next.stage[2]).toMatchObject({ invId: "C2", qty: 10 });
+    expect(next.stage[0]).toBe(ze.stage[0]);
+    expect(next.lounge[1]).toBe(ze.lounge[1]);
+  });
+  it("no picks or no kind changes nothing", () => {
+    expect(applyChoicesToAll(ze, ["stage"], [], inv, inv, "overlay").count).toBe(0);
+    expect(applyChoicesToAll(ze, ["stage"], picks, inv, inv, null).count).toBe(0);
   });
 });

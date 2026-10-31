@@ -5,7 +5,7 @@ import NumField from "../../../components/ui/NumField.jsx";
 import { applyQtyCeiling } from "../../../lib/studio/qtyCeiling";
 import { smartFilter } from "../../../lib/studio/itemSearch";
 import { unitAllowsDecimal, quantityForUnit } from "../../../lib/studio/qtyUnits";
-import { itemTakesChoices, elementChoices, partChoices, applyChoicePicks, ELEMENT_PREF_MAX, ELEMENT_PREF_LABELS } from "../../../lib/studio/elementPrefs";
+import { itemTakesChoices, elementChoices, partChoices, applyChoicePicks, applyChoicesToAll, choiceKind, ELEMENT_PREF_MAX, ELEMENT_PREF_LABELS } from "../../../lib/studio/elementPrefs";
 import { SMALL_PRINT_LIMIT, SMALL_PRINT_CHARGE, firstSmallPrint, printFlatForZone } from "../../../lib/studio/truckPrint";
 import { IconClipboard, IconPencil, IconRuler, IconBolt, IconWall, IconPlatform, IconCarpet, IconBulb, IconCheck,
   IconSearch, IconCamera, IconPrinter, IconNote, IconCalendar, IconFlower, IconFactory,
@@ -2069,7 +2069,7 @@ export default function StudioBuild({ ctx }) {
   // Hover-to-zoom on an element's thumbnail — same fixed-position enlarged-preview pattern as
   // ManageLibrary.jsx's elHoverImg. Keyed by "zoneKey:idx" since two near-duplicate element-list
   // blocks in this file can both be on screen at once.
-  // Overlays and cushion covers name up to four designs in order of preference (Planning decides which one is used from what is free on the day). The stock
+  // Overlays and cushion covers name up to three designs in order of preference (Planning decides which one is used from what is free on the day). The stock
   // icon on the element opens that picker for them - no separate "Choices" button - and any other element keeps the plain one-item picker.
   // Returns the opener for this element, or null when it takes no choices.
   const choiceOpenerFor = (k, idx, el, rc, invItem, qtyUnit) => {
@@ -2083,7 +2083,15 @@ export default function StudioBuild({ ctx }) {
           const elems = [...(p[k] || [])]; if (!elems[idx] || !picks.length) return p;
           elems[idx] = applyChoicePicks(elems[idx], picks, all);
           return { ...p, [k]: elems };
-        }) } });
+        }),
+        // Save to all: the same choices on every overlay (or every cushion cover) of this function (switched-on zones), like a carpet's Save to all. Kit parts stay per kit.
+        onSaveAll: (picks, all) => {
+          const kind = choiceKind(invItem);
+          const zoneKeys = Object.keys(zoneElements || {}).filter(z => enabledEls[z]);
+          if (!zoneKeys.includes(k)) zoneKeys.push(k);
+          setZoneElements(p => applyChoicesToAll(p, zoneKeys, picks, all || imsInventory, imsInventory, kind).next);
+        },
+        saveAllTitle: `Use these choices on every ${noun} in this function — each keeps its own qty; stock decides which show short. Kit parts are not changed.` } });
   };
   const [elThumbHover, setElThumbHover] = useState(null); // { key, top, bottom, left }
   // "+ Add element…" search results dropdown, keyed by zone key. Same escape-the-clipped-ancestor
