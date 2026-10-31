@@ -889,7 +889,7 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
                         <span style={{display:"block",fontSize:10,color:"#6B7280"}}>{showCosts?`billed at ₹${carpetBilled.rate}/sqft`:""}</span>
                       </span>
                     </div>
-                  ) : zc.cpT!==CARPET_OFF && prefs.length ? (
+                  ) : zc.cpT!==CARPET_OFF && isStockCarpet && prefs.length ? (
                     showCosts&&<div style={{fontSize:10.5,color:textS,marginBottom:4}}>Billed at {carpetBilled.label} ₹{carpetBilled.rate}/sqft</div>
                   ) : (
                   <select value={zc.cpT===CARPET_OFF?"":(zc.cpT||defaultCarpetMatId(imsCarpetMaterials)||"")} onChange={e=>sZ({cpT:e.target.value||CARPET_OFF})}
