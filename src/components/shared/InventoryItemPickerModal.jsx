@@ -56,9 +56,12 @@ export default function InventoryItemPickerModal({
                 const owned = Math.max(0, Number(it.qty ?? it.qtyOwned) || 0);
                 const free = freeFor ? Math.max(0, Number(freeFor(it)) || 0) : null;
                 const unit = String(it.unit || "").trim();
+                // the count sits on the photo's top-left corner (owner ask): green while some are free, red when none is
                 const count = free == null
-                  ? { t: `${owned} owned`, c: textS }
-                  : free > 0 ? { t: `${free} free of ${owned}`, c: "#10B981" } : { t: owned > 0 ? `0 free of ${owned}` : "None owned", c: "#EF4444" };
+                  ? { t: `${owned} owned`, bg: "rgba(17,24,39,0.82)" }
+                  : free > 0 ? { t: `${free} of ${owned} free`, bg: "#059669" } : { t: owned > 0 ? `0 of ${owned} free` : "None owned", bg: "#DC2626" };
+                const countTip = free == null ? `${owned}${unit ? " " + unit : ""} in IMS`
+                  : `${free}${unit ? " " + unit : ""} free${dateLabel ? ` on ${dateLabel}` : " on the event date"} (after other events and the rest of this deal) · ${owned} owned`;
                 return (
                   <div key={it.id} onClick={() => onSelect(it)}
                     style={{ borderRadius: 10, cursor: "pointer", border: `1px solid ${border}`, overflow: "hidden", background: isDark ? "#12121F" : "#fafafa", display: "flex", flexDirection: "column" }}
@@ -68,13 +71,12 @@ export default function InventoryItemPickerModal({
                       {src
                         ? <img src={fitUrl(src, 200)} alt={it.name} loading="lazy" decoding="async" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} onError={(e) => { e.target.style.display = "none"; }} />
                         : <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 26, color: textS }}>{icon}</div>}
+                      <div title={countTip} style={{ position: "absolute", top: 6, left: 6, background: count.bg, color: "#fff", padding: "2px 7px", borderRadius: 6, fontSize: 10.5, fontWeight: 700, boxShadow: "0 1px 3px rgba(0,0,0,0.3)" }}>{count.t}</div>
                       <div style={{ position: "absolute", bottom: 0, right: 0, background: accent, color: "#fff", padding: "2px 8px", borderTopLeftRadius: 8, fontSize: 11, fontWeight: 700 }}>₹{Math.round(price).toLocaleString("en-IN")}</div>
                     </div>
                     <div style={{ padding: "7px 9px" }}>
                       <div title={it.name} style={{ fontSize: 11, fontWeight: 600, color: textP, lineHeight: 1.25, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{it.name}</div>
                       <div style={{ fontSize: 9, color: textS, marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sub}{dims ? ` · 📐 ${dims}` : ""}</div>
-                      <div title={free == null ? `${owned}${unit ? " " + unit : ""} in IMS` : `${free} free${dateLabel ? ` on ${dateLabel}` : " on the event date"} (after other events and the rest of this deal) · ${owned} owned`}
-                        style={{ fontSize: 10, fontWeight: 700, color: count.c, marginTop: 4 }}>{count.t}{unit ? ` ${unit}` : ""}</div>
                     </div>
                   </div>
                 );
