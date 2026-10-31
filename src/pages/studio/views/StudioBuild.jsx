@@ -286,7 +286,7 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                 </div>
               <div style={{display:"flex",gap:8,marginBottom:6}}>
                 {[["W","Width"],["L","Depth"],["H","Height"]].map(([d,label])=><div key={d} style={{flex:1}}><div style={{fontSize:11.5,color:textS,marginBottom:3}}>Truss {label} (ft)</div>
-                  <NumField value={zc.dims?.[d]||""} onCommit={n=>sD(d,n)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}}/></div>)}
+                  <NumField value={zc.dims?.[d]||""} onCommit={n=>sD(d,n)} blankCommit style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}}/></div>)}
                 {/* Scale By (the zone header's "set of N" multiplier) rescales this the same way it
                     rescales a Platform row's own Qty and a print row's own qty, keeping a per-set
                     base across changes (see setZoneScale). */}
@@ -295,9 +295,9 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                     sZ({trussQty:nextQty, trussQtyBase: scale>1?nextQty/scale:nextQty});
                   }} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}}/></div>}
                 {zc.trT&&<div style={{flex:1}}><div style={{fontSize:11.5,color:textS,marginBottom:3}} title="Single-U extension on each front side, this many ft long. Priced as 2× Single U truss. Rare.">Front ext (ft/side)</div>
-                  <NumField min={0} value={zc.trussFrontExt||""} onCommit={n=>sZ({trussFrontExt:n})} placeholder="0" style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}}/></div>}
+                  <NumField min={0} value={zc.trussFrontExt||""} onCommit={n=>sZ({trussFrontExt:n})} blankCommit placeholder="0" style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}}/></div>}
                 {zc.trT&&(Number(zc.trussFrontExt)||0)>0&&<div style={{flex:1}}><div style={{fontSize:11.5,color:textS,marginBottom:3}} title="Height of the front extension (can differ from box height). Defaults to box height.">Ext height (ft)</div>
-                  <NumField min={0} value={zc.trussFrontExtH||""} onCommit={n=>sZ({trussFrontExtH:n})} placeholder={String(zc.dims?.H||0)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}}/></div>}
+                  <NumField min={0} value={zc.trussFrontExtH||""} onCommit={n=>sZ({trussFrontExtH:n})} blankCommit placeholder={String(zc.dims?.H||0)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}}/></div>}
               </div>
               {/* §23 Phase 5 (28 May 2026) — Smart truss tip: add 1ft per pillar to physical span */}
               {(() => {
