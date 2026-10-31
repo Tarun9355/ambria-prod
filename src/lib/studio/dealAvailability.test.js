@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { allocateRowAvailability, maxQtyForRow, qtyUsedElsewhereInBuild } from "./dealAvailability.js";
+import { allocateRowAvailability, maxQtyForRow, qtyUsedElsewhereInBuild, kitPartShortfalls } from "./dealAvailability.js";
 
 const inventory = [{ id: "pod", name: "Round Fibre Podium" }];
 const fnWith = (rows) => [{ fnDate: "2026-10-15", zoneElements: Object.fromEntries(rows.map(([zk, qty]) => [zk, [{ invId: "pod", qty }]])) }];
@@ -107,5 +107,36 @@ describe("maxQtyForRow — randomised against allocateRowAvailability", () => {
       else expect(max).toBe(0);   // someone is already short without this row: nothing may be added
     }
     expect(checked).toBeGreaterThan(300);
+  });
+});
+
+describe("kitPartShortfalls — a part inside a kit that is short on the date", () => {
+  const inv = [
+    { id: "kit", name: "Lounge Kit", subItems: [{ itemId: "cover", qty: 4 }, { itemId: "pot", qty: 1 }] },
+    { id: "cover", name: "Cushion Cover" },
+    { id: "pot", name: "Brass Pot" },
+  ];
+  const free = { kit: 9, cover: 10, pot: 9 };
+  const availFor = (it) => free[it.id];
+  const D = "2026-10-15";
+  it("nothing short: nothing listed (and the kit itself is never listed)", () => {
+    const fns = [{ fnDate: D, zoneElements: { lounge: [{ invId: "kit", qty: 2 }] } }];
+    expect(kitPartShortfalls(inv[0], 2, undefined, fns, inv, T("lounge"), D, availFor)).toEqual([]);
+  });
+  it("3 kits need 12 covers, 10 free: covers 2 short", () => {
+    const fns = [{ fnDate: D, zoneElements: { lounge: [{ invId: "kit", qty: 3 }] } }];
+    expect(kitPartShortfalls(inv[0], 3, undefined, fns, inv, T("lounge"), D, availFor)).toEqual([{ id: "cover", name: "Cushion Cover", need: 12, short: 2 }]);
+  });
+  it("covers also used as their own element elsewhere in the booking compete for the same 10", () => {
+    const fns = [{ fnDate: D, zoneElements: { lounge: [{ invId: "kit", qty: 2 }], stage: [{ invId: "cover", qty: 5 }] } }];
+    // 5 (stage, smaller row first) + 8 (kit) against 10 free → the kit's row is 3 short
+    expect(kitPartShortfalls(inv[0], 2, undefined, fns, inv, T("lounge"), D, availFor)).toEqual([{ id: "cover", name: "Cushion Cover", need: 8, short: 3 }]);
+  });
+  it("the kit's own edited parts are the ones checked", () => {
+    const fns = [{ fnDate: D, zoneElements: { lounge: [{ invId: "kit", qty: 1, kitOverrides: [{ itemId: "pot", qty: 12 }] }] } }];
+    expect(kitPartShortfalls(inv[0], 1, [{ itemId: "pot", qty: 12 }], fns, inv, T("lounge"), D, availFor)).toEqual([{ id: "pot", name: "Brass Pot", need: 12, short: 3 }]);
+  });
+  it("without a target row the kit is judged alone", () => {
+    expect(kitPartShortfalls(inv[0], 3, undefined, [], inv, null, D, availFor)).toEqual([{ id: "cover", name: "Cushion Cover", need: 12, short: 2 }]);
   });
 });

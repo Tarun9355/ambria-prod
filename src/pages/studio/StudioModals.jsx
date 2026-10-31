@@ -472,6 +472,7 @@ export default function StudioModals({ ctx }) {
                   <div style={{minWidth:0}}>
                     <div style={{fontSize:13,fontWeight:600,color:textP,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{f.name}</div>
                     <div style={{fontSize:11,color:textS,marginTop:2}}>{f.fnLabel} · {f.zoneKey}</div>
+                    {Array.isArray(f.parts) && f.parts.length > 0 && <div style={{fontSize:11,color:"#EF4444",marginTop:2,whiteSpace:"normal"}}>Inside this kit: {f.parts.join(", ")}</div>}
                   </div>
                   <button onClick={() => openOosFix(f)} title="Pick an alternative item" style={{padding:"6px 12px",borderRadius:7,border:"none",background:"#EF4444",color:"#fff",fontSize:11.5,fontWeight:700,cursor:"pointer",flexShrink:0,display:"inline-flex",alignItems:"center",gap:5}}><IconBox size={12}/> Fix</button>
                 </div>

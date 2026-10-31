@@ -28,7 +28,7 @@ import { itemTakesChoices, partChoices, applyPartChoicePicks, ELEMENT_PREF_LABEL
 // same "swap to ONE item" / "split across 2+ items" choice a top-level element already has, instead
 // of being swap-only. Omit the prop (as Library does — it has no client/event-date context to check
 // availability against) and the icon simply never renders; nothing else about the component changes.
-export default function KitComponentsEditor({ item, overrides, onChange, imsInventory, flowerPatterns, qtyMultiplier = 1, dealAwareness, onCheckAvailability, onCheckChoices, rcSubcatFactors, rcFactorByKey, mandiCatalogue = [], studioMarkup = 3, elSize, floralRatio = 0, rcFloralModeByKey = {}, floralSettings = null, targetUnitPrice, textP, textS, border, cardBg, accent, isDark, fmt }) {
+export default function KitComponentsEditor({ item, overrides, onChange, imsInventory, flowerPatterns, qtyMultiplier = 1, dealAwareness, shortParts, onCheckAvailability, onCheckChoices, rcSubcatFactors, rcFactorByKey, mandiCatalogue = [], studioMarkup = 3, elSize, floralRatio = 0, rcFloralModeByKey = {}, floralSettings = null, targetUnitPrice, textP, textS, border, cardBg, accent, isDark, fmt }) {
   // rcFactorByKey = { subcatLower: scaling_factor } — the pricing multiplier map (priceForInvItem needs
   // this, NOT the rcSubcatFactors array which is for isHiddenSubcat). Fall back to {} so pricing is 1×.
   const _factorMap = (rcFactorByKey && typeof rcFactorByKey === "object" && !Array.isArray(rcFactorByKey)) ? rcFactorByKey : {};
@@ -267,6 +267,15 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
                 <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, flexWrap: "wrap", rowGap: 4 }}>
                 <span style={{ color: cItem ? textP : "#EF4444", fontWeight: 600, flex: "1 1 auto", minWidth: 104, whiteSpace: "normal", overflowWrap: "break-word", display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
                   <span style={{ whiteSpace: "normal", overflowWrap: "break-word" }}>{cItem ? cItem.name : `⚠ ${c.itemId} not in IMS`}</span>
+                  {/* This part short on the event date (shortParts - Build's kitPartShorts for the whole kit row, so the
+                      figure is the row's total for the part, across every kit of the row). Red when production can't cover it. */}
+                  {(() => {
+                    const sp = cItem && Array.isArray(shortParts) ? shortParts.find((p) => p.id === cItem.id) : null;
+                    if (!sp) return null;
+                    return <span title={`${sp.short} of ${sp.need} not free for this date${sp.canMake ? " - production can make the rest" : " - can't be made, swap it with the box icon"}`}
+                      style={{ fontSize: 10, padding: "1px 6px", borderRadius: 3, fontWeight: 700, whiteSpace: "nowrap",
+                        background: sp.canMake ? "rgba(245,158,11,0.15)" : "rgba(239,68,68,0.15)", color: sp.canMake ? "#B45309" : "#EF4444" }}>⚠ {sp.short} short</span>;
+                  })()}
                   {cItemIsKit && <span style={{ color: indigo, fontWeight: 700, display: "flex" }}><IconBox size={11}/></span>}
                   {cItem && onCheckChoices && itemTakesChoices(cItem) && (
                     // An overlay or a cushion cover inside the kit: the stock icon names up to four designs in order of preference (Planning decides which one is used),
@@ -347,6 +356,7 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
                     flowerPatterns={flowerPatterns}
                     qtyMultiplier={qtyEach * qtyMultiplier}
                     onCheckAvailability={onCheckAvailability}
+                    shortParts={shortParts}
                     onCheckChoices={onCheckChoices}
                     rcSubcatFactors={rcSubcatFactors}
                     rcFactorByKey={rcFactorByKey}

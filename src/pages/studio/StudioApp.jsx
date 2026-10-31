@@ -94,7 +94,7 @@ import { normalizePaintAllocation, maxRepaintCostInSubcat, paintLinesFor, paintT
 import { sheetItemLine } from "../../lib/studio/sheetRounding";
 import { sigHash } from "../../lib/sigHash";
 import { costSheetQtyEdit } from "../../lib/studio/costSheetQtyEdit";
-import { allocateRowAvailability, maxQtyForRow, netOwnReservedBlocksLive } from "../../lib/studio/dealAvailability";
+import { allocateRowAvailability, maxQtyForRow, netOwnReservedBlocksLive, kitPartShortfalls } from "../../lib/studio/dealAvailability";
 import { callClaudeStreaming } from "../../lib/ai";
 import { heavyExtraLabour, eventTimingMultFor, SETTINGS_DEFAULTS, SIT_MULT_DEFAULTS, assembleHeavyElementRangesFromRows, assembleTrussLabourRangesFromRows, assembleFabricBangaliRangesFromRows } from "../../lib/ims/constants";
 import { resolveDateCategory, getEffectivePricing, assembleMarkedDatesFromRows } from "../../lib/inventory/helpers";
@@ -4838,6 +4838,32 @@ export default function StudioApp() {
     const unitPrice = priceForInvItem(item, rcFactorByKey, imsInventory, el.kitOverrides);
     return { rc: null, unitPrice, fullUnitPrice: unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName, crossFnTake, el.repeatOverride, dateFactorFor(el, opts), el.kitOverrides), area: 0, warning: null, isFloralBlend: false, realPct: null };
   }, [imsInventory, rcFactorByKey, rcCostPctForSub, activeBlocksForDate, activeBlocksDetailForDate, dealCheckData, studioFloralData, rcFloralModeByKey, floralRatio, fvCfgForRepeat, eventOrders, activeClientId, clientName, activeFnIdx, activeFnMeta, clientDate]);
+
+  // ── A KIT'S SHORT PARTS ──
+  // getElPriceFromInventory checks a kit row against the KIT's own stock only - a part inside it (a cushion cover, a pot)
+  // booked out elsewhere on the date showed nothing on Build, and the deal could still be marked Sold (owner ask
+  // 2026-10-31). This checks every part, at any depth, against the same free stock that function uses for a plain row:
+  // other events' blocks with this deal's own reservation netted back out, the Fixed-Venue lock, and every other row of
+  // this booking on the date that uses the part (kitPartShortfalls, lib/studio/dealAvailability.js). Indicator only -
+  // the kit's price is not changed. canMake: production can still cover the shortfall (canFulfillShortfall); a part that
+  // can't be made stops the deal being marked Sold (scanOutOfStockElements).
+  // opts: { fnIdx, zoneKey, elIdx, fnDate, venueName, blocksForDate, blocksDetailForDate } - Build's own card passes
+  // zoneKey/elIdx only and gets the active function's.
+  const kitPartShorts = useCallback((el, opts = {}) => {
+    const item = el?.invId ? (imsInventory || []).find((i) => i.id === el.invId) : null;
+    if (!item || !(Array.isArray(item.subItems) && item.subItems.length) || !((Number(el.qty) || 0) > 0)) return [];
+    const fnDate = opts.fnDate || activeFnMeta?.date || clientDate;
+    const rawBlocks = opts.blocksForDate ?? activeBlocksForDate;
+    const detail = opts.blocksDetailForDate ?? activeBlocksDetailForDate;
+    const eo = (eventOrders || []).find((e) => e.clientId === activeClientId) || (eventOrders || []).find((e) => (e.clientName || "") === (clientName || "").trim());
+    const venueName = opts.venueName ?? activeFnMeta?.venue;
+    const fns = collectAllFunctionDataRef.current ? collectAllFunctionDataRef.current() : [];
+    const target = opts.zoneKey != null && opts.elIdx != null ? { fnIdx: opts.fnIdx ?? activeFnIdx, zoneKey: opts.zoneKey, elIdx: opts.elIdx } : null;
+    const freeFor = (part) => combineAvailability(Number(part?.qty ?? part?.qtyOwned) || 0,
+      getStudioAvailable(part, netOwnReservedBlocksLive(rawBlocks, part.id, detail, eo?.id)), availableAtVenue(fvCfgForRepeat, venueName, part));
+    return kitPartShortfalls(item, Number(el.qty) || 0, el.kitOverrides, fns, imsInventory, target, fnDate, freeFor)
+      .map((p) => ({ ...p, canMake: canFulfillShortfall((imsInventory || []).find((i) => i.id === p.id), fnDate, el?.addedAt || undefined) }));
+  }, [imsInventory, activeFnMeta, clientDate, activeBlocksForDate, activeBlocksDetailForDate, eventOrders, activeClientId, clientName, activeFnIdx, fvCfgForRepeat]);
   // Shared SMB/flat rate resolution — the one place `getElPrice`, `getElPriceForFn`, and
   // `calcFullEventCost` all resolve a rate-card item's base rate for an element's size, now with
   // the sub-category scaling factor applied. Previously duplicated verbatim in all three
@@ -5568,7 +5594,8 @@ export default function StudioApp() {
   // same cross-function reuse pool), but keeps every element's own getElPriceForFn result instead of
   // summing it, so it can report which ones came back outOfStock (StudioApp.jsx's
   // getElPriceFromInventory — short AND canFulfillShortfall false, lib/rateCard.js). Only plain
-  // invId elements are checked — a kit/pattern/mandi element never sets outOfStock at all.
+  // invId elements are checked — a kit/pattern/mandi element never sets outOfStock at all; a kit is checked through its
+  // parts instead (kitPartShorts).
   const scanOutOfStockElements = useCallback(() => {
     const allFns = collectAllFunctionData();
     const flagged = [];
@@ -5585,18 +5612,22 @@ export default function StudioApp() {
         elems.forEach((el, i) => {
           if (!el?.invId || !(Number(el.qty) || 0) > 0) return;
           const r = getElPriceForFn(el, fZoneConfig[zk], fFloralRatio, true, fnData.fnVenue, fBlocksForDate, fnData.fnDate, pricingPool, fnData.fnIdx, zk, i);
-          if (r.outOfStock) {
+          // A kit is also stopped by a part inside it that is short and can't be made (kitPartShorts).
+          const partsOut = kitPartShorts(el, { fnIdx: fnData.fnIdx, zoneKey: zk, elIdx: i, fnDate: fnData.fnDate, venueName: fnData.fnVenue, blocksForDate: fBlocksForDate })
+            .filter((p) => !p.canMake);
+          if (r.outOfStock || partsOut.length) {
             const item = (imsInventory || []).find((x) => x.id === el.invId);
             // idx/invId carried so the gate modal's own 📦 picker can open directly against this
             // exact element (openAvailModal(zoneKey, idx, el, rc)) instead of only pointing the
             // salesperson at the right function/zone and making them find it by hand.
-            flagged.push({ fnIdx: fnData.fnIdx, fnLabel: fnData.fnType || `Function ${fnData.fnIdx + 1}`, zoneKey: zk, idx: i, invId: el.invId, name: item?.name || el.name || "Item" });
+            flagged.push({ fnIdx: fnData.fnIdx, fnLabel: fnData.fnType || `Function ${fnData.fnIdx + 1}`, zoneKey: zk, idx: i, invId: el.invId, name: item?.name || el.name || "Item",
+              parts: partsOut.map((p) => `${p.name} (${p.short} short)`) });
           }
         });
       });
     });
     return flagged;
-  }, [collectAllFunctionData, blocksByDate, hideDiscountFromClient, getElPriceForFn, imsInventory]);
+  }, [collectAllFunctionData, blocksByDate, hideDiscountFromClient, getElPriceForFn, imsInventory, kitPartShorts]);
 
   // The SAME cross-function reuse quantities calcFunctionCost/calcFunctionBreakdown already build
   // and fold into the Live Estimate/Summary/Deal Check totals for the active function — but Build's
@@ -12239,7 +12270,7 @@ export default function StudioApp() {
     dcArtFlowerAlloc, setDcArtFlowerAlloc, dcArtFlowerAllocSrc, setDcArtFlowerAllocSrc, dcArtFlowerModal, setDcArtFlowerModal, dcFloralColorPrefs, setDcFloralColorPrefs, dcPrefModal, setDcPrefModal,
     dcCustomItems, setDcCustomItems: setDcCustomItemsAndFlush, dcCustomModal, setDcCustomModal,
     availModal, setAvailModal, openAvailModal, saveAvailPick, saveAvailSplit,
-    oosGateModal, setOosGateModal, openOosFix,
+    oosGateModal, setOosGateModal, openOosFix, kitPartShorts,
     dcSwapSearch, setDcSwapSearch, dcSwapPicked, setDcSwapPicked, dcSwapMode, setDcSwapMode, dcSwapSplitQty, setDcSwapSplitQty,
     // pricing helpers
     rcIsSMB, buildZoneConfig, getFloralMode, applyFloralRatio, getElPrice, getElPriceForFn, calcElsCost, calcElsCostForFn, rcCostPctForSub,

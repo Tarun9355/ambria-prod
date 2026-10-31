@@ -1010,7 +1010,7 @@ export default function StudioBuild({ ctx }) {
     // client / function meta
     clientName, clientDate, activeFnMeta, venue, fn, extraFunctions, setExtraFunctions, copyBuildsFromClient,
     clientPalette, setClientPalette, clientFlowerPalette, setClientFlowerPalette,
-    studioFloralData, sharedFloralSettings, venueParents, loadAvailability, getStudioAvailable, activeBlocksForDate, openAvailModal,
+    studioFloralData, sharedFloralSettings, venueParents, loadAvailability, getStudioAvailable, activeBlocksForDate, openAvailModal, kitPartShorts,
     activeFnIdx, collectAllFunctionData, rcSubcatFactors, rcFactorByKey, rcFloralModeByKey,
     // Build's kit edits also land in Deal Check's own per-card copy (see the kit editor below).
     setDcKitEdits, persistDcKitEditsNow, buildElCardKey,
@@ -1268,6 +1268,8 @@ export default function StudioBuild({ ctx }) {
         const asked = (Number(el.wantedQty) || 0) > (Number(el.qty) || 0);
         let warned = false;
         try { warned = !!getElPrice(el, zoneConfig[k], { checkAvailability: true, zoneKey: k, elIdx: idx, crossFnReusePool: pool }, aVenue)?.warning; } catch { /* price check failed: not counted */ }
+        // a kit with a part short on the date counts too (kitPartShorts, StudioApp.jsx)
+        if (!warned && kitPartShorts) { try { warned = kitPartShorts(el, { zoneKey: k, elIdx: idx }).length > 0; } catch { /* not counted */ } }
         return a + (asked || warned ? 1 : 0);
       }, 0);
       // Overlays and cushion covers (also as parts of a kit) with no alternative designs named: said on the tile too, in red, so it shows without opening the card.
@@ -4878,6 +4880,10 @@ undefined
                   const zonePool = crossFnPool();
                   return groupedEls(k).map(({ el, idx, isKit, firstKit }) => {
                   const priceInfo = getElPrice(el, zoneConfig[k], { checkAvailability: true, zoneKey: k, elIdx: idx, crossFnReusePool: zonePool }, aVenue);
+                  // Parts of this kit short on the date (a cushion cover booked out elsewhere) - the kit's own stock check above
+                  // never looks inside it. Shown as a badge here and against each part in the kit's list below.
+                  const kitShort = isKit && el.invId && kitPartShorts ? kitPartShorts(el, { zoneKey: k, elIdx: idx }) : [];
+                  const kitShortOut = kitShort.some(p => !p.canMake);
                   const rc = priceInfo.rc;
                   const hasSizes = rcIsSMB(rc);
                   const isTrussSqft = rc && rc.unit === "truss_sqft";
@@ -5004,6 +5010,7 @@ undefined
                         {!rc&&!el.invId&&!el.patternId&&!el.mandiId&&<span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700}}>NEW</span>}
                         {el.invId&&(el.wantedQty||0)>(el.qty||0)&&<span title={`Asked for ${el.wantedQty}, only ${el.qty} available for this date — held at ${el.qty}`} style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700}}>⚠ short · {el.wantedQty} asked</span>}
                         {el.invId&&priceInfo.warning&&<span title={priceInfo.warning} style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700}}>{priceInfo.outOfStock?"⚠ out of stock":"⚠ short"}</span>}
+                        {kitShort.length>0&&<span title={`Short for this date inside this kit:\n${kitShort.map(p=>`${p.name}: ${p.short} of ${p.need} short${p.canMake?" (production can make it)":" (can't be made, pick another part)"}`).join("\n")}`} style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:kitShortOut?"rgba(239,68,68,0.15)":"rgba(245,158,11,0.15)",color:kitShortOut?"#EF4444":"#B45309",fontWeight:700}}>⚠ {kitShort.length} part{kitShort.length===1?"":"s"} short</span>}
                         {(rc||el.invId)&&<span onClick={()=>((!isKit&&choiceOpenerFor(k,idx,el,rc,invItem,qtyUnit))||(()=>openAvailModal(k, idx, el, rc)))()} title={(!isKit&&choiceOpenerFor(k,idx,el,rc,invItem,qtyUnit))?`Check what is free and name up to ${ELEMENT_PREF_MAX} ${/cover/i.test(invItem?.name||"")?"cushion cover":"overlay"} designs in order of preference - Planning decides which one is used`:_subcatOpportunity?`Also used in ${[...new Set(_subcatOpportunity.map(o=>o.label))].join(", ")} (${_subcatOpportunity.map(o=>o.name).join(", ")}) — swap to it for the repeat discount`:"Check stock availability & pick an item"} style={{cursor:"pointer",fontSize:12,opacity:_subcatOpportunity?1:0.5,padding:"0 1px",lineHeight:1,color:_subcatOpportunity?"#F97316":undefined}}><IconBox size={12}/></span>}
                         {/* Only when the manually-pinned stock item's name actually differs from
                             what's already shown above (invItem?.name || el.name) — the box icon
@@ -5279,6 +5286,7 @@ undefined
                       flowerPatterns={sharedFloralSettings.flowerPatterns||recipeOnlyPatterns}
                       qtyMultiplier={el.qty||1}
                       dealAwareness={{getRemaining:(itemId)=>remainingForItem(itemId,k,idx)}}
+                      shortParts={kitShort}
                       // A kit part is RENTED: the kit prices a swapped-in part at its rental (priceForInvItem),
                       // so the picker shows that same guest-facing rate (its default mode). It used to pass
                       // priceMode "cost" with the custom-item picker's wording, so a part renting at ₹70 was

@@ -186,3 +186,30 @@ export function qtyUsedElsewhereInDealCheck(imsId, fns, dcCards, dcManualItems, 
   });
   return used;
 }
+
+// Build: the parts of ONE kit row that are short on its date — every component at any depth, not the kit itself (the
+// kit's own stock is the row's ordinary check). A kit whose own count is fine used to show nothing while a part inside
+// it (a cushion cover, a pot) was booked out elsewhere, and the deal could still be marked Sold (owner ask 2026-10-31).
+// availFor(part) = how many of that part are free for the date (other events' blocks, Fixed-Venue locks). With a target
+// row, the part's free units are shared out across every row of the booking that uses it (allocateRowAvailability —
+// a plain element, or another kit's part), so the same shortage is never counted against two rows. Without one, the
+// row is judged alone. Returns [{ id, name, need, short }] for the short parts only.
+export function kitPartShortfalls(kitItem, elQty, kitOverrides, fns, imsInventory, target, targetDate, availFor) {
+  if (!kitItem || !(Number(elQty) > 0) || typeof availFor !== "function") return [];
+  const need = new Map();
+  walkKitUnits(kitItem, Number(elQty), imsInventory, kitOverrides, (node, nodeQty) => {
+    if (!node?.id || node.id === kitItem.id) return;
+    const cur = need.get(node.id) || { item: node, qty: 0 };
+    cur.qty += Number(nodeQty) || 0;
+    need.set(node.id, cur);
+  });
+  const out = [];
+  need.forEach(({ item, qty }, id) => {
+    const avail = Math.max(0, Number(availFor(item)) || 0);
+    const short = target
+      ? allocateRowAvailability(id, fns, imsInventory, target, targetDate, avail).shortQty
+      : Math.max(0, qty - avail);
+    if (short > 0) out.push({ id, name: item.name || id, need: qty, short: Math.round(short * 100) / 100 });
+  });
+  return out;
+}
