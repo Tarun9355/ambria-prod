@@ -32,10 +32,13 @@ export function zoneSwitchState({ currentSel, elements, zoneCfg, note }) {
   const elementsChanged = els.length > 0
     && (!currentSel?._loadedElements || JSON.stringify(currentSel._loadedElements) !== JSON.stringify(els));
   const noteChanged = curNote !== (currentSel?._loadedNote ?? "");
+  // _carried: the zone holds a build that is not the photo's own - carried over by Save & Replace, or a saved build
+  // reopened - so leaving the photo always asks, even with nothing changed since (owner ask 2026-10-31).
+  const carried = !!currentSel?._carried && (els.length > 0 || !!curNote);
   const configChanged = !!currentSel && (currentSel._loadedCfg == null || currentSel._loadedCfg !== zoneCfgSig(curCfg));
   return {
     curCfg, curNote, elements: els, prevStash: prevStash || {},
-    hasUnsavedWork: elementsChanged || noteChanged, // asked about
+    hasUnsavedWork: elementsChanged || noteChanged || carried, // asked about
     configChanged, // a truss / platform / print edit alone is saved without asking
     hasPhoto: !!photoStashKey(currentSel),
   };
@@ -78,7 +81,7 @@ export function zoneAfterSwitch({ plan, state, photo, liveCfg }) {
     const { photoStash: _old, ...cfgNow } = liveCfg || {}; // eslint-disable-line no-unused-vars
     return {
       elements: state.elements, config: { ...cfgNow, ...stashPatch }, note: state.curNote,
-      sel: { ...photo, _loadedElements: state.elements, _loadedCfg: zoneCfgSig(state.curCfg), _loadedNote: state.curNote },
+      sel: { ...photo, _loadedElements: state.elements, _loadedCfg: zoneCfgSig(state.curCfg), _loadedNote: state.curNote, _carried: true },
     };
   }
   if (plan.mode === "saved") {
@@ -88,7 +91,7 @@ export function zoneAfterSwitch({ plan, state, photo, liveCfg }) {
     const note = plan.savedIn.note || "";
     return {
       elements, config: { ...cfgIn, repeat: liveCfg?.repeat, repeatCats: liveCfg?.repeatCats, ...stashPatch }, note,
-      sel: { ...photo, _loadedElements: elements, _loadedCfg: zoneCfgSig(cfgIn), _loadedNote: note },
+      sel: { ...photo, _loadedElements: elements, _loadedCfg: zoneCfgSig(cfgIn), _loadedNote: note, _carried: true },
     };
   }
   return null;

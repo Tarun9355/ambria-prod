@@ -123,17 +123,37 @@ describe("Save & Replace", () => {
     expect(z.note).toBe("No couch");
     expect(Object.keys(z.config.photoStash).sort()).toEqual([A.src, B.src].sort());
   });
-  it("does not ask again right after, and does not duplicate elements", () => {
+  it("asks again on the next switch, even with nothing changed since the replace (owner's recording)", () => {
     const z = makeZone();
     pick(z, A);
     z.elements = [{ name: "Mine", qty: 1 }];
     pick(z, B, "replace");
-    expect(z.elements).toHaveLength(1);
-    expect(pick(z, C).asked).toBe(false); // nothing changed since the replace
-    pick(z, B);
+    expect(z.elements).toHaveLength(1); // no duplicates
+    expect(pick(z, C, null)).toEqual({ asked: true, done: false }); // Cancel keeps B with the carried build
+    expect(z.sel.src).toBe(B.src);
     expect(names(z)).toEqual(["Mine"]);
+    expect(pick(z, C, "switch")).toMatchObject({ asked: true, mode: "fresh" });
+    expect(pick(z, B).asked).toBe(false); // C is the photo's own build - nothing to ask
+    expect(names(z)).toEqual(["Mine"]);
+    pick(z, A, "switch");
+    expect(names(z)).toEqual(["Mine"]);
+  });
+  it("asks when leaving a reopened saved build", () => {
+    const z = makeZone();
     pick(z, A);
+    z.elements = [{ name: "Mine", qty: 1 }];
+    pick(z, B, "switch");
+    pick(z, A); // A's saved build
+    expect(pick(z, B, null).asked).toBe(true);
+  });
+  it("Replace then Replace again carries the same build on, once", () => {
+    const z = makeZone();
+    pick(z, A);
+    z.elements = [{ name: "Mine", qty: 1 }];
+    pick(z, B, "replace");
+    pick(z, C, "replace");
     expect(names(z)).toEqual(["Mine"]);
+    expect(z.sel.src).toBe(C.src);
   });
   it("the stash never nests inside a saved config", () => {
     const z = makeZone();
