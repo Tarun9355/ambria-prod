@@ -6,9 +6,12 @@ import { fitUrl } from "../../lib/studio/thumb.js";
 // section's Custom Ceiling button (Fabric › Ceiling) and the masking section's Custom Masking
 // button (Fabric › Printed Walls). Substring/case-insensitive match on both legacy (cat/subCat)
 // and new (category/subcategory) inventory field names, since not every item has been migrated.
+// Every card says how many the studio owns (IMS qty); with freeFor(item) - how many are free on the event date, after
+// other events and the rest of this deal - it says that too, so a ceiling nobody can have on the day is seen before
+// it is picked (owner ask 2026-10-31).
 export default function InventoryItemPickerModal({
   title, icon = "🖼️", accent = "#7C3AED",
-  imsInventory, categoryMatch, subcatMatch, rcFactorByKey,
+  imsInventory, categoryMatch, subcatMatch, rcFactorByKey, freeFor, dateLabel,
   onSelect, onClose,
   isDark, border, textP, textS, cardBg,
 }) {
@@ -50,6 +53,12 @@ export default function InventoryItemPickerModal({
                 const src = it.img || it.photoUrls?.[0];
                 const sub = (it.subCat || it.subcategory) || "";
                 const dims = itemDimsText(it);
+                const owned = Math.max(0, Number(it.qty ?? it.qtyOwned) || 0);
+                const free = freeFor ? Math.max(0, Number(freeFor(it)) || 0) : null;
+                const unit = String(it.unit || "").trim();
+                const count = free == null
+                  ? { t: `${owned} owned`, c: textS }
+                  : free > 0 ? { t: `${free} free of ${owned}`, c: "#10B981" } : { t: owned > 0 ? `0 free of ${owned}` : "None owned", c: "#EF4444" };
                 return (
                   <div key={it.id} onClick={() => onSelect(it)}
                     style={{ borderRadius: 10, cursor: "pointer", border: `1px solid ${border}`, overflow: "hidden", background: isDark ? "#12121F" : "#fafafa", display: "flex", flexDirection: "column" }}
@@ -64,6 +73,8 @@ export default function InventoryItemPickerModal({
                     <div style={{ padding: "7px 9px" }}>
                       <div title={it.name} style={{ fontSize: 11, fontWeight: 600, color: textP, lineHeight: 1.25, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{it.name}</div>
                       <div style={{ fontSize: 9, color: textS, marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sub}{dims ? ` · 📐 ${dims}` : ""}</div>
+                      <div title={free == null ? `${owned}${unit ? " " + unit : ""} in IMS` : `${free} free${dateLabel ? ` on ${dateLabel}` : " on the event date"} (after other events and the rest of this deal) · ${owned} owned`}
+                        style={{ fontSize: 10, fontWeight: 700, color: count.c, marginTop: 4 }}>{count.t}{unit ? ` ${unit}` : ""}</div>
                     </div>
                   </div>
                 );

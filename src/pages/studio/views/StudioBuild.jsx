@@ -3236,6 +3236,9 @@ undefined
         categoryMatch="fabric"
         subcatMatch={customPicker.kind === "ceiling" ? "ceiling" : "printed wall"}
         rcFactorByKey={rcFactorByKey}
+        // free on the event date = what other events leave, minus what the rest of this deal already holds (as the printed-walls picker)
+        freeFor={(() => { const fnsNow = collectAllFunctionData ? collectAllFunctionData() : []; return (it) => Math.max(0, getStudioAvailable(it, activeBlocksForDate) - qtyUsedElsewhereInBuild(it.id, fnsNow, imsInventory, {}, fnDate)); })()}
+        dateLabel={fnDate ? new Date(fnDate + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : ""}
         onSelect={(item) => {
           // Masking is either the flat per-sqft material OR this one custom item, never both —
           // picking a custom masking item clears mkT so the two can't silently disagree about
