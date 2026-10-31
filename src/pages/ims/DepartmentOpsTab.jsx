@@ -3486,19 +3486,32 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     // and the specific colours to pull. Per function when the event has more than one (floralDetail), then the whole event. No rupees: this book is for the crew.
     // Floral book only: the all-departments book carries no flower sections (owner ask) - its Mandi & Kits pages list kits only.
     const artPlan = !combined && dept === "Floral" ? sel?.floralPlan?.artificial : null;
+    // Artificial flowers and greens go out in whole bunches - 10.4 is 11 to pull (owner ask 2026-10-31). Only these two are
+    // rounded; the mandi flowers in a recipe keep their decimals. Rounded to 2 places first so a float like 10.000000001 stays 10.
+    const artBunches = (n) => Math.ceil(Math.round((Number(n) || 0) * 100) / 100);
     const artRows = [], artColourRows = [];
     if (artPlan && ((Number(artPlan.flowerBunches) || 0) > 0 || (Number(artPlan.greenBunches) || 0) > 0)) {
       const artRow = (label, bunches, bpk, kg) => `<tr><td>${esc(label)}</td><td class="n">${esc(bunches)}</td><td class="n">${esc(bpk)}</td><td class="n">${esc(kg)} kg</td></tr>`;
       const fd = sel?.floralDetail && typeof sel.floralDetail === "object" ? sel.floralDetail : {};
       const fdKeys = Object.keys(fd).sort((a, b) => Number(a) - Number(b));
-      const multi = fdKeys.filter(k => (fd[k]?.art?.flower?.bunches > 0) || (fd[k]?.art?.green?.bunches > 0)).length > 1;
-      if (multi) fdKeys.forEach(k => {
-        const f = fd[k] || {}, tag = [f.fnType || `Function ${Number(k) + 1}`, f.fnDate].filter(Boolean).join(" · ");
-        if (f.art?.flower?.bunches > 0) artRows.push(artRow(`${tag} — Flower bunches`, f.art.flower.bunches, `${artPlan.flowerBPK} / kg`, f.art.flower.kg));
-        if (f.art?.green?.bunches > 0) artRows.push(artRow(`${tag} — Green bunches`, f.art.green.bunches, `${artPlan.greenBPK} / kg`, f.art.green.kg));
+      // Whole bunches: a function's total adds up each arrangement's own bunches, each rounded up (artBunches) - the same
+      // figures the zone pages print under each arrangement, so the two cannot disagree. A function synced before artZones
+      // existed keeps Deal Check's own total, rounded up.
+      const fnBunches = (f, kind) => Array.isArray(f?.artZones) && f.artZones.length
+        ? f.artZones.reduce((t, a) => t + artBunches(a[kind]), 0)
+        : artBunches(f?.art?.[kind]?.bunches);
+      const kgOf = (b, bpk) => (Number(bpk) > 0 ? Math.round(b / bpk * 100) / 100 : 0);
+      const fnRows = fdKeys.map(k => ({ k, f: fd[k] || {}, fl: fnBunches(fd[k], "flower"), gr: fnBunches(fd[k], "green") }));
+      const multi = fnRows.filter(r => r.fl > 0 || r.gr > 0).length > 1;
+      if (multi) fnRows.forEach(({ k, f, fl, gr }) => {
+        const tag = [f.fnType || `Function ${Number(k) + 1}`, f.fnDate].filter(Boolean).join(" · ");
+        if (fl > 0) artRows.push(artRow(`${tag} — Flower bunches`, fl, `${artPlan.flowerBPK} / kg`, kgOf(fl, artPlan.flowerBPK)));
+        if (gr > 0) artRows.push(artRow(`${tag} — Green bunches`, gr, `${artPlan.greenBPK} / kg`, kgOf(gr, artPlan.greenBPK)));
       });
-      if (artPlan.flowerBunches > 0) artRows.push(artRow(multi ? "All functions — Flower bunches" : "Flower bunches", artPlan.flowerBunches, `${artPlan.flowerBPK} / kg`, artPlan.flowerKg));
-      if (artPlan.greenBunches > 0) artRows.push(artRow(multi ? "All functions — Green bunches" : "Green bunches", artPlan.greenBunches, `${artPlan.greenBPK} / kg`, artPlan.greenKg));
+      const allFl = fnRows.length ? fnRows.reduce((t, r) => t + r.fl, 0) : artBunches(artPlan.flowerBunches);
+      const allGr = fnRows.length ? fnRows.reduce((t, r) => t + r.gr, 0) : artBunches(artPlan.greenBunches);
+      if (allFl > 0) artRows.push(artRow(multi ? "All functions — Flower bunches" : "Flower bunches", allFl, `${artPlan.flowerBPK} / kg`, kgOf(allFl, artPlan.flowerBPK)));
+      if (allGr > 0) artRows.push(artRow(multi ? "All functions — Green bunches" : "Green bunches", allGr, `${artPlan.greenBPK} / kg`, kgOf(allGr, artPlan.greenBPK)));
       (Array.isArray(artPlan.colorSplit) ? artPlan.colorSplit : []).forEach(c => artColourRows.push(`<tr><td>${esc(c.name || "Artificial bunch")}</td><td class="n">${esc(c.qty)}</td></tr>`));
     }
 
@@ -4211,11 +4224,25 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     };
     const zoneDetailPages = (pg) => {
       const blocks = [];
+      // ── ARTIFICIAL BUNCHES UNDER THEIR OWN ARRANGEMENT ──
+      // A zone's artificial flowers and greens used to print as a block of their own ("Ulta Pulta Pot — flowers 10.8
+      // bunches"), apart from the arrangement they go into. They now sit in that arrangement's own block, in whole bunches
+      // (owner ask 2026-10-31). Matched by name; an arrangement with no recipe of its own gets a block for them.
+      const zArt = artPlan ? (sel?.floralDetail?.[pg.fnIdx]?.artZones || []).filter(a => a.zone === pg.zk) : [];
+      const artKey = (n) => String(n || "").trim().toLowerCase();
+      const artLeft = new Map();
+      zArt.forEach(a => { const k = artKey(a.el); artLeft.set(k, [...(artLeft.get(k) || []), a]); });
+      const artLines = (list) => {
+        const fl = list.reduce((t, a) => t + artBunches(a.flower), 0), gr = list.reduce((t, a) => t + artBunches(a.green), 0);
+        return [...(fl > 0 ? [{ name: "Artificial flowers", qty: fl, unit: "bunches" }] : []), ...(gr > 0 ? [{ name: "Artificial greens", qty: gr, unit: "bunches" }] : [])];
+      };
+      const takeArt = (name) => { const k = artKey(name), list = artLeft.get(k) || []; artLeft.delete(k); return artLines(list); };
       (pg.items || []).forEach(it => {
-        if (!combined && Array.isArray(it.recipe) && it.recipe.length) {
+        const art = !combined && it.mix ? takeArt(it.name) : [];
+        if (!combined && ((Array.isArray(it.recipe) && it.recipe.length) || art.length)) {
           // "Artificial 70% · Real 30%" is too long to repeat on every line - the lines say "Art 70%", the header has both.
           const tag = !it.mix ? "" : it.mix === "Real" || it.mix === "Artificial" ? it.mix : `Art ${(it.mix.match(/\d+/) || [""])[0]}%`;
-          const parts = it.recipe.map(f => ({ name: f.name, qty: Math.round((Number(f.qty) || 0) * (Number(it.qty) || 0) * 100) / 100, unit: f.unit, tag }));
+          const parts = [...(it.recipe || []).map(f => ({ name: f.name, qty: Math.round((Number(f.qty) || 0) * (Number(it.qty) || 0) * 100) / 100, unit: f.unit, tag })), ...art];
           blocks.push({ h: detailH(parts), html: detailCard("🌸", it.name, it.qty, it.unit, parts, it.mix) });
         }
         if (it.kit > 0) {
@@ -4236,21 +4263,13 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           if (kb) blocks.push({ h: detailH(parts), html: detailCard("📦", it.name, zq > 0 && tq > 0 ? zq : kb.qty, "", parts) });
         }
       });
-      // This zone's artificial bunches (Floral book): per arrangement, then the zone's totals worked to kilos (bunches ÷ bunches per kg).
-      const zArt = artPlan ? (sel?.floralDetail?.[pg.fnIdx]?.artZones || []).filter(a => a.zone === pg.zk) : [];
-      if (zArt.length) {
-        const rd = (n) => Math.round(n * 100) / 100;
-        const fB = zArt.reduce((s, a) => s + (a.flower || 0), 0), gB = zArt.reduce((s, a) => s + (a.green || 0), 0);
-        const parts = [
-          ...zArt.flatMap(a => [
-            ...(a.flower > 0 ? [{ name: `${a.el}${a.qty > 1 ? ` ×${a.qty}` : ""} — flowers`, qty: a.flower, unit: "bunches" }] : []),
-            ...(a.green > 0 ? [{ name: `${a.el}${a.qty > 1 ? ` ×${a.qty}` : ""} — greens`, qty: a.green, unit: "bunches" }] : []),
-          ]),
-          ...(fB > 0 && artPlan.flowerBPK > 0 ? [{ name: `Flower bunches ${rd(fB)} ÷ ${artPlan.flowerBPK} per kg`, qty: rd(fB / artPlan.flowerBPK), unit: "kg" }] : []),
-          ...(gB > 0 && artPlan.greenBPK > 0 ? [{ name: `Green bunches ${rd(gB)} ÷ ${artPlan.greenBPK} per kg`, qty: rd(gB / artPlan.greenBPK), unit: "kg" }] : []),
-        ];
-        blocks.push({ h: detailH(parts), html: detailCard("🌺", "Artificial flowers & greens", "", "", parts) });
-      }
+      // An arrangement whose name matched no card on this page (renamed since, or on another department's sheet) still gets
+      // its bunches - as a block under its own name, never as a loose "Artificial flowers & greens" list.
+      artLeft.forEach(list => {
+        const parts = artLines(list);
+        const q = list.reduce((t, a) => t + (Number(a.qty) || 0), 0);
+        if (parts.length) blocks.push({ h: detailH(parts), html: detailCard("🌸", list[0].el || "Arrangement", q || "", "", parts, "Artificial") });
+      });
       if (!blocks.length) return [];
       const dChunks = [];
       blocks.forEach(b => {
