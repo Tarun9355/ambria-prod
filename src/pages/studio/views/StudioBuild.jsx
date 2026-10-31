@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { makeFilterUI, useRailMaxHeight } from "../../../components/studio/filterUI.jsx";
 import NumField from "../../../components/ui/NumField.jsx";
 import { applyQtyCeiling } from "../../../lib/studio/qtyCeiling";
+import { smartFilter } from "../../../lib/studio/itemSearch";
 import { unitAllowsDecimal, quantityForUnit } from "../../../lib/studio/qtyUnits";
 import { itemTakesChoices, elementChoices, partChoices, applyChoicePicks, ELEMENT_PREF_MAX, ELEMENT_PREF_LABELS } from "../../../lib/studio/elementPrefs";
 import { SMALL_PRINT_LIMIT, SMALL_PRINT_CHARGE, firstSmallPrint, printFlatForZone } from "../../../lib/studio/truckPrint";
@@ -4768,15 +4769,15 @@ undefined
                       // Searches IMS inventory + pure flower-recipe patterns with no inventory backing
                       // (Rate Card is not consulted here — see getElPriceFromInventory /
                       // getElPriceFromPattern in StudioApp.jsx).
-                      const invMatches=(imsInventory||[]).filter(it=>!(zoneElements[k]||[]).find(el=>el.invId===it.id)&&!kitCoveredIds.has(it.id)&&!isHiddenSubcat(it,rcSubcatFactors)&&(it.name.toLowerCase().includes(q)||(it.cat||"").toLowerCase().includes(q)||(it.subCat||it.subcategory||"").toLowerCase().includes(q)));
-                      const patMatches=(recipeOnlyPatterns||[]).filter(pt=>!(zoneElements[k]||[]).find(el=>el.patternId===pt.id)&&pt.name.toLowerCase().includes(q));
+                      const invMatches=smartFilter((imsInventory||[]).filter(it=>!(zoneElements[k]||[]).find(el=>el.invId===it.id)&&!kitCoveredIds.has(it.id)&&!isHiddenSubcat(it,rcSubcatFactors)),q,it=>[it.name,it.cat,it.subCat||it.subcategory]);
+                      const patMatches=smartFilter((recipeOnlyPatterns||[]).filter(pt=>!(zoneElements[k]||[]).find(el=>el.patternId===pt.id)),q,pt=>[pt.name]);
                       // A raw mandi commodity is directly addable as its own element (by the kg,
                       // variant picked afterward on the element card), unlike every other mandi
                       // flower which only ever prices through a recipe — Loose Petals (the original
                       // named exception) or any item the Mandi Prices admin has given a markup
                       // (isDirectMandiElement, lib/studio/pricing.js).
                       const mandiCatalogue=(dealCheckData||studioFloralData)?.mandiCatalogue||[];
-                      const mandiMatches=mandiCatalogue.filter(m=>isDirectMandiElement(m)&&!(zoneElements[k]||[]).find(el=>el.mandiId===m.id)&&(m.name||"").toLowerCase().includes(q));
+                      const mandiMatches=smartFilter(mandiCatalogue.filter(m=>isDirectMandiElement(m)&&!(zoneElements[k]||[]).find(el=>el.mandiId===m.id)),q,m=>[m.name]);
                       const matches=[...invMatches.map(it=>({kind:"inv",it})),...patMatches.map(pt=>({kind:"pat",pt})),...mandiMatches.map(m=>({kind:"mandi",m}))];
                       if(!addElPos||addElPos.key!==k) return null;
                       return matches.length>0?createPortal(<div className="ael-widget" style={{position:"fixed",top:addElPos.top,bottom:addElPos.bottom,left:addElPos.left,zIndex:10000,background:cardBg,border:`1px solid ${border}`,borderRadius:8,boxShadow:"0 4px 16px rgba(0,0,0,0.2)",maxHeight:340,overflowY:"auto",width:320}}>
@@ -6034,9 +6035,9 @@ undefined
               const q=(zoneElSearch[zk]||"").toLowerCase().trim();
               const addMatches=q?(()=>{
                 const kitCoveredIds=new Set(els.filter(el=>el.invId).flatMap(el=>{const it=(imsInventory||[]).find(i=>i.id===el.invId);return it?[...kitDescendantIds(it,imsInventory,el.kitOverrides)]:[];}));
-                const inv=(imsInventory||[]).filter(it=>!els.find(el=>el.invId===it.id)&&!kitCoveredIds.has(it.id)&&!isHiddenSubcat(it,rcSubcatFactors)&&(it.name.toLowerCase().includes(q)||(it.cat||"").toLowerCase().includes(q)||(it.subCat||it.subcategory||"").toLowerCase().includes(q))).slice(0,40).map(it=>({key:"inv:"+it.id,label:it.name,sub:(it.subCat||it.subcategory)?(it.subCat||it.subcategory)+" › "+(it.cat||""):(it.cat||""),src:it.img||it.photoUrls?.[0],make:()=>({name:it.name,qty:1,unit:it.unit,size:"",invId:it.id,addedAt:todayStr()})}));
-                const pat=(recipeOnlyPatterns||[]).filter(pt=>!els.find(el=>el.patternId===pt.id)&&pt.name.toLowerCase().includes(q)).map(pt=>({key:"pat:"+pt.id,label:pt.name,sub:"🌺 Flower recipe",make:()=>({name:pt.name,qty:1,unit:pt.unit,size:"",patternId:pt.id})}));
-                const mandi=((dealCheckData||studioFloralData)?.mandiCatalogue||[]).filter(m=>isDirectMandiElement(m)&&!els.find(el=>el.mandiId===m.id)&&(m.name||"").toLowerCase().includes(q)).map(m=>{const v=Array.isArray(m.colorVariants)?m.colorVariants:[];return {key:"mandi:"+m.id,label:m.name,sub:`🌸 Mandi · ${m.unit||"kg"}`,src:m.photoUrl,make:()=>({name:m.name,qty:1,unit:m.unit||"kg",size:"",mandiId:m.id,mandiVariantId:v.length===1?v[0].variantId:""})};});
+                const inv=smartFilter((imsInventory||[]).filter(it=>!els.find(el=>el.invId===it.id)&&!kitCoveredIds.has(it.id)&&!isHiddenSubcat(it,rcSubcatFactors)),q,it=>[it.name,it.cat,it.subCat||it.subcategory]).slice(0,40).map(it=>({key:"inv:"+it.id,label:it.name,sub:(it.subCat||it.subcategory)?(it.subCat||it.subcategory)+" › "+(it.cat||""):(it.cat||""),src:it.img||it.photoUrls?.[0],make:()=>({name:it.name,qty:1,unit:it.unit,size:"",invId:it.id,addedAt:todayStr()})}));
+                const pat=smartFilter((recipeOnlyPatterns||[]).filter(pt=>!els.find(el=>el.patternId===pt.id)),q,pt=>[pt.name]).map(pt=>({key:"pat:"+pt.id,label:pt.name,sub:"🌺 Flower recipe",make:()=>({name:pt.name,qty:1,unit:pt.unit,size:"",patternId:pt.id})}));
+                const mandi=smartFilter(((dealCheckData||studioFloralData)?.mandiCatalogue||[]).filter(m=>isDirectMandiElement(m)&&!els.find(el=>el.mandiId===m.id)),q,m=>[m.name]).map(m=>{const v=Array.isArray(m.colorVariants)?m.colorVariants:[];return {key:"mandi:"+m.id,label:m.name,sub:`🌸 Mandi · ${m.unit||"kg"}`,src:m.photoUrl,make:()=>({name:m.name,qty:1,unit:m.unit||"kg",size:"",mandiId:m.id,mandiVariantId:v.length===1?v[0].variantId:""})};});
                 return [...inv,...pat,...mandi];
               })():[];
               const prints=cfgCur.prints||[];
