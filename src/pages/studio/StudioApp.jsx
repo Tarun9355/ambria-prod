@@ -44,7 +44,7 @@ import { printSqftOf, smallPrintFlat, printFlatForZone, PRINT_TRUCK_SUB } from "
 import { withKitEdit } from "../../lib/studio/dealCheckSync";
 import { itemTakesChoices } from "../../lib/studio/elementPrefs";
 import { findCrossFnReuseSource, computeFnInvQty, findSiblingFnInvUse, findSiblingFnSubcatOpportunity } from "../../lib/studio/crossFnReuse";
-import { computeFnFloralCost, buildMandiBreakdown } from "../../lib/studio/floralCost";
+import { computeFnFloralCost, buildMandiBreakdown, mergeSwapRows } from "../../lib/studio/floralCost";
 import { computePeople, shiftToTiming, sizeFromMode, situationalFactorsFor, walkFnElements, tentingZoneUsage } from "../../lib/studio/manpowerCount";
 
 // ═══ HEADER TYPE + CHIP SCALE ═══
@@ -5879,7 +5879,7 @@ export default function StudioApp() {
     const eb = r.elementBreakdown || [];
     if (!eb.length) return null;
     const rnd = (n, p = 100) => Math.round((Number(n) || 0) * p) / p;
-    const agg = Array.from(r.flowerAgg.values()).sort((a, b) => b.totalQty - a.totalQty);
+    const agg = Array.from(mergeSwapRows(r.flowerAgg).values()).sort((a, b) => b.totalQty - a.totalQty); // one line per flower for IMS
     const mandi = agg.map(f => ({
       name: f.name, unit: f.unit, need: rnd(f.totalQty), needFull: f.totalQtyFull != null ? rnd(f.totalQtyFull) : null,
       buyQty: Math.ceil(f.totalQty), buyQtyFull: f.totalQtyFull != null ? Math.ceil(f.totalQtyFull) : null,

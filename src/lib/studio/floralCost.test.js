@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeFnFloralCost, computeFnRawFlowerUsage, buildMandiBreakdown, findImmediatePrecedingFn, FLOWER_REUSE_RATE } from "./floralCost";
+import { computeFnFloralCost, computeFnRawFlowerUsage, buildMandiBreakdown, mergeSwapRows, findImmediatePrecedingFn, FLOWER_REUSE_RATE } from "./floralCost";
 import { resolveMandiFlower } from "../ims/flowerHelpers";
 
 // Minimal fixtures. Recipes reference a bare SPECIES id only — exactly how real flower patterns
@@ -383,5 +383,46 @@ describe("real flower lines — the amount the Dept Ops PDF prints", () => {
   });
   it("the size is the element's own for an S/M/B recipe", () => {
     expect(run({ name: "Pot", patternId: "p_pot", qty: 2, size: "M", realPct: 100 })["carnation himachal"]).toBe(1.2);
+  });
+});
+
+// Deal Check's mandi swap into a flower the list already has (Morya Patti → dandela, dandela already on the list):
+// the swap shows as its own row at the swap's qty and rate, as the swap preview said; buying totals are unchanged.
+describe("a swap into a flower already on the list stays its own row", () => {
+  const morya = { id: "morya", name: "Morya Patti", unit: "bundle", flowerType: "green", currentPrice: 22 };
+  const dandela = { id: "dandela", name: "dandela", unit: "bundle", flowerType: "green", currentPrice: 55 };
+  const cat = [morya, dandela];
+  const pMix = { id: "p_mix", sub: "Bunch", sizes: { medium: { flowers: [{ flowerId: "morya", qty: 18.75 }, { flowerId: "dandela", qty: 5 }], extraCost: 0 } } };
+  const swap = { swapTo: { fromParentId: "morya", fromName: "Morya Patti", toParentId: "dandela", toName: "dandela", toRate: 50, qty: 18.75, isSplit: false } };
+  const run = (rows) => {
+    const f = fn({ zoneElements: { z: [{ name: "Bunch", patternId: "p_mix", qty: 1, realPct: 100 }] }, enabledEls: { z: true }, floralOverrides: { rows } });
+    return computeFnFloralCost(f, [f], { ...baseOpts([pMix]), mandiCatalogue: cat });
+  };
+  it("dandela's own 5 @ ₹55 and the swap's 18.75 @ ₹50 are two rows (not 23.75 @ a blended ₹51)", () => {
+    const { flowerAgg } = run([swap]);
+    expect(flowerAgg.has("morya")).toBe(false);
+    const own = flowerAgg.get("dandela"), sw = flowerAgg.get("dandela::swap");
+    expect(own.totalQty).toBe(5);
+    expect(own.unitPrice).toBe(55);
+    expect(sw.totalQty).toBe(18.75);
+    expect(sw.unitPrice).toBe(50);
+    expect(sw.flowerId).toBe("dandela");
+    expect(sw._isSwapTarget).toBe(true);
+    expect(sw._swapFrom).toEqual(["morya"]);
+  });
+  it("the buying side still gets one dandela line with the same cost as before", () => {
+    const { flowerAgg } = run([swap]);
+    const merged = mergeSwapRows(flowerAgg).get("dandela");
+    expect(merged.totalQty).toBe(23.75);
+    expect(merged.totalCost).toBe(5 * 55 + 18.75 * 50);
+    const mandi = buildMandiBreakdown(flowerAgg).find((m) => m.name === "dandela");
+    expect(mandi.qty).toBe(24);
+  });
+  it("a swap into a flower NOT on the list is still the flower's only row", () => {
+    const pOnly = { id: "p_only", sub: "Bunch", sizes: { medium: { flowers: [{ flowerId: "morya", qty: 10 }], extraCost: 0 } } };
+    const f = fn({ zoneElements: { z: [{ name: "Bunch", patternId: "p_only", qty: 1, realPct: 100 }] }, enabledEls: { z: true }, floralOverrides: { rows: [{ swapTo: { ...swap.swapTo, qty: 10 } }] } });
+    const { flowerAgg } = computeFnFloralCost(f, [f], { ...baseOpts([pOnly]), mandiCatalogue: cat });
+    expect([...flowerAgg.keys()]).toEqual(["dandela"]);
+    expect(flowerAgg.get("dandela").totalQty).toBe(10);
   });
 });

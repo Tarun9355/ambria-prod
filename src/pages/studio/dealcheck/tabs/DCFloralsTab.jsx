@@ -10,7 +10,7 @@
 import { Fragment, useState } from "react";
 import { parseFlowerPalette, autoSplitArtificialByPalette } from "../../../../lib/studio/pricing";
 import { thumbUrl, fitUrl } from "../../../../lib/studio/thumb.js";
-import { computeFnFloralCost, effectiveColorPrefRows } from "../../../../lib/studio/floralCost";
+import { computeFnFloralCost, effectiveColorPrefRows, mergeSwapRows } from "../../../../lib/studio/floralCost";
 
 // ═══ THE FLORAL GROUND ═══
 // Drop the artwork at src/assets/ambria-florals.(jpg|jpeg|png|webp) and this tab is drawn on it.
@@ -119,7 +119,8 @@ export default function DCFloralsTab({ ctx }) {
                   // pricing the exact fractional need. The exact per-flower quantity is still shown
                   // (and still drives the "how" drill-down) — only the PRICE this total reflects
                   // rounds up to what actually gets bought.
-                  const realTotalCeiled = fixedExtras + sortedAgg.reduce((s, f) => s + Math.ceil(f.totalQty) * f.unitPrice, 0);
+                  // a swap shown on its own row is added back into its flower here, so this total is the buying total the sidebar shows
+                  const realTotalCeiled = fixedExtras + Array.from(mergeSwapRows(flowerAgg).values()).reduce((s, f) => s + Math.ceil(f.totalQty) * f.unitPrice, 0);
                   const grandTotal = realTotalCeiled + totalArtificial;
                   const overallRealPct = grandTotal > 0 ? Math.round((realTotalCeiled / grandTotal) * 100) : 0;
                   // §26 — Total artificial bunches for this function (sum of realUnitsReplaced across all art lines)
@@ -388,7 +389,7 @@ export default function DCFloralsTab({ ctx }) {
                             </tr></thead>
                             <tbody>
                               {sortedAgg.map(f => {
-                                const fKey = `mandi:${f.flowerId||f.name}`;
+                                const fKey = `mandi:${f._aggKey||f.flowerId||f.name}`;
                                 const open = !!dcFloralCalcOpen[fKey];
                                 // Shows the Flower Palette default here too, not just an explicit
                                 // pick — a salesperson should see (and be able to override) the
@@ -396,7 +397,7 @@ export default function DCFloralsTab({ ctx }) {
                                 // opened the 🎨 picker for this flower themselves.
                                 const rowPrefs = effectiveColorPrefRows(dcFloralColorPrefs[fnIdx], f.flowerId, activeFn, resolveMandiFlower(f.flowerId, mandiCatalogue)?.parent);
                                 return (
-                                <Fragment key={f.flowerId||f.name}>
+                                <Fragment key={f._aggKey||f.flowerId||f.name}>
                                 <tr className="dcf-row" style={{borderBottom:open?"none":`1px solid ${border}33`}}>
                                   <td style={{padding:"8px 4px",color:"#1A1A2E"}}>
                                     {/* Row marker, matching the reference. Decorative — the flower is
@@ -1260,6 +1261,16 @@ export default function DCFloralsTab({ ctx }) {
           if (!dcSwapPicked || swapQty <= 0) return;
           setFloralOverrides(prev => {
             const rows = Array.isArray(prev?.rows) ? [...prev.rows] : [];
+            // A swap shown on its own row (swapped into a flower the list already had - lib/studio/floralCost): its 🔄 acts on
+            // THAT swap, never on the flower's own row. Picking the flower it came from undoes the swap; any other flower
+            // re-points the swap there.
+            const splitFrom = dcSwapModal.currentRow?._swapSplit ? (dcSwapModal.currentRow._swapFrom || []) : null;
+            if (splitFrom) {
+              const mine = (r) => r?.swapTo && r.swapTo.toParentId === fromParent.id && splitFrom.includes(r.swapTo.fromParentId);
+              return { note: prev?.note || "", rows: rows
+                .filter(r => !(mine(r) && r.swapTo.fromParentId === dcSwapPicked.id))
+                .map(r => mine(r) ? { ...r, flowerId: dcSwapPicked.id, swapTo: { ...r.swapTo, toParentId: dcSwapPicked.id, toName: dcSwapPicked.name, toRate: targetRate } } : r) };
+            }
             // Swapping back to the flower an earlier FULL swap diverted away from undoes that row
             // instead of stacking a second counter-swap on top of it. Without this, a plain A→B
             // then B→A round trip left two swap rows in place — the swap-application loop above

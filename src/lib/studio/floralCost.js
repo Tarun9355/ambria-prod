@@ -635,7 +635,28 @@ export function computeFnFloralCost(fn, allFns, opts) {
     const targetFlowerType = targetParent.flowerType || (targetParent.isGreen ? "green" : "flower");
     const newQty = swapQty;
     const existing = flowerAgg.get(targetId);
-    if (existing) {
+    const swapContrib = { elName: "↪ swapped from " + (override.swapTo.fromName || ""), zoneKey: "—", elQty: 1, perPattern: newQty, realFrac: 1, contribution: newQty, size: "—", realOnly: targetFlowerType === "real_only", isSwap: true };
+    // Swapped INTO a flower the list already has on its own (Morya Patti → dandela, dandela already 5 bundles): the swap
+    // stays its own row - the swapped qty at the swap's rate, exactly as the swap preview said (18.75 × ₹50) - instead of
+    // melting into that row (it read "24 bundle @ ₹51", a blended rate nobody chose). Keyed `<flowerId>::swap`, carrying
+    // the flower's own flowerId; _swapFrom lists the flowers swapped in so Deal Check can undo / re-point them.
+    // Buying-side readers (buildMandiBreakdown, the IMS snapshot via mergeSwapRows) still add them into one line.
+    if (existing && !existing._isSwapTarget) {
+      const key = `${targetId}::swap`;
+      const split = flowerAgg.get(key);
+      if (split) {
+        split.totalCost += newQty * targetRate; split.totalQty += newQty; split.totalQtyFull += newQty;
+        split.unitPrice = split.totalQty > 0 ? split.totalCost / split.totalQty : targetRate;
+        split.contributors.push(swapContrib); split._swapFrom.push(override.swapTo.fromParentId);
+      } else {
+        flowerAgg.set(key, {
+          flowerId: targetId, name: targetParent.name, totalQty: newQty, totalQtyFull: newQty, totalCost: newQty * targetRate,
+          unit: targetParent.unit || "kg", unitPrice: targetRate, contributors: [swapContrib],
+          realOnly: targetFlowerType === "real_only", flowerType: targetFlowerType, variantPicked: null,
+          _isSwapTarget: true, _swapSplit: true, _aggKey: key, _swapFrom: [override.swapTo.fromParentId],
+        });
+      }
+    } else if (existing) {
       existing.totalCost = (existing.totalCost ?? existing.totalQty * existing.unitPrice) + newQty * targetRate;
       existing.totalQty += newQty;
       existing.unitPrice = existing.totalQty > 0 ? existing.totalCost / existing.totalQty : targetRate;
@@ -660,6 +681,24 @@ export function computeFnFloralCost(fn, allFns, opts) {
     artFlowerBunches, artGreenBunches, artFlowerBunchesFull, artGreenBunchesFull,
     precedingFn, overlapColors,
   };
+}
+
+// flowerAgg's rows with a swap kept on its own row (`<flowerId>::swap`, see the swap loop above) added back into its
+// flower's row - one line per flower, for the buying side (the IMS mandi list keys its actuals and swaps by name).
+export function mergeSwapRows(flowerAgg) {
+  const out = new Map();
+  (flowerAgg instanceof Map ? flowerAgg : new Map()).forEach((v) => {
+    const id = v.flowerId;
+    const prev = out.get(id);
+    if (!prev) { out.set(id, { ...v, contributors: [...(v.contributors || [])] }); return; }
+    const cost = (prev.totalCost ?? prev.totalQty * prev.unitPrice) + (v.totalCost ?? v.totalQty * v.unitPrice);
+    prev.totalQty += v.totalQty;
+    prev.totalQtyFull = (prev.totalQtyFull ?? 0) + (v.totalQtyFull ?? v.totalQty);
+    prev.totalCost = cost;
+    prev.unitPrice = prev.totalQty > 0 ? cost / prev.totalQty : prev.unitPrice;
+    prev.contributors.push(...(v.contributors || []));
+  });
+  return out;
 }
 
 /**
