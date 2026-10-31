@@ -19,8 +19,15 @@ export default function InventoryItemPickerModal({
 }) {
   const [q, setQ] = useState("");
   const [qtyById, setQtyById] = useState({});
-  const qtyOf = (id) => Math.max(1, Number(qtyById[id]) || Math.max(1, Number(defaultQty) || 1));
-  const setQty = (id, v) => setQtyById((m) => ({ ...m, [id]: Math.max(1, Math.round(Number(v) || 1)) }));
+  // Never more than is free on the date (owner ask: 15 could be asked for with 1 available). An item the studio owns
+  // none of (made to order - a customised printed ceiling) has no stock to hold a number to, so it is not capped -
+  // the same rule Build's own quantity cap uses.
+  const capOf = (it) => {
+    const owned = Math.max(0, Number(it?.qty ?? it?.qtyOwned) || 0);
+    return freeFor && owned > 0 ? Math.max(0, Math.floor(Number(freeFor(it)) || 0)) : Infinity;
+  };
+  const qtyOf = (it, cap = capOf(it)) => Math.max(1, Math.min(cap, Number(qtyById[it.id]) || Math.max(1, Number(defaultQty) || 1)));
+  const setQty = (it, v, cap = capOf(it)) => setQtyById((m) => ({ ...m, [it.id]: Math.max(1, Math.min(cap, Math.round(Number(v) || 1))) }));
   const catM = String(categoryMatch || "").toLowerCase();
   const subM = String(subcatMatch || "").toLowerCase();
   const items = (imsInventory || []).filter((it) => {
@@ -61,6 +68,9 @@ export default function InventoryItemPickerModal({
                 const owned = Math.max(0, Number(it.qty ?? it.qtyOwned) || 0);
                 const free = freeFor ? Math.max(0, Number(freeFor(it)) || 0) : null;
                 const unit = String(it.unit || "").trim();
+                const cap = capOf(it);
+                const blocked = cap <= 0; // owned, but none free on the date - nothing to pick
+                const qNow = qtyOf(it, cap);
                 // the count sits on the photo's top-left corner (owner ask): green while some are free, red when none is
                 const count = free == null
                   ? { t: String(owned), bg: "rgba(17,24,39,0.82)" }
@@ -68,9 +78,10 @@ export default function InventoryItemPickerModal({
                 const countTip = free == null ? `${owned}${unit ? " " + unit : ""} in IMS`
                   : `${free}${unit ? " " + unit : ""} free${dateLabel ? ` on ${dateLabel}` : " on the event date"} (after other events and the rest of this deal) · ${owned} owned`;
                 return (
-                  <div key={it.id} onClick={() => onSelect(it, withQty ? qtyOf(it.id) : undefined)}
-                    style={{ borderRadius: 10, cursor: "pointer", border: `1px solid ${border}`, overflow: "hidden", background: isDark ? "#12121F" : "#fafafa", display: "flex", flexDirection: "column" }}
-                    onMouseEnter={(e) => { e.currentTarget.style.borderColor = accent; e.currentTarget.style.boxShadow = `0 2px 12px ${accent}30`; }}
+                  <div key={it.id} onClick={() => { if (!blocked) onSelect(it, withQty ? qNow : undefined); }}
+                    title={blocked ? `None free${dateLabel ? ` on ${dateLabel}` : " on the event date"}` : undefined}
+                    style={{ opacity: blocked ? 0.55 : 1, borderRadius: 10, cursor: blocked ? "not-allowed" : "pointer", border: `1px solid ${border}`, overflow: "hidden", background: isDark ? "#12121F" : "#fafafa", display: "flex", flexDirection: "column" }}
+                    onMouseEnter={(e) => { if (blocked) return; e.currentTarget.style.borderColor = accent; e.currentTarget.style.boxShadow = `0 2px 12px ${accent}30`; }}
                     onMouseLeave={(e) => { e.currentTarget.style.borderColor = border; e.currentTarget.style.boxShadow = "none"; }}>
                     <div style={{ width: "100%", height: 120, background: isDark ? "#1a1a2e" : "#eee", position: "relative", flexShrink: 0 }}>
                       {src
@@ -86,13 +97,13 @@ export default function InventoryItemPickerModal({
                         // its own clicks stay here - only "Select" (or the rest of the card) picks the item
                         <div onClick={(e) => e.stopPropagation()} style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 7 }}>
                           <div style={{ display: "inline-flex", alignItems: "center", border: `1px solid ${border}`, borderRadius: 7, overflow: "hidden" }}>
-                            <button type="button" aria-label="Fewer" onClick={() => setQty(it.id, qtyOf(it.id) - 1)} style={{ width: 24, height: 24, border: "none", background: "transparent", color: textP, fontSize: 14, cursor: "pointer" }}>−</button>
-                            <input value={qtyOf(it.id)} inputMode="numeric" aria-label="Quantity" onChange={(e) => setQty(it.id, e.target.value.replace(/\D/g, ""))}
+                            <button type="button" aria-label="Fewer" disabled={blocked || qNow <= 1} onClick={() => setQty(it, qNow - 1, cap)} style={{ width: 24, height: 24, border: "none", background: "transparent", color: textP, fontSize: 14, cursor: blocked || qNow <= 1 ? "not-allowed" : "pointer", opacity: blocked || qNow <= 1 ? 0.35 : 1 }}>−</button>
+                            <input value={blocked ? 0 : qNow} disabled={blocked} inputMode="numeric" aria-label="Quantity" onChange={(e) => setQty(it, e.target.value.replace(/\D/g, ""), cap)}
                               style={{ width: 30, height: 24, border: "none", borderLeft: `1px solid ${border}`, borderRight: `1px solid ${border}`, textAlign: "center", fontSize: 12, fontWeight: 700, color: textP, background: "transparent" }} />
-                            <button type="button" aria-label="More" onClick={() => setQty(it.id, qtyOf(it.id) + 1)} style={{ width: 24, height: 24, border: "none", background: "transparent", color: textP, fontSize: 14, cursor: "pointer" }}>+</button>
+                            <button type="button" aria-label="More" disabled={blocked || qNow >= cap} title={!blocked && qNow >= cap && cap !== Infinity ? `Only ${cap} free on this date` : undefined} onClick={() => setQty(it, qNow + 1, cap)} style={{ width: 24, height: 24, border: "none", background: "transparent", color: textP, fontSize: 14, cursor: blocked || qNow >= cap ? "not-allowed" : "pointer", opacity: blocked || qNow >= cap ? 0.35 : 1 }}>+</button>
                           </div>
-                          <button type="button" onClick={() => onSelect(it, qtyOf(it.id))}
-                            style={{ marginLeft: "auto", height: 24, padding: "0 9px", borderRadius: 7, border: "none", background: accent, color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Select</button>
+                          <button type="button" disabled={blocked} onClick={() => { if (!blocked) onSelect(it, qNow); }}
+                            style={{ marginLeft: "auto", height: 24, padding: "0 9px", borderRadius: 7, border: "none", background: blocked ? "#9CA3AF" : accent, color: "#fff", fontSize: 11, fontWeight: 700, cursor: blocked ? "not-allowed" : "pointer" }}>{blocked ? "Not free" : "Select"}</button>
                         </div>
                       )}
                     </div>
