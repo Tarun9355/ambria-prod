@@ -281,8 +281,6 @@ export default function StudioSummary({ ctx }) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeClientId, pricingReady, dvIsBooked, dvHasNegotiated, activeClient?.bookedSystemTotal]);
-  const pendingDelta = (dvIsBooked && dvHasNegotiated && activeClient?.bookedSystemTotal != null)
-    ? Math.round(eventGrandTotal - activeClient.bookedSystemTotal) : 0;
   // ═══ THE DECK THIS DEAL ALREADY HAS ═══
   // canvaEditUrl lived in component state alone, so the link died on a reload, on closing the
   // preview, or on switching deal and back — and the button dropped to "Canva", offering to build a
@@ -373,15 +371,21 @@ export default function StudioSummary({ ctx }) {
     // builds the deck from the applied deal.
     forgetDeck(); setCanvaState("idle"); setCanvaEditUrl(""); setCanvaDeckId(""); setCanvaDeckSig(""); setDeckPdf({ state: "idle", url: "", error: "" });
   };
-  // Escape hatch for when the pending figure itself is not trustworthy — most commonly a deal
-  // booked before this tracking existed, whose baseline got healed off whatever the build happened
-  // to total the first time Summary was opened post-rollout (not the true number at booking).
-  // Re-points the baseline at today's live total with ZERO effect on negotiatedAmount — unlike
-  // Apply, this never changes what the client owes, only where drift starts being measured from.
-  const resetDealValueTracking = () => {
-    saveClientLedger(clientLedger.map(c => c.id === activeClientId ? { ...c, bookedSystemTotal: eventGrandTotal } : c));
-    syncDealValueNow?.({ amount: Math.round(Number(activeClient?.negotiatedAmount) || 0), pending: 0 });
-    showMsg?.("Tracking reset to the current build — deal value unchanged", "green");
+  // ── A BUILD EDIT'S CHANGE WAITS FOR A TAP ──
+  // Owner ask (2026-10-31): the negotiated amount stays what was agreed. What the build edits since have added or taken
+  // off (negotiatedPending, kept by StudioApp - edits only, never a rate change) shows small under it; tapping it adds it
+  // to the amount, × drops it. On a booked deal the deal value in IMS follows the tap.
+  const buildChange = Math.round(Number(activeClient?.negotiatedPending) || 0);
+  const addBuildChange = () => {
+    if (!buildChange || !(Number(activeClient?.negotiatedAmount) > 0)) return;
+    const next = Math.max(0, Math.round(Number(activeClient.negotiatedAmount) + buildChange));
+    const booked = activeClient.status === "booked";
+    saveClientLedger(clientLedger.map(c => c.id === activeClientId ? { ...c, negotiatedAmount: next, negotiatedPending: 0, ...(booked ? { bookedSystemTotal: eventGrandTotal } : {}) } : c));
+    if (booked) syncDealValueNow?.({ amount: next, pending: 0 });
+    showMsg?.(`Deal amount ${buildChange > 0 ? "raised" : "lowered"} to ${fmt(next)}`, "green");
+  };
+  const dropBuildChange = () => {
+    saveClientLedger(clientLedger.map(c => c.id === activeClientId ? { ...c, negotiatedPending: 0 } : c));
   };
 
   const showDeckPdf = async () => {
@@ -2817,7 +2821,6 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
             Until they land it is a real total over seed defaults.
             The tier pill goes with it; it is derived from the same figure. */}
         {(() => {
-          const isBooked = activeClient?.status === "booked";
           const hasNegotiated = Number(activeClient?.negotiatedAmount) > 0;
           const displayTotal = hasNegotiated ? Number(activeClient.negotiatedAmount) : eventGrandTotal;
           return <>
@@ -2860,27 +2863,18 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
               margin math also uses) — the system-generated estimate stays visible here, just demoted
               to a secondary line, so nobody loses sight of what the design itself would cost at list price. */}
           {hasNegotiated && <div style={{fontSize:11.5,color:"#a5b4fc",marginTop:9}}>System estimate: <strong style={{color:"#fff",fontWeight:700}}>{fmt(eventGrandTotal)}</strong></div>}
-          {/* Build changed after booking (a Production/Buying item added, a swap, etc.) — the
-              negotiated deal value itself never moves on its own; this just makes the drift visible.
-              Folding it into the deal value now happens via the single "Apply Changes" button below
-              (which also pushes the build itself to IMS) rather than its own button here. */}
-          {isBooked && pendingDelta !== 0 && (
-            <div style={{marginTop:11,padding:"9px 14px",borderRadius:10,background:"rgba(245,158,11,0.16)",border:"1px solid rgba(245,158,11,0.4)",display:"inline-block"}}>
-              <div style={{fontSize:11.5,color:"#fcd34d",fontWeight:700}}>⚠ Build changed since booking: {pendingDelta > 0 ? "+" : ""}{fmt(pendingDelta)}</div>
-              <div style={{marginTop:7,display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
-                {/* For when this figure isn't a real change to bill/discount for — e.g. an already-
-                    booked deal whose tracking only started from whatever the build happened to total
-                    the first time this shipped, not the true number at booking. Only moves where
-                    drift is measured FROM; never touches what the client is actually being charged. */}
-                <button
-                  type="button"
-                  onClick={resetDealValueTracking}
-                  title="Re-points tracking at today's build total. Does not change the deal value."
-                  style={{fontSize:10.5,fontWeight:600,padding:"6px 12px",borderRadius:8,background:"transparent",color:"#fcd34d",border:"1px solid rgba(252,211,77,0.4)",cursor:"pointer"}}
-                >
-                  Reset tracking (no value change)
-                </button>
-              </div>
+          {/* What the build edits since have added or taken off - small, under the amount. The amount itself does not move
+              until this is tapped (addBuildChange); × drops it (dropBuildChange). Replaces the old "Build changed since
+              booking" box, which measured the whole total (rate changes too) and was folded in by Apply Changes. */}
+          {hasNegotiated && buildChange !== 0 && (
+            <div style={{marginTop:9,display:"inline-flex",alignItems:"center",gap:2,borderRadius:999,background:"rgba(245,158,11,0.16)",border:"1px solid rgba(245,158,11,0.4)"}}>
+              <button type="button" onClick={addBuildChange}
+                title={`The build was changed after this amount was agreed. Tap to ${buildChange > 0 ? "add" : "take"} ${fmt(Math.abs(buildChange))} ${buildChange > 0 ? "to" : "off"} the deal amount.`}
+                style={{fontFamily:"inherit",fontSize:11.5,fontWeight:700,padding:"4px 6px 4px 12px",background:"transparent",border:"none",color:"#fcd34d",cursor:"pointer"}}>
+                Build change {buildChange > 0 ? "+" : "−"}{fmt(Math.abs(buildChange))} · <span style={{textDecoration:"underline",textUnderlineOffset:2}}>{buildChange > 0 ? "Add" : "Apply"}</span>
+              </button>
+              <button type="button" onClick={dropBuildChange} title="Ignore - keep the deal amount as it is"
+                style={{fontSize:13,lineHeight:1,padding:"4px 10px 4px 4px",background:"transparent",border:"none",color:"rgba(252,211,77,0.7)",cursor:"pointer"}}>×</button>
             </div>
           )}
         </> : <>

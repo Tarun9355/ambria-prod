@@ -1023,7 +1023,7 @@ export default function StudioBuild({ ctx }) {
     // zone photo groups (hand-picked leading photos, keyed by zone + function)
     zoneGroups = {}, writeZoneGroup,
     // date demand
-    dateTypes, clientLedger, activeClientId, saveClientLedger, floatPending, hideDiscountFromClient, guestPriceMultiplier, activeCrossFnReuseQty, activeSiblingFnInvUse = {}, activeSiblingFnSubcatOpportunity = {},
+    dateTypes, clientLedger, activeClientId, saveClientLedger, hideDiscountFromClient, guestPriceMultiplier, activeCrossFnReuseQty, activeSiblingFnInvUse = {}, activeSiblingFnSubcatOpportunity = {},
     // build canvas
     setShowCosts, grandTotal, agencyFeeAmt, totalCost, transportCalc, pricingReady,
     savedInsps, setStep, setPreviewImg,
@@ -2565,11 +2565,10 @@ export default function StudioBuild({ ctx }) {
   // estimate is not shown on the Build page). With more than one function the amount is for all of
   // them and has no meaning for one function's rail, so it is left alone.
   const negClient = (clientLedger||[]).find(c=>c.id===activeClientId);
-  // The negotiated amount (it always follows the build) is the stored amount plus this tab's own edits not yet written
-  // (floatPending — StudioApp's follow-the-build logic). It moves only when the build is edited: never
-  // with a rate change, never just because the deal was opened, never with another tab's writes.
+  // The negotiated amount as agreed - a build edit no longer moves it (owner ask 2026-10-31); the edit's change waits on
+  // Summary as a small "+/− ₹X" for someone to add it.
   const negBase = Number(negClient?.negotiatedAmount) || 0;
-  const negAmt = negBase > 0 ? Math.max(0, Math.round(negBase + (Number(floatPending) || 0))) : 0;
+  const negAmt = negBase > 0 ? Math.round(negBase) : 0;
   const showNeg = negAmt > 0 && (extraFunctions||[]).length === 0;
   const shownTotal = showNeg ? negAmt : grandTotal;
   const PRICING_TILE = showCosts && (()=>{

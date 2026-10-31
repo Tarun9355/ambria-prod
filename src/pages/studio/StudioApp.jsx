@@ -6270,10 +6270,10 @@ export default function StudioApp() {
       floatPendingRef.current = 0;
       setFloatPending(0);
       if (!cur || !(Number(cur.negotiatedAmount) > 0) || !add) return; // the amount was cleared meanwhile
-      const want = Math.max(0, Math.round((Number(cur.negotiatedAmount) || 0) + add));
-      const booked = cur.status === "booked";
-      L.saveClientLedger((clientLedgerRef.current || L.clientLedger).map(c => c.id === cur.id ? { ...c, negotiatedAmount: want, ...(booked ? { bookedSystemTotal: L.eventGrandTotal } : {}) } : c));
-      if (booked) L.syncDealValueNow?.({ amount: want, pending: 0 });
+      // The negotiated amount itself stays put (owner ask 2026-10-31, reversing the auto-follow): the edit's change is kept
+      // as negotiatedPending, shown small under the amount on Summary, and only added to it when someone taps it there.
+      const pending = Math.round((Number(cur.negotiatedPending) || 0) + add);
+      L.saveClientLedger((clientLedgerRef.current || L.clientLedger).map(c => c.id === cur.id ? { ...c, negotiatedPending: pending } : c));
     }, 800);
   }, [grandTotal, buildSig, activeClientId, pricingReady, restoring, extraFunctions, zoneElements, floatOn]);
 
@@ -8671,10 +8671,10 @@ export default function StudioApp() {
   // (which used to revert a deal to "ongoing" so its build could be edited) is removed. This is now
   // the only path a salesperson uses to push a post-booking build edit through — same out-of-stock
   // hard block markSold uses (an edit can introduce a shortfall just as easily as a fresh build
-  // can), and it also folds any price drift since booking into the negotiated deal value, replacing
-  // the old Summary "Apply to deal value" button (which only ever touched the price, never IMS's
-  // own copy of the actual build). Returns true/false so the caller (Summary) knows whether to
-  // treat the deck/cache it keeps alongside the deal as stale.
+  // can). It does NOT touch the negotiated deal value (owner ask 2026-10-31): a build edit's change waits on
+  // Summary as a small "+/− ₹X" (negotiatedPending) that is added only when someone taps it. The booked
+  // baseline is re-pointed at the build being pushed. Returns true/false so the caller (Summary) knows
+  // whether to treat the deck/cache it keeps alongside the deal as stale.
   const applyBookedChanges = useCallback(async () => {
     try {
       const client = activeClient;
@@ -8684,22 +8684,18 @@ export default function StudioApp() {
       const result = saveSession();
       if (!result || !result.client) { showMsg("Save a client first", "red"); return false; }
       const { client: savedClient, ledger } = result;
-      const hasNegotiated = Number(savedClient.negotiatedAmount) > 0;
-      const delta = (hasNegotiated && savedClient.bookedSystemTotal != null) ? Math.round(eventGrandTotal - savedClient.bookedSystemTotal) : 0;
       let freshClient = savedClient;
-      if (delta !== 0) {
-        const newNegotiated = Math.max(0, (Number(savedClient.negotiatedAmount) || 0) + delta);
-        const updated = ledger.map(c => c.id === savedClient.id ? { ...c, negotiatedAmount: newNegotiated, bookedSystemTotal: eventGrandTotal } : c);
+      if (savedClient.bookedSystemTotal !== eventGrandTotal) {
+        const updated = ledger.map(c => c.id === savedClient.id ? { ...c, bookedSystemTotal: eventGrandTotal } : c);
         saveClientLedger(updated);
         freshClient = updated.find(c => c.id === savedClient.id);
       }
       const pushed = await pushEventOrderPlan(freshClient, { skipDupeConfirm: true, activityVerb: "Booking updated", activityEmoji: "✏️" });
       if (!pushed) return false;
-      if (delta !== 0) syncDealValueNow({ amount: Math.round(freshClient.negotiatedAmount), pending: 0 });
       showMsg(`Changes applied for ${freshClient.name}`, "green");
       return true;
     } catch (e) { showMsg("Error: " + (e.message || "unknown"), "red"); return false; }
-  }, [activeClient, scanOutOfStockElements, saveSession, showMsg, eventGrandTotal, saveClientLedger, pushEventOrderPlan, syncDealValueNow]);
+  }, [activeClient, scanOutOfStockElements, saveSession, showMsg, eventGrandTotal, saveClientLedger, pushEventOrderPlan]);
 
   // ── Load client session — VERBATIM ──
   const loadClientSession = useCallback((client, session, landingStep = 3, opts = {}) => {
