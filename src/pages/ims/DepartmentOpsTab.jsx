@@ -32,6 +32,7 @@ import { buildFabricGroups, foldFabricLines } from "../../lib/ims/fabricGroups";
 import { mandiHow } from "../../lib/ims/floralHow";
 import { buildEventSwap, swappedRecipeFlower } from "../../lib/ims/mandiSwap";
 import { realLineTaker } from "../../lib/ims/floralBook";
+import { splitCrewByDept } from "../../lib/ims/crewSplit";
 
 // ── THE OFFICIAL LOGO, READY FOR THE PDF ──
 // ambria-logo.png is a WHITE wordmark with a gold dot and gold "DESIGN & DECOR", on a transparent
@@ -3308,11 +3309,17 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
                     // actually kept that day (d.count), same as before this fix.
                     const abs = d.shareAbsByDept;
                     const base = Number(d.trace?.result ?? d.count) || 0;
-                    const entries = DEPTS
+                    const raw = DEPTS
                       .filter((d2) => poolLabourDept(d2) === d2)
-                      .map((d2) => ({ dept: d2, count: Math.ceil(abs ? (Number(abs[d2]) || 0) : (Number(d.shareByDept?.[d2]) || 0) * base) }))
-                      .filter((x) => x.count > 0)
-                      .sort((a, b) => b.count - a.count);
+                      .map((d2) => ({ dept: d2, raw: abs ? (Number(abs[d2]) || 0) : (Number(d.shareByDept?.[d2]) || 0) * base }));
+                    // The head changed this day's crew (the day box, or per-shift counts): the line follows that crew, split by the
+                    // plan's proportions (lib/ims/crewSplit) - it kept showing the plan's own numbers whatever was typed. Per-shift
+                    // counts: the most people on site in any one shift. Untouched days keep the plan's own rounded-up split.
+                    const edited = dayOv(r, d) || winOverridden;
+                    const setCrew = winOverridden ? Math.max(0, ...ids.map((id) => Number(effShift(r, d, id)) || 0)) : showDay(r, d);
+                    const entries = edited
+                      ? splitCrewByDept(raw, setCrew)
+                      : raw.map((x) => ({ dept: x.dept, count: Math.ceil(x.raw) })).filter((x) => x.count > 0).sort((a, b) => b.count - a.count);
                     if (!entries.length) return null;
                     const total = entries.reduce((s, e) => s + e.count, 0);
                     return (
