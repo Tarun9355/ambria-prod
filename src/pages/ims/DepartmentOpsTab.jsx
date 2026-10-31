@@ -3692,12 +3692,13 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           return;
         }
         if (!prefs.length) return;
-        // Deal Check's PDF lists all three sales picked; Planning's lists the decided one (all three until one is decided).
+        // Planning's decided carpet once there is one; otherwise sales' 1st choice ONLY - the 2nd/3rd preferences printed as
+        // cards of their own read as three carpets to lay (owner ask 2026-10-31). Deal Check's PDF prints the 1st choice too.
         const chosen = dec && !pdfAllCarpetsRef.current ? (prefs.find(p => p.id === dec.id) || (dec.manual ? { id: dec.id, name: dec.name } : null)) : null;
         const byHand = !!chosen && !prefs.some(p => p.id === chosen.id);
         const lbl = ri === 0 ? "" : ` (floor ${ri + 1})`;
         const RANK = ["1st", "2nd", "3rd", "4th"];
-        (chosen ? [{ p: chosen, role: (byHand ? "To use (Planning's pick)" : "To use") + lbl }] : prefs.map((p, i) => ({ p, role: `${RANK[i] || i + 1 + "th"} choice${lbl}` }))).forEach(({ p, role }) => {
+        (chosen ? [{ p: chosen, role: (byHand ? "To use (Planning's pick)" : "To use") + lbl }] : prefs.slice(0, 1).map((p, i) => ({ p, role: `${RANK[i] || i + 1 + "th"} choice${lbl}` }))).forEach(({ p, role }) => {
           const inv = invById.get(String(p.id));
           out.push({
             name: inv?.name || p.name || "Carpet", qty: area, unit: "sqft", photo: invPhoto(inv, null), dims: invDims(inv), kit: 0, recipe: [],
@@ -3809,22 +3810,22 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           if (held) placed.add(held.id);
           // ── OVERLAYS AND CUSHION COVERS WITH CHOICES ──
           // Planning decides one of sales' designs (or arranges the pieces outside stock). The card shows that design — its own photo and
-          // size — and until it is decided the choices are listed under the 1st. Deal Check's PDF (pdfAllCarpetsRef) lists what sales asked for.
+          // size — and until it is decided, the 1st choice. Deal Check's PDF (pdfAllCarpetsRef) prints the 1st choice as its own card.
           const prow = elementPlanOf().rows.find(r => r.fi === (fn?.fnIdx ?? fi) && r.zk === zk && r.ei === ei && r.part === undefined) || null;
           let invU = inv, arranged = false, choiceExtra = null, decName = "";
           if (prow) {
-            const names = prow.options.map((o, i) => `${i + 1} ${String(o.name || "").length > 16 ? String(o.name).slice(0, 15) + "…" : o.name}`).join(" · ");
             if (prow.other) { arranged = true; choiceExtra = [["Source", "Bought / hired / made outside stock"]]; }
             else if (prow.decidedId) {
               const di = invById.get(String(prow.decidedId));
               if (di) invU = di; else { invU = null; decName = ([...prow.options, prow.manual].filter(Boolean).find(o => o.id === prow.decidedId) || {}).name || ""; }
               choiceExtra = [["Design", "Chosen in Planning"]];
-            } else choiceExtra = [["Choices", names + " (not decided)"]];
+            } else choiceExtra = [["Choice", "1st choice (not decided)"]];
           }
           // Deal Check's PDF lists what sales asked for: every design, 1st to 4th, each as its own card with its photo (like the carpets).
           if (prow && pdfAllCarpetsRef.current) {
             const RANKS = ["1st", "2nd", "3rd", "4th"];
-            prow.options.forEach((o, i) => {
+            // 1st choice only (owner ask 2026-10-31) - same as the carpets.
+            prow.options.slice(0, 1).forEach((o, i) => {
               const ci = invById.get(String(o.id));
               merged.set(`c:${el?.pid || ei}:${i}`, { name: ci?.name || o.name || "Design", qty: Number(el?.qty) || 1, unit: String(el?.unit || ci?.unit || "").trim(),
                 deptTag: combined ? (deptByInvId.get(String(o.id)) || catToDept(ci?.category || ci?.cat)) : "", photo: invPhoto(ci, null), dims: invDims(ci), size: "", kit: 0, recipe: [],
