@@ -140,6 +140,7 @@ import { LOGO_ASSET, logoCrop } from "../../lib/studio/brand.js";
 import { registerFlushBeforeReload, unregisterFlushBeforeReload, flushBeforeReload } from "../../lib/pendingSaveRegistry.js";
 import { thumbUrl } from "../../lib/studio/thumb.js";
 import { prefetchImages, AVAIL_THUMB } from "../../lib/studio/prefetchImages.js";
+import { zoneSwitchState, planPhotoSwitch, zoneAfterSwitch, zoneCfgSig, stripPhotoStash } from "../../lib/studio/photoStash.js";
 
 // ═══════════════════════════════════════════════════════════════
 // MODULE-SCOPE CONSTANTS / HELPERS — copied VERBATIM from the reference.
@@ -305,19 +306,6 @@ const FLORAL_HARDPROP_DEFAULT = {
 // a module-level constant only because this function sits outside the component and can't close
 // over that one; kept in lockstep by being the one other place this number is allowed to live.
 const GUEST_STRUCT_DISCOUNT_PCT = 25;
-// zoneConfig without each zone's photoStash (Build's per-photo saved builds, see selectElPhoto) - Studio's own
-// working copies, not part of the zone, so they never reach IMS. A zone left with nothing but its stash is dropped.
-function stripPhotoStash(zoneConfig) {
-  const out = {};
-  Object.entries(zoneConfig || {}).forEach(([zk, zc]) => {
-    if (!zc || typeof zc !== "object") { out[zk] = zc; return; }
-    const { photoStash: _ps, ...rest } = zc; // eslint-disable-line no-unused-vars
-    if (_ps && !Object.keys(rest).length) return;
-    out[zk] = rest;
-  });
-  return out;
-}
-
 function calcStructCost(zk, zc, rates, applyDiscount) {
   if (!zc) return { truss: 0, masking: 0, platform: 0, carpet: 0, arches: 0, pillars: 0, glass: 0, print: 0, fabric: 0, fabricNew: false, total: 0 };
   // fd (Platform/Carpet's own floor size) no longer falls back to the truss's dims (d) — owner ask:
@@ -10068,76 +10056,63 @@ export default function StudioApp() {
     // still match it, nothing has changed since (the common "just browsing photos" case) and there
     // is nothing to warn about. No stamp at all (a zone picked before this check existed) is treated
     // as possibly-customized — asking once is safer than silently discarding legacy work.
-    const curEls = zoneElements[elKey] || [];
-    // ── Per-photo saved work (owner ask 2026-10-31) ── every photo a zone has been built on keeps its own copy of
-    // the zone - elements, the whole zone config (truss & masking, platform, print, custom items...) and the client
-    // note - in zoneConfig[elKey].photoStash, keyed by the photo. zoneConfig is saved with the deal, so the copies
-    // survive a refresh; stripPhotoStash keeps them out of everything that leaves Studio.
-    const stashKey = (ph) => ph?.src || ph?.eventId || "";
-    const { photoStash: prevStash, ...curCfg } = zoneConfig[elKey] || {};
-    const curNote = elNotes[elKey] || "";
-    // a config's own content - scale / repeat are live deal choices, not what the photo's build is
-    const cfgSig = (c) => { const { scale: _s, repeat: _r, repeatCats: _rc, photoStash: _ps, ...rest } = c || {}; return JSON.stringify(rest); }; // eslint-disable-line no-unused-vars
-    const configChanged = !!currentSel && (currentSel._loadedCfg == null || currentSel._loadedCfg !== cfgSig(curCfg));
-    const hasUnsavedWork = (curEls.length > 0
-      && (!currentSel?._loadedElements || JSON.stringify(currentSel._loadedElements) !== JSON.stringify(curEls)))
-      || (!!currentSel && curNote !== (currentSel._loadedNote ?? ""));
+    // ── Per-photo saved builds (lib/studio/photoStash.js) ── each photo this zone was built on keeps its own copy
+    // of the zone (elements, whole config, note) in zoneConfig[elKey].photoStash, saved with the deal.
+    const st = zoneSwitchState({ currentSel, elements: zoneElements[elKey], zoneCfg: zoneConfig[elKey], note: elNotes[elKey] });
+    const hasUnsavedWork = st.hasUnsavedWork;
     if (currentSel && currentSel.src === photo.src) {
       if (hasUnsavedWork && !opts.skipConfirm) {
         const ok = await askConfirmAsync(
           "This clears everything built for this zone's photo — including anything added or changed since it was picked.",
-          { note: "This can't be undone.", yesLabel: "Clear it" }
+          { note: "This can't be undone. Builds saved with this zone's other photos stay.", yesLabel: "Clear it" }
         );
         if (!ok) return false;
       }
       setElSelectedPhoto(p => { const n = { ...p }; delete n[elKey]; return n; });
       setZoneElements(p => { const n = { ...p }; delete n[elKey]; return n; });
+      setElNotes(p => { if (!p[elKey]) return p; const n = { ...p }; delete n[elKey]; return n; });
       // Full deselect means "nothing in this zone" — clear the truss/platform/carpet config too,
       // since it came from this same photo pick. Otherwise the zone reads as empty (no elements,
       // no photo selected) while still silently charging for a structure nobody can see is configured.
-      setZoneConfig(p => { const n = { ...p }; delete n[elKey]; return n; });
+      // The builds saved with this zone's photos stay (a config holding only them prices at nothing).
+      setZoneConfig(p => {
+        const n = { ...p };
+        const keep = p[elKey]?.photoStash;
+        if (keep && Object.keys(keep).length) n[elKey] = { photoStash: keep }; else delete n[elKey];
+        return n;
+      });
       return true;
     }
     // Save & Replace: the new photo takes this zone exactly as it is now. Save & Switch: this build stays saved
     // with the current photo, and the new photo opens with its own saved build (or fresh). Both save first.
+    // With no photo yet (elements added by hand) there is no photo to save with: keep them on the new photo,
+    // or take the photo's own.
     let choice = "switch";
     if (hasUnsavedWork && !opts.skipConfirm) {
       choice = await askChoiceAsync(
         "This zone has changes. Keep them before changing the photo?",
-        {
+        st.hasPhoto ? {
           note: "Save & Replace — the new photo keeps this zone's elements, truss & masking, platform, print and note as they are now.\nSave & Switch — they stay saved with the current photo (pick it again to get them back) and the new photo opens with its own.",
           tone: "positive",
           choices: [{ value: "replace", label: "Save & Replace", primary: true }, { value: "switch", label: "Save & Switch" }],
+        } : {
+          note: "No photo is picked for this zone yet, so there is no photo to save them with.\nKeep on this photo — the new photo keeps this zone's elements and note as they are now.\nUse the photo's own — the elements and note made here are replaced.",
+          tone: "positive",
+          choices: [{ value: "replace", label: "Keep on this photo", primary: true }, { value: "fresh", label: "Use the photo's own" }],
         }
       );
       if (!choice) return false;
     }
-    const stash = { ...(prevStash || {}) };
-    const curWork = { elements: curEls, config: curCfg, note: curNote, savedAt: Date.now() };
-    const outKey = stashKey(currentSel);
-    if (outKey && (hasUnsavedWork || configChanged) && (curEls.length || curNote || Object.keys(curCfg).length)) stash[outKey] = JSON.parse(JSON.stringify(curWork));
-    const inKey = stashKey(photo);
-    if (choice === "replace" && inKey) stash[inKey] = JSON.parse(JSON.stringify({ ...curWork, savedAt: curWork.savedAt + 1 }));
-    // newest 12 photos per zone - enough to go back and forth, without the deal growing with every photo browsed
-    const nextStash = Object.fromEntries(Object.entries(stash).sort((a, b) => (b[1]?.savedAt || 0) - (a[1]?.savedAt || 0)).slice(0, 12));
-    const stashPatch = Object.keys(nextStash).length ? { photoStash: nextStash } : {};
-    if (choice === "replace") {
-      // elements, config and note stay as they are - only the photo changes
-      setZoneConfig(p => { const { photoStash: _old, ...cfgNow } = p[elKey] || {}; return { ...p, [elKey]: { ...cfgNow, ...stashPatch } }; }); // eslint-disable-line no-unused-vars
-      setElSelectedPhoto(p => ({ ...p, [elKey]: { ...photo, _loadedElements: curEls, _loadedCfg: cfgSig(curCfg), _loadedNote: curNote } }));
-      setActiveZones([]);
-      setCustomMode(p => ({ ...p, [elKey]: false }));
-      return true;
-    }
-    const savedIn = inKey ? nextStash[inKey] : null;
-    if (savedIn) {
-      // the new photo was built on before in this zone - open its own saved build
-      const els = JSON.parse(JSON.stringify(savedIn.elements || []));
-      const cfgIn = JSON.parse(JSON.stringify(savedIn.config || {}));
-      setZoneElements(p => ({ ...p, [elKey]: els }));
-      setZoneConfig(p => ({ ...p, [elKey]: { ...cfgIn, repeat: p[elKey]?.repeat, repeatCats: p[elKey]?.repeatCats, ...stashPatch } }));
-      setElNotes(p => ({ ...p, [elKey]: savedIn.note || "" }));
-      setElSelectedPhoto(p => ({ ...p, [elKey]: { ...photo, _loadedElements: els, _loadedCfg: cfgSig(cfgIn), _loadedNote: savedIn.note || "" } }));
+    const plan = planPhotoSwitch({ state: st, currentSel, photo, choice });
+    const stashPatch = Object.keys(plan.stash).length ? { photoStash: plan.stash } : {};
+    // replace: elements, config and note stay as they are - only the photo changes.
+    // saved: the new photo was built on before in this zone - open its own saved build.
+    const after = zoneAfterSwitch({ plan, state: st, photo, liveCfg: zoneConfig[elKey] });
+    if (after) {
+      setZoneElements(p => ({ ...p, [elKey]: after.elements }));
+      setZoneConfig(p => ({ ...p, [elKey]: after.config }));
+      setElNotes(p => { const n = { ...p }; if (after.note) n[elKey] = after.note; else delete n[elKey]; return n; });
+      setElSelectedPhoto(p => ({ ...p, [elKey]: after.sel }));
       setActiveZones([]);
       setCustomMode(p => ({ ...p, [elKey]: false }));
       return true;
@@ -10198,7 +10173,7 @@ export default function StudioApp() {
     }
     // Stamped onto the stored photo record so the NEXT switch/reselect away from this one can tell
     // whether anything changed in the meantime — see hasUnsavedWork / configChanged above.
-    setElSelectedPhoto(p => ({ ...p, [elKey]: { ...photo, _loadedElements: finalEls, _loadedCfg: cfgSig(cfg || curCfg), _loadedNote: "" } }));
+    setElSelectedPhoto(p => ({ ...p, [elKey]: { ...photo, _loadedElements: finalEls, _loadedCfg: zoneCfgSig(cfg || st.curCfg), _loadedNote: "" } }));
     setActiveZones([]);
     setCustomMode(p => ({ ...p, [elKey]: false }));
     return true;
