@@ -67,6 +67,17 @@ function parentMap(settings) {
   return p || {};
 }
 
+// A function's venue with its property in front — "Valencia › Poolside" rather than a bare
+// "Poolside", which says nothing about where the event is. A property, an outdoor venue, an unknown
+// name, or a sub-venue whose own name already carries its property ("Aura Poolside") stays as it is.
+export function venueWithParent(settings, venueName) {
+  const name = String(venueName || "").trim();
+  if (!name) return "";
+  const parent = String(parentMap(settings)[name] || "").trim();
+  if (!parent || ` ${normVenue(name)} `.includes(` ${normVenue(parent)} `)) return name;
+  return `${parent} › ${name}`;
+}
+
 // Resolve the fixed-venue config for a venue name. Parent-aware: a function at a
 // sub-venue (Aura) matches a fixed venue keyed by its parent (Exotica / "Ambria
 // Exotica"), with "Ambria " prefix ignored. null if not a fixed venue.

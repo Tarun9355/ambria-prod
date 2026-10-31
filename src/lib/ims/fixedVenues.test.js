@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { availableAtVenue, reservedByVenueToday, venueSlackFor, combineAvailability, standingQty, standingDiscQty, rentalSplit } from "./fixedVenues";
+import { availableAtVenue, reservedByVenueToday, venueSlackFor, combineAvailability, standingQty, standingDiscQty, rentalSplit, venueWithParent } from "./fixedVenues";
 
 // Confirmed live bug this covers: an item with 300 total stock, 200 of it configured as standing
 // allocation across two Fixed Venues (Pushpanjali 150, Exotica 50), leaving a 100-unit outdoor pool.
@@ -149,5 +149,26 @@ describe("standing item split — qty (discounted) + fullQty (full rate, still s
     expect(rentalSplit(splitSettings, "Legacy Venue", "ITEM_B", 8)).toEqual({
       standingUnits: 8, discUnits: 8, fullStandingUnits: 0, freshUnits: 0, discountPct: 0,
     });
+  });
+});
+
+describe("venueWithParent — a sub-venue is shown with its property", () => {
+  const s = { venueParents: { Poolside: "Valencia", Aura: "Exotica", "Aura Poolside": "Aura", Exotica: "Exotica", "Laura Hall": "Aura", Farm: "Farm" } };
+  it("puts the property in front of a sub-venue", () => {
+    expect(venueWithParent(s, "Poolside")).toBe("Valencia › Poolside");
+    expect(venueWithParent(s, "Aura")).toBe("Exotica › Aura");
+  });
+  it("leaves a property, an outdoor venue and an unknown name alone", () => {
+    expect(venueWithParent(s, "Exotica")).toBe("Exotica");
+    expect(venueWithParent(s, "Farm")).toBe("Farm");
+    expect(venueWithParent(s, "Somewhere New")).toBe("Somewhere New");
+    expect(venueWithParent(s, "")).toBe("");
+  });
+  it("does not repeat a property the name already carries — whole words only", () => {
+    expect(venueWithParent(s, "Aura Poolside")).toBe("Aura Poolside");
+    expect(venueWithParent(s, "Laura Hall")).toBe("Aura › Laura Hall");
+  });
+  it("reads the map when it is stored as a JSON string", () => {
+    expect(venueWithParent({ venueParents: JSON.stringify(s.venueParents) }, "Poolside")).toBe("Valencia › Poolside");
   });
 });

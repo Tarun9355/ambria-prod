@@ -10,6 +10,7 @@ import { TabsMenu, useConfirm } from "../../components/ui";
 import { IconPrinter } from "../../components/icons";
 import { hasIMSPerm } from "../../lib/ims/constants";
 import { fetchOpsExpenses } from "../../lib/ims/opsExpenses";
+import { venueWithParent } from "../../lib/ims/fixedVenues";
 import { ZONE_META, trussBaseArea, CARPET_OFF } from "../../lib/studio/taxonomy";
 import { prefsOf, floorSqftOf } from "../../lib/studio/carpetPrefs";
 import { carpetFloorsOf, planCarpets, carpetKey, carpetStockFor, validDecision, carpetNotesForRows, carpetPrefNotesForRows } from "../../lib/ims/carpetPlan";
@@ -1052,6 +1053,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const flowerPatterns = useMemo(() => (Array.isArray(settings?.flowerPatterns) ? settings.flowerPatterns : []), [settings]);
 
   const eventDate = (eo) => eo?.functionsDetail?.[0]?.date || eo?.date || eo?.eventDate || "";
+  // The event's venue with its property — "Valencia › Poolside", not a bare "Poolside".
+  const venueOf = (eo) => venueWithParent(settings, eo?.functionsDetail?.[0]?.venue || eo?.venue || "");
   const today = new Date().toISOString().slice(0, 10);
   // A "live" event for ops = confirmed/finalised. Excludes pending (not yet auto-confirmed), cancelled,
   // and review — so cancelled/dead deals never clutter the list or the transfer pickers.
@@ -1964,7 +1967,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     }).join("");
     w.document.write(`<html><head><title>Mandi List — ${esc(sel?.clientName || "Event")}</title><style>body{font-family:Arial;padding:24px;color:#111}table{width:100%;border-collapse:collapse;margin-top:8px}th,td{border:1px solid #ddd;padding:6px 8px;font-size:12px;vertical-align:top}th{background:#f5f5f5;text-align:left}td.c{text-align:center}td.r,th.r{text-align:right;white-space:nowrap}td.blank{min-width:70px}img{width:44px;height:44px;object-fit:cover;border-radius:5px;display:block;margin:auto}tr.off img{opacity:.45}.s{color:#777;font-size:10.5px;margin-top:2px}.sw{color:#B45309;font-weight:bold}tr.off td{color:#999}tr.off b{text-decoration:line-through}tr{break-inside:avoid}tfoot td{font-weight:bold;background:#ECFDF5}@media print{button{display:none}body{padding:0}@page{size:A4;margin:10mm}}</style></head><body>
       <h2>🌸 Ambria — Mandi Shopping List</h2>
-      <p>Event: ${esc(sel?.clientName || "-")} &nbsp;|&nbsp; ${esc(selDateStr || "-")} &nbsp;|&nbsp; ${esc(sel?.functionsDetail?.[0]?.venue || sel?.venue || "-")}</p>
+      <p>Event: ${esc(sel?.clientName || "-")} &nbsp;|&nbsp; ${esc(selDateStr || "-")} &nbsp;|&nbsp; ${esc(venueOf(sel) || "-")}</p>
       <table><tr><th class="c">#</th><th class="c">Photo</th><th>Flower</th><th class="r">Planned</th><th class="r">To buy</th><th class="r">₹/unit</th><th class="r">Total</th><th>Bought qty</th><th>Paid ₹/unit</th></tr>${rows || '<tr><td colspan="9" style="text-align:center;color:#999">No flowers on the list</td></tr>'}
       <tfoot><tr><td colspan="6">Total (real flowers)</td><td class="r">₹${num(mandiActualReal)}</td><td></td><td></td></tr></tfoot></table>
       <br><p>Bought by: _______________ &nbsp;&nbsp; Checked by: _______________</p>
@@ -2168,7 +2171,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     const toolRows = deptTools.map(t => `<tr><td>🛠️ ${t.name}</td><td>essential / tool</td><td style="text-align:center">${t.qty || 1}</td></tr>`).join("");
     w.document.write(`<html><head><title>Challan — ${dept} — Truck ${n}</title><style>body{font-family:Arial;padding:24px;color:#111}table{width:100%;border-collapse:collapse;margin-top:8px}th,td{border:1px solid #ddd;padding:8px;font-size:13px}th{background:#f3f4f6;text-align:left}h2{color:#4f46e5;margin-bottom:2px}h4{margin:14px 0 0}@media print{button{display:none}}</style></head><body>
       <h2>${DEPT_ICON[dept]} Ambria — ${dept} Challan · Truck ${n}</h2>
-      <p>Event: ${sel?.clientName || "-"} &nbsp;|&nbsp; ${selDateStr || "-"} &nbsp;|&nbsp; ${sel?.functionsDetail?.[0]?.venue || sel?.venue || "-"}</p>
+      <p>Event: ${sel?.clientName || "-"} &nbsp;|&nbsp; ${selDateStr || "-"} &nbsp;|&nbsp; ${venueOf(sel) || "-"}</p>
       <p>Vehicle: ${truck.vehicle || "______"} &nbsp;|&nbsp; Driver: ${truck.driver || "______"} &nbsp;|&nbsp; Phone: ${truck.phone || "______"}</p>
       <h4>Inventory on this truck</h4>
       <table><tr><th>Item</th><th>Type</th><th>Qty</th></tr>${rows || '<tr><td colspan="3" style="text-align:center;color:#999">No items assigned to this truck</td></tr>'}</table>
@@ -2212,7 +2215,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       pdf.setFont("helvetica", "bold"); pdf.setFontSize(16); pdf.setTextColor(79, 70, 229);
       pdf.text(`Ambria - ${dept} Challan - Truck ${n}`, M, y); y += 22;
       pdf.setTextColor(17); pdf.setFont("helvetica", "normal"); pdf.setFontSize(10);
-      pdf.text(`Event: ${sel.clientName || "-"}  |  ${selDateStr || "-"}  |  ${sel.functionsDetail?.[0]?.venue || sel.venue || "-"}`, M, y); y += 16;
+      pdf.text(`Event: ${sel.clientName || "-"}  |  ${selDateStr || "-"}  |  ${venueOf(sel) || "-"}`, M, y); y += 16;
       pdf.text(`Vehicle: ${truck.vehicle || "______"}  |  Driver: ${truck.driver || "______"}  |  Phone: ${truck.phone || "______"}`, M, y); y += 26;
       pdf.setFontSize(9.5);
       pdf.setFont("helvetica", "bold"); pdf.text("Inventory on this truck", M, y); y += 16;
@@ -2300,7 +2303,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       pdf.setFont("helvetica", "bold"); pdf.setFontSize(16);
       pdf.text(`Actuals - ${dept}`, M, y); y += 20;
       pdf.setFont("helvetica", "normal"); pdf.setFontSize(10);
-      pdf.text([sel.clientName || "Event", selDateStr || "", sel.functionsDetail?.[0]?.venue || sel.venue || ""].filter(Boolean).join("  |  "), M, y); y += 24;
+      pdf.text([sel.clientName || "Event", selDateStr || "", venueOf(sel)].filter(Boolean).join("  |  "), M, y); y += 24;
       pdf.setFontSize(9.5);
       if (dept === "Floral") {
         const artTot = fp.artificial ? fp.artificial.total : artificialProj;
@@ -2389,7 +2392,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     ].join("");
     w.document.write(`<html><head><title>Challan — ${dept}</title><style>body{font-family:Arial;padding:24px;color:#111}table{width:100%;border-collapse:collapse;margin-top:12px}th,td{border:1px solid #ddd;padding:8px;font-size:13px}th{background:#f3f4f6;text-align:left}h2{color:#4f46e5;margin-bottom:2px}@media print{button{display:none}}</style></head><body>
       <h2>${DEPT_ICON[dept]} Ambria — ${dept} Loading Challan</h2>
-      <p>Event: ${sel?.clientName || "-"} &nbsp;|&nbsp; ${selDateStr || "-"} &nbsp;|&nbsp; ${sel?.functionsDetail?.[0]?.venue || sel?.venue || "-"}</p>
+      <p>Event: ${sel?.clientName || "-"} &nbsp;|&nbsp; ${selDateStr || "-"} &nbsp;|&nbsp; ${venueOf(sel) || "-"}</p>
       <p>Vehicle: ${dispatch.vehicle || "______"} &nbsp;|&nbsp; Driver: ${dispatch.driver || "______"} &nbsp;|&nbsp; Phone: ${dispatch.phone || "______"}</p>
       <table><tr><th>✓</th><th>Item</th><th>Type</th><th>Qty</th></tr>${rows || '<tr><td colspan="4" style="text-align:center;color:#999">Nothing to load</td></tr>'}</table>
       <br><p>Dispatched by: _______________ &nbsp;&nbsp; Received by: _______________</p>
@@ -2539,8 +2542,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const venueOfEvent = (e) => {
     if (!e) return "";
     const own = String(e.venue || "").trim();
-    if (own) return own;
-    return [...new Set((Array.isArray(e.functionsDetail) ? e.functionsDetail : []).map(f => String(f?.venue || "").trim()).filter(Boolean))].join(", ");
+    if (own) return venueWithParent(settings, own);
+    return [...new Set((Array.isArray(e.functionsDetail) ? e.functionsDetail : []).map(f => venueWithParent(settings, String(f?.venue || "").trim())).filter(Boolean))].join(", ");
   };
   const nearbyTransferEvents = useMemo(() => {
     const base = selDateStr ? new Date(selDateStr + "T00:00:00").getTime() : 0;
@@ -3386,7 +3389,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       return `<table><colgroup>${widths.map(w => `<col style="width:${w}">`).join("")}</colgroup><thead><tr>${heads.map((h, i) => `<th${numeric(i) ? ' class="n"' : ""}>${esc(h)}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table>`;
     };
 
-    const venue = sel?.functionsDetail?.[0]?.venue || sel?.venue || "—";
+    const venue = venueOf(sel) || "—";
 
     /* Money. `income` is the same memo the readout on screen uses, so the report and the page
        cannot disagree about what the department earns. */
@@ -5673,7 +5676,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                                   {/* Venue and shift, because that is what an event_order actually
                                       carries — there are no start/end times on one to show. */}
                                   <span className="mt-0.5 block text-xs text-gray-500 truncate">
-                                    {eo.functionsDetail?.[0]?.venue || eo.venue || "—"}
+                                    {venueOf(eo) || "—"}
                                     {eo.functionsDetail?.[0]?.shift ? ` · ${eo.functionsDetail[0].shift}` : ""}
                                   </span>
                                   {/* Own line, not tacked onto venue/shift above — that span already
@@ -5819,7 +5822,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                       reading it for. Capped at two lines so a long venue cannot push the card
                       taller than the tiles it sits above; from sm there is room for one line and
                       it truncates as before. */}
-                  <div className="text-[12px] sm:text-sm text-gray-500 leading-snug line-clamp-2 sm:truncate">{selDateStr || "no date"} · {sel.functionsDetail?.[0]?.venue || sel.venue || "—"}{sel.salesperson ? ` · booked by ${sel.salesperson}` : ""}{deptData.updatedBy ? ` · last edited by ${deptData.updatedBy}` : ""}</div>
+                  <div className="text-[12px] sm:text-sm text-gray-500 leading-snug line-clamp-2 sm:truncate">{selDateStr || "no date"} · {venueOf(sel) || "—"}{sel.salesperson ? ` · booked by ${sel.salesperson}` : ""}{deptData.updatedBy ? ` · last edited by ${deptData.updatedBy}` : ""}</div>
                   {/* Site Supervisor — one per event (not per department, since the same person
                       oversees the whole booking onsite), assignable by anyone with this tab open
                       (same access as everything else here, no extra gate). Denormalized onto the
