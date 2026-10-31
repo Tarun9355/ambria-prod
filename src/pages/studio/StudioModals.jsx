@@ -469,10 +469,10 @@ export default function StudioModals({ ctx }) {
             <div style={{padding:"4px 20px",overflowY:"auto",flex:1}}>
               {oosGateModal.map((f, i) => (
                 <div key={i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"10px 0",borderBottom:i<oosGateModal.length-1?`1px solid ${border}`:"none"}}>
-                  <div style={{minWidth:0}}>
-                    <div style={{fontSize:13,fontWeight:600,color:textP,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{f.name}</div>
-                    <div style={{fontSize:11,color:textS,marginTop:2}}>{f.fnLabel} · {f.zoneKey}</div>
-                    {Array.isArray(f.parts) && f.parts.length > 0 && <div style={{fontSize:11,color:"#EF4444",marginTop:2,whiteSpace:"normal"}}>Inside this kit: {f.parts.join(", ")}</div>}
+                  {/* Just what is short, by name (owner ask): the item itself, or for a kit the part(s) inside it that are short -
+                      no function / zone / "inside this kit" lines. Fix still opens the right element. */}
+                  <div style={{minWidth:0,fontSize:13,fontWeight:600,color:textP,whiteSpace:"normal"}}>
+                    {Array.isArray(f.shortNames) && f.shortNames.length ? f.shortNames.join(", ") : f.name}
                   </div>
                   <button onClick={() => openOosFix(f)} title="Pick an alternative item" style={{padding:"6px 12px",borderRadius:7,border:"none",background:"#EF4444",color:"#fff",fontSize:11.5,fontWeight:700,cursor:"pointer",flexShrink:0,display:"inline-flex",alignItems:"center",gap:5}}><IconBox size={12}/> Fix</button>
                 </div>

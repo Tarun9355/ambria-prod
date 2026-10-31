@@ -5629,7 +5629,9 @@ export default function StudioApp() {
             // exact element (openAvailModal(zoneKey, idx, el, rc)) instead of only pointing the
             // salesperson at the right function/zone and making them find it by hand.
             flagged.push({ fnIdx: fnData.fnIdx, fnLabel: fnData.fnType || `Function ${fnData.fnIdx + 1}`, zoneKey: zk, idx: i, invId: el.invId, name: item?.name || el.name || "Item",
-              parts: partsOut.map((p) => `${p.name} (${p.short} short)`) });
+              parts: partsOut.map((p) => `${p.name} (${p.short} short)`),
+              // what is short, by name only - the gate modal shows just this: the item itself when it is out, and/or the kit part(s) that are
+              shortNames: [...new Set([...(r.outOfStock ? [item?.name || el.name || "Item"] : []), ...partsOut.map((p) => p.name)])] });
           }
         });
       });
