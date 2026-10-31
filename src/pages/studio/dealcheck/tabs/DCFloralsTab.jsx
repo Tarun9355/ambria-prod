@@ -11,6 +11,7 @@ import { Fragment, useState } from "react";
 import { parseFlowerPalette, autoSplitArtificialByPalette } from "../../../../lib/studio/pricing";
 import { thumbUrl, fitUrl } from "../../../../lib/studio/thumb.js";
 import { computeFnFloralCost, effectiveColorPrefRows, mergeSwapRows } from "../../../../lib/studio/floralCost";
+import { convertFlowerQty, piecesPerUnit } from "../../../../lib/ims/flowerHelpers";
 
 // ═══ THE FLORAL GROUND ═══
 // Drop the artwork at src/assets/ambria-florals.(jpg|jpeg|png|webp) and this tab is drawn on it.
@@ -1255,7 +1256,11 @@ export default function DCFloralsTab({ ctx }) {
         const remainingOriginalQty = dcSwapMode === "full" ? 0 : Math.max(0, totalQty - swapQty);
         const targetRate = dcSwapPicked ? (Number(dcSwapPicked.currentPrice) || 0) : 0;
         const rowDeltaBefore = totalQty * fromRate;
-        const rowDeltaAfter = (remainingOriginalQty * fromRate) + (swapQty * targetRate);
+        // The swapped qty in the NEW flower's unit (pieces ↔ bundles by each flower's pcs per unit) - the same conversion
+        // the mandi list applies (lib/studio/floralCost), so the preview is what the list will show.
+        const swapConv = dcSwapPicked ? convertFlowerQty(swapQty, fromParent, dcSwapPicked) : { qty: swapQty, converted: true, same: true };
+        const targetQty = swapConv.qty;
+        const rowDeltaAfter = (remainingOriginalQty * fromRate) + (targetQty * targetRate);
         const rowDelta = rowDeltaAfter - rowDeltaBefore;
         const confirmSwap = () => {
           if (!dcSwapPicked || swapQty <= 0) return;
@@ -1365,14 +1370,17 @@ export default function DCFloralsTab({ ctx }) {
                   <div style={{fontSize:13,color:"#1A1A2E",lineHeight:1.7}}>
                     <div>Before: {totalQty.toFixed(2)} {fromParent.unit||""} {fromParent.name} × ₹{Math.round(fromRate)} = <span style={{color:"#1A1A2E",fontWeight:600}}>₹{Math.round(rowDeltaBefore).toLocaleString("en-IN")}</span></div>
                     {dcSwapMode === "full" ? (
-                      <div>After: {swapQty.toFixed(2)} {dcSwapPicked.unit||""} {dcSwapPicked.name} × ₹{Math.round(targetRate)} = <span style={{color:"#1A1A2E",fontWeight:600}}>₹{Math.round(rowDeltaAfter).toLocaleString("en-IN")}</span></div>
+                      <div>After: {targetQty.toFixed(2)} {dcSwapPicked.unit||""} {dcSwapPicked.name} × ₹{Math.round(targetRate)} = <span style={{color:"#1A1A2E",fontWeight:600}}>₹{Math.round(rowDeltaAfter).toLocaleString("en-IN")}</span></div>
                     ) : (
                       <>
                         <div>After (original): {remainingOriginalQty.toFixed(2)} {fromParent.unit||""} × ₹{Math.round(fromRate)} = ₹{Math.round(remainingOriginalQty * fromRate).toLocaleString("en-IN")}</div>
-                        <div>After (swap): {swapQty.toFixed(2)} {dcSwapPicked.unit||""} {dcSwapPicked.name} × ₹{Math.round(targetRate)} = ₹{Math.round(swapQty * targetRate).toLocaleString("en-IN")}</div>
+                        <div>After (swap): {targetQty.toFixed(2)} {dcSwapPicked.unit||""} {dcSwapPicked.name} × ₹{Math.round(targetRate)} = ₹{Math.round(targetQty * targetRate).toLocaleString("en-IN")}</div>
                         <div>Row total: <span style={{color:"#1A1A2E",fontWeight:600}}>₹{Math.round(rowDeltaAfter).toLocaleString("en-IN")}</span></div>
                       </>
                     )}
+                    {!swapConv.same && (swapConv.converted
+                      ? <div style={{fontSize:12,color:"#6B7280"}}>{swapQty.toFixed(2)} {fromParent.unit} {fromParent.name} = {targetQty.toFixed(2)} {dcSwapPicked.unit} {dcSwapPicked.name} (1 {fromParent.unit} = {piecesPerUnit(fromParent)} pcs, 1 {dcSwapPicked.unit} = {piecesPerUnit(dcSwapPicked)} pcs)</div>
+                      : <div style={{fontSize:12,color:"#B45309",fontWeight:600}}>⚠ {fromParent.unit} → {dcSwapPicked.unit}: set "pcs per unit" for {piecesPerUnit(fromParent) > 0 ? dcSwapPicked.name : fromParent.name} in IMS → Mandi, else the qty is not converted</div>)}
                     <div style={{marginTop:5,paddingTop:5,borderTop:`1px dashed ${border}`}}>
                       Row delta: <span style={{color:rowDelta >= 0 ? "#10B981" : "#EF4444",fontWeight:700}}>{rowDelta >= 0 ? "+" : ""}₹{Math.round(rowDelta).toLocaleString("en-IN")}</span>
                     </div>

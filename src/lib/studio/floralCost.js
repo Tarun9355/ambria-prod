@@ -57,7 +57,7 @@
 // "flower" rows (IMS Admin UI) — greens/real-only/mapping items have no palette picker at all,
 // so they're simply never reuse-eligible under this mechanism.
 
-import { matchFlowerPattern, sizeClassToPatternKey, normalizeSizeClass } from "../ims/flowerHelpers";
+import { matchFlowerPattern, sizeClassToPatternKey, normalizeSizeClass, convertFlowerQty } from "../ims/flowerHelpers";
 import { repeatCatFor, parseFlowerPalette, fuzzyColourMatch } from "./pricing";
 import { shiftToTiming } from "./manpowerCount";
 
@@ -633,7 +633,11 @@ export function computeFnFloralCost(fn, allFns, opts) {
     const targetId = targetParent.id;
     const targetRate = override.swapTo.toRate || targetParent.currentPrice || 0;
     const targetFlowerType = targetParent.flowerType || (targetParent.isGreen ? "green" : "flower");
-    const newQty = swapQty;
+    // The swap's qty is in the flower it came FROM; the new flower is bought in its own unit - 50 pieces of guldavari star
+    // are 2 bundles of a 25-pcs talpalm, not 50 bundles (lib/ims/flowerHelpers convertFlowerQty). A pcs-per-unit missing on
+    // either side leaves the qty as it is, as before.
+    const fromParent = resolveMandiFlower(override.swapTo.fromParentId, mandiCatalogue)?.parent;
+    const newQty = fromParent ? convertFlowerQty(swapQty, fromParent, targetParent).qty : swapQty;
     const existing = flowerAgg.get(targetId);
     const swapContrib = { elName: "↪ swapped from " + (override.swapTo.fromName || ""), zoneKey: "—", elQty: 1, perPattern: newQty, realFrac: 1, contribution: newQty, size: "—", realOnly: targetFlowerType === "real_only", isSwap: true };
     // Swapped INTO a flower the list already has on its own (Morya Patti → dandela, dandela already 5 bundles): the swap

@@ -426,3 +426,24 @@ describe("a swap into a flower already on the list stays its own row", () => {
     expect(flowerAgg.get("dandela").totalQty).toBe(10);
   });
 });
+
+describe("a swap between a piece flower and a bundle flower converts by pieces", () => {
+  const guldavari = { id: "guld", name: "guldavari star", unit: "piece", flowerType: "flower", currentPrice: 3 };
+  const talpalm = { id: "talp", name: "talpalm", unit: "bundle", gattharSize: 25, flowerType: "flower", currentPrice: 150 };
+  const fernNoSize = { id: "fern", name: "fern", unit: "bundle", flowerType: "flower", currentPrice: 80 };
+  const cat = [guldavari, talpalm, fernNoSize];
+  const p = { id: "p_g", sub: "Bunch", sizes: { medium: { flowers: [{ flowerId: "guld", qty: 50 }], extraCost: 0 } } };
+  const run = (to) => {
+    const f = fn({ zoneElements: { z: [{ name: "Bunch", patternId: "p_g", qty: 1, realPct: 100 }] }, enabledEls: { z: true },
+      floralOverrides: { rows: [{ swapTo: { fromParentId: "guld", fromName: "guldavari star", toParentId: to.id, toName: to.name, toRate: to.currentPrice, qty: 50, isSplit: false } }] } });
+    return computeFnFloralCost(f, [f], { ...baseOpts([p]), mandiCatalogue: cat });
+  };
+  it("50 pieces → 2 bundles of a 25-pcs talpalm (not 50 bundles), priced per bundle", () => {
+    const r = run(talpalm);
+    expect(r.flowerAgg.get("talp").totalQty).toBe(2);
+    expect(r.totalReal).toBeCloseTo(2 * 150);
+  });
+  it("no pcs per bundle set: the qty is left as it was", () => {
+    expect(run(fernNoSize).flowerAgg.get("fern").totalQty).toBe(50);
+  });
+});

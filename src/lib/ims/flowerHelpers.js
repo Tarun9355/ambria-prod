@@ -309,3 +309,20 @@ const RC_UNIT_LABELS = {
   trip: "/trip", event: "/event", string: "/string", included: "Included", multiplier: "× mult",
 };
 export const studioUnitLabel = (unitId) => RC_UNIT_LABELS[String(unitId || "").toLowerCase()] || (unitId ? `/${unitId}` : "");
+
+// ── PIECES ↔ BUNDLES ON A SWAP ──
+// How many pieces one unit of a mandi flower is: a "piece" flower is 1, any other unit (bundle, gatthar, kodi…) is its
+// gattharSize ("pcs per unit" in IMS → Mandi). 0 when not set - such a quantity cannot be turned into pieces.
+export const piecesPerUnit = (f) => (String(f?.unit || "").trim().toLowerCase() === "piece" ? 1 : Math.max(0, Number(f?.gattharSize) || 0));
+
+// A quantity of one flower as the same number of PIECES of another: 50 pieces of guldavari star → talpalm at 25 pcs per
+// bundle = 2 bundles. Same unit: unchanged. Different units with either pcs-per-unit unknown: unchanged, converted false -
+// the caller says so rather than pass a piece count off as bundles.
+export function convertFlowerQty(qty, from, to) {
+  const q = Number(qty) || 0;
+  const fu = String(from?.unit || "").trim().toLowerCase(), tu = String(to?.unit || "").trim().toLowerCase();
+  if (!fu || !tu || fu === tu) return { qty: q, converted: true, same: true };
+  const pf = piecesPerUnit(from), pt = piecesPerUnit(to);
+  if (!(pf > 0) || !(pt > 0)) return { qty: q, converted: false, same: false };
+  return { qty: Math.round((q * pf / pt) * 10000) / 10000, converted: true, same: false };
+}
