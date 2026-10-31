@@ -3071,7 +3071,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       </div>
     );
     // Fabric Bangali crew is driven by each zone's own tent/truss structure — a big canopy top needs
-    // its own crew, and every wall-masking + the fabric wrap around every pillar/beam (batta) adds
+    // its own crew, and every wall-masking (fabric only - truss batta is not Fabric Bangali work) adds
     // running feet that a team of workers covers together. Plain zone-by-zone list instead of the
     // config-type jargon ("full_box"/"half_box"/"u_only") the underlying calc uses — a head just
     // needs "this zone needs a canopy team" and "this many feet of wrap", not which truss shape.

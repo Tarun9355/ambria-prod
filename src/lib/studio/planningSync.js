@@ -49,8 +49,9 @@ export function planningUpcoming(eo, now = Date.now()) {
 // independently-ceiled department counts rather than a single raw total.
 // v12: the Florals detail also carries each element row's REAL flower lines (floralDetail[fn].realZones) — Deal Check's
 // own amounts (real share, real-only flowers, reuse credit) — so the Dept Ops PDF prints exactly what Deal Check shows.
-export const PLANNING_SNAPSHOT_VERSION = 12;
-const PLANNING_SNAPSHOT_SHIPPED_AT = Date.parse("2026-10-31T12:31:00Z");
+// v13: Fabric Bangali's wrap feet (manpowerDetail fabricBangali zones / count) no longer include the truss batta - fabric only.
+export const PLANNING_SNAPSHOT_VERSION = 13;
+const PLANNING_SNAPSHOT_SHIPPED_AT = Date.parse("2026-10-31T12:39:00Z");
 export const planningSnapshotOutdated = (eo) => (Number(eo?.deptSnapVer) || 1) < PLANNING_SNAPSHOT_VERSION;
 
 // Synced before, and a planning input changed after that sync (a minute of slack: the sync's own write

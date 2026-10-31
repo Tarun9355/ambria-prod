@@ -545,18 +545,10 @@ export default function DCManpowerTab({ ctx }) {
                         if (z.mkOn && mw.back && spanL > 0) { parts.push({ kind: "rft", label: `Back RFT: ${spanL} (L-span)`, rft: spanL }); zoneRft += spanL; }
                       }
 
-                      // Batta wraps every pillar + every beam this zone's truss actually has — always,
-                      // whether or not the OPTIONAL side-wall Masking above is switched on. Used to be
-                      // entirely invisible here: the whole zone was skipped unless mkOn was true.
-                      if (tInv) {
-                        try {
-                          const pv = calcZoneTrussPreview(z, tInv);
-                          const battaRft = pv?.batta?.rftWithBuffer || 0;
-                          if (battaRft > 0) { parts.push({ kind: "rft", label: `Batta RFT (wraps truss, buffered): ${battaRft}`, rft: battaRft }); zoneRft += battaRft; }
-                        } catch {}
-                      }
+                      // Truss batta (the wrap round every pillar/beam) is not counted: Fabric Bangali puts up the
+                      // fabric only (owner, 2026-10-31) - the same rule as lib/studio/manpowerCount peopleFabricBangali.
 
-                      // Skip zones with zero contribution (no top, no walls, no truss to batta-wrap)
+                      // Skip zones with zero contribution (no top, no masking walls)
                       if (zoneTop === 0 && zoneRft === 0) return;
 
                       grandTop += zoneTop;

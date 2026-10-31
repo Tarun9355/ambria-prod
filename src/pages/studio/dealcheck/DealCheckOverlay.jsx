@@ -1521,7 +1521,7 @@ export default function DealCheckOverlay({ ctx }) {
                   // Was grouped by individual FABRIC ELEMENTS (anything whose sub-category name says
                   // "wall masking"/"fabric"/"draping" and carries its own L×W) — but Fabric Bangali crew
                   // is actually driven by the ZONE's own truss/tenting structure (its shape, dimensions,
-                  // which masking walls are switched on, the batta wrap around every pillar+beam), not
+                  // which masking walls are switched on - fabric only, never the truss batta), not
                   // by picking individual decor items with dimensions of their own. Real bookings rarely
                   // have any such "element" at all, so this almost always returned sq<=0 → null — the
                   // trace explained nothing while calcPplRaw (the real headcount engine, same file,
@@ -1541,7 +1541,7 @@ export default function DealCheckOverlay({ ctx }) {
                     if (config === "full_box") { const topSqft = dL * dW; if (topSqft > 0 && fabricBangaliRanges.length > 0) { for (const r of fabricBangaliRanges) { if (topSqft <= r.upTo) { zoneTop = r.labour || 0; break; } } } if (z.mkOn) { if (mw.back && dW > 0) zoneRft += dW; if (mw.left && dL > 0) zoneRft += dL; if (mw.right && dL > 0) zoneRft += dL; } }
                     else if (config === "half_box") { const spanL = cfg.spanFt || dL || dW; if (z.mkOn) { if (mw.back && spanL > 0) zoneRft += spanL; if (mw.left && sideDepth > 0) zoneRft += sideDepth; if (mw.right && sideDepth > 0) zoneRft += sideDepth; } }
                     else if (config === "u_only") { const spanL = cfg.spanFt || dL || dW; if (z.mkOn && mw.back && spanL > 0) zoneRft += spanL; }
-                    if (tInv) { try { const pv = calcZoneTrussPreview(z, tInv); if (pv?.batta?.rftWithBuffer) zoneRft += pv.batta.rftWithBuffer; } catch {} }
+                    // no truss batta: Fabric Bangali puts up the fabric only (lib/studio/manpowerCount peopleFabricBangali)
                     if (zoneTop > 0 || zoneRft > 0) { const zLabel = zoneLabelsD[zk]?.label || (fn.customZones || []).find(cz2 => cz2.id === zk)?.name || zk; zones.push({ zone: zLabel, topSqft: Math.round(dL * dW), topLabour: zoneTop, rft: Math.round(zoneRft), ...zoneShapeMeta(z, config, cfg.spanFt) }); }
                     topTotal += zoneTop; rftTotal += zoneRft;
                   });

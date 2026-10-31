@@ -128,6 +128,16 @@ describe("computePeopleRaw — Fabric Bangali", () => {
     const ctx = { ...baseCtx(), fabricBangaliRanges: [{ upTo: 50, labour: 2 }, { upTo: 150, labour: 4 }] };
     expect(computePeopleRaw(fn({ zoneConfig }), "Fabric Bangali", ctx)).toBe(4);
   });
+
+  it("counts the fabric only - never the truss batta, even with a real truss that has batta", () => {
+    const trussInv = { settings: { pillarWidthFt: 0.75, maxSpanFt: 30, defaultBackDepthFt: 4, backDepthRange: [3, 5] }, rates: {}, batta: { bufferPct: 10 } };
+    const ctx = { ...baseCtx(), trussInv, fabricRftPerWorker: 10 };
+    // no masking: nothing to wrap, so no Fabric Bangali at all (batta used to add its pillar/beam feet here)
+    expect(computePeopleRaw(fn({ zoneConfig: { stage: { dims: { L: 12, W: 12, H: 10 } } } }), "Fabric Bangali", ctx)).toBe(0);
+    // masking on: only the walls - back 12 + left 12 + right 12 = 36 ft -> ceil(36/10) = 4
+    const masked = { stage: { dims: { L: 12, W: 12, H: 10 }, mkOn: true, mkWalls: { back: true, left: true, right: true } } };
+    expect(computePeopleRaw(fn({ zoneConfig: masked }), "Fabric Bangali", ctx)).toBe(4);
+  });
 });
 
 describe("computePeopleRaw — Truss Labour", () => {

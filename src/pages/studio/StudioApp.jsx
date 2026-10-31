@@ -6110,7 +6110,7 @@ export default function StudioApp() {
       }
       if (type === "Fabric Bangali") {
         // Crew is driven by the ZONE's own truss/tenting structure (shape, dims, which masking
-        // walls are on, the batta wrap around every pillar+beam) — not by picking individual decor
+        // walls are on - fabric only, never the truss batta) — not by picking individual decor
         // items with dimensions of their own (real bookings rarely have any such "element" at all).
         const zc = fn.zoneConfig || {}, en = fn.enabledEls || {};
         const engBackDepth = Number(d.trussInv?.settings?.defaultBackDepthFt) || 4;
@@ -6134,7 +6134,7 @@ export default function StudioApp() {
             const spanL = cfg.spanFt || dL || dW;
             if (z.mkOn && mw.back && spanL > 0) zoneRft += spanL;
           }
-          if (tInv) { try { const pv = calcZoneTrussPreview(z, tInv); if (pv?.batta?.rftWithBuffer) zoneRft += pv.batta.rftWithBuffer; } catch { /* zone has no resolvable truss preview */ } }
+          // no truss batta: Fabric Bangali puts up the fabric only (lib/studio/manpowerCount peopleFabricBangali)
           if (zoneTop > 0 || zoneRft > 0) { const zLabel = zoneLabelsD[zk]?.label || (fn.customZones || []).find(cz => cz.id === zk)?.name || zk; zones.push({ zone: zLabel, topSqft: Math.round(dL * dW), topLabour: zoneTop, rft: Math.round(zoneRft), ...zoneShapeMeta(z, config, cfg.spanFt) }); }
           topTotal += zoneTop; rftTotal += zoneRft;
         });

@@ -253,10 +253,10 @@ function peopleTier3Labours(fn, ctx) {
 }
 
 // Top sqft is a per-zone range-table lookup (a canopy is a physical panel, one zone's
-// doesn't average against another's). Side-wall RFT (masking, opt-in per zone) + batta
-// RFT (wraps every pillar/beam, ALWAYS, regardless of the optional masking toggle) are
-// summed across every zone FIRST, then divided by fabricRftPerWorker and ceiled ONCE —
-// ceiling each zone's own RFT independently throws away real leftover capacity.
+// doesn't average against another's). Side-wall RFT (masking, opt-in per zone) is summed
+// across every zone FIRST, then divided by fabricRftPerWorker and ceiled ONCE — ceiling each
+// zone's own RFT independently throws away real leftover capacity. Truss batta (the wrap round
+// every pillar/beam) is NOT counted: Fabric Bangali puts up the fabric only (owner, 2026-10-31).
 function peopleFabricBangali(fn, ctx) {
   let topTotal = 0, rftTotal = 0;
   const zc = fn.zoneConfig || {}, en = fn.enabledEls || {};
@@ -283,7 +283,6 @@ function peopleFabricBangali(fn, ctx) {
       const spanL = cfg.spanFt || dL || dW;
       if (z.mkOn && mw.back && spanL > 0) zoneRft += spanL;
     }
-    if (ctx.trussInv) { try { const pv = calcZoneTrussPreview(z, ctx.trussInv); if (pv?.batta?.rftWithBuffer) zoneRft += pv.batta.rftWithBuffer; } catch { /* zone has no resolvable truss preview */ } }
     rftTotal += zoneRft;
   });
   return topTotal + (rftTotal > 0 ? Math.ceil(rftTotal / ctx.fabricRftPerWorker) : 0);
