@@ -6775,7 +6775,11 @@ export default function StudioApp() {
   // venue's `parent` (i.e. it groups its own rooms, so it functions as a property even though the
   // data model stores it as a flat venue entry too). Tagging/filter-chip UIs should offer only these
   // plus the property row, not both a property AND that same name again as a "sub-venue".
-  const leafInhouseVenues = useMemo(() => allInhouseVenues.filter(v => !inhouseParentNames.includes(v)), [allInhouseVenues, inhouseParentNames]);
+  // Every bookable in-house room - exactly what Event Info's venue dropdown offers (allInhouseGroups' rooms). It used to
+  // leave out any room whose name is also a property's, so a property whose room carries its own name - Pushpanjali →
+  // Pushpanjali - vanished from the photo Tags and Build's venue chips altogether (owner ask 2026-10-31). A property itself
+  // (Restro) is not a room and was never in this list.
+  const leafInhouseVenues = allInhouseVenues;
 
   // ═══ SUPABASE STORAGE PHOTO BROWSER (was Cloudinary) ═══
   // Same folder-tree UI, different backend: the `media` bucket, listed through the /upload Edge
