@@ -4025,7 +4025,18 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     // prints twice (owner ask), so the zone page shows the item only.
     const flowerRows = () => "";
     // The paint line takes its 20px out of the photo.
-    const flLines = (it) => (it.paint?.size ? 1 : 0) + (it.extra || []).length;
+    // So does every line of the name past the two the card is laid out for: a long name ("Round Metal Ring Arch on
+    // Stand - Large (approx 5ft diameter)") wrapped to three, pushed the last row out past the card's fixed 300px,
+    // and the arrow below drew straight through it. Wrapped word by word at ~26 characters, the width of a line of
+    // the 13.5px name in the 202px the card gives it.
+    const nameLines = (name) => {
+      let lines = 1, len = 0;
+      for (const w of String(name || "").split(/\s+/).filter(Boolean)) {
+        if (len && len + 1 + w.length > 26) { lines++; len = w.length; } else len += (len ? 1 : 0) + w.length;
+      }
+      return lines;
+    };
+    const flLines = (it) => (it.paint?.size ? 1 : 0) + (it.extra || []).length + Math.max(0, nameLines(it.name) - 2);
     const card = (it, zone, num) => `
       ${it.photo ? `<div class="zc-ph" style="${bgCss(it.photo, 180)}${flLines(it) ? `height:${168 - flLines(it) * 20}px` : ""}" ${bgData(it.photo, 180)}></div>` : ""}
       ${num ? `<div class="zc-no">${num}</div>` : ""}
