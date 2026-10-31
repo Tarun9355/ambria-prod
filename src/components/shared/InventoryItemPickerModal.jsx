@@ -58,8 +58,8 @@ export default function InventoryItemPickerModal({
                 const unit = String(it.unit || "").trim();
                 // the count sits on the photo's top-left corner (owner ask): green while some are free, red when none is
                 const count = free == null
-                  ? { t: `${owned} owned`, bg: "rgba(17,24,39,0.82)" }
-                  : { t: `${free} available`, bg: free > 0 ? "#059669" : "#DC2626" }; // only what is available on the date (owner ask) - owned is in the tooltip
+                  ? { t: String(owned), bg: "rgba(17,24,39,0.82)" }
+                  : { t: String(free), bg: free > 0 ? "#059669" : "#DC2626" }; // just the number available on the date (owner ask) - the rest is in the tooltip
                 const countTip = free == null ? `${owned}${unit ? " " + unit : ""} in IMS`
                   : `${free}${unit ? " " + unit : ""} free${dateLabel ? ` on ${dateLabel}` : " on the event date"} (after other events and the rest of this deal) · ${owned} owned`;
                 return (
