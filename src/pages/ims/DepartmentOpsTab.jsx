@@ -31,6 +31,7 @@ import FabricBlock from "./FabricBlock.jsx";
 import { buildFabricGroups, foldFabricLines } from "../../lib/ims/fabricGroups";
 import { mandiHow } from "../../lib/ims/floralHow";
 import { buildEventSwap, swappedRecipeFlower } from "../../lib/ims/mandiSwap";
+import { realLineTaker } from "../../lib/ims/floralBook";
 
 // ── THE OFFICIAL LOGO, READY FOR THE PDF ──
 // ambria-logo.png is a WHITE wordmark with a gold dot and gold "DESIGN & DECOR", on a transparent
@@ -3902,7 +3903,11 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           // artificial share goes out as artificial bunches (listed in the same block), so the full recipe
           // amount here counted it twice and disagreed with Deal Check (2.5 bundles printed where Deal Check
           // and the mandi list say 0.75 at 30% real).
-          const sizeData = pat?.sizes?.[resolveSizeKey(pat.sizes, sizeClassToPatternKey(rawSize || "B"))];
+          // The recipe size Deal Check works the flowers at (lib/studio/floralCost): an inventory-item element at its size, B when
+          // unset; a recipe-only element at its size only for an S/M/B recipe, M when unset - any other recipe at medium.
+          const dcSize = (el?.invId && invById.get(String(el.invId))) ? sizeClassToPatternKey(rawSize || "B")
+            : pat?.mode === "smb" ? sizeClassToPatternKey(rawSize || "M") : "medium";
+          const sizeData = pat?.sizes?.[resolveSizeKey(pat.sizes, dcSize)];
           const recipe = (sizeData?.flowers || []).map(fl => {
             if (fl?.invItemId) { const ing = invById.get(String(fl.invItemId)); return ing ? { name: ing.name, qty: Number(fl.qty) || 0, unit: ing.unit || "", full: true } : null; }
             const mf = resolveMandiFlower(fl?.flowerId, mandiCatalogue)?.parent;
@@ -4281,15 +4286,25 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         return [...(fl > 0 ? [{ name: "Artificial flowers", qty: fl, unit: "bunches" }] : []), ...(gr > 0 ? [{ name: "Artificial greens", qty: gr, unit: "bunches" }] : [])];
       };
       const takeArt = (name) => { const k = artKey(name), list = artLeft.get(k) || []; artLeft.delete(k); return artLines(list); };
+      // ── REAL FLOWERS AS DEAL CHECK HAS THEM ──
+      // Deal Check's own real flower lines per element row (floralDetail[fn].realZones, snapshot v12): the real share, real-only
+      // flowers at full, the reuse credit taken off, the recipe's inventory ingredients - so a line here is the number Deal Check
+      // shows. This event's mandi swaps (made in IMS) are applied on top, as before. Matched by name, like the bunches above; an
+      // element the snapshot does not know yet (added since Deal Check last ran) falls back to its recipe worked out here.
+      const realTaker = realLineTaker(sel?.floralDetail?.[pg.fnIdx]?.realZones, pg.zk, eventSwap);
       (pg.items || []).forEach(it => {
         const art = !combined && it.mix ? takeArt(it.name) : [];
-        if (!combined && ((Array.isArray(it.recipe) && it.recipe.length) || art.length)) {
-          // The flower lines are the REAL flowers - the recipe times the piece's real share, the same amount Deal Check and the
-          // mandi list have (they printed the whole recipe, 2.5 where Deal Check said 0.75 at 30% real). The artificial share
-          // follows as the "Artificial flowers / greens" bunches; the header still says the full mix.
+        const snapReal = !combined && it.mix && realTaker.has(it.name) ? realTaker.take(it.name) : null;
+        if (!combined && ((Array.isArray(it.recipe) && it.recipe.length) || art.length || (snapReal && snapReal.length))) {
+          // The flower lines are the REAL flowers - the amount Deal Check and the mandi list have (the whole recipe used to print,
+          // 2.5 where Deal Check said 0.75 at 30% real). Without a snapshot line: the recipe times the piece's real share, real-only
+          // flowers and inventory ingredients at full. The artificial share follows as the bunches; the header still says the mix.
           const tag = !it.mix ? "" : "Real";
           const realShare = typeof it.realPct === "number" ? it.realPct / 100 : 1;
-          const parts = [...(it.recipe || []).map(f => ({ name: f.name, qty: Math.round((Number(f.qty) || 0) * (Number(it.qty) || 0) * (f.full ? 1 : realShare) * 100) / 100, unit: f.unit, tag })).filter(f => f.qty > 0), ...art];
+          const realParts = snapReal
+            ? snapReal.map(f => ({ ...f, tag }))
+            : (it.recipe || []).map(f => ({ name: f.name, qty: Math.round((Number(f.qty) || 0) * (Number(it.qty) || 0) * (f.full ? 1 : realShare) * 100) / 100, unit: f.unit, tag }));
+          const parts = [...realParts.filter(f => f.qty > 0), ...art];
           if (parts.length) blocks.push({ h: detailH(parts), html: detailCard("🌸", it.name, it.qty, it.unit, parts, it.mix) });
         }
         if (it.kit > 0) {

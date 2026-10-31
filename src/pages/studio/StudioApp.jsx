@@ -5925,6 +5925,12 @@ export default function StudioApp() {
       direct: Object.values(direct).map(d => ({ ...d, qty: rnd(d.qty), cost: Math.round(d.cost) })),
       // artificial bunches per element row, with its zone - the Dept Ops PDF lists them on each zone's own page
       artZones: eb.filter(e => (e.artBunchesFlower || 0) > 0 || (e.artBunchesGreen || 0) > 0).map(e => ({ zone: e.zoneKey, el: e.name, qty: rnd(e.qty), flower: rnd(e.artBunchesFlower, 10), green: rnd(e.artBunchesGreen, 10) })),
+      // the real flowers per element row, with its zone, exactly as Deal Check works them (real share, real-only flowers at
+      // full, reuse credit taken off) plus the recipe's inventory ingredients - the Dept Ops PDF prints these on the zone pages
+      realZones: eb.filter(e => !e.isInvOnlyNoPattern).map(e => ({ zone: e.zoneKey, el: e.name,
+        lines: [...(e.realLines || []).map(l => ({ name: l.name, qty: Number(l.qty) || 0, unit: l.unit || "" })),
+          ...(e.artLines || []).filter(l => l.invItem).map(l => ({ name: l.name, qty: Number(l.qty) || 0, unit: l.unit || "" }))].filter(l => l.qty > 0) }))
+        .filter(z => z.lines.length),
       uncosted: (r.uncosted || []).map(u => ({ name: u.name, zone: u.zoneKey, qty: u.qty, reason: u.reason })),
       elements: elements.map(g => ({ ...g, zones: [...new Set(g.zones)], qty: rnd(g.qty), real: Math.round(g.real), art: Math.round(g.art), total: Math.round(g.total), invCost: Math.round(g.invCost) })),
     };

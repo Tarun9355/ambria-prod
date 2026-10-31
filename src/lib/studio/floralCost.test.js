@@ -354,3 +354,34 @@ describe("buildMandiBreakdown", () => {
     expect(buildMandiBreakdown(flowerAgg)).toHaveLength(0);
   });
 });
+
+// Cross-check for the Dept Ops Floral PDF (DepartmentOpsTab zoneDetailPages): when it has no Deal Check snapshot line it works a
+// flower line out as recipe qty × piece qty × real share, with real-only flowers at full. These pin that Deal Check's own realLines
+// are exactly that, so the PDF and Deal Check cannot drift apart (they did: 2.5 bundles printed where Deal Check said 0.75).
+describe("real flower lines — the amount the Dept Ops PDF prints", () => {
+  const carnation = { id: "carn", name: "carnation himachal", unit: "bundle", flowerType: "flower", artificialBunchesPerUnit: 4 };
+  const fern = { id: "fern", name: "Fern", unit: "bundle", flowerType: "real_only" };
+  const cat = [carnation, fern];
+  const pot = { id: "p_pot", sub: "Flower Pot", mode: "smb", sizes: { big: { flowers: [{ flowerId: "carn", qty: 1.25 }, { flowerId: "fern", qty: 0.5 }], extraCost: 0 }, medium: { flowers: [{ flowerId: "carn", qty: 0.6 }], extraCost: 0 } } };
+  const run = (el) => {
+    const f = fn({ zoneElements: { btr: [el] }, enabledEls: { btr: true } });
+    const r = computeFnFloralCost(f, [f], { ...baseOpts([pot]), mandiCatalogue: cat });
+    const e = r.elementBreakdown.find((x) => x.zoneKey === "btr");
+    return Object.fromEntries((e?.realLines || []).map((l) => [l.name, Math.round(l.qty * 100) / 100]));
+  };
+  it("Terracotta pot, 2 pieces at 30% real: carnation 1.25 × 2 × 0.3 = 0.75 (not 2.5)", () => {
+    expect(run({ name: "Terracotta Fibre Pot", patternId: "p_pot", qty: 2, size: "B", realPct: 30 })["carnation himachal"]).toBe(0.75);
+  });
+  it("a real-only flower stays at its full amount whatever the mix", () => {
+    expect(run({ name: "Terracotta Fibre Pot", patternId: "p_pot", qty: 2, size: "B", realPct: 30 }).Fern).toBe(1);
+  });
+  it("100% real is the whole recipe; 0% real has no real flower but the real-only one", () => {
+    expect(run({ name: "Pot", patternId: "p_pot", qty: 2, size: "B", realPct: 100 })["carnation himachal"]).toBe(2.5);
+    const art = run({ name: "Pot", patternId: "p_pot", qty: 2, size: "B", realPct: 0 });
+    expect(art["carnation himachal"] || 0).toBe(0);
+    expect(art.Fern).toBe(1);
+  });
+  it("the size is the element's own for an S/M/B recipe", () => {
+    expect(run({ name: "Pot", patternId: "p_pot", qty: 2, size: "M", realPct: 100 })["carnation himachal"]).toBe(1.2);
+  });
+});
