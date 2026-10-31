@@ -751,7 +751,7 @@ function DeptIncomeModal({ eo, depts, startDept, onClose }) {
   );
 }
 
-export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEventOrders, inventory, setInventory, blocks, settings, setSettings, trussInv, setTrussInv, authUser, amendRequests, focusEventId, focusSearch, focusLeadEntry, onFocusHandled, onGoToCalendar, autoPdfFor, onAutoPdfDone, supervisors = [] }) {
+export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEventOrders, inventory, setInventory, blocks, settings, setSettings, trussInv, setTrussInv, authUser, amendRequests, focusEventId, focusSearch, focusLeadEntry, onFocusHandled, onGoToCalendar, autoPdfFor, onAutoPdfDone, supervisors = [], rateCardCategories = [] }) {
   const catDeptCfg = (settings && settings.categoryDepartments && typeof settings.categoryDepartments === "object") ? settings.categoryDepartments : {};
   const catToDept = (cat) => sharedCatToDept(cat, catDeptCfg);
   // A labour usage row belongs to the department Deal Check charged it to (ur.dept — the item's own
@@ -1132,6 +1132,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   // Which departments actually have something to report on this event — the same gate the
   // report itself uses (hasDeptSnapshot / blockedItemsGrouped both key off deptInventory[dept]).
   // A combined book skips an empty department rather than printing a cover with nothing behind it.
+  // Sub-category -> floral mode (real / artificial / blend), IMS Rate Card's own setting; the PDF's flower cards read it.
+  const floralModeBySub = useMemo(() => new Map((rateCardCategories || []).map(r => [String(r?.id ?? "").trim().replace(/\s+/g, " ").toLowerCase(), r?.floral_mode])), [rateCardCategories]);
   const deptsWithWork = useMemo(() =>
     deptOptions.filter(d => Array.isArray(sel?.deptInventory?.[d]) && sel.deptInventory[d].length > 0),
     [deptOptions, sel]);
@@ -3847,7 +3849,19 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           // tell an unsized item from an unset one, and a wrong size is worse than none.
           const rawSize = String(el?.size || "").trim().toUpperCase();
           const elSize = SMB_LABEL[rawSize] || (!rawSize && el?.patternId ? SMB_LABEL.B : "");
-          const key = (arranged ? "o:" + (el?.pid || ei) : invU ? "i:" + invU.id : "n:" + (decName || nm)) + (elSize ? "|" + elSize : "");
+          // ── REAL OR ARTIFICIAL ── a flower piece says which it is made as, worked out the way Studio prices it
+          // (getElPriceFromPattern): the element's own % first, else its sub-category's floral mode (IMS Rate Card),
+          // else the function's floral slider (floralRatio = the artificial share, 70 when never set).
+          const pat = (el?.patternId && flowerPatterns.find(fp => fp?.id === el.patternId)) || (inv && matchFlowerPattern(inv, flowerPatterns)) || null;
+          let floralMix = "";
+          if (pat) {
+            const subMode = floralModeBySub.get(String(pat.sub ?? "").trim().replace(/\s+/g, " ").toLowerCase());
+            const fnArt = typeof fn?.floralRatio === "number" ? fn.floralRatio : 70;
+            const real = (typeof el?.realPct === "number" && el.realPct >= 0 && el.realPct <= 100) ? Math.round(el.realPct)
+              : subMode === "real" ? 100 : subMode === "artificial" ? 0 : Math.max(0, Math.min(100, Math.round(100 - fnArt)));
+            floralMix = real >= 100 ? "Real" : real <= 0 ? "Artificial" : `Artificial ${100 - real}% · Real ${real}%`;
+          }
+          const key = (arranged ? "o:" + (el?.pid || ei) : invU ? "i:" + invU.id : "n:" + (decName || nm)) + (elSize ? "|" + elSize : "") + (floralMix ? "|" + floralMix : "");
           const prev = merged.get(key);
           const qty = Number(el?.qty) || 1;
           // Paint the build asked for on this item, carried on its own card so the item's
@@ -3867,7 +3881,6 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           // inventory item's sub-category (matchFlowerPattern) — at the same size, B when unset.
           // Kept PER UNIT; the card multiplies by the zone's summed qty. The full recipe amount,
           // not the real/artificial split: that is how much goes into the piece.
-          const pat = (el?.patternId && flowerPatterns.find(fp => fp?.id === el.patternId)) || (inv && matchFlowerPattern(inv, flowerPatterns)) || null;
           const sizeData = pat?.sizes?.[resolveSizeKey(pat.sizes, sizeClassToPatternKey(rawSize || "B"))];
           const recipe = (sizeData?.flowers || []).map(fl => {
             if (fl?.invItemId) { const ing = invById.get(String(fl.invItemId)); return ing ? { name: ing.name, qty: Number(fl.qty) || 0, unit: ing.unit || "" } : null; }
@@ -3882,7 +3895,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
             return { name: mf.name, qty: baseQty, unit: mf.unit || "" };
           }).filter(f => f && f.qty > 0);
           // a recipe with no inventory item shows the picture of its size, as Build does (photo below)
-          merged.set(key, { name: arranged ? `${el?.name || inv?.name || "Item"} — arranged separately` : (invU?.name || decName || el?.name || held?.name || "Item"), qty, unit, deptTag, photo: arranged ? "" : (invPhoto(invU, invU === inv ? held : null) || (!invU && sizeData?.img) || ""), dims: arranged ? "" : invDims(invU), extra: choiceExtra || undefined, size: elSize, kit: held?.isKit ? (Array.isArray(held.components) ? held.components.length : 0) + (Array.isArray(held.recipeParts) ? held.recipeParts.length : 0) : 0, recipe, paint: addPaint(new Map(), paint) });
+          merged.set(key, { name: arranged ? `${el?.name || inv?.name || "Item"} — arranged separately` : (invU?.name || decName || el?.name || held?.name || "Item"), qty, unit, deptTag, photo: arranged ? "" : (invPhoto(invU, invU === inv ? held : null) || (!invU && sizeData?.img) || ""), dims: arranged ? "" : invDims(invU), extra: (choiceExtra || floralMix) ? [...(choiceExtra || []), ...(floralMix ? [["Flowers", floralMix]] : [])] : undefined, size: elSize, kit: held?.isKit ? (Array.isArray(held.components) ? held.components.length : 0) + (Array.isArray(held.recipeParts) ? held.recipeParts.length : 0) : 0, recipe, paint: addPaint(new Map(), paint) });
         });
         const items = [...merged.values()];
         const zPhoto = fn.elSelectedPhoto?.[zk]?.src || "";
