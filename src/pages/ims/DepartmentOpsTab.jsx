@@ -927,7 +927,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     carpetPlanCache = planCarpets({ floors, itemsById, blocks, eventId: sel?.id, choice: sel?.deptOps?.Tenting?.carpetChoice || {}, eventOrders });
     return carpetPlanCache;
   };
-  // ── OVERLAY / CUSHION COVER CHOICES ── the same idea for the Fabric head: sales names up to four designs for an overlay or a cushion
+  // ── OVERLAY / CUSHION COVER CHOICES ── the same idea for the Fabric head: sales names up to three designs for an overlay or a cushion
   // cover; Planning decides the one design used for the whole quantity (deptOps.Fabric.itemChoice, IMS-owned).
   const zoneLabelFor = (fn, zk) => fn?.zoneNames?.[zk] || ZONE_META[zk]?.label || String(zk).replace(/[_-]+/g, " ").replace(/\b\w/g, c => c.toUpperCase());
   let elementPlanCache = null;
@@ -3834,7 +3834,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
               choiceExtra = [["Design", "Chosen in Planning"]];
             } else choiceExtra = [["Choice", "1st choice (not decided)"]];
           }
-          // Deal Check's PDF lists what sales asked for: every design, 1st to 4th, each as its own card with its photo (like the carpets).
+          // Deal Check's PDF lists what sales asked for: every design, 1st to 3rd, each as its own card with its photo (like the carpets).
           if (prow && pdfAllCarpetsRef.current) {
             const RANKS = ["1st", "2nd", "3rd", "4th"];
             // 1st choice only (owner ask 2026-10-31) - same as the carpets.
@@ -7372,7 +7372,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                   <span aria-hidden="true" className="shrink-0 w-9 h-9 rounded-lg bg-white shadow-[0_1px_3px_rgba(15,23,42,0.12),0_4px_10px_-4px_rgba(15,23,42,0.22)] flex items-center justify-center text-base leading-none">🟥</span>
                   <div className="min-w-0 flex-1">
                     <div className="text-[15px] font-semibold text-gray-900">Carpet plan</div>
-                    <div className="text-xs text-gray-500">Sales picked up to four carpets for each floor. Check what is free on the day and choose the one that goes down.</div>
+                    <div className="text-xs text-gray-500">Sales picked up to three carpets for each floor. Check what is free on the day and choose the one that goes down.</div>
                   </div>
                 </div>
                 <div className="p-3 sm:p-4 space-y-3">
@@ -7396,7 +7396,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                           <span className={"ml-auto text-[11px] font-semibold px-2 py-0.5 rounded-full ring-1 " + chip.c}>{chip.t}</span>
                         </div>
                         {r.options.length === 0 ? (
-                          <div className="mt-2 text-xs text-gray-500">Nothing to choose from yet — ask sales to pick up to four carpets in Build (Platform → Carpet).</div>
+                          <div className="mt-2 text-xs text-gray-500">Nothing to choose from yet — ask sales to pick up to three carpets in Build (Platform → Carpet).</div>
                         ) : (
                           <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
                             {r.options.map(o => {

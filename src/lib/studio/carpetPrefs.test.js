@@ -15,10 +15,10 @@ describe("prefsOf", () => {
   it("a floor saved before preferences existed has its single pick as the one preference", () => {
     expect(prefsOf({ cpInvId: "A", cpInvName: "Maroon", cpInvFree: 100 })).toEqual([A]);
   });
-  it("a saved list comes back in rank order, at most four, no repeats", () => {
+  it("a saved list comes back in rank order, at most three, no repeats", () => {
     const row = { cpPrefs: [A, B, C, D, { id: "E", name: "y", free: 1 }, A], cpInvId: "A" };
-    expect(prefsOf(row).map((p) => p.id)).toEqual(["A", "B", "C", "D"]);
-    expect(CARPET_PREF_MAX).toBe(4);
+    expect(prefsOf(row).map((p) => p.id)).toEqual(["A", "B", "C"]);
+    expect(CARPET_PREF_MAX).toBe(3);
   });
   it("an older writer that changed cpInvId alone: the new pick leads, the rest follow", () => {
     expect(prefsOf({ cpPrefs: [A, B], cpInvId: "B", cpInvName: "Grey", cpInvFree: 300 }).map((p) => p.id)).toEqual(["B", "A"]);
@@ -38,9 +38,10 @@ describe("prefsPatch", () => {
     expect(row.cpInvId).toBe("A");
     expect(row.cpInvName).toBe("Maroon");
     expect(row.cpInvFree).toBe(100);
-    expect(prefsStatus(row)).toEqual({ count: 3, max: 4, complete: false });
+    expect(prefsStatus(row)).toEqual({ count: 3, max: 3, complete: true });
+    // there is no 4th slot: a pick past the end replaces the last choice, the list stays at three
     row = { ...row, ...prefsPatch(row, 3, D) };
-    expect(prefsStatus(row)).toEqual({ count: 4, max: 4, complete: true });
+    expect(prefsStatus(row)).toEqual({ count: 3, max: 3, complete: true });
   });
   it("clicking the 3rd slot while only one is picked puts it next in line (no gap)", () => {
     const row = prefsPatch({}, 0, A);
@@ -84,11 +85,11 @@ describe("setPrefsPatch — all of them chosen in one go", () => {
     expect(p.cpInvName).toBe("Grey");
     expect(p.cpInvFree).toBe(300);
   });
-  it("more than four keeps the first four; repeats and junk are dropped", () => {
-    expect(setPrefsPatch([A, A, {}, B, C, D, { id: "E", name: "x", free: 1 }]).cpPrefs.map((x) => x.id)).toEqual(["A", "B", "C", "D"]);
+  it("more than three keeps the first three; repeats and junk are dropped", () => {
+    expect(setPrefsPatch([A, A, {}, B, C, D, { id: "E", name: "x", free: 1 }]).cpPrefs.map((x) => x.id)).toEqual(["A", "B", "C"]);
   });
-  it("all four fit and keep their order", () => {
-    expect(setPrefsPatch([D, C, B, A]).cpPrefs.map((x) => x.id)).toEqual(["D", "C", "B", "A"]);
+  it("three fit and keep their order", () => {
+    expect(setPrefsPatch([D, C, B]).cpPrefs.map((x) => x.id)).toEqual(["D", "C", "B"]);
   });
   it("one pick is just a 1st choice", () => {
     expect(setPrefsPatch([C]).cpPrefs).toHaveLength(1);

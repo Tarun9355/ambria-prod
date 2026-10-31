@@ -10,8 +10,8 @@
 
 import { elementAfterPick } from "./elementPick.js";
 
-export const ELEMENT_PREF_MAX = 4;
-export const ELEMENT_PREF_LABELS = ["1st choice", "2nd choice", "3rd choice", "4th choice"];
+export const ELEMENT_PREF_MAX = 3;
+export const ELEMENT_PREF_LABELS = ["1st choice", "2nd choice", "3rd choice"];
 
 const norm = (v) => String(v || "").trim().toLowerCase();
 
@@ -70,7 +70,7 @@ export function applyChoicePicks(el, picks, items, makeId) {
 }
 
 // ── CHOICES FOR A PART INSIDE A KIT ──
-// A kit element lists its parts ({ itemId, qty }, in el.kitOverrides once edited); a part that is an overlay or a cushion cover can name up to four designs
+// A kit element lists its parts ({ itemId, qty }, in el.kitOverrides once edited); a part that is an overlay or a cushion cover can name up to three designs
 // the same way an element can. The part's own item (itemId) is the 1st choice - what is priced and held - and `prefs` / `pid` sit on the part.
 export function partChoices(part) {
   return elementChoices(part ? { invId: part.itemId, prefs: part.prefs } : null);

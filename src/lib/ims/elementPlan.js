@@ -1,4 +1,4 @@
-// Planning's plan for overlays and cushion covers. Sales names up to four designs for an element (lib/studio/elementPrefs); here the
+// Planning's plan for overlays and cushion covers. Sales names up to three designs for an element (lib/studio/elementPrefs); here the
 // Fabric head sees each element's designs with what is actually free on the event date, and decides ONE design for the whole quantity.
 // The decision is IMS-owned (deptOps.Fabric.itemChoice[key]), so every Studio sync leaves it alone. Same shape as the carpet plan
 // (carpetPlan.js), minus everything about laying a carpet: nothing here stays down between events, so there is no same-venue reuse.

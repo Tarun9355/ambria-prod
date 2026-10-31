@@ -27,10 +27,10 @@ describe("elementChoices", () => {
     expect(hasChoices({ invId: "A" })).toBe(false);
     expect(elementChoices(null)).toEqual([]);
   });
-  it("the list in rank order, up to four, no repeats", () => {
+  it("the list in rank order, up to three, no repeats", () => {
     const el = { invId: "A", prefs: [P("A"), P("B"), P("B"), P("C"), P("D"), P("E")] };
-    expect(elementChoices(el).map((p) => p.id)).toEqual(["A", "B", "C", "D"]);
-    expect(ELEMENT_PREF_MAX).toBe(4);
+    expect(elementChoices(el).map((p) => p.id)).toEqual(["A", "B", "C"]);
+    expect(ELEMENT_PREF_MAX).toBe(3);
   });
   it("a single entry is not 'choices'", () => {
     expect(elementChoices({ invId: "A", prefs: [P("A")] })).toEqual([]);
@@ -65,9 +65,9 @@ describe("withChoices", () => {
     const n = withChoices({ invId: "A" }, [P("B"), P("C")], () => "p");
     expect("prefs" in n).toBe(false);
   });
-  it("caps at four and removes repeats and junk", () => {
+  it("caps at three and removes repeats and junk", () => {
     const n = withChoices({ invId: "A" }, [P("A"), P("A"), {}, P("B"), P("C"), P("D"), P("E")], () => "p");
-    expect(n.prefs.map((p) => p.id)).toEqual(["A", "B", "C", "D"]);
+    expect(n.prefs.map((p) => p.id)).toEqual(["A", "B", "C"]);
   });
   it("never changes the element it was given", () => {
     const e = { invId: "A", qty: 5 };

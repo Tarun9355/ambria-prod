@@ -278,10 +278,10 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
                   })()}
                   {cItemIsKit && <span style={{ color: indigo, fontWeight: 700, display: "flex" }}><IconBox size={11}/></span>}
                   {cItem && onCheckChoices && itemTakesChoices(cItem) && (
-                    // An overlay or a cushion cover inside the kit: the stock icon names up to four designs in order of preference (Planning decides which one is used),
+                    // An overlay or a cushion cover inside the kit: the stock icon names up to three designs in order of preference (Planning decides which one is used),
                     // exactly as it does on an element of its own.
                     <span onClick={() => onCheckChoices(cItem, c, (picks) => setComps(comps.map((x, i) => (i === ci ? applyPartChoicePicks(x, picks) : x))), { need: qtyEach * qtyMultiplier })}
-                      title="Check what is free and name up to 4 designs for this part in order of preference - Planning decides which one is used" style={{ cursor: "pointer", fontSize: 12, opacity: 0.5, padding: "0 1px", lineHeight: 1 }}><IconBox size={12}/></span>
+                      title="Check what is free and name up to 3 designs for this part in order of preference - Planning decides which one is used" style={{ cursor: "pointer", fontSize: 12, opacity: 0.5, padding: "0 1px", lineHeight: 1 }}><IconBox size={12}/></span>
                   )}
                   {cItem && onCheckAvailability && !(onCheckChoices && itemTakesChoices(cItem)) && (
                     <span onClick={() => onCheckAvailability(cItem, (picked) => { if (picked) setComps(comps.map((x, i) => i === ci ? { ...x, itemId: picked.id } : x)); }, {
@@ -328,7 +328,7 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
               {cItem && onCheckChoices && itemTakesChoices(cItem) && partChoices(c).length < 2 && (
                 <div style={{ margin: "2px 0 4px 28px" }}>
                   <span role="button" tabIndex={0} onClick={() => onCheckChoices(cItem, c, (picks) => setComps(comps.map((x, i) => (i === ci ? applyPartChoicePicks(x, picks) : x))), { need: qtyEach * qtyMultiplier })}
-                    title="No alternative designs named - tap to pick up to 4 in order of preference. Planning decides which one is used."
+                    title="No alternative designs named - tap to pick up to 3 in order of preference. Planning decides which one is used."
                     style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 700, color: "#EF4444", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.35)", borderRadius: 6, padding: "2px 8px", cursor: "pointer" }}>● Not selected preference</span>
                 </div>
               )}
