@@ -1534,9 +1534,14 @@ export default function StudioEventInfo({ ctx }) {
                     </div>
                   ) : null;
                   // ── Studio clientLedger matches — shown ALONGSIDE LMS, not only when LMS is empty ──
+                  // Word by word, spacing ignored - the same way "Copy a build" finds a client. A whole-phrase match missed
+                  // a stored name with a double or odd space in it ("Pushpanjali  LUX" looks the same on screen), so typing
+                  // the name exactly said "No matching … Studio client" while Copy a build listed it.
+                  const nameWords = qName.split(/\s+/).filter(Boolean);
                   const matchesBeforeRepFilter = clientLedger.filter(c => {
                     if (!c.name) return false;
-                    const nameMatch = qName.length >= 2 && c.name.toLowerCase().includes(qName);
+                    const hay = c.name.toLowerCase().replace(/\s+/g, " ");
+                    const nameMatch = qName.length >= 2 && nameWords.every(w => hay.includes(w));
                     const phoneMatch = qPhone.length >= 4 && (c.phone || "").includes(qPhone);
                     if (!(nameMatch || phoneMatch)) return false;
                     // ── ONE ROW PER DEAL, AND STUDIO IS THE ONE THAT WINS ──
@@ -1572,7 +1577,7 @@ export default function StudioEventInfo({ ctx }) {
                   // clicked it saw no sessions and thought a ₹5,62,529 build had vanished.
                   // compareClientsByWork asks "does it hold work" FIRST and only then "how recent",
                   // so a record with sessions can no longer lose to an empty one.
-                  const clientKey = (c) => `${String(c?.name || "").trim().toLowerCase()}|${digits10(c?.phone)}`;
+                  const clientKey = (c) => `${String(c?.name || "").trim().toLowerCase().replace(/\s+/g, " ")}|${digits10(c?.phone)}`;
                   const bestPerClient = new Map();
                   for (const c of matchesAfterRepFilter) {
                     const k = clientKey(c);
@@ -1590,9 +1595,10 @@ export default function StudioEventInfo({ ctx }) {
                   // then a name that STARTS with the query, then everything else (today's only tier).
                   const relevanceRank = (c) => {
                     if (qPhone.length >= 4 && (c.phone || "").includes(qPhone)) return 0;
-                    const name = (c.name || "").trim().toLowerCase();
-                    if (qName.length >= 2 && name === qName) return 1;
-                    if (qName.length >= 2 && name.startsWith(qName)) return 2;
+                    const name = (c.name || "").trim().toLowerCase().replace(/\s+/g, " ");
+                    const q = qName.replace(/\s+/g, " ");
+                    if (q.length >= 2 && name === q) return 1;
+                    if (q.length >= 2 && name.startsWith(q)) return 2;
                     return 3;
                   };
                   const matches = Array.from(bestPerClient.values())
