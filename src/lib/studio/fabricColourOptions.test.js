@@ -31,3 +31,18 @@ describe("fabricColourOptions — only colours the fabric stock holds", () => {
     expect(fabricColourOptions({}).size).toBe(0);
   });
 });
+
+describe("fabricColourOptions — one colour whatever its capitals", () => {
+  const inv2 = { lizaStock: [{ colour: "Navy blue", stockKg: 40 }], maskingStock: [{ colour: "Navy Blue", stockPieces: 20, photo: "navy.jpg" }], curtainStock: [{ colour: " navy  blue ", stockPieces: 3 }] };
+  it("Liza's 'Navy blue' and Wall Masking's 'Navy Blue' are one entry, offered for every fabric that has it", () => {
+    const m = fabricColourOptions(inv2);
+    expect(m.size).toBe(1);
+    const e = [...m.values()][0];
+    expect([...e.in].sort()).toEqual(["curtain", "liza", "masking"]);
+    expect(e.photo).toBe("navy.jpg");
+  });
+  it("keeps the spelling already picked on the deal, so the pick stays ticked", () => {
+    const m = fabricColourOptions(inv2, ["Navy Blue"]);
+    expect([...m.keys()]).toEqual(["Navy Blue"]);
+  });
+});
