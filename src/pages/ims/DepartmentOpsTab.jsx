@@ -3871,12 +3871,14 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           // else the function's floral slider (floralRatio = the artificial share, 70 when never set).
           const pat = (el?.patternId && flowerPatterns.find(fp => fp?.id === el.patternId)) || (inv && matchFlowerPattern(inv, flowerPatterns)) || null;
           let floralMix = "";
+          let realPct = null; // the real share, 0-100 - what the piece's mandi flowers are bought for (the rest goes as artificial bunches)
           if (pat) {
             const subMode = floralModeBySub.get(String(pat.sub ?? "").trim().replace(/\s+/g, " ").toLowerCase());
             const fnArt = typeof fn?.floralRatio === "number" ? fn.floralRatio : 70;
             const real = (typeof el?.realPct === "number" && el.realPct >= 0 && el.realPct <= 100) ? Math.round(el.realPct)
               : subMode === "real" ? 100 : subMode === "artificial" ? 0 : Math.max(0, Math.min(100, Math.round(100 - fnArt)));
             floralMix = real >= 100 ? "Real" : real <= 0 ? "Artificial" : `Artificial ${100 - real}% · Real ${real}%`;
+            realPct = real;
           }
           const key = (arranged ? "o:" + (el?.pid || ei) : invU ? "i:" + invU.id : "n:" + (decName || nm)) + (elSize ? "|" + elSize : "") + (floralMix ? "|" + floralMix : "");
           const prev = merged.get(key);
@@ -3896,11 +3898,13 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           // A "Flower Reet" is a recipe of several flowers; the crew needs those, not just the
           // count. Recipe found the way Studio prices it — the element's own patternId, else the
           // inventory item's sub-category (matchFlowerPattern) — at the same size, B when unset.
-          // Kept PER UNIT; the card multiplies by the zone's summed qty. The full recipe amount,
-          // not the real/artificial split: that is how much goes into the piece.
+          // Kept PER UNIT; the card multiplies by the zone's summed qty and by the piece's real share - the
+          // artificial share goes out as artificial bunches (listed in the same block), so the full recipe
+          // amount here counted it twice and disagreed with Deal Check (2.5 bundles printed where Deal Check
+          // and the mandi list say 0.75 at 30% real).
           const sizeData = pat?.sizes?.[resolveSizeKey(pat.sizes, sizeClassToPatternKey(rawSize || "B"))];
           const recipe = (sizeData?.flowers || []).map(fl => {
-            if (fl?.invItemId) { const ing = invById.get(String(fl.invItemId)); return ing ? { name: ing.name, qty: Number(fl.qty) || 0, unit: ing.unit || "" } : null; }
+            if (fl?.invItemId) { const ing = invById.get(String(fl.invItemId)); return ing ? { name: ing.name, qty: Number(fl.qty) || 0, unit: ing.unit || "", full: true } : null; }
             const mf = resolveMandiFlower(fl?.flowerId, mandiCatalogue)?.parent;
             if (!mf) return null;
             const baseQty = Number(fl.qty) || 0;
@@ -3908,8 +3912,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
             // piece is made with the replacement, in its units. Only the replacement is named — the crew makes the piece with
             // what was bought; the flower it stands in for is on the Mandi list, not here.
             const swapped = swappedRecipeFlower(eventSwap, mf.name, baseQty);
-            if (swapped) return swapped;
-            return { name: mf.name, qty: baseQty, unit: mf.unit || "" };
+            // full: an inventory ingredient, or a mandi flower that is real-only, goes in at its whole amount whatever the mix - as Deal Check counts it
+            const full = mf.flowerType === "real_only";
+            if (swapped) return { ...swapped, full };
+            return { name: mf.name, qty: baseQty, unit: mf.unit || "", full };
           }).filter(f => f && f.qty > 0);
           // ── THE KIT'S PARTS AS BUILD HAS THEM NOW ──
           // The parts list below the zone came only from Deal Check's snapshot (deptInventory), so a part added to the kit in
@@ -3928,7 +3934,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
               dept: heldByInv.has(String(ci.id)) ? dept : catToDept(ci.category || ci.cat) };
           }).filter(x => x && x.per > 0);
           // a recipe with no inventory item shows the picture of its size, as Build does (photo below)
-          merged.set(key, { name: arranged ? `${el?.name || inv?.name || "Item"} — arranged separately` : (invU?.name || decName || el?.name || held?.name || "Item"), qty, unit, deptTag, photo: arranged ? "" : (invPhoto(invU, invU === inv ? held : null) || (!invU && sizeData?.img) || ""), dims: arranged ? "" : invDims(invU), extra: (choiceExtra || floralMix) ? [...(choiceExtra || []), ...(floralMix ? [["Flowers", floralMix]] : [])] : undefined, mix: floralMix, size: elSize, kit: held?.isKit ? (Array.isArray(held.components) ? held.components.length : 0) + (Array.isArray(held.recipeParts) ? held.recipeParts.length : 0) : liveKit.length, liveKit, recipe, paint: addPaint(new Map(), paint) });
+          merged.set(key, { name: arranged ? `${el?.name || inv?.name || "Item"} — arranged separately` : (invU?.name || decName || el?.name || held?.name || "Item"), qty, unit, deptTag, photo: arranged ? "" : (invPhoto(invU, invU === inv ? held : null) || (!invU && sizeData?.img) || ""), dims: arranged ? "" : invDims(invU), extra: (choiceExtra || floralMix) ? [...(choiceExtra || []), ...(floralMix ? [["Flowers", floralMix]] : [])] : undefined, mix: floralMix, realPct, size: elSize, kit: held?.isKit ? (Array.isArray(held.components) ? held.components.length : 0) + (Array.isArray(held.recipeParts) ? held.recipeParts.length : 0) : liveKit.length, liveKit, recipe, paint: addPaint(new Map(), paint) });
         });
         // ── CUSTOM CEILING ── not a zone element: it sits on the zone's truss rows (customCeilingItemId + its count
         // customCeilingQty, else one per truss), which reach IMS with the layout on every Build save. A card of its own on
@@ -4278,10 +4284,13 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       (pg.items || []).forEach(it => {
         const art = !combined && it.mix ? takeArt(it.name) : [];
         if (!combined && ((Array.isArray(it.recipe) && it.recipe.length) || art.length)) {
-          // "Artificial 70% · Real 30%" is too long to repeat on every line - the lines say "Art 70%", the header has both.
-          const tag = !it.mix ? "" : it.mix === "Real" || it.mix === "Artificial" ? it.mix : `Art ${(it.mix.match(/\d+/) || [""])[0]}%`;
-          const parts = [...(it.recipe || []).map(f => ({ name: f.name, qty: Math.round((Number(f.qty) || 0) * (Number(it.qty) || 0) * 100) / 100, unit: f.unit, tag })), ...art];
-          blocks.push({ h: detailH(parts), html: detailCard("🌸", it.name, it.qty, it.unit, parts, it.mix) });
+          // The flower lines are the REAL flowers - the recipe times the piece's real share, the same amount Deal Check and the
+          // mandi list have (they printed the whole recipe, 2.5 where Deal Check said 0.75 at 30% real). The artificial share
+          // follows as the "Artificial flowers / greens" bunches; the header still says the full mix.
+          const tag = !it.mix ? "" : "Real";
+          const realShare = typeof it.realPct === "number" ? it.realPct / 100 : 1;
+          const parts = [...(it.recipe || []).map(f => ({ name: f.name, qty: Math.round((Number(f.qty) || 0) * (Number(it.qty) || 0) * (f.full ? 1 : realShare) * 100) / 100, unit: f.unit, tag })).filter(f => f.qty > 0), ...art];
+          if (parts.length) blocks.push({ h: detailH(parts), html: detailCard("🌸", it.name, it.qty, it.unit, parts, it.mix) });
         }
         if (it.kit > 0) {
           const key = String(it.name || "").trim().toLowerCase();
