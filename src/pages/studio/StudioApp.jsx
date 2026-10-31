@@ -305,6 +305,19 @@ const FLORAL_HARDPROP_DEFAULT = {
 // a module-level constant only because this function sits outside the component and can't close
 // over that one; kept in lockstep by being the one other place this number is allowed to live.
 const GUEST_STRUCT_DISCOUNT_PCT = 25;
+// zoneConfig without each zone's photoStash (Build's per-photo saved builds, see selectElPhoto) - Studio's own
+// working copies, not part of the zone, so they never reach IMS. A zone left with nothing but its stash is dropped.
+function stripPhotoStash(zoneConfig) {
+  const out = {};
+  Object.entries(zoneConfig || {}).forEach(([zk, zc]) => {
+    if (!zc || typeof zc !== "object") { out[zk] = zc; return; }
+    const { photoStash: _ps, ...rest } = zc; // eslint-disable-line no-unused-vars
+    if (_ps && !Object.keys(rest).length) return;
+    out[zk] = rest;
+  });
+  return out;
+}
+
 function calcStructCost(zk, zc, rates, applyDiscount) {
   if (!zc) return { truss: 0, masking: 0, platform: 0, carpet: 0, arches: 0, pillars: 0, glass: 0, print: 0, fabric: 0, fabricNew: false, total: 0 };
   // fd (Platform/Carpet's own floor size) no longer falls back to the truss's dims (d) — owner ask:
@@ -1349,6 +1362,12 @@ export default function StudioApp() {
     confirmToastRef.current = null;
     setConfirmToast(null);
     if (c) (confirmed ? c.onYes : c.onCancel)?.();
+  }, []);
+  const closeConfirmChoice = useCallback((value) => {
+    const c = confirmToastRef.current;
+    confirmToastRef.current = null;
+    setConfirmToast(null);
+    c?.onChoice?.(value);
   }, []);
   // Escape cancels the confirm dialog — bound only while one is open, so it never competes with the
   // Escape handling on galleries and overlays.
@@ -2521,6 +2540,14 @@ export default function StudioApp() {
     openConfirm({
       msg, note: opts.note, yesLabel: opts.yesLabel || "Confirm", tone: opts.tone,
       onYes: () => resolve(true), onCancel: () => resolve(false),
+    });
+  }), []);
+  // Same dialog with several answers: choices = [{ value, label, primary }], resolves the picked value,
+  // or null on Cancel / Escape / the backdrop.
+  const askChoiceAsync = useCallback((msg, opts = {}) => new Promise((resolve) => {
+    openConfirm({
+      msg, note: opts.note, tone: opts.tone, choices: opts.choices || [],
+      onChoice: (v) => resolve(v), onCancel: () => resolve(null),
     });
   }), []);
   // Closing the zone-upload review (Back button, Cancel, or the modal's own backdrop click) used to
@@ -3950,7 +3977,7 @@ export default function StudioApp() {
     try {
       (collectAllFunctionDataRef.current?.() || []).forEach(fd => {
         layout.set(fd.fnIdx, {
-          zones: JSON.parse(JSON.stringify(fd.zoneConfig || {})),
+          zones: JSON.parse(JSON.stringify(stripPhotoStash(fd.zoneConfig))),
           elements: JSON.parse(JSON.stringify(fd.zoneElements || {})),
           enabledEls: { ...(fd.enabledEls || {}) },
           elSelectedPhoto: Object.fromEntries(Object.entries(fd.elSelectedPhoto || {}).map(([k, v]) => [k, { src: v?.src, eventName: v?.eventName, isLibrary: v?.isLibrary, eventId: v?.eventId }])),
@@ -4048,7 +4075,7 @@ export default function StudioApp() {
     try {
       (collectAllFunctionDataRef.current?.() || []).forEach(fd => {
         layout.set(fd.fnIdx, {
-          zones: JSON.parse(JSON.stringify(fd.zoneConfig || {})),
+          zones: JSON.parse(JSON.stringify(stripPhotoStash(fd.zoneConfig))),
           elements: JSON.parse(JSON.stringify(fd.zoneElements || {})),
           enabledEls: { ...(fd.enabledEls || {}) },
           elSelectedPhoto: Object.fromEntries(Object.entries(fd.elSelectedPhoto || {}).map(([k, v]) => [k, { src: v?.src, eventName: v?.eventName, isLibrary: v?.isLibrary, eventId: v?.eventId }])),
@@ -8446,7 +8473,7 @@ export default function StudioApp() {
         pax: fnData.fnPax || "",
         flowerPalette: fnData.fnFlowerPalette || "",
         fabricPalette: fnData.fnPalette || "",
-        zones: JSON.parse(JSON.stringify(fnData.zoneConfig || {})),
+        zones: JSON.parse(JSON.stringify(stripPhotoStash(fnData.zoneConfig))),
         elements: JSON.parse(JSON.stringify(fnData.zoneElements || {})),
         enabledEls: { ...(fnData.enabledEls || {}) },
         elTiers: { ...(fnData.elTiers || {}) },
@@ -10042,8 +10069,19 @@ export default function StudioApp() {
     // is nothing to warn about. No stamp at all (a zone picked before this check existed) is treated
     // as possibly-customized — asking once is safer than silently discarding legacy work.
     const curEls = zoneElements[elKey] || [];
-    const hasUnsavedWork = curEls.length > 0
-      && (!currentSel?._loadedElements || JSON.stringify(currentSel._loadedElements) !== JSON.stringify(curEls));
+    // ── Per-photo saved work (owner ask 2026-10-31) ── every photo a zone has been built on keeps its own copy of
+    // the zone - elements, the whole zone config (truss & masking, platform, print, custom items...) and the client
+    // note - in zoneConfig[elKey].photoStash, keyed by the photo. zoneConfig is saved with the deal, so the copies
+    // survive a refresh; stripPhotoStash keeps them out of everything that leaves Studio.
+    const stashKey = (ph) => ph?.src || ph?.eventId || "";
+    const { photoStash: prevStash, ...curCfg } = zoneConfig[elKey] || {};
+    const curNote = elNotes[elKey] || "";
+    // a config's own content - scale / repeat are live deal choices, not what the photo's build is
+    const cfgSig = (c) => { const { scale: _s, repeat: _r, repeatCats: _rc, photoStash: _ps, ...rest } = c || {}; return JSON.stringify(rest); }; // eslint-disable-line no-unused-vars
+    const configChanged = !!currentSel && (currentSel._loadedCfg == null || currentSel._loadedCfg !== cfgSig(curCfg));
+    const hasUnsavedWork = (curEls.length > 0
+      && (!currentSel?._loadedElements || JSON.stringify(currentSel._loadedElements) !== JSON.stringify(curEls)))
+      || (!!currentSel && curNote !== (currentSel._loadedNote ?? ""));
     if (currentSel && currentSel.src === photo.src) {
       if (hasUnsavedWork && !opts.skipConfirm) {
         const ok = await askConfirmAsync(
@@ -10060,12 +10098,49 @@ export default function StudioApp() {
       setZoneConfig(p => { const n = { ...p }; delete n[elKey]; return n; });
       return true;
     }
+    // Save & Replace: the new photo takes this zone exactly as it is now. Save & Switch: this build stays saved
+    // with the current photo, and the new photo opens with its own saved build (or fresh). Both save first.
+    let choice = "switch";
     if (hasUnsavedWork && !opts.skipConfirm) {
-      const ok = await askConfirmAsync(
-        "Switching to this photo replaces this zone's current element list — including anything added or changed since the current photo was picked.",
-        { note: "This can't be undone.", yesLabel: "Switch anyway" }
+      choice = await askChoiceAsync(
+        "This zone has changes. Keep them before changing the photo?",
+        {
+          note: "Save & Replace — the new photo keeps this zone's elements, truss & masking, platform, print and note as they are now.\nSave & Switch — they stay saved with the current photo (pick it again to get them back) and the new photo opens with its own.",
+          tone: "positive",
+          choices: [{ value: "replace", label: "Save & Replace", primary: true }, { value: "switch", label: "Save & Switch" }],
+        }
       );
-      if (!ok) return false;
+      if (!choice) return false;
+    }
+    const stash = { ...(prevStash || {}) };
+    const curWork = { elements: curEls, config: curCfg, note: curNote, savedAt: Date.now() };
+    const outKey = stashKey(currentSel);
+    if (outKey && (hasUnsavedWork || configChanged) && (curEls.length || curNote || Object.keys(curCfg).length)) stash[outKey] = JSON.parse(JSON.stringify(curWork));
+    const inKey = stashKey(photo);
+    if (choice === "replace" && inKey) stash[inKey] = JSON.parse(JSON.stringify({ ...curWork, savedAt: curWork.savedAt + 1 }));
+    // newest 12 photos per zone - enough to go back and forth, without the deal growing with every photo browsed
+    const nextStash = Object.fromEntries(Object.entries(stash).sort((a, b) => (b[1]?.savedAt || 0) - (a[1]?.savedAt || 0)).slice(0, 12));
+    const stashPatch = Object.keys(nextStash).length ? { photoStash: nextStash } : {};
+    if (choice === "replace") {
+      // elements, config and note stay as they are - only the photo changes
+      setZoneConfig(p => { const { photoStash: _old, ...cfgNow } = p[elKey] || {}; return { ...p, [elKey]: { ...cfgNow, ...stashPatch } }; }); // eslint-disable-line no-unused-vars
+      setElSelectedPhoto(p => ({ ...p, [elKey]: { ...photo, _loadedElements: curEls, _loadedCfg: cfgSig(curCfg), _loadedNote: curNote } }));
+      setActiveZones([]);
+      setCustomMode(p => ({ ...p, [elKey]: false }));
+      return true;
+    }
+    const savedIn = inKey ? nextStash[inKey] : null;
+    if (savedIn) {
+      // the new photo was built on before in this zone - open its own saved build
+      const els = JSON.parse(JSON.stringify(savedIn.elements || []));
+      const cfgIn = JSON.parse(JSON.stringify(savedIn.config || {}));
+      setZoneElements(p => ({ ...p, [elKey]: els }));
+      setZoneConfig(p => ({ ...p, [elKey]: { ...cfgIn, repeat: p[elKey]?.repeat, repeatCats: p[elKey]?.repeatCats, ...stashPatch } }));
+      setElNotes(p => ({ ...p, [elKey]: savedIn.note || "" }));
+      setElSelectedPhoto(p => ({ ...p, [elKey]: { ...photo, _loadedElements: els, _loadedCfg: cfgSig(cfgIn), _loadedNote: savedIn.note || "" } }));
+      setActiveZones([]);
+      setCustomMode(p => ({ ...p, [elKey]: false }));
+      return true;
     }
     // Scale By is a deal-specific "how many of this zone" multiplier (40 tables, say) — it has
     // nothing to do with WHICH reference photo is loaded. Browsing to a different centrepiece photo
@@ -10089,9 +10164,8 @@ export default function StudioApp() {
       finalEls = [];
     }
     setZoneElements(p => ({ ...p, [elKey]: finalEls }));
-    // Stamped onto the stored photo record so the NEXT switch/reselect away from this one can tell
-    // whether anything changed in the meantime — see hasUnsavedWork above.
-    setElSelectedPhoto(p => ({ ...p, [elKey]: { ...photo, _loadedElements: finalEls } }));
+    // a fresh photo starts without the previous photo's note (that one is in the stash)
+    setElNotes(p => { if (!p[elKey]) return p; const n = { ...p }; delete n[elKey]; return n; });
     const libImg = photo.isLibrary ? libItems.find(i => i.url === photo.src || i.id === photo.eventId) : null;
     const photoDims = photo.dims || libImg?.dims || {};
     let cfg = buildZoneConfig(elKey, photoDims);
@@ -10100,7 +10174,8 @@ export default function StudioApp() {
     // legacy partial-config restore for photos verified before full-config saving existed.
     const savedFull = libImg?.zoneConfigByType?.[elKey] || photo.zoneConfigByType?.[elKey] || null;
     if (savedFull) {
-      cfg = { ...(cfg || {}), ...JSON.parse(JSON.stringify(savedFull)) };
+      const { photoStash: _ps, ...fullCfg } = savedFull; // eslint-disable-line no-unused-vars
+      cfg = { ...(cfg || {}), ...JSON.parse(JSON.stringify(fullCfg)) };
     } else if (cfg) {
       const evZone = (photo.zones || []).find(z => z.type === elKey);
       if (evZone?.config) {
@@ -10117,8 +10192,13 @@ export default function StudioApp() {
       // photo's config describes. Preserve them across the replace instead of losing them.
       // repeatCats rides alongside repeat — the per-chip (Elements/Truss & Masking/Platform/Print)
       // overrides are just as much a live deal choice as the zone-wide toggle they refine.
-      setZoneConfig(p => ({ ...p, [elKey]: { ...cfg, scale: p[elKey]?.scale, repeat: p[elKey]?.repeat, repeatCats: p[elKey]?.repeatCats } }));
+      setZoneConfig(p => ({ ...p, [elKey]: { ...cfg, scale: p[elKey]?.scale, repeat: p[elKey]?.repeat, repeatCats: p[elKey]?.repeatCats, ...stashPatch } }));
+    } else if (stashPatch.photoStash) {
+      setZoneConfig(p => ({ ...p, [elKey]: { ...(p[elKey] || {}), ...stashPatch } }));
     }
+    // Stamped onto the stored photo record so the NEXT switch/reselect away from this one can tell
+    // whether anything changed in the meantime — see hasUnsavedWork / configChanged above.
+    setElSelectedPhoto(p => ({ ...p, [elKey]: { ...photo, _loadedElements: finalEls, _loadedCfg: cfgSig(cfg || curCfg), _loadedNote: "" } }));
     setActiveZones([]);
     setCustomMode(p => ({ ...p, [elKey]: false }));
     return true;
@@ -12541,7 +12621,7 @@ export default function StudioApp() {
         const GOLD = "#C9A96E", GOLD_D = "#A8844A";
         return (
         <div onClick={() => closeConfirm(false)} style={{ position: "fixed", inset: 0, zIndex: 100001, background: "rgba(15,15,26,0.5)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, animation: "studioDlgFade 0.16s ease-out" }}>
-          <div role="alertdialog" aria-modal="true" aria-label={confirmToast.msg} onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 400, background: "linear-gradient(180deg,#FFFDF8 0%,#FBF6EC 100%)", border: "1px solid rgba(201,169,110,0.35)", borderRadius: 18, padding: "26px 26px 20px", boxShadow: "0 28px 70px rgba(15,15,26,0.38), 0 0 0 1px rgba(255,255,255,0.6) inset", textAlign: "center", animation: "studioDlgPop 0.2s cubic-bezier(0.34,1.4,0.64,1)" }}>
+          <div role="alertdialog" aria-modal="true" aria-label={confirmToast.msg} onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: confirmToast.choices?.length ? 480 : 400, background: "linear-gradient(180deg,#FFFDF8 0%,#FBF6EC 100%)", border: "1px solid rgba(201,169,110,0.35)", borderRadius: 18, padding: "26px 26px 20px", boxShadow: "0 28px 70px rgba(15,15,26,0.38), 0 0 0 1px rgba(255,255,255,0.6) inset", textAlign: "center", animation: "studioDlgPop 0.2s cubic-bezier(0.34,1.4,0.64,1)" }}>
             <div aria-hidden="true" style={{ width: 46, height: 46, borderRadius: "50%", margin: "0 auto 14px", display: "flex", alignItems: "center", justifyContent: "center",
               background: positive ? "rgba(201,169,110,0.16)" : "rgba(220,38,38,0.09)", border: `1px solid ${positive ? "rgba(201,169,110,0.45)" : "rgba(220,38,38,0.25)"}`, color: positive ? GOLD_D : "#dc2626" }}>
               {positive
@@ -12551,12 +12631,24 @@ export default function StudioApp() {
             <div style={{ fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 23, fontWeight: 600, fontStyle: "italic", color: "#1A1A2E", lineHeight: 1.2, marginBottom: 8 }}>{confirmToast.msg}</div>
             <div style={{ width: 36, height: 1, background: GOLD, opacity: 0.6, margin: "0 auto 10px" }} />
             <div style={{ fontSize: 12.5, color: "#6B6457", lineHeight: 1.6, marginBottom: 22, whiteSpace: "pre-line" }}>{confirmToast.note || "This can’t be undone — its elements and pricing go with it."}</div>
+            {confirmToast.choices?.length ? (
+              // Several answers (askChoiceAsync): the choices in order, Cancel last. The primary one is gold.
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+                {confirmToast.choices.map((ch, i) => (
+                  <button key={ch.value} autoFocus={i === 0} onClick={() => closeConfirmChoice(ch.value)} style={{ flex: "1 1 120px", padding: "11px 8px", borderRadius: 11, fontSize: 12, fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase", cursor: "pointer",
+                    border: ch.primary ? "none" : `1px solid ${GOLD}`, background: ch.primary ? `linear-gradient(135deg, ${GOLD} 0%, ${GOLD_D} 100%)` : "rgba(201,169,110,0.10)", color: "#1A1A2E",
+                    boxShadow: ch.primary ? "0 8px 20px -8px rgba(168,132,74,0.7)" : "none" }}>{ch.label}</button>
+                ))}
+                <button onClick={() => closeConfirm(false)} style={{ flex: "1 1 120px", background: "transparent", color: "#6B6457", border: "1px solid rgba(26,26,46,0.14)", padding: "11px 8px", borderRadius: 11, fontSize: 12, fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase", cursor: "pointer" }}>Cancel</button>
+              </div>
+            ) : (
             <div style={{ display: "flex", gap: 10 }}>
               <button onClick={() => closeConfirm(false)} style={{ flex: 1, background: "transparent", color: "#6B6457", border: "1px solid rgba(26,26,46,0.14)", padding: "11px 0", borderRadius: 11, fontSize: 12, fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase", cursor: "pointer" }}>Cancel</button>
               <button autoFocus onClick={() => closeConfirm(true)} style={{ flex: 1, border: "none", padding: "11px 0", borderRadius: 11, fontSize: 12, fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase", cursor: "pointer",
                 background: positive ? `linear-gradient(135deg, ${GOLD} 0%, ${GOLD_D} 100%)` : "#dc2626", color: positive ? "#1A1A2E" : "#fff",
                 boxShadow: positive ? "0 8px 20px -8px rgba(168,132,74,0.7)" : "0 8px 20px -8px rgba(220,38,38,0.6)" }}>{confirmToast.yesLabel}</button>
             </div>
+            )}
           </div>
         </div>
         );

@@ -5780,7 +5780,7 @@ undefined
         const zoneCfgMap={...(master?.zoneConfigByType||{})};
         let libDims=master?.dims;
         if(liveCfg){
-          const {repeat,repeatCats,scale,...rest}=liveCfg;
+          const {repeat,repeatCats,scale,photoStash:_ps,...rest}=liveCfg; // photoStash: this deal's per-photo saved builds, never the master's
           // trussQtyBase/plQtyBase/each print's qtyBase are Scale By's own bookkeeping — same
           // reasoning as baseQty above: saving them verbatim bakes a stray scale ratio into the
           // master, which resurfaces on the next salesperson's very first Scale edit against a base
