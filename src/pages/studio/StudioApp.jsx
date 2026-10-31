@@ -12605,7 +12605,7 @@ export default function StudioApp() {
             </div>
             <div style={{ fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 23, fontWeight: 600, fontStyle: "italic", color: "#1A1A2E", lineHeight: 1.2, marginBottom: 8 }}>{confirmToast.msg}</div>
             <div style={{ width: 36, height: 1, background: GOLD, opacity: 0.6, margin: "0 auto 10px" }} />
-            <div style={{ fontSize: 12.5, color: "#6B6457", lineHeight: 1.6, marginBottom: 22, whiteSpace: "pre-line" }}>{confirmToast.note || "This can’t be undone — its elements and pricing go with it."}</div>
+            <div style={{ fontSize: 12.5, color: "#6B6457", lineHeight: 1.6, marginBottom: 22, whiteSpace: "pre-line", textAlign: confirmToast.choices?.length ? "left" : undefined }}>{confirmToast.note || "This can’t be undone — its elements and pricing go with it."}</div>
             {confirmToast.choices?.length ? (
               // Several answers (askChoiceAsync): the choices in order, Cancel last. The primary one is gold.
               <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
