@@ -300,7 +300,8 @@ export default function StudioModals({ ctx }) {
                   // to the broader subcat-wide/keyword heuristic — same fallback order IMS's own
                   // Inventory form uses when displaying an item with paintable left unset.
                   const curItem = availModal.selectedId ? (imsInventory || []).find(i => i.id === availModal.selectedId) : null;
-                  const itemPaintable = curItem && curItem.paintable !== undefined ? !!curItem.paintable : null;
+                  // unset = OFF since 2026-10-31 (IMS shows it unticked); only an item with no inventory record falls back
+                  const itemPaintable = curItem ? curItem.paintable === true : null;
                   const chk = isSubcatPaintable ? isSubcatPaintable(sub, dealCheckData?.inventory || []) : null;
                   const subPaintable = (chk === null || chk === undefined)
                     ? (PAINT_TOKENS_FALLBACK || []).some(t => String(sub || "").toLowerCase().includes(t))

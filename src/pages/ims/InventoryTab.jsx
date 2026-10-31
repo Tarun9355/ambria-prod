@@ -2,7 +2,7 @@ import React, { useState, useRef, useMemo } from "react";
 import { thumbUrl, fitUrl } from "../../lib/studio/thumb.js";
 import { Badge, TypeBadge, Modal } from "../../components/ui";
 import { fmt } from "../../lib/format";
-import { INV_CATS, INV_LOCATIONS, DEPTS, INV_TYPES, PRICING_CAT_STYLES, SUBCAT_OTHER, PAINT_TOKENS } from "../../lib/inventory/constants";
+import { INV_CATS, INV_LOCATIONS, DEPTS, INV_TYPES, PRICING_CAT_STYLES, SUBCAT_OTHER } from "../../lib/inventory/constants";
 import { findAlternatives, getEffectivePricing, resolveDateCategory } from "../../lib/inventory/helpers";
 import { DATE_PRICING_LABELS, hasIMSPerm } from "../../lib/ims/constants";
 import { uploadToStorage, compressImageForUpload, STORAGE_FOLDERS } from "../../lib/storage";
@@ -424,8 +424,9 @@ Rules:
     const oosRaw = form.oosCostPct;
     const oosNum = (oosRaw === "" || oosRaw === null || oosRaw === undefined) ? undefined : Math.max(0, Number(oosRaw) || 0);
     const paintNum = form.paintCost ? (parseFloat(form.paintCost) || 0) : 0;
-    const paintableFlag = form.paintable !== undefined ? !!form.paintable
-      : (!!(form.baseColour || form.paintCost) || PAINT_TOKENS.some((tok) => String(form.cat || "").toLowerCase().includes(tok) || String(form.subCat || "").toLowerCase().includes(tok)));
+    // OFF unless ticked (owner ask 2026-10-31): no item is paintable because of its category or a colour on file -
+    // the department head turns it on per item.
+    const paintableFlag = form.paintable === true;
     // Append against the CANONICAL list (prev), not the stale `inventory` closure, and mint a
     // collision-proof id. The old "I"+(length+10) scheme reused ids after deletes — and gave two
     // people adding at once the SAME id — so the upsert (onConflict:"id") silently OVERWROTE an
@@ -456,7 +457,7 @@ Rules:
         cost: costNum,
         breakagePct: breakNum,
         oosCostPct: oosNum,
-        canBeMade: form.canBeMade !== false,
+        canBeMade: form.canBeMade === true, // OFF unless ticked - the department head turns production on per item
         noRepeatDiscount: !!form.noRepeatDiscount,
         baseColour: form.baseColour || "",
         paintCost: paintNum,
@@ -628,8 +629,7 @@ Rules:
         photoUrls: f.img ? [f.img] : [],
         baseColour: f.baseColour || "",
         paintCost: f.paintCost !== "" && f.paintCost != null ? (parseFloat(f.paintCost) || 0) : (i.paintCost ?? 0),
-        paintable: f.paintable !== undefined ? !!f.paintable
-          : (!!(f.baseColour || f.paintCost) || PAINT_TOKENS.some((tok) => String(f.cat || "").toLowerCase().includes(tok) || String(f.subCat || "").toLowerCase().includes(tok))),
+        paintable: f.paintable === true, // OFF unless ticked (2026-10-31) - never inferred from the category
         subItems: cleanSubItems,
         kitBase: kitBaseNum,
         printable_LxW: (f.printL || f.printW) ? { l: f.printL || "", w: f.printW || "", unit: f.printUnit || "Feet" } : (i.printable_LxW || null),
@@ -1332,7 +1332,7 @@ Rules:
                 ticked; only a ticked item is ever produced. */}
             <div className="col-span-2">
               <label className="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" checked={form.canBeMade !== false} onChange={(e) => setForm({ ...form, canBeMade: e.target.checked })} className="w-4 h-4 accent-indigo-600" />
+                <input type="checkbox" checked={form.canBeMade === true} onChange={(e) => setForm({ ...form, canBeMade: e.target.checked })} className="w-4 h-4 accent-indigo-600" />
                 <span className="text-xs font-medium text-gray-700">🛠️ Can be made in production</span>
                 <span className="text-xs text-gray-400">— only a ticked item is ever produced, and only when the event is 10+ days away; otherwise a short unit shows "Out of stock"</span>
               </label>
@@ -1384,12 +1384,8 @@ Rules:
 
             {/* Paint Override — manual per-item toggle */}
             {(() => {
-              const PAINT_TOKENS = ["truss", "struct", "mask", "platform", "carpet", "furniture", "arch", "prop", "panel", "pillar", "glass", "stage", "wrought", "consumable"];
-              const cat = String(form.cat || "").toLowerCase();
-              const subcat = String(form.subCat || "").toLowerCase();
-              const legacyHint = PAINT_TOKENS.some((tok) => cat.includes(tok) || subcat.includes(tok));
-              const hasPaintData = !!(form.baseColour || form.paintCost);
-              const paintable = form.paintable === undefined ? (hasPaintData || legacyHint) : !!form.paintable;
+              // OFF unless ticked (2026-10-31) - no longer inferred from the category or a colour on file.
+              const paintable = form.paintable === true;
               const colours = (settings?.colourCatalogue || []).map((c) => c.name);
               return (
                 <div className="col-span-2 bg-pink-50 border border-pink-200 rounded-xl p-3 space-y-2">
@@ -1750,14 +1746,9 @@ Rules:
 
               {/* §23 Phase 2.9 — Paint override (manual per-item toggle) */}
               {(() => {
-                const PAINT_TOKENS = ["truss", "struct", "mask", "platform", "carpet", "furniture", "arch", "prop", "panel", "pillar", "glass", "stage", "wrought", "consumable"];
-                const cat = String(editForm.cat || "").toLowerCase();
-                const subcat = String(editForm.subCat || "").toLowerCase();
-                const legacyHint = PAINT_TOKENS.some((tok) => cat.includes(tok) || subcat.includes(tok));
-                const hasPaintData = !!(editForm.baseColour || editForm.paintCost);
-                // Default ON for items that already have paint data or match a paintable category,
-                // so nothing currently configured disappears; otherwise the user opts in explicitly.
-                const paintable = editForm.paintable === undefined ? (hasPaintData || legacyHint) : !!editForm.paintable;
+                // OFF unless ticked (owner ask 2026-10-31): an item is paintable only when its department head has
+                // turned it on - not because of its category or a colour on file.
+                const paintable = editForm.paintable === true;
                 const colours = (settings.colourCatalogue || []).map((c) => c.name);
                 return (
                   <div className="bg-pink-50 border border-pink-200 rounded-xl p-3 space-y-2">

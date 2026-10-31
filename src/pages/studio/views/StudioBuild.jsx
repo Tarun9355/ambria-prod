@@ -5130,9 +5130,9 @@ undefined
                           // sub-category can mix paintable and non-paintable items (e.g. a fibre vs.
                           // plastic variant of "the same" pot), and the pill is about THIS element's
                           // actual assigned item, not whether anything else in its subcat takes paint.
-                          // Only overrides OFF, never forces it on — an item with no explicit flag
-                          // (legacy data, paintable === undefined) keeps the fallback logic above.
-                          if (invItem && invItem.paintable === false) isPaintable = false;
+                          // Since 2026-10-31 an inventory item is paintable ONLY when its checkbox is ticked - unset counts
+                          // as OFF, the same as IMS shows it (department heads turn it on item by item).
+                          if (invItem && invItem.paintable !== true) isPaintable = false;
                           if (!isPaintable) return null;
                           const baseColour = invItem?.baseColour || "Ivory";
                           // §23 Phase 2.9d — multi-colour allocation aware
