@@ -361,7 +361,7 @@ function calcStructCost(zk, zc, rates, applyDiscount) {
   if (applyDiscount) {
     const flags = applyDiscount === true
       ? { truss: true, platform: true, print: true }
-      : { truss: !!applyDiscount.truss, platform: !!applyDiscount.platform, print: !!applyDiscount.print };
+      : { truss: !!applyDiscount.truss, platform: !!applyDiscount.platform, print: !!applyDiscount.print, fabricRepeat: applyDiscount.fabricRepeat !== false };
     const pct = GUEST_STRUCT_DISCOUNT_PCT;
     const before = r.total;
     // Truss & Masking chip = truss/arches/pillars/glass; Platform chip = platform/carpet; Print chip = print
@@ -379,7 +379,7 @@ function calcStructCost(zk, zc, rates, applyDiscount) {
     // Fabric is NOT part of any discount group — the truss's Repeat chip never touches it (a truss is
     // reused, drape fabric is consumed). Only a part the salesperson marked Repeat on the Fabric card
     // (Liza / velvet curtains, fabLizaRep / fabCurtainRep) takes the same flat pct off its own share.
-    if (rates?.trussInv) {
+    if (rates?.trussInv && flags.fabricRepeat !== false) {
       const mult = guestFabricMultiplier(rates);
       const off = trussRows.reduce((s, row) => s + fabricRepeatDiscount(row, rates.trussInv, row.drapeDensity || "moderate", mult, pct), 0);
       r.fabric = Math.max(0, r.fabric - off);
@@ -4457,7 +4457,8 @@ export default function StudioApp() {
   // Repeat chips' part. A Fixed Venue already discounts all three groups, so Repeat adds nothing on top of it there.
   const structDiscountFor = (zc, venueName) => {
     const fv = !!fixedVenueFor(fvCfgForRepeat, venueName);
-    if (hideDiscountFromClient) return fv ? { truss: true, platform: true, print: true } : false;
+    // fabricRepeat:false - a Liza / curtain part marked Repeat on the Fabric card is a Repeat discount, so it waits for the checkbox
+    if (hideDiscountFromClient) return fv ? { truss: true, platform: true, print: true, fabricRepeat: false } : false;
     return { truss: fv || repeatCatFor(zc, "truss"), platform: fv || repeatCatFor(zc, "platform"), print: fv || repeatCatFor(zc, "print") };
   };
   // Owner ask: a second discrete per-deal lever, alongside hideDiscountFromClient — the small dot on
