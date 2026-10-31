@@ -3607,7 +3607,7 @@ undefined
             const client=clientLedger.find(c=>c.id===activeClientId);
             // who flipped it and when ride along, so every tab can say so - another person's click reaches this screen live and
             // otherwise looks like the price changing by itself
-            saveClientLedger(clientLedger.map(c=>c.id===activeClientId?{...c,applyDiscountToClient:v,applyDiscountBy:authUser?.name||"—",applyDiscountAt:Date.now()}:c), undefined, {discount:true});
+            saveClientLedger(clientLedger.map(c=>c.id===activeClientId?{...c,guestDiscount:v,guestDiscountBy:authUser?.name||"—",guestDiscountAt:Date.now()}:c), undefined, {discount:true});
             logDiscountToClientToggle(authUser, client, v);
             // let go of focus: a focused checkbox flips on the Space key, so pressing Space to scroll the page afterwards
             // silently toggled the client discount (Pushpanjali STD: 20+ flips in 10 minutes nobody meant to make)

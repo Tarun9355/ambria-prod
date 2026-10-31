@@ -1142,6 +1142,13 @@ function rowToClient(row) {
   // throw rather than read as "no saves yet".
   return { sessions: [], ...base, id: row.id, status: base.status || row.status || "ongoing", createdBy: base.createdBy || row.created_by || "—" };
 }
+// The client-discount checkbox's value. It moved from applyDiscountToClient to guestDiscount (2026-10-31): browser tabs
+// opened before the stale-copy fix kept re-sending applyDiscountToClient with every autosave, so Pushpanjali STD kept
+// jumping back to Rs 5.79L even after the fix was live. Old code knows nothing of guestDiscount, so once the checkbox
+// has been clicked on new code no old tab can move it. The old key is only read for deals nobody has clicked since.
+function clientDiscountOn(c) {
+  return c?.guestDiscount !== undefined ? !!c.guestDiscount : !!c?.applyDiscountToClient;
+}
 function clientToRow(c) {
   // _fnRows is the per-function rows a session was rebuilt FROM (see rowsToSessions) — it is a view
   // of studio_sessions, not part of the client. Left in, the blob mirror would carry a second copy of
@@ -3516,7 +3523,8 @@ export default function StudioApp() {
             // current value - take it from the row even when the rest of this tab's copy wins on staleness.
             const pick = ledgerStamp(merged) < ledgerStamp(mine) ? mine : merged;
             const winner = pick === mine
-              ? { ...mine, applyDiscountToClient: c.applyDiscountToClient, applyDiscountBy: c.applyDiscountBy, applyDiscountAt: c.applyDiscountAt }
+              ? { ...mine, guestDiscount: c.guestDiscount, guestDiscountBy: c.guestDiscountBy, guestDiscountAt: c.guestDiscountAt,
+                  applyDiscountToClient: c.applyDiscountToClient, applyDiscountBy: c.applyDiscountBy, applyDiscountAt: c.applyDiscountAt }
               : pick;
             seed(winner);
             if (JSON.stringify(mine) === JSON.stringify(winner)) return prev;
@@ -3797,11 +3805,14 @@ export default function StudioApp() {
         // doesn't mention - so a second tab still holding the old value can no longer write it back. That was
         // the price swinging Rs 6.41L <-> Rs 5.79L on its own (Pushpanjali STD): each open tab's autosave
         // re-sent its stale copy of the flag, stamped with that tab's own name/time.
+        // The flag lives in guestDiscount now; the old applyDiscountToClient key is never sent from here at all
+        // (see clientDiscountOn) - tabs still running the pre-fix code kept writing that one back.
         const rows = changed.map((c) => {
           const row = clientToRow(c);
-          if (!opts.discount && row.data && typeof row.data === "object") {
+          if (row.data && typeof row.data === "object") {
             // eslint-disable-next-line no-unused-vars
             const { applyDiscountToClient: _a, applyDiscountBy: _b, applyDiscountAt: _t, ...rest } = row.data;
+            if (!opts.discount) { delete rest.guestDiscount; delete rest.guestDiscountBy; delete rest.guestDiscountAt; }
             row.data = rest;
           }
           return { ...row, updated_at: new Date().toISOString() };
@@ -4413,17 +4424,17 @@ export default function StudioApp() {
   // always applies the real discount regardless of this checkbox. zc.repeat itself is untouched
   // either way (the ✨Fresh/♻️Repeat toggle stays available and still flows to Deal Check as before)
   // — only what that flag PRICES for the client depends on this.
-  const hideDiscountFromClient = !clientLedger.find(c => c.id === activeClientId)?.applyDiscountToClient;
+  const hideDiscountFromClient = !clientDiscountOn(clientLedger.find(c => c.id === activeClientId));
   // The checkbox flipped by someone else (their click reaches this tab live through the client_ledger subscription): say who,
   // or the price here just jumps by itself every time a colleague on the same deal clicks it.
   const discountSeenRef = useRef({ id: null, on: null });
   useEffect(() => {
     const c = clientLedger.find(x => x.id === activeClientId);
-    const on = !!c?.applyDiscountToClient;
+    const on = clientDiscountOn(c);
     const seen = discountSeenRef.current;
     discountSeenRef.current = { id: activeClientId, on };
     if (seen.id !== activeClientId || seen.on === null || seen.on === on) return;
-    const by = c?.applyDiscountBy;
+    const by = c?.guestDiscount !== undefined ? c?.guestDiscountBy : c?.applyDiscountBy;
     if (by && by !== (authUser?.name || "—")) showMsg?.(`${by} turned the client discount ${on ? "ON" : "OFF"} on this deal — the price has changed`);
   }, [clientLedger, activeClientId, authUser, showMsg]);
   // Feeds calcStructCost's flat 25% (see its own comment) — same eligibility rule
