@@ -10,7 +10,7 @@ import { IconClipboard, IconPencil, IconRuler, IconBolt, IconWall, IconPlatform,
   IconSearch, IconCamera, IconPrinter, IconNote, IconCalendar, IconFlower, IconFactory,
   IconCart, IconCopy, IconRepeat, IconAlert, IconPalette, IconChevron, IconSparkle,
   IconPlay, IconBox, IconSave, IconSliders, IconStar, IconCrown, IconFiller } from "../../../components/icons.jsx";
-import { getEffectivePricing } from "../../../lib/inventory/helpers";
+import { getEffectivePricing, resolveDateCategory } from "../../../lib/inventory/helpers";
 import {
   ZONE_TYPE_TO_AREA, getCat, taxOr, FUNCTIONS, CATEGORIES, venueTypeLabel,
   maskingOptions, platformOptions, defaultCarpetMatId, CARPET_OFF, TRUSS_MATERIALS, trussBaseArea, trussRateFor,
@@ -1185,7 +1185,13 @@ export default function StudioBuild({ ctx }) {
   const aVenue = activeFnMeta?.venue || venue;
   const dateDemand = (() => {
     if (!fnDate) return null;
-    const dt = dateTypes[fnDate];
+    // Saya-ness comes from the same IMS Calendar category as the date badge beside it (King's = the
+    // heavy Saya day). The old Studio-only dateTypes list (ambria-datetypes-v1) has no editor any more
+    // and still called 21 Nov 2026 a Saya day while the badge said Perfect - so the panel showed
+    // "Perfect date" and "High demand / Saya Day" together. It is only the fallback now, when no
+    // datePricing has loaded.
+    const dp = sharedFloralSettings?.datePricing;
+    const dt = dp ? (resolveDateCategory(fnDate, { datePricing: dp }) === "heavy_saya" ? "saya" : null) : dateTypes[fnDate];
     const booked = clientLedger.filter(c => c.eventDate === fnDate && c.status === "booked").length;
     const ongoing = clientLedger.filter(c => c.eventDate === fnDate && c.status === "ongoing" && c.id !== activeClientId).length;
     const isHigh = booked >= 2 || dt === "saya";

@@ -8552,7 +8552,10 @@ export default function StudioApp() {
       // of stock and can't be produced, so it never reaches the confirm dialog at all.
       const oosFlagged = scanOutOfStockElements();
       if (oosFlagged.length > 0) { setOosGateModal(oosFlagged); return; }
-      const dt = dateTypes[clientDate];
+      // Same IMS Calendar category the Build panel's date badge uses (King's = Saya day) - see dateDemand
+      // in StudioBuild.jsx. The legacy dateTypes list is only a fallback when datePricing hasn't loaded.
+      const dpSave = sharedFloralSettings?.datePricing;
+      const dt = dpSave ? (resolveDateCategory(clientDate, { datePricing: dpSave }) === "heavy_saya" ? "saya" : null) : dateTypes[clientDate];
       const bookedCount = clientLedger.filter(c => c.eventDate === clientDate && c.status === "booked").length;
       let warns = [];
       if (dt === "saya") warns.push("🔴 This is a Saya day");
@@ -8592,7 +8595,7 @@ export default function StudioApp() {
       setTimeout(() => setShowSoldConfetti(false), 4000);
       showMsg("🎉 Booking confirmed for " + client.name, "green");
     } catch (e) { showMsg("Error: " + (e.message || "unknown"), "red"); }
-  }, [scanOutOfStockElements, saveSession, authUser, saveClientLedger, clientName, clientDate, venue, dateTypes, clientLedger,
+  }, [scanOutOfStockElements, saveSession, authUser, saveClientLedger, clientName, clientDate, venue, dateTypes, sharedFloralSettings, clientLedger,
     // Listed because the ₹0 check above reads it. Without this the callback holds whatever
     // eventGrandTotal was when it was last rebuilt — which could warn "nothing has been built" on a
     // deal that has since been priced, or worse, stay silent on one that has been emptied.
