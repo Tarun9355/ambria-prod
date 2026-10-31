@@ -1889,10 +1889,9 @@ export default function StudioBuild({ ctx }) {
   };
   // Same rule as StudioApp.jsx's structDiscountFor: a Fixed Venue (or its sub-venue) switches the structure
   // discount on by itself, Fresh chip or not; elsewhere it follows the Repeat chips.
-  // The Fixed-Venue part is always on (2026-10-31); the checkbox only switches the Repeat chips' part.
   const structDiscountFor = (zc, venueName) => {
+    if (hideDiscountFromClient) return false;
     const fv = !!fixedVenueFor({ fixedVenues: sharedFloralSettings?.fixedVenues || [], venueParents: venueParents || {} }, venueName);
-    if (hideDiscountFromClient) return fv ? { truss: true, platform: true, print: true } : false;
     return { truss: fv || repeatCatFor(zc, "truss"), platform: fv || repeatCatFor(zc, "platform"), print: fv || repeatCatFor(zc, "print") };
   };
   // Same scaleStruct StudioApp.jsx uses for its own guest-facing calcStructCost calls (getElPrice/
@@ -3605,11 +3604,10 @@ undefined
     <div style={{flexShrink:0, display:"flex", alignItems:"center", justifyContent:"flex-end", gap:8}}>
       {/* Discrete, deliberately unlabeled — see hideDiscountFromClient (StudioApp.jsx). OFF by
           default (unticked = hidden): every guest-facing number here in Build, Summary, and every
-          export prices without the Repeat discount. Ticking it applies the Repeat discount (Repeat
-          zones/elements, cross-function reuse) to the guest build too. The Fixed-Venue discount is
-          always applied, ticked or not (owner ask 2026-10-31). Deal Check is unaffected either way — it has its own separate cost engine
+          export prices at full rate. Ticking it applies the Fixed-Venue/Repeat discount to the
+          guest build too. Deal Check is unaffected either way — it has its own separate cost engine
           and always applies the real discount regardless of this checkbox. */}
-      <label title="Apply the Repeat discount to this customer's build (off by default). The Fixed-Venue discount is always applied."
+      <label title="Apply fixed-venue / repeat discount to this customer's build too (off by default — Deal Check always applies it)"
         style={{display:"inline-flex",alignItems:"center",opacity:!hideDiscountFromClient?0.85:0.25,cursor:activeClientId?"pointer":"not-allowed"}}>
         <input type="checkbox" checked={!hideDiscountFromClient} disabled={!activeClientId}
           onChange={e=>{

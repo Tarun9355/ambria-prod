@@ -4416,8 +4416,6 @@ export default function StudioApp() {
     venueParents: venueParents || dealCheckData?.venueParents || {},
     fixedVenueSubcatDiscount: sharedFloralSettings.fixedVenueSubcatDiscount,
   }), [sharedFloralSettings, dealCheckData, venueParents]);
-  // 2026-10-31: this now governs the REPEAT discount only (Repeat zones/elements, cross-function reuse, Repeat florals).
-  // The Fixed-Venue discount is always applied - see structDiscountFor and repeatAdjustedLineCost below.
   // Owner ask: a discrete per-deal toggle (Build's reference banner, beside Upload) — OFF (hidden)
   // BY DEFAULT: every Fixed-Venue/Repeat discount prices at full rate for the GUEST-facing numbers
   // — Build's live canvas, Summary, and every export — until the checkbox is explicitly ticked to
@@ -4453,11 +4451,9 @@ export default function StudioApp() {
   // in-house venue at full price, which sales read as the discount checkbox not working (owner ask
   // 2026-10-30). Elsewhere it still follows the Repeat chips. (Elements keep their own Fixed-Venue
   // standing-stock discount — repeatAdjustedLineCost.)
-  // Since 2026-10-31 (owner ask) the Fixed-Venue part is ALWAYS on - the checkbox beside Upload only switches the
-  // Repeat chips' part. A Fixed Venue already discounts all three groups, so Repeat adds nothing on top of it there.
   const structDiscountFor = (zc, venueName) => {
+    if (hideDiscountFromClient) return false;
     const fv = !!fixedVenueFor(fvCfgForRepeat, venueName);
-    if (hideDiscountFromClient) return fv ? { truss: true, platform: true, print: true } : false;
     return { truss: fv || repeatCatFor(zc, "truss"), platform: fv || repeatCatFor(zc, "platform"), print: fv || repeatCatFor(zc, "print") };
   };
   // Owner ask: a second discrete per-deal lever, alongside hideDiscountFromClient — the small dot on
@@ -4548,12 +4544,9 @@ export default function StudioApp() {
   // kitOverrides (optional): the element's own edited component list, so a kit's switched-off components
   // (IMS "No repeat discount") are found in the same list the kit's price was built from.
   // The arithmetic itself is guestRepeatLineCost (lib/studio/repeatPricing.js), which is tested.
-  // The Fixed-Venue standing units are discounted ALWAYS (owner ask 2026-10-31); the checkbox beside Upload switches only
-  // the Repeat part - a Repeat zone/element and units reused from an earlier function. A Repeat unit is never also a
-  // standing unit here (guestRepeatLineCost takes isRepeat OR standing), so nothing is discounted twice.
   const repeatAdjustedLineCost = (item, qty, unitRate, zc, venueName, crossFnReuseQty = 0, repeatOverride, dateFactor = 1, kitOverrides) => {
     if (!item) return qty * unitRate;
-    const isRepeat = !hideDiscountFromClient && (typeof repeatOverride === "boolean" ? repeatOverride : repeatCatFor(zc, "elements"));
+    const isRepeat = typeof repeatOverride === "boolean" ? repeatOverride : repeatCatFor(zc, "elements");
     // Only the discount-eligible bucket (Fixed Venue's "disc qty", not its "full qty" — see
     // FixedVenuesEditor.jsx) counts as eligible here, so the client never sees a Repeat markdown on
     // units the venue specifically designated to bill at full rate.
@@ -4562,8 +4555,8 @@ export default function StudioApp() {
       qty, unitRate,
       // a kit with switched-off components: their share of the kit's price is never discounted
       flaggedUnitRate: flaggedUnitRate(item, (it, ov) => priceForInvItem(it, rcFactorByKey, imsInventory, ov), imsInventory, kitOverrides),
-      noDiscount: item.noRepeatDiscount === true,
-      isRepeat, standingUnits: discUnits, crossFnReuseQty: hideDiscountFromClient ? 0 : crossFnReuseQty, dateFactor, pct: GUEST_DISCOUNT_PCT,
+      noDiscount: item.noRepeatDiscount === true, hidden: hideDiscountFromClient,
+      isRepeat, standingUnits: discUnits, crossFnReuseQty, dateFactor, pct: GUEST_DISCOUNT_PCT,
     });
   };
   // The date factor getElPrice / getElPriceForFn will multiply onto this element's line — 1 for a
