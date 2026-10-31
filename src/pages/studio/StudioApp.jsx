@@ -3512,7 +3512,12 @@ export default function StudioApp() {
             if (i < 0) { seed(c); return [...prev, c]; }
             const mine = prev[i];
             const merged = keepSessions(mine, c);
-            const winner = ledgerStamp(merged) < ledgerStamp(mine) ? mine : merged;
+            // The discount flag is written only by its checkbox (see saveClientLedger), so the row always holds its
+            // current value - take it from the row even when the rest of this tab's copy wins on staleness.
+            const pick = ledgerStamp(merged) < ledgerStamp(mine) ? mine : merged;
+            const winner = pick === mine
+              ? { ...mine, applyDiscountToClient: c.applyDiscountToClient, applyDiscountBy: c.applyDiscountBy, applyDiscountAt: c.applyDiscountAt }
+              : pick;
             seed(winner);
             if (JSON.stringify(mine) === JSON.stringify(winner)) return prev;
             return prev.map((x) => (x.id === c.id ? winner : x));
@@ -3787,7 +3792,20 @@ export default function StudioApp() {
         await deleteRow("client_ledger", id);
       }
       if (changed.length) {
-        const rows = changed.map((c) => ({ ...clientToRow(c), updated_at: new Date().toISOString() }));
+        // The client-discount flag rides ONLY on the checkbox's own write (opts.discount). Every other save
+        // (15s autosave, tab-hide, Deal Check draft...) leaves it out, and the merge RPC keeps a key the write
+        // doesn't mention - so a second tab still holding the old value can no longer write it back. That was
+        // the price swinging Rs 6.41L <-> Rs 5.79L on its own (Pushpanjali STD): each open tab's autosave
+        // re-sent its stale copy of the flag, stamped with that tab's own name/time.
+        const rows = changed.map((c) => {
+          const row = clientToRow(c);
+          if (!opts.discount && row.data && typeof row.data === "object") {
+            // eslint-disable-next-line no-unused-vars
+            const { applyDiscountToClient: _a, applyDiscountBy: _b, applyDiscountAt: _t, ...rest } = row.data;
+            row.data = rest;
+          }
+          return { ...row, updated_at: new Date().toISOString() };
+        });
         // merge_client_ledger_rows (migration 034), not a plain upsert — a plain upsert REPLACES the
         // `data` jsonb column outright. That was always safe when every client's full data was loaded
         // at boot; it stopped being safe the moment client_ledger_light (same migration) started
