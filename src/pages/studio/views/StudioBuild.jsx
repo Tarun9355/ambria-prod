@@ -118,7 +118,7 @@ const cloneTrussRow = (src = {}) => ({
   mkS: src.mkS,
   mkWalls: { ...(src.mkWalls || {}) },
   mkWallMat: src.mkWallMat ? { ...src.mkWallMat } : undefined,
-  customCeilingItemId: src.customCeilingItemId || null,
+  customCeilingItemId: src.customCeilingItemId || null, customCeilingQty: src.customCeilingQty ?? null,
   customMaskingItemId: src.customMaskingItemId || null,
 });
 
@@ -1866,8 +1866,8 @@ export default function StudioBuild({ ctx }) {
     const item = zc.customCeilingItemId ? (imsInventory || []).find(i => i.id === zc.customCeilingItemId) : null;
     const fs = dense ? 9 : 10;
     if (item) return <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 8px", borderRadius: 6, fontSize: fs, background: "rgba(124,58,237,0.12)", color: "#7C3AED", fontWeight: 600, marginLeft: 8 }}>
-      <IconPlay size={12}/> {item.name}
-      <span onClick={() => patchTrussRow(k, rowIdx, { customCeilingItemId: null })} style={{ cursor: "pointer", color: "#E11D48", fontWeight: 700 }}>×</span>
+      <IconPlay size={12}/> {item.name}{Number(zc.customCeilingQty) > 0 ? ` × ${zc.customCeilingQty}` : ""}
+      <span onClick={() => patchTrussRow(k, rowIdx, { customCeilingItemId: null, customCeilingQty: null })} style={{ cursor: "pointer", color: "#E11D48", fontWeight: 700 }}>×</span>
     </span>;
     return <button onClick={() => setCustomPicker({ k, kind: "ceiling", rowIdx })} style={{ padding: dense ? "2px 7px" : "3px 9px", borderRadius: 6, fontSize: fs, border: `1px dashed ${border}`, background: "transparent", color: textS, cursor: "pointer", marginLeft: 8 }}><IconPlay size={11}/> Custom Ceiling</button>;
   };
@@ -3238,8 +3238,11 @@ undefined
         rcFactorByKey={rcFactorByKey}
         // free on the event date = what other events leave, minus what the rest of this deal already holds (as the printed-walls picker)
         freeFor={(() => { const fnsNow = collectAllFunctionData ? collectAllFunctionData() : []; return (it) => Math.max(0, getStudioAvailable(it, activeBlocksForDate) - qtyUsedElsewhereInBuild(it.id, fnsNow, imsInventory, {}, fnDate)); })()}
+        // Ceiling only: how many panels, starting at what the row has now (else one per truss). Masking stays one per truss.
+        withQty={customPicker.kind === "ceiling"}
+        defaultQty={(() => { const z = zoneConfig[customPicker.k] || {}; const r = customPicker.rowIdx == null ? z : (z.extraTrussRows || [])[customPicker.rowIdx] || {}; return Number(r.customCeilingQty) || Math.max(1, Number(r.trussQty) || 1); })()}
         dateLabel={fnDate ? new Date(fnDate + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : ""}
-        onSelect={(item) => {
+        onSelect={(item, qty) => {
           // Masking is either the flat per-sqft material OR this one custom item, never both —
           // picking a custom masking item clears mkT so the two can't silently disagree about
           // which one is actually billing (trussRowCost only ever charges one of them). Same rule
@@ -3247,7 +3250,7 @@ undefined
           // mkWallMat, addressed off the mkWallMat snapshot taken when the picker was opened (it
           // can't have changed underneath a modal the user is blocked on).
           const patch = customPicker.kind === "ceiling"
-            ? { customCeilingItemId: item.id }
+            ? { customCeilingItemId: item.id, customCeilingQty: qty || null }
             : customPicker.wallId
               // Merged onto this wall's own prior entry (not replaced) — a colour already picked
               // for this wall (see the 🎨 picker) must survive choosing a custom masking item too.
@@ -5806,7 +5809,7 @@ undefined
             trussQty:row.trussQty??1,trussFrontExt:row.trussFrontExt||0,trussFrontExtH:row.trussFrontExtH||0,
             mkOn:!!row.mkOn,mkT:row.mkT||"",mkWalls:row.mkWalls||{},
             trussMaterial:row.trussMaterial??null,drapeDensity:row.drapeDensity??null,
-            customCeilingItemId:row.customCeilingItemId??null,customMaskingItemId:row.customMaskingItemId??null});
+            customCeilingItemId:row.customCeilingItemId??null,customCeilingQty:row.customCeilingQty??null,customMaskingItemId:row.customMaskingItemId??null});
           const rowToLibPlatform=(row)=>({id:row.id,plH:row.plH||"",plHft:row.plHft??null,floorL:row.floorDims?.L||0,floorW:row.floorDims?.W||0});
           libDims={...(master?.dims||{}),
             trussL:d.L||0,trussW:d.W||0,trussH:d.H||0,floorL:fd.L||0,floorW:fd.W||0,
@@ -5815,7 +5818,7 @@ undefined
             trussFrontExt:liveCfg.trussFrontExt||0,trussFrontExtH:liveCfg.trussFrontExtH||0,
             trussMaterial:liveCfg.trussMaterial??master?.dims?.trussMaterial??null,
             drapeDensity:liveCfg.drapeDensity??master?.dims?.drapeDensity??null,
-            customCeilingItemId:liveCfg.customCeilingItemId??null,customMaskingItemId:liveCfg.customMaskingItemId??null,
+            customCeilingItemId:liveCfg.customCeilingItemId??null,customCeilingQty:liveCfg.customCeilingQty??null,customMaskingItemId:liveCfg.customMaskingItemId??null,
             trussRows:(liveCfg.extraTrussRows||[]).map(rowToLibTruss),
             platformRows:(liveCfg.extraPlatformRows||[]).map(rowToLibPlatform)};
         }

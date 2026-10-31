@@ -1205,7 +1205,10 @@ export function trussRowCost(row, rates) {
   let ceiling = 0;
   if (hasCustomCeiling) {
     const ceilingItem = (rates?.imsInventory || []).find((i) => i.id === row.customCeilingItemId);
-    if (ceilingItem) { ceiling = priceForInvItem(ceilingItem, rates?.rcFactorByKey, rates?.imsInventory) * Math.max(1, row.trussQty || 1); truss += ceiling; }
+    // How many panels: the count picked with it in the Custom Ceiling picker (row.customCeilingQty, owner ask 2026-10-31),
+    // else one per truss in the row, as before.
+    const ceilingQty = Number(row.customCeilingQty) > 0 ? Number(row.customCeilingQty) : Math.max(1, row.trussQty || 1);
+    if (ceilingItem) { ceiling = priceForInvItem(ceilingItem, rates?.rcFactorByKey, rates?.imsInventory) * ceilingQty; truss += ceiling; }
   }
   // Custom masking — same idea as custom ceiling: a specific IMS inventory item (e.g. a printed
   // wall panel) replaces the flat sqft × material-rate masking cost for this row's masked walls.

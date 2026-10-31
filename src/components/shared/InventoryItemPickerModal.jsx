@@ -12,10 +12,15 @@ import { fitUrl } from "../../lib/studio/thumb.js";
 export default function InventoryItemPickerModal({
   title, icon = "🖼️", accent = "#7C3AED",
   imsInventory, categoryMatch, subcatMatch, rcFactorByKey, freeFor, dateLabel,
+  // withQty: each card gets a − / + quantity (starting at defaultQty) and a "Select" button; onSelect(item, qty).
+  withQty = false, defaultQty = 1,
   onSelect, onClose,
   isDark, border, textP, textS, cardBg,
 }) {
   const [q, setQ] = useState("");
+  const [qtyById, setQtyById] = useState({});
+  const qtyOf = (id) => Math.max(1, Number(qtyById[id]) || Math.max(1, Number(defaultQty) || 1));
+  const setQty = (id, v) => setQtyById((m) => ({ ...m, [id]: Math.max(1, Math.round(Number(v) || 1)) }));
   const catM = String(categoryMatch || "").toLowerCase();
   const subM = String(subcatMatch || "").toLowerCase();
   const items = (imsInventory || []).filter((it) => {
@@ -63,7 +68,7 @@ export default function InventoryItemPickerModal({
                 const countTip = free == null ? `${owned}${unit ? " " + unit : ""} in IMS`
                   : `${free}${unit ? " " + unit : ""} free${dateLabel ? ` on ${dateLabel}` : " on the event date"} (after other events and the rest of this deal) · ${owned} owned`;
                 return (
-                  <div key={it.id} onClick={() => onSelect(it)}
+                  <div key={it.id} onClick={() => onSelect(it, withQty ? qtyOf(it.id) : undefined)}
                     style={{ borderRadius: 10, cursor: "pointer", border: `1px solid ${border}`, overflow: "hidden", background: isDark ? "#12121F" : "#fafafa", display: "flex", flexDirection: "column" }}
                     onMouseEnter={(e) => { e.currentTarget.style.borderColor = accent; e.currentTarget.style.boxShadow = `0 2px 12px ${accent}30`; }}
                     onMouseLeave={(e) => { e.currentTarget.style.borderColor = border; e.currentTarget.style.boxShadow = "none"; }}>
@@ -77,6 +82,19 @@ export default function InventoryItemPickerModal({
                     <div style={{ padding: "7px 9px" }}>
                       <div title={it.name} style={{ fontSize: 11, fontWeight: 600, color: textP, lineHeight: 1.25, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{it.name}</div>
                       <div style={{ fontSize: 9, color: textS, marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sub}{dims ? ` · 📐 ${dims}` : ""}</div>
+                      {withQty && (
+                        // its own clicks stay here - only "Select" (or the rest of the card) picks the item
+                        <div onClick={(e) => e.stopPropagation()} style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 7 }}>
+                          <div style={{ display: "inline-flex", alignItems: "center", border: `1px solid ${border}`, borderRadius: 7, overflow: "hidden" }}>
+                            <button type="button" aria-label="Fewer" onClick={() => setQty(it.id, qtyOf(it.id) - 1)} style={{ width: 24, height: 24, border: "none", background: "transparent", color: textP, fontSize: 14, cursor: "pointer" }}>−</button>
+                            <input value={qtyOf(it.id)} inputMode="numeric" aria-label="Quantity" onChange={(e) => setQty(it.id, e.target.value.replace(/\D/g, ""))}
+                              style={{ width: 30, height: 24, border: "none", borderLeft: `1px solid ${border}`, borderRight: `1px solid ${border}`, textAlign: "center", fontSize: 12, fontWeight: 700, color: textP, background: "transparent" }} />
+                            <button type="button" aria-label="More" onClick={() => setQty(it.id, qtyOf(it.id) + 1)} style={{ width: 24, height: 24, border: "none", background: "transparent", color: textP, fontSize: 14, cursor: "pointer" }}>+</button>
+                          </div>
+                          <button type="button" onClick={() => onSelect(it, qtyOf(it.id))}
+                            style={{ marginLeft: "auto", height: 24, padding: "0 9px", borderRadius: 7, border: "none", background: accent, color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Select</button>
+                        </div>
+                      )}
                     </div>
                   </div>
                 );

@@ -1616,7 +1616,7 @@ export default function ManageLibrary({ ctx }) {
                 const cpRate=row.cpT===CARPET_OFF?0:cp.rate;const cpCost=flSqft*cpRate;
                 return {fL,fW,flSqft,plH:row.plH,plRate,plCost,cpRate,cpCost,cpLabel:cp.label};
               };
-              const trussRows=[{trussL:d.trussL,trussW:d.trussW,trussH:d.trussH,trussQty:d.trussQty,mkT:d.mkT,mkWalls:d.mkWalls,trussMaterial:d.trussMaterial,drapeDensity:d.drapeDensity,customCeilingItemId:d.customCeilingItemId,customMaskingItemId:d.customMaskingItemId}, ...(d.trussRows||[])];
+              const trussRows=[{trussL:d.trussL,trussW:d.trussW,trussH:d.trussH,trussQty:d.trussQty,mkT:d.mkT,mkWalls:d.mkWalls,trussMaterial:d.trussMaterial,drapeDensity:d.drapeDensity,customCeilingItemId:d.customCeilingItemId,customCeilingQty:d.customCeilingQty??null,customMaskingItemId:d.customMaskingItemId}, ...(d.trussRows||[])];
               const platformRows=[{floorL:d.floorL,floorW:d.floorW,plH:d.plH,cpT:d.cpT}, ...(d.platformRows||[])];
               const trussResults=trussRows.map(trussRowCalc);
               const platformResults=platformRows.map(platformRowCalc);

@@ -317,7 +317,7 @@ function calcStructCost(zk, zc, rates, applyDiscount) {
   // structures in the same zone can be a different material, density, or handle their ceiling
   // differently, so each extra row carries its own (set via its own card in the zone editor).
   const trussRows = [
-    { dims: d, trT: zc.trT, trussType: zc.trussType, trussQty: zc.trussQty, trussFrontExt: zc.trussFrontExt, trussFrontExtH: zc.trussFrontExtH, trussBackDepth: zc.trussBackDepth, mkOn: zc.mkOn, mkT: zc.mkT, mkWalls: zc.mkWalls, mkWallMat: zc.mkWallMat, mkS: zc.mkS, trussMaterial: zc.trussMaterial, drapeDensity: zc.drapeDensity, customCeilingItemId: zc.customCeilingItemId, customMaskingItemId: zc.customMaskingItemId,
+    { dims: d, trT: zc.trT, trussType: zc.trussType, trussQty: zc.trussQty, trussFrontExt: zc.trussFrontExt, trussFrontExtH: zc.trussFrontExtH, trussBackDepth: zc.trussBackDepth, mkOn: zc.mkOn, mkT: zc.mkT, mkWalls: zc.mkWalls, mkWallMat: zc.mkWallMat, mkS: zc.mkS, trussMaterial: zc.trussMaterial, drapeDensity: zc.drapeDensity, customCeilingItemId: zc.customCeilingItemId, customCeilingQty: zc.customCeilingQty ?? null, customMaskingItemId: zc.customMaskingItemId,
       useNewFabric: zc.useNewFabric, noFabric: zc.noFabric, fabLiza: zc.fabLiza, fabCurtain: zc.fabCurtain, fabLizaRep: zc.fabLizaRep, fabCurtainRep: zc.fabCurtainRep, mkRep: zc.mkRep },
     ...(zc.extraTrussRows || []),
   ];
@@ -4900,7 +4900,7 @@ export default function StudioApp() {
         trussFrontExtH: Number(row.trussFrontExtH) || 0,
         mkOn: !!row.mkT, mkT: row.mkT || null, mkWalls: row.mkWalls || {},
         trussMaterial: row.trussMaterial ?? null, drapeDensity: row.drapeDensity ?? null,
-        customCeilingItemId: row.customCeilingItemId ?? null, customMaskingItemId: row.customMaskingItemId ?? null,
+        customCeilingItemId: row.customCeilingItemId ?? null, customCeilingQty: row.customCeilingQty ?? null, customMaskingItemId: row.customMaskingItemId ?? null,
       };
     };
     const mapPlatformRow = (row) => ({
@@ -4925,7 +4925,7 @@ export default function StudioApp() {
       trT, mkOn: !!d.mkT, mkT: d.mkT || null, mkWalls: d.mkWalls || {},
       plH: d.plH || null, plHft: d.plHft ?? null, cpT: d.cpT ?? null,
       trussMaterial: d.trussMaterial ?? null, drapeDensity: d.drapeDensity ?? null,
-      customCeilingItemId: d.customCeilingItemId ?? null, customMaskingItemId: d.customMaskingItemId ?? null,
+      customCeilingItemId: d.customCeilingItemId ?? null, customCeilingQty: d.customCeilingQty ?? null, customMaskingItemId: d.customMaskingItemId ?? null,
       // Carry truss quantity + box front-extension tagged on the library photo through to Build.
       trussQty: Number(d.trussQty) === 0 ? 0 : Math.max(1, Number(d.trussQty) || 1),
       trussFrontExt: Number(d.trussFrontExt) || 0,
