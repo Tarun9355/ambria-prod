@@ -5396,16 +5396,18 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
               Only the departments that actually have something on this event are included — a
               seven-book file where four books are empty is worse than four books.
               Hidden until an event is picked, since there is nothing to export before that. */}
-          {sel && deptsWithWork.length > 1 && (
-            <button onClick={() => exportDeptPdf(deptsWithWork)} disabled={!!exporting}
-              title={exporting === "download" ? "Building the PDF…" : `One PDF with all ${deptsWithWork.length} departments on this event`}
+          {/* Always on the bar (owner ask 2026-10-31) - hiding it with no event picked, or when Deal Check had synced
+              fewer than two departments, read as the button having been removed. Disabled with a reason before an
+              event is picked; with one department (or none synced yet) it downloads the department on screen. */}
+          <button onClick={() => exportDeptPdf(deptsWithWork)} disabled={!sel || !!exporting}
+              title={!sel ? "Pick an event first" : exporting === "download" ? "Building the PDF…"
+                : deptsWithWork.length > 1 ? `One PDF with all ${deptsWithWork.length} departments on this event` : `Download ${dept} as PDF`}
               className="hidden sm:inline-flex shrink-0 items-center gap-1.5 ml-1 px-3 py-1.5 rounded-lg text-sm font-semibold whitespace-nowrap border border-gray-200 bg-white text-gray-700 hover:text-gray-900 hover:bg-gray-50 hover:-translate-y-0.5 hover:shadow-[0_1px_2px_rgba(16,24,40,0.06),0_4px_10px_-6px_rgba(16,24,40,0.2)] disabled:opacity-60 disabled:hover:translate-y-0 transition-all duration-150">
               {exporting === "download"
                 ? <span aria-hidden="true" className="w-3.5 h-3.5 rounded-full border-2 border-gray-300 border-t-blue-600 animate-spin" />
                 : <IconDownload />}
               <span>{exporting === "download" && exportNote ? exportNote : "Download PDF"}</span>
             </button>
-          )}
           {/* Only while an event's planning is older than an IMS setting / inventory change. */}
           <PlanningSyncButton eventOrders={eventOrders} onlyOrder={sel} />
         </div>
