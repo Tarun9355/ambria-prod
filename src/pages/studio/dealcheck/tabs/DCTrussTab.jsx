@@ -593,6 +593,25 @@ export default function DCTrussTab({ ctx }) {
                                         gone — each figure now rides on the tile it describes, and the
                                         zone's truss total is on the card header. */}
 
+                                    {/* ── CUSTOM CEILING ── the inventory panel Build's Custom Ceiling picker put on this truss, with its
+                                        count (row.customCeilingQty, else one per truss - what Build prices). It was priced but shown
+                                        nowhere in Deal Check (owner ask 2026-10-31). */}
+                                    {row.customCeilingItemId && (() => {
+                                      const ci = (dealCheckData?.inventory || []).find(x => x.id === row.customCeilingItemId);
+                                      const cq = Number(row.customCeilingQty) > 0 ? Number(row.customCeilingQty) : Math.max(1, Number(row.trussQty) || 1);
+                                      const src = ci?.img || ci?.photoUrls?.[0] || "";
+                                      return (
+                                        <div style={{marginTop:12,padding:"9px 12px",background:TILE_BG,border:"1px dashed #D3D7DF",borderRadius:8,display:"flex",alignItems:"center",gap:10}}>
+                                          {src ? <img src={src} alt="" style={{width:36,height:36,borderRadius:6,objectFit:"cover",flexShrink:0}} /> : null}
+                                          <div style={{minWidth:0,flex:1}}>
+                                            <div style={{fontSize:10.5,fontWeight:700,color:INK_2,letterSpacing:0.7,textTransform:"uppercase"}}>Custom Ceiling</div>
+                                            <div style={{fontSize:12.5,fontWeight:600,color:INK_2,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ci?.name || "Item not in IMS"}</div>
+                                          </div>
+                                          <div style={{...NUM,fontSize:13,fontWeight:700,color:INK_2,flexShrink:0}}>× {cq}{ci?.unit ? ` ${ci.unit}` : ""}</div>
+                                        </div>
+                                      );
+                                    })()}
+
                                     {/* ── §23 Phase 2.9f — Fabric Allocation (Masking + Liza + Curtains) ──
                                         Each truss row gets its own allocation — row 0 lives directly on
                                         the zone (zoneConfig[zk].maskingAllocation etc, unchanged), extra

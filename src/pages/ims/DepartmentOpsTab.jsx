@@ -3927,6 +3927,25 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           // a recipe with no inventory item shows the picture of its size, as Build does (photo below)
           merged.set(key, { name: arranged ? `${el?.name || inv?.name || "Item"} — arranged separately` : (invU?.name || decName || el?.name || held?.name || "Item"), qty, unit, deptTag, photo: arranged ? "" : (invPhoto(invU, invU === inv ? held : null) || (!invU && sizeData?.img) || ""), dims: arranged ? "" : invDims(invU), extra: (choiceExtra || floralMix) ? [...(choiceExtra || []), ...(floralMix ? [["Flowers", floralMix]] : [])] : undefined, mix: floralMix, size: elSize, kit: held?.isKit ? (Array.isArray(held.components) ? held.components.length : 0) + (Array.isArray(held.recipeParts) ? held.recipeParts.length : 0) : liveKit.length, liveKit, recipe, paint: addPaint(new Map(), paint) });
         });
+        // ── CUSTOM CEILING ── not a zone element: it sits on the zone's truss rows (customCeilingItemId + its count
+        // customCeilingQty, else one per truss), which reach IMS with the layout on every Build save. A card of its own on
+        // the zone's page, in the book of the department that pulls it (owner ask 2026-10-31) - it used to appear nowhere.
+        const zoneRows = [fn?.zones?.[zk], ...((fn?.zones?.[zk]?.extraTrussRows) || [])].filter(Boolean);
+        zoneRows.forEach((row, ri) => {
+          if (!row.customCeilingItemId) return;
+          const ci = invById.get(String(row.customCeilingItemId));
+          if (!ci) return;
+          const held = heldByInv.get(String(ci.id)) || null;
+          if (!(combined || held || catToDept(ci.category || ci.cat) === dept)) return;
+          if (held) placed.add(held.id);
+          const cq = Number(row.customCeilingQty) > 0 ? Number(row.customCeilingQty) : Math.max(1, Number(row.trussQty) || 1);
+          const key = "ceil:" + ci.id;
+          const prev = merged.get(key);
+          if (prev) { prev.qty += cq; return; }
+          merged.set(key, { name: ci.name, qty: cq, unit: String(ci.unit || "").trim(), photo: invPhoto(ci, held), dims: invDims(ci), size: "", kit: 0, recipe: [],
+            deptTag: combined ? (deptByInvId.get(String(ci.id)) || catToDept(ci.category || ci.cat)) : "",
+            extra: [["Ceiling", "Custom ceiling" + (zoneRows.length > 1 ? ` (truss ${ri + 1})` : "")]] });
+        });
         const items = [...merged.values()];
         const zPhoto = fn.elSelectedPhoto?.[zk]?.src || "";
         const zDims = zoneDimsText(fn.dims?.[zk] || fn.zones?.[zk]?.dims);

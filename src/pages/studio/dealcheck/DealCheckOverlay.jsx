@@ -1093,6 +1093,21 @@ export default function DealCheckOverlay({ ctx }) {
                     const fabCost = calcZoneFabricCost(row, tInv, anchors, row.drapeDensity || density, row.dcFabricMult) * repeatFabMult;
                     truss += fabCost; byFn[fi].truss += fabCost; addD("Fabric", "fabric", fabCost); // truss/masking fabric → Fabric
                     // Line items for the Fabric dept's own planning view (IMS Dept Ops) — this never
+                    // ── CUSTOM CEILING ── the inventory panel picked in Build's Custom Ceiling picker (row.customCeilingItemId),
+                    // with its own count (row.customCeilingQty, else one per truss - the same count Build prices). It never
+                    // reached Deal Check's department lists, so the department pulling it (and IMS Dept Ops / its PDF) never
+                    // saw it (owner ask 2026-10-31). Listed under the item's own department, like any inventory line; a
+                    // Repeat zone's ceiling is already up, so nothing to pull - same rule as the truss pieces above.
+                    if (row.customCeilingItemId && !isRepeat) {
+                      const ceilItem = (dcInventoryCache || []).find(x => x.id === row.customCeilingItemId);
+                      const ceilDept = ceilItem ? catToDept(imsField.category(ceilItem)) : null;
+                      if (ceilItem && deptInv[ceilDept]) {
+                        const cq = Number(row.customCeilingQty) > 0 ? Number(row.customCeilingQty) : Math.max(1, row.trussQty || 1);
+                        const cu = Math.round(Number(ceilItem.price ?? ceilItem.rentalCost) || 0);
+                        deptInv[ceilDept].push({ name: ceilItem.name, photo: imsField.photos(ceilItem)[0] || "", qty: cq, rentalQty: cq, unit: cu, total: cu * cq,
+                          sub: imsField.subcategory(ceilItem) || "custom ceiling", imsId: ceilItem.id, fnIdx: fi, customCeilingZone: zk });
+                      }
+                    }
                     // existed before (addD above only ever fed a dollar total, nothing a warehouse team
                     // could actually shop/pull against). Old vs New in the name so whoever's pulling
                     // stock knows which tier this zone was billed at, straight from the salesperson's
