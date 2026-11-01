@@ -44,14 +44,17 @@ export default function PaintDeptView({ sel, inventory, colourCatalogue, zoneLab
         <div key={f.fi} className="bg-white rounded-xl shadow-sm overflow-hidden">
           {multiFn && (
             <div className="px-4 py-2.5 border-b border-gray-100 text-xs font-semibold text-gray-700">
-              {f.label}{f.date ? <span className="font-normal text-gray-400"> · {f.date}</span> : null}
+              {f.label}{f.date ? <span className="font-normal text-gray-500"> · {f.date}</span> : null}
             </div>
           )}
           <div className="divide-y divide-gray-100">
             {f.rows.map((r) => (
               <div key={r.key} className="flex items-start gap-3 px-4 py-3">
                 {r.photo
-                  ? <img src={thumbUrl(r.photo, 48)} loading="lazy" decoding="async" alt="" onClick={() => onZoom?.(r.photo)} className="w-12 h-12 rounded-lg object-cover border cursor-zoom-in shrink-0" onError={(e) => { e.target.style.display = "none"; }} />
+                  ? <button type="button" onClick={() => onZoom?.(r.photo)} aria-label={`Enlarge photo of ${r.name}`}
+                      className="shrink-0 rounded-lg cursor-zoom-in focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1">
+                      <img src={thumbUrl(r.photo, 48)} loading="lazy" decoding="async" alt="" className="w-12 h-12 rounded-lg object-cover border" onError={(e) => { e.target.style.display = "none"; }} />
+                    </button>
                   : <div className="w-12 h-12 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-lg shrink-0">📦</div>}
                 <div className="min-w-0 flex-1">
                   <div className="flex items-baseline justify-between gap-3">
