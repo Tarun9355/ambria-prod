@@ -5908,8 +5908,10 @@ export default function StudioApp() {
     const byName = {}; const elements = [];
     eb.forEach(e => {
       if (e.isInvOnlyNoPattern) return;
-      if (!byName[e.name]) { byName[e.name] = { name: e.name, zones: [], qty: 0, realPct: e.realPct, real: 0, art: 0, total: 0, invCost: 0 }; elements.push(byName[e.name]); }
-      const g = byName[e.name];
+      // same name AND same real % - rows at different ratios stay apart, so each shows its own % (as Deal Check's table)
+      const mk = `${e.name}|${e.realPct}`;
+      if (!byName[mk]) { byName[mk] = { name: e.name, zones: [], qty: 0, realPct: e.realPct, real: 0, art: 0, total: 0, invCost: 0 }; elements.push(byName[mk]); }
+      const g = byName[mk];
       g.zones.push(e.zoneKey); g.qty += e.qty || 0; g.real += e.realCost || 0; g.art += e.artCost || 0; g.total += e.total || 0;
       g.invCost += (e.artLines || []).reduce((s, rl) => s + (rl.invItem ? (rl.lineCost || 0) : 0), 0);
     });

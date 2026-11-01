@@ -736,8 +736,11 @@ export default function DCFloralsTab({ ctx }) {
                           // their cost is still folded into totalReal/totalArtificial above, just not
                           // shown again here as a "no pattern" row (there was never a pattern to have).
                           if (eb.isInvOnlyNoPattern) return;
-                          if (!byName[eb.name]) { byName[eb.name] = { name: eb.name, zones: [], totalQty: 0, realPct: eb.realPct, realCost: 0, artCost: 0, total: 0, hasPattern: false, invCost: 0, entries: [] }; merged.push(byName[eb.name]); }
-                          const g = byName[eb.name];
+                          // Same name AND same real %: a Flower Bunch at 20% real in BTR and at 100% in Centre Pieces are two rows, not one row
+                          // showing whichever zone came first's ratio over both quantities.
+                          const mk = `${eb.name}|${eb.realPct}`;
+                          if (!byName[mk]) { byName[mk] = { name: eb.name, zones: [], totalQty: 0, realPct: eb.realPct, realCost: 0, artCost: 0, total: 0, hasPattern: false, invCost: 0, entries: [] }; merged.push(byName[mk]); }
+                          const g = byName[mk];
                           g.zones.push(eb.zoneKey);
                           g.totalQty += (eb.qty || 0);
                           g.realCost += (eb.realCost || 0);
