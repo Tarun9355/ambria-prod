@@ -3084,7 +3084,13 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
                                 const zc=eb.zc||{};
                                 const maskedWalls=["back","left","right"].filter(wId=>zc.mkWalls?.[wId]);
                                 const hasOv=maskedWalls.some(wId=>zc.mkWallMat?.[wId]?.matKey||zc.mkWallMat?.[wId]?.customItemId);
-                                const label=hasOv?"mixed materials":`${zc.mkT} masking (${zc.mkS} side${zc.mkS>1?"s":""})`;
+                                // Name what each masked wall is in, not a bare "mixed materials" (RC-79: three walls each set to Acrylic read
+                                // "mixed materials ₹30,000"). One material on every wall reads as that material.
+                                const matOf=wId=>{const ov=zc.mkWallMat?.[wId];return ov?.customItemId?"custom panel":(ov?.matKey||zc.mkT||"");};
+                                const mats=maskedWalls.map(matOf);
+                                const label=!hasOv?`${zc.mkT} masking (${zc.mkS} side${zc.mkS>1?"s":""})`
+                                  :new Set(mats).size===1?`${mats[0]} masking (${mats.length} side${mats.length>1?"s":""})`
+                                  :maskedWalls.map((wId,i)=>`${wId} ${mats[i]}`).join(" · ");
                                 return <div style={{display:"flex",justifyContent:"space-between",padding:"3px 0",fontSize:12}}><span style={{color:textS}}>🧱 {label}</span><span style={{fontWeight:600}}>{fmt(eb.zl.masking)}</span></div>;
                               })()}
                               {eb.zl.platform>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"3px 0",fontSize:12}}><span style={{color:textS}}>🏗️ Platform ({eb.zc?.plH})</span><span style={{fontWeight:600}}>{fmt(eb.zl.platform)}</span></div>}
