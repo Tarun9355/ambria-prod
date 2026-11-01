@@ -22,10 +22,9 @@ export function eventOrderFor(eventOrders, clientId, clientName) {
 // newest one counted the other's holds as another event's: the deal's own items read out of stock at Sold (owner report 2026-11-01).
 export function ownEventOrderIds(eventOrders, clientId, clientName) {
   const list = Array.isArray(eventOrders) ? eventOrders.filter(Boolean) : [];
-  let mine = clientId ? list.filter((e) => e.clientId === clientId) : [];
-  if (!mine.length) {
-    const name = String(clientName || "").trim();
-    mine = name ? list.filter((e) => (e.clientName || "") === name) : [];
-  }
+  // By client id; by name only for an old order saved without one - never another client's order that shares the name
+  // (netting a namesake's holds would show a new deal stock that is actually taken).
+  const name = String(clientName || "").trim();
+  const mine = list.filter((e) => (clientId && e.clientId === clientId) || (!e.clientId && name && (e.clientName || "") === name));
   return mine.filter((e) => !isCancelled(e) && e.id).map((e) => e.id);
 }

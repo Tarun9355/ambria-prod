@@ -56,3 +56,15 @@ describe("a deal booked twice does not read its own stock as taken (Sangeeta 4 N
     expect(netOwnReservedBlocksLive({ sofa: 4 }, "sofa", detail, "eo_a").sofa).toBe(2);
   });
 });
+
+describe("ownEventOrderIds never takes a namesake's order", () => {
+  it("another client with the same name is left out; an old order with no client id is matched by name", () => {
+    const orders = [
+      { id: "eo_mine", clientId: "c1", clientName: "Sangeeta", status: "pending" },
+      { id: "eo_other", clientId: "c9", clientName: "Sangeeta", status: "pending" },
+      { id: "eo_old", clientName: "Sangeeta", status: "pending" },
+    ];
+    expect(ownEventOrderIds(orders, "c1", "Sangeeta").sort()).toEqual(["eo_mine", "eo_old"]);
+    expect(ownEventOrderIds(orders, "c_new", "Sangeeta")).toEqual(["eo_old"]);
+  });
+});
