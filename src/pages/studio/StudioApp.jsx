@@ -41,6 +41,7 @@ import { dealAgencyFeePct, feePctOf, DEFAULT_AGENCY_FEE_PCT } from "../../lib/st
 import { sameVenueHolds, siblingCarpetUse } from "../../lib/studio/carpetReuse";
 import { elementAfterPick } from "../../lib/studio/elementPick";
 import { printSqftOf, smallPrintFlat, printFlatForZone, PRINT_TRUCK_SUB } from "../../lib/studio/truckPrint";
+import { zoneDimLabel } from "../../lib/studio/zoneDims";
 import { withKitEdit } from "../../lib/studio/dealCheckSync";
 import { itemTakesChoices } from "../../lib/studio/elementPrefs";
 import { findCrossFnReuseSource, computeFnInvQty, findSiblingFnInvUse, findSiblingFnSubcatOpportunity } from "../../lib/studio/crossFnReuse";
@@ -10357,7 +10358,7 @@ export default function StudioApp() {
       const zc = fZoneConfig[k] || {};
       const zm = zoneMeta[k];
       const dims = zc.dims || {};
-      const dimLabel = zm ? ["L", "W", "H"].map(d => `${dims[d] || 0}ft`).join(" × ") : "";
+      const dimLabel = zm ? zoneDimLabel(zc) : "";
       if (zl.truss > 0) {
         // Multiple truss structures in one zone (zc + zc.extraTrussRows — the exact rows
         // calcStructCost's own trussRows loop sums into zl.truss) used to collapse into ONE

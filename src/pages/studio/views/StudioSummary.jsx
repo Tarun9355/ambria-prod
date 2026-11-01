@@ -34,6 +34,7 @@ const ESTIMATE_BG = Object.values(
 )[0] || null;
 import { supabase } from "../../../lib/supabase";
 import { callClaudeStreaming } from "../../../lib/ai";
+import { zoneDimLabel } from "../../../lib/studio/zoneDims";
 
 // ═══ AMBRIA'S OWN SLIDE BACKGROUNDS (optional, one per event type) ═══
 // Drop an image at src/assets/<event>-bg.(png|jpg|webp) — wedding-bg.jpg, birthday-bg.jpg — and a
@@ -3035,7 +3036,7 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
                                 <div style={{fontSize:14,fontWeight:600}}>{eb.label}</div>
                                 <div style={{display:"flex",gap:6,alignItems:"center"}}>
                                   <span style={{fontSize:10,color:textS}}>{eb.itemCount} items</span>
-                                  {eb.zc && <span style={{fontSize:9,color:textS}}>{["L","W","H"].map(d=>`${eb.zc.dims?.[d]||0}ft`).join("×")}</span>}
+                                  {eb.zc && zoneDimLabel(eb.zc) && <span style={{fontSize:9,color:textS}}>{zoneDimLabel(eb.zc)}</span>}
                                   {/* The chip says a reference photo IS chosen. Its name was the storage
                                       filename, which told nobody anything. */}
                                   {eb.selPh && <span title="Reference photo selected for this zone" style={{fontSize:9,padding:"1px 6px",borderRadius:4,background:"#ECFDF5",color:"#059669"}}>📷 Photo</span>}
