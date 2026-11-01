@@ -849,20 +849,6 @@ export const resolveFabricAllocation = (existing, totalQty, paletteAnchors, stoc
   return autoFillFabricAllocation(totalQty, anchors, stockArray, qtyField);
 };
 
-// A truss row's Wall Masking colours (RC-80). The colour picked on that truss in Build (row.mkColour) wins - it was
-// never read, so Deal Check ignored it - else the deal's Fabric Palette colours tagged for masking. With neither, and
-// no colour allocated by hand yet, the masking is "Colour not picked" rather than whichever colour happens to have the
-// most stock (it read "Ivory x3" on a deal where nobody had chosen a colour, and ops would have pulled Ivory). The
-// colour does not change the price: Deal Check bills masking at one flat rate.
-export const MASKING_COLOUR_UNPICKED = "Colour not picked";
-export const maskingAnchorsForRow = (row, paletteAnchors) => (row?.mkColour ? [row.mkColour] : (Array.isArray(paletteAnchors) ? paletteAnchors : []));
-export const resolveMaskingAllocation = (row, totalQty, paletteAnchors, stockArray, qtyField) => {
-  const anchors = maskingAnchorsForRow(row, paletteAnchors);
-  const saved = Array.isArray(row?.maskingAllocation) && row.maskingAllocation.length > 0;
-  if (anchors.length === 0 && !saved) return totalQty > 0 ? [{ qty: totalQty, colour: MASKING_COLOUR_UNPICKED }] : [];
-  return resolveFabricAllocation(row?.maskingAllocation, totalQty, anchors, stockArray, qtyField);
-};
-
 // ═══ Direct-add mandi elements (owner ask, 2026-10-17) ═══ A raw mandi commodity is normally only
 // ever priced through a recipe/blend — never added to a build as its own element. "Loose Petals"
 // was the one named exception (by the kg, variant picked afterward on the card). Generalized here:
