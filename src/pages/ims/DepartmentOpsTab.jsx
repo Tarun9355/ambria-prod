@@ -3774,6 +3774,26 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       if (!z.plH && !hasCarpet && floor) out.push({ k: "Floor", v: floor });
       return out;
     };
+    // ── THE FABRIC COLOURS ── Liza / Velvet curtain / Wall masking colour of each zone, under the truss size (owner ask 2026-11-01): the
+    // colours the Fabric block works out (lib/ims/fabricGroups - Deal Check's allocation, live from Build's Fabric Palette), in the
+    // books that put up the truss and its fabric.
+    const fabricByZone = new Map(); // "fi|zk" -> [{ k, html }]
+    if (showStruct || dept === "Fabric") {
+      try {
+        buildFabricGroups({ entries: fabricEntriesOf(), lines: [], fabricPlan: sel?.fabricPlan, stock: trussInv, fnPalettes: fabricPalettesOf() }).groups.forEach(g => {
+          g.zones.forEach(z => {
+            if (z.fi == null) return;
+            const cols = (z.colours || []).filter(c => c.colour && c.colour !== "(unassigned)");
+            const one = cols.length === 1;
+            const html = cols.length
+              ? cols.map(c => `<b class="fpc">${c.hex ? `<i style="background:${esc(c.hex)}"></i>` : ""}${esc(c.colour)}${one ? "" : ` ${esc(c.qty)} ${esc(g.unit)}`}</b>`).join("") + (z.standing ? `<b class="fpc">♻ Repeat</b>` : "")
+              : esc("Colour not picked");
+            const key = `${z.fi}|${z.zoneKey}`;
+            fabricByZone.set(key, [...(fabricByZone.get(key) || []), { k: g.label, html }]);
+          });
+        });
+      } catch { /* the zone pages print without the colours */ }
+    }
     fns.forEach((fn, fi) => {
       const els = fn?.elements || {};
       // ── EVERY ZONE OF THE EVENT, NOT ONLY THE ONES THIS DEPARTMENT FILLS ──
@@ -4026,6 +4046,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           zoneDims: zDims,
           dimsOf: zDimsOf,
           struct: zStruct,
+          fabric: fabricByZone.get(`${fi}|${zk}`) || [],
           items,
         });
       });
@@ -4166,7 +4187,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       const cont = part > 1; // a later page of a zone that is already named
       // The strip (structure, floral mix, palette) prints on the zone's first page only — nothing repeats (owner ask).
       const strip = !cont && (pg.struct || []).length > 0;
-      const headPx = (cont ? CONT_HEAD_PX : HEAD_PX) + (strip ? 44 : 0);
+      // the fabric colours get a row of their own under it, so the truss strip never wraps past the height set aside for it
+      const fabStrip = !cont && (pg.fabric || []).length > 0;
+      const headPx = (cont ? CONT_HEAD_PX : HEAD_PX) + (strip ? 44 : 0) + (fabStrip ? 44 : 0);
       const PHOTO_H = bare ? PAGE_PX - headPx : Math.max(260, PAGE_PX - headPx - rows * (ROW_H + ARROW));
       const photoTop = bare ? 0 : ROW_H + ARROW;
       const botTop = photoTop + PHOTO_H + ARROW;
@@ -4187,6 +4210,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           <div class="zt">${pg.zoneDims ? `<span><i class="zl">${esc(pg.dimsOf)}</i>${esc(pg.zoneDims)}</span>` : ""}<span>${zoneCountText(pg)}</span></div>
         </div>`}
         ${strip ? `<div class="zst">${pg.struct.map(c => `<span><i class="zl">${esc(c.k)}</i>${c.html != null ? c.html : esc(c.v)}</span>`).join("")}</div>` : ""}
+        ${fabStrip ? `<div class="zst">${pg.fabric.map(c => `<span><i class="zl">${esc(c.k)}</i>${c.html}</span>`).join("")}</div>` : ""}
         <div class="zs" style="height:${stageH}px">
           <div class="zphoto" style="top:${photoTop}px;height:${PHOTO_H}px;${bgCss(pg.photo)}" ${bgData(pg.photo)}>${pg.photo ? "" : "<span>No zone photo</span>"}</div>
           ${cards}
