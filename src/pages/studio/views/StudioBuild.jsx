@@ -20,7 +20,7 @@ import {
 import { paletteNames, addPaletteInline } from "../../../lib/studio/colours";
 import PaletteQuickAdd from "../../../components/studio/PaletteQuickAdd.jsx";
 import { prefsOf, prefsPatch, setPrefsPatch, clearPrefsPatch, assignCarpets, carpetRemainingFor, floorSqftOf, CARPET_PREF_LABELS, CARPET_PREF_MAX } from "../../../lib/studio/carpetPrefs";
-import { trussRowCost, calcZoneFabricCost, guestFabricMultiplier, fabricRepeatDiscount, maskingRepeatOn, maskingGuestCost, zoneTrussStandingDiscountDetail, repeatCatFor, parseFlowerPalette, stringifyFlowerPalette, parseFabricPalette, stringifyFabricPalette, isDirectMandiElement, anchorsForPaletteByMaterial, snapRowDimsForProduction } from "../../../lib/studio/pricing";
+import { trussRowCost, calcZoneFabricCost, calcZoneFabric, guestFabricMultiplier, fabricRepeatDiscount, maskingRepeatOn, maskingGuestCost, zoneTrussStandingDiscountDetail, repeatCatFor, parseFlowerPalette, stringifyFlowerPalette, parseFabricPalette, stringifyFabricPalette, isDirectMandiElement, anchorsForPaletteByMaterial, snapRowDimsForProduction } from "../../../lib/studio/pricing";
 import { paletteSearch, paletteMatches } from "../../../components/studio/filterUI.jsx";
 import { resolveTrussConfig } from "../../../lib/studio/pricing";
 import { fabricColourOptions } from "../../../lib/studio/fabricColourOptions";
@@ -168,6 +168,11 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
   // figure below) — same total, each part under the control that causes it. Without-walls is the
   // same calculation with no walls masked.
   const fabricAll = fabricInv ? calcZoneFabricCost(zc, fabricInv, [], zc.drapeDensity || "moderate") * fabMult : 0;
+  // What the Fabric figure is made of, in the units Deal Check allocates (RC-81) - it showed a bare ₹ with no kg or
+  // pieces, so a salesperson could not sanity-check it. And what each drape preset would pull (RC-82, the preset tooltips).
+  const fabQtyAt = (density) => (fabricInv && !zc.noFabric ? calcZoneFabric(zc, fabricInv, density) : null);
+  const fabQtyText = (f) => !f ? "" : [f.lizaKg > 0 && `Liza ${f.lizaKg} kg`, f.curtainPieces > 0 && `Velvet curtains ${f.curtainPieces} pc`, f.maskingPieces > 0 && `Wall masking ${f.maskingPieces} pc`].filter(Boolean).join(" · ");
+  const fabQtyNow = fabQtyText(fabQtyAt(zc.drapeDensity || "moderate"));
   const fabricCost = fabricInv ? calcZoneFabricCost({ ...zc, mkOn: false, mkWalls: {} }, fabricInv, [], zc.drapeDensity || "moderate") * fabMult : 0;
   const wallPanelCost = Math.max(0, fabricAll - fabricCost);
   // The Custom Ceiling panel bills inside rowCost.truss (and takes the Repeat discount with it), but
@@ -405,7 +410,8 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                     <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
                       {[{v:"minimum",l:"Minimum"},{v:"moderate",l:"Moderate"},{v:"dense",l:"Dense"}].map(o=>{
                         const sel=(zc.drapeDensity||"moderate")===o.v;
-                        return <span key={o.v} onClick={()=>sZ({drapeDensity:o.v})} style={optPill(sel)}>{sel&&<IconCheck size={9}/>}{o.l}</span>;
+                        const q=fabQtyText(fabQtyAt(o.v));
+                        return <span key={o.v} onClick={()=>sZ({drapeDensity:o.v})} style={optPill(sel)} title={q?`${o.l} drape: ${q}`:undefined}>{sel&&<IconCheck size={9}/>}{o.l}</span>;
                       })}
                       {/* Sits with Drape, not Material: it swaps the fabric ceiling drape for an
                           inventory item, so its cost comes out of the drape portion of the rate
@@ -457,6 +463,7 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                           impossible to tell apart from a legitimately-zero one without opening devtools. */}
                       {showCosts&&<span style={{marginLeft:"auto",fontSize:12,fontWeight:600,color:textP}} title={`Liza + velvet curtains${wallPanelCost>0?` + wall fabric pieces ${fmt(wallPanelCost)}`:""} for a ${zc.drapeDensity||"moderate"} drape, ${zc.useNewFabric?"New":"Old"} stock${ceilingShown>0?" (the ceiling panel's own cost is on the Drape card)":""}`}>{fmt(fabricShown)}</span>}
                     </div>
+                    {fabQtyNow&&<div style={{fontSize:11,color:textS,marginTop:4}}>{fabQtyNow}</div>}
                     {/* A bare frame: the truss bills at IMS's "Without fabric" rate and no Liza,
                         curtains or masking pieces are counted (see calcZoneFabric/trussRowCost). */}
                     <span onClick={()=>sZ({noFabric:!zc.noFabric})} style={{...optPill(!!zc.noFabric),marginTop:6,display:"inline-flex"}}
