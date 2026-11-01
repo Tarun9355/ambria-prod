@@ -3829,10 +3829,7 @@ export default function DealCheckOverlay({ ctx }) {
                                           // like undefined everywhere except that one reconcile call.
                                           const resetKit = ()=> setDcKitEdits(prev=>({...prev,[fnIdx]:{...(prev[fnIdx]||{}),[editKey]: null}}));
                                           const kitBase = Number(item.kitBase) || 0;  // kit's own charge, added on top of parts
-                                          // A component that is itself a kit (sub-kit) at its kit price - the same effKitRental the cost rollup uses - not its bare
-                                          // rental: "Golden Couple Couch 13" read ₹1,380 here while Build priced it with its 3 cushion covers (RC-85).
-                                          const compRental = (ci)=> (Array.isArray(ci?.subItems) && ci.subItems.length) ? effKitRental(ci, fnIdx, null) : imsField.rentalCost(ci);
-                                          const partsTotal = comps.reduce((s,c)=>{ const ci=dcInventoryCache.find(x=>x.id===c.itemId); return s + (ci?compRental(ci):0)*(Number(c.qty)||0); },0);
+                                          const partsTotal = comps.reduce((s,c)=>{ const ci=dcInventoryCache.find(x=>x.id===c.itemId); return s + (ci?imsField.rentalCost(ci):0)*(Number(c.qty)||0); },0);
                                           const kitTotal = kitBase + partsTotal;
                                           return (
                                             /* ── FULL CARD WIDTH, NOT TEXT-COLUMN WIDTH ──
@@ -3906,21 +3903,11 @@ export default function DealCheckOverlay({ ctx }) {
                                                       <span style={{minWidth:74,color:IV.ink3,whiteSpace:"nowrap",...NUM}}>
                                                         {cardQty>1 ? <>× {cardQty} kits = <b style={{color:IV.ink}}>{needed}</b></> : <>× {needed}</>}
                                                       </span>
-                                                      {cItem && (()=>{ const cr=compRental(cItem); return <span style={{...NUM,flex:"1 1 auto",minWidth:108,color:IV.ink3,whiteSpace:"nowrap"}}>₹{cr.toLocaleString("en-IN")} × {needed} = <b style={{color:"#4338CA"}}>₹{(cr*needed).toLocaleString("en-IN")}</b></span>; })()}
+                                                      {cItem && (()=>{ const cr=imsField.rentalCost(cItem); return <span style={{...NUM,flex:"1 1 auto",minWidth:108,color:IV.ink3,whiteSpace:"nowrap"}}>₹{cr.toLocaleString("en-IN")} × {needed} = <b style={{color:"#4338CA"}}>₹{(cr*needed).toLocaleString("en-IN")}</b></span>; })()}
                                                       {cItem && (short
                                                         ? <span style={{color:"#EF4444",fontWeight:700,whiteSpace:"nowrap",textAlign:"right",...NUM}}>{canFulfillShortfall(cItem,_fnDateForRepeat) ? `⚠ need ${needed}, only ${owned}` : `⚠ out of stock (need ${needed}, only ${owned})`}</span>
                                                         : <span style={{color:"#10B981",whiteSpace:"nowrap",textAlign:"right",...NUM}}>✓ {owned} avail</span>)}
                                                     </div>
-                                                    {/* Its own parts, read-only: a kit inside this kit showed as one flat line with nothing under it (RC-85). */}
-                                                    {cItem && Array.isArray(cItem.subItems) && cItem.subItems.length > 0 && (
-                                                      <div style={{marginTop:3,paddingLeft:28,display:"flex",flexDirection:"column",gap:2}}>
-                                                        {cItem.subItems.filter(sp=>!sp.patternId).map((sp,si)=>{ const sItem=dcInventoryCache.find(x=>x.id===sp.itemId); const sQty=(sp.qty==null?1:(Number(sp.qty)||0))*needed; return (
-                                                          <div key={si} style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:IV.ink3}}>
-                                                            <span style={{flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>↳ {sItem?sItem.name:`⚠ ${sp.itemId} not in IMS`}</span>
-                                                            <span style={{...NUM,whiteSpace:"nowrap"}}>× {sQty}</span>
-                                                          </div>); })}
-                                                      </div>
-                                                    )}
                                                     {unavailable && (
                                                       <div style={{marginTop:4,paddingLeft:28}}>
                                                         {/* Same availability picker Build's IconBox control opens (and the
