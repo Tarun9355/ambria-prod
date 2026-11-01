@@ -4,32 +4,34 @@ import { todayStr, dayHours, daySummary, punchLocationLabel } from "../../lib/im
 import { loadExcelJS, downloadWorkbook, styleHeader } from "../../lib/excel";
 import { LABOUR_DEPTS, DEPT_ICON, fetchLabourPunchesRange, fetchAllActiveLabours } from "../../lib/ims/labourAttendance";
 import { DatePickerPopover, SelectPopover } from "./AttendanceAdminLog.jsx";
-import { IconPin, IconCalendar, IconUsers, IconExcelMark } from "../../components/icons.jsx";
+import { IconPin, IconCalendar, IconUsers, IconExcelMark, IconChevron, IconSearch } from "../../components/icons.jsx";
 
 // ═══ ADMIN: LABOUR LOG ═══ (Attendance → Labour Log)
 // Everything the Labour Punch screen records, across every department, for Admin:
-//   Day   — one card per labour: each punch's photo (tap to enlarge), time, place and who punched
+//   Day   — one row per labour: each punch's photo (tap to enlarge), time, place and who punched
 //           them, hours worked, plus the roster's labours who never punched that day.
 //   Month — per labour: days present, hours, and days left open (no punch-out).
 // Hours use the same in→out pairing as staff attendance (dayHours) — an unmatched 'in' adds nothing.
+// Styled to match the redesigned punch screen (AttendanceTab.jsx): one white card, a header with
+// the Day / Month switch and date stepper, the filters, a stat strip, then the list or table.
 
 const fmtTime = (iso) => { try { return new Date(iso).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }); } catch { return "—"; } };
 const fmtHours = (h) => (h > 0 ? `${h.toFixed(1)}h` : "—");
 const pad2 = (n) => String(n).padStart(2, "0");
 const fmtDay = (dateStr) => new Date(dateStr + "T00:00:00").toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" });
-// Full literal class strings (not assembled) so Tailwind's build can see every one.
-const STAT_STYLES = {
-  green: { box: "bg-green-50", label: "text-green-700" },
-  blue: { box: "bg-blue-50", label: "text-blue-700" },
-  amber: { box: "bg-amber-50", label: "text-amber-700" },
-  gray: { box: "bg-gray-50", label: "text-gray-500" },
-};
 
-function Stat({ tone, label, value }) {
+// Full literal class strings (not assembled) so Tailwind's build can see every one.
+const navBtn = "w-10 h-10 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center text-gray-500 hover:text-gray-900 hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-gray-500";
+const thHead = "py-2.5 text-xs font-medium text-gray-500";
+
+const Spinner = () => <span className="w-3.5 h-3.5 rounded-full border-2 border-gray-300 border-t-blue-600 animate-spin" aria-hidden="true" />;
+
+function EmptyState({ icon, title, hint }) {
   return (
-    <div className={"rounded-xl px-3 py-2 " + STAT_STYLES[tone].box}>
-      <div className={"text-[10px] font-semibold uppercase tracking-wide " + STAT_STYLES[tone].label}>{label}</div>
-      <div className="text-xl font-bold text-gray-900">{value}</div>
+    <div className="py-10 text-center">
+      <div className="mx-auto w-10 h-10 rounded-full bg-gray-100 text-gray-400 flex items-center justify-center">{icon}</div>
+      <p className="mt-3 text-sm font-medium text-gray-700">{title}</p>
+      {hint && <p className="mt-1 text-xs text-gray-500">{hint}</p>}
     </div>
   );
 }
@@ -45,6 +47,7 @@ export default function LabourAdminLog() {
   const [roster, setRoster] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [reload, setReload] = useState(0);         // bumped by "Try again" to re-run the load
   const [viewing, setViewing] = useState(null);   // the punch whose photo is open big
   const [openId, setOpenId] = useState(null);      // month row expanded to its day-by-day in/out
   const [exporting, setExporting] = useState(false);
@@ -61,11 +64,12 @@ export default function LabourAdminLog() {
       .catch((e) => { if (active) setError(e.message || "Couldn't load the labour log"); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-    // eslint-disable-next-line -- keyed on the range strings
-  }, [range[0], range[1]]);
+    // eslint-disable-next-line -- keyed on the range strings (and the retry counter)
+  }, [range[0], range[1], reload]);
 
   const term = search.trim().toLowerCase();
   const keep = (name, d) => (dept === "all" || d === dept) && (!term || (name || "").toLowerCase().includes(term));
+  const filtered = !!term || dept !== "all";
 
   // labour_id → { name, department, punches[] } for the loaded range, oldest-first punches.
   const byLabour = useMemo(() => {
@@ -88,6 +92,11 @@ export default function LabourAdminLog() {
     setYm(({ y, m }) => { let nm = m + delta, ny = y; if (nm < 1) { nm = 12; ny--; } else if (nm > 12) { nm = 1; ny++; } return { y: ny, m: nm }; });
   }
   const isCurMonth = ym.y === new Date().getFullYear() && ym.m === new Date().getMonth() + 1;
+  const atLatest = view === "day" ? date >= today : isCurMonth;
+  function jumpToToday() {
+    if (view === "day") setDate(today);
+    else setYm({ y: new Date().getFullYear(), m: new Date().getMonth() + 1 });
+  }
 
   // Day stats
   const dayStats = labours.reduce((acc, l) => {
@@ -203,202 +212,277 @@ export default function LabourAdminLog() {
     }
   }
 
-  const thumb = (p) => (
-    <button key={p.id} onClick={() => p.photo && setViewing(p)} title={p.photo ? "View photo" : "No photo"}
-      className={"relative w-12 h-12 rounded-xl overflow-hidden bg-gray-100 shrink-0 flex items-center justify-center ring-2 "
-        + (p.type === "in" ? "ring-green-200" : p.auto_closed ? "ring-amber-200" : "ring-red-200")
-        + (p.photo ? " hover:ring-blue-400 cursor-pointer transition" : " cursor-default")}>
-      {p.photo ? <img src={p.photo} alt="" loading="lazy" className="w-full h-full object-cover" /> : <span className="text-gray-300 text-[10px]">{p.auto_closed ? "auto" : "—"}</span>}
-      <span className={"absolute bottom-0 inset-x-0 text-[9px] font-bold text-white text-center leading-tight py-0.5 "
-        + (p.type === "in" ? "bg-green-600/85" : p.auto_closed ? "bg-amber-500/85" : "bg-red-500/85")}>
-        {p.type === "in" ? "IN" : "OUT"} {fmtTime(p.at)}
-      </span>
-    </button>
-  );
+  // A punch's photo tile: ring + caption coloured by kind (green in, red out, amber auto-closed out).
+  // Tap opens the photo big; a punch with no photo is a disabled tile (auto punch-outs have none).
+  const thumb = (p) => {
+    const kind = p.type === "in" ? "Punched in" : p.auto_closed ? "Auto punched out" : "Punched out";
+    return (
+      <button key={p.id} type="button" onClick={() => p.photo && setViewing(p)} disabled={!p.photo}
+        aria-label={`${kind} at ${fmtTime(p.at)}${p.photo ? " — view photo" : " — no photo"}`} title={p.photo ? "View photo" : "No photo"}
+        className={"relative w-14 h-14 rounded-xl overflow-hidden bg-gray-100 shrink-0 flex items-center justify-center ring-2 transition-shadow focus-visible:outline-none focus-visible:ring-blue-500 "
+          + (p.type === "in" ? "ring-green-200 " : p.auto_closed ? "ring-amber-200 " : "ring-red-200 ")
+          + (p.photo ? "hover:ring-blue-400 cursor-pointer" : "cursor-default")}>
+        {p.photo
+          ? <img src={p.photo} alt="" loading="lazy" className="w-full h-full object-cover" />
+          : <span className="text-[10px] font-medium text-gray-500 -mt-3">{p.auto_closed ? "auto" : "—"}</span>}
+        <span className={"absolute bottom-0 inset-x-0 text-[10px] font-semibold text-white text-center leading-tight py-0.5 tabular-nums "
+          + (p.type === "in" ? "bg-green-600/90" : p.auto_closed ? "bg-amber-600/90" : "bg-red-600/90")}>
+          {p.type === "in" ? "IN" : "OUT"} <time dateTime={p.at}>{fmtTime(p.at)}</time>
+        </span>
+      </button>
+    );
+  };
+
+  const deptOptions = [{ value: "all", label: "All departments" }, ...LABOUR_DEPTS.map((d) => ({ value: d, label: `${DEPT_ICON[d] || ""} ${d}` }))];
+  const monthLabel = new Date(ym.y, ym.m - 1, 1).toLocaleDateString("en-IN", { month: "long", year: "numeric" });
+  const prevLabel = view === "day" ? "Previous day" : "Previous month";
+  const nextLabel = view === "day" ? "Next day" : "Next month";
 
   return (
-    <div className="mt-3 bg-white rounded-2xl shadow-sm ring-1 ring-gray-100 p-4 sm:p-6">
-      <div className="flex items-center justify-between flex-wrap gap-3 mb-1">
-        <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2"><IconUsers size={18} /> Labour Log</h3>
+    <section aria-label="Labour log" className="mt-3 rounded-2xl bg-white ring-1 ring-gray-200/70 shadow-sm">
+      {/* ── HEADER ── title + what's showing; the Day / Month switch and the date / month stepper. */}
+      <div className="px-5 py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="flex items-center gap-2 text-sm font-semibold text-gray-900">
+            <IconUsers size={15} /> Labour Log
+          </h3>
+          <p className="mt-0.5 text-xs text-gray-500" aria-live="polite">
+            {view === "day" ? new Date(date + "T00:00:00").toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" }) : "Days present and hours per labour this month"}
+          </p>
+        </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex bg-gray-100 rounded-xl p-1">
+          <div className="flex rounded-xl bg-gray-100 p-1" role="group" aria-label="Range">
             {[["day", "Day"], ["month", "Month"]].map(([v, l]) => (
-              <button key={v} onClick={() => setView(v)}
-                className={"px-3 py-1 rounded-lg text-xs font-semibold transition " + (view === v ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700")}>{l}</button>
+              <button key={v} type="button" onClick={() => setView(v)} aria-pressed={view === v}
+                className={"h-8 px-3.5 rounded-lg text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 "
+                  + (view === v ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-800")}>{l}</button>
             ))}
           </div>
-          <div className="flex items-center gap-1 bg-gray-50 rounded-xl ring-1 ring-gray-100 p-1">
-            <button onClick={() => (view === "day" ? shiftDay(-1) : shiftMonth(-1))} title="Previous"
-              className="w-7 h-7 flex items-center justify-center rounded-lg text-gray-400 hover:text-gray-700 hover:bg-white transition text-lg leading-none">‹</button>
+          <div className="flex items-center gap-0.5">
+            <button type="button" onClick={() => (view === "day" ? shiftDay(-1) : shiftMonth(-1))} aria-label={prevLabel} title={prevLabel} className={navBtn}>
+              <span className="rotate-90" aria-hidden="true"><IconChevron size={16} /></span>
+            </button>
             {view === "day"
               ? <DatePickerPopover value={date} max={today} onChange={setDate} />
-              : <span className="text-sm font-semibold text-gray-700 px-2">{new Date(ym.y, ym.m - 1, 1).toLocaleDateString("en-IN", { month: "long", year: "numeric" })}</span>}
-            <button onClick={() => (view === "day" ? shiftDay(1) : shiftMonth(1))} disabled={view === "day" ? date >= today : isCurMonth} title="Next"
-              className="w-7 h-7 flex items-center justify-center rounded-lg text-gray-400 hover:text-gray-700 hover:bg-white transition text-lg leading-none disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent">›</button>
+              : <span className="px-2 text-sm font-semibold text-gray-900 whitespace-nowrap" aria-live="polite">{monthLabel}</span>}
+            <button type="button" onClick={() => (view === "day" ? shiftDay(1) : shiftMonth(1))} disabled={atLatest} aria-label={nextLabel} title={nextLabel} className={navBtn}>
+              <span className="-rotate-90" aria-hidden="true"><IconChevron size={16} /></span>
+            </button>
+            {!atLatest && (
+              <button type="button" onClick={jumpToToday}
+                className="h-10 sm:h-8 px-2.5 rounded-lg text-xs font-semibold text-blue-700 hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 transition-colors">
+                {view === "day" ? "Today" : "This month"}
+              </button>
+            )}
           </div>
         </div>
       </div>
-      <p className="text-xs text-gray-400 mb-4">
-        {view === "day" ? new Date(date + "T00:00:00").toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" }) : "Days present and hours per labour this month"}
-      </p>
 
-      {/* Search + department side by side, the same pairing the Staff Log uses. */}
-      <div className="flex gap-2 mb-4">
-        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search labour…"
-          className="flex-1 min-w-0 border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400" />
-        <SelectPopover value={dept} onChange={setDept}
-          options={[{ value: "all", label: "All departments" }, ...LABOUR_DEPTS.map((d) => ({ value: d, label: `${DEPT_ICON[d] || ""} ${d}` }))]} />
+      {/* ── FILTERS ── search + department side by side, the same pairing the Staff Log uses. */}
+      <div className="border-t border-gray-100 px-5 py-4 flex gap-2">
+        <div className="relative flex-1 min-w-0">
+          <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" aria-hidden="true"><IconSearch size={15} /></span>
+          <input type="search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search labour…" aria-label="Search labour by name"
+            className="w-full h-10 rounded-xl border border-gray-200 bg-white pl-9 pr-3 text-sm text-gray-900 placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500" />
+        </div>
+        <SelectPopover value={dept} onChange={setDept} options={deptOptions} />
       </div>
 
       {loading ? (
-        <p className="text-sm text-gray-400 text-center py-10">Loading…</p>
+        <div className="border-t border-gray-100 py-12 flex items-center justify-center gap-2 text-sm text-gray-500" aria-live="polite">
+          <Spinner /> Loading the labour log…
+        </div>
       ) : error ? (
-        <p className="text-sm text-red-600 text-center py-10">{error}</p>
+        <div className="border-t border-gray-100 py-10 text-center" role="alert">
+          <p className="text-sm text-red-600">{error}</p>
+          <button type="button" onClick={() => setReload((n) => n + 1)}
+            className="mt-3 inline-flex items-center justify-center gap-2 h-10 px-4 rounded-xl bg-white ring-1 ring-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2">
+            Try again
+          </button>
+        </div>
       ) : view === "day" ? (
         <>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
-            <Stat tone="green" label="Present" value={dayStats.present} />
-            <Stat tone="blue" label="Still in" value={dayStats.stillIn} />
-            <Stat tone="amber" label="Not punched" value={notPunched.length} />
-            <Stat tone="gray" label="Total hours" value={dayStats.hours.toFixed(1)} />
-          </div>
-          {labours.length === 0 ? (
-            <div className="text-center py-8">
-              <div className="flex justify-center mb-2 text-gray-300"><IconCalendar size={26} /></div>
-              <p className="text-sm text-gray-400">No labour punches {term || dept !== "all" ? "match that filter" : "on this day"}.</p>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {labours.map((l) => {
-                const last = l.punches[l.punches.length - 1];
-                const by = [...new Set(l.punches.map((p) => p.punched_by_name).filter(Boolean))];
-                return (
-                  <div key={l.id} className="rounded-xl ring-1 ring-gray-100 p-3 hover:bg-gray-50 transition">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="text-sm font-semibold text-gray-900 truncate">{l.name}</div>
-                        <div className="text-xs text-gray-400 truncate">{DEPT_ICON[l.department] || ""} {l.department}{by.length ? ` · punched by ${by.join(", ")}` : ""}</div>
-                      </div>
-                      <div className="text-right shrink-0">
-                        <div className={"text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full inline-block "
-                          + (last?.type === "in" ? "bg-green-100 text-green-700" : last?.auto_closed ? "bg-amber-100 text-amber-700" : "bg-gray-100 text-gray-600")}>
-                          {last?.type === "in" ? "Still in" : last?.auto_closed ? "Auto out" : "Out"}
+          {/* ── DAY STATS ── (gap-px over a grey fill draws the dividers in both the 2×2 phone and 1×4 desktop layouts) */}
+          <dl className="mx-5 mb-4 grid grid-cols-2 sm:grid-cols-4 gap-px rounded-xl bg-gray-100 ring-1 ring-gray-100 overflow-hidden">
+            {[["Present", dayStats.present], ["Still in", dayStats.stillIn], ["Not punched", notPunched.length], ["Total hours", dayStats.hours.toFixed(1)]].map(([k, v]) => (
+              <div key={k} className="bg-gray-50 px-4 py-2.5 min-w-0">
+                <dt className="text-xs text-gray-500 truncate">{k}</dt>
+                <dd className="text-lg font-semibold text-gray-900 tabular-nums leading-tight">{v}</dd>
+              </div>
+            ))}
+          </dl>
+
+          {/* ── WHO PUNCHED ── */}
+          <div className="border-t border-gray-100">
+            {labours.length === 0 ? (
+              <EmptyState icon={<IconCalendar size={18} />}
+                title={filtered ? "No labour punches match that filter" : "No labour punches on this day"}
+                hint={filtered ? "Try another name or department." : "Punches made from the Labour Punch screen show up here."} />
+            ) : (
+              <ul className="divide-y divide-gray-100">
+                {labours.map((l) => {
+                  const last = l.punches[l.punches.length - 1];
+                  const by = [...new Set(l.punches.map((p) => p.punched_by_name).filter(Boolean))];
+                  return (
+                    <li key={l.id} className="px-5 py-4 hover:bg-gray-50 transition-colors">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="text-sm font-semibold text-gray-900 truncate">{l.name}</div>
+                          <div className="mt-0.5 text-xs text-gray-500 truncate">{DEPT_ICON[l.department] || ""} {l.department}{by.length ? ` · punched by ${by.join(", ")}` : ""}</div>
                         </div>
-                        <div className="text-sm font-bold text-gray-800 mt-0.5">{fmtHours(dayHours(l.punches))}</div>
+                        <div className="shrink-0 flex flex-col items-end gap-1">
+                          {last?.type === "in" ? (
+                            <span className="inline-flex items-center gap-1.5 rounded-full ring-1 px-2.5 py-0.5 text-xs font-medium bg-green-50 ring-green-200 text-green-800">
+                              <span className="w-1.5 h-1.5 rounded-full bg-green-600" aria-hidden="true" />Still in
+                            </span>
+                          ) : last?.auto_closed ? (
+                            <span className="inline-flex items-center gap-1.5 rounded-full ring-1 px-2.5 py-0.5 text-xs font-medium bg-amber-50 ring-amber-200 text-amber-800">
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-500" aria-hidden="true" />Auto out
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1.5 rounded-full ring-1 px-2.5 py-0.5 text-xs font-medium bg-gray-100 ring-gray-200 text-gray-700">
+                              <span className="w-1.5 h-1.5 rounded-full bg-gray-400" aria-hidden="true" />Out
+                            </span>
+                          )}
+                          <span className="text-sm font-semibold text-gray-900 tabular-nums">{fmtHours(dayHours(l.punches))}</span>
+                        </div>
                       </div>
-                    </div>
-                    <div className="flex gap-2 mt-2 overflow-x-auto pb-1">{l.punches.map(thumb)}</div>
-                    <div className="text-xs text-gray-400 mt-1 truncate flex items-center gap-1"><IconPin size={11} /> {punchLocationLabel(l.punches[0])}</div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+                      {/* p-1 keeps the tiles' rings from being clipped by the scroller */}
+                      <div className="flex gap-2 mt-2 -mx-1 p-1 overflow-x-auto">{l.punches.map(thumb)}</div>
+                      <div className="mt-1.5 text-xs text-gray-500 truncate flex items-center gap-1"><span className="shrink-0" aria-hidden="true"><IconPin size={12} /></span> {punchLocationLabel(l.punches[0])}</div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+
+          {/* ── NOT PUNCHED ── roster labours (of the filtered set) with no punch this day. */}
           {notPunched.length > 0 && (
-            <div className="mt-5">
-              <div className="flex items-center gap-2 mb-2 px-1">
-                <span className="text-xs font-bold text-gray-500 uppercase tracking-wide">Not punched</span>
-                <span className="text-[10px] font-semibold text-gray-400 bg-gray-100 rounded-full px-1.5 py-0.5">{notPunched.length}</span>
-              </div>
-              <div className="flex flex-wrap gap-1.5">
+            <div className="border-t border-gray-100 px-5 py-4">
+              <h4 className="flex items-center gap-2 text-sm font-semibold text-gray-900 mb-3">
+                Not punched
+                <span className="rounded-md bg-gray-100 px-1.5 py-0.5 text-xs font-semibold text-gray-600 tabular-nums">{notPunched.length}</span>
+              </h4>
+              <ul className="flex flex-wrap gap-1.5">
                 {notPunched.map((l) => (
-                  <span key={l.id} className="text-xs text-gray-500 bg-gray-50 ring-1 ring-gray-100 rounded-full px-2.5 py-1">{l.name} · {l.department}</span>
+                  <li key={l.id} className="text-xs text-gray-700 bg-gray-50 ring-1 ring-gray-200 rounded-full px-2.5 py-1">{l.name} <span className="text-gray-500">· {l.department}</span></li>
                 ))}
-              </div>
+              </ul>
             </div>
           )}
         </>
       ) : monthRows.length === 0 ? (
-        <p className="text-sm text-gray-400 text-center py-10">No labours {term || dept !== "all" ? "match that filter" : "on the roster"}.</p>
+        <div className="border-t border-gray-100">
+          <EmptyState icon={<IconUsers size={18} />}
+            title={filtered ? "No labours match that filter" : "No labours on the roster"}
+            hint={filtered ? "Try another name or department." : "Labours added on the Labour Punch screen show up here."} />
+        </div>
       ) : (
         <>
-        <div className="flex items-center justify-between gap-3 mb-3">
-          <p className="text-xs text-gray-400">{monthRows.length} labour{monthRows.length === 1 ? "" : "s"} · tap a name for in/out times</p>
-          <button onClick={exportExcel} disabled={exporting}
-            className="shrink-0 inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold text-gray-700 bg-white ring-1 ring-gray-200 hover:ring-green-400 hover:text-green-700 hover:bg-green-50 disabled:opacity-40 disabled:cursor-not-allowed transition">
-            <IconExcelMark size={15} /> {exporting ? "Exporting…" : "Export to Excel"}
-          </button>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-[10px] font-bold text-gray-400 uppercase tracking-wide border-b border-gray-100">
-                <th className="py-2 pr-3">Labour</th>
-                <th className="py-2 pr-3">Department</th>
-                <th className="py-2 pr-3 text-right">Days</th>
-                <th className="py-2 pr-3 text-right">Hours</th>
-                <th className="py-2 text-right" title="Days with no punch-out (left open or auto-closed)">Open</th>
-              </tr>
-            </thead>
-            <tbody>
-              {monthRows.map((r) => {
-                const isOpen = openId === r.id;
-                const dates = Object.keys(r.byDate).sort();
-                return (
-                  <Fragment key={r.id}>
-                    <tr onClick={() => dates.length && setOpenId(isOpen ? null : r.id)}
-                      className={"border-b border-gray-50 hover:bg-gray-50 " + (r.daysPresent ? "cursor-pointer" : "text-gray-400")}>
-                      <td className={"py-2 pr-3 font-semibold " + (r.daysPresent ? "text-gray-800" : "")}>
-                        {dates.length > 0 && <span className={"inline-block w-3 text-gray-400 text-[10px] transition-transform " + (isOpen ? "rotate-90" : "")}>▸</span>}
-                        {r.name}
-                      </td>
-                      <td className="py-2 pr-3 text-gray-500">{DEPT_ICON[r.department] || ""} {r.department}</td>
-                      <td className={"py-2 pr-3 text-right font-semibold " + (r.daysPresent ? "text-gray-800" : "")}>{r.daysPresent}</td>
-                      <td className="py-2 pr-3 text-right text-gray-700">{fmtHours(r.hours)}</td>
-                      <td className={"py-2 text-right " + (r.openDays ? "text-amber-600 font-semibold" : "text-gray-300")}>{r.openDays || "—"}</td>
-                    </tr>
-                    {isOpen && (
-                      <tr className="bg-gray-50/70">
-                        <td colSpan={5} className="px-3 py-2">
-                          <div className="grid grid-cols-[minmax(0,1fr)_auto_auto_auto] gap-x-4 gap-y-1 text-xs">
-                            <div className="font-bold text-gray-400 uppercase tracking-wide text-[10px]">Day</div>
-                            <div className="font-bold text-gray-400 uppercase tracking-wide text-[10px] text-right">In</div>
-                            <div className="font-bold text-gray-400 uppercase tracking-wide text-[10px] text-right">Out</div>
-                            <div className="font-bold text-gray-400 uppercase tracking-wide text-[10px] text-right">Hours</div>
-                            {dates.map((date) => {
-                              const d = daySummary(r.byDate[date]);
-                              return (
-                                <Fragment key={date}>
-                                  <div className="text-gray-700">{fmtDay(date)}</div>
-                                  <div className="text-right text-green-700 font-semibold tabular-nums">{d.inAt ? fmtTime(d.inAt) : "—"}</div>
-                                  <div className={"text-right font-semibold tabular-nums " + (d.open || d.auto ? "text-amber-600" : "text-red-600")}>
-                                    {d.open ? "no out" : `${fmtTime(d.outAt)}${d.auto ? " auto" : ""}`}
-                                  </div>
-                                  <div className="text-right text-gray-700 tabular-nums">{fmtHours(d.hours)}</div>
-                                </Fragment>
-                              );
-                            })}
-                          </div>
+          {/* ── MONTH ── count + export, then one row per labour (tap to see each day's in / out). */}
+          <div className="border-t border-gray-100 px-5 py-3 flex items-center justify-between gap-3">
+            <p className="text-xs text-gray-500 min-w-0">
+              <span className="tabular-nums">{monthRows.length}</span> labour{monthRows.length === 1 ? "" : "s"} · tap a name for in/out times
+            </p>
+            <button type="button" onClick={exportExcel} disabled={exporting}
+              className="shrink-0 inline-flex items-center justify-center gap-2 h-10 px-4 rounded-xl bg-white ring-1 ring-gray-200 text-gray-700 text-sm font-semibold hover:bg-green-50 hover:ring-green-300 hover:text-green-800 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-600 focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed">
+              {exporting ? <Spinner /> : <IconExcelMark size={15} />} {exporting ? "Exporting…" : "Export to Excel"}
+            </button>
+          </div>
+          <div className="overflow-x-auto border-t border-gray-100">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left border-b border-gray-100">
+                  <th scope="col" className={thHead + " pl-5 pr-3"}>Labour</th>
+                  <th scope="col" className={thHead + " pr-3 hidden sm:table-cell"}>Department</th>
+                  <th scope="col" className={thHead + " pr-3 text-right"}>Days</th>
+                  <th scope="col" className={thHead + " pr-3 text-right"}>Hours</th>
+                  <th scope="col" className={thHead + " pr-5 text-right"} title="Days with no punch-out (left open or auto-closed)">Open</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {monthRows.map((r) => {
+                  const isOpen = openId === r.id;
+                  const dates = Object.keys(r.byDate).sort();
+                  const toggle = () => dates.length && setOpenId(isOpen ? null : r.id);
+                  return (
+                    <Fragment key={r.id}>
+                      <tr onClick={toggle}
+                        className={"hover:bg-gray-50 transition-colors " + (dates.length ? "cursor-pointer " : "") + (isOpen ? "bg-gray-50" : "")}>
+                        <td className="py-2.5 pl-5 pr-3">
+                          {dates.length > 0 ? (
+                            <button type="button" onClick={(e) => { e.stopPropagation(); toggle(); }} aria-expanded={isOpen}
+                              aria-label={`${r.name} — ${isOpen ? "hide" : "show"} day-by-day in/out`}
+                              className="-ml-1 flex items-center gap-1.5 min-h-10 sm:min-h-0 rounded-md px-1 text-left font-semibold text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
+                              <span className={"text-gray-400 transition-transform duration-200 " + (isOpen ? "" : "-rotate-90")} aria-hidden="true"><IconChevron size={14} /></span>
+                              {r.name}
+                            </button>
+                          ) : (
+                            <span className="pl-5 font-medium text-gray-500">{r.name}</span>
+                          )}
+                          <div className="sm:hidden pl-5 text-xs text-gray-500 truncate">{DEPT_ICON[r.department] || ""} {r.department}</div>
                         </td>
+                        <td className="py-2.5 pr-3 text-gray-600 hidden sm:table-cell whitespace-nowrap">{DEPT_ICON[r.department] || ""} {r.department}</td>
+                        <td className={"py-2.5 pr-3 text-right tabular-nums " + (r.daysPresent ? "font-semibold text-gray-900" : "text-gray-500")}>{r.daysPresent}</td>
+                        <td className={"py-2.5 pr-3 text-right tabular-nums whitespace-nowrap " + (r.hours > 0 ? "text-gray-800" : "text-gray-500")}>{fmtHours(r.hours)}</td>
+                        <td className={"py-2.5 pr-5 text-right tabular-nums " + (r.openDays ? "text-amber-700 font-semibold" : "text-gray-500")}>{r.openDays || "—"}</td>
                       </tr>
-                    )}
-                  </Fragment>
-                );
-              })}
-            </tbody>
-            <tfoot>
-              <tr className="text-gray-900 font-bold">
-                <td className="pt-3 pr-3" colSpan={2}>{monthRows.length} labour{monthRows.length === 1 ? "" : "s"}</td>
-                <td className="pt-3 pr-3 text-right">{monthRows.reduce((s, r) => s + r.daysPresent, 0)}</td>
-                <td className="pt-3 pr-3 text-right">{fmtHours(monthRows.reduce((s, r) => s + r.hours, 0))}</td>
-                <td className="pt-3 text-right">{monthRows.reduce((s, r) => s + r.openDays, 0) || "—"}</td>
-              </tr>
-            </tfoot>
-          </table>
-        </div>
+                      {isOpen && (
+                        <tr className="bg-gray-50">
+                          <td colSpan={5} className="px-5 pt-1 pb-3">
+                            <div className="rounded-xl bg-white ring-1 ring-gray-200/70 px-4 py-3 grid grid-cols-[minmax(0,1fr)_auto_auto_auto] gap-x-4 gap-y-1.5 text-xs">
+                              <div className="font-medium text-gray-500">Day</div>
+                              <div className="font-medium text-gray-500 text-right">In</div>
+                              <div className="font-medium text-gray-500 text-right">Out</div>
+                              <div className="font-medium text-gray-500 text-right">Hours</div>
+                              {dates.map((date) => {
+                                const d = daySummary(r.byDate[date]);
+                                return (
+                                  <Fragment key={date}>
+                                    <time dateTime={date} className="text-gray-800 truncate">{fmtDay(date)}</time>
+                                    <div className="text-right text-green-700 font-semibold tabular-nums whitespace-nowrap">{d.inAt ? <time dateTime={d.inAt}>{fmtTime(d.inAt)}</time> : "—"}</div>
+                                    <div className={"text-right font-semibold tabular-nums whitespace-nowrap " + (d.open || d.auto ? "text-amber-700" : "text-red-600")}>
+                                      {d.open ? "no out" : <><time dateTime={d.outAt}>{fmtTime(d.outAt)}</time>{d.auto ? " auto" : ""}</>}
+                                    </div>
+                                    <div className="text-right text-gray-800 tabular-nums">{fmtHours(d.hours)}</div>
+                                  </Fragment>
+                                );
+                              })}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+              <tfoot>
+                <tr className="border-t border-gray-200 font-semibold text-gray-900">
+                  <td className="py-3 pl-5 pr-3"><span className="tabular-nums">{monthRows.length}</span> labour{monthRows.length === 1 ? "" : "s"}</td>
+                  <td className="py-3 pr-3 hidden sm:table-cell" />
+                  <td className="py-3 pr-3 text-right tabular-nums">{monthRows.reduce((s, r) => s + r.daysPresent, 0)}</td>
+                  <td className="py-3 pr-3 text-right tabular-nums whitespace-nowrap">{fmtHours(monthRows.reduce((s, r) => s + r.hours, 0))}</td>
+                  <td className="py-3 pr-5 text-right tabular-nums">{monthRows.reduce((s, r) => s + r.openDays, 0) || "—"}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
         </>
       )}
 
       <Modal open={!!viewing} onClose={() => setViewing(null)} title={viewing?.labour_name || "Punch photo"}>
         {viewing && (
           <div className="text-center">
-            <img src={viewing.photo} alt="" className="w-full rounded-xl mb-3" />
-            <p className="text-sm text-gray-600">{viewing.type === "in" ? "Punched in" : "Punched out"} at {fmtTime(viewing.at)} · {viewing.department}</p>
-            <p className="text-xs text-gray-400 mt-1 flex items-center justify-center gap-1"><IconPin size={11} /> {punchLocationLabel(viewing)}</p>
-            {viewing.punched_by_name && <p className="text-xs text-gray-400 mt-1">Punched by {viewing.punched_by_name}</p>}
+            <img src={viewing.photo} alt={`${viewing.labour_name || "Labour"} — ${viewing.type === "in" ? "punch-in" : "punch-out"} photo`} className="w-full rounded-xl mb-3" />
+            <p className="text-sm text-gray-700">
+              {viewing.type === "in" ? "Punched in" : "Punched out"} at <time dateTime={viewing.at} className="font-semibold text-gray-900 tabular-nums">{fmtTime(viewing.at)}</time> · {viewing.department}
+            </p>
+            <p className="text-xs text-gray-500 mt-1 flex items-center justify-center gap-1"><span className="shrink-0" aria-hidden="true"><IconPin size={12} /></span> {punchLocationLabel(viewing)}</p>
+            {viewing.punched_by_name && <p className="text-xs text-gray-500 mt-1">Punched by {viewing.punched_by_name}</p>}
           </div>
         )}
       </Modal>
-    </div>
+    </section>
   );
 }

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { checkFaceInPhoto, watchFaceInVideo } from "../../lib/faceCheck";
-import { IconCamera, IconX } from "../../components/icons.jsx";
+import { IconCamera, IconX, IconRepeat } from "../../components/icons.jsx";
 
 // ═══ LABOUR PUNCH CAMERA ═══
 // The supervisor photographs ONE labour, the face check runs on that frame, and only a pass hands
@@ -85,63 +85,76 @@ export default function LabourPunchCamera({ labour, type, onCaptured, onCancel, 
     reader.readAsDataURL(file);
   }
 
+  const verb = type === "in" ? "Punch In" : "Punch Out";
+  const firstName = labour.name.split(" ")[0];
+
   return createPortal(
     <div className="fixed inset-0 z-[9000] bg-black/70 backdrop-blur-sm flex items-center justify-center p-0 sm:p-4">
-      <div className="bg-white shadow-2xl w-full h-full sm:h-auto sm:max-h-[90vh] sm:max-w-md rounded-none sm:rounded-2xl p-5 sm:p-6 flex flex-col sm:block overflow-y-auto relative">
+      <div role="dialog" aria-modal="true" aria-label={`${verb} ${labour.name}`}
+        className="bg-white shadow-2xl w-full h-full sm:h-auto sm:max-h-[90vh] sm:max-w-md rounded-none sm:rounded-2xl p-5 sm:p-6 flex flex-col sm:block overflow-y-auto relative">
         {!busy && (
-          <button onClick={onCancel} title="Cancel (Esc)"
-            className="absolute top-4 right-4 w-9 h-9 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-500 flex items-center justify-center transition z-10">
+          <button onClick={onCancel} title="Cancel (Esc)" aria-label="Cancel (Esc)"
+            className="absolute top-4 right-4 w-10 h-10 sm:w-9 sm:h-9 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-500 hover:text-gray-800 flex items-center justify-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 z-10">
             <IconX size={16} />
           </button>
         )}
-        <div className="flex items-start gap-3 pr-10">
-          <div className={"w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 " + (type === "in" ? "bg-green-50 text-green-600" : "bg-gray-100 text-gray-700")}>
+        <div className="flex items-start gap-3 pr-12">
+          <div className={"w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 " + (type === "in" ? "bg-green-50 text-green-700" : "bg-gray-100 text-gray-700")}>
             <IconCamera size={22} />
           </div>
           <div className="min-w-0 pt-1">
-            <h3 className="text-xl font-bold text-gray-900 truncate">{type === "in" ? "Punch In" : "Punch Out"} · {labour.name}</h3>
-            <p className="text-sm text-gray-500 mt-0.5">{labour.department} — take {labour.name.split(" ")[0]}'s photo.</p>
+            <h3 className="text-xl font-bold text-gray-900 truncate">{verb} · {labour.name}</h3>
+            <p className="text-sm text-gray-500 mt-0.5">{labour.department} — take {firstName}'s photo.</p>
           </div>
         </div>
 
-        <div className="mt-4 flex-1 flex flex-col min-h-0 sm:flex-none sm:block">
+        <div className="mt-5 flex-1 flex flex-col min-h-0 sm:flex-none sm:block">
           {busy || preview ? (
-            <div className="relative rounded-xl overflow-hidden bg-black flex-1 sm:flex-none sm:aspect-square sm:max-w-[280px] sm:mx-auto">
-              {preview && <img src={preview} alt="" className="w-full h-full object-cover opacity-70" />}
-              <div className="absolute inset-0 flex items-center justify-center text-white text-sm font-medium">{busy ? "Saving punch…" : "Checking photo…"}</div>
+            <div className="relative rounded-xl overflow-hidden bg-black flex-1 sm:flex-none sm:aspect-square sm:max-w-[280px] sm:mx-auto" aria-live="polite">
+              {preview && <img src={preview} alt="" className="w-full h-full object-cover opacity-60" />}
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-2.5 text-white text-sm font-medium">
+                <span className="w-6 h-6 rounded-full border-2 border-white/30 border-t-white animate-spin" aria-hidden="true" />
+                {busy ? "Saving punch…" : "Checking photo…"}
+              </div>
             </div>
           ) : cameraError ? (
-            <label className="flex flex-col items-center justify-center gap-2 border-2 border-dashed border-gray-200 rounded-xl py-10 flex-1 sm:flex-none cursor-pointer hover:border-indigo-300 hover:bg-indigo-50/40 transition">
-              <IconCamera size={28} />
-              <span className="text-sm font-semibold text-gray-600">Open Camera</span>
-              {cameraError === "denied" && <span className="text-xs text-amber-600 px-6 text-center">Camera access was blocked — allow it for this site, or pick a photo instead.</span>}
-              <input type="file" accept="image/*" capture="environment" className="hidden" onChange={handleFile} />
+            // The file input stays in the tab order (sr-only, not hidden) so the fallback works from a keyboard too.
+            <label className="flex flex-col items-center justify-center gap-2 border-2 border-dashed border-gray-200 rounded-xl py-10 px-6 flex-1 sm:flex-none cursor-pointer text-gray-500 hover:border-blue-300 hover:bg-blue-50/40 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/40 transition-colors">
+              <span className="w-12 h-12 rounded-full bg-gray-100 text-gray-500 flex items-center justify-center"><IconCamera size={24} /></span>
+              <span className="text-sm font-semibold text-gray-700">Open Camera</span>
+              {cameraError === "denied" && <span className="text-xs text-amber-700 text-center">Camera access was blocked — allow it for this site, or pick a photo instead.</span>}
+              <input type="file" accept="image/*" capture="environment" className="sr-only" onChange={handleFile} />
             </label>
           ) : (
             <div className="relative rounded-xl overflow-hidden bg-black flex-1 sm:flex-none sm:aspect-square sm:max-w-[280px] sm:mx-auto">
               {/* Mirrored only for the front camera, where a mirror preview is what people expect. */}
               <video ref={videoRef} autoPlay playsInline muted onLoadedMetadata={() => setVideoReady(true)}
                 className={"w-full h-full object-cover " + (facing === "user" ? "-scale-x-100" : "")} />
-              {videoReady && (
-                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                  <div className={"w-[70%] h-[70%] sm:w-[60%] sm:h-[80%] rounded-[50%] border-[3px] transition-colors duration-200 " + (faceInOval ? "border-green-400" : "border-white/50")}
-                    style={{ boxShadow: "0 0 0 1000px rgba(0,0,0,0.35)" }} />
+              {!videoReady && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2.5 text-white/80 text-sm">
+                  <span className="w-6 h-6 rounded-full border-2 border-white/30 border-t-white animate-spin" aria-hidden="true" />
+                  Starting camera…
                 </div>
               )}
-              <button onClick={() => setFacing((f) => (f === "user" ? "environment" : "user"))} title="Switch camera"
-                className="absolute top-3 right-3 px-3 py-1.5 rounded-full bg-black/55 text-white text-xs font-semibold hover:bg-black/70 transition">
-                ⟲ Flip
+              {videoReady && (
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                  <div className={"w-[70%] h-[70%] sm:w-[60%] sm:h-[80%] rounded-[50%] border-[3px] shadow-[0_0_0_1000px_rgba(0,0,0,0.35)] transition-colors duration-200 " + (faceInOval ? "border-green-400" : "border-white/50")} />
+                </div>
+              )}
+              <button onClick={() => setFacing((f) => (f === "user" ? "environment" : "user"))} title="Switch camera" aria-label="Switch camera"
+                className="absolute top-3 right-3 inline-flex items-center gap-1.5 h-10 sm:h-8 px-3 rounded-full bg-black/55 text-white text-xs font-semibold hover:bg-black/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white transition-colors">
+                <IconRepeat size={14} /> Flip
               </button>
             </div>
           )}
           {live && (
             <button onClick={capture} disabled={!videoReady || !faceInOval}
-              className="mt-4 w-full flex items-center justify-center gap-2 py-3 rounded-xl font-semibold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition flex-shrink-0">
-              <IconCamera size={16} /> Take Photo & {type === "in" ? "Punch In" : "Punch Out"}
+              className="mt-4 w-full shrink-0 inline-flex items-center justify-center gap-2 h-12 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed">
+              <IconCamera size={16} /> Take Photo & {verb}
             </button>
           )}
-          {live && videoReady && !faceInOval && <p className="text-xs text-gray-400 mt-2 text-center">Line their face up inside the oval</p>}
-          {failMsg && <p className="text-sm text-red-600 mt-3 text-center">{failMsg}</p>}
+          {live && videoReady && !faceInOval && <p className="text-xs text-gray-500 mt-2 text-center" aria-live="polite">Line their face up inside the oval</p>}
+          {failMsg && <p role="alert" className="text-sm text-red-600 mt-3 text-center">{failMsg}</p>}
         </div>
       </div>
     </div>,

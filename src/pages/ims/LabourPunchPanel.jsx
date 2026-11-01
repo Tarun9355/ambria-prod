@@ -10,7 +10,7 @@ import {
 import LabourPunchCamera from "./LabourPunchCamera.jsx";
 import { SelectPopover } from "./AttendanceAdminLog.jsx";
 import { phone10 } from "../../lib/ims/helpers";
-import { IconUsers, IconSearch, IconPlusCircle, IconTrash, IconPin, IconLock, IconX } from "../../components/icons.jsx";
+import { IconUsers, IconSearch, IconPlusCircle, IconTrash, IconPin, IconLock, IconX, IconCheck, IconPlay, IconStop } from "../../components/icons.jsx";
 
 // ═══ LABOUR PUNCH ═══ (Attendance → Labour Punch)
 // One person with access — a guard, a site supervisor — punches a department's labours in and out
@@ -21,6 +21,13 @@ import { IconUsers, IconSearch, IconPlusCircle, IconTrash, IconPin, IconLock, Ic
 const deptOptions = (depts) => depts.map((d) => ({ value: d, label: `${DEPT_ICON[d] || ""} ${d}` }));
 const fmtTime = (iso) => { try { return new Date(iso).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }); } catch { return "—"; } };
 const COORDS_MAX_AGE_MS = 2 * 60 * 1000;
+
+// The Attendance tab's shared look (see AttendanceTab.jsx) — cards, buttons and inputs.
+const CARD = "rounded-2xl bg-white ring-1 ring-gray-200/70 shadow-sm";
+const BTN_FOCUS = "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed";
+const BTN_PRIMARY = "inline-flex items-center justify-center gap-2 h-10 px-4 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-colors " + BTN_FOCUS;
+const BTN_SECONDARY = "inline-flex items-center justify-center gap-2 h-10 px-4 rounded-xl bg-white ring-1 ring-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors " + BTN_FOCUS;
+const INPUT = "h-10 rounded-xl border border-gray-200 bg-white px-3 text-sm text-gray-900 placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500";
 
 export default function LabourPunchPanel({ authUser, users, settings, myAccess, onAccessChanged }) {
   const punchDepts = useMemo(() => labourPunchDepts(authUser, myAccess), [authUser, myAccess]);
@@ -40,7 +47,9 @@ export default function LabourPunchPanel({ authUser, users, settings, myAccess, 
   const [labours, setLabours] = useState([]);
   const [punches, setPunches] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [error, setError] = useState("");        // a failed add / remove / save, dismissable
+  const [loadError, setLoadError] = useState(""); // the roster itself didn't load — shown in the list, with a retry
+  const [reload, setReload] = useState(0);
   const [q, setQ] = useState("");
   const [camera, setCamera] = useState(null);   // { labour, type } | null
   const [saving, setSaving] = useState(false);
@@ -55,12 +64,12 @@ export default function LabourPunchPanel({ authUser, users, settings, myAccess, 
     let active = true;
     setLoading(true);
     Promise.all([fetchLabours(punchDepts), fetchDayLabourPunches(today, punchDepts)])
-      .then(([ls, ps]) => { if (active) { setLabours(ls); setPunches(ps); setError(""); } })
-      .catch((e) => { if (active) setError(e.message || "Couldn't load labours"); })
+      .then(([ls, ps]) => { if (active) { setLabours(ls); setPunches(ps); setLoadError(""); } })
+      .catch((e) => { if (active) setLoadError(e.message || "Couldn't load labours"); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
     // eslint-disable-next-line -- keyed on the department set, not the array identity
-  }, [deptKey, today]);
+  }, [deptKey, today, reload]);
 
   // Live: another guard punching the same department, or someone adding a labour, shows up here.
   useEffect(() => {
@@ -165,109 +174,184 @@ export default function LabourPunchPanel({ authUser, users, settings, myAccess, 
 
   if (!punchDepts.length) {
     return (
-      <div className="bg-white rounded-2xl shadow-sm ring-1 ring-gray-100 p-8 text-center text-gray-500">
-        <div className="flex justify-center mb-2 text-gray-300"><IconLock size={28} /></div>
-        You don't have labour punch access. Ask Admin to give it to you.
-      </div>
+      <section aria-label="Labour punch" className={CARD + " px-6 py-12 text-center"}>
+        <div className="mx-auto w-10 h-10 rounded-full bg-gray-100 text-gray-400 flex items-center justify-center"><IconLock size={18} /></div>
+        <p className="mt-3 text-sm font-medium text-gray-700">You don't have labour punch access</p>
+        <p className="mt-1 text-xs text-gray-500">Ask Admin to give it to you.</p>
+      </section>
     );
   }
+
+  const notIn = Math.max(0, deptLabours.length - counts.in - counts.out);
+  const searching = q.trim().length > 0;
 
   return (
     // Side by side from lg up when the access card is shown (Admin), two equal columns; one
     // column (stacked) on phones and for a guard, who only sees the list.
-    <div className={manageDepts.length > 0 ? "grid grid-cols-1 lg:grid-cols-2 gap-4 items-start" : "space-y-4"}>
-      <div className="bg-white rounded-2xl shadow-sm ring-1 ring-gray-100 p-4 sm:p-5">
-        <div className="flex items-center justify-between gap-3 flex-wrap">
-          <div className="flex items-center gap-2 text-sm font-bold text-gray-800 uppercase tracking-wide">
+    <div className={manageDepts.length > 0 ? "grid grid-cols-1 lg:grid-cols-2 gap-5 items-start" : "space-y-5"}>
+      <section aria-label="Labour punch" className={CARD}>
+        <div className="flex items-center justify-between gap-3 flex-wrap px-5 py-4">
+          <h2 className="flex items-center gap-2 text-sm font-semibold text-gray-900">
             <IconUsers size={15} /> Labour Punch
-          </div>
-          <div className="text-xs font-medium text-gray-500 border border-gray-200 rounded-lg px-3 py-1.5">
+            {!loading && deptLabours.length > 0 && <span className="rounded-md bg-gray-100 px-1.5 py-0.5 text-xs font-semibold text-gray-600 tabular-nums">{deptLabours.length}</span>}
+          </h2>
+          <time dateTime={today} className="text-sm text-gray-500">
             {new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long" })}
-          </div>
+          </time>
         </div>
 
-        {punchDepts.length > 1 && (
-          <div className="mt-4 flex items-center gap-2">
-            <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Department</span>
-            <SelectPopover align="left" size="sm" value={dept} onChange={setDept} options={[{ value: ALL_DEPTS, label: "All departments" }, ...deptOptions(punchDepts)]} />
-          </div>
-        )}
-
-        <div className="grid grid-cols-2 gap-2 mt-4">
-          <div className="rounded-xl bg-green-50 px-3 py-2"><div className="text-[10px] font-semibold text-green-700 uppercase tracking-wide">In now</div><div className="text-xl font-bold text-gray-900">{counts.in}</div></div>
-          <div className="rounded-xl bg-gray-50 px-3 py-2"><div className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">Out</div><div className="text-xl font-bold text-gray-900">{counts.out}</div></div>
-        </div>
-
-        <div className="flex gap-2 mt-4">
-          <div className="relative flex-1">
-            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"><IconSearch size={14} /></span>
-            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search labour…"
-              className="w-full border border-gray-200 rounded-xl pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300" />
-          </div>
-          <button onClick={() => setAdding((a) => !a)}
-            className="shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 transition">
-            <IconPlusCircle size={15} /> Add
-          </button>
-        </div>
-
-        {adding && (
-          <div className="mt-3 rounded-xl bg-gray-50 p-3 flex flex-col sm:flex-row sm:items-center gap-2">
-            {isAllDepts && <SelectPopover align="left" size="sm" value={targetDept} onChange={setAddDept} options={deptOptions(punchDepts)} />}
-            <input autoFocus value={newName} onChange={(e) => setNewName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addLabour()}
-              placeholder={`Name (${targetDept})`} className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300" />
-            <input value={newPhone} onChange={(e) => setNewPhone(phone10(e.target.value))} onKeyDown={(e) => e.key === "Enter" && addLabour()}
-              placeholder="Phone (10 digits)" inputMode="numeric" maxLength={10} className="sm:w-40 border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300" />
-            <button onClick={addLabour} disabled={!newName.trim() || (newPhone.length > 0 && newPhone.length !== 10)}
-              className="px-4 py-2 rounded-lg text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 transition">Save</button>
-          </div>
-        )}
-
-        {flash && <div className="mt-3 text-sm font-medium text-green-700 bg-green-50 rounded-lg px-3 py-2">✓ {flash}</div>}
-        {error && (
-          <div className="mt-3 text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2 flex items-center justify-between gap-2">
-            <span>{error}</span>
-            <button onClick={() => setError("")} className="text-red-400 hover:text-red-600"><IconX size={14} /></button>
-          </div>
-        )}
-
-        <div className="mt-4 divide-y divide-gray-100">
-          {loading ? (
-            <div className="text-center text-gray-400 py-8 text-sm">Loading labours…</div>
-          ) : shown.length === 0 ? (
-            <div className="text-center text-gray-400 py-8 text-sm">
-              {deptLabours.length ? "No labour matches that search." : (isAllDepts ? "No labours yet — tap Add to put the first one in." : `No labours in ${dept} yet — tap Add to put the first one in.`)}
+        <div className="border-t border-gray-100 px-5 py-4 space-y-4">
+          {punchDepts.length > 1 && (
+            <div className="flex items-center gap-3">
+              <span className="text-xs font-medium text-gray-500">Department</span>
+              <SelectPopover align="left" size="sm" value={dept} onChange={setDept} options={[{ value: ALL_DEPTS, label: "All departments" }, ...deptOptions(punchDepts)]} />
             </div>
-          ) : shown.map((l) => {
-            const p = last[l.id];
-            const isIn = p?.type === "in";
-            return (
-              <div key={l.id} className="flex items-center gap-2.5 sm:gap-3 py-3">
-                {p?.photo
-                  ? <img src={p.photo} alt="" className="w-10 h-10 rounded-full object-cover shrink-0 ring-1 ring-gray-200" />
-                  : <div className="w-10 h-10 rounded-full bg-gray-100 text-gray-500 flex items-center justify-center font-bold shrink-0">{l.name.slice(0, 1).toUpperCase()}</div>}
-                <div className="min-w-0 flex-1">
-                  <div className="text-sm font-semibold text-gray-900 truncate">{l.name}{l.phone ? <span className="font-normal text-gray-400"> · {l.phone}</span> : null}{isAllDepts ? <span className="ml-1.5 align-middle text-[10px] font-semibold text-gray-500 bg-gray-100 rounded-full px-1.5 py-0.5">{DEPT_ICON[l.department] || ""} {l.department}</span> : null}</div>
-                  <div className={"text-xs truncate flex items-center gap-1 " + (isIn ? "text-green-600" : p ? (p.auto_closed ? "text-amber-600" : "text-gray-500") : "text-gray-400")}>
-                    {!p ? "Not punched in today"
-                      : isIn ? <>In since {fmtTime(p.at)} <span className="text-gray-400 inline-flex items-center gap-0.5"><IconPin size={10} />{punchLocationLabel(p)}</span></>
-                      : `${p.auto_closed ? "Auto punched out" : "Out"} at ${fmtTime(p.at)}`}
-                  </div>
-                </div>
-                <button onClick={() => setCamera({ labour: l, type: isIn ? "out" : "in" })}
-                  className={"shrink-0 px-3 sm:px-4 py-2 rounded-xl text-sm font-semibold text-white whitespace-nowrap transition " + (isIn ? "bg-gray-800 hover:bg-gray-900" : "bg-green-600 hover:bg-green-700")}>
-                  {isIn ? "Punch Out" : "Punch In"}
-                </button>
-                {manageDepts.includes(l.department) && (
-                  <button onClick={() => removeLabour(l)} title={`Remove ${l.name}`}
-                    className="shrink-0 w-8 h-8 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 flex items-center justify-center transition">
-                    <IconTrash size={14} />
-                  </button>
-                )}
+          )}
+
+          {/* Where the department stands right now, from each labour's latest punch today. */}
+          <dl className="grid grid-cols-3 rounded-xl bg-gray-50 ring-1 ring-gray-100 divide-x divide-gray-100">
+            {[["In now", counts.in, "bg-green-500"], ["Out", counts.out, "bg-gray-400"], ["Not in yet", notIn, "bg-amber-500"]].map(([k, v, dot]) => (
+              <div key={k} className="px-3 sm:px-4 py-2.5 min-w-0">
+                <dt className="flex items-center gap-1.5 text-xs text-gray-500 truncate"><span aria-hidden="true" className={"w-1.5 h-1.5 shrink-0 rounded-full " + dot} />{k}</dt>
+                <dd className="mt-0.5 text-lg font-semibold text-gray-900 tabular-nums leading-tight">
+                  {loading ? <span className="inline-block w-6 h-4 rounded bg-gray-200 motion-safe:animate-pulse align-middle" /> : v}
+                </dd>
               </div>
-            );
-          })}
+            ))}
+          </dl>
+
+          <div className="flex gap-2">
+            <div className="relative flex-1 min-w-0">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"><IconSearch size={15} /></span>
+              <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name or phone…" aria-label="Search labours"
+                className={INPUT + " w-full pl-9"} />
+            </div>
+            <button onClick={() => setAdding((a) => !a)} aria-expanded={adding} className={BTN_SECONDARY + " shrink-0"}>
+              {adding ? <><IconX size={15} /> Cancel</> : <><IconPlusCircle size={15} /> Add</>}
+            </button>
+          </div>
+
+          {adding && (
+            <div className="rounded-xl bg-gray-50 ring-1 ring-gray-100 p-3.5">
+              <p className="text-xs font-semibold text-gray-900">New labour</p>
+              <div className="mt-2.5 flex flex-col sm:flex-row sm:items-center gap-2">
+                {isAllDepts && <SelectPopover align="left" size="sm" value={targetDept} onChange={setAddDept} options={deptOptions(punchDepts)} />}
+                <input autoFocus value={newName} onChange={(e) => setNewName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addLabour()}
+                  placeholder={`Name (${targetDept})`} aria-label="Name" className={INPUT + " flex-1 min-w-0"} />
+                <input value={newPhone} onChange={(e) => setNewPhone(phone10(e.target.value))} onKeyDown={(e) => e.key === "Enter" && addLabour()}
+                  placeholder="Phone (10 digits)" aria-label="Phone (optional, 10 digits)" inputMode="numeric" maxLength={10} className={INPUT + " sm:w-40 tabular-nums"} />
+                <button onClick={addLabour} disabled={!newName.trim() || (newPhone.length > 0 && newPhone.length !== 10)} className={BTN_PRIMARY}>Save</button>
+              </div>
+              <p className="mt-2 text-xs text-gray-500">
+                {newPhone.length > 0 && newPhone.length !== 10 ? `Phone needs 10 digits — ${newPhone.length} so far.` : "Phone is optional."}
+              </p>
+            </div>
+          )}
+
+          {flash && (
+            <div role="status" className="flex items-center gap-2 rounded-xl bg-green-50 ring-1 ring-green-200 px-3 py-2 text-sm font-medium text-green-800">
+              <IconCheck size={15} /> {flash}
+            </div>
+          )}
+          {error && (
+            <div role="alert" className="flex items-center justify-between gap-2 rounded-xl bg-red-50 ring-1 ring-red-200 pl-3 pr-1 py-1 text-sm text-red-700">
+              <span className="py-1">{error}</span>
+              <button onClick={() => setError("")} aria-label="Dismiss"
+                className="shrink-0 w-8 h-8 rounded-lg text-red-500 hover:text-red-700 hover:bg-red-100 flex items-center justify-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500">
+                <IconX size={14} />
+              </button>
+            </div>
+          )}
         </div>
-      </div>
+
+        <div className="border-t border-gray-100">
+          {loading ? (
+            <ul aria-busy="true" aria-label="Loading labours" className="divide-y divide-gray-100">
+              {[0, 1, 2].map((i) => (
+                <li key={i} className="flex items-center gap-3 px-5 py-3">
+                  <span className="w-10 h-10 shrink-0 rounded-full bg-gray-100 motion-safe:animate-pulse" />
+                  <span className="flex-1 space-y-2">
+                    <span className="block h-3 w-32 rounded bg-gray-100 motion-safe:animate-pulse" />
+                    <span className="block h-2.5 w-24 rounded bg-gray-100 motion-safe:animate-pulse" />
+                  </span>
+                  <span className="w-24 h-10 shrink-0 rounded-xl bg-gray-100 motion-safe:animate-pulse" />
+                </li>
+              ))}
+            </ul>
+          ) : loadError ? (
+            <div className="px-5 py-10 text-center">
+              <p className="text-sm text-red-600">{loadError}</p>
+              <button onClick={() => setReload((n) => n + 1)}
+                className="mt-2 h-8 px-3 rounded-lg text-xs font-semibold text-blue-700 hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 transition-colors">Try again</button>
+            </div>
+          ) : shown.length === 0 ? (
+            <div className="px-5 py-10 text-center">
+              <div className="mx-auto w-10 h-10 rounded-full bg-gray-100 text-gray-400 flex items-center justify-center">
+                {deptLabours.length && searching ? <IconSearch size={18} /> : <IconUsers size={18} />}
+              </div>
+              {deptLabours.length ? (
+                <>
+                  <p className="mt-3 text-sm font-medium text-gray-700">No labour matches that search</p>
+                  <p className="mt-1 text-xs text-gray-500">Check the spelling, or search by phone number.</p>
+                </>
+              ) : (
+                <>
+                  <p className="mt-3 text-sm font-medium text-gray-700">{isAllDepts ? "No labours yet" : `No labours in ${dept} yet`}</p>
+                  <p className="mt-1 text-xs text-gray-500">Tap Add to put the first one in.</p>
+                </>
+              )}
+            </div>
+          ) : (
+            <ul className="divide-y divide-gray-100">
+              {shown.map((l) => {
+                const p = last[l.id];
+                const isIn = p?.type === "in";
+                return (
+                  <li key={l.id} className="flex items-center gap-3 px-5 py-3">
+                    {/* Their latest punch photo, so the guard can match the face; an initial before the first punch. */}
+                    <span className="relative shrink-0">
+                      {p?.photo
+                        ? <img src={p.photo} alt="" className="w-10 h-10 rounded-full object-cover ring-1 ring-gray-200" />
+                        : <span className="w-10 h-10 rounded-full bg-gray-100 text-gray-600 flex items-center justify-center text-sm font-semibold">{l.name.slice(0, 1).toUpperCase()}</span>}
+                      {isIn && <span aria-hidden="true" className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-green-500 ring-2 ring-white" />}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className="text-sm font-semibold text-gray-900 truncate">
+                          {l.name}{l.phone ? <span className="font-normal text-gray-500 tabular-nums"> · {l.phone}</span> : null}
+                        </span>
+                        {isAllDepts && <span className="shrink-0 rounded-md bg-gray-100 px-1.5 py-0.5 text-[11px] font-medium text-gray-600">{DEPT_ICON[l.department] || ""} {l.department}</span>}
+                      </div>
+                      <div className={"mt-0.5 flex items-center gap-1 text-xs min-w-0 " + (isIn ? "text-green-700" : p?.auto_closed ? "text-amber-700" : "text-gray-500")}>
+                        {!p ? "Not punched in today"
+                          : isIn ? (
+                            <>
+                              <span className="shrink-0">In since <time dateTime={p.at} className="tabular-nums">{fmtTime(p.at)}</time></span>
+                              <span className="inline-flex items-center gap-0.5 min-w-0 text-gray-500"><span className="shrink-0"><IconPin size={11} /></span><span className="truncate">{punchLocationLabel(p)}</span></span>
+                            </>
+                          )
+                          : <span className="truncate">{p.auto_closed ? "Auto punched out" : "Out"} at <time dateTime={p.at} className="tabular-nums">{fmtTime(p.at)}</time></span>}
+                      </div>
+                    </div>
+                    <button onClick={() => setCamera({ labour: l, type: isIn ? "out" : "in" })} aria-label={`${isIn ? "Punch out" : "Punch in"} ${l.name}`}
+                      className={"shrink-0 inline-flex items-center justify-center gap-1.5 h-10 px-3 sm:px-4 rounded-xl text-sm font-semibold text-white whitespace-nowrap transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 "
+                        + (isIn ? "bg-gray-900 hover:bg-gray-800 focus-visible:ring-gray-900" : "bg-green-600 hover:bg-green-700 focus-visible:ring-green-600")}>
+                      <span className="hidden sm:inline-flex">{isIn ? <IconStop size={14} /> : <IconPlay size={14} />}</span>
+                      {isIn ? "Punch Out" : "Punch In"}
+                    </button>
+                    {manageDepts.includes(l.department) && (
+                      <button onClick={() => removeLabour(l)} title={`Remove ${l.name}`} aria-label={`Remove ${l.name}`}
+                        className="shrink-0 -mr-2 w-10 h-10 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 flex items-center justify-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500">
+                        <IconTrash size={15} />
+                      </button>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      </section>
 
       {manageDepts.length > 0 && (
         <LabourAccessCard authUser={authUser} users={users} manageDepts={manageDepts} onChanged={onAccessChanged} />
@@ -288,7 +372,9 @@ function LabourAccessCard({ authUser, users, manageDepts, onChanged }) {
   const ALL = "__all";
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [error, setError] = useState("");         // a failed grant / revoke
+  const [loadError, setLoadError] = useState(""); // the list itself didn't load — shown in place, with a retry
+  const [reload, setReload] = useState(0);
   const [q, setQ] = useState("");
   const [qFocus, setQFocus] = useState(false);   // suggestions show only while the search box is in use
   // "All departments" by default: a guard at the gate usually punches every department's labours,
@@ -299,13 +385,14 @@ function LabourAccessCard({ authUser, users, manageDepts, onChanged }) {
 
   useEffect(() => {
     let active = true;
+    setLoading(true);
     fetchLabourAccessForDepts(manageDepts)
-      .then((r) => { if (active) { setRows(r); setError(""); } })
-      .catch((e) => { if (active) setError(e.message || "Couldn't load access"); })
+      .then((r) => { if (active) { setRows(r); setLoadError(""); } })
+      .catch((e) => { if (active) setLoadError(e.message || "Couldn't load access"); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
     // eslint-disable-next-line -- keyed on the department set
-  }, [key]);
+  }, [key, reload]);
 
   const byId = useMemo(() => new Map((users || []).map((u) => [u.id, u])), [users]);
   const nameOf = (id) => byId.get(id)?.name || byId.get(id)?.username || id;
@@ -345,70 +432,116 @@ function LabourAccessCard({ authUser, users, manageDepts, onChanged }) {
 
   const deptRows = rows.filter((r) => r.department === pickDept);
   const userGroups = [...deptsByUser.entries()].map(([uid, list]) => ({ uid, list })).sort((a, b) => nameOf(a.uid).localeCompare(nameOf(b.uid)));
+  const listCount = isAll ? userGroups.length : deptRows.length;
+  const avatar = (uid) => (
+    <span aria-hidden="true" className="w-8 h-8 shrink-0 rounded-full bg-gray-100 text-gray-600 flex items-center justify-center text-xs font-semibold">
+      {String(nameOf(uid)).slice(0, 1).toUpperCase()}
+    </span>
+  );
+  const removeBtn = "shrink-0 -mr-2 inline-flex items-center justify-center h-10 sm:h-8 px-3 rounded-lg text-xs font-semibold text-red-700 hover:bg-red-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 transition-colors";
 
   return (
-    <div className="bg-white rounded-2xl shadow-sm ring-1 ring-gray-100 p-4 sm:p-5">
-      <div className="flex items-center gap-2 text-sm font-bold text-gray-800 uppercase tracking-wide">
-        <IconLock size={14} /> Who can punch labours
+    <section aria-label="Who can punch labours" className={CARD}>
+      <div className="px-5 py-4">
+        <h2 className="flex items-center gap-2 text-sm font-semibold text-gray-900">
+          <IconLock size={15} /> Who can punch labours
+          {!loading && !loadError && listCount > 0 && <span className="rounded-md bg-gray-100 px-1.5 py-0.5 text-xs font-semibold text-gray-600 tabular-nums">{listCount}</span>}
+        </h2>
+        <p className="mt-1 text-xs text-gray-500">Only the people here can punch a department's labours in and out.</p>
       </div>
 
-      {manageDepts.length > 1 && (
-        <div className="mt-3 flex items-center gap-2">
-          <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Department</span>
-          <SelectPopover align="left" size="sm" value={pickDept} onChange={setPickDept}
-            options={[{ value: ALL, label: "All departments" }, ...deptOptions(manageDepts)]} />
-        </div>
-      )}
+      <div className="border-t border-gray-100 px-5 py-4 space-y-3">
+        {manageDepts.length > 1 && (
+          <div className="flex items-center gap-3">
+            <span className="text-xs font-medium text-gray-500">Department</span>
+            <SelectPopover align="left" size="sm" value={pickDept} onChange={setPickDept}
+              options={[{ value: ALL, label: "All departments" }, ...deptOptions(manageDepts)]} />
+          </div>
+        )}
 
-      <div className="relative mt-3">
-        <input value={q} onChange={(e) => setQ(e.target.value)} onFocus={() => setQFocus(true)} onBlur={() => setQFocus(false)}
-          placeholder={isAll ? "Search user to give access to all departments…" : "Search user to give access…"}
-          className="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-300" />
-        {qFocus && matches.length > 0 && (
-          <div className="absolute z-20 left-0 right-0 mt-1 bg-white rounded-xl shadow-lg ring-1 ring-gray-200 overflow-hidden">
-            {matches.map((u) => (
-              <button key={u.id} onMouseDown={(e) => e.preventDefault()} onClick={() => grant(u)} className="w-full text-left px-3 py-2 text-sm hover:bg-indigo-50 transition flex items-center justify-between gap-2">
-                <span className="font-medium text-gray-800 truncate">{u.name || u.username}</span>
-                <span className="text-xs text-gray-400 shrink-0">{u.role}</span>
-              </button>
-            ))}
+        <div className="relative">
+          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"><IconSearch size={15} /></span>
+          <input value={q} onChange={(e) => setQ(e.target.value)} onFocus={() => setQFocus(true)} onBlur={() => setQFocus(false)}
+            placeholder={isAll ? "Search user to give access to all departments…" : "Search user to give access…"}
+            aria-label={isAll ? "Search user to give access to all departments" : `Search user to give ${pickDept} access`}
+            className={INPUT + " w-full pl-9"} />
+          {qFocus && q.trim() && (
+            <div className="absolute z-20 left-0 right-0 mt-1.5 bg-white rounded-xl shadow-lg ring-1 ring-gray-200 p-1.5">
+              {matches.length > 0 ? matches.map((u) => (
+                <button key={u.id} onMouseDown={(e) => e.preventDefault()} onClick={() => grant(u)}
+                  className="w-full min-h-10 text-left px-3 py-2 rounded-lg text-sm hover:bg-blue-50 focus-visible:outline-none focus-visible:bg-blue-50 transition-colors flex items-center justify-between gap-2">
+                  <span className="font-medium text-gray-900 truncate">{u.name || u.username}</span>
+                  <span className="text-xs text-gray-500 shrink-0">{u.role}</span>
+                </button>
+              )) : (
+                <p className="px-3 py-2 text-xs text-gray-500">No one else matches — they may already have this access.</p>
+              )}
+            </div>
+          )}
+        </div>
+
+        {error && (
+          <div role="alert" className="flex items-center justify-between gap-2 rounded-xl bg-red-50 ring-1 ring-red-200 pl-3 pr-1 py-1 text-sm text-red-700">
+            <span className="py-1">{error}</span>
+            <button onClick={() => setError("")} aria-label="Dismiss"
+              className="shrink-0 w-8 h-8 rounded-lg text-red-500 hover:text-red-700 hover:bg-red-100 flex items-center justify-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500">
+              <IconX size={14} />
+            </button>
           </div>
         )}
       </div>
 
-      {error && <div className="mt-3 text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</div>}
-
-      <div className="mt-3 divide-y divide-gray-100">
-        {loading ? <div className="text-sm text-gray-400 py-3">Loading…</div>
-          : isAll ? (
-            userGroups.length === 0
-              ? <div className="text-sm text-gray-400 py-3">Nobody has labour punch access yet.</div>
-              : userGroups.map(({ uid, list }) => (
-                <div key={uid} className="flex items-start justify-between gap-2 py-2.5">
-                  <div className="min-w-0">
-                    <div className="text-sm font-semibold text-gray-800 truncate">{nameOf(uid)}</div>
-                    <div className="mt-1 flex flex-wrap gap-1">
-                      {list.length >= manageDepts.length
-                        ? <span className="text-[11px] font-semibold text-indigo-700 bg-indigo-50 rounded-full px-2 py-0.5">All departments</span>
-                        : list.map((r) => <span key={r.id} className="text-[11px] text-gray-600 bg-gray-100 rounded-full px-2 py-0.5">{DEPT_ICON[r.department] || ""} {r.department}</span>)}
-                    </div>
+      <div className="border-t border-gray-100">
+        {loading ? (
+          <div className="flex items-center gap-2 px-5 py-6 text-sm text-gray-500">
+            <span className="w-3.5 h-3.5 rounded-full border-2 border-gray-300 border-t-blue-600 animate-spin" aria-hidden="true" />
+            Loading access…
+          </div>
+        ) : loadError ? (
+          <div className="px-5 py-8 text-center">
+            <p className="text-sm text-red-600">{loadError}</p>
+            <button onClick={() => setReload((n) => n + 1)}
+              className="mt-2 h-8 px-3 rounded-lg text-xs font-semibold text-blue-700 hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 transition-colors">Try again</button>
+          </div>
+        ) : listCount === 0 ? (
+          <div className="px-5 py-8 text-center">
+            <div className="mx-auto w-10 h-10 rounded-full bg-gray-100 text-gray-400 flex items-center justify-center"><IconLock size={18} /></div>
+            <p className="mt-3 text-sm font-medium text-gray-700">{isAll ? "Nobody has labour punch access yet" : `Nobody has ${pickDept} access yet`}</p>
+            <p className="mt-1 text-xs text-gray-500">Search for a user above to give them access.</p>
+          </div>
+        ) : isAll ? (
+          <ul className="divide-y divide-gray-100">
+            {userGroups.map(({ uid, list }) => (
+              <li key={uid} className="flex items-start gap-3 px-5 py-3">
+                {avatar(uid)}
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-semibold text-gray-900 truncate">{nameOf(uid)}</div>
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {list.length >= manageDepts.length
+                      ? <span className="rounded-md bg-blue-50 ring-1 ring-blue-100 px-1.5 py-0.5 text-[11px] font-semibold text-blue-700">All departments</span>
+                      : list.map((r) => <span key={r.id} className="rounded-md bg-gray-100 px-1.5 py-0.5 text-[11px] font-medium text-gray-600">{DEPT_ICON[r.department] || ""} {r.department}</span>)}
                   </div>
-                  <button onClick={() => revoke(list)} title="Remove all of this user's labour punch access"
-                    className="shrink-0 text-xs font-semibold text-red-500 hover:text-red-700 hover:bg-red-50 px-2.5 py-1.5 rounded-lg transition">Remove</button>
                 </div>
-              ))
-          ) : deptRows.length === 0
-            ? <div className="text-sm text-gray-400 py-3">Nobody has {pickDept} access yet.</div>
-            : deptRows.map((r) => (
-              <div key={r.id} className="flex items-center justify-between gap-2 py-2.5">
-                <div className="min-w-0">
-                  <div className="text-sm font-semibold text-gray-800 truncate">{nameOf(r.user_id)}</div>
-                  <div className="text-xs text-gray-400 truncate">{r.department}{r.granted_by ? ` · given by ${nameOf(r.granted_by)}` : ""}</div>
-                </div>
-                <button onClick={() => revoke([r])} className="shrink-0 text-xs font-semibold text-red-500 hover:text-red-700 hover:bg-red-50 px-2.5 py-1.5 rounded-lg transition">Remove</button>
-              </div>
+                <button onClick={() => revoke(list)} title="Remove all of this user's labour punch access"
+                  aria-label={`Remove all of ${nameOf(uid)}'s labour punch access`} className={removeBtn}>Remove</button>
+              </li>
             ))}
+          </ul>
+        ) : (
+          <ul className="divide-y divide-gray-100">
+            {deptRows.map((r) => (
+              <li key={r.id} className="flex items-center gap-3 px-5 py-3">
+                {avatar(r.user_id)}
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-semibold text-gray-900 truncate">{nameOf(r.user_id)}</div>
+                  <div className="text-xs text-gray-500 truncate">{r.department}{r.granted_by ? ` · given by ${nameOf(r.granted_by)}` : ""}</div>
+                </div>
+                <button onClick={() => revoke([r])} aria-label={`Remove ${nameOf(r.user_id)}'s ${r.department} access`} className={removeBtn}>Remove</button>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
-    </div>
+    </section>
   );
 }

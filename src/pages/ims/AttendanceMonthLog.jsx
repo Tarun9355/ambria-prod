@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { fetchRangePunches, dayHours, daySummary, punchLocationLabel, punchLabel } from "../../lib/ims/attendance";
 import { loadExcelJS, downloadWorkbook, styleHeader } from "../../lib/excel";
-import { IconExcelMark } from "../../components/icons.jsx";
+import { IconExcelMark, IconChevron, IconUsers, IconX } from "../../components/icons.jsx";
 
 // ═══ ADMIN: STAFF ATTENDANCE — MONTH ═══ (Attendance → Staff Log → Month)
 // One row per staff member for the month: days present, hours, and days left open (no punch-out
@@ -9,6 +9,10 @@ import { IconExcelMark } from "../../components/icons.jsx";
 // roster for payroll rather than only the people who showed up. "Export to Excel" writes what is
 // on screen (same search + department filter) as three sheets: Summary, a day-by-day Daily grid,
 // and every Punch with its photo link.
+//
+// Rendered inside AttendanceAdminLog's card body (that card owns the month stepper, search and
+// department filter), so this draws no card of its own: a totals strip, the export action, then
+// the staff table. On phones the Department column folds under each name so the table fits.
 
 const pad2 = (n) => String(n).padStart(2, "0");
 const fmtTime = (iso) => { try { return new Date(iso).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }); } catch { return ""; } };
@@ -20,7 +24,9 @@ export default function AttendanceMonthLog({ users, ym, search, dept, deptByUser
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [reload, setReload] = useState(0);         // bumped by "Try again" after a failed load
   const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState(""); // shown beside the button; the table stays up
   const [openId, setOpenId] = useState(null);   // staff row expanded to its day-by-day in/out times
   const daysInMonth = new Date(ym.y, ym.m, 0).getDate();
   const from = `${ym.y}-${pad2(ym.m)}-01`;
@@ -35,7 +41,7 @@ export default function AttendanceMonthLog({ users, ym, search, dept, deptByUser
       .catch((e) => { if (active) setError(e.message || "Couldn't load attendance"); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [from, to]);
+  }, [from, to, reload]);
 
   const deptLabel = (id) => (isAdminByUserId[id] ? "Admin" : (deptByUserId[id] || []).join(", ") || "Unassigned");
 
@@ -71,6 +77,7 @@ export default function AttendanceMonthLog({ users, ym, search, dept, deptByUser
 
   async function exportExcel() {
     setExporting(true);
+    setExportError("");
     try {
       const ExcelJS = await loadExcelJS();
       const wb = new ExcelJS.Workbook();
@@ -155,76 +162,146 @@ export default function AttendanceMonthLog({ users, ym, search, dept, deptByUser
       const deptPart = dept === "all" ? "" : `_${dept.replace(/[^a-zA-Z0-9]+/g, "_")}`;
       await downloadWorkbook(wb, `Ambria_Staff_Attendance_${ym.y}-${pad2(ym.m)}${deptPart}.xlsx`);
     } catch (e) {
-      setError(e.message || "Couldn't export");
+      setExportError(e.message || "Couldn't export");
     } finally {
       setExporting(false);
     }
   }
 
-  if (loading) return <p className="text-sm text-gray-400 text-center py-10">Loading…</p>;
-  if (error) return <p className="text-sm text-red-600 text-center py-10">{error}</p>;
+
+  if (loading) {
+    return (
+      <div aria-busy="true" aria-label="Loading the month">
+        <div className="mx-5 mt-4 h-16 rounded-xl bg-gray-50 ring-1 ring-gray-100 motion-safe:animate-pulse" />
+        <ul className="mt-4 border-t border-gray-100 divide-y divide-gray-100">
+          {[0, 1, 2, 3, 4].map((i) => (
+            <li key={i} className="flex items-center justify-between gap-4 px-5 py-3.5">
+              <div className="h-3 w-40 max-w-full rounded bg-gray-100 motion-safe:animate-pulse" />
+              <div className="h-3 w-20 rounded bg-gray-100 motion-safe:animate-pulse" />
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <div className="px-5 py-10 text-center" role="alert">
+        <p className="text-sm text-red-600">{error}</p>
+        <button type="button" onClick={() => setReload((n) => n + 1)}
+          className="mt-3 inline-flex items-center justify-center gap-2 h-10 px-4 rounded-xl bg-white ring-1 ring-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2">Try again</button>
+      </div>
+    );
+  }
+
+  const totDays = shown.reduce((s, u) => s + u.daysPresent, 0);
+  const totHours = shown.reduce((s, u) => s + u.hours, 0);
+  const totOpen = shown.reduce((s, u) => s + u.openDays, 0);
+  const th = "py-2.5 text-xs font-medium text-gray-500";
 
   return (
-    <div>
-      <div className="flex items-center justify-between gap-3 mb-3">
-        <p className="text-xs text-gray-400">{shown.length} staff · {rows.length} punch{rows.length === 1 ? "" : "es"} this month · tap a name for in/out times</p>
-        <button onClick={exportExcel} disabled={exporting || shown.length === 0}
-          className="shrink-0 inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold text-gray-700 bg-white ring-1 ring-gray-200 hover:ring-green-400 hover:text-green-700 hover:bg-green-50 disabled:opacity-40 disabled:cursor-not-allowed transition">
-          <IconExcelMark size={15} /> {exporting ? "Exporting…" : "Export to Excel"}
+    <div className="pb-2">
+      {/* Month totals over what's shown (same search + department filter as the table). */}
+      <dl className="mx-5 mt-4 grid grid-cols-3 rounded-xl bg-gray-50 ring-1 ring-gray-100 divide-x divide-gray-100">
+        {[["Days present", totDays], ["Hours", round1(totHours).toFixed(1)], ["No punch-out", totOpen]].map(([k, v]) => (
+          <div key={k} className="px-3 py-2.5 min-w-0">
+            <dt className="text-xs text-gray-500 truncate">{k}</dt>
+            <dd className="text-lg font-semibold text-gray-900 tabular-nums leading-tight">{v}</dd>
+          </div>
+        ))}
+      </dl>
+
+      <div className="flex flex-wrap items-center justify-between gap-3 px-5 mt-4 mb-3">
+        <p className="text-xs text-gray-500 tabular-nums">
+          {shown.length} staff · {rows.length} punch{rows.length === 1 ? "" : "es"} this month
+          {shown.some((u) => u.daysPresent) && <span className="hidden sm:inline"> · select a name for in/out times</span>}
+        </p>
+        <button type="button" onClick={exportExcel} disabled={exporting || shown.length === 0}
+          className="shrink-0 inline-flex items-center justify-center gap-2 h-10 px-4 rounded-xl bg-white ring-1 ring-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed">
+          {exporting
+            ? <span className="w-3.5 h-3.5 rounded-full border-2 border-gray-300 border-t-blue-600 animate-spin" aria-hidden="true" />
+            : <IconExcelMark size={15} />}
+          {exporting ? "Exporting…" : "Export to Excel"}
         </button>
       </div>
+      {exportError && <p className="px-5 -mt-1 mb-3 text-xs text-red-600" role="alert">{exportError}</p>}
+
       {shown.length === 0 ? (
-        <p className="text-sm text-gray-400 text-center py-10">No staff match that filter.</p>
+        <div className="px-5 py-12 text-center border-t border-gray-100">
+          <div className="mx-auto w-10 h-10 rounded-full bg-gray-100 text-gray-400 flex items-center justify-center"><IconUsers size={18} /></div>
+          <p className="mt-3 text-sm font-medium text-gray-700">No staff match that filter</p>
+          <p className="mt-1 text-xs text-gray-500">Try another name or department.</p>
+        </div>
       ) : (
+        // Scrolls inside the card, never the page, if a long name or department ever outgrows it.
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-left text-[10px] font-bold text-gray-400 uppercase tracking-wide border-b border-gray-100">
-                <th className="py-2 pr-3">Name</th>
-                <th className="py-2 pr-3">Department</th>
-                <th className="py-2 pr-3 text-right">Days</th>
-                <th className="py-2 pr-3 text-right">Hours</th>
-                <th className="py-2 text-right" title="Days with no punch-out (left open or auto-closed)">Open</th>
+              <tr className="text-left bg-gray-50 border-y border-gray-100">
+                <th scope="col" className={th + " pl-5 pr-3"}>Name</th>
+                <th scope="col" className={th + " pr-3 hidden sm:table-cell"}>Department</th>
+                <th scope="col" className={th + " pr-3 text-right"}>Days</th>
+                <th scope="col" className={th + " pr-3 text-right"}>Hours</th>
+                <th scope="col" className={th + " pr-5 text-right"} title="Days with no punch-out (left open or auto-closed)">Open</th>
               </tr>
             </thead>
             <tbody>
               {shown.map((u) => {
                 const open = openId === u.id;
                 const dates = Object.keys(u.byDate).sort();
+                const toggle = () => dates.length && setOpenId(open ? null : u.id);
                 return (
                   <Fragment key={u.id}>
-                    <tr onClick={() => dates.length && setOpenId(open ? null : u.id)}
-                      className={"border-b border-gray-50 hover:bg-gray-50 " + (u.daysPresent ? "cursor-pointer" : "text-gray-400")}>
-                      <td className={"py-2 pr-3 font-semibold " + (u.daysPresent ? "text-gray-800" : "")}>
-                        {dates.length > 0 && <span className={"inline-block w-3 text-gray-400 text-[10px] transition-transform " + (open ? "rotate-90" : "")}>▸</span>}
-                        {u.name}
+                    {/* The whole row toggles on click; the name is a real button so it also works from the keyboard. */}
+                    <tr onClick={toggle}
+                      className={"border-t border-gray-100 first:border-t-0 transition-colors " + (dates.length ? "cursor-pointer hover:bg-gray-50 " : "") + (open ? "bg-gray-50" : "")}>
+                      <td className="py-3 pl-5 pr-3">
+                        {dates.length > 0 ? (
+                          <button type="button" onClick={(e) => { e.stopPropagation(); toggle(); }} aria-expanded={open} aria-controls={`att-month-${u.id}`}
+                            className="inline-flex items-center gap-1.5 -ml-1 px-1 rounded-md text-left font-semibold text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
+                            <span className={"shrink-0 text-gray-500 transition-transform duration-200 " + (open ? "" : "-rotate-90")} aria-hidden="true"><IconChevron size={14} /></span>
+                            {u.name}
+                          </button>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 font-medium text-gray-500"><span className="w-3.5 shrink-0" aria-hidden="true" />{u.name}</span>
+                        )}
+                        <div className="sm:hidden pl-5 text-xs text-gray-500">{deptLabel(u.id)}</div>
                       </td>
-                      <td className="py-2 pr-3 text-gray-500">{deptLabel(u.id)}</td>
-                      <td className="py-2 pr-3 text-right font-semibold">{u.daysPresent}</td>
-                      <td className="py-2 pr-3 text-right">{fmtHours(u.hours)}</td>
-                      <td className={"py-2 text-right " + (u.openDays ? "text-amber-600 font-semibold" : "text-gray-300")}>{u.openDays || "—"}</td>
+                      <td className="py-3 pr-3 text-gray-600 hidden sm:table-cell">{deptLabel(u.id)}</td>
+                      <td className={"py-3 pr-3 text-right tabular-nums " + (u.daysPresent ? "font-semibold text-gray-900" : "text-gray-500")}>{u.daysPresent}</td>
+                      <td className={"py-3 pr-3 text-right tabular-nums " + (u.hours > 0 ? "text-gray-700" : "text-gray-500")}>{fmtHours(u.hours)}</td>
+                      <td className="py-3 pr-5 text-right tabular-nums">
+                        {u.openDays
+                          ? <span className="inline-flex items-center rounded-full ring-1 px-2 py-0.5 text-xs font-semibold bg-amber-50 ring-amber-200 text-amber-800">{u.openDays}</span>
+                          : <span className="text-gray-500">—</span>}
+                      </td>
                     </tr>
                     {open && (
-                      <tr className="bg-gray-50/70">
-                        <td colSpan={5} className="px-3 py-2">
-                          <div className="grid grid-cols-[minmax(0,1fr)_auto_auto_auto] gap-x-4 gap-y-1 text-xs">
-                            <div className="font-bold text-gray-400 uppercase tracking-wide text-[10px]">Day</div>
-                            <div className="font-bold text-gray-400 uppercase tracking-wide text-[10px] text-right">In</div>
-                            <div className="font-bold text-gray-400 uppercase tracking-wide text-[10px] text-right">Out</div>
-                            <div className="font-bold text-gray-400 uppercase tracking-wide text-[10px] text-right">Hours</div>
-                            {dates.map((date) => {
-                              const d = daySummary(u.byDate[date]);
-                              return (
-                                <Fragment key={date}>
-                                  <div className="text-gray-700">{fmtDay(date)}</div>
-                                  <div className="text-right text-green-700 font-semibold tabular-nums">{fmtTime(d.inAt) || "—"}</div>
-                                  <div className={"text-right font-semibold tabular-nums " + (d.open ? "text-amber-600" : d.auto ? "text-amber-600" : "text-red-600")}>
-                                    {d.open ? "no out" : `${fmtTime(d.outAt)}${d.auto ? " auto" : ""}`}
-                                  </div>
-                                  <div className="text-right text-gray-700 tabular-nums">{fmtHours(d.hours)}</div>
-                                </Fragment>
-                              );
-                            })}
+                      <tr id={`att-month-${u.id}`} className="bg-gray-50">
+                        <td colSpan={5} className="px-5 pb-3">
+                          <div className="rounded-xl bg-white ring-1 ring-gray-200/70 px-3.5 py-2.5">
+                            <div className="grid grid-cols-[minmax(0,1fr)_auto_auto_auto] gap-x-4 sm:gap-x-6 text-xs">
+                              <div className="pb-1.5 font-medium text-gray-500">Day</div>
+                              <div className="pb-1.5 font-medium text-gray-500 text-right">In</div>
+                              <div className="pb-1.5 font-medium text-gray-500 text-right">Out</div>
+                              <div className="pb-1.5 font-medium text-gray-500 text-right">Hours</div>
+                              {dates.map((date) => {
+                                const d = daySummary(u.byDate[date]);
+                                const cell = "py-1.5 border-t border-gray-100 tabular-nums";
+                                return (
+                                  <Fragment key={date}>
+                                    <time dateTime={date} className={cell + " text-gray-800"}>{fmtDay(date)}</time>
+                                    <div className={cell + " text-right font-medium text-green-700"}>
+                                      {d.inAt ? <time dateTime={d.inAt}>{fmtTime(d.inAt)}</time> : "—"}
+                                    </div>
+                                    <div className={cell + " text-right font-medium " + (d.open || d.auto ? "text-amber-700" : "text-gray-800")}>
+                                      {d.open ? "no out" : <><time dateTime={d.outAt}>{fmtTime(d.outAt)}</time>{d.auto ? " auto" : ""}</>}
+                                    </div>
+                                    <div className={cell + " text-right text-gray-700"}>{fmtHours(d.hours)}</div>
+                                  </Fragment>
+                                );
+                              })}
+                            </div>
                           </div>
                         </td>
                       </tr>
@@ -234,11 +311,12 @@ export default function AttendanceMonthLog({ users, ym, search, dept, deptByUser
               })}
             </tbody>
             <tfoot>
-              <tr className="text-gray-900 font-bold">
-                <td className="pt-3 pr-3" colSpan={2}>{shown.length} staff</td>
-                <td className="pt-3 pr-3 text-right">{shown.reduce((s, u) => s + u.daysPresent, 0)}</td>
-                <td className="pt-3 pr-3 text-right">{fmtHours(shown.reduce((s, u) => s + u.hours, 0))}</td>
-                <td className="pt-3 text-right">{shown.reduce((s, u) => s + u.openDays, 0) || "—"}</td>
+              <tr className="border-t border-gray-200 bg-gray-50 font-semibold text-gray-900 tabular-nums">
+                <td className="py-3 pl-5 pr-3">{shown.length} staff</td>
+                <td className="py-3 pr-3 hidden sm:table-cell" />
+                <td className="py-3 pr-3 text-right">{totDays}</td>
+                <td className="py-3 pr-3 text-right">{fmtHours(totHours)}</td>
+                <td className="py-3 pr-5 text-right">{totOpen || "—"}</td>
               </tr>
             </tfoot>
           </table>
