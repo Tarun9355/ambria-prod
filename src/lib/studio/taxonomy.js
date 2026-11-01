@@ -85,9 +85,11 @@ export const ZONE_META = {
 export const BASE_RATES={truss:{box:50,singleU:30},masking:{fabric:20,acrylic:100,flex:45,vinyl:90},platform:{"4in":30,"1ft":45},arch:{"2d":60,"3d":100},pillar:2000,glass:{"2d":120,"3d":180}};
 // MASK_OPTS removed — it was a second, frozen copy of the masking list (with 2024 seed rates baked
 // into `r`) that drifted from whatever the admin had actually set. Use maskingOptions(imsMaskingRates).
-// Platform heights. The set is FIXED (the two values are baked into computePlatformComponents'
-// fatta/stand geometry), so rows can't be added or removed — only their rate edited, exactly like
-// truss and masking. Editable live from IMS Admin → Settings → 🪵 Platform Rates.
+// Platform heights. The set is FIXED, so rows can't be added or removed — only their rate edited,
+// exactly like truss and masking. Editable live from IMS Admin → Settings → 🪵 Platform Rates.
+// (Until 2026-11-01 the "4in" key also zeroed a fatta/stand stand-count geometry calc — that
+// calc is retired along with the Fatta/Stand inventory items it billed; see pricing.js's
+// buildPlatformPlan. The height set itself stays fixed for now regardless.)
 //
 // PLAT_OPTS stays as the fallback shape and the source of the labels. Do NOT read `.r` from it for
 // pricing or display — use platformOptions()/platformRateFor() so an admin's edit is honoured.
@@ -106,10 +108,10 @@ export function platformRateFor(key, platformRates) {
  * The heights a salesperson can pick, in PLAT_OPTS shape ({id,l,r}) so call sites are unchanged.
  * Derived from the admin's saved list, so added/renamed/removed heights show up in Studio.
  *
- * Only the `4in` KEY carries behaviour — computePlatformComponents zeroes the stand count for it
- * (a 4-inch fatta sits flush). Any other key, including a custom one, computes stands normally,
- * which is the right default for anything raised. That is why the panel lets the label be renamed
- * but never the key: rename "4 inch" to "Low riser" and the geometry still holds.
+ * Until 2026-11-01 the `4in` KEY also carried behaviour (zeroed a fatta/stand stand-count geometry
+ * calc, now retired — see pricing.js's buildPlatformPlan). The panel still never lets the key
+ * itself be renamed, only the label, so a deal priced against "4 inch" keeps resolving correctly
+ * even after it's relabeled.
  *
  * A deleted height stays resolvable in platformRateFor above on purpose — a zone saved against it
  * keeps pricing at the seeded rate instead of silently dropping to ₹0. Deleting removes it from

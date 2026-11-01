@@ -2845,8 +2845,8 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
               on the zone's floor area and both live in the Platform card. Splitting them
               across two settings tabs is what made the platform rate hard to find at all.
               The list differs though — carpet is a free-form catalogue you add to, while the
-              two platform heights are structural (computePlatformComponents derives fatta and
-              stand counts from them), so those rows can only have their rate changed. */}
+              two platform heights are structural keys referenced by zoneConfig.plH on every
+              saved quote, so those rows can only have their rate changed. */}
           <div className="pt-4 mt-2 border-t">
             <p className="font-bold text-gray-900 mb-1">🪵 Platform Rates</p>
             <p className="text-xs text-gray-500 mb-3">
@@ -2865,9 +2865,8 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
             <div className="space-y-2">
               {platformRateRows.map((row) => {
                 const def = DEFAULT_PLATFORM_RATES.find((d) => d.key === row.key);
-                // `key` is never edited — computePlatformComponents zeroes the stand count for
-                // "4in" specifically, and zoneConfig.plH on every saved quote holds these keys.
-                // Only the label and the rate change.
+                // `key` is never edited — zoneConfig.plH on every saved quote holds these keys
+                // directly. Only the label and the rate change.
                 const patch = (fields) => {
                   const row2 = {};
                   if ("name" in fields) row2.name = fields.name;
