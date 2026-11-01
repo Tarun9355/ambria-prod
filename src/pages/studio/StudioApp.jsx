@@ -98,7 +98,7 @@ import { normalizePaintAllocation, maxRepaintCostInSubcat, paintLinesFor, paintT
 import { sheetItemLine } from "../../lib/studio/sheetRounding";
 import { sigHash } from "../../lib/sigHash";
 import { costSheetQtyEdit } from "../../lib/studio/costSheetQtyEdit";
-import { allocateRowAvailability, maxQtyForRow, netOwnReservedBlocksLive, kitPartShortfalls } from "../../lib/studio/dealAvailability";
+import { allocateRowAvailability, maxQtyForRow, netOwnReservedBlocksLive, kitPartShortfalls, fnUnitQty } from "../../lib/studio/dealAvailability";
 import { callClaudeStreaming } from "../../lib/ai";
 import { heavyExtraLabour, eventTimingMultFor, SETTINGS_DEFAULTS, SIT_MULT_DEFAULTS, assembleHeavyElementRangesFromRows, assembleTrussLabourRangesFromRows, assembleFabricBangaliRangesFromRows } from "../../lib/ims/constants";
 import { resolveDateCategory, getEffectivePricing, assembleMarkedDatesFromRows } from "../../lib/inventory/helpers";
@@ -4892,7 +4892,7 @@ export default function StudioApp() {
     const target = opts.zoneKey != null && opts.elIdx != null ? { fnIdx: opts.fnIdx ?? activeFnIdx, zoneKey: opts.zoneKey, elIdx: opts.elIdx } : null;
     const freeFor = (part) => combineAvailability(Number(part?.qty ?? part?.qtyOwned) || 0,
       getStudioAvailable(part, netOwnReservedBlocksLive(rawBlocks, part.id, detail, [eo?.id, ...ownEventOrderIds(eventOrders, activeClientId, clientName)])), availableAtVenue(fvCfgForRepeat, venueName, part));
-    return kitPartShortfalls(item, Number(el.qty) || 0, el.kitOverrides, fns, imsInventory, target, fnDate, freeFor)
+    return kitPartShortfalls(item, Number(el.qty) || 0, el.kitOverrides, fns, imsInventory, target, fnDate, freeFor, opts.reusePool)
       .map((p) => ({ ...p, canMake: canFulfillShortfall((imsInventory || []).find((i) => i.id === p.id), fnDate, el?.addedAt || undefined) }));
   }, [imsInventory, activeFnMeta, clientDate, activeBlocksForDate, activeBlocksDetailForDate, blocksDetailByDate, eventOrders, activeClientId, clientName, activeFnIdx, fvCfgForRepeat]);
   // Shared SMB/flat rate resolution — the one place `getElPrice`, `getElPriceForFn`, and
@@ -5655,20 +5655,22 @@ export default function StudioApp() {
       // this credit too, so a sofa used in Haldi and again in Sangeet the same day read out of stock at Sold (RC-11).
       const crossFnPrevFn = findCrossFnReuseSource(fnData, allFns);
       const reusePool = crossFnPrevFn ? new Map(Object.entries(computeFnInvQty(crossFnPrevFn))) : null;
+      // the same function's pieces, kit parts included, for the kit-part check
+      const partReusePool = crossFnPrevFn ? fnUnitQty(crossFnPrevFn, imsInventory) : null;
       Object.entries(fZoneElements).forEach(([zk, elems]) => {
         if (!fEnabledEls[zk] || !Array.isArray(elems)) return;
         elems.forEach((el, i) => {
           if (!el?.invId || !(Number(el.qty) || 0) > 0) return;
           const r = getElPriceForFn(el, fZoneConfig[zk], fFloralRatio, true, fnData.fnVenue, fBlocksForDate, fnData.fnDate, reusePool, fnData.fnIdx, zk, i);
           // A kit is also stopped by a part inside it that is short and can't be made (kitPartShorts).
-          const partsOut = kitPartShorts(el, { fnIdx: fnData.fnIdx, zoneKey: zk, elIdx: i, fnDate: fnData.fnDate, venueName: fnData.fnVenue, blocksForDate: fBlocksForDate })
+          const partsOut = kitPartShorts(el, { fnIdx: fnData.fnIdx, zoneKey: zk, elIdx: i, fnDate: fnData.fnDate, venueName: fnData.fnVenue, blocksForDate: fBlocksForDate, reusePool: partReusePool })
             .filter((p) => !p.canMake);
           if (r.outOfStock || partsOut.length) {
             const item = (imsInventory || []).find((x) => x.id === el.invId);
             // idx/invId carried so the gate modal's own 📦 picker can open directly against this
             // exact element (openAvailModal(zoneKey, idx, el, rc)) instead of only pointing the
             // salesperson at the right function/zone and making them find it by hand.
-            flagged.push({ fnIdx: fnData.fnIdx, fnLabel: fnData.fnType || `Function ${fnData.fnIdx + 1}`, zoneKey: zk, idx: i, invId: el.invId, name: item?.name || el.name || "Item",
+            flagged.push({ fnIdx: fnData.fnIdx, fnLabel: fnData.fnType || `Function ${fnData.fnIdx + 1}`, fnDate: fnData.fnDate || "", zoneKey: zk, idx: i, invId: el.invId, name: item?.name || el.name || "Item",
               parts: partsOut.map((p) => `${p.name} (${p.short} short)`),
               // what is short, by name only - the gate modal shows just this: the item itself when it is out, and/or the kit part(s) that are
               shortNames: [...new Set([...(r.outOfStock ? [item?.name || el.name || "Item"] : []), ...partsOut.map((p) => p.name)])] });

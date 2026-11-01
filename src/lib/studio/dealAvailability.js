@@ -196,7 +196,9 @@ export function qtyUsedElsewhereInDealCheck(imsId, fns, dcCards, dcManualItems, 
 // row, the part's free units are shared out across every row of the booking that uses it (allocateRowAvailability —
 // a plain element, or another kit's part), so the same shortage is never counted against two rows. Without one, the
 // row is judged alone. Returns [{ id, name, need, short }] for the short parts only.
-export function kitPartShortfalls(kitItem, elQty, kitOverrides, fns, imsInventory, target, targetDate, availFor) {
+// reusePool (optional, a mutable Map<invId, qty> from fnUnitQty of the deal's same-day / previous-day function at the venue): parts
+// already standing there are not short - drawn down so two kits can't claim the same reused pieces.
+export function kitPartShortfalls(kitItem, elQty, kitOverrides, fns, imsInventory, target, targetDate, availFor, reusePool) {
   if (!kitItem || !(Number(elQty) > 0) || typeof availFor !== "function") return [];
   const need = new Map();
   walkKitUnits(kitItem, Number(elQty), imsInventory, kitOverrides, (node, nodeQty) => {
@@ -208,10 +210,31 @@ export function kitPartShortfalls(kitItem, elQty, kitOverrides, fns, imsInventor
   const out = [];
   need.forEach(({ item, qty }, id) => {
     const avail = Math.max(0, Number(availFor(item)) || 0);
-    const short = target
+    let short = target
       ? allocateRowAvailability(id, fns, imsInventory, target, targetDate, avail).shortQty
       : Math.max(0, qty - avail);
+    if (short > 0 && reusePool) { const take = Math.min(short, reusePool.get(id) || 0); if (take > 0) { reusePool.set(id, (reusePool.get(id) || 0) - take); short -= take; } }
     if (short > 0) out.push({ id, name: item.name || id, need: qty, short: Math.round(short * 100) / 100 });
   });
   return out;
+}
+
+// Every unit a function puts at the venue, kit parts included (a kit's own id and each part's, by qty) - the pool a same-day or
+// next-day function of the deal can reuse. computeFnInvQty counts top-level items only, so a sofa inside Haldi's lounge kit was
+// not there for Sangeet's same kit to reuse: the Sold check read the kit's parts out of stock (owner report 2026-11-01).
+export function fnUnitQty(fnData, imsInventory) {
+  const m = new Map();
+  const add = (id, q) => { if (id && q > 0) m.set(id, (m.get(id) || 0) + q); };
+  const en = fnData?.enabledEls || {};
+  Object.entries(fnData?.zoneElements || {}).forEach(([zk, elems]) => {
+    if (!en[zk] || !Array.isArray(elems)) return;
+    elems.forEach((el) => {
+      const q = Number(el?.qty) || 0;
+      if (!el?.invId || !(q > 0)) return;
+      const item = (imsInventory || []).find((i) => i.id === el.invId);
+      if (item && Array.isArray(item.subItems) && item.subItems.length) walkKitUnits(item, q, imsInventory, el.kitOverrides, (node, nq) => add(node?.id, Number(nq) || 0));
+      else add(el.invId, q);
+    });
+  });
+  return m;
 }

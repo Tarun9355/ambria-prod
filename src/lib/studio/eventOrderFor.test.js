@@ -68,3 +68,23 @@ describe("ownEventOrderIds never takes a namesake's order", () => {
     expect(ownEventOrderIds(orders, "c_new", "Sangeeta")).toEqual(["eo_old"]);
   });
 });
+
+import { fnUnitQty, kitPartShortfalls } from "./dealAvailability.js";
+describe("kit parts reuse the same-day function's pieces at the Sold check", () => {
+  const inv = [
+    { id: "kit", name: "Lounge Kit", subItems: [{ itemId: "sofa", qty: 2 }, { itemId: "cush", qty: 4 }] },
+    { id: "sofa", name: "Ivory 3 Seater Sofa", qty: 2 },
+    { id: "cush", name: "Cushion Cover", qty: 4 },
+  ];
+  const haldi = { enabledEls: { lounge: true }, zoneElements: { lounge: [{ invId: "kit", qty: 1 }] } };
+  it("fnUnitQty counts kit parts", () => {
+    const m = fnUnitQty(haldi, inv);
+    expect(m.get("sofa")).toBe(2);
+    expect(m.get("cush")).toBe(4);
+  });
+  it("Sangeet's kit is not short when Haldi's pieces are already at the venue", () => {
+    const noFree = () => 0;
+    expect(kitPartShortfalls(inv[0], 1, undefined, [], inv, null, "2026-11-04", noFree).length).toBe(2);
+    expect(kitPartShortfalls(inv[0], 1, undefined, [], inv, null, "2026-11-04", noFree, fnUnitQty(haldi, inv))).toEqual([]);
+  });
+});
