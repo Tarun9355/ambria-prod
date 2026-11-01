@@ -1928,7 +1928,11 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
       })()}
       {activePanel === "trussbatta" && trussInv && (() => {
         // Per-material truss inventory. Iron = the top-level trussInv (back-compat with all pricing
-        // consumers). Pole/Aluminium = trussInv.materials[mat]. Batta stays SHARED (Iron tab only).
+        // consumers). Pole/Aluminium = trussInv.materials[mat]. Batta is ALSO per-material now
+        // (2026-11-01 owner ask — a Pole/Aluminium truss draws its wrap fabric from its own pool
+        // instead of always sharing Iron's), falling back to Iron's batta independently of
+        // pillars/beams until that material's own batta is configured (see trussInvForMaterial,
+        // pricing.js). Liza stays genuinely shared across all materials — out of scope of that ask.
         const MAT_TABS = [{ k: "pole", l: "🪵 Pole" }, { k: "iron", l: "⛓️ Iron" }, { k: "aluminium", l: "⚙️ Aluminium" }];
         const isIron = trussMatTab === "iron";
         const TI = isIron ? trussInv : (trussInv.materials?.[trussMatTab] || {});
@@ -1937,6 +1941,12 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
           setTrussInv((ti) => ({ ...ti, materials: { ...(ti.materials || {}), [trussMatTab]: updater(ti.materials?.[trussMatTab] || {}) } }));
         };
         const matLabel = (MAT_TABS.find((m) => m.k === trussMatTab)?.l || "Iron").replace(/^\S+\s/, "");
+        // Batta falls back to Iron's pool independently of pillars/beams (see trussInvForMaterial,
+        // pricing.js, for the matching fallback used at quote time) — TI.batta is only ever set once
+        // this material's own batta has actually been edited below.
+        const battaInherited = !isIron && TI.batta == null;
+        const battaTI = battaInherited ? trussInv.batta : TI.batta;
+        const battaRate = battaInherited ? trussInv.rates?.battaRftRate : TI.rates?.battaRftRate;
         return (
         <div className="space-y-4">
           {/* ── Material tabs ── */}
@@ -1950,14 +1960,14 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
             <div className="flex items-start gap-3">
               <span className="text-2xl">🏗️</span>
               <div className="flex-1">
-                <p className="font-bold text-indigo-900">{matLabel} Truss Inventory{isIron ? " · Batta · Liza" : ""}</p>
-                <p className="text-xs text-indigo-700 mt-0.5">Skeleton (pillars + beams) per material. {isIron ? "Batta cloth + Liza fabric are shared across all materials and configured here." : "Batta + Liza are shared — configure them in the Iron tab."} Rates start at ₹0 — fill in below.</p>
+                <p className="font-bold text-indigo-900">{matLabel} Truss Inventory · Batta{isIron ? " · Liza" : ""}</p>
+                <p className="text-xs text-indigo-700 mt-0.5">Skeleton (pillars + beams) + batta wrap, per material. {isIron ? "Liza fabric is shared across all materials and configured here." : "Until this material's own batta is filled in below, its trusses draw from the Iron batta pool. Liza is shared — configure it in the Iron tab."} Rates start at ₹0 — fill in below.</p>
               </div>
             </div>
-            <div className={"grid gap-3 mt-4 " + (isIron ? "grid-cols-4" : "grid-cols-2")}>
+            <div className={"grid gap-3 mt-4 " + (isIron ? "grid-cols-4" : "grid-cols-3")}>
               <div className="bg-white rounded-xl p-3 text-center"><div className="text-2xl font-bold text-indigo-700">{Object.values(TI.pillars || {}).reduce((s, p) => s + (p.stock || 0), 0)}</div><div className="text-xs text-gray-500">Pillar pieces</div></div>
               <div className="bg-white rounded-xl p-3 text-center"><div className="text-2xl font-bold text-indigo-700">{Object.values(TI.beams || {}).reduce((s, b) => s + (b.stock || 0), 0)}</div><div className="text-xs text-gray-500">Beam pieces</div></div>
-              {isIron && <div className="bg-white rounded-xl p-3 text-center"><div className="text-2xl font-bold text-amber-700">{(trussInv.batta?.stockRft || 0).toLocaleString("en-IN")}</div><div className="text-xs text-gray-500">Batta RFT pool <span className="text-[9px] text-gray-400">(shared)</span></div></div>}
+              <div className="bg-white rounded-xl p-3 text-center"><div className="text-2xl font-bold text-amber-700">{(battaTI?.stockRft || 0).toLocaleString("en-IN")}</div><div className="text-xs text-gray-500">Batta RFT pool{battaInherited && <span className="text-[9px] text-gray-400"> (from Iron)</span>}</div></div>
               {isIron && <div className="bg-white rounded-xl p-3 text-center"><div className="text-2xl font-bold text-rose-700">{(trussInv.liza?.stockKg || 0).toLocaleString("en-IN")}</div><div className="text-xs text-gray-500">Liza kg pool <span className="text-[9px] text-gray-400">(shared)</span></div></div>}
             </div>
           </div>
@@ -2033,17 +2043,17 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
             </div>
           </div>
 
-          {/* Batta — shared across materials, edited only in Iron */}
-          {isIron && (
+          {/* Batta — per-material now (2026-11-01). Pole/Aluminium show the inherited Iron pool
+              until their first edit here, at which point setTI seeds the new material-specific
+              batta from whatever was showing (battaTI) rather than from empty. */}
           <div className="bg-white border border-amber-100 rounded-2xl p-5">
-            <div className="mb-3"><p className="font-bold text-amber-800">🧵 Batta (truss wrap) <span className="text-[10px] font-normal text-gray-400">· shared across Pole / Iron / Aluminium</span></p><p className="text-xs text-gray-500">Bulk RFT pool — ops cuts to needed length. Wraps every pillar + beam.</p></div>
+            <div className="mb-3"><p className="font-bold text-amber-800">🧵 {matLabel} Batta (truss wrap) {battaInherited && <span className="text-[10px] font-normal text-gray-400">· inherited from Iron until edited here</span>}</p><p className="text-xs text-gray-500">Bulk RFT pool — ops cuts to needed length. Wraps every pillar + beam.</p></div>
             <div className="grid md:grid-cols-3 gap-3">
-              <div><label className="text-xs text-gray-600 font-medium">Total stock (RFT)</label><input type="number" min="0" value={trussInv.batta?.stockRft || 0} onChange={(e) => setTrussInv((ti) => ({ ...ti, batta: { ...ti.batta, stockRft: parseInt(e.target.value) || 0 } }))} className="mt-1 w-full border border-amber-200 rounded-lg px-3 py-2 text-sm font-bold text-amber-700 text-center" /></div>
-              <div><label className="text-xs text-gray-600 font-medium">Rental rate (₹/RFT)</label><input type="number" min="0" value={trussInv.rates?.battaRftRate || 0} onChange={(e) => setTrussInv((ti) => ({ ...ti, rates: { ...ti.rates, battaRftRate: parseFloat(e.target.value) || 0 } }))} className="mt-1 w-full border border-amber-200 rounded-lg px-3 py-2 text-sm font-bold text-amber-700 text-center" /></div>
-              <div><label className="text-xs text-gray-600 font-medium">Precautionary buffer (%)</label><input type="number" min="0" max="50" value={trussInv.batta?.bufferPct || 10} onChange={(e) => setTrussInv((ti) => ({ ...ti, batta: { ...ti.batta, bufferPct: parseInt(e.target.value) || 0 } }))} className="mt-1 w-full border border-amber-200 rounded-lg px-3 py-2 text-sm font-bold text-amber-700 text-center" /></div>
+              <div><label className="text-xs text-gray-600 font-medium">Total stock (RFT)</label><input type="number" min="0" value={battaTI?.stockRft || 0} onChange={(e) => setTI((ti) => ({ ...ti, batta: { ...(ti.batta || battaTI || {}), stockRft: parseInt(e.target.value) || 0 } }))} className="mt-1 w-full border border-amber-200 rounded-lg px-3 py-2 text-sm font-bold text-amber-700 text-center" /></div>
+              <div><label className="text-xs text-gray-600 font-medium">Rental rate (₹/RFT)</label><input type="number" min="0" value={battaRate || 0} onChange={(e) => setTI((ti) => ({ ...ti, rates: { ...(ti.rates || {}), battaRftRate: parseFloat(e.target.value) || 0 } }))} className="mt-1 w-full border border-amber-200 rounded-lg px-3 py-2 text-sm font-bold text-amber-700 text-center" /></div>
+              <div><label className="text-xs text-gray-600 font-medium">Precautionary buffer (%)</label><input type="number" min="0" max="50" value={battaTI?.bufferPct ?? 10} onChange={(e) => setTI((ti) => ({ ...ti, batta: { ...(ti.batta || battaTI || {}), bufferPct: parseInt(e.target.value) || 0 } }))} className="mt-1 w-full border border-amber-200 rounded-lg px-3 py-2 text-sm font-bold text-amber-700 text-center" /></div>
             </div>
           </div>
-          )}
 
           {/* Engineering settings */}
           <div className="bg-white border border-gray-200 rounded-2xl p-5">
@@ -2071,22 +2081,43 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
         // step one of consolidating Platform the same way Truss already is: once this catalogue is
         // real, the structural engine can read FROM here instead of each zone typing its own
         // material/rate, and the literal "Platform" inventory items can be considered for removal.
-        const platforms = Array.isArray(trussInv.platforms) ? trussInv.platforms : [];
-        const updRow = (id, patch) => setTrussInv((ti) => ({ ...ti, platforms: (ti.platforms || []).map((r) => (r.id === id ? { ...r, ...patch } : r)) }));
-        const addRow = () => setTrussInv((ti) => ({ ...ti, platforms: [...(ti.platforms || []), { id: "plat_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), label: "", material: "Wood", lengthFt: 8, widthFt: 4, thicknessIn: 4, stock: 0, ratePerSqft: 0 }] }));
+        //
+        // Per-material now (2026-11-01 owner ask), same trussMatTab the Truss & Batta Config panel
+        // uses — reused on purpose so switching tabs there carries over here. Iron = the top-level
+        // trussInv.platforms (back-compat). Pole/Aluminium = trussInv.materials[mat].platforms,
+        // inheriting Iron's list read-only until the first add/edit/delete here forks that material
+        // its own array (seeded from whatever was showing, not from empty).
+        const MAT_TABS = [{ k: "pole", l: "🪵 Pole" }, { k: "iron", l: "⛓️ Iron" }, { k: "aluminium", l: "⚙️ Aluminium" }];
+        const isIron = trussMatTab === "iron";
+        const TI = isIron ? trussInv : (trussInv.materials?.[trussMatTab] || {});
+        const setTI = (updater) => {
+          if (isIron) { setTrussInv(updater); return; }
+          setTrussInv((ti) => ({ ...ti, materials: { ...(ti.materials || {}), [trussMatTab]: updater(ti.materials?.[trussMatTab] || {}) } }));
+        };
+        const matLabel = (MAT_TABS.find((m) => m.k === trussMatTab)?.l || "Iron").replace(/^\S+\s/, "");
+        const platformsInherited = !isIron && !Array.isArray(TI.platforms);
+        const platforms = Array.isArray(TI.platforms) ? TI.platforms : (Array.isArray(trussInv.platforms) ? trussInv.platforms : []);
+        const updRow = (id, patch) => setTI((ti) => ({ ...ti, platforms: (Array.isArray(ti.platforms) ? ti.platforms : platforms).map((r) => (r.id === id ? { ...r, ...patch } : r)) }));
+        const addRow = () => setTI((ti) => ({ ...ti, platforms: [...(Array.isArray(ti.platforms) ? ti.platforms : platforms), { id: "plat_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), label: "", material: "Wood", lengthFt: 8, widthFt: 4, thicknessIn: 4, stock: 0, ratePerSqft: 0 }] }));
         const delRow = async (id, label) => {
           if (!(await confirm({ title: `Remove ${label ? `"${label}"` : "this platform"}?`, body: "It will no longer count towards platform stock." }))) return;
-          setTrussInv((ti) => ({ ...ti, platforms: (ti.platforms || []).filter((r) => r.id !== id) }));
+          setTI((ti) => ({ ...ti, platforms: (Array.isArray(ti.platforms) ? ti.platforms : platforms).filter((r) => r.id !== id) }));
         };
         const totalPieces = platforms.reduce((s, r) => s + (Number(r.stock) || 0), 0);
         const totalSqft = platforms.reduce((s, r) => s + (Number(r.lengthFt) || 0) * (Number(r.widthFt) || 0) * (Number(r.stock) || 0), 0);
         return (
           <div className="space-y-4">
+            {/* ── Material tabs — same trussMatTab as Truss & Batta Config ── */}
+            <div className="flex gap-2">
+              {MAT_TABS.map((m) => (
+                <button key={m.k} onClick={() => setTrussMatTab(m.k)} className={"px-5 py-2 rounded-xl text-sm font-semibold transition " + (trussMatTab === m.k ? "bg-indigo-600 text-white shadow" : "bg-white border border-indigo-200 text-indigo-700 hover:bg-indigo-50")}>{m.l}</button>
+              ))}
+            </div>
             <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-4">
               <div className="flex items-start gap-3">
                 <span className="text-2xl">🛏️</span>
                 <div className="flex-1">
-                  <p className="font-bold text-indigo-900">Platform Inventory</p>
+                  <p className="font-bold text-indigo-900">{matLabel} Platform Inventory {platformsInherited && <span className="text-[10px] font-normal text-gray-400">· inherited from Iron until edited here</span>}</p>
                   <p className="text-xs text-indigo-700 mt-0.5">Each platform module's own dimensions, material, stock, and rental rate — one catalogue instead of typing these per zone.</p>
                 </div>
               </div>
@@ -2098,7 +2129,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
 
             <div className="bg-white border border-indigo-100 rounded-2xl p-5">
               <div className="flex items-center justify-between mb-3">
-                <div><p className="font-bold text-indigo-800">🛏️ Platforms</p><p className="text-xs text-gray-500">Dimensions × stock give each row's own sqft, used for the total above.</p></div>
+                <div><p className="font-bold text-indigo-800">🛏️ {matLabel} Platforms</p><p className="text-xs text-gray-500">Dimensions × stock give each row's own sqft, used for the total above.</p></div>
                 <button onClick={addRow} className="text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg font-medium">+ Add Platform</button>
               </div>
               {platforms.length === 0 ? (
