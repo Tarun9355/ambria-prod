@@ -11,7 +11,7 @@ import { IconPrinter } from "../../components/icons";
 import { hasIMSPerm } from "../../lib/ims/constants";
 import { fetchOpsExpenses } from "../../lib/ims/opsExpenses";
 import { venueWithParent } from "../../lib/ims/fixedVenues";
-import { ZONE_META, trussBaseArea, CARPET_OFF } from "../../lib/studio/taxonomy";
+import { ZONE_META, trussBaseArea, CARPET_OFF, carpetPricingFor } from "../../lib/studio/taxonomy";
 import { prefsOf, floorSqftOf } from "../../lib/studio/carpetPrefs";
 import { carpetFloorsOf, planCarpets, carpetKey, carpetStockFor, validDecision, carpetNotesForRows, carpetPrefNotesForRows } from "../../lib/ims/carpetPlan";
 import CarpetPickerModal from "./CarpetPickerModal.jsx";
@@ -3721,9 +3721,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         }
         // No stock carpets ranked (Flex / New / Acrylic, which take no stock pick, or an Old floor nobody ranked): still a card
         // with the material and its sqft - the floor's carpet was missing from the zone page and the book while Deal Check showed it.
-        if (!prefs.length) {
+        // A carpet Planning picked by hand for such a floor still wins (the chosen path below).
+        if (!prefs.length && !(dec?.manual && dec.id && !pdfAllCarpetsRef.current)) {
           if (!row.cpT) return;
-          out.push({ name: carpetName(row.cpT) || "Carpet", qty: area, unit: "sqft", photo: row.cpPhoto || "", dims: "", kit: 0, recipe: [],
+          out.push({ name: carpetPricingFor(row.cpT, settings?.carpetMaterials).label || carpetName(row.cpT) || "Carpet", qty: area, unit: "sqft", photo: row.cpPhoto || "", dims: "", kit: 0, recipe: [],
             deptTag: combined ? "Tenting" : "", extra: [["Carpet", "To lay" + (ri === 0 ? "" : ` (floor ${ri + 1})`)], ["Floor", floorTxt]] });
           return;
         }

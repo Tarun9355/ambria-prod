@@ -3086,7 +3086,7 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
                                 const hasOv=maskedWalls.some(wId=>zc.mkWallMat?.[wId]?.matKey||zc.mkWallMat?.[wId]?.customItemId);
                                 // Name what each masked wall is in, not a bare "mixed materials" (RC-79: three walls each set to Acrylic read
                                 // "mixed materials ₹30,000"). One material on every wall reads as that material.
-                                const matOf=wId=>{const ov=zc.mkWallMat?.[wId];return ov?.customItemId?"custom panel":(ov?.matKey||zc.mkT||"");};
+                                const matOf=wId=>{const ov=zc.mkWallMat?.[wId];return ov?.customItemId?"custom panel":(ov?.matKey||zc.mkT||"masking");};
                                 const mats=maskedWalls.map(matOf);
                                 const label=!hasOv?`${zc.mkT} masking (${zc.mkS} side${zc.mkS>1?"s":""})`
                                   :new Set(mats).size===1?`${mats[0]} masking (${mats.length} side${mats.length>1?"s":""})`
