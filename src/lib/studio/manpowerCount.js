@@ -24,7 +24,7 @@
 // explanation stays tailored per audience/file.
 
 import { matchFlowerPattern } from "../ims/flowerHelpers";
-import { resolveTrussConfig, calcZoneTrussPreview, computePlatformComponents } from "./pricing";
+import { resolveTrussConfig, calcZoneTrussPreview } from "./pricing";
 import { heavyExtraLabour, eventTimingMultFor } from "../ims/constants";
 import { standingReductionBySubcat } from "../ims/fixedVenues";
 import { itemImsSubcat, lookupBySubcat, walkKitUnits } from "../ims/helpers";
@@ -36,9 +36,11 @@ import { catToDept, poolLabourDept } from "../ims/deptClassify";
 // neither is ever a zone ELEMENT — walkFnElements can't find them — their quantity comes from the
 // zone's own truss/platform config instead: Truss is the same pillar count already driving Truss
 // Labour's own range-table lookup (calcZoneTrussPreview); Platform is the number of platform
-// PIECES (Build's own "Platform Qty" per row, the same count buildPlatformPlan bills fatta/stand
-// material for), not sqft or a material count. Shared by this engine's own usage floor (below) and
-// DealCheckOverlay.jsx's per-function department split, so both always agree.
+// PIECES (Build's own "Platform Qty" per row), not sqft or a material count — unaffected by
+// Platform's 2026-11-01 move off the Fatta/Stand inventory items onto Platform Config's ₹/sqft
+// model (pricing.js's buildPlatformPlan), since this never counted fatta/stand pieces to begin
+// with. Shared by this engine's own usage floor (below) and DealCheckOverlay.jsx's per-function
+// department split, so both always agree.
 export function tentingZoneUsage(fn, ctx) {
   let truss = 0, platform = 0;
   const zc = fn?.zoneConfig || {}, en = fn?.enabledEls || {};
@@ -54,7 +56,6 @@ export function tentingZoneUsage(fn, ctx) {
       const fd = row.floorDims || {};
       const L = Number(fd.L) || 0, W = Number(fd.W) || 0;
       if (L <= 0 || W <= 0) return;
-      if (!computePlatformComponents(L, W, row.plH)) return;
       platform += Math.max(1, Math.round(Number(row.plQty) || 1));
     });
   });

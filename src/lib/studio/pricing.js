@@ -12,6 +12,7 @@ import { priceForInvItem } from "../ims/helpers.js";
 // The real beam-stock-aware joint solver, reused by snapRowDimsForProduction below instead of a
 // second hand-rolled "clean span" table — see that function's own comment.
 import { resolveBeamSegment } from "../ims/trussEngine.js";
+import { platformAvgRatePerSqft } from "../ims/platformEngine.js";
 export { resolveMandiFlower };
 
 // One shared resolver for "is THIS pricing category of a zone repeat-discounted". Build's own
@@ -1058,43 +1059,6 @@ export const calcZoneCarpet = (zc, carpetItem, markupPct) => {
   return { needed, reused, fresh, reusedCost, freshCost, cost: reusedCost + freshCost, rentalRate, purchaseRate };
 };
 
-// ═══ PLATFORM COMPOSITE HELPERS (Deploy 2 · §7.9 addendum) ═══
-// Platform is structural (zoneConfig.plH = "4in" | "1ft"), not an RC element.
-// Recipe: 1 fatta = 8'×4'; stands sit at every grid corner, shared between adjacent fattas.
-// "4in" platform = fattas only (fatta itself is 4 inches tall, no stand needed).
-// "1ft" platform = fattas + stands (height-adjustable stand handles 1ft–3ft).
-// IMS items: TEN-00008 (Platform Fatta, 4×8 ft), TEN-00009 (Platform Stand, height-adjustable).
-export const PLATFORM_FATTA_CODE = "TEN-00008";
-export const PLATFORM_STAND_CODE = "TEN-00009";
-
-// Compute fatta + stand counts for a platform of L×W ft.
-// Tries both grid orientations, picks the one with FEWER stands (tie → fewer fattas).
-// Returns null if dims invalid.
-export function computePlatformComponents(L, W, plH) {
-  const Lv = Number(L) || 0, Wv = Number(W) || 0;
-  if (Lv <= 0 || Wv <= 0) return null;
-  // Orientation A: fatta 8' along L, 4' along W
-  const ma = Math.ceil(Lv / 8), na = Math.ceil(Wv / 4);
-  // Orientation B: fatta 4' along L, 8' along W
-  const mb = Math.ceil(Lv / 4), nb = Math.ceil(Wv / 8);
-  const fA = ma * na, sA = (ma + 1) * (na + 1);
-  const fB = mb * nb, sB = (mb + 1) * (nb + 1);
-  let fattas, stands;
-  if (sA < sB) { fattas = fA; stands = sA; }
-  else if (sB < sA) { fattas = fB; stands = sB; }
-  else { fattas = Math.min(fA, fB); stands = sA; }
-  // 4-inch platform: fatta itself sits flush, no stands needed
-  if (plH === "4in") stands = 0;
-  return { fattas, stands };
-}
-
-// Find IMS inventory item by code (case-insensitive, trim).
-export function findIMSByCode(inventory, code) {
-  if (!Array.isArray(inventory) || !code) return null;
-  const target = String(code).toUpperCase().trim();
-  return inventory.find(i => String(i?.code || "").toUpperCase().trim() === target) || null;
-}
-
 // Returns total free for an item on a given date (inventory minus all-deal blocks for that date).
 // Mirrors IMS getAvailableQty. blocksForDate is { [imsId]: totalBlockedQty }.
 export function getStudioAvailable(item, blocksForDate) {
@@ -1103,72 +1067,52 @@ export function getStudioAvailable(item, blocksForDate) {
   return Math.max(0, (Number(item.qty) || 0) - (Number(item.blocked) || 0) - blocked);
 }
 
-// Build per-zone platform allocation plan with within-deal sibling-aware tracking.
-// Each zone's "free before / free after" reflects prior zones' draws on the same fnDate.
-// fns = collectAllFunctionData() output; dealCheckData = {inventory, blocksByDate, ...}.
-// TODO: cross-function same-(date,venue) reuse rule (mirrors IMS confirmBlocks Step 3) not applied here —
-// for multi-fn deals at one venue, demand may display inflated. Acceptable for v1; revisit if real deals show this.
+// ═══ PLATFORM (Deploy 2 §7.9 addendum, re-based onto Platform Config 2026-11-01) ═══
+// Platform used to be tracked as two generic inventory items (TEN-00008 Platform Fatta / TEN-00009
+// Platform Stand, a geometric fatta+stand tiling of the L×W footprint) — owner call: no longer
+// tracked via those items at all (they're being deleted); platform now costs off Platform Config's
+// own stock-weighted ₹/sqft per material (platformAvgRatePerSqft, lib/ims/platformEngine.js), same
+// one-aggregate-sqft-pool model the rest of this session's platform booking work uses (see that
+// file's own header comment for why sqft, not discrete pieces). This only computes sqft/material/
+// cost per zone row for DISPLAY — live per-zone stock availability isn't shown here any more (it was
+// previously computed against the two retired items' real-time blocks); the authoritative stock
+// check now happens once, date-aware and across every event sharing that date, at the moment a deal
+// is actually marked Sold (scanTrussStockShortage, StudioApp.jsx) and in IMS's own Structure
+// Planning dashboard — showing a second, necessarily-simpler live number here risked disagreeing
+// with that real one.
+// fns = collectAllFunctionData() output; dealCheckData = {trussInv, ...}.
 export function buildPlatformPlan(fns, dealCheckData) {
   if (!Array.isArray(fns) || !dealCheckData) return null;
-  const inv = dealCheckData.inventory || [];
-  const blocksByDate = dealCheckData.blocksByDate || {};
-  const fattaItem = findIMSByCode(inv, PLATFORM_FATTA_CODE);
-  const standItem = findIMSByCode(inv, PLATFORM_STAND_CODE);
-  // Step 1: collect raw per-zone draws in render order (fnIdx asc → zoneKey iteration order).
-  // Each zone can carry more than one platform footprint (row 0 = the zone's own scalar plH/floorDims,
-  // plus any zc.extraPlatformRows added via "+ Add Platform") — draw one entry per row.
-  const zoneDraws = [];
+  const trussInv = dealCheckData.trussInv;
+  const perZone = {};
   fns.forEach((fn, fnIdx) => {
     if (!fn || !fn.zoneConfig || !fn.enabledEls) return;
     const enabledKeys = Object.keys(fn.enabledEls).filter(k => fn.enabledEls[k]);
     enabledKeys.forEach(zoneKey => {
       const zc = fn.zoneConfig[zoneKey];
       if (!zc) return;
-      // No truss-dims fallback — see calcStructCost's own comment (StudioApp.jsx).
-      const rows = [{ plH: zc.plH, floorDims: zc.floorDims || {}, plQty: zc.plQty }, ...(zc.extraPlatformRows || [])];
+      // Each zone can carry more than one platform footprint (row 0 = the zone's own scalar
+      // plH/floorDims, plus any zc.extraPlatformRows added via "+ Add Platform") — one entry per row.
+      const rows = [{ plH: zc.plH, floorDims: zc.floorDims || {}, plQty: zc.plQty, trussMaterial: zc.trussMaterial },
+        ...(zc.extraPlatformRows || []).map(r => ({ ...r, trussMaterial: r.trussMaterial || zc.trussMaterial }))];
       rows.forEach((row, rowIdx) => {
         if (!row.plH) return;
         const fd = row.floorDims || {};
         const L = Number(fd.L) || 0, W = Number(fd.W) || 0;
         if (L <= 0 || W <= 0) return;
-        const comp = computePlatformComponents(L, W, row.plH);
-        if (!comp) return;
-        // How many identical footprints this row represents (Build's own Platform Qty field) — the
-        // physical fatta/stand count production needs scales with it the same way the rupee cost
-        // already does (platformRowCost), or ops would be told to prepare material for only one of
-        // several identical platforms the deal actually calls for.
+        // How many identical footprints this row represents (Build's own Platform Qty field).
         const qty = Math.max(1, Math.round(Number(row.plQty) || 1));
-        zoneDraws.push({ fnIdx, zoneKey, rowIdx, plH: row.plH, L, W, qty, fattas: comp.fattas * qty, stands: comp.stands * qty, fnDate: fn.fnDate || "", fnVenue: fn.fnVenue || "" });
+        const material = String(row.trussMaterial || "iron").toLowerCase();
+        const sqft = L * W * qty;
+        const rate = platformAvgRatePerSqft(trussInv, material);
+        // Row 0 keeps the original 2-segment key (every existing single-lookup consumer targets this
+        // exact key); extra rows get a 3rd segment so they don't collide.
+        const key = rowIdx > 0 ? `${fnIdx}|${zoneKey}|${rowIdx}` : `${fnIdx}|${zoneKey}`;
+        perZone[key] = { fnIdx, zoneKey, rowIdx, plH: row.plH, L, W, qty, material, sqft, rate, cost: Math.round(sqft * rate) };
       });
     });
   });
-  // Step 2: assign free-before / free-after per zone, tracking running allocation per fnDate.
-  const allocByDate = {};
-  const perZone = {};
-  zoneDraws.forEach(d => {
-    const date = d.fnDate;
-    const blocksOnDate = blocksByDate[date] || {};
-    const fattaTotalFree = getStudioAvailable(fattaItem, blocksOnDate);
-    const standTotalFree = getStudioAvailable(standItem, blocksOnDate);
-    if (!allocByDate[date]) allocByDate[date] = { fattaAlloc: 0, standAlloc: 0 };
-    const priorFatta = allocByDate[date].fattaAlloc;
-    const priorStand = allocByDate[date].standAlloc;
-    const freeBeforeFatta = fattaTotalFree - priorFatta;       // can be negative if prior zones overdrew
-    const freeBeforeStand = standTotalFree - priorStand;
-    const freeAfterFatta = fattaTotalFree - priorFatta - d.fattas;
-    const freeAfterStand = standTotalFree - priorStand - d.stands;
-    allocByDate[date].fattaAlloc += d.fattas;
-    allocByDate[date].standAlloc += d.stands;
-    // Row 0 keeps the original 2-segment key (every existing single-lookup consumer targets this
-    // exact key); extra rows get a 3rd segment so they don't collide, picked up automatically by
-    // any Object.values(perZone) rollup without needing those consumers to change.
-    const key = d.rowIdx > 0 ? `${d.fnIdx}|${d.zoneKey}|${d.rowIdx}` : `${d.fnIdx}|${d.zoneKey}`;
-    perZone[key] = {
-      ...d, fattaItem, standItem, fattaTotalFree, standTotalFree,
-      freeBeforeFatta, freeBeforeStand, freeAfterFatta, freeAfterStand, priorFatta, priorStand
-    };
-  });
-  return { fattaItem, standItem, perZone };
+  return { perZone };
 }
 
 

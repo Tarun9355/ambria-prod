@@ -91,7 +91,7 @@ import {
   resolveTrussConfig, findZoneForArea, findAreaForZone, makeZoneId,
   defaultZoneFromArea, resolveMandiFlower, calcZoneTrussPreview,
   calcZoneFabric, calcZoneFabricCost, guestFabricMultiplier, fabricRepeatDiscount, maskingAfterRepeat, calcZoneCarpet, buildPlatformPlan, getStudioAvailable,
-  buildTopology, PLATFORM_FATTA_CODE, PLATFORM_STAND_CODE, trussRowCost, repeatCatFor, repeatCatsOn, REPEAT_CAT_LABELS,
+  buildTopology, trussRowCost, repeatCatFor, repeatCatsOn, REPEAT_CAT_LABELS,
   freshFnForManpower, snapRowDimsForProduction,
 } from "../../lib/studio/pricing";
 import { normalizePaintAllocation, maxRepaintCostInSubcat, paintLinesFor, paintTotalFor } from "../../lib/studio/paint";
@@ -12449,7 +12449,7 @@ export default function StudioApp() {
     openDealCheck, runDealCheckGenerate, getStudioAvailable, loadAvailability, reliableSave, DC_CACHE_SK,
     flushDcAutosaveRef,
     // deal check inventory-tab module helpers
-    isZoneDirty, parseCardKey, PLATFORM_FATTA_CODE, PLATFORM_STAND_CODE,
+    isZoneDirty, parseCardKey,
     // module helpers exposed for views
     imsField, fetchIMSData, searchLmsLeads, calcZoneTrussPreview, calcZoneFabricCost, calcZoneCarpet, buildPlatformPlan,
     resolveMandiFlower,

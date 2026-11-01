@@ -252,7 +252,7 @@ export default function DealCheckOverlay({ ctx }) {
     calcZoneTrussPreview, calcZoneFabricCost, calcZoneCarpet, buildPlatformPlan, imsField,
     libItems, rcItems, rcSubcatFactors, normalizePaintAllocation, paintFor, ensureLibItemsByUrl,
     // deal check inventory-tab module helpers
-    isZoneDirty, parseCardKey, PLATFORM_FATTA_CODE, PLATFORM_STAND_CODE,
+    isZoneDirty, parseCardKey,
     // Settings → Zones' own drag-ordered priority (Object.keys(zoneMeta), same list Build sorts by)
     zoneKeys, zoneLabelsD,
     // orchestration + persistence
@@ -2698,8 +2698,6 @@ export default function DealCheckOverlay({ ctx }) {
                     : (dcInventoryCache || []);
                   const fns = collectAllFunctionData ? collectAllFunctionData() : [];
                   const platformPlan = buildPlatformPlan(fns, dealCheckData);
-                  const platformFattaR = platformPlan?.fattaItem ? imsField.rentalCost(platformPlan.fattaItem) : 0;
-                  const platformStandR = platformPlan?.standItem ? imsField.rentalCost(platformPlan.standItem) : 0;
                   // §7.9.19 — Precompute reuse count per imsId for ♻ chip on cards. Walks into kit
                   // components too (walkKitUnits) — a kit card used to only ever register its OWN
                   // id, so a component used directly (not as part of a kit) in a sibling function
@@ -2935,7 +2933,6 @@ export default function DealCheckOverlay({ ctx }) {
                           .map(([k, pi]) => ({ k, pi, rowIdx: k === `${fnIdx}|${zk}` ? 0 : Number(k.split("|")[2]) }))
                           .sort((a, b) => a.rowIdx - b.rowIdx);
                         const hasPlatform = platformEntriesForZone.length > 0;
-                        const platformShort = platformEntriesForZone.some(({ pi }) => pi.freeAfterFatta < 0 || (pi.stands > 0 && pi.freeAfterStand < 0));
                         const recipeFlorals = recipeFloralsByZone[zk] || [];
                         const manualItemsInZone = dcManualItems.filter(mi => mi.fnIdx === fnIdx && mi.zoneKey === zk);
                         const totalRowCount = zoneCards.length + platformEntriesForZone.length + recipeFlorals.length + manualItemsInZone.length;
@@ -3014,7 +3011,7 @@ export default function DealCheckOverlay({ ctx }) {
                           zoneRentalTotal += repeatAdjustedRental(_rep, _fnVenueForRepeat, it, ownedQty, baseR, _fnDateForRepeat, _crossFnAvail) + shortQty * shortRate;
                         });
                         manualItemsInZone.forEach(mi => { const it = dcInventoryCache.find(x => x.id === mi.imsId); if (!it) return; const q = Number(mi.qty) || 1; const baseR = effKitRental(it, fnIdx, null); const _rep = mi.zoneKey ? repeatCatFor(fns[fnIdx]?.zoneConfig?.[mi.zoneKey], "elements") : false; zoneRentalTotal += repeatAdjustedRental(_rep, _fnVenueForRepeat, it, q, baseR, _fnDateForRepeat, _crossFnTakePill(it.id, q)); });
-                        platformEntriesForZone.forEach(({ pi }) => { zoneRentalTotal += (pi.fattas || 0) * platformFattaR + (pi.stands || 0) * platformStandR; });
+                        platformEntriesForZone.forEach(({ pi }) => { zoneRentalTotal += pi.cost || 0; });
                         {
                           const zcz = fns[fnIdx]?.zoneConfig?.[zk];
                           if (zcz && zcz.cpT !== CARPET_OFF) {
@@ -3070,7 +3067,7 @@ export default function DealCheckOverlay({ ctx }) {
                                     version could not be size-matched anyway.
                                     Copied down to the colours and the box: #7E22CE on violet, #B45309 on
                                     amber, 26×26, radius 7. If Build's change, these should follow. */}
-                                {hasPlatform && <span title={platformShort?"Structural platform — short in stock":"Structural platform (fatta + stand)"} style={{display:"inline-flex",alignItems:"center",justifyContent:"center",gap:3,height:26,padding:"0 8px",borderRadius:7,background:platformShort?"rgba(245,158,11,0.14)":"rgba(16,185,129,0.14)",color:platformShort?"#B45309":"#059669",fontWeight:700,fontSize:11}}><IconPlatform size={13}/>{platformShort?"⚠":"✓"}</span>}
+                                {hasPlatform && <span title="Structural platform (Platform Config)" style={{display:"inline-flex",alignItems:"center",justifyContent:"center",gap:3,height:26,padding:"0 8px",borderRadius:7,background:"rgba(16,185,129,0.14)",color:"#059669",fontWeight:700,fontSize:11}}><IconPlatform size={13}/>✓</span>}
                                 {fnIdx === activeFnIdx && <>
                                   <span onClick={e=>{e.stopPropagation();setDcCustomModal({fnIdx,zoneKey:zk,type:"production"});}} title="Add Production item" style={{cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",width:26,height:26,color:"#7E22CE",borderRadius:7,background:"rgba(168,85,247,0.10)"}}><IconFactory size={14}/></span>
                                   <span onClick={e=>{e.stopPropagation();setDcCustomModal({fnIdx,zoneKey:zk,type:"buying"});}} title="Add Buying item" style={{cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",width:26,height:26,color:"#B45309",borderRadius:7,background:"rgba(245,158,11,0.12)"}}><IconCart size={14}/></span>
@@ -3081,95 +3078,31 @@ export default function DealCheckOverlay({ ctx }) {
                             </div>
                             {!collapsed && (
                               <div style={{padding:"10px 14px",display:"flex",flexDirection:"column",gap:10}}>
-                                {/* Platform composite card(s) (Deploy 2 §7.9 addendum) — one per platform row */}
+                                {/* Platform card(s), one per platform row — re-based onto Platform Config
+                                    (2026-11-01, see buildPlatformPlan's own comment, pricing.js): no more
+                                    live fatta/stand availability (those items are retired), just the
+                                    sqft/material/cost this row computes. Real stock feasibility is
+                                    checked once, date-aware, at Sold time (scanTrussStockShortage,
+                                    StudioApp.jsx) and in IMS's Structure Planning dashboard — not here. */}
                                 {platformEntriesForZone.map(({ k: piKey, pi, rowIdx }) => {
-                                  const sqft = pi.L * pi.W;
                                   const heightLabel = pi.plH === "4in" ? "4 inch raise" : "1ft–3ft";
-                                  const fattaShort = pi.freeAfterFatta < 0;
-                                  const standShort = pi.stands > 0 && pi.freeAfterStand < 0;
-                                  const anyShort = fattaShort || standShort;
-                                  // THE INSIDE OF A ZONE, SKINNED LIKE THE OUTSIDE. This card was a
-                                  // 4%-green wash with a green hairline, which made every structural item
-                                  // look like a success message. The state it needs to signal is stock —
-                                  // short or not — and that is already said by the tick or warning on
-                                  // each line below, in words. So the card goes glass like everything
-                                  // else, and the BORDER carries the state: amber when something is
-                                  // short, otherwise a plain edge. (accentBorder is gone with the green
-                                  // wash it was picked for; anyShort is read directly below.)
-                                  // STRUCTURAL loses its grey slab for a hairline tag: it is a
-                                  // classification, not a warning, and at 11px in a filled box it was
-                                  // heavier than the item's own name.
+                                  const matLabel = pi.material.charAt(0).toUpperCase() + pi.material.slice(1);
                                   return (
-                                    <div key={piKey} className="dc-item" style={{padding:"12px 13px",borderRadius:10,border:`1px solid ${anyShort?"rgba(245,158,11,0.45)":"rgba(255,255,255,0.85)"}`,display:"flex",flexDirection:"column",gap:8}}>
+                                    <div key={piKey} className="dc-item" style={{padding:"12px 13px",borderRadius:10,border:"1px solid rgba(255,255,255,0.85)",display:"flex",flexDirection:"column",gap:8}}>
                                       <div style={{display:"flex",alignItems:"center",gap:7,flexWrap:"wrap"}}>
                                         <span style={{fontSize:13,fontWeight:700,color:IV.ink,letterSpacing:-0.1}}>🏗️ Platform{rowIdx>0?` #${rowIdx+1}`:""} ({heightLabel})</span>
                                         <span className="dc-cap" style={{fontSize:10,padding:"2px 7px",borderRadius:999,border:"1px solid rgba(100,116,139,0.32)",color:"#64748B",letterSpacing:1.1}}>Structural</span>
-                                        <span className="dc-money" style={{fontSize:12,color:IV.ink2}}>{pi.L}×{pi.W} = {sqft} sqft</span>
+                                        <span className="dc-cap" style={{fontSize:10,padding:"2px 7px",borderRadius:999,background:"rgba(99,102,241,0.12)",color:"#4F46E5",letterSpacing:1.1}}>{matLabel}</span>
+                                        <span className="dc-money" style={{fontSize:12,color:IV.ink2}}>{pi.L}×{pi.W}{pi.qty>1?`×${pi.qty}`:""} = {pi.sqft} sqft</span>
                                       </div>
-                                      <div className="dc-cap" style={{color:IV.ink3,letterSpacing:1.3}}>Composite — expands to</div>
-                                      <div style={{display:"flex",flexDirection:"column",gap:5,paddingLeft:8}}>
-                                        <div style={{display:"flex",alignItems:"center",gap:8,fontSize:13}}>
-                                          <span style={{color:IV.ink,fontWeight:600,minWidth:140}}>Platform Fatta × {pi.fattas}</span>
-                                          {pi.fattaItem ? (
-                                            fattaShort ? (
-                                              <span style={{color:"#F59E0B",fontWeight:600}}>⚠ {Math.max(0,pi.freeBeforeFatta)} free{pi.priorFatta>0?` (after ${pi.priorFatta} taken by prior zones this date)`:""} · short by {Math.abs(pi.freeAfterFatta)}</span>
-                                            ) : (
-                                              <span style={{color:"#10B981"}}>✓ {pi.freeBeforeFatta} free{pi.priorFatta>0?` (after ${pi.priorFatta} prior)`:""}, {pi.freeAfterFatta} left after this zone</span>
-                                            )
-                                          ) : (
-                                            <span style={{color:"#EF4444",fontStyle:"italic"}}>⚠ {PLATFORM_FATTA_CODE} not in IMS</span>
-                                          )}
+                                      {pi.cost > 0 ? (
+                                        <div style={{display:"flex",justifyContent:"space-between",gap:12,alignItems:"baseline",paddingTop:5,borderTop:"1px solid rgba(26,26,46,0.07)"}}>
+                                          <span className="dc-cap" style={{color:IV.ink2,letterSpacing:1.3}}>₹{Math.round(pi.rate).toLocaleString("en-IN")}/sqft · Platform rental</span>
+                                          <span className="dc-money" style={{fontSize:14,fontWeight:800,color:IV.ink}}>₹{pi.cost.toLocaleString("en-IN")}</span>
                                         </div>
-                                        {pi.stands > 0 && (
-                                          <div style={{display:"flex",alignItems:"center",gap:8,fontSize:13}}>
-                                            <span style={{color:IV.ink,fontWeight:600,minWidth:140}}>Platform Stand × {pi.stands}</span>
-                                            {pi.standItem ? (
-                                              standShort ? (
-                                                <span style={{color:"#F59E0B",fontWeight:600}}>⚠ {Math.max(0,pi.freeBeforeStand)} free{pi.priorStand>0?` (after ${pi.priorStand} taken by prior zones this date)`:""} · short by {Math.abs(pi.freeAfterStand)}</span>
-                                              ) : (
-                                                <span style={{color:"#10B981"}}>✓ {pi.freeBeforeStand} free{pi.priorStand>0?` (after ${pi.priorStand} prior)`:""}, {pi.freeAfterStand} left after this zone</span>
-                                              )
-                                            ) : (
-                                              <span style={{color:"#EF4444",fontStyle:"italic"}}>⚠ {PLATFORM_STAND_CODE} not in IMS</span>
-                                            )}
-                                          </div>
-                                        )}
-                                      </div>
-                                      {(()=>{
-                                        const fR = pi.fattaItem ? imsField.rentalCost(pi.fattaItem) : 0;
-                                        const sR = pi.standItem ? imsField.rentalCost(pi.standItem) : 0;
-                                        const fCost = (pi.fattas||0) * fR;
-                                        const sCost = (pi.stands||0) * sR;
-                                        const total = fCost + sCost;
-                                        if (total <= 0) return <div style={{fontSize:12,color:"#F59E0B",marginTop:6,fontStyle:"italic"}}>⚠ Set rental prices on Platform Fatta/Stand in IMS for cost to appear</div>;
-                                        // A COSTING BLOCK, SET AS ONE. Three lines with a rupee figure on
-                                        // the right is a small table, and it was set as three sentences:
-                                        // proportional digits, so ₹4,800 and ₹1,200 did not line up under
-                                        // each other, and the sum did not line up under either. dc-money
-                                        // on every figure fixes the column.
-                                        // The total stops being green. Green is what the availability ticks
-                                        // above mean here — "in stock" — and using it again on a rupee
-                                        // figure said the amount was somehow good news. It is the sum, so
-                                        // it is ink, and weight is what makes it the sum.
-                                        return (
-                                          <div style={{marginTop:9,paddingTop:8,borderTop:"1px solid rgba(26,26,46,0.10)",display:"flex",flexDirection:"column",gap:4}}>
-                                            <div style={{display:"flex",justifyContent:"space-between",gap:12,fontSize:12,color:IV.ink2}}>
-                                              <span>Fatta ₹{fR.toLocaleString("en-IN")} × {pi.fattas}</span>
-                                              <span className="dc-money" style={{fontWeight:600}}>₹{fCost.toLocaleString("en-IN")}</span>
-                                            </div>
-                                            {pi.stands > 0 && sR > 0 && (
-                                              <div style={{display:"flex",justifyContent:"space-between",gap:12,fontSize:12,color:IV.ink2}}>
-                                                <span>Stand ₹{sR.toLocaleString("en-IN")} × {pi.stands}</span>
-                                                <span className="dc-money" style={{fontWeight:600}}>₹{sCost.toLocaleString("en-IN")}</span>
-                                              </div>
-                                            )}
-                                            <div style={{display:"flex",justifyContent:"space-between",gap:12,alignItems:"baseline",marginTop:3,paddingTop:5,borderTop:"1px solid rgba(26,26,46,0.07)"}}>
-                                              <span className="dc-cap" style={{color:IV.ink2,letterSpacing:1.3}}>Platform rental</span>
-                                              <span className="dc-money" style={{fontSize:14,fontWeight:800,color:IV.ink}}>₹{total.toLocaleString("en-IN")}</span>
-                                            </div>
-                                          </div>
-                                        );
-                                      })()}
+                                      ) : (
+                                        <div style={{fontSize:12,color:"#F59E0B",fontStyle:"italic"}}>⚠ Set a ₹/sqft rate for {matLabel} in IMS → Platform Config for cost to appear</div>
+                                      )}
                                     </div>
                                   );
                                 })}
