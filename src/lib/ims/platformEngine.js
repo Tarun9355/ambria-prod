@@ -179,3 +179,6 @@ export const appendPlatformAudit = async (entry) => {
 };
 
 export { eoToFnList };
+
+// ─── Backfill flag storage key — mirrors trussEngine.js's TRUSS_P3_BACKFILLED_SK ─────────────
+export const PLATFORM_BACKFILLED_SK = "ambria-ims-platform-alloc-backfilled-v1";
