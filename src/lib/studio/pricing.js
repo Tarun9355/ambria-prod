@@ -252,9 +252,18 @@ export const buildTopology = (config, L, W, H, spanFt, backDepth, engSettings) =
     ];
     return {
       config, method, pillars, beams,
-      physicalL: L + 2 * pillarWidth,
-      physicalW: W + 2 * pillarWidth,
-      // §23 Phase 2.9e — masking outer = physical (Method B already outside-out, no extra +1.5 needed)
+      // physicalL/W: Method-A-interior, same rule as u_only/half_box above (see this file's own
+      // calcZoneFabric comment: "Different from physicalL/W which is Method-A-interior for cost
+      // calc... regardless of Method A/B"). L/W already IS the final footprint — lAxisPillars/
+      // wAxisPillars and the beam-budget subtraction above already account for EVERY pillar on each
+      // axis, not just the 2 corners — so adding pillarWidth again here double-counted it. Confirmed
+      // live (2026-11-01): a 43×43 full-box entry showed 44.5×44.5 "Physical Footprint" instead of
+      // matching the 43×43 customer demand, and silently over-fed the Full Box ceiling-drape Liza
+      // calc (area = physicalL×physicalW below) for every full-box truss ever quoted.
+      physicalL: L,
+      physicalW: W,
+      // masking outer DOES get +2×pillarWidth — fabric wraps fully around the two outer corner
+      // pillars, which is a real addition beyond the structural footprint, unlike physicalL/W above.
       maskingL: L + 2 * pillarWidth,
       maskingW: W + 2 * pillarWidth,
       pillarCount: pillars.length,
