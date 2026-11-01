@@ -16,3 +16,16 @@ export function eventOrderFor(eventOrders, clientId, clientName) {
   if (!mine.length) return undefined;
   return [...mine].sort((a, b) => (isCancelled(a) - isCancelled(b)) || (createdOf(b) - createdOf(a)))[0];
 }
+
+// Every live (not cancelled) event order of the client - what the deal's own stock holds can sit under. A deal booked twice
+// (two orders on the same date, as Sangeeta's 4 Nov showed in the calendar) held stock under both, and netting out only the
+// newest one counted the other's holds as another event's: the deal's own items read out of stock at Sold (owner report 2026-11-01).
+export function ownEventOrderIds(eventOrders, clientId, clientName) {
+  const list = Array.isArray(eventOrders) ? eventOrders.filter(Boolean) : [];
+  let mine = clientId ? list.filter((e) => e.clientId === clientId) : [];
+  if (!mine.length) {
+    const name = String(clientName || "").trim();
+    mine = name ? list.filter((e) => (e.clientName || "") === name) : [];
+  }
+  return mine.filter((e) => !isCancelled(e) && e.id).map((e) => e.id);
+}

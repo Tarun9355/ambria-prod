@@ -26,7 +26,7 @@ import { DEPTS as OPS_DEPTS, catToDept as sharedCatToDept, poolLabourDept } from
 import ItemHoverThumb from "../../../components/shared/ItemHoverThumb.jsx";
 import { WASH_BANDS, GRAIN_URL } from "../../../lib/studio/pageWash";
 import { newSplitGroupId, reconcileDealCheckIntoBuild } from "../../../lib/studio/dealCheckSync.js";
-import { eventOrderFor } from "../../../lib/studio/eventOrderFor.js";
+import { eventOrderFor, ownEventOrderIds } from "../../../lib/studio/eventOrderFor.js";
 
 // ══ THE PAGE'S GROUND ══
 // A glob, not an import, for the same reason every other background in this app uses one: if the file
@@ -472,7 +472,7 @@ export default function DealCheckOverlay({ ctx }) {
     const cliForAvail = clientLedger.find(c => c.id === activeClientId);
     const eoForAvail = eventOrderFor(eventOrders, activeClientId, cliForAvail?.name);
     const blocksDetail = (dealCheckData?.blocksDetailByDate || {})[targetDate] || {};
-    const otherEventsAvail = getStudioAvailable(it, netOwnReservedBlocksLive(fnBlocks, it.id, blocksDetail, eoForAvail?.id));
+    const otherEventsAvail = getStudioAvailable(it, netOwnReservedBlocksLive(fnBlocks, it.id, blocksDetail, [eoForAvail?.id, ...ownEventOrderIds(eventOrders, activeClientId, cliForAvail?.name)]));
     return Math.max(0, otherEventsAvail - usedElsewhere);
   };
 
@@ -596,7 +596,7 @@ export default function DealCheckOverlay({ ctx }) {
           const fns = collectAllFunctionData ? collectAllFunctionData() : [];
           const fnDate = fns[fnIdx]?.fnDate;
           const blocksDetail = fnDate ? (dealCheckData?.blocksDetailByDate || {})[fnDate] || {} : {};
-          return getStudioAvailable(item, netOwnReservedBlocksLive(fnBlocks, item.id, blocksDetail, eoForAvail?.id));
+          return getStudioAvailable(item, netOwnReservedBlocksLive(fnBlocks, item.id, blocksDetail, [eoForAvail?.id, ...ownEventOrderIds(eventOrders, activeClientId, cli?.name)]));
         };
         // The 2-run counter came out with the Generate button — nothing starts a run from this
         // screen any more, so there is no allowance left to display. dcRunCounter is still written

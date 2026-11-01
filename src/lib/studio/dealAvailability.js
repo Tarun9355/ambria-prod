@@ -135,11 +135,13 @@ export function maxQtyForRow(invId, fns, imsInventory, target, targetDate, other
 // and had never been edited in Build since booking, so it stayed permanently uncredited for its own
 // stock. Reading the live blocks detail has no such dependency: correct the instant the reservation
 // exists, regardless of which of the app's two reservation paths wrote it.
+// eventOrderId: one id, or every live order of the deal (ownEventOrderIds) - a deal booked twice holds stock under both.
 export function netOwnReservedBlocksLive(fnBlocks, itemId, blocksDetailForDate, eventOrderId) {
-  if (!eventOrderId) return fnBlocks || {};
+  const own = new Set((Array.isArray(eventOrderId) ? eventOrderId : [eventOrderId]).filter(Boolean));
+  if (!own.size) return fnBlocks || {};
   const entries = blocksDetailForDate?.[itemId];
   if (!Array.isArray(entries) || !entries.length) return fnBlocks || {};
-  const ownReserved = entries.filter((b) => b && b.eventId === eventOrderId).reduce((s, b) => s + (Number(b.qty) || 0), 0);
+  const ownReserved = entries.filter((b) => b && own.has(b.eventId)).reduce((s, b) => s + (Number(b.qty) || 0), 0);
   if (ownReserved <= 0) return fnBlocks || {};
   return { ...(fnBlocks || {}), [itemId]: Math.max(0, ((fnBlocks || {})[itemId] || 0) - ownReserved) };
 }

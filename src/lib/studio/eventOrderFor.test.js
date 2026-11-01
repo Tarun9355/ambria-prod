@@ -34,3 +34,25 @@ describe("eventOrderFor", () => {
     expect(eventOrderFor(null, "C", "x")).toBeUndefined();
   });
 });
+import { ownEventOrderIds } from "./eventOrderFor.js";
+import { netOwnReservedBlocksLive } from "./dealAvailability.js";
+
+describe("a deal booked twice does not read its own stock as taken (Sangeeta 4 Nov)", () => {
+  const orders = [
+    { id: "eo_a", clientId: "c1", status: "pending" },
+    { id: "eo_b", clientId: "c1", status: "blocked" },
+    { id: "eo_c", clientId: "c1", status: "cancelled" },
+    { id: "eo_x", clientId: "c2", status: "pending" },
+  ];
+  it("every live order of the client, not cancelled ones or other clients'", () => {
+    expect(ownEventOrderIds(orders, "c1").sort()).toEqual(["eo_a", "eo_b"]);
+  });
+  it("holds under both of the deal's orders are netted out; another event's stay", () => {
+    const detail = { sofa: [{ eventId: "eo_a", qty: 2 }, { eventId: "eo_b", qty: 2 }, { eventId: "eo_x", qty: 1 }] };
+    expect(netOwnReservedBlocksLive({ sofa: 5 }, "sofa", detail, ownEventOrderIds(orders, "c1")).sofa).toBe(1);
+  });
+  it("a single id still works as before", () => {
+    const detail = { sofa: [{ eventId: "eo_a", qty: 2 }, { eventId: "eo_b", qty: 2 }] };
+    expect(netOwnReservedBlocksLive({ sofa: 4 }, "sofa", detail, "eo_a").sofa).toBe(2);
+  });
+});

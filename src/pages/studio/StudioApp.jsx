@@ -141,7 +141,7 @@ import { LOGO_ASSET, logoCrop } from "../../lib/studio/brand.js";
 import { registerFlushBeforeReload, unregisterFlushBeforeReload, flushBeforeReload } from "../../lib/pendingSaveRegistry.js";
 import { thumbUrl } from "../../lib/studio/thumb.js";
 import { prefetchImages, AVAIL_THUMB } from "../../lib/studio/prefetchImages.js";
-import { eventOrderFor } from "../../lib/studio/eventOrderFor.js";
+import { eventOrderFor, ownEventOrderIds } from "../../lib/studio/eventOrderFor.js";
 import { zoneSwitchState, planPhotoSwitch, zoneAfterSwitch, zoneCfgSig, stripPhotoStash } from "../../lib/studio/photoStash.js";
 
 // ═══════════════════════════════════════════════════════════════
@@ -2147,6 +2147,8 @@ export default function StudioApp() {
   // against), which meant the shortfall discount silently moved to whichever function you had open —
   // the combined total shifted every time you switched tabs, nothing about the event having changed.
   const [blocksByDate, setBlocksByDate] = useState({});
+  // each date's per-event holds, so a function's own reservation is netted against ITS date (not the open function's)
+  const [blocksDetailByDate, setBlocksDetailByDate] = useState({});
   const [libElSearch, setLibElSearch] = useState("");
   const [trVenues, setTrVenues] = useState(TR_DV);
   const [truckCap, setTruckCap] = useState(TR_DTC);
@@ -4740,8 +4742,9 @@ export default function StudioApp() {
       // writes — a deal whose only reservation came from IMS's auto-confirm (never edited in Build
       // since booking) had no write to that cache at all, and read permanently short on its own stock.
       const eo = eventOrderFor(eventOrders, activeClientId, clientName);
-      const blocksDetailForDate = opts?.blocksDetailForDate ?? activeBlocksDetailForDate;
-      const blocksForDate = netOwnReservedBlocksLive(rawBlocksForDate, item.id, blocksDetailForDate, eo?.id);
+      // the own-holds detail of the date being priced (a non-active function's own date), not the open function's
+      const blocksDetailForDate = opts?.blocksDetailForDate ?? (opts?.fnDate ? blocksDetailByDate[opts.fnDate] : undefined) ?? activeBlocksDetailForDate;
+      const blocksForDate = netOwnReservedBlocksLive(rawBlocksForDate, item.id, blocksDetailForDate, [eo?.id, ...ownEventOrderIds(eventOrders, activeClientId, clientName)]);
       // opts.fnIdx is the function being priced (event-level callers pass it); without it this
       // scoped allocateRowAvailability's sibling-row check to the ACTIVE function only — unchanged
       // from before, still needed below, just no longer feeding the dcReservedInventory lookup.
@@ -4847,7 +4850,7 @@ export default function StudioApp() {
     }
     const unitPrice = priceForInvItem(item, rcFactorByKey, imsInventory, el.kitOverrides);
     return { rc: null, unitPrice, fullUnitPrice: unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName, crossFnTake, el.repeatOverride, dateFactorFor(el, opts), el.kitOverrides), area: 0, warning: null, isFloralBlend: false, realPct: null };
-  }, [imsInventory, rcFactorByKey, rcCostPctForSub, activeBlocksForDate, activeBlocksDetailForDate, dealCheckData, studioFloralData, rcFloralModeByKey, floralRatio, fvCfgForRepeat, eventOrders, activeClientId, clientName, activeFnIdx, activeFnMeta, clientDate]);
+  }, [imsInventory, rcFactorByKey, rcCostPctForSub, activeBlocksForDate, activeBlocksDetailForDate, blocksDetailByDate, dealCheckData, studioFloralData, rcFloralModeByKey, floralRatio, fvCfgForRepeat, eventOrders, activeClientId, clientName, activeFnIdx, activeFnMeta, clientDate]);
 
   // ── A KIT'S SHORT PARTS ──
   // getElPriceFromInventory checks a kit row against the KIT's own stock only - a part inside it (a cushion cover, a pot)
@@ -4864,16 +4867,16 @@ export default function StudioApp() {
     if (!item || !(Array.isArray(item.subItems) && item.subItems.length) || !((Number(el.qty) || 0) > 0)) return [];
     const fnDate = opts.fnDate || activeFnMeta?.date || clientDate;
     const rawBlocks = opts.blocksForDate ?? activeBlocksForDate;
-    const detail = opts.blocksDetailForDate ?? activeBlocksDetailForDate;
+    const detail = opts.blocksDetailForDate ?? (opts.fnDate ? blocksDetailByDate[opts.fnDate] : undefined) ?? activeBlocksDetailForDate;
     const eo = eventOrderFor(eventOrders, activeClientId, clientName);
     const venueName = opts.venueName ?? activeFnMeta?.venue;
     const fns = collectAllFunctionDataRef.current ? collectAllFunctionDataRef.current() : [];
     const target = opts.zoneKey != null && opts.elIdx != null ? { fnIdx: opts.fnIdx ?? activeFnIdx, zoneKey: opts.zoneKey, elIdx: opts.elIdx } : null;
     const freeFor = (part) => combineAvailability(Number(part?.qty ?? part?.qtyOwned) || 0,
-      getStudioAvailable(part, netOwnReservedBlocksLive(rawBlocks, part.id, detail, eo?.id)), availableAtVenue(fvCfgForRepeat, venueName, part));
+      getStudioAvailable(part, netOwnReservedBlocksLive(rawBlocks, part.id, detail, [eo?.id, ...ownEventOrderIds(eventOrders, activeClientId, clientName)])), availableAtVenue(fvCfgForRepeat, venueName, part));
     return kitPartShortfalls(item, Number(el.qty) || 0, el.kitOverrides, fns, imsInventory, target, fnDate, freeFor)
       .map((p) => ({ ...p, canMake: canFulfillShortfall((imsInventory || []).find((i) => i.id === p.id), fnDate, el?.addedAt || undefined) }));
-  }, [imsInventory, activeFnMeta, clientDate, activeBlocksForDate, activeBlocksDetailForDate, eventOrders, activeClientId, clientName, activeFnIdx, fvCfgForRepeat]);
+  }, [imsInventory, activeFnMeta, clientDate, activeBlocksForDate, activeBlocksDetailForDate, blocksDetailByDate, eventOrders, activeClientId, clientName, activeFnIdx, fvCfgForRepeat]);
   // Shared SMB/flat rate resolution — the one place `getElPrice`, `getElPriceForFn`, and
   // `calcFullEventCost` all resolve a rate-card item's base rate for an element's size, now with
   // the sub-category scaling factor applied. Previously duplicated verbatim in all three
@@ -10822,8 +10825,8 @@ export default function StudioApp() {
     const dates = [...new Set([clientDate, ...(extraFunctions || []).map(f => f?.date)].filter(Boolean))];
     if (!dates.length) return;
     let cancelled = false;
-    Promise.all(dates.map((d) => loadAvailability(d).then(({ blocksForDate }) => [d, blocksForDate || {}])))
-      .then((pairs) => { if (!cancelled) setBlocksByDate(Object.fromEntries(pairs)); })
+    Promise.all(dates.map((d) => loadAvailability(d).then(({ blocksForDate, blocksDetailForDate }) => [d, blocksForDate || {}, blocksDetailForDate || {}])))
+      .then((rows) => { if (!cancelled) { setBlocksByDate(Object.fromEntries(rows.map(([d, b]) => [d, b]))); setBlocksDetailByDate(Object.fromEntries(rows.map(([d, , det]) => [d, det]))); } })
       .catch(() => {});
     return () => { cancelled = true; };
   }, [clientDate, extraFunctions, loadAvailability, blocksVersion]);
@@ -10965,7 +10968,7 @@ export default function StudioApp() {
           // OTHER venues' stock ("1 at MKT, 4 at AR") was listed read as "my own venue's stock
           // vanished," when it was actually just quietly counted rather than named.
           const _ownStanding = standingQty(fvCfgForRepeat, pickerVenue, it.id);
-          const netBlocksForDate = netOwnReservedBlocksLive(blocksForDate, it.id, blocksDetailForDate, eo?.id);
+          const netBlocksForDate = netOwnReservedBlocksLive(blocksForDate, it.id, blocksDetailForDate, [eo?.id, ...ownEventOrderIds(eventOrders, activeClientId, clientName)]);
           // combineAvailability, not Math.min — see StudioApp.jsx's other getStudioAvailable/
           // availableAtVenue composition for the worked example this closes.
           const free = Math.max(0, combineAvailability(Number(it?.qty ?? it?.qtyOwned) || 0, getStudioAvailable(it, netBlocksForDate), availableAtVenue(fvCfgForRepeat, pickerVenue, it)) - (usedQty[it.id] || 0));
