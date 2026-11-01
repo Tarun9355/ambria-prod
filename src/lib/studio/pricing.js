@@ -566,10 +566,20 @@ export const calcZoneFabric = (zc, trussInv, drapeDensity) => {
   // outside of the truss so the pillars are inside the masking envelope.
   const maskL = topo.maskingL ?? topo.physicalL ?? 0;
   const maskW = topo.maskingW ?? topo.physicalW ?? 0;
+  // Wall Masking FABRIC pieces only for a wall that is masked (masking switched on) in fabric - its own material (Build's
+  // per-wall pick, zc.mkWallMat) else the truss's (zc.mkT). An Acrylic / Flex / Vinyl wall or a custom printed panel is not
+  // fabric stock: counting it turned "Acrylic 300 sqft" into "Wall Masking Ivory x3" in Deal Check (RC-79), and masking
+  // switched off still listed "Wall Masking required" in the Fabric book (PDF-16).
+  const wallIsFabric = (w) => {
+    if (!zc.mkOn || !mkWalls[w]) return false;
+    const ov = (zc.mkWallMat || {})[w];
+    const key = ov?.matKey || (ov?.customItemId ? null : zc.mkT);
+    return /fabric/i.test(String(key || ""));
+  };
   let rft = 0;
-  if (mkWalls.back  && maskL > 0) rft += maskL;
-  if (mkWalls.left  && maskW > 0) rft += maskW;
-  if (mkWalls.right && maskW > 0) rft += maskW;
+  if (wallIsFabric("back")  && maskL > 0) rft += maskL;
+  if (wallIsFabric("left")  && maskW > 0) rft += maskW;
+  if (wallIsFabric("right") && maskW > 0) rft += maskW;
   const maskingPieces = rft > 0 ? Math.ceil(rft / 13) : 0;
 
   // Liza kg — depends on truss config (Tarun lock 26 May):
@@ -625,7 +635,7 @@ export const calcZoneFabric = (zc, trussInv, drapeDensity) => {
     // Curtains: each of the 2 new pillars gets a curtain set (shared pillars already counted).
     extCurtains = extPillars * curtainsPerPillar;
     // Wall masking: when masking is on, each wing gets a masked wall (extLen wide → 13ft panels).
-    if (zc.mkOn) extMaskingPieces = 2 * Math.max(1, Math.ceil(extLen / 13));
+    if (zc.mkOn && /fabric/i.test(String(zc.mkT || ""))) extMaskingPieces = 2 * Math.max(1, Math.ceil(extLen / 13));
   }
   // Multiple identical trusses in one zone → all physical counts (fabric pieces, liza, curtains,
   // pillars) scale by quantity. Per-truss dimensions (maskL/W, physL/W) stay as a single truss.

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { snapRowDimsForProduction, trussRowCost, calcZoneTrussPreview } from "./pricing";
+import { snapRowDimsForProduction, trussRowCost, calcZoneTrussPreview, calcZoneFabric } from "./pricing";
 
 // Isolated from real IMS stock numbers on purpose: maxSpanFt huge (always 2 pillars, 1 segment)
 // turns "how many joints does this span need" into "can one or two 10ft beams reach this length,
@@ -144,5 +144,26 @@ describe("trussRowCost — a custom ceiling is charged even with Truss Qty 0", (
   });
   it("Truss Qty 0 and no custom ceiling is still nothing", () => {
     expect(trussRowCost({ dims: { W: 10, L: 10, H: 10 }, trussQty: 0 }, rates)).toEqual({ truss: 0, masking: 0, ceiling: 0 });
+  });
+});
+
+describe("calcZoneFabric — Wall Masking fabric only for walls masked in fabric (RC-79 / PDF-16)", () => {
+  const trussInv = { settings: { pillarWidthFt: 0.75, maxSpanFt: 30, defaultBackDepthFt: 4, backDepthRange: [3, 5] }, rates: {}, batta: { bufferPct: 10 } };
+  const zone = (over) => ({ dims: { W: 10, L: 10, H: 10 }, trT: "box", mkWalls: { back: true, left: true, right: true }, ...over });
+  it("masking on in fabric: the walls count", () => {
+    expect(calcZoneFabric(zone({ mkOn: true, mkT: "fabric" }), trussInv).maskingPieces).toBeGreaterThan(0);
+  });
+  it("masking switched off: no Wall Masking, even with the walls still ticked", () => {
+    expect(calcZoneFabric(zone({ mkOn: false, mkT: "fabric" }), trussInv).maskingPieces).toBe(0);
+  });
+  it("Acrylic / Flex masking is not fabric stock", () => {
+    expect(calcZoneFabric(zone({ mkOn: true, mkT: "acrylic" }), trussInv).maskingPieces).toBe(0);
+    expect(calcZoneFabric(zone({ mkOn: true, mkT: "flex" }), trussInv).maskingPieces).toBe(0);
+  });
+  it("per-wall material: only the fabric walls count", () => {
+    const all = calcZoneFabric(zone({ mkOn: true, mkT: "fabric" }), trussInv).maskingPieces;
+    const mixed = calcZoneFabric(zone({ mkOn: true, mkT: "fabric", mkWallMat: { back: { matKey: "acrylic" } } }), trussInv).maskingPieces;
+    expect(mixed).toBeLessThan(all);
+    expect(mixed).toBeGreaterThan(0);
   });
 });
