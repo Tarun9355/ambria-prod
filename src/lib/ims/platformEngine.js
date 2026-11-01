@@ -27,6 +27,22 @@ const platformsForMaterial = (trussInv, material) => {
 export const platformStockSqft = (trussInv, material) => platformsForMaterial(trussInv, material)
   .reduce((s, r) => s + (Number(r.lengthFt) || 0) * (Number(r.widthFt) || 0) * (Number(r.stock) || 0), 0);
 
+// Stock-weighted average ₹/sqft across a material's configured platform rows — Ambria's own internal
+// cost rate, the same role the old Fatta/Stand inventory items' rentalCost played before Platform
+// Config replaced them (2026-11-01 owner call: platform is no longer tracked via TEN-00008/TEN-00009
+// at all — see DealCheckOverlay.jsx's Tenting rollup). A simple average because platform demand here
+// is one aggregate sqft number per material (see this file's own header comment), not tied to any one
+// named row, so there's no single row's rate to charge off directly.
+export const platformAvgRatePerSqft = (trussInv, material) => {
+  let sqftSum = 0, costSum = 0;
+  platformsForMaterial(trussInv, material).forEach((r) => {
+    const area = (Number(r.lengthFt) || 0) * (Number(r.widthFt) || 0) * (Number(r.stock) || 0);
+    sqftSum += area;
+    costSum += area * (Number(r.ratePerSqft) || 0);
+  });
+  return sqftSum > 0 ? costSum / sqftSum : 0;
+};
+
 // ─── Layer 4.2-equivalent — one event's platform sqft demand, by material ───────────────────
 // Mirrors trussEngine.js's buildEventAllocation, but the "allocator" here is just arithmetic
 // (sqft = L × W × qty) instead of a pillar/beam topology resolve — there's no structural layout to
