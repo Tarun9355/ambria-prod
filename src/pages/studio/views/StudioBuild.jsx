@@ -1316,7 +1316,11 @@ export default function StudioBuild({ ctx }) {
       if (anySize && rows.some(needsPick)) return `${size || "Floor"} · carpet not picked`;
       // a stock carpet is picked but fewer than two are ranked: no preference named yet
       if (anySize && rows.some(r => r?.cpT !== CARPET_OFF && r?.cpInvId && carpetTakesStockPick(carpetPricingFor(r?.cpT, imsCarpetMaterials)?.label) && prefsOf(r).length < 2)) return `${size || "Floor"} · ⚠ Not selected preference`;
-      return [size, picked[0] ? `📦 ${picked[0]}` : ""].filter(Boolean).join(" · ");
+      // No stock carpet to name (Acrylic, Flex, New…): name the material picked, so the closed tile says what is down
+      // (RC-83 - it read only the size, next to a card that clearly had Acrylic chosen).
+      const matRow = rows.find(r => r?.cpT && r.cpT !== CARPET_OFF);
+      const matLabel = matRow ? carpetPricingFor(matRow.cpT, imsCarpetMaterials)?.label : "";
+      return [size, picked[0] ? `📦 ${picked[0]}` : (matLabel ? `carpet: ${matLabel}` : "")].filter(Boolean).join(" · ");
     }
     const n = (zc.prints || []).length, w = printedWallsOf(k).length;
     return [n ? `${n} print${n === 1 ? "" : "s"}` : "", w ? `${w} existing wall${w === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · ") || "None";
