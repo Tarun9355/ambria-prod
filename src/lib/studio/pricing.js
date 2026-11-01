@@ -284,21 +284,33 @@ export const buildTopology = (config, L, W, H, spanFt, backDepth, engSettings) =
 //   zc: zoneConfig entry { dims:{L,W,H}, trussType }
 //   trussInv: { pillars, beams, rates: {pillarRftRate, beamRftRate, battaRftRate, lizaKgRate}, batta:{bufferPct}, settings }
 // Resolve a material-specific view of the truss inventory (pillars/beams/rates/settings per material;
-// batta + liza + fabric factors stay SHARED at the top level = Iron). Iron reads the top-level object
-// (back-compat with every existing consumer). Pole/Aluminium read trussInv.materials[mat] — but fall back
-// to Iron until that material has any pillars configured, so an un-filled material never breaks pricing.
+// liza + fabric factors stay SHARED at the top level = Iron). Iron reads the top-level object
+// (back-compat with every existing consumer). Pole/Aluminium read trussInv.materials[mat] — the
+// pillar/beam skeleton falls back to Iron until that material has any pillars configured, so an
+// un-filled material never breaks pricing.
+//
+// batta/platforms (2026-11-01 owner ask — both now per-material, no longer shared with Iron like
+// liza still is) resolve INDEPENDENTLY of that pillars-configured check: a material's wrap fabric or
+// platform stock can be set up before, after, or without its own pillars/beams ever being filled in
+// (see AdminSettingsTab.jsx's Truss & Batta / Platform Config panels, which edit these the same way),
+// so gating them on `m.pillars` would silently drop a configured Pole/Aluminium batta or platform
+// list back to Iron's whenever that material's skeleton happened to still be empty.
 export const trussInvForMaterial = (trussInv, material) => {
   if (!trussInv) return trussInv;
   const mat = String(material || "iron").toLowerCase();
   if (mat === "iron") return trussInv;
   const m = trussInv.materials && trussInv.materials[mat];
-  if (!m || !m.pillars || Object.keys(m.pillars).length === 0) return trussInv; // not configured yet → Iron
+  const batta = m?.batta != null ? m.batta : trussInv.batta;
+  const platforms = Array.isArray(m?.platforms) ? m.platforms : trussInv.platforms;
+  if (!m || !m.pillars || Object.keys(m.pillars).length === 0) return { ...trussInv, batta, platforms }; // skeleton not configured yet → Iron
   return {
-    ...trussInv,                                                   // shared: batta, liza, fabricFactors, fabricFreshMarkup, lizaStock…
+    ...trussInv,                                                   // shared: liza, fabricFactors, fabricFreshMarkup, lizaStock…
     pillars: m.pillars || {},                                     // per-material skeleton
     beams: m.beams || {},
-    rates: { ...(trussInv.rates || {}), ...(m.rates || {}) },     // per-material pillar/beam rates (batta rate stays shared)
+    rates: { ...(trussInv.rates || {}), ...(m.rates || {}) },     // per-material pillar/beam/batta rates
     settings: { ...(trussInv.settings || {}), ...(m.settings || {}) },
+    batta,
+    platforms,
   };
 };
 
