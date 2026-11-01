@@ -168,11 +168,9 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
   // figure below) — same total, each part under the control that causes it. Without-walls is the
   // same calculation with no walls masked.
   const fabricAll = fabricInv ? calcZoneFabricCost(zc, fabricInv, [], zc.drapeDensity || "moderate") * fabMult : 0;
-  // What the Fabric figure is made of, in the units Deal Check allocates (RC-81) - it showed a bare ₹ with no kg or
-  // pieces, so a salesperson could not sanity-check it. And what each drape preset would pull (RC-82, the preset tooltips).
+  // What each drape preset would pull, in the units Deal Check allocates (RC-82, the preset tooltips).
   const fabQtyAt = (density) => (fabricInv && !zc.noFabric ? calcZoneFabric(zc, fabricInv, density) : null);
   const fabQtyText = (f) => !f ? "" : [f.lizaKg > 0 && `Liza ${f.lizaKg} kg`, f.curtainPieces > 0 && `Velvet curtains ${f.curtainPieces} pc`, f.maskingPieces > 0 && `Wall masking ${f.maskingPieces} pc`].filter(Boolean).join(" · ");
-  const fabQtyNow = fabQtyText(fabQtyAt(zc.drapeDensity || "moderate"));
   const fabricCost = fabricInv ? calcZoneFabricCost({ ...zc, mkOn: false, mkWalls: {} }, fabricInv, [], zc.drapeDensity || "moderate") * fabMult : 0;
   const wallPanelCost = Math.max(0, fabricAll - fabricCost);
   // The Custom Ceiling panel bills inside rowCost.truss (and takes the Repeat discount with it), but
@@ -463,7 +461,6 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                           impossible to tell apart from a legitimately-zero one without opening devtools. */}
                       {showCosts&&<span style={{marginLeft:"auto",fontSize:12,fontWeight:600,color:textP}} title={`Liza + velvet curtains${wallPanelCost>0?` + wall fabric pieces ${fmt(wallPanelCost)}`:""} for a ${zc.drapeDensity||"moderate"} drape, ${zc.useNewFabric?"New":"Old"} stock${ceilingShown>0?" (the ceiling panel's own cost is on the Drape card)":""}`}>{fmt(fabricShown)}</span>}
                     </div>
-                    {fabQtyNow&&<div style={{fontSize:11,color:textS,marginTop:4}}>{fabQtyNow}</div>}
                     {/* A bare frame: the truss bills at IMS's "Without fabric" rate and no Liza,
                         curtains or masking pieces are counted (see calcZoneFabric/trussRowCost). */}
                     <span onClick={()=>sZ({noFabric:!zc.noFabric})} style={{...optPill(!!zc.noFabric),marginTop:6,display:"inline-flex"}}
