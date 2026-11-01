@@ -32,6 +32,9 @@ import { makeAmendRequest } from "../../lib/ims/amend";
 import { catToDept } from "../../lib/ims/deptClassify";
 import { availableAtVenue, isStandingAt, rentalSplit, fixedVenueDealDiscount, fixedVenueDiscountPctFor, proratedVenueDiscount, fixedVenueFor, builtQty, kitBuiltQty, venueSlackFor, standingReductionBySubcat, standingQty, combineAvailability, assembleFixedVenuesFromRows } from "../../lib/ims/fixedVenues";
 import { searchLmsLeads, triggerLmsSync, fetchCachedContracts, fetchLmsLeadByEntry } from "../../lib/ims/lms";
+import { allocateForDate, buildEventAllocation } from "../../lib/ims/trussEngine";
+import { allocatePlatformForDate, buildEventPlatformAllocation } from "../../lib/ims/platformEngine";
+import { allocateBattaForDate, buildEventBattaAllocation } from "../../lib/ims/battaEngine";
 import { uploadToStorage, compressImageForUpload, STORAGE_FOLDERS, listStorage, deleteStorageObjects, deleteStorageFolder } from "../../lib/storage";
 import { ytApi, ytDuration } from "../../lib/youtube";
 import { extractLabeledValue, bestTaxMatch } from "../../lib/studio/videoDescriptionTags";
@@ -1927,6 +1930,11 @@ export default function StudioApp() {
   // returned. Blocking, not a warning: closing it just cancels markSold, same as a failed
   // name/date/venue check above it. See scanOutOfStockElements's own comment for why.
   const [oosGateModal, setOosGateModal] = useState(null);
+  // Pre-Sold gate #2 (truss/platform/batta stock) — see scanTrussStockShortage's own comment. Same
+  // blocking treatment as oosGateModal, just a plain list (no per-item swap picker — fixing a
+  // truss/platform/batta shortage means picking a different size/material or sourcing more stock,
+  // not swapping one inventory item for another).
+  const [trussStockGateModal, setTrussStockGateModal] = useState(null);
   // One flagged row's {fnIdx, zoneKey, idx} while its own function switch is still catching up to
   // openAvailModal — see the effect right below. null the rest of the time.
   const [oosFixPending, setOosFixPending] = useState(null);
@@ -3313,6 +3321,16 @@ export default function StudioApp() {
     document.addEventListener("visibilitychange", onBack);
     window.addEventListener("focus", onBack);
     return () => { try { supabase.removeChannel(ch); } catch { /* ignore */ } document.removeEventListener("visibilitychange", onBack); window.removeEventListener("focus", onBack); };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // ── Realtime: truss_allocations / platform_allocations / batta_allocations — the per-date stock
+  // pools another sale elsewhere in IMS/Studio can change at any moment. markSold's pre-sale gate
+  // (scanTrussStockShortage) reads studioFloralData.trussAlloc/platformAlloc/battaAlloc, so these need
+  // to stay fresh the same way truss_inventory already does above. ──
+  useEffect(() => {
+    const chT = subscribeTable("truss_allocations", () => { refreshStudioFloralData(); });
+    const chP = subscribeTable("platform_allocations", () => { refreshStudioFloralData(); });
+    const chB = subscribeTable("batta_allocations", () => { refreshStudioFloralData(); });
+    return () => { [chT, chP, chB].forEach((ch) => { try { supabase.removeChannel(ch); } catch { /* ignore */ } }); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   // ── Realtime: the five structure rate lists (migration 043) — each its own table now, not a
   // settings row, so each gets its own re-fetch-and-set subscription instead of the generic
@@ -4971,14 +4989,25 @@ export default function StudioApp() {
       // comes from the `fixed_venues` TABLE (migration 038), mandiCatalogue from `mandi_flowers`
       // (migration 039), and flowerPatterns from `flower_patterns` (migration 040) — none of them
       // are this settings-keys fetch any more.
-      const [{ data }, trussInvRows, fixedVenueRows, mandiRows, patternRows, markedDateRows] = await Promise.all([
+      const [{ data }, trussInvRows, fixedVenueRows, mandiRows, patternRows, markedDateRows, trussAllocRows, platformAllocRows, battaAllocRows] = await Promise.all([
         supabase.from("settings").select("key,value").in("key", FLORAL_DATA_KEYS),
         fetchAll("truss_inventory").catch(() => []),
         fetchAll("fixed_venues").catch(() => []),
         fetchAll("mandi_flowers").catch(() => []),
         fetchAll("flower_patterns").catch(() => []),
         fetchAll("date_pricing_overrides").catch(() => []),
+        // truss_allocations/platform_allocations/batta_allocations — the SAME per-date pool IMS's own
+        // Planning dashboards read (see trussEngine.js/platformEngine.js/battaEngine.js), fetched here
+        // too so markSold's pre-sale stock gate (scanTrussStockShortage, below) can check this build's
+        // own truss/platform/batta demand against real stock BEFORE committing the sale, not just see
+        // a shortage after the fact on the IMS side.
+        fetchAll("truss_allocations").catch(() => []),
+        fetchAll("platform_allocations").catch(() => []),
+        fetchAll("batta_allocations").catch(() => []),
       ]);
+      // date -> {events, ...pool} — same shape IMS.jsx's own rowToAlloc builds (soft-hold rows are
+      // never written any more, per truss_allocations' own comment, but dropped here defensively too).
+      const rowsToAllocMap = (rows) => Object.fromEntries((rows || []).map((r) => [r.date, { ...(r.pool || {}), date: r.date, events: (r.events || []).filter((ev) => ev?.state !== "soft") }]));
       const s = {};
       (data || []).forEach(r => { let v = r?.value; for (let i = 0; i < 2; i++) { if (typeof v === "string") { try { v = JSON.parse(v); } catch { break; } } } s[r.key] = v; });
       let trussInv = null;
@@ -5010,6 +5039,9 @@ export default function StudioApp() {
         // on top, same reasoning as fixedVenues/mandiCatalogue/flowerPatterns above.
         datePricing: { ...((s.datePricing && typeof s.datePricing === "object") ? s.datePricing : SETTINGS_DEFAULTS.datePricing), markedDates: assembleMarkedDatesFromRows(markedDateRows) },
         trussInv,
+        trussAlloc: rowsToAllocMap(trussAllocRows),
+        platformAlloc: rowsToAllocMap(platformAllocRows),
+        battaAlloc: rowsToAllocMap(battaAllocRows),
       });
     } catch { /* ignore — floral auto-derive falls back to flat rate */ }
   }, []);
@@ -5640,6 +5672,68 @@ export default function StudioApp() {
     });
     return flagged;
   }, [collectAllFunctionData, blocksByDate, hideDiscountFromClient, getElPriceForFn, imsInventory, kitPartShorts]);
+
+  // Pre-Sold gate #2 — same "physically can't be delivered" reasoning as scanOutOfStockElements
+  // above, for truss pillars/beams, platform sqft, and batta RFT instead of a tagged inventory item.
+  // Computes exactly what THIS build would draw from each date's real stock pool (same functions
+  // IMS's own promote-on-sold effect uses — buildEventAllocation/buildEventPlatformAllocation/
+  // buildEventBattaAllocation), folds it onto that date's CURRENT real pool (studioFloralData.
+  // trussAlloc/platformAlloc/battaAlloc, minus this same client's own existing reservation so
+  // re-confirming an already-booked deal doesn't double-count itself), and runs the identical
+  // allocateForDate/allocatePlatformForDate/allocateBattaForDate hard/soft priority check IMS uses.
+  // A sentinel eoId ("__self_check__") identifies this hypothetical entry in the result — hard
+  // events are processed oldest-first and this one is always newest, so if the date's stock can't
+  // cover everything, THIS entry is the one that ends up bearing shortageBorne (unless some
+  // ALREADY-sold event was already over-committed before this build existed, which isn't this
+  // salesperson's problem to fix and correctly stays unflagged).
+  const SELF_CHECK_EOID = "__self_check__";
+  const scanTrussStockShortage = useCallback(() => {
+    const trussInv = studioFloralData?.trussInv;
+    if (!trussInv) return [];
+    const allFns = collectAllFunctionData();
+    const byDate = {};
+    allFns.forEach((fnData) => {
+      if (!fnData.fnDate) return;
+      (byDate[fnData.fnDate] ||= []).push({ fnIdx: fnData.fnIdx, date: fnData.fnDate, zones: fnData.zoneConfig || {}, enabledEls: fnData.enabledEls || {} });
+    });
+    const flagged = [];
+    Object.entries(byDate).forEach(([date, fnsForDate]) => {
+      const meta = { eoId: SELF_CHECK_EOID, clientId: activeClientId || "self", clientName: clientName?.trim() || "This build", state: "hard", createdAt: Date.now() };
+      const excludeMine = (ev) => ev.eoId !== SELF_CHECK_EOID && ev.clientId !== activeClientId;
+
+      const trussEntry = buildEventAllocation(meta, fnsForDate, trussInv);
+      if (trussEntry.trusses?.length) {
+        const list = [...(studioFloralData.trussAlloc?.[date]?.events || []).filter(excludeMine), trussEntry];
+        const result = allocateForDate({}, date, list, trussInv, "studio-presale-check");
+        if (list.find((ev) => ev.eoId === SELF_CHECK_EOID)?.shortageBorne) {
+          const sm = result[date]?.stockSummary;
+          const bits = [...Object.entries(sm?.overflowPillars || {}).map(([sz, q]) => `${q}× ${sz}ft pillar`), ...Object.entries(sm?.overflowBeams || {}).map(([sz, q]) => `${q}× ${sz}ft beam`)];
+          flagged.push({ domain: "truss", emoji: "🏗️", date, detail: bits.join(", ") || "stock shortfall" });
+        }
+      }
+
+      const platEntry = buildEventPlatformAllocation(meta, fnsForDate);
+      if (Object.keys(platEntry.totalPlatformSqftByMaterial).length) {
+        const list = [...(studioFloralData.platformAlloc?.[date]?.events || []).filter(excludeMine), platEntry];
+        const result = allocatePlatformForDate({}, date, list, trussInv, "studio-presale-check");
+        if (list.find((ev) => ev.eoId === SELF_CHECK_EOID)?.shortageBorne) {
+          const over = result[date]?.stockSummary?.overflow || {};
+          flagged.push({ domain: "platform", emoji: "🛏️", date, detail: Object.entries(over).map(([m, sqft]) => `${sqft} sqft ${m}`).join(", ") || "stock shortfall" });
+        }
+      }
+
+      const battaEntry = buildEventBattaAllocation(meta, fnsForDate, trussInv);
+      if (Object.keys(battaEntry.totalBattaRftByMaterial).length) {
+        const list = [...(studioFloralData.battaAlloc?.[date]?.events || []).filter(excludeMine), battaEntry];
+        const result = allocateBattaForDate({}, date, list, trussInv, "studio-presale-check");
+        if (list.find((ev) => ev.eoId === SELF_CHECK_EOID)?.shortageBorne) {
+          const over = result[date]?.stockSummary?.overflow || {};
+          flagged.push({ domain: "batta", emoji: "🧵", date, detail: Object.entries(over).map(([m, rft]) => `${rft} RFT ${m}`).join(", ") || "stock shortfall" });
+        }
+      }
+    });
+    return flagged;
+  }, [studioFloralData, collectAllFunctionData, activeClientId, clientName]);
 
   // The SAME cross-function reuse quantities calcFunctionCost/calcFunctionBreakdown already build
   // and fold into the Live Estimate/Summary/Deal Check totals for the active function — but Build's
@@ -8623,6 +8717,10 @@ export default function StudioApp() {
       // of stock and can't be produced, so it never reaches the confirm dialog at all.
       const oosFlagged = scanOutOfStockElements();
       if (oosFlagged.length > 0) { setOosGateModal(oosFlagged); return; }
+      // Pre-Sold gate #2 — see scanTrussStockShortage's own comment. Same hard block, now for
+      // truss/platform/batta stock instead of a tagged inventory item.
+      const trussFlagged = scanTrussStockShortage();
+      if (trussFlagged.length > 0) { setTrussStockGateModal(trussFlagged); return; }
       // Same IMS Calendar category the Build panel's date badge uses (King's = Saya day) - see dateDemand
       // in StudioBuild.jsx. The legacy dateTypes list is only a fallback when datePricing hasn't loaded.
       const dpSave = sharedFloralSettings?.datePricing;
@@ -8666,7 +8764,7 @@ export default function StudioApp() {
       setTimeout(() => setShowSoldConfetti(false), 4000);
       showMsg("🎉 Booking confirmed for " + client.name, "green");
     } catch (e) { showMsg("Error: " + (e.message || "unknown"), "red"); }
-  }, [scanOutOfStockElements, saveSession, authUser, saveClientLedger, clientName, clientDate, venue, dateTypes, sharedFloralSettings, clientLedger,
+  }, [scanOutOfStockElements, scanTrussStockShortage, saveSession, authUser, saveClientLedger, clientName, clientDate, venue, dateTypes, sharedFloralSettings, clientLedger,
     // Listed because the ₹0 check above reads it. Without this the callback holds whatever
     // eventGrandTotal was when it was last rebuilt — which could warn "nothing has been built" on a
     // deal that has since been priced, or worse, stay silent on one that has been emptied.
@@ -8687,6 +8785,8 @@ export default function StudioApp() {
       if (!client || client.status !== "booked") return false;
       const oosFlagged = scanOutOfStockElements();
       if (oosFlagged.length > 0) { setOosGateModal(oosFlagged); return false; }
+      const trussFlagged = scanTrussStockShortage();
+      if (trussFlagged.length > 0) { setTrussStockGateModal(trussFlagged); return false; }
       const result = saveSession();
       if (!result || !result.client) { showMsg("Save a client first", "red"); return false; }
       const { client: savedClient, ledger } = result;
@@ -8701,7 +8801,7 @@ export default function StudioApp() {
       showMsg(`Changes applied for ${freshClient.name}`, "green");
       return true;
     } catch (e) { showMsg("Error: " + (e.message || "unknown"), "red"); return false; }
-  }, [activeClient, scanOutOfStockElements, saveSession, showMsg, eventGrandTotal, saveClientLedger, pushEventOrderPlan]);
+  }, [activeClient, scanOutOfStockElements, scanTrussStockShortage, saveSession, showMsg, eventGrandTotal, saveClientLedger, pushEventOrderPlan]);
 
   // ── Load client session — VERBATIM ──
   const loadClientSession = useCallback((client, session, landingStep = 3, opts = {}) => {
@@ -12331,6 +12431,7 @@ export default function StudioApp() {
     dcCustomItems, setDcCustomItems: setDcCustomItemsAndFlush, dcCustomModal, setDcCustomModal,
     availModal, setAvailModal, openAvailModal, saveAvailPick, saveAvailSplit,
     oosGateModal, setOosGateModal, openOosFix, kitPartShorts,
+    trussStockGateModal, setTrussStockGateModal,
     dcSwapSearch, setDcSwapSearch, dcSwapPicked, setDcSwapPicked, dcSwapMode, setDcSwapMode, dcSwapSplitQty, setDcSwapSplitQty,
     // pricing helpers
     rcIsSMB, buildZoneConfig, getFloralMode, applyFloralRatio, getElPrice, getElPriceForFn, calcElsCost, calcElsCostForFn, rcCostPctForSub,

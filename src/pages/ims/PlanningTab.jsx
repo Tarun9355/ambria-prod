@@ -2,9 +2,7 @@ import { useState, useEffect } from "react";
 import { Tabs } from "../../components/ui";
 import PaintPlanningTab from "./PaintPlanningTab.jsx";
 import AdminSettingsTab from "./AdminSettingsTab.jsx";
-import TrussPlanningTab from "./TrussPlanningTab.jsx";
-import PlatformPlanningTab from "./PlatformPlanningTab.jsx";
-import BattaPlanningTab from "./BattaPlanningTab.jsx";
+import StructurePlanningTab from "./StructurePlanningTab.jsx";
 import DepartmentOpsTab from "./DepartmentOpsTab.jsx";
 
 // Faithful to the reference PlanningTab wrapper (sub-tabs: Truss / Paint / Truss&Batta /
@@ -24,9 +22,7 @@ export default function PlanningTab({ projects, functions, setFunctions, invento
   // here and update that list in the same change.
   const allTabs = [
     { id: "deptops", label: "🏦 Dept Ops" },
-    { id: "truss", label: "🏗️ Truss" },
-    { id: "platform", label: "🛏️ Platform" },
-    { id: "batta", label: "🧵 Batta" },
+    { id: "structure", label: "🏗️ Truss/Platform/Batta" },
     { id: "paint", label: "🎨 Paint" },
     { id: "trussbatta", label: "🏗️ Truss & Batta Config" },
     { id: "platformconfig", label: "🛏️ Platform Config" },
@@ -65,9 +61,7 @@ export default function PlanningTab({ projects, functions, setFunctions, invento
         <div ref={setPickerSlot} className="sm:hidden shrink-0 empty:hidden" />
       </div>
       {sub === "deptops" && <DepartmentOpsTab pickerSlot={pickerSlot} eventOrders={eventOrders} setEventOrders={setEventOrders} inventory={inventory} setInventory={setInventory} blocks={blocks} settings={settings} setSettings={setSettings} trussInv={trussInv} setTrussInv={setTrussInv} authUser={authUser} amendRequests={amendRequests} focusEventId={focusEventId} focusSearch={focusSearch} focusLeadEntry={focusLeadEntry} onFocusHandled={onFocusHandled} onGoToCalendar={onGoToCalendar} autoPdfFor={autoPdfFor} onAutoPdfDone={onAutoPdfDone} supervisors={supervisors} rateCardCategories={rateCardCategories} />}
-      {sub === "truss" && <TrussPlanningTab trussAlloc={trussAlloc} setTrussAlloc={setTrussAlloc} trussInv={trussInv} eventOrders={eventOrders} authUser={authUser} />}
-      {sub === "platform" && <PlatformPlanningTab platformAlloc={platformAlloc} setPlatformAlloc={setPlatformAlloc} trussInv={trussInv} authUser={authUser} />}
-      {sub === "batta" && <BattaPlanningTab battaAlloc={battaAlloc} setBattaAlloc={setBattaAlloc} trussInv={trussInv} authUser={authUser} />}
+      {sub === "structure" && <StructurePlanningTab trussAlloc={trussAlloc} setTrussAlloc={setTrussAlloc} platformAlloc={platformAlloc} setPlatformAlloc={setPlatformAlloc} battaAlloc={battaAlloc} setBattaAlloc={setBattaAlloc} trussInv={trussInv} eventOrders={eventOrders} authUser={authUser} />}
       {sub === "paint" && <PaintPlanningTab projects={projects} functions={functions} inventory={inventory} settings={settings} />}
       {sub === "trussbatta" && <AdminSettingsTab mode="trussbatta" settings={settings} setSettings={setSettings} studio={studio} trussInv={trussInv} setTrussInv={setTrussInv} />}
       {sub === "platformconfig" && <AdminSettingsTab mode="platformconfig" settings={settings} setSettings={setSettings} studio={studio} trussInv={trussInv} setTrussInv={setTrussInv} />}

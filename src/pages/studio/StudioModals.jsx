@@ -78,6 +78,9 @@ export default function StudioModals({ ctx }) {
     // Pre-Sold gate (markSold's scanOutOfStockElements, StudioApp.jsx) — a hard block, not a
     // warning, so closing it just cancels the Sold confirm rather than letting it proceed.
     oosGateModal, setOosGateModal, openOosFix,
+    // Pre-Sold gate #2 (markSold's scanTrussStockShortage, StudioApp.jsx) — truss/platform/batta
+    // stock instead of a tagged inventory item. Same hard-block treatment, no per-item fix button.
+    trussStockGateModal, setTrussStockGateModal,
     // fabricPickerTarget
     fabricPickerTarget, setFabricPickerTarget, fnBuilds, setFnBuilds,
     zoneConfig, setZoneConfig, libItems,
@@ -480,6 +483,36 @@ export default function StudioModals({ ctx }) {
             </div>
             <div style={{padding:"12px 20px",borderTop:`1px solid ${border}`,textAlign:"right"}}>
               <button onClick={() => setOosGateModal(null)} style={{padding:"8px 16px",borderRadius:8,border:`1px solid ${border}`,background:"transparent",color:textS,fontSize:12,fontWeight:600,cursor:"pointer"}}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Pre-Sold gate #2 — markSold/applyBookedChanges (StudioApp.jsx) scan the whole build's
+          truss/platform/batta demand against each date's REAL stock pool (scanTrussStockShortage)
+          and open this instead of the usual confirm dialog when selling this deal would push a
+          date's pillars/beams, platform sqft, or batta RFT past what's actually in stock for that
+          material. No per-row fix button, unlike the OOS gate above — resolving this means picking a
+          smaller/different-material truss or platform, or a department head sourcing more stock, not
+          swapping one inventory item for another. Closing it just cancels the confirm. */}
+      {trussStockGateModal && trussStockGateModal.length > 0 && (
+        <div onClick={() => setTrussStockGateModal(null)} style={{position:"fixed",inset:0,zIndex:9400,background:"rgba(10,10,20,0.85)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+          <div onClick={e => e.stopPropagation()} style={{width:"min(520px, 100%)",maxHeight:"80vh",background:isDark?"#0F0F1A":"#fff",borderRadius:14,border:`1px solid ${border}`,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+            <div style={{padding:"18px 20px",borderBottom:`1px solid ${border}`}}>
+              <div style={{fontSize:16,fontWeight:700,color:"#EF4444",display:"flex",alignItems:"center",gap:8}}>🏗️ Can't confirm — truss/platform/batta stock short</div>
+              <div style={{fontSize:12.5,color:textS,marginTop:6,lineHeight:1.5}}>Confirming this booking would put one of these dates over the real stock available. Reduce the size/qty, pick a different material, or check with a department head about sourcing more before this deal can be marked Sold.</div>
+            </div>
+            <div style={{padding:"4px 20px",overflowY:"auto",flex:1}}>
+              {trussStockGateModal.map((f, i) => (
+                <div key={i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"10px 0",borderBottom:i<trussStockGateModal.length-1?`1px solid ${border}`:"none"}}>
+                  <div style={{minWidth:0,fontSize:13,fontWeight:600,color:textP,whiteSpace:"normal"}}>
+                    {f.emoji} {f.date} — short {f.detail}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div style={{padding:"12px 20px",borderTop:`1px solid ${border}`,textAlign:"right"}}>
+              <button onClick={() => setTrussStockGateModal(null)} style={{padding:"8px 16px",borderRadius:8,border:`1px solid ${border}`,background:"transparent",color:textS,fontSize:12,fontWeight:600,cursor:"pointer"}}>Close</button>
             </div>
           </div>
         </div>
