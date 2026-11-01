@@ -33,7 +33,7 @@ import { buildFabricGroups, foldFabricLines } from "../../lib/ims/fabricGroups";
 import { mandiHow } from "../../lib/ims/floralHow";
 import { buildEventSwap, swappedRecipeFlower } from "../../lib/ims/mandiSwap";
 import { realLineTaker } from "../../lib/ims/floralBook";
-import { pdfT, pdfDate, pdfDateTime, hindiReportHtml } from "../../lib/ims/pdfI18n";
+import { pdfT, pdfDate, pdfDateTime, hindiReportHtml, HI_FONT_FAMILIES } from "../../lib/ims/pdfI18n";
 import PdfLangToggle from "./PdfLangToggle";
 import { splitCrewByDept } from "../../lib/ims/crewSplit";
 
@@ -5036,6 +5036,26 @@ ${!combined && fabRows.length ? sect(t("Fabric required vs available"), table([t
         } catch { /* fallback stack is fine */ }
       }
       if (doc.fonts?.ready) { try { await doc.fonts.ready; } catch { /* font API absent — the fallback stack is fine */ } }
+      // ── THE DEVANAGARI FACES IN THIS PAGE TOO ── html2canvas draws onto a canvas of THIS document, each word at
+      // the spot the report laid it out. With the Noto faces loaded only in the report's iframe, the canvas drew
+      // Hindi in a wider system face, every word ran over the space after it and the spacing vanished
+      // ("फ़र्नीचरकाकोईआइटमनहीं"). The house fonts already load here through the app's own CSS; these are added once.
+      if (pdfLang === "hi") {
+        if (!document.querySelector('link[data-pdf-hi-fonts]')) {
+          const l = document.createElement("link");
+          l.rel = "stylesheet";
+          l.href = "https://fonts.googleapis.com/css2?display=swap" + HI_FONT_FAMILIES;
+          l.setAttribute("data-pdf-hi-fonts", "");
+          document.head.appendChild(l);
+          await capped(new Promise(r => { l.onload = r; l.onerror = r; }), 3000);
+        }
+        if (document.fonts?.load) {
+          try {
+            await capped(Promise.all(["400 11px", "600 11px", "700 11px"].map(w => document.fonts.load(`${w} "Noto Sans Devanagari"`, "कि"))
+              .concat(["600 16px", "700 38px"].map(w => document.fonts.load(`${w} "Noto Serif Devanagari"`, "कि")))), 3000);
+          } catch { /* the system Devanagari face is the fallback */ }
+        }
+      }
 
 
       // The zone pages are mostly photos, set as CSS backgrounds — which nothing waits for. Load
