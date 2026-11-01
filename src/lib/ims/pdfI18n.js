@@ -99,6 +99,10 @@ export const PDF_HI = {
   "Wall Masking": "वॉल मास्किंग",
   "Colour not picked": "रंग नहीं चुना",
   "Repeat": "रिपीट",
+  "Status": "स्थिति",
+  "Reused from {fn}": "{fn} से दोबारा इस्तेमाल",
+  "the earlier function": "पिछला फंक्शन",
+  "Fixed at venue ({n} standing)": "वेन्यू पर फिक्स ({n} खड़े)",
 
   // The zone strip
   "Truss": "ट्रस",

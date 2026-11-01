@@ -10,7 +10,7 @@ import { TabsMenu, useConfirm } from "../../components/ui";
 import { IconPrinter } from "../../components/icons";
 import { hasIMSPerm } from "../../lib/ims/constants";
 import { fetchOpsExpenses } from "../../lib/ims/opsExpenses";
-import { venueWithParent } from "../../lib/ims/fixedVenues";
+import { venueWithParent, standingQty } from "../../lib/ims/fixedVenues";
 import { ZONE_META, trussBaseArea, CARPET_OFF, carpetPricingFor } from "../../lib/studio/taxonomy";
 import { prefsOf, floorSqftOf } from "../../lib/studio/carpetPrefs";
 import { carpetFloorsOf, planCarpets, carpetKey, carpetStockFor, validDecision, carpetNotesForRows, carpetPrefNotesForRows } from "../../lib/ims/carpetPlan";
@@ -3837,8 +3837,38 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         });
       } catch { /* the zone pages print without the colours */ }
     }
+    // ── REPEAT / FIXED ON AN ITEM ── (owner ask 2026-11-01, like the fabric's ♻ Repeat) the crew sees which items need no fresh
+    // pull: ♻ Repeat (the item's own Repeat, else its zone's Elements chip - the rule Studio prices by), ♻ Reused from an EARLIER
+    // function of the deal at the same venue the same or the day before (the earlier one is not tagged - it is the one that brings
+    // them), and 📌 Fixed when the item is standing stock at this venue.
+    const DAY = 24 * 60 * 60 * 1000;
+    const normV = (v) => String(v || "").trim().toLowerCase();
+    const usedIdsOf = (f) => { const ids = new Set(); const en = f?.enabledEls || {};
+      Object.entries(f?.elements || {}).forEach(([zk, list]) => { if (en[zk] === false || !Array.isArray(list)) return; list.forEach(e => { const id = e?.invId || e?.imsId; if (id) ids.add(String(id)); }); });
+      return ids; };
+    const reuseSourceOf = (fi) => {
+      const f = fns[fi]; const d = Date.parse(f?.date || ""); if (!Number.isFinite(d) || !f?.venue) return null;
+      const src = fns.map((g, j) => ({ g, j })).filter(({ g, j }) => {
+        if (j === fi || normV(g?.venue) !== normV(f.venue)) return false;
+        const dd = Math.round((d - Date.parse(g?.date || "")) / DAY);
+        return dd === 1 || (dd === 0 && j < fi);
+      });
+      if (!src.length) return null;
+      const ids = new Set(); src.forEach(({ g }) => usedIdsOf(g).forEach(id => ids.add(id)));
+      return { ids, label: src.map(({ g }) => g?.type || g?.name || "").filter(Boolean).join(" + ") };
+    };
+    const itemStatusOf = (fn, reuseSrc, zk, el, inv) => {
+      const out = [];
+      const zc = fn?.zones?.[zk];
+      if (typeof el?.repeatOverride === "boolean" ? el.repeatOverride : repeatCatFor(zc, "elements")) out.push("♻ " + t("Repeat"));
+      else if (inv && reuseSrc?.ids.has(String(inv.id))) out.push("♻ " + t("Reused from {fn}", { fn: reuseSrc.label || t("the earlier function") }));
+      const standing = inv ? standingQty(settings, fn?.venue, inv.id) : 0;
+      if (standing > 0) out.push("📌 " + t("Fixed at venue ({n} standing)", { n: standing }));
+      return out.join(" · ");
+    };
     fns.forEach((fn, fi) => {
       const els = fn?.elements || {};
+      const reuseSrc = reuseSourceOf(fi);
       // ── EVERY ZONE OF THE EVENT, NOT ONLY THE ONES THIS DEPARTMENT FILLS ──
       // A zone is described in three places and none of them is complete on its own: the element
       // lists, the zone config (dims, truss) and the chosen reference photos — a zone can easily
@@ -4019,9 +4049,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
             return { name: ci.name, per: Number(si.qty) || 0, unit: String(ci.unit || "").trim(), photo: invPhoto(ci, null),
               dept: heldByInv.has(String(ci.id)) ? dept : catToDept(ci.category || ci.cat) };
           }).filter(x => x && x.per > 0);
+          const statusTxt = arranged ? "" : itemStatusOf(fn, reuseSrc, zk, el, invU || inv);
           // a recipe with no inventory item shows the picture of its size, as Build does (photo below)
           merged.set(key, { name: arranged ? `${el?.name || inv?.name || t("Item")} — ${t("arranged separately")}` : (invU?.name || decName || el?.name || held?.name || t("Item")),
-            ...(arranged ? { shown: `${hn(el?.name || inv?.name) || t("Item")} — ${t("arranged separately")}` } : {}), qty, unit, deptTag, photo: arranged ? "" : (invPhoto(invU, invU === inv ? held : null) || (!invU && sizeData?.img) || ""), dims: arranged ? "" : invDims(invU), extra: (choiceExtra || floralMix) ? [...(choiceExtra || []), ...(floralMix ? [[t("Flowers"), floralMix]] : [])] : undefined, mix: floralMix, realPct, size: elSize, kit: held?.isKit ? (Array.isArray(held.components) ? held.components.length : 0) + (Array.isArray(held.recipeParts) ? held.recipeParts.length : 0) : liveKit.length, liveKit, recipe, paint: addPaint(new Map(), paint) });
+            ...(arranged ? { shown: `${hn(el?.name || inv?.name) || t("Item")} — ${t("arranged separately")}` } : {}), qty, unit, deptTag, photo: arranged ? "" : (invPhoto(invU, invU === inv ? held : null) || (!invU && sizeData?.img) || ""), dims: arranged ? "" : invDims(invU), extra: (choiceExtra || floralMix || statusTxt) ? [...(choiceExtra || []), ...(floralMix ? [[t("Flowers"), floralMix]] : []), ...(statusTxt ? [[t("Status"), statusTxt]] : [])] : undefined, mix: floralMix, realPct, size: elSize, kit: held?.isKit ? (Array.isArray(held.components) ? held.components.length : 0) + (Array.isArray(held.recipeParts) ? held.recipeParts.length : 0) : liveKit.length, liveKit, recipe, paint: addPaint(new Map(), paint) });
         });
         // ── CUSTOM CEILING ── not a zone element: it sits on the zone's truss rows (customCeilingItemId + its count
         // customCeilingQty, else one per truss), which reach IMS with the layout on every Build save. A card of its own on
