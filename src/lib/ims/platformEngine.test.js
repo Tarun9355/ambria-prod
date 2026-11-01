@@ -5,6 +5,7 @@ import {
   allocatePlatformForDate,
   applyPlatformOverridesToEvents,
   simulatePlatformImpact,
+  platformAvgRatePerSqft,
 } from "./platformEngine";
 
 describe("buildEventPlatformAllocation", () => {
@@ -162,5 +163,25 @@ describe("simulatePlatformImpact", () => {
   it("returns gray with no entered sqft", () => {
     const r = simulatePlatformImpact({ mode: "independent", zones: [] }, null, [], trussInv);
     expect(r.status).toBe("gray");
+  });
+});
+
+describe("platformAvgRatePerSqft", () => {
+  it("weights the average by each row's own stock sqft", () => {
+    const trussInv = { platforms: [
+      { lengthFt: 10, widthFt: 10, stock: 1, ratePerSqft: 10 }, // 100 sqft @ ₹10
+      { lengthFt: 10, widthFt: 10, stock: 3, ratePerSqft: 20 }, // 300 sqft @ ₹20
+    ] };
+    // (100*10 + 300*20) / (100+300) = 7000/400 = 17.5
+    expect(platformAvgRatePerSqft(trussInv, "iron")).toBeCloseTo(17.5);
+  });
+
+  it("returns 0 when the material has no configured rows", () => {
+    expect(platformAvgRatePerSqft({ platforms: [] }, "iron")).toBe(0);
+  });
+
+  it("falls back to Iron's rows for a material with nothing of its own", () => {
+    const trussInv = { platforms: [{ lengthFt: 5, widthFt: 5, stock: 2, ratePerSqft: 12 }] };
+    expect(platformAvgRatePerSqft(trussInv, "pole")).toBeCloseTo(12);
   });
 });

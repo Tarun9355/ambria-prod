@@ -102,6 +102,7 @@ import { deptMpReconciled, itemImsSubcat, lookupBySubcat, itemDimsText, walkKitU
 import { rentalSplit, availableAtVenue, isStandingAt, fixedVenueFor, standingReductionBySubcat, fixedVenueDealDiscount, reservedByVenueToday, venueSlackFor, combineAvailability } from "../../../lib/ims/fixedVenues";
 import { calcZoneFabric, resolveFabricAllocation, anchorsForPalette, anchorsForPaletteByMaterial, resolveTrussConfig, zoneTrussStandingDiscountDetail, trussDiscountedCosts, repeatCatFor, freshFnForManpower , dcFabricMultOf, trussInvForMaterial } from "../../../lib/studio/pricing";
 import { resolveBeamSegment, resolvePillarHeight } from "../../../lib/ims/trussEngine";
+import { platformAvgRatePerSqft } from "../../../lib/ims/platformEngine";
 import { carpetPricingFor, CARPET_OFF, carpetTakesStockPick } from "../../../lib/studio/taxonomy";
 import { qtyUsedElsewhereInDealCheck, netOwnReservedBlocksLive } from "../../../lib/studio/dealAvailability";
 import { isHiddenSubcat, oosCostPctFor, canFulfillShortfall } from "../../../lib/rateCard";
@@ -1144,26 +1145,47 @@ export default function DealCheckOverlay({ ctx }) {
               }
             } catch {}
           });
-          // Platform + carpet → rental
+          // Platform → rental. Owner call (2026-11-01): platform is no longer tracked via the
+          // TEN-00008/TEN-00009 Fatta/Stand inventory items at all (those are being deleted) —
+          // every zone's platform sqft (floorDims.L × W × plQty, only when a Height band is picked)
+          // now costs off Platform Config's own stock-weighted ₹/sqft for that material
+          // (platformAvgRatePerSqft, platformEngine.js), same "Ambria's own cost" role the Fatta/
+          // Stand rental rates played before. One row per material actually used, not per zone — the
+          // new model is one aggregate sqft pool per material, not per-piece, so there's no finer
+          // per-zone split to show (see platformEngine.js's own header comment on why).
           try {
-            const pp = buildPlatformPlan(fns, dealCheckData);
-            if (pp) {
-              const fattaR = pp.fattaItem ? imsField.rentalCost(pp.fattaItem) : 0;
-              const standR = pp.standItem ? imsField.rentalCost(pp.standItem) : 0;
-              // Fatta and Stand are two different IMS items (TEN-00008/TEN-00009 — see pricing.js's own
-              // comment) at two different rental rates, so a single combined "Platform (fatta+stand)"
-              // row — one qty that added pieces of each together, one rate that could only ever read
-              // ₹0 for a mix of two rates — told ops a total ₹ with no usable piece count for either.
-              // Two rows, same names Deal Check's own Inventory tab already uses for these items
-              // (Platform Fatta / Platform Stand), each with its real qty and rate.
-              Object.entries(pp.perZone || {}).forEach(([k, z]) => {
-                const pc = (z.fattas || 0) * fattaR + (z.stands || 0) * standR;
-                rental += pc; const pfi = Number(k.split("|")[0]); if (byFn[pfi]) byFn[pfi].rental += pc; addD("Tenting", "rental", pc);
-                if (!deptInv["Tenting"]) return;
-                if ((z.fattas || 0) > 0) deptInv["Tenting"].push({ name: "Platform Fatta", photo: "", qty: z.fattas, unit: fattaR, total: Math.round((z.fattas || 0) * fattaR), sub: "platform structure" });
-                if ((z.stands || 0) > 0) deptInv["Tenting"].push({ name: "Platform Stand", photo: "", qty: z.stands, unit: standR, total: Math.round((z.stands || 0) * standR), sub: "platform structure" });
-              }); // platform → Tenting
-            }
+            // sqft by function, then by material — the per-function split falls out of this directly
+            // (no proportional-share math needed), and summing across functions per material gives
+            // the one row per material the Tenting rollup below needs.
+            const sqftByFnMat = {};
+            fns.forEach((fn, fnIdx) => {
+              if (!fn?.zoneConfig || !fn?.enabledEls) return;
+              Object.keys(fn.enabledEls).filter(k => fn.enabledEls[k]).forEach(zk => {
+                const zc = fn.zoneConfig[zk]; if (!zc) return;
+                [{ plH: zc.plH, floorDims: zc.floorDims || {}, plQty: zc.plQty, trussMaterial: zc.trussMaterial },
+                  ...(zc.extraPlatformRows || []).map(r => ({ ...r, trussMaterial: r.trussMaterial || zc.trussMaterial }))].forEach(row => {
+                  if (!row.plH) return;
+                  const L = Number(row.floorDims?.L) || 0, W = Number(row.floorDims?.W) || 0;
+                  if (L <= 0 || W <= 0) return;
+                  const qty = Math.max(1, Math.round(Number(row.plQty) || 1));
+                  const mat = String(row.trussMaterial || "iron").toLowerCase();
+                  if (!sqftByFnMat[fnIdx]) sqftByFnMat[fnIdx] = {};
+                  sqftByFnMat[fnIdx][mat] = (sqftByFnMat[fnIdx][mat] || 0) + L * W * qty;
+                });
+              });
+            });
+            const matSqftTotal = {};
+            Object.entries(sqftByFnMat).forEach(([fnIdx, byMat]) => {
+              Object.entries(byMat).forEach(([mat, sqft]) => {
+                matSqftTotal[mat] = (matSqftTotal[mat] || 0) + sqft;
+                const pc = Math.round(sqft * platformAvgRatePerSqft(dealCheckData?.trussInv, mat));
+                rental += pc; if (byFn[fnIdx]) byFn[fnIdx].rental += pc; addD("Tenting", "rental", pc);
+              });
+            });
+            Object.entries(matSqftTotal).forEach(([mat, sqft]) => {
+              const rate = platformAvgRatePerSqft(dealCheckData?.trussInv, mat);
+              if (deptInv["Tenting"]) deptInv["Tenting"].push({ name: `Platform (${mat})`, photo: "", qty: Math.round(sqft * 100) / 100, unit: Math.round(rate), total: Math.round(sqft * rate), sub: "platform structure" });
+            });
           } catch {}
           try {
             const carpetMarkup = dealCheckData?.carpetFreshMarkup ?? 40;
