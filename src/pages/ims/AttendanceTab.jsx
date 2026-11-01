@@ -15,8 +15,8 @@ import LabourPunchPanel from "./LabourPunchPanel.jsx";
 import LabourAdminLog from "./LabourAdminLog.jsx";
 import { labourPunchDepts } from "../../lib/ims/labourAttendance";
 import {
-  IconUsers, IconClockAlert, IconHourglass, IconPlay, IconStop, IconClipboard, IconPin,
-  IconCamera, IconList, IconClipboardCheck, IconX, IconArrowRight,
+  IconHourglass, IconPlay, IconStop, IconClipboard, IconPin,
+  IconCamera, IconList, IconClipboardCheck, IconX, IconArrowRight, IconChevron, IconClock, IconCheck,
 } from "../../components/icons.jsx";
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -45,30 +45,11 @@ import {
 // ═══════════════════════════════════════════════════════════════════════════
 
 const fmtTime = (iso) => { try { return new Date(iso).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }); } catch { return "—"; } };
-
-// Fixed, fully-written-out class strings per variant — NOT built by concatenating a colour
-// variable into a template string. Tailwind's build only ever includes classes it can see
-// literally in source; a dynamically assembled "bg-" + colour + "-100" would vanish from the
-// shipped CSS the first time nothing else on the page happens to use that exact class already.
-const STAT_VARIANTS = {
-  green: { badge: "bg-green-50 text-green-600", value: "text-gray-900" },
-  amber: { badge: "bg-amber-50 text-amber-600", value: "text-gray-900" },
-  blue: { badge: "bg-blue-50 text-blue-600", value: "text-gray-900" },
+// Hours as "7h 05m" ("45m" under an hour).
+const fmtDur = (h) => {
+  const m = Math.max(0, Math.round((Number(h) || 0) * 60));
+  return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m`;
 };
-
-function StatCard({ variant, icon, label, value, sub }) {
-  const v = STAT_VARIANTS[variant];
-  return (
-    <div className="rounded-2xl bg-white ring-1 ring-gray-100 shadow-sm p-3 sm:p-4 transition duration-200 hover:shadow-xl hover:shadow-gray-400/30 hover:-translate-y-0.5">
-      <div className="flex items-center justify-between mb-2 sm:mb-3 gap-1">
-        <div className="text-[9px] sm:text-[10px] font-semibold text-gray-400 uppercase tracking-wide truncate">{label}</div>
-        <div className={"w-6 h-6 sm:w-7 sm:h-7 rounded-lg flex items-center justify-center shrink-0 " + v.badge}>{icon}</div>
-      </div>
-      <div className={"text-xl sm:text-2xl font-bold leading-none " + v.value}>{value}</div>
-      <div className="text-[10px] sm:text-[11px] text-gray-400 mt-1.5">{sub}</div>
-    </div>
-  );
-}
 
 export default function AttendanceTab({ authUser, settings, setSettings, users, view, setView, myLabourAccess = [], reloadLabourAccess }) {
   const isAdmin = (authUser?.role || "").toLowerCase() === "admin" || authUser?.id === "u_admin";
@@ -92,6 +73,9 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
   // "hidden lg:block" pairing below, the standard Tailwind way to make a collapse mobile-only).
   const [todayOpen, setTodayOpen] = useState(false);
   const savingRef = useRef(false);
+  // The clock the page reads (greeting, "worked today", the open session's length) - a minute is its finest step.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 30000); return () => clearInterval(t); }, []);
 
   // ── Live camera (photo step) ──
   // `<input capture>` only launches a camera on mobile — desktop Chrome/Edge on Windows just
@@ -302,11 +286,23 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
     // eslint-disable-next-line -- see the note above the Esc effect
   }, [flow?.step]);
 
-  if (!authUser) return <div className="text-center text-gray-400 py-20">Sign in to use Attendance.</div>;
+  if (!authUser) return <div className="text-center text-gray-500 py-20">Sign in to use Attendance.</div>;
 
   const state = currentState(dayPunches);
   const lastPunch = dayPunches[dayPunches.length - 1];
   const hasVideo = !!extractYouTubeId(myTraining.videoUrl);
+  // Worked today, ticking while punched in: the closed sessions plus the open one so far.
+  const openSince = state === "in" && lastPunch ? new Date(lastPunch.at).getTime() : null;
+  const workedToday = dayHours(dayPunches) + (openSince ? Math.max(0, now - openSince) / 3600000 : 0);
+  const firstIn = dayPunches.find((p) => p.type === "in");
+  const lastOut = state === "out" ? [...dayPunches].reverse().find((p) => p.type === "out") : null;
+  const hour = new Date(now).getHours();
+  const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+  const firstName = String(authUser.name || authUser.username || "").trim().split(/\s+/)[0];
+  // What the button will ask for, said before it is pressed: punch-in runs the briefing first.
+  const inSteps = [hasVideo && "watch the briefing", myTraining.questions?.length > 0 && "answer a short quiz", "take a selfie"].filter(Boolean);
+  const nextHint = state === "in" ? "A selfie punches you out."
+    : `You'll ${inSteps.length > 1 ? inSteps.slice(0, -1).join(", ") + " and " + inSteps[inSteps.length - 1] : inSteps[0]}.`;
 
   return (
     <div className="max-w-6xl mx-auto space-y-5">
@@ -315,87 +311,131 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
           the Back button returns to the punch screen. */}
       {!adminView && (
         <>
-          <div className="rounded-2xl p-8 sm:p-12 shadow-xl shadow-gray-300/50 ring-1 ring-black/5 transition duration-200 hover:shadow-2xl hover:shadow-gray-400/40 hover:-translate-y-0.5"
-            style={{ background: "linear-gradient(135deg, #EAF2FF 0%, #F4F8FF 55%, #FFFFFF 100%)" }}>
-            <div className="text-center max-w-md mx-auto">
-              <div className="text-xs text-gray-400 font-semibold uppercase tracking-[0.15em]">
-                {new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long" })}
-              </div>
-              <h2 className="text-4xl font-bold text-gray-900 tracking-tight mt-2">{authUser.name || authUser.username}</h2>
-              {loadingStatus ? (
-                <p className="text-sm text-gray-400 mt-3">Loading today's status…</p>
-              ) : loadError ? (
-                <p className="text-sm text-red-600 mt-3">{loadError}</p>
-              ) : (
-                <p className="text-sm text-gray-500 mt-3">
-                  {!lastPunch ? "Not punched in yet today"
-                    : state === "in" ? `Punched in at ${fmtTime(lastPunch.at)}`
-                    : `Punched out at ${fmtTime(lastPunch.at)}`}
-                </p>
-              )}
-              <button
-                disabled={loadingStatus}
-                onClick={() => startPunch(state === "in" ? "out" : "in")}
-                className={"mt-6 w-full sm:w-auto inline-flex items-center justify-center gap-2 px-12 py-4 rounded-xl font-semibold text-base text-white shadow-lg transition disabled:opacity-50 "
-                  + (state === "in" ? "bg-gray-800 hover:bg-gray-900" : "bg-green-600 hover:bg-green-700")}>
-                {state === "in" ? <IconStop size={16} /> : <IconPlay size={16} />}
-                {state === "in" ? "Punch Out" : "Punch In"}
-              </button>
-            </div>
-          </div>
-
-          {/* Nothing to show yet on a day with no punches at all — the timeline, stat cards, and
-              calendar only appear once today's first punch-in has actually happened. */}
-          {dayPunches.length > 0 && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              <div className="order-2 lg:order-1 lg:col-span-2 bg-white rounded-2xl shadow-sm ring-1 ring-gray-100 p-5 transition duration-200 hover:shadow-xl hover:shadow-gray-400/30 hover:-translate-y-0.5">
-                <button onClick={() => setTodayOpen((o) => !o)}
-                  className="w-full flex items-center justify-between mb-0 lg:mb-4 flex-wrap gap-2 lg:cursor-default lg:pointer-events-none">
-                  <div className="flex items-center gap-2 text-sm font-bold text-gray-800 uppercase tracking-wide">
-                    <IconList size={14} /> Today's Attendance
-                    <span className={"lg:hidden text-gray-400 text-xs transition-transform " + (todayOpen ? "rotate-180" : "")}>▾</span>
-                  </div>
-                  {/* Display only — the calendar below already lets a day be opened; this isn't a
-                      second date picker, just today's date shown the way the reference shows it. */}
-                  <div className="text-xs font-medium text-gray-500 border border-gray-200 rounded-lg px-3 py-1.5">
-                    {new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
-                  </div>
-                </button>
-                <div className={(todayOpen ? "block" : "hidden") + " lg:block mt-4 lg:mt-0"}>
-                  {dayPunches.map((p, i) => (
-                    <div key={p.id} className="relative flex items-start gap-3 pb-5 last:pb-0">
-                      {i < dayPunches.length - 1 && <div className="absolute left-4 top-9 bottom-0 w-px bg-gray-200" />}
-                      <div className={"w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 text-sm font-bold z-10 "
-                        + (p.type === "in" ? "bg-green-100 text-green-600" : "bg-red-100 text-red-500")}>
-                        {p.type === "in" ? "↘" : "↗"}
-                      </div>
-                      <div className="flex-1 flex items-center justify-between min-w-0 pt-1">
-                        <div className="min-w-0">
-                          <div className={"text-sm font-semibold " + (p.auto_closed ? "text-amber-600" : "text-gray-800")}>
-                            {punchLabel(p)}
-                          </div>
-                          <div className="text-xs text-gray-400 truncate flex items-center gap-1"><IconPin size={11} /> {punchLocationLabel(p)}</div>
-                        </div>
-                        <div className="text-sm text-gray-500 flex-shrink-0 pl-3">{fmtTime(p.at)}</div>
-                      </div>
-                    </div>
-                  ))}
+          {/* ── TODAY ── who, where they stand and the one action; then today's three numbers. */}
+          <section aria-label="Today" className="rounded-2xl bg-white ring-1 ring-gray-200/70 shadow-sm overflow-hidden">
+            <div className="p-5 sm:p-7 flex flex-col md:flex-row md:items-center md:justify-between gap-6">
+              <div className="min-w-0">
+                <p className="text-sm text-gray-500">{new Date(now).toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</p>
+                <h2 className="mt-1 text-2xl sm:text-3xl font-semibold tracking-tight text-gray-900 truncate">{greeting}{firstName ? `, ${firstName}` : ""}</h2>
+                <div className="mt-3" aria-live="polite">
+                  {loadingStatus ? (
+                    <span className="inline-flex items-center gap-2 text-sm text-gray-500">
+                      <span className="w-3.5 h-3.5 rounded-full border-2 border-gray-300 border-t-blue-600 animate-spin" aria-hidden="true" />
+                      Checking today's status…
+                    </span>
+                  ) : loadError ? (
+                    <span className="inline-flex items-center gap-2 rounded-full bg-red-50 ring-1 ring-red-200 px-3 py-1 text-sm font-medium text-red-700">{loadError}</span>
+                  ) : state === "in" ? (
+                    <span className="inline-flex items-center gap-2 rounded-full bg-green-50 ring-1 ring-green-200 px-3 py-1 text-sm font-medium text-green-800">
+                      <span className="relative flex w-2 h-2" aria-hidden="true">
+                        <span className="absolute inline-flex h-full w-full rounded-full bg-green-500 opacity-60 motion-safe:animate-ping" />
+                        <span className="relative inline-flex w-2 h-2 rounded-full bg-green-600" />
+                      </span>
+                      On duty since {fmtTime(lastPunch.at)}
+                    </span>
+                  ) : lastPunch ? (
+                    <span className="inline-flex items-center gap-2 rounded-full bg-gray-100 ring-1 ring-gray-200 px-3 py-1 text-sm font-medium text-gray-700">
+                      <span className="w-2 h-2 rounded-full bg-gray-400" aria-hidden="true" />
+                      {lastPunch.auto_closed ? "Auto punched out" : "Punched out"} at {fmtTime(lastPunch.at)}
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-2 rounded-full bg-amber-50 ring-1 ring-amber-200 px-3 py-1 text-sm font-medium text-amber-800">
+                      <span className="w-2 h-2 rounded-full bg-amber-500" aria-hidden="true" />
+                      Not punched in yet
+                    </span>
+                  )}
                 </div>
               </div>
-
-              <div className="order-1 lg:order-2 space-y-4">
-                <MyAttendanceCalendar authUser={authUser} />
+              <div className="flex flex-col items-stretch md:items-end gap-2 md:shrink-0">
+                <button
+                  disabled={loadingStatus}
+                  onClick={() => startPunch(state === "in" ? "out" : "in")}
+                  className={"inline-flex items-center justify-center gap-2.5 min-h-12 px-8 rounded-xl text-base font-semibold text-white shadow-sm transition-[background-color,transform] duration-150 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed "
+                    + (state === "in" ? "bg-gray-900 hover:bg-gray-800 focus-visible:ring-gray-900" : "bg-green-600 hover:bg-green-700 focus-visible:ring-green-600")}>
+                  {state === "in" ? <IconStop size={16} /> : <IconPlay size={16} />}
+                  {state === "in" ? "Punch Out" : "Punch In"}
+                </button>
+                {!loadingStatus && !loadError && <p className="text-xs text-gray-500 text-center md:text-right">{nextHint}</p>}
               </div>
             </div>
-          )}
+            <dl className="grid grid-cols-3 border-t border-gray-100 bg-gray-50/70 divide-x divide-gray-100">
+              {[
+                ["First in", firstIn ? fmtTime(firstIn.at) : "—"],
+                [state === "in" ? "Status" : "Last out", state === "in" ? "Working" : lastOut ? fmtTime(lastOut.at) : "—"],
+                ["Worked today", dayPunches.length ? fmtDur(workedToday) : "—"],
+              ].map(([k, v]) => (
+                <div key={k} className="px-4 sm:px-7 py-3.5 min-w-0">
+                  <dt className="text-xs text-gray-500 truncate">{k}</dt>
+                  <dd className="mt-0.5 text-base sm:text-lg font-semibold text-gray-900 tabular-nums truncate">{v}</dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 items-start">
+            {/* ── TODAY'S PUNCHES ── a timeline, with the time spent between each in and out. */}
+            <section aria-label="Today's punches" className="order-2 lg:order-1 lg:col-span-2 rounded-2xl bg-white ring-1 ring-gray-200/70 shadow-sm">
+              <button onClick={() => setTodayOpen((o) => !o)} aria-expanded={todayOpen}
+                className="w-full flex items-center justify-between gap-3 px-5 py-4 text-left lg:cursor-default lg:pointer-events-none">
+                <span className="flex items-center gap-2 text-sm font-semibold text-gray-900">
+                  <IconList size={15} /> Today's punches
+                  {dayPunches.length > 0 && <span className="rounded-md bg-gray-100 px-1.5 py-0.5 text-xs font-semibold text-gray-600 tabular-nums">{dayPunches.length}</span>}
+                </span>
+                <span className={"lg:hidden text-gray-400 transition-transform duration-200 " + (todayOpen ? "rotate-180" : "")} aria-hidden="true"><IconChevron size={16} /></span>
+              </button>
+              <div className={(todayOpen ? "block" : "hidden") + " lg:block border-t border-gray-100 px-5 py-4"}>
+                {!dayPunches.length ? (
+                  <div className="py-8 text-center">
+                    <div className="mx-auto w-10 h-10 rounded-full bg-gray-100 text-gray-400 flex items-center justify-center"><IconClock size={18} /></div>
+                    <p className="mt-3 text-sm font-medium text-gray-700">No punches yet today</p>
+                    <p className="mt-1 text-xs text-gray-500">Your punch-in and punch-out times show up here.</p>
+                  </div>
+                ) : (
+                  <ol>
+                    {dayPunches.map((p, i) => {
+                      const next = dayPunches[i + 1];
+                      const isIn = p.type === "in";
+                      const endMs = next?.type === "out" ? new Date(next.at).getTime() : (isIn && !next ? now : null);
+                      const span = isIn && endMs != null ? endMs - new Date(p.at).getTime() : null;
+                      return (
+                        <li key={p.id} className="relative flex gap-3.5 pb-5 last:pb-0">
+                          {i < dayPunches.length - 1 && <span aria-hidden="true" className="absolute left-[15px] top-9 bottom-1 w-px bg-gray-200" />}
+                          <span aria-hidden="true" className={"relative z-10 w-8 h-8 shrink-0 rounded-full ring-4 ring-white flex items-center justify-center "
+                            + (isIn ? "bg-green-50 text-green-700" : p.auto_closed ? "bg-amber-50 text-amber-700" : "bg-gray-100 text-gray-600")}>
+                            {isIn ? <IconPlay size={13} /> : <IconStop size={13} />}
+                          </span>
+                          <div className="min-w-0 flex-1 pt-1">
+                            <div className="flex items-baseline justify-between gap-3">
+                              <span className={"text-sm font-semibold " + (p.auto_closed ? "text-amber-700" : "text-gray-900")}>{punchLabel(p)}</span>
+                              <time className="shrink-0 text-sm font-medium text-gray-700 tabular-nums" dateTime={p.at}>{fmtTime(p.at)}</time>
+                            </div>
+                            <div className="mt-0.5 flex items-center gap-1 text-xs text-gray-500 min-w-0"><IconPin size={11} /><span className="truncate">{punchLocationLabel(p)}</span></div>
+                            {span != null && span > 0 && (
+                              <div className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-gray-50 ring-1 ring-gray-100 px-2 py-0.5 text-xs text-gray-600 tabular-nums">
+                                <IconHourglass size={11} /> {fmtDur(span / 3600000)}{next ? "" : " so far"}
+                              </div>
+                            )}
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ol>
+                )}
+              </div>
+            </section>
+
+            <div className="order-1 lg:order-2">
+              <MyAttendanceCalendar authUser={authUser} />
+            </div>
+          </div>
         </>
       )}
 
       {adminView && (isAdmin || (adminView === "labour" && canLabourPunch)) && (
         <div className={adminView === "labour" ? (isAdmin ? "max-w-6xl" : "max-w-3xl") : adminView === "log" ? "max-w-3xl" : adminView === "quiz" || adminView === "labourlog" ? "max-w-4xl" : "max-w-2xl"}>
           <button onClick={() => setAdminView(null)}
-            className="flex items-center gap-1.5 text-sm font-semibold text-gray-500 bg-white ring-1 ring-gray-200 shadow-sm rounded-xl px-3 py-1.5 mb-3 hover:bg-gray-50 hover:text-gray-700 transition">
-            ← Back to Attendance
+            className="inline-flex items-center gap-1.5 text-sm font-semibold text-gray-600 bg-white ring-1 ring-gray-200 shadow-sm rounded-xl pl-2 pr-3 py-1.5 mb-3 hover:bg-gray-50 hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 transition-colors">
+            <span className="rotate-90" aria-hidden="true"><IconChevron size={15} /></span> Back to Attendance
           </button>
           {adminView === "quiz" && <QuizSetupPanel settings={settings} />}
           {adminView === "log" && <AttendanceAdminLog users={users} />}
@@ -415,20 +455,21 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
         // — a second one for a "mobile version" would silently steal videoRef's stream from it.
         <div className={"fixed inset-0 z-[9000] bg-black/70 backdrop-blur-sm flex items-center justify-center "
           + (flow.step === "photo" ? "p-0 sm:p-4" : "p-4")}>
-          <div className={"bg-white shadow-2xl w-full overflow-y-auto relative "
+          <div role="dialog" aria-modal="true" aria-label={flow.type === "in" ? "Punch in" : "Punch out"}
+            className={"bg-white shadow-2xl w-full overflow-y-auto relative "
             + (flow.step === "photo"
               ? "h-full sm:h-auto flex flex-col sm:block sm:max-h-[90vh] sm:max-w-md rounded-none sm:rounded-2xl p-5 sm:p-6"
               : "max-h-[90vh] rounded-2xl p-6 " + ((flow.step === "video" || flow.step === "quiz") ? "max-w-2xl" : "max-w-md"))}>
             {flow.step !== "saving" && (
               <button onClick={() => setFlow(null)}
-                className="absolute top-4 right-4 w-9 h-9 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-500 flex items-center justify-center transition z-10" title="Cancel (Esc)">
+                aria-label="Cancel (Esc)" className="absolute top-4 right-4 w-9 h-9 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-500 hover:text-gray-800 flex items-center justify-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 z-10" title="Cancel (Esc)">
                 <IconX size={16} />
               </button>
             )}
 
             {(flow.step === "photo" || flow.step === "video" || flow.step === "quiz") ? (
               <div className="flex items-start gap-3 pr-10">
-                <div className="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
+                <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
                   {flow.step === "photo" && <IconCamera size={22} />}
                   {flow.step === "video" && <IconPlay size={22} />}
                   {flow.step === "quiz" && <IconClipboardCheck size={22} />}
@@ -437,7 +478,7 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
                   <h3 className="text-xl font-bold text-gray-900">{flow.type === "in" ? "Punch In" : "Punch Out"}</h3>
                   <p className="text-sm text-gray-500 mt-0.5">
                     {flow.step === "photo" && `Take a photo of yourself to ${flow.type === "in" ? "punch in" : "punch out"}.`}
-                    {flow.step === "video" && "Watch this, then answer a couple of questions."}
+                    {flow.step === "video" && (flow.questions.length ? "Watch this, then answer a couple of questions." : "Watch this before you're punched in.")}
                     {flow.step === "quiz" && "Quick check before you're punched in."}
                   </p>
                 </div>
@@ -448,6 +489,27 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
               </h3>
             )}
 
+            {/* Where you are in a punch-in: briefing, quiz (when one is set), selfie. Punch-out is one step. */}
+            {flow.needsTraining && (() => {
+              const steps = [["video", "Briefing"], ...(flow.questions.length ? [["quiz", "Quiz"]] : []), ["photo", "Selfie"]];
+              const at = flow.step === "video" ? 0 : flow.step === "quiz" ? 1 : steps.length - 1;
+              const done = (i) => i < at || flow.step === "saving";
+              return (
+                <ol className="mt-5 flex items-center gap-2" aria-label="Punch-in steps">
+                  {steps.map(([k, label], i) => (
+                    <li key={k} className="flex items-center gap-2 min-w-0 flex-1 last:flex-none" aria-current={i === at ? "step" : undefined}>
+                      <span className={"shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-semibold transition-colors "
+                        + (done(i) ? "bg-green-600 text-white" : i === at ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-500")}>
+                        {done(i) ? <IconCheck size={12} /> : i + 1}
+                      </span>
+                      <span className={"text-xs font-medium truncate " + (i === at ? "text-gray-900" : "text-gray-500")}>{label}</span>
+                      {i < steps.length - 1 && <span aria-hidden="true" className={"h-px flex-1 min-w-3 " + (done(i) ? "bg-green-300" : "bg-gray-200")} />}
+                    </li>
+                  ))}
+                </ol>
+              );
+            })()}
+
             {flow.step === "photo" && (
               <div className="mt-4 flex-1 flex flex-col min-h-0 sm:flex-none sm:block">
                 {flow.photoDataUrl ? (
@@ -456,7 +518,7 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
                     <div className="absolute inset-0 flex items-center justify-center text-white text-sm font-medium">Checking photo…</div>
                   </div>
                 ) : cameraError ? (
-                  <label className="flex flex-col items-center justify-center gap-2 border-2 border-dashed border-gray-200 rounded-xl py-10 flex-1 sm:flex-none cursor-pointer hover:border-indigo-300 hover:bg-indigo-50/40 transition">
+                  <label className="flex flex-col items-center justify-center gap-2 border-2 border-dashed border-gray-200 rounded-xl py-10 flex-1 sm:flex-none cursor-pointer hover:border-blue-300 hover:bg-blue-50/40 transition">
                     <IconCamera size={28} />
                     <span className="text-sm font-semibold text-gray-600">Open Camera</span>
                     {cameraError === "denied" && (
@@ -485,7 +547,7 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
                 )}
                 {!flow.photoDataUrl && !cameraError && (
                   <button onClick={capturePhoto} disabled={!videoReady || !faceInOval}
-                    className="mt-4 w-full flex items-center justify-center gap-2 py-2.5 rounded-xl font-semibold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition flex-shrink-0">
+                    className="mt-4 w-full flex items-center justify-center gap-2 py-2.5 rounded-xl font-semibold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition flex-shrink-0">
                     <IconCamera size={16} /> Take Photo
                   </button>
                 )}
@@ -509,7 +571,7 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
                 <button
                   disabled={hasVideo && !flow.videoDone && !flow.videoBroken}
                   onClick={() => setFlow((f) => f && ({ ...f, step: f.questions.length ? "quiz" : "photo", videoRetryNote: false }))}
-                  className="mt-4 w-full py-2.5 rounded-xl font-semibold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition">
+                  className="mt-4 w-full py-2.5 rounded-xl font-semibold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition">
                   Continue
                 </button>
               </div>
@@ -527,7 +589,7 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
                         className={"rounded-2xl p-5 transition " + (wrong ? "bg-red-50 ring-1 ring-red-200" : "bg-gray-50")}>
                         <div className="flex items-start gap-3 mb-3">
                           <span className={"shrink-0 w-8 h-8 rounded-xl flex items-center justify-center text-sm font-bold "
-                            + (wrong ? "bg-red-100 text-red-600" : "bg-indigo-100 text-indigo-600")}>
+                            + (wrong ? "bg-red-100 text-red-600" : "bg-blue-100 text-blue-600")}>
                             {qi + 1}
                           </span>
                           <div className="min-w-0 pt-0.5">
@@ -550,10 +612,10 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
                               return (
                                 <label key={oi} onClick={pick}
                                   className={"flex items-center gap-3 rounded-xl px-4 py-3 bg-white ring-1 cursor-pointer transition "
-                                    + (checked ? "ring-indigo-400 shadow-sm" : "ring-gray-200 hover:ring-gray-300")}>
+                                    + (checked ? "ring-blue-400 shadow-sm" : "ring-gray-200 hover:ring-gray-300")}>
                                   <span className={"shrink-0 w-5 h-5 border-2 flex items-center justify-center transition "
                                     + (type === "multi" ? "rounded-md" : "rounded-full")
-                                    + " " + (checked ? "border-indigo-600 bg-indigo-600" : "border-gray-300")}>
+                                    + " " + (checked ? "border-blue-600 bg-blue-600" : "border-gray-300")}>
                                     {checked && <span className={"bg-white " + (type === "multi" ? "w-2.5 h-2.5 rounded-sm" : "w-2 h-2 rounded-full")} />}
                                   </span>
                                   <span className="text-sm text-gray-800">
@@ -567,11 +629,11 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
                         )}
                         {type === "fill_blank" && (
                           <input value={flow.answers[q.id] || ""} onChange={(e) => setAnswer(e.target.value)}
-                            placeholder="Type your answer" className="ml-11 w-[calc(100%-2.75rem)] border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300" />
+                            placeholder="Type your answer" className="ml-11 w-[calc(100%-2.75rem)] border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-300" />
                         )}
                         {type === "short_answer" && (
                           <textarea value={flow.answers[q.id] || ""} onChange={(e) => setAnswer(e.target.value)}
-                            placeholder="Write your answer" rows={2} className="ml-11 w-[calc(100%-2.75rem)] border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300" />
+                            placeholder="Write your answer" rows={2} className="ml-11 w-[calc(100%-2.75rem)] border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-300" />
                         )}
                       </div>
                     );
@@ -584,7 +646,7 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
                   </p>
                 )}
                 <button onClick={submitQuiz}
-                  className="mt-5 w-full flex items-center justify-center gap-2 py-3 rounded-xl font-semibold text-white bg-indigo-600 hover:bg-indigo-700 shadow-sm transition">
+                  className="mt-5 w-full flex items-center justify-center gap-2 py-3 rounded-xl font-semibold text-white bg-blue-600 hover:bg-blue-700 shadow-sm transition">
                   Submit answers <IconArrowRight size={16} />
                 </button>
               </div>
@@ -592,7 +654,7 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
 
             {flow.step === "saving" && (
               <div className="mt-6 text-center text-gray-500 py-6">
-                <svg className="animate-spin mx-auto mb-2 text-indigo-500" width="28" height="28" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <svg className="animate-spin mx-auto mb-2 text-blue-500" width="28" height="28" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                   <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2.5" strokeOpacity="0.2" />
                   <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
                 </svg>
@@ -605,7 +667,7 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
                 <p className="text-sm text-red-600 mb-4">{flow.saveError}</p>
                 <div className="flex gap-2 justify-center">
                   <button onClick={() => setFlow(null)} className="px-4 py-2 rounded-lg text-sm font-medium bg-gray-100 hover:bg-gray-200 text-gray-700">Start over</button>
-                  <button onClick={() => setFlow((f) => f && ({ ...f, step: "saving", saveError: "" }))} className="px-4 py-2 rounded-lg text-sm font-medium bg-indigo-600 hover:bg-indigo-700 text-white">Retry</button>
+                  <button onClick={() => setFlow((f) => f && ({ ...f, step: "saving", saveError: "" }))} className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white">Retry</button>
                 </div>
               </div>
             )}
@@ -623,6 +685,13 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
 // so a Sunday or a company holiday with no punch reads the same as a genuine no-show. See dayStatus
 // in lib/ims/attendance.js. Owns its month's data once and renders both the stat cards row and the
 // calendar grid from it, rather than fetching the same month twice.
+const DAY_STATUS = {
+  closed: { dot: "bg-green-500", label: "Closed" },
+  open: { dot: "bg-amber-500", label: "Never punched out" },
+  "in-progress": { dot: "bg-blue-500", label: "Still in" },
+  absent: { dot: "bg-red-400", label: "Absent" },
+};
+
 function MyAttendanceCalendar({ authUser }) {
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
@@ -631,6 +700,7 @@ function MyAttendanceCalendar({ authUser }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [openDay, setOpenDay] = useState(null);
+  const [reload, setReload] = useState(0);
 
   useEffect(() => {
     if (!authUser?.id) return;
@@ -641,13 +711,14 @@ function MyAttendanceCalendar({ authUser }) {
       .catch((e) => { if (active) setError(e.message || "Couldn't load attendance"); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [authUser?.id, year, month]);
+  }, [authUser?.id, year, month, reload]);
 
   function shiftMonth(delta) {
     let m = month + delta, y = year;
     if (m < 1) { m = 12; y -= 1; } else if (m > 12) { m = 1; y += 1; }
     setMonth(m); setYear(y); setOpenDay(null);
   }
+  const isThisMonth = year === now.getFullYear() && month === now.getMonth() + 1;
 
   const byDate = groupPunchesByDate(rows);
   const today = todayStr();
@@ -662,90 +733,95 @@ function MyAttendanceCalendar({ authUser }) {
     totalHours += dayHours(dayRows);
   });
 
-  const dotProps = (status) => {
-    if (status === "closed") return { className: "bg-green-500" };
-    if (status === "open") return { className: "bg-amber-500" };
-    if (status === "in-progress") return { className: "bg-blue-500" };
-    if (status === "absent") return { className: "bg-red-500" };
-    return null;
-  };
-
   const cells = [...Array(firstWeekday).fill(null), ...Array.from({ length: daysInMonth }, (_, i) => i + 1)];
+  const navBtn = "w-8 h-8 rounded-lg flex items-center justify-center text-gray-500 hover:text-gray-900 hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 transition-colors";
 
   return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-3 gap-2 sm:gap-3">
-        <StatCard variant="green" icon={<IconUsers size={15} />} label="Present" value={loading ? "…" : presentDays} sub="Days this month" />
-        <StatCard variant="amber" icon={<IconClockAlert size={15} />} label="Incomplete" value={loading ? "…" : incompleteDays} sub="Never punched out" />
-        <StatCard variant="blue" icon={<IconHourglass size={15} />} label="Hours" value={loading ? "…" : totalHours.toFixed(1)} sub="This month" />
+    <section aria-label="This month" className="rounded-2xl bg-white ring-1 ring-gray-200/70 shadow-sm">
+      <div className="flex items-center justify-between gap-2 px-5 pt-4">
+        <h3 className="text-sm font-semibold text-gray-900" aria-live="polite">{monthLabel}</h3>
+        <div className="flex items-center gap-1">
+          {!isThisMonth && (
+            <button onClick={() => { setYear(now.getFullYear()); setMonth(now.getMonth() + 1); setOpenDay(null); }}
+              className="h-8 px-2.5 rounded-lg text-xs font-semibold text-blue-700 hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 transition-colors">Today</button>
+          )}
+          <button onClick={() => shiftMonth(-1)} aria-label="Previous month" className={navBtn}><span className="rotate-90"><IconChevron size={16} /></span></button>
+          <button onClick={() => shiftMonth(1)} aria-label="Next month" className={navBtn}><span className="-rotate-90"><IconChevron size={16} /></span></button>
+        </div>
       </div>
 
-      <div className="bg-white rounded-2xl shadow-sm ring-1 ring-gray-100 p-5 transition duration-200 hover:shadow-xl hover:shadow-gray-400/30 hover:-translate-y-0.5">
-        <div className="flex items-center justify-between mb-4">
-          <button onClick={() => shiftMonth(-1)} className="text-gray-400 hover:text-gray-700 px-2 text-lg leading-none">‹</button>
-          <div className="text-sm font-bold text-gray-800">{monthLabel}</div>
-          <button onClick={() => shiftMonth(1)} className="text-gray-400 hover:text-gray-700 px-2 text-lg leading-none">›</button>
-        </div>
+      <dl className="mx-5 mt-3 grid grid-cols-3 rounded-xl bg-gray-50 ring-1 ring-gray-100 divide-x divide-gray-100">
+        {[["Present", presentDays, "days"], ["Incomplete", incompleteDays, "no punch-out"], ["Hours", totalHours.toFixed(1), "worked"]].map(([k, v, sub]) => (
+          <div key={k} className="px-3 py-2.5 min-w-0">
+            <dt className="text-[11px] text-gray-500 truncate">{k}</dt>
+            <dd className="text-lg font-semibold text-gray-900 tabular-nums leading-tight">{loading ? <span className="inline-block w-6 h-4 rounded bg-gray-200 motion-safe:animate-pulse align-middle" /> : v}</dd>
+            <dd className="text-[11px] text-gray-500 truncate">{sub}</dd>
+          </div>
+        ))}
+      </dl>
 
-        {loading ? (
-          <p className="text-sm text-gray-400 text-center py-6">Loading…</p>
-        ) : error ? (
-          <p className="text-sm text-red-600 text-center py-6">{error}</p>
+      <div className="px-5 pb-5 pt-4">
+        {error ? (
+          <div className="py-6 text-center">
+            <p className="text-sm text-red-600">{error}</p>
+            <button onClick={() => setReload((n) => n + 1)} className="mt-2 text-xs font-semibold text-blue-700 hover:underline">Try again</button>
+          </div>
         ) : (
           <>
-            <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-semibold text-gray-400 uppercase mb-1">
+            <div className="grid grid-cols-7 gap-1 text-center text-[11px] font-medium text-gray-500 mb-1" aria-hidden="true">
               {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((d) => <div key={d}>{d}</div>)}
             </div>
-            <div className="grid grid-cols-7 gap-1">
+            <div className={"grid grid-cols-7 gap-1 transition-opacity " + (loading ? "opacity-50" : "")}>
               {cells.map((d, i) => {
                 if (!d) return <div key={"blank" + i} />;
                 const dateStr = `${year}-${String(month).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
                 const dayRows = byDate[dateStr];
                 const status = dayStatus(dayRows, dateStr, today);
-                const dot = dotProps(status);
+                const st = DAY_STATUS[status];
                 const isToday = dateStr === today;
+                const isOpen = openDay === dateStr;
                 return (
-                  <button key={d} disabled={!dayRows} onClick={() => setOpenDay(dateStr)}
-                    className={"aspect-square rounded-lg flex flex-col items-center justify-center gap-0.5 text-xs transition "
-                      + (isToday ? "bg-blue-600 text-white font-bold shadow-sm hover:bg-blue-700 "
-                        : dayRows ? "hover:bg-gray-50 cursor-pointer text-gray-700 " : "cursor-default text-gray-400 ")}>
+                  <button key={d} disabled={!dayRows} onClick={() => setOpenDay(isOpen ? null : dateStr)}
+                    aria-label={`${d} ${monthLabel}${st ? ": " + st.label : ""}`} aria-pressed={dayRows ? isOpen : undefined}
+                    className={"aspect-square rounded-lg flex flex-col items-center justify-center gap-0.5 text-xs tabular-nums transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 "
+                      + (isOpen ? "bg-blue-600 text-white font-semibold "
+                        : isToday ? "ring-1 ring-blue-500 text-blue-700 font-semibold hover:bg-blue-50 "
+                        : dayRows ? "text-gray-800 hover:bg-gray-100 cursor-pointer " : "text-gray-400 cursor-default ")}>
                     <span>{d}</span>
-                    {dot && <span className={"w-1.5 h-1.5 rounded-full " + dot.className} />}
+                    {st && <span aria-hidden="true" className={"w-1.5 h-1.5 rounded-full " + (isOpen ? "bg-white" : st.dot)} />}
                   </button>
                 );
               })}
             </div>
 
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-4 pt-3 border-t text-[11px] text-gray-400">
-              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500" />Closed</span>
-              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-500" />Never punched out</span>
-              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500" />Still in</span>
-              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500" />Absent</span>
-            </div>
+            <ul className="flex flex-wrap items-center gap-x-4 gap-y-1.5 mt-4 pt-3 border-t border-gray-100 text-[11px] text-gray-500">
+              {Object.values(DAY_STATUS).map((s) => (
+                <li key={s.label} className="flex items-center gap-1.5"><span aria-hidden="true" className={"w-2 h-2 rounded-full " + s.dot} />{s.label}</li>
+              ))}
+            </ul>
           </>
         )}
 
         {openDay && byDate[openDay] && (
-          <div className="mt-4 pt-4 border-t">
-            <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">
-              {new Date(openDay + "T00:00:00").toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long" })}
+          <div className="mt-4 rounded-xl bg-gray-50 ring-1 ring-gray-100 p-3.5">
+            <div className="flex items-baseline justify-between gap-3 mb-2">
+              <span className="text-xs font-semibold text-gray-900">{new Date(openDay + "T00:00:00").toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long" })}</span>
+              {dayHours(byDate[openDay]) > 0 && <span className="shrink-0 text-xs text-gray-500 tabular-nums">{fmtDur(dayHours(byDate[openDay]))}</span>}
             </div>
-            <div className="space-y-1">
+            <ul className="divide-y divide-gray-100">
               {byDate[openDay].map((p) => (
-                <div key={p.id} className="flex items-center justify-between text-sm py-1">
-                  <div>
-                    <div className={p.type === "in" ? "text-green-700 font-medium" : p.auto_closed ? "text-amber-600 font-medium" : "text-gray-600 font-medium"}>
-                      {punchLabel(p)}
-                    </div>
-                    <div className="text-xs text-gray-400 flex items-center gap-1"><IconPin size={11} /> {punchLocationLabel(p)}</div>
+                <li key={p.id} className="flex items-center justify-between gap-3 py-1.5">
+                  <div className="min-w-0">
+                    <div className={"text-sm font-medium " + (p.type === "in" ? "text-green-700" : p.auto_closed ? "text-amber-700" : "text-gray-700")}>{punchLabel(p)}</div>
+                    <div className="text-xs text-gray-500 flex items-center gap-1 min-w-0"><IconPin size={11} /><span className="truncate">{punchLocationLabel(p)}</span></div>
                   </div>
-                  <span className="text-gray-400">{fmtTime(p.at)}</span>
-                </div>
+                  <time className="shrink-0 text-sm text-gray-600 tabular-nums" dateTime={p.at}>{fmtTime(p.at)}</time>
+                </li>
               ))}
-            </div>
+            </ul>
           </div>
         )}
       </div>
-    </div>
+    </section>
   );
 }
