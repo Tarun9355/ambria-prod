@@ -46,9 +46,30 @@ export function createSettingsWriter(writeFn, onError) {
   };
 
   const isDirty = (key) => key in latest;
+  // For a write that bypasses enqueue entirely — a key saved via its own server-side merge RPC
+  // (mergeDatePricing's merge_settings_json call) rather than a whole-value upsert through writeFn.
+  // Without this, isDirty/isStaleFor have no idea that key is mid-write: a realtime echo from ANY
+  // OTHER settings key changing (the subscription fires on the whole table) can fetchAll() and read
+  // that key's row from just before the RPC committed, then applySettingsRows happily overwrites the
+  // just-written local value with that stale read — since, as far as the writer's bookkeeping is
+  // concerned, nothing about that key was ever in flight. Confirmed live (2026-11-01): this silently
+  // reverted a freshly-set Date Pricing auto-sync pause + lock code back to off/blank. markWriting
+  // before the RPC call and markSettled in its .finally close the same window enqueue already closes
+  // for every other key.
+  // Counted, not boolean — two overlapping external writes to the same key (e.g. setting the lock
+  // code then immediately pausing, before the first RPC has returned) must keep isDirty true until
+  // BOTH settle, or the first one finishing would clear it while the second is still in flight.
+  const pendingExternal = {};
+  const markWriting = (key) => { pendingExternal[key] = (pendingExternal[key] || 0) + 1; latest[key] = true; };
+  const markSettled = (key) => {
+    settledAt[key] = ++clock;
+    pendingExternal[key] = Math.max(0, (pendingExternal[key] || 0) - 1);
+    if (!pendingExternal[key]) delete latest[key];
+  };
   return {
     enqueue, isDirty,
     mark: () => clock,
     isStaleFor: (key, mark) => isDirty(key) || (settledAt[key] || 0) > mark,
+    markWriting, markSettled,
   };
 }

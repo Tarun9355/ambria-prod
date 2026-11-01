@@ -1245,8 +1245,13 @@ export default function IMS() {
     const nextSettings = { ...s, datePricing: { ...s.datePricing, autoCategories } };
     settingsRef.current = nextSettings;
     setSettingsState(nextSettings);
+    // markWriting/markSettled: see settingsWriter.js's own comment — this RPC bypasses enqueue, so
+    // without these isDirty/isStaleFor can't tell a concurrent realtime echo (from ANY other settings
+    // key changing) to prefer local state over a pre-commit read of this one.
+    settingsWriterRef.current.markWriting("datePricing");
     supabase.rpc("merge_settings_json", { p_key: "datePricing", p_patch: { autoCategories } })
-      .then(({ error }) => { if (error) console.warn("[settings] autoCategories merge failed:", error.message); });
+      .then(({ error }) => { if (error) console.warn("[settings] autoCategories merge failed:", error.message); })
+      .finally(() => settingsWriterRef.current.markSettled("datePricing"));
   }, [studioLmsCache, settingsLoaded]);
 
   // Same reasoning as the autoCategories effect above, generalized: EVERY write to a sub-field of
@@ -1267,8 +1272,13 @@ export default function IMS() {
     const nextSettings = { ...s, datePricing: { ...s.datePricing, ...patch } };
     settingsRef.current = nextSettings;
     setSettingsState(nextSettings);
+    // markWriting/markSettled: see settingsWriter.js's own comment — without this, a pause/lock-code
+    // write here is invisible to isDirty/isStaleFor, so a realtime echo triggered by ANY unrelated
+    // settings-table write elsewhere can silently revert it back to the pre-write value.
+    settingsWriterRef.current.markWriting("datePricing");
     supabase.rpc("merge_settings_json", { p_key: "datePricing", p_patch: patch })
-      .then(({ error }) => { if (error) console.warn("[settings] datePricing merge failed:", error.message); });
+      .then(({ error }) => { if (error) console.warn("[settings] datePricing merge failed:", error.message); })
+      .finally(() => settingsWriterRef.current.markSettled("datePricing"));
   }, []);
 
   // Manual "🔄 Sync LMS": Edge Function paginates LMS server-side → DB, then re-read cache.

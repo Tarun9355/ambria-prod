@@ -289,7 +289,14 @@ export const buildTopology = (config, L, W, H, spanFt, backDepth, engSettings) =
       ...wSegLens.map((len, i) => ({ side: wSegLens.length === 1 ? "left" : `left-${i+1}`, lengthFt: len })),
       ...wSegLens.map((len, i) => ({ side: wSegLens.length === 1 ? "right" : `right-${i+1}`, lengthFt: len })),
     ];
-    return { config, method: "B", pillars, beams, physicalL: L + 2 * pillarWidth, physicalW: W + 2 * pillarWidth, maskingL: L + 2 * pillarWidth, maskingW: W + 2 * pillarWidth, pillarCount: pillars.length, beamCount: beams.length };
+    // physicalL/W: Method-A-interior, same rule as u_only/half_box above — L/W already IS the final
+    // footprint (pillarCountForSpan + the beam-budget subtraction above already account for every
+    // pillar on each axis, not just the 2 corners), so adding pillarWidth again here double-counts
+    // it. Confirmed live (2026-11-01): a 43×43 full-box entry showed a 44.5×44.5 "Physical Footprint"
+    // instead of matching the 43×43 customer demand, and silently over-fed the Full Box ceiling-drape
+    // Liza calc (area = physicalL×physicalW in pricing.js) for every full-box truss. maskingL/W keep
+    // the +2×pillarWidth — that one's real (fabric wraps fully around the two outer corner pillars).
+    return { config, method: "B", pillars, beams, physicalL: L, physicalW: W, maskingL: L + 2 * pillarWidth, maskingW: W + 2 * pillarWidth, pillarCount: pillars.length, beamCount: beams.length };
   }
   return null;
 };
