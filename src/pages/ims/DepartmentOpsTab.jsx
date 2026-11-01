@@ -3793,7 +3793,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
             const cols = (z.colours || []).filter(c => c.colour && c.colour !== "(unassigned)");
             const one = cols.length === 1;
             const html = cols.length
-              ? cols.map(c => `<b class="fpc">${c.hex ? `<i style="background:${esc(c.hex)}"></i>` : ""}${esc(c.colour)}${one ? "" : ` ${esc(c.qty)} ${esc(g.unit)}`}</b>`).join("") + (z.standing ? `<b class="fpc">♻ Repeat</b>` : "")
+              ? cols.map(c => `<b class="fpc"><i style="background:${esc(swatchHexFor(c.colour, settings?.colourCatalogue, c.hex))}"></i>${esc(c.colour)}${one ? "" : ` ${esc(c.qty)} ${esc(g.unit)}`}</b>`).join("") + (z.standing ? `<b class="fpc">♻ Repeat</b>` : "")
               : esc("Colour not picked");
             const key = `${z.fi}|${z.zoneKey}`;
             fabricByZone.set(key, [...(fabricByZone.get(key) || []), { k: g.label, html }]);
@@ -4197,7 +4197,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       // the fabric colours get a row of their own under it, so the truss strip never wraps past the height set aside for it
       const fabStrip = !cont && (pg.fabric || []).length > 0;
       const headPx = (cont ? CONT_HEAD_PX : HEAD_PX) + (strip ? 44 : 0) + (fabStrip ? 44 : 0);
-      const PHOTO_H = bare ? PAGE_PX - headPx : Math.max(260, PAGE_PX - headPx - rows * (ROW_H + ARROW));
+      // the fabric row comes out of the photo's floor too, so it never makes a page taller than it was without it
+      const PHOTO_H = bare ? PAGE_PX - headPx : Math.max(260 - (fabStrip ? 44 : 0), PAGE_PX - headPx - rows * (ROW_H + ARROW));
       const photoTop = bare ? 0 : ROW_H + ARROW;
       const botTop = photoTop + PHOTO_H + ARROW;
       const stageH = bare ? PHOTO_H : bot.length ? botTop + ROW_H : photoTop + PHOTO_H;
