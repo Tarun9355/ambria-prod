@@ -12287,7 +12287,7 @@ export default function StudioApp() {
     resumeSavedSession, toggleEl, selectElPhoto, handleZoneUpload, aiTagImage, findTemplate,
     getLibPhotosForZone, maxRepaintCostInSubcat, saveSession, markSold, applyBookedChanges, loadEvent,
     buildZonesForFn, buildCombinedCostSheetData, applyCostSheetQty, logActivity, saveTR,
-    normalizePaintAllocation, paintPillLabel, isSubcatPaintable,
+    normalizePaintAllocation, paintPillLabel, isSubcatPaintable, paintFor,
     lmsCacheRef,
     // zone photo filters + upload
     zpFilterOpen, setZpFilterOpen, zpFilters, setZpFilters, zpToggleFilter, zpHasFilters, zpFilterPhoto, zpVenueMatch, zpPaletteMatch,

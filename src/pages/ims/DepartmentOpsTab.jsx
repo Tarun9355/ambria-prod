@@ -6150,7 +6150,7 @@ ${!combined && fabRows.length ? sect(t("Fabric required vs available"), table([t
             {/* Sub-view switch (Planning / On-site) now lives in the event header above — it
                 scopes the entire column, so it sits with the event rather than between cards. */}
 
-            {dept === PAINT && <PaintDeptView sel={sel} inventory={inventory} colourCatalogue={settings?.colourCatalogue} zoneLabel={zoneLabelFor} onZoom={setZoomImg} />}
+            {dept === PAINT && <PaintDeptView sel={sel} inventory={inventory} colourCatalogue={settings?.colourCatalogue} defaultPaintCost={Number(settings?.defaultPaintCostPerItem) || 400} zoneLabel={zoneLabelFor} onZoom={setZoomImg} />}
 
             {opsView === "planning" && dept !== PAINT && (<>
 

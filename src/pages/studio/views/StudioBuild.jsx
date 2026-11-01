@@ -1069,7 +1069,7 @@ export default function StudioBuild({ ctx }) {
     // taxonomy
     taxonomy,
     // paint / deal check
-    dealCheckData, normalizePaintAllocation, paintPillLabel, isSubcatPaintable,
+    dealCheckData, normalizePaintAllocation, paintPillLabel, isSubcatPaintable, paintFor,
     PAINT_TOKENS_FALLBACK, maxRepaintCostInSubcat, imsDefaultPaintCost, setPaintPickerTarget,
     // custom items
     dcCustomItems, setDcCustomItems, setDcCustomModal,
@@ -5199,6 +5199,9 @@ undefined
                                 <span style={{width:10,height:10,borderRadius:2,border:"1px solid rgba(0,0,0,0.15)",background:cObj1?.hex||"#F5F0E1"}} />
                               )}
                               <span>{label}</span>
+                              {/* What the repaint adds to the bill - the same paintFor the zone total and Summary use, so the
+                                  card says where the extra in the total comes from (the line price beside it is rental only). */}
+                              {isOverridden && showCosts && (()=>{ const pc = paintFor ? paintFor(el, rc) : 0; return pc > 0 ? <span style={{fontWeight:700,whiteSpace:"nowrap"}}>· +{fmt(pc)}</span> : null; })()}
                               {isOverridden && <span style={{fontSize:10.5,padding:"1px 6px",borderRadius:3,background:"#EC4899",color:"#fff",fontWeight:700,marginLeft:2}}><IconPencil size={10}/></span>}
                             </button>
                           );

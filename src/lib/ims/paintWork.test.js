@@ -35,7 +35,7 @@ describe("paintWorkOf", () => {
 
   it("an event with no paint has nothing", () => {
     const w = paintWorkOf({ inventory, functionsDetail: [{ elements: { stage: [{ invId: "A1", qty: 4 }] } }] });
-    expect(w).toEqual({ fns: [], colours: [], pieces: 0, items: 0 });
+    expect(w).toEqual({ fns: [], colours: [], pieces: 0, items: 0, cost: 0 });
   });
 
   it("joins the same item twice in one zone, keeps zones and functions apart, and totals colours over the event", () => {
@@ -69,5 +69,19 @@ describe("paintWorkOf", () => {
       functionsDetail: [{ zoneNames: { custom_1: "Photo Booth" }, elements: { custom_1: [{ name: "wooden  arch", qty: 1, paintOverride: "Pink" }] } }],
     });
     expect(w.fns[0].rows[0]).toMatchObject({ name: "Wooden Arch", invId: "A1", zone: "Photo Booth" });
+  });
+
+  it("prices the repaint as Studio does: the item's paint cost, else the default rate", () => {
+    const inv = [{ id: "A1", name: "Wooden Arch", baseColour: "White", paintCost: 250 }, { id: "C1", name: "Console Table" }];
+    const w = paintWorkOf({
+      inventory: inv, defaultPaintCost: 400,
+      functionsDetail: [{ elements: { stage: [
+        { invId: "A1", name: "Wooden Arch", qty: 6, paintAllocation: [{ qty: 4, colour: "Gold" }, { qty: 2, colour: "White" }] },
+        { invId: "C1", name: "Console Table", qty: 2, paintOverride: "Rose Gold" },
+      ] } }],
+    });
+    const byName = Object.fromEntries(w.fns[0].rows.map((r) => [r.name, r.cost]));
+    expect(byName).toEqual({ "Wooden Arch": 1000, "Console Table": 800 });
+    expect(w.cost).toBe(1800);
   });
 });

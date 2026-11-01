@@ -250,7 +250,7 @@ export default function DealCheckOverlay({ ctx }) {
     // Shared availability picker — the same one Build's IconBox control opens.
     openAvailModal,
     calcZoneTrussPreview, calcZoneFabricCost, calcZoneCarpet, buildPlatformPlan, imsField,
-    libItems, rcItems, rcSubcatFactors, normalizePaintAllocation, ensureLibItemsByUrl,
+    libItems, rcItems, rcSubcatFactors, normalizePaintAllocation, paintFor, ensureLibItemsByUrl,
     // deal check inventory-tab module helpers
     isZoneDirty, parseCardKey, PLATFORM_FATTA_CODE, PLATFORM_STAND_CODE,
     // Settings → Zones' own drag-ordered priority (Object.keys(zoneMeta), same list Build sorts by)
@@ -3720,11 +3720,13 @@ export default function DealCheckOverlay({ ctx }) {
                                           if (allocs.length === 0) return null;
                                           const allocLabel = allocs.map(a => `${a.colour} ×${a.qty}`).join(", ");
                                           const itemPaintCost = Number(item?.paintCost || 0);
+                                          // what the repaint adds to the bill - the same rule as Build's zone total and Summary
+                                          const paintCharge = paintFor ? Math.round(paintFor(origEl, null)) : 0;
                                           const isNonPaintable = item && itemPaintCost <= 0;
                                           return (
                                             <div style={{marginBottom:5}}>
                                               <div style={{display:"flex",alignItems:"center",gap:5,flexWrap:"wrap"}}>
-                                                <span style={{fontSize:12,padding:"2px 7px",borderRadius:5,background:"rgba(236,72,153,0.15)",color:"#EC4899",fontWeight:700}}>🖌 {allocLabel}</span>
+                                                <span style={{fontSize:12,padding:"2px 7px",borderRadius:5,background:"rgba(236,72,153,0.15)",color:"#EC4899",fontWeight:700}}>🖌 {allocLabel}{paintCharge > 0 ? ` · ₹${paintCharge.toLocaleString("en-IN")}` : ""}</span>
                                                 <span style={{fontSize:11,color:"#BE1D62",fontWeight:600}}>salesperson requested</span>
                                               </div>
                                               {isNonPaintable && (

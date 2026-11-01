@@ -5,18 +5,21 @@
 // So this reads the event's own layout (functionsDetail), not a department snapshot. A colour equal to the item's base
 // colour (Ivory when unset) is no repaint - the same rule Studio prices paint by (lib/studio/paint.js).
 
-import { normalizePaintAllocation } from "../studio/paint.js";
+import { normalizePaintAllocation, paintTotalFor } from "../studio/paint.js";
 
 const nameKey = (s) => String(s || "").trim().replace(/\s+/g, " ").toLowerCase();
 const prettyZone = (zk) => String(zk || "").replace(/[_-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 
 // functionsDetail: the event order's functions. inventory: IMS items (id, name, baseColour, photoUrls / img).
 // zoneLabel(fn, zk): the zone's display name (defaults to the zone's own name, else its key).
+// defaultPaintCost: the per-piece repaint rate for an item with none of its own (IMS settings.defaultPaintCostPerItem, 400).
+// Each row's `cost` is what the repaint adds to the bill, by Studio's own rule (paintTotalFor: the item's paint cost, else
+// the highest in its sub-category, else the default), so it matches the paint in the deal's total.
 // Returns { fns: [{ fi, label, date, rows }], colours: [{ colour, qty }], pieces, items }:
 //   rows    - one per item per zone: { key, invId, name, photo, baseColour, qty, colours: [{ colour, qty }], painted, zk, zone }
 //   colours - every colour over the event, most pieces first
-//   pieces  - pieces to paint over the event; items - how many rows
-export function paintWorkOf({ functionsDetail = [], inventory = [], zoneLabel = null } = {}) {
+//   pieces  - pieces to paint over the event; items - how many rows; cost - the paint over the event
+export function paintWorkOf({ functionsDetail = [], inventory = [], zoneLabel = null, defaultPaintCost = 400 } = {}) {
   const byId = new Map(), byName = new Map();
   (inventory || []).forEach((i) => {
     if (!i) return;
@@ -40,11 +43,12 @@ export function paintWorkOf({ functionsDetail = [], inventory = [], zoneLabel = 
         // the same item twice in one zone is one row: it is painted together
         const key = `${fi}|${zk}|${inv ? "i:" + inv.id : "n:" + nameKey(name)}`;
         const row = rows.get(key) || {
-          key, invId: inv?.id ?? null, name, baseColour, qty: 0, colours: new Map(), zk,
+          key, invId: inv?.id ?? null, name, baseColour, qty: 0, cost: 0, colours: new Map(), zk,
           photo: (Array.isArray(inv?.photoUrls) && inv.photoUrls[0]) || inv?.img || el?.photo || el?.img || "",
           zone: (zoneLabel && zoneLabel(fn, zk)) || fn.zoneNames?.[zk] || prettyZone(zk),
         };
         row.qty += Number(el?.qty) || 0;
+        row.cost += paintTotalFor(el, { inventory, defaultPaintCost });
         allocs.forEach((a) => {
           const ck = nameKey(a.colour);
           const c = row.colours.get(ck) || { colour: a.colour, qty: 0 };
@@ -68,6 +72,7 @@ export function paintWorkOf({ functionsDetail = [], inventory = [], zoneLabel = 
   return {
     fns, colours,
     pieces: colours.reduce((s, c) => s + c.qty, 0),
+    cost: fns.reduce((s, f) => s + f.rows.reduce((t, r) => t + r.cost, 0), 0),
     items: fns.reduce((s, f) => s + f.rows.length, 0),
   };
 }
