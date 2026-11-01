@@ -20,7 +20,8 @@ import { planElements, elementStockFor, elementKey, choiceNotesForRows, preferen
 import { loadOnDate } from "../../lib/ims/loadByDate";
 import { elementChoices } from "../../lib/studio/elementPrefs";
 import { orderZoneKeys } from "../../lib/ims/zoneOrder";
-import { calcZoneTrussPreview, calcZoneFabric, dcFabricMultOf, repeatCatFor } from "../../lib/studio/pricing";
+import { calcZoneTrussPreview, calcZoneFabric, dcFabricMultOf, repeatCatFor, trussInvForMaterial } from "../../lib/studio/pricing";
+import { resolveBeamSegment, resolvePillarHeight } from "../../lib/ims/trussEngine";
 import { ZONE_DEF_SK, RC_SK_TR } from "../../lib/studio/keys";
 import { LOGO_ASSET, LOGO_BOX } from "../../lib/studio/brand.js";
 import { thumbUrl, fitUrl } from "../../lib/studio/thumb.js";
@@ -7602,8 +7603,6 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                 <div className="p-3 sm:p-4 space-y-3">
                   {(() => {
                     const fnCount = new Set(trussPlanOf().map(z => z.fi)).size;
-                    // Pillars / beams as editable groups: "N × L ft" rows (same grouping Deal Check shows).
-                    const groupsOf = (arr, get) => Object.entries((arr || []).reduce((m, x) => { const len = Math.round((get(x) || 0) * 100) / 100; m[len] = (m[len] || 0) + 1; return m; }, {})).sort((a, b) => Number(b[0]) - Number(a[0])).map(([len, c]) => ({ len: Number(len), n: c }));
                     const cfgLabel = (c) => c === "u_only" ? "U Truss" : c === "half_box" ? "Half Box" : c === "full_box" ? "Full Box" : "—";
                     const numCls = "text-[13px] text-center rounded-md ring-1 ring-gray-200 bg-white px-1 py-0.5 tabular-nums font-semibold text-gray-900";
                     const tileBox = (label, children) => (
@@ -7639,14 +7638,29 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                       const openForm = pv.config === "u_only" || pv.config === "half_box";
                       const demandBase = openForm ? { W: pv.spanFt || Math.max(dL, dW), H: dH } : { W: dW, D: dL, H: dH };
                       const physBase = pv.config === "u_only" ? { W: phyL, H: dH } : { W: phyW, D: phyL, H: dH };
-                      const pillarGroups = Array.isArray(ed?.pillars) ? ed.pillars : groupsOf(topo.pillars, x => x.H);
-                      const beamGroups = Array.isArray(ed?.beams) ? ed.beams : groupsOf(topo.beams, x => x.lengthFt);
+                      // Real stock pieces, not the ideal pre-stock-rounding topology length — same
+                      // reasoning/resolver as DealCheckOverlay.jsx's Tenting rollup and DCTrussTab.jsx's
+                      // own Pillars/Beams tiles (see either's comment): a pillar/beam named by a length
+                      // no stock size can make in one piece used to default into this editable group
+                      // untouched. Only the DEFAULT changes — a dept head's own saved edit (ed.pillars/
+                      // ed.beams) always wins, same as before.
+                      const matInv = trussInvForMaterial(trussInv, row.trussMaterial);
+                      const realGroupsOf = (arr, resolver) => { const m = {}; (arr || []).forEach(x => { (resolver(x, matInv).pieces || []).forEach(pc => { m[pc.size] = (m[pc.size] || 0) + pc.qty; }); }); return Object.entries(m).sort((a, b) => Number(b[0]) - Number(a[0])).map(([len, n]) => ({ len: Number(len), n })); };
+                      const pillarGroups = Array.isArray(ed?.pillars) ? ed.pillars : realGroupsOf(topo.pillars, (p, inv) => resolvePillarHeight(p.H, inv));
+                      const beamGroups = Array.isArray(ed?.beams) ? ed.beams : realGroupsOf(topo.beams, (b, inv) => resolveBeamSegment(b.lengthFt, inv));
                       const rftOfG = (gs) => Math.round(gs.reduce((a, g) => a + (Number(g.len) || 0) * (Number(g.n) || 0), 0) * 100) / 100;
                       const countOfG = (gs) => gs.reduce((a, g) => a + (Number(g.n) || 0), 0);
                       const pillarRft = Array.isArray(ed?.pillars) ? rftOfG(pillarGroups) : (costs.pillarRft || 0);
                       const beamRft = Array.isArray(ed?.beams) ? rftOfG(beamGroups) : (costs.beamRft || 0);
                       const nPillars = Array.isArray(ed?.pillars) ? countOfG(pillarGroups) : topo.pillars.length;
                       const nBeams = Array.isArray(ed?.beams) ? countOfG(beamGroups) : topo.beams.length;
+                      // Real piece counts for the group tile headers below — pillarGroups/beamGroups
+                      // are real resolved pieces by default now (see their own comment above), so the
+                      // header must match or "Beams (2)" would sit over a list of 4 real pieces. nPillars/
+                      // nBeams above stay as the ideal/structural count for the "Method... N beam segment"
+                      // summary line, same distinction DCTrussTab.jsx's own tile vs. summary line draws.
+                      const pillarPieceCount = countOfG(pillarGroups);
+                      const beamPieceCount = countOfG(beamGroups);
                       const bRft = ed?.batta?.rft ?? batta?.rftRequired ?? 0;
                       const bBuf = ed?.batta?.buf ?? batta?.bufferPct ?? 10;
                       const bTotal = ed?.batta ? Math.round((Number(bRft) || 0) * (1 + (Number(bBuf) || 0) / 100)) : (batta?.rftWithBuffer ?? 0);
@@ -7709,8 +7723,8 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
                             {dimsTile("Physical footprint", "physical", physBase)}
                           </div>
                           <div className="flex flex-wrap gap-2 mt-2">
-                            {groupTile(`🏛️ Pillars (${nPillars})`, "pillars", pillarGroups, pillarRft)}
-                            {groupTile(`🔗 Beams (${nBeams})`, "beams", beamGroups, beamRft)}
+                            {groupTile(`🏛️ Pillars (${pillarPieceCount})`, "pillars", pillarGroups, pillarRft)}
+                            {groupTile(`🔗 Beams (${beamPieceCount})`, "beams", beamGroups, beamRft)}
                             {(batta || ed?.batta) && battaTile()}
                           </div>
                           {fabRows.length > 0 && (

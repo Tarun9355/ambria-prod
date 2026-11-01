@@ -100,7 +100,8 @@ const NUM = { fontVariantNumeric: "tabular-nums" };
 import { heavyExtraLabour, eventTimingMultFor, SIT_MULT_DEFAULTS } from "../../../lib/ims/constants";
 import { deptMpReconciled, itemImsSubcat, lookupBySubcat, itemDimsText, walkKitUnits } from "../../../lib/ims/helpers";
 import { rentalSplit, availableAtVenue, isStandingAt, fixedVenueFor, standingReductionBySubcat, fixedVenueDealDiscount, reservedByVenueToday, venueSlackFor, combineAvailability } from "../../../lib/ims/fixedVenues";
-import { calcZoneFabric, resolveFabricAllocation, anchorsForPalette, anchorsForPaletteByMaterial, resolveTrussConfig, zoneTrussStandingDiscountDetail, trussDiscountedCosts, repeatCatFor, freshFnForManpower , dcFabricMultOf } from "../../../lib/studio/pricing";
+import { calcZoneFabric, resolveFabricAllocation, anchorsForPalette, anchorsForPaletteByMaterial, resolveTrussConfig, zoneTrussStandingDiscountDetail, trussDiscountedCosts, repeatCatFor, freshFnForManpower , dcFabricMultOf, trussInvForMaterial } from "../../../lib/studio/pricing";
+import { resolveBeamSegment, resolvePillarHeight } from "../../../lib/ims/trussEngine";
 import { carpetPricingFor, CARPET_OFF, carpetTakesStockPick } from "../../../lib/studio/taxonomy";
 import { qtyUsedElsewhereInDealCheck, netOwnReservedBlocksLive } from "../../../lib/studio/dealAvailability";
 import { isHiddenSubcat, oosCostPctFor, canFulfillShortfall } from "../../../lib/rateCard";
@@ -1070,9 +1071,16 @@ export default function DealCheckOverlay({ ctx }) {
                     // built, so there is nothing for Tenting to load/haul even though the dims still
                     // drive the Liza/Curtain fabric lines pushed further below.
                     if (!isRepeat && row.trussQty !== 0 && pv?.topology && deptInv["Tenting"]) {
+                      // Real stock pieces, not the ideal pre-stock-rounding topology length — a
+                      // pillar/beam named by a length no stock size can make in one piece (e.g. a
+                      // 23ft beam segment when the longest in stock is 15ft) used to go straight onto
+                      // this loadable list, telling Tenting to load something that doesn't exist.
+                      // Same resolveBeamSegment/resolvePillarHeight resolver DCTrussTab.jsx's own
+                      // Pillars/Beams tiles already use (see that file's realBeamSizeCounts comment).
+                      const matInv = trussInvForMaterial(tInv, row.trussMaterial);
                       const pmap = {}, bmap = {};
-                      (pv.topology.pillars || []).forEach(p => { const ft = Math.round(Number(p.H) || 0); if (ft > 0) pmap[ft] = (pmap[ft] || 0) + 1; });
-                      (pv.topology.beams || []).forEach(b => { const ft = Math.round(Number(b.lengthFt) || 0); if (ft > 0) bmap[ft] = (bmap[ft] || 0) + 1; });
+                      (pv.topology.pillars || []).forEach(p => { (resolvePillarHeight(p.H, matInv).pieces || []).forEach(pc => { pmap[pc.size] = (pmap[pc.size] || 0) + pc.qty; }); });
+                      (pv.topology.beams || []).forEach(b => { (resolveBeamSegment(b.lengthFt, matInv).pieces || []).forEach(pc => { bmap[pc.size] = (bmap[pc.size] || 0) + pc.qty; }); });
                       // Per-piece rate = this zone's own effective ₹/RFT (cost ÷ total RFT, already
                       // material-aware via trussInvForMaterial inside calcZoneTrussPreview) × the
                       // piece's own length — e.g. a 12ft pillar at ₹20/RFT prices at ₹240 each. Used to
