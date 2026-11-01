@@ -39,21 +39,30 @@ export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, l
   function dateStr(d) { return `${year}-${String(month + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`; }
 
   const dateCategories = studioLmsCache?.dateCategories || {};
-  const getDateCategory = (ds) => dateCategories[ds] || null;
-  const dateCatColors = {
-    "Heavy Saya": { bg: "#fef2f2", border: "#fca5a5", text: "#dc2626", label: "👑 King's" },
-    "Saya": { bg: "#fefce8", border: "#fde047", text: "#ca8a04", label: "✦ Perfect" },
-    "Normal": { bg: "#f0fdf4", border: "#86efac", text: "#16a34a", label: "○ Normal" },
-  };
   const hasCats = Object.keys(dateCategories).length > 0;
-  // This grid's colour is always LIVE (today's real booking count) — resolveDateCategory below is
-  // whatever Studio actually prices a deal at, which can silently differ: auto-sync paused and
-  // frozen on a stale value, or a manual markedDates override. Same mapping IMS.jsx's own resync
-  // effect uses to translate studioLmsCache's labels into datePricing's category keys.
+  // This grid's own badge/background is the STATIC, owner-set category (markedDates override, else
+  // the autoCategories snapshot — frozen once LMS Auto-Sync is paused in Date Pricing Config), not
+  // the live LMS/season feed — severed per owner ask (2026-11-01): a date's category used to be
+  // whatever studioLmsCache said RIGHT NOW, so it could silently change under a quote even with
+  // auto-sync paused (pausing only froze the PRICING math's autoCategories map, never this grid's
+  // own badge, which read dateCategories raw regardless). No badge at all until this date has an
+  // explicit entry (override or a synced autoCategories value) — same as before, just from the
+  // static source instead of the live one.
+  const resolvedCatColors = {
+    heavy_saya: { bg: "#fef2f2", border: "#fca5a5", text: "#dc2626", label: DATE_PRICING_LABELS.heavy_saya },
+    competition: { bg: "#fefce8", border: "#fde047", text: "#ca8a04", label: DATE_PRICING_LABELS.competition },
+    non_saya: { bg: "#f0fdf4", border: "#86efac", text: "#16a34a", label: DATE_PRICING_LABELS.non_saya },
+  };
+  const dp0 = settings?.datePricing || {};
+  const hasResolvedCategory = (ds) => (dp0.markedDates || {})[ds] != null || (dp0.autoCategories || {})[ds] != null;
+  const getDateCategory = (ds) => (hasResolvedCategory(ds) ? resolveDateCategory(ds, settings) : null);
+  // Divergence check still reads the raw LIVE LMS label — it's the whole point of the warning
+  // (today's actual booking load vs. what this date is statically priced/shown at), so the live
+  // feed keeps flowing into Calendar for comparison purposes, just never back into the display.
   const LIVE_CAT_KEY = { "Heavy Saya": "heavy_saya", "Saya": "competition", "Normal": "non_saya" };
-  const getPricingDivergence = (ds, liveCat) => {
-    if (!liveCat) return null;
-    const liveKey = LIVE_CAT_KEY[liveCat] || "non_saya";
+  const getPricingDivergence = (ds, liveLabel) => {
+    if (!liveLabel) return null;
+    const liveKey = LIVE_CAT_KEY[liveLabel] || "non_saya";
     const pricingKey = resolveDateCategory(ds, settings);
     if (pricingKey === liveKey) return null;
     return { liveKey, pricingKey };
@@ -235,9 +244,9 @@ export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, l
             const isToday = ds === today;
             const isSel = ds === selDate;
             const cat = getDateCategory(ds);
-            const catStyle = cat && dateCatColors[cat] ? dateCatColors[cat] : null;
+            const catStyle = cat && resolvedCatColors[cat] ? resolvedCatColors[cat] : null;
             const override = marked[ds];
-            const divergence = getPricingDivergence(ds, cat);
+            const divergence = getPricingDivergence(ds, dateCategories[ds] || null);
             return (
               <div key={d} onClick={() => setSelDate(isSel ? null : ds)}
                 role="button" tabIndex={0}
@@ -296,13 +305,11 @@ export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, l
         <span className="flex items-center gap-1.5"><span className="w-2.5 h-4 rounded-sm bg-indigo-500 inline-block" /> Venue Contract</span>
         <span className="flex items-center gap-1.5"><span className="w-2.5 h-4 rounded-sm bg-amber-500 inline-block" /> Decor Contract</span>
         <span className="flex items-center gap-1.5"><span className="w-2.5 h-4 rounded-sm bg-purple-500 inline-block" /> 🎭 Studio Booking</span>
-        {hasCats && <>
-          <span className="w-px h-4 bg-gray-200" />
-          <span className="flex items-center gap-1.5"><span className="w-3.5 h-3.5 rounded inline-block" style={{ background: "#fef2f2", border: "1px solid #fca5a5" }} /> 👑 King&apos;s</span>
-          <span className="flex items-center gap-1.5"><span className="w-3.5 h-3.5 rounded inline-block" style={{ background: "#fefce8", border: "1px solid #fde047" }} /> ✦ Perfect</span>
-          <span className="flex items-center gap-1.5"><span className="w-3.5 h-3.5 rounded inline-block" style={{ background: "#f0fdf4", border: "1px solid #86efac" }} /> ○ Normal</span>
-          <span className="text-gray-400">Unlisted = Filler</span>
-        </>}
+        <span className="w-px h-4 bg-gray-200" />
+        <span className="flex items-center gap-1.5"><span className="w-3.5 h-3.5 rounded inline-block" style={{ background: "#fef2f2", border: "1px solid #fca5a5" }} /> 👑 King&apos;s</span>
+        <span className="flex items-center gap-1.5"><span className="w-3.5 h-3.5 rounded inline-block" style={{ background: "#fefce8", border: "1px solid #fde047" }} /> ✦ Perfect</span>
+        <span className="flex items-center gap-1.5"><span className="w-3.5 h-3.5 rounded inline-block" style={{ background: "#f0fdf4", border: "1px solid #86efac" }} /> ○ Filler</span>
+        <span className="text-gray-400">Blank = not categorised yet</span>
       </div>
 
       {selDate && (
@@ -317,8 +324,8 @@ export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, l
                 <span className="text-xs font-medium text-gray-500">{selEvents.length} event{selEvents.length === 1 ? "" : "s"}</span>
                 {getDateCategory(selDate) && (
                   <span className="text-[11px] font-semibold px-2 py-0.5 rounded-md"
-                    style={dateCatColors[getDateCategory(selDate)] ? { background: dateCatColors[getDateCategory(selDate)].bg, color: dateCatColors[getDateCategory(selDate)].text } : {}}>
-                    {dateCatColors[getDateCategory(selDate)]?.label || getDateCategory(selDate)}
+                    style={resolvedCatColors[getDateCategory(selDate)] ? { background: resolvedCatColors[getDateCategory(selDate)].bg, color: resolvedCatColors[getDateCategory(selDate)].text } : {}}>
+                    {resolvedCatColors[getDateCategory(selDate)]?.label || getDateCategory(selDate)}
                   </span>
                 )}
               </h3>

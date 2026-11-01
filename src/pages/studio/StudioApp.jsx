@@ -10038,17 +10038,19 @@ export default function StudioApp() {
       } catch (e) {
         showMsg("Upload failed: " + e.message, "red"); setZoneUploading(null); return;
       }
-      showMsg("✓ Uploaded! Running AI analysis...", "green");
-      let aiResult = null;
-      try { aiResult = await Promise.race([aiTagImage(cldUrl), new Promise((_, r) => setTimeout(() => r(new Error("timeout")), 25000))]); } catch (e) { showMsg("AI tagging skipped — edit manually", "red"); }
+      // No AI tagging here (owner ask, 2026-11-01) — a client/reference photo uploaded straight
+      // into a zone used to run it through aiTagImage (two Claude vision calls, tag + self-verify)
+      // before the review step. That cost a real API call on every upload for a flow where the
+      // salesperson tags manually anyway. The review step still opens, just blank — same as
+      // before whenever AI tagging failed or timed out.
       setZoneUploadReview({
         elKey, url: cldUrl, areaFor: typeof areaFor === "function" ? areaFor : null,
-        name: aiResult?.name || file.name?.replace(/\.[^.]+$/, "") || "Client Upload",
-        tags: aiResult?.tags || { eventType: [], venueType: [], areasElements: [], colorPalette: [], categoryTier: [], designStyle: [], timeSetting: [] },
-        elements: aiResult?.elements || [],
-        dims: aiResult?.dims || {},
+        name: file.name?.replace(/\.[^.]+$/, "") || "Client Upload",
+        tags: { eventType: [], venueType: [], areasElements: [], colorPalette: [], categoryTier: [], designStyle: [], timeSetting: [] },
+        elements: [],
+        dims: {},
       });
-      showMsg("✓ AI done — review & edit before applying", "green");
+      showMsg("✓ Uploaded — add elements manually", "green");
     } catch (e) { showMsg("Upload failed: " + e.message, "red"); }
     setZoneUploading(null);
   };
