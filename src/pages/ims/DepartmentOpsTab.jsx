@@ -28,6 +28,7 @@ import { matchFlowerPattern, resolveSizeKey, sizeClassToPatternKey, resolveMandi
 import { swatchHexFor } from "../../lib/studio/colours";
 import PlanningSyncButton from "./PlanningSyncButton.jsx";
 import FabricBlock from "./FabricBlock.jsx";
+import PaintDeptView from "./PaintDeptView.jsx";
 import { buildFabricGroups, foldFabricLines } from "../../lib/ims/fabricGroups";
 import { mandiHow } from "../../lib/ims/floralHow";
 import { buildEventSwap, swappedRecipeFlower } from "../../lib/ims/mandiSwap";
@@ -394,7 +395,7 @@ function VoiceRecorder({ value, onSave, compact = false, label = "voice note" })
 // event (blocked inventory with photos, manpower), override the manpower plan, and log ACTUALS
 // (real mandi cost + on-site expenses) so projected cost converts to exact cost (reflected to Studio).
 const DEPTS = SHARED_DEPTS;
-const DEPT_ICON = { Furniture: "🛋️", Floral: "🌸", Structure: "🏛️", Tenting: "⛺", Transport: "🚚", Lighting: "💡", Fabric: "🧵" };
+const DEPT_ICON = { Furniture: "🛋️", Floral: "🌸", Structure: "🏛️", Tenting: "⛺", Transport: "🚚", Lighting: "💡", Fabric: "🧵", Paint: "🎨" };
 // Primary manpower types per department (for the editable crew plan).
 // Furniture/Fabric carry no Labours row of their own (owner ask, 2026-10-27) — the same person runs
 // Furniture+Structure and Fabric+Tenting, so that shared crew's cost/usage pools into Structure's
@@ -770,7 +771,12 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   // existed for Admin/Sales/any role that doesn't name one.
   const myDepts = useMemo(() => userDepartments(authUser), [authUser]);
   const roleDept = myDepts && myDepts.length === 1 ? myDepts[0] : null; // the common single-dept case — locks the picker to a badge, same as before
-  const deptOptions = isAdmin || !myDepts ? DEPTS : DEPTS.filter((d) => myDepts.includes(d));
+  // 🎨 Paint (owner ask 2026-11-01) is a view on the bar, not one of the ops departments: no income, crew or book of its own -
+  // it lists the event's repainted items (PaintDeptView). Shown to whoever sees every department, or is given Paint.
+  const PAINT = "Paint";
+  const deptOptions = [...(isAdmin || !myDepts ? DEPTS : DEPTS.filter((d) => myDepts.includes(d))), ...(isAdmin || !myDepts || myDepts.includes(PAINT) ? [PAINT] : [])];
+  // the departments a PDF book is made for
+  const bookDepts = deptOptions.filter((d) => d !== PAINT);
 
   const [dept, setDept] = useState(roleDept || deptOptions[0] || "Floral");
   // ── EXPORTING A DEPARTMENT THAT IS NOT THE ONE ON SCREEN ──
@@ -1140,8 +1146,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   // Sub-category -> floral mode (real / artificial / blend), IMS Rate Card's own setting; the PDF's flower cards read it.
   const floralModeBySub = useMemo(() => new Map((rateCardCategories || []).map(r => [String(r?.id ?? "").trim().replace(/\s+/g, " ").toLowerCase(), r?.floral_mode])), [rateCardCategories]);
   const deptsWithWork = useMemo(() =>
-    deptOptions.filter(d => Array.isArray(sel?.deptInventory?.[d]) && sel.deptInventory[d].length > 0),
-    [deptOptions, sel]);
+    bookDepts.filter(d => Array.isArray(sel?.deptInventory?.[d]) && sel.deptInventory[d].length > 0),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [deptOptions.join(), sel]);
   const selDateStr = sel ? eventDate(sel) : "";
   // Lifted out of the activity-log block so the bell in the event header can show the count
   // without recomputing it — one query, two readers, and they cannot disagree about how many
@@ -1431,7 +1438,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   useEffect(() => {
     let cancelled = false;
     const contractNo = sel?.lmsLeadId;
-    if (!contractNo) { setOpsExpenses([]); return; }
+    if (!contractNo || dept === PAINT) { setOpsExpenses([]); return; }
     fetchOpsExpenses(contractNo, dept).then((rows) => { if (!cancelled) setOpsExpenses(rows); });
     return () => { cancelled = true; };
   }, [sel?.id, sel?.lmsLeadId, dept]);
@@ -5331,7 +5338,8 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
   // top-right corner, and the Planning / On-site switch gets a full-width row of its own. Wrapped
   // together as one group they broke onto a second line in no particular order, which is most
   // of what made the header read as cluttered. From sm they sit side by side again.
-  const actionIcons = sel ? (
+  // Paint has no book, activity log or on-site view of its own - just its list
+  const actionIcons = sel && dept !== PAINT ? (
   <div className="flex items-center gap-1.5 shrink-0">
     {/* ── ACTIVITY BEHIND A BELL ──
         The log was a permanent panel between the header and the content, so an
@@ -5420,7 +5428,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
     </button>
   </div>
   ) : null;
-  const viewSwitch = sel ? (
+  const viewSwitch = sel && dept !== PAINT ? (
   /* Sized to their labels at every width. As two full-width halves on a phone they were the
      largest controls on the card — bigger than the title they sit under. */
   <div className="flex items-center gap-1.5">
@@ -5565,9 +5573,9 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
               event is picked. It is always the all-departments book - every department with work on the event, or every
               department on the bar when Deal Check hasn't synced any yet - never just the one on screen (the icon by
               the bell does that). */}
-          <button onClick={() => exportDeptPdf(deptsWithWork.length ? deptsWithWork : deptOptions)} disabled={!sel || !!exporting}
+          <button onClick={() => exportDeptPdf(deptsWithWork.length ? deptsWithWork : bookDepts)} disabled={!sel || !!exporting}
             title={!sel ? "Pick an event first" : exporting === "download" ? "Building the PDF…"
-              : `One PDF with all ${(deptsWithWork.length || deptOptions.length)} departments on this event`}
+              : `One PDF with all ${(deptsWithWork.length || bookDepts.length)} departments on this event`}
             className="hidden sm:inline-flex shrink-0 items-center gap-1.5 ml-1 px-3 py-1.5 rounded-lg text-sm font-semibold whitespace-nowrap border border-gray-200 bg-white text-gray-700 hover:text-gray-900 hover:bg-gray-50 hover:-translate-y-0.5 hover:shadow-[0_1px_2px_rgba(16,24,40,0.06),0_4px_10px_-6px_rgba(16,24,40,0.2)] disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:translate-y-0 disabled:hover:bg-white disabled:hover:text-gray-700 disabled:hover:shadow-none transition-all duration-150">
             {exporting === "download"
               ? <span aria-hidden="true" className="w-3.5 h-3.5 rounded-full border-2 border-gray-300 border-t-blue-600 animate-spin" />
@@ -6056,7 +6064,9 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
             {/* Sub-view switch (Planning / On-site) now lives in the event header above — it
                 scopes the entire column, so it sits with the event rather than between cards. */}
 
-            {opsView === "planning" && (<>
+            {dept === PAINT && <PaintDeptView sel={sel} inventory={inventory} colourCatalogue={settings?.colourCatalogue} zoneLabel={zoneLabelFor} onZoom={setZoomImg} />}
+
+            {opsView === "planning" && dept !== PAINT && (<>
 
             {/* Department income (from Deal Check snapshot — matches Studio). Floral is split into real
                 (mandi) vs artificial; Manpower uses the LIVE edited plan so crew edits move the total. */}
@@ -7898,7 +7908,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
             </div>
             </>)}
 
-            {opsView === "onsite" && (<>
+            {opsView === "onsite" && dept !== PAINT && (<>
             {/* The department chip row that used to sit here is gone. It switched department,
                 which is exactly what the Department picker in the left rail already does, under
                 the same permission rules — roleDept locks the rail to a badge only when the user
@@ -8489,7 +8499,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
         </div>
       )}
       {confirmDialog}
-      {dcModalOpen && sel && <DeptIncomeModal eo={sel} depts={deptOptions} startDept={dept} onClose={() => setDcModalOpen(false)} />}
+      {dcModalOpen && sel && <DeptIncomeModal eo={sel} depts={bookDepts} startDept={dept} onClose={() => setDcModalOpen(false)} />}
     </div>
   );
 }
