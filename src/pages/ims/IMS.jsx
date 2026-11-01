@@ -31,6 +31,8 @@ import PullToRefresh from "../../components/shared/PullToRefresh.jsx";
 import { useSwipeDrawer } from "../../lib/useSwipeDrawer";
 import { triggerLmsSync, fetchCachedContracts, fetchSeason, buildDateCategories, crossReferenceContracts } from "../../lib/ims/lms";
 import { allocateForDate, buildEventAllocation, eoToFnList, appendTrussAudit, TRUSS_P3_BACKFILLED_SK } from "../../lib/ims/trussEngine";
+import { allocatePlatformForDate, buildEventPlatformAllocation, appendPlatformAudit, PLATFORM_BACKFILLED_SK } from "../../lib/ims/platformEngine";
+import { allocateBattaForDate, buildEventBattaAllocation, appendBattaAudit, BATTA_BACKFILLED_SK } from "../../lib/ims/battaEngine";
 import { ensureCdnLibs } from "../../lib/ims/pdf";
 import { kvGet, reliableSave } from "../../lib/ims/kv";
 import { rowToRcItem, rcItemToRow } from "../../lib/rateCard";
@@ -278,6 +280,8 @@ export default function IMS() {
   const [blocks, setBlocksState] = useState({});
   const [amendRequests, setAmendRequests] = useState([]);
   const [trussAlloc, setTrussAllocState] = useState({});
+  const [platformAlloc, setPlatformAllocState] = useState({});
+  const [battaAlloc, setBattaAllocState] = useState({});
   const [trussInv, setTrussInvState] = useState(INIT_TRUSS_INV);
   const [categories, setCats] = useState([]);
   const [settings, setSettingsState] = useState(SETTINGS_DEFAULTS);
@@ -375,6 +379,12 @@ export default function IMS() {
   const trussAllocRef = useRef({});
   const trussPromotedRef = useRef(new Set());
   const trussBackfilledRef = useRef(false);
+  const platformAllocRef = useRef({});
+  const platformPromotedRef = useRef(new Set());
+  const platformBackfilledRef = useRef(false);
+  const battaAllocRef = useRef({});
+  const battaPromotedRef = useRef(new Set());
+  const battaBackfilledRef = useRef(false);
   const settingsRef = useRef(SETTINGS_DEFAULTS);
   // Mandi flower catalogue rows (migration 039) — read by applySettingsRows below so its own full
   // settingsObj rebuilds (triggered by ANY unrelated settings-table change) never lose the catalogue
@@ -462,6 +472,8 @@ export default function IMS() {
   useEffect(() => { blocksRef.current = blocks; }, [blocks]);
   useEffect(() => { projectsRef.current = projects; }, [projects]);
   useEffect(() => { trussAllocRef.current = trussAlloc; }, [trussAlloc]);
+  useEffect(() => { platformAllocRef.current = platformAlloc; }, [platformAlloc]);
+  useEffect(() => { battaAllocRef.current = battaAlloc; }, [battaAlloc]);
   useEffect(() => { settingsRef.current = settings; }, [settings]);
 
   // Settings are a key→value table; persist only the keys that changed. Declared here (rather
@@ -975,7 +987,7 @@ export default function IMS() {
     let active = true;
     (async () => {
       try {
-        const [invRows, fnRows, projRows, venRows, poRows, ohRows, supRows, userRows, prodRows, eoRows, allocRows, rcRows, trussRows, catRows, setRows, blockRows, rcCatRows, mandiRows, patternRows, labourTypeRows, venueLabourRows, printMaterialRows, carpetMaterialRows, platformRateRows, maskingRateRows, trussRateRows, heavyElementRangeRows, trussLabourRangeRows, fabricBangaliRangeRows, attendanceLocationRows, attendanceTrainingRows, synonymGroupRows, markedDateRows] = await Promise.all([
+        const [invRows, fnRows, projRows, venRows, poRows, ohRows, supRows, userRows, prodRows, eoRows, allocRows, platformAllocRows, battaAllocRows, rcRows, trussRows, catRows, setRows, blockRows, rcCatRows, mandiRows, patternRows, labourTypeRows, venueLabourRows, printMaterialRows, carpetMaterialRows, platformRateRows, maskingRateRows, trussRateRows, heavyElementRangeRows, trussLabourRangeRows, fabricBangaliRangeRows, attendanceLocationRows, attendanceTrainingRows, synonymGroupRows, markedDateRows] = await Promise.all([
           fetchAll("inventory"),
           fetchAll("functions").catch(() => []),
           fetchAll("projects").catch(() => []),
@@ -987,6 +999,8 @@ export default function IMS() {
           fetchAll("production_requests").catch(() => []),
           fetchAll("event_orders").catch(() => []),
           fetchAll("truss_allocations").catch(() => []),
+          fetchAll("platform_allocations").catch(() => []),
+          fetchAll("batta_allocations").catch(() => []),
           fetchAll("rate_card").catch(() => []),
           fetchAll("truss_inventory").catch(() => []),
           fetchAll("categories").catch(() => []),
@@ -1025,6 +1039,8 @@ export default function IMS() {
         setProdRequestsState(prodRows.map(rowToProd));
         setEventOrdersState(eoRows.map(rowToEO));
         setTrussAllocState(Object.fromEntries(allocRows.map((r) => [r.date, rowToAlloc(r)])));
+        setPlatformAllocState(Object.fromEntries(platformAllocRows.map((r) => [r.date, rowToAlloc(r)])));
+        setBattaAllocState(Object.fromEntries(battaAllocRows.map((r) => [r.date, rowToAlloc(r)])));
         const trussRow = trussRows.find((r) => r.key === "main") || trussRows[0];
         if (trussRow?.data) setTrussInvState(trussRow.data);
         setCats(catRows.map((c) => c.name).filter(Boolean));
@@ -1181,6 +1197,8 @@ export default function IMS() {
     liveTable("functions", (rows) => setFns(rows.map(rowToFn)));
     liveTable("projects", (rows) => setProjectsState(rows.map(rowToProject)));
     liveTable("truss_allocations", (rows) => setTrussAllocState(Object.fromEntries(rows.map((r) => [r.date, rowToAlloc(r)]))));
+    liveTable("platform_allocations", (rows) => setPlatformAllocState(Object.fromEntries(rows.map((r) => [r.date, rowToAlloc(r)]))));
+    liveTable("batta_allocations", (rows) => setBattaAllocState(Object.fromEntries(rows.map((r) => [r.date, rowToAlloc(r)]))));
     liveTable("truss_inventory", (rows) => { const tr = rows.find((r) => r.key === "main") || rows[0]; if (tr?.data) setTrussInvState(tr.data); });
     liveTable("categories", (rows) => setCats(rows.map((c) => c.name).filter(Boolean)));
     liveTable("supervisors", (rows) => setSupervisorsState(rows.map(rowToSupervisor)));
@@ -1401,6 +1419,205 @@ export default function IMS() {
       } catch (e) {
         // eslint-disable-next-line no-console
         console.error("[tier23-p3] backfill FAILED", e);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, eventOrders, trussInv]);
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // PLATFORM BOOKING — same two-effect shape as the truss orchestrator above, targeting
+  // platformEngine.js / platformAlloc / platform_allocations instead. See platformEngine.js's own
+  // header comment for why this tracks sqft-by-material rather than per-size piece counts.
+  // ══════════════════════════════════════════════════════════════════════════
+  // ── Promote to a hard platform reservation when an EO is sold/confirmed ──
+  useEffect(() => {
+    if (!user) return;
+    if (!Array.isArray(eventOrders) || eventOrders.length === 0) return;
+    if (!trussInv || !trussInv.platforms) return;
+    const toPromote = eventOrders.filter((eo) => {
+      if (!eo || !eo.id) return false;
+      if (platformPromotedRef.current.has(eo.id)) return false;
+      if (eo.status === "pending" || !eo.status) return false;
+      return true;
+    });
+    if (toPromote.length === 0) return;
+    let nextAlloc = { ...platformAllocRef.current };
+    const datesToRecompute = new Set();
+    toPromote.forEach((eo) => {
+      platformPromotedRef.current.add(eo.id);
+      const fnList = eoToFnList(eo);
+      const fnsByDate = {};
+      fnList.forEach((fn) => { const d = fn.date || eo.date || ""; if (!d) return; if (!fnsByDate[d]) fnsByDate[d] = []; fnsByDate[d].push(fn); });
+      Object.entries(fnsByDate).forEach(([d, fns]) => {
+        const eventEntry = buildEventPlatformAllocation({ eoId: eo.id, clientId: eo.clientId || "", clientName: eo.clientName || "", fnIdx: 0, state: "hard", expiry: null, heldBy: eo.salesperson || "—", createdAt: eo.createdAt || Date.now() }, fns);
+        if (Object.keys(eventEntry.totalPlatformSqftByMaterial).length === 0) return; // no platform in this event
+        const dateEntry = nextAlloc[d] || { events: [] };
+        const existingEvents = Array.isArray(dateEntry.events) ? [...dateEntry.events] : [];
+        const filteredEvents = existingEvents.filter((ev) => {
+          if (ev.state === "soft" && ev.clientId === eventEntry.clientId) return false;
+          if (ev.state === "hard" && ev.eoId === eventEntry.eoId) return false;
+          return true;
+        });
+        filteredEvents.push(eventEntry);
+        nextAlloc[d] = { ...dateEntry, events: filteredEvents };
+        datesToRecompute.add(d);
+      });
+    });
+    datesToRecompute.forEach((d) => { nextAlloc = allocatePlatformForDate(nextAlloc, d, nextAlloc[d]?.events || [], trussInv, "auto-promote-on-sold"); });
+    if (datesToRecompute.size > 0) {
+      setPlatformAlloc(nextAlloc);
+      datesToRecompute.forEach((d) => appendPlatformAudit({ date: d, event: "promote-soft-to-hard", triggerEoIds: toPromote.map((e) => e.id), eventCount: nextAlloc[d]?.events?.length || 0, feasible: !!nextAlloc[d]?.stockSummary?.feasible }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eventOrders, trussInv, user]);
+
+  // ── One-time backfill of already-sold EOs into platform allocation ──
+  useEffect(() => {
+    if (!user) return;
+    if (platformBackfilledRef.current) return;
+    if (!Array.isArray(eventOrders)) return;
+    if (!trussInv || !trussInv.platforms) return;
+    (async () => {
+      try {
+        const flag = await kvGet(PLATFORM_BACKFILLED_SK);
+        const alreadyDone = flag === "1" || flag === '"1"';
+        if (alreadyDone) { platformBackfilledRef.current = true; return; }
+        const soldEos = eventOrders.filter((eo) => eo && eo.id && eo.status && eo.status !== "pending");
+        const eosToBackfill = soldEos.filter((eo) => {
+          const d = eo.date || eo.functionsDetail?.[0]?.date || "";
+          if (!d) return false;
+          return !(platformAllocRef.current[d]?.events || []).some((ev) => ev.eoId === eo.id);
+        });
+        if (eosToBackfill.length === 0) {
+          await reliableSave(PLATFORM_BACKFILLED_SK, "1", "Platform alloc backfill flag");
+          platformBackfilledRef.current = true;
+          return;
+        }
+        let nextAlloc = { ...platformAllocRef.current };
+        const datesChanged = new Set();
+        eosToBackfill.forEach((eo) => {
+          platformPromotedRef.current.add(eo.id);
+          const fnList = eoToFnList(eo);
+          const fnsByDate = {};
+          fnList.forEach((fn) => { const d = fn.date || eo.date || ""; if (d) { if (!fnsByDate[d]) fnsByDate[d] = []; fnsByDate[d].push(fn); } });
+          Object.entries(fnsByDate).forEach(([d, fns]) => {
+            const eventEntry = buildEventPlatformAllocation({ eoId: eo.id, clientId: eo.clientId || "", clientName: eo.clientName || "", fnIdx: 0, state: "hard", expiry: null, heldBy: eo.salesperson || "—", createdAt: eo.createdAt || Date.now() }, fns);
+            if (Object.keys(eventEntry.totalPlatformSqftByMaterial).length === 0) return;
+            const dateEntry = nextAlloc[d] || { events: [] };
+            const existingEvents = Array.isArray(dateEntry.events) ? [...dateEntry.events] : [];
+            const filtered = existingEvents.filter((ev) => ev.eoId !== eventEntry.eoId);
+            filtered.push(eventEntry);
+            nextAlloc[d] = { ...dateEntry, events: filtered };
+            datesChanged.add(d);
+          });
+        });
+        datesChanged.forEach((d) => { nextAlloc = allocatePlatformForDate(nextAlloc, d, nextAlloc[d]?.events || [], trussInv, "platform-backfill"); });
+        setPlatformAlloc(nextAlloc);
+        await reliableSave(PLATFORM_BACKFILLED_SK, "1", "Platform alloc backfill flag");
+        platformBackfilledRef.current = true;
+        await appendPlatformAudit({ date: "ALL", event: "platform-backfill", eventCount: eosToBackfill.length, datesAffected: datesChanged.size });
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.error("[platform-alloc] backfill FAILED", e);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, eventOrders, trussInv]);
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // BATTA BOOKING — same two-effect shape as the truss/platform orchestrators above, targeting
+  // battaEngine.js / battaAlloc / batta_allocations instead.
+  // ══════════════════════════════════════════════════════════════════════════
+  // ── Promote to a hard batta reservation when an EO is sold/confirmed ──
+  useEffect(() => {
+    if (!user) return;
+    if (!Array.isArray(eventOrders) || eventOrders.length === 0) return;
+    if (!trussInv || !trussInv.batta) return;
+    const toPromote = eventOrders.filter((eo) => {
+      if (!eo || !eo.id) return false;
+      if (battaPromotedRef.current.has(eo.id)) return false;
+      if (eo.status === "pending" || !eo.status) return false;
+      return true;
+    });
+    if (toPromote.length === 0) return;
+    let nextAlloc = { ...battaAllocRef.current };
+    const datesToRecompute = new Set();
+    toPromote.forEach((eo) => {
+      battaPromotedRef.current.add(eo.id);
+      const fnList = eoToFnList(eo);
+      const fnsByDate = {};
+      fnList.forEach((fn) => { const d = fn.date || eo.date || ""; if (!d) return; if (!fnsByDate[d]) fnsByDate[d] = []; fnsByDate[d].push(fn); });
+      Object.entries(fnsByDate).forEach(([d, fns]) => {
+        const eventEntry = buildEventBattaAllocation({ eoId: eo.id, clientId: eo.clientId || "", clientName: eo.clientName || "", fnIdx: 0, state: "hard", expiry: null, heldBy: eo.salesperson || "—", createdAt: eo.createdAt || Date.now() }, fns, trussInv);
+        if (Object.keys(eventEntry.totalBattaRftByMaterial).length === 0) return; // no truss (so no batta) in this event
+        const dateEntry = nextAlloc[d] || { events: [] };
+        const existingEvents = Array.isArray(dateEntry.events) ? [...dateEntry.events] : [];
+        const filteredEvents = existingEvents.filter((ev) => {
+          if (ev.state === "soft" && ev.clientId === eventEntry.clientId) return false;
+          if (ev.state === "hard" && ev.eoId === eventEntry.eoId) return false;
+          return true;
+        });
+        filteredEvents.push(eventEntry);
+        nextAlloc[d] = { ...dateEntry, events: filteredEvents };
+        datesToRecompute.add(d);
+      });
+    });
+    datesToRecompute.forEach((d) => { nextAlloc = allocateBattaForDate(nextAlloc, d, nextAlloc[d]?.events || [], trussInv, "auto-promote-on-sold"); });
+    if (datesToRecompute.size > 0) {
+      setBattaAlloc(nextAlloc);
+      datesToRecompute.forEach((d) => appendBattaAudit({ date: d, event: "promote-soft-to-hard", triggerEoIds: toPromote.map((e) => e.id), eventCount: nextAlloc[d]?.events?.length || 0, feasible: !!nextAlloc[d]?.stockSummary?.feasible }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eventOrders, trussInv, user]);
+
+  // ── One-time backfill of already-sold EOs into batta allocation ──
+  useEffect(() => {
+    if (!user) return;
+    if (battaBackfilledRef.current) return;
+    if (!Array.isArray(eventOrders)) return;
+    if (!trussInv || !trussInv.batta) return;
+    (async () => {
+      try {
+        const flag = await kvGet(BATTA_BACKFILLED_SK);
+        const alreadyDone = flag === "1" || flag === '"1"';
+        if (alreadyDone) { battaBackfilledRef.current = true; return; }
+        const soldEos = eventOrders.filter((eo) => eo && eo.id && eo.status && eo.status !== "pending");
+        const eosToBackfill = soldEos.filter((eo) => {
+          const d = eo.date || eo.functionsDetail?.[0]?.date || "";
+          if (!d) return false;
+          return !(battaAllocRef.current[d]?.events || []).some((ev) => ev.eoId === eo.id);
+        });
+        if (eosToBackfill.length === 0) {
+          await reliableSave(BATTA_BACKFILLED_SK, "1", "Batta alloc backfill flag");
+          battaBackfilledRef.current = true;
+          return;
+        }
+        let nextAlloc = { ...battaAllocRef.current };
+        const datesChanged = new Set();
+        eosToBackfill.forEach((eo) => {
+          battaPromotedRef.current.add(eo.id);
+          const fnList = eoToFnList(eo);
+          const fnsByDate = {};
+          fnList.forEach((fn) => { const d = fn.date || eo.date || ""; if (d) { if (!fnsByDate[d]) fnsByDate[d] = []; fnsByDate[d].push(fn); } });
+          Object.entries(fnsByDate).forEach(([d, fns]) => {
+            const eventEntry = buildEventBattaAllocation({ eoId: eo.id, clientId: eo.clientId || "", clientName: eo.clientName || "", fnIdx: 0, state: "hard", expiry: null, heldBy: eo.salesperson || "—", createdAt: eo.createdAt || Date.now() }, fns, trussInv);
+            if (Object.keys(eventEntry.totalBattaRftByMaterial).length === 0) return;
+            const dateEntry = nextAlloc[d] || { events: [] };
+            const existingEvents = Array.isArray(dateEntry.events) ? [...dateEntry.events] : [];
+            const filtered = existingEvents.filter((ev) => ev.eoId !== eventEntry.eoId);
+            filtered.push(eventEntry);
+            nextAlloc[d] = { ...dateEntry, events: filtered };
+            datesChanged.add(d);
+          });
+        });
+        datesChanged.forEach((d) => { nextAlloc = allocateBattaForDate(nextAlloc, d, nextAlloc[d]?.events || [], trussInv, "batta-backfill"); });
+        setBattaAlloc(nextAlloc);
+        await reliableSave(BATTA_BACKFILLED_SK, "1", "Batta alloc backfill flag");
+        battaBackfilledRef.current = true;
+        await appendBattaAudit({ date: "ALL", event: "batta-backfill", eventCount: eosToBackfill.length, datesAffected: datesChanged.size });
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.error("[batta-alloc] backfill FAILED", e);
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1731,6 +1948,40 @@ export default function IMS() {
     })());
   }, [trackWrite]);
 
+  // Platform allocations — same shape/persistence rule as setTrussAlloc above, targeting the
+  // platform_allocations table (migration 052).
+  const setPlatformAlloc = useCallback((updater) => {
+    const prev = platformAllocRef.current;
+    const next = typeof updater === "function" ? updater(prev) : updater;
+    platformAllocRef.current = next;
+    setPlatformAllocState(next);
+    trackWrite((async () => {
+      for (const date of Object.keys(next)) {
+        if (JSON.stringify(prev[date]) !== JSON.stringify(next[date])) {
+          const { error: e } = await supabase.from("platform_allocations").upsert(allocToRow(date, next[date]), { onConflict: "date" });
+          if (e) setError(`Save failed: ${e.message}`);
+        }
+      }
+    })());
+  }, [trackWrite]);
+
+  // Batta allocations — same shape/persistence rule as setTrussAlloc/setPlatformAlloc above,
+  // targeting the batta_allocations table (migration 052).
+  const setBattaAlloc = useCallback((updater) => {
+    const prev = battaAllocRef.current;
+    const next = typeof updater === "function" ? updater(prev) : updater;
+    battaAllocRef.current = next;
+    setBattaAllocState(next);
+    trackWrite((async () => {
+      for (const date of Object.keys(next)) {
+        if (JSON.stringify(prev[date]) !== JSON.stringify(next[date])) {
+          const { error: e } = await supabase.from("batta_allocations").upsert(allocToRow(date, next[date]), { onConflict: "date" });
+          if (e) setError(`Save failed: ${e.message}`);
+        }
+      }
+    })());
+  }, [trackWrite]);
+
   // Truss inventory is a single-row key-value (key='main', data JSONB).
   const setTrussInv = useCallback((updater) => {
     setTrussInvState((prev) => {
@@ -2008,7 +2259,7 @@ export default function IMS() {
             projects={projects} functions={functions} setFunctions={setFunctions} inventory={items} setInventory={setInventory}
             settings={settings} setSettings={setSettings}
             trussInv={trussInv} setTrussInv={setTrussInv}
-            trussAlloc={trussAlloc} setTrussAlloc={setTrussAlloc} eventOrders={eventOrders} setEventOrders={setEventOrders} blocks={blocks}
+            trussAlloc={trussAlloc} setTrussAlloc={setTrussAlloc} platformAlloc={platformAlloc} setPlatformAlloc={setPlatformAlloc} battaAlloc={battaAlloc} setBattaAlloc={setBattaAlloc} eventOrders={eventOrders} setEventOrders={setEventOrders} blocks={blocks}
             studio={studio} authUser={user} amendRequests={amendRequests}
             focusEventId={focusEventId} focusSearch={focusSearch} focusLeadEntry={focusLeadEntry} onFocusHandled={clearFocusEvent}
             autoPdfFor={autoPdfFor} onAutoPdfDone={finishAutoPdf}
