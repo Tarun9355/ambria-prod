@@ -4,6 +4,7 @@ import {
   computePlatformPoolFeasibility,
   allocatePlatformForDate,
   applyPlatformOverridesToEvents,
+  simulatePlatformImpact,
 } from "./platformEngine";
 
 describe("buildEventPlatformAllocation", () => {
@@ -129,5 +130,37 @@ describe("applyPlatformOverridesToEvents", () => {
     const events = [{ eoId: "e1", totalPlatformSqftByMaterial: { iron: 50 } }];
     const out = applyPlatformOverridesToEvents(events, { e2: {} });
     expect(out[0]).toEqual(events[0]);
+  });
+});
+
+describe("simulatePlatformImpact", () => {
+  const trussInv = { platforms: [{ lengthFt: 10, widthFt: 10, stock: 2 }] }; // 200 sqft iron stock
+
+  it("returns green when the simulated sqft fits comfortably", () => {
+    const sim = { mode: "independent", zones: [{ material: "iron", sqft: 50 }] };
+    const r = simulatePlatformImpact(sim, null, [], trussInv);
+    expect(r.status).toBe("green");
+    expect(r.demand).toEqual({ iron: 50 });
+  });
+
+  it("returns red with an overflow figure when demand exceeds remaining stock", () => {
+    const dateAlloc = { events: [{ totalPlatformSqftByMaterial: { iron: 180 } }] };
+    const sim = { mode: "independent", zones: [{ material: "iron", sqft: 50 }] };
+    const r = simulatePlatformImpact(sim, dateAlloc, [], trussInv);
+    expect(r.status).toBe("red");
+    expect(r.overflow.iron).toBeCloseTo(30);
+  });
+
+  it("stacks onto other compound drafts when mode is compound", () => {
+    const sim = { mode: "compound", zones: [{ material: "iron", sqft: 50 }] };
+    const otherDrafts = [{ computed: { demand: { iron: 170 } } }];
+    const r = simulatePlatformImpact(sim, null, otherDrafts, trussInv);
+    expect(r.status).toBe("red");
+    expect(r.overflow.iron).toBeCloseTo(20);
+  });
+
+  it("returns gray with no entered sqft", () => {
+    const r = simulatePlatformImpact({ mode: "independent", zones: [] }, null, [], trussInv);
+    expect(r.status).toBe("gray");
   });
 });

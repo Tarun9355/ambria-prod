@@ -45,6 +45,7 @@ const IMS_SUBTABS = {
   planning: [
     { id: "deptops", label: "🏦 Dept Ops" },
     { id: "truss", label: "🏗️ Truss" },
+    { id: "platform", label: "🛏️ Platform" },
     { id: "paint", label: "🎨 Paint" },
     { id: "trussbatta", label: "🏗️ Truss & Batta Config" },
     { id: "platformconfig", label: "🛏️ Platform Config" },

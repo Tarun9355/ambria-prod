@@ -3,6 +3,7 @@ import { Tabs } from "../../components/ui";
 import PaintPlanningTab from "./PaintPlanningTab.jsx";
 import AdminSettingsTab from "./AdminSettingsTab.jsx";
 import TrussPlanningTab from "./TrussPlanningTab.jsx";
+import PlatformPlanningTab from "./PlatformPlanningTab.jsx";
 import DepartmentOpsTab from "./DepartmentOpsTab.jsx";
 
 // Faithful to the reference PlanningTab wrapper (sub-tabs: Truss / Paint / Truss&Batta /
@@ -16,13 +17,14 @@ function Placeholder({ name, note }) {
   );
 }
 
-export default function PlanningTab({ projects, functions, setFunctions, inventory, setInventory, settings, setSettings, trussInv, setTrussInv, trussAlloc, setTrussAlloc, eventOrders, setEventOrders, blocks, studio, authUser, amendRequests, focusEventId, focusSearch, focusLeadEntry, onFocusHandled, onGoToCalendar, autoPdfFor, onAutoPdfDone, rateCardCategories, rcItems, rcCats, supervisors }) {
+export default function PlanningTab({ projects, functions, setFunctions, inventory, setInventory, settings, setSettings, trussInv, setTrussInv, trussAlloc, setTrussAlloc, platformAlloc, setPlatformAlloc, eventOrders, setEventOrders, blocks, studio, authUser, amendRequests, focusEventId, focusSearch, focusLeadEntry, onFocusHandled, onGoToCalendar, autoPdfFor, onAutoPdfDone, rateCardCategories, rcItems, rcCats, supervisors }) {
   // KEEP IN SYNC: RoleAccessModal.jsx's IMS_SUBTABS.planning mirrors this list by hand (role-based
   // tab access has no shared source of truth with the real tab bars) — add/remove/rename a tab
   // here and update that list in the same change.
   const allTabs = [
     { id: "deptops", label: "🏦 Dept Ops" },
     { id: "truss", label: "🏗️ Truss" },
+    { id: "platform", label: "🛏️ Platform" },
     { id: "paint", label: "🎨 Paint" },
     { id: "trussbatta", label: "🏗️ Truss & Batta Config" },
     { id: "platformconfig", label: "🛏️ Platform Config" },
@@ -62,6 +64,7 @@ export default function PlanningTab({ projects, functions, setFunctions, invento
       </div>
       {sub === "deptops" && <DepartmentOpsTab pickerSlot={pickerSlot} eventOrders={eventOrders} setEventOrders={setEventOrders} inventory={inventory} setInventory={setInventory} blocks={blocks} settings={settings} setSettings={setSettings} trussInv={trussInv} setTrussInv={setTrussInv} authUser={authUser} amendRequests={amendRequests} focusEventId={focusEventId} focusSearch={focusSearch} focusLeadEntry={focusLeadEntry} onFocusHandled={onFocusHandled} onGoToCalendar={onGoToCalendar} autoPdfFor={autoPdfFor} onAutoPdfDone={onAutoPdfDone} supervisors={supervisors} rateCardCategories={rateCardCategories} />}
       {sub === "truss" && <TrussPlanningTab trussAlloc={trussAlloc} setTrussAlloc={setTrussAlloc} trussInv={trussInv} eventOrders={eventOrders} authUser={authUser} />}
+      {sub === "platform" && <PlatformPlanningTab platformAlloc={platformAlloc} setPlatformAlloc={setPlatformAlloc} trussInv={trussInv} authUser={authUser} />}
       {sub === "paint" && <PaintPlanningTab projects={projects} functions={functions} inventory={inventory} settings={settings} />}
       {sub === "trussbatta" && <AdminSettingsTab mode="trussbatta" settings={settings} setSettings={setSettings} studio={studio} trussInv={trussInv} setTrussInv={setTrussInv} />}
       {sub === "platformconfig" && <AdminSettingsTab mode="platformconfig" settings={settings} setSettings={setSettings} studio={studio} trussInv={trussInv} setTrussInv={setTrussInv} />}

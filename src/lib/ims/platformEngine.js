@@ -24,7 +24,7 @@ const platformsForMaterial = (trussInv, material) => {
   return Array.isArray(trussInv?.platforms) ? trussInv.platforms : [];
 };
 
-const platformStockSqft = (trussInv, material) => platformsForMaterial(trussInv, material)
+export const platformStockSqft = (trussInv, material) => platformsForMaterial(trussInv, material)
   .reduce((s, r) => s + (Number(r.lengthFt) || 0) * (Number(r.widthFt) || 0) * (Number(r.stock) || 0), 0);
 
 // ─── Layer 4.2-equivalent — one event's platform sqft demand, by material ───────────────────
@@ -164,6 +164,63 @@ export const applyPlatformOverridesToEvents = (eventsForDate, overrides) => {
       override: { reason: ovr.reason || "", overrideBy: ovr.overrideBy || "", overrideAt: ovr.overrideAt || null },
     };
   });
+};
+
+// ─── Simulator — what-if impact of a hypothetical sqft demand on a date ──────────────────────
+// Mirrors trussEngine.js's simulateImpact, but the input is directly {material, sqft} per row —
+// there's no L/W/H/config to resolve into pieces first, since platform demand already IS a plain
+// sqft number (see buildEventPlatformAllocation above). No cost estimate: platform billing is the
+// zone's own Height-band rate x sqft in Studio Build, not a flat RFT x rate like truss, so there's
+// no single rate to estimate cost from here — this stays booking-only, same as the rest of the file.
+export const simulatePlatformImpact = (sim, dateAlloc, otherDrafts, trussInv) => {
+  if (!sim || !trussInv) return null;
+
+  const demand = {};
+  (sim.zones || []).forEach(z => {
+    const mat = String(z.material || "iron").toLowerCase();
+    const sqft = Number(z.sqft) || 0;
+    if (sqft > 0) demand[mat] = Math.round(((demand[mat] || 0) + sqft) * 100) / 100;
+  });
+  if (Object.keys(demand).length === 0) {
+    return { status: "gray", reason: "No platform sqft entered", demand: {}, overflow: {}, pressure: 0 };
+  }
+
+  const realEvents = Array.isArray(dateAlloc?.events) ? dateAlloc.events : [];
+  const used = {};
+  realEvents.forEach(ev => {
+    Object.entries(ev.totalPlatformSqftByMaterial || {}).forEach(([mat, sqft]) => { used[mat] = (used[mat] || 0) + sqft; });
+  });
+  if (sim.mode === "compound" && Array.isArray(otherDrafts)) {
+    otherDrafts.forEach(draft => {
+      Object.entries(draft.computed?.demand || {}).forEach(([mat, sqft]) => { used[mat] = (used[mat] || 0) + sqft; });
+    });
+  }
+
+  const stock = {};
+  PLATFORM_MATERIALS.forEach(mat => { stock[mat] = platformStockSqft(trussInv, mat); });
+  Object.keys(demand).forEach(mat => { if (!(mat in stock)) stock[mat] = platformStockSqft(trussInv, mat); });
+
+  let shortageSqft = 0;
+  let maxPressure = 0;
+  const overflow = {};
+  Object.entries(demand).forEach(([mat, sqft]) => {
+    const totalStock = stock[mat] || 0;
+    const remaining = totalStock - (used[mat] || 0);
+    const pressure = totalStock > 0 ? ((used[mat] || 0) + sqft) / totalStock : 1;
+    if (pressure > maxPressure) maxPressure = pressure;
+    if (sqft > remaining) {
+      const over = Math.round((sqft - remaining) * 100) / 100;
+      shortageSqft += over;
+      overflow[mat] = over;
+    }
+  });
+
+  let status, reason;
+  if (shortageSqft > 0) { status = "red"; reason = `Shortage of ${shortageSqft} sqft — rental needed`; }
+  else if (maxPressure > 0.85) { status = "yellow"; reason = `High stock pressure (${Math.round(maxPressure * 100)}% utilization)`; }
+  else { status = "green"; reason = `Available · ${Math.round(maxPressure * 100)}% utilization`; }
+
+  return { status, reason, demand, overflow, pressure: Math.round(maxPressure * 100) };
 };
 
 export { isDeptHead, expireStaleSimulations };

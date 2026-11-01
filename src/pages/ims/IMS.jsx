@@ -2135,7 +2135,7 @@ export default function IMS() {
             projects={projects} functions={functions} setFunctions={setFunctions} inventory={items} setInventory={setInventory}
             settings={settings} setSettings={setSettings}
             trussInv={trussInv} setTrussInv={setTrussInv}
-            trussAlloc={trussAlloc} setTrussAlloc={setTrussAlloc} eventOrders={eventOrders} setEventOrders={setEventOrders} blocks={blocks}
+            trussAlloc={trussAlloc} setTrussAlloc={setTrussAlloc} platformAlloc={platformAlloc} setPlatformAlloc={setPlatformAlloc} eventOrders={eventOrders} setEventOrders={setEventOrders} blocks={blocks}
             studio={studio} authUser={user} amendRequests={amendRequests}
             focusEventId={focusEventId} focusSearch={focusSearch} focusLeadEntry={focusLeadEntry} onFocusHandled={clearFocusEvent}
             autoPdfFor={autoPdfFor} onAutoPdfDone={finishAutoPdf}
