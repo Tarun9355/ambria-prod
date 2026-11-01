@@ -5650,13 +5650,16 @@ export default function StudioApp() {
       const fZoneConfig = fnData.zoneConfig || {};
       const fFloralRatio = typeof fnData.floralRatio === "number" ? fnData.floralRatio : 70;
       const fBlocksForDate = blocksByDate[fnData.fnDate];
-      const crossFnPrevFn = (!hideDiscountFromClient && !isFillerDateFor(fnData.fnDate)) ? findCrossFnReuseSource(fnData, allFns) : null;
-      const pricingPool = crossFnPrevFn ? new Map(Object.entries(computeFnInvQty(crossFnPrevFn))) : null;
+      // Whether stock is THERE, not what it costs: pieces already standing at the venue from the deal's own same-day / previous-day
+      // function count, whatever the guest-discount toggle or a Filler date say (those only decide the price). The discount gate cut
+      // this credit too, so a sofa used in Haldi and again in Sangeet the same day read out of stock at Sold (RC-11).
+      const crossFnPrevFn = findCrossFnReuseSource(fnData, allFns);
+      const reusePool = crossFnPrevFn ? new Map(Object.entries(computeFnInvQty(crossFnPrevFn))) : null;
       Object.entries(fZoneElements).forEach(([zk, elems]) => {
         if (!fEnabledEls[zk] || !Array.isArray(elems)) return;
         elems.forEach((el, i) => {
           if (!el?.invId || !(Number(el.qty) || 0) > 0) return;
-          const r = getElPriceForFn(el, fZoneConfig[zk], fFloralRatio, true, fnData.fnVenue, fBlocksForDate, fnData.fnDate, pricingPool, fnData.fnIdx, zk, i);
+          const r = getElPriceForFn(el, fZoneConfig[zk], fFloralRatio, true, fnData.fnVenue, fBlocksForDate, fnData.fnDate, reusePool, fnData.fnIdx, zk, i);
           // A kit is also stopped by a part inside it that is short and can't be made (kitPartShorts).
           const partsOut = kitPartShorts(el, { fnIdx: fnData.fnIdx, zoneKey: zk, elIdx: i, fnDate: fnData.fnDate, venueName: fnData.fnVenue, blocksForDate: fBlocksForDate })
             .filter((p) => !p.canMake);
@@ -5674,7 +5677,7 @@ export default function StudioApp() {
       });
     });
     return flagged;
-  }, [collectAllFunctionData, blocksByDate, hideDiscountFromClient, getElPriceForFn, imsInventory, kitPartShorts]);
+  }, [collectAllFunctionData, blocksByDate, getElPriceForFn, imsInventory, kitPartShorts]);
 
   // Pre-Sold gate #2 — same "physically can't be delivered" reasoning as scanOutOfStockElements
   // above, for truss pillars/beams, platform sqft, and batta RFT instead of a tagged inventory item.
