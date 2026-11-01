@@ -3719,7 +3719,14 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
             extra: [["Carpet", "To use" + (ri === 0 ? "" : ` (floor ${ri + 1})`)], ["Source", "Bought / hired outside stock"], ["Floor", floorTxt]] });
           return;
         }
-        if (!prefs.length) return;
+        // No stock carpets ranked (Flex / New / Acrylic, which take no stock pick, or an Old floor nobody ranked): still a card
+        // with the material and its sqft - the floor's carpet was missing from the zone page and the book while Deal Check showed it.
+        if (!prefs.length) {
+          if (!row.cpT) return;
+          out.push({ name: carpetName(row.cpT) || "Carpet", qty: area, unit: "sqft", photo: row.cpPhoto || "", dims: "", kit: 0, recipe: [],
+            deptTag: combined ? "Tenting" : "", extra: [["Carpet", "To lay" + (ri === 0 ? "" : ` (floor ${ri + 1})`)], ["Floor", floorTxt]] });
+          return;
+        }
         // Planning's decided carpet once there is one; otherwise sales' 1st choice ONLY - the 2nd/3rd preferences printed as
         // cards of their own read as three carpets to lay (owner ask 2026-10-31). Deal Check's PDF prints the 1st choice too.
         const chosen = dec && !pdfAllCarpetsRef.current ? (prefs.find(p => p.id === dec.id) || (dec.manual ? { id: dec.id, name: dec.name } : null)) : null;
