@@ -141,6 +141,7 @@ import { LOGO_ASSET, logoCrop } from "../../lib/studio/brand.js";
 import { registerFlushBeforeReload, unregisterFlushBeforeReload, flushBeforeReload } from "../../lib/pendingSaveRegistry.js";
 import { thumbUrl } from "../../lib/studio/thumb.js";
 import { prefetchImages, AVAIL_THUMB } from "../../lib/studio/prefetchImages.js";
+import { eventOrderFor } from "../../lib/studio/eventOrderFor.js";
 import { zoneSwitchState, planPhotoSwitch, zoneAfterSwitch, zoneCfgSig, stripPhotoStash } from "../../lib/studio/photoStash.js";
 
 // ═══════════════════════════════════════════════════════════════
@@ -2608,7 +2609,7 @@ export default function StudioApp() {
     if (autoSyncedClientsRef.current.has(activeClientId)) return;
     const cli = (clientLedger || []).find(c => c.id === activeClientId);
     if (!cli || cli.status !== "booked") return;
-    const eo = (eventOrders || []).find(e => e.clientId === activeClientId) || (eventOrders || []).find(e => (e.clientName || "") === (clientName || "").trim());
+    const eo = eventOrderFor(eventOrders, activeClientId, clientName);
     if (!eo || !eo.deptSyncedAt) return; // never synced yet — the first Deal Check open does that
     // Only once this client's build has actually loaded: a run over a build that is still empty
     // would push an empty plan to IMS. Until then this effect just waits for the next change.
@@ -3951,7 +3952,7 @@ export default function StudioApp() {
   // Persist the Deal Check department breakdown onto the client's SOLD event-order row (table), so
   // IMS Dept Ops shows the SAME numbers (income, inventory-with-photos, manpower) Studio computed.
   const persistDeptSnapshot = useCallback(async (snap) => {
-    const eo = (eventOrders || []).find(e => e.clientId === activeClientId) || (eventOrders || []).find(e => (e.clientName || "") === (clientName || "").trim());
+    const eo = eventOrderFor(eventOrders, activeClientId, clientName);
     if (!eo) return;
     // Signature of the WHOLE projected breakdown (income + per-dept manpower + inventory + fabric) —
     // used to skip redundant writes. Covering all of it (not just income totals) means a change to the
@@ -4058,7 +4059,7 @@ export default function StudioApp() {
   // `layout` map already builds — deptIncome/deptInventory/manpowerPlan/fabricPlan/etc. stay
   // exactly persistDeptSnapshot's job; this function never writes them, so it can't race it.
   const persistBuildLayoutSnapshot = useCallback(async () => {
-    const eo = (eventOrders || []).find(e => e.clientId === activeClientId) || (eventOrders || []).find(e => (e.clientName || "") === (clientName || "").trim());
+    const eo = eventOrderFor(eventOrders, activeClientId, clientName);
     if (!eo) return; // not sold yet — nothing in IMS to keep in sync
     const layout = new Map();
     try {
@@ -4096,7 +4097,7 @@ export default function StudioApp() {
   // the old "pending" amount until the build changes again and persistDeptSnapshot's own debounced
   // sync happens to fire. Same freshest-row-first pattern as persistDeptSnapshot, just for one field.
   const syncDealValueNow = useCallback(async (dealValue) => {
-    const eo = (eventOrders || []).find(e => e.clientId === activeClientId) || (eventOrders || []).find(e => (e.clientName || "") === (clientName || "").trim());
+    const eo = eventOrderFor(eventOrders, activeClientId, clientName);
     if (!eo) return;
     try {
       const { data: row } = await supabase.from("event_orders").select("data").eq("id", eo.id).maybeSingle();
@@ -4108,7 +4109,7 @@ export default function StudioApp() {
   // order row, so Deal Check can show exact cost. The IMS deptOps live on the event_orders TABLE.
   const [dcEoActuals, setDcEoActuals] = useState(null);
   const refreshDcEoActuals = useCallback(async () => {
-    const eo = (eventOrders || []).find(e => e.clientId === activeClientId) || (eventOrders || []).find(e => (e.clientName || "") === (clientName || "").trim());
+    const eo = eventOrderFor(eventOrders, activeClientId, clientName);
     if (!eo) { setDcEoActuals(null); return; }
     try { const { data } = await supabase.from("event_orders").select("data").eq("id", eo.id).maybeSingle(); const d = data?.data; setDcEoActuals(d ? { deptOps: d.deptOps || {}, floralPlan: d.floralPlan || null } : null); }
     catch { setDcEoActuals(null); }
@@ -4738,7 +4739,7 @@ export default function StudioApp() {
       // event_order, rather than a dcReservedInventory cache that only this file's own reconcile ever
       // writes — a deal whose only reservation came from IMS's auto-confirm (never edited in Build
       // since booking) had no write to that cache at all, and read permanently short on its own stock.
-      const eo = (eventOrders || []).find((e) => e.clientId === activeClientId) || (eventOrders || []).find((e) => (e.clientName || "") === (clientName || "").trim());
+      const eo = eventOrderFor(eventOrders, activeClientId, clientName);
       const blocksDetailForDate = opts?.blocksDetailForDate ?? activeBlocksDetailForDate;
       const blocksForDate = netOwnReservedBlocksLive(rawBlocksForDate, item.id, blocksDetailForDate, eo?.id);
       // opts.fnIdx is the function being priced (event-level callers pass it); without it this
@@ -4864,7 +4865,7 @@ export default function StudioApp() {
     const fnDate = opts.fnDate || activeFnMeta?.date || clientDate;
     const rawBlocks = opts.blocksForDate ?? activeBlocksForDate;
     const detail = opts.blocksDetailForDate ?? activeBlocksDetailForDate;
-    const eo = (eventOrders || []).find((e) => e.clientId === activeClientId) || (eventOrders || []).find((e) => (e.clientName || "") === (clientName || "").trim());
+    const eo = eventOrderFor(eventOrders, activeClientId, clientName);
     const venueName = opts.venueName ?? activeFnMeta?.venue;
     const fns = collectAllFunctionDataRef.current ? collectAllFunctionDataRef.current() : [];
     const target = opts.zoneKey != null && opts.elIdx != null ? { fnIdx: opts.fnIdx ?? activeFnIdx, zoneKey: opts.zoneKey, elIdx: opts.elIdx } : null;
@@ -10853,7 +10854,7 @@ export default function StudioApp() {
       // (e.g. 18 total − 12 reserved at Sold = "6 free" forever), and never moves when the live
       // Build qty is edited afterward, since that edit doesn't touch the blocks table until the
       // next reconcile. Owner-reported: bumping a booked deal's qty from 12 to 13 still showed 6.
-      const eo = (eventOrders || []).find((e) => e.clientId === activeClientId) || (eventOrders || []).find((e) => (e.clientName || "") === (clientName || "").trim());
+      const eo = eventOrderFor(eventOrders, activeClientId, clientName);
       // Where each inventory item is already placed for THIS guest — every function of the deal,
       // every enabled zone — minus the element being swapped right now, so the "free" count never
       // over-counts stock this same client has already committed elsewhere in the deal.
@@ -11010,7 +11011,7 @@ export default function StudioApp() {
     if (!date || !venueNow) return out;
     const all = collectAllFunctionData() || [];
     const thisFn = all.find((f) => f.fnIdx === activeFnIdx);
-    const eo = (eventOrders || []).find((e) => e.clientId === activeClientId) || (eventOrders || []).find((e) => (e.clientName || "") === (clientName || "").trim());
+    const eo = eventOrderFor(eventOrders, activeClientId, clientName);
     (imsInventory || []).forEach((it) => {
       if (String(it.subCat || it.subcategory || "").trim().toLowerCase() !== "carpet") return;
       const holds = sameVenueHolds(activeBlocksDetailForDate?.[it.id], eventOrders, venueNow, date, eo?.id);

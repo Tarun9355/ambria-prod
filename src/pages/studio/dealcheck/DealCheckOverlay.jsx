@@ -26,6 +26,7 @@ import { DEPTS as OPS_DEPTS, catToDept as sharedCatToDept, poolLabourDept } from
 import ItemHoverThumb from "../../../components/shared/ItemHoverThumb.jsx";
 import { WASH_BANDS, GRAIN_URL } from "../../../lib/studio/pageWash";
 import { newSplitGroupId, reconcileDealCheckIntoBuild } from "../../../lib/studio/dealCheckSync.js";
+import { eventOrderFor } from "../../../lib/studio/eventOrderFor.js";
 
 // ══ THE PAGE'S GROUND ══
 // A glob, not an import, for the same reason every other background in this app uses one: if the file
@@ -469,7 +470,7 @@ export default function DealCheckOverlay({ ctx }) {
     const fnBlocks = (dealCheckData?.blocksByDate || {})[targetDate] || {};
     // Net this SAME deal's own already-recorded reservation out first — see netOwnReservedBlocksLive.
     const cliForAvail = clientLedger.find(c => c.id === activeClientId);
-    const eoForAvail = (eventOrders || []).find(e => e.clientId === activeClientId) || (eventOrders || []).find(e => (e.clientName || "") === (cliForAvail?.name || "").trim());
+    const eoForAvail = eventOrderFor(eventOrders, activeClientId, cliForAvail?.name);
     const blocksDetail = (dealCheckData?.blocksDetailByDate || {})[targetDate] || {};
     const otherEventsAvail = getStudioAvailable(it, netOwnReservedBlocksLive(fnBlocks, it.id, blocksDetail, eoForAvail?.id));
     return Math.max(0, otherEventsAvail - usedElsewhere);
@@ -579,7 +580,7 @@ export default function DealCheckOverlay({ ctx }) {
         const isSold = cli?.status === "booked";
         // This deal's own event_order — resolved once, same lookup used everywhere else a caller
         // needs "the sold event_order this client maps to" (StudioApp.jsx's persistDeptSnapshot etc).
-        const eoForAvail = (eventOrders || []).find(e => e.clientId === activeClientId) || (eventOrders || []).find(e => (e.clientName || "") === (cli?.name || "").trim());
+        const eoForAvail = eventOrderFor(eventOrders, activeClientId, cli?.name);
         // Every availability check below must net out THIS deal's own already-recorded reservation
         // first (netOwnReservedBlocksLive) — otherwise a SOLD deal's own held stock counts as someone
         // else's demand against itself the moment reconcileSoldInventoryBlocks (or IMS's own auto-
@@ -3328,7 +3329,7 @@ export default function DealCheckOverlay({ ctx }) {
                                             } } },
                                         );
                                         if (!prefs.length) return null; // nothing picked yet: the pick button above is the way in; the three show once a carpet is chosen
-                                        const decRaw = ((eventOrders || []).find(e => e.clientId === activeClientId)?.deptOps?.Tenting?.carpetChoice || {})[`${fnIdx}|${zk}|0`];
+                                        const decRaw = (eventOrderFor(eventOrders, activeClientId)?.deptOps?.Tenting?.carpetChoice || {})[`${fnIdx}|${zk}|0`];
                                         // the decision counts only while it still belongs to this function (same date and type), and is one of the choices, a hand pick, or "arranged separately"
                                         const dec = validDecision(decRaw, { date: fns[fnIdx]?.fnDate, fnLabel: fns[fnIdx]?.fnType }) && (decRaw.other || decRaw.manual || prefs.some(p => p.id === decRaw.id)) ? decRaw : null;
                                         return (
@@ -3549,7 +3550,7 @@ export default function DealCheckOverlay({ ctx }) {
                                           const el = _repParsed?.idx != null ? fns[fnIdx]?.zoneElements?.[card.zoneKey]?.[_repParsed.idx] : null;
                                           const ch = elementChoices(el);
                                           if (ch.length < 2) return null;
-                                          const decRaw = el.pid ? ((eventOrders || []).find(e => e.clientId === activeClientId)?.deptOps?.Fabric?.itemChoice || {})[`${fnIdx}|${card.zoneKey}|${el.pid}`] : null;
+                                          const decRaw = el.pid ? (eventOrderFor(eventOrders, activeClientId)?.deptOps?.Fabric?.itemChoice || {})[`${fnIdx}|${card.zoneKey}|${el.pid}`] : null;
                                           const dec = validDecision(decRaw, { date: fns[fnIdx]?.fnDate, fnLabel: fns[fnIdx]?.fnType }) && (decRaw.other || decRaw.manual || ch.some(p => p.id === decRaw.id)) ? decRaw : null;
                                           return (
                                             <div style={{display:"flex",flexDirection:"column",gap:5,marginBottom:8}}>
