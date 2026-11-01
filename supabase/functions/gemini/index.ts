@@ -31,12 +31,15 @@ Deno.serve(async (req) => {
     return json({ error: "Invalid JSON body" }, 400);
   }
 
-  const { text, system, model = "gemini-2.5-flash", maxTokens = 300 } = body || {};
+  // gemini-2.5-flash is closed to new API keys (404 "no longer available to new users", 2026-11-01).
+  const { text, system, model = "gemini-3.8-flash", maxTokens = 300 } = body || {};
   if (typeof text !== "string" || !text.trim()) return json({ error: "text required" }, 400);
 
   const payload: Record<string, unknown> = {
     contents: [{ role: "user", parts: [{ text }] }],
-    generationConfig: { maxOutputTokens: maxTokens, temperature: 0.2 },
+    // A 3.x model thinks before it answers and the thinking spends the same token budget: at 300 it was cut off
+    // mid-answer. Low thinking is plenty for translating a line, and the floor leaves room for the answer.
+    generationConfig: { maxOutputTokens: Math.max(Number(maxTokens) || 300, 1024), temperature: 0.2, thinkingConfig: { thinkingLevel: "low" } },
   };
   if (system) payload.systemInstruction = { parts: [{ text: system }] };
 
@@ -48,7 +51,8 @@ Deno.serve(async (req) => {
     });
     const data = await resp.json();
     if (!resp.ok) return json({ error: data?.error?.message || `HTTP ${resp.status}` }, resp.status);
-    const out = (data?.candidates?.[0]?.content?.parts || []).map((p: { text?: string }) => p.text || "").join("").trim();
+    // the answer only - a thought summary part, when a model sends one, is not part of it
+    const out = (data?.candidates?.[0]?.content?.parts || []).filter((p: { thought?: boolean }) => !p.thought).map((p: { text?: string }) => p.text || "").join("").trim();
     return json({ text: out });
   } catch (e) {
     return json({ error: String(e?.message || e) }, 502);
