@@ -33,6 +33,8 @@ import { buildFabricGroups, foldFabricLines } from "../../lib/ims/fabricGroups";
 import { mandiHow } from "../../lib/ims/floralHow";
 import { buildEventSwap, swappedRecipeFlower } from "../../lib/ims/mandiSwap";
 import { realLineTaker } from "../../lib/ims/floralBook";
+import { pdfT, pdfDate, pdfDateTime, hindiReportHtml } from "../../lib/ims/pdfI18n";
+import PdfLangToggle from "./PdfLangToggle";
 import { splitCrewByDept } from "../../lib/ims/crewSplit";
 
 // ── THE OFFICIAL LOGO, READY FOR THE PDF ──
@@ -395,6 +397,7 @@ function VoiceRecorder({ value, onSave, compact = false, label = "voice note" })
 // event (blocked inventory with photos, manpower), override the manpower plan, and log ACTUALS
 // (real mandi cost + on-site expenses) so projected cost converts to exact cost (reflected to Studio).
 const DEPTS = SHARED_DEPTS;
+const PDF_LANG_KEY = "ims.deptOps.pdfLang";
 const DEPT_ICON = { Furniture: "🛋️", Floral: "🌸", Structure: "🏛️", Tenting: "⛺", Transport: "🚚", Lighting: "💡", Fabric: "🧵", Paint: "🎨" };
 // Primary manpower types per department (for the editable crew plan).
 // Furniture/Fabric carry no Labours row of their own (owner ask, 2026-10-27) — the same person runs
@@ -1139,6 +1142,15 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   // with nothing changed reuses it instantly instead of rebuilding; any edit to the event changes
   // the key, so what opens is still always the latest. Its blob: URL is freed when replaced.
   const deckCacheRef = useRef(null); // {key, url, name}
+  // The Dept Ops PDF's language (the EN | हिं toggle by Download PDF): English or Hindi, remembered per viewer in this browser.
+  const [pdfLang, setPdfLangState] = useState(() => {
+    try { return localStorage.getItem(PDF_LANG_KEY) === "hi" ? "hi" : "en"; } catch { return "en"; }
+  });
+  const setPdfLang = (l) => {
+    const v = l === "hi" ? "hi" : "en";
+    setPdfLangState(v);
+    try { localStorage.setItem(PDF_LANG_KEY, v); } catch { /* private window: this session only */ }
+  };
   useEffect(() => () => { if (deckCacheRef.current) URL.revokeObjectURL(deckCacheRef.current.url); }, []);
   // Which departments actually have something to report on this event — the same gate the
   // report itself uses (hasDeptSnapshot / blockedItemsGrouped both key off deptInventory[dept]).
@@ -3375,7 +3387,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const zoneAdminOrderRef = useRef(null);
   const buildReportHtml = (zoneLabels = {}, logos = {}, opts = {}) => {
     const combined = !!opts.combined;
-    const bookTitle = combined ? "All departments" : dept;
+    // The book's language (Planning's EN | हिं toggle). Every word the book prints goes through t(); data does not.
+    const lang = opts.lang === "hi" ? "hi" : "en";
+    const t = pdfT(lang);
+    const bookTitle = combined ? t("All departments") : t(dept);
     // Anything that reaches the page goes through this first. The values are client names,
     // venues, crew types and item names typed by staff in Studio — an apostrophe or a stray
     // "<" in one of them would otherwise break the markup or inject into it.
@@ -3385,7 +3400,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     // natural unit: a heading stranded at the foot of a page with its table overleaf is the
     // single thing that makes a generated report look generated.
     // S / M / B spelled out: a lone "S" on a card is a letter, "Small" is an instruction.
-    const SMB_LABEL = { S: "Small", M: "Medium", B: "Big" };
+    const SMB_LABEL = { S: t("Small"), M: t("Medium"), B: t("Big") };
+    // "1st choice" … for a ranked preference (carpets, overlay / cushion cover designs).
+    const CHOICE_LBL = [t("1st choice"), t("2nd choice"), t("3rd choice"), t("4th choice")];
+    const choiceLbl = (i) => CHOICE_LBL[i] || t("{n}th choice", { n: i + 1 });
     let sectionNo = 0;
     const sect = (title, body) => {
       if (!body) return "";
@@ -3440,6 +3458,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     /* Inventory, with each kit's components indented beneath it — the components sum to the kit
        line, which is the one comparison this section exists to support. */
     const finish = buildFinish(sel?.functionsDetail, inventory, settings?.printMaterials);
+    // finish.printLine with its one English word ("on") through t(); the English book keeps finish's own line.
+    const printLineT = (p) => lang !== "hi" ? finish.printLine(p)
+      : `${p.material} · ${p.size}${p.qty > 1 ? ` ×${p.qty}` : ""}${p.on ? ` ${t("on {item}", { item: p.on })}` : ""} — ${p.zone}${p.fn ? ` (${p.fn})` : ""}`;
     const invRows = [];
     blockedItemsGrouped.forEach(it => {
       const flags = [it.isKit ? "KIT" : "", it.shortQty > 0 ? (it.outOfStock ? "OUT OF STOCK" : `SHORT x${it.shortQty}`) : "", it.prodOrBuy ? it.prodOrBuy.toUpperCase() : "", it.isSwapped ? "SWAPPED" : ""].filter(Boolean).join(" · ");
@@ -3465,8 +3486,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     ];
     if (spendRows.length) spendRows.push(`<tr class="tot"><td>Total logged</td><td class="n b">${money(actualCost)}</td></tr>`);
 
-    const truckRows = trucks.map((t, i) =>
-      `<tr><td>Truck ${i + 1}</td><td>${esc(t.vehicle || "—")}</td><td>${esc(t.driver || "—")}</td><td>${esc(t.phone || "—")}</td><td>${esc(t.status || "—")}</td></tr>`);
+    const truckRows = trucks.map((tk, i) =>
+      `<tr><td>${t("Truck {n}", { n: i + 1 })}</td><td>${esc(tk.vehicle || "—")}</td><td>${esc(tk.driver || "—")}</td><td>${esc(tk.phone || "—")}</td><td>${esc(tk.status || "—")}</td></tr>`);
 
     /* ── WHAT IS ACTUALLY GOING ON THE TRUCKS ──
        The truck table used to carry a "Load" column reading "7 items", which is a number nobody
@@ -3485,24 +3506,24 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     const decidedInstead = new Map();
     if (!pdfAllCarpetsRef.current) elementPlanOf().rows.forEach(r => {
       if (!r.other && (!r.decidedId || r.decidedId === r.prefs[0]?.id)) return;
-      const nm = r.other ? "arranged separately" : ([...r.options, r.manual].filter(Boolean).find(o => o.id === r.decidedId) || {}).name || "another design";
+      const nm = r.other ? t("arranged separately") : ([...r.options, r.manual].filter(Boolean).find(o => o.id === r.decidedId) || {}).name || t("another design");
       const k = String(r.prefs[0]?.id);
       decidedInstead.set(k, [...(decidedInstead.get(k) || []), `${nm} × ${r.qty}`]);
     });
     const loadRows = blockedItems.map(it => {
       const paint = finish.paintFor(it);
-      const sub = (it.kitOf ? `<div class="sub">part of ${esc(it.kitOf)}</div>` : "")
-        + (it.invId && decidedInstead.has(String(it.invId)) ? `<div class="sub">Planning chose instead: ${esc(decidedInstead.get(String(it.invId)).join(", "))}</div>` : "")
-        + (paint ? `<div class="sub">Paint: ${esc(paint)}</div>` : "")
-        + (it.sub === "print" ? finish.prints.map(p => `<div class="sub">${esc(finish.printLine(p))}</div>`).join("") : "");
+      const sub = (it.kitOf ? `<div class="sub">${t("part of {kit}", { kit: esc(it.kitOf) })}</div>` : "")
+        + (it.invId && decidedInstead.has(String(it.invId)) ? `<div class="sub">${t("Planning chose instead: {list}", { list: esc(decidedInstead.get(String(it.invId)).join(", ")) })}</div>` : "")
+        + (paint ? `<div class="sub">${t("Paint: {paint}", { paint: esc(paint) })}</div>` : "")
+        + (it.sub === "print" ? finish.prints.map(p => `<div class="sub">${esc(printLineT(p))}</div>`).join("") : "");
       return `<tr><td>${esc(it.name)}${sub}</td><td class="n b">${esc(it.qty)}</td></tr>`;
     });
 
     const moveRows = movements.map(m =>
-      `<tr><td>${esc(m.name)}</td><td>${esc(m.type === "transfer" ? `Transfer → ${m.toEventName || "site"}` : m.type === "damage" ? "Damaged" : "Back to production house")}</td><td class="n">${esc(m.qty)}</td><td>${esc(m.by || "—")}</td></tr>`);
+      `<tr><td>${esc(m.name)}</td><td>${esc(m.type === "transfer" ? t("Transfer → {to}", { to: m.toEventName || t("site") }) : m.type === "damage" ? t("Damaged") : t("Back to production house"))}</td><td class="n">${esc(m.qty)}</td><td>${esc(m.by || "—")}</td></tr>`);
 
     const fabRows = dept === "Fabric" ? fabricReqRows.flatMap(ft => ft.rows.map(r =>
-      `<tr><td>${esc(ft.label)} · ${r.colour && r.colour !== "(unassigned)" ? `<span style="display:inline-block;width:9px;height:9px;border-radius:2px;border:1px solid rgba(0,0,0,.18);background:${esc(r.hex)};margin-right:5px;vertical-align:middle"></span>` : ""}${esc(r.colour)}</td><td class="n">${esc(r.required)} ${esc(ft.unit)}</td><td class="n">${esc(r.avail)} ${esc(ft.unit)}</td><td class="n ${r.short > 0 ? "bad" : "ok"}">${r.short > 0 ? `short ${esc(r.short)} ${esc(ft.unit)}` : "ok"}</td></tr>`)) : [];
+      `<tr><td>${esc(t(ft.label))} · ${r.colour && r.colour !== "(unassigned)" ? `<span style="display:inline-block;width:9px;height:9px;border-radius:2px;border:1px solid rgba(0,0,0,.18);background:${esc(r.hex)};margin-right:5px;vertical-align:middle"></span>` : ""}${esc(r.colour === "(unassigned)" ? t("(unassigned)") : r.colour)}</td><td class="n">${esc(r.required)} ${esc(ft.unit)}</td><td class="n">${esc(r.avail)} ${esc(ft.unit)}</td><td class="n ${r.short > 0 ? "bad" : "ok"}">${r.short > 0 ? t("short {n}", { n: `${esc(r.short)} ${esc(ft.unit)}` }) : t("ok")}</td></tr>`)) : [];
 
     // ── ARTIFICIAL FLOWERS & GREENS ── the bunches the Floral book sends out, worked to kilos the way Deal Check does it (bunches ÷ bunches per kg),
     // and the specific colours to pull. Per function when the event has more than one (floralDetail), then the whole event. No rupees: this book is for the crew.
@@ -3526,15 +3547,15 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       const fnRows = fdKeys.map(k => ({ k, f: fd[k] || {}, fl: fnBunches(fd[k], "flower"), gr: fnBunches(fd[k], "green") }));
       const multi = fnRows.filter(r => r.fl > 0 || r.gr > 0).length > 1;
       if (multi) fnRows.forEach(({ k, f, fl, gr }) => {
-        const tag = [f.fnType || `Function ${Number(k) + 1}`, f.fnDate].filter(Boolean).join(" · ");
-        if (fl > 0) artRows.push(artRow(`${tag} — Flower bunches`, fl, `${artPlan.flowerBPK} / kg`, kgOf(fl, artPlan.flowerBPK)));
-        if (gr > 0) artRows.push(artRow(`${tag} — Green bunches`, gr, `${artPlan.greenBPK} / kg`, kgOf(gr, artPlan.greenBPK)));
+        const tag = [f.fnType || t("Function {n}", { n: Number(k) + 1 }), f.fnDate].filter(Boolean).join(" · ");
+        if (fl > 0) artRows.push(artRow(`${tag} — ${t("Flower bunches")}`, fl, `${artPlan.flowerBPK} / kg`, kgOf(fl, artPlan.flowerBPK)));
+        if (gr > 0) artRows.push(artRow(`${tag} — ${t("Green bunches")}`, gr, `${artPlan.greenBPK} / kg`, kgOf(gr, artPlan.greenBPK)));
       });
-      const allFl = fnRows.length ? fnRows.reduce((t, r) => t + r.fl, 0) : artBunches(artPlan.flowerBunches);
-      const allGr = fnRows.length ? fnRows.reduce((t, r) => t + r.gr, 0) : artBunches(artPlan.greenBunches);
-      if (allFl > 0) artRows.push(artRow(multi ? "All functions — Flower bunches" : "Flower bunches", allFl, `${artPlan.flowerBPK} / kg`, kgOf(allFl, artPlan.flowerBPK)));
-      if (allGr > 0) artRows.push(artRow(multi ? "All functions — Green bunches" : "Green bunches", allGr, `${artPlan.greenBPK} / kg`, kgOf(allGr, artPlan.greenBPK)));
-      (Array.isArray(artPlan.colorSplit) ? artPlan.colorSplit : []).forEach(c => artColourRows.push(`<tr><td>${esc(c.name || "Artificial bunch")}</td><td class="n">${esc(c.qty)}</td></tr>`));
+      const allFl = fnRows.length ? fnRows.reduce((s, r) => s + r.fl, 0) : artBunches(artPlan.flowerBunches);
+      const allGr = fnRows.length ? fnRows.reduce((s, r) => s + r.gr, 0) : artBunches(artPlan.greenBunches);
+      if (allFl > 0) artRows.push(artRow(multi ? `${t("All functions")} — ${t("Flower bunches")}` : t("Flower bunches"), allFl, `${artPlan.flowerBPK} / kg`, kgOf(allFl, artPlan.flowerBPK)));
+      if (allGr > 0) artRows.push(artRow(multi ? `${t("All functions")} — ${t("Green bunches")}` : t("Green bunches"), allGr, `${artPlan.greenBPK} / kg`, kgOf(allGr, artPlan.greenBPK)));
+      (Array.isArray(artPlan.colorSplit) ? artPlan.colorSplit : []).forEach(c => artColourRows.push(`<tr><td>${esc(c.name || t("Artificial bunch"))}</td><td class="n">${esc(c.qty)}</td></tr>`));
     }
 
     /* ── ZONE LAYOUT PAGES ──
@@ -3665,11 +3686,11 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       const m = (Array.isArray(settings?.carpetMaterials) ? settings.carpetMaterials : []).find(x => x && x.id === id);
       return m?.name || String(id);
     };
-    const trussTypeLbl = (t) => t === "box" ? "Box" : t === "singleU" ? "Single U" : (t ? String(t) : "");
+    const trussTypeLbl = (tt) => tt === "box" ? t("Box") : tt === "singleU" ? t("Single U") : (tt ? String(tt) : "");
     // "1ft-3ft" is a flat rate band, not one fixed height — hft (zc.plHft, Build's own "Exact ht"
     // picker) is the salesperson's actual stand height within that band, shown in parens so ops
     // knows exactly what to build rather than just "somewhere between 1 and 3 feet".
-    const platLbl = (h, hft) => h === "4in" ? '4"' : h === "1ft" ? `Raised ${Number(hft) > 0 ? hft : 1}ft` : (h ? String(h) : "");
+    const platLbl = (h, hft) => h === "4in" ? '4"' : h === "1ft" ? t("Raised {n}ft", { n: Number(hft) > 0 ? hft : 1 }) : (h ? String(h) : "");
     const ftArea = (d) => [d?.L, d?.W].every(v => Number(v) > 0) ? `${d.L} x ${d.W} ft` : "";
     const printName = (id) => {
       if (!id) return "";
@@ -3696,10 +3717,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         const ref = String(p.refImageUrl || "").trim();
         const area = Math.round(w * d * q * 100) / 100;
         return {
-          name: "🖨 Print · " + (printName(p.material) || "—"), qty: q, unit: "pc",
+          name: "🖨 " + t("Print") + " · " + (printName(p.material) || "—"), qty: q, unit: "pc",
           photo: /^https?:\/\//i.test(ref) ? ref : "", dims: `${w} x ${d} ft`, kit: 0, recipe: [],
           deptTag: combined ? "Structure" : "",
-          extra: [["Area", `${area} sqft${q > 1 ? " total" : ""}`], ...(on ? [["On", on.name]] : [])],
+          extra: [[t("Area"), `${area} sqft${q > 1 ? " " + t("total") : ""}`], ...(on ? [[t("On"), on.name]] : [])],
         };
       });
     };
@@ -3722,8 +3743,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         const floorTxt = `${Number(fd.L) || Number(fd.S) || 0} x ${Number(fd.W) || Number(fd.S) || 0} ft${qtyTxt}`;
         if (dec?.other && !pdfAllCarpetsRef.current) {
           // none of the stock carpets could be used: the carpet is bought or hired outside stock
-          out.push({ name: "Carpet arranged separately", qty: area, unit: "sqft", photo: "", dims: "", kit: 0, recipe: [], deptTag: combined ? "Tenting" : "",
-            extra: [["Carpet", "To use" + (ri === 0 ? "" : ` (floor ${ri + 1})`)], ["Source", "Bought / hired outside stock"], ["Floor", floorTxt]] });
+          out.push({ name: t("Carpet arranged separately"), qty: area, unit: "sqft", photo: "", dims: "", kit: 0, recipe: [], deptTag: combined ? "Tenting" : "",
+            extra: [[t("Carpet"), t("To use") + (ri === 0 ? "" : " " + t("(floor {n})", { n: ri + 1 }))], [t("Source"), t("Bought / hired outside stock")], [t("Floor"), floorTxt]] });
           return;
         }
         // No stock carpets ranked (Flex / New / Acrylic, which take no stock pick, or an Old floor nobody ranked): still a card
@@ -3731,22 +3752,21 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         // A carpet Planning picked by hand for such a floor still wins (the chosen path below).
         if (!prefs.length && !(dec?.manual && dec.id && !pdfAllCarpetsRef.current)) {
           if (!row.cpT) return;
-          out.push({ name: carpetPricingFor(row.cpT, settings?.carpetMaterials).label || carpetName(row.cpT) || "Carpet", qty: area, unit: "sqft", photo: row.cpPhoto || "", dims: "", kit: 0, recipe: [],
-            deptTag: combined ? "Tenting" : "", extra: [["Carpet", "To lay" + (ri === 0 ? "" : ` (floor ${ri + 1})`)], ["Floor", floorTxt]] });
+          out.push({ name: carpetPricingFor(row.cpT, settings?.carpetMaterials).label || carpetName(row.cpT) || t("Carpet"), qty: area, unit: "sqft", photo: row.cpPhoto || "", dims: "", kit: 0, recipe: [],
+            deptTag: combined ? "Tenting" : "", extra: [[t("Carpet"), t("To lay") + (ri === 0 ? "" : " " + t("(floor {n})", { n: ri + 1 }))], [t("Floor"), floorTxt]] });
           return;
         }
         // Planning's decided carpet once there is one; otherwise sales' 1st choice ONLY - the 2nd/3rd preferences printed as
         // cards of their own read as three carpets to lay (owner ask 2026-10-31). Deal Check's PDF prints the 1st choice too.
         const chosen = dec && !pdfAllCarpetsRef.current ? (prefs.find(p => p.id === dec.id) || (dec.manual ? { id: dec.id, name: dec.name } : null)) : null;
         const byHand = !!chosen && !prefs.some(p => p.id === chosen.id);
-        const lbl = ri === 0 ? "" : ` (floor ${ri + 1})`;
-        const RANK = ["1st", "2nd", "3rd", "4th"];
-        (chosen ? [{ p: chosen, role: (byHand ? "To use (Planning's pick)" : "To use") + lbl }] : prefs.slice(0, 1).map((p, i) => ({ p, role: `${RANK[i] || i + 1 + "th"} choice${lbl}` }))).forEach(({ p, role }) => {
+        const lbl = ri === 0 ? "" : " " + t("(floor {n})", { n: ri + 1 });
+        (chosen ? [{ p: chosen, role: (byHand ? t("To use (Planning's pick)") : t("To use")) + lbl }] : prefs.slice(0, 1).map((p, i) => ({ p, role: choiceLbl(i) + lbl }))).forEach(({ p, role }) => {
           const inv = invById.get(String(p.id));
           out.push({
-            name: inv?.name || p.name || "Carpet", qty: area, unit: "sqft", photo: invPhoto(inv, null), dims: invDims(inv), kit: 0, recipe: [],
+            name: inv?.name || p.name || t("Carpet"), qty: area, unit: "sqft", photo: invPhoto(inv, null), dims: invDims(inv), kit: 0, recipe: [],
             deptTag: combined ? "Tenting" : "",
-            extra: [["Carpet", role], ["Floor", floorTxt]],
+            extra: [[t("Carpet"), role], [t("Floor"), floorTxt]],
           });
         });
       });
@@ -3766,19 +3786,19 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       const sizedExtra = extraTr.filter(r => (trussBaseArea(r || {}).area || 0) > 0 && r?.trussQty !== 0);
       const hasTruss = (trussBaseArea(z).area || 0) > 0 && z.trussQty !== 0;
       const truss = hasTruss ? [trussTypeLbl(z.trT), Number(z.trussQty) > 1 ? `x${z.trussQty}` : "", z.trussMaterial ? String(z.trussMaterial) : ""].filter(Boolean).join(" ") : "";
-      if (truss) out.push({ k: "Truss", v: truss + (sizedExtra.length ? ` +${sizedExtra.length} more` : "") });
-      else if (sizedExtra.length) out.push({ k: "Truss", v: `${sizedExtra.length} truss${sizedExtra.length === 1 ? "" : "es"}` });
+      if (truss) out.push({ k: t("Truss"), v: truss + (sizedExtra.length ? " " + t("+{n} more", { n: sizedExtra.length }) : "") });
+      else if (sizedExtra.length) out.push({ k: t("Truss"), v: t("{n} truss|{n} trusses", { n: sizedExtra.length }) });
       const plats = [
         z.plH ? [platLbl(z.plH, z.plHft), floor].filter(Boolean).join(" · ") : "",
         ...extraPl.map(r => [platLbl(r?.plH, r?.plHft), ftArea(r?.floorDims)].filter(Boolean).join(" · ")),
       ].filter(Boolean);
-      if (plats.length) out.push({ k: "Platform", v: plats.join("; ") });
+      if (plats.length) out.push({ k: t("Platform"), v: plats.join("; ") });
       // "— None —" is stored as the CARPET_OFF sentinel: no carpet, so no Carpet chip (it printed "Carpet __off__")
       const hasCarpet = !!z.cpT && z.cpT !== CARPET_OFF;
-      if (hasCarpet) out.push({ k: "Carpet", v: [carpetName(z.cpT), floor].filter(Boolean).join(" · ") });
+      if (hasCarpet) out.push({ k: t("Carpet"), v: [carpetName(z.cpT), floor].filter(Boolean).join(" · ") });
       // Masking hangs on a truss — with no sized truss there is nothing to mask (and nothing billed).
-      if (z.mkOn && (hasTruss || sizedExtra.length)) out.push({ k: "Masking", v: "Yes" });
-      if (!z.plH && !hasCarpet && floor) out.push({ k: "Floor", v: floor });
+      if (z.mkOn && (hasTruss || sizedExtra.length)) out.push({ k: t("Masking"), v: t("Yes") });
+      if (!z.plH && !hasCarpet && floor) out.push({ k: t("Floor"), v: floor });
       return out;
     };
     // ── THE FABRIC COLOURS ── Liza / Velvet curtain / Wall masking colour of each zone, under the truss size (owner ask 2026-11-01): the
@@ -3793,10 +3813,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
             const cols = (z.colours || []).filter(c => c.colour && c.colour !== "(unassigned)");
             const one = cols.length === 1;
             const html = cols.length
-              ? cols.map(c => `<b class="fpc"><i style="background:${esc(swatchHexFor(c.colour, settings?.colourCatalogue, c.hex))}"></i>${esc(c.colour)}${one ? "" : ` ${esc(c.qty)} ${esc(g.unit)}`}</b>`).join("") + (z.standing ? `<b class="fpc">♻ Repeat</b>` : "")
-              : esc("Colour not picked");
+              ? cols.map(c => `<b class="fpc"><i style="background:${esc(swatchHexFor(c.colour, settings?.colourCatalogue, c.hex))}"></i>${esc(c.colour)}${one ? "" : ` ${esc(c.qty)} ${esc(g.unit)}`}</b>`).join("") + (z.standing ? `<b class="fpc">♻ ${t("Repeat")}</b>` : "")
+              : esc(t("Colour not picked"));
             const key = `${z.fi}|${z.zoneKey}`;
-            fabricByZone.set(key, [...(fabricByZone.get(key) || []), { k: g.label, html }]);
+            fabricByZone.set(key, [...(fabricByZone.get(key) || []), { k: t(g.label), html }]);
           });
         });
       } catch { /* the zone pages print without the colours */ }
@@ -3853,7 +3873,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
             : hasDeptSnapshot ? false
             : inv ? catToDept(inv.category || inv.cat) === dept : false;
           if (!mine) return;
-          const kitLabel = String(inv?.name || el?.name || "").trim() || "kit";
+          const kitLabel = String(inv?.name || el?.name || "").trim() || t("kit");
           kitParts.forEach(p => {
             if (placed.has(p.id)) return; // one physical part, on the first zone that claims it
             placed.add(p.id);
@@ -3866,7 +3886,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
               if (di) { pInv = di; partName = di.name; }
               else partName = ([...prt.options, prt.manual].filter(Boolean).find(o => o.id === prt.decidedId) || {}).name || partName;
             }
-            merged.set("p:" + p.id, { name: partName, qty: Number(p.qty) || 0, unit: String(pInv?.unit || p?.unit || "").trim(), photo: invPhoto(pInv, p), dims: invDims(pInv), source: "Inside " + kitLabel });
+            merged.set("p:" + p.id, { name: partName, qty: Number(p.qty) || 0, unit: String(pInv?.unit || p?.unit || "").trim(), photo: invPhoto(pInv, p), dims: invDims(pInv), source: t("Inside {kit}", { kit: kitLabel }) });
           });
           // Only the parts are ours — the kit shell itself sits on another department's sheet.
           if (!held && kitParts.length) return;
@@ -3877,22 +3897,21 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           const prow = elementPlanOf().rows.find(r => r.fi === (fn?.fnIdx ?? fi) && r.zk === zk && r.ei === ei && r.part === undefined) || null;
           let invU = inv, arranged = false, choiceExtra = null, decName = "";
           if (prow) {
-            if (prow.other) { arranged = true; choiceExtra = [["Source", "Bought / hired / made outside stock"]]; }
+            if (prow.other) { arranged = true; choiceExtra = [[t("Source"), t("Bought / hired / made outside stock")]]; }
             else if (prow.decidedId) {
               const di = invById.get(String(prow.decidedId));
               if (di) invU = di; else { invU = null; decName = ([...prow.options, prow.manual].filter(Boolean).find(o => o.id === prow.decidedId) || {}).name || ""; }
-              choiceExtra = [["Design", "Chosen in Planning"]];
-            } else choiceExtra = [["Choice", "1st choice (not decided)"]];
+              choiceExtra = [[t("Design"), t("Chosen in Planning")]];
+            } else choiceExtra = [[t("Choice"), t("1st choice (not decided)")]];
           }
           // Deal Check's PDF lists what sales asked for: every design, 1st to 3rd, each as its own card with its photo (like the carpets).
           if (prow && pdfAllCarpetsRef.current) {
-            const RANKS = ["1st", "2nd", "3rd", "4th"];
             // 1st choice only (owner ask 2026-10-31) - same as the carpets.
             prow.options.slice(0, 1).forEach((o, i) => {
               const ci = invById.get(String(o.id));
-              merged.set(`c:${el?.pid || ei}:${i}`, { name: ci?.name || o.name || "Design", qty: Number(el?.qty) || 1, unit: String(el?.unit || ci?.unit || "").trim(),
+              merged.set(`c:${el?.pid || ei}:${i}`, { name: ci?.name || o.name || t("Design"), qty: Number(el?.qty) || 1, unit: String(el?.unit || ci?.unit || "").trim(),
                 deptTag: combined ? (deptByInvId.get(String(o.id)) || catToDept(ci?.category || ci?.cat)) : "", photo: invPhoto(ci, null), dims: invDims(ci), size: "", kit: 0, recipe: [],
-                extra: [["Choice", `${RANKS[i] || i + 1 + "th"} choice`]] });
+                extra: [[t("Choice"), choiceLbl(i)]] });
             });
             return;
           }
@@ -3924,7 +3943,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
             const fnArt = typeof fn?.floralRatio === "number" ? fn.floralRatio : 70;
             const real = (typeof el?.realPct === "number" && el.realPct >= 0 && el.realPct <= 100) ? Math.round(el.realPct)
               : subMode === "real" ? 100 : subMode === "artificial" ? 0 : Math.max(0, Math.min(100, Math.round(100 - fnArt)));
-            floralMix = real >= 100 ? "Real" : real <= 0 ? "Artificial" : `Artificial ${100 - real}% · Real ${real}%`;
+            floralMix = real >= 100 ? t("Real") : real <= 0 ? t("Artificial") : t("Artificial {art}% · Real {real}%", { art: 100 - real, real });
             realPct = real;
           }
           const key = (arranged ? "o:" + (el?.pid || ei) : invU ? "i:" + invU.id : "n:" + (decName || nm)) + (elSize ? "|" + elSize : "") + (floralMix ? "|" + floralMix : "");
@@ -3977,7 +3996,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           const liveKit = !kitInv ? [] : (Array.isArray(el?.kitOverrides) ? el.kitOverrides : kitInv.subItems).map(si => {
             if (si?.patternId) {
               const pt = flowerPatterns.find(fp => fp?.id === si.patternId);
-              return pt ? { name: pt.name || "Flower recipe", per: Number(si.qty) || 0, unit: pt.unit || "", dept: "Floral" } : null;
+              return pt ? { name: pt.name || t("Flower recipe"), per: Number(si.qty) || 0, unit: pt.unit || "", dept: "Floral" } : null;
             }
             const ci = invById.get(String(si?.itemId));
             if (!ci) return null;
@@ -3985,7 +4004,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
               dept: heldByInv.has(String(ci.id)) ? dept : catToDept(ci.category || ci.cat) };
           }).filter(x => x && x.per > 0);
           // a recipe with no inventory item shows the picture of its size, as Build does (photo below)
-          merged.set(key, { name: arranged ? `${el?.name || inv?.name || "Item"} — arranged separately` : (invU?.name || decName || el?.name || held?.name || "Item"), qty, unit, deptTag, photo: arranged ? "" : (invPhoto(invU, invU === inv ? held : null) || (!invU && sizeData?.img) || ""), dims: arranged ? "" : invDims(invU), extra: (choiceExtra || floralMix) ? [...(choiceExtra || []), ...(floralMix ? [["Flowers", floralMix]] : [])] : undefined, mix: floralMix, realPct, size: elSize, kit: held?.isKit ? (Array.isArray(held.components) ? held.components.length : 0) + (Array.isArray(held.recipeParts) ? held.recipeParts.length : 0) : liveKit.length, liveKit, recipe, paint: addPaint(new Map(), paint) });
+          merged.set(key, { name: arranged ? `${el?.name || inv?.name || t("Item")} — ${t("arranged separately")}` : (invU?.name || decName || el?.name || held?.name || t("Item")), qty, unit, deptTag, photo: arranged ? "" : (invPhoto(invU, invU === inv ? held : null) || (!invU && sizeData?.img) || ""), dims: arranged ? "" : invDims(invU), extra: (choiceExtra || floralMix) ? [...(choiceExtra || []), ...(floralMix ? [[t("Flowers"), floralMix]] : [])] : undefined, mix: floralMix, realPct, size: elSize, kit: held?.isKit ? (Array.isArray(held.components) ? held.components.length : 0) + (Array.isArray(held.recipeParts) ? held.recipeParts.length : 0) : liveKit.length, liveKit, recipe, paint: addPaint(new Map(), paint) });
         });
         // ── CUSTOM CEILING ── not a zone element: it sits on the zone's truss rows (customCeilingItemId + its count
         // customCeilingQty, else one per truss), which reach IMS with the layout on every Build save. A card of its own on
@@ -4004,7 +4023,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           if (prev) { prev.qty += cq; return; }
           merged.set(key, { name: ci.name, qty: cq, unit: String(ci.unit || "").trim(), photo: invPhoto(ci, held), dims: invDims(ci), size: "", kit: 0, recipe: [],
             deptTag: combined ? (deptByInvId.get(String(ci.id)) || catToDept(ci.category || ci.cat)) : "",
-            extra: [["Ceiling", "Custom ceiling" + (zoneRows.length > 1 ? ` (truss ${ri + 1})` : "")]] });
+            extra: [[t("Ceiling"), t("Custom ceiling") + (zoneRows.length > 1 ? " " + t("(truss {n})", { n: ri + 1 }) : "")]] });
         });
         const items = [...merged.values()];
         const zPhoto = fn.elSelectedPhoto?.[zk]?.src || "";
@@ -4019,9 +4038,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         // zone title, and "Single U Truss" there costs enough width to wrap the title onto a
         // second line. The truss TYPE is spelled out in the structure strip under the zone header.
         const zCfg = fn?.zones?.[zk] || {};
-        const zDimsOf = (zCfg.trT || Number(zCfg.trussQty) > 0) ? "Truss"
-          : Number(zCfg.plH) > 0 ? "Platform"
-          : "Zone";
+        const zDimsOf = (zCfg.trT || Number(zCfg.trussQty) > 0) ? t("Truss")
+          : Number(zCfg.plH) > 0 ? t("Platform")
+          : t("Zone");
         // The only zone still worth skipping is one with nothing to put on the page at all: none
         // of our items, no reference photo and no dimensions. That page would be a heading.
         const zStruct = zoneStructOf(zCfg);
@@ -4031,11 +4050,11 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         // (the function's default; a single element can still be set to its own %).
         if (!combined && dept === "Floral" && typeof fn?.floralRatio === "number") {
           const art = Math.max(0, Math.min(100, Math.round(fn.floralRatio)));
-          zStruct.push({ k: "Floral mix", v: `Real ${100 - art}% · Artificial ${art}%` });
+          zStruct.push({ k: t("Floral mix"), v: t("Real {real}% · Artificial {art}%", { real: 100 - art, art }) });
         }
         if (!combined && dept === "Floral" && fn?.flowerPalette) {
           const cols = parseFlowerPalette(fn.flowerPalette);
-          if (cols.length) zStruct.push({ k: "Flower palette", html: cols.map(c => `<b class="fpc"><i style="background:${esc(flowerPaletteHexFor(c.name))}"></i>${esc(c.name)} ${esc(c.pct)}%</b>`).join("") });
+          if (cols.length) zStruct.push({ k: t("Flower palette"), html: cols.map(c => `<b class="fpc"><i style="background:${esc(flowerPaletteHexFor(c.name))}"></i>${esc(c.name)} ${esc(c.pct)}%</b>`).join("") });
         }
         // First, not last: a zone with more than six items splits across pages, and a print
         // appended at the end landed on the zone's second page, away from the one the crew opens.
@@ -4045,10 +4064,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           zk,
           fi,
           fnIdx: fn?.fnIdx ?? fi,
-          fnType: fn.type || `Function ${fi + 1}`,
+          fnType: fn.type || t("Function {n}", { n: fi + 1 }),
           fnDate: fn.date || "",
           title: zoneName(zk, fn),
-          fnLabel: [fn.type || (fns.length > 1 ? `Function ${fi + 1}` : ""), fn.date].filter(Boolean).join(" · "),
+          fnLabel: [fn.type || (fns.length > 1 ? t("Function {n}", { n: fi + 1 }) : ""), fn.date].filter(Boolean).join(" · "),
           photo: zPhoto,
           zoneDims: zDims,
           dimsOf: zDimsOf,
@@ -4086,15 +4105,16 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     const trMine = trPlan?.byDept?.[dept] || null;
     // Transport stays a per-department-only section — not in the combined book (owner call).
     const trRows = (trMine?.rows || []).map(r =>
-      `<tr><td><b>${esc(r.label)}</b>${(fns || []).length > 1 && r.fn ? `<div class="sub">${esc(r.fn)}</div>` : ""}</td><td class="n">${esc(r.qty)}${r.unit ? " " + esc(r.unit) : ""}</td><td class="n">${Number(r.perTruck) > 0 ? esc(r.perTruck) + (r.unit ? " " + esc(r.unit) : "") + " per truck" : "—"}</td><td class="n b">${Number(r.flat) > 0 ? "₹" + esc(Math.round(r.flat).toLocaleString("en-IN")) + " flat" : esc(r.trucks)}</td></tr>`);
-    const trNote = !trMine ? "" : `${esc(dept)} fills ${trMine.trucks} of the ${trPlan.totalTrucks} truck${trPlan.totalTrucks === 1 ? "" : "s"} this event needs${trPlan.tierLabel ? ` · ${esc(trPlan.tierLabel)}` : ""}. A truck is counted by capacity, so a part-truck share is normal — the loads travel together.`;
+      `<tr><td><b>${esc(r.label)}</b>${(fns || []).length > 1 && r.fn ? `<div class="sub">${esc(r.fn)}</div>` : ""}</td><td class="n">${esc(r.qty)}${r.unit ? " " + esc(r.unit) : ""}</td><td class="n">${Number(r.perTruck) > 0 ? t("{n} per truck", { n: esc(r.perTruck) + (r.unit ? " " + esc(r.unit) : "") }) : "—"}</td><td class="n b">${Number(r.flat) > 0 ? t("{amount} flat", { amount: "₹" + esc(Math.round(r.flat).toLocaleString("en-IN")) }) : esc(r.trucks)}</td></tr>`);
+    const trNote = !trMine ? "" : t("{dept} fills {trucks} of the {n} truck this event needs|{dept} fills {trucks} of the {n} trucks this event needs", { dept: esc(t(dept)), trucks: trMine.trucks, n: trPlan.totalTrucks })
+      + `${trPlan.tierLabel ? ` · ${esc(trPlan.tierLabel)}` : ""}. ${t("A truck is counted by capacity, so a part-truck share is normal — the loads travel together.")}`;
 
     // Deal Check's one "🖨 Print / signage" row says only how many jobs there are; it is replaced
     // below by one card per job, read from the build.
     const unplaced = blockedItemsGrouped.filter(b => !placed.has(b.id) && b.sub !== "print").map(b => {
       const inv = (b.invId && invById.get(String(b.invId))) || invByName.get(String(b.name || "").trim().toLowerCase()) || null;
       const kitOf = String(b.fromKit || "").trim();
-      return { name: b.name, qty: Number(b.qty) || 0, photo: invPhoto(inv, b), dims: invDims(inv), prodOrBuy: b.prodOrBuy || null, kit: b.isKit ? (Array.isArray(b.components) ? b.components.length : 0) + (Array.isArray(b.recipeParts) ? b.recipeParts.length : 0) : 0, source: b.prodOrBuy === "buying" ? "Buying" : b.prodOrBuy === "production" ? "Production" : kitOf ? "Inside " + kitOf : "" };
+      return { name: b.name, qty: Number(b.qty) || 0, photo: invPhoto(inv, b), dims: invDims(inv), prodOrBuy: b.prodOrBuy || null, kit: b.isKit ? (Array.isArray(b.components) ? b.components.length : 0) + (Array.isArray(b.recipeParts) ? b.recipeParts.length : 0) : 0, source: b.prodOrBuy === "buying" ? t("Buying") : b.prodOrBuy === "production" ? t("Production") : kitOf ? t("Inside {kit}", { kit: kitOf }) : "" };
     });
     // ── TWO PAGES, AND WHY THEY STAY TWO ──
     // Briefly merged into one "From production" page, which was wrong: on pratik test's 29 Aug
@@ -4118,11 +4138,11 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     // before that date still carries the stale lists. Printing the sync date lets whoever reads
     // the book tell the two apart instead of trusting a claim the data cannot actually support.
     const syncedOn = sel?.deptSyncedAt
-      ? new Date(sel.deptSyncedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })
+      ? pdfDate(lang, new Date(sel.deptSyncedAt), { day: "numeric", month: "short", year: "numeric" })
       : "";
     const looseNote = syncedOn
-      ? `Held for this event, but no zone lists these. The zone plan here was last synced from Deal Check on ${syncedOn} — re-sync if they belong in a zone.`
-      : "Held for this event, but no zone lists these — re-sync Deal Check if they belong in a zone.";
+      ? t("Held for this event, but no zone lists these. The zone plan here was last synced from Deal Check on {date} — re-sync if they belong in a zone.", { date: syncedOn })
+      : t("Held for this event, but no zone lists these — re-sync Deal Check if they belong in a zone.");
 
     // Geometry, in the sheet's 706px content width. Cards sit four to a row: top row, the photo
     // band, bottom row. Each card's arrow drops straight onto the photo edge below / above it.
@@ -4163,14 +4183,14 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     const card = (it, zone, num) => `
       ${it.photo ? `<div class="zc-ph" style="${bgCss(it.photo, 180)}${flLines(it) ? `height:${168 - flLines(it) * 20}px` : ""}" ${bgData(it.photo, 180)}></div>` : ""}
       ${num ? `<div class="zc-no">${num}</div>` : ""}
-      ${it.kit ? `<div class="zc-kt">KIT · ${esc(it.kit)}</div>` : ""}
+      ${it.kit ? `<div class="zc-kt">${t("KIT · {n}", { n: esc(it.kit) })}</div>` : ""}
       ${it.size ? `<div class="zc-sz">${esc(it.size)}</div>` : ""}
       <div class="zc-b">
         <div class="zc-n">${esc(it.name)}</div>
-        <div class="zc-r"><span>Qty</span><b>${esc(it.qty)}${it.unit ? ` <span style="font-weight:500;font-size:.85em;opacity:.7">${esc(it.unit)}</span>` : ""}</b></div>
-        <div class="zc-r"><span>Size</span><b>${esc(it.dims || "—")}</b></div>
-        ${it.source ? `<div class="zc-r"><span>From</span><b>${esc(it.source)}</b></div>` : it.deptTag ? `<div class="zc-r"><span>Dept</span><b>${esc(it.deptTag)}</b></div>` : ""}
-        ${it.paint?.size ? `<div class="zc-r"><span>Paint</span><b>${esc(paintText(it.paint))}</b></div>` : ""}
+        <div class="zc-r"><span>${t("Qty")}</span><b>${esc(it.qty)}${it.unit ? ` <span style="font-weight:500;font-size:.85em;opacity:.7">${esc(it.unit)}</span>` : ""}</b></div>
+        <div class="zc-r"><span>${t("Size")}</span><b>${esc(it.dims || "—")}</b></div>
+        ${it.source ? `<div class="zc-r"><span>${t("From")}</span><b>${esc(it.source)}</b></div>` : it.deptTag ? `<div class="zc-r"><span>${t("Dept")}</span><b>${esc(t(it.deptTag))}</b></div>` : ""}
+        ${it.paint?.size ? `<div class="zc-r"><span>${t("Paint")}</span><b>${esc(paintText(it.paint))}</b></div>` : ""}
         ${(it.extra || []).map(([k, v]) => `<div class="zc-r"><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join("")}
         ${flowerRows(it)}
       </div>`;
@@ -4180,7 +4200,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     // Structure book the strip is reference (Tenting's frame they build on), so it isn't counted.
     const zoneCountText = (pg) => {
       const n = pg.items.length + (combined || dept === "Tenting" ? (pg.struct || []).length : 0);
-      return n ? `${n} item${n === 1 ? "" : "s"}` : (combined ? "No items" : `No ${esc(dept)} items`);
+      return n ? t("{n} item|{n} items", { n }) : (combined ? t("No items") : t("No {dept} items", { dept: esc(t(dept)) }));
     };
     const zoneSection = (pg, chunk, part, parts, zoneNo, offset) => {
       // A zone this department has nothing in still gets its page — the reference photo, run the
@@ -4212,7 +4232,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       ].join("");
       return `<section data-block data-page class="zp"><div class="pc tl"></div><div class="pc tr"></div>
         ${cont ? `<div style="height:${CONT_GAP}px"></div>` : `<div class="zh">
-          <div><div class="zk"><b>Zone ${String(zoneNo).padStart(2, "0")}</b>${parts > 1 ? ` · Part ${part} of ${parts}` : ""}</div><h2>${esc(pg.title)}</h2>
+          <div><div class="zk"><b>${t("Zone {n}", { n: String(zoneNo).padStart(2, "0") })}</b>${parts > 1 ? ` · ${t("Part {part} of {parts}", { part, parts })}` : ""}</div><h2>${esc(pg.title)}</h2>
             <div class="orn l"><i></i><b></b><i></i></div>
             <div class="zm">${esc(pg.fnLabel || selDateStr || "")}</div></div>
           <div class="zt">${pg.zoneDims ? `<span><i class="zl">${esc(pg.dimsOf)}</i>${esc(pg.zoneDims)}</span>` : ""}<span>${zoneCountText(pg)}</span></div>
@@ -4220,7 +4240,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         ${strip ? `<div class="zst">${pg.struct.map(c => `<span><i class="zl">${esc(c.k)}</i>${c.html != null ? c.html : esc(c.v)}</span>`).join("")}</div>` : ""}
         ${fabStrip ? `<div class="zst">${pg.fabric.map(c => `<span><i class="zl">${esc(c.k)}</i>${c.html}</span>`).join("")}</div>` : ""}
         <div class="zs" style="height:${stageH}px">
-          <div class="zphoto" style="top:${photoTop}px;height:${PHOTO_H}px;${bgCss(pg.photo)}" ${bgData(pg.photo)}>${pg.photo ? "" : "<span>No zone photo</span>"}</div>
+          <div class="zphoto" style="top:${photoTop}px;height:${PHOTO_H}px;${bgCss(pg.photo)}" ${bgData(pg.photo)}>${pg.photo ? "" : `<span>${t("No zone photo")}</span>`}</div>
           ${cards}
         </div>
       </section>`;
@@ -4229,10 +4249,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     // A plain grid page (no zone photo) for a list of items — used for production items and for
     // anything not placed in a zone.
     const listPages = (items, eyebrow, title, note) => items.length ? chunks(items, 9).map((c, i, all) => `<section data-block data-page class="zp"><div class="pc tl"></div><div class="pc tr"></div>
-        <div class="zh"><div><div class="zk"><b>${esc(eyebrow)}</b>${all.length > 1 ? ` · Part ${i + 1} of ${all.length}` : ""}</div><h2>${esc(title)}</h2>
+        <div class="zh"><div><div class="zk"><b>${esc(eyebrow)}</b>${all.length > 1 ? ` · ${t("Part {part} of {parts}", { part: i + 1, parts: all.length })}` : ""}</div><h2>${esc(title)}</h2>
           <div class="orn l"><i></i><b></b><i></i></div>
           <div class="zm">${esc(note)}</div></div>
-          <div class="zt"><span>${items.length} item${items.length === 1 ? "" : "s"}</span></div></div>
+          <div class="zt"><span>${t("{n} item|{n} items", { n: items.length })}</span></div></div>
         <div class="zg">${c.map(it => `<div class="zc st${npCls(it)}">${card(it, "")}</div>`).join("")}</div>
       </section>`) : [];
     /* ── WHAT IS INSIDE EVERY KIT ──
@@ -4304,8 +4324,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     const detailCard = (icon, name, qty, unit, parts, mix) => { const cols = detailCols(parts); return `<div class="kb">
       <div class="kb-h">
         <div class="kb-t"><div class="kb-nm">${icon} ${esc(name)}</div></div>
-        ${mix ? `<div class="kb-z kb-q"><div class="kb-zk">Flowers</div><div class="kb-zv">${esc(mix)}</div></div>` : ""}
-        ${qty ? `<div class="kb-z kb-q"><div class="kb-zk">Qty</div><div class="kb-zv">${esc(qty)}${unit ? " " + esc(unit) : ""}</div></div>` : ""}
+        ${mix ? `<div class="kb-z kb-q"><div class="kb-zk">${t("Flowers")}</div><div class="kb-zv">${esc(mix)}</div></div>` : ""}
+        ${qty ? `<div class="kb-z kb-q"><div class="kb-zk">${t("Qty")}</div><div class="kb-zv">${esc(qty)}${unit ? " " + esc(unit) : ""}</div></div>` : ""}
       </div>
       <ul class="kb-l${cols === 1 ? " one" : ""}">${parts.map(p => `<li><i class="kb-x"></i>${p.photo ? `<i class="kb-p" style="${bgCss(p.photo, 40)}" ${bgData(p.photo, 40)}></i>` : ""}<span>${esc(p.name)}${p.tag ? ` <em class="kb-tg">${esc(p.tag)}</em>` : ""}</span><i class="kb-d"></i><b>${esc(p.qty)}${p.unit ? ` ${esc(p.unit)}` : ""}</b></li>`).join("")}</ul>
     </div>`; };
@@ -4334,7 +4354,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       zArt.forEach(a => { const k = artKey(a.el); artLeft.set(k, [...(artLeft.get(k) || []), a]); });
       const artLines = (list) => {
         const fl = list.reduce((t, a) => t + artBunches(a.flower), 0), gr = list.reduce((t, a) => t + artBunches(a.green), 0);
-        return [...(fl > 0 ? [{ name: "Artificial flowers", qty: fl, unit: "bunches" }] : []), ...(gr > 0 ? [{ name: "Artificial greens", qty: gr, unit: "bunches" }] : [])];
+        return [...(fl > 0 ? [{ name: t("Artificial flowers"), qty: fl, unit: t("bunches") }] : []), ...(gr > 0 ? [{ name: t("Artificial greens"), qty: gr, unit: t("bunches") }] : [])];
       };
       const takeArt = (name) => { const k = artKey(name), list = artLeft.get(k) || []; artLeft.delete(k); return artLines(list); };
       // ── REAL FLOWERS AS DEAL CHECK HAS THEM ──
@@ -4350,7 +4370,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           // The flower lines are the REAL flowers - the amount Deal Check and the mandi list have (the whole recipe used to print,
           // 2.5 where Deal Check said 0.75 at 30% real). Without a snapshot line: the recipe times the piece's real share, real-only
           // flowers and inventory ingredients at full. The artificial share follows as the bunches; the header still says the mix.
-          const tag = !it.mix ? "" : "Real";
+          const tag = !it.mix ? "" : t("Real");
           const realShare = typeof it.realPct === "number" ? it.realPct / 100 : 1;
           const realParts = snapReal
             ? snapReal.map(f => ({ ...f, tag }))
@@ -4390,7 +4410,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       artLeft.forEach(list => {
         const parts = artLines(list);
         const q = list.reduce((t, a) => t + (Number(a.qty) || 0), 0);
-        if (parts.length) blocks.push({ h: detailH(parts), html: detailCard("🌸", list[0].el || "Arrangement", q || "", "", parts, "Artificial") });
+        if (parts.length) blocks.push({ h: detailH(parts), html: detailCard("🌸", list[0].el || t("Arrangement"), q || "", "", parts, t("Artificial")) });
       });
       if (!blocks.length) return [];
       const dChunks = [];
@@ -4414,8 +4434,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     // start, names which function the pages after it belong to.
     const fnDivider = (no, type, date) => `<section data-block data-page class="zp"><div class="pc tl"></div><div class="pc tr"></div>
         <div class="zh" style="text-align:center;padding:${Math.max(40, Math.round((PAGE_PX - 170) / 2))}px 14px 10px">
-          <div class="zk">Function ${no}</div>
-          <h2 style="font-size:52px">${esc(type || `Function ${no}`)}</h2>
+          <div class="zk">${t("Function {n}", { n: no })}</div>
+          <h2 style="font-size:52px">${esc(type || t("Function {n}", { n: no }))}</h2>
           <div class="orn l" style="justify-content:center"><i></i><b></b><i></i></div>
           ${date ? `<div class="zm">${esc(date)}</div>` : ""}
         </div>
@@ -4437,9 +4457,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     const zoneHtml = [
       ...zonePageHtml,
       ...(combined ? [] : [
-      ...listPages(prodItems, "Production", "From production", "Made by the production team for this event"),
-      ...listPages(buyItems, "Buying", "To buy", "Bought in for this event — not from our own stock"),
-      ...listPages(looseItems, "Not in a zone", "Also on site", looseNote),
+      ...listPages(prodItems, t("Production"), t("From production"), t("Made by the production team for this event")),
+      ...listPages(buyItems, t("Buying"), t("To buy"), t("Bought in for this event — not from our own stock")),
+      ...listPages(looseItems, t("Not in a zone"), t("Also on site"), looseNote),
       ]),
     ].join("");
 
@@ -4449,17 +4469,17 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     // The event's sessions (its functions) for the cover: what, when, and the details that shape
     // a setup — shift, headcount and, when it differs from the event's main venue, where.
     const niceDate = (ds) => {
-      if (!ds) return "Date to be set";
+      if (!ds) return t("Date to be set");
       const d = new Date(ds + "T00:00:00");
-      return isNaN(d) ? String(ds) : d.toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+      return isNaN(d) ? String(ds) : pdfDate(lang, d, { weekday: "long", day: "numeric", month: "long", year: "numeric" });
     };
     // `skipped` on a function is the LIST of Deal Check lines skipped in it, not a flag — an empty
     // array is truthy, so filtering on it dropped every session and the cover showed none.
     const sessions = fns.filter(Boolean).map((f, i) => ({
-      type: f.type || `Session ${i + 1}`,
+      type: f.type || t("Session {n}", { n: i + 1 }),
       date: niceDate(f.date),
       // Short form for the card's DATE cell ("Sat, 29 Aug 2026") — the long one does not fit a column.
-      dateShort: (() => { if (!f.date) return "To be set"; const d = new Date(f.date + "T00:00:00"); return isNaN(d) ? String(f.date) : d.toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric" }); })(),
+      dateShort: (() => { if (!f.date) return t("To be set"); const d = new Date(f.date + "T00:00:00"); return isNaN(d) ? String(f.date) : pdfDate(lang, d, { weekday: "short", day: "numeric", month: "short", year: "numeric" }); })(),
       shift: f.shift ? String(f.shift) : "",
       pax: Number(f.pax) > 0 ? String(f.pax) : "",
       place: f.venue && f.venue !== venue ? f.venue : "",
@@ -4473,7 +4493,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     const ornament = `<div class="orn"><i></i><b></b><i></i></div>`;
 
     const html = `<!doctype html><html><head><meta charset="utf-8">
-<title>${esc(bookTitle)} — ${esc(sel?.clientName || "Event")} — Ambria</title>
+<title>${esc(bookTitle)} — ${esc(sel?.clientName || t("Event"))} — Ambria</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700;800&family=Inter:wght@400;500;600;700&display=swap">
 <style>
@@ -4789,7 +4809,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     tr{break-inside:avoid}
   }
 </style></head><body>
-<button class="noprint" onclick="window.print()">Save as PDF</button>
+<button class="noprint" onclick="window.print()">${t("Save as PDF")}</button>
 <div class="sheet" id="sheet">
 <header class="cover" data-block data-cover style="${bgCss(coverPhoto)}" ${bgData(coverPhoto)}>
   <div class="cv-shade"></div>
@@ -4797,23 +4817,23 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     <div class="cv-ribbon"></div>
     <div class="cv-corner tl"></div><div class="cv-corner tr"></div><div class="cv-corner bl"></div><div class="cv-corner br"></div>
     ${logos.dark ? `<img class="cv-logo" src="${logos.dark}" alt="Ambria — Design &amp; Decor">` : `<div class="cv-mark">AMBRIA</div>`}
-    <div class="cv-kind">Setup book</div>
+    <div class="cv-kind">${t("Setup book")}</div>
     <div class="cv-title">${esc(bookTitle)}</div>
-    <div class="cv-for">${esc(sel?.clientName || "Event")}</div>
+    <div class="cv-for">${esc(sel?.clientName || t("Event"))}</div>
     ${ornament}
     <div class="cv-facts">
-      <div><div class="k">Venue</div><div class="v">${esc(venue)}</div></div>
-      <div><div class="k">Prepared by</div><div class="v">${esc(deptData.updatedBy || authUser?.name || "—")}</div></div>
+      <div><div class="k">${t("Venue")}</div><div class="v">${esc(venue)}</div></div>
+      <div><div class="k">${t("Prepared by")}</div><div class="v">${esc(deptData.updatedBy || authUser?.name || "—")}</div></div>
     </div>
-    ${sessions.length ? `<div class="cv-sec">${sessions.length === 1 ? "The event" : `${sessions.length} sessions`}</div>
+    ${sessions.length ? `<div class="cv-sec">${sessions.length === 1 ? t("The event") : t("{n} sessions", { n: sessions.length })}</div>
     <div class="cv-sessions${sessions.length > 4 ? " many dense" : sessions.length > 2 ? " many" : ""}">${sessions.map((s, i) => `<div class="cv-ses t-${sesTone(s.type, i)}">
-      <div class="sk">Event type</div>
+      <div class="sk">${t("Event type")}</div>
       <div class="st">${esc(s.type)}</div>
       <div class="sl"></div>
       <div class="sg">
-        <div class="sf"><div class="k">Date</div><div class="v">${esc(s.dateShort)}</div></div>
-        ${s.shift ? `<div class="sf"><div class="k">Shift</div><div class="v">${esc(s.shift)}</div></div>` : ""}
-        ${s.pax ? `<div class="sf"><div class="k">Guests</div><div class="v">${esc(s.pax)}</div></div>` : ""}
+        <div class="sf"><div class="k">${t("Date")}</div><div class="v">${esc(s.dateShort)}</div></div>
+        ${s.shift ? `<div class="sf"><div class="k">${t("Shift")}</div><div class="v">${esc(s.shift)}</div></div>` : ""}
+        ${s.pax ? `<div class="sf"><div class="k">${t("Guests")}</div><div class="v">${esc(s.pax)}</div></div>` : ""}
       </div>
       ${s.place ? `<div class="sm">${esc(s.place)}</div>` : ""}
     </div>`).join("")}</div>` : ""}
@@ -4824,22 +4844,23 @@ ${/* Money, the priced inventory table, the crew plan and logged spend are left 
      goes to the people setting up the event, who need what goes where, not what it costs. The
      zone layout pages below carry every item, with photo, qty and size. */ ""}
 ${zoneHtml}
-${combined ? "" : (truckRows.length || loadRows.length) ? sect("Loading & dispatch",
-  (truckRows.length ? table(["#", "Vehicle", "Driver", "Phone", "Status"], truckRows, ["12%", "26%", "24%", "20%", "18%"]) : "")
-  + (loadRows.length ? `<p class="meta">Everything going to site — ${blockedItems.length} item${blockedItems.length === 1 ? "" : "s"}, ${loadUnits} piece${loadUnits === 1 ? "" : "s"} in total.</p>`
-    + table(["Item", "Qty"], loadRows, ["80%", "20%"]) : "")) : ""}
-${artRows.length ? sect("Artificial flowers & greens", table(["Item", "Bunches", "Bunches per kg", "Weight"], artRows, ["46%", "16%", "20%", "18%"])
-  + (artColourRows.length ? `<p class="meta">Pull these specific bunches</p>` + table(["Colour", "Bunches"], artColourRows, ["80%", "20%"]) : "")) : ""}
-${!combined && trRows.length ? sect("Transport", table(["Load", "Quantity", "Fits per truck", "Trucks"], trRows, ["46%", "20%", "22%", "12%"]) + `<p class="note">${trNote}</p>`) : ""}
-${!combined && moveRows.length ? sect("Dismantle routing", table(["Item", "Goes to", "Qty", "Logged by"], moveRows, ["38%", "32%", "12%", "18%"])) : ""}
-${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fabric · colour", "Required", "Available", "Status"], fabRows, ["40%", "20%", "20%", "20%"])) : ""}
+${combined ? "" : (truckRows.length || loadRows.length) ? sect(t("Loading & dispatch"),
+  (truckRows.length ? table(["#", t("Vehicle"), t("Driver"), t("Phone"), t("Status")], truckRows, ["12%", "26%", "24%", "20%", "18%"]) : "")
+  + (loadRows.length ? `<p class="meta">${t("Everything going to site — {items}, {pieces} in total.", { items: t("{n} item|{n} items", { n: blockedItems.length }), pieces: t("{n} piece|{n} pieces", { n: loadUnits }) })}</p>`
+    + table([t("Item"), t("Qty")], loadRows, ["80%", "20%"]) : "")) : ""}
+${artRows.length ? sect(t("Artificial flowers & greens"), table([t("Item"), t("Bunches"), t("Bunches per kg"), t("Weight")], artRows, ["46%", "16%", "20%", "18%"])
+  + (artColourRows.length ? `<p class="meta">${t("Pull these specific bunches")}</p>` + table([t("Colour"), t("Bunches")], artColourRows, ["80%", "20%"]) : "")) : ""}
+${!combined && trRows.length ? sect(t("Transport"), table([t("Load"), t("Quantity"), t("Fits per truck"), t("Trucks")], trRows, ["46%", "20%", "22%", "12%"]) + `<p class="note">${trNote}</p>`) : ""}
+${!combined && moveRows.length ? sect(t("Dismantle routing"), table([t("Item"), t("Goes to"), t("Qty"), t("Logged by")], moveRows, ["38%", "32%", "12%", "18%"])) : ""}
+${!combined && fabRows.length ? sect(t("Fabric required vs available"), table([t("Fabric · colour"), t("Required"), t("Available"), t("Status")], fabRows, ["40%", "20%", "20%", "20%"])) : ""}
 <footer data-block>
   ${logos.dark ? `<img class="ft-logo" src="${logos.dark}" alt="Ambria — Design &amp; Decor">` : `<div class="ft-mark">AMBRIA · DESIGN &amp; DECOR</div>`}
-  <div class="ft-meta">Generated ${esc(new Date().toLocaleString("en-IN"))} · ${esc(authUser?.name || "—")}</div>
+  <div class="ft-meta">${t("Generated {date} · {name}", { date: esc(pdfDateTime(lang, new Date())), name: esc(authUser?.name || "—") })}</div>
 </footer>
 </div>
 </body></html>`;
-    return html;
+    // The Hindi book: Devanagari fonts in every stack, lang="hi", no letter-spacing / uppercase (lib/ims/pdfI18n). English is returned as built.
+    return lang === "hi" ? hindiReportHtml(html) : html;
   };
   // Reassigned on every render, unconditionally — not in a useEffect, which would only run
   // AFTER paint, one tick too late for the export loop below, which calls settleDept and reads
@@ -4970,7 +4991,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
       const passes = multi ? ["__combined__"] : depts;
       for (let di = 0; di < passes.length; di++) {
         if (multi) setExportNote("All departments — combined");
-        const html = (buildReportRef.current || buildReportHtml)(zoneLabels, logos, { combined: multi });
+        const html = (buildReportRef.current || buildReportHtml)(zoneLabels, logos, { combined: multi, lang: pdfLang });
         if (di > 0) { newPage(); }
         frame = document.createElement("iframe");
 
@@ -5002,6 +5023,15 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
             doc.fonts.load('600 16px "Playfair Display"'),
             doc.fonts.load('400 11px "Inter"'),
             doc.fonts.load('600 11px "Inter"'),
+            // The Hindi book's Devanagari faces. The sample text matters: Google serves them split by script, and
+            // without Devanagari in it only the Latin part would be fetched.
+            ...(pdfLang === "hi" ? [
+              doc.fonts.load('400 11px "Noto Sans Devanagari"', "कि"),
+              doc.fonts.load('600 11px "Noto Sans Devanagari"', "कि"),
+              doc.fonts.load('700 11px "Noto Sans Devanagari"', "कि"),
+              doc.fonts.load('600 16px "Noto Serif Devanagari"', "कि"),
+              doc.fonts.load('700 38px "Noto Serif Devanagari"', "कि"),
+            ] : []),
           ]), 3000);
         } catch { /* fallback stack is fine */ }
       }
@@ -5209,7 +5239,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
       // Filename is what the file is called in someone's Downloads folder a month later, so it
       // carries all three identifiers. Slashes and colons are illegal in filenames on Windows.
       const safe = (s) => String(s || "").replace(/[\\/:*?"<>|]+/g, "-").trim();
-      const fileName = `${safe(multi ? "All departments" : depts[0])} - ${safe(sel?.clientName || "Event")} - ${safe(selDateStr || "no date")}.pdf`;
+      const fileName = `${safe(multi ? "All departments" : depts[0])} - ${safe(sel?.clientName || "Event")} - ${safe(selDateStr || "no date")}${pdfLang === "hi" ? " (Hindi)" : ""}.pdf`;
       // A download is the newest build, so the next View deck must not reopen an older one.
       if (!view && deckCacheRef.current) { URL.revokeObjectURL(deckCacheRef.current.url); deckCacheRef.current = null; }
       if (view) {
@@ -5247,11 +5277,11 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
       // download is never mistaken for the complete set.
       try {
         const safe = (s) => String(s || "").replace(/[\\/:*?"<>|]+/g, "-").trim();
-        const blob = new Blob([buildReportHtml(zoneLabels, logos)], { type: "text/html;charset=utf-8" });
+        const blob = new Blob([buildReportHtml(zoneLabels, logos, { lang: pdfLang })], { type: "text/html;charset=utf-8" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = `${safe(multi ? `${dept} (partial — combined export failed)` : dept)} - ${safe(sel?.clientName || "Event")} - ${safe(selDateStr || "no date")}.html`;
+        a.download = `${safe(multi ? `${dept} (partial — combined export failed)` : dept)} - ${safe(sel?.clientName || "Event")} - ${safe(selDateStr || "no date")}${pdfLang === "hi" ? " (Hindi)" : ""}.html`;
         document.body.appendChild(a);
         a.click();
         a.remove();
@@ -5309,7 +5339,7 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
   // What the department PDF is built from. The item photos come from inventory, not the event, so a
   // photo added since must count too; floral cards also read the recipes and the mandi list.
   const deckKeyNow = () => {
-    try { return dept + "|" + JSON.stringify(sel) + "|" + JSON.stringify(inventory) + "|" + JSON.stringify(flowerPatterns) + "|" + JSON.stringify(mandiCatalogue); } catch { return ""; /* unkeyable — just rebuild */ }
+    try { return dept + "|" + pdfLang + "|" + JSON.stringify(sel) + "|" + JSON.stringify(inventory) + "|" + JSON.stringify(flowerPatterns) + "|" + JSON.stringify(mandiCatalogue); } catch { return ""; /* unkeyable — just rebuild */ }
   };
   // ── AN OPEN PDF FOLLOWS THE EVENT ──
   // Studio now pushes a booked deal's edits to this event on its own, and the row arrives here over
@@ -5378,6 +5408,8 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
         The "Download PDF" button for the whole event sits in the department row, which on a phone is
         a dropdown with no room for it — so on a phone the icon opens a two-choice menu instead (when
         the event has more than one department): this department, or every department in one file. */}
+    {/* The PDF's language on a phone, beside the icons it applies to (desktop has it by Download PDF). */}
+    <PdfLangToggle value={pdfLang} onChange={setPdfLang} disabled={!!exporting} compact display="inline-flex sm:hidden" />
     {deptsWithWork.length > 1 && (
       <div className="sm:hidden relative shrink-0">
         <button onClick={() => setDlMenuOpen(o => !o)} disabled={!!exporting} aria-haspopup="menu" aria-expanded={dlMenuOpen}
@@ -5574,6 +5606,8 @@ ${!combined && fabRows.length ? sect("Fabric required vs available", table(["Fab
               event is picked. It is always the all-departments book - every department with work on the event, or every
               department on the bar when Deal Check hasn't synced any yet - never just the one on screen (the icon by
               the bell does that). */}
+          {/* The PDF's language, right before the button it applies to (the phone has its own by the PDF icons). */}
+          <PdfLangToggle value={pdfLang} onChange={setPdfLang} disabled={!!exporting} display="hidden sm:inline-flex" className="ml-1" />
           <button onClick={() => exportDeptPdf(deptsWithWork.length ? deptsWithWork : bookDepts)} disabled={!sel || !!exporting}
             title={!sel ? "Pick an event first" : exporting === "download" ? "Building the PDF…"
               : `One PDF with all ${(deptsWithWork.length || bookDepts.length)} departments on this event`}
