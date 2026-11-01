@@ -552,7 +552,7 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
                   </button>
                 )}
                 {videoReady && !faceInOval && (
-                  <p className="text-xs text-gray-400 mt-2 text-center">Line your face up inside the oval</p>
+                  <p className="text-xs text-gray-500 mt-2 text-center">Line your face up inside the oval</p>
                 )}
                 {flow.failMsg && <p className="text-sm text-red-600 mt-3 text-center">{flow.failMsg}</p>}
               </div>
@@ -598,10 +598,10 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
                             </p>
                             {/* The English/Hinglish source stays visible too — a bilingual pair, not a
                                 replacement, since a mistranslation should never be the only text shown. */}
-                            {q.textHi && <p className="text-sm text-gray-400 mt-0.5">{q.text}</p>}
+                            {q.textHi && <p className="text-sm text-gray-500 mt-0.5">{q.text}</p>}
                           </div>
                         </div>
-                        {type === "multi" && <p className="text-sm text-gray-400 mb-2 ml-11">Select all that apply.</p>}
+                        {type === "multi" && <p className="text-sm text-gray-500 mb-2 ml-11">Select all that apply.</p>}
                         {(type === "single" || type === "multi") && (
                           <div className="space-y-2">
                             {q.options.map((opt, oi) => {
@@ -620,7 +620,7 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
                                   </span>
                                   <span className="text-sm text-gray-800">
                                     <span className="font-semibold">{optHi || opt}</span>
-                                    {optHi && <span className="text-gray-400"> · {opt}</span>}
+                                    {optHi && <span className="text-gray-500"> · {opt}</span>}
                                   </span>
                                 </label>
                               );
