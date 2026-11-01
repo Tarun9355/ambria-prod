@@ -174,21 +174,31 @@ export default function DCTrussTab({ ctx }) {
                         // resolveBeamSegment's own joint count per beam segment (same solver the
                         // snap above uses) and resolvePillarHeight's per pillar (a non-standard
                         // height needs its own spacer joint, e.g. 17ft = 15ft pillar + 2ft spacer).
+                        // realBeamSizeCounts/realPillarSizeCounts: the ACTUAL stock pieces each ideal
+                        // topology segment/pillar resolves to (e.g. an ideal 20.38ft beam segment with
+                        // no 20ft stock becomes two 10ft pieces) — same resolveBeamSegment/
+                        // resolvePillarHeight calls realJoints already uses, just also keeping their
+                        // `pieces` instead of only the joint count. Shown in the Pillars/Beams tiles
+                        // below so "8 beams" (a reassuring but physically wrong headline when no stock
+                        // size matches the ideal segment length) doesn't read as literal piece count.
                         let realJoints = 0, realJointsShortage = false;
+                        const realBeamSizeCounts = {}, realPillarSizeCounts = {};
                         if (pv?.topology) {
                           const matInv = trussInvForMaterial(trussInv, snappedRow.trussMaterial);
                           (pv.topology.beams || []).forEach(b => {
                             const r = resolveBeamSegment(b.lengthFt, matInv);
                             if (r.shortage) realJointsShortage = true;
                             realJoints += r.joints || 0;
+                            (r.pieces || []).forEach(p => { realBeamSizeCounts[p.size] = (realBeamSizeCounts[p.size] || 0) + p.qty; });
                           });
                           (pv.topology.pillars || []).forEach(p => {
                             const r = resolvePillarHeight(p.H, matInv);
                             if (r.shortage) realJointsShortage = true;
                             realJoints += r.joints || 0;
+                            (r.pieces || []).forEach(pc => { realPillarSizeCounts[pc.size] = (realPillarSizeCounts[pc.size] || 0) + pc.qty; });
                           });
                         }
-                        return { zk, zLabel: rowIdx > 0 ? `${zLabel} (truss #${rowIdx + 1})${isRepeat ? " · ♻️ Repeat (30%)" : ""}` : `${zLabel}${isRepeat ? " · ♻️ Repeat (30%)" : ""}`, pv, row, rowIdx, snapNote, realJoints, realJointsShortage };
+                        return { zk, zLabel: rowIdx > 0 ? `${zLabel} (truss #${rowIdx + 1})${isRepeat ? " · ♻️ Repeat (30%)" : ""}` : `${zLabel}${isRepeat ? " · ♻️ Repeat (30%)" : ""}`, pv, row, rowIdx, snapNote, realJoints, realJointsShortage, realBeamSizeCounts, realPillarSizeCounts };
                       });
                     }).filter(x => x.pv && x.pv.source !== "none");
                     return { fn, previews };
@@ -218,6 +228,15 @@ export default function DCTrussTab({ ctx }) {
                     }, {})
                   ).sort((a, b) => Number(b[0]) - Number(a[0]))
                    .map(([len, n]) => `${n} × ${len}ft`).join(" · ");
+                  // Same "N × Xft" format as groupByLen, but from a {size: qty} map of REAL resolved
+                  // stock pieces (realBeamSizeCounts/realPillarSizeCounts) rather than ideal topology
+                  // segments — fixes "8 × 20.38ft" being shown for a length no stock size can make in
+                  // one piece, when the real build is two 10ft pieces per segment (16 total).
+                  const fmtSizeCounts = (counts) => Object.entries(counts || {})
+                    .sort((a, b) => Number(b[0]) - Number(a[0]))
+                    .map(([len, n]) => `${n} × ${len}ft`).join(" · ");
+                  const sizeCountsRft = (counts) => Object.entries(counts || {}).reduce((s, [len, n]) => s + Number(len) * n, 0);
+                  const sizeCountsTotal = (counts) => Object.values(counts || {}).reduce((s, n) => s + n, 0);
                   const flagEmoji = (flag) => flag === "green" ? "🟢" : flag === "yellow" ? "🟡" : "🔴";
 
                   // Deal Check sits on a wedding-artwork ground, so translucent tints let the
@@ -447,7 +466,7 @@ export default function DCTrussTab({ ctx }) {
                               </div>
                             )}
                           </div>
-                          {previews.map(({ zk, zLabel, pv, row, rowIdx, snapNote, realJoints, realJointsShortage }, previewIdx) => {
+                          {previews.map(({ zk, zLabel, pv, row, rowIdx, snapNote, realJoints, realJointsShortage, realBeamSizeCounts, realPillarSizeCounts }, previewIdx) => {
                             const isInvalid = pv.smartFlag === "red";
                             const topo = pv.topology;
                             const costs = pv.costs;
@@ -553,24 +572,52 @@ export default function DCTrussTab({ ctx }) {
 
                                     {/* Structure breakdown */}
                                     <div style={{display:"flex",gap:10,marginBottom:10,flexWrap:"wrap"}}>
-                                      <div className="dct-tile" style={{flex:"1 1 200px",padding:"10px 12px",background:TILE_BG,borderRadius:7,fontSize:12}}>
-                                        <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",gap:8,marginBottom:4}}>
-                                          <span style={{fontSize:10.5,fontWeight:700,letterSpacing:0.6,textTransform:"uppercase",color:INK_2}}>🏛️ Pillars ({topo.pillars.length})</span>
-                                          {(costs?.pillarCost || 0) > 0 && <span title={costs?.pillarDiscounted?"Fixed-venue standing-pillar discount applied":undefined} style={{...NUM,fontSize:12.5,fontWeight:700,color:costs?.pillarDiscounted?"#10B981":INK}}>₹{Math.round((costs?.pillarCost || 0)).toLocaleString("en-IN")}</span>}
-                                        </div>
-                                        <div style={{...NUM,color:INK,fontWeight:600,lineHeight:1.5}}>
-                                          {groupByLen(topo.pillars, p => p.H)} = {costs?.pillarRft || 0} RFT
-                                        </div>
-                                      </div>
-                                      <div className="dct-tile" style={{flex:"1 1 200px",padding:"10px 12px",background:TILE_BG,borderRadius:7,fontSize:12}}>
-                                        <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",gap:8,marginBottom:4}}>
-                                          <span style={{fontSize:10.5,fontWeight:700,letterSpacing:0.6,textTransform:"uppercase",color:INK_2}}>🔗 Beams ({topo.beams.length})</span>
-                                          {(costs?.beamCost || 0) > 0 && <span title={costs?.beamDiscounted?"Fixed-venue standing-beam discount applied":undefined} style={{...NUM,fontSize:12.5,fontWeight:700,color:costs?.beamDiscounted?"#10B981":INK}}>₹{Math.round((costs?.beamCost || 0)).toLocaleString("en-IN")}</span>}
-                                        </div>
-                                        <div style={{...NUM,color:INK,fontWeight:600,lineHeight:1.5}}>
-                                          {groupByLen(topo.beams, b => b.lengthFt)} = {costs?.beamRft || 0} RFT
-                                        </div>
-                                      </div>
+                                      {(() => {
+                                        // Real resolved stock pieces when available (e.g. a 17ft pillar height
+                                        // with no 17ft stock splits into a 15ft + 2ft spacer) — falls back to
+                                        // the ideal topology count only if resolution found nothing (no
+                                        // trussInv loaded yet).
+                                        const realCount = sizeCountsTotal(realPillarSizeCounts);
+                                        const realRft = sizeCountsRft(realPillarSizeCounts);
+                                        const billedRft = costs?.pillarRft || 0;
+                                        return (
+                                          <div className="dct-tile" style={{flex:"1 1 200px",padding:"10px 12px",background:TILE_BG,borderRadius:7,fontSize:12}}>
+                                            <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",gap:8,marginBottom:4}}>
+                                              <span style={{fontSize:10.5,fontWeight:700,letterSpacing:0.6,textTransform:"uppercase",color:INK_2}}>🏛️ Pillars ({realCount > 0 ? realCount : topo.pillars.length})</span>
+                                              {(costs?.pillarCost || 0) > 0 && <span title={costs?.pillarDiscounted?"Fixed-venue standing-pillar discount applied":undefined} style={{...NUM,fontSize:12.5,fontWeight:700,color:costs?.pillarDiscounted?"#10B981":INK}}>₹{Math.round((costs?.pillarCost || 0)).toLocaleString("en-IN")}</span>}
+                                            </div>
+                                            <div style={{...NUM,color:INK,fontWeight:600,lineHeight:1.5}}>
+                                              {realCount > 0 ? <>
+                                                {fmtSizeCounts(realPillarSizeCounts)} = {Math.round(realRft * 100) / 100} RFT
+                                                {Math.abs(realRft - billedRft) >= 0.01 && <span title="Billed at the clean height you asked for; real stock resolves slightly differently" style={{color:INK_3,fontWeight:500}}> · billed {billedRft} RFT</span>}
+                                              </> : <>{groupByLen(topo.pillars, p => p.H)} = {billedRft} RFT</>}
+                                            </div>
+                                          </div>
+                                        );
+                                      })()}
+                                      {(() => {
+                                        // Same real-stock substitution as Pillars above — an ideal beam segment
+                                        // length with no matching stock size (e.g. 20.38ft, no 20ft beam) splits
+                                        // into real pieces (two 10ft here) instead of showing an impossible
+                                        // single-piece length. See realBeamSizeCounts' own comment above.
+                                        const realCount = sizeCountsTotal(realBeamSizeCounts);
+                                        const realRft = sizeCountsRft(realBeamSizeCounts);
+                                        const billedRft = costs?.beamRft || 0;
+                                        return (
+                                          <div className="dct-tile" style={{flex:"1 1 200px",padding:"10px 12px",background:TILE_BG,borderRadius:7,fontSize:12}}>
+                                            <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",gap:8,marginBottom:4}}>
+                                              <span style={{fontSize:10.5,fontWeight:700,letterSpacing:0.6,textTransform:"uppercase",color:INK_2}}>🔗 Beams ({realCount > 0 ? realCount : topo.beams.length})</span>
+                                              {(costs?.beamCost || 0) > 0 && <span title={costs?.beamDiscounted?"Fixed-venue standing-beam discount applied":undefined} style={{...NUM,fontSize:12.5,fontWeight:700,color:costs?.beamDiscounted?"#10B981":INK}}>₹{Math.round((costs?.beamCost || 0)).toLocaleString("en-IN")}</span>}
+                                            </div>
+                                            <div style={{...NUM,color:INK,fontWeight:600,lineHeight:1.5}}>
+                                              {realCount > 0 ? <>
+                                                {fmtSizeCounts(realBeamSizeCounts)} = {Math.round(realRft * 100) / 100} RFT
+                                                {Math.abs(realRft - billedRft) >= 0.01 && <span title="Billed at the clean span you asked for; real stock resolves slightly under it (never over)" style={{color:INK_3,fontWeight:500}}> · billed {billedRft} RFT</span>}
+                                              </> : <>{groupByLen(topo.beams, b => b.lengthFt)} = {billedRft} RFT</>}
+                                            </div>
+                                          </div>
+                                        );
+                                      })()}
                                       {/* Batta wraps every pillar and every beam, so its RFT is the
                                           other two tiles added together plus the IMS buffer — shown
                                           as the sum so the number is checkable against them. */}
