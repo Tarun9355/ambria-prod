@@ -16,7 +16,7 @@ import ClickablePhoto from "../../components/shared/ClickablePhoto.jsx";
 import InventoryItemPickerModal from "../../components/shared/InventoryItemPickerModal.jsx";
 import PhotoTagFields from "../../components/studio/PhotoTagFields.jsx";
 import { getCat, carpetPricingFor, defaultCarpetMatId, CARPET_OFF, trussRateFor, maskingRateFor, maskingOptions, TRUSS_MATERIALS } from "../../lib/studio/taxonomy";
-import { calcZoneFabric, resolveFabricAllocation, anchorsForPaletteByMaterial } from "../../lib/studio/pricing";
+import { calcZoneFabric, resolveFabricAllocation, anchorsForPaletteByMaterial, maskingAnchorsForRow } from "../../lib/studio/pricing";
 import { qtyUsedElsewhereInBuild } from "../../lib/studio/dealAvailability";
 import { isHiddenSubcat } from "../../lib/rateCard";
 import { itemDimsText, priceForInvItem, kitDescendantIds } from "../../lib/ims/helpers";
@@ -1408,7 +1408,8 @@ export default function StudioModals({ ctx }) {
         // fabricType is "masking"/"liza"/"curtain" — the exact material keys a Fabric Palette
         // colour can be tagged with (StudioBuild.jsx) — only colours meant for THIS material
         // auto-fill this picker, matching DCTrussTab's own FabricRow resolveAlloc.
-        const anchors = anchorsForPaletteByMaterial(imsPaletteCatalogue, fnPalette, fabricType);
+        const paletteAnchors = anchorsForPaletteByMaterial(imsPaletteCatalogue, fnPalette, fabricType);
+        const anchors = fabricType === "masking" ? maskingAnchorsForRow(row, paletteAnchors) : paletteAnchors;
         const existingAlloc = row[cfg.allocField];
         const initial = resolveFabricAllocation(existingAlloc, cfg.totalQty, anchors, cfg.stockArr, cfg.qtyField);
         // Filter colour catalogue to only colours that exist in this fabric's stock array

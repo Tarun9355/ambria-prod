@@ -1,5 +1,5 @@
 import { Fragment } from "react";
-import { calcZoneFabric, resolveFabricAllocation, anchorsForPalette, anchorsForPaletteByMaterial, calcFabricAllocationTotal, zoneTrussStandingDiscountDetail, trussDiscountedCosts, repeatCatFor, snapRowDimsForProduction, trussInvForMaterial, dcFabricMultOf } from "../../../../lib/studio/pricing";
+import { calcZoneFabric, resolveFabricAllocation, resolveMaskingAllocation, anchorsForPalette, anchorsForPaletteByMaterial, calcFabricAllocationTotal, zoneTrussStandingDiscountDetail, trussDiscountedCosts, repeatCatFor, snapRowDimsForProduction, trussInvForMaterial, dcFabricMultOf } from "../../../../lib/studio/pricing";
 import { fixedVenueFor } from "../../../../lib/ims/fixedVenues";
 import { resolveBeamSegment, resolvePillarHeight } from "../../../../lib/ims/trussEngine";
 import { findCrossFnReuseSource } from "../../../../lib/studio/crossFnReuse";
@@ -642,7 +642,7 @@ export default function DCTrussTab({ ctx }) {
                                       const resolveAlloc = (material, allocField, totalQty, stockArr, qtyField) => {
                                         return resolveFabricAllocation(row[allocField], totalQty, anchorsForPaletteByMaterial(imsPaletteCatalogue, fnPalette, material), stockArr, qtyField);
                                       };
-                                      const maskingAlloc = showMasking ? resolveAlloc("masking", "maskingAllocation", fab.maskingPieces, trussInv.maskingStock, "stockPieces") : [];
+                                      const maskingAlloc = showMasking ? resolveMaskingAllocation(row, fab.maskingPieces, anchorsForPaletteByMaterial(imsPaletteCatalogue, fnPalette, "masking"), trussInv.maskingStock, "stockPieces") : [];
                                       const lizaAlloc    = showLiza    ? resolveAlloc("liza", "lizaAllocation",    Math.ceil(fab.lizaKg),  trussInv.lizaStock,    "stockKg")     : [];
                                       const curtainAlloc = showCurtain ? resolveAlloc("curtain", "curtainAllocation", fab.curtainPieces, trussInv.curtainStock, "stockPieces") : [];
 

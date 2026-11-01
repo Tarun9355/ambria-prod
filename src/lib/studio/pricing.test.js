@@ -167,3 +167,21 @@ describe("calcZoneFabric — Wall Masking fabric only for walls masked in fabric
     expect(mixed).toBeGreaterThan(0);
   });
 });
+
+import { resolveMaskingAllocation, MASKING_COLOUR_UNPICKED } from "./pricing.js";
+describe("resolveMaskingAllocation (RC-80)", () => {
+  const stock = [{ colour: "Ivory", stockPieces: 20 }, { colour: "Maroon", stockPieces: 5 }];
+  it("no colour picked anywhere: 'Colour not picked', not the most-stocked colour", () => {
+    expect(resolveMaskingAllocation({}, 3, [], stock, "stockPieces")).toEqual([{ qty: 3, colour: MASKING_COLOUR_UNPICKED }]);
+  });
+  it("the colour picked on the truss in Build wins over the palette", () => {
+    expect(resolveMaskingAllocation({ mkColour: "Maroon" }, 3, ["Ivory"], stock, "stockPieces")).toEqual([{ qty: 3, colour: "Maroon" }]);
+  });
+  it("no truss pick: the palette's masking colour, as before", () => {
+    expect(resolveMaskingAllocation({}, 3, ["Ivory"], stock, "stockPieces")).toEqual([{ qty: 3, colour: "Ivory" }]);
+  });
+  it("a colour allocated by hand in Deal Check is kept", () => {
+    const row = { maskingAllocation: [{ qty: 3, colour: "Maroon" }] };
+    expect(resolveMaskingAllocation(row, 3, [], stock, "stockPieces")).toEqual([{ qty: 3, colour: "Maroon" }]);
+  });
+});
