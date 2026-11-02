@@ -38,6 +38,7 @@ import { buildEventSwap, swappedRecipeFlower } from "../../lib/ims/mandiSwap";
 import { realLineTaker } from "../../lib/ims/floralBook";
 import { pdfT, pdfUnit, pdfDate, pdfDateTime, hindiReportHtml, HI_FONT_FAMILIES } from "../../lib/ims/pdfI18n";
 import { loadHindiNames, ensureHindiNames, nameKey, normName, needsHindi } from "../../lib/ims/hindiNames";
+import { toHindi } from "../../lib/ims/hindiTranslit";
 import PdfLangToggle from "./PdfLangToggle";
 import { splitCrewByDept } from "../../lib/ims/crewSplit";
 
@@ -3409,7 +3410,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     const t = pdfT(lang);
     // hn(): a DATA name (item, zone, colour, flower, client, venue…) in the Hindi book is printed in Devanagari as the
     // crew says it (lib/ims/hindiNames - opts.names, key → Hindi). A name not known yet prints as it is and is noted in
-    // opts.collect, so the export can ask for it and build again. English: the name exactly as given.
+    // opts.collect, so the export can ask for it and build again; meanwhile it is spelled offline (lib/ims/hindiTranslit), so the
+    // book is Hindi even when the AI cannot answer. English: the name exactly as given.
     const nameMap = opts.names instanceof Map ? opts.names : null;
     const nameMiss = opts.collect instanceof Set ? opts.collect : null;
     const hn = (s) => {
@@ -3417,8 +3419,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       const hi = nameMap && nameMap.get(nameKey(s));
       if (hi) return hi;
       if (nameMiss) nameMiss.add(normName(s));
-      return s;
+      return toHindi(s);
     };
+    // A size ("5 × 12 inches") with its unit word in Hindi - not a name, so not asked of the AI.
+    const hd = (d) => lang === "hi" ? toHindi(d) : d;
     // A unit after a quantity ("1.5 bundle") in the book's language - lib/ims/pdfI18n's fixed list, a unit not in it as given.
     const hu = (u) => pdfUnit(lang, u);
     // A paint line ("Gold ×2, Silver ×1") with each colour through hn().
@@ -4253,7 +4257,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       <div class="zc-b">
         <div class="zc-n">${esc(it.shown != null ? it.shown : hn(it.name))}</div>
         <div class="zc-r"><span>${t("Qty")}</span><b>${esc(it.qty)}${it.unit ? ` <span style="font-weight:500;font-size:.85em;opacity:.7">${esc(hu(it.unit))}</span>` : ""}</b></div>
-        <div class="zc-r"><span>${t("Size")}</span><b>${esc(it.dims || "—")}</b></div>
+        <div class="zc-r"><span>${t("Size")}</span><b>${esc(hd(it.dims) || "—")}</b></div>
         ${it.source ? `<div class="zc-r"><span>${t("From")}</span><b>${esc(it.source)}</b></div>` : it.deptTag ? `<div class="zc-r"><span>${t("Dept")}</span><b>${esc(t(it.deptTag))}</b></div>` : ""}
         ${it.paint?.size ? `<div class="zc-r"><span>${t("Paint")}</span><b>${esc(paintHn(paintText(it.paint)))}</b></div>` : ""}
         ${(it.extra || []).map(([k, v]) => `<div class="zc-r"><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join("")}
@@ -4909,7 +4913,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     ${ornament}
     <div class="cv-facts">
       <div><div class="k">${t("Venue")}</div><div class="v">${esc(hn(venue))}</div></div>
-      <div><div class="k">${t("Prepared by")}</div><div class="v">${esc(deptData.updatedBy || authUser?.name || "—")}</div></div>
+      <div><div class="k">${t("Prepared by")}</div><div class="v">${esc(hn(deptData.updatedBy || authUser?.name) || "—")}</div></div>
     </div>
     ${sessions.length ? `<div class="cv-sec">${sessions.length === 1 ? t("The event") : t("{n} sessions", { n: sessions.length })}</div>
     <div class="cv-sessions${sessions.length > 4 ? " many dense" : sessions.length > 2 ? " many" : ""}">${sessions.map((s, i) => `<div class="cv-ses t-${sesTone(s.type, i)}">
@@ -4918,7 +4922,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       <div class="sl"></div>
       <div class="sg">
         <div class="sf"><div class="k">${t("Date")}</div><div class="v">${esc(s.dateShort)}</div></div>
-        ${s.shift ? `<div class="sf"><div class="k">${t("Shift")}</div><div class="v">${esc(s.shift)}</div></div>` : ""}
+        ${s.shift ? `<div class="sf"><div class="k">${t("Shift")}</div><div class="v">${esc(hn(s.shift))}</div></div>` : ""}
         ${s.pax ? `<div class="sf"><div class="k">${t("Guests")}</div><div class="v">${esc(s.pax)}</div></div>` : ""}
       </div>
       ${s.place ? `<div class="sm">${esc(hn(s.place))}</div>` : ""}
@@ -4942,7 +4946,7 @@ ${!combined && moveRows.length ? sect(t("Dismantle routing"), table([t("Item"), 
 ${!combined && fabRows.length ? sect(t("Fabric required vs available"), table([t("Fabric · colour"), t("Required"), t("Available"), t("Status")], fabRows, ["40%", "20%", "20%", "20%"])) : ""}
 <footer data-block>
   ${logos.dark ? `<img class="ft-logo" src="${logos.dark}" alt="Ambria — Design &amp; Decor">` : `<div class="ft-mark">AMBRIA · DESIGN &amp; DECOR</div>`}
-  <div class="ft-meta">${t("Generated {date} · {name}", { date: esc(pdfDateTime(lang, new Date())), name: esc(authUser?.name || "—") })}</div>
+  <div class="ft-meta">${t("Generated {date} · {name}", { date: esc(pdfDateTime(lang, new Date())), name: esc(hn(authUser?.name) || "—") })}</div>
 </footer>
 </div>
 </body></html>`;
