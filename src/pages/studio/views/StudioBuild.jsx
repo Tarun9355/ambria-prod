@@ -573,14 +573,18 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                                         <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.name}</span>
                                       </div>
                                     ))}
-                                    {/* Enlarge-on-hover (owner ask, 2026-11-02): the per-colour reference
-                                        photo IMS Admin uploads is a 16px swatch in the list above — too
-                                        small to actually tell colours apart by eye. Hovering a row floats
-                                        this bigger preview beside the panel instead. */}
-                                    {loosePreview && <div style={{position:"absolute",left:"100%",top:0,marginLeft:6,width:120,height:120,borderRadius:8,overflow:"hidden",border:`1px solid ${border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.25)",background:isDark?"#111":"#fff"}}>
-                                      <img src={fitUrl(loosePreview.src, 240)} alt={loosePreview.name} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
-                                    </div>}
                                   </div>
+                                  {/* Enlarge-on-hover (owner ask, 2026-11-02): the per-colour reference
+                                      photo IMS Admin uploads is a 16px swatch in the list above — too
+                                      small to actually tell colours apart by eye. Hovering a row floats
+                                      this bigger preview beside the panel. Must be a SIBLING of the
+                                      scrollable panel above, not nested inside it — a CSS quirk makes
+                                      `overflowY: auto` with no explicit overflowX compute overflowX to
+                                      auto too, so a preview positioned to poke out past the panel's own
+                                      right edge was getting clipped by that same scrollbar. */}
+                                  {loosePreview && <div style={{position:"absolute",top:"100%",left:186,marginTop:2,zIndex:50,width:120,height:120,borderRadius:8,overflow:"hidden",border:`1px solid ${border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.25)",background:isDark?"#111":"#fff"}}>
+                                    <img src={fitUrl(loosePreview.src, 240)} alt={loosePreview.name} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+                                  </div>}
                                 </>}
                               </div>
                               <NumField min={0} value={row.qty||""} onCommit={n=>updLooseRow(i,{qty:n})} blankCommit commitOn="blur" placeholder="0"
