@@ -8682,10 +8682,16 @@ export default function StudioApp() {
         afBunches += r.artFlowerBunches || 0; agBunches += r.artGreenBunches || 0;
         incReal += r.income?.real || 0; incArt += r.income?.art || 0;
         (r.breakdown || []).forEach(f => {
-          if (!fbAgg[f.name]) fbAgg[f.name] = { name: f.name, qty: 0, cost: 0, unit: f.unit, colorVariant: f.colorVariant || null, colorPrefs: f.colorPrefs || null };
-          fbAgg[f.name].qty += f.qty; fbAgg[f.name].cost += f.cost;
-          if (f.colorVariant && !fbAgg[f.name].colorVariant) fbAgg[f.name].colorVariant = f.colorVariant;
-          if (f.colorPrefs && !fbAgg[f.name].colorPrefs) fbAgg[f.name].colorPrefs = f.colorPrefs;
+          // Keyed by name + colour, not name alone — a flower ordered in two different colours
+          // across two functions (Haldi's yellow guldavari star, Wedding's white) used to collapse
+          // into ONE bucket: whichever function's colour got there first won it, and every other
+          // colour's quantity/cost was silently folded in uncredited — the purchase manager's mandi
+          // list then showed only one colour's worth to buy while the real total spanned both.
+          // Confirmed live, 2026-11-02.
+          const colourKey = f.colorVariant?.label || (Array.isArray(f.colorPrefs) ? f.colorPrefs.map(p => p.label).join("/") : "") || "";
+          const key = colourKey ? `${f.name}¦${colourKey}` : f.name;
+          if (!fbAgg[key]) fbAgg[key] = { name: f.name, qty: 0, cost: 0, unit: f.unit, colorVariant: f.colorVariant || null, colorPrefs: f.colorPrefs || null };
+          fbAgg[key].qty += f.qty; fbAgg[key].cost += f.cost;
         });
       });
       const flowers = Object.values(fbAgg).map(f => ({ ...f, rate: f.qty > 0 ? Math.round((f.cost / f.qty) * 100) / 100 : 0 })).sort((a, b) => b.cost - a.cost);
