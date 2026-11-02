@@ -30,3 +30,15 @@ describe("uiHindi - truck statuses", () => {
     expect(uiHindi("At site")).toBe("साइट पर");
   });
 });
+
+describe("uiHindi - routing and pieces built around numbers", () => {
+  it("Add a site / Send items", () => {
+    expect(uiHindi("Add a site")).toBe("साइट जोड़ें");
+    expect(uiHindi("Send items to another event")).toBe("सामान दूसरे इवेंट में भेजें");
+  });
+  it("a listed phrase inside a longer text", () => {
+    expect(uiHindi("Short for this date — only 3")).toBe("इस तारीख पर कम — सिर्फ़ 3");
+    expect(uiHindi("12 sqft free · covers it")).toBe("12 वर्ग फुट खाली · पूरा पड़ता है");
+    expect(uiHindi("🌿 Greens:")).toBe("🌿 ग्रीन्स:");
+  });
+});

@@ -6,6 +6,7 @@
 // in Devanagari by lib/ims/hindiTranslit, like the book's names. Digits, ₹ amounts and symbols are kept.
 import { PDF_HI } from "./pdfI18n";
 import { toHindi } from "./hindiTranslit";
+import { UI_HI_MORE } from "./uiHindiMore";
 
 export const UI_HI = {
   // headings and tiles
@@ -105,13 +106,23 @@ const UI_WORDS = {
 };
 
 const norm = (s) => s.replace(/\s+/g, " ").trim();
-const lowerMap = new Map();
-const lookup = (core) => {
-  if (!core) return null;
-  if (Object.prototype.hasOwnProperty.call(UI_HI, core)) return UI_HI[core];
-  if (Object.prototype.hasOwnProperty.call(PDF_HI, core) && !PDF_HI[core].includes("{")) return PDF_HI[core].split("|")[0];
-  if (!lowerMap.size) [PDF_HI, UI_HI].forEach(m => Object.entries(m).forEach(([k, v]) => { if (!v.includes("{")) lowerMap.set(k.toLowerCase(), v.split("|")[0]); }));
-  return lowerMap.get(core.toLowerCase()) ?? null;
+// Every listed label, keyed lower-case: the Hindi book's words, then the screen's (lib/ims/uiHindiMore, then UI_HI above) over them.
+let ALL = null;
+const all = () => {
+  if (ALL) return ALL;
+  ALL = new Map();
+  [PDF_HI, UI_HI_MORE, UI_HI].forEach(m => Object.entries(m).forEach(([k, v]) => { if (!String(v).includes("{")) ALL.set(norm(k).toLowerCase(), String(v).split("|")[0]); }));
+  return ALL;
+};
+const lookup = (core) => (core ? all().get(core.toLowerCase()) ?? null : null);
+// A listed phrase of two words or more inside a longer text the screen builds around a number or a name ("Short for this date — only 3"),
+// longest first, whole words only.
+let PHRASE_RE = null;
+const phraseRe = () => {
+  if (PHRASE_RE) return PHRASE_RE;
+  const keys = [...all().keys()].filter(k => /[a-z]/.test(k) && k.includes(" ") && k.length >= 6).sort((x, y) => y.length - x.length);
+  PHRASE_RE = new RegExp("(?<![A-Za-z])(" + keys.map(k => k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|") + ")(?![A-Za-z])", "gi");
+  return PHRASE_RE;
 };
 
 const cache = new Map();
@@ -125,12 +136,21 @@ export function uiHindi(text) {
   const core = norm(s);
   let out = lookup(core);
   if (out == null) {
-    // emoji / arrows / bullets before, ":" "=" "…" "→" after: look the words up without them
-    const m = core.match(/^([^A-Za-z]*?)([A-Za-z].*?)([^A-Za-z.]*)$/);
-    const hit = m && lookup(m[2]);
-    if (hit != null) out = m[1] + hit + m[3];
+    // emoji / arrows / bullets before, ":" "=" "…" "→" "(" after: look the words up without them
+    const m = core.match(/^([^A-Za-z]*)(.*)$/);
+    const hitRest = lookup(m[2]);
+    if (hitRest != null) out = m[1] + hitRest;
+    else {
+      const k = m[2].match(/^(.*?)([^A-Za-z.]*)$/);
+      const hit = k && lookup(k[1].trim());
+      if (hit != null) out = m[1] + hit + k[2];
+    }
   }
-  if (out == null) out = toHindi(core.replace(/[A-Za-z]+/g, (w) => UI_WORDS[w.toLowerCase()] || w));
+  if (out == null) {
+    // A longer text: the listed phrases in it first, then every other English word in Devanagari.
+    out = core.replace(phraseRe(), (ph) => lookup(ph) ?? ph);
+    out = toHindi(out.replace(/[A-Za-z]+/g, (w) => UI_WORDS[w.toLowerCase()] || w));
+  }
   out = lead + out + trail;
   if (cache.size > 5000) cache.clear();
   cache.set(s, out);
