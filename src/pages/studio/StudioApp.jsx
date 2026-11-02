@@ -780,54 +780,14 @@ async function aiMatchCardWithSubcat(cardSpec, scopedItems, signal) {
 
 // Claude Vision call — matches a design photo to the best IMS inventory item.
 // REWIRED through callClaudeStreaming (image-URL block + text prompt).
-async function matchPhotoWithAI(photoUrl, photoMetadata, inventoryList) {
-  const tags = (photoMetadata?.elements || []).map(t => (t?.name || "").toLowerCase()).filter(Boolean);
-  let candidates = inventoryList;
-  if (tags.length > 0) {
-    const filtered = inventoryList.filter(i => {
-      const name = (i.name || "").toLowerCase();
-      const cat = (i.cat || "").toLowerCase();
-      const subCat = (i.subCat || "").toLowerCase();
-      return tags.some(t => name.includes(t) || cat.includes(t) || subCat.includes(t));
-    });
-    if (filtered.length > 0) candidates = filtered;
-  }
-  candidates = candidates.slice(0, 50);
-  if (candidates.length === 0) return { primary: null, alternatives: [] };
-  const invList = candidates.map(i => ({ id: i.id, name: i.name, cat: i.cat, subCat: i.subCat, size: i.size, qty: i.qty }));
-  const prompt = "You are an expert decor inventory matcher for Ambria Decorations. Look at the attached photo from our wedding/event decoration library.\n\n" +
-    "Identify the MAIN physical prop or structural element shown (arch, mandap, console, backdrop, pedestal, etc.). Ignore decorative fills like flowers, candles, fabric unless they ARE the main item.\n\n" +
-    "Match to the best candidate from this IMS inventory list:\n" + JSON.stringify(invList, null, 2) + "\n\n" +
-    "Photo element tags: " + (tags.join(", ") || "(none)") + "\n\n" +
-    "Return ONLY valid JSON, no markdown, no preamble:\n" +
-    "{\n  \"primary\": { \"imsId\": \"X####\", \"confidence\": \"high\"|\"medium\"|\"low\", \"reasoning\": \"short why\" },\n" +
-    "  \"alternatives\": [ { \"imsId\": \"X####\" }, { \"imsId\": \"X####\" }, { \"imsId\": \"X####\" } ]\n}\n\n" +
-    "If nothing reasonably matches, return: { \"primary\": null, \"alternatives\": [] }";
-  try {
-    const text = await callClaudeStreaming({
-      contentBlocks: [
-        { type: "image", source: { type: "url", url: photoUrl } },
-        { type: "text", text: prompt },
-      ],
-      model: "claude-sonnet-4-6",
-      maxTokens: 1000,
-    });
-    const clean = (text || "").replace(/```json|```/g, "").trim();
-    let parsed;
-    try { parsed = JSON.parse(clean); } catch { return { primary: null, alternatives: [] }; }
-    if (parsed?.primary?.imsId) {
-      const item = inventoryList.find(i => i.id === parsed.primary.imsId);
-      if (item) parsed.primary.name = item.name;
-    }
-    parsed.alternatives = (parsed?.alternatives || []).map(alt => {
-      const item = inventoryList.find(i => i.id === alt.imsId);
-      return item ? { imsId: alt.imsId, name: item.name } : alt;
-    }).filter(a => a?.imsId);
-    return parsed;
-  } catch (e) {
-    console.error("[preflight] matchPhotoWithAI failed:", e);
-    return { primary: null, alternatives: [] };
-  }
+// Disabled (owner ask, 2026-11-02): no AI photo-matching at all. This used to call Claude on every
+// un-cached zone photo the moment Deal Check opened, with no toggle to turn it off — once the
+// Anthropic account ran out of credit it was a guaranteed-failing network call on every Deal Check
+// open, for every salesperson, logging a console error each time for a feature nobody wanted
+// running. Returns the same "no match" shape the real call used to return on any failure, so
+// resolvePhotoToIMS's cache/override/structural-fallback logic (below) is otherwise untouched.
+async function matchPhotoWithAI() {
+  return { primary: null, alternatives: [] };
 }
 
 // Resolve a photo URL to IMS ID. Order: event override → global cache → AI fallback. — VERBATIM
@@ -8675,10 +8635,21 @@ export default function StudioApp() {
     // Snapshot the system manpower plan (counts + how each was derived) so dept heads see it.
     let manpowerPlan = [];
     try { manpowerPlan = manpowerPlanForBooking(allFns); } catch {}
-    // Prevent double-booking: one client + date = ONE event order. If an active (non-cancelled) order
-    // already exists for this client+date, update it IN PLACE (reuse id) instead of creating a second
-    // row. Otherwise re-pushing the same deal would spawn a duplicate booking in IMS.
-    const existingActive = eventOrders.find(e => e.clientId === client.id && e.date === clientDate && e.status !== "cancelled");
+    // Prevent double-booking: one client = ONE live event order. If a non-cancelled order already
+    // exists for this client, update it IN PLACE (reuse id) instead of creating a second row.
+    // Confirmed live, 2026-11-02 (Sangeeta): this used to also require e.date === clientDate, where
+    // clientDate is function #1's own date — which drifts the moment that function's date gets
+    // edited, or the functions get reordered so a different one becomes #1. Any such drift made
+    // this match fail silently and spawn a fresh duplicate on the next push, 8 times over for one
+    // client in this incident. ownEventOrderIds (eventOrderFor.js) is the same "which order(s) are
+    // this client's own live one(s)" helper every other such lookup in this file already uses —
+    // clientId alone, no date, is the stable identity; a client with no live order yet still creates
+    // fresh, same as before.
+    const myLiveIds = new Set(ownEventOrderIds(eventOrders, client.id, client.name));
+    const myLiveOrders = eventOrders.filter(e => myLiveIds.has(e.id));
+    const existingActive = myLiveOrders.length
+      ? [...myLiveOrders].sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0))[0]
+      : undefined;
     if (existingActive && !skipDupeConfirm && !confirm(`${client.name} is already booked for ${clientDate} (status: ${existingActive.status || "pending"}). Update that existing booking with the latest plan instead of creating a second one?`)) return false;
     const eoId = existingActive ? existingActive.id : ("eo_" + Date.now().toString(36));
     const eoCreatedAt = existingActive ? (existingActive.createdAt || Date.now()) : Date.now();
@@ -11662,7 +11633,13 @@ export default function StudioApp() {
   // another event's reservation. It also never expands a kit into its component items, matching
   // executeConfirmBlocks/ApprovalsTab's own real-block behavior (only the kit shell gets a row).
   const reconcileSoldInventoryBlocks = useCallback(async (fnsToProcess, newCards, inventoryList, cli) => {
-    const eo = (eventOrders || []).find(e => e.clientId === cli.id);
+    // eventOrderFor, not a plain .find() — a client can carry several event_orders (a duplicate
+    // push, a cancelled-and-rebooked deal), and a plain "first clientId match" can land on a
+    // CANCELLED one regardless of a newer live order existing (confirmed live, 2026-11-02:
+    // Sangeeta's duplicate-booking cleanup kept re-writing real stock blocks under her already-
+    // cancelled original order, because this was the one lookup in the file that still used the
+    // naive pattern eventOrderFor/ownEventOrderIds were built to replace everywhere else).
+    const eo = eventOrderFor(eventOrders, cli.id, cli.name);
     if (!eo) { console.warn("[reconcile] no event_orders row for this client — skipping (not through markSold yet?)", cli.id); return; }
 
     // KNOWN SCOPE LIMIT: this only diffs functions still present in fnsToProcess. Deleting an
