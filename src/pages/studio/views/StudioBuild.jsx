@@ -25,6 +25,7 @@ import { paletteSearch, paletteMatches } from "../../../components/studio/filter
 import { resolveTrussConfig, pillarCountForSpan, trussInvForMaterial } from "../../../lib/studio/pricing";
 import { fabricColourOptions } from "../../../lib/studio/fabricColourOptions";
 import { qtyUsedElsewhereInBuild } from "../../../lib/studio/dealAvailability";
+import { crossedMiddle } from "../../../lib/studio/zoneDrop";
 import { logDiscountToClientToggle } from "../../../lib/studio/userActions";
 import { todayStr } from "../../../lib/ims/attendance";
 import { isHiddenSubcat, canFulfillShortfall } from "../../../lib/rateCard";
@@ -2607,6 +2608,10 @@ export default function StudioBuild({ ctx }) {
   }, [zoneKeys, customZones, enabledEls, zoneOrder]);
 
   const [dragZone, setDragZone] = useState(null);   // key being dragged
+  // After a swap, the next one waits until the zones have finished sliding (ZONE_SLIDE_MS): measuring mid-slide read
+  // positions that were still moving, and swaps landing back to back were too fast to follow.
+  const ZONE_SLIDE_MS = 280;
+  const zoneSwapLockRef = useRef(0);
   // Commit a move by writing the FULL visible order, not just the moved key. A partial list would
   // be read back with the untouched keys falling behind the moved one, which silently undoes the
   // rest of the arrangement the next time the deal is opened.
@@ -2643,7 +2648,7 @@ export default function StudioBuild({ ctx }) {
       el.style.transition = "none";
       el.style.transform = `translateY(${was - r.top}px)`;
       requestAnimationFrame(() => {
-        el.style.transition = "transform 200ms cubic-bezier(.2,.8,.2,1)";
+        el.style.transition = `transform ${ZONE_SLIDE_MS}ms cubic-bezier(.2,.8,.2,1)`;
         el.style.transform = "";
       });
     });
@@ -4288,13 +4293,23 @@ undefined
            other zones slide out of the way while you are still holding the card — the list you
            are looking at is already the list you will get, so there is nothing to guess at. The
            drop then only has to clear the drag state. */
-        onDragOver={e=>{ if(dragZone && dragZone!==k){ e.preventDefault(); e.dataTransfer.dropEffect="move"; moveZone(dragZone,k); } }}
+        onDragOver={e=>{
+          if(!dragZone || dragZone===k) return;
+          e.preventDefault(); e.dataTransfer.dropEffect="move";
+          // Only once the pointer is past this zone's middle (crossedMiddle), and not while the last swap is still sliding.
+          const now=performance.now();
+          if(now<zoneSwapLockRef.current) return;
+          const r=e.currentTarget.getBoundingClientRect();
+          if(!crossedMiddle(orderedZoneKeys.indexOf(dragZone), orderedZoneKeys.indexOf(k), e.clientY, r.top, r.height)) return;
+          zoneSwapLockRef.current=now+ZONE_SLIDE_MS;
+          moveZone(dragZone,k);
+        }}
         onDrop={e=>{ e.preventDefault(); setDragZone(null); }}
         /* No `transition` in this style object on purpose: React owns every property listed here
            and rewrites them on each render, which would wipe the transform transition FLIP sets
            imperatively mid-animation. The drop-target outline is gone too — the list reorders
            live now, so the card's real position IS the preview. */
-        style={{background:isOn?cardBg:isDark?"#12121F":"#FAFAFA",borderRadius:14,border:isOn?`2px solid ${isDuplicate?"#C9A96E":"#444"}`:`1px solid ${isDark?"rgba(255,255,255,0.08)":"rgba(26,26,46,0.09)"}`,marginBottom:10,overflow:"hidden",opacity:dragZone===k?0.4:1}}>
+        style={{background:isOn?cardBg:isDark?"#12121F":"#FAFAFA",borderRadius:14,border:isOn?`2px solid ${isDuplicate?"#C9A96E":"#444"}`:`1px solid ${isDark?"rgba(255,255,255,0.08)":"rgba(26,26,46,0.09)"}`,marginBottom:10,overflow:"hidden",opacity:dragZone===k?0.4:1,outline:dragZone===k?`2px dashed ${accent}`:"none",outlineOffset:2}}>
         {/* Only the Details chip collapses an open zone. The whole header used to do it, so any
             stray click — on the name, the summary text, the empty space — folded the zone away
             mid-edit. An OFF zone still switches on from anywhere in the row, since there is nothing
