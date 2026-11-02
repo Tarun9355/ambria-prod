@@ -198,6 +198,8 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
   const fabricRepOff = fabricInv ? fabricRepeatDiscount(zc, fabricInv, zc.drapeDensity || "moderate", fabMult, guestFabricDiscPct) : 0;
   const fabricShown = fabricCost + wallPanelCost - fabricRepOff;
   const [fabMenu, setFabMenu] = useState(null); // which Fabric icon's menu is open ("fabLiza" | "fabCurtain")
+  const [looseColourMenu, setLooseColourMenu] = useState(null); // which loose-fabric row's colour picker is open (its index)
+  const [loosePreview, setLoosePreview] = useState(null); // { src, name } of the loose-fabric colour swatch currently hovered — the enlarge-on-hover
   // Width, Depth and Height all filled = a Box (the rule sD applies when a dimension is typed). A truss
   // whose type was left at "Single U" by some other path (a copied build, a photo's own dims) hid the
   // Custom Ceiling and priced as a U; trT is brought back in line so every reader — price, Deal Check,
@@ -520,14 +522,19 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                       const addLooseRow = () => setLooseRows([...looseRows, { kind: "liza", colour: "", qty: 0 }]);
                       const updLooseRow = (i, patch) => setLooseRows(looseRows.map((r, j) => j === i ? { ...r, ...patch } : r));
                       const delLooseRow = (i) => setLooseRows(looseRows.filter((_, j) => j !== i));
+                      // Carries each colour's own reference photo (IMS Admin → Planning → Fabric
+                      // Stock, same upload the per-colour stock rows there show) so the picker below
+                      // can show what the fabric actually looks like instead of just its name.
                       const looseColourOpts = (stockKey) => {
-                        const seen = new Set(), out = [];
+                        const seen = new Map();
                         (fabricInv?.[stockKey] || []).forEach(r => {
                           const c = String(r?.colour || "").trim();
-                          if (!c || seen.has(c.toLowerCase())) return;
-                          seen.add(c.toLowerCase()); out.push(c);
+                          if (!c) return;
+                          const k = c.toLowerCase();
+                          if (!seen.has(k)) seen.set(k, { name: c, photo: r.photo || "" });
+                          else if (!seen.get(k).photo && r.photo) seen.get(k).photo = r.photo;
                         });
-                        return out.sort((a, b) => a.localeCompare(b));
+                        return [...seen.values()].sort((a, b) => a.name.localeCompare(b.name));
                       };
                       const selStyle = { fontSize:11, padding:"5px 6px", borderRadius:6, border:`1px solid ${border}`, background:isDark?"#1A1A2E":"#fff", color:textP, width:"100%" };
                       return <div style={{marginTop:8,paddingTop:8,borderTop:`1px dashed ${border}`}}>
@@ -543,11 +550,39 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                               <select value={row.kind} onChange={e=>updLooseRow(i,{kind:e.target.value, colour:""})} style={selStyle}>
                                 {LOOSE_FABRIC_KINDS.map(x=><option key={x.key} value={x.key}>{x.emoji} {x.label}</option>)}
                               </select>
-                              <select value={row.colour || ""} onChange={e=>updLooseRow(i,{colour:e.target.value})}
-                                style={{...selStyle, color:row.colour?accent:textS, borderColor:row.colour?accent:border}}>
-                                <option value="">— Colour —</option>
-                                {colourOpts.map(c=><option key={c} value={c}>{c}</option>)}
-                              </select>
+                              <div style={{position:"relative"}}>
+                                <button type="button" onClick={()=>setLooseColourMenu(m=>m===i?null:i)}
+                                  style={{...selStyle, display:"flex", alignItems:"center", gap:5, cursor:"pointer", color:row.colour?accent:textS, borderColor:row.colour?accent:border}}>
+                                  {(() => { const sel = colourOpts.find(c => c.name === row.colour); return sel?.photo
+                                    ? <img src={thumbUrl(sel.photo, 14)} loading="lazy" decoding="async" alt="" style={{width:14,height:14,borderRadius:3,objectFit:"cover",flexShrink:0,border:`1px solid ${border}`}}/> : null; })()}
+                                  <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,textAlign:"left"}}>{row.colour || "— Colour —"}</span>
+                                  <span style={{fontSize:9,opacity:0.6,flexShrink:0}}>▾</span>
+                                </button>
+                                {looseColourMenu === i && <>
+                                  <div className="fixed inset-0 z-40" onClick={()=>{setLooseColourMenu(null);setLoosePreview(null);}} />
+                                  <div style={{position:"absolute",top:"100%",left:0,marginTop:2,zIndex:50,width:180,maxHeight:230,overflowY:"auto",background:isDark?"#1A1A2E":"#fff",border:`1px solid ${border}`,borderRadius:8,boxShadow:"0 8px 24px rgba(0,0,0,0.2)",padding:4}}>
+                                    <div onClick={()=>{updLooseRow(i,{colour:""});setLooseColourMenu(null);setLoosePreview(null);}}
+                                      style={{padding:"5px 7px",borderRadius:5,cursor:"pointer",fontSize:11,color:textS}}>— Colour —</div>
+                                    {colourOpts.map(c => (
+                                      <div key={c.name} onClick={()=>{updLooseRow(i,{colour:c.name});setLooseColourMenu(null);setLoosePreview(null);}}
+                                        onMouseEnter={()=>c.photo && setLoosePreview({src:c.photo, name:c.name})} onMouseLeave={()=>setLoosePreview(null)}
+                                        style={{display:"flex",alignItems:"center",gap:6,padding:"5px 7px",borderRadius:5,cursor:"pointer",fontSize:11,
+                                          background:row.colour===c.name?`${accent}18`:"transparent",color:row.colour===c.name?accent:textP,fontWeight:row.colour===c.name?700:400}}>
+                                        {c.photo ? <img src={thumbUrl(c.photo, 16)} loading="lazy" decoding="async" alt="" style={{width:16,height:16,borderRadius:3,objectFit:"cover",flexShrink:0,border:`1px solid ${border}`}}/>
+                                          : <span style={{width:16,height:16,borderRadius:3,flexShrink:0,border:`1px dashed ${border}`}}/>}
+                                        <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.name}</span>
+                                      </div>
+                                    ))}
+                                    {/* Enlarge-on-hover (owner ask, 2026-11-02): the per-colour reference
+                                        photo IMS Admin uploads is a 16px swatch in the list above — too
+                                        small to actually tell colours apart by eye. Hovering a row floats
+                                        this bigger preview beside the panel instead. */}
+                                    {loosePreview && <div style={{position:"absolute",left:"100%",top:0,marginLeft:6,width:120,height:120,borderRadius:8,overflow:"hidden",border:`1px solid ${border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.25)",background:isDark?"#111":"#fff"}}>
+                                      <img src={fitUrl(loosePreview.src, 240)} alt={loosePreview.name} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+                                    </div>}
+                                  </div>
+                                </>}
+                              </div>
                               <NumField min={0} value={row.qty||""} onCommit={n=>updLooseRow(i,{qty:n})} blankCommit commitOn="blur" placeholder="0"
                                 style={{...S.input,width:"100%",padding:"5px 4px",fontSize:11.5,fontWeight:600,textAlign:"center"}} />
                               <div style={{display:"flex",alignItems:"center",gap:7,justifySelf:"end"}}>
