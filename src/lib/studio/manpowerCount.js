@@ -30,19 +30,25 @@ import { standingReductionBySubcat } from "../ims/fixedVenues";
 import { itemImsSubcat, lookupBySubcat, walkKitUnits } from "../ims/helpers";
 import { resolveDateCategory } from "../inventory/helpers";
 import { catToDept, poolLabourDept } from "../ims/deptClassify";
+import { CARPET_OFF } from "./taxonomy";
+import { floorSqftOf } from "./carpetPrefs";
 
-// Tenting's own zone-driven quantities for the Labours usage split (Heavy Element Add-ons' "Truss"
-// and "Platform" sub-categories, 2026-10-28 owner ask). Unlike every other heavy sub-category,
-// neither is ever a zone ELEMENT — walkFnElements can't find them — their quantity comes from the
-// zone's own truss/platform config instead: Truss is the same pillar count already driving Truss
-// Labour's own range-table lookup (calcZoneTrussPreview); Platform is the number of platform
-// PIECES (Build's own "Platform Qty" per row), not sqft or a material count — unaffected by
-// Platform's 2026-11-01 move off the Fatta/Stand inventory items onto Platform Config's ₹/sqft
-// model (pricing.js's buildPlatformPlan), since this never counted fatta/stand pieces to begin
-// with. Shared by this engine's own usage floor (below) and DealCheckOverlay.jsx's per-function
-// department split, so both always agree.
+// Tenting's own zone-driven quantities for the Labours usage split (Heavy Element Add-ons' "Truss",
+// "Platform" and "Carpet" sub-categories — Truss/Platform 2026-10-28 owner ask, Carpet 2026-11-02
+// owner report: it was missing from this table entirely). Unlike every other heavy sub-category,
+// none of these three is ever a zone ELEMENT — walkFnElements can't find them — their quantity
+// comes from the zone's own truss/platform/carpet config instead: Truss is the same pillar count
+// already driving Truss Labour's own range-table lookup (calcZoneTrussPreview); Platform is the
+// number of platform PIECES (Build's own "Platform Qty" per row), not sqft or a material count —
+// unaffected by Platform's 2026-11-01 move off the Fatta/Stand inventory items onto Platform
+// Config's ₹/sqft model (pricing.js's buildPlatformPlan), since this never counted fatta/stand
+// pieces to begin with; Carpet is billed sqft (floorSqftOf — the same figure the carpet cost and
+// stock checks use, so this can't disagree with either), on EVERY floor row whose cpT isn't the
+// explicit OFF sentinel — not gated on plH like Platform's own count just below, since a floor can
+// be carpeted with no platform under it at all. Shared by this engine's own usage floor (below) and
+// DealCheckOverlay.jsx's per-function department split, so both always agree.
 export function tentingZoneUsage(fn, ctx) {
-  let truss = 0, platform = 0;
+  let truss = 0, platform = 0, carpet = 0;
   const zc = fn?.zoneConfig || {}, en = fn?.enabledEls || {};
   Object.keys(zc).forEach((zk) => {
     if (!en[zk] || !zc[zk]) return;
@@ -50,8 +56,12 @@ export function tentingZoneUsage(fn, ctx) {
     if (ctx?.trussInv) {
       try { const pv = calcZoneTrussPreview(z, ctx.trussInv); if (pv?.topology?.pillarCount) truss += pv.topology.pillarCount; } catch { /* zone has no resolvable truss preview */ }
     }
-    const rows = [{ plH: z.plH, floorDims: z.floorDims || {}, plQty: z.plQty }, ...(z.extraPlatformRows || [])];
+    const rows = [{ plH: z.plH, floorDims: z.floorDims || {}, plQty: z.plQty, cpT: z.cpT }, ...(z.extraPlatformRows || [])];
     rows.forEach((row) => {
+      if (row.cpT !== CARPET_OFF) {
+        const area = floorSqftOf(row);
+        if (area > 0) carpet += area;
+      }
       if (!row.plH) return;
       const fd = row.floorDims || {};
       const L = Number(fd.L) || 0, W = Number(fd.W) || 0;
@@ -59,7 +69,7 @@ export function tentingZoneUsage(fn, ctx) {
       platform += Math.max(1, Math.round(Number(row.plQty) || 1));
     });
   });
-  return { truss, platform };
+  return { truss, platform, carpet };
 }
 
 export const shiftToTiming = (shift) => {
@@ -215,12 +225,14 @@ function peopleTier3Labours(fn, ctx) {
   const adjusted = Math.ceil(base * situationalMult);
   const subCounts = {};
   walkFnElements(fn, ctx.dcInventoryCache, ({ rc, qty }) => { subCounts[itemImsSubcat(rc)] = (subCounts[itemImsSubcat(rc)] || 0) + qty; });
-  // Truss pillar count / Platform piece count — never a zone element, so walkFnElements above can
-  // never find them (see tentingZoneUsage's own comment). Added in here so Tenting's own heavy
-  // footprint counts toward this function's usage floor, the same as every other department's.
+  // Truss pillar count / Platform piece count / Carpet sqft — never a zone element, so
+  // walkFnElements above can never find them (see tentingZoneUsage's own comment). Added in here so
+  // Tenting's own heavy footprint counts toward this function's usage floor, the same as every
+  // other department's.
   const tentingUsage = tentingZoneUsage(fn, ctx);
   if (tentingUsage.truss > 0) subCounts["Truss"] = (subCounts["Truss"] || 0) + tentingUsage.truss;
   if (tentingUsage.platform > 0) subCounts["Platform"] = (subCounts["Platform"] || 0) + tentingUsage.platform;
+  if (tentingUsage.carpet > 0) subCounts["Carpet"] = (subCounts["Carpet"] || 0) + tentingUsage.carpet;
   const fvCfg = { fixedVenues: ctx.fixedVenues || [], venueParents: ctx.venueParents || {} };
   const reduction = standingReductionBySubcat(fvCfg, venueName, ctx.cardsForFn, ctx.inventory || []);
   let heavyExtra = 0;

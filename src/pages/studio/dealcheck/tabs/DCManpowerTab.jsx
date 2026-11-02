@@ -455,12 +455,14 @@ export default function DCManpowerTab({ ctx }) {
                     const adjusted = Math.ceil(base * situationalMult); // venue-min floor (with situational)
                     const subCounts = {};
                     walkFnElements(fn, ({ rc, qty }) => { const s = itemImsSubcat(rc); subCounts[s] = (subCounts[s] || 0) + qty; });
-                    // Truss pillar count / Platform piece count — never a zone element, so the walk
-                    // above can never find them (tentingZoneUsage's own comment, manpowerCount.js).
-                    // Added here so this trace's own total matches the engine's (computePeople).
+                    // Truss pillar count / Platform piece count / Carpet sqft — never a zone
+                    // element, so the walk above can never find them (tentingZoneUsage's own
+                    // comment, manpowerCount.js). Added here so this trace's own total matches the
+                    // engine's (computePeople).
                     const _tu = tentingZoneUsage(fn, mpCtxFor(fn));
                     if (_tu.truss > 0) subCounts["Truss"] = (subCounts["Truss"] || 0) + _tu.truss;
                     if (_tu.platform > 0) subCounts["Platform"] = (subCounts["Platform"] || 0) + _tu.platform;
+                    if (_tu.carpet > 0) subCounts["Carpet"] = (subCounts["Carpet"] || 0) + _tu.carpet;
                     const reductionB = standingReductionBySubcat({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, fn.fnVenue || "", (dcCards || {})[fns.indexOf(fn)], dealCheckData?.inventory || []);
                     const rows = []; let usageSum = 0, heavyFloor = 0;
                     heavyElementRanges.forEach(her => {

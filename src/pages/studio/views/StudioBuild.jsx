@@ -22,7 +22,7 @@ import PaletteQuickAdd from "../../../components/studio/PaletteQuickAdd.jsx";
 import { prefsOf, prefsPatch, setPrefsPatch, clearPrefsPatch, assignCarpets, carpetRemainingFor, floorSqftOf, CARPET_PREF_LABELS, CARPET_PREF_MAX } from "../../../lib/studio/carpetPrefs";
 import { trussRowCost, calcZoneFabricCost, calcZoneFabric, guestFabricMultiplier, fabricRepeatDiscount, maskingRepeatOn, maskingGuestCost, zoneTrussStandingDiscountDetail, repeatCatFor, parseFlowerPalette, stringifyFlowerPalette, parseFabricPalette, stringifyFabricPalette, isDirectMandiElement, anchorsForPaletteByMaterial, snapRowDimsForProduction } from "../../../lib/studio/pricing";
 import { paletteSearch, paletteMatches } from "../../../components/studio/filterUI.jsx";
-import { resolveTrussConfig } from "../../../lib/studio/pricing";
+import { resolveTrussConfig, pillarCountForSpan, trussInvForMaterial } from "../../../lib/studio/pricing";
 import { fabricColourOptions } from "../../../lib/studio/fabricColourOptions";
 import { qtyUsedElsewhereInBuild } from "../../../lib/studio/dealAvailability";
 import { logDiscountToClientToggle } from "../../../lib/studio/userActions";
@@ -123,6 +123,18 @@ const cloneTrussRow = (src = {}) => ({
   customMaskingItemId: src.customMaskingItemId || null,
 });
 
+// Loose Liza/Masking/Curtain (Fabric card's "+ Add loose" rows, 2026-11-02 owner ask): a colour +
+// qty the salesperson adds by hand, beyond whatever this truss's own geometry already calls for.
+// stockKey picks which of IMS's three Fabric Stock tables (Admin → Planning → Fabric Stock) the
+// colour dropdown offers; rateKey/rateKeyNew are the SAME rates calcZoneFabricCost already bills
+// the rest of this row's fabric at (pricing.js's looseFabricQty folds these rows into that same
+// formula, so there's exactly one rate lookup — this can't drift from what's shown above it).
+const LOOSE_FABRIC_KINDS = [
+  { key: "liza", label: "Liza", emoji: "🧣", unit: "kg", stockKey: "lizaStock", rateKey: "lizaKgRate", rateKeyNew: "lizaKgRateNew" },
+  { key: "masking", label: "Masking", emoji: "🧱", unit: "pcs", stockKey: "maskingStock", rateKey: "maskingPieceRate", rateKeyNew: "maskingPieceRateNew" },
+  { key: "curtain", label: "Curtain", emoji: "🎀", unit: "pcs", stockKey: "curtainStock", rateKey: "curtainPieceRate", rateKeyNew: "curtainPieceRateNew" },
+];
+
 // `nested` renders this same card as one of a zone's EXTRA truss structures: identical body, but
 // titled "Truss N", carrying a remove control and no Add button of its own. Reusing the component
 // rather than writing a cut-down row is what keeps an added truss genuinely equal to the first —
@@ -186,6 +198,8 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
   const fabricRepOff = fabricInv ? fabricRepeatDiscount(zc, fabricInv, zc.drapeDensity || "moderate", fabMult, guestFabricDiscPct) : 0;
   const fabricShown = fabricCost + wallPanelCost - fabricRepOff;
   const [fabMenu, setFabMenu] = useState(null); // which Fabric icon's menu is open ("fabLiza" | "fabCurtain")
+  const [looseColourMenu, setLooseColourMenu] = useState(null); // which loose-fabric row's colour picker is open (its index)
+  const [loosePreview, setLoosePreview] = useState(null); // { src, name } of the loose-fabric colour swatch currently hovered — the enlarge-on-hover
   // Width, Depth and Height all filled = a Box (the rule sD applies when a dimension is typed). A truss
   // whose type was left at "Single U" by some other path (a copied build, a photo's own dims) hid the
   // Custom Ceiling and priced as a U; trT is brought back in line so every reader — price, Deal Check,
@@ -302,43 +316,72 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                 {zc.trT&&(Number(zc.trussFrontExt)||0)>0&&<div style={{flex:1}}><div style={{fontSize:11.5,color:textS,marginBottom:3}} title="Height of the front extension (can differ from box height). Defaults to box height.">Ext height (ft)</div>
                   <NumField min={0} value={zc.trussFrontExtH||""} onCommit={n=>sZ({trussFrontExtH:n})} blankCommit commitOn="blur" placeholder={String(zc.dims?.H||0)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}}/></div>}
               </div>
-              {/* §23 Phase 5 (28 May 2026) — Smart truss tip: add 1ft per pillar to physical span */}
+              {/* Pillar-padding tip (owner convention, 2026-11-02): enter span + 1ft per pillar so the
+                  TRUE built footprint lands near what you actually want, instead of the engine
+                  shrinking to fit under whatever you typed (it never builds OVER the entered number —
+                  see pricing.js's buildTopology, "never exceed" rule). Replaces an earlier hardcoded
+                  "sweet spot" list that assumed a single span and a flat 1ft/pillar budget everywhere —
+                  wrong for Full Box's two INDEPENDENT axes (it only ever checked Math.max(L,W), so the
+                  other axis's own padding need went silently unchecked) and for any material whose
+                  maxSpanFt isn't the Iron default. This reads the zone's own live config instead.
+                  Pillar count via pillarCountForSpan (pricing.js) — the exact same formula
+                  buildTopology itself uses, so this can't drift from what actually gets built.
+                  Label fix (2026-11-02): the Width/Depth inputs just above bind "Width" to dims.W and
+                  "Depth" to dims.L — this used to label the hint the other way round, so it told you to
+                  pad whichever field you were NOT looking at.
+                  One-shot per value (2026-11-02, owner report): the hint recomputes off whatever is
+                  currently typed, so if you type exactly the ft it just suggested, THAT becomes the new
+                  "raw" value and it suggests padding it again — forever. zc.trussPadAck{label:value}
+                  remembers the exact value a hint was taken at (recognised via zc.trussPadSeen, the
+                  suggestion recorded the render before) and that value never shows the hint again,
+                  including after a reload; typing any other value starts the cycle fresh. */}
               {(() => {
                 const dims = zc.dims || {};
                 const L = parseFloat(dims.L) || 0;
                 const W = parseFloat(dims.W) || 0;
-                if (L < 4 && W < 4) return null;  // no dims yet
-                const span = Math.max(L, W);
-                // Sweet spots for clean truss (using standard 15/12/10/8/5/4/3/2 beam stock + 1ft/pillar budget)
-                // 2-pillar (span ≤ 30): 12, 17, 24, 27, 29, 32 → these give 0/1 joint, 0-gap
-                // 3-pillar (31-60): 43, 47, 53, 57, 63 → 1-2 joints per segment
-                // 4-pillar (61-90): 64, 74, 84 → 2 joints per segment
-                const sweetSpots2 = [12, 17, 24, 27, 29, 32];
-                const sweetSpots3 = [43, 47, 53, 57, 63];
-                const sweetSpots4 = [64, 74, 84];
-                const all = [...sweetSpots2, ...sweetSpots3, ...sweetSpots4];
-                const isExact = all.includes(span);
-                // Find nearest sweet spot within ±5ft
-                let nearest = null;
-                let nearestDist = 999;
-                for (const s of all) {
-                  const d = Math.abs(s - span);
-                  if (d > 0 && d <= 5 && d < nearestDist) {
-                    nearest = s;
-                    nearestDist = d;
+                if (L < 4 && W < 4) return null; // no dims yet
+                const tr = resolveTrussConfig(zc);
+                const matInv = trussInvForMaterial(trussInv, zc.trussMaterial);
+                const maxSpan = matInv?.settings?.maxSpanFt || 30;
+                const axes = tr.config === "full_box"
+                  ? [["Width", W], ["Depth", L]].filter(([, v]) => v >= 4)
+                  : [["Span", tr.spanFt || Math.max(L, W)]];
+                const ack = zc.trussPadAck || {};
+                const seen = zc.trussPadSeen || {};
+                const ackPatch = { ...ack }, seenPatch = { ...seen };
+                let ackChanged = false, seenChanged = false;
+                const rows = [];
+                axes.forEach(([label, v]) => {
+                  if (!(v > 0)) return;
+                  const pillars = pillarCountForSpan(v, maxSpan);
+                  const suggestion = v + pillars;
+                  if (ack[label] === v) return; // this exact value already had its hint taken
+                  if (seen[label] === v) {
+                    // what's typed now IS the suggestion shown last render — hint just got taken
+                    ackPatch[label] = v; ackChanged = true;
+                    if (label in seenPatch) { delete seenPatch[label]; seenChanged = true; }
+                    return;
                   }
+                  rows.push({ label, v, pillars, suggestion });
+                  if (seen[label] !== suggestion) { seenPatch[label] = suggestion; seenChanged = true; }
+                });
+                if (ackChanged || seenChanged) {
+                  const patch = {};
+                  if (ackChanged) patch.trussPadAck = ackPatch;
+                  if (seenChanged) patch.trussPadSeen = seenPatch;
+                  setTimeout(() => sZ(patch), 0);
                 }
-                if (isExact) {
-                  return <div style={{marginBottom:10,padding:"4px 8px",borderRadius:6,background:"rgba(34,197,94,0.08)",border:"1px solid rgba(34,197,94,0.25)",fontSize:11.5,color:"#15803D",fontWeight:600,display:"flex",alignItems:"center",gap:6}}>
-                    <span>✓</span><span>Smart truss: clean allocation (minimum joints).</span>
-                  </div>;
-                }
-                if (nearest) {
-                  return <div style={{marginBottom:10,padding:"4px 8px",borderRadius:6,background:"rgba(59,130,246,0.08)",border:"1px solid rgba(59,130,246,0.25)",fontSize:11.5,color:"#1E40AF",display:"flex",alignItems:"center",gap:6}}>
-                    <span style={{display:"flex",color:"#B45309"}}><IconBulb size={12}/></span><span>Tip: try <strong>{nearest}ft</strong> for cleanest truss (fewer joints, less ops effort).</span>
-                  </div>;
-                }
-                return null;
+                if (rows.length === 0) return null;
+                return (
+                  <div style={{marginBottom:10,padding:"4px 8px",borderRadius:6,background:"rgba(59,130,246,0.08)",border:"1px solid rgba(59,130,246,0.25)",fontSize:11.5,color:"#1E40AF",display:"flex",flexDirection:"column",gap:3}}>
+                    {rows.map(({ label, v, pillars, suggestion }) => (
+                      <div key={label} style={{display:"flex",alignItems:"center",gap:6}}>
+                        <span style={{display:"flex",color:"#B45309",flexShrink:0}}><IconBulb size={12}/></span>
+                        <span>{label} {v}ft → {pillars} pillar{pillars===1?"":"s"}. If you want the true footprint to land near {v}ft, enter <strong>{suggestion}ft</strong> (+1ft/pillar) instead.</span>
+                      </div>
+                    ))}
+                  </div>
+                );
               })()}
               {/* ── §23 Truss Type selector + Height-anchor validation ── */}
               {(()=>{
@@ -465,6 +508,99 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                         curtains or masking pieces are counted (see calcZoneFabric/trussRowCost). */}
                     <span onClick={()=>sZ({noFabric:!zc.noFabric})} style={{...optPill(!!zc.noFabric),marginTop:6,display:"inline-flex"}}
                       title="Truss without any drape fabric — billed at the 'Without fabric' rate">{zc.noFabric&&<IconCheck size={9}/>}No fabric</span>
+                    {/* ═══ LOOSE FABRIC ═══ Liza/Masking/Curtain added by hand, by colour + qty, on
+                        top of whatever this truss's own geometry already calls for above — e.g. a
+                        loose drape elsewhere that has nothing to do with this truss's own wrap/
+                        ceiling/curtain count. Not gated by noFabric/fabLiza/fabCurtain: those only
+                        govern the AUTOMATIC per-truss counts, an explicit hand-add here should stick
+                        regardless. */}
+                    {(()=>{
+                      const looseRows = Array.isArray(zc.looseFabric) ? zc.looseFabric : [];
+                      const looseRates = fabricInv?.rates || {};
+                      const looseUseNew = !!zc.useNewFabric;
+                      const setLooseRows = (next) => sZ({ looseFabric: next });
+                      const addLooseRow = () => setLooseRows([...looseRows, { kind: "liza", colour: "", qty: 0 }]);
+                      const updLooseRow = (i, patch) => setLooseRows(looseRows.map((r, j) => j === i ? { ...r, ...patch } : r));
+                      const delLooseRow = (i) => setLooseRows(looseRows.filter((_, j) => j !== i));
+                      // Carries each colour's own reference photo (IMS Admin → Planning → Fabric
+                      // Stock, same upload the per-colour stock rows there show) so the picker below
+                      // can show what the fabric actually looks like instead of just its name.
+                      const looseColourOpts = (stockKey) => {
+                        const seen = new Map();
+                        (fabricInv?.[stockKey] || []).forEach(r => {
+                          const c = String(r?.colour || "").trim();
+                          if (!c) return;
+                          const k = c.toLowerCase();
+                          if (!seen.has(k)) seen.set(k, { name: c, photo: r.photo || "" });
+                          else if (!seen.get(k).photo && r.photo) seen.get(k).photo = r.photo;
+                        });
+                        return [...seen.values()].sort((a, b) => a.name.localeCompare(b.name));
+                      };
+                      const selStyle = { fontSize:11, padding:"5px 6px", borderRadius:6, border:`1px solid ${border}`, background:isDark?"#1A1A2E":"#fff", color:textP, width:"100%" };
+                      return <div style={{marginTop:8,paddingTop:8,borderTop:`1px dashed ${border}`}}>
+                        <div style={{fontSize:9,fontWeight:700,color:textS,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>Loose fabric <span style={{fontWeight:500,letterSpacing:0,textTransform:"none",opacity:0.8}}>· same {looseUseNew?"New":"Old"} rate as above</span></div>
+                        {looseRows.length>0 && <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:6}}>
+                          {looseRows.map((row, i) => {
+                            const meta = LOOSE_FABRIC_KINDS.find(x => x.key === row.kind) || LOOSE_FABRIC_KINDS[0];
+                            const colourOpts = looseColourOpts(meta.stockKey);
+                            const rawRate = looseUseNew ? looseRates[meta.rateKeyNew] : looseRates[meta.rateKey];
+                            const rate = Number((rawRate===undefined||rawRate===null||rawRate==="") ? looseRates[meta.rateKey] : rawRate) || 0;
+                            const rowCost = (Number(row.qty)||0) * rate;
+                            return <div key={i} style={{display:"grid",gridTemplateColumns:"74px 1fr 46px auto",gap:5,alignItems:"center",padding:"5px 6px",borderRadius:6,background:isDark?"rgba(255,255,255,0.04)":"#fff",border:`1px solid ${border}`}}>
+                              <select value={row.kind} onChange={e=>updLooseRow(i,{kind:e.target.value, colour:""})} style={selStyle}>
+                                {LOOSE_FABRIC_KINDS.map(x=><option key={x.key} value={x.key}>{x.emoji} {x.label}</option>)}
+                              </select>
+                              <div style={{position:"relative"}}>
+                                <button type="button" onClick={()=>setLooseColourMenu(m=>m===i?null:i)}
+                                  style={{...selStyle, display:"flex", alignItems:"center", gap:5, cursor:"pointer", color:row.colour?accent:textS, borderColor:row.colour?accent:border}}>
+                                  {(() => { const sel = colourOpts.find(c => c.name === row.colour); return sel?.photo
+                                    ? <img src={thumbUrl(sel.photo, 14)} loading="lazy" decoding="async" alt="" style={{width:14,height:14,borderRadius:3,objectFit:"cover",flexShrink:0,border:`1px solid ${border}`}}/> : null; })()}
+                                  <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,textAlign:"left"}}>{row.colour || "— Colour —"}</span>
+                                  <span style={{fontSize:9,opacity:0.6,flexShrink:0}}>▾</span>
+                                </button>
+                                {looseColourMenu === i && <>
+                                  <div className="fixed inset-0 z-40" onClick={()=>{setLooseColourMenu(null);setLoosePreview(null);}} />
+                                  <div style={{position:"absolute",top:"100%",left:0,marginTop:2,zIndex:50,width:180,maxHeight:230,overflowY:"auto",background:isDark?"#1A1A2E":"#fff",border:`1px solid ${border}`,borderRadius:8,boxShadow:"0 8px 24px rgba(0,0,0,0.2)",padding:4}}>
+                                    <div onClick={()=>{updLooseRow(i,{colour:""});setLooseColourMenu(null);setLoosePreview(null);}}
+                                      style={{padding:"5px 7px",borderRadius:5,cursor:"pointer",fontSize:11,color:textS}}>— Colour —</div>
+                                    {colourOpts.map(c => (
+                                      <div key={c.name} onClick={()=>{updLooseRow(i,{colour:c.name});setLooseColourMenu(null);setLoosePreview(null);}}
+                                        onMouseEnter={()=>c.photo && setLoosePreview({src:c.photo, name:c.name})} onMouseLeave={()=>setLoosePreview(null)}
+                                        style={{display:"flex",alignItems:"center",gap:6,padding:"5px 7px",borderRadius:5,cursor:"pointer",fontSize:11,
+                                          background:row.colour===c.name?`${accent}18`:"transparent",color:row.colour===c.name?accent:textP,fontWeight:row.colour===c.name?700:400}}>
+                                        {c.photo ? <img src={thumbUrl(c.photo, 16)} loading="lazy" decoding="async" alt="" style={{width:16,height:16,borderRadius:3,objectFit:"cover",flexShrink:0,border:`1px solid ${border}`}}/>
+                                          : <span style={{width:16,height:16,borderRadius:3,flexShrink:0,border:`1px dashed ${border}`}}/>}
+                                        <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.name}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                  {/* Enlarge-on-hover (owner ask, 2026-11-02): the per-colour reference
+                                      photo IMS Admin uploads is a 16px swatch in the list above — too
+                                      small to actually tell colours apart by eye. Hovering a row floats
+                                      this bigger preview beside the panel. Must be a SIBLING of the
+                                      scrollable panel above, not nested inside it — a CSS quirk makes
+                                      `overflowY: auto` with no explicit overflowX compute overflowX to
+                                      auto too, so a preview positioned to poke out past the panel's own
+                                      right edge was getting clipped by that same scrollbar. */}
+                                  {loosePreview && <div style={{position:"absolute",top:"100%",left:186,marginTop:2,zIndex:50,width:120,height:120,borderRadius:8,overflow:"hidden",border:`1px solid ${border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.25)",background:isDark?"#111":"#fff"}}>
+                                    <img src={fitUrl(loosePreview.src, 240)} alt={loosePreview.name} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+                                  </div>}
+                                </>}
+                              </div>
+                              <NumField min={0} value={row.qty||""} onCommit={n=>updLooseRow(i,{qty:n})} blankCommit commitOn="blur" placeholder="0"
+                                style={{...S.input,width:"100%",padding:"5px 4px",fontSize:11.5,fontWeight:600,textAlign:"center"}} />
+                              <div style={{display:"flex",alignItems:"center",gap:7,justifySelf:"end"}}>
+                                <span style={{fontSize:9.5,color:textS}}>{meta.unit}</span>
+                                {showCosts && <span style={{fontSize:10.5,fontWeight:600,color:textP,minWidth:38,textAlign:"right"}}>{fmt(rowCost)}</span>}
+                                <span onClick={()=>delLooseRow(i)} title="Remove" style={{cursor:"pointer",color:"#E11D48",fontSize:13,fontWeight:700,lineHeight:1}}>✕</span>
+                              </div>
+                            </div>;
+                          })}
+                        </div>}
+                        <button type="button" onClick={addLooseRow}
+                          style={{fontSize:10.5,fontWeight:600,color:accent,background:"transparent",border:`1px dashed ${accent}80`,borderRadius:6,padding:"4px 10px",cursor:"pointer"}}>+ Add loose fabric</button>
+                      </div>;
+                    })()}
                   </div>}
                   <div style={groupCard} title="Masking panels attach to this truss">
                     <div style={{...rowCap,marginBottom:6}}>Masking</div>

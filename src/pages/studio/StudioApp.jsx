@@ -6193,12 +6193,12 @@ export default function StudioApp() {
             if (!itemAgg[key]) itemAgg[key] = { name: rc.name || sub, sub, qty: 0, per, need: 0 };
             itemAgg[key].qty += Number(qty) || 0; itemAgg[key].need += need;
           });
-          // Truss pillar count / Platform piece count — never a zone element, so the walk above can
-          // never find them (tentingZoneUsage's own comment, manpowerCount.js). Always Tenting's
-          // — added here so this trace's own result matches the engine's (computePeople, which
-          // already includes them via peopleTier3Labours).
+          // Truss pillar count / Platform piece count / Carpet sqft — never a zone element, so the
+          // walk above can never find them (tentingZoneUsage's own comment, manpowerCount.js).
+          // Always Tenting's — added here so this trace's own result matches the engine's
+          // (computePeople, which already includes them via peopleTier3Labours).
           const tu = tentingZoneUsage(fn, mpCtxFor(fn));
-          [["Truss", tu.truss], ["Platform", tu.platform]].forEach(([sub, count]) => {
+          [["Truss", tu.truss], ["Platform", tu.platform], ["Carpet", tu.carpet]].forEach(([sub, count]) => {
             const per = lookupBySubcat(labBatches, sub);
             if (!per || !(count > 0)) return;
             const need = count / per;

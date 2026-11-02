@@ -50,7 +50,10 @@ export function planningUpcoming(eo, now = Date.now()) {
 // v12: the Florals detail also carries each element row's REAL flower lines (floralDetail[fn].realZones) — Deal Check's
 // own amounts (real share, real-only flowers, reuse credit) — so the Dept Ops PDF prints exactly what Deal Check shows.
 // v13: Fabric Bangali's wrap feet (manpowerDetail fabricBangali zones / count) no longer include the truss batta - fabric only.
-export const PLANNING_SNAPSHOT_VERSION = 13;
+// v14: Carpet's billed sqft (floorSqftOf) now feeds the Labours usage floor too, same as v9's Truss/
+// Platform fix — Carpet is also never a zone element, so a Heavy Element Add-ons entry for it was
+// silently contributing nothing; every deal with carpet needs its crew count recomputed.
+export const PLANNING_SNAPSHOT_VERSION = 14;
 const PLANNING_SNAPSHOT_SHIPPED_AT = Date.parse("2026-10-31T12:39:00Z");
 export const planningSnapshotOutdated = (eo) => (Number(eo?.deptSnapVer) || 1) < PLANNING_SNAPSHOT_VERSION;
 

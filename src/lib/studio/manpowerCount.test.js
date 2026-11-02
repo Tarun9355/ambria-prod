@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { computePeople, computePeopleRaw, shiftToTiming, heavySayaMultFor, situationalFactorsFor, tentingZoneUsage } from "./manpowerCount";
+import { CARPET_OFF } from "./taxonomy";
 
 const computeRaw = (f, ctx) => computePeopleRaw(f, "Labours", ctx);
 
@@ -158,8 +159,8 @@ describe("computePeopleRaw — Truss Labour", () => {
 describe("tentingZoneUsage — Truss pillar count / Platform piece count for the Labours usage split", () => {
   const trussInv = { settings: { pillarWidthFt: 0.75, maxSpanFt: 30, defaultBackDepthFt: 4, backDepthRange: [3, 5] }, rates: {}, batta: { bufferPct: 10 } };
 
-  it("returns 0/0 with no zone config at all", () => {
-    expect(tentingZoneUsage(fn(), baseCtx())).toEqual({ truss: 0, platform: 0 });
+  it("returns 0/0/0 with no zone config at all", () => {
+    expect(tentingZoneUsage(fn(), baseCtx())).toEqual({ truss: 0, platform: 0, carpet: 0 });
   });
 
   it("truss: 0 with no truss inventory loaded, even with real truss dims", () => {
@@ -196,6 +197,35 @@ describe("tentingZoneUsage — Truss pillar count / Platform piece count for the
   it("feeds computePeopleRaw's Labours usage floor via heavyElementRanges (the actual bug fixed) — Platform alone, with no walkable element at all, still produces a positive need", () => {
     const zoneConfig = { stage: { plH: 3, floorDims: { L: 10, W: 8 }, plQty: 40 } }; // 40 ÷ 20 = 2
     const ctx = { ...baseCtx(), heavyElementRanges: [{ subCat: "Platform", perCount: 20 }] };
+    expect(computePeopleRaw(fn({ zoneConfig }), "Labours", ctx)).toBe(2);
+  });
+
+  // Owner report, 2026-11-02: Carpet never showed up in the Labours breakdown at all, even with a
+  // Heavy Element Add-ons entry configured for it — same root cause as Truss/Platform above (never
+  // a zone element, so walkFnElements can't find it), just not fixed alongside them at the time.
+  it("carpet: counts billed sqft (floorSqftOf) even with no platform height at all — a floor can be carpeted with no platform under it", () => {
+    const zoneConfig = { stage: { floorDims: { L: 10, W: 8 } } }; // no plH — not a platform, still a carpeted floor
+    expect(tentingZoneUsage(fn({ zoneConfig }), baseCtx()).carpet).toBe(80);
+  });
+
+  it("carpet: an unset cpT still counts (an unset cpT still bills the default carpet, per taxonomy's carpetPricingFor)", () => {
+    const zoneConfig = { stage: { floorDims: { L: 10, W: 8 } } };
+    expect(tentingZoneUsage(fn({ zoneConfig }), baseCtx()).carpet).toBeGreaterThan(0);
+  });
+
+  it("carpet: explicitly turned off (CARPET_OFF) counts nothing", () => {
+    const zoneConfig = { stage: { floorDims: { L: 10, W: 8 }, cpT: CARPET_OFF } };
+    expect(tentingZoneUsage(fn({ zoneConfig }), baseCtx()).carpet).toBe(0);
+  });
+
+  it("carpet: extraPlatformRows each contribute their own sqft too", () => {
+    const zoneConfig = { stage: { floorDims: { L: 10, W: 8 }, extraPlatformRows: [{ floorDims: { L: 6, W: 4 } }] } };
+    expect(tentingZoneUsage(fn({ zoneConfig }), baseCtx()).carpet).toBe(10 * 8 + 6 * 4);
+  });
+
+  it("carpet: feeds computePeopleRaw's Labours usage floor via heavyElementRanges, same as Truss/Platform", () => {
+    const zoneConfig = { stage: { floorDims: { L: 10, W: 8 }, plQty: 5 } }; // 80 sqft × 5 = 400 ÷ 200 = 2
+    const ctx = { ...baseCtx(), heavyElementRanges: [{ subCat: "Carpet", perCount: 200 }] };
     expect(computePeopleRaw(fn({ zoneConfig }), "Labours", ctx)).toBe(2);
   });
 });
