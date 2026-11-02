@@ -22,3 +22,11 @@ describe("uiHindi", () => {
     expect(uiHindi("गुलाब")).toBe("गुलाब");
   });
 });
+
+describe("uiHindi - truck statuses", () => {
+  it("statuses are Hindi words, any case", () => {
+    expect(uiHindi("Loading")).toBe("लोडिंग");
+    expect(uiHindi("dispatched")).toBe("डिस्पैच हुआ");
+    expect(uiHindi("At site")).toBe("साइट पर");
+  });
+});

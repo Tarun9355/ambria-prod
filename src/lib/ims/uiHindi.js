@@ -30,6 +30,8 @@ export const UI_HI = {
   "Download PDF": "PDF डाउनलोड करें", "Download Actuals as PDF": "असल खर्च PDF में डाउनलोड करें", "One PDF, every department": "एक PDF, सभी विभाग",
   "Pick an event to plan": "प्लान करने के लिए इवेंट चुनें", "Open Calendar →": "कैलेंडर खोलें →", "Today": "आज", "Per date": "तारीख के हिसाब से",
   "Tap a highlighted date to see its events.": "इवेंट देखने के लिए हाइलाइट तारीख पर टैप करें।", "Changes made in Studio": "स्टूडियो में हुए बदलाव",
+  "Loading": "लोडिंग", "Dispatched": "डिस्पैच हुआ", "At site": "साइट पर", "Returned": "वापस आया", "Pending": "बाकी", "Ready": "तैयार",
+  "Packed": "पैक हुआ", "Delivered": "पहुँच गया", "Sold": "सोल्ड", "Confirmed": "कन्फ़र्म",
   "Site Supervisor": "साइट सुपरवाइज़र", "Added": "जोड़ा", "Removed": "हटाया", "Quantity changed": "मात्रा बदली",
   // fabric, truss, carpet
   "Fabric allocation": "फ़ैब्रिक बँटवारा", "Liza": "लिज़ा", "Liza Fabric": "लिज़ा फ़ैब्रिक", "Velvet Curtains": "वेलवेट पर्दे",
