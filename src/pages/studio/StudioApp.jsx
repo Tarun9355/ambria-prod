@@ -11827,6 +11827,13 @@ export default function StudioApp() {
       // same projectId. Seeding this map from fnRows and writing into it the instant a row is
       // created (not waiting for its insert to land) makes the second function see it.
       const rowByDate = new Map((fnRows || []).map((r) => [(r.date || r.data?.date), r]));
+      // Every new fnId actually created this run, collected locally and written to the project's
+      // own functions array ONCE after the whole loop — not per function. The old code updated
+      // projects.data.functions separately for each function needing a backfill row, each update
+      // reading the SAME one-time ensureProject() snapshot as its "existing list" — so a deal
+      // backfilling two different dates in one run had its second update silently overwrite the
+      // first's just-added fnId, since neither update knew about the other's addition.
+      let newFnIds = null;
       for (let i = 0; i < fnsToProcess.length; i++) {
         const fn = fnsToProcess[i];
         const fnIdx = fn.fnIdx ?? i;
@@ -11852,7 +11859,13 @@ export default function StudioApp() {
         }
         const p = await ensureProject();
         if (!p) { console.warn("[reconcile] no functions row AND no projects row for event", eo.id, "date", date, "— this deal never went through the real markSold confirm at all. IMS's date-filtered Inventory view has nothing to show regardless of the blocks write below."); continue; }
-        const fnId = "fn_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6) + "_bck";
+        // Deterministic, not random — a pure function of (event, date), so two reconcile calls
+        // racing to backfill the SAME missing (event, date) combo always compute the SAME id and
+        // collide on ONE row via the upsert below, instead of each minting its own random id and
+        // both landing as separate rows. Confirmed live, 2026-11-02 (Anuja Berry): two calls 229ms
+        // apart each found no row for the date and each inserted its own — this makes a second row
+        // for the same (event, date) structurally impossible, not just less likely.
+        const fnId = `fn_bck_${eo.id}_${date}`;
         const fnData = {
           id: fnId, projectId: p.id, name: fn.fnType || "Function", type: fn.fnType || "Function", date,
           budget: 0, venue: { type: "outdoor", name: "", fullAddress: "" }, items: nextItems, flowerOrders: [],
@@ -11861,17 +11874,28 @@ export default function StudioApp() {
           status: "Confirmed", adminApproval: null, eventOrderId: eo.id, shift: "", pax: "",
           brideGroom: eo.brideGroom || "", salesperson: eo.salesperson || "",
         };
-        // Recorded before the insert resolves — a second function of THIS deal on the same date,
+        // Recorded before the upsert resolves — a second function of THIS deal on the same date,
         // later in this same loop, must see this row already exists rather than racing to create
         // its own (see rowByDate's own comment above).
         rowByDate.set(date, { id: fnId, date, data: fnData });
-        supabase.from("functions").insert({ id: fnId, project_id: p.id, name: fnData.name, date, venue: fnData.venue, status: "Confirmed", data: fnData })
+        if (!newFnIds) newFnIds = new Set(p.data?.functions || []);
+        newFnIds.add(fnId);
+        // Plain upsert, not insert — the deterministic id means a concurrent call backfilling the
+        // same (event, date) hits the SAME row and just overwrites it (last writer wins, same
+        // self-heals-every-run posture as the rest of this function) instead of erroring on a
+        // duplicate key or racing to insert first.
+        supabase.from("functions").upsert({ id: fnId, project_id: p.id, name: fnData.name, date, venue: fnData.venue, status: "Confirmed", data: fnData }, { onConflict: "id" })
           .then(({ error }) => {
-            if (error) { console.error("[reconcile] functions backfill insert failed for event", eo.id, "date", date, ":", error.message); return; }
-            console.info("[reconcile] backfilled missing functions row for event", eo.id, "date", date, "— was created (project exists) but had never gotten a function row.");
-            supabase.from("projects").update({ data: { ...p.data, functions: [...(p.data?.functions || []), fnId] } }).eq("id", p.id)
-              .then(({ error: pe }) => { if (pe) console.error("[reconcile] project.functions backfill link failed:", pe.message); });
+            if (error) console.error("[reconcile] functions backfill upsert failed for event", eo.id, "date", date, ":", error.message);
+            else console.info("[reconcile] backfilled missing functions row for event", eo.id, "date", date, "— was created (project exists) but had never gotten a function row.");
           });
+      }
+      if (newFnIds) {
+        const p = await ensureProject();
+        if (p) {
+          supabase.from("projects").update({ data: { ...p.data, functions: [...newFnIds] } }).eq("id", p.id)
+            .then(({ error }) => { if (error) console.error("[reconcile] project.functions backfill link failed:", error.message); });
+        }
       }
     } catch (e) {
       // Best-effort — the real reservation (`blocks`, below) isn't affected by this failing.
