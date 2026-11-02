@@ -2099,6 +2099,19 @@ export default function DealCheckOverlay({ ctx }) {
                     add("masking", fab.maskingPieces, tInv.maskingStock, "stockPieces", "maskingAllocation");
                     add("liza", fab.lizaKg, tInv.lizaStock, "stockKg", "lizaAllocation");
                     add("curtain", fab.curtainPieces, tInv.curtainStock, "stockPieces", "curtainAllocation");
+                    // Loose Liza/Masking/Curtain (Build's own "Loose fabric" rows, 2026-11-02) — the
+                    // salesperson already picked the colour by hand, so this bumps it straight into
+                    // the aggregate under THAT colour instead of going through add()'s auto-match
+                    // (resolveFabricAllocation), which exists only to GUESS a colour for the
+                    // formula-derived demand above.
+                    (Array.isArray(row.looseFabric) ? row.looseFabric : []).forEach((lf) => {
+                      const kind = lf?.kind, qty = Number(lf?.qty) || 0;
+                      if (!kind || qty <= 0 || !agg[kind]) return;
+                      const colour = String(lf.colour || "").trim() || "(unassigned)";
+                      if (!agg[kind][colour]) agg[kind][colour] = { old: 0, new: 0 };
+                      agg[kind][colour][tier] += qty;
+                      byRow.push({ fi: fnI, zk, ri, kind, colour, qty, tier });
+                    });
                   });
                 });
               });

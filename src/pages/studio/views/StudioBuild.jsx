@@ -123,6 +123,18 @@ const cloneTrussRow = (src = {}) => ({
   customMaskingItemId: src.customMaskingItemId || null,
 });
 
+// Loose Liza/Masking/Curtain (Fabric card's "+ Add loose" rows, 2026-11-02 owner ask): a colour +
+// qty the salesperson adds by hand, beyond whatever this truss's own geometry already calls for.
+// stockKey picks which of IMS's three Fabric Stock tables (Admin → Planning → Fabric Stock) the
+// colour dropdown offers; rateKey/rateKeyNew are the SAME rates calcZoneFabricCost already bills
+// the rest of this row's fabric at (pricing.js's looseFabricQty folds these rows into that same
+// formula, so there's exactly one rate lookup — this can't drift from what's shown above it).
+const LOOSE_FABRIC_KINDS = [
+  { key: "liza", label: "Liza", emoji: "🧣", unit: "kg", stockKey: "lizaStock", rateKey: "lizaKgRate", rateKeyNew: "lizaKgRateNew" },
+  { key: "masking", label: "Masking", emoji: "🧱", unit: "pcs", stockKey: "maskingStock", rateKey: "maskingPieceRate", rateKeyNew: "maskingPieceRateNew" },
+  { key: "curtain", label: "Curtain", emoji: "🎀", unit: "pcs", stockKey: "curtainStock", rateKey: "curtainPieceRate", rateKeyNew: "curtainPieceRateNew" },
+];
+
 // `nested` renders this same card as one of a zone's EXTRA truss structures: identical body, but
 // titled "Truss N", carrying a remove control and no Add button of its own. Reusing the component
 // rather than writing a cut-down row is what keeps an added truss genuinely equal to the first —
@@ -494,6 +506,62 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                         curtains or masking pieces are counted (see calcZoneFabric/trussRowCost). */}
                     <span onClick={()=>sZ({noFabric:!zc.noFabric})} style={{...optPill(!!zc.noFabric),marginTop:6,display:"inline-flex"}}
                       title="Truss without any drape fabric — billed at the 'Without fabric' rate">{zc.noFabric&&<IconCheck size={9}/>}No fabric</span>
+                    {/* ═══ LOOSE FABRIC ═══ Liza/Masking/Curtain added by hand, by colour + qty, on
+                        top of whatever this truss's own geometry already calls for above — e.g. a
+                        loose drape elsewhere that has nothing to do with this truss's own wrap/
+                        ceiling/curtain count. Not gated by noFabric/fabLiza/fabCurtain: those only
+                        govern the AUTOMATIC per-truss counts, an explicit hand-add here should stick
+                        regardless. */}
+                    {(()=>{
+                      const looseRows = Array.isArray(zc.looseFabric) ? zc.looseFabric : [];
+                      const looseRates = fabricInv?.rates || {};
+                      const looseUseNew = !!zc.useNewFabric;
+                      const setLooseRows = (next) => sZ({ looseFabric: next });
+                      const addLooseRow = () => setLooseRows([...looseRows, { kind: "liza", colour: "", qty: 0 }]);
+                      const updLooseRow = (i, patch) => setLooseRows(looseRows.map((r, j) => j === i ? { ...r, ...patch } : r));
+                      const delLooseRow = (i) => setLooseRows(looseRows.filter((_, j) => j !== i));
+                      const looseColourOpts = (stockKey) => {
+                        const seen = new Set(), out = [];
+                        (fabricInv?.[stockKey] || []).forEach(r => {
+                          const c = String(r?.colour || "").trim();
+                          if (!c || seen.has(c.toLowerCase())) return;
+                          seen.add(c.toLowerCase()); out.push(c);
+                        });
+                        return out.sort((a, b) => a.localeCompare(b));
+                      };
+                      const selStyle = { fontSize:11, padding:"5px 6px", borderRadius:6, border:`1px solid ${border}`, background:isDark?"#1A1A2E":"#fff", color:textP, width:"100%" };
+                      return <div style={{marginTop:8,paddingTop:8,borderTop:`1px dashed ${border}`}}>
+                        <div style={{fontSize:9,fontWeight:700,color:textS,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>Loose fabric <span style={{fontWeight:500,letterSpacing:0,textTransform:"none",opacity:0.8}}>· same {looseUseNew?"New":"Old"} rate as above</span></div>
+                        {looseRows.length>0 && <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:6}}>
+                          {looseRows.map((row, i) => {
+                            const meta = LOOSE_FABRIC_KINDS.find(x => x.key === row.kind) || LOOSE_FABRIC_KINDS[0];
+                            const colourOpts = looseColourOpts(meta.stockKey);
+                            const rawRate = looseUseNew ? looseRates[meta.rateKeyNew] : looseRates[meta.rateKey];
+                            const rate = Number((rawRate===undefined||rawRate===null||rawRate==="") ? looseRates[meta.rateKey] : rawRate) || 0;
+                            const rowCost = (Number(row.qty)||0) * rate;
+                            return <div key={i} style={{display:"grid",gridTemplateColumns:"74px 1fr 46px auto",gap:5,alignItems:"center",padding:"5px 6px",borderRadius:6,background:isDark?"rgba(255,255,255,0.04)":"#fff",border:`1px solid ${border}`}}>
+                              <select value={row.kind} onChange={e=>updLooseRow(i,{kind:e.target.value, colour:""})} style={selStyle}>
+                                {LOOSE_FABRIC_KINDS.map(x=><option key={x.key} value={x.key}>{x.emoji} {x.label}</option>)}
+                              </select>
+                              <select value={row.colour || ""} onChange={e=>updLooseRow(i,{colour:e.target.value})}
+                                style={{...selStyle, color:row.colour?accent:textS, borderColor:row.colour?accent:border}}>
+                                <option value="">— Colour —</option>
+                                {colourOpts.map(c=><option key={c} value={c}>{c}</option>)}
+                              </select>
+                              <NumField min={0} value={row.qty||""} onCommit={n=>updLooseRow(i,{qty:n})} blankCommit commitOn="blur" placeholder="0"
+                                style={{...S.input,width:"100%",padding:"5px 4px",fontSize:11.5,fontWeight:600,textAlign:"center"}} />
+                              <div style={{display:"flex",alignItems:"center",gap:7,justifySelf:"end"}}>
+                                <span style={{fontSize:9.5,color:textS}}>{meta.unit}</span>
+                                {showCosts && <span style={{fontSize:10.5,fontWeight:600,color:textP,minWidth:38,textAlign:"right"}}>{fmt(rowCost)}</span>}
+                                <span onClick={()=>delLooseRow(i)} title="Remove" style={{cursor:"pointer",color:"#E11D48",fontSize:13,fontWeight:700,lineHeight:1}}>✕</span>
+                              </div>
+                            </div>;
+                          })}
+                        </div>}
+                        <button type="button" onClick={addLooseRow}
+                          style={{fontSize:10.5,fontWeight:600,color:accent,background:"transparent",border:`1px dashed ${accent}80`,borderRadius:6,padding:"4px 10px",cursor:"pointer"}}>+ Add loose fabric</button>
+                      </div>;
+                    })()}
                   </div>}
                   <div style={groupCard} title="Masking panels attach to this truss">
                     <div style={{...rowCap,marginBottom:6}}>Masking</div>

@@ -982,11 +982,24 @@ export const dcFabricMultOf = (row, part) => {
   const n = Number(v);
   return Number.isFinite(n) && n >= 0 ? n : 1;
 };
+// Loose Liza / Masking / Curtain (Build's "Loose fabric" rows on the Fabric card, 2026-11-02 owner
+// ask): a colour + exact qty the salesperson adds by hand, independent of this truss's own geometry
+// (an extra loose drape elsewhere, say) — NOT scaled by trussQty/noFabric/fabLiza/fabCurtain, which
+// only govern the automatic per-truss wrap/ceiling/curtain counts calcZoneFabric derives. Kept as its
+// own explicit-colour list (zCfg.looseFabric: [{kind,colour,qty}]) rather than folded into calcZoneFabric's
+// own totals, so a caller that needs the colour (DealCheckOverlay's fabricPlan) can bill it to the
+// colour the salesperson actually picked instead of losing it to the Fabric Palette's auto-match.
+export const looseFabricQty = (zCfg) => {
+  const rows = Array.isArray(zCfg?.looseFabric) ? zCfg.looseFabric : [];
+  const sum = (kind) => rows.filter((r) => r?.kind === kind).reduce((s, r) => s + (Number(r.qty) || 0), 0);
+  return { liza: sum("liza"), masking: sum("masking"), curtain: sum("curtain") };
+};
 // mults (optional): { masking, liza, curtain } - Deal Check passes the row's own dcFabricMult; the
 // guest price (calcStructCost, Build) never does, so it is always 1x there.
 export const calcZoneFabricCost = (zCfg, trussInv, paletteAnchors, density, mults) => {
   if (!zCfg || !trussInv) return 0;
   const fab = calcZoneFabric(zCfg, trussInv, density || "moderate");
+  const loose = looseFabricQty(zCfg);
   const rates = trussInv.rates || {};
   const useNew = !!zCfg.useNewFabric;
   let cost = 0;
@@ -998,9 +1011,9 @@ export const calcZoneFabricCost = (zCfg, trussInv, paletteAnchors, density, mult
     const newRate = (newRateRaw === undefined || newRateRaw === null || newRateRaw === "") ? oldRate : (Number(newRateRaw) || 0);
     cost += totalQty * (useNew ? newRate : oldRate) * m;
   };
-  addFab(fab.maskingPieces, "maskingPieceRate", "maskingPieceRateNew", "masking");
-  addFab(fab.lizaKg,        "lizaKgRate",       "lizaKgRateNew",       "liza");
-  addFab(fab.curtainPieces, "curtainPieceRate", "curtainPieceRateNew", "curtain");
+  addFab(fab.maskingPieces + loose.masking, "maskingPieceRate", "maskingPieceRateNew", "masking");
+  addFab(fab.lizaKg        + loose.liza,    "lizaKgRate",       "lizaKgRateNew",       "liza");
+  addFab(fab.curtainPieces + loose.curtain, "curtainPieceRate", "curtainPieceRateNew", "curtain");
   return cost;
 };
 
