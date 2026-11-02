@@ -4,7 +4,8 @@
 // asked their system for reduced motion. Deal Check keeps its own .dc-sk (same look) inside its overlay.
 const SK_CSS = `@keyframes skShimmer{0%{background-position:100% 0}100%{background-position:-100% 0}}
 .sk{display:block;background:linear-gradient(90deg,rgba(128,128,140,0.12) 25%,rgba(128,128,140,0.22) 37%,rgba(128,128,140,0.12) 63%);background-size:200% 100%;animation:skShimmer 1.3s ease-in-out infinite}
-@media (prefers-reduced-motion:reduce){.sk{animation:none}}`;
+@media (prefers-reduced-motion:reduce){.sk{animation:none}}
+.sk-rail{display:flex}@media (max-width:640px){.sk-rail{display:none!important}}`;
 
 /** The shimmer's stylesheet. Render it once in any tree that shows a skeleton (a repeat is harmless). */
 export function SkStyle() {

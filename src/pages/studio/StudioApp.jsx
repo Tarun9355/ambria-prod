@@ -13184,7 +13184,7 @@ export default function StudioApp() {
         <Suspense fallback={<div role="status" aria-label="Loading Deal Check" style={{ position: "fixed", inset: 0, zIndex: 45, background: "#FAF9F6", display: "flex" }}>
             {/* Deal Check's code is still downloading: its own layout (function rail + zone cards) instead of a blank sheet. */}
             <SkStyle />
-            <div style={{ width: 220, borderRight: "1px solid rgba(26,26,46,0.08)", padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>{[0, 1, 2].map(i => <Sk key={i} h={52} r={10} />)}</div>
+            <div className="sk-rail" style={{ width: 220, flexShrink: 0, borderRight: "1px solid rgba(26,26,46,0.08)", padding: 16, flexDirection: "column", gap: 12 }}>{[0, 1, 2].map(i => <Sk key={i} h={52} r={10} />)}</div>
             <div style={{ flex: 1, minWidth: 0, padding: 22, display: "flex", flexDirection: "column", gap: 14 }}>
               <Sk w={220} h={12} />
               {[0, 1].map(i => <div key={i} style={{ border: "1px solid rgba(26,26,46,0.08)", borderRadius: 14, padding: 16, display: "flex", flexDirection: "column", gap: 12 }}><Sk w={160} h={16} /><Sk h={64} r={12} /><SkTiles n={3} min={240} ratio="5 / 1" caption={false} label="" /></div>)}
