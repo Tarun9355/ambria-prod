@@ -10,7 +10,7 @@ import { TabsMenu, useConfirm } from "../../components/ui";
 import { IconPrinter } from "../../components/icons";
 import { hasIMSPerm } from "../../lib/ims/constants";
 import { fetchOpsExpenses } from "../../lib/ims/opsExpenses";
-import { venueWithParent, standingQty, assembleFixedVenuesFromRows } from "../../lib/ims/fixedVenues";
+import { venueWithParent, standingQty, assembleFixedVenuesFromRows, fixedVenueFor } from "../../lib/ims/fixedVenues";
 import { supabase, fetchAll } from "../../lib/supabase";
 import { ZONE_META, trussBaseArea, CARPET_OFF, carpetPricingFor } from "../../lib/studio/taxonomy";
 import { prefsOf, floorSqftOf } from "../../lib/studio/carpetPrefs";
@@ -4519,6 +4519,27 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       // with another zone's, and never lands in a single combined reference page at the book's end.
       zonePageHtml.push(...zoneDetailPages(pg));
     });
+    // ── WHAT IS ALREADY STANDING AT THE VENUE ── (owner ask 2026-11-02) right after the cover: the event venue's Fixed Venue stock
+    // for this department (every department's in the combined book) - already there, not to be loaded. One page per Fixed Venue the
+    // event's functions use; from Settings → Fixed Venues (fvSettings).
+    const fixedVenuePages = (() => {
+      const names = [...new Set((fns.length ? fns.map(f => f?.venue) : [sel?.venue]).filter(Boolean))];
+      const seen = new Set();
+      return names.flatMap(vn => {
+        const fv = fixedVenueFor(fvSettings, vn);
+        if (!fv || seen.has(fv.name)) return [];
+        seen.add(fv.name);
+        const items = (fv.items || []).map(it => {
+          const inv = invById.get(String(it?.invId));
+          const qty = (Number(it?.qty) || 0) + (Number(it?.fullQty) || 0);
+          if (!inv || !(qty > 0)) return null;
+          const d = catToDept(inv.category || inv.cat);
+          if (!combined && d !== dept) return null;
+          return { name: inv.name, qty, unit: String(inv.unit || "").trim(), photo: invPhoto(inv, null), dims: invDims(inv), deptTag: combined ? d : "", kit: 0, recipe: [] };
+        }).filter(Boolean).sort((a, b) => String(a.name).localeCompare(String(b.name)));
+        return listPages(items, t("Fixed at venue"), hn(fv.name), t("Already standing here - not to be loaded"));
+      }).join("");
+    })();
     const zoneHtml = [
       ...zonePageHtml,
       ...(combined ? [] : [
@@ -4908,6 +4929,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
 ${/* Money, the priced inventory table, the crew plan and logged spend are left out: this sheet
      goes to the people setting up the event, who need what goes where, not what it costs. The
      zone layout pages below carry every item, with photo, qty and size. */ ""}
+${fixedVenuePages}
 ${zoneHtml}
 ${combined ? "" : (truckRows.length || loadRows.length) ? sect(t("Loading & dispatch"),
   (truckRows.length ? table(["#", t("Vehicle"), t("Driver"), t("Phone"), t("Status")], truckRows, ["12%", "26%", "24%", "20%", "18%"]) : "")
