@@ -11825,11 +11825,25 @@ export default function StudioApp() {
     }
 
     const byId = new Map(blockRows.map((r) => [r.item_id, Array.isArray(r.data) ? r.data : []]));
+    // Group by DATE first, not by function — two functions sharing a date (Haldi + Sangeet both
+    // on the same day, say) reuse the same physical pieces set up once at the venue, same reasoning
+    // scanOutOfStockElements's own crossFnReusePool credits for availability. Confirmed live,
+    // 2026-11-02: writing one blocks entry per FUNCTION, keyed only on (eventId, date), had each
+    // same-day function's own iteration delete the date's entry the previous one just wrote and
+    // replace it with its own number — whichever function this loop reached last silently became
+    // the ENTIRE date's reservation, discarding the other's requirement rather than crediting it.
+    // The true reservation for a shared date is the larger of what any one function on it needs,
+    // not each one stomping the last.
+    const reqByDate = {};
     fnsToProcess.forEach((fn, i) => {
       const fnIdx = fn.fnIdx ?? i;
       const req = requiredByFn[fnIdx] || {};
       const date = fn.fnDate || "";
       if (!date) return;
+      const slot = reqByDate[date] || (reqByDate[date] = {});
+      Object.entries(req).forEach(([id, qty]) => { slot[id] = Math.max(slot[id] || 0, Number(qty) || 0); });
+    });
+    Object.entries(reqByDate).forEach(([date, req]) => {
       ids.forEach((id) => {
         const qty = req[id] || 0;
         const arr = (byId.get(id) || []).filter((b) => !(b.eventId === eo.id && b.date === date));
