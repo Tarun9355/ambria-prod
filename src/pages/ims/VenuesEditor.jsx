@@ -30,7 +30,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { supabase, fetchAll, updateRow, deleteRow } from "../../lib/supabase";
 import { RC_SK_TR } from "../../lib/studio/keys";
-import { assembleVenuesFromRows, genVenueId } from "../../lib/ims/venueProperties";
+import { assembleVenuesFromRows, deterministicVenueId } from "../../lib/ims/venueProperties";
 import { SPACES as VENUE_TYPES, venueTypeLabel } from "../../lib/studio/taxonomy";
 
 // Cascades a venue rename into the three places Studio's own renameVenueEverywhere used to update.
@@ -154,12 +154,6 @@ export default function VenuesEditor({ showMsg }) {
 
   const venues = useMemo(() => (rows ? assembleVenuesFromRows(rows) : null), [rows]);
 
-  const writeRow = async (row) => {
-    try {
-      const { error } = await supabase.from("venues").insert(row);
-      if (error) throw error;
-    } catch (e) { showMsg?.("Save failed: " + (e?.message || e), "red"); }
-  };
   const patchRow = async (id, patch) => {
     try { await updateRow("venues", id, patch); }
     catch (e) { showMsg?.("Save failed: " + (e?.message || e), "red"); }
@@ -200,8 +194,12 @@ export default function VenuesEditor({ showMsg }) {
     const trimmed = (name || "").trim();
     if (!trimmed) return;
     if (venues.properties.some((p) => p.name.toLowerCase() === trimmed.toLowerCase())) { showMsg?.("Property already exists — pick it from the dropdown instead", "red"); return; }
-    const id = genVenueId("prop");
-    await writeRow({ id, kind: "property", name: trimmed, manager: "—", icon: "🏛️" });
+    // deterministicVenueId — see addProperty's own comment below for why.
+    const id = deterministicVenueId("prop", trimmed);
+    try {
+      const { error } = await supabase.from("venues").upsert({ id, kind: "property", name: trimmed, manager: "—", icon: "🏛️" }, { onConflict: "id", ignoreDuplicates: true });
+      if (error) throw error;
+    } catch (e) { showMsg?.("Save failed: " + (e?.message || e), "red"); return; }
     await patchRow(svId, { property_id: id });
     setOrphanAssign((s) => { const n = { ...s }; delete n[svId]; return n; });
   };
@@ -210,7 +208,16 @@ export default function VenuesEditor({ showMsg }) {
     const name = newPropName.trim();
     if (!name) return;
     if ((venues.properties || []).some((p) => p.name.toLowerCase() === name.toLowerCase())) { showMsg?.("Property already exists", "red"); return; }
-    await writeRow({ id: genVenueId("prop"), kind: "property", name, manager: "—", icon: "🏛️" });
+    // deterministicVenueId, not genVenueId — see its own comment (lib/ims/venueProperties.js). The
+    // check above reads this tab's own in-memory `venues.properties`, which two admins editing at
+    // once (or this tab lagging behind a just-landed realtime update) can both pass for the SAME new
+    // name, each then inserting under a random id and leaving two property rows with one name (same
+    // race already confirmed live for the `functions` table, 2026-11-02).
+    const id = deterministicVenueId("prop", name);
+    try {
+      const { error } = await supabase.from("venues").upsert({ id, kind: "property", name, manager: "—", icon: "🏛️" }, { onConflict: "id", ignoreDuplicates: true });
+      if (error) throw error;
+    } catch (e) { showMsg?.("Save failed: " + (e?.message || e), "red"); }
     setNewPropName("");
   };
 
@@ -250,7 +257,13 @@ export default function VenuesEditor({ showMsg }) {
     // type as "Outdoor", so nothing changes for an untagged sub-venue until someone sets a real
     // value below. Leaving it unset is what surfaces the "Not set" pill instead of silently locking
     // every new sub-venue to Outdoor with no way to ever change it — the bug this fixes.
-    await writeRow({ id: genVenueId("iv"), kind: "subvenue", name, property_id: propertyId });
+    // deterministicVenueId — see addProperty's own comment above for why the in-memory check alone
+    // isn't enough to stop two concurrent adds of the same name from each minting their own row.
+    const id = deterministicVenueId("iv", name);
+    try {
+      const { error } = await supabase.from("venues").upsert({ id, kind: "subvenue", name, property_id: propertyId }, { onConflict: "id", ignoreDuplicates: true });
+      if (error) throw error;
+    } catch (e) { showMsg?.("Save failed: " + (e?.message || e), "red"); }
     setNewSubVenue((p) => ({ ...p, [propertyId]: "" }));
   };
   const setSubVenueType = async (id, type) => { await patchRow(id, { venue_type: type || null }); };
@@ -278,7 +291,13 @@ export default function VenuesEditor({ showMsg }) {
     const name = newOd.name.trim();
     if (!name) return;
     if (venues.outdoor.some((v) => v.name.toLowerCase() === name.toLowerCase())) { showMsg?.("Venue already exists", "red"); return; }
-    await writeRow({ id: genVenueId("od"), kind: "outdoor", name, empanelled: newOd.empanelled });
+    // deterministicVenueId, shared with Studio's own autoPersistCustomVenue/addOutdoorVenue (see its
+    // comment) — the two converge on the same id for the same name, so this admin form adding a
+    // venue a salesperson is concurrently auto-persisting lands on one row, not two.
+    try {
+      const { error } = await supabase.from("venues").upsert({ id: deterministicVenueId("od", name), kind: "outdoor", name, empanelled: newOd.empanelled }, { onConflict: "id", ignoreDuplicates: true });
+      if (error) throw error;
+    } catch (e) { showMsg?.("Save failed: " + (e?.message || e), "red"); return; }
     setNewOd({ name: "", empanelled: true });
   };
   const renameOutdoorVenue = async (id, patch) => {

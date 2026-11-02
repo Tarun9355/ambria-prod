@@ -118,7 +118,7 @@ import {
   fetchVerifiedLibraryPhotos, checkExistingLibraryUrls, TAG_SOURCE,
 } from "../../lib/studio/libraryQueries";
 import { rowToItem } from "../../lib/inventory/adapter";
-import { assembleVenuesFromRows, genVenueId } from "../../lib/ims/venueProperties";
+import { assembleVenuesFromRows, deterministicVenueId } from "../../lib/ims/venueProperties";
 import {
   STORAGE_KEY, AMBRIA_PLAYLIST_ID, CLD_CLOUD,
   YT_SK, YT_TAG_SK, MANUAL_VID_SK, HIDDEN_VID_SK, FAV_VID_SK, FAV_PHOTO_SK,
@@ -3184,7 +3184,15 @@ export default function StudioApp() {
   // typed in Event Info). The realtime subscription above re-fetches and updates customOutdoor, so
   // no local setState here.
   const addOutdoorVenue = useCallback(async (name, empanelled) => {
-    await supabase.from("venues").insert({ id: genVenueId("od"), kind: "outdoor", name, empanelled: !!empanelled });
+    // deterministicVenueId, not genVenueId — see its own comment (lib/ims/venueProperties.js) for
+    // why: two salespeople auto-persisting the SAME brand-new custom venue around the same moment
+    // (autoPersistCustomVenue fires unattended, no admin review in between) used to each pass their
+    // own session's stale in-memory "does this exist yet" check and each insert under a random id,
+    // leaving two venues rows with the same name (confirmed live, 2026-11-02 — same bug class as the
+    // `functions` table's own backfill race). Shared with IMS → Settings → Venues' own outdoor-add
+    // form, so the two converge on the same id for the same name too.
+    const id = deterministicVenueId("od", name);
+    await supabase.from("venues").upsert({ id, kind: "outdoor", name, empanelled: !!empanelled }, { onConflict: "id", ignoreDuplicates: true });
   }, []);
   // Sub-venue → parent map (Aura → Exotica) so fixed-venue rules match across sub-venues.
   // Persisted to settings so IMS reads it too.
