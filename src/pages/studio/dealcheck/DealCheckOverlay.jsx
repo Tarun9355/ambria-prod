@@ -2023,18 +2023,20 @@ export default function DealCheckOverlay({ ctx }) {
               artTotal += r.totalArtificial || 0;
               afBunches += r.artFlowerBunches || 0; agBunches += r.artGreenBunches || 0;
               incReal += r.income?.real || 0; incArt += r.income?.art || 0;
-              // Keyed across every function by flower name — two functions commonly share a species
-              // (e.g. Haldi + Mehendi both using carnation himachal). Whichever function's row got
-              // iterated FIRST used to permanently decide the colour for every later function's rows
-              // of that same flower too, even when the first one had no colour picked — this is the
-              // actual reason a colour picked on one function never reached IMS: this is the live
-              // snapshot-push path for an already-booked deal, the one that runs every time Deal
-              // Check is open (unlike markSold, which only runs once at booking).
+              // Keyed across every function by flower name + COLOUR, not name alone — two functions
+              // commonly share a species (e.g. Haldi + Mehendi both using carnation himachal), but
+              // keying by name alone used to merge them into one bucket: whichever function's row got
+              // iterated FIRST permanently decided the colour for every later function's rows of that
+              // same flower too, silently folding a different colour's qty/cost in uncredited. This is
+              // the live snapshot-push path for an already-booked deal, the one that runs every time
+              // Deal Check is open (unlike markSold, which only runs once at booking) — confirmed
+              // live, 2026-11-02 (Sangeeta): Haldi's yellow guldavari star and Wedding's white both
+              // showed as one yellow-only line.
               (r.breakdown || []).forEach(f => {
-                if (!agg[f.name]) agg[f.name] = { name: f.name, qty: 0, cost: 0, unit: f.unit, colorVariant: f.colorVariant || null, colorPrefs: f.colorPrefs || null };
-                agg[f.name].qty += f.qty; agg[f.name].cost += f.cost;
-                if (f.colorVariant && !agg[f.name].colorVariant) agg[f.name].colorVariant = f.colorVariant;
-                if (f.colorPrefs && !agg[f.name].colorPrefs) agg[f.name].colorPrefs = f.colorPrefs;
+                const colourKey = f.colorVariant?.label || (Array.isArray(f.colorPrefs) ? f.colorPrefs.map(p => p.label).join("/") : "") || "";
+                const key = colourKey ? `${f.name}¦${colourKey}` : f.name;
+                if (!agg[key]) agg[key] = { name: f.name, qty: 0, cost: 0, unit: f.unit, colorVariant: f.colorVariant || null, colorPrefs: f.colorPrefs || null };
+                agg[key].qty += f.qty; agg[key].cost += f.cost;
               });
               // rate: the true per-unit price (qty is already whole-unit-respecting, from
               // calcFnFloralSourcingCost's own breakdown) — IMS's mandi list seeds its ₹/unit field
