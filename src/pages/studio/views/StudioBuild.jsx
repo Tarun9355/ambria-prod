@@ -311,7 +311,16 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                   other axis's own padding need went silently unchecked) and for any material whose
                   maxSpanFt isn't the Iron default. This reads the zone's own live config instead.
                   Pillar count via pillarCountForSpan (pricing.js) — the exact same formula
-                  buildTopology itself uses, so this can't drift from what actually gets built. */}
+                  buildTopology itself uses, so this can't drift from what actually gets built.
+                  Label fix (2026-11-02): the Width/Depth inputs just above bind "Width" to dims.W and
+                  "Depth" to dims.L — this used to label the hint the other way round, so it told you to
+                  pad whichever field you were NOT looking at.
+                  One-shot per value (2026-11-02, owner report): the hint recomputes off whatever is
+                  currently typed, so if you type exactly the ft it just suggested, THAT becomes the new
+                  "raw" value and it suggests padding it again — forever. zc.trussPadAck{label:value}
+                  remembers the exact value a hint was taken at (recognised via zc.trussPadSeen, the
+                  suggestion recorded the render before) and that value never shows the hint again,
+                  including after a reload; typing any other value starts the cycle fresh. */}
               {(() => {
                 const dims = zc.dims || {};
                 const L = parseFloat(dims.L) || 0;
@@ -321,17 +330,40 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                 const matInv = trussInvForMaterial(trussInv, zc.trussMaterial);
                 const maxSpan = matInv?.settings?.maxSpanFt || 30;
                 const axes = tr.config === "full_box"
-                  ? [["Width", L], ["Depth", W]].filter(([, v]) => v >= 4)
+                  ? [["Width", W], ["Depth", L]].filter(([, v]) => v >= 4)
                   : [["Span", tr.spanFt || Math.max(L, W)]];
-                const rows = axes.map(([label, v]) => ({ label, v, pillars: pillarCountForSpan(v, maxSpan) }))
-                  .filter(({ v }) => v > 0);
+                const ack = zc.trussPadAck || {};
+                const seen = zc.trussPadSeen || {};
+                const ackPatch = { ...ack }, seenPatch = { ...seen };
+                let ackChanged = false, seenChanged = false;
+                const rows = [];
+                axes.forEach(([label, v]) => {
+                  if (!(v > 0)) return;
+                  const pillars = pillarCountForSpan(v, maxSpan);
+                  const suggestion = v + pillars;
+                  if (ack[label] === v) return; // this exact value already had its hint taken
+                  if (seen[label] === v) {
+                    // what's typed now IS the suggestion shown last render — hint just got taken
+                    ackPatch[label] = v; ackChanged = true;
+                    if (label in seenPatch) { delete seenPatch[label]; seenChanged = true; }
+                    return;
+                  }
+                  rows.push({ label, v, pillars, suggestion });
+                  if (seen[label] !== suggestion) { seenPatch[label] = suggestion; seenChanged = true; }
+                });
+                if (ackChanged || seenChanged) {
+                  const patch = {};
+                  if (ackChanged) patch.trussPadAck = ackPatch;
+                  if (seenChanged) patch.trussPadSeen = seenPatch;
+                  setTimeout(() => sZ(patch), 0);
+                }
                 if (rows.length === 0) return null;
                 return (
                   <div style={{marginBottom:10,padding:"4px 8px",borderRadius:6,background:"rgba(59,130,246,0.08)",border:"1px solid rgba(59,130,246,0.25)",fontSize:11.5,color:"#1E40AF",display:"flex",flexDirection:"column",gap:3}}>
-                    {rows.map(({ label, v, pillars }) => (
+                    {rows.map(({ label, v, pillars, suggestion }) => (
                       <div key={label} style={{display:"flex",alignItems:"center",gap:6}}>
                         <span style={{display:"flex",color:"#B45309",flexShrink:0}}><IconBulb size={12}/></span>
-                        <span>{label} {v}ft → {pillars} pillar{pillars===1?"":"s"}. If you want the true footprint to land near {v}ft, enter <strong>{v + pillars}ft</strong> (+1ft/pillar) instead.</span>
+                        <span>{label} {v}ft → {pillars} pillar{pillars===1?"":"s"}. If you want the true footprint to land near {v}ft, enter <strong>{suggestion}ft</strong> (+1ft/pillar) instead.</span>
                       </div>
                     ))}
                   </div>
