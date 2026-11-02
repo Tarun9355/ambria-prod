@@ -39,6 +39,7 @@ import { realLineTaker } from "../../lib/ims/floralBook";
 import { pdfT, pdfUnit, pdfDate, pdfDateTime, hindiReportHtml, HI_FONT_FAMILIES } from "../../lib/ims/pdfI18n";
 import { loadHindiNames, ensureHindiNames, nameKey, normName, needsHindi } from "../../lib/ims/hindiNames";
 import { toHindi } from "../../lib/ims/hindiTranslit";
+import useHindiDom from "../../lib/ims/useHindiDom";
 import PdfLangToggle from "./PdfLangToggle";
 import { splitCrewByDept } from "../../lib/ims/crewSplit";
 
@@ -1170,6 +1171,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     try { localStorage.setItem(PDF_LANG_KEY, v); } catch { /* private window: this session only */ }
   };
   useEffect(() => () => { if (deckCacheRef.current) URL.revokeObjectURL(deckCacheRef.current.url); }, []);
+  // The same toggle turns the screen Hindi too (owner ask 2026-11-02): this tab and its popups (data-hi-scope) - lib/ims/useHindiDom.
+  useHindiDom(pdfLang === "hi");
   // Which departments actually have something to report on this event — the same gate the
   // report itself uses (hasDeptSnapshot / blockedItemsGrouped both key off deptInventory[dept]).
   // A combined book skips an empty department rather than printing a cover with nothing behind it.
@@ -5645,7 +5648,7 @@ ${!combined && fabRows.length ? sect(t("Fabric required vs available"), table([t
        ~1600px the wide tables turn into strips with their content pinned to both far edges. */
     /* font-body on the whole tab, not just the event header card: with it on one card only,
        everything else fell back to the system font, so the page mixed two sans faces. */
-    <div className="font-body antialiased space-y-4 xl:max-w-[1600px]">
+    <div data-hi-scope className="font-body antialiased space-y-4 xl:max-w-[1600px]">
       {/* ── DEPARTMENT PICKER ──
           Was a <select> buried at the top of the left rail. A dropdown hides its options until
           you open it, so the one thing that scopes this entire page — every figure, every tile,
@@ -5663,7 +5666,7 @@ ${!combined && fabRows.length ? sect(t("Fabric required vs available"), table([t
           or its space-y gap would still open a blank band above the event. Without a slot it
           falls back to the old pulled-up placement. */}
       {pickerSlot && createPortal(
-        <div className="sm:hidden">
+        <div data-hi-scope className="sm:hidden">
           {roleDept && !isAdmin
             ? <span className="inline-flex px-3 py-2 rounded-xl bg-blue-50 text-blue-700 text-[13px] font-semibold whitespace-nowrap">{DEPT_ICON[roleDept]} {roleDept}</span>
             : <TabsMenu tabs={deptOptions.map(d => ({ id: d, label: `${DEPT_ICON[d]} ${d}` }))} active={dept} onChange={setDept} tone="accent" />}
@@ -6882,7 +6885,7 @@ ${!combined && fabRows.length ? sect(t("Fabric required vs available"), table([t
                         ? (Array.isArray(src?.schedule) ? src.schedule.map(day => ({ label: phaseLbl(day), crew: Number(day.count) || 0, shifts: Array.isArray(day.windowIds) ? day.windowIds.length : (Number(day.windows) || 0) })) : [])
                         : null;
                       return createPortal(
-                        <div onClick={() => setMpHowType(null)} className="fixed inset-0 z-[9999] bg-black/40 flex items-center justify-center p-4">
+                        <div data-hi-scope onClick={() => setMpHowType(null)} className="fixed inset-0 z-[9999] bg-black/40 flex items-center justify-center p-4">
                           <div onClick={e => e.stopPropagation()} className="w-full max-w-xl max-h-[85vh] overflow-y-auto rounded-2xl bg-white shadow-2xl p-4 space-y-3 text-[13px] text-gray-700">
                             <div className="flex items-center gap-2">
                               <span aria-hidden="true" className="shrink-0 w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center text-sm leading-none">{crewIcon(t.type)}</span>
@@ -8602,7 +8605,7 @@ ${!combined && fabRows.length ? sect(t("Fabric required vs available"), table([t
         const total = (Number(mandiSwap.qty) || 0) * (Number(mandiSwap.price) || 0);
         const set = (patch) => setMandiSwap(m => ({ ...m, ...patch }));
         return (
-          <div onClick={() => setMandiSwap(null)} className="fixed inset-0 z-[9999] bg-black/50 flex items-center justify-center p-4">
+          <div data-hi-scope onClick={() => setMandiSwap(null)} className="fixed inset-0 z-[9999] bg-black/50 flex items-center justify-center p-4">
             <div onClick={e => e.stopPropagation()} className="bg-white rounded-2xl w-[min(720px,100%)] max-h-[88vh] flex flex-col overflow-hidden shadow-2xl">
               <div className="px-5 py-4 border-b flex items-start justify-between gap-3">
                 <div className="min-w-0">
@@ -8656,7 +8659,7 @@ ${!combined && fabRows.length ? sect(t("Fabric required vs available"), table([t
         );
       })(), document.body)}
       {swatchView && createPortal(
-        <div onClick={() => setSwatchView(null)} className="fixed inset-0 z-[9999] bg-black/50 flex items-center justify-center p-6 cursor-zoom-out">
+        <div data-hi-scope onClick={() => setSwatchView(null)} className="fixed inset-0 z-[9999] bg-black/50 flex items-center justify-center p-6 cursor-zoom-out">
           <div onClick={e => e.stopPropagation()} className="rounded-2xl bg-white shadow-2xl p-4 w-72 space-y-3">
             <div className="w-full h-56 rounded-xl ring-1 ring-black/10" style={{ background: swatchView.hex }} />
             <div className="flex items-center gap-2">
