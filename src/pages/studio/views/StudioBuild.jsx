@@ -22,7 +22,7 @@ import PaletteQuickAdd from "../../../components/studio/PaletteQuickAdd.jsx";
 import { prefsOf, prefsPatch, setPrefsPatch, clearPrefsPatch, assignCarpets, carpetRemainingFor, floorSqftOf, CARPET_PREF_LABELS, CARPET_PREF_MAX } from "../../../lib/studio/carpetPrefs";
 import { trussRowCost, calcZoneFabricCost, calcZoneFabric, guestFabricMultiplier, fabricRepeatDiscount, maskingRepeatOn, maskingGuestCost, zoneTrussStandingDiscountDetail, repeatCatFor, parseFlowerPalette, stringifyFlowerPalette, parseFabricPalette, stringifyFabricPalette, isDirectMandiElement, anchorsForPaletteByMaterial, snapRowDimsForProduction } from "../../../lib/studio/pricing";
 import { paletteSearch, paletteMatches } from "../../../components/studio/filterUI.jsx";
-import { resolveTrussConfig } from "../../../lib/studio/pricing";
+import { resolveTrussConfig, pillarCountForSpan, trussInvForMaterial } from "../../../lib/studio/pricing";
 import { fabricColourOptions } from "../../../lib/studio/fabricColourOptions";
 import { qtyUsedElsewhereInBuild } from "../../../lib/studio/dealAvailability";
 import { logDiscountToClientToggle } from "../../../lib/studio/userActions";
@@ -302,43 +302,40 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                 {zc.trT&&(Number(zc.trussFrontExt)||0)>0&&<div style={{flex:1}}><div style={{fontSize:11.5,color:textS,marginBottom:3}} title="Height of the front extension (can differ from box height). Defaults to box height.">Ext height (ft)</div>
                   <NumField min={0} value={zc.trussFrontExtH||""} onCommit={n=>sZ({trussFrontExtH:n})} blankCommit commitOn="blur" placeholder={String(zc.dims?.H||0)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}}/></div>}
               </div>
-              {/* §23 Phase 5 (28 May 2026) — Smart truss tip: add 1ft per pillar to physical span */}
+              {/* Pillar-padding tip (owner convention, 2026-11-02): enter span + 1ft per pillar so the
+                  TRUE built footprint lands near what you actually want, instead of the engine
+                  shrinking to fit under whatever you typed (it never builds OVER the entered number —
+                  see pricing.js's buildTopology, "never exceed" rule). Replaces an earlier hardcoded
+                  "sweet spot" list that assumed a single span and a flat 1ft/pillar budget everywhere —
+                  wrong for Full Box's two INDEPENDENT axes (it only ever checked Math.max(L,W), so the
+                  other axis's own padding need went silently unchecked) and for any material whose
+                  maxSpanFt isn't the Iron default. This reads the zone's own live config instead.
+                  Pillar count via pillarCountForSpan (pricing.js) — the exact same formula
+                  buildTopology itself uses, so this can't drift from what actually gets built. */}
               {(() => {
                 const dims = zc.dims || {};
                 const L = parseFloat(dims.L) || 0;
                 const W = parseFloat(dims.W) || 0;
-                if (L < 4 && W < 4) return null;  // no dims yet
-                const span = Math.max(L, W);
-                // Sweet spots for clean truss (using standard 15/12/10/8/5/4/3/2 beam stock + 1ft/pillar budget)
-                // 2-pillar (span ≤ 30): 12, 17, 24, 27, 29, 32 → these give 0/1 joint, 0-gap
-                // 3-pillar (31-60): 43, 47, 53, 57, 63 → 1-2 joints per segment
-                // 4-pillar (61-90): 64, 74, 84 → 2 joints per segment
-                const sweetSpots2 = [12, 17, 24, 27, 29, 32];
-                const sweetSpots3 = [43, 47, 53, 57, 63];
-                const sweetSpots4 = [64, 74, 84];
-                const all = [...sweetSpots2, ...sweetSpots3, ...sweetSpots4];
-                const isExact = all.includes(span);
-                // Find nearest sweet spot within ±5ft
-                let nearest = null;
-                let nearestDist = 999;
-                for (const s of all) {
-                  const d = Math.abs(s - span);
-                  if (d > 0 && d <= 5 && d < nearestDist) {
-                    nearest = s;
-                    nearestDist = d;
-                  }
-                }
-                if (isExact) {
-                  return <div style={{marginBottom:10,padding:"4px 8px",borderRadius:6,background:"rgba(34,197,94,0.08)",border:"1px solid rgba(34,197,94,0.25)",fontSize:11.5,color:"#15803D",fontWeight:600,display:"flex",alignItems:"center",gap:6}}>
-                    <span>✓</span><span>Smart truss: clean allocation (minimum joints).</span>
-                  </div>;
-                }
-                if (nearest) {
-                  return <div style={{marginBottom:10,padding:"4px 8px",borderRadius:6,background:"rgba(59,130,246,0.08)",border:"1px solid rgba(59,130,246,0.25)",fontSize:11.5,color:"#1E40AF",display:"flex",alignItems:"center",gap:6}}>
-                    <span style={{display:"flex",color:"#B45309"}}><IconBulb size={12}/></span><span>Tip: try <strong>{nearest}ft</strong> for cleanest truss (fewer joints, less ops effort).</span>
-                  </div>;
-                }
-                return null;
+                if (L < 4 && W < 4) return null; // no dims yet
+                const tr = resolveTrussConfig(zc);
+                const matInv = trussInvForMaterial(trussInv, zc.trussMaterial);
+                const maxSpan = matInv?.settings?.maxSpanFt || 30;
+                const axes = tr.config === "full_box"
+                  ? [["Width", L], ["Depth", W]].filter(([, v]) => v >= 4)
+                  : [["Span", tr.spanFt || Math.max(L, W)]];
+                const rows = axes.map(([label, v]) => ({ label, v, pillars: pillarCountForSpan(v, maxSpan) }))
+                  .filter(({ v }) => v > 0);
+                if (rows.length === 0) return null;
+                return (
+                  <div style={{marginBottom:10,padding:"4px 8px",borderRadius:6,background:"rgba(59,130,246,0.08)",border:"1px solid rgba(59,130,246,0.25)",fontSize:11.5,color:"#1E40AF",display:"flex",flexDirection:"column",gap:3}}>
+                    {rows.map(({ label, v, pillars }) => (
+                      <div key={label} style={{display:"flex",alignItems:"center",gap:6}}>
+                        <span style={{display:"flex",color:"#B45309",flexShrink:0}}><IconBulb size={12}/></span>
+                        <span>{label} {v}ft → {pillars} pillar{pillars===1?"":"s"}. If you want the true footprint to land near {v}ft, enter <strong>{v + pillars}ft</strong> (+1ft/pillar) instead.</span>
+                      </div>
+                    ))}
+                  </div>
+                );
               })()}
               {/* ── §23 Truss Type selector + Height-anchor validation ── */}
               {(()=>{

@@ -149,6 +149,14 @@ export const resolveTrussConfig = (zc) => {
 // Each pillar: { id, H }
 // Each beam:   { side, lengthFt }
 // Reference: SPEC_MASTER §23.7 Layer 1 + §23.4 (Method A vs B).
+// 2 corners + N middle pillars when span > maxSpan. Exported (not just a buildTopology-local const)
+// so a salesperson-facing hint can show "this needs N pillars" live, off the SAME live maxSpanFt a
+// zone's own material actually uses, instead of a hand-maintained guess table that can drift from
+// it (see StudioBuild.jsx's padding hint, which used to do exactly that — a hardcoded "sweet spot"
+// list assuming a flat 1ft/pillar budget, silently wrong for Full Box's two independent axes and
+// for any material whose maxSpanFt/pillarWidthFt isn't the Iron default).
+export const pillarCountForSpan = (spanLen, maxSpan = 30) => 2 + Math.max(0, Math.ceil(spanLen / maxSpan) - 1);
+
 export const buildTopology = (config, L, W, H, spanFt, backDepth, engSettings) => {
   if (!config || !H || H <= 0) return null;
   const eng = engSettings || {};
@@ -160,8 +168,7 @@ export const buildTopology = (config, L, W, H, spanFt, backDepth, engSettings) =
 
   // §23 Phase 5 (28 May 2026) — Smart allocator: beam_total = span − pillarCount (1ft per pillar).
   // Pillar physical = 0.75ft → 0.25ft slack per pillar = engineering buffer for joint plates.
-  // pillarCountForSpan: 2 corners + N middle pillars when span > maxSpan
-  const pillarCountForSpan = (spanLen) => 2 + Math.max(0, Math.ceil(spanLen / maxSpan) - 1);
+  const pillarCountForThisSpan = (spanLen) => pillarCountForSpan(spanLen, maxSpan);
   // Split total beam length into per-segment lengths (one per pillar-gap)
   const splitBeamSegments = (totalBeamLen, segments) => {
     if (segments <= 0 || totalBeamLen <= 0) return [];
@@ -172,7 +179,7 @@ export const buildTopology = (config, L, W, H, spanFt, backDepth, engSettings) =
   if (config === "u_only") {
     // Method A: inside-out — beam length total = spanFt − totalPillars (each 1ft budget).
     const method = "A";
-    const totalPillars = pillarCountForSpan(spanFt);
+    const totalPillars = pillarCountForThisSpan(spanFt);
     const beamTotalLen = Math.max(0, spanFt - totalPillars * pillarBudget);
     const segLengths = splitBeamSegments(beamTotalLen, totalPillars - 1);
     const pillars = Array.from({ length: totalPillars }, (_, i) => {
@@ -195,7 +202,7 @@ export const buildTopology = (config, L, W, H, spanFt, backDepth, engSettings) =
   if (config === "half_box") {
     // Method A: inside-out — front beam total follows spanFt − totalFrontPillars; sides are full depth.
     const method = "A";
-    const totalFrontPillars = pillarCountForSpan(spanFt);
+    const totalFrontPillars = pillarCountForThisSpan(spanFt);
     const beamTotalLen = Math.max(0, spanFt - totalFrontPillars * pillarBudget);
     const segLengths = splitBeamSegments(beamTotalLen, totalFrontPillars - 1);
     // Front pillars: 2 corners + middle. Back pillars: 2 corners only (depth too small for mid).
@@ -229,8 +236,8 @@ export const buildTopology = (config, L, W, H, spanFt, backDepth, engSettings) =
     // Method B: outside-out — both L and W axes get mid-pillars. Corners are shared.
     // For Method B with the new formula: still subtract pillars on each axis (smart truss).
     const method = "B";
-    const lAxisPillars = pillarCountForSpan(L);
-    const wAxisPillars = pillarCountForSpan(W);
+    const lAxisPillars = pillarCountForThisSpan(L);
+    const wAxisPillars = pillarCountForThisSpan(W);
     const lMidCount = lAxisPillars - 2;
     const wMidCount = wAxisPillars - 2;
     const lBeamTotal = Math.max(0, L - lAxisPillars * pillarBudget);
@@ -458,20 +465,22 @@ export const calcZoneTrussPreview = (zc, trussInv) => {
 // and what IMS actually assembles all agree on the SAME real structure. Build's own input field, and
 // the zone's saved dims, are untouched — only what every pricing/production call computes FROM them
 // is snapped, at the point each of those functions reads row.dims, not by mutating the zone.
-const CLEAN_SPAN_MAX_SHRINK_FT = 5; // same tolerance window Build's own "try Nft" tip already uses
+// Independent of Build's own pillar-padding tip (StudioBuild.jsx) — that one tells a salesperson
+// what to TYPE before the fact; this one SNAPS what gets billed/produced, after the fact, within the
+// same ballpark window, for a span nobody got around to padding.
+const CLEAN_SPAN_MAX_SHRINK_FT = 5;
 function pickCleanSpan(span, trussInvForMat, engSettings) {
   if (!(span > 0)) return span;
   const eng = engSettings || {};
   const maxSpan = eng.maxSpanFt || 30;
   const pillarWidth = eng.pillarWidthFt || 0.75;
-  const pillarCountForSpan = (s) => 2 + Math.max(0, Math.ceil(s / maxSpan) - 1);
   // A "shortage" result (resolveBeamSegment couldn't find any combo within its own 1ft-gap
   // tolerance) falls back to a single undersized piece with a misleadingly low joint count — that
   // is a BAD placement, not a genuinely clean one, so it's scored as Infinity rather than trusted
   // at face value. Otherwise a span that's already unresolvable at its own entered size would look
   // artificially "perfect" (0 joints) and block every real improvement a smaller span could offer.
   const totalJointsFor = (s) => {
-    const pillars = pillarCountForSpan(s);
+    const pillars = pillarCountForSpan(s, maxSpan);
     const segments = Math.max(1, pillars - 1);
     const segLen = Math.max(0, s - pillars * pillarWidth) / segments;
     const r = resolveBeamSegment(segLen, trussInvForMat);
