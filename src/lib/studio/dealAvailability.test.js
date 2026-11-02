@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { allocateRowAvailability, maxQtyForRow, qtyUsedElsewhereInBuild, kitPartShortfalls } from "./dealAvailability.js";
+import { walkKitUnits } from "../ims/helpers";
 
 const inventory = [{ id: "pod", name: "Round Fibre Podium" }];
 const fnWith = (rows) => [{ fnDate: "2026-10-15", zoneElements: Object.fromEntries(rows.map(([zk, qty]) => [zk, [{ invId: "pod", qty }]])) }];
@@ -138,5 +139,53 @@ describe("kitPartShortfalls — a part inside a kit that is short on the date", 
   });
   it("without a target row the kit is judged alone", () => {
     expect(kitPartShortfalls(inv[0], 3, undefined, [], inv, null, D, availFor)).toEqual([{ id: "cover", name: "Cushion Cover", need: 12, short: 2 }]);
+  });
+});
+
+// ── The cached booking-row index gives exactly what the old per-call walk gave ──
+describe("allocateRowAvailability — index matches the old per-call walk", () => {
+  let seed = 777;
+  const rnd = (n) => { seed = (seed + 0x6D2B79F5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return Math.floor((((t ^ (t >>> 14)) >>> 0) / 4294967296) * n); };
+  const inv = [
+    { id: "led", name: "LED" },
+    { id: "kit", name: "Kit", subItems: [{ itemId: "led", qty: 3 }, { itemId: "pot", qty: 1 }] },
+    { id: "big", name: "Kit of kits", subItems: [{ itemId: "kit", qty: 2 }, { itemId: "led", qty: 1 }] },
+    { id: "pot", name: "Pot" },
+  ];
+  // the walk allocateRowAvailability used before the index (rows per call, in booking order)
+  const oldRows = (invId, fns, date) => {
+    const rows = [];
+    fns.forEach((fn, fnIdx) => {
+      if (date && (fn.fnDate || "") !== date) return;
+      Object.entries(fn.zoneElements || {}).forEach(([zk, els]) => {
+        const en = fn.enabledEls; if (en && Object.keys(en).length && !en[zk]) return;
+        els.forEach((el, elIdx) => {
+          if (!el?.invId) return;
+          const q0 = Number(el.qty) || 0; let qty = 0;
+          if (q0 > 0) { const top = inv.find((i) => i.id === el.invId); if (!top) { if (el.invId === invId) qty = q0; } else walkKitUnits(top, q0, inv, el.kitOverrides, (node, nq) => { if (node?.id === invId) qty += nq; }); }
+          if (qty > 0) rows.push({ fnIdx, zk, elIdx, qty });
+        });
+      });
+    });
+    return rows;
+  };
+  const oldAlloc = (invId, fns, target, date, avail) => {
+    const rows = oldRows(invId, fns, date).sort((a, b) => a.qty - b.qty);
+    let remaining = Math.max(0, avail); let res = { ownedQty: 0, shortQty: 0 };
+    for (const r of rows) { const owned = Math.min(r.qty, remaining); remaining -= owned; if (r.fnIdx === target.fnIdx && r.zk === target.zoneKey && r.elIdx === target.elIdx) res = { ownedQty: owned, shortQty: r.qty - owned }; }
+    return res;
+  };
+  it("same allocation for 2,000 random bookings with nested kits and unknown items", () => {
+    const ids = ["led", "kit", "big", "pot", "gone"];
+    for (let n = 0; n < 2000; n++) {
+      const fns = Array.from({ length: 1 + rnd(3) }, () => {
+        const enabledEls = {}, zoneElements = {};
+        ["stage", "entry"].forEach((z) => { enabledEls[z] = rnd(4) !== 0; zoneElements[z] = Array.from({ length: 1 + rnd(3) }, () => ({ invId: ids[rnd(ids.length)], qty: rnd(12) })); });
+        return { fnDate: rnd(2) ? "d1" : "d2", enabledEls, zoneElements };
+      });
+      const fnIdx = rnd(fns.length), zoneKey = rnd(2) ? "stage" : "entry", elIdx = rnd(3);
+      const id = ids[rnd(ids.length)], pool = rnd(60), date = rnd(3) ? "d1" : undefined;
+      expect(allocateRowAvailability(id, fns, inv, { fnIdx, zoneKey, elIdx }, date, pool)).toEqual(oldAlloc(id, fns, { fnIdx, zoneKey, elIdx }, date, pool));
+    }
   });
 });

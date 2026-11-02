@@ -209,6 +209,7 @@ export default function DealCheckOverlay({ ctx }) {
   // of the deal, not the whole project total, to know what room that head actually has to give.
   const [dcDeptModalOpen, setDcDeptModalOpen] = useState(false);
   const deptSyncRef = useRef(""); // dedupe auto-push of the dept snapshot to IMS
+  const deptSyncTimerRef = useRef(null); // the one pending auto-push: a newer snapshot replaces it, so only the last fires
   const [dcKitAddSearch, setDcKitAddSearch] = useState({}); // per-kit-card "add component" search text, keyed by editKey
   const [dcPrintForm, setDcPrintForm] = useState({ zoneKey: "", material: "", areaW: "", areaD: "", qty: 1 }); // Buying tab's own "+ Add print" row
   const {
@@ -2185,7 +2186,7 @@ export default function DealCheckOverlay({ ctx }) {
             // different artificial-bunch colour mix — which the two lines above wouldn't notice.
             (_deptSnap.floralPlan?.artificial?.colorSplit || []).map(c => `${c.imsId}:${c.qty}`),
           ]);
-          if (dcDataReady && deptSyncRef.current !== _sig) { deptSyncRef.current = _sig; setTimeout(() => { try { persistWithDetail(_deptSnap); } catch {} }, 200); }
+          if (dcDataReady && deptSyncRef.current !== _sig) { deptSyncRef.current = _sig; clearTimeout(deptSyncTimerRef.current); deptSyncTimerRef.current = setTimeout(() => { try { persistWithDetail(_deptSnap); } catch {} }, 200); }
         }
 
         return (

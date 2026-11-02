@@ -1023,12 +1023,22 @@ function paintPillLabel(el, baseColour) {
 // Reads inventory (inventory table → rowToItem) + blocks (now the `blocks` TABLE, row-per-item).
 // Returns the same per-date shape the reference returned: { inventory, blocksForDate }.
 // blocksForDate: { imsId: totalBlockedQty for that date }.
+// The two whole tables are read ONCE for every date asked for together (a 4-function deal warmed every date with its own
+// pair of whole-table downloads, often twice over): calls within RAW_IMS_SHARE_MS share one fetch, and a `blocks` change
+// drops the shared copy at once (invalidateRawIMS, from the realtime handler), so a reservation is never priced stale.
+const RAW_IMS_SHARE_MS = 5000;
+let rawImsFetch = null; // { at, promise }
+function fetchRawIMS() {
+  const now = Date.now();
+  if (rawImsFetch && now - rawImsFetch.at < RAW_IMS_SHARE_MS) return rawImsFetch.promise;
+  const promise = Promise.all([fetchAll("inventory").catch(() => []), fetchAll("blocks").catch(() => [])]);
+  rawImsFetch = { at: now, promise };
+  return promise;
+}
+function invalidateRawIMS() { rawImsFetch = null; }
 async function fetchIMSData(date) {
   try {
-    const [invRows, blockRows] = await Promise.all([
-      fetchAll("inventory").catch(() => []),
-      fetchAll("blocks").catch(() => []),
-    ]);
+    const [invRows, blockRows] = await fetchRawIMS();
     let inventory = Array.isArray(invRows) ? invRows.map(rowToItem).filter(Boolean) : [];
     // blocks table is row-per-item: { id/item_id, data: [reservations] } → { itemId: [reservations] }
     const blocks = {};
@@ -1075,7 +1085,7 @@ function eoToRow(eo) {
 async function loadEoRows() {
   const all = []; const SIZE = 1000;
   for (let from = 0; ; from += SIZE) {
-    const { data, error } = await supabase.from("event_orders").select("*").order("id").range(from, from + SIZE - 1);
+    const { data, error } = await supabase.from("event_orders").select("id,status,data").order("id").range(from, from + SIZE - 1);
     if (error) throw error;
     all.push(...(data || []));
     if (!data || data.length < SIZE) break;
@@ -2350,7 +2360,7 @@ export default function StudioApp() {
   // So the busy flag is owned outright and held for a minimum, guaranteeing the loading state is
   // actually seen and that a stale card can never flash in its place. It stays up longer if the
   // switch itself takes longer.
-  const FN_BUSY_MIN_MS = 400;
+  const FN_BUSY_MIN_MS = 200; // was 400: long enough to be seen, short enough not to read as the switch being slow
   const [fnBusy, setFnBusy] = useState(false);
   const fnBusyStartRef = useRef(0);
   // Runs once the new index has committed — i.e. the switch is done — then waits out whatever is
@@ -2540,6 +2550,7 @@ export default function StudioApp() {
   // reference there throws "Cannot access before initialization" (a real prod crash hit this exact
   // way), unlike a reference inside a callback body that only runs later, once render has finished.
   const flushDcAutosaveRef = useRef(null);
+  const dcAutosavePendingRef = useRef(false); // a Deal Check edit is waiting on the 2.5s autosave timer
   // Closes Deal Check, flushing any pending debounced save first (see flushDcAutosaveRef above) —
   // both the Back-button guard and the × button route through this instead of a bare
   // setDcFullPageOpen(false), so neither one silently drops up to 2.5s of unsaved edits on close.
@@ -2585,8 +2596,16 @@ export default function StudioApp() {
     // would push an empty plan to IMS. Until then this effect just waits for the next change.
     if (!Object.values(zoneElements || {}).some(a => Array.isArray(a) && a.length > 0)) return;
     autoSyncedClientsRef.current.add(activeClientId); // once per client per session
+    const clientId = activeClientId;
     (async () => {
       try {
+        // Let the deal's own screen paint first: the hidden Deal Check run is a full pricing + load of its own, and starting
+        // it in the same moment the build renders made opening a booked deal feel stuck. The startup sweep keeps its pace.
+        // If the salesperson has moved to another client by then, nothing runs (and this one can sync on its next open).
+        if (!sweepRef.current.id) {
+          await new Promise((r) => (typeof window.requestIdleCallback === "function" ? window.requestIdleCallback(() => r(), { timeout: 2500 }) : setTimeout(r, 1200)));
+          if (activeClientIdRef.current !== clientId) { autoSyncedClientsRef.current.delete(clientId); return; }
+        }
         const latest = await latestPlanningInputStamp();
         if (!latest) return;
         // A minute of slack: the sync's own write lands moments after the run it belongs to.
@@ -3279,7 +3298,7 @@ export default function StudioApp() {
   useEffect(() => {
     const ch = subscribeTable("truss_inventory", () => { refreshStudioFloralData(); });
     let last = 0;
-    const onBack = () => { if (document.visibilityState === "hidden" || Date.now() - last < 4000) return; last = Date.now(); refreshStudioFloralData(); };
+    const onBack = () => { if (document.visibilityState === "hidden" || Date.now() - last < 30000) return; last = Date.now(); refreshStudioFloralData(); };
     document.addEventListener("visibilitychange", onBack);
     window.addEventListener("focus", onBack);
     return () => { try { supabase.removeChannel(ch); } catch { /* ignore */ } document.removeEventListener("visibilitychange", onBack); window.removeEventListener("focus", onBack); };
@@ -4957,7 +4976,7 @@ export default function StudioApp() {
     "artificialGreenRatePerKg", "artificialGreenBunchesPerKg", "defaultStudioMarkup",
     "fixedVenueSubcatDiscount", "agencyFeePct", "datePricing",
   ];
-  const refreshStudioFloralData = useCallback(async () => {
+  const loadStudioFloralData = useCallback(async () => {
     try {
       // truss_inventory alongside settings, same parallel fetch shape — it's one row (key "main"),
       // not the 600+-row `inventory` table, so it costs nothing extra to load on mount. Needed so the
@@ -5025,7 +5044,24 @@ export default function StudioApp() {
       });
     } catch { /* ignore — floral auto-derive falls back to flat rate */ }
   }, []);
-  useEffect(() => { refreshStudioFloralData(); }, [refreshStudioFloralData]);
+  // What every realtime change (9 tables) and every return to the tab calls: a burst of changes - a sale writes several
+  // allocation rows at once - made one full 9-table reload per row, overlapping. Now a burst settles into ONE reload,
+  // and a change arriving while a reload is running gets one more after it, so the last state is always read.
+  const floralRefreshRef = useRef({ timer: null, running: false, again: false });
+  const refreshStudioFloralData = useCallback(() => {
+    const st = floralRefreshRef.current;
+    const run = async () => {
+      if (st.running) { st.again = true; return; }
+      st.running = true;
+      try { await loadStudioFloralData(); } finally {
+        st.running = false;
+        if (st.again) { st.again = false; run(); }
+      }
+    };
+    clearTimeout(st.timer);
+    st.timer = setTimeout(run, 300);
+  }, [loadStudioFloralData]);
+  useEffect(() => { loadStudioFloralData(); }, [loadStudioFloralData]);
 
   // Auto-derived artificial rate PER UNIT for a floral recipe element = Σ(recipe flowers × artificial
   // bunches-per-unit) × ₹/bunch × studio markup. Mirrors calcFnFloralSourcingCost's artificial cost so
@@ -5565,7 +5601,9 @@ export default function StudioApp() {
     return null;
   }, [clientLedger, activeClientId, activeFnIdx]);
 
-  const collectAllFunctionData = useCallback(() => {
+  // Every function's data, built once per change of its inputs: dozens of calls per render (every price, floral and stock
+  // check) used to each build the whole list afresh. Callers only read it - the same objects are handed to each.
+  const allFunctionData = useMemo(() => {
     const all = [];
     const totalFns = 1 + (extraFunctions || []).length;
     for (let idx = 0; idx < totalFns; idx++) {
@@ -5607,6 +5645,7 @@ export default function StudioApp() {
     }
     return all;
   }, [fn, clientDate, venue, clientShift, clientPax, clientPalette, clientFlowerPalette, zoneElements, zoneConfig, enabledEls, elSelectedPhoto, itemQty, itemGrades, activeZones, zoneOrder, customZones, elTiers, floralRatio, customGensets, customTripRate, elNotes, floralOverrides, extraFunctions, fnBuilds, activeFnIdx]);
+  const collectAllFunctionData = useCallback(() => allFunctionData, [allFunctionData]);
   // Layout, same reasoning as snapshotFnRef / saveSessionRef — read from synchronous paths.
   useLayoutEffect(() => { collectAllFunctionDataRef.current = collectAllFunctionData; });
 
@@ -5763,7 +5802,21 @@ export default function StudioApp() {
     return all[activeFnIdx] ? findSiblingFnSubcatOpportunity(all[activeFnIdx], all, imsInventory) : {};
   }, [collectAllFunctionData, activeFnIdx, imsInventory]);
 
+  // One full price run per function per set of inputs: the event total, its fixed-venue discount and Deal Check's rollups
+  // each ask for the same function's grand several times a render. Keyed on the function object (allFunctionData hands
+  // out the same one until something changes) and on the floral costing it used (read through a ref, so a change there
+  // is checked here); the cache is new whenever any other input changes. Callers only read the result.
+  const fnCostCache = useMemo(() => new WeakMap(), [calcElsCostForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, dcCustomItems, structRates, blocksByDate, imsInventory, dealCheckData, studioFloralData, fvCfgForRepeat, venueParents, clientLedger, activeClientId, hideDiscountFromClient, collectAllFunctionData]);
   const calcFunctionCost = useCallback((fnData) => {
+    if (!fnData) return { decor: 0, transport: 0, grand: 0 };
+    const hit = typeof fnData === "object" ? fnCostCache.get(fnData) : null;
+    if (hit && hit.floral === calcFnFloralSourcingCostRef.current) return hit.result;
+    const floralUsed = calcFnFloralSourcingCostRef.current;
+    const result = calcFunctionCostUncached(fnData);
+    if (typeof fnData === "object") fnCostCache.set(fnData, { floral: floralUsed, result });
+    return result;
+  }, [fnCostCache]);
+  const calcFunctionCostUncached = (fnData) => {
     if (!fnData) return { decor: 0, transport: 0, grand: 0 };
     const fZoneElements = fnData.zoneElements || {};
     const fZoneConfig = fnData.zoneConfig || {};
@@ -5908,7 +5961,7 @@ export default function StudioApp() {
       transport = truckTotal + gensetCost;
     }
     return { decor, transport, grand: decor + transport };
-  }, [calcElsCostForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, dcCustomItems, structRates, blocksByDate, imsInventory, dealCheckData, studioFloralData, fvCfgForRepeat, venueParents, clientLedger, activeClientId, hideDiscountFromClient, collectAllFunctionData]);
+  };
 
   // ═══ Shared floral cost engine (src/lib/studio/floralCost.js) ═══
   // Used to be ~320 lines here AND a near-identical ~400 lines in DCFloralsTab.jsx's own Florals
@@ -5940,16 +5993,25 @@ export default function StudioApp() {
       artGreenBunchesPerKg: Number(sharedFloralSettings.artificialGreenBunchesPerKg ?? 23) || 23,
       resolveRcRate,
   }), [sharedFloralSettings, rcItems, floralRatio, resolveRcRate, rcFloralModeByKey, dcFloralColorPrefs, imsInventory, dcInventoryCache]);
+  // One floral costing per function per set of inputs: the event total, transport, every function's cost and breakdown
+  // and Deal Check all ask for the same function's figures, several times a render. Keyed on the function object (the
+  // memoized allFunctionData hands out the same one until something changes); the cache is new whenever any input of
+  // the costing changes, so it can never hand back an old figure. Callers only read the result.
+  const floralCostCache = useMemo(() => new WeakMap(), [dealCheckData, studioFloralData, floralOptsFor, collectAllFunctionData]);
   const calcFnFloralSourcingCost = useCallback((fn) => {
+    const cacheable = fn && typeof fn === "object";
+    if (cacheable && floralCostCache.has(fn)) return floralCostCache.get(fn);
     const result = computeFnFloralCost(fn, collectAllFunctionData(), floralOptsFor(fn));
     const breakdown = buildMandiBreakdown(result.flowerAgg);
     const tReal = result.fixedExtras + breakdown.reduce((s, f) => s + (f.cost || 0), 0);
-    return {
+    const out = {
       totalReal: tReal, totalArtificial: result.totalArtificial, grandTotal: tReal + result.totalArtificial,
       breakdown, artFlowerBunches: result.artFlowerBunches, artGreenBunches: result.artGreenBunches,
       income: result.income,
     };
-  }, [dealCheckData, studioFloralData, floralOptsFor, collectAllFunctionData]);
+    if (cacheable) floralCostCache.set(fn, out);
+    return out;
+  }, [dealCheckData, studioFloralData, floralOptsFor, collectAllFunctionData, floralCostCache]);
   // What Deal Check's Florals tab shows for one function, as plain figures (no formulas to re-run): the header, the
   // mandi list with each flower's contributors, artificial bunches, direct-from-inventory pieces, elements not
   // costed as florals, and the per-element table. Pushed to IMS with the department snapshot so Dept Ops can show
@@ -6278,14 +6340,17 @@ export default function StudioApp() {
 
   const eventGrandTotal = useMemo(() => {
     const all = collectAllFunctionData();
-    const base = all.reduce((sum, fnData) => sum + calcFunctionCost(fnData).grand, 0);
+    // Each function priced once: the fixed-venue discount below asks for the same grands again, and every
+    // calcFunctionCost is a full price run of that function.
+    const grandOf = new Map(all.map((fnData) => [fnData, calcFunctionCost(fnData).grand]));
+    const base = all.reduce((sum, fnData) => sum + grandOf.get(fnData), 0);
     // Fixed-venue discount — % off a function's own share of the deal when its venue is a Fixed
     // Venue configured with one (Admin → Settings → Fixed Venues), applied before the agency fee.
     // Falls back to studioFloralData/local venueParents (both load on mount, no Deal Check needed)
     // before dealCheckData exists — see refreshStudioFloralData's agencyFeePct comment for why this
     // matters: without the fallback, this total was visibly wrong until Deal Check was first opened.
     const fvCfg = { fixedVenues: sharedFloralSettings.fixedVenues, venueParents: venueParents || dealCheckData?.venueParents || {} };
-    const discounted = Math.max(0, base - fixedVenueDealDiscount(fvCfg, all, (fn) => calcFunctionCost(fn).grand, base));
+    const discounted = Math.max(0, base - fixedVenueDealDiscount(fvCfg, all, (fn) => grandOf.get(fn) ?? calcFunctionCost(fn).grand, base));
     // Agency fee — flat % of the (post-discount) deal, billed to the guest on top of everything else
     // (Admin → Settings, default 25%). This is the number booking confirmation, Summary's hero,
     // and the negotiated-amount placeholder all read, so the fee has to sit inside it, not beside it.
@@ -10874,13 +10939,25 @@ export default function StudioApp() {
   // blocks, cached per date. free = owned − blocked (getStudioAvailable). Lets the Build modal show live
   // availability without opening Deal Check.
   const availCacheRef = useRef({});
+  // The same date asked for again while its fetch is still out (the active-date and all-dates warm-ups below both ask
+  // on a client open) shares that fetch. availGenRef: a result that lands after a `blocks` change cleared the cache is
+  // handed back but not cached, so the next ask fetches fresh.
+  const availInflightRef = useRef({});
+  const availGenRef = useRef(0);
   const loadAvailability = useCallback(async (date) => {
     if (!date) return { inventory: [], blocksForDate: {} };
     if (availCacheRef.current[date]) return availCacheRef.current[date];
-    const res = await fetchIMSData(date);
-    const val = (res && Array.isArray(res.inventory)) ? res : { inventory: [], blocksForDate: {} };
-    availCacheRef.current[date] = val;
-    return val;
+    const gen = availGenRef.current;
+    const inflight = availInflightRef.current[date];
+    if (inflight && inflight.gen === gen) return inflight.promise;
+    const promise = fetchIMSData(date).then((res) => {
+      const val = (res && Array.isArray(res.inventory)) ? res : { inventory: [], blocksForDate: {} };
+      if (availGenRef.current === gen) availCacheRef.current[date] = val;
+      if (availInflightRef.current[date]?.promise === promise) delete availInflightRef.current[date];
+      return val;
+    });
+    availInflightRef.current[date] = { gen, promise };
+    return promise;
   }, []);
 
   // Cache was never invalidated once a date's blocksForDate had been fetched — so once an item's
@@ -10892,11 +10969,17 @@ export default function StudioApp() {
   // depend on, so every date in play gets a fresh fetch as soon as a reservation actually changes.
   const [blocksVersion, setBlocksVersion] = useState(0);
   useEffect(() => {
+    // A Sold / reconcile writes many `blocks` rows at once, one realtime event each: the caches are dropped at the first
+    // one (nothing stale is ever served), but the refetch waits for the burst to settle, so it runs once, not per row.
+    let timer = null;
     const ch = subscribeTable("blocks", () => {
       availCacheRef.current = {};
-      setBlocksVersion((v) => v + 1);
+      availGenRef.current += 1;
+      invalidateRawIMS();
+      clearTimeout(timer);
+      timer = setTimeout(() => setBlocksVersion((v) => v + 1), 400);
     });
-    return () => { try { supabase.removeChannel(ch); } catch { /* ignore */ } };
+    return () => { clearTimeout(timer); try { supabase.removeChannel(ch); } catch { /* ignore */ } };
   }, []);
 
   // Warms activeBlocksForDate whenever the active function's date changes, so Build view's
@@ -10913,16 +10996,19 @@ export default function StudioApp() {
   // Same warm-up, for every function's date — not just the active one. loadAvailability already
   // caches per date (availCacheRef), so re-fetching a date already warmed by the effect above (or by
   // a previous run of this one) is free. Runs whenever the set of dates in play changes: function 0's
-  // date (clientDate) or any extra function's date.
+  // date (clientDate) or any extra function's date. Keyed on the dates themselves, not the extraFunctions array: any edit
+  // to another function (its palette, pax, a zone) made a new array, which re-set blocksByDate to fresh objects and so
+  // re-ran every price that reads it, for the same dates.
+  const fnDatesKey = [...new Set([clientDate, ...(extraFunctions || []).map(f => f?.date)].filter(Boolean))].join("|");
   useEffect(() => {
-    const dates = [...new Set([clientDate, ...(extraFunctions || []).map(f => f?.date)].filter(Boolean))];
+    const dates = fnDatesKey ? fnDatesKey.split("|") : [];
     if (!dates.length) return;
     let cancelled = false;
     Promise.all(dates.map((d) => loadAvailability(d).then(({ blocksForDate, blocksDetailForDate }) => [d, blocksForDate || {}, blocksDetailForDate || {}])))
       .then((rows) => { if (!cancelled) { setBlocksByDate(Object.fromEntries(rows.map(([d, b]) => [d, b]))); setBlocksDetailByDate(Object.fromEntries(rows.map(([d, , det]) => [d, det]))); } })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [clientDate, extraFunctions, loadAvailability, blocksVersion]);
+  }, [fnDatesKey, loadAvailability, blocksVersion]);
 
   // ═══ AVAILABILITY PICKER ═══ Moved here from StudioBuild.jsx so it's reachable from any view
   // (the Add Production/Buying Item modal lives in StudioModals.jsx, a sibling of Build) instead of
@@ -11539,6 +11625,7 @@ export default function StudioApp() {
     // after that shows "No IMS match". A real draft always has cards, so empty = mid-load → skip.
     if (!dcCards || Object.keys(dcCards).length === 0) return;
     const doSave = (saveOpts = {}) => {
+      dcAutosavePendingRef.current = false;
       // Read through the layout-effect-mirrored ref, NOT this closure's own dcCards/etc — see
       // dcStateRef above for why a stale closure here would otherwise re-flush pre-swap state.
       const dcs = dcStateRef.current;
@@ -11597,6 +11684,7 @@ export default function StudioApp() {
       }
     };
     flushDcAutosaveRef.current = doSave;
+    dcAutosavePendingRef.current = true;
     const t = setTimeout(doSave, 2500);
     // Same reasoning as Build's own autosave (see its pagehide/beforeunload handlers): a real tab
     // close/refresh can tear the page down before a normal request finishes, so the draft this
@@ -11607,16 +11695,25 @@ export default function StudioApp() {
     document.addEventListener("visibilitychange", onVisChange);
     window.addEventListener("pagehide", onHideOrUnload);
     window.addEventListener("beforeunload", onHideOrUnload);
-    // Unmount (Studio↔IMS route switch, or leaving this client) used to just clearTimeout the
-    // pending tick and drop it — unlike Build's own autosave, which flushes on unmount for exactly
-    // this reason. A Deal Check draft edited less than 2.5s before navigating away was silently lost.
+    // A dependency change only restarts the 2.5s timer - the next run schedules the newer state. This cleanup used to
+    // also save on EVERY change (React runs it before each re-run, not only on unmount), so each edit wrote the whole
+    // draft straight away and again 2.5s later: the debounce did nothing. Leaving the client / unmounting still saves
+    // what is pending - the effect below.
     return () => {
-      clearTimeout(t); doSave(); flushDcAutosaveRef.current = null;
+      clearTimeout(t);
       document.removeEventListener("visibilitychange", onVisChange);
       window.removeEventListener("pagehide", onHideOrUnload);
       window.removeEventListener("beforeunload", onHideOrUnload);
     };
   }, [activeClientId, dcRun, dcGenerating, dcResolved, dcCards, dcZoneState, dcPhotoOverrides, dcSkipped, dcManualItems, dcDedupOverrides, dcProductionAccepted, dcArtFlowerAlloc, dcArtFlowerAllocSrc, dcFloralColorPrefs, dcCustomItems, dcKitEdits, dcCarpetPick, dcCarpetSplit, dcMpOverrides, dcMpWinCount, dcMpIncludeMinusOne, dcMpIncludeDismantle, authUser, saveClientLedger]);
+
+  // Leaving this client, closing Deal Check's run, or unmounting (Studio↔IMS route switch): save what is still waiting
+  // on the autosave timer above - an edit made less than 2.5s before leaving was otherwise lost. Declared after the
+  // autosave effect, so its cleanup has already cleared the timer when this one flushes.
+  useEffect(() => () => {
+    if (dcAutosavePendingRef.current) flushDcAutosaveRef.current?.();
+    flushDcAutosaveRef.current = null;
+  }, [activeClientId, dcRun]);
 
   // ═══ SOLD-DEAL INCREMENTAL INVENTORY RESERVATION ═══
   // Owner decision: a change to a SOLD deal's matched inventory reserves immediately — no

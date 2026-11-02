@@ -52,30 +52,48 @@ export function qtyUsedElsewhereInBuild(invId, fns, imsInventory, exclude = {}, 
   return used;
 }
 
-// Every row of the booking (on targetDate) that draws on invId — its own qty, or via a kit's component.
-function itemRowsFor(invId, fns, imsInventory, targetDate) {
-  const rows = [];
-  (fns || []).forEach((fn, fnIdx) => {
+// Every row of the booking (on targetDate) that draws on each inventory id — its own qty, or via a kit's component —
+// as one index: invId → [{ fnIdx, zk, elIdx, qty }], rows in booking order. Build asks this for every element card on
+// every render, and walking the whole booking (with an inventory search per element) each time was the main cost of a
+// keystroke; the index is built once per (function list, inventory, date) and reused while those are the same objects.
+const rowIndexCache = new WeakMap(); // fns → Map<imsInventory, Map<date, Map<invId, rows>>>
+function bookingRowIndex(fns, imsInventory, targetDate) {
+  const key = fns || [];
+  let byInv = rowIndexCache.get(key);
+  if (!byInv) { byInv = new Map(); rowIndexCache.set(key, byInv); }
+  let byDate = byInv.get(imsInventory);
+  if (!byDate) { byDate = new Map(); byInv.set(imsInventory, byDate); }
+  const dk = targetDate || "";
+  if (byDate.has(dk)) return byDate.get(dk);
+  const invById = new Map((imsInventory || []).map((i) => [i.id, i]));
+  const index = new Map();
+  key.forEach((fn, fnIdx) => {
     if (targetDate && (fn?.fnDate || "") !== targetDate) return;
     Object.entries(fn?.zoneElements || {}).forEach(([zk, elems]) => {
       if (zoneIsOff(fn, zk)) return;
       (elems || []).forEach((el, elIdx) => {
         if (!el?.invId) return;
         const elQty = Number(el.qty) || 0;
-        let qty = 0;
-        if (elQty > 0) {
-          // walkKitUnits recurses through a nested kit-inside-a-kit — see qtyUsedElsewhereInBuild's
-          // own comment for why the old one-level component scan could miss a component two levels
-          // down.
-          const topItem = (imsInventory || []).find((i) => i.id === el.invId);
-          if (!topItem) { if (el.invId === invId) qty = elQty; }
-          else walkKitUnits(topItem, elQty, imsInventory, el.kitOverrides, (node, nodeQty) => { if (node?.id === invId) qty += nodeQty; });
-        }
-        if (qty > 0) rows.push({ fnIdx, zk, elIdx, qty });
+        if (elQty <= 0) return;
+        // walkKitUnits recurses through a nested kit-inside-a-kit — see qtyUsedElsewhereInBuild's own comment for why
+        // the old one-level component scan could miss a component two levels down.
+        const perId = new Map();
+        const topItem = invById.get(el.invId);
+        if (!topItem) perId.set(el.invId, elQty);
+        else walkKitUnits(topItem, elQty, imsInventory, el.kitOverrides, (node, nodeQty) => { if (node?.id != null) perId.set(node.id, (perId.get(node.id) || 0) + nodeQty); });
+        perId.forEach((qty, id) => {
+          if (!(qty > 0)) return;
+          if (!index.has(id)) index.set(id, []);
+          index.get(id).push({ fnIdx, zk, elIdx, qty });
+        });
       });
     });
   });
-  return rows;
+  byDate.set(dk, index);
+  return index;
+}
+function itemRowsFor(invId, fns, imsInventory, targetDate) {
+  return (bookingRowIndex(fns, imsInventory, targetDate).get(invId) || []).map((r) => ({ ...r }));
 }
 
 // Build: full scarce-stock allocation for ONE item across the WHOLE booking (same date) — every
