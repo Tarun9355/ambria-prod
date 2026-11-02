@@ -321,8 +321,15 @@ export function sessionToRows(clientId, s) {
       is_active_fn: !!isActive,
       has_data: built,
       fn_label: s.fn || null,
-      event_date: s.eventDate || null,
-      venue: s.venue || null,
+      // b.fnDate/b.fnVenue — THIS function's own date/venue, stamped onto its snapshot at save time
+      // (StudioApp.jsx's saveSession) — preferred over the session-level eventDate/venue, which is
+      // only ever Function 1's/whichever function was active when Save fired, and stamping it onto
+      // EVERY function's row is exactly the bug this closes (confirmed live, 2026-11-02 — see
+      // saveSession's own comment). Falls back to the session-level fields for any save taken before
+      // this existed, so an old session's rows don't go from "wrong for every function but 1" to
+      // "blank for every function but 1".
+      event_date: b?.fnDate || s.eventDate || null,
+      venue: b?.fnVenue || s.venue || null,
       source_video_id: b?.sourceVideo?.id || b?.sourceVideoId || null,
       source_video_title: b?.sourceVideo?.title || b?.sourceVideoTitle || null,
       source_event_id: b?.sourceEvent?.id || b?.sourceEventId || null,

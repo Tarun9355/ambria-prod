@@ -7982,6 +7982,17 @@ export default function StudioApp() {
             elSelectedPhoto: Object.fromEntries(Object.entries(snap.elSelectedPhoto).map(([ek, v]) => [ek, { src: v?.src, eventName: v?.eventName, isLibrary: v?.isLibrary, eventId: v?.eventId }]))
           };
         }
+        // fnDate/fnVenue — THIS function's own date/venue, not whichever one was on screen when Save
+        // fired. sessionToRows (lib/studio/sessionData.js) used to stamp every function's studio_sessions
+        // row with the session-level eventDate/venue (Function 1's/the active function's own), because
+        // snapshotBuildState() never carried date/venue at all — only total/tier had been fixed to read
+        // per-function (fnTotals) after the same historical bug (migration 026's own header: "ONE total
+        // for a MULTI-FUNCTION deal... written from whichever function happened to be on screen").
+        // Confirmed live, 2026-11-02 (Sangeeta): Wedding (fn_idx 2, genuinely 2026-10-05) got saved with
+        // event_date 2026-11-04 — Haldi/Sangeet's date, whichever of the two was the active tab —
+        // because all three functions were saved in the same batch. That wrong date then pooled
+        // Wedding's own stock needs into Haldi/Sangeet's same-day availability check.
+        snap = { ...snap, fnDate: (i === 0 ? clientDate : extraFunctions[i - 1]?.date) || "", fnVenue: (i === 0 ? venue : extraFunctions[i - 1]?.venue) || "" };
         fnSnapshots[i] = snap;
       }
     }
@@ -11877,7 +11888,17 @@ export default function StudioApp() {
         if (row) {
           const existingItems = Array.isArray(row.data?.items) ? row.data.items : [];
           const kept = existingItems.filter((it) => !ids.includes(it.invId));
-          supabase.from("functions").update({ data: { ...row.data, items: [...kept, ...nextItems] } }).eq("id", row.id)
+          // venue/shift/pax resync — this row's own venue object used to be written ONCE, whenever
+          // the row was first created, and never touched again: editing the venue in Event Info
+          // afterward updated event_orders (and the `blocks` table's own event lookups, which read
+          // the venue live off event_orders) but had no path back to this row at all. Confirmed live,
+          // 2026-11-02 (Sangeeta): renamed a venue twice in Event Info, `functions.data.venue` still
+          // showed the very first name ever typed. Preserves the object's own `type`/`fullAddress`
+          // (Event Info only ever supplies a plain name string, never those) when there's one to
+          // preserve; a row with no venue object yet defaults to "outdoor" (matching the backfill
+          // branch below, and every other place in this app an untyped venue defaults the same way).
+          const prevVenueObj = (row.data?.venue && typeof row.data.venue === "object") ? row.data.venue : { type: "outdoor", fullAddress: "" };
+          supabase.from("functions").update({ data: { ...row.data, items: [...kept, ...nextItems], venue: { ...prevVenueObj, name: fn.fnVenue || "" }, shift: fn.fnShift || row.data?.shift || "", pax: fn.fnPax || row.data?.pax || "" } }).eq("id", row.id)
             .then(({ error }) => { if (error) console.error("[reconcile] functions.items sync failed for fn", row.id, ":", error.message); else console.info("[reconcile] synced functions.items for fn", row.id, "date", date); });
           continue;
         }
@@ -11892,10 +11913,10 @@ export default function StudioApp() {
         const fnId = `fn_bck_${eo.id}_${date}`;
         const fnData = {
           id: fnId, projectId: p.id, name: fn.fnType || "Function", type: fn.fnType || "Function", date,
-          budget: 0, venue: { type: "outdoor", name: "", fullAddress: "" }, items: nextItems, flowerOrders: [],
+          budget: 0, venue: { type: "outdoor", name: fn.fnVenue || "", fullAddress: "" }, items: nextItems, flowerOrders: [],
           floralRatio: 70, manpower: [], manpowerPhases: [{ phase: "event", date, crew: [], status: "planned" }],
           expenses: [], transport: { planned: [], actual: [] }, breakage: { provision: [], actual: [] },
-          status: "Confirmed", adminApproval: null, eventOrderId: eo.id, shift: "", pax: "",
+          status: "Confirmed", adminApproval: null, eventOrderId: eo.id, shift: fn.fnShift || "", pax: fn.fnPax || "",
           brideGroom: eo.brideGroom || "", salesperson: eo.salesperson || "",
         };
         // Recorded before the upsert resolves — a second function of THIS deal on the same date,
