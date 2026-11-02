@@ -24,11 +24,19 @@ const zoneIsOff = (fn, zk) => {
 // exclude = { fnIdx, zoneKey, elIdx? } — omit elIdx to exclude the WHOLE zone (top-level
 // "+Add element" boxes, since a zone's own rows are never "elsewhere"); supply elIdx to
 // exclude only that one row (kit-component search — sibling rows in the same zone still count).
-export function qtyUsedElsewhereInBuild(invId, fns, imsInventory, exclude = {}, targetDate) {
+// targetVenue (optional) further scopes to functions at the SAME venue — two functions sharing a
+// date but at genuinely different venues (Haldi at Roseate House Aerocity, Sangeet at a different
+// venue entirely, same day) cannot physically share the same installed pieces, so without this they
+// wrongly competed for one pool anyway, same as two unrelated clients' deals would. Confirmed live,
+// 2026-11-02 (Sangeeta): a second same-day function at a different venue showed Ratten Chair almost
+// entirely out of stock even though nothing else in the whole system was holding it. Omitted (the
+// default) keeps every existing caller's exact old behavior — date-only scoping, as before.
+export function qtyUsedElsewhereInBuild(invId, fns, imsInventory, exclude = {}, targetDate, targetVenue) {
   if (!invId) return 0;
   let used = 0;
   (fns || []).forEach((fn, fnIdx) => {
     if (targetDate && (fn?.fnDate || "") !== targetDate) return;
+    if (targetVenue && (fn?.fnVenue || "") !== targetVenue) return;
     Object.entries(fn?.zoneElements || {}).forEach(([zk, elems]) => {
       if (zoneIsOff(fn, zk)) return;
       (elems || []).forEach((el, elIdx) => {
@@ -52,23 +60,29 @@ export function qtyUsedElsewhereInBuild(invId, fns, imsInventory, exclude = {}, 
   return used;
 }
 
-// Every row of the booking (on targetDate) that draws on each inventory id — its own qty, or via a kit's component —
-// as one index: invId → [{ fnIdx, zk, elIdx, qty }], rows in booking order. Build asks this for every element card on
-// every render, and walking the whole booking (with an inventory search per element) each time was the main cost of a
-// keystroke; the index is built once per (function list, inventory, date) and reused while those are the same objects.
-const rowIndexCache = new WeakMap(); // fns → Map<imsInventory, Map<date, Map<invId, rows>>>
-function bookingRowIndex(fns, imsInventory, targetDate) {
+// Every row of the booking (on targetDate, and targetVenue when given — see qtyUsedElsewhereInBuild's
+// own comment) that draws on each inventory id — its own qty, or via a kit's component — as one
+// index: invId → [{ fnIdx, zk, elIdx, qty }], rows in booking order. Build asks this for every
+// element card on every render, and walking the whole booking (with an inventory search per element)
+// each time was the main cost of a keystroke; the index is built once per (function list, inventory,
+// date, venue) and reused while those are the same objects.
+const rowIndexCache = new WeakMap(); // fns → Map<imsInventory, Map<date, Map<venue, Map<invId, rows>>>>
+function bookingRowIndex(fns, imsInventory, targetDate, targetVenue) {
   const key = fns || [];
   let byInv = rowIndexCache.get(key);
   if (!byInv) { byInv = new Map(); rowIndexCache.set(key, byInv); }
   let byDate = byInv.get(imsInventory);
   if (!byDate) { byDate = new Map(); byInv.set(imsInventory, byDate); }
   const dk = targetDate || "";
-  if (byDate.has(dk)) return byDate.get(dk);
+  let byVenue = byDate.get(dk);
+  if (!byVenue) { byVenue = new Map(); byDate.set(dk, byVenue); }
+  const vk = targetVenue || "";
+  if (byVenue.has(vk)) return byVenue.get(vk);
   const invById = new Map((imsInventory || []).map((i) => [i.id, i]));
   const index = new Map();
   key.forEach((fn, fnIdx) => {
     if (targetDate && (fn?.fnDate || "") !== targetDate) return;
+    if (targetVenue && (fn?.fnVenue || "") !== targetVenue) return;
     Object.entries(fn?.zoneElements || {}).forEach(([zk, elems]) => {
       if (zoneIsOff(fn, zk)) return;
       (elems || []).forEach((el, elIdx) => {
@@ -89,11 +103,11 @@ function bookingRowIndex(fns, imsInventory, targetDate) {
       });
     });
   });
-  byDate.set(dk, index);
+  byVenue.set(vk, index);
   return index;
 }
-function itemRowsFor(invId, fns, imsInventory, targetDate) {
-  return (bookingRowIndex(fns, imsInventory, targetDate).get(invId) || []).map((r) => ({ ...r }));
+function itemRowsFor(invId, fns, imsInventory, targetDate, targetVenue) {
+  return (bookingRowIndex(fns, imsInventory, targetDate, targetVenue).get(invId) || []).map((r) => ({ ...r }));
 }
 
 // Build: full scarce-stock allocation for ONE item across the WHOLE booking (same date) — every
@@ -105,10 +119,13 @@ function itemRowsFor(invId, fns, imsInventory, targetDate) {
 // looked short there AND made a completely separate 1-unit zone look short again, when only one
 // unit total was ever actually missing). Returns the allocation for the ONE row identified by
 // target = { fnIdx, zoneKey, elIdx } (a specific row, not a whole-zone exclusion — this is only
-// ever called from getElPriceFromInventory's own per-row shortfall pricing).
-export function allocateRowAvailability(invId, fns, imsInventory, target, targetDate, otherEventsAvail) {
+// ever called from getElPriceFromInventory's own per-row shortfall pricing). targetVenue (optional,
+// trailing so every existing caller/test keeps its exact old date-only behavior) — see
+// qtyUsedElsewhereInBuild's own comment for why two same-day functions at different venues must not
+// share one pool.
+export function allocateRowAvailability(invId, fns, imsInventory, target, targetDate, otherEventsAvail, targetVenue) {
   if (!invId) return { ownedQty: 0, shortQty: 0 };
-  const rows = itemRowsFor(invId, fns, imsInventory, targetDate);
+  const rows = itemRowsFor(invId, fns, imsInventory, targetDate, targetVenue);
   // Array.prototype.sort is stable (spec-guaranteed) — ties keep their original relative order, so
   // the result doesn't reshuffle between renders just because two rows happen to match on qty.
   rows.sort((a, b) => a.qty - b.qty);
@@ -128,11 +145,12 @@ export function allocateRowAvailability(invId, fns, imsInventory, target, target
 // of the booking that draws on the same item: the pool left once every other row has its own quantity.
 // (allocateRowAvailability serves the smallest rows first, so a bigger quantity here would quietly push a
 // sibling row into shortage instead — that is the one thing this cap exists to prevent.) Used to stop a
-// quantity being typed or stepped past what an item that can't be produced can supply.
-export function maxQtyForRow(invId, fns, imsInventory, target, targetDate, otherEventsAvail) {
+// quantity being typed or stepped past what an item that can't be produced can supply. targetVenue —
+// see allocateRowAvailability's own comment.
+export function maxQtyForRow(invId, fns, imsInventory, target, targetDate, otherEventsAvail, targetVenue) {
   const pool = Math.max(0, Math.floor(Number(otherEventsAvail) || 0));
   if (!invId) return pool;
-  const othersQty = itemRowsFor(invId, fns, imsInventory, targetDate)
+  const othersQty = itemRowsFor(invId, fns, imsInventory, targetDate, targetVenue)
     .filter((r) => !(r.fnIdx === target.fnIdx && r.zk === target.zoneKey && r.elIdx === target.elIdx))
     .reduce((s, r) => s + r.qty, 0);
   return Math.max(0, pool - othersQty);
@@ -216,7 +234,7 @@ export function qtyUsedElsewhereInDealCheck(imsId, fns, dcCards, dcManualItems, 
 // row is judged alone. Returns [{ id, name, need, short }] for the short parts only.
 // reusePool (optional, a mutable Map<invId, qty> from fnUnitQty of the deal's same-day / previous-day function at the venue): parts
 // already standing there are not short - drawn down so two kits can't claim the same reused pieces.
-export function kitPartShortfalls(kitItem, elQty, kitOverrides, fns, imsInventory, target, targetDate, availFor, reusePool) {
+export function kitPartShortfalls(kitItem, elQty, kitOverrides, fns, imsInventory, target, targetDate, availFor, reusePool, targetVenue) {
   if (!kitItem || !(Number(elQty) > 0) || typeof availFor !== "function") return [];
   const need = new Map();
   walkKitUnits(kitItem, Number(elQty), imsInventory, kitOverrides, (node, nodeQty) => {
@@ -229,7 +247,7 @@ export function kitPartShortfalls(kitItem, elQty, kitOverrides, fns, imsInventor
   need.forEach(({ item, qty }, id) => {
     const avail = Math.max(0, Number(availFor(item)) || 0);
     let short = target
-      ? allocateRowAvailability(id, fns, imsInventory, target, targetDate, avail).shortQty
+      ? allocateRowAvailability(id, fns, imsInventory, target, targetDate, avail, targetVenue).shortQty
       : Math.max(0, qty - avail);
     if (short > 0 && reusePool) { const take = Math.min(short, reusePool.get(id) || 0); if (take > 0) { reusePool.set(id, (reusePool.get(id) || 0) - take); short -= take; } }
     if (short > 0) out.push({ id, name: item.name || id, need: qty, short: Math.round(short * 100) / 100 });

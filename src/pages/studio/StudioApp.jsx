@@ -4811,8 +4811,13 @@ export default function StudioApp() {
         const _fnsForAlloc = collectAllFunctionDataRef.current ? collectAllFunctionDataRef.current() : [];
         const _rowTarget = { fnIdx, zoneKey: opts.zoneKey, elIdx: opts.elIdx };
         const _allocDate = opts?.fnDate || activeFnMeta?.date || clientDate;
-        const alloc = allocateRowAvailability(item.id, _fnsForAlloc, imsInventory, _rowTarget, _allocDate, otherEventsAvail);
-        rowMaxQty = maxQtyForRow(item.id, _fnsForAlloc, imsInventory, _rowTarget, _allocDate, otherEventsAvail);
+        // opts.venueName (this row's own function's venue) — two functions sharing a date but at
+        // genuinely different venues cannot share the same installed stock (see
+        // qtyUsedElsewhereInBuild's own comment, lib/studio/dealAvailability.js); without this, a
+        // second same-day function at a different venue competed for the SAME pool as the first,
+        // exactly as if it were a completely different client's deal on that date.
+        const alloc = allocateRowAvailability(item.id, _fnsForAlloc, imsInventory, _rowTarget, _allocDate, otherEventsAvail, opts?.venueName);
+        rowMaxQty = maxQtyForRow(item.id, _fnsForAlloc, imsInventory, _rowTarget, _allocDate, otherEventsAvail, opts?.venueName);
         ownedQty = alloc.ownedQty; shortQty = alloc.shortQty;
       } else {
         ownedQty = Math.min(qty, otherEventsAvail);
@@ -4897,7 +4902,7 @@ export default function StudioApp() {
     const target = opts.zoneKey != null && opts.elIdx != null ? { fnIdx: opts.fnIdx ?? activeFnIdx, zoneKey: opts.zoneKey, elIdx: opts.elIdx } : null;
     const freeFor = (part) => combineAvailability(Number(part?.qty ?? part?.qtyOwned) || 0,
       getStudioAvailable(part, netOwnReservedBlocksLive(rawBlocks, part.id, detail, [eo?.id, ...ownEventOrderIds(eventOrders, activeClientId, clientName)])), availableAtVenue(fvCfgForRepeat, venueName, part));
-    return kitPartShortfalls(item, Number(el.qty) || 0, el.kitOverrides, fns, imsInventory, target, fnDate, freeFor, opts.reusePool)
+    return kitPartShortfalls(item, Number(el.qty) || 0, el.kitOverrides, fns, imsInventory, target, fnDate, freeFor, opts.reusePool, venueName)
       .map((p) => ({ ...p, canMake: canFulfillShortfall((imsInventory || []).find((i) => i.id === p.id), fnDate, el?.addedAt || undefined) }));
   }, [imsInventory, activeFnMeta, clientDate, activeBlocksForDate, activeBlocksDetailForDate, blocksDetailByDate, eventOrders, activeClientId, clientName, activeFnIdx, fvCfgForRepeat]);
   // Shared SMB/flat rate resolution — the one place `getElPrice`, `getElPriceForFn`, and
@@ -7588,31 +7593,36 @@ export default function StudioApp() {
   // ── Auto-persist custom venue (Event Info) — VERBATIM ──
   const autoPersistCustomVenue = useCallback(() => {
     const name = (clientVenueOther || "").trim();
+    if (!name) return;
+    const lcName = name.toLowerCase();
+    const inInhouse = allInhouseVenues.some(v => v.toLowerCase() === lcName);
+    const inOutside = customOutdoor.some(o => (o.name || "").toLowerCase() === lcName);
+    // ── THE VENUE REGISTERS OFF ITS NAME ALONE ──
+    // This fires onBlur of all three fields (Venue Name, Trip Rate, Gensets) — typing a name, then
+    // tabbing through Trip Rate, used to run this with Gensets still at its untouched default (null)
+    // and hit the single combined guard below (name AND rate>0 AND gensets set), which skipped
+    // EVERYTHING: not just the transport row, but the venue itself — so it never reached Venues
+    // master, never became selectable in this deal's other functions, and nothing was shown to say
+    // why. Confirmed live, 2026-11-02: "Roseate House Aerocity", name + rate filled, Gensets never
+    // touched — saved nothing at all, silently. A venue existing is not conditional on transport
+    // numbers also being known yet (the admin refines those in Transport & Power later anyway, per
+    // the field's own helper text below) — only the TRANSPORT ROW needs rate/gensets to mean
+    // anything, so only that part still waits on them.
+    if (!inInhouse && !inOutside) addOutdoorVenue(name, false);
     const rate = Number(customTripRate) || 0;
     // Event Info's "Gensets needed" field for a brand-new venue only ever sets a 125 KVA count
     // (there's no 62 KVA field here — this is a rough estimate the admin refines properly in
     // Transport & Power afterward) — genset125 directly, genset62 starts at 0, not the old
     // fractional "gensets" scalar.
     const genset125 = customGensets;
-    if (!name || rate <= 0 || genset125 === null || genset125 === undefined || genset125 < 0) return;
-    const lcName = name.toLowerCase();
-    const inInhouse = allInhouseVenues.some(v => v.toLowerCase() === lcName);
-    const inOutside = customOutdoor.some(o => (o.name || "").toLowerCase() === lcName);
-    const inAnyTR = trVenues.some(v => (v.name || "").toLowerCase() === lcName);
-    if (inInhouse || inOutside || inAnyTR) return;
+    if (rate <= 0 || genset125 === null || genset125 === undefined || genset125 < 0) return;
     const existingTR = trVenues.find(v => (v.name || "").toLowerCase() === lcName);
-    let newTR;
-    if (existingTR) {
-      newTR = trVenues.map(v => v.id === existingTR.id ? { ...v, rate, genset125, genset62: 0, name } : v);
-    } else {
-      const id = "V" + Date.now().toString(36).slice(-5).toUpperCase();
-      newTR = [...trVenues, { id, tier: "other", name, rate, genset125, genset62: 0 }];
-    }
-    const existingOut = customOutdoor.find(o => (o.name || "").toLowerCase() === lcName);
+    const newTR = existingTR
+      ? trVenues.map(v => v.id === existingTR.id ? { ...v, rate, genset125, genset62: 0, name } : v)
+      : [...trVenues, { id: "V" + Date.now().toString(36).slice(-5).toUpperCase(), tier: "other", name, rate, genset125, genset62: 0 }];
     saveTR(newTR, null);
-    if (!existingOut) addOutdoorVenue(name, false);
     showMsg(`✓ Saved ${name} (₹${rate}/trip, ${genset125} × 125 KVA genset)`, "green");
-  }, [clientVenueOther, customTripRate, customGensets, trVenues, customOutdoor, customInhouse, allInhouseVenues, saveTR, addOutdoorVenue]);
+  }, [clientVenueOther, customTripRate, customGensets, trVenues, customOutdoor, customInhouse, allInhouseVenues, saveTR, addOutdoorVenue, showMsg]);
 
   // ── Outdoor venue list (DB + events) — VERBATIM ──
   const outdoorVenueList = useMemo(() => {

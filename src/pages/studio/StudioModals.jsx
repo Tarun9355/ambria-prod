@@ -102,7 +102,7 @@ export default function StudioModals({ ctx }) {
     const fns = collectAllFunctionData();
     const zoneKey = zoneUploadReview?.elKey;
     const exclude = elIdx == null ? { fnIdx: activeFnIdx, zoneKey } : { fnIdx: activeFnIdx, zoneKey, elIdx };
-    const usedElsewhere = qtyUsedElsewhereInBuild(itemId, fns, imsInventory, exclude, activeFnMeta?.date || clientDate);
+    const usedElsewhere = qtyUsedElsewhereInBuild(itemId, fns, imsInventory, exclude, activeFnMeta?.date || clientDate, activeFnMeta?.venue);
     if (usedElsewhere <= 0) return null;
     const otherEventsAvail = getStudioAvailable(it, activeBlocksForDate);
     return Math.max(0, otherEventsAvail - usedElsewhere);

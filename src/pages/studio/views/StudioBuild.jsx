@@ -2066,7 +2066,7 @@ export default function StudioBuild({ ctx }) {
     const exclude = elIdx == null ? { fnIdx: activeFnIdx, zoneKey } : { fnIdx: activeFnIdx, zoneKey, elIdx };
     // fnDate — the same value, previously spelled out inline here. This call site already had it
     // right; sharing the one derived constant is what stops the next one getting it wrong.
-    const usedElsewhere = qtyUsedElsewhereInBuild(itemId, fns, imsInventory, exclude, fnDate);
+    const usedElsewhere = qtyUsedElsewhereInBuild(itemId, fns, imsInventory, exclude, fnDate, aVenue);
     if (usedElsewhere <= 0) return null;
     const otherEventsAvail = getStudioAvailable(it, activeBlocksForDate);
     return Math.max(0, otherEventsAvail - usedElsewhere);
@@ -3353,7 +3353,7 @@ undefined
       const fnsNow = collectAllFunctionData ? collectAllFunctionData() : [];
       const inZoneIds = new Set((zoneElements[pk] || []).map((el) => el.invId).filter(Boolean));
       // free = what other events leave on the event date, minus what the rest of this deal already holds
-      const freeFor = (it) => Math.max(0, getStudioAvailable(it, activeBlocksForDate) - qtyUsedElsewhereInBuild(it.id, fnsNow, imsInventory, {}, fnDate));
+      const freeFor = (it) => Math.max(0, getStudioAvailable(it, activeBlocksForDate) - qtyUsedElsewhereInBuild(it.id, fnsNow, imsInventory, {}, fnDate, aVenue));
       // What the zone's other elements are multiplied by: the guest-price level, and the event date's category (King's / Filler …).
       const dp = sharedFloralSettings?.datePricing;
       const dateMult = fnDate && dp ? (Number(getEffectivePricing(1, fnDate, { datePricing: dp }).multiplier) || 1) : 1;
@@ -3389,7 +3389,7 @@ undefined
         subcatMatch={customPicker.kind === "ceiling" ? "ceiling" : "printed wall"}
         rcFactorByKey={rcFactorByKey}
         // free on the event date = what other events leave, minus what the rest of this deal already holds (as the printed-walls picker)
-        freeFor={(() => { const fnsNow = collectAllFunctionData ? collectAllFunctionData() : []; return (it) => Math.max(0, getStudioAvailable(it, activeBlocksForDate) - qtyUsedElsewhereInBuild(it.id, fnsNow, imsInventory, {}, fnDate)); })()}
+        freeFor={(() => { const fnsNow = collectAllFunctionData ? collectAllFunctionData() : []; return (it) => Math.max(0, getStudioAvailable(it, activeBlocksForDate) - qtyUsedElsewhereInBuild(it.id, fnsNow, imsInventory, {}, fnDate, aVenue)); })()}
         // Ceiling only: how many panels, starting at what the row has now (else one per truss). Masking stays one per truss.
         withQty={customPicker.kind === "ceiling"}
         defaultQty={(() => { const z = zoneConfig[customPicker.k] || {}; const r = customPicker.rowIdx == null ? z : (z.extraTrussRows || [])[customPicker.rowIdx] || {}; return Number(r.customCeilingQty) || Math.max(1, Number(r.trussQty) || 1); })()}
