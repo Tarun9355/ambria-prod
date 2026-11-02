@@ -113,6 +113,13 @@ export const PDF_HI = {
   "Floor": "फ़्लोर",
   "Zone": "ज़ोन",
   "Yes": "हाँ",
+
+  // The truss cut-list block (pillars/beams/batta by real stock size)
+  "Truss #{n}": "ट्रस #{n}",
+  "Pillar": "पिलर",
+  "Beam": "बीम",
+  "Batta": "बट्टा",
+  "Truss cut list": "ट्रस कट लिस्ट",
   "Floral mix": "फूलों का मिक्स",
   "Flower palette": "फूलों के रंग",
   "Real {real}% · Artificial {art}%": "असली {real}% · आर्टिफ़िशियल {art}%",

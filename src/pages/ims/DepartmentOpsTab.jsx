@@ -3892,6 +3892,44 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       if (standing > 0) out.push("📌 " + t("Fixed at venue ({n} standing)", { n: standing }));
       return out.join(" · ");
     };
+    // ── TRUSS BREAKDOWN TABLE (pillars/beams/batta by size), on each truss zone's own page ──
+    // Owner ask (2026-11-02): the chip above only says "L 12 × W 26 × H 12 ft" — the crew still has
+    // to go find the on-screen Truss plan (trussPlanOf, above) to know what to actually cut. This
+    // prints that same breakdown directly on the page the crew is holding.
+    // Real resolved stock pieces (resolveBeamSegment/resolvePillarHeight), not the ideal pre-stock
+    // length — same reasoning as DCTrussTab.jsx's own Pillars/Beams tiles and the on-screen Truss
+    // plan card just above (realGroupsOf) — and the SAME dept-head edits that card lets Tenting
+    // make. Read from sel.deptOps.Tenting.trussPlan explicitly, not the generic `deptData` (which
+    // is whatever department's book is CURRENTLY being built — a combined book cycles through every
+    // department in turn, see opts.combined's own comment) — this plan is always Tenting's own, the
+    // same reasoning carpetPlanOf's carpetChoice read above already follows.
+    // Tenting's own book only (owner ask), not Structure's, even though the structure strip above
+    // shows in both.
+    const showTrussTable = combined || dept === "Tenting";
+    const trussTableByZone = new Map(); // "fi|zk" -> [{ label, pillars, beams, battaRft }]
+    if (showTrussTable && trussInv) {
+      const tentingPlan = sel?.deptOps?.Tenting?.trussPlan || {};
+      trussPlanOf().forEach(z => {
+        const { row, pv, fi, zk, ri, key } = z;
+        if (!pv?.topology) return;
+        const ed = tentingPlan[key] || null;
+        const matInv = trussInvForMaterial(trussInv, row.trussMaterial);
+        const realGroupsOf = (arr, resolver) => {
+          const m = {};
+          (arr || []).forEach(x => { (resolver(x, matInv).pieces || []).forEach(pc => { m[pc.size] = (m[pc.size] || 0) + pc.qty; }); });
+          return Object.entries(m).sort((a, b) => Number(b[0]) - Number(a[0])).map(([len, n]) => ({ len: Number(len), n }));
+        };
+        const pillars = Array.isArray(ed?.pillars) ? ed.pillars : realGroupsOf(pv.topology.pillars, (p, inv) => resolvePillarHeight(p.H, inv));
+        const beams = Array.isArray(ed?.beams) ? ed.beams : realGroupsOf(pv.topology.beams, (b, inv) => resolveBeamSegment(b.lengthFt, inv));
+        const bRft = ed?.batta?.rft ?? pv.batta?.rftRequired ?? 0;
+        const bBuf = ed?.batta?.buf ?? pv.batta?.bufferPct ?? 10;
+        const battaRft = ed?.batta ? Math.round((Number(bRft) || 0) * (1 + (Number(bBuf) || 0) / 100)) : (pv.batta?.rftWithBuffer ?? 0);
+        if (!pillars.length && !beams.length && !(battaRft > 0)) return;
+        const zkey = `${fi}|${zk}`;
+        if (!trussTableByZone.has(zkey)) trussTableByZone.set(zkey, []);
+        trussTableByZone.get(zkey).push({ label: ri > 0 ? t("Truss #{n}", { n: ri + 1 }) : "", pillars, beams, battaRft });
+      });
+    }
     fns.forEach((fn, fi) => {
       const els = fn?.elements || {};
       const reuseSrc = reuseSourceOf(fi);
@@ -4147,6 +4185,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           dimsOf: zDimsOf,
           struct: zStruct,
           fabric: fabricByZone.get(`${fi}|${zk}`) || [],
+          trussTable: trussTableByZone.get(`${fi}|${zk}`) || [],
           items,
         });
       });
@@ -4485,6 +4524,18 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         const parts = artLines(list);
         const q = list.reduce((t, a) => t + (Number(a.qty) || 0), 0);
         if (parts.length) blocks.push({ h: detailH(parts), html: detailCard("🌸", list[0].el || t("Arrangement"), q || "", "", parts, t("Artificial")) });
+      });
+      // ── TRUSS CUT LIST (pillars/beams/batta by real stock size) ──
+      // Reuses detailCard/detailH as-is (a "part" is just {name,qty,unit} — Pillar/Beam/Batta fit
+      // that shape fine) rather than inventing a parallel table + its own height math: this page's
+      // per-block chunking already has to fit everything on one sheet, and that logic lives here.
+      (pg.trussTable || []).forEach(tt => {
+        const parts = [
+          ...tt.pillars.map(g => ({ name: t("Pillar"), qty: g.n, unit: `× ${g.len}ft` })),
+          ...tt.beams.map(g => ({ name: t("Beam"), qty: g.n, unit: `× ${g.len}ft` })),
+          ...(tt.battaRft > 0 ? [{ name: t("Batta"), qty: tt.battaRft, unit: "RFT" }] : []),
+        ];
+        if (parts.length) blocks.push({ h: detailH(parts), html: detailCard("🏗️", t("Truss cut list") + (tt.label ? ` · ${tt.label}` : ""), "", "", parts) });
       });
       if (!blocks.length) return [];
       const dChunks = [];

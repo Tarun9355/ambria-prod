@@ -389,6 +389,12 @@ export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, l
                   </div>
                   <div className="flex items-center gap-2">
                     {e.entryNo && <span className="text-xs text-gray-400">#{e.entryNo}</span>}
+                    {/* The event_order's own id, in full — the only thing on this card that can tell
+                        two otherwise-identical duplicate bookings apart (owner report, 2026-11-02: a
+                        client with several duplicate Studio bookings had no way to tell which card on
+                        screen was which one in the database). Small and muted — reference info, not
+                        something ops reads day to day. */}
+                    {e.dept === "studio" && e.eoId && <span className="text-[10px] font-mono text-gray-400" title="event_order id">{e.eoId}</span>}
                     {/* Shown at rest, not on hover. A card that only reveals it is clickable
                         once the cursor is already on it is a card nobody discovers — and on a
                         touch screen there is no hover at all, so it would never appear.
