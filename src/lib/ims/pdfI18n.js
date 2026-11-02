@@ -99,7 +99,6 @@ export const PDF_HI = {
   "Wall Masking": "वॉल मास्किंग",
   "Colour not picked": "रंग नहीं चुना",
   "Repeat": "रिपीट",
-  "Status": "स्थिति",
   "Reused from {fn}": "{fn} से दोबारा इस्तेमाल",
   "the earlier function": "पिछला फंक्शन",
   "Fixed at venue ({n} standing)": "वेन्यू पर फिक्स ({n} खड़े)",
@@ -182,6 +181,22 @@ export const PDF_HI = {
   "bunches": "गुच्छे",
   "Arrangement": "अरेंजमेंट",
 };
+
+// Units the books print after a quantity ("1.5 bundle", "2 Pieces"), in the Hindi the crew uses. Matched case-blind on the unit as stored;
+// a unit not listed prints as it is (owner report 2026-11-02: the Hindi book's quantities still read "bundle" / "piece").
+const UNIT_HI = {
+  piece: "पीस", pieces: "पीस", pc: "पीस", pcs: "पीस", nos: "नग", no: "नग", unit: "नग", units: "नग",
+  bundle: "बंडल", bundles: "बंडल", bunch: "गुच्छा", bunches: "गुच्छे", gaddi: "गड्डी", set: "सेट", sets: "सेट", pair: "जोड़ी", pairs: "जोड़ी",
+  kg: "किलो", kgs: "किलो", g: "ग्राम", gm: "ग्राम", gram: "ग्राम", grams: "ग्राम", litre: "लीटर", liter: "लीटर", l: "लीटर",
+  ft: "फुट", feet: "फुट", rft: "रनिंग फुट", sqft: "वर्ग फुट", "sq ft": "वर्ग फुट", m: "मीटर", metre: "मीटर", meter: "मीटर", mtr: "मीटर",
+  inch: "इंच", inches: "इंच", roll: "रोल", rolls: "रोल", box: "डिब्बा", boxes: "डिब्बे", packet: "पैकेट", packets: "पैकेट", dozen: "दर्जन",
+};
+/** A unit for the book's language: the Hindi word for "hi" when known, else the unit as given. */
+export function pdfUnit(lang, unit) {
+  if (lang !== "hi" || unit == null) return unit;
+  const k = String(unit).trim().toLowerCase();
+  return Object.prototype.hasOwnProperty.call(UNIT_HI, k) ? UNIT_HI[k] : unit;
+}
 
 /** t(str, vars) for a language: the Hindi for "hi" when there is one, else the English as given. */
 export function pdfT(lang) {

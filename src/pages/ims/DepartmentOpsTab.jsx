@@ -36,7 +36,7 @@ import { buildFabricGroups, foldFabricLines } from "../../lib/ims/fabricGroups";
 import { mandiHow } from "../../lib/ims/floralHow";
 import { buildEventSwap, swappedRecipeFlower } from "../../lib/ims/mandiSwap";
 import { realLineTaker } from "../../lib/ims/floralBook";
-import { pdfT, pdfDate, pdfDateTime, hindiReportHtml, HI_FONT_FAMILIES } from "../../lib/ims/pdfI18n";
+import { pdfT, pdfUnit, pdfDate, pdfDateTime, hindiReportHtml, HI_FONT_FAMILIES } from "../../lib/ims/pdfI18n";
 import { loadHindiNames, ensureHindiNames, nameKey, normName, needsHindi } from "../../lib/ims/hindiNames";
 import PdfLangToggle from "./PdfLangToggle";
 import { splitCrewByDept } from "../../lib/ims/crewSplit";
@@ -3419,6 +3419,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       if (nameMiss) nameMiss.add(normName(s));
       return s;
     };
+    // A unit after a quantity ("1.5 bundle") in the book's language - lib/ims/pdfI18n's fixed list, a unit not in it as given.
+    const hu = (u) => pdfUnit(lang, u);
     // A paint line ("Gold ×2, Silver ×1") with each colour through hn().
     const paintHn = (txt) => lang !== "hi" ? txt : String(txt || "").split(", ").map(part => part.replace(/^(.*) ×(\S+)$/, (m, c, q) => `${hn(c)} ×${q}`)).join(", ");
     const bookTitle = combined ? t("All departments") : t(dept);
@@ -3554,7 +3556,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       `<tr><td>${esc(hn(m.name))}</td><td>${esc(m.type === "transfer" ? t("Transfer → {to}", { to: hn(m.toEventName) || t("site") }) : m.type === "damage" ? t("Damaged") : t("Back to production house"))}</td><td class="n">${esc(m.qty)}</td><td>${esc(m.by || "—")}</td></tr>`);
 
     const fabRows = dept === "Fabric" ? fabricReqRows.flatMap(ft => ft.rows.map(r =>
-      `<tr><td>${esc(t(ft.label))} · ${r.colour && r.colour !== "(unassigned)" ? `<span style="display:inline-block;width:9px;height:9px;border-radius:2px;border:1px solid rgba(0,0,0,.18);background:${esc(r.hex)};margin-right:5px;vertical-align:middle"></span>` : ""}${esc(r.colour === "(unassigned)" ? t("(unassigned)") : hn(r.colour))}</td><td class="n">${esc(r.required)} ${esc(ft.unit)}</td><td class="n">${esc(r.avail)} ${esc(ft.unit)}</td><td class="n ${r.short > 0 ? "bad" : "ok"}">${r.short > 0 ? t("short {n}", { n: `${esc(r.short)} ${esc(ft.unit)}` }) : t("ok")}</td></tr>`)) : [];
+      `<tr><td>${esc(t(ft.label))} · ${r.colour && r.colour !== "(unassigned)" ? `<span style="display:inline-block;width:9px;height:9px;border-radius:2px;border:1px solid rgba(0,0,0,.18);background:${esc(r.hex)};margin-right:5px;vertical-align:middle"></span>` : ""}${esc(r.colour === "(unassigned)" ? t("(unassigned)") : hn(r.colour))}</td><td class="n">${esc(r.required)} ${esc(hu(ft.unit))}</td><td class="n">${esc(r.avail)} ${esc(hu(ft.unit))}</td><td class="n ${r.short > 0 ? "bad" : "ok"}">${r.short > 0 ? t("short {n}", { n: `${esc(r.short)} ${esc(hu(ft.unit))}` }) : t("ok")}</td></tr>`)) : [];
 
     // ── ARTIFICIAL FLOWERS & GREENS ── the bunches the Floral book sends out, worked to kilos the way Deal Check does it (bunches ÷ bunches per kg),
     // and the specific colours to pull. Per function when the event has more than one (floralDetail), then the whole event. No rupees: this book is for the crew.
@@ -3844,7 +3846,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
             const cols = (z.colours || []).filter(c => c.colour && c.colour !== "(unassigned)");
             const one = cols.length === 1;
             const html = cols.length
-              ? cols.map(c => `<b class="fpc"><i style="background:${esc(swatchHexFor(c.colour, settings?.colourCatalogue, c.hex))}"></i>${esc(hn(c.colour))}${one ? "" : ` ${esc(c.qty)} ${esc(g.unit)}`}</b>`).join("") + (z.standing ? `<b class="fpc">♻ ${t("Repeat")}</b>` : "")
+              ? cols.map(c => `<b class="fpc"><i style="background:${esc(swatchHexFor(c.colour, settings?.colourCatalogue, c.hex))}"></i>${esc(hn(c.colour))}${one ? "" : ` ${esc(c.qty)} ${esc(hu(g.unit))}`}</b>`).join("") + (z.standing ? `<b class="fpc">♻ ${t("Repeat")}</b>` : "")
               : esc(t("Colour not picked"));
             const key = `${z.fi}|${z.zoneKey}`;
             fabricByZone.set(key, [...(fabricByZone.get(key) || []), { k: t(g.label), html }]);
@@ -4168,7 +4170,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     const trMine = trPlan?.byDept?.[dept] || null;
     // Transport stays a per-department-only section — not in the combined book (owner call).
     const trRows = (trMine?.rows || []).map(r =>
-      `<tr><td><b>${esc(hn(r.label))}</b>${(fns || []).length > 1 && r.fn ? `<div class="sub">${esc(hn(r.fn))}</div>` : ""}</td><td class="n">${esc(r.qty)}${r.unit ? " " + esc(r.unit) : ""}</td><td class="n">${Number(r.perTruck) > 0 ? t("{n} per truck", { n: esc(r.perTruck) + (r.unit ? " " + esc(r.unit) : "") }) : "—"}</td><td class="n b">${Number(r.flat) > 0 ? t("{amount} flat", { amount: "₹" + esc(Math.round(r.flat).toLocaleString("en-IN")) }) : esc(r.trucks)}</td></tr>`);
+      `<tr><td><b>${esc(hn(r.label))}</b>${(fns || []).length > 1 && r.fn ? `<div class="sub">${esc(hn(r.fn))}</div>` : ""}</td><td class="n">${esc(r.qty)}${r.unit ? " " + esc(hu(r.unit)) : ""}</td><td class="n">${Number(r.perTruck) > 0 ? t("{n} per truck", { n: esc(r.perTruck) + (r.unit ? " " + esc(hu(r.unit)) : "") }) : "—"}</td><td class="n b">${Number(r.flat) > 0 ? t("{amount} flat", { amount: "₹" + esc(Math.round(r.flat).toLocaleString("en-IN")) }) : esc(r.trucks)}</td></tr>`);
     const trNote = !trMine ? "" : t("{dept} fills {trucks} of the {n} truck this event needs|{dept} fills {trucks} of the {n} trucks this event needs", { dept: esc(t(dept)), trucks: trMine.trucks, n: trPlan.totalTrucks })
       + `${trPlan.tierLabel ? ` · ${esc(trPlan.tierLabel)}` : ""}. ${t("A truck is counted by capacity, so a part-truck share is normal — the loads travel together.")}`;
 
@@ -4250,7 +4252,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       ${it.size ? `<div class="zc-sz">${esc(it.size)}</div>` : ""}
       <div class="zc-b">
         <div class="zc-n">${esc(it.shown != null ? it.shown : hn(it.name))}</div>
-        <div class="zc-r"><span>${t("Qty")}</span><b>${esc(it.qty)}${it.unit ? ` <span style="font-weight:500;font-size:.85em;opacity:.7">${esc(it.unit)}</span>` : ""}</b></div>
+        <div class="zc-r"><span>${t("Qty")}</span><b>${esc(it.qty)}${it.unit ? ` <span style="font-weight:500;font-size:.85em;opacity:.7">${esc(hu(it.unit))}</span>` : ""}</b></div>
         <div class="zc-r"><span>${t("Size")}</span><b>${esc(it.dims || "—")}</b></div>
         ${it.source ? `<div class="zc-r"><span>${t("From")}</span><b>${esc(it.source)}</b></div>` : it.deptTag ? `<div class="zc-r"><span>${t("Dept")}</span><b>${esc(t(it.deptTag))}</b></div>` : ""}
         ${it.paint?.size ? `<div class="zc-r"><span>${t("Paint")}</span><b>${esc(paintHn(paintText(it.paint)))}</b></div>` : ""}
@@ -4388,9 +4390,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       <div class="kb-h">
         <div class="kb-t"><div class="kb-nm">${icon} ${esc(hn(name))}</div></div>
         ${mix ? `<div class="kb-z kb-q"><div class="kb-zk">${t("Flowers")}</div><div class="kb-zv">${esc(mix)}</div></div>` : ""}
-        ${qty ? `<div class="kb-z kb-q"><div class="kb-zk">${t("Qty")}</div><div class="kb-zv">${esc(qty)}${unit ? " " + esc(unit) : ""}</div></div>` : ""}
+        ${qty ? `<div class="kb-z kb-q"><div class="kb-zk">${t("Qty")}</div><div class="kb-zv">${esc(qty)}${unit ? " " + esc(hu(unit)) : ""}</div></div>` : ""}
       </div>
-      <ul class="kb-l${cols === 1 ? " one" : ""}">${parts.map(p => `<li><i class="kb-x"></i>${p.photo ? `<i class="kb-p" style="${bgCss(p.photo, 40)}" ${bgData(p.photo, 40)}></i>` : ""}<span>${esc(hn(p.name))}${p.tag ? ` <em class="kb-tg">${esc(p.tag)}</em>` : ""}</span><i class="kb-d"></i><b>${esc(p.qty)}${p.unit ? ` ${esc(p.unit)}` : ""}</b></li>`).join("")}</ul>
+      <ul class="kb-l${cols === 1 ? " one" : ""}">${parts.map(p => `<li><i class="kb-x"></i>${p.photo ? `<i class="kb-p" style="${bgCss(p.photo, 40)}" ${bgData(p.photo, 40)}></i>` : ""}<span>${esc(hn(p.name))}${p.tag ? ` <em class="kb-tg">${esc(p.tag)}</em>` : ""}</span><i class="kb-d"></i><b>${esc(p.qty)}${p.unit ? ` ${esc(hu(p.unit))}` : ""}</b></li>`).join("")}</ul>
     </div>`; };
     // One page (or more, if a zone's own recipes+kits don't fit one sheet) per zone, built right
     // after that zone's card pages in the loop below — never bundled with any OTHER zone's.

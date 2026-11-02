@@ -106,8 +106,8 @@ async function askBatch(list) {
 
 /**
  * Fills `map` with the Devanagari of every name in `names` it does not have yet: asked of the AI in batches of 60,
- * the answers saved row by row to `hindi_names` and to this browser's cache. Capped at ~20s; whatever is not back by
- * then (or failed) stays English in the book. Returns the same map.
+ * each batch's answers saved to `hindi_names` and this browser's cache as it arrives. The book waits ~20s; whatever is not back by
+ * then stays English in THAT book but is still saved when it arrives, for the next one. Returns the same map.
  */
 export async function ensureHindiNames(names, map) {
   const want = [];
@@ -119,20 +119,25 @@ export async function ensureHindiNames(names, map) {
     want.push(normName(n));
   });
   if (!want.length) return map;
-  const fresh = {};
+  // Each batch is saved the moment it comes back - also after the ~20s cap, when the book has already gone out in English: only what
+  // arrived in time used to be saved, so a big first Hindi book timed out every export and the names never reached the table (owner
+  // report 2026-11-02: item and flower names printing in English). The next book then finds them.
+  const save = async (pairs) => {
+    if (!Object.keys(pairs).length) return;
+    writeCache(pairs);
+    try {
+      const { supabase } = await import("../supabase");
+      const now = new Date().toISOString();
+      await supabase.from("hindi_names").upsert(Object.entries(pairs).map(([en, hi]) => ({ en, hi, updated_at: now })), { onConflict: "en" });
+    } catch { /* table not created yet: the cache keeps them */ }
+  };
   const work = Promise.all(batches(want).map(async (list) => {
     const got = await askBatch(list);
     const asked = new Set(list.map(nameKey));
-    Object.entries(got).forEach(([k, v]) => { if (asked.has(k)) { map.set(k, v); fresh[k] = v; } });
+    const pairs = {};
+    Object.entries(got).forEach(([k, v]) => { if (asked.has(k)) { map.set(k, v); pairs[k] = v; } });
+    await save(pairs);
   })).catch(() => {});
   await Promise.race([work, new Promise(r => setTimeout(r, TIME_CAP_MS))]);
-  const pairs = { ...fresh };
-  if (!Object.keys(pairs).length) return map;
-  writeCache(pairs);
-  try {
-    const { supabase } = await import("../supabase");
-    const now = new Date().toISOString();
-    await supabase.from("hindi_names").upsert(Object.entries(pairs).map(([en, hi]) => ({ en, hi, updated_at: now })), { onConflict: "en" });
-  } catch { /* table not created yet: the cache keeps them */ }
   return map;
 }
