@@ -3848,10 +3848,12 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           g.zones.forEach(z => {
             if (z.fi == null) return;
             const cols = (z.colours || []).filter(c => c.colour && c.colour !== "(unassigned)");
-            const one = cols.length === 1;
+            // Each colour with its quantity, as Planning's Fabric block shows it (owner ask 2026-11-02: one colour used to print with no
+            // quantity, so the crew could not tell how much Liza / Velvet the zone takes); no colour picked yet: the zone's own quantity.
+            const qtyTxt = (q) => Number(q) > 0 ? ` ${esc(q)} ${esc(hu(g.unit))}` : "";
             const html = cols.length
-              ? cols.map(c => `<b class="fpc"><i style="background:${esc(swatchHexFor(c.colour, settings?.colourCatalogue, c.hex))}"></i>${esc(hn(c.colour))}${one ? "" : ` ${esc(c.qty)} ${esc(hu(g.unit))}`}</b>`).join("") + (z.standing ? `<b class="fpc">♻ ${t("Repeat")}</b>` : "")
-              : esc(t("Colour not picked"));
+              ? cols.map(c => `<b class="fpc"><i style="background:${esc(swatchHexFor(c.colour, settings?.colourCatalogue, c.hex))}"></i>${esc(hn(c.colour))}${qtyTxt(c.qty)}</b>`).join("") + (z.standing ? `<b class="fpc">♻ ${t("Repeat")}</b>` : "")
+              : esc(t("Colour not picked")) + (Number(z.qty) > 0 ? ` · <b>${qtyTxt(z.qty).trim()}</b>` : "");
             const key = `${z.fi}|${z.zoneKey}`;
             fabricByZone.set(key, [...(fabricByZone.get(key) || []), { k: t(g.label), html }]);
           });
