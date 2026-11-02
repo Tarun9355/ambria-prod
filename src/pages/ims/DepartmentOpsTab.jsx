@@ -10,7 +10,8 @@ import { TabsMenu, useConfirm } from "../../components/ui";
 import { IconPrinter } from "../../components/icons";
 import { hasIMSPerm } from "../../lib/ims/constants";
 import { fetchOpsExpenses } from "../../lib/ims/opsExpenses";
-import { venueWithParent, standingQty } from "../../lib/ims/fixedVenues";
+import { venueWithParent, standingQty, assembleFixedVenuesFromRows } from "../../lib/ims/fixedVenues";
+import { supabase, fetchAll } from "../../lib/supabase";
 import { ZONE_META, trussBaseArea, CARPET_OFF, carpetPricingFor } from "../../lib/studio/taxonomy";
 import { prefsOf, floorSqftOf } from "../../lib/studio/carpetPrefs";
 import { carpetFloorsOf, planCarpets, carpetKey, carpetStockFor, validDecision, carpetNotesForRows, carpetPrefNotesForRows } from "../../lib/ims/carpetPlan";
@@ -29,6 +30,7 @@ import { matchFlowerPattern, resolveSizeKey, sizeClassToPatternKey, resolveMandi
 import { swatchHexFor } from "../../lib/studio/colours";
 import PlanningSyncButton from "./PlanningSyncButton.jsx";
 import FabricBlock from "./FabricBlock.jsx";
+import FixedVenueStockCard from "./FixedVenueStockCard.jsx";
 import PaintDeptView from "./PaintDeptView.jsx";
 import { buildFabricGroups, foldFabricLines } from "../../lib/ims/fabricGroups";
 import { mandiHow } from "../../lib/ims/floralHow";
@@ -810,6 +812,19 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const carpetGateOpenRef = useRef(false); // the "Carpet not selected" message is on screen
   const [carpetMore, setCarpetMore] = useState(null); // key of the carpet floor whose carpet picker (modal) is open
   const [zoomImg, setZoomImg] = useState(null); // click-to-enlarge lightbox (ops needs a clear big photo)
+  // The Fixed Venues' standing stock - the `fixed_venues` TABLE (migration 038), which IMS's settings object does not carry (only
+  // Studio and the Fixed Venues editor loaded it), so the Fixed card and the book's "📌 Fixed at venue" read nothing. Loaded here, live.
+  const [fvRows, setFvRows] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => { const rows = await fetchAll("fixed_venues").catch(() => []); if (!cancelled) setFvRows(rows || []); };
+    load();
+    const ch = supabase.channel("realtime:fixed_venues:dept-ops")
+      .on("postgres_changes", { event: "*", schema: "public", table: "fixed_venues" }, load)
+      .subscribe();
+    return () => { cancelled = true; try { supabase.removeChannel(ch); } catch { /* ignore */ } };
+  }, []);
+  const fvSettings = useMemo(() => ({ ...(settings || {}), fixedVenues: assembleFixedVenuesFromRows(fvRows) }), [settings, fvRows]);
   const [opsView, setOpsView] = useState("planning"); // "planning" | "onsite" — split on-site (receiving/dismantle) into its own view
   // The mini calendar that used to sit in this rail is gone — the IMS Calendar tab is the one
   // calendar, and clicking an event there lands here with that event already selected. Its
@@ -3862,7 +3877,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       const zc = fn?.zones?.[zk];
       if (typeof el?.repeatOverride === "boolean" ? el.repeatOverride : repeatCatFor(zc, "elements")) out.push("♻ " + t("Repeat"));
       else if (inv && reuseSrc?.ids.has(String(inv.id))) out.push("♻ " + t("Reused from {fn}", { fn: reuseSrc.label || t("the earlier function") }));
-      const standing = inv ? standingQty(settings, fn?.venue, inv.id) : 0;
+      const standing = inv ? standingQty(fvSettings, fn?.venue, inv.id) : 0;
       if (standing > 0) out.push("📌 " + t("Fixed at venue ({n} standing)", { n: standing }));
       return out.join(" · ");
     };
@@ -6184,6 +6199,9 @@ ${!combined && fabRows.length ? sect(t("Fabric required vs available"), table([t
             {dept === PAINT && <PaintDeptView sel={sel} inventory={inventory} colourCatalogue={settings?.colourCatalogue} defaultPaintCost={Number(settings?.defaultPaintCostPerItem) || 400} zoneLabel={zoneLabelFor} onZoom={setZoomImg} />}
 
             {opsView === "planning" && dept !== PAINT && (<>
+
+            {/* What stands permanently at each Fixed Venue for this department (read-only, from Settings → Fixed Venues). */}
+            <FixedVenueStockCard fixedVenues={fvSettings.fixedVenues} inventory={inventory} dept={dept} catToDept={catToDept} settings={fvSettings} eventVenue={sel?.venue} onZoom={setZoomImg} />
 
             {/* Department income (from Deal Check snapshot — matches Studio). Floral is split into real
                 (mandi) vs artificial; Manpower uses the LIVE edited plan so crew edits move the total. */}
