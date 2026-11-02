@@ -11645,7 +11645,13 @@ export default function StudioApp() {
   // another event's reservation. It also never expands a kit into its component items, matching
   // executeConfirmBlocks/ApprovalsTab's own real-block behavior (only the kit shell gets a row).
   const reconcileSoldInventoryBlocks = useCallback(async (fnsToProcess, newCards, inventoryList, cli) => {
-    const eo = (eventOrders || []).find(e => e.clientId === cli.id);
+    // eventOrderFor, not a plain .find() — a client can carry several event_orders (a duplicate
+    // push, a cancelled-and-rebooked deal), and a plain "first clientId match" can land on a
+    // CANCELLED one regardless of a newer live order existing (confirmed live, 2026-11-02:
+    // Sangeeta's duplicate-booking cleanup kept re-writing real stock blocks under her already-
+    // cancelled original order, because this was the one lookup in the file that still used the
+    // naive pattern eventOrderFor/ownEventOrderIds were built to replace everywhere else).
+    const eo = eventOrderFor(eventOrders, cli.id, cli.name);
     if (!eo) { console.warn("[reconcile] no event_orders row for this client — skipping (not through markSold yet?)", cli.id); return; }
 
     // KNOWN SCOPE LIMIT: this only diffs functions still present in fnsToProcess. Deleting an
