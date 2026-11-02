@@ -1476,9 +1476,27 @@ Rules:
           )}
           <div>
             <h4 className="font-semibold text-gray-700 mb-2 text-sm">Blocked for Functions:</h4>
-            {functions.filter((f) => f.items?.some((it) => it.invId === selItem.id)).length === 0
-              ? <p className="text-sm text-gray-400 italic">Not blocked for any function</p>
-              : functions.filter((f) => f.items?.some((it) => it.invId === selItem.id)).map((f) => {
+            {(() => {
+              // A function row's own event_order can be cancelled (a duplicate booking, say)
+              // without the function row itself ever being cleaned up — cancelStudioEvent only
+              // releases `blocks` and flips the order's own status, it never touches `functions`.
+              // Without this check, a cancelled duplicate's orphaned function row kept listing
+              // here forever as if it were still blocking real stock (owner report, 2026-11-02 —
+              // Sangeeta's cancelled duplicates all still showed after the blocks table itself was
+              // already clean). Sorted date-wise so duplicates/near-duplicates sit next to each
+              // other instead of in whatever order the functions table happened to return them.
+              const blockedFns = functions
+                .filter((f) => {
+                  if (!f.items?.some((it) => it.invId === selItem.id)) return false;
+                  if (f.eventOrderId) {
+                    const eo = eventOrders.find((e) => e.id === f.eventOrderId);
+                    if (eo?.status === "cancelled") return false;
+                  }
+                  return true;
+                })
+                .sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
+              if (blockedFns.length === 0) return <p className="text-sm text-gray-400 italic">Not blocked for any function</p>;
+              return blockedFns.map((f) => {
                   const it = f.items.find((it) => it.invId === selItem.id);
                   // Guest name + venue — read from the linked event_order when there is one (the
                   // authoritative, always-plain-string copy), since a functions row's own blob carries
@@ -1495,8 +1513,8 @@ Rules:
                     <Badge color="indigo">{it.dept}</Badge><span className="text-gray-500 text-xs">{it.remark}</span>
                     <span className="ml-auto font-medium">×{it.qty}</span>
                   </div>;
-                })
-            }
+                });
+            })()}
           </div>
           <div className="flex justify-end pt-3 border-t">
             <button onClick={() => openEdit(selItem.id)}

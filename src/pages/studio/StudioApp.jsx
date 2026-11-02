@@ -11819,13 +11819,21 @@ export default function StudioApp() {
         }
         return proj;
       };
+      // Keyed by DATE, not re-derived per function — two functions of this SAME event sharing a
+      // date (Haldi + Sangeet, one day) used to each find `row` undefined off the one-time fnRows
+      // fetch above (neither had a row yet) and each mint its OWN backfill `functions` row for the
+      // same date, because the loop never recorded what the FIRST one just created before the
+      // second one looked. Confirmed live, 2026-11-02 (Sangeeta): one date, two `functions` rows,
+      // same projectId. Seeding this map from fnRows and writing into it the instant a row is
+      // created (not waiting for its insert to land) makes the second function see it.
+      const rowByDate = new Map((fnRows || []).map((r) => [(r.date || r.data?.date), r]));
       for (let i = 0; i < fnsToProcess.length; i++) {
         const fn = fnsToProcess[i];
         const fnIdx = fn.fnIdx ?? i;
         const req = requiredByFn[fnIdx] || {};
         const date = fn.fnDate || "";
         if (!date) continue;
-        const row = (fnRows || []).find((r) => (r.date || r.data?.date) === date);
+        const row = rowByDate.get(date);
         const nextItems = ids.reduce((acc, id) => {
           const qty = req[id] || 0;
           if (qty <= 0) return acc;
@@ -11853,6 +11861,10 @@ export default function StudioApp() {
           status: "Confirmed", adminApproval: null, eventOrderId: eo.id, shift: "", pax: "",
           brideGroom: eo.brideGroom || "", salesperson: eo.salesperson || "",
         };
+        // Recorded before the insert resolves — a second function of THIS deal on the same date,
+        // later in this same loop, must see this row already exists rather than racing to create
+        // its own (see rowByDate's own comment above).
+        rowByDate.set(date, { id: fnId, date, data: fnData });
         supabase.from("functions").insert({ id: fnId, project_id: p.id, name: fnData.name, date, venue: fnData.venue, status: "Confirmed", data: fnData })
           .then(({ error }) => {
             if (error) { console.error("[reconcile] functions backfill insert failed for event", eo.id, "date", date, ":", error.message); return; }
