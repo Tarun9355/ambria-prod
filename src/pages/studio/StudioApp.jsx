@@ -11953,6 +11953,20 @@ export default function StudioApp() {
       const slot = reqByDate[date] || (reqByDate[date] = {});
       Object.entries(req).forEach(([id, qty]) => { slot[id] = Math.max(slot[id] || 0, Number(qty) || 0); });
     });
+    // Release this event's own reservation on any date that is no longer one of its functions' dates
+    // — a function's date edited in Event Info (or a whole function removed) left its OLD date's
+    // hold in place forever, because the loop below only ever replaces THIS SAME date's entry, never
+    // touches any other. Confirmed live, 2026-11-02 (Anuja Berry): a function moved from 30 Oct to
+    // 3 Nov kept double-holding every one of its ~67 items on BOTH dates — the real date got its
+    // entry refreshed each run, the abandoned date's entry just sat there, permanently starving that
+    // day's stock for every other deal. ids already covers every item this event has ever reserved
+    // (allItemIds merges current AND prevByFn), so this reaches a date dropped entirely, not just one
+    // whose qty changed.
+    const validDates = new Set(Object.keys(reqByDate));
+    ids.forEach((id) => {
+      const arr = (byId.get(id) || []).filter((b) => !(b.eventId === eo.id && !validDates.has(b.date)));
+      byId.set(id, arr);
+    });
     Object.entries(reqByDate).forEach(([date, req]) => {
       ids.forEach((id) => {
         const qty = req[id] || 0;
