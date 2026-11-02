@@ -113,7 +113,10 @@ export const resolveMandiFlower = (id, mandi) => {
 // on the same rupee. A rate_card_categories factor is the general Studio-wide multiplier for
 // pricing an item on its own; a recipe ingredient is priced by the RECIPE's rules instead, which is
 // why this reads item.price/rentalCost raw rather than calling priceForInvItem.
-export const computePatternSizeCost = (sizeData, mandiCatalogue, inventory) => {
+// flowerRate (optional): (recipe flower row, resolved mandi flower) → the rate to use instead of the base mandi price, or null.
+// Studio passes the function's chosen colour (its 🎨 pick, else the Flower Palette's tagged variant - lib/studio/floralCost's
+// effectiveColorPrefRows), so the price follows the same colour Deal Check costs the flower at.
+export const computePatternSizeCost = (sizeData, mandiCatalogue, inventory, flowerRate) => {
   if (!sizeData?.flowers?.length) return null;
   let total = 0;
   for (const fl of sizeData.flowers) {
@@ -124,7 +127,8 @@ export const computePatternSizeCost = (sizeData, mandiCatalogue, inventory) => {
       continue;
     }
     const res = resolveMandiFlower(fl?.flowerId, mandiCatalogue);
-    const price = res ? res.price : 0;
+    const chosen = flowerRate ? Number(flowerRate(fl, res)) || 0 : 0;
+    const price = chosen > 0 ? chosen : (res ? res.price : 0);
     total += (Number(fl?.qty) || 0) * price;
   }
   return total;
@@ -207,13 +211,14 @@ export const matchFlowerPattern = (item, flowerPatterns) => {
 // asymmetry rather than "fixing" a formula used elsewhere. `extra` (pot/base) is returned
 // separately, uncombined — callers blend realRate/artRate by real% first, then add extra once,
 // matching getElPrice's existing composition order (extra is never itself blended).
-export const floralPatternUnitRates = (pattern, sizeKey, mandiCatalogue, settings, inventory, rcFactorByKey) => {
+// flowerRate (optional): as computePatternSizeCost's - the colour chosen for the function prices its real flowers.
+export const floralPatternUnitRates = (pattern, sizeKey, mandiCatalogue, settings, inventory, rcFactorByKey, flowerRate) => {
   if (!pattern) return null;
   const sizes = pattern.sizes || {};
   const sizeData = sizes[resolveSizeKey(sizes, sizeKey)];
   if (!sizeData) return null;
   const markup = effectiveMarkup(pattern, settings);
-  const realRate = Math.round((computePatternSizeCost(sizeData, mandiCatalogue, inventory) || 0) * markup);
+  const realRate = Math.round((computePatternSizeCost(sizeData, mandiCatalogue, inventory, flowerRate) || 0) * markup);
   const afRate = Number(settings?.artificialFlowerRatePerKg ?? 50);
   const afBPK = Number(settings?.artificialFlowerBunchesPerKg ?? 16) || 16;
   const agRate = Number(settings?.artificialGreenRatePerKg ?? 40);
@@ -246,7 +251,8 @@ export const floralPatternUnitRates = (pattern, sizeKey, mandiCatalogue, setting
       // up by this SAME pattern markup, not artMarkup) lands it identically on both sides of the
       // blend — invariant to the slider — instead of scaling down to ₹0 as real% drops, which is
       // what returning here with no contribution used to do.
-      invItemCost += (Number(fl?.qty) || 0) * (res?.price || 0);
+      const chosen = flowerRate ? Number(flowerRate(fl, res)) || 0 : 0;
+      invItemCost += (Number(fl?.qty) || 0) * (chosen > 0 ? chosen : (res?.price || 0));
       return;
     }
     if (ft === "mapping") {

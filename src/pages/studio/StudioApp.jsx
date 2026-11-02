@@ -48,7 +48,7 @@ import { zoneDimLabel } from "../../lib/studio/zoneDims";
 import { withKitEdit } from "../../lib/studio/dealCheckSync";
 import { itemTakesChoices } from "../../lib/studio/elementPrefs";
 import { findCrossFnReuseSource, computeFnInvQty, findSiblingFnInvUse, findSiblingFnSubcatOpportunity } from "../../lib/studio/crossFnReuse";
-import { computeFnFloralCost, buildMandiBreakdown, mergeSwapRows } from "../../lib/studio/floralCost";
+import { computeFnFloralCost, buildMandiBreakdown, mergeSwapRows, effectiveColorPrefRows } from "../../lib/studio/floralCost";
 import { computePeople, shiftToTiming, sizeFromMode, situationalFactorsFor, walkFnElements, tentingZoneUsage } from "../../lib/studio/manpowerCount";
 
 // ═══ HEADER TYPE + CHIP SCALE ═══
@@ -4381,6 +4381,23 @@ export default function StudioApp() {
       .map((p) => ({ id: p.id, name: p.name, sub: p.sub || "", unit: p.unit || "pc" }));
   }, [dealCheckData, studioFloralData]);
 
+  // The colour a function's real flowers are priced at (owner decision 2026-11-02: the price follows the colour, in Build, Deal
+  // Check and Planning alike): the flower's own 🎨 pick in Deal Check, else the variant its Flower Palette's main colour is tagged to
+  // (lib/studio/floralCost's effectiveColorPrefRows - the same row Deal Check's Florals tab costs the flower at). A flower with
+  // neither keeps its base mandi rate. fnIdx: 0 = the first function, i = extraFunctions[i - 1]; omitted, the active one.
+  const flowerRateForFn = useCallback((fnIdx) => {
+    const i = typeof fnIdx === "number" ? fnIdx : activeFnIdx;
+    const fnLike = { fnFlowerPalette: i === 0 ? (clientFlowerPalette || "") : (extraFunctions[i - 1]?.flowerPalette || "") };
+    const prefs = dcFloralColorPrefs?.[i] || {};
+    return (fl, res) => {
+      const parent = res?.parent;
+      if (!parent) return null;
+      const rows = effectiveColorPrefRows(prefs, parent.id || fl?.flowerId, fnLike, parent);
+      const rate = Array.isArray(rows) && rows.length ? Number(rows[0]?.rate) || 0 : 0;
+      return rate > 0 ? rate : null;
+    };
+  }, [activeFnIdx, clientFlowerPalette, extraFunctions, dcFloralColorPrefs]);
+
   // Price an element sourced directly from a flower-recipe pattern with no inventory backing
   // (el.patternId, sibling to el.invId's getElPriceFromInventory). Same formula as the floral branch
   // there, minus the item-rental term (there's no physical item to add rental for) — flower cost
@@ -4388,14 +4405,14 @@ export default function StudioApp() {
   // fnRatio (optional): the real/artificial mix of the function being priced — same fix as
   // getElPriceFromInventory's fnFloralRatio. Omitted by Build's live cards, which price the active
   // function and so correctly fall back to its own floralRatio.
-  const getElPriceFromPattern = useCallback((el, fnRatio) => {
+  const getElPriceFromPattern = useCallback((el, fnRatio, fnIdx) => {
     const fnFloralRatio = typeof fnRatio === "number" ? fnRatio : floralRatio;
     const floralSrc = sharedFloralSettings;
     const pattern = (floralSrc.flowerPatterns || []).find((p) => p.id === el.patternId);
     if (!pattern) return { rc: null, unitPrice: 0, lineCost: 0, area: 0, warning: null, isFloralBlend: false, realPct: null };
     const qty = el.qty || 0;
     const sizeKey = sizeClassToPatternKey(normalizeSizeClass(el.size || "B"));
-    const rates = floralPatternUnitRates(pattern, sizeKey, floralSrc.mandiCatalogue || [], floralSrc, imsInventory, rcFactorByKey);
+    const rates = floralPatternUnitRates(pattern, sizeKey, floralSrc.mandiCatalogue || [], floralSrc, imsInventory, rcFactorByKey, flowerRateForFn(fnIdx));
     if (!rates) return { rc: null, unitPrice: 0, lineCost: 0, area: 0, warning: null, isFloralBlend: false, realPct: null };
     const subKey = squeezeKey(pattern.sub);
     const subMode = subKey ? rcFloralModeByKey[subKey] : undefined;
@@ -4403,7 +4420,7 @@ export default function StudioApp() {
     const realPct = (typeof el.realPct === "number" && el.realPct >= 0 && el.realPct <= 100) ? el.realPct : modeDefault;
     const unitPrice = Math.round(realPct / 100 * rates.realRate + (100 - realPct) / 100 * rates.artRate) + rates.extra;
     return { rc: null, unitPrice, lineCost: qty * unitPrice, area: 0, warning: null, isFloralBlend: true, realPct, patternSMB: pattern.mode === "smb" };
-  }, [dealCheckData, studioFloralData, rcFloralModeByKey, floralRatio, imsInventory, rcFactorByKey]);
+  }, [dealCheckData, studioFloralData, rcFloralModeByKey, floralRatio, imsInventory, rcFactorByKey, flowerRateForFn]);
 
   // Price an element sourced directly from a raw mandi commodity (el.mandiId, sibling to
   // el.patternId's getElPriceFromPattern) — e.g. "Loose Petals" added straight to a zone by the kg,
@@ -4682,7 +4699,7 @@ export default function StudioApp() {
       const recipeCost = (pattern, subKey, recipeQty = 1, override) => {
         if (!pattern) return 0;
         const szKey = override?.size || sizeKey;
-        const rates = floralPatternUnitRates(pattern, szKey, floralSrc.mandiCatalogue || [], floralSrc, imsInventory, rcFactorByKey);
+        const rates = floralPatternUnitRates(pattern, szKey, floralSrc.mandiCatalogue || [], floralSrc, imsInventory, rcFactorByKey, flowerRateForFn(opts?.fnIdx));
         if (!rates) return 0;
         const sk = String(subKey || pattern.sub || "").trim().toLowerCase();
         const subMode = sk ? rcFloralModeByKey[sk] : undefined;
@@ -4729,7 +4746,7 @@ export default function StudioApp() {
     if (isFloral && !isKit) {
       const pattern = matchFlowerPattern(item, floralSrc.flowerPatterns || []);
       const sizeKey = pattern ? sizeClassToPatternKey(normalizeSizeClass(el.size || "B")) : null;
-      const rates = pattern ? floralPatternUnitRates(pattern, sizeKey, floralSrc.mandiCatalogue || [], floralSrc, imsInventory, rcFactorByKey) : null;
+      const rates = pattern ? floralPatternUnitRates(pattern, sizeKey, floralSrc.mandiCatalogue || [], floralSrc, imsInventory, rcFactorByKey, flowerRateForFn(opts?.fnIdx)) : null;
       if (rates) {
         const subKey = String(item.subCat || item.subcategory || "").trim().toLowerCase();
         const subMode = subKey ? rcFloralModeByKey[subKey] : undefined;
@@ -4868,7 +4885,7 @@ export default function StudioApp() {
     }
     const unitPrice = priceForInvItem(item, rcFactorByKey, imsInventory, el.kitOverrides);
     return { rc: null, unitPrice, fullUnitPrice: unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName, crossFnTake, el.repeatOverride, dateFactorFor(el, opts), el.kitOverrides), area: 0, warning: null, isFloralBlend: false, realPct: null };
-  }, [imsInventory, rcFactorByKey, rcCostPctForSub, activeBlocksForDate, activeBlocksDetailForDate, blocksDetailByDate, dealCheckData, studioFloralData, rcFloralModeByKey, floralRatio, fvCfgForRepeat, eventOrders, activeClientId, clientName, activeFnIdx, activeFnMeta, clientDate]);
+  }, [imsInventory, rcFactorByKey, rcCostPctForSub, activeBlocksForDate, activeBlocksDetailForDate, blocksDetailByDate, dealCheckData, studioFloralData, rcFloralModeByKey, floralRatio, fvCfgForRepeat, eventOrders, activeClientId, clientName, activeFnIdx, activeFnMeta, clientDate, flowerRateForFn]);
 
   // ── A KIT'S SHORT PARTS ──
   // getElPriceFromInventory checks a kit row against the KIT's own stock only - a part inside it (a cushion cover, a pot)
@@ -5269,7 +5286,7 @@ export default function StudioApp() {
   const getElPriceForFnRaw = useCallback((el, zc, fnRatio, checkAvail, venueName, blocksForDate, crossFnReusePool, fnIdx, zoneKey, elIdx, fnDate) => {
     if (el.invId) return getElPriceFromInventory(el, { checkAvailability: !!checkAvail, zc, venueName, blocksForDate, crossFnReusePool, fnRatio, fnIdx, zoneKey, elIdx, fnDate }); // zoneKey+elIdx → the same booking-wide shortfall allocation Build's own cards use // IMS inventory-sourced element — Rate Card never consulted
     if (el.mandiId) return floralRepeatDiscount(getElPriceFromMandi(el), el, zc); // raw mandi commodity (e.g. Loose Petals), no recipe/inventory
-    if (el.patternId) return floralRepeatDiscount(getElPriceFromPattern(el, fnRatio), el, zc); // pure flower-recipe element, no inventory item
+    if (el.patternId) return floralRepeatDiscount(getElPriceFromPattern(el, fnRatio, fnIdx), el, zc); // pure flower-recipe element, no inventory item
     const rc = rcItems.find(i => i.name.toLowerCase() === (el.name || "").toLowerCase());
     if (!rc) return { rc: null, unitPrice: 0, lineCost: 0 };
     const isFloral = (rc.cat || "").toLowerCase() === "florals";
