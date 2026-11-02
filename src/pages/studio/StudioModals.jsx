@@ -23,6 +23,7 @@ import { itemDimsText, priceForInvItem, kitDescendantIds } from "../../lib/ims/h
 import { thumbUrl, fitUrl } from "../../lib/studio/thumb.js";
 import { AVAIL_THUMB } from "../../lib/studio/prefetchImages.js";
 import { reuseAwareAvail } from "../../lib/studio/carpetReuse.js";
+import { SkRows } from "../../components/studio/Skeleton.jsx";
 
 // Short codes for the availability picker's per-venue idle-slack breakdown — substring match
 // (case-insensitive) rather than an exact one, so "Ambria Restro"/"Restro"/a future venue-group
@@ -340,7 +341,7 @@ export default function StudioModals({ ctx }) {
             </div>
             <div style={{padding:16,overflowY:"auto",flex:1}}>
               {availModal.loading ? (
-                <div style={{padding:"48px 0",textAlign:"center",color:textS,fontSize:13}}>Loading availability…</div>
+                <SkRows n={6} label="Loading availability" />
               ) : (availModal.items.length===0 ? (
                 <div style={{padding:"48px 0",textAlign:"center",color:textS,fontSize:13}}>No inventory found in "{availModal.subcat||"this sub-category"}".</div>
               ) : (

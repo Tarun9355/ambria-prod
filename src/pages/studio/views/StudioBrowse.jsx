@@ -9,6 +9,7 @@ import { makeS } from "../../../lib/studio/styles";
 import { WASH_BANDS, GRAIN_URL } from "../../../lib/studio/pageWash";
 import { prefetchImages } from "../../../lib/studio/prefetchImages.js";
 import CopyBuildModal from "../../../components/studio/CopyBuildModal.jsx";
+import { Sk, SkStyle } from "../../../components/studio/Skeleton.jsx";
 
 // The panel's right edge. Event Info's gesture, but a FLATTER waist — 0.90 rather than 0.80.
 // Event Info's panel holds a logo and nothing else, so it can afford to lose a fifth of its width
@@ -1535,8 +1536,7 @@ function StudioBrowse({ ctx }) {
                         {!priceSettled ? (
                           <span style={{display:"inline-flex",alignItems:"center",gap:5}}>
                             <span>·</span>
-                            <span aria-hidden="true" style={{width:9,height:9,borderRadius:"50%",border:`1.5px solid ${isDark?"rgba(234,179,8,0.35)":"rgba(217,119,6,0.35)"}`,borderTopColor:isDark?"#FBBF24":"#B45309",animation:"sbSkelSpin .6s linear infinite"}}/>
-                            <span style={{fontStyle:"italic"}}>Loading price…</span>
+                            <SkStyle /><Sk w={64} h={9} r={4} style={{display:"inline-block"}} /><span className="sr-only" style={{position:"absolute",width:1,height:1,overflow:"hidden",clip:"rect(0 0 0 0)"}}>Loading price…</span>
                           </span>
                         ) : (() => {
                           const live = isCurrent && settledTotal > 0 ? { total: settledTotal, tier: getCat(settledTotal).label } : null;

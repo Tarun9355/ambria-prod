@@ -5,6 +5,7 @@ import { supabase } from "../../../lib/supabase";
 import { findZoneForArea } from "../../../lib/studio/pricing";
 import { makeDeleteClient, makeDeleteClients } from "../../../lib/studio/clientDelete";
 import { clientLastTouch, clientHasBuild } from "../../../lib/studio/sessionData";
+import { SkRows } from "../../../components/studio/Skeleton.jsx";
 
 // getTaxLabel — module-scope helper in the reference (App_latest.jsx:1267). Local here.
 const getTaxLabel = (k) => TAX_LABELS[k] || k.replace(/_/g, " ").replace(/([A-Z])/g, " $1").replace(/\s+/g, " ").replace(/^./, s => s.toUpperCase()).trim();
@@ -447,10 +448,7 @@ export default function ManageSettings({ ctx }) {
               checked here) — a client typed into a search or opened here in that window looked
               like it didn't exist yet, easy to mistake for real data loss. */}
           {!ledgerReady && clientLedger.length === 0
-            ? <div style={{fontSize:11,color:textS,marginBottom:14,display:"flex",alignItems:"center",gap:8}}>
-                <span style={{display:"inline-block",width:6,height:6,borderRadius:"50%",background:accent,animation:"pulse 1.5s infinite"}}/>
-                Loading clients…
-              </div>
+            ? <div style={{marginBottom:14}}><SkRows n={6} thumb={false} label="Loading clients" /></div>
             : <div style={{fontSize:11,color:textS,marginBottom:14}}>All clients from guest details form. {clientLedger.length} total{filtered.length!==clientLedger.length?` · ${filtered.length} shown`:""}</div>}
           <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:14,alignItems:"center"}}>
             <input value={clientSearch} onChange={e=>setClientSearch(e.target.value)} placeholder="🔍 Search name or phone" style={{...S.select,fontSize:11,padding:"6px 10px",width:180}}/>

@@ -6,6 +6,7 @@ import { useVersionCheck } from "./lib/useVersionCheck";
 import { flushBeforeReload } from "./lib/pendingSaveRegistry";
 import { canvaHandleOAuthRedirect } from "./lib/canva";
 import Login from "./pages/Login.jsx";
+import { SkPage } from "./components/studio/Skeleton.jsx";
 // Studio and IMS are each a large, largely independent bundle (Studio alone pulls in
 // DealCheckOverlay and every Deal Check tab) — a salesperson opening /studio was downloading
 // every byte of IMS's admin/inventory code too, and vice versa for ops staff on /ims, even though
@@ -15,12 +16,9 @@ import Login from "./pages/Login.jsx";
 const Studio = lazy(() => import("./pages/Studio.jsx"));
 const IMS = lazy(() => import("./pages/ims/IMS.jsx"));
 
+// The page's shape while its code downloads (Studio's chunk is the biggest) — a top bar and cards, not a bare "Loading…".
 function RouteFallback() {
-  return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", fontSize: 14, color: "#6B7280" }}>
-      Loading…
-    </div>
-  );
+  return <SkPage label="Loading" />;
 }
 
 // Canva's OAuth redirect lands back on the site's bare base URL with ?code=&state= — BEFORE the

@@ -27,6 +27,7 @@ import { itemDimsText, priceForInvItem, kitDescendantIds } from "../../../lib/im
 import { addPaletteInline } from "../../../lib/studio/colours";
 import PaletteQuickAdd from "../../../components/studio/PaletteQuickAdd.jsx";
 import { thumbUrl, fitUrl } from "../../../lib/studio/thumb.js";
+import { SkTiles, SkRows } from "../../../components/studio/Skeleton.jsx";
 
 // Server-side paginated + status-scoped browse grid. Resets to page 1 whenever the status chip,
 // any sidebar filter, venue selection, or (debounced) search term changes.
@@ -1093,7 +1094,9 @@ export default function ManageLibrary({ ctx }) {
           );
           })}
         </div>
-        {libPage.loading && <div style={{ textAlign: "center", padding: 16, fontSize: 11, color: textS }}>Loading…</div>}
+        {libPage.loading && (libVisible.length === 0
+          ? <SkTiles n={12} min={150} label="Loading photos" />
+          : <div style={{ textAlign: "center", padding: 16, fontSize: 11, color: textS }}>Loading…</div>)}
         {/* Pager. No auto-load sentinel any more — the grid holds one page and you step through it.
             Prev/Next rather than page numbers because the queries are keyset-paginated: a cursor
             points forward only, so a page can be opened once it has been reached, and offering "go to
@@ -2600,7 +2603,7 @@ export default function ManageLibrary({ ctx }) {
             </div>;
           })}
         </div>}
-        {cldLoading&&<div style={{textAlign:"center",padding:20,color:textS,fontSize:11}}>⏳ Loading...</div>}
+        {cldLoading&&<SkTiles n={10} min={120} ratio="1 / 1" label="Loading Cloudinary" />}
         {!cldLoading&&cldFolders.length>0&&<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(120px,1fr))",gap:8,marginBottom:10}}>
           {cldFolders.map(f=>{const fn=f.name||f.path;return <div key={fn} style={{position:"relative",padding:"10px 12px",borderRadius:8,border:`1px solid ${border}`,cursor:"pointer",textAlign:"center",fontSize:11,fontWeight:600,color:textP,background:isDark?"rgba(255,255,255,0.03)":"rgba(0,0,0,0.02)"}}>
             <div onClick={()=>cldNavigate(fn)}>📁 {fn}</div>
@@ -2720,7 +2723,7 @@ export default function ManageLibrary({ ctx }) {
         </>}
       </div>
       {libView === "palettes" && !paletteCatalogueLoaded && (
-        <div style={{ maxWidth: 650, padding: "24px 18px", textAlign: "center", color: textS, fontSize: 12 }}>Loading palette catalogue…</div>
+        <div style={{ maxWidth: 650, padding: "24px 18px" }}><SkRows n={6} figure={false} label="Loading palette catalogue" /></div>
       )}
       {/* The wrapper below has NO maxWidth. It was capped at 650 while the library tab runs to 1640,
           which is where all that empty right-hand side came from — the two catalogues were sitting in
@@ -2945,7 +2948,7 @@ export default function ManageLibrary({ ctx }) {
                 <span onClick={()=>cldVideoGoBack(si+1)} style={{fontSize:10,color:si===cldVideoPath.length-1?textP:accent,cursor:"pointer",fontWeight:600}}>{seg}</span>
               </Fragment>)}
             </div>
-            {cldVideoLoading&&<div style={{textAlign:"center",padding:20,color:textS,fontSize:11}}>⏳ Loading...</div>}
+            {cldVideoLoading&&<SkTiles n={8} min={150} ratio="16 / 9" label="Loading videos" />}
             {/* Folders */}
             {!cldVideoLoading&&cldVideoFolders.length>0&&<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(120px,1fr))",gap:8,marginBottom:10}}>
               {cldVideoFolders.map(f=><div key={f.name||f.path} onClick={()=>cldVideoNavigate(f.name||f.path)} style={{padding:"10px 12px",borderRadius:8,border:`1px solid ${border}`,cursor:"pointer",textAlign:"center",fontSize:11,fontWeight:600,color:textP,background:isDark?"rgba(255,255,255,0.03)":"rgba(0,0,0,0.02)"}}>
@@ -2984,7 +2987,7 @@ export default function ManageLibrary({ ctx }) {
             <div><span style={{fontWeight:600,color:"#0EA5E9",fontSize:12}}>🔗 Linking video to:</span> <span style={{fontSize:12,fontWeight:700}}>{events.find(e=>e.id===ytPicker)?.name||"Event"}</span></div>
             <button onClick={()=>setYtPicker(null)} style={{...S.btn(false),fontSize:10,padding:"4px 10px"}}>Cancel</button>
           </div>}
-          {ytLoading&&<div style={{textAlign:"center",padding:40,color:textS}}>⏳ Loading videos from YouTube...</div>}
+          {ytLoading&&<div style={{padding:"16px 0"}}><SkTiles n={9} min={220} ratio="16 / 9" label="Loading videos from YouTube" /></div>}
           {!ytLoading&&allVideos.length===0&&<div style={{textAlign:"center",padding:40,color:textS}}>No videos found. Hit Refresh to load from YouTube, or Add Video from Storage.</div>}
           {/* Video grid, paged. The filter + sort is unchanged and still decides the whole set; the
               only new step is slicing one page out of it before rendering. */}

@@ -13,6 +13,7 @@
 import { Fragment, useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef, useTransition, lazy, Suspense } from "react";
 import { useAuth } from "../../lib/AuthContext";
 import AppSwitcher from "../../components/AppSwitcher.jsx";
+import { Sk, SkStyle, SkTiles } from "../../components/studio/Skeleton.jsx";
 import { IconPalette, IconSliders, IconBook, IconGear, IconClipboardCheck, IconLogout, IconCheck, IconLock } from "../../components/icons.jsx";
 // Manage (Library + Settings, ~420KB) and Deal Check (overlay + its tabs, ~740KB) are each their
 // own chunk, fetched only when that screen is opened — together they were ~40% of the Studio
@@ -13144,7 +13145,7 @@ export default function StudioApp() {
         // so nothing else moves.
         return <div style={effManageTab === "library" ? { ...S.main, maxWidth: 1640 } : S.main}>
           {effManageTab === "library" || effManageTab === "settings" ? (
-            <Suspense fallback={<div style={{ textAlign: "center", padding: 60, color: textS, fontSize: 13 }}>Loading…</div>}>
+            <Suspense fallback={<div style={{ padding: "24px 18px", display: "flex", flexDirection: "column", gap: 16 }}><SkStyle /><div style={{ display: "flex", gap: 8 }}><Sk w={90} h={28} r={999} /><Sk w={90} h={28} r={999} /><Sk w={90} h={28} r={999} /></div><SkTiles n={12} min={150} label="Loading" /></div>}>
               {effManageTab === "library" ? <ManageLibrary ctx={ctx} /> : <ManageSettings ctx={ctx} />}
             </Suspense>
           ) : (
@@ -13180,7 +13181,15 @@ export default function StudioApp() {
           click): the overlay's own cream ground under the header (z 45 < header's 50), so the page
           behind is covered at once and the overlay's skeleton takes over when it mounts. */}
       {authUser && dcFullPageOpen && (
-        <Suspense fallback={<div style={{ position: "fixed", inset: 0, zIndex: 45, background: "#FAF9F6" }} />}>
+        <Suspense fallback={<div role="status" aria-label="Loading Deal Check" style={{ position: "fixed", inset: 0, zIndex: 45, background: "#FAF9F6", display: "flex" }}>
+            {/* Deal Check's code is still downloading: its own layout (function rail + zone cards) instead of a blank sheet. */}
+            <SkStyle />
+            <div style={{ width: 220, borderRight: "1px solid rgba(26,26,46,0.08)", padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>{[0, 1, 2].map(i => <Sk key={i} h={52} r={10} />)}</div>
+            <div style={{ flex: 1, minWidth: 0, padding: 22, display: "flex", flexDirection: "column", gap: 14 }}>
+              <Sk w={220} h={12} />
+              {[0, 1].map(i => <div key={i} style={{ border: "1px solid rgba(26,26,46,0.08)", borderRadius: 14, padding: 16, display: "flex", flexDirection: "column", gap: 12 }}><Sk w={160} h={16} /><Sk h={64} r={12} /><SkTiles n={3} min={240} ratio="5 / 1" caption={false} label="" /></div>)}
+            </div>
+          </div>}>
           <DealCheckOverlay ctx={ctx} />
         </Suspense>
       )}

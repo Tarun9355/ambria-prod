@@ -10,6 +10,7 @@ import { WASH_BANDS as BANDS } from "../../../lib/studio/pageWash";
 import AppSwitcher from "../../../components/AppSwitcher.jsx";
 import AgencyFeeControl from "../../../components/studio/AgencyFeeControl.jsx";
 import { clampAgencyFeePct } from "../../../lib/studio/agencyFee";
+import { SkRows } from "../../../components/studio/Skeleton.jsx";
 
 // The brand panel's right edge, in objectBoundingBox units (0–1 on both axes) so it stretches with
 // the panel rather than being fixed to pixels. Full width at top and bottom, drawn in to a waist at
@@ -1450,9 +1451,13 @@ export default function StudioEventInfo({ ctx }) {
                   // client" gets acted on a few seconds before the real match would have shown up.
                   // Nothing renders below until BOTH are in.
                   if (lmsLoading || !ledgerReady) {
-                    return <div style={{marginBottom:16,padding:"10px 12px",borderRadius:10,background:isDark?"rgba(59,130,246,0.06)":"rgba(59,130,246,0.04)",border:`1px solid ${isDark?"rgba(59,130,246,0.2)":"rgba(59,130,246,0.15)"}`,display:"flex",alignItems:"center",gap:8}}>
-                      <span style={{display:"inline-block",width:8,height:8,borderRadius:"50%",background:"#3B82F6",animation:"pulse 1.5s infinite"}}></span>
-                      <span style={{fontSize:11,fontWeight:600,color:C.blue}}>🔍 Searching leads & existing clients…</span>
+                    // The search line stays (it says what is being waited on); the result rows' shape fills in below it.
+                    return <div style={{marginBottom:16,padding:"10px 12px",borderRadius:10,background:isDark?"rgba(59,130,246,0.06)":"rgba(59,130,246,0.04)",border:`1px solid ${isDark?"rgba(59,130,246,0.2)":"rgba(59,130,246,0.15)"}`,display:"flex",flexDirection:"column",gap:10}}>
+                      <div style={{display:"flex",alignItems:"center",gap:8}}>
+                        <span style={{display:"inline-block",width:8,height:8,borderRadius:"50%",background:"#3B82F6",animation:"pulse 1.5s infinite"}}></span>
+                        <span style={{fontSize:11,fontWeight:600,color:C.blue}}>🔍 Searching leads & existing clients…</span>
+                      </div>
+                      <SkRows n={3} thumb={false} label="Searching leads and clients" />
                     </div>;
                   }
                   // ── LMS results block (shown ALONGSIDE matching Studio clients, not instead of them) ──
