@@ -4115,7 +4115,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           // was built on; anything else is left blank, because without the rate card IMS cannot
           // tell an unsized item from an unset one, and a wrong size is worse than none.
           const rawSize = String(el?.size || "").trim().toUpperCase();
-          const elSize = SMB_LABEL[rawSize] || (!rawSize && el?.patternId ? SMB_LABEL.B : "");
+          let elSize = SMB_LABEL[rawSize] || (!rawSize && el?.patternId ? SMB_LABEL.B : "");
           // ── REAL OR ARTIFICIAL ── a flower piece says which it is made as, worked out the way Studio prices it
           // (getElPriceFromPattern): the element's own % first, else its sub-category's floral mode (IMS Rate Card),
           // else the function's floral slider (floralRatio = the artificial share, 70 when never set).
@@ -4129,6 +4129,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
               : subMode === "real" ? 100 : subMode === "artificial" ? 0 : Math.max(0, Math.min(100, Math.round(100 - fnArt)));
             floralMix = real >= 100 ? t("Real") : real <= 0 ? t("Artificial") : t("Artificial {art}% · Real {real}%", { art: 100 - real, real });
             realPct = real;
+            // A flower piece with no size set is priced Big (Studio's el.size || "B"), so it reads Big here too - the flowers
+            // under it are for that size (owner ask 2026-11-03: S / M / B wherever a flower piece is in the book).
+            if (!elSize && pat.mode === "smb") elSize = SMB_LABEL.B; // only a recipe that comes in sizes; a flat one has none
           }
           const key = (arranged ? "o:" + (el?.pid || ei) : invU ? "i:" + invU.id : "n:" + (decName || nm)) + (elSize ? "|" + elSize : "") + (floralMix ? "|" + floralMix : "");
           const prev = merged.get(key);
@@ -4538,9 +4541,12 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     const detailH = (parts) => { const cols = detailCols(parts); return 68 + (Math.ceil(parts.length / cols) + Math.ceil(detailLongNames(parts, cols) / cols)) * 24 + 14; };
     // mix: a flower piece's real / artificial make-up (zone card's "Flowers" line) - in the header, and as a tag on every
     // flower line so whoever pulls a flower knows whether it is the real one or the artificial one (owner ask).
-    const detailCard = (icon, name, qty, unit, parts, mix) => { const cols = detailCols(parts); return `<div class="kb">
+    // size: an arrangement's Small / Medium / Big (owner ask 2026-11-03) - the recipe under it is for that size, so it is said beside
+    // the flowers and the qty instead of only on the zone page's card.
+    const detailCard = (icon, name, qty, unit, parts, mix, size) => { const cols = detailCols(parts); return `<div class="kb">
       <div class="kb-h">
         <div class="kb-t"><div class="kb-nm">${icon} ${esc(hn(name))}</div></div>
+        ${size ? `<div class="kb-z kb-q"><div class="kb-zk">${t("Size")}</div><div class="kb-zv">${esc(size)}</div></div>` : ""}
         ${mix ? `<div class="kb-z kb-q"><div class="kb-zk">${t("Flowers")}</div><div class="kb-zv">${esc(mix)}</div></div>` : ""}
         ${qty ? `<div class="kb-z kb-q"><div class="kb-zk">${t("Qty")}</div><div class="kb-zv">${esc(qty)}${unit ? " " + esc(hu(unit)) : ""}</div></div>` : ""}
       </div>
@@ -4593,7 +4599,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
             ? snapReal.map(f => ({ ...f, tag }))
             : (it.recipe || []).map(f => ({ name: f.name, qty: Math.round((Number(f.qty) || 0) * (Number(it.qty) || 0) * (f.full ? 1 : realShare) * 100) / 100, unit: f.unit, tag }));
           const parts = [...realParts.filter(f => f.qty > 0), ...art];
-          if (parts.length) blocks.push({ h: detailH(parts), html: detailCard("🌸", it.name, it.qty, it.unit, parts, it.mix) });
+          if (parts.length) blocks.push({ h: detailH(parts), html: detailCard("🌸", it.name, it.qty, it.unit, parts, it.mix, it.size) });
         }
         if (it.kit > 0) {
           const key = String(it.name || "").trim().toLowerCase();
