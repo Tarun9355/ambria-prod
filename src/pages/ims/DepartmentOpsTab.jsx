@@ -3927,7 +3927,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         if (!pillars.length && !beams.length && !(battaRft > 0)) return;
         const zkey = `${fi}|${zk}`;
         if (!trussTableByZone.has(zkey)) trussTableByZone.set(zkey, []);
-        trussTableByZone.get(zkey).push({ label: ri > 0 ? t("Truss #{n}", { n: ri + 1 }) : "", pillars, beams, battaRft });
+        trussTableByZone.get(zkey).push({ label: ri > 0 ? t("Truss #{n}", { n: ri + 1 }) : "", pillars, beams, battaRft, battaBuf: Number(bBuf) || 0 });
       });
     }
     fns.forEach((fn, fi) => {
@@ -4329,25 +4329,28 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       const strip = !cont && (pg.struct || []).length > 0;
       // the fabric colours get a row of their own under it, so the truss strip never wraps past the height set aside for it
       const fabStrip = !cont && (pg.fabric || []).length > 0;
-      // The truss breakdown (pillars / beams / batta, as Planning's Truss plan shows it - owner ask 2026-11-03): one card row
-      // per truss of the zone, under the truss and fabric strips, on the zone's first page; its height comes out of the
-      // photo like the fabric row, so the page still adds up to one sheet.
+      // The truss breakdown (owner ask 2026-11-03), as Planning's Truss plan shows it: a Pillars, a Beams and a Batta card side
+      // by side for each truss of the zone, under the truss and fabric strips, on the zone's first page. Pillar / beam cards
+      // list one size a line; every card of a truss is as tall as its longest list. The height comes out of the photo like
+      // the fabric row, so the page still adds up to one sheet.
       const trussRows = !cont ? (pg.trussTable || []) : [];
-      // A truss with many sizes would run past the page width on one line: such a row wraps onto two, and is given the
-      // height for it (about 80 characters fit on one line of the card).
-      const sizes = (groups) => groups.map(g => `${g.n} × ${g.len}ft`).join(", ");
-      const trussRowLen = (tt) => (tt.label || "Truss breakdown").length + (tt.pillars.length ? 8 + sizes(tt.pillars).length : 0) + (tt.beams.length ? 6 + sizes(tt.beams).length : 0) + (tt.battaRft > 0 ? 14 : 0);
-      const trussRowPx = (tt) => (trussRowLen(tt) > 80 ? 74 : 50);
-      const trussPx = trussRows.length ? trussRows.reduce((h, tt) => h + trussRowPx(tt), 0) + 12 : 0;
+      const TK_LINE = 19, TK_BASE = 52, TK_LABEL = 20, TK_GAP = 10;
+      const trussBlockPx = (tt) => (tt.label ? TK_LABEL : 0) + TK_BASE + Math.max(tt.battaRft > 0 && tt.battaBuf > 0 ? 2 : 1, tt.pillars.length, tt.beams.length) * TK_LINE;
+      const trussPx = trussRows.length ? trussRows.reduce((h, tt) => h + trussBlockPx(tt) + TK_GAP, 0) + 2 : 0;
       const headPx = (cont ? CONT_HEAD_PX : HEAD_PX) + (strip ? 44 : 0) + (fabStrip ? 44 : 0) + trussPx;
       // the fabric row comes out of the photo's floor too, so it never makes a page taller than it was without it
-      const PHOTO_H = bare ? PAGE_PX - headPx : Math.max(260 - (fabStrip ? 44 : 0) - trussPx, PAGE_PX - headPx - rows * (ROW_H + ARROW));
-      const trussCard = trussRows.length ? `<div class="ztc">${trussRows.map(tt => `<div class="ztc-r${trussRowPx(tt) > 50 ? " ztc-2" : ""}">
-          ${tt.label ? `<b class="ztc-n">${esc(tt.label)}</b>` : `<b class="ztc-n">${t("Truss breakdown")}</b>`}
-          ${tt.pillars.length ? `<span><i class="zl">${t("Pillars")}</i>${esc(sizes(tt.pillars))}</span>` : ""}
-          ${tt.beams.length ? `<span><i class="zl">${t("Beams")}</i>${esc(sizes(tt.beams))}</span>` : ""}
-          ${tt.battaRft > 0 ? `<span><i class="zl">${t("Batta")}</i>${esc(tt.battaRft)} RFT</span>` : ""}
-        </div>`).join("")}</div>` : "";
+      const PHOTO_H = bare ? PAGE_PX - headPx : Math.max(Math.max(160, 260 - (fabStrip ? 44 : 0) - trussPx), PAGE_PX - headPx - rows * (ROW_H + ARROW));
+      const pieces = (groups) => groups.reduce((a, g) => a + (Number(g.n) || 0), 0);
+      const sizeLines = (groups) => groups.map(g => `<div class="ztk-l"><b>${esc(g.n)}</b><span>× ${esc(g.len)} ft</span></div>`).join("");
+      const tkCard = (icon, title, count, body) => `<div class="ztk-c"><div class="ztk-h"><span>${icon} ${title}</span>${count != null ? `<b>${esc(count)}</b>` : ""}</div>${body}</div>`;
+      const trussCard = trussRows.map(tt => `<div class="ztk-w">
+          ${tt.label ? `<div class="ztk-t">${esc(tt.label)}</div>` : ""}
+          <div class="ztk" style="height:${trussBlockPx(tt) - (tt.label ? TK_LABEL : 0)}px">
+            ${tt.pillars.length ? tkCard("🏛️", t("Pillars"), pieces(tt.pillars), sizeLines(tt.pillars)) : ""}
+            ${tt.beams.length ? tkCard("🔗", t("Beams"), pieces(tt.beams), sizeLines(tt.beams)) : ""}
+            ${tt.battaRft > 0 ? tkCard("🎗️", t("Batta"), null, `<div class="ztk-l ztk-big"><b>${esc(tt.battaRft)}</b><span>RFT</span></div>${tt.battaBuf > 0 ? `<div class="ztk-s">${t("incl. {pct}% buffer", { pct: esc(tt.battaBuf) })}</div>` : ""}`) : ""}
+          </div>
+        </div>`).join("");
       const photoTop = bare ? 0 : ROW_H + ARROW;
       const botTop = photoTop + PHOTO_H + ARROW;
       const stageH = bare ? PHOTO_H : bot.length ? botTop + ROW_H : photoTop + PHOTO_H;
@@ -4851,13 +4854,17 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   /* Says WHAT is being measured. On its own "L 52 × W 14 × H 12 ft" could be the zone, the
      structure or a single prop; it is the zone's own span. */
   .zst{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 12px}
-  .ztc{box-sizing:border-box;margin:0 0 12px;border:1px solid #DDD4C2;border-radius:10px;background:#FBF8F1;overflow:hidden}
-  .ztc-r{box-sizing:border-box;height:50px;display:flex;align-items:center;gap:18px;padding:0 14px;font-size:12.5px;font-weight:700;color:#1A1A1A;white-space:nowrap;overflow:hidden}
-  .ztc-r + .ztc-r{border-top:1px solid #E7DFCF}
-  .ztc-r.ztc-2{height:74px;flex-wrap:wrap;align-content:center;row-gap:6px;white-space:normal}
-  .ztc-r.ztc-2 span{white-space:nowrap}
-  .ztc-n{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:#7A7263;min-width:74px}
-  .ztc .zl{font-style:normal;font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#7A7263;margin-right:7px}
+  .ztk-w{margin:0 0 10px}
+  .ztk-t{height:20px;font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#7A7263}
+  .ztk{display:flex;gap:10px}
+  .ztk-c{flex:1;min-width:0;box-sizing:border-box;padding:10px 14px;border:1px solid #DDD4C2;border-radius:12px;background:#FBF8F1;overflow:hidden}
+  .ztk-h{display:flex;align-items:center;justify-content:space-between;height:22px;margin-bottom:6px;font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#7A7263}
+  .ztk-h b{font-size:12px;letter-spacing:0;color:#1A1A1A}
+  .ztk-l{display:flex;align-items:baseline;gap:6px;height:19px;font-size:13px;color:#1A1A1A;white-space:nowrap}
+  .ztk-l b{font-weight:700;min-width:18px}
+  .ztk-l span{font-weight:500;color:#4A453C}
+  .ztk-big{font-size:15px}
+  .ztk-s{font-size:10.5px;color:#7A7263;margin-top:2px}
   .zst span{box-sizing:border-box;height:30px;line-height:30px;padding:0 12px;font-size:12px;font-weight:700;color:#1A1A1A;background:#EFE9DC;border:1px solid #DDD4C2;border-radius:8px;white-space:nowrap}
   .zst .zl{font-style:normal;font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#7A7263;margin-right:7px}
   /* Flower palette colours: a dot in the colour, then its name and share. */

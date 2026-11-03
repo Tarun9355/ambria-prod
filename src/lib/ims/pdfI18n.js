@@ -123,6 +123,7 @@ export const PDF_HI = {
   "Pillars": "पिलर",
   "Beams": "बीम",
   "Truss breakdown": "ट्रस का हिसाब",
+  "incl. {pct}% buffer": "{pct}% बफ़र सहित",
   "Floral mix": "फूलों का मिक्स",
   "Flower palette": "फूलों के रंग",
   "Real {real}% · Artificial {art}%": "असली {real}% · आर्टिफ़िशियल {art}%",
