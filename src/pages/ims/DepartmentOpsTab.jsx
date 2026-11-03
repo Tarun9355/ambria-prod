@@ -1932,10 +1932,15 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   // someone remembers to click "↺ Reset to system plan" (which would also wipe the logged qty/price
   // nobody wants touched). Matched by name; a row with no live match (e.g. a swap replacement) is
   // left exactly as it was.
+  // Keyed by name + colour, matching how StudioApp.jsx's floralPlan builder now keys its own
+  // aggregation (same flower name ordered in two different colours across two functions is two
+  // separate rows there, not one) — matching by name alone here would re-collapse them right back
+  // down to a single colour on every render, the same bug just moved one file over.
+  const mandiKey = (r) => `${r.name}¦${r.colorVariant?.label || (Array.isArray(r.colorPrefs) ? r.colorPrefs.map(p => p.label).join("/") : "") || ""}`;
   const seedColourByName = {};
-  seedMandi.forEach(r => { if (!seedColourByName[r.name]) seedColourByName[r.name] = { colorVariant: r.colorVariant, colorPrefs: r.colorPrefs }; });
+  seedMandi.forEach(r => { const k = mandiKey(r); if (!seedColourByName[k]) seedColourByName[k] = { colorVariant: r.colorVariant, colorPrefs: r.colorPrefs }; });
   const mandiRows = Array.isArray(deptData.mandiLines)
-    ? deptData.mandiLines.map(r => seedColourByName[r.name] ? { ...r, ...seedColourByName[r.name] } : r)
+    ? deptData.mandiLines.map(r => seedColourByName[mandiKey(r)] ? { ...r, ...seedColourByName[mandiKey(r)] } : r)
     : seedMandi;
   // Real shopping hasn't been logged until someone actually edits a row — until then, mandiRows is
   // just seedMandi (the plan's own quantities/prices mirrored in as a starting point), so the "Real

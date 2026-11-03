@@ -2067,7 +2067,7 @@ export default function StudioBuild({ ctx }) {
     const exclude = elIdx == null ? { fnIdx: activeFnIdx, zoneKey } : { fnIdx: activeFnIdx, zoneKey, elIdx };
     // fnDate — the same value, previously spelled out inline here. This call site already had it
     // right; sharing the one derived constant is what stops the next one getting it wrong.
-    const usedElsewhere = qtyUsedElsewhereInBuild(itemId, fns, imsInventory, exclude, fnDate);
+    const usedElsewhere = qtyUsedElsewhereInBuild(itemId, fns, imsInventory, exclude, fnDate, aVenue);
     if (usedElsewhere <= 0) return null;
     const otherEventsAvail = getStudioAvailable(it, activeBlocksForDate);
     return Math.max(0, otherEventsAvail - usedElsewhere);
@@ -3358,7 +3358,7 @@ undefined
       const fnsNow = collectAllFunctionData ? collectAllFunctionData() : [];
       const inZoneIds = new Set((zoneElements[pk] || []).map((el) => el.invId).filter(Boolean));
       // free = what other events leave on the event date, minus what the rest of this deal already holds
-      const freeFor = (it) => Math.max(0, getStudioAvailable(it, activeBlocksForDate) - qtyUsedElsewhereInBuild(it.id, fnsNow, imsInventory, {}, fnDate));
+      const freeFor = (it) => Math.max(0, getStudioAvailable(it, activeBlocksForDate) - qtyUsedElsewhereInBuild(it.id, fnsNow, imsInventory, {}, fnDate, aVenue));
       // What the zone's other elements are multiplied by: the guest-price level, and the event date's category (King's / Filler …).
       const dp = sharedFloralSettings?.datePricing;
       const dateMult = fnDate && dp ? (Number(getEffectivePricing(1, fnDate, { datePricing: dp }).multiplier) || 1) : 1;
@@ -3394,7 +3394,7 @@ undefined
         subcatMatch={customPicker.kind === "ceiling" ? "ceiling" : "printed wall"}
         rcFactorByKey={rcFactorByKey}
         // free on the event date = what other events leave, minus what the rest of this deal already holds (as the printed-walls picker)
-        freeFor={(() => { const fnsNow = collectAllFunctionData ? collectAllFunctionData() : []; return (it) => Math.max(0, getStudioAvailable(it, activeBlocksForDate) - qtyUsedElsewhereInBuild(it.id, fnsNow, imsInventory, {}, fnDate)); })()}
+        freeFor={(() => { const fnsNow = collectAllFunctionData ? collectAllFunctionData() : []; return (it) => Math.max(0, getStudioAvailable(it, activeBlocksForDate) - qtyUsedElsewhereInBuild(it.id, fnsNow, imsInventory, {}, fnDate, aVenue)); })()}
         // Ceiling only: how many panels, starting at what the row has now (else one per truss). Masking stays one per truss.
         withQty={customPicker.kind === "ceiling"}
         defaultQty={(() => { const z = zoneConfig[customPicker.k] || {}; const r = customPicker.rowIdx == null ? z : (z.extraTrussRows || [])[customPicker.rowIdx] || {}; return Number(r.customCeilingQty) || Math.max(1, Number(r.trussQty) || 1); })()}
@@ -5180,7 +5180,13 @@ undefined
                         {showCosts&&<span title={el.swappedFrom?`Swapped within the same category — the original item had none free on this date`:_siblingFns?`Also used in ${_siblingFns.join(", ")} — same venue, same/next day`+(_rateDiscounted?" (Repeat discount applied)":""):_rateDiscounted?"Rate per unit — Repeat/standing-venue discount applied":"Rate per unit"} style={{flexShrink:0,fontSize:11,fontWeight:600,color:(el.swappedFrom||_siblingFns)?"#F97316":_rateDiscounted?"#10B981":textS,whiteSpace:"nowrap"}}>{_effUp>0?`₹${Math.round(_effUp).toLocaleString("en-IN")}/${isTrussSqft?"truss sqft":(invItem?.unit||rc?.unit||el.unit)}`:"₹0"}</span>}
                         {isKit&&<span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(99,102,241,0.15)",color:"#6366F1",fontWeight:700}}>KIT</span>}
                         {!rc&&!el.invId&&!el.patternId&&!el.mandiId&&<span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700}}>NEW</span>}
-                        {el.invId&&(el.wantedQty||0)>(el.qty||0)&&<span title={`Asked for ${el.wantedQty}, only ${el.qty} available for this date — held at ${el.qty}`} style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700}}>⚠ short · {el.wantedQty} asked</span>}
+                        {/* `wantedQty` is written once, at the moment a typed/stepped quantity got capped, and
+                            never cleared on its own — only re-touching this row's qty control clears it. Gated
+                            on priceInfo.warning (recomputed live every render) so this badge disappears the
+                            instant the real constraint behind it is gone, instead of sitting there forever
+                            telling the salesperson "short" against stock that's free again (confirmed on a real
+                            deal: Manaktala stock freed up, the live cap moved, and this badge kept showing). */}
+                        {el.invId&&(el.wantedQty||0)>(el.qty||0)&&priceInfo.warning&&<span title={`Asked for ${el.wantedQty}, only ${el.qty} available for this date — held at ${el.qty}`} style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700}}>⚠ short · {el.wantedQty} asked</span>}
                         {el.invId&&priceInfo.warning&&<span title={priceInfo.warning} style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700}}>{priceInfo.outOfStock?"⚠ out of stock":"⚠ short"}</span>}
                         {kitShort.length>0&&<span title={`Short for this date inside this kit:\n${kitShort.map(p=>`${p.name}: ${p.short} of ${p.need} short${p.canMake?" (production can make it)":" (can't be made, pick another part)"}`).join("\n")}`} style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:kitShortOut?"rgba(239,68,68,0.15)":"rgba(245,158,11,0.15)",color:kitShortOut?"#EF4444":"#B45309",fontWeight:700}}>⚠ {kitShort.length} part{kitShort.length===1?"":"s"} short</span>}
                         {(rc||el.invId)&&<span onClick={()=>((!isKit&&choiceOpenerFor(k,idx,el,rc,invItem,qtyUnit))||(()=>openAvailModal(k, idx, el, rc)))()} title={(!isKit&&choiceOpenerFor(k,idx,el,rc,invItem,qtyUnit))?`Check what is free and name up to ${ELEMENT_PREF_MAX} ${/cover/i.test(invItem?.name||"")?"cushion cover":"overlay"} designs in order of preference - Planning decides which one is used`:_subcatOpportunity?`Also used in ${[...new Set(_subcatOpportunity.map(o=>o.label))].join(", ")} (${_subcatOpportunity.map(o=>o.name).join(", ")}) — swap to it for the repeat discount`:"Check stock availability & pick an item"} style={{cursor:"pointer",fontSize:12,opacity:_subcatOpportunity?1:0.5,padding:"0 1px",lineHeight:1,color:_subcatOpportunity?"#F97316":undefined}}><IconBox size={12}/></span>}

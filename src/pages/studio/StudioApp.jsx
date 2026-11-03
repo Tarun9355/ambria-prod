@@ -118,7 +118,7 @@ import {
   fetchVerifiedLibraryPhotos, checkExistingLibraryUrls, TAG_SOURCE,
 } from "../../lib/studio/libraryQueries";
 import { rowToItem } from "../../lib/inventory/adapter";
-import { assembleVenuesFromRows, genVenueId } from "../../lib/ims/venueProperties";
+import { assembleVenuesFromRows, deterministicVenueId } from "../../lib/ims/venueProperties";
 import {
   STORAGE_KEY, AMBRIA_PLAYLIST_ID, CLD_CLOUD,
   YT_SK, YT_TAG_SK, MANUAL_VID_SK, HIDDEN_VID_SK, FAV_VID_SK, FAV_PHOTO_SK,
@@ -3184,7 +3184,15 @@ export default function StudioApp() {
   // typed in Event Info). The realtime subscription above re-fetches and updates customOutdoor, so
   // no local setState here.
   const addOutdoorVenue = useCallback(async (name, empanelled) => {
-    await supabase.from("venues").insert({ id: genVenueId("od"), kind: "outdoor", name, empanelled: !!empanelled });
+    // deterministicVenueId, not genVenueId — see its own comment (lib/ims/venueProperties.js) for
+    // why: two salespeople auto-persisting the SAME brand-new custom venue around the same moment
+    // (autoPersistCustomVenue fires unattended, no admin review in between) used to each pass their
+    // own session's stale in-memory "does this exist yet" check and each insert under a random id,
+    // leaving two venues rows with the same name (confirmed live, 2026-11-02 — same bug class as the
+    // `functions` table's own backfill race). Shared with IMS → Settings → Venues' own outdoor-add
+    // form, so the two converge on the same id for the same name too.
+    const id = deterministicVenueId("od", name);
+    await supabase.from("venues").upsert({ id, kind: "outdoor", name, empanelled: !!empanelled }, { onConflict: "id", ignoreDuplicates: true });
   }, []);
   // Sub-venue → parent map (Aura → Exotica) so fixed-venue rules match across sub-venues.
   // Persisted to settings so IMS reads it too.
@@ -4803,8 +4811,13 @@ export default function StudioApp() {
         const _fnsForAlloc = collectAllFunctionDataRef.current ? collectAllFunctionDataRef.current() : [];
         const _rowTarget = { fnIdx, zoneKey: opts.zoneKey, elIdx: opts.elIdx };
         const _allocDate = opts?.fnDate || activeFnMeta?.date || clientDate;
-        const alloc = allocateRowAvailability(item.id, _fnsForAlloc, imsInventory, _rowTarget, _allocDate, otherEventsAvail);
-        rowMaxQty = maxQtyForRow(item.id, _fnsForAlloc, imsInventory, _rowTarget, _allocDate, otherEventsAvail);
+        // opts.venueName (this row's own function's venue) — two functions sharing a date but at
+        // genuinely different venues cannot share the same installed stock (see
+        // qtyUsedElsewhereInBuild's own comment, lib/studio/dealAvailability.js); without this, a
+        // second same-day function at a different venue competed for the SAME pool as the first,
+        // exactly as if it were a completely different client's deal on that date.
+        const alloc = allocateRowAvailability(item.id, _fnsForAlloc, imsInventory, _rowTarget, _allocDate, otherEventsAvail, opts?.venueName);
+        rowMaxQty = maxQtyForRow(item.id, _fnsForAlloc, imsInventory, _rowTarget, _allocDate, otherEventsAvail, opts?.venueName);
         ownedQty = alloc.ownedQty; shortQty = alloc.shortQty;
       } else {
         ownedQty = Math.min(qty, otherEventsAvail);
@@ -4889,7 +4902,7 @@ export default function StudioApp() {
     const target = opts.zoneKey != null && opts.elIdx != null ? { fnIdx: opts.fnIdx ?? activeFnIdx, zoneKey: opts.zoneKey, elIdx: opts.elIdx } : null;
     const freeFor = (part) => combineAvailability(Number(part?.qty ?? part?.qtyOwned) || 0,
       getStudioAvailable(part, netOwnReservedBlocksLive(rawBlocks, part.id, detail, [eo?.id, ...ownEventOrderIds(eventOrders, activeClientId, clientName)])), availableAtVenue(fvCfgForRepeat, venueName, part));
-    return kitPartShortfalls(item, Number(el.qty) || 0, el.kitOverrides, fns, imsInventory, target, fnDate, freeFor, opts.reusePool)
+    return kitPartShortfalls(item, Number(el.qty) || 0, el.kitOverrides, fns, imsInventory, target, fnDate, freeFor, opts.reusePool, venueName)
       .map((p) => ({ ...p, canMake: canFulfillShortfall((imsInventory || []).find((i) => i.id === p.id), fnDate, el?.addedAt || undefined) }));
   }, [imsInventory, activeFnMeta, clientDate, activeBlocksForDate, activeBlocksDetailForDate, blocksDetailByDate, eventOrders, activeClientId, clientName, activeFnIdx, fvCfgForRepeat]);
   // Shared SMB/flat rate resolution — the one place `getElPrice`, `getElPriceForFn`, and
@@ -7580,31 +7593,36 @@ export default function StudioApp() {
   // ── Auto-persist custom venue (Event Info) — VERBATIM ──
   const autoPersistCustomVenue = useCallback(() => {
     const name = (clientVenueOther || "").trim();
+    if (!name) return;
+    const lcName = name.toLowerCase();
+    const inInhouse = allInhouseVenues.some(v => v.toLowerCase() === lcName);
+    const inOutside = customOutdoor.some(o => (o.name || "").toLowerCase() === lcName);
+    // ── THE VENUE REGISTERS OFF ITS NAME ALONE ──
+    // This fires onBlur of all three fields (Venue Name, Trip Rate, Gensets) — typing a name, then
+    // tabbing through Trip Rate, used to run this with Gensets still at its untouched default (null)
+    // and hit the single combined guard below (name AND rate>0 AND gensets set), which skipped
+    // EVERYTHING: not just the transport row, but the venue itself — so it never reached Venues
+    // master, never became selectable in this deal's other functions, and nothing was shown to say
+    // why. Confirmed live, 2026-11-02: "Roseate House Aerocity", name + rate filled, Gensets never
+    // touched — saved nothing at all, silently. A venue existing is not conditional on transport
+    // numbers also being known yet (the admin refines those in Transport & Power later anyway, per
+    // the field's own helper text below) — only the TRANSPORT ROW needs rate/gensets to mean
+    // anything, so only that part still waits on them.
+    if (!inInhouse && !inOutside) addOutdoorVenue(name, false);
     const rate = Number(customTripRate) || 0;
     // Event Info's "Gensets needed" field for a brand-new venue only ever sets a 125 KVA count
     // (there's no 62 KVA field here — this is a rough estimate the admin refines properly in
     // Transport & Power afterward) — genset125 directly, genset62 starts at 0, not the old
     // fractional "gensets" scalar.
     const genset125 = customGensets;
-    if (!name || rate <= 0 || genset125 === null || genset125 === undefined || genset125 < 0) return;
-    const lcName = name.toLowerCase();
-    const inInhouse = allInhouseVenues.some(v => v.toLowerCase() === lcName);
-    const inOutside = customOutdoor.some(o => (o.name || "").toLowerCase() === lcName);
-    const inAnyTR = trVenues.some(v => (v.name || "").toLowerCase() === lcName);
-    if (inInhouse || inOutside || inAnyTR) return;
+    if (rate <= 0 || genset125 === null || genset125 === undefined || genset125 < 0) return;
     const existingTR = trVenues.find(v => (v.name || "").toLowerCase() === lcName);
-    let newTR;
-    if (existingTR) {
-      newTR = trVenues.map(v => v.id === existingTR.id ? { ...v, rate, genset125, genset62: 0, name } : v);
-    } else {
-      const id = "V" + Date.now().toString(36).slice(-5).toUpperCase();
-      newTR = [...trVenues, { id, tier: "other", name, rate, genset125, genset62: 0 }];
-    }
-    const existingOut = customOutdoor.find(o => (o.name || "").toLowerCase() === lcName);
+    const newTR = existingTR
+      ? trVenues.map(v => v.id === existingTR.id ? { ...v, rate, genset125, genset62: 0, name } : v)
+      : [...trVenues, { id: "V" + Date.now().toString(36).slice(-5).toUpperCase(), tier: "other", name, rate, genset125, genset62: 0 }];
     saveTR(newTR, null);
-    if (!existingOut) addOutdoorVenue(name, false);
     showMsg(`✓ Saved ${name} (₹${rate}/trip, ${genset125} × 125 KVA genset)`, "green");
-  }, [clientVenueOther, customTripRate, customGensets, trVenues, customOutdoor, customInhouse, allInhouseVenues, saveTR, addOutdoorVenue]);
+  }, [clientVenueOther, customTripRate, customGensets, trVenues, customOutdoor, customInhouse, allInhouseVenues, saveTR, addOutdoorVenue, showMsg]);
 
   // ── Outdoor venue list (DB + events) — VERBATIM ──
   const outdoorVenueList = useMemo(() => {
@@ -7964,6 +7982,17 @@ export default function StudioApp() {
             elSelectedPhoto: Object.fromEntries(Object.entries(snap.elSelectedPhoto).map(([ek, v]) => [ek, { src: v?.src, eventName: v?.eventName, isLibrary: v?.isLibrary, eventId: v?.eventId }]))
           };
         }
+        // fnDate/fnVenue — THIS function's own date/venue, not whichever one was on screen when Save
+        // fired. sessionToRows (lib/studio/sessionData.js) used to stamp every function's studio_sessions
+        // row with the session-level eventDate/venue (Function 1's/the active function's own), because
+        // snapshotBuildState() never carried date/venue at all — only total/tier had been fixed to read
+        // per-function (fnTotals) after the same historical bug (migration 026's own header: "ONE total
+        // for a MULTI-FUNCTION deal... written from whichever function happened to be on screen").
+        // Confirmed live, 2026-11-02 (Sangeeta): Wedding (fn_idx 2, genuinely 2026-10-05) got saved with
+        // event_date 2026-11-04 — Haldi/Sangeet's date, whichever of the two was the active tab —
+        // because all three functions were saved in the same batch. That wrong date then pooled
+        // Wedding's own stock needs into Haldi/Sangeet's same-day availability check.
+        snap = { ...snap, fnDate: (i === 0 ? clientDate : extraFunctions[i - 1]?.date) || "", fnVenue: (i === 0 ? venue : extraFunctions[i - 1]?.venue) || "" };
         fnSnapshots[i] = snap;
       }
     }
@@ -8674,10 +8703,16 @@ export default function StudioApp() {
         afBunches += r.artFlowerBunches || 0; agBunches += r.artGreenBunches || 0;
         incReal += r.income?.real || 0; incArt += r.income?.art || 0;
         (r.breakdown || []).forEach(f => {
-          if (!fbAgg[f.name]) fbAgg[f.name] = { name: f.name, qty: 0, cost: 0, unit: f.unit, colorVariant: f.colorVariant || null, colorPrefs: f.colorPrefs || null };
-          fbAgg[f.name].qty += f.qty; fbAgg[f.name].cost += f.cost;
-          if (f.colorVariant && !fbAgg[f.name].colorVariant) fbAgg[f.name].colorVariant = f.colorVariant;
-          if (f.colorPrefs && !fbAgg[f.name].colorPrefs) fbAgg[f.name].colorPrefs = f.colorPrefs;
+          // Keyed by name + colour, not name alone — a flower ordered in two different colours
+          // across two functions (Haldi's yellow guldavari star, Wedding's white) used to collapse
+          // into ONE bucket: whichever function's colour got there first won it, and every other
+          // colour's quantity/cost was silently folded in uncredited — the purchase manager's mandi
+          // list then showed only one colour's worth to buy while the real total spanned both.
+          // Confirmed live, 2026-11-02.
+          const colourKey = f.colorVariant?.label || (Array.isArray(f.colorPrefs) ? f.colorPrefs.map(p => p.label).join("/") : "") || "";
+          const key = colourKey ? `${f.name}¦${colourKey}` : f.name;
+          if (!fbAgg[key]) fbAgg[key] = { name: f.name, qty: 0, cost: 0, unit: f.unit, colorVariant: f.colorVariant || null, colorPrefs: f.colorPrefs || null };
+          fbAgg[key].qty += f.qty; fbAgg[key].cost += f.cost;
         });
       });
       const flowers = Object.values(fbAgg).map(f => ({ ...f, rate: f.qty > 0 ? Math.round((f.cost / f.qty) * 100) / 100 : 0 })).sort((a, b) => b.cost - a.cost);
@@ -11819,13 +11854,28 @@ export default function StudioApp() {
         }
         return proj;
       };
+      // Keyed by DATE, not re-derived per function — two functions of this SAME event sharing a
+      // date (Haldi + Sangeet, one day) used to each find `row` undefined off the one-time fnRows
+      // fetch above (neither had a row yet) and each mint its OWN backfill `functions` row for the
+      // same date, because the loop never recorded what the FIRST one just created before the
+      // second one looked. Confirmed live, 2026-11-02 (Sangeeta): one date, two `functions` rows,
+      // same projectId. Seeding this map from fnRows and writing into it the instant a row is
+      // created (not waiting for its insert to land) makes the second function see it.
+      const rowByDate = new Map((fnRows || []).map((r) => [(r.date || r.data?.date), r]));
+      // Every new fnId actually created this run, collected locally and written to the project's
+      // own functions array ONCE after the whole loop — not per function. The old code updated
+      // projects.data.functions separately for each function needing a backfill row, each update
+      // reading the SAME one-time ensureProject() snapshot as its "existing list" — so a deal
+      // backfilling two different dates in one run had its second update silently overwrite the
+      // first's just-added fnId, since neither update knew about the other's addition.
+      let newFnIds = null;
       for (let i = 0; i < fnsToProcess.length; i++) {
         const fn = fnsToProcess[i];
         const fnIdx = fn.fnIdx ?? i;
         const req = requiredByFn[fnIdx] || {};
         const date = fn.fnDate || "";
         if (!date) continue;
-        const row = (fnRows || []).find((r) => (r.date || r.data?.date) === date);
+        const row = rowByDate.get(date);
         const nextItems = ids.reduce((acc, id) => {
           const qty = req[id] || 0;
           if (qty <= 0) return acc;
@@ -11838,28 +11888,59 @@ export default function StudioApp() {
         if (row) {
           const existingItems = Array.isArray(row.data?.items) ? row.data.items : [];
           const kept = existingItems.filter((it) => !ids.includes(it.invId));
-          supabase.from("functions").update({ data: { ...row.data, items: [...kept, ...nextItems] } }).eq("id", row.id)
+          // venue/shift/pax resync — this row's own venue object used to be written ONCE, whenever
+          // the row was first created, and never touched again: editing the venue in Event Info
+          // afterward updated event_orders (and the `blocks` table's own event lookups, which read
+          // the venue live off event_orders) but had no path back to this row at all. Confirmed live,
+          // 2026-11-02 (Sangeeta): renamed a venue twice in Event Info, `functions.data.venue` still
+          // showed the very first name ever typed. Preserves the object's own `type`/`fullAddress`
+          // (Event Info only ever supplies a plain name string, never those) when there's one to
+          // preserve; a row with no venue object yet defaults to "outdoor" (matching the backfill
+          // branch below, and every other place in this app an untyped venue defaults the same way).
+          const prevVenueObj = (row.data?.venue && typeof row.data.venue === "object") ? row.data.venue : { type: "outdoor", fullAddress: "" };
+          supabase.from("functions").update({ data: { ...row.data, items: [...kept, ...nextItems], venue: { ...prevVenueObj, name: fn.fnVenue || "" }, shift: fn.fnShift || row.data?.shift || "", pax: fn.fnPax || row.data?.pax || "" } }).eq("id", row.id)
             .then(({ error }) => { if (error) console.error("[reconcile] functions.items sync failed for fn", row.id, ":", error.message); else console.info("[reconcile] synced functions.items for fn", row.id, "date", date); });
           continue;
         }
         const p = await ensureProject();
         if (!p) { console.warn("[reconcile] no functions row AND no projects row for event", eo.id, "date", date, "— this deal never went through the real markSold confirm at all. IMS's date-filtered Inventory view has nothing to show regardless of the blocks write below."); continue; }
-        const fnId = "fn_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6) + "_bck";
+        // Deterministic, not random — a pure function of (event, date), so two reconcile calls
+        // racing to backfill the SAME missing (event, date) combo always compute the SAME id and
+        // collide on ONE row via the upsert below, instead of each minting its own random id and
+        // both landing as separate rows. Confirmed live, 2026-11-02 (Anuja Berry): two calls 229ms
+        // apart each found no row for the date and each inserted its own — this makes a second row
+        // for the same (event, date) structurally impossible, not just less likely.
+        const fnId = `fn_bck_${eo.id}_${date}`;
         const fnData = {
           id: fnId, projectId: p.id, name: fn.fnType || "Function", type: fn.fnType || "Function", date,
-          budget: 0, venue: { type: "outdoor", name: "", fullAddress: "" }, items: nextItems, flowerOrders: [],
+          budget: 0, venue: { type: "outdoor", name: fn.fnVenue || "", fullAddress: "" }, items: nextItems, flowerOrders: [],
           floralRatio: 70, manpower: [], manpowerPhases: [{ phase: "event", date, crew: [], status: "planned" }],
           expenses: [], transport: { planned: [], actual: [] }, breakage: { provision: [], actual: [] },
-          status: "Confirmed", adminApproval: null, eventOrderId: eo.id, shift: "", pax: "",
+          status: "Confirmed", adminApproval: null, eventOrderId: eo.id, shift: fn.fnShift || "", pax: fn.fnPax || "",
           brideGroom: eo.brideGroom || "", salesperson: eo.salesperson || "",
         };
-        supabase.from("functions").insert({ id: fnId, project_id: p.id, name: fnData.name, date, venue: fnData.venue, status: "Confirmed", data: fnData })
+        // Recorded before the upsert resolves — a second function of THIS deal on the same date,
+        // later in this same loop, must see this row already exists rather than racing to create
+        // its own (see rowByDate's own comment above).
+        rowByDate.set(date, { id: fnId, date, data: fnData });
+        if (!newFnIds) newFnIds = new Set(p.data?.functions || []);
+        newFnIds.add(fnId);
+        // Plain upsert, not insert — the deterministic id means a concurrent call backfilling the
+        // same (event, date) hits the SAME row and just overwrites it (last writer wins, same
+        // self-heals-every-run posture as the rest of this function) instead of erroring on a
+        // duplicate key or racing to insert first.
+        supabase.from("functions").upsert({ id: fnId, project_id: p.id, name: fnData.name, date, venue: fnData.venue, status: "Confirmed", data: fnData }, { onConflict: "id" })
           .then(({ error }) => {
-            if (error) { console.error("[reconcile] functions backfill insert failed for event", eo.id, "date", date, ":", error.message); return; }
-            console.info("[reconcile] backfilled missing functions row for event", eo.id, "date", date, "— was created (project exists) but had never gotten a function row.");
-            supabase.from("projects").update({ data: { ...p.data, functions: [...(p.data?.functions || []), fnId] } }).eq("id", p.id)
-              .then(({ error: pe }) => { if (pe) console.error("[reconcile] project.functions backfill link failed:", pe.message); });
+            if (error) console.error("[reconcile] functions backfill upsert failed for event", eo.id, "date", date, ":", error.message);
+            else console.info("[reconcile] backfilled missing functions row for event", eo.id, "date", date, "— was created (project exists) but had never gotten a function row.");
           });
+      }
+      if (newFnIds) {
+        const p = await ensureProject();
+        if (p) {
+          supabase.from("projects").update({ data: { ...p.data, functions: [...newFnIds] } }).eq("id", p.id)
+            .then(({ error }) => { if (error) console.error("[reconcile] project.functions backfill link failed:", error.message); });
+        }
       }
     } catch (e) {
       // Best-effort — the real reservation (`blocks`, below) isn't affected by this failing.
@@ -11940,6 +12021,20 @@ export default function StudioApp() {
       if (!date) return;
       const slot = reqByDate[date] || (reqByDate[date] = {});
       Object.entries(req).forEach(([id, qty]) => { slot[id] = Math.max(slot[id] || 0, Number(qty) || 0); });
+    });
+    // Release this event's own reservation on any date that is no longer one of its functions' dates
+    // — a function's date edited in Event Info (or a whole function removed) left its OLD date's
+    // hold in place forever, because the loop below only ever replaces THIS SAME date's entry, never
+    // touches any other. Confirmed live, 2026-11-02 (Anuja Berry): a function moved from 30 Oct to
+    // 3 Nov kept double-holding every one of its ~67 items on BOTH dates — the real date got its
+    // entry refreshed each run, the abandoned date's entry just sat there, permanently starving that
+    // day's stock for every other deal. ids already covers every item this event has ever reserved
+    // (allItemIds merges current AND prevByFn), so this reaches a date dropped entirely, not just one
+    // whose qty changed.
+    const validDates = new Set(Object.keys(reqByDate));
+    ids.forEach((id) => {
+      const arr = (byId.get(id) || []).filter((b) => !(b.eventId === eo.id && !validDates.has(b.date)));
+      byId.set(id, arr);
     });
     Object.entries(reqByDate).forEach(([date, req]) => {
       ids.forEach((id) => {

@@ -14,6 +14,22 @@
 // filter, …) needed to change.
 export const genVenueId = (prefix) => `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
 
+// A pure function of (prefix, name) rather than genVenueId's random one, so every caller that adds
+// a venue by name — Studio's unattended autoPersistCustomVenue, and IMS → Settings → Venues' own
+// add-property/add-sub-venue/add-outdoor forms — always computes the SAME id for the SAME name,
+// regardless of which of them got there first. Two of these racing (two salespeople auto-persisting
+// the identical new venue name moments apart, or an admin editing while a Studio session does the
+// same) used to each pass their own stale in-memory "does this exist yet" check and each insert
+// under a fresh random id, leaving two rows with one name (confirmed live, 2026-11-02 — the exact
+// bug already fixed for the `functions` table's own backfill race). Paired with `.upsert(row, {
+// onConflict: "id", ignoreDuplicates: true })` instead of `.insert(row)`, a concurrent second write
+// now lands on the SAME row and is a silent no-op, not a second row. Falls back to genVenueId when
+// the normalized name is too short to be a safe id on its own (e.g. all-punctuation input).
+export function deterministicVenueId(prefix, name) {
+  const norm = String(name || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 48);
+  return norm.length > 2 ? `${prefix}_${norm}` : genVenueId(prefix);
+}
+
 // venues-table rows -> the legacy blob shape. `parent` (a sub-venue's property NAME, the field
 // every Studio consumer actually reads) is derived fresh from the property row's CURRENT name —
 // never stored on the sub-venue row itself — so a property rename can never leave a stale name

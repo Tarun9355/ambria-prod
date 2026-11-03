@@ -104,6 +104,33 @@ export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, l
     const updated = (eventOrders || []).map((eo) => (eo.id === eoId ? { ...eo, status: "cancelled" } : eo));
     setEventOrders(updated);
     saveEventOrders?.(updated);
+    // Releasing the real stock hold above never touched the ops-side `functions` rows this event
+    // created — those kept showing as blocked in IMS Inventory's own "Blocked for Functions" list
+    // long after cancellation (the exact orphan InventoryTab.jsx had to start filtering out by the
+    // linked event_order's status instead of the row actually being gone). Delete them here too, and
+    // prune their ids off whichever project(s) listed them, so cancelling a booking actually retires
+    // everything it created, not just the inventory hold. Best-effort / fire-and-forget, same as the
+    // rest of this screen's writes — the event_orders/blocks release above is already done and is
+    // what matters most if this part fails.
+    (async () => {
+      try {
+        const { data: fnRows, error: fnErr } = await supabase.from("functions").select("id, project_id").contains("data", { eventOrderId: eoId });
+        if (fnErr) throw fnErr;
+        if (!fnRows?.length) return;
+        const fnIds = fnRows.map((r) => r.id);
+        const { error: delErr } = await supabase.from("functions").delete().in("id", fnIds);
+        if (delErr) throw delErr;
+        const projectIds = [...new Set(fnRows.map((r) => r.project_id).filter(Boolean))];
+        for (const pid of projectIds) {
+          const { data: proj } = await supabase.from("projects").select("id, data").eq("id", pid).maybeSingle();
+          if (!proj) continue;
+          const nextFns = (proj.data?.functions || []).filter((id) => !fnIds.includes(id));
+          await supabase.from("projects").update({ data: { ...proj.data, functions: nextFns } }).eq("id", pid);
+        }
+      } catch (e) {
+        console.error("[cancelStudioEvent] functions cleanup failed:", e?.message || e);
+      }
+    })();
   }
 
   const calEvents = useMemo(() => {
