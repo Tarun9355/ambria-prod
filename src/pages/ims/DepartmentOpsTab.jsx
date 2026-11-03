@@ -4329,8 +4329,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       const strip = !cont && (pg.struct || []).length > 0;
       // the fabric colours get a row of their own under it, so the truss strip never wraps past the height set aside for it
       const fabStrip = !cont && (pg.fabric || []).length > 0;
-      // The truss breakdown (owner ask 2026-11-03), as Planning's Truss plan shows it: a Pillars, a Beams and a Batta card side
-      // by side for each truss of the zone, under the truss and fabric strips, on the zone's first page. Pillar / beam cards
+      // The truss breakdown (owner ask 2026-11-03), as Planning's Truss plan shows it: one card per truss of the zone, its Pillars,
+      // Beams and Batta side by side, under the truss and fabric strips, on the zone's first page. Pillar / beam cards
       // list one size a line; every card of a truss is as tall as its longest list. The height comes out of the photo like
       // the fabric row, so the page still adds up to one sheet.
       const trussRows = !cont ? (pg.trussTable || []) : [];
@@ -4856,8 +4856,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   .zst{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 12px}
   .ztk-w{margin:0 0 10px}
   .ztk-t{height:20px;font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#7A7263}
-  .ztk{display:flex;gap:10px}
-  .ztk-c{flex:1;min-width:0;box-sizing:border-box;padding:10px 14px;border:1px solid #DDD4C2;border-radius:12px;background:#FBF8F1;overflow:hidden}
+  .ztk{display:flex;box-sizing:border-box;border:1px solid #DDD4C2;border-radius:12px;background:#FBF8F1;overflow:hidden}
+  .ztk-c{flex:1;min-width:0;box-sizing:border-box;padding:10px 16px;overflow:hidden}
+  .ztk-c + .ztk-c{border-left:1px solid #E7DFCF}
   .ztk-h{display:flex;align-items:center;justify-content:space-between;height:22px;margin-bottom:6px;font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#7A7263}
   .ztk-h b{font-size:12px;letter-spacing:0;color:#1A1A1A}
   .ztk-l{display:flex;align-items:baseline;gap:6px;height:19px;font-size:13px;color:#1A1A1A;white-space:nowrap}
