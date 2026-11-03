@@ -140,7 +140,7 @@ import { logPhotoCorrection, fetchPhotoCorrections } from "../../lib/studio/phot
 import { createMatcher, normalize, STRUCT_KW, STRUCTURAL_CATS as RAW_SCAFFOLD_CATS, MATCH, assembleSynonymDictionaryFromRows } from "../../lib/studio/tagging/matcher.js";
 // One place that merges an aiTagImage() result onto a library photo (spec §9-B / §12.2).
 import { applyAiTagResult } from "../../lib/studio/tagging/applyResult.js";
-import { fnSnapHasData as fnSnapHasDataPure, fnSnapHasBuild, autoSaveWouldDestroy, snapshotContentEqual, sessionToRows, findLatestBuild, restoreTarget } from "../../lib/studio/sessionData.js";
+import { fnSnapHasData as fnSnapHasDataPure, fnSnapHasBuild, autoSaveWouldDestroy, snapshotContentEqual, sessionToRows, findLatestBuild, restoreTarget, suspiciousDuplicateFnIdxs } from "../../lib/studio/sessionData.js";
 import { LOGO_ASSET, logoCrop } from "../../lib/studio/brand.js";
 import { registerFlushBeforeReload, unregisterFlushBeforeReload, flushBeforeReload } from "../../lib/pendingSaveRegistry.js";
 import { thumbUrl } from "../../lib/studio/thumb.js";
@@ -3991,7 +3991,17 @@ export default function StudioApp() {
     // has are touched; nothing else on a function (costs, skips, overrides) changes here.
     const layout = new Map();
     try {
-      (collectAllFunctionDataRef.current?.() || []).forEach(fd => {
+      const allFns = collectAllFunctionDataRef.current?.() || [];
+      // ── REFUSE TO PUSH TWO FUNCTIONS WITH IDENTICAL DECOR CONTENT INTO IMS ──
+      // Same guard, same reasoning, as saveSession's own copy (see its comment) — this is yet
+      // another write this exact in-memory data feeds (event_orders.functionsDetail, what IMS
+      // reads), and the confirmed incident (Sangeeta, 2026-11-03) could have hit this path too.
+      const unsafeFnIdxs = suspiciousDuplicateFnIdxs(allFns, activeFnIdxRef.current);
+      allFns.forEach(fd => {
+        if (unsafeFnIdxs.has(fd.fnIdx)) {
+          console.warn(`[persistDeptSnapshot] Function ${fd.fnIdx + 1}'s decor content exactly matches another function's — refusing to push it to IMS this cycle.`);
+          return;
+        }
         layout.set(fd.fnIdx, {
           zones: JSON.parse(JSON.stringify(stripPhotoStash(fd.zoneConfig))),
           elements: JSON.parse(JSON.stringify(fd.zoneElements || {})),
@@ -4095,7 +4105,17 @@ export default function StudioApp() {
     if (!eo) return; // not sold yet — nothing in IMS to keep in sync
     const layout = new Map();
     try {
-      (collectAllFunctionDataRef.current?.() || []).forEach(fd => {
+      const allFns = collectAllFunctionDataRef.current?.() || [];
+      // ── REFUSE TO PUSH TWO FUNCTIONS WITH IDENTICAL DECOR CONTENT INTO IMS ──
+      // Same guard, same reasoning, as saveSession's own copy (see its comment) — this is the
+      // OTHER write this exact in-memory data feeds (event_orders.functionsDetail, what IMS reads),
+      // and the confirmed incident (Sangeeta, 2026-11-03) hit both within seconds of each other.
+      const unsafeFnIdxs = suspiciousDuplicateFnIdxs(allFns, activeFnIdxRef.current);
+      allFns.forEach(fd => {
+        if (unsafeFnIdxs.has(fd.fnIdx)) {
+          console.warn(`[persistBuildLayoutSnapshot] Function ${fd.fnIdx + 1}'s decor content exactly matches another function's — refusing to push it to IMS this cycle.`);
+          return;
+        }
         layout.set(fd.fnIdx, {
           zones: JSON.parse(JSON.stringify(stripPhotoStash(fd.zoneConfig))),
           elements: JSON.parse(JSON.stringify(fd.zoneElements || {})),
@@ -8034,10 +8054,27 @@ export default function StudioApp() {
         // event_date 2026-11-04 — Haldi/Sangeet's date, whichever of the two was the active tab —
         // because all three functions were saved in the same batch. That wrong date then pooled
         // Wedding's own stock needs into Haldi/Sangeet's same-day availability check.
-        snap = { ...snap, fnDate: (i === 0 ? clientDate : extraFunctions[i - 1]?.date) || "", fnVenue: (i === 0 ? venue : extraFunctions[i - 1]?.venue) || "" };
+        snap = { ...snap, fnType: (i === 0 ? fn : extraFunctions[i - 1]?.type) || "", fnDate: (i === 0 ? clientDate : extraFunctions[i - 1]?.date) || "", fnVenue: (i === 0 ? venue : extraFunctions[i - 1]?.venue) || "" };
         fnSnapshots[i] = snap;
       }
     }
+    // ── REFUSE TO SAVE TWO FUNCTIONS WITH IDENTICAL DECOR CONTENT ──
+    // Confirmed incident (Sangeeta, 2026-11-03): Wedding's entire zones/elements ended up saved
+    // under Sangeet's fnIdx and kept re-saving that way for ~90 minutes, because nothing here
+    // checked whether two different functions had somehow become byte-identical before writing.
+    // A collision means something upstream already went wrong (fnBuilds[idx] holding another
+    // function's content) — this can't fix that, but it can stop the wrong slot from ever reaching
+    // the table. The flagged fnIdx is simply left OUT of this save: sessionToRows then emits no row
+    // for it, so the table keeps whatever its last genuinely-saved value was instead of being
+    // overwritten with a duplicate.
+    suspiciousDuplicateFnIdxs(
+      Object.keys(fnSnapshots).map((k) => ({ fnIdx: Number(k), ...fnSnapshots[k] })),
+      liveIdx
+    ).forEach((i) => {
+      console.warn(`[saveSession] Function ${i + 1}'s decor content exactly matches another function's — refusing to save it this cycle to avoid overwriting it with a duplicate.`);
+      showMsg?.(`Function ${i + 1} looks like it duplicated another function's build — not saved this time. Reload and check it.`, "red");
+      delete fnSnapshots[i];
+    });
     // Same pricingReady gate as total/decorTotal/transportTotal below — a snapshot taken while
     // rates are still settling would freeze seed-default garbage instead of a real historical rate.
     // Skipping it here just means this save carries no priceSnapshot forward; it never blocks or
@@ -8719,9 +8756,6 @@ export default function StudioApp() {
         dedupOverrides: { ...(dcDedupOverrides[fnData.fnIdx] || {}) }
       };
     });
-    const eventTotal = fnEOs.reduce((s, f) => s + (f.total || 0), 0);
-    const eventDecor = fnEOs.reduce((s, f) => s + (f.decorCost || 0), 0);
-    const eventTransport = fnEOs.reduce((s, f) => s + (f.transportCost || 0), 0);
     // Snapshot the Deal Check floral MANDI plan (projected) so the IMS Floral head sees the same
     // breakdown and can enter the actual mandi price later → real P&L flows back here.
     //
@@ -8798,6 +8832,32 @@ export default function StudioApp() {
       ? [...myLiveOrders].sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0))[0]
       : undefined;
     if (existingActive && !skipDupeConfirm && !confirm(`${client.name} is already booked for ${clientDate} (status: ${existingActive.status || "pending"}). Update that existing booking with the latest plan instead of creating a second one?`)) return false;
+    // ── REFUSE TO BOOK TWO FUNCTIONS WITH IDENTICAL DECOR CONTENT ──
+    // Same guard, same reasoning, as persistBuildLayoutSnapshot/persistDeptSnapshot/saveSession's own
+    // copies (see persistBuildLayoutSnapshot's comment) — this is the path that first SEEDS
+    // event_orders.functionsDetail (Sold, or any re-push of an already-booked deal), so it needs the
+    // same protection. A flagged function falls back to whatever this same deal's existing booked
+    // row already had for it (a re-push should never make things worse than they already were); a
+    // brand-new booking with no prior row to fall back to is let through with a loud warning, since
+    // omitting the function from the booking entirely would be a worse regression than a suspected
+    // duplicate — there is nothing safer to substitute for a first confirm.
+    suspiciousDuplicateFnIdxs(allFns, activeFnIdx).forEach((i) => {
+      const prior = existingActive?.functionsDetail?.find(f => f?.fnIdx === i);
+      const idx = fnEOs.findIndex(f => f.fnIdx === i);
+      if (idx === -1) return;
+      if (prior) {
+        console.warn(`[pushEventOrderPlan] Function ${i + 1}'s decor content exactly matches another function's — booking the existing, already-booked version instead of the suspect one.`);
+        fnEOs[idx] = prior;
+      } else {
+        console.warn(`[pushEventOrderPlan] Function ${i + 1}'s decor content exactly matches another function's and there is no prior booked version to fall back to — booking it anyway (omitting it would be worse), but this needs a human look.`);
+        showMsg?.(`Function ${i + 1} looks like it duplicated another function's build — booked anyway, but check it in IMS.`, "red");
+      }
+    });
+    // Computed AFTER the substitution loop above, not before — these have to reflect whatever
+    // fnEOs actually ends up holding, not whatever it held before a suspect entry got swapped out.
+    const eventTotal = fnEOs.reduce((s, f) => s + (f.total || 0), 0);
+    const eventDecor = fnEOs.reduce((s, f) => s + (f.decorCost || 0), 0);
+    const eventTransport = fnEOs.reduce((s, f) => s + (f.transportCost || 0), 0);
     const eoId = existingActive ? existingActive.id : ("eo_" + Date.now().toString(36));
     const eoCreatedAt = existingActive ? (existingActive.createdAt || Date.now()) : Date.now();
     // Keep an in-progress IMS status (blocked/final) on re-push; otherwise (re)start the auto-confirm.
