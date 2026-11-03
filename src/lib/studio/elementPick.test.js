@@ -68,3 +68,12 @@ describe("elementAfterPick — the one rule for swapping an element's item (move
     expect(e).toEqual(copy);
   });
 });
+
+describe("elementAfterPick — a swap starts without the old item's 'asked for more'", () => {
+  const items = [{ id: "A", name: "A", unit: "pc", free: 0 }, { id: "B", name: "B", unit: "pc", free: 50 }];
+  it("drops wantedQty when the item changes, keeps it when the same item is picked again", () => {
+    const capped = { invId: "A", name: "A", unit: "pc", qty: 10, wantedQty: 20 };
+    expect(elementAfterPick(capped, "B", items[1], items).wantedQty).toBeUndefined();
+    expect(elementAfterPick(capped, "A", items[0], items).wantedQty).toBe(20);
+  });
+});

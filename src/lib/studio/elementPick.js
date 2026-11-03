@@ -38,5 +38,8 @@ export function elementAfterPick(el, selectedId, pick, items) {
   // Choices (overlays / cushion covers, lib/studio/elementPrefs.js) belong to the item they started from: swapping the element to another item
   // is a fresh decision, and the old list must not come back to life if the first item is picked again later.
   if (Array.isArray(next.prefs) && String(next.prefs[0]?.id) !== String(next.invId)) delete next.prefs;
+  // wantedQty is "asked for more than THIS item had free" - written when the quantity was capped at the old item's stock. A different
+  // item starts without it: kept, Build went on calling the new item short after the swap (owner report 2026-11-03).
+  if (selectedId && String(selectedId) !== String(el.invId)) delete next.wantedQty;
   return next;
 }

@@ -1409,12 +1409,13 @@ export default function StudioBuild({ ctx }) {
       const pool = crossFnPool();
       const shortN = els.reduce((a, el, idx) => {
         if (!el?.invId) return a;
-        const asked = (Number(el.wantedQty) || 0) > (Number(el.qty) || 0);
+        // Short only when the live stock check says so - the same rule as the card's own "⚠ short" badge. A held "asked for more"
+        // (wantedQty) on its own was counted too, so a tile kept saying short after the item was swapped for one with stock.
         let warned = false;
         try { warned = !!getElPrice(el, zoneConfig[k], { checkAvailability: true, zoneKey: k, elIdx: idx, crossFnReusePool: pool }, aVenue)?.warning; } catch { /* price check failed: not counted */ }
         // a kit with a part short on the date counts too (kitPartShorts, StudioApp.jsx)
         if (!warned && kitPartShorts) { try { warned = kitPartShorts(el, { zoneKey: k, elIdx: idx }).length > 0; } catch { /* not counted */ } }
-        return a + (asked || warned ? 1 : 0);
+        return a + (warned ? 1 : 0);
       }, 0);
       // Overlays and cushion covers (also as parts of a kit) with no alternative designs named: said on the tile too, in red, so it shows without opening the card.
       const prefN = els.reduce((a, el) => {
